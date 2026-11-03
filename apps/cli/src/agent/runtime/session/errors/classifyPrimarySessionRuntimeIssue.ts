@@ -91,9 +91,11 @@ export function readSessionPreparationFailureDiagnostic(error: unknown): Readonl
         && allowed.has(descriptor.value) ? descriptor.value : 'unknown';
     } catch { return 'unknown'; }
   };
+  const originalCode = readClosedField('code', preparationDiagnosticCodes);
+  const reason = readClosedField('reason', preparationDiagnosticReasons);
   return {
-    originalCode: readClosedField('code', preparationDiagnosticCodes),
-    reason: readClosedField('reason', preparationDiagnosticReasons),
+    originalCode,
+    reason: reason === 'unknown' && originalCode === 'agent_isolation_unavailable' ? originalCode : reason,
     contextSource: readClosedField('contextSource', preparationDiagnosticSources),
   };
 }

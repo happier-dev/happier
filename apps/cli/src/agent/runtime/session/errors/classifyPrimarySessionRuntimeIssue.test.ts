@@ -1,3 +1,4 @@
+import { PluginError } from '@happier-dev/plugin-sdk';
 import { describe, expect, it } from 'vitest';
 
 import { classifyPrimarySessionRuntimeIssue, readSessionPreparationFailureDiagnostic } from './classifyPrimarySessionRuntimeIssue';
@@ -11,6 +12,17 @@ import { McpServerCatalogUnavailableError } from '@/mcp/servers/readMcpServersSe
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 
 describe('classifyPrimarySessionRuntimeIssue', () => {
+  it('retains the closed isolation refusal as the startup cause with visible owner remediation', () => {
+    const error = new PluginError({ code: 'agent_isolation_unavailable', retryable: false,
+      message: 'PRIVATE_MACHINE_DETAILS' });
+    expect(readSessionPreparationFailureDiagnostic(error)).toEqual({
+      originalCode: 'agent_isolation_unavailable', reason: 'agent_isolation_unavailable', contextSource: 'unknown',
+    });
+    const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', error, occurredAt: 100 });
+    expect(issue).toMatchObject({ code: 'agent_isolation_unavailable' });
+    expect(issue.sanitizedPreview).toContain('machine owner');
+    expect(JSON.stringify(issue)).not.toContain('PRIVATE_');
+  });
   it.each(['plugin_mcp_preparation_unavailable', 'agent_runtime_daemon_service_generation_not_current',
     'native_agent_privileged_effect_authority_unavailable', 'native_agent_privileged_effect_outcome_unknown', 'skills_unavailable'])(
     'publishes the closed preparation refusal %s without private plugin data', code => {

@@ -40,7 +40,7 @@ export function createAgentIsolationSessionContext(input: Readonly<{
       const material = input.readMaterial();
       const managedHappierBinaryPath = input.managedHappierBinaryPath;
       if (!material || !managedHappierBinaryPath
-        || (!mcpLaunchMaterial || agentNativeLaunch) && !sessionMcpContext) throw new PluginError({ code: 'agent_isolation_unavailable',
+        || agentNativeLaunch && !sessionMcpContext) throw new PluginError({ code: 'agent_isolation_unavailable',
         message: 'Current Session isolation material is unavailable', retryable: false });
       const member = material.memberIdentity;
       // Ordinary Account Sessions use the Home already qualified by the
@@ -71,22 +71,25 @@ export function createAgentIsolationSessionContext(input: Readonly<{
             || projectedMember.agentUid !== member.agentUid || projectedMember.agentGid !== member.agentGid) throw new PluginError({
             code: 'agent_isolation_unavailable', message: 'Current MCP native identity differs from its Session', retryable: false });
         }
-        if (!agentNativeLaunch && !sessionMcpContext) {
-          if (!signal) throw new PluginError({ code: 'agent_isolation_unavailable',
-            message: 'Current MCP operation lifetime is unavailable', retryable: false });
-          const operationMaterial = { materializationKey: material.runtimeHome,
-            environment: mcpLaunchMaterial.environment, selectedMaterials: mcpLaunchMaterial.selectedMaterials };
-          const operation = { machine: input.machine!, managedHappierBinaryPath,
-            requesterIdentity: { ...requesterIdentity, homeServerIdentityId: home },
-            signal,
-            readTarget: () => input.readMaterial() === material ? material : undefined,
-            readMaterial: () => operationMaterial };
-          return createAgentIsolationOperationContext(member
-            ? { ...operation, memberIdentity: member }
-            : { ...operation, nativeIdentity: native });
-        }
       }
       const identity = member ?? mcpLaunchMaterial?.nativeIdentity ?? await readAgentIsolationNativeIdentity(signal);
+      // Finite CLI probes consume the member selected at Session preparation;
+      // only the native Session process requires its live MCP authority.
+      if (!agentNativeLaunch && !sessionMcpContext) {
+        if (!signal) throw new PluginError({ code: 'agent_isolation_unavailable',
+          message: 'Current operation lifetime is unavailable', retryable: false });
+        const selected = mcpLaunchMaterial ?? material;
+        const operationMaterial = { materializationKey: material.runtimeHome,
+          environment: selected.environment, selectedMaterials: selected.selectedMaterials };
+        const operation = { machine: input.machine!, managedHappierBinaryPath,
+          requesterIdentity: { ...requesterIdentity, homeServerIdentityId: home },
+          signal,
+          readTarget: () => input.readMaterial() === material ? material : undefined,
+          readMaterial: () => operationMaterial };
+        return createAgentIsolationOperationContext(member
+          ? { ...operation, memberIdentity: member }
+          : { ...operation, nativeIdentity: identity });
+      }
       const launchMaterial = mcpLaunchMaterial ? { ...material,
         environment: { ...material.environment, ...mcpLaunchMaterial.environment },
         selectedMaterials: [...material.selectedMaterials, ...mcpLaunchMaterial.selectedMaterials] } : material;

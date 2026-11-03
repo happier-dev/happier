@@ -7,6 +7,43 @@ import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/proto
 import { deriveAgentIsolationMemberIdentity } from './provisioning';
 
 describe('held Agent isolation launch admission', () => {
+    it.skipIf(process.platform !== 'linux')('uses prepared member material for finite Session probes without borrowing native MCP authority', async () => {
+        await withTempDir('member-session-probe-', async cwd => {
+            for (const [index, accountId] of ['member-a', 'member-b'].entries()) {
+                const requester = { serverId: 'saved-profile', accountId, machineId: 'machine', installationId: 'installation' };
+                const identity = { kind: 'isolated' as const, separationRequired: true,
+                    homeServerIdentityId: 'canonical-home', requester };
+                // Prepared identity/material are the Session owner's held output;
+                // this consumer neither provisions nor probes an OS account.
+                const member = { ...deriveAgentIsolationMemberIdentity(identity), agentUid: 2401 + index, agentGid: 2401 + index };
+                const material = { runtimeHome: join(member.home, 'runtime', 'session'), memberIdentity: member,
+                    environment: { SELECTED: accountId }, selectedMaterials: [] };
+                let held: typeof material | undefined = material;
+                const context = createAgentIsolationSessionContext({
+                    machine: { read: () => ({ enabled: true, memberProvisioning: 'linuxUsersV1',
+                        status: { kind: 'effective', platform: 'linux', agentUser: 'happier-agent' }, workspaceRoots: [cwd] }) },
+                    managedHappierBinaryPath: '/opt/happier/current/happier',
+                    sessionRequester: requester, sessionRequesterHomeServerIdentityId: identity.homeServerIdentityId,
+                    hostHomeServerIdentityId: identity.homeServerIdentityId, sessionCustodianAccountId: 'owner',
+                    resolveRequesterIdentity: async () => identity, readMaterial: () => held,
+                });
+                const signal = new AbortController().signal;
+                const probe = await context.prepareLaunch!({ requesterIdentity: identity, signal });
+                expect(probe.read()).toMatchObject({ memberIdentity: member,
+                    localTransport: { agentUid: member.agentUid, agentGid: member.agentGid },
+                    launch: { runtimeHome: material.runtimeHome, environment: material.environment } });
+                expect(probe.read()?.launch?.sessionMcpContext).toBeUndefined();
+                await expect(context.prepareLaunch!({ requesterIdentity: identity, signal, agentNativeLaunch: true }))
+                    .rejects.toMatchObject({ code: 'agent_isolation_unavailable', retryable: false });
+                const foreign = { ...identity, requester: { ...requester, accountId: 'another-member' } };
+                await expect(context.prepareLaunch!({ requesterIdentity: foreign, signal }))
+                    .rejects.toMatchObject({ code: 'agent_isolation_unavailable', retryable: false });
+                held = undefined;
+                await expect(context.prepareLaunch!({ requesterIdentity: identity, signal }))
+                    .rejects.toMatchObject({ code: 'agent_isolation_unavailable', retryable: false });
+            }
+        });
+    });
     // 2026-11-02 owner ruling: placement follows Machine policy, not requester privilege.
     it.each(['owner', 'manage', 'use'] as const)('preserves %s custody across the guest fallback matrix', async role => {
         const accountId = role === 'owner' ? 'owner' : role;

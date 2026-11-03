@@ -1,3 +1,5 @@
+import { createCodexAppServerTurnFailure, formatCodexAppServerErrorForUi } from './turns/failure';
+import { PluginError } from '@happier-dev/plugin-sdk';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
@@ -32,6 +34,35 @@ vi.mock('node:os', async importOriginal => {
 describe('createCodexSharedAppServer', () => {
   beforeEach(async () => { osBoundary.home = await mkdtemp(join(tmpdir(), 'codex-startup-home-')); });
   afterEach(async () => { await rm(osBoundary.home, { recursive: true, force: true }); });
+  it.skipIf(process.platform !== 'linux').each(['shared-version', 'stdio-feature', 'stdio-version'] as const)(
+    'preserves isolation refusal from the %s probe instead of falling back to an unknown startup failure', async stage => {
+      const refusal = new PluginError({ code: 'agent_isolation_unavailable', retryable: false,
+        message: 'PRIVATE_MACHINE_DETAILS', details: { reason: 'member_setup_required' } });
+      const probes: string[] = [];
+      // Exec is the external process/daemon boundary; the probes, fallback,
+      // startup lock and failure projection run their real implementations.
+      const exec = {
+        systemTools: { resolve: async () => ({ executable: { kind: 'systemTool', id: 'codex-cli' } }) },
+        run: async (request: Parameters<ExecService['run']>[0]): Promise<PluginProcessResult> => {
+          probes.push(request.args.join(' '));
+          if (stage !== 'stdio-version' || request.args.includes('--version')) throw refusal;
+          return { termination: { observed: { kind: 'exit', exitCode: 0 }, requestedBy: { kind: 'none' } },
+            stdout: new Uint8Array(), stderr: new Uint8Array(), stdoutTruncated: false, stderrTruncated: false };
+        },
+        clients: { spawn: async () => { throw new Error('Unexpected process launch after isolation refusal'); } },
+      } as unknown as ExecService;
+      const opening = stage === 'shared-version'
+        ? createCodexSharedAppServer({ exec, processEnv: {}, platform: 'linux' })
+        : createCodexNativeAppServerClient({ exec, cwd: osBoundary.home,
+          processEnv: { CODEX_HOME: join(osBoundary.home, 'auth-home'), CODEX_SQLITE_HOME: osBoundary.home } });
+      const result: unknown = await opening.catch(error => error);
+      expect(probes).toContain(stage === 'stdio-feature' ? 'features list' : '--version');
+      expect(result).toMatchObject({ code: 'agent_isolation_unavailable' });
+      const failure = createCodexAppServerTurnFailure({ phase: 'client_start', value: result });
+      expect(failure).toMatchObject({ code: 'agent_isolation_unavailable' });
+      expect(formatCodexAppServerErrorForUi(failure)).toContain('machine owner');
+      expect(JSON.stringify(failure)).not.toContain('PRIVATE_');
+    });
   it.skipIf(!['darwin', 'linux'].includes(process.platform)).each(['within_limit', 'exceeds_limit'] as const)(
     'retains the actual OS errno and syscall through startup sanitization: %s', async lengthClass => {
       const directory = await mkdtemp('/tmp/codex-connect-failure-');

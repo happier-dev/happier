@@ -1,4 +1,5 @@
 import { PluginError, type JsonValue, type LoggerService } from '@happier-dev/plugin-sdk';
+import { readSessionPreparationFailureCode } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import type {
     ManagedExecutableRef } from '@happier-dev/plugin-sdk/managed-services';
 import type {
@@ -239,7 +240,7 @@ export async function probeCodexRealtimeConversationFeature(params: Readonly<{
             : await params.exec.run(request);
         return advertisesRealtimeConversation(result);
     } catch (error) {
-        if (params.signal?.aborted) throw error;
+        if (params.signal?.aborted || error instanceof PluginError && readSessionPreparationFailureCode(error.code)) throw error;
         return false;
     }
 }
@@ -438,7 +439,10 @@ export async function createCodexNativeAppServerClient(params: CodexNativeAppSer
     }, params.signal ? { signal: params.signal } : undefined).then(result =>
         processExitedSuccessfully(result) && !result.stdoutTruncated
             ? new TextDecoder().decode(result.stdout) : '',
-    ).catch(error => { if (params.signal?.aborted) throw error; return ''; });
+    ).catch(error => {
+        if (params.signal?.aborted || error instanceof PluginError && readSessionPreparationFailureCode(error.code)) throw error;
+        return '';
+    });
     return await withCodexNativeStartupLock(
         async configOverrides => await createUnlockedCodexNativeAppServerClient({ ...params, configOverrides }, resolvedSystemTool.executable),
         params.initializeRequestOptions?.signal ?? params.signal,

@@ -3,7 +3,8 @@ import { join } from 'node:path';
 import { constants } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
 import { createSecureTempDirectorySync } from '@happier-dev/plugin-sdk/fs';
-import type { LoggerService } from '@happier-dev/plugin-sdk';
+import { PluginError, type LoggerService } from '@happier-dev/plugin-sdk';
+import { readSessionPreparationFailureCode } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 
 import type { ExecService, PluginProcessHandle, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 
@@ -308,7 +309,10 @@ export async function createCodexSharedAppServer(params: Readonly<{
     params.exec,
     params.processEnv,
     params.signal,
-  ).catch(() => '');
+  ).catch(error => {
+    if (params.signal?.aborted || error instanceof PluginError && readSessionPreparationFailureCode(error.code)) throw error;
+    return '';
+  });
   if (!supportsSharedControl(versionOutput, params.platform ?? process.platform)) return null;
 
   const runtimeDirectory = await dependencies.createRuntimeDirectory();
