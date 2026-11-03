@@ -35,3 +35,32 @@ it('reads zero disabled built-in files for startup process roles and a cold cata
     }
   });
 });
+
+it('keeps a Machine-disabled built-in cold before a fresh daemon has an active registry', async () => {
+  await withTempDir('happier-fresh-disabled-catalog-', async happyHomeDir => {
+    const store = createPluginRegistryStateStore({ happyHomeDir,
+      runtimeLifecycle: createDaemonPluginRegistryRuntimeLifecycle({ happyHomeDir, reloadController: pluginReloadController }),
+    });
+    await store.setEnabledWithResult('happier.agent.pi', false);
+    await pluginReloadController.shutdown();
+    vi.resetModules();
+    vi.stubEnv('HAPPIER_HOME_DIR', happyHomeDir);
+    const { configuration } = await import('@/configuration');
+    expect(configuration.happyHomeDir).toBe(happyHomeDir);
+    const reads = vi.spyOn(fs, 'readFileSync');
+    try {
+      const { readProcessRoleCatalog: readFreshProcessRoles } = await import('@/processes/classification/processRoleCatalog');
+      const roles = readFreshProcessRoles();
+      readFreshProcessRoles();
+      expect(reads.mock.calls.filter(([path]) =>
+        /(?:bundled-plugin-manifests[\\/]pi\.json|plugins[\\/]pi[\\/].*ui-artifacts\.json)$/.test(String(path))))
+        .toHaveLength(0);
+      expect(roles.agentExecutables.some(agent => agent.executable === 'pi')).toBe(false);
+      expect(roles.agentExecutables.length).toBeGreaterThan(0);
+      expect(reads.mock.calls.filter(([path]) => String(path).endsWith('registry-current.v1.json'))).toHaveLength(1);
+    } finally {
+      reads.mockRestore();
+      vi.unstubAllEnvs();
+    }
+  });
+});

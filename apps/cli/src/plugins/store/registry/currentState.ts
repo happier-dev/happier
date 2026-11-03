@@ -29,6 +29,7 @@ import type { PluginStateFileV1, PluginStateRecord } from '../state';
 import { PluginStateFileV1Schema, PluginStateRecordSchema } from '../state';
 import { ensurePluginStoreDirectories, resolvePluginStorePaths, type PluginStorePaths } from '../paths';
 import { createPluginRegistryCommitCoordinator } from './commitCoordinator';
+import { resolveBundledPluginMachineEnablement } from './admittedState';
 import {
   PluginRegistryCommitRecordInvalidError,
   PluginRegistryCommitRecordSchema,
@@ -74,18 +75,7 @@ function createPluginMaterializationId(): string {
   return `materialization-${randomUUID()}`;
 }
 
-/** Installed replacements own their Machine desired bit while present. */
-export function resolveBundledPluginMachineEnablement(params: Readonly<{
-  state: PluginStateFileV1;
-  bundledPluginEnabledById?: Readonly<Record<string, boolean>>;
-}>): Readonly<Record<string, boolean>> {
-  const enabledById = { ...params.bundledPluginEnabledById };
-  for (const { pluginId } of BUNDLED_FIRST_PARTY_PLUGIN_METADATA) {
-    const installed = params.state.plugins[pluginId];
-    if (installed) enabledById[pluginId] = installed.state.enabled;
-  }
-  return Object.freeze(enabledById);
-}
+export { resolveBundledPluginMachineEnablement } from './admittedState';
 
 function createRevision(params: Readonly<{
   revisionId: string;

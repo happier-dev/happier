@@ -10,6 +10,11 @@ import { ingestPluginManifestV2, type PluginManifestV2 } from '@happier-dev/prot
 import { PluginError, isPluginError } from '@happier-dev/plugin-sdk';
 import { bundlePluginDaemonRuntime as bundlePluginDaemonRuntimeImplementation } from './bundleDaemonRuntime';
 import { evaluatePluginAuthorSource } from './sourceModule';
+import { createDaemonPluginChangeService } from '@/plugins/daemon/changeService';
+import { createDaemonPathPluginChangePreparer } from '@/plugins/daemon/pathChangePreparer';
+import { readInstalledPluginCatalog } from '@/plugins/projection/catalog/installed';
+import { createPluginReloadController } from '@/plugins/runtime/reload/controller';
+import { createDaemonPluginRegistryRuntimeLifecycle } from '@/plugins/runtime/reload/registryRuntimeLifecycle';
 
 const execFileAsync = promisify(execFile);
 
@@ -35,6 +40,51 @@ async function linkCanonicalPublicRuntimePackages(projectRoot: string): Promise<
 }
 
 describe('bundlePluginDaemonRuntime', () => {
+
+  it('installs the maintained Store kind from a built bundle with only its declared SDK dependency', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-store-bundle-install-'));
+    const projectRoot = join(root, 'author');
+    const installedRoot = join(root, 'built');
+    const happyHomeDir = join(root, 'home');
+    const controller = createPluginReloadController({ happyHomeDir });
+    const service = createDaemonPluginChangeService({ prepare: createDaemonPathPluginChangePreparer({
+      happyHomeDir,
+      runtimeLifecycle: createDaemonPluginRegistryRuntimeLifecycle({ happyHomeDir, reloadController: controller }),
+      readManagedResources: async () => ({ resources: [], reviewed: true }),
+    }) });
+    try {
+      await mkdir(projectRoot, { recursive: true });
+      await cp(join(publicAuthoringSourceRoot, 'storeKinds.ts'), join(projectRoot, 'storeKinds.ts'));
+      await writeFile(join(projectRoot, 'package.json'), JSON.stringify({
+        name: 'store-bundle-install', version: '1.0.0', type: 'module', main: './index.ts',
+        dependencies: { '@happier-dev/plugin-sdk': '0.0.0' },
+      }));
+      await writeFile(join(projectRoot, 'index.ts'), `import { createExternalStoreKind } from './storeKinds.js';
+const plugin = createExternalStoreKind({ read: async () => null, write: async () => {}, remove: async () => {} });
+export const manifest = { ...plugin.manifest, entrypoints: { daemon: './dist/index.js' } };
+export const activate = plugin.activate;
+`);
+      await linkCanonicalPublicRuntimePackages(projectRoot);
+      await bundlePluginDaemonRuntimeImplementation(projectRoot);
+      await mkdir(installedRoot);
+      await cp(join(projectRoot, 'dist'), join(installedRoot, 'dist'), { recursive: true });
+      await cp(join(projectRoot, '.happier-plugin'), join(installedRoot, '.happier-plugin'), { recursive: true });
+      await writeFile(join(installedRoot, 'package.json'), JSON.stringify({ type: 'module' }));
+      // The installer receives only emitted artifacts, with no author tree or node_modules.
+      const review = await service.requestPluginChange({ kind: 'installPath', locator: installedRoot });
+      expect(review, JSON.stringify(review)).toMatchObject({ kind: 'reviewRequired', reviewKind: 'installation' });
+      if (review.kind !== 'reviewRequired') throw new Error('Expected Store installation review');
+      const installedResult = await service.decidePluginChange({ pendingChangeId: review.pendingChangeId, decision: 'installAndTrust' });
+      expect(installedResult, JSON.stringify(installedResult)).toMatchObject({ kind: 'committed', pluginId: 'com.example.store' });
+      const [installed] = await readInstalledPluginCatalog({ happyHomeDir });
+      expect(installed?.diagnostics).toEqual([]);
+      expect(installed?.manifest?.contributes.storeKinds).toMatchObject([{ id: 'theme', operations: { acquire: 'acquire' } }]);
+    } finally {
+      await service.shutdown();
+      await controller.shutdown();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 
   it('executes lazy dependency imports after an external plugin is installed away from its source', async () => {
     const parentRoot = await mkdtemp(join(tmpdir(), 'happier-installed-plugin-lazy-'));

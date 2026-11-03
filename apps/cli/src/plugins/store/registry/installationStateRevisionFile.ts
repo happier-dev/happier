@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod/mini';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
@@ -48,9 +49,32 @@ export async function readAdmittedInstallationStateRevision(input: Readonly<{
   commit: PluginRegistryCommitRecord;
 }>): Promise<PluginInstallationStateRevision> {
   const value = await readInstallationStateRevisionValue(input);
+  return parseAdmittedInstallationStateRevision(value, input.reference);
+}
+
+function parseAdmittedInstallationStateRevision(
+  value: unknown,
+  reference: InstallationStateRevisionReference,
+): PluginInstallationStateRevision {
   const parsed = AdmittedInstallationStateRevisionStoredReadSchema.safeParse(value);
-  if (!parsed.success || parsed.data.revisionId !== input.reference.revisionId) {
+  if (!parsed.success || parsed.data.revisionId !== reference.revisionId) {
     throw new Error('Invalid installation state revision');
   }
   return parsed.data;
+}
+
+export function readAdmittedInstallationStateRevisionSync(input: Readonly<{
+  paths: PluginStorePaths;
+  commit: PluginRegistryCommitRecord;
+}>): PluginInstallationStateRevision {
+  const reference = input.commit.installationState;
+  if (!PortableStorageIdSchema.safeParse(reference.revisionId).success) throw new Error('Invalid installation state revision');
+  const raw = readFileSync(stateRevisionPath(input.paths, reference.revisionId), 'utf8');
+  let value: unknown;
+  try {
+    value = JSON.parse(raw) as unknown;
+  } catch (error) {
+    throw new Error('Invalid installation state revision', { cause: error });
+  }
+  return parseAdmittedInstallationStateRevision(value, reference);
 }

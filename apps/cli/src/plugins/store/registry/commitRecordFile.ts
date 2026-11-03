@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { z } from 'zod/mini';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import type { PluginStorePaths } from '../paths';
@@ -58,4 +59,18 @@ export async function readPluginRegistryCommitRecordFile<T>(
 
 export function readAdmittedPluginRegistryCommitRecord(paths: PluginStorePaths): Promise<PluginRegistryCommitRecord | null> {
   return readPluginRegistryCommitRecordFile(paths, parsePluginRegistryCommitRecordEnvelope);
+}
+
+/** Cold synchronous declaration readers use the same admitted framing parser. */
+export function readAdmittedPluginRegistryCommitRecordSync(paths: PluginStorePaths): PluginRegistryCommitRecord | null {
+  try {
+    return parsePluginRegistryCommitRecordEnvelope(paths.registryCurrentFilePath,
+      JSON.parse(readFileSync(paths.registryCurrentFilePath, 'utf8')) as unknown);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException | null)?.code === 'ENOENT') return null;
+    if (error instanceof SyntaxError) {
+      throw invalidCommitRecord(paths.registryCurrentFilePath, [`file is not valid JSON: ${error.message}`], error);
+    }
+    throw error;
+  }
 }

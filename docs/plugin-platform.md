@@ -54,7 +54,7 @@ the distribution for packaging, without making those contributions available.
 Enabling both scopes restores the contributions. Disablement retains plugin data
 and credentials, and already admitted work finishes at its natural boundary.
 
-In 0.3 development, bundled plugin locators exclude disabled plugins before loading their manifests. Exact selections retain their enabled entries; an enabled dependent keeps healthy sibling contributions while admission prunes references to unavailable plugins. The daemon constructs its Workflow runtime at the existing `isWorkflowRuntimeEnabled` reconciliation boundary: disabled startup performs no Workflow assignment reads, and later enablement uses the next lifecycle recovery or claim boundary.
+In 0.3 development, bundled plugin locators exclude disabled plugins before loading their manifests. Before the daemon has an active registry, the synchronous built-in snapshot reads the persisted Machine intent once through the admitted registry reader; it excludes disabled declarations and their UI artifact indexes. Runtime admission still combines Account and Machine intent. Exact selections retain their enabled entries; an enabled dependent keeps healthy sibling contributions while admission prunes references to unavailable plugins. The daemon constructs its Workflow runtime at the existing `isWorkflowRuntimeEnabled` reconciliation boundary: disabled startup performs no Workflow assignment reads, and later enablement uses the next lifecycle recovery or claim boundary.
 
 The `plugins.enable` and `plugins.disable` Actions accept an optional `scope` of
 `account` or `machine`; omitted scope selects the Machine. Plugin administration

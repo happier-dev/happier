@@ -393,7 +393,6 @@ export type PluginInstallationStateRevision = {
 const CanonicalPluginInstallationStateRevisionSchema: z.ZodMiniType<PluginInstallationStateRevision> = z.strictObject({
   ...installationStateRevisionEnvelopeShape,
   plugins: z.record(asHostProtocolZod(PluginIdSchema), PluginInstallationStateRecordSchema),
-  bundledPluginEnabledById: z.optional(z.record(asHostProtocolZod(PluginIdSchema), z.boolean())),
   rollbackRetention: z.array(PluginRollbackRetentionRecordSchema),
   hardRevocationRevisions: z.optional(z.record(
     asHostProtocolZod(PluginIdSchema),

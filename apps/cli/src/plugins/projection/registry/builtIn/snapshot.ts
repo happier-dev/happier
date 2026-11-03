@@ -7,6 +7,8 @@ import { BUNDLED_FIRST_PARTY_PLUGIN_METADATA } from '../sources/generatedBundled
 import type { AccountPluginDataStorageHostDependencies } from '@/plugins/runtime/context/accountPluginDataStorage';
 import { BUNDLED_FIRST_PARTY_AGENT_REGISTRATION_BINDINGS } from '../sources/generatedBundledPlugins';
 import { getAllAgentDefinitionContracts } from '@happier-dev/agents/definitions';
+import { readAdmittedPluginRegistryStateSync, resolveBundledPluginMachineEnablement } from '@/plugins/store/registry/admittedState';
+import { resolvePluginStorePaths } from '@/plugins/store/paths';
 
 /** Read desired scope facts once for this admission, never from its consumers. */
 export async function readCurrentBundledPluginEnablement(params?: Readonly<{
@@ -48,12 +50,19 @@ let builtInResolvedContributionRegistry: ResolvedContributionRegistry | null = n
 export function getResolvedContributionRegistry(params?: Readonly<{
   pluginEnablementById: Readonly<Record<string, ResolvedPluginEnablement>>;
 }>): ResolvedContributionRegistry {
-  const declarations = Object.values(params?.pluginEnablementById ?? {}).some(fact => !fact.enabled)
-    ? createResolvedContributionRegistry(resolveBuiltInContributions(params))
-    : (builtInResolvedContributionRegistry ??= Object.freeze(
-        createResolvedContributionRegistry(resolveBuiltInContributions()),
-      ));
-  if (!params) return declarations;
+  if (!params) {
+    if (builtInResolvedContributionRegistry) return builtInResolvedContributionRegistry;
+    const current = readAdmittedPluginRegistryStateSync(resolvePluginStorePaths());
+    const machineEnabledById = current ? resolveBundledPluginMachineEnablement({
+      state: current.catalog, bundledPluginEnabledById: current.revision.bundledPluginEnabledById,
+    }) : undefined;
+    return builtInResolvedContributionRegistry = getResolvedContributionRegistry({
+      pluginEnablementById: resolveBundledPluginEnablement({
+        pluginIds: BUNDLED_FIRST_PARTY_PLUGIN_METADATA.map(plugin => plugin.pluginId), machineEnabledById,
+      }),
+    });
+  }
+  const declarations = createResolvedContributionRegistry(resolveBuiltInContributions(params));
   const unavailableAgentPluginsByBackendId: Record<string, UnavailableAgentPlugin> = {};
   const definitions = new Map(getAllAgentDefinitionContracts().map(definition => [definition.id, definition]));
   for (const binding of BUNDLED_FIRST_PARTY_AGENT_REGISTRATION_BINDINGS) {
