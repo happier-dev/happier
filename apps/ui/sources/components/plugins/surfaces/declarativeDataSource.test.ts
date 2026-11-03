@@ -1,8 +1,75 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import type { ResourceSubscriptionEvent } from '@happier-dev/plugin-sdk/ui';
 import { createPluginUiResourceStore } from '@happier-dev/plugin-ui/advanced';
-import { PluginDeclarativeDocumentV1Schema } from '@happier-dev/protocol';
+import { PluginDeclarativeDocumentV1Schema } from '@happier-dev/protocol/plugins/contributions/ui/declarative-document-authoring';
 import { readPluginResourceStoreSnapshot } from './pluginSurfaceResourceRead';
 import { projectDeclarativeDataResourceSnapshot } from './declarativeDataSource';
+
+describe('Resource natural-read recovery', () => {
+    const fresh = { contentType: 'application/json', digest: 'fresh', bytes: new TextEncoder().encode('{}') };
+
+    it.each([false, true])('re-acquires retained expiry through the existing loader (explicit refresh: %s)', async (refresh) => {
+        let expired = true;
+        // Resource acquisition is the external boundary; both shared owners stay real.
+        const readResource = vi.fn(async () => {
+            if (expired) throw Object.assign(new Error('Expired read authority'), { code: 'expired_resource', retryable: false });
+            return fresh;
+        });
+        const store = createPluginUiResourceStore({ client: { readResource } });
+        const entry = store.getEntry('native-pr');
+        const release = entry.subscribe(() => {}, false);
+        try {
+            await vi.waitFor(() => expect(entry.getSnapshot().error?.code).toBe('expired_resource'));
+            expired = false;
+            const recovered = await readPluginResourceStoreSnapshot(entry, undefined, refresh);
+            expect(recovered.error).toBeUndefined();
+            expect(recovered.value?.digest).toBe('fresh');
+            expect(readResource).toHaveBeenCalledTimes(2);
+        } finally { release(); store.dispose(); }
+    });
+
+    it('lets a dependent natural read await replacement instead of settling transient expiry', async () => {
+        let deliver: ((event: ResourceSubscriptionEvent) => void) | undefined;
+        const store = createPluginUiResourceStore({ client: {
+            readResource: async () => fresh,
+            watchResource: async (_ref, listener) => {
+                deliver = listener;
+                return { admittedDigest: fresh.digest, dispose() {} };
+            },
+        } });
+        const entry = store.getEntry('native-pr');
+        let dependent: ReturnType<typeof readPluginResourceStoreSnapshot> | undefined;
+        const release = entry.subscribe(() => {
+            if (entry.getSnapshot().error?.code === 'expired_resource' && !dependent) {
+                dependent = readPluginResourceStoreSnapshot(entry);
+            }
+        }, true);
+        try {
+            await vi.waitFor(() => expect(entry.getSnapshot().subscription).toBe('live'));
+            deliver!({ version: 1, subscriptionId: 'initial', kind: 'error', code: 'expired_resource', diagnostics: [] });
+            expect(dependent).toBeDefined();
+            const result = await dependent;
+            expect(result?.error).toBeUndefined();
+            expect(result?.value?.digest).toBe('fresh');
+        } finally { release(); store.dispose(); }
+    });
+
+    it.each(['denied', 'collection_update_required'])('keeps a permanent %s refusal settled on natural reads', async (code) => {
+        const readResource = vi.fn(async () => {
+            throw Object.assign(new Error('Read refused'), { code, retryable: false });
+        });
+        const store = createPluginUiResourceStore({ client: { readResource } });
+        const entry = store.getEntry('native-pr');
+        const release = entry.subscribe(() => {}, false);
+        try {
+            await vi.waitFor(() => expect(entry.getSnapshot().error?.code).toBe(code));
+            const refused = await readPluginResourceStoreSnapshot(entry);
+            expect(refused.error?.code).toBe(code);
+            expect(refused.value).toBeUndefined();
+            expect(readResource).toHaveBeenCalledTimes(1);
+        } finally { release(); store.dispose(); }
+    });
+});
 
 describe('declarative Resource data projection', () => {
     it('reads real Resource bytes, retains authorized values on read failure and removes retired output', async () => {

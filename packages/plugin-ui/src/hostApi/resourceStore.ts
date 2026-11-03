@@ -5,6 +5,8 @@ import type {
   ResourceSubscriptionEvent,
 } from '@happier-dev/plugin-sdk/ui';
 
+import { settleResourceWatchTermination } from './watchTermination.js';
+
 type PluginDiagnosticData = Parameters<PluginUiHostApi['diagnostic']>[0];
 
 import {
@@ -515,6 +517,7 @@ export function createPluginUiResourceStore(input: Readonly<{
     error: PluginUiResourceError,
     subscription: PluginUiResourceSnapshot['subscription'],
     pending: PluginUiResourceSnapshot['pending'] = 'idle',
+    replace?: () => void,
   ): void {
     const authorityLost = hasLostResourceReadAuthority(error);
     const previous = entry.snapshot;
@@ -534,14 +537,15 @@ export function createPluginUiResourceStore(input: Readonly<{
     publish(entry, {
       ...(hasValue ? { value: previous.value, digest: previous.digest } : {}),
       freshness: hasValue ? 'stale' : 'unknown',
-      pending: authorityLost ? 'idle' : pending,
+      pending: replace ? 'initial' : authorityLost ? 'idle' : pending,
       error,
       subscription: authorityLost ? 'ended' : subscription,
     });
-    if (authorityLost) {
+    if (authorityLost && !replace) {
       settleRefreshWaiters(entry);
       settleRefreshWaiters(entry, true);
     }
+    replace?.();
   }
 
   function requestRead(
@@ -736,39 +740,23 @@ export function createPluginUiResourceStore(input: Readonly<{
       );
       return;
     }
-    const previous = entry.snapshot;
-    const hasValue = previous.value !== undefined;
     // These events retire the current subscription id, not the Resource's
     // watch capability for the rest of the mounted provider lifetime. A later
     // live consumer may establish a fresh subscription; only a terminal
     // watch-open refusal latches against reopening this exact mount.
-    stopWatch(entry, false);
-    if (event.kind === 'complete') {
-      // `complete` is a graceful protocol arm, not a Resource failure. Keep
-      // the already-admitted snapshot truthful and let the mount lifetime own
-      // its eventual retirement.
-      publish(entry, {
-        ...(hasValue ? { value: previous.value, digest: previous.digest } : {}),
-        freshness: previous.freshness,
-        pending: 'idle',
-        subscription: 'ended',
-      });
-      return;
-    }
-    publishResourceFailure(entry, Object.freeze({
-        ...(event.kind === 'error' ? { code: event.code } : {}),
-        ...(event.kind === 'error' && event.diagnostics.length > 0
-          ? { diagnostics: Object.freeze([...event.diagnostics]) }
-          : {}),
-        message: event.diagnostics.join(', ') || 'Plugin UI resource watch ended.',
-      }), 'ended');
-    if (event.kind === 'error' && event.code === 'expired_resource' && entry.liveSubscriberCount > 0) {
-      // The producer withdrew this read authority while the Resource remains
-      // demanded. Its old bytes are already cleared; acquire the replacement
-      // through the ordinary watch/read admission, whose refusals settle here.
-      startWatch(entry);
-      requestRead(entry, 'initial');
-    }
+    settleResourceWatchTermination({
+      event,
+      snapshot: entry.snapshot,
+      established: entry.watch !== null,
+      demanded: entry.liveSubscriberCount > 0,
+      stop: () => stopWatch(entry, false),
+      publish: snapshot => publish(entry, snapshot),
+      fail: error => publishResourceFailure(entry, error, 'ended'),
+      replace: error => publishResourceFailure(entry, error, 'ended', 'initial', () => {
+        startWatch(entry);
+        requestRead(entry, 'initial');
+      }),
+    });
   }
 
   function scheduleWatchOpenRetry(entry: MutableEntry): void {

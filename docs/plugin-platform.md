@@ -526,6 +526,13 @@ invalidation retains the admitted value while refreshing. For revisioned
 selected credentials, metadata-only Connected Account updates do not retire
 credential authority.
 
+Natural reads of a retained, settled `expired_resource` acquire again through the
+existing Resource entry loader. An already-pending replacement is joined rather
+than queued again. Established-watch expiry withdraws raw content and typed
+baselines immediately, but leaves replacement pending until fresh admission or
+refusal settles it; dependent reads do not settle the transient expiry. Permanent
+refusals remain settled, with no automatic retry or consumer fallback.
+
 The observer's `PluginActionReadInvalidation` is callable for ordinary refresh
 and exposes `invalidate.retire()` for loss of the authority behind an admitted
 read. A plugin uses retirement only after observing an actual replacement or

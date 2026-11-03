@@ -72,10 +72,12 @@ export type PluginSurfaceResourceBinding = Readonly<{
 /** Hold static demand until admitted bytes are available or the read settles. */
 export function readPluginResourceStoreSnapshot(entry: PluginUiResourceEntry, signal?: AbortSignal, refresh = false,
     awaitIdle = false): Promise<PluginUiResourceSnapshot> {
+    const retained = entry.getSnapshot();
+    const reacquire = refresh || (retained.pending === 'idle' && retained.error?.code === 'expired_resource');
     return new Promise((resolve, reject) => {
         let release = () => {};
         let settled = false;
-        let refreshSettled = !refresh;
+        let refreshSettled = !reacquire;
         const finish = (error?: unknown): void => {
             if (settled) return;
             if (!error && !refreshSettled) return;
@@ -87,9 +89,10 @@ export function readPluginResourceStoreSnapshot(entry: PluginUiResourceEntry, si
             if (error) reject(error); else resolve(snapshot);
         };
         const abort = (): void => finish(Object.assign(new Error('Resource operation was aborted'), { code: 'plugin_resource_aborted' }));
-        // Refresh starts the existing entry's read before static demand joins
-        // it. Subscribing first would start one read and queue a second one.
-        const refreshed = refresh ? entry.refresh() : null;
+        // A natural read after settled expiry is a fresh acquisition through
+        // the same loader. Join a pending replacement without queuing a reread.
+        // Start before static demand, which otherwise starts a duplicate read.
+        const refreshed = reacquire ? entry.refresh() : null;
         release = entry.subscribe(() => finish(), false);
         if (refreshed) void refreshed.then(() => {
             refreshSettled = true;
