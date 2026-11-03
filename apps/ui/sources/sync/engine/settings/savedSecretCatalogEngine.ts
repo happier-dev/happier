@@ -1,6 +1,7 @@
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { readSavedSecretCatalogInContext, readSavedSecretCatalogMetadataInContext } from '@/sync/api/account/apiSavedSecretCatalog';
 import { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
+import { classifyAccountStorageReadFailure } from '@/sync/encryption/accountStorageContext';
 import { createScopedSnapshotLoader, type ScopedLoadTarget } from '@/sync/engine/scope/scopedSnapshotLoader';
 import { materializeSavedSecretResources } from '@/sync/engine/settings/materializeSavedSecretResources';
 import type { ScopedSnapshotError } from '@/sync/domains/scope/scopedSnapshotFacts';
@@ -44,6 +45,13 @@ function retainMaterialDemand(scope: ServerAccountScope): () => void {
     };
 }
 
+function storageFailure(error: unknown): CatalogProjection {
+    const code = classifyAccountStorageReadFailure(error);
+    const kind = code === 'unauthorized' || code === 'forbidden' || code === 'unsupported' || code === 'unreachable'
+        ? code : 'invalid';
+    return { ok: false, error: { kind, code, retryable: kind === 'unreachable' } };
+}
+
 const loader = createScopedSnapshotLoader<Target>({
     load: async ({ scope }, context) => {
         // Maintenance belongs to the foreground read that acquired this demand.
@@ -61,6 +69,11 @@ const loader = createScopedSnapshotLoader<Target>({
                     await sync.awaitBootstrapForegroundAcquisition();
                     captured.assertCurrent();
                     const mode = await captured.resolveAccountMode();
+                    const assertCurrentMode = async () => {
+                        const currentMode = (await fetchAccountEncryptionMode(captured.credentials, { request: captured.request })).mode;
+                        captured.assertCurrent();
+                        if (currentMode !== mode) throw new Error('account-mode-mismatch');
+                    };
                     const project = async (legacyImport?: SavedSecretLegacyImportResult): Promise<CatalogProjection> => {
                         if (!includeMaterial) {
                             const outcome = await readSavedSecretCatalogMetadataInContext(captured, context.signal);
@@ -94,12 +107,10 @@ const loader = createScopedSnapshotLoader<Target>({
                                 decryptDataKeyEnvelope: async encryptedDataKey => encryption
                                     ? encryption.decryptEncryptionKey(encryptedDataKey, scope) : null,
                             });
-                            const currentMode = (await fetchAccountEncryptionMode(captured.credentials, { request: captured.request })).mode;
-                            captured.assertCurrent();
-                            if (currentMode !== mode) throw new Error('account-mode-mismatch');
+                            await assertCurrentMode();
                             return { ok: true, materialized, includesMaterial: true, ...(legacyImport ? { legacyImport } : {}), observedAt: Date.now() };
-                        } catch {
-                            return { ok: false, error: { kind: 'invalid', retryable: false } };
+                        } catch (error) {
+                            return storageFailure(error);
                         }
                     };
                     // Wakes may withdraw publication authority, but never prevent the
@@ -111,16 +122,22 @@ const loader = createScopedSnapshotLoader<Target>({
                     if (publication.hasPendingCleanup()) return foreground;
                     const { importLegacySavedSecretsInContext } = await import('@/sync/ops/settings/savedSecretResourceOperations');
                     let legacyImport: SavedSecretLegacyImportResult;
+                    let materialChanged = false;
                     try {
-                        legacyImport = await importLegacySavedSecretsInContext(captured, mode, scope, undefined, undefined, 'current-read');
+                        legacyImport = await importLegacySavedSecretsInContext(captured, mode, scope, undefined, undefined, 'current-read',
+                            () => { materialChanged = true; });
                     } catch {
                         // Pending approval/import cannot withdraw valid foreground material.
                         legacyImport = { status: 'pending', reason: 'source-unavailable' };
                     }
                     captured.assertCurrent();
-                    return await project(legacyImport);
-                } catch {
-                    return { ok: false, error: { kind: 'unreachable', retryable: true } };
+                    if (materialChanged) return await project(legacyImport);
+                    // Import diagnostics do not change resource material. Keep the
+                    // same final mode proof without issuing another material read.
+                    await assertCurrentMode();
+                    return { ...foreground, legacyImport };
+                } catch (error) {
+                    return storageFailure(error);
                 } finally {
                     // Maintenance retains the same captured Account, including its watches.
                     account?.dispose();

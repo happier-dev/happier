@@ -55,7 +55,7 @@ import { AccountSettingsV2UpdateRequestSchema, AccountSettingsV2HistoryListRespo
     AccountSettingsV2HistoryMutationResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 import { deriveSavedSecretImportResourceIdV1, promotePersonalSavedSecretReference, qualifyPluginAccountSecretBindingKey, readSavedSecretTransferSourceV1 } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
 import { observeSavedSecretCatalog, refreshSavedSecretCatalog } from '@/sync/engine/settings/savedSecretCatalogEngine';
-import { applySavedSecretCatalogPage, getSavedSecretCatalogSnapshot } from '@/sync/store/settings/savedSecretCatalogSnapshot';
+import { applySavedSecretCatalogPage, getSavedSecretCatalogSnapshot, resolveSavedSecretReference } from '@/sync/store/settings/savedSecretCatalogSnapshot';
 import { getMcpServerCatalogSnapshot } from '@/sync/store/settings/mcpServerCatalogSnapshot';
 import { readSavedSecretReferenceInContext } from '@/sync/api/account/apiSavedSecretCatalog';
 import { REMOTE_HOST_ROWS_ROUTE_V1, RemoteHostCatalogRecordV1Schema, RemoteHostCatalogRowMutationV1Schema,
@@ -71,6 +71,7 @@ import { SavedSecretCreateEditor } from '@/components/secrets/SavedSecretCreateE
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { settingsParse } from '@/sync/domains/settings/settings';
+import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { VoiceProviderContributionSchema } from '@happier-dev/protocol/plugins/contributions/voice';
 import { applySavedSecretCatalogVoiceCredentialSourceMutationV1, type SavedSecretReferenceCatalogsV1 } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
 import { createAccountVoiceCredentialReplacementMutation, mutateScopedAccountVoiceCredentialSource, resolveAccountVoiceCredentialApprovalDigest } from '@/voice/credentials/accountVoiceCredential';
@@ -3170,6 +3171,38 @@ describe('Saved Secret operations through their real Account and Action owners',
         expect(input).toMatchObject({ toMode: 'plain', storedContent: { t: 'plain', v: { value: 'rotated-value' } } });
         expect(input.keyEnvelopes).toBeUndefined();
     });
+    it('keeps revoked resource material withdrawn when older no-effect maintenance finishes', async () => {
+        const secret = { id: 'pending-source', name: 'Pending', kind: 'token' as const, createdAt: 1, updatedAt: 2,
+            encryptedValue: { _isSecretValue: true as const, value: 'pending-private' } };
+        const account = await openAccount('plain', { raw: { secrets: [secret] } });
+        account.materialRow('revoked', 'plain', sealSavedSecretResourceStoredContentV1({ resourceId: 'revoked', mode: 'plain',
+            content: { v: 1, name: 'Revoked key', kind: 'token', value: 'revoked-private' } }), 1);
+        const entered = createDeferred<void>();
+        const releaseMaintenance = createDeferred<void>();
+        account.setBeforeCatalogRead(async () => {
+            account.setBeforeCatalogRead(undefined);
+            entered.resolve();
+            await releaseMaintenance.promise;
+        });
+        account.setEffect(() => Response.json({ error: 'forbidden' }, { status: 403 }));
+        const release = observeSavedSecretCatalog(account.scope);
+        try {
+            await entered.promise;
+            expect(getSavedSecretCatalogSnapshot(account.scope)?.materializedSecrets).toHaveLength(1);
+            account.resources.clear();
+            publishHomeAccountChange(account.scope.serverId, ['revoked'], { changeKinds: ['savedSecretResource'] });
+            expect(resolveSavedSecretReference(account.scope, [], 'happier:shared-secret:v1:revoked'))
+                .toMatchObject({ status: 'temporarily_unavailable', secret: null });
+            await vi.waitFor(() => expect(getSavedSecretCatalogSnapshot(account.scope)).toMatchObject({ status: 'ready', stale: false,
+                data: [], materializedSecrets: [] }));
+            releaseMaintenance.resolve();
+            await vi.waitFor(() => expect(getSavedSecretCatalogSnapshot(account.scope)?.legacyImport).toBeTruthy());
+            expect(getSavedSecretCatalogSnapshot(account.scope)).toMatchObject({ data: [], materializedSecrets: [] });
+            expect(resolveSavedSecretReference(account.scope, [], 'happier:shared-secret:v1:revoked'))
+                .toMatchObject({ status: 'access_removed', secret: null });
+        } finally { releaseMaintenance.resolve(); release(); }
+    });
+
 
 });
 // Native filesystem classes are an OS boundary, not part of this source-driven UI journey.
