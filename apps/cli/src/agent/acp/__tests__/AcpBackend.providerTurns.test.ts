@@ -99,20 +99,19 @@ it.each(['realpath', 'mkdir'] as const)('withdraws an old filesystem write held 
   });
 });
 
-it('uses the finalized spawned environment for the source and closes it before accepting a successor', async () => {
+it('preserves composed source settings and closes the source before accepting a successor', async () => {
   await withTempDir('provider-env-', async directory => {
     vi.stubEnv('SOURCE_UNSET', 'drop');
     let host: AgentAcpProviderTurnSourceHost | undefined;
     const backend = createAcpBackend({ agentName: 'fixture', cwd: directory, command: process.execPath,
       args: [writeProviderTurnAgent(directory)], env: { SOURCE_EXPLICIT: 'first' }, unsetEnv: ['SOURCE_UNSET'],
-      transformAgentChildLaunchEnvironment: env => ({ ...env, SOURCE_EXPLICIT: 'prepared' }),
       providerTurnSource: async value => { host = value; return { catchUp: async () => {}, dispose() {} }; },
       providerTurnLifecycle: { registerContinuation: () => true, beginContinuation: () => true,
         releaseToolCalls() {}, dispose() {} },
     });
     try {
       await backend.startSession();
-      expect(host!.env).toMatchObject({ SOURCE_EXPLICIT: 'prepared' });
+      expect(host!.env).toMatchObject({ SOURCE_EXPLICIT: 'first' });
       expect(host!.env).not.toHaveProperty('SOURCE_UNSET');
       const old = host!;
       await backend.requestExtension('test/hold-close', {});
@@ -122,6 +121,8 @@ it('uses the finalized spawned environment for the source and closes it before a
       const joined = backend.cancel('owned');
       await backend.requestExtension('test/release-close', {});
       await Promise.all([cancel, joined]);
+      expect(host!.env).toMatchObject({ SOURCE_EXPLICIT: 'first' });
+      expect(host!.env).not.toBe(old.env);
       expect(await backend.requestExtension('test/status', {})).toMatchObject({ closes: 1, loads: 1 });
       expect(old.beginContinuation({ id: 'stale', turnId: '1' })).toBeNull();
       await backend.sendPrompt('owned', 'after');

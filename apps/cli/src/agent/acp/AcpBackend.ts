@@ -553,7 +553,7 @@ export class AcpBackend implements CatalogAcpBackend {
   private dropPromptTurnUpdatesUntilPromptResponse = false;
   private pendingPromptResponseTurnGeneration: number | null = null;
   private rawPromptRequest: Promise<unknown> | null = null;
-  private spawnedProcessEnv: NodeJS.ProcessEnv = {};
+  private providerTurnSourceEnv: Readonly<NodeJS.ProcessEnv> = {};
   private rawPromptRequestTurnGeneration: number | null = null;
   private idleStatusDeferredUntilPromptResponse = false;
 
@@ -566,7 +566,7 @@ export class AcpBackend implements CatalogAcpBackend {
       this.providerTurns = new AcpProviderTurns(options.providerTurnSource, options.providerTurnLifecycle, {
         sessionId: () => this.acpSessionId,
         cwd: options.cwd,
-        env: () => Object.freeze({ ...this.spawnedProcessEnv }),
+        env: () => Object.freeze({ ...this.providerTurnSourceEnv }),
         followJournal: options.providerJournalFollower,
         isDisposed: () => this.disposed,
         foregroundActive: () => !this.providerTurns?.isActive() && this.waitingForResponse && !this.isCurrentTurnGenerationClosed(),
@@ -696,6 +696,7 @@ export class AcpBackend implements CatalogAcpBackend {
     return mcpServers as unknown as NewSessionRequest['mcpServers'];
   }
 
+  /** Capture composed launch settings for observers before runner-private credential substitution. */
   private buildSpawnEnv(): NodeJS.ProcessEnv {
     const environment = finalizeSessionChildEnvironment({
       environment: buildScopedProcessEnv({
@@ -707,6 +708,7 @@ export class AcpBackend implements CatalogAcpBackend {
       enableCgroupSelfMigration: false,
       stackProcessKind: null,
     });
+    this.providerTurnSourceEnv = Object.freeze({ ...environment });
     if (!this.options.transformAgentChildLaunchEnvironment) {
       return withHostProcessOwnerEnvironment(environment);
     }
@@ -739,7 +741,7 @@ export class AcpBackend implements CatalogAcpBackend {
     const connection = this.connection;
     const closeNetworkTransport = this.closeNetworkTransport;
     this.process = null;
-    this.spawnedProcessEnv = {};
+    this.providerTurnSourceEnv = {};
     this.connection = null;
     this.closeNetworkTransport = null;
     this.acpSessionId = null;
@@ -774,7 +776,7 @@ export class AcpBackend implements CatalogAcpBackend {
     await sourceStopped;
   }
 
-  /** Capture the native launch environment for the journal source and release partial transport setup on initialization failure. */
+  /** Prepare one source snapshot and native transport; failed initialization releases both through the existing cleanup owner. */
   private async createConnectionAndInitialize(params: { operationId: string }): Promise<{ initTimeout: number }> {
     logger.debug(`[AcpBackend] Starting transport + initializing connection (op=${params.operationId})`);
 
@@ -803,12 +805,12 @@ export class AcpBackend implements CatalogAcpBackend {
         }
       // Spawn the ACP agent process.
       // Use cross-spawn so Windows quoting/.cmd resolution is handled safely without joining args.
-      this.spawnedProcessEnv = this.buildSpawnEnv();
+      const spawnEnv = this.buildSpawnEnv();
       const spec = buildAcpSpawnSpec({
         command,
         args: this.options.args || [],
         cwd: this.options.cwd,
-        env: this.spawnedProcessEnv,
+        env: spawnEnv,
         ...(this.options.hostFinalizedLaunch ? { hostFinalizedLaunch: true } : {}),
         ...(this.options.windowsVerbatimArguments === undefined ? {} : { windowsVerbatimArguments: this.options.windowsVerbatimArguments }),
       });
@@ -3248,6 +3250,7 @@ export class AcpBackend implements CatalogAcpBackend {
     logger.debug('[AcpBackend] Disposing backend');
     this.disposed = true;
     const sourceStopped = this.stopProviderTurnSource();
+    this.providerTurnSourceEnv = {};
 
     if (this.waitingForResponse || this.responseCompletionTimeout) {
       this.failPendingResponseWait(makeAbortError('Backend disposed'));

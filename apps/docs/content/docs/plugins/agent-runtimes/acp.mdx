@@ -105,7 +105,11 @@ assistant chunk alone cannot open a turn.
 Use the source host's `followJournal` method for the exact native journal
 validated by the adapter. It uses the existing transcript follower with a path
 grant that ends with the ACP source lifetime. Resolve the journal from the
-source host's finalized process environment. Release parent tool contexts after
+source host's composed launch environment: inheritance, explicit overrides and
+removals are already applied, including the selected home directory. This frozen
+snapshot precedes runner-private credential substitution, so managed credential
+slots retain their markers; only the native child receives the substituted values.
+Release parent tool contexts after
 their registration boundary and dispose the observer with its Session. Historical replay cannot establish a new live continuation.
 The composer and host retain permission authority; the source supplies
 correlation evidence only. Kimi's journal observer is the current consumer.

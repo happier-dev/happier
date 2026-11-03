@@ -54,6 +54,10 @@ async function defaultPostJson(params: Readonly<{
     return { ok: true };
 }
 
+/**
+ * Negotiate v2 ingest with scalar fallback for Session observations. Native-subject
+ * capture requires v2; unsupported or failed publication stays unacknowledged for replay.
+ */
 export function createUsageObservationPublisher(params: Readonly<{
     token: string;
     apiServerUrl: string;
@@ -110,6 +114,11 @@ export function createUsageObservationPublisher(params: Readonly<{
         return { mode: 'legacy', path: null };
     }
 
+    /**
+     * Preserve explicit report keys, use event identity for keyless deltas, and
+     * retain cumulative stream keys. The scalar builder omits tokenless partial
+     * observations because legacy upserts replace the full token/cost snapshot.
+     */
     function emitLegacyReport(params2: Readonly<{
         sessionId?: string;
         observation: UsageObservation;

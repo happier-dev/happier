@@ -10,7 +10,8 @@ export type AgentAcpProviderTurnSink = Readonly<{
 export type AgentAcpProviderTurnSourceHost = Readonly<{
   sessionId: string;
   cwd: string;
-  /** The finalized environment used to spawn this exact ACP process. */
+  /** Composed launch settings for this ACP process, before runner-private credential substitution.
+   * Inheritance, explicit overrides and removals are already applied; managed credential slots retain their markers. */
   env: Readonly<Record<string, string | undefined>>;
   /** One native journal validated by the adapter, scoped to this source lifetime. */
   followJournal(input: Omit<AgentTranscriptFileFollowInput, 'signal'>): Promise<AgentTranscriptFileFollowHandle>;

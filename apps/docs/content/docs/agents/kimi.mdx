@@ -72,10 +72,10 @@ then returns to idle after publishing the result. The continuation retains the
 permission policy of the turn that started its task, even if a later turn uses
 a different policy.
 
-Cancelling an active turn also stops its pending background tasks. The same
-session remains available for another prompt. Closing the session stops waiting
-tasks as well. A detached shell waiting for work does not itself keep the
-session marked active.
+Cancelling a turn stops all pending background tasks and active continuations in
+the session, including tasks started by earlier turns. The same session remains
+available for another prompt. Closing the session stops waiting tasks as well.
+A detached shell waiting for work does not itself keep the session marked active.
 
 ## Interactive terminal
 

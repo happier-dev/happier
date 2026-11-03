@@ -34,6 +34,10 @@ function createLegacyNumberMap(): Record<string, number> {
     return Object.create(null) as Record<string, number>;
 }
 
+/**
+ * Preserve inference categories when present; otherwise encode context occupancy
+ * for legacy transcript telemetry. Accounting callers must first require measured tokens.
+ */
 function getCompatibleLegacyTokens(observation: UsageObservation): LegacyUsageNumberMap | null {
     if (observation.tokens) {
         const out = createLegacyNumberMap();
@@ -148,7 +152,11 @@ export function buildTokenCountSessionMessageFromUsageObservation(
     };
 }
 
-/** Adapt observations to scalar replacement reports without promoting partial context updates to full snapshots. */
+/**
+ * Project measured token snapshots onto the legacy full-row replacement contract.
+ * Tokenless costs remain available to v2 accounting; emitting them as zero tokens
+ * would erase an earlier same-key measurement, while a separate key could double costs.
+ */
 export function buildLegacyUsageReportFromUsageObservation(params: Readonly<{
     sessionId: string;
     observation: UsageObservationBoundaryInput;
@@ -159,14 +167,12 @@ export function buildLegacyUsageReportFromUsageObservation(params: Readonly<{
     // servers replace the session key and cannot reconcile the two; retain
     // their unchanged cumulative report instead of letting a delta replace it.
     if (observation.source === 'codex-app-server-response-usage') return null;
-    // Scalar upserts replace tokens and cost together; partial context costs stay in v2 accounting and telemetry.
-    if (!observation.tokens && (observation.contextUsedTokens != null || observation.contextWindowTokens != null)) return null;
-    // Context stays on transcript/runtime messages, never in consumed-token accounting.
-    const tokens = observation.tokens ? getCompatibleLegacyTokens(observation) : { total: 0 };
+    if (!observation.tokens) return null;
+    const tokens = getCompatibleLegacyTokens(observation);
+    if (!tokens) return null;
     const cost = createLegacyNumberMap();
     Object.assign(cost, observation.cost?.breakdown ?? {});
     cost.total = observation.cost?.reportedUsd || observation.cost?.estimatedUsd || observation.cost?.invoiceUsd || 0;
-    if (!tokens || (!observation.tokens && cost.total === 0)) return null;
     return {
         key: observation.key ?? `${observation.provider}-session`,
         sessionId: params.sessionId,

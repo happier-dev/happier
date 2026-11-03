@@ -261,7 +261,7 @@ export async function runCanonicalBundledPluginArtifactPublisher({
     process.execPath,
     // Register source resolution before Node links the publisher's static graph.
     '--import',
-    resolve(repoRoot, 'packages', 'cli-common', 'registerSourceRuntime.mjs'),
+    pathToFileURL(resolve(repoRoot, 'packages', 'cli-common', 'registerSourceRuntime.mjs')).href,
     '--conditions=happier-source',
     '--experimental-strip-types',
     generatorPath,

@@ -345,7 +345,7 @@ describe('usageObservation', () => {
         expect(message?.contextSnapshot).toEqual(contextSnapshot);
     });
 
-    it.each([true, false])('omits partial context costs (%s) while retaining standalone cost reports', withContext => {
+    it.each([true, false])('omits tokenless scalar reports with context=%s', withContext => {
         const report = buildLegacyUsageReportFromUsageObservation({
             sessionId: 'sess-1',
             observation: {
@@ -363,17 +363,6 @@ describe('usageObservation', () => {
             },
         });
 
-        if (withContext) {
-            expect(report).toBeNull();
-            return;
-        }
-        expect(report).toEqual({
-            key: 'opencode-session',
-            sessionId: 'sess-1',
-            tokens: { total: 0 },
-            cost: {
-                total: 0.42,
-            },
-        });
+        expect(report).toBeNull();
     });
 });

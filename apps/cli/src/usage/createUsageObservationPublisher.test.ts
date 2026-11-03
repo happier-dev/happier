@@ -9,7 +9,12 @@ import type { UsageReportV1 } from './legacy/legacyUsageTransport';
 
 
 describe('createUsageObservationPublisher', () => {
-    it.each(['unadvertised', 'rejected'] as const)('preserves complete scalar snapshots across paid context, replay, and fresh %s fallback', async mode => {
+    it.each([
+        { mode: 'unadvertised', withContext: true },
+        { mode: 'unadvertised', withContext: false },
+        { mode: 'rejected', withContext: true },
+        { mode: 'rejected', withContext: false },
+    ] as const)('preserves complete scalar snapshots across tokenless costs, replay, and fresh $mode fallback (context=$withContext)', async ({ mode, withContext }) => {
         const stored = new Map<string, UsageReportV1>();
         const createPublisher = () => createUsageObservationPublisher({
             token: 'token', apiServerUrl: 'https://api.example.test',
@@ -33,29 +38,29 @@ describe('createUsageObservationPublisher', () => {
         const totals = () => [...stored.values()].reduce((sum, report) => ({
             tokens: sum.tokens + report.tokens.total, cost: sum.cost + report.cost.total,
         }), { tokens: 0, cost: 0 });
-        const paidContext = (amount: number) => ({ used: 900, size: 1000, cost: { amount, currency: 'USD' } });
+        const partialCost = (amount: number) => ({ ...(withContext ? { used: 900, size: 1000 } : {}), cost: { amount, currency: 'USD' } });
         const billed = (inputTokens: number, outputTokens: number, amount: number) => ({
             inputTokens, outputTokens, totalTokens: inputTokens + outputTokens, cost: { amount, currency: 'USD' },
         });
         const first = createPublisher();
         await publish(first, billed(80, 20, 0.1));
-        const contextResult = await publish(first, paidContext(0.2));
+        const contextResult = await publish(first, partialCost(0.2));
         expect(totals()).toEqual({ tokens: 100, cost: 0.1 });
         expect(contextResult).toEqual({ status: 'skipped' });
         await publish(first, billed(120, 30, 0.3));
         await publish(first, billed(120, 30, 0.3));
         expect(totals()).toEqual({ tokens: 150, cost: 0.3 });
         const resumed = createPublisher();
-        expect(await publish(resumed, paidContext(0.4))).toEqual({ status: 'skipped' });
+        expect(await publish(resumed, partialCost(0.4))).toEqual({ status: 'skipped' });
         expect(totals()).toEqual({ tokens: 150, cost: 0.3 });
         await publish(resumed, billed(120, 30, 0.3));
         await publish(resumed, billed(160, 40, 0.5));
-        expect(await publish(resumed, paidContext(0.6))).toEqual({ status: 'skipped' });
+        expect(await publish(resumed, partialCost(0.6))).toEqual({ status: 'skipped' });
         expect(totals()).toEqual({ tokens: 200, cost: 0.5 });
         expect(stored.size).toBe(1);
     });
 
-    it('retains paid context in v2 accounting without invoking scalar fallback', async () => {
+    it.each([true, false])('retains tokenless costs in v2 accounting without scalar fallback (context=%s)', async withContext => {
         const postJson = vi.fn(async () => ({ ok: true as const }));
         const emitLegacyUsageReport = vi.fn();
         const publisher = createUsageObservationPublisher({
@@ -68,21 +73,22 @@ describe('createUsageObservationPublisher', () => {
             }) }),
         });
         const observation = buildAcpUsageUpdateObservation({ provider: 'fixture', update: {
-            used: 900, size: 1000, cost: { amount: 0.25, currency: 'USD' },
+            ...(withContext ? { used: 900, size: 1000 } : {}), cost: { amount: 0.25, currency: 'USD' },
         } });
         if (!observation) throw new Error('Expected a usage observation');
         expect(await publisher.publish({ sessionId: 'session', observation })).toEqual({ status: 'sent', transport: 'v2' });
         expect(postJson).toHaveBeenCalledWith(expect.objectContaining({ body: expect.objectContaining({
             tokens: expect.objectContaining({ total: 0 }),
             cost: expect.objectContaining({ reportedUsd: 0.25 }),
-            context: { usedTokens: 900, windowTokens: 1000 },
+            context: withContext ? { usedTokens: 900, windowTokens: 1000 } : undefined,
         }) }));
         expect(emitLegacyUsageReport).not.toHaveBeenCalled();
     });
 
-    it.each(['unadvertised', 'rejected'] as const)('preserves delta identity on %s legacy fallback without changing cumulative keys', async mode => {
-        const reports: Array<{ key: string; tokens: { total: number } }> = [];
-        const publisher = createUsageObservationPublisher({
+    it.each(['unadvertised', 'rejected'] as const)('preserves producer delta identities on %s fallback across replay and a fresh publisher', async mode => {
+        const reports: UsageReportV1[] = [];
+        const stored = new Map<string, UsageReportV1>();
+        const createPublisher = () => createUsageObservationPublisher({
             token: 'token', apiServerUrl: 'https://api.example.test',
             fetchServerFeaturesSnapshot: async () => mode === 'unadvertised'
                 ? { status: 'unsupported', reason: 'endpoint_missing' }
@@ -91,17 +97,33 @@ describe('createUsageObservationPublisher', () => {
                     legacy: { usageReportsPath: '/v2/usage-reports', usageQueryPath: '/v1/usage/query' },
                 } } } }) },
             postJson: async () => { throw { response: { status: 404 } }; },
-            emitLegacyUsageReport: report => { reports.push(report); },
+            emitLegacyUsageReport: report => {
+                reports.push(report);
+                stored.set(JSON.stringify([report.sessionId, report.key]), report);
+            },
         });
-        const observation = { provider: 'fixture', source: 'acp-usage-update', scope: 'turn_delta' as const,
-            key: null, modelId: null, tokens: { total: 110, input: 100, output: 10, reasoning: 0, cacheRead: 0, cacheWrite: 0 },
-            cost: null, contextUsedTokens: null, contextWindowTokens: null };
+        const publish = (publisher: ReturnType<typeof createPublisher>, externalKey: string, update: Record<string, unknown>) => {
+            const observation = buildAcpUsageUpdateObservation({ provider: 'fixture', update: {
+                inputTokens: 100, outputTokens: 10, totalTokens: 110, cost: { amount: 0.25 }, ...update,
+            } });
+            if (!observation) throw new Error('Expected a usage observation');
+            return publisher.publish({ sessionId: 'session', externalKey, observation });
+        };
+        const first = createPublisher();
         for (const externalKey of ['step-1', 'step-2', 'step-1']) {
-            await publisher.publish({ sessionId: 'session', externalKey, observation });
+            await publish(first, externalKey, { scope: 'turn_delta' });
         }
-        await publisher.publish({ sessionId: 'session', externalKey: 'cumulative-event', observation: { ...observation, scope: 'session_cumulative' } });
-        await publisher.publish({ sessionId: 'session', externalKey: 'event', observation: { ...observation, key: 'explicit-key' } });
-        expect(reports.map(report => report.key)).toEqual(['step-1', 'step-2', 'step-1', 'fixture-session', 'explicit-key']);
+        const resumed = createPublisher();
+        await publish(resumed, 'step-1', { scope: 'turn_delta' });
+        await publish(resumed, 'step-3', { scope: 'turn_delta' });
+        expect([...stored.values()].reduce((total, report) => total + report.tokens.total, 0)).toBe(330);
+        expect([...stored.values()].reduce((total, report) => total + report.cost.total, 0)).toBe(0.75);
+        await publish(resumed, 'cumulative-event', {});
+        await publish(resumed, 'event', { scope: 'turn_delta', key: 'explicit-key' });
+        await publish(resumed, 'explicit-cumulative-event', { scope: 'session_cumulative', key: 'explicit-counter' });
+        expect(reports.map(report => report.key)).toEqual([
+            'step-1', 'step-2', 'step-1', 'step-1', 'step-3', 'acp-usage-update', 'explicit-key', 'explicit-counter',
+        ]);
         expect(reports.every(report => report.tokens.total === 110)).toBe(true);
     });
 

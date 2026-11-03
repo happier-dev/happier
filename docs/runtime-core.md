@@ -1955,7 +1955,13 @@ observer has crossed their registration boundary. Session disposal retires
 both. Historical replay never creates continuation authority. The shared ACP
 composer translates provider-owned evidence into this same host lifecycle;
 transcript, plan, activity, approval, and terminal publication keep their
-existing owners. See the [compatibility ruling](compatibility.md#provider-continuation-authority-03-development-source)
+existing owners. The source callback receives a frozen copy of the composed launch
+settings before runner-private credential substitution. It retains the selected
+home, explicit overrides and removals; a host-finalized launch does not inherit
+ambient environment values. Managed credential slots remain markers in that
+copy, while only the native child receives their substituted values. The ACP
+launch owner clears the retained source settings when its connection retires.
+See the [compatibility ruling](compatibility.md#provider-continuation-authority-03-development-source)
 for the coordinated host/SDK update.
 
 In 0.3 development source, assistant deltas and authoritative committed snapshots
