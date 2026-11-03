@@ -360,6 +360,31 @@ describe('resolveAllProfileMachineInventorySnapshots', () => {
         ]);
     });
 
+    it('converts only the selected warm Machine from its admitted Home', () => {
+        let unrelatedDisplayReads = 0;
+        const cached: Record<string, MachineDisplayCacheEntryV1> = {};
+        for (let index = 0; index < 138; index++) {
+            const machineId = `warm-${index}`;
+            cached[machineId] = { machineId, metadataVersion: 1, updatedAt: 40,
+                active: false, activeAt: 20, revokedAt: null, displayName: machineId };
+            if (index !== 0) Object.defineProperty(cached[machineId]!, 'displayName', {
+                get: () => { unrelatedDisplayReads++; return machineId; },
+            });
+        }
+        const requestedKeys: string[] = [];
+        const input = { profiles, serverId: profiles[1].serverIdentityId, machineId: 'warm-0',
+            activeServerId: 'local-a', activeMachines: [], machineListByServerId: {}, machineListStatusByServerId: {},
+            accountScopesByServerId, loadWarmEntries: (serverId: string) => {
+                requestedKeys.push(serverId);
+                return serverId === 'legacy-b' ? cached : {};
+            } };
+        const snapshots = resolveAllProfileMachineInventorySnapshots(input);
+        expect(unrelatedDisplayReads).toBe(0);
+        expect(requestedKeys).toEqual(['srv_server_b', 'local-b', 'legacy-b']);
+        expect(snapshots).toEqual([expect.objectContaining({ kind: 'resolved', observation: 'stale',
+            machines: [expect.objectContaining({ id: 'warm-0', metadata: expect.objectContaining({ displayName: 'warm-0' }) })] })]);
+    });
+
     it('rehydrates replacement tombstones from canonical, local-id, or legacy warm keys without treating them as live', () => {
         const requestedKeys: string[] = [];
         const cached: Record<string, Record<string, MachineDisplayCacheEntryV1>> = {

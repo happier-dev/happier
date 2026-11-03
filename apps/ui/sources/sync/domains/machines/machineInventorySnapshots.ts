@@ -126,6 +126,9 @@ function resolveRawMachineList(params: Readonly<{
  */
 export function resolveAllProfileMachineInventorySnapshots(params: Readonly<{
     profiles: readonly ServerProfile[];
+    /** Optional admitted Home demand; identity conflicts are still checked against all profiles. */
+    serverId?: string;
+    machineId?: string;
     activeServerId: string;
     activeMachines: readonly Machine[];
     machineListByServerId: Readonly<Record<string, readonly Machine[] | null | undefined>>;
@@ -155,6 +158,7 @@ export function resolveAllProfileMachineInventorySnapshots(params: Readonly<{
 
     const snapshots: ServerMachineInventorySnapshotV1[] = [];
     for (const profile of params.profiles) {
+        if (params.serverId && !areServerProfileIdentifiersEquivalent(profile.serverIdentityId, params.serverId, resolveScopeId)) continue;
         const serverName = resolveHomeDisplayLabel(profile, profile.id);
         const serverIdentityId = normalizePortableIdentity(profile.serverIdentityId);
         if (!serverIdentityId) {
@@ -204,6 +208,7 @@ export function resolveAllProfileMachineInventorySnapshots(params: Readonly<{
             const executionPendingMachineIds: string[] = [];
             const machines: MachineDisplayRenderable[] = [];
             for (const machine of raw.machines) {
+                if (params.machineId && machine.id !== params.machineId) continue;
                 // Presence is a live, self-expiring fact. Resolve it once for
                 // both projections without making display reuse an admission.
                 if (isMachineSelectableForFleet(accountScope, machine, params.nowMs, resolveScopeId)) {
@@ -234,6 +239,7 @@ export function resolveAllProfileMachineInventorySnapshots(params: Readonly<{
             profile,
             serverIdentityId,
             accountId: accountScope.accountId,
+            machineId: params.machineId,
             loadWarmEntries: params.loadWarmEntries,
         }) : [];
         snapshots.push(cached.length > 0

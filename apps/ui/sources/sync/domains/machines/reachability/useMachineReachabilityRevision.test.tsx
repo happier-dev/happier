@@ -9,6 +9,7 @@ import {
     recordMachineRequestSucceeded,
 } from './machineReachability';
 import { useMachineReachabilityRevision } from './useMachineReachabilityRevision';
+import { removeServerProfile, setServerProfileIdentityForUrl, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 
 afterEach(() => {
     standardCleanup();
@@ -16,6 +17,23 @@ afterEach(() => {
 });
 
 describe('useMachineReachabilityRevision', () => {
+    it('keeps a mounted profile-id subscription live when its canonical Home identity arrives', async () => {
+        const profile = await upsertServerProfile({ serverUrl: 'https://last-answer-alias.example.test' });
+        const scope = { serverId: profile.id, accountId: 'account-a' };
+        const hook = await renderHook(() => useMachineReachabilityRevision(true, scope, 'machine'));
+        try {
+            await act(async () => recordMachineRequestSucceeded({ ...scope, machineId: 'machine', observedAtMs: 1 }));
+            const beforeIdentity = hook.getCurrent();
+            await act(async () => { await setServerProfileIdentityForUrl(profile.serverUrl, 'srv_last_answer_alias'); });
+            await act(async () => recordMachineRequestFailed({ serverId: 'srv_last_answer_alias', accountId: scope.accountId,
+                machineId: 'machine', observedAtMs: 2 }));
+            expect(hook.getCurrent()).toBeGreaterThan(beforeIdentity);
+            expect(hook.getCurrent()).toBe(readMachineRequestReachabilityRevision());
+        } finally {
+            await hook.unmount();
+            await removeServerProfile(profile.id);
+        }
+    });
     it('keeps disabled readers quiet and acquires current reachability when enabled', async () => {
         let renders = 0;
         const hook = await renderHook((props: { enabled: boolean }) => {

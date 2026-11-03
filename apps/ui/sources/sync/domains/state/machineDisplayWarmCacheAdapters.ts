@@ -12,13 +12,16 @@ export function readWarmMachineDisplays(params: Readonly<{
     profile: ServerProfile | null;
     serverIdentityId: string;
     accountId: string;
+    machineId?: string;
     loadWarmEntries: (serverId: string, accountId: string) => Record<string, MachineDisplayCacheEntryV1>;
 }>): readonly MachineDisplayRenderable[] {
     const entriesByMachineId = new Map<string, MachineDisplayCacheEntryV1>();
     const keys = new Set([params.profile?.serverIdentityId, params.serverIdentityId, params.profile?.id, ...(params.profile?.legacyServerIds ?? [])]
         .map(value => String(value ?? '').trim()).filter(Boolean));
     for (const key of keys) {
-        for (const entry of Object.values(params.loadWarmEntries(key, params.accountId))) {
+        const held = params.loadWarmEntries(key, params.accountId);
+        const selected = params.machineId ? held[params.machineId] : undefined;
+        for (const entry of params.machineId ? selected ? [selected] : [] : Object.values(held)) {
             const previous = entriesByMachineId.get(entry.machineId);
             if (!previous || entry.updatedAt > previous.updatedAt) entriesByMachineId.set(entry.machineId, entry);
         }
