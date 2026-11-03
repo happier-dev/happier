@@ -6,6 +6,16 @@ import { normalizeReviewOutput } from './normalizeReviewOutput';
 import { normalizeStrictJsonReviewOutput } from './normalizeStrictJsonReviewOutput';
 
 const codexBackendTarget = { kind: 'builtInAgent', agentId: 'codex' } as const;
+const nativeReview = {
+  findings: [{
+    title: '[P1] Preserve authorization checks',
+    body: 'The write runs without checking the supplied authorization scope.',
+    priority: 1,
+    confidence_score: 0.95,
+    code_location: { absolute_file_path: '/repo/auth.ts', line_range: { start: 10, end: 12 } },
+  }],
+  overall_explanation: 'Authorization is missing.',
+};
 
 function normalizeCodex(rawText: string) {
   return normalizeReviewOutput({
@@ -133,6 +143,15 @@ describe('normalizeReviewOutput codex reviews', () => {
     expect(payload.findings).toEqual([]);
   });
 
+  it.each([
+    'No correctness issues found. The configuration {"enabled":true} is valid.',
+    'No correctness issues found.\n\nThe following configuration remains valid:\n```json\n{"enabled":true}\n```',
+  ])('preserves no-findings prose containing a JSON example: %s', (rawText) => {
+    const payload = parseFindingsPayload(normalizeCodex(rawText));
+    expect(payload.overviewMarkdown).toBe(rawText);
+    expect(payload.findings).toEqual([]);
+  });
+
   it('keeps native prose findings whose evidence contains a JSON example', () => {
     const result = normalizeCodex([
       'One correctness issue is present.',
@@ -193,6 +212,58 @@ describe('normalizeReviewOutput codex reviews', () => {
     expect(result.toolResultOutput).toMatchObject({ findingsDigest: { total: 1 } });
   });
 
+  it.each([
+    `Review result: ${JSON.stringify(nativeReview)}`,
+    `\`\`\`json\n${JSON.stringify(nativeReview, null, 2)}\n\`\`\``,
+    `${JSON.stringify(nativeReview)}\n\nFor reference: {"enabled":true}`,
+  ])('reads a single native review independently of surrounding prose and examples: %s', (rawText) => {
+    const payload = parseFindingsPayload(normalizeCodex(rawText));
+    expect(payload.findings).toHaveLength(1);
+    expect(payload.findings[0]).toMatchObject({
+      severity: 'high', confidence: 0.95, filePath: '/repo/auth.ts', startLine: 10, endLine: 12,
+    });
+  });
+
+  it.each([
+    JSON.stringify([nativeReview]),
+    JSON.stringify([nativeReview, { ...nativeReview, findings: [], overall_explanation: 'No issues found.' }]),
+    JSON.stringify([[nativeReview]]),
+    JSON.stringify({ result: nativeReview }),
+    JSON.stringify([{ result: nativeReview }]),
+    `Review comment:\n- Preface observation -- /preface.ts:3\n  Preliminary text.\n\n${JSON.stringify(nativeReview)}`,
+  ])('rejects ambiguous review envelopes instead of dropping findings: %s', (rawText) => {
+    const result = normalizeCodex(rawText);
+    expect(result.status).toBe('failed');
+    expect(result.toolResultOutput).toMatchObject({ error: { code: 'invalid_output' } });
+  });
+
+  it.each([
+    '{"findings":[]}',
+    '{"overall_correctness":false}',
+    JSON.stringify({ ...nativeReview, findings: [] }),
+  ])('keeps JSON evidence in a recognized native prose finding: %s', (example) => {
+    const payload = parseFindingsPayload(normalizeCodex([
+      'One correctness issue found.',
+      '',
+      'Review comment:',
+      '- Preserve authorization -- /repo/auth.ts:10-12',
+      '  The write skips authorization.',
+      `  Example input: ${example}`,
+    ].join('\n')));
+    expect(payload.findings).toHaveLength(1);
+    expect(payload.findings[0].summary).toContain(`Example input: ${example}`);
+  });
+
+  it.each([
+    'The function starts with `{`.',
+    'The token "{" opens an object.',
+    '[Reviewer "Codex]',
+  ])('finds the native JSON review after literal prose punctuation: %s', (prefix) => {
+    const payload = parseFindingsPayload(normalizeCodex(`${prefix}\n\n${JSON.stringify(nativeReview)}`));
+    expect(payload.findings).toHaveLength(1);
+    expect(payload.findings[0]).toMatchObject({ severity: 'high', filePath: '/repo/auth.ts' });
+  });
+
   it('accepts a valid Codex native JSON review with no findings', () => {
     const result = normalizeCodex(JSON.stringify({
       findings: [],
@@ -227,6 +298,11 @@ describe('normalizeReviewOutput codex reviews', () => {
 
   it.each([
     '{"findings":[',
+    '{"findings"',
+    '{"findings',
+    '{"findings" []}',
+    '{"overall_correctness":"patch is incorrect"}',
+    'Review result: {"findings":[',
     '```json\n{"findings":[\n```',
     'Review result:\n```json\n{"findings":[\n```',
     JSON.stringify({ findings: [{ title: 'Finding without a location', body: 'Details.' }] }),

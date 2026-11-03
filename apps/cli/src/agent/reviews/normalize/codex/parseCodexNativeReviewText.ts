@@ -2,7 +2,6 @@ import { createHash } from 'node:crypto';
 import { z } from 'zod';
 
 import type { ReviewFinding } from '@happier-dev/protocol';
-import { parseTrailingJsonObject } from '@/agent/executionRuns/profiles/shared/parseTrailingJsonObject';
 
 type ParsedCodexNativeReview = {
   summary: string;
@@ -38,6 +37,85 @@ const CODEX_JSON_REVIEW_SCHEMA = z.object({
   overall_explanation: z.string().trim(),
 });
 const SEVERITY_BY_PRIORITY = ['blocker', 'high', 'medium', 'low'] as const;
+const REVIEW_JSON_FIELDS = new Set([
+  ...Object.keys(CODEX_JSON_REVIEW_SCHEMA.shape),
+  'overall_correctness',
+  'overall_confidence_score',
+]);
+
+function hasReviewFields(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  return [...REVIEW_JSON_FIELDS]
+    .some((field) => Object.prototype.hasOwnProperty.call(value, field));
+}
+
+function containsReviewFields(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false;
+  return hasReviewFields(value) || Object.values(value).some(containsReviewFields);
+}
+
+function readJsonFieldToken(text: string): { name: string; rest: string; complete: boolean } | null {
+  const match = /^\s*("(?:\\.|[^"\\\r\n])*"?|[A-Za-z_]\w*)/.exec(text);
+  if (!match) return null;
+  const token = match[1];
+  const quoted = token.startsWith('"');
+  const complete = !quoted || token.endsWith('"');
+  try {
+    const name: unknown = quoted ? JSON.parse(complete ? token : `${token}"`) : token;
+    return typeof name === 'string' ? { name, rest: text.slice(match[0].length), complete } : null;
+  } catch {
+    return null;
+  }
+}
+
+function hasReviewFieldText(text: string): boolean {
+  for (const match of text.matchAll(/[{,]/g)) {
+    const token = readJsonFieldToken(text.slice(match.index + 1));
+    if (token && REVIEW_JSON_FIELDS.has(token.name)) return true;
+  }
+  return false;
+}
+
+function canStartJsonValue(text: string, start: number): boolean {
+  const tail = text.slice(start + 1).trimStart();
+  if (text[start] === '[') return /^(?:[\[\]{}"]|-?\d|true\b|false\b|null\b)/.test(tail);
+  if (tail.startsWith('}')) return true;
+  const key = readJsonFieldToken(tail);
+  if (!key) return false;
+  if (REVIEW_JSON_FIELDS.has(key.name)) return true;
+  return tail.startsWith('"') && key.complete && /^\s*:/.test(key.rest);
+}
+
+function extractJsonSpans(text: string): string[] {
+  // Keep outer JSON values whole; JSON.parse owns syntax validation.
+  const spans: string[] = [];
+  for (let start = 0; start < text.length; start += 1) {
+    if (text[start] !== '{' && text[start] !== '[') continue;
+    if (!canStartJsonValue(text, start)) continue;
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    let end = start;
+    for (; end < text.length; end += 1) {
+      const char = text[end];
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (char === '\\') escaped = true;
+        else if (char === '"') inString = false;
+        continue;
+      }
+      if (char === '"') inString = true;
+      else if (char === '{' || char === '[') depth += 1;
+      else if (char === '}' || char === ']') {
+        depth -= 1;
+        if (depth === 0) break;
+      }
+    }
+    spans.push(text.slice(start, end + 1));
+    start = end;
+  }
+  return spans;
+}
 
 function firstNonEmptyParagraph(text: string): string {
   const paragraphs = text
@@ -84,8 +162,9 @@ function toFinding(draft: FindingDraft): ReviewFinding {
   };
 }
 
-function parseNativeFindings(text: string): ReviewFinding[] {
+function parseNativeFindings(text: string): { findings: ReviewFinding[]; textOutsideFindings: string } {
   const lines = text.split('\n');
+  const outsideLines = [...lines];
   const findings: ReviewFinding[] = [];
   let inComments = false;
   let current: FindingDraft | null = null;
@@ -96,18 +175,22 @@ function parseNativeFindings(text: string): ReviewFinding[] {
     current = null;
   };
 
-  for (const rawLine of lines) {
+  for (const [lineIndex, rawLine] of lines.entries()) {
     const line = rawLine.replace(/\r$/, '');
     const trimmed = line.trim();
 
     if (!inComments) {
-      if (REVIEW_COMMENTS_HEADER_PATTERN.test(trimmed)) inComments = true;
+      if (REVIEW_COMMENTS_HEADER_PATTERN.test(trimmed)) {
+        inComments = true;
+        outsideLines[lineIndex] = '';
+      }
       continue;
     }
 
     const bullet = line.match(FINDING_BULLET_PATTERN);
     if (bullet) {
       flush();
+      outsideLines[lineIndex] = '';
       const startLine = Number(bullet[3]);
       const endLine = bullet[4] ? Number(bullet[4]) : startLine;
       current = {
@@ -127,36 +210,48 @@ function parseNativeFindings(text: string): ReviewFinding[] {
     }
 
     const bodyLine = line.match(INDENTED_BODY_LINE_PATTERN);
-    if (!bodyLine) continue;
+    if (!bodyLine) {
+      flush();
+      continue;
+    }
+    outsideLines[lineIndex] = '';
     current.bodyLines.push(bodyLine[1] ?? '');
   }
 
   flush();
-  return findings;
+  return { findings, textOutsideFindings: outsideLines.join('\n') };
 }
 
 export function parseCodexNativeReviewText(rawText: string): ParsedCodexNativeReview | null {
   const overviewMarkdown = rawText.trim();
   if (overviewMarkdown.length === 0) return null;
 
-  const textFindings = parseNativeFindings(overviewMarkdown);
-  if (textFindings.length > 0) {
-    return {
-      summary: firstNonEmptyParagraph(overviewMarkdown),
-      overviewMarkdown,
-      findings: textFindings,
-    };
+  const prose = parseNativeFindings(overviewMarkdown);
+  const textFindings = prose.findings;
+  let jsonReview: z.infer<typeof CODEX_JSON_REVIEW_SCHEMA> | null = null;
+  // Native prose can quote JSON examples that are unrelated to review output.
+  for (const span of extractJsonSpans(prose.textOutsideFindings)) {
+    let json: unknown;
+    try {
+      json = JSON.parse(span);
+    } catch {
+      if (hasReviewFieldText(span)) return null;
+      continue;
+    }
+    if (!hasReviewFields(json)) {
+      if (containsReviewFields(json)) return null;
+      continue;
+    }
+    const parsed = CODEX_JSON_REVIEW_SCHEMA.safeParse(json);
+    if (!parsed.success || jsonReview || textFindings.length > 0) return null;
+    jsonReview = parsed.data;
   }
 
-  const json = parseTrailingJsonObject(overviewMarkdown);
-  if (json !== null) {
-    const parsed = CODEX_JSON_REVIEW_SCHEMA.safeParse(json);
-    if (!parsed.success) return null;
-
+  if (jsonReview) {
     return {
-      summary: firstNonEmptyParagraph(parsed.data.overall_explanation),
-      overviewMarkdown: parsed.data.overall_explanation,
-      findings: parsed.data.findings.map((finding) => ({
+      summary: firstNonEmptyParagraph(jsonReview.overall_explanation),
+      overviewMarkdown: jsonReview.overall_explanation,
+      findings: jsonReview.findings.map((finding) => ({
         ...toFinding({
           title: finding.title,
           filePath: finding.code_location.absolute_file_path,
@@ -169,7 +264,6 @@ export function parseCodexNativeReviewText(rawText: string): ParsedCodexNativeRe
       })),
     };
   }
-  if (/^\s*(?:\{|\[|```(?:json\b|\s*[\r\n]+\s*[\[{]))/im.test(overviewMarkdown)) return null;
 
   return {
     summary: firstNonEmptyParagraph(overviewMarkdown),
