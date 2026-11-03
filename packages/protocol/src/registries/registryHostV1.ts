@@ -1,3 +1,14 @@
+import { selectRegistryBotTemplateUpdatePointerV1 } from './registryBotTemplateUpdatePointerV1.js';
+import type { ResolvedBotTemplateReleaseV1 } from '../bots/templates/botTemplateV1.js';
+import type { PluginBotTemplateContributionV1 } from '../plugins/contributions/botTemplates.js';
+export type RegistryBotTemplateReaderV1 = (input: Readonly<{
+  item: RegistryItemV1; source: RegistrySourceDescriptorV1; context: RegistryFetchContextV1;
+  contributionId: string;
+}>) => Promise<ResolvedBotTemplateReleaseV1>;
+export type RegistryAvailableBotTemplateReaderV1 = (input: Readonly<{
+  pointer: RegistryItemPointerV1; source: RegistrySourceDescriptorV1; contributionId: string;
+  signal?: AbortSignal; item?: RegistryItemV1;
+}>) => Promise<ResolvedBotTemplateReleaseV1 | null>;
 import { decodeBase64,encodeBase64 } from '../crypto/base64.js';
 import { REGISTRY_ACTION_INPUT_SCHEMAS_V1,REGISTRY_ACTION_OUTPUT_SCHEMAS_V1,type RegistryActionIdV1 } from './registryActionsV1.js';
 import { REGISTRY_FORMAT_ADAPTERS_V1 } from './formats/index.js';
@@ -23,6 +34,11 @@ export type RegistryHostDepsV1=Readonly<{
   updates?:(filter?:import('zod/mini').infer<typeof REGISTRY_ACTION_INPUT_SCHEMAS_V1['registries.updates.check']>)=>Promise<RegistryUpdateCheckResultV1>;
   mutateSources?:(mutation:RegistrySourcesMutationV1)=>Promise<RegistrySourcesMutationResultV1>;
   daemonFetch?:(request:RegistryFetchRequestV1)=>Promise<RegistryFetchResponseV1>;
+  readPluginBotTemplates?: RegistryBotTemplateReaderV1;
+  /** Existing verified installed bytes may satisfy the exact pointer without an acquisition. */
+  readAvailableBotTemplate?: RegistryAvailableBotTemplateReaderV1;
+  /** Uses the existing Account-scoped template.preview Action carrier. */
+  readBotTemplateOnDaemon?:(pointer:RegistryItemPointerV1,contributionId:string)=>Promise<ResolvedBotTemplateReleaseV1>;
   /** Delegates the same approved create Action; never sends credential material to the client. */
   createSourceOnDaemon?:(input:import('zod/mini').infer<typeof REGISTRY_ACTION_INPUT_SCHEMAS_V1['registries.sources.create']>)=>Promise<import('zod/mini').infer<typeof REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.sources.create']>>;
 }>;
@@ -522,9 +538,54 @@ export function createRegistryHostV1(deps:RegistryHostDepsV1) {
     }
     return REGISTRY_ACTION_OUTPUT_SCHEMAS_V1[actionId].parse(output);
   };
-  return {
+  const host = {
     // The public fetch boundary always resolves Account authority; callers cannot supply a descriptor.
     execute, fetchRequest: (request: RegistryFetchRequestV1) => fetchRequest(request), readRegistryItem, readRegistrySource: sourceById,
+    /** Discovery is metadata-only; template bodies are acquired only after a contribution is selected. */
+    readBotTemplateContributions: async (pointer: RegistryItemPointerV1): Promise<readonly PluginBotTemplateContributionV1[]> => {
+      const response = await fetchRequest({ op: 'read', kind: 'plugin', ...pointer });
+      if (response.op !== 'read' || response.item.payload.kind !== 'plugin') {
+        throw new RegistryFetchErrorV1(response.op === 'error' && response.status.state !== 'ok' ? response.status : { state: 'invalid_source' });
+      }
+      const contributions = response.item.payload.listing.summary.botTemplates;
+      if (!contributions) throw new RegistryFetchErrorV1({ state: 'newer_format', found: 'botTemplates' });
+      return contributions;
+    },
+    readBotTemplate: async (pointer: RegistryItemPointerV1, contributionId: string): Promise<ResolvedBotTemplateReleaseV1> => {
+      if (deps.host !== 'node') {
+        if (!deps.readBotTemplateOnDaemon) throw new RegistryFetchErrorV1({ state: 'needs_machine' });
+        return deps.readBotTemplateOnDaemon(pointer, contributionId);
+      }
+      if (!deps.readPluginBotTemplates) throw new RegistryFetchErrorV1({ state: 'needs_machine' });
+      const source = await sourceById(pointer.sourceId);
+      const context = await admitSource(source, ctx);
+      const available = await deps.readAvailableBotTemplate?.({ pointer, source, contributionId, signal: context.signal });
+      if (available) return available;
+      const response = await direct({ op: 'read', kind: 'plugin', ...pointer }, source, context).catch(error => {
+        if (error instanceof RegistryTransportFailureV1) throw new RegistryFetchErrorV1({ state: 'unreachable' });
+        throw error;
+      });
+      if (response.op !== 'read' || response.item.payload.kind !== 'plugin') {
+        throw new RegistryFetchErrorV1(response.op === 'error' && response.status.state !== 'ok'
+          ? response.status : { state: 'invalid_source' });
+      }
+      const contributions = response.item.payload.listing.summary.botTemplates;
+      if (!contributions) throw new RegistryFetchErrorV1({ state: 'newer_format', found: 'botTemplates' });
+      if (!contributions.some(contribution => contribution.id === contributionId)) throw new RegistryFetchErrorV1({ state: 'invalid_source' });
+      return deps.readPluginBotTemplates({ item: response.item, source, context, contributionId });
+    },
+    /** Explicit updates use the registry's existing offered-version and eligibility owner. */
+    readBotTemplateUpdate: async (pointer: RegistryItemPointerV1, contributionId: string): Promise<ResolvedBotTemplateReleaseV1> => {
+      const response = await fetchRequest({ op: 'read', kind: 'plugin', sourceId: pointer.sourceId, itemId: pointer.itemId });
+      if (response.op !== 'read' || response.item.payload.kind !== 'plugin') {
+        throw new RegistryFetchErrorV1(response.op === 'error' && response.status.state !== 'ok'
+          ? response.status : { state: 'invalid_source' });
+      }
+      const listing = response.item.payload.listing;
+      const selected = selectRegistryBotTemplateUpdatePointerV1(pointer, listing);
+      return host.readBotTemplate(selected, contributionId);
+    },
     fetchRegistrySkillFiles: filesForPointer, filesForPointer, readLinkSkills, fetchLinkSkillFiles,
   };
+  return host;
 }

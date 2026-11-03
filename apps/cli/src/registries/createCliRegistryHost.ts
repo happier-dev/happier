@@ -1,3 +1,6 @@
+import type { ActionExecutorContext } from '@happier-dev/protocol';
+import { createCliRegistryBotTemplateReaderV1 } from './botTemplates';
+import { createCliAvailableBotTemplateReaderV1 } from './availableBotTemplates';
 import { createRegistryHostV1,listRegistrySourcesV1,createPluginRegistrySourceDescriptorV1,RegistryFetchErrorV1,type RegistrySourceDescriptorV1, type RegistryHostDepsV1 } from '@happier-dev/protocol/registries';
 import { readPromptLibraryCatalogRecordV1,updatePromptLibraryRegistrySourcesV1,type PromptLibraryStackActionPortV1 } from '@happier-dev/protocol/prompts/library/promptLibraryCatalogV1';
 import { createCliPromptLibraryStore } from '@/settings/prompts/promptLibraryStore';
@@ -30,6 +33,7 @@ export async function readCliRegistrySourcesV1(input:Readonly<{port?:PromptLibra
 }
 export function createCliRegistryHostV1(input:Readonly<{credentials?:StoredCredentials;port?:PromptLibraryStackActionPortV1;signal?:AbortSignal;
   secretSources?:TargetSecretSourcesV1;
+  actionContext?:Pick<ActionExecutorContext,'externalActionExecutionAuthorization'|'externalActionCredential'>;
   readSources?:()=>Promise<readonly RegistrySourceDescriptorV1[]>;
   operationContext?:SavedSecretOperationContextV1;machineAdmission?:SocketRpcMachineAdmissionContextV1;
   updates?: RegistryHostDepsV1['updates']}>={}) {
@@ -79,7 +83,15 @@ export function createCliRegistryHostV1(input:Readonly<{credentials?:StoredCrede
     return createFetchContext(async selected => selected.token?.secretRef === reference ? value : null);
   };
   const fetchContext = { ...baseContext, admitSource };
+  const actionBinding = input.actionContext?.externalActionExecutionAuthorization?.binding;
+  const allowMachinePrivateContent = input.machineAdmission
+    ? input.machineAdmission.actorAccountId === input.machineAdmission.custodianAccountId
+    : actionBinding ? actionBinding.accountId === actionBinding.custodianAccountId
+      : !input.actionContext?.externalActionCredential;
+  const readAvailableBotTemplate = allowMachinePrivateContent ? createCliAvailableBotTemplateReaderV1() : undefined;
   const host=createRegistryHostV1({host:'node',...fetchContext,
+    readAvailableBotTemplate,
+    readPluginBotTemplates: createCliRegistryBotTemplateReaderV1({ allowMachineNpmProfiles: allowMachinePrivateContent, readAvailableBotTemplate }),
     readSources, updates: input.updates,
     ...(input.port||credentials?{mutateSources:async(mutation:Parameters<typeof updatePromptLibraryRegistrySourcesV1>[1])=>{
       const current=await resolvePort();if(!current)return {status:'unavailable' as const,reason:'account_credentials_unavailable'};
