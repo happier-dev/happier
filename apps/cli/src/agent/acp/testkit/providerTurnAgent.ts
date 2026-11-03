@@ -9,7 +9,9 @@ export function writeProviderTurnAgent(directory: string): string {
             let closes = 0;
             let loads = 0;
             let holdClose = false;
+            let rejectClose = false;
             let holdLoad = false;
+            let rejectLoad = false;
             let loadingRequest = null;
             let closingRequest = null;
             const awaiting = new Map();
@@ -31,16 +33,24 @@ export function writeProviderTurnAgent(directory: string): string {
                         agentCapabilities: { loadSession: true, sessionCapabilities: { close: {}, fork: {} } },
                     });
                     else if (message.method === 'session/new' || message.method === 'session/fork') ok(message.id, { sessionId: 'owned' });
-                    else if (message.method === 'session/load') { loads++; if (holdLoad) loadingRequest = message.id; else ok(message.id, {}); }
+                    else if (message.method === 'session/load') {
+                        loads++;
+                        if (rejectLoad) send({ jsonrpc: '2.0', id: message.id, error: { code: -32603, message: 'Native reload rejected' } });
+                        else if (holdLoad) loadingRequest = message.id;
+                        else ok(message.id, {});
+                    }
                     else if (message.method === 'session/close') {
                         closes++;
-                        if (holdClose) closingRequest = message.id;
+                        if (rejectClose) send({ jsonrpc: '2.0', id: message.id, error: { code: -32603, message: 'Native close rejected' } });
+                        else if (holdClose) closingRequest = message.id;
                         else ok(message.id, {});
                     } else if (message.method === 'test/hold-close') { holdClose = true; ok(message.id, {}); }
+                    else if (message.method === 'test/reject-close') { rejectClose = true; ok(message.id, {}); }
                     else if (message.method === 'test/release-close') {
                         if (closingRequest !== null) ok(closingRequest, {});
                         closingRequest = null; holdClose = false; ok(message.id, {});
                     }
+                    else if (message.method === 'test/reject-load') { rejectLoad = true; ok(message.id, {}); }
                     else if (message.method === 'test/hold-load') { holdLoad = true; ok(message.id, {}); }
                     else if (message.method === 'test/release-load') {
                         if (loadingRequest !== null) ok(loadingRequest, {});

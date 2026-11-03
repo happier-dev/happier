@@ -1341,10 +1341,10 @@ export class AcpBackend implements CatalogAcpBackend {
       this.acpSessionId = sessionId;
       logger.debug(`[AcpBackend] Session created: ${sessionId}`);
 
-      await this.applyInitialSessionMode(sessionResponse);
-      this.seedSessionModesFromSessionResponse(sessionResponse);
-      await this.seedSessionModelsFromSessionResponse(sessionResponse);
-      this.seedSessionConfigOptionsFromSessionResponse(sessionResponse);
+      const initialSessionResponse = await this.applyInitialSessionMode(sessionResponse);
+      this.seedSessionModesFromSessionResponse(initialSessionResponse);
+      await this.seedSessionModelsFromSessionResponse(initialSessionResponse);
+      this.seedSessionConfigOptionsFromSessionResponse(initialSessionResponse);
       await this.providerTurns?.start();
 
       this.emitIdleStatus();
@@ -1390,10 +1390,10 @@ export class AcpBackend implements CatalogAcpBackend {
       this.acpSessionId = normalized;
       logger.debug(`[AcpBackend] Session loaded: ${normalized}`);
 
-      await this.applyInitialSessionMode(sessionResponse);
-      this.seedSessionModesFromSessionResponse(sessionResponse);
-      await this.seedSessionModelsFromSessionResponse(sessionResponse);
-      this.seedSessionConfigOptionsFromSessionResponse(sessionResponse);
+      const initialSessionResponse = await this.applyInitialSessionMode(sessionResponse);
+      this.seedSessionModesFromSessionResponse(initialSessionResponse);
+      await this.seedSessionModelsFromSessionResponse(initialSessionResponse);
+      this.seedSessionConfigOptionsFromSessionResponse(initialSessionResponse);
       await this.providerTurns?.start();
 
       this.emitIdleStatus();
@@ -1479,10 +1479,10 @@ export class AcpBackend implements CatalogAcpBackend {
       }
 
       this.acpSessionId = forkedSessionId;
-      await this.applyInitialSessionMode(response);
-      this.seedSessionModesFromSessionResponse(response);
-      await this.seedSessionModelsFromSessionResponse(response);
-      this.seedSessionConfigOptionsFromSessionResponse(response);
+      const initialSessionResponse = await this.applyInitialSessionMode(response);
+      this.seedSessionModesFromSessionResponse(initialSessionResponse);
+      await this.seedSessionModelsFromSessionResponse(initialSessionResponse);
+      this.seedSessionConfigOptionsFromSessionResponse(initialSessionResponse);
       await this.providerTurns?.start();
       this.emitIdleStatus();
 
@@ -1622,10 +1622,10 @@ export class AcpBackend implements CatalogAcpBackend {
       this.seedSessionModesFromSessionResponse(forkResponse);
       await this.seedSessionModelsFromSessionResponse(forkResponse);
       this.seedSessionConfigOptionsFromSessionResponse(forkResponse);
-      await this.applyInitialSessionMode(sessionResponse);
-      this.seedSessionModesFromSessionResponse(sessionResponse);
-      await this.seedSessionModelsFromSessionResponse(sessionResponse);
-      this.seedSessionConfigOptionsFromSessionResponse(sessionResponse);
+      const initialSessionResponse = await this.applyInitialSessionMode(sessionResponse);
+      this.seedSessionModesFromSessionResponse(initialSessionResponse);
+      await this.seedSessionModelsFromSessionResponse(initialSessionResponse);
+      this.seedSessionConfigOptionsFromSessionResponse(initialSessionResponse);
       await this.providerTurns?.start();
 
       this.emitIdleStatus();
@@ -1894,13 +1894,18 @@ export class AcpBackend implements CatalogAcpBackend {
   async catchUpProviderTurns(): Promise<void> { await this.providerTurns?.catchUp(); }
 
   /** Require the declared native safety mode even when mode UI is disabled, and reject providers that do not advertise it. */
-  private async applyInitialSessionMode(response: unknown): Promise<void> {
+  private async applyInitialSessionMode(response: unknown): Promise<unknown> {
     const modeId = this.options.initialSessionModeId;
-    if (!modeId) return;
+    if (!modeId) return response;
     const state = readSessionModeStateFromSessionResponse(response);
-    if (!state?.availableModes.some(mode => mode.id === modeId)) throw new Error('Required ACP session mode is unavailable');
+    const rawResponse = asRecord(response);
+    const modes = asRecord(rawResponse?.modes);
+    if (!rawResponse || !modes || !state?.availableModes.some(mode => mode.id === modeId)) {
+      throw new Error('Required ACP session mode is unavailable');
+    }
     // Native mode reports can omit inherited automatic-approval settings.
     await this.connection!.peer.setSessionMode({ sessionId: this.acpSessionId!, modeId });
+    return { ...rawResponse, modes: { ...modes, currentModeId: modeId } };
   }
 
   private seedSessionModesFromSessionResponse(sessionResponse: unknown): void {
@@ -3091,24 +3096,25 @@ export class AcpBackend implements CatalogAcpBackend {
     const sourceStopped = this.stopProviderTurnSource();
     this.toolCalls.terminalizeTurn('cancelled');
     if (!this.connection) { await sourceStopped; return; }
-    if (!this.negotiatedSessionCapabilities.closeSession) {
-      await this.cleanupInitializedProcessConnection({ graceMs: 250 });
-      await sourceStopped;
-      await this.loadSession(sessionId);
-    } else {
-      try {
-        const outcome = await withGracefulTeardownBound(Promise.all([
-          this.connection.peer.closeSession({ sessionId }), foregroundCancellation,
-        ]));
-        if (outcome === 'timed_out') {
-          logger.debug('[AcpBackend] Provider session close exceeded the graceful teardown bound; restarting connection');
-          await this.cleanupInitializedProcessConnection({ graceMs: 250 });
-          await sourceStopped;
-          await this.loadSession(sessionId);
-          this.finalizeTurnOutcome({ kind: 'aborted', stopReason: 'cancelled' });
-          this.emit({ type: 'status', status: 'stopped', detail: 'Cancelled by user' });
-          return;
+    try {
+      let restart = !this.negotiatedSessionCapabilities.closeSession;
+      if (!restart) {
+        try {
+          const outcome = await withGracefulTeardownBound(Promise.all([
+            this.connection.peer.closeSession({ sessionId }), foregroundCancellation,
+          ]));
+          restart = outcome === 'timed_out';
+          if (restart) logger.warnLocalFile('[AcpBackend] Native session close timed out; restarting connection');
+        } catch (error) {
+          logger.warnLocalFile('[AcpBackend] Native session close failed; restarting connection', error);
+          restart = true;
         }
+      }
+      if (restart) {
+        await this.cleanupInitializedProcessConnection({ graceMs: 250 });
+        await sourceStopped;
+        await this.loadSession(sessionId);
+      } else {
         await sourceStopped;
         this.replayCapture = new AcpReplayCapture();
         const response = await this.loadSessionOnCurrentConnection(sessionId, this.transport.getInitTimeout());
@@ -3116,17 +3122,19 @@ export class AcpBackend implements CatalogAcpBackend {
         this.rawPromptRequestTurnGeneration = null;
         this.lastSelectedPermissionOptionIdByToolCallId.clear();
         this.toolCalls.reset();
-        await this.applyInitialSessionMode(response);
-        this.seedSessionModesFromSessionResponse(response);
-        await this.seedSessionModelsFromSessionResponse(response);
-        this.seedSessionConfigOptionsFromSessionResponse(response);
+        const initialSessionResponse = await this.applyInitialSessionMode(response);
+        this.seedSessionModesFromSessionResponse(initialSessionResponse);
+        await this.seedSessionModelsFromSessionResponse(initialSessionResponse);
+        this.seedSessionConfigOptionsFromSessionResponse(initialSessionResponse);
         this.replayCapture = null;
         await this.providerTurns?.start();
-      } catch (error) {
-        this.replayCapture = null;
-        await this.cleanupInitializedProcessConnection({ graceMs: 250 });
-        throw error;
       }
+    } catch (error) {
+      this.replayCapture = null;
+      await this.cleanupInitializedProcessConnection({ graceMs: 250 });
+      // Cleanup detaches the process/connection observers; explicitly retire unrecoverable runtimes.
+      this.options.onConnectionLost?.({ detail: error instanceof Error ? error.message : String(error) });
+      throw error;
     }
     this.finalizeTurnOutcome({ kind: 'aborted', stopReason: 'cancelled' });
     this.emit({ type: 'status', status: 'stopped', detail: 'Cancelled by user' });

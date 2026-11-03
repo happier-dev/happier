@@ -3,7 +3,7 @@ import type { AgentAcpProviderTurnSourceHost, AgentSessionRuntimeEvent } from '@
 import { TestInteractions, type TestInteractionRequester } from '@/agent/acp/testkit/interactionsFixture';
 import { writeProviderTurnAgent } from '../../testkit/providerTurnAgent';
 import { withTempDir } from '@/testkit/fs/tempDir';
-import { createPublicAcpSession, type PublicAcpSessionRuntime, type PublicAcpComposerDependencies } from './createPublicAcpSession';
+import { createPublicAcpSession, createPublicAcpSessionFromAwaitableAdapter, type PublicAcpAwaitableAdapter, type PublicAcpSessionRuntime, type PublicAcpComposerDependencies } from './createPublicAcpSession';
 
 describe('public ACP provider continuation', () => {
   it('retains the originating authority after a later turn and publishes lifecycle/output/terminal in order', async () => {
@@ -79,7 +79,7 @@ async function withPublicContinuation(run: (fixture: {
   requestInteraction: ReturnType<typeof vi.fn>;
   setCatchUp(handler: () => Promise<void>): void;
   listen(handler: (event: AgentSessionRuntimeEvent) => Promise<void>): void;
-}) => Promise<void>) {
+}) => Promise<void>, adapter: PublicAcpAwaitableAdapter = {}) {
   await withTempDir('public-continuation-lifetime-', async directory => {
     let host: AgentAcpProviderTurnSourceHost | undefined;
     let catchUp = async () => {};
@@ -89,7 +89,7 @@ async function withPublicContinuation(run: (fixture: {
         if (request.kind === 'questions') throw new Error('Unexpected questions');
         return { requestId: 'fixture-interaction', kind: request.kind, status: 'approved' };
       });
-    const runtime = await createPublicAcpSession({ kind: 'create', sessionId: 'public', cwd: directory }, {
+    const runtime = await createPublicAcpSessionFromAwaitableAdapter({ kind: 'create', sessionId: 'public', cwd: directory }, {
       transport: { kind: 'stdio', executable: { kind: 'systemTool', id: 'fixture' } },
       providerTurnSource: async value => { host = value; return { catchUp: () => catchUp(), dispose() {} }; },
     }, {
@@ -99,7 +99,7 @@ async function withPublicContinuation(run: (fixture: {
       } }) }, interactions: new TestInteractions(requestInteraction),
       media: { async registerSourceRoot() { throw new Error('Unexpected media'); } },
       models: { bind: () => ({ dispose() {} }) }, modes: { bind: () => ({ dispose() {} }) },
-    });
+    }, adapter);
     const subscription = runtime.watch(async event => { await listener?.(event); events.push(event); });
     try {
       await runtime.send({ inputIds: ['input-parent'], input: { text: 'first' }, delivery: { kind: 'newTurn', turnId: 'parent' },
@@ -238,14 +238,14 @@ it.each(['process exit', 'source failure'] as const)('publishes runtime terminat
 });
 
 
-it('keeps the public runtime usable after restarting a peer that never answers native close', async () => {
+it.each(['hold', 'reject'] as const)('keeps the public runtime usable after a native close does not complete (%s)', async close => {
   await withPublicContinuation(async ({ runtime, host, events }) => {
     expect(host.beginContinuation({ id: 'task', turnId: '1' })).not.toBeNull();
     await expect.poll(() => events.some(event => event.kind === 'turn-start' && event.startedBy === 'provider')).toBe(true);
     const turn = events.find((event): event is Extract<AgentSessionRuntimeEvent, { kind: 'turn-start' }> =>
       event.kind === 'turn-start' && event.startedBy === 'provider');
     if (!turn) throw new Error('Missing continuation');
-    await runtime.requestExtension!('test/hold-close', {});
+    await runtime.requestExtension!(`test/${close}-close`, {});
     await expect(runtime.cancel!({ turnId: turn.turnId, reason: 'user' })).resolves.toMatchObject({ status: 'requested' });
     await expect.poll(() => events.some(event => event.kind === 'turn-cancelled' && event.turnId === turn.turnId)).toBe(true);
     expect(await runtime.send({ inputIds: ['next'], input: { text: 'Successor.' }, delivery: { kind: 'newTurn', turnId: 'next' },
@@ -254,6 +254,47 @@ it('keeps the public runtime usable after restarting a peer that never answers n
     await expect.poll(() => events.some(event => event.kind === 'turn-complete' && event.turnId === 'next')).toBe(true);
   });
 }, 10_000);
+
+it('retires the public runtime when native cancellation recovery fails', async () => {
+  await withPublicContinuation(async ({ runtime, host, events }) => {
+    expect(host.beginContinuation({ id: 'task', turnId: '1' })).not.toBeNull();
+    await expect.poll(() => events.some(event => event.kind === 'turn-start' && event.startedBy === 'provider')).toBe(true);
+    const turn = events.find((event): event is Extract<AgentSessionRuntimeEvent, { kind: 'turn-start' }> =>
+      event.kind === 'turn-start' && event.startedBy === 'provider');
+    if (!turn) throw new Error('Missing continuation');
+    await runtime.requestExtension!('test/reject-load', {});
+    await expect(runtime.cancel!({ turnId: turn.turnId, reason: 'user' })).rejects.toThrow('Native reload rejected');
+    await expect.poll(() => events.some(event => event.kind === 'runtime-ended')).toBe(true);
+    expect(await runtime.send({ inputIds: ['after-failed-recovery'], input: { text: 'Successor.' },
+      delivery: { kind: 'newTurn', turnId: 'after-failed-recovery' },
+    })).toMatchObject({ status: 'unavailable' });
+  });
+});
+
+it('publishes the resolved continuation tool name without resolving it again', async () => {
+  await withPublicContinuation(async ({ runtime, host, events }) => {
+    const sink = host.beginContinuation({ id: 'task', turnId: '1' });
+    expect(sink).not.toBeNull();
+    await sink!.update({ sessionUpdate: 'tool_call', toolCallId: '1:broken',
+      title: 'NativeTool', kind: 'other', status: 'in_progress', rawInput: {} });
+    await sink!.update({ sessionUpdate: 'plan', entries: [{ content: 'Check the result', status: 'in_progress' }] });
+    await sink!.finish({ kind: 'completed' });
+    await expect.poll(() => events.some(event => event.kind === 'tool-call' && event.toolCallId === '1:broken' && event.toolName === 'ResolvedTool')).toBe(true);
+    expect(events).toContainEqual(expect.objectContaining({ kind: 'tool-call', toolName: 'TodoWrite',
+      input: { todos: [{ content: 'Check the result', status: 'in_progress' }] } }));
+    await expect.poll(() => events.some(event => event.kind === 'turn-complete' && event.turnId !== 'parent')).toBe(true);
+    expect(await runtime.send({ inputIds: ['after-projection'], input: { text: 'Successor.' },
+      delivery: { kind: 'newTurn', turnId: 'after-projection' },
+    })).toEqual({ status: 'admitted' });
+    await expect.poll(() => events.some(event => event.kind === 'turn-complete' && event.turnId === 'after-projection')).toBe(true);
+  }, { resolveToolName: async input => {
+    if (input.toolCallId === '1:broken') {
+      if (input.toolName === 'ResolvedTool') throw new Error('Resolved names must not be resolved again');
+      return 'ResolvedTool';
+    }
+    return input.toolName === 'TodoWrite' ? 'IncorrectlyRenamedPlan' : input.toolName;
+  } });
+});
 
 it.each(['Connection aborted', 'Upstream cancelled the request'])(
   'retains an ordinary provider failure containing cancellation words: %s', async message => {

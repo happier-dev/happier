@@ -212,21 +212,22 @@ it('closes native work before waiting for a held provider observer', async () =>
   });
 });
 
-it('restarts an unresponsive native close within the graceful teardown bound', async () => {
+it.each(['hold', 'reject'] as const)('restarts a native close that does not complete (%s)', async close => {
   await lifecycleFixture(async ({ backend }) => {
     const before = await backend.requestExtension<{ pid: number }>('test/status', {});
-    await backend.requestExtension('test/hold-close', {});
+    await backend.requestExtension(`test/${close}-close`, {});
     const cancellation = backend.cancel('owned');
     let cancelled = false;
-    void cancellation.then(() => { cancelled = true; });
+    const observedCancellation = cancellation.then(() => { cancelled = true; });
+    void observedCancellation.catch(() => undefined);
     try {
-      await expect.poll(() => cancelled, { timeout: 5_000 }).toBe(true);
+      await expect(observedCancellation).resolves.toBeUndefined();
       expect(isPidAlive(before.pid)).toBe(false);
       await backend.sendPrompt('owned', 'successor');
       await backend.waitForResponseComplete();
       expect((await backend.requestExtension<{ pid: number }>('test/status', {})).pid).not.toBe(before.pid);
     } finally {
-      if (!cancelled) await backend.requestExtension('test/release-close', {});
+      if (!cancelled && close === 'hold') await backend.requestExtension('test/release-close', {});
       await cancellation;
     }
   });

@@ -952,25 +952,7 @@ async function createPublicAcpConversationFromAwaitableAdapter(
         if (emittedToolCallIds.has(message.callId)) return;
         const input = AgentRuntimeJsonValueV1Schema.safeParse(message.args);
         if (input.success) {
-          const inferenceInput = buildAcpToolNameResolverInput(input.data, undefined);
-          const toolName = awaitableAdapter.resolveToolName
-            ? await awaitableAdapter.resolveToolName({
-                toolName: message.toolName,
-                toolCallId: message.callId,
-                input: inferenceInput,
-                context: {
-                  toolCallCountSincePrompt: emittedToolCallIds.size + 1,
-                },
-              }) ?? message.toolName
-            : transportHandler.determineToolName?.(
-                message.toolName,
-                message.callId,
-                inferenceInput,
-                {
-                  recentPromptHadChangeTitle: false,
-                  toolCallCountSincePrompt: emittedToolCallIds.size + 1,
-                },
-              ) ?? message.toolName;
+          const toolName = message.toolName;
           emittedToolCallIds.set(message.callId, toolName);
           const sidechainId = dependencies.sidechainSession && 'sessionId' in request
             && isGenericSubAgentToolName(canonicalizeToolNameV2({ protocol: 'acp', toolName }))

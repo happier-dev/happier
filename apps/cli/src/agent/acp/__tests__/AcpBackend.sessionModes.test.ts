@@ -170,6 +170,26 @@ describe('AcpBackend session modes', () => {
 });
 
 describe('AcpBackend required initial mode', () => {
+  it.each(['new', 'load', 'fork'] as const)('publishes the acknowledged initial mode after %s with controls enabled', async operation => {
+    await withTempDir('happier-acp-initial-mode-visible-', async dir => {
+      const backend = new AcpBackend({
+        agentName: 'test', cwd: dir, command: process.execPath,
+        args: [writeFakeAcpAgentScript({ dir })], initialSessionModeId: 'code',
+      });
+      const events: AgentMessage[] = [];
+      backend.onMessage(event => events.push(event));
+      try {
+        if (operation === 'new') await backend.startSession();
+        else if (operation === 'load') await backend.loadSession('test-session');
+        else await backend.forkSession({ sessionId: 'original-session' });
+        expect(backend.getSessionModeState()?.currentModeId).toBe('code');
+        expect(events).toContainEqual(expect.objectContaining({ type: 'event', name: 'session_modes_state',
+          payload: expect.objectContaining({ currentModeId: 'code' }),
+        }));
+      } finally { await backend.dispose(); }
+    });
+  });
+
   it.each(['new', 'load', 'fork'] as const)('applies the required mode before %s becomes ready and keeps direct controls disabled', async (operation) => {
     await withTempDir('happier-acp-initial-mode-', async (dir) => {
       const recordedRequestsPath = join(dir, 'requests.jsonl');
