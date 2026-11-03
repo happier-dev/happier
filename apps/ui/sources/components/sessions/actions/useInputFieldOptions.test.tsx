@@ -97,6 +97,20 @@ function OptionsProbe(props: Readonly<{ serverId: string; workflow: string; rest
     </View>;
 }
 
+const platformActionId = 'happier.deploy.vercel/actions/targets-inspect-v1';
+const platformField = { path: 'providerIdentity.providerAccountId',
+    inputType: { pluginId: 'happier.deploy.vercel', localId: 'provider-account' } };
+function PlatformOptionsProbe(props: Readonly<{ serverId: string; draftInput: Record<string, unknown>; cursor?: string }>) {
+    const { binding } = useServerCredentialAccountScopeBinding(props.serverId);
+    const options = useInputFieldOptions({ serverId: props.serverId, machineId: 'controller-a', enabled: !!binding, accountLifetime: binding,
+        requests: [{ actionId: platformActionId, field: platformField, draftInput: props.draftInput,
+            ...(props.cursor ? { query: 'selected', cursor: props.cursor } : {}) }] });
+    return <View testID="platform.options" accessibilityLabel={options.state(platformField).status}
+        accessibilityHint={options.state(platformField).errorCode}>
+        {options.state(platformField).options.map(option => <Text key={option.label}>{option.label}</Text>)}
+    </View>;
+}
+
 function NativeSessionOptionsProbe(props: Readonly<{ serverId: string }>) {
     const { binding } = useServerCredentialAccountScopeBinding(props.serverId);
     const definition = { kind: 'builtin' as const, id: 'local_services' };
@@ -167,6 +181,40 @@ function reply(label: string) {
 }
 
 describe('qualified input field options scope', () => {
+    it('carries the partial platform draft and paging through the UI Account HTTP executor', async () => {
+        const origin = 'https://platform-options.example';
+        const serverIdentityId = 'srv_platform_options';
+        const serverId = await harness.addHome({ name: 'Platform choices', serverUrl: origin,
+            serverIdentityId, accountId: 'viewer', currentAccount: true });
+        optionsBoundaries.set(origin, await createExternalActionAccountHttpBoundary({ serverUrl: origin, serverIdentityId,
+            accountId: 'viewer', machineId: 'controller-a', actionId: 'action.options.resolve', tokenEpoch: 0,
+            execute: input => rpc.read(input) }));
+        const machine = createPlainMachineRowFixture({ id: 'controller-a', accountId: 'viewer' });
+        harness.answer(serverId, 'GET /v1/machines/controller-a', { body: { machine } });
+        harness.answer(serverId, 'GET /v1/machines', { body: [machine] });
+        const credentialRef = { service: { pluginId: 'happier.machine.vercel', localId: 'vercel-account' }, accountId: 'selected' };
+        const draftInput = { v: 1, serverId, environmentId: 'environment-options', expectedRevision: 1, credentialRef,
+            credentialPrincipal: { kind: 'account', accountId: 'viewer', purpose: { consumer: {
+                pluginId: 'happier.deploy.vercel', localId: 'targets-inspect-v1' }, purpose: 'deploy.manage' },
+                target: { kind: 'account', account: credentialRef } } };
+        rpc.read.mockImplementation(async input => ({ actionId: platformActionId, fieldPath: platformField.path,
+            optionsSourceId: 'plugin-input:happier.deploy.vercel/provider-account',
+            options: [{ value: input.cursor ? 'team-selected' : 'user-selected', label: input.cursor ? 'Selected team' : 'Selected user' }] }));
+        const screen = await renderScreen(<PlatformOptionsProbe serverId={serverId} draftInput={draftInput} />);
+        try {
+            await waitForHomeGovernance(() => expect(screen.findByTestId('platform.options')?.props.accessibilityLabel).not.toBe('loading'));
+            expect({ status: screen.findByTestId('platform.options')?.props.accessibilityLabel,
+                error: screen.findByTestId('platform.options')?.props.accessibilityHint, requests: rpc.read.mock.calls.length })
+                .toEqual({ status: 'ready', error: undefined, requests: 1 });
+            expect(screen.getTextContent()).toContain('Selected user');
+            expect(rpc.read).toHaveBeenLastCalledWith({ actionId: platformActionId, fieldPath: platformField.path,
+                draftInput: { ...draftInput, machineId: 'controller-a' } });
+            await screen.update(<PlatformOptionsProbe serverId={serverId} draftInput={draftInput} cursor="from:next-team" />);
+            await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('Selected team'));
+            expect(rpc.read).toHaveBeenLastCalledWith({ actionId: platformActionId, fieldPath: platformField.path,
+                draftInput: { ...draftInput, machineId: 'controller-a' }, query: 'selected', cursor: 'from:next-team' });
+        } finally { await screen.unmount(); }
+    });
     it('keeps admitted native choices ready when responsive composition replaces the last reader, and withdraws them on Account retirement', async () => {
         const serverId = await harness.addHome({ name: 'Responsive Home', serverUrl: 'https://responsive-options.example',
             accountId: 'viewer', currentAccount: true });

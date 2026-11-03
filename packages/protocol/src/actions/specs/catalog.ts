@@ -49,6 +49,7 @@ export const ActionOptionsResolveInputSchema = lazyZodSchema(() => z.looseObject
   sessionId: z.optional(z.string().check(z.minLength(1))),
   limit: z.optional(z.number().check(z.int(), z.minimum(1), z.maximum(200))),
   query: z.optional(z.string().check(z.trim())),
+  cursor: z.optional(z.string()),
   values: z.optional(z.array(StrictJsonValueSchema)),
   draftInput: z.optional(z.record(z.string(), z.unknown())),
 }).check(z.superRefine((value, ctx) => {
@@ -69,6 +70,7 @@ export const ActionOptionsResolveResultSchema = lazyZodSchema(() => z.strictObje
   fieldPath: z.nullable(z.string().check(z.minLength(1))),
   optionsSourceId: z.nullable(z.string().check(z.minLength(1))),
   options: z.readonly(z.array(ActionInputOptionSchema)),
+  nextCursor: z.optional(z.string()),
   machineRecipeDetails: z.optional(z.readonly(z.array(PluginProjectedMachineRecipeEntryV1Schema))),
   modelCatalog: z.optional(z.strictObject({
     nativeModels: z.readonly(z.array(z.strictObject({
@@ -219,6 +221,7 @@ export const ACTION_OPTIONS_ACTION_SPECS = Object.freeze([
         { path: 'sessionId', title: 'Session id', prompt: 'Which session?', description: 'Omit to use the current invoking Session. Set only for an intentional authorized cross-Session target.', widget: 'text' },
         { path: 'draftInput', title: 'Partial action input', description: 'Dependent inventory context: for execution.run.start use {"backendTargetKey":"<backend option.value>"} for model, config, or connected-service choices; backendTarget alone does not select an inventory. Ergonomic multi-backend starts use backendTargetKeys. Session spawn uses its agentTarget and executionTarget objects.', widget: 'json' },
         { path: 'query', title: 'Query filter', description: 'Optional search text to filter the returned options.', widget: 'text' },
+        { path: 'cursor', title: 'Cursor', description: 'Continue a provider options page using its returned nextCursor.', widget: 'text' },
         { path: 'limit', title: 'Limit', description: 'Maximum number of options to return.', widget: 'text' },
         { path: 'values', title: 'Values', description: 'Return only the options for these values, to check a picked value without reading the whole inventory. A source that can answer directly does; any other is read in full and narrowed.', widget: 'json' },
       ],

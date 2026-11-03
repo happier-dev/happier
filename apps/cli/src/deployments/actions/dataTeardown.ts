@@ -103,7 +103,7 @@ export function createDataTeardownForHost(host: Host) {
                     const admission = await createDeploymentTargetRoleAdmissionHost(context, {
                         resolveRequesterIdentity: host.resolveRequesterIdentity, readCurrentMachineId: () => host.machineId,
                         accountExecution: { credentials: host.credentials, serverUrl: host.serverHttpBaseUrl,
-                            serverId: host.serverId, machineId: host.machineId,
+                            serverIdentityId: host.serverId, machineId: host.machineId,
                             isCurrent: async () => { await host.assertCurrent(context); return true; } } });
                     if (!admission) return failure('deployment_access_denied');
                     await admitDeploymentTargetRoleForHost({ pluginId: retained.result.deleteAction.pluginId, localId: retained.result.deleteAction.localId,

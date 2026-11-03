@@ -7,6 +7,7 @@ import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
+import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import type { StoredCredentials } from '@/persistence';
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import { createCliDeploymentActionDeps } from '../createCliDeploymentActionDeps';
@@ -29,6 +30,8 @@ export async function createDeploymentTargetRoleAdmissionHost(context: ActionExe
         credentials: StoredCredentials;
         serverUrl: string;
         serverId?: string;
+        /** Portable Home identity admitted by the containing Account runtime. */
+        serverIdentityId?: string;
         machineId?: string;
         savedSecretOperationContext?: SavedSecretOperationContextV1;
         isCurrent(): Promise<boolean>;
@@ -42,7 +45,7 @@ export async function createDeploymentTargetRoleAdmissionHost(context: ActionExe
         : context.externalActionCredential || context.rpcSessionAuthorization || !captured) return null;
     const credentials = requester?.credentials ?? captured?.credentials;
     const projection = authorization?.requesterHttpProjection;
-    const serverId = projection?.serverId ?? captured?.serverId;
+    const serverId = projection?.serverIdentityId ?? captured?.serverIdentityId;
     const serverHttpBaseUrl = requester?.serverHttpBaseUrl ?? captured?.serverUrl;
     const machineId = config.readCurrentMachineId() ?? captured?.machineId;
     const credentialOwnerAccountId = credentials ? readAccountIdFromToken(credentials.token) : null;
@@ -71,7 +74,7 @@ export async function createDeploymentTargetRoleAdmissionHost(context: ActionExe
     };
     const storage = createCliDeploymentActionDeps({ serverHttpBaseUrl,
         admitAccount: async (requestedServerId, current) => {
-            if (requestedServerId !== serverId) return { ok: false, errorCode: 'server_scope_mismatch', error: 'server_scope_mismatch' };
+            if (!await isServerProfileHomeIdentity(requestedServerId, serverId)) return { ok: false, errorCode: 'server_scope_mismatch', error: 'server_scope_mismatch' };
             await assertCurrent(current); return null;
         }, resolveRequestHeaders: headers,
         dispatchReceipt: async () => refuse('unsupported_action'),

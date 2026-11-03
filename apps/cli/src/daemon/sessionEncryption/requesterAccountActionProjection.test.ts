@@ -19,6 +19,7 @@ import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValu
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import * as requesterAccountOwner from './requesterAccountActionProjection';
 import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { createDeploymentTargetRoleAdmissionHost } from '@/deployments/targets/createDeploymentTargetRoleAdmissionHost';
 import { createActionOperationRunner } from '../actionOperations/actionOperationRunner';
 import { createActionOperationStore } from '../actionOperations/actionOperationStore';
 import { deriveAccountMachineKeyFromRecoverySecret, sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
@@ -1290,6 +1291,19 @@ describe('admitted requester Action projection', () => {
     const carrier = await projectExternalActionRequesterHttpAuthorization(httpInput);
     expect(carrier?.requesterHttpProjection).toMatchObject({ accountId: 'bob', serverIdentityId: 'stable-home',
       accountEncryptionMode: mode });
+    const custody = await requesterAccountOwner.admitRequesterAccountActionContext({ authorization: root, credentials,
+      serverId: 'home-profile', serverIdentityId: 'stable-home', serverHttpBaseUrl: 'https://requester-home.test',
+      isCurrent: async () => current });
+    if (!custody) throw new Error('Expected admitted installed Account custody');
+    try {
+      const installed = await projectExternalActionRequesterHttpAuthorization({ ...httpInput, authorization: custody.authorization });
+      if (!installed) throw new Error('Expected installed HTTP projection');
+      const deploymentHost = await createDeploymentTargetRoleAdmissionHost({ externalActionExecutionAuthorization: installed }, {
+        resolveRequesterIdentity: async () => ({ kind: 'unknown', reason: 'requester_authority_unavailable' }),
+        readCurrentMachineId: () => 'machine',
+      });
+      expect(deploymentHost).toMatchObject({ serverId: 'stable-home', credentialOwnerAccountId: 'bob' });
+    } finally { await custody.dispose(); }
     expect(ExternalActionExecutionAuthorizationV1Schema.parse(carrier)).toEqual(root);
     expect(Object.isFrozen(carrier?.requesterHttpProjection)).toBe(true);
     reads.mockClear(); posts.mockClear();

@@ -169,6 +169,7 @@ export type DiscoveryActionInputById = {
         sessionId?: string | undefined;
         limit?: number | undefined;
         query?: string | undefined;
+        cursor?: string | undefined;
         values?: unknown[] | undefined;
         draftInput?: Record<string, unknown> | undefined;
     };
@@ -516,6 +517,7 @@ export type DiscoveryActionResultById = {
             description?: string | undefined;
             disabled?: boolean | undefined;
         }[];
+        nextCursor?: string | undefined;
         modelCatalog?: {
             nativeModels: readonly {
                 value: string;

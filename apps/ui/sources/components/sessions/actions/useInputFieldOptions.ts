@@ -31,7 +31,7 @@ function hasLocalStaticOptions(field: InputFieldOptionsRequest['field']): boolea
 
 function fieldKey(field: Pick<ActionInputFieldHint, 'optionsSourceId' | 'inputType'> & { path?: string }, context?: InputFieldOptionsContext): string {
     return JSON.stringify([field.path, field.optionsSourceId, field.inputType, context?.actionId, context?.consumer,
-        projectInputOptionsDependencies(context?.draftInput ?? {}, context?.consumer), context?.values]);
+        projectInputOptionsDependencies(context?.draftInput ?? {}, context?.consumer, context?.actionId), context?.values, context?.query, context?.cursor]);
 }
 
 /** Account choices do not release their demand when a sibling's serving relay changes. */
@@ -107,7 +107,7 @@ export function useInputFieldOptions(params: Readonly<{
     });
     const signature = JSON.stringify([accountScope?.accountId, params.accountLifetime?.revision, optionServerId, machineId,
         params.sessionId, producerRoutes, params.requests.map((request) => ({ ...request,
-            draftInput: projectInputOptionsDependencies(request.draftInput ?? {}, request.consumer) }))]);
+            draftInput: projectInputOptionsDependencies(request.draftInput ?? {}, request.consumer, request.actionId) }))]);
     const { reads, keys, defaultContexts, fieldTargets } = React.useMemo(() => {
         const keys = new Map<string, string>();
         const defaultContexts = new Map<string, InputFieldOptionsContext>();
@@ -131,7 +131,9 @@ export function useInputFieldOptions(params: Readonly<{
                 ...(request.actionId ? { actionId: request.actionId, fieldPath: request.field.path } : {}),
                 ...(request.consumer ? { consumer: request.consumer, fieldPath: request.field.path } : {}),
                 ...(request.values ? { values: request.values } : {}),
-                draftInput: { ...projectInputOptionsDependencies(request.draftInput ?? {}, request.consumer),
+                ...(request.query === undefined ? {} : { query: request.query }),
+                ...(request.cursor === undefined ? {} : { cursor: request.cursor }),
+                draftInput: { ...projectInputOptionsDependencies(request.draftInput ?? {}, request.consumer, request.actionId),
                     ...(requestMachineId ? { machineId: requestMachineId } : {}),
                     ...(requestSessionId ? { sessionId: requestSessionId } : {}) },
             };

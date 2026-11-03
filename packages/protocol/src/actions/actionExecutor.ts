@@ -5042,15 +5042,18 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           let admittedInputTypeSource = false;
           // The picked values an admission needs answered; every path below narrows to them.
           const optionValues = Array.isArray(data.values) ? data.values as readonly JsonValue[] : undefined;
+          const readAdmittedOptions = async (read: NonNullable<ActionExecutorDeps['readAdmittedInputTypeOptions']>): Promise<ActionExecuteResult> => {
+            const result = await read({ input: data, context: ctx });
+            const failure = readActionFailureEnvelope(result);
+            if (failure) return failure;
+            const parsed = getActionSpec('action.options.resolve').outputSchema!.safeParse(result);
+            return parsed.success ? { ok: true, result: parsed.data }
+              : { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
+          };
           const resolveTypedFieldOptions = async (field: Parameters<typeof resolveTypedInputFieldOptions>[0]['field'], ownerId: string): Promise<ActionExecuteResult | null> => {
             if (!field.inputType || 'hostType' in field.inputType) return null;
             if (!deps.resolveInputType && deps.readAdmittedInputTypeOptions) {
-              const result = await deps.readAdmittedInputTypeOptions({ input: data, context: ctx });
-              const failure = readActionFailureEnvelope(result);
-              if (failure) return failure;
-              const parsed = getActionSpec('action.options.resolve').outputSchema!.safeParse(result);
-              return parsed.success ? { ok: true, result: parsed.data }
-                : { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
+              return readAdmittedOptions(deps.readAdmittedInputTypeOptions);
             }
             const resolved = await resolveTypedInputFieldOptions({ field, deps, ctx,
               actionId: ownerId as ActionId, input: { ...readRecord(data.draftInput), ...data },
@@ -5106,6 +5109,11 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           } else if (actionIdRaw && fieldPath) {
             const credentialFailure = credentialScopeFailure(actionIdRaw, ctx, undefined, true);
             if (credentialFailure) return credentialFailure;
+            // A UI host need not mount the serving runtime's contributed
+            // catalog. That runtime admits the Action, field and Resource.
+            if (parseQualifiedPluginActionId(actionIdRaw) && !deps.resolveInputType && deps.readAdmittedInputTypeOptions) {
+              return readAdmittedOptions(deps.readAdmittedInputTypeOptions);
+            }
             let contributedDefinition: ActionDefinitionSummaryV1 | null = null;
             try {
               getActionSpec(actionIdRaw as ActionId);

@@ -9,6 +9,7 @@ import type { DeploymentEnvironmentDetailV1, DeploymentReceiptDetailV1 } from '@
 import type { ResolvedDeploymentTargetActionRole } from '@/plugins/projection/registry/types';
 import type { RegistryConnectedAccountActionFormPurposeAuthorization } from '@/daemon/connectedServices/purposeBindings/deriveRegistryConnectedAccountPurposeAuthorizations';
 import type { StoredCredentials } from '@/persistence';
+import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 
 export type DeploymentTargetRoleAdmissionHost = Readonly<{
     serverId: string;
@@ -120,11 +121,11 @@ export async function admitDeploymentTargetRoleForHost(request: DeploymentTarget
         || !authorization.serviceRefs.some(service => isDeepStrictEqual(service, input.credentialRef.service))) {
         return refuse('deployment_access_denied');
     }
-    if (input.serverId !== host.serverId) return refuse('server_scope_mismatch');
+    if (!await isServerProfileHomeIdentity(input.serverId, host.serverId)) return refuse('server_scope_mismatch');
     const detail = await host.readEnvironment({ environmentId: input.environmentId,
         ...(input.targetLinkId ? { targetLinkId: input.targetLinkId } : {}), context: request.context });
     const environment = detail.environment;
-    if (environment.id !== input.environmentId || environment.serverId !== input.serverId || environment.deletedAtMs !== undefined
+    if (environment.id !== input.environmentId || !await isServerProfileHomeIdentity(environment.serverId, host.serverId) || environment.deletedAtMs !== undefined
         || !environment.capabilities.read) return refuse('deployment_access_denied');
     if (environment.revision !== input.expectedRevision) return refuse('deployment_conflict');
     let candidates = matched;
