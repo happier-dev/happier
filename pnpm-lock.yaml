@@ -230,7 +230,7 @@ patchedDependencies:
   jiti@2.7.0: f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214
   libmime@5.4.7: cf1c063659759d7ba5fa082fd5e2df7899ed94bb7bcfb977da03dc1cbcd89693
   metro-config@0.83.5: dc1b77d0b18c826eaa0be0097f70a6c788fe94d0110f11efd481c47b5d1262ea
-  metro-file-map@0.83.5: 07dbe5b07ea7079102e731c3eb721e8e1f328a8787fdfcb5809117125dedcd4d
+  metro-file-map@0.83.5: 6d6325a060afa27b93b9e6672c7f63587449ac985e9593b50af97081b2770a65
   metro-runtime@0.83.5: 598b831c623e9314f5e0729b06bda8e660c958745636d6691e66c90ccbb24854
   metro-source-map@0.83.5: 1ef606a94094961c6b5eb46e47baef9c51e4f7f5edeffc6a5c36007e6da5de5c
   metro@0.83.5: a4d1925aa93429b49d8ecf3e25a2843942c582971fe73e582a9f92ae26a8d646
@@ -18920,7 +18920,7 @@ snapshots:
       metro-cache-key: 0.83.5
       metro-config: 0.83.5(patch_hash=dc1b77d0b18c826eaa0be0097f70a6c788fe94d0110f11efd481c47b5d1262ea)(supports-color@8.1.1)
       metro-core: 0.83.5
-      metro-file-map: 0.83.5(patch_hash=07dbe5b07ea7079102e731c3eb721e8e1f328a8787fdfcb5809117125dedcd4d)(supports-color@8.1.1)
+      metro-file-map: 0.83.5(patch_hash=6d6325a060afa27b93b9e6672c7f63587449ac985e9593b50af97081b2770a65)(supports-color@8.1.1)
       metro-minify-terser: 0.83.5
       metro-resolver: 0.83.5
       metro-runtime: 0.83.5(patch_hash=598b831c623e9314f5e0729b06bda8e660c958745636d6691e66c90ccbb24854)
@@ -27134,7 +27134,7 @@ snapshots:
       lodash.throttle: 4.1.1
       metro-resolver: 0.83.5
 
-  metro-file-map@0.83.5(patch_hash=07dbe5b07ea7079102e731c3eb721e8e1f328a8787fdfcb5809117125dedcd4d)(supports-color@8.1.1):
+  metro-file-map@0.83.5(patch_hash=6d6325a060afa27b93b9e6672c7f63587449ac985e9593b50af97081b2770a65)(supports-color@8.1.1):
     dependencies:
       debug: 4.4.3(supports-color@8.1.1)
       fb-watchman: 2.0.2
@@ -27244,7 +27244,7 @@ snapshots:
       metro-cache-key: 0.83.5
       metro-config: 0.83.5(patch_hash=dc1b77d0b18c826eaa0be0097f70a6c788fe94d0110f11efd481c47b5d1262ea)(supports-color@8.1.1)
       metro-core: 0.83.5
-      metro-file-map: 0.83.5(patch_hash=07dbe5b07ea7079102e731c3eb721e8e1f328a8787fdfcb5809117125dedcd4d)(supports-color@8.1.1)
+      metro-file-map: 0.83.5(patch_hash=6d6325a060afa27b93b9e6672c7f63587449ac985e9593b50af97081b2770a65)(supports-color@8.1.1)
       metro-resolver: 0.83.5
       metro-runtime: 0.83.5(patch_hash=598b831c623e9314f5e0729b06bda8e660c958745636d6691e66c90ccbb24854)
       metro-source-map: 0.83.5(patch_hash=1ef606a94094961c6b5eb46e47baef9c51e4f7f5edeffc6a5c36007e6da5de5c)(supports-color@8.1.1)

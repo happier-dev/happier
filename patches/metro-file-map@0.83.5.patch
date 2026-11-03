@@ -900,3 +900,40 @@ diff --git a/src/watchers/FallbackWatcher.js.flow b/src/watchers/FallbackWatcher
      .on('file', normalizeProxy(fileCallback))
      .on('symlink', normalizeProxy(symlinkCallback))
      .on('error', errorCallback)
+diff --git a/src/watchers/NativeWatcher.js b/src/watchers/NativeWatcher.js
+--- a/src/watchers/NativeWatcher.js
++++ b/src/watchers/NativeWatcher.js
+@@ -84,6 +84,14 @@
+       if (!type) {
+         return;
+       }
++      // FSEvents may report only a populated directory's name. Enumerate it
++      // through the same handler so descendants enter the existing file map.
++      if (type === "d") {
++        for (const entry of await _fs.promises.readdir(absolutePath)) {
++          await this._handleEvent(path.join(relativePath, entry));
++        }
++        return;
++      }
+       if (
+         !(0, _common.includedByGlob)(type, this.globs, this.dot, relativePath)
+       ) {
+diff --git a/src/watchers/NativeWatcher.js.flow b/src/watchers/NativeWatcher.js.flow
+--- a/src/watchers/NativeWatcher.js.flow
++++ b/src/watchers/NativeWatcher.js.flow
+@@ -112,6 +112,15 @@
+         return;
+       }
+ 
++      // FSEvents may report only a populated directory's name. Enumerate it
++      // through the same handler so descendants enter the existing file map.
++      if (type === 'd') {
++        for (const entry of await fsPromises.readdir(absolutePath)) {
++          await this._handleEvent(path.join(relativePath, entry));
++        }
++        return;
++      }
++
+       if (!includedByGlob(type, this.globs, this.dot, relativePath)) {
+         return;
+       }
