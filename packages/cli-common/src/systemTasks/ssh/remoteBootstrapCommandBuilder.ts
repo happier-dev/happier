@@ -98,7 +98,7 @@ function normalizeServerUrlForBootstrap(url: string): string {
 
 function shouldUseCloudProfileId(params: Readonly<{ serverUrl: string; localServerUrl?: string }>): boolean {
   const serverUrl = normalizeServerUrlForBootstrap(params.serverUrl);
-  if (serverUrl !== DEFAULT_HAPPIER_CLOUD_SERVER_URL) return false;
+  if (!serverUrl || serverUrl !== DEFAULT_HAPPIER_CLOUD_SERVER_URL) return false;
   const localServerUrl = typeof params.localServerUrl === 'string' ? normalizeServerUrlForBootstrap(params.localServerUrl) : '';
   return !localServerUrl || localServerUrl === serverUrl;
 }

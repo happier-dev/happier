@@ -3,7 +3,7 @@ import { isEmbedWindowContext } from '@/embed/isEmbedWindowContext';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { HomeConnectionDescriptorV1Schema, StoredHomeConnectionDescriptorV1Schema, type HomeConnectionDescriptorV1 } from '@happier-dev/protocol/auth/accountDirectory';
 import { normalizeServerIdentityIdCapability, areServerProfileIdentifiersEquivalent as areProfileIdentifiersEquivalent } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
-import { DEFAULT_HAPPIER_CLOUD_SERVER_URL } from '@happier-dev/cli-common/happierCloud';
+import { DEFAULT_HAPPIER_CLOUD_SERVER_URL, isHappierCloudServerUrl, resolveBuildDefaultProfile } from '@happier-dev/cli-common/happierCloud';
 import { readStorageScopeFromEnv, scopedStorageId } from '@/utils/system/storageScope';
 import type { HomeCarrier } from '@/sync/runtime/homeCarrier';
 import { normalizeAccountDirectoryEndpoint } from '@/sync/domains/accountDirectory/accountDirectoryEndpoint';
@@ -553,9 +553,11 @@ function parsePreconfiguredServersFromEnv(): PreconfiguredServer[] {
         }
     }
 
-    // In stack context, and on native builds, never start "serverless": seed Happier Cloud when no preconfigured server exists.
-    if (entries.length === 0 && (isStackContext() || !isWebRuntime()) && setupPolicy.relay.allowHappierCloud) {
-        append(HAPPIER_CLOUD_SERVER_URL, 'Happier Cloud', 'preconfigured');
+    // Native/source clients only seed a Home when their build explicitly supplies one.
+    const defaultHome = resolveBuildDefaultProfile().home;
+    if (entries.length === 0 && defaultHome
+        && (!isHappierCloudServerUrl(defaultHome.url) || setupPolicy.relay.allowHappierCloud)) {
+        append(defaultHome.url, '', 'preconfigured');
     }
 
     return entries;
@@ -1592,12 +1594,9 @@ function getWebSameOriginServerUrl(): string | null {
     try {
         const parsed = new URL(origin);
         if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
-        // Official hosted web apps are static SPAs; the API lives on api.happier.dev.
-        // When builds are missing EXPO_PUBLIC_HAPPIER_SERVER_URL (and legacy aliases), this prevents the default server
-        // from incorrectly pointing at the web host.
-        const hostname = parsed.hostname.toLowerCase();
-        if (hostname === 'cloud.happier.dev' || hostname === 'app.happier.dev') {
-            return HAPPIER_CLOUD_SERVER_URL;
+        const home = resolveBuildDefaultProfile().home;
+        if (home?.webappUrl && new URL(home.webappUrl).origin === parsed.origin) {
+            return home.url;
         }
         // In stack context, the UI can be served by an Expo/Metro dev server (e.g. http://localhost:8081).
         // Do not treat the UI origin as a relay server. Only allow same-origin fallback for stack-served
@@ -1872,8 +1871,7 @@ const accountServiceEndpointListeners = new Set<(endpoint: AccountServiceEndpoin
  * `useSyncExternalStore` consumers.
  */
 export const DEFAULT_ACCOUNT_SERVICE_ENDPOINT: AccountServiceEndpointV1 = Object.freeze({
-    url: HAPPIER_CLOUD_SERVER_URL,
-    displayName: 'Happier Cloud',
+    url: resolveBuildDefaultProfile().accountService?.url ?? '',
     source: 'default',
 });
 
@@ -2472,6 +2470,7 @@ export function upsertServerProfile(params: UpsertServerProfileParams): Promise<
 
 export function getOrCreateHappierCloudServerProfile(): Promise<ServerProfile> {
     return withPersistedStateMutation(() => {
+        if (!HAPPIER_CLOUD_SERVER_URL) throw new Error('No build default Home is configured');
         const state = readPersistedState();
         const existing = findProfileByEquivalentUrl(state.servers, HAPPIER_CLOUD_SERVER_URL);
         if (existing) {
@@ -2481,7 +2480,6 @@ export function getOrCreateHappierCloudServerProfile(): Promise<ServerProfile> {
 
         return upsertServerProfileUnlocked({
             serverUrl: HAPPIER_CLOUD_SERVER_URL,
-            name: 'Happier Cloud',
             source: 'preconfigured',
         });
     });

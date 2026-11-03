@@ -23,9 +23,8 @@ type PrimaryAction = Readonly<{
 
 /**
  * "Set up a Home on a server" (desktop app): run a Home on this computer or on a server over SSH, with
- * the existing relay-host runners (their steps, prompts and system tasks). Each runner offers its next
- * action; this pane shows it under the steps. When the Home answers, its address continues in
- * "Connect to a Home directly", so it is saved through the one connect operation.
+ * the Personal Home bootstrap or the SSH host runner. Local setup opens the full bootstrap on Home;
+ * SSH setup continues in "Connect to a Home directly" when the remote Home answers.
  */
 export function ServerHomePane(props: Readonly<{
     testID: string;
@@ -56,10 +55,6 @@ export function ServerHomePane(props: Readonly<{
                     <RelayHostLocalChecklistStep
                         testID={`${props.testID}.thisComputer`}
                         onWizardPrimaryChange={setPrimary}
-                        onRequestAdvance={(status) => {
-                            const address = status?.relayUrl?.trim();
-                            if (address) onHomeReady(address);
-                        }}
                     />
                 ) : (
                     <RemoteSshChecklistStep

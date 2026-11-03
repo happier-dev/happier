@@ -62,7 +62,7 @@ export function listKnownAccountServices(
 ): readonly KnownService[] {
     const currentLabel = t('settingsAccount.accountServiceChooserCurrent');
     const defaultUrl = DEFAULT_ACCOUNT_SERVICE_ENDPOINT.url;
-    const services: KnownService[] = [{
+    const services: KnownService[] = defaultUrl ? [{
         id: 'default',
         url: defaultUrl,
         title: DEFAULT_ACCOUNT_SERVICE_ENDPOINT.displayName ?? hostOf(defaultUrl),
@@ -72,8 +72,8 @@ export function listKnownAccountServices(
             hostOf(defaultUrl),
         ].filter(Boolean).join(' · '),
         mark: 'cloud',
-    }];
-    if (!sameService(current.url, defaultUrl)) {
+    }] : [];
+    if (current.url && !sameService(current.url, defaultUrl)) {
         services.push({
             id: 'current',
             url: current.url,
@@ -126,7 +126,7 @@ export const AccountServiceChooser = React.memo(function AccountServiceChooser(p
         () => listKnownAccountServices(props.currentEndpoint, props.profiles, props.homeTitle, props.activeServerId),
         [props.activeServerId, props.currentEndpoint, props.homeTitle, props.profiles],
     );
-    const currentId = known.find((service) => sameService(service.url, props.currentEndpoint.url))?.id ?? 'default';
+    const currentId = known.find((service) => sameService(service.url, props.currentEndpoint.url))?.id ?? ANOTHER_SERVICE;
     const [choice, setChoice] = React.useState(currentId);
     const [address, setAddress] = React.useState('');
     const [verified, setVerified] = React.useState<Readonly<{ choice: string; service: VerifiedService }> | null>(null);

@@ -1,4 +1,4 @@
-import { DEFAULT_HAPPIER_CLOUD_SERVER_URL } from '@happier-dev/cli-common/happierCloud';
+import { resolveDefaultWebappUrl } from '@happier-dev/cli-common/happierCloud';
 
 import { configuration } from '@/configuration';
 import { spawnHappyCLI } from '@/utils/spawnHappyCLI';
@@ -45,11 +45,7 @@ export function defaultNameFromUrl(serverUrl: string): string {
 
 export function defaultWebappUrlFromServerUrl(serverUrl: string): string {
   try {
-    const normalized = new URL(serverUrl).toString().replace(/\/+$/, '');
-    if (normalized === DEFAULT_HAPPIER_CLOUD_SERVER_URL) {
-      return 'https://cloud.happier.dev';
-    }
-    return new URL(serverUrl).origin.replace(/\/+$/, '');
+    return resolveDefaultWebappUrl(serverUrl);
   } catch {
     return configuration.webappUrl;
   }

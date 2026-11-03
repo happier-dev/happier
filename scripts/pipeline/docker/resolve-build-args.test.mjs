@@ -67,3 +67,10 @@ test('resolveOptionalDockerBuildArgs maps legacy server-url aliases to EXPO_PUBL
     'EXPO_PUBLIC_HAPPIER_SERVER_URL=https://legacy-happy.example.test',
   ]);
 });
+
+test('resolveOptionalDockerBuildArgs forwards the baked profile unchanged', () => {
+  const profile = JSON.stringify({ home: { url: 'https://home.example.test' }, personalHome: { value: 'offer' } });
+  assert.deepEqual(resolveOptionalDockerBuildArgs({ EXPO_PUBLIC_HAPPIER_BUILD_DEFAULT_PROFILE_JSON: profile }), [
+    '--build-arg', `EXPO_PUBLIC_HAPPIER_BUILD_DEFAULT_PROFILE_JSON=${profile}`,
+  ]);
+});

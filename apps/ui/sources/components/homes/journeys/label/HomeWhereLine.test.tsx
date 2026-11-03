@@ -1,7 +1,10 @@
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
+import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
+import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
+import { HomeWhereLine } from './HomeWhereLine';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -33,9 +36,8 @@ vi.mock('@/sync/api/capabilities/serverFeaturesClient', async (importOriginal) =
     getCachedServerFeaturesSnapshot: () => null,
 }));
 // Whether this computer can host a Personal Home (desktop host kind) and its boot state (runtime).
-vi.mock('@/sync/domains/server/setup/setupSurfacePolicy', async (importOriginal) => ({
-    ...(await importOriginal<Record<string, unknown>>()),
-    canHostPersonalHomeHere: () => state.hostsHere,
+vi.mock('@/utils/platform/personalHomeBootstrapHost', () => ({
+    isPersonalHomeBootstrapRuntimeHost: () => state.hostsHere,
 }));
 vi.mock('@/components/personalHome/bootstrap/PersonalHomeBootstrapGate', () => ({
     usePersonalHomeBootReadiness: () => ({ kind: 'ready' }),
@@ -43,6 +45,7 @@ vi.mock('@/components/personalHome/bootstrap/PersonalHomeBootstrapGate', () => (
 
 afterEach(() => {
     standardCleanup();
+    vi.unstubAllEnvs();
     state.profile = null;
     state.hostsHere = false;
     state.pushed = [];
@@ -60,7 +63,6 @@ function profile(overrides: Record<string, unknown>) {
 }
 
 async function renderLine() {
-    const { HomeWhereLine } = await import('./HomeWhereLine');
     const screen = await renderScreen(<HomeWhereLine />);
     await flushHookEffects({ cycles: 2 });
     return screen;
@@ -75,7 +77,8 @@ describe('HomeWhereLine', () => {
         expect(screen.findByTestId('home-where-line')).toBeNull();
     });
 
-    it('names the Personal Home this computer runs and where it lives, and the name opens About your Home', async () => {
+    it('keeps the installed Personal Home location when new installs are off, and its name opens About your Home', async () => {
+        vi.stubEnv('EXPO_PUBLIC_HAPPIER_BUILD_DEFAULT_PROFILE_JSON', JSON.stringify({ personalHome: { value: 'off' } }));
         state.profile = profile({ personalHomeBootstrapCompleted: true });
         state.hostsHere = true;
         const screen = await renderLine();

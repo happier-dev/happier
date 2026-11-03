@@ -126,6 +126,9 @@ concurrency:
   group: release-npm-${{ github.ref }}
   cancel-in-progress: false
 
+env:
+  HAPPIER_BUILD_DEFAULT_PROFILE_JSON: '{"accountService":{"url":"https://api.happier.dev"},"home":{"url":"https://api.happier.dev","webappUrl":"https://cloud.happier.dev"},"personalHome":{"value":"offer"}}'
+
 jobs:
   trusted_ref_guard:
     name: Trusted workflow ref guard

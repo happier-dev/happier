@@ -30,6 +30,34 @@ closed (an unmet catalog dependency, an inactive persistence contract, an absent
 - Server enabled-bit helpers: `packages/protocol/src/features/serverEnabledBit.ts`.
 - `/v1/features` payload schema: `packages/protocol/src/features/payload/featuresResponseSchema.ts`.
 
+## First-run defaults and setup admission (0.3 development)
+
+`packages/cli-common/src/happierCloud.ts` owns `BuildDefaultProfileSchema`, its reusable
+`BuildDefaultProfileFields`, and `resolveBuildDefaultProfile()`. The closed build profile is
+`{accountService?:{url,locked?}, home?:{url,webappUrl?,locked?}, personalHome?:{value:'auto'|'offer'|'off',locked?}}`.
+The optional lock fields reserve the same field shape for organization-policy composition;
+baked configuration supplies defaults, and deliberate saved endpoint choices remain authoritative.
+Account-service and Home URLs are independent. `resolveDefaultWebappUrl()` applies a configured
+Home's separate web client only to that Home and otherwise uses the Home's origin.
+
+Expo inlines `EXPO_PUBLIC_HAPPIER_BUILD_DEFAULT_PROFILE_JSON`. The CLI-common build validates
+`HAPPIER_BUILD_DEFAULT_PROFILE_JSON` through the compiled canonical parser, then embeds it in
+its staged runtime output. Missing configuration produces an empty profile; malformed present
+configuration throws `BuildDefaultProfileError` with a field path and issue code, without raw values.
+Official EAS, desktop, CLI/npm and Docker workflows supply the Cloud Account service and Home,
+the Cloud web client, and `personalHome.value:'offer'`. Source builds supply no Cloud defaults.
+Web retains same-origin Home selection; native/CLI first run asks for a service or Home.
+The historical CLI v4→v5 migration retains its original Cloud credential audience independently
+of current build defaults, so changing a build cannot retarget existing credentials.
+
+UI setup admission belongs to `setupSurfacePolicy.ts#resolvePersonalHomeAdmission`: it combines
+the platform bootstrap-host fact, setup policy and the profile's Personal Home choice. Only
+`auto` starts automatic setup; `offer` exposes the full Personal Home bootstrap on demand;
+`off` refuses new installation and leaves an existing Home intact. A Personal Home uses the
+configured Account service, preserving explicit installed-runtime configuration, or the
+server's existing `self` sign-in-service mode when no external service is configured.
+These defaults do not create server-enabled feature bits or override their canonical decisions.
+
 ## Payload contract
 
 - `features` is the only location for gates.

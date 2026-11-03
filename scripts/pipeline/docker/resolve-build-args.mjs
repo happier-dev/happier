@@ -51,5 +51,10 @@ export function resolveOptionalDockerBuildArgs(env, opts) {
     args.push('--build-arg', `EXPO_PUBLIC_HAPPIER_SERVER_URL=${happierServerUrl}`);
   }
 
+  const buildDefaultProfile = readFirstNonEmpty('EXPO_PUBLIC_HAPPIER_BUILD_DEFAULT_PROFILE_JSON');
+  if (buildDefaultProfile) {
+    args.push('--build-arg', `EXPO_PUBLIC_HAPPIER_BUILD_DEFAULT_PROFILE_JSON=${buildDefaultProfile}`);
+  }
+
   return args;
 }

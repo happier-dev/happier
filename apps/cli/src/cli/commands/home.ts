@@ -19,7 +19,7 @@ import {
   parseRemotePersonalHomeApprovalInput,
 } from '@happier-dev/cli-common/systemTasks';
 import { isHappierRuntimePathWithinRoot } from '@happier-dev/cli-common/happierRuntime';
-import { DEFAULT_HAPPIER_CLOUD_SERVER_URL } from '@happier-dev/cli-common/happierCloud';
+import { resolveBuildDefaultProfile } from '@happier-dev/cli-common/happierCloud';
 import {
   cleanupPersonalHomeRelocationUpload,
   consumePersonalHomeRelocationUpload,
@@ -366,7 +366,7 @@ async function resolvePostCreateHomeLink(params: Readonly<{
  * built-in default service `happier setup` would use when none is selected.
  */
 function signInCommand(selectedEndpoint: string | undefined): string {
-  return `happier auth service use ${selectedEndpoint ?? DEFAULT_HAPPIER_CLOUD_SERVER_URL}`;
+  return `happier auth service use ${selectedEndpoint ?? resolveBuildDefaultProfile().accountService?.url ?? '<url>'}`;
 }
 
 /** One human sentence per typed reason a link or unlink could not start. */

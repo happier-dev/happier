@@ -1,4 +1,4 @@
-export { PersonalHomeBootstrapContent, PersonalHomeBootstrapGate, usePersonalHomeBootReadiness } from './PersonalHomeBootstrapGate';
+export { PersonalHomeBootstrapContent, PersonalHomeBootstrapGate, usePersonalHomeBootReadiness, usePersonalHomeBootstrapActive } from './PersonalHomeBootstrapGate';
 export type { PersonalHomeBootReadiness } from './PersonalHomeBootstrapGate';
 export { derivePersonalHomeBootstrapSnapshot } from './derivePersonalHomeBootstrapSnapshot';
 export { createPersonalHomeBootstrapFacts } from './personalHomeBootstrapFacts';

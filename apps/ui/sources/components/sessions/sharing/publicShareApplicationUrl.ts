@@ -1,4 +1,5 @@
 import { Platform } from 'react-native';
+import { resolveBuildDefaultProfile, resolveDefaultWebappUrl } from '@happier-dev/cli-common/happierCloud';
 
 import { sanitizeServerUrlForShareableLink } from '@/sync/domains/server/url/shareableServerUrl';
 
@@ -24,5 +25,5 @@ export function resolvePublicShareApplicationBaseUrl(): string {
         return typeof window !== 'undefined' && window.location?.origin ? window.location.origin : '';
     }
     const configuredWebAppUrl = (process.env.EXPO_PUBLIC_HAPPY_WEBAPP_URL || '').trim();
-    return configuredWebAppUrl || 'https://cloud.happier.dev';
+    return configuredWebAppUrl || resolveDefaultWebappUrl(resolveBuildDefaultProfile().home?.url ?? '');
 }

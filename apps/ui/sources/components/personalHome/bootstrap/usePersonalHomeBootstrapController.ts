@@ -2,7 +2,7 @@ import * as React from 'react';
 
 import { derivePersonalHomeBootstrapSnapshot } from './derivePersonalHomeBootstrapSnapshot';
 import { readThisComputerConnectionFromError } from './personalHomeComputerErrors';
-import { isPersonalHomeBootstrapRuntimeHost } from './personalHomeBootstrapHost';
+import { isPersonalHomeBootstrapRuntimeHost } from '@/utils/platform/personalHomeBootstrapHost';
 import type {
     PersonalHomeBootstrapOperation,
     PersonalHomeBootstrapSnapshot,

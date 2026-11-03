@@ -56,7 +56,8 @@ export const AccountServiceSelectionForm = React.memo(function AccountServiceSel
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const inputRef = React.useRef<React.ElementRef<typeof TextInput>>(null);
-    const [showUrlInput, setShowUrlInput] = React.useState(props.currentEndpoint == null);
+    const currentEndpoint = props.currentEndpoint?.url ? props.currentEndpoint : null;
+    const [showUrlInput, setShowUrlInput] = React.useState(currentEndpoint == null);
     const [url, setUrl] = React.useState('');
     const selection = useAccountServiceSelection(props.onSelect);
     const error = selection.error;
@@ -78,14 +79,14 @@ export const AccountServiceSelectionForm = React.memo(function AccountServiceSel
     return (
         <View testID="account-service-selection-form" style={styles.root}>
             <View style={styles.choices}>
-                {props.currentEndpoint ? (
+                {currentEndpoint ? (
                     <WizardChoiceRow
                         testID="account-service-current-choice"
                         selected={false}
                         icon="globe"
-                        title={endpointLabel(props.currentEndpoint)}
-                        subtitle={props.currentEndpoint.url}
-                        onPress={() => select(props.currentEndpoint!.url)}
+                        title={endpointLabel(currentEndpoint)}
+                        subtitle={currentEndpoint.url}
+                        onPress={() => select(currentEndpoint.url)}
                     />
                 ) : null}
                 <WizardChoiceRow

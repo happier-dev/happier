@@ -11,7 +11,7 @@ import { PersonalHomeSetupBackdrop, PersonalHomeSetupSurface } from '../setup/Pe
 import { derivePersonalHomeSetupProgress } from '../setup/personalHomeSetupProgress';
 import { PersonalHomeRecoveryStrip } from './PersonalHomeRecoveryStrip';
 import { usePersonalHomeSetupReveal } from './PersonalHomeSetupReveal';
-import { isPersonalHomeBootstrapRuntimeHost } from './personalHomeBootstrapHost';
+import { isPersonalHomeBootstrapRuntimeHost } from '@/utils/platform/personalHomeBootstrapHost';
 import type {
     PersonalHomeBootstrapOperation,
     PersonalHomeBootstrapSnapshot,
@@ -23,14 +23,17 @@ import {
 } from './usePersonalHomeBootstrapController';
 
 export type PersonalHomeBootReadiness = Readonly<{
+    /** False when this Home bypasses bootstrap, even in an eligible Tauri main window. */
+    active: boolean;
     kind: 'starting' | 'ready';
     /** True only after this Home's endpoint, identity, auth and signup state are verified. */
     homeReady: boolean;
 }>;
 
-const BOOT_STARTING: PersonalHomeBootReadiness = Object.freeze({ kind: 'starting', homeReady: false });
-const BOOT_READY: PersonalHomeBootReadiness = Object.freeze({ kind: 'ready', homeReady: true });
-const PersonalHomeBootReadinessContext = React.createContext<PersonalHomeBootReadiness>(BOOT_READY);
+const BOOT_BYPASSED: PersonalHomeBootReadiness = Object.freeze({ active: false, kind: 'ready', homeReady: true });
+const BOOT_STARTING: PersonalHomeBootReadiness = Object.freeze({ active: true, kind: 'starting', homeReady: false });
+const BOOT_READY: PersonalHomeBootReadiness = Object.freeze({ active: true, kind: 'ready', homeReady: true });
+const PersonalHomeBootReadinessContext = React.createContext<PersonalHomeBootReadiness>(BOOT_BYPASSED);
 
 /** The bootstrap owner's per-surface readiness, without a second daemon or Home probe. */
 export function usePersonalHomeBootReadiness(): PersonalHomeBootReadiness {
@@ -43,6 +46,11 @@ type PersonalHomeBootstrapPresentation = Readonly<{
     setupSurface?: PersonalHomeBootstrapGateProps['setupSurface'];
 }>;
 const PersonalHomeBootstrapPresentationContext = React.createContext<PersonalHomeBootstrapPresentation | null>(null);
+
+/** The mounted bootstrap owner, not Tauri host eligibility, decides who owns signed-out Home. */
+export function usePersonalHomeBootstrapActive(): boolean {
+    return React.useContext(PersonalHomeBootReadinessContext).active;
+}
 
 /** Home's content boundary; the shell and other routes retain their own viewport. */
 export function PersonalHomeBootstrapContent(props: Readonly<{ children: React.ReactNode }>): React.ReactElement {
@@ -140,6 +148,8 @@ export type PersonalHomeBootstrapGateProps = Readonly<{
     /** S18: sign in to an existing local Home whose credentials this app cannot verify. */
     onSignInToExistingRuntime?: () => void;
     onOpenDetails?: () => void;
+    /** Releases a one-shot creation request after the lifecycle owner finishes. */
+    onReady?: () => void;
     setupSurface?: (props: React.ComponentProps<typeof PersonalHomeSetupSurface>) => React.ReactNode;
 }>;
 
@@ -190,6 +200,10 @@ export function PersonalHomeBootstrapGate(props: PersonalHomeBootstrapGateProps)
         enabled,
     });
     const existingRuntimeNeedsSignIn = controller.snapshot.detail?.code === 'existing_runtime_credentials';
+    const onReady = props.onReady;
+    React.useEffect(() => {
+        if (enabled && controller.snapshot.phase === 'ready' && !controller.isOperating) onReady?.();
+    }, [enabled, controller.snapshot.phase, controller.isOperating, onReady]);
     const onSignInToExistingRuntime = props.onSignInToExistingRuntime;
     const handleUseExisting = React.useCallback(() => {
         if (existingRuntimeNeedsSignIn && onSignInToExistingRuntime) {
@@ -241,7 +255,7 @@ export function PersonalHomeBootstrapGate(props: PersonalHomeBootstrapGateProps)
         && controller.snapshot.homeReady
         && controller.snapshot.shouldGateShell === false;
     return (
-        <PersonalHomeBootReadinessContext.Provider value={!enabled || controller.snapshot.homeReady ? BOOT_READY : BOOT_STARTING}>
+        <PersonalHomeBootReadinessContext.Provider value={!enabled ? BOOT_BYPASSED : controller.snapshot.homeReady ? BOOT_READY : BOOT_STARTING}>
             <PersonalHomeBootstrapPresentationContext.Provider value={{ gating, setupProps, setupSurface: props.setupSurface }}>
                 <View style={{ flex: 1 }}>
                     {props.children}

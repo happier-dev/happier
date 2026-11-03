@@ -12,7 +12,7 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { useServerProfilesGeneration } from '@/hooks/server/useServerProfilesGeneration';
-import { canHostPersonalHomeHere } from '@/sync/domains/server/setup/setupSurfacePolicy';
+import { isPersonalHomeBootstrapRuntimeHost } from '@/utils/platform/personalHomeBootstrapHost';
 import {
     getServerProfileById,
     isServerProfilePersonalHomeBootstrapCompleted,
@@ -47,7 +47,7 @@ export const HomeWhereLine = React.memo(function HomeWhereLine(props: Readonly<{
     const profile = getServerProfileById(active.serverId);
     if (!profile) {
         // While this computer is still starting its Personal Home, the Home already has its name.
-        if (boot.kind !== 'starting' || !canHostPersonalHomeHere()) return null;
+        if (boot.kind !== 'starting' || !boot.active) return null;
         return (
             <View style={styles.line} testID="home-where-line">
                 <Text style={styles.text} numberOfLines={1}>
@@ -60,7 +60,7 @@ export const HomeWhereLine = React.memo(function HomeWhereLine(props: Readonly<{
     }
     const name = resolveHomeDisplayName(profile);
     if (!name) return null;
-    const hostedHere = canHostPersonalHomeHere() && isServerProfilePersonalHomeBootstrapCompleted(profile);
+    const hostedHere = isPersonalHomeBootstrapRuntimeHost() && isServerProfilePersonalHomeBootstrapCompleted(profile);
     const serverId = resolveServerProfileScopeId(profile);
     const facts = hostedHere && props.detail !== 'name'
         ? `${t('homesJourneys.livesOnThisComputer')} · ${t('homesJourneys.availableWhileAwake')}`

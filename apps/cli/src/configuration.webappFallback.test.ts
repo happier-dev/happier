@@ -9,6 +9,7 @@ describe('configuration env url fallback', () => {
   const envKeys = [
     'HAPPIER_HOME_DIR',
     'HAPPIER_SERVER_URL',
+    'HAPPIER_BUILD_DEFAULT_PROFILE_JSON',
     'HAPPIER_LOCAL_SERVER_URL',
     'HAPPIER_PUBLIC_SERVER_URL',
     'HAPPIER_WEBAPP_URL',
@@ -63,6 +64,9 @@ describe('configuration env url fallback', () => {
     tempDirs.push(homeDir);
     process.env.HAPPIER_HOME_DIR = homeDir;
     process.env.HAPPIER_SERVER_URL = 'https://api.happier.dev';
+    process.env.HAPPIER_BUILD_DEFAULT_PROFILE_JSON = JSON.stringify({
+      home: { url: 'https://api.happier.dev', webappUrl: 'https://cloud.happier.dev' },
+    });
     delete process.env.HAPPIER_WEBAPP_URL;
 
     const output = captureConsoleText();

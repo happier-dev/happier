@@ -1,9 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { SystemTaskJsonObject, SystemTaskJsonValue, SystemTaskSpec } from '@happier-dev/protocol';
+import type { SystemTaskJsonObject, SystemTaskJsonValue, SystemTaskSpec } from '@happier-dev/protocol/system/tasks/spec';
 import type { SystemTaskBridgeListenerSet } from '@/components/systemTasks/types';
 import { installPersonalHomeBootstrapNetworkBoundary } from '@/dev/testkit/harness/personalHomeBootstrapNetworkBoundary';
 
-import { flushHookEffects, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
+import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
+import { renderHook } from '@/dev/testkit/hooks/renderHook';
+import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { PersonalHomeBootstrapContent } from './PersonalHomeBootstrapGate';
 import type { PersonalHomeFacts } from './personalHomeBootstrapTypes';
 
@@ -270,6 +273,7 @@ const initialFacts: PersonalHomeFacts = {
 
 describe('usePersonalHomeBootstrapRuntime production composition', () => {
     beforeEach(async () => {
+        vi.stubEnv('EXPO_PUBLIC_HAPPIER_BUILD_DEFAULT_PROFILE_JSON', JSON.stringify({ personalHome: { value: 'auto' } }));
         harness.reset();
         network = await installPersonalHomeBootstrapNetworkBoundary({
             serverUrl: harness.canonicalServerUrl,
@@ -303,6 +307,43 @@ describe('usePersonalHomeBootstrapRuntime production composition', () => {
         for (const profile of profiles.listServerProfiles()) await profiles.removeServerProfile(profile.id);
         network.dispose();
         vi.restoreAllMocks();
+        vi.unstubAllEnvs();
+    });
+
+    it('offers without starting tasks, then runs the full bootstrap from the Add Home local action', async () => {
+        vi.stubEnv('EXPO_PUBLIC_HAPPIER_BUILD_DEFAULT_PROFILE_JSON', JSON.stringify({ personalHome: { value: 'offer' } }));
+        const { PersonalHomeBootstrapRuntimeMount } = await import('./usePersonalHomeBootstrapRuntime');
+        const { RelayHostLocalChecklistStep } = await import('@/components/onboarding/checklists/relayHostLocal/RelayHostLocalChecklistStep');
+        const action: { primary: Readonly<{ disabled: boolean; onPress: () => void | Promise<void> }> | null } = { primary: null };
+        await renderScreen(
+            <PersonalHomeBootstrapRuntimeMount>
+                <PersonalHomeBootstrapContent>
+                    <RelayHostLocalChecklistStep onWizardPrimaryChange={(value) => { action.primary = value; }} />
+                </PersonalHomeBootstrapContent>
+            </PersonalHomeBootstrapRuntimeMount>,
+        );
+        await flushHookEffects({ cycles: 2, turns: 2 });
+        expect(harness.taskSpecs.size).toBe(0);
+        expect(action.primary).toMatchObject({ disabled: false });
+        await action.primary!.onPress();
+        await flushHookEffects({ cycles: 10, turns: 6 });
+        expect(harness.runtime.purpose).toEqual({ kind: 'personal-home', canonicalServerUrl: harness.canonicalServerUrl });
+        expect(harness.runtime.signupEnabled).toBe(false);
+        expect(harness.getCredentials()).toEqual({ token: harness.token });
+        const profiles = await import('@/sync/domains/server/serverProfiles');
+        expect(profiles.listServerProfiles()).toContainEqual(expect.objectContaining({ personalHomeBootstrapCompleted: true }));
+    });
+
+    it('off leaves the existing runtime untouched and constructs no bootstrap tasks', async () => {
+        vi.stubEnv('EXPO_PUBLIC_HAPPIER_BUILD_DEFAULT_PROFILE_JSON', JSON.stringify({ personalHome: { value: 'off' } }));
+        harness.runtime.installed = true;
+        harness.runtime.healthy = true;
+        const { PersonalHomeBootstrapRuntimeMount } = await import('./usePersonalHomeBootstrapRuntime');
+        await renderScreen(<PersonalHomeBootstrapRuntimeMount><div data-testid="normal-shell" /></PersonalHomeBootstrapRuntimeMount>);
+        await flushHookEffects({ cycles: 2, turns: 2 });
+        expect(harness.taskSpecs.size).toBe(0);
+        expect(harness.runtime.installed).toBe(true);
+        expect(harness.runtime.healthy).toBe(true);
     });
 
     it('runs the canonical bootstrap through system tasks, persists token-only credentials, adopts only after verification, and preserves focus', async () => {
@@ -440,7 +481,7 @@ describe('usePersonalHomeBootstrapRuntime production composition', () => {
 
         await screen.pressByTestIdAsync('personal-home-use-existing');
         await flushHookEffects({ cycles: 4, turns: 4 });
-        expect(harness.routerPush).toHaveBeenCalledWith(`/server?url=${encodeURIComponent(harness.canonicalServerUrl)}&auto=1`);
+        expect(harness.routerPush).toHaveBeenCalledWith(`/?step=home&server=${encodeURIComponent(harness.canonicalServerUrl)}`);
         expect(harness.mutations()).toEqual([]);
         expect(harness.taskCalls.some(call => call.kind === 'relay.runtime.status.v1')).toBe(true);
         expect(harness.runtime.installed).toBe(false);
@@ -553,7 +594,7 @@ describe('usePersonalHomeBootstrapRuntime production composition', () => {
         await flushHookEffects({ cycles: 8, turns: 6 });
 
         // The decision is routed to the established generic login path for this local Home.
-        expect(harness.routerPush).toHaveBeenCalledWith(`/server?url=${encodeURIComponent(harness.canonicalServerUrl)}&auto=1`);
+        expect(harness.routerPush).toHaveBeenCalledWith(`/?step=home&server=${encodeURIComponent(harness.canonicalServerUrl)}`);
         // The canonical caller preflighted through the read-only status task and mutated nothing.
         expect(harness.mutations()).toEqual([]);
         expect(harness.taskCalls.some(call => call.kind === 'relay.runtime.status.v1')).toBe(true);
@@ -580,7 +621,7 @@ describe('usePersonalHomeBootstrapRuntime production composition', () => {
         await screen.pressByTestIdAsync('personal-home-use-existing');
         await flushHookEffects({ cycles: 8, turns: 6 });
 
-        expect(harness.routerPush).toHaveBeenCalledWith(`/server?url=${encodeURIComponent(harness.canonicalServerUrl)}&auto=1`);
+        expect(harness.routerPush).toHaveBeenCalledWith(`/?step=home&server=${encodeURIComponent(harness.canonicalServerUrl)}`);
         expect(harness.mutations()).toEqual([]);
         expect(harness.taskCalls.some(call => call.kind === 'relay.runtime.status.v1')).toBe(true);
         expect(harness.runtime.purpose).toEqual({ kind: 'generic' });
@@ -613,7 +654,7 @@ describe('usePersonalHomeBootstrapRuntime production composition', () => {
         await flushHookEffects({ cycles: 4, turns: 4 });
 
         expect(harness.routerPush).toHaveBeenCalledTimes(1);
-        expect(harness.routerPush).toHaveBeenCalledWith('/server');
+        expect(harness.routerPush).toHaveBeenCalledWith('/?step=home');
         expect(harness.mutations()).toEqual([]);
         expect(harness.getCredentials()).toBeNull();
         expect(harness.runtime.purpose).toEqual({ kind: 'generic' });
@@ -781,7 +822,8 @@ describe('usePersonalHomeBootstrapRuntime production composition', () => {
         expect(harness.taskSpecs.size).toBe(0);
     });
 
-    it('releases a durable returning Personal Home without misclassifying an unverified Home as computer recovery', async () => {
+    it('off retains durable returning Home recovery without misclassifying an unverified Home as computer recovery', async () => {
+        vi.stubEnv('EXPO_PUBLIC_HAPPIER_BUILD_DEFAULT_PROFILE_JSON', JSON.stringify({ personalHome: { value: 'off' } }));
         const profiles = await import('@/sync/domains/server/serverProfiles');
         await profiles.adoptPersonalHomeProfileAndComplete({
             source: 'desktop-personal-home',

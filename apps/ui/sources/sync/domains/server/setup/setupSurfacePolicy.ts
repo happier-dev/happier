@@ -1,6 +1,8 @@
 import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBuildPolicy';
 import { readConfiguredServerUrlEnv } from '../readConfiguredServerUrlEnv';
 import { desktopHostKind } from '@/utils/platform/desktopHost';
+import { isPersonalHomeBootstrapRuntimeHost } from '@/utils/platform/personalHomeBootstrapHost';
+import { resolveBuildDefaultProfile } from '@happier-dev/cli-common/happierCloud';
 
 export type SetupSurfacePolicy = Readonly<{
     relay: Readonly<{
@@ -60,10 +62,25 @@ export function resolveSetupSurfacePolicy(): SetupSurfacePolicy {
  * where the build lets the person choose a Home and host it locally. Every "Create a Personal Home"
  * entry (welcome, the Add a Home sheet) asks this one question.
  */
+export type PersonalHomeAdmission = 'auto' | 'offer' | 'off';
+
+/** One admission owner for automatic bootstrap and every new local Personal Home entry. */
+export function resolvePersonalHomeAdmission(
+    policy: SetupSurfacePolicy = resolveSetupSurfacePolicy(),
+    input: Readonly<{
+        host?: boolean;
+        /** Effective policy value; the organization-policy projection can supply this here. */
+        personalHome?: PersonalHomeAdmission;
+    }> = {},
+): PersonalHomeAdmission {
+    if (!(input.host ?? isPersonalHomeBootstrapRuntimeHost())
+        || !policy.relay.allowRelaySelection
+        || !policy.relay.allowLocalRelayHost) return 'off';
+    return input.personalHome ?? resolveBuildDefaultProfile().personalHome?.value ?? 'offer';
+}
+
 export function canHostPersonalHomeHere(policy: SetupSurfacePolicy = resolveSetupSurfacePolicy()): boolean {
-    return desktopHostKind() === 'tauri'
-        && policy.relay.allowRelaySelection
-        && policy.relay.allowLocalRelayHost;
+    return resolvePersonalHomeAdmission(policy) !== 'off';
 }
 
 /** Server Home setup also allows the desktop SSH relay-host task. */

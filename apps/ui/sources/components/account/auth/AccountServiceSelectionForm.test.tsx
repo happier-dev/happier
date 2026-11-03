@@ -130,6 +130,16 @@ describe('AccountServiceSelectionForm', () => {
         expect(screen.findByTestId('account-service-url-error')?.props.children).toBe('welcome.signInServiceUnsupportedBody');
     });
 
+    it('opens URL entry without discovery when the source build has no default service', async () => {
+        const { AccountServiceSelectionForm } = await import('./AccountServiceSelectionForm');
+        const screen = await renderScreen(<AccountServiceSelectionForm
+            currentEndpoint={{ url: '', source: 'default' }} onBack={vi.fn()} onSelect={vi.fn()}
+        />);
+        expect(screen.findByTestId('account-service-url-input')).toBeTruthy();
+        expect(screen.findByTestId('account-service-current-choice')).toBeNull();
+        expect(network.request).not.toHaveBeenCalled();
+    });
+
     it('selects the current service from its own choice without opening the address form', async () => {
         const selection = createDeferred<{ kind: 'selected' }>();
         const onSelect = vi.fn(async () => await selection.promise);

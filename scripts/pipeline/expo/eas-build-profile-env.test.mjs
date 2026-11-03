@@ -17,7 +17,10 @@ test('resolveEasBuildProfileEnv: internaldev includes profile env and inherited 
   const env = resolveEasBuildProfileEnv({ easJsonPath, profileId: 'internaldev' });
 
   // From base profile (inherited via extends)
-  assert.equal(env.EXPO_PUBLIC_HAPPY_SERVER_URL, 'https://api.happier.dev');
+  const profile = JSON.parse(env.EXPO_PUBLIC_HAPPIER_BUILD_DEFAULT_PROFILE_JSON);
+  assert.equal(profile.accountService.url, 'https://api.happier.dev');
+  assert.equal(profile.home.url, 'https://api.happier.dev');
+  assert.equal(profile.personalHome.value, 'offer');
   assert.equal(env.HAPPIER_UI_VENDOR_WEB_ASSETS, '0');
 
   // From internaldev profile

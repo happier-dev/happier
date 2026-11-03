@@ -19,6 +19,7 @@ import {
   verifyStagedPackageDistExports,
 } from './packageDistBuildPhases.mjs';
 import { verifyPackageExportTargets } from './verifyExports.mjs';
+import { bakeBuildDefaultProfile } from './bakeBuildDefaultProfile.mjs';
 
 export {
   cleanupPackageDistBuildArtifacts,
@@ -225,6 +226,8 @@ async function buildPackageDistUnderLock(options = {}, scope = resolvePackageDis
         },
       });
       stageRoot = stagedBuild.stageRoot;
+
+      await bakeBuildDefaultProfile({ stageDistDir: stagedBuild.stageDistDir, env: commandEnv });
 
       verifyStagedPackageDistExports({
         stageRoot: stagedBuild.stageRoot,

@@ -468,21 +468,11 @@ test('build-tauri workflow sets Happier Cloud as explicit default server for des
   const buildJobEnv = parsed?.jobs?.build?.env;
   assert.ok(buildJobEnv && typeof buildJobEnv === 'object', 'build-tauri workflow should define jobs.build.env');
 
-  assert.equal(
-    buildJobEnv.EXPO_PUBLIC_HAPPIER_SERVER_URL,
-    'https://api.happier.dev',
-    'desktop release builds should explicitly set EXPO_PUBLIC_HAPPIER_SERVER_URL to Happier Cloud',
-  );
-  assert.equal(
-    buildJobEnv.EXPO_PUBLIC_HAPPY_SERVER_URL,
-    'https://api.happier.dev',
-    'desktop release builds should keep EXPO_PUBLIC_HAPPY_SERVER_URL aligned with the canonical server URL',
-  );
-  assert.equal(
-    buildJobEnv.EXPO_PUBLIC_SERVER_URL,
-    'https://api.happier.dev',
-    'desktop release builds should keep EXPO_PUBLIC_SERVER_URL aligned with the canonical server URL',
-  );
+  const profile = JSON.parse(buildJobEnv.EXPO_PUBLIC_HAPPIER_BUILD_DEFAULT_PROFILE_JSON);
+  assert.equal(profile.accountService.url, 'https://api.happier.dev');
+  assert.equal(profile.home.url, 'https://api.happier.dev');
+  assert.equal(profile.home.webappUrl, 'https://cloud.happier.dev');
+  assert.equal(profile.personalHome.value, 'offer');
 });
 
 test('candidate code is isolated from Tauri and Apple private signing authority', async () => {

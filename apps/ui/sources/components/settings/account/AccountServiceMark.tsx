@@ -1,14 +1,15 @@
 import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
+import { isHappierCloudServerUrl } from '@happier-dev/cli-common/happierCloud';
 
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { HeaderLogo } from '@/components/ui/navigation/HeaderLogo';
 import { normalizeAccountDirectoryEndpoint } from '@/sync/domains/accountDirectory/accountDirectoryEndpoint';
-import { DEFAULT_ACCOUNT_SERVICE_ENDPOINT } from '@/sync/domains/server/serverProfiles';
 
 export function isDefaultAccountServiceUrl(url: string): boolean {
     const normalized = normalizeAccountDirectoryEndpoint(url);
-    return normalized !== null && normalized === normalizeAccountDirectoryEndpoint(DEFAULT_ACCOUNT_SERVICE_ENDPOINT.url);
+    // Identity classification, not a default: custom builds must not brand their service as Cloud.
+    return normalized !== null && isHappierCloudServerUrl(normalized);
 }
 
 /**

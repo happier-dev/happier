@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { useRouter, useSegments } from 'expo-router';
 import { t } from '@/text';
+import { openAddHome } from '@/components/homes/add/openAddHome';
 
 import { getCurrentAuth } from '@/auth/context/currentAuth';
 import { isPublicRouteForUnauthenticated } from '@/auth/routing/authRouting';
@@ -60,7 +61,9 @@ import type {
 } from './personalHomeBootstrapTypes';
 import { createThisComputerConnectionError } from './personalHomeComputerErrors';
 import { PersonalHomeBootstrapGate } from './PersonalHomeBootstrapGate';
-import { isPersonalHomeBootstrapRuntimeHost } from './personalHomeBootstrapHost';
+import { isPersonalHomeBootstrapRuntimeHost } from '@/utils/platform/personalHomeBootstrapHost';
+import { resolvePersonalHomeAdmission } from '@/sync/domains/server/setup/setupSurfacePolicy';
+import { PersonalHomeBootstrapAdmission } from './PersonalHomeBootstrapAdmission';
 import { awaitPersonalHomeBootstrapQaMutationPause } from './personalHomeBootstrapQaMutationPause';
 import {
     runPersonalHomeBootstrapFromSystemTasks,
@@ -769,37 +772,50 @@ function completedProfileInitialFacts(profile: ServerProfile): PersonalHomeFacts
 function PersonalHomeBootstrapRuntimeInner(props: Readonly<{
     children: React.ReactNode;
     initialFacts?: PersonalHomeFacts;
+    requested?: boolean;
+    onSettled: () => void;
 }>): React.ReactElement {
     const runtime = usePersonalHomeBootstrapRuntime();
+    const readFacts = React.useCallback(async () => {
+        const facts = await runtime.readFacts();
+        return props.requested
+            ? { ...facts, explicitlySelectedOtherHome: false, signedInOtherHome: null }
+            : facts;
+    }, [runtime.readFacts, props.requested]);
     const router = useRouter();
     const useExistingRuntime = React.useCallback<PersonalHomeBootstrapOperationRunner>(async (facts) => {
         try {
             await runtime.useExistingRuntime(facts);
         } catch (error) {
             if (shouldRouteExistingRuntimeToGenericHome(error, facts)) {
-                router.push(`/server?url=${encodeURIComponent(runtime.localServerUrl)}&auto=1`);
+                props.onSettled();
+                openAddHome(router, { address: runtime.localServerUrl, auto: true });
                 return;
             }
             throw error;
         }
-    }, [router, runtime.localServerUrl, runtime.useExistingRuntime]);
+    }, [router, runtime.localServerUrl, runtime.useExistingRuntime, props.onSettled]);
     const useAnotherHome = React.useCallback(() => {
-        router.push('/server');
-    }, [router]);
+        props.onSettled();
+        openAddHome(router);
+    }, [router, props.onSettled]);
     const signInToExistingRuntime = React.useCallback(() => {
-        router.push(`/server?url=${encodeURIComponent(runtime.localServerUrl)}&auto=1`);
-    }, [router, runtime.localServerUrl]);
+        props.onSettled();
+        openAddHome(router, { address: runtime.localServerUrl, auto: true });
+    }, [router, runtime.localServerUrl, props.onSettled]);
     const keepSignedInHome = React.useCallback(async (serverId: string) => {
         // A device-scoped selection is explicit, which is the durable "keep this Home" answer.
         await setActiveServerId(serverId, { scope: 'device' });
-    }, []);
+        props.onSettled();
+    }, [props.onSettled]);
     return (
         <PersonalHomeBootstrapGate
             bypass={false}
-            readFacts={runtime.readFacts}
+            readFacts={readFacts}
             activeTask={runtime.activeTask}
             operations={runtime.operations}
             initialFacts={props.initialFacts}
+            onReady={props.requested ? props.onSettled : undefined}
             useExistingRuntimeOperation={useExistingRuntime}
             onUseAnotherHome={useAnotherHome}
             onKeepSignedInHome={keepSignedInHome}
@@ -810,13 +826,13 @@ function PersonalHomeBootstrapRuntimeInner(props: Readonly<{
     );
 }
 
-function EligibleDesktopPersonalHomeBootstrapRuntime(props: Readonly<{ children: React.ReactNode }>): React.ReactElement {
+function EligibleDesktopPersonalHomeBootstrapRuntime(props: Readonly<{ children: React.ReactNode; requested: boolean; onSettled: () => void }>): React.ReactElement {
     const segments = useSegments();
     const activeSelection = useActiveServerSnapshot();
     useServerProfilesGeneration();
     const activeProfile = getServerProfileById(activeSelection.serverId);
     if (shouldBypassPersonalHomeBootstrapForSegments(segments)
-        || isExplicitExistingHomeSelection(activeProfile, activeSelection.isSelectionExplicit)) {
+        || (!props.requested && isExplicitExistingHomeSelection(activeProfile, activeSelection.isSelectionExplicit))) {
         return <>{props.children}</>;
     }
 
@@ -824,6 +840,8 @@ function EligibleDesktopPersonalHomeBootstrapRuntime(props: Readonly<{ children:
     return (
         <PersonalHomeBootstrapRuntimeInner
             initialFacts={completedProfile ? completedProfileInitialFacts(completedProfile) : undefined}
+            requested={props.requested}
+            onSettled={props.onSettled}
         >
             {props.children}
         </PersonalHomeBootstrapRuntimeInner>
@@ -831,16 +849,20 @@ function EligibleDesktopPersonalHomeBootstrapRuntime(props: Readonly<{ children:
 }
 
 export function PersonalHomeBootstrapRuntimeMount(props: Readonly<{ children: React.ReactNode }>): React.ReactElement {
+    const router = useRouter();
+    useServerProfilesGeneration();
+    const host = isPersonalHomeBootstrapRuntimeHost();
+    const recoverExistingHome = host && findPersonalHomeBootstrapCompletedProfile(listServerProfiles()) != null;
+    const openBootstrap = React.useCallback(() => router.push('/'), [router]);
     // This guard must stay outside the runtime component. Unsupported desktop hosts,
     // off-Desktop runtimes, and overlay windows render without constructing relay, daemon,
     // TokenStorage, network, or bootstrap-controller hooks. Tauri is currently the only host
     // with the native system-task commands required by Personal Home bootstrap.
     // A durable profile instead seeds synchronous ready facts into that same controller: children
     // render on the first pass while normal health/auth/daemon recovery continues in the shell.
-    if (!isPersonalHomeBootstrapRuntimeHost()) return <>{props.children}</>;
     return (
-        <EligibleDesktopPersonalHomeBootstrapRuntime>
+        <PersonalHomeBootstrapAdmission admission={resolvePersonalHomeAdmission(undefined, { host })} recoverExistingHome={recoverExistingHome} runtime={EligibleDesktopPersonalHomeBootstrapRuntime} onRequest={openBootstrap}>
             {props.children}
-        </EligibleDesktopPersonalHomeBootstrapRuntime>
+        </PersonalHomeBootstrapAdmission>
     );
 }

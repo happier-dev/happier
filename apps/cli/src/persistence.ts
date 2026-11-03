@@ -13,7 +13,7 @@ import { readFile, writeFile, mkdir, open, unlink, rename, stat, chmod, readdir 
 import { chmodSync, existsSync, mkdirSync, readFileSync, unlinkSync } from 'node:fs';
 import { constants } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { DEFAULT_HAPPIER_CLOUD_SERVER_URL } from '@happier-dev/cli-common/happierCloud';
+import { resolveBuildDefaultProfile, resolveDefaultWebappUrl } from '@happier-dev/cli-common/happierCloud';
 import { configuration } from './configuration';
 import { resolveCliApiToken } from './auth/cliApiToken';
 import { resolveDaemonStateCandidatePaths } from './daemon/ownership/daemonOwnershipPaths';
@@ -22,7 +22,7 @@ import {
   DaemonStartupSourceSchema,
   type DaemonStartupSource,
 } from './daemon/ownership/daemonOwnershipMetadata';
-import { isServerIdFilesystemSafe, sanitizeServerIdForFilesystem } from './server/serverId';
+import { deriveServerIdFromUrl, isServerIdFilesystemSafe, sanitizeServerIdForFilesystem } from './server/serverId';
 import { isLocalishServerUrl } from './server/serverUrlClassification';
 import type { PublicReleaseRingLabel } from '@happier-dev/release-runtime/releaseRings';
 import { isPidPresent, isPidProvablyAbsent, parseDaemonLockSnapshot, type DaemonLockRecord, type DaemonLockSnapshot } from '@happier-dev/cli-common/process';
@@ -199,21 +199,23 @@ export type MachineReplacementCandidate = Readonly<{
   createdAt: number
 }>
 
+const defaultHome = resolveBuildDefaultProfile().home;
+const defaultHomeId = defaultHome ? deriveServerIdFromUrl(defaultHome.url) : '';
 const defaultSettings: Settings = {
   schemaVersion: SUPPORTED_SCHEMA_VERSION,
   onboardingCompleted: false,
-  activeServerId: 'cloud',
-  servers: {
-    cloud: {
-      id: 'cloud',
-      name: 'Happier Cloud',
-      serverUrl: DEFAULT_HAPPIER_CLOUD_SERVER_URL,
-      webappUrl: 'https://cloud.happier.dev',
+  activeServerId: defaultHomeId,
+  servers: defaultHome ? {
+    [defaultHomeId]: {
+      id: defaultHomeId,
+      name: new URL(defaultHome.url).hostname,
+      serverUrl: defaultHome.url,
+      webappUrl: resolveDefaultWebappUrl(defaultHome.url),
       createdAt: 0,
       updatedAt: 0,
       lastUsedAt: 0,
     },
-  },
+  } : {},
   machineIdByServerId: {},
   machineIdByServerIdByAccountId: {},
   lastTokenSubByServerId: {},
@@ -258,7 +260,8 @@ function migrateSettings(raw: any, fromVersion: number): any {
       [cloudId]: {
         id: cloudId,
         name: 'Happier Cloud',
-        serverUrl: DEFAULT_HAPPIER_CLOUD_SERVER_URL,
+        // Historical v4 credentials belonged to this endpoint, independent of this build's defaults.
+        serverUrl: 'https://api.happier.dev',
         webappUrl: DEFAULT_WEBAPP_URL,
         createdAt: now,
         updatedAt: now,

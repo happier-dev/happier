@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { createServerUrlComparableKey } from '@happier-dev/protocol/server/urls/serverUrlComparableKey';
-import { DEFAULT_HAPPIER_CLOUD_SERVER_URL } from '@happier-dev/cli-common/happierCloud';
+import { resolveBuildDefaultProfile, resolveDefaultWebappUrl } from '@happier-dev/cli-common/happierCloud';
 
 import { deriveServerIdFromUrl, sanitizeServerIdForFilesystem } from '@/server/serverId';
 import { isLocalishServerUrl } from '@/server/serverUrlClassification';
@@ -94,7 +94,7 @@ export function resolveServerSelection(params: Readonly<{
   persisted: PersistedServerSettings | null;
   serversDir: string;
 }>): Readonly<{ activeServerId: string; serverUrl: string; apiServerUrl: string; webappUrl: string }> {
-  const DEFAULT_WEBAPP_URL = 'https://cloud.happier.dev';
+  const defaultHome = resolveBuildDefaultProfile().home;
   const resolveActiveServerId = (fallbackId: string): string =>
     sanitizeServerIdForFilesystem(params.envActiveServerId ?? fallbackId, 'cloud');
 
@@ -202,14 +202,8 @@ export function resolveServerSelection(params: Readonly<{
     if (!webappUrl) {
       if (persistedMatch?.webappUrl) {
         webappUrl = persistedMatch.webappUrl;
-      } else if (envCanonicalServerUrl === DEFAULT_HAPPIER_CLOUD_SERVER_URL) {
-        webappUrl = DEFAULT_WEBAPP_URL;
       } else {
-        try {
-          webappUrl = new URL(envCanonicalServerUrl).origin;
-        } catch {
-          webappUrl = DEFAULT_WEBAPP_URL;
-        }
+        webappUrl = resolveDefaultWebappUrl(envCanonicalServerUrl);
       }
     }
     const activeServerId = sanitizeServerIdForFilesystem(
@@ -234,9 +228,9 @@ export function resolveServerSelection(params: Readonly<{
   }
 
   return {
-    activeServerId: resolveActiveServerId('cloud'),
-    serverUrl: DEFAULT_HAPPIER_CLOUD_SERVER_URL,
-    apiServerUrl: DEFAULT_HAPPIER_CLOUD_SERVER_URL,
-    webappUrl: DEFAULT_WEBAPP_URL,
+    activeServerId: resolveActiveServerId(defaultHome ? deriveServerIdFromUrl(defaultHome.url) : ''),
+    serverUrl: defaultHome?.url ?? '',
+    apiServerUrl: defaultHome?.url ?? '',
+    webappUrl: normalizeUrl(params.envWebappUrl) ?? resolveDefaultWebappUrl(defaultHome?.url ?? ''),
   };
 }

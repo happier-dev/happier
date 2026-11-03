@@ -67,7 +67,7 @@ export function resolveAccountServiceEntryProbeTarget(input: Readonly<{
 }>): Readonly<{ effective: EffectiveSignInService; probe: AccountServiceEntryProbeTarget | null }> {
     const effective = resolveEffectiveSignInService({
         targetContext: input.targetContext,
-        deviceSelection: input.targetContext.kind === 'none'
+        deviceSelection: input.targetContext.kind === 'none' && input.deviceSelection.url
             ? {
                 endpoint: input.deviceSelection.url,
                 ...(input.deviceSelection.serverIdentityId

@@ -41,7 +41,6 @@ import { AUTHENTICATED_ACCOUNT_ENTRY_ROUTE } from '@/components/navigation/accou
 import type { AccountContinuationIntent } from '@happier-dev/cli-common/accountService';
 import type { WelcomeAuthenticationMethod } from '../preAuth/composeWelcomeEntryModel';
 
-import type { RelayHostLocalChecklistRuntimeStatus } from '../checklists/relayHostLocal/types';
 import { RelayHostLocalChecklistStep } from '../checklists/relayHostLocal/RelayHostLocalChecklistStep';
 import { RemoteSshChecklistStep } from '../checklists/remoteSsh/RemoteSshChecklistStep';
 import type { RemoteSshChecklistMode } from '../checklists/remoteSsh/types';
@@ -116,7 +115,6 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
     relaySwitchDecision: RelaySwitchDecision;
     onRelaySwitchDecisionChange: (next: RelaySwitchDecision) => void;
 
-    onLocalRelayRuntimeStatusChange: (next: RelayHostLocalChecklistRuntimeStatus | null) => void;
 
     onWizardPrimaryChange: (next: WizardPrimaryOverride | null) => void;
     onWizardBackChange: (next: WizardBackOverride | null) => void;
@@ -145,7 +143,7 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
     onOpenRelaySelectionFromWelcome: () => void;
     onOpenRelaySelectionFromAuth: () => void;
     onOpenSetup: () => void;
-    onCreatePersonalHome: () => void;
+    onCreatePersonalHome?: () => void;
 
     onOpenRestore: () => void;
     onOpenLostAccess: () => void;
@@ -156,7 +154,6 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
     restoreInitialView?: 'qr';
     onLostAccessBackToAuth: () => void;
 
-    onHostRelayLocalAdvance: () => void;
     onRelayAccessAdvance: () => void;
     onHostRelayRemoteAdvance: () => void;
     onHostRelayRemoteCancel: () => void;
@@ -296,9 +293,7 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
         return (
             <RelayHostLocalChecklistStep
                 testID={`${params.testIDPrefix}-relay-host-local`}
-                onStatusChange={params.onLocalRelayRuntimeStatusChange}
                 onWizardPrimaryChange={params.onWizardPrimaryChange}
-                onRequestAdvance={params.onHostRelayLocalAdvance}
             />
         );
     }

@@ -276,7 +276,9 @@ database locally; selecting the adapter does not turn it into an API/worker spli
 
 ## Happier Cloud as the default Account Service (0.3)
 
-Happier Cloud (`https://api.happier.dev`) is the client's default Account Service, but clients
+Official 0.3 builds select Happier Cloud (`https://api.happier.dev`) as the default Account Service
+through their [build profile](feature-gating.md#first-run-defaults-and-setup-admission-03-development).
+Source builds without a profile have no hosted Account Service or Home default. Clients
 treat it exactly like a self-hosted one: every method, creation path and reset is read from what it
 advertises. The operator-facing contract is the published
 [Running your own Account Service](../apps/docs/content/docs/self-hosting/auth.mdx) section; this

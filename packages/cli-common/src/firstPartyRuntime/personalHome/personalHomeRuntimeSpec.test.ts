@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   DEFAULT_PERSONAL_HOME_PORT,
@@ -12,11 +12,33 @@ import { resolveHomeIrohEndpointKeyPath, resolvePersonalHomeRuntimeLayout } from
 import { parseRelayRuntimeTaskParams } from '../../systemTasks/kinds/relayRuntimeKinds.js';
 
 describe('Personal Home runtime purpose', () => {
+  afterEach(() => vi.unstubAllEnvs());
+  it('does not require a hosted Account service without a build profile', () => {
+    vi.stubEnv('HAPPIER_BUILD_DEFAULT_PROFILE_JSON', '');
+    vi.stubEnv('EXPO_PUBLIC_HAPPIER_BUILD_DEFAULT_PROFILE_JSON', '');
+    const spec = createPersonalHomeRuntimeSpec({ canonicalServerUrl: 'http://127.0.0.1:43123' });
+    expect(renderPersonalHomeRuntimeEnv({ spec, port: 43123 })).not.toHaveProperty('HAPPIER_AUTH_SIGN_IN_SERVICE_URL');
+  });
+  it('preserves an existing self sign-in service when a later build supplies an Account service', () => {
+    vi.stubEnv('HAPPIER_BUILD_DEFAULT_PROFILE_JSON', JSON.stringify({ accountService: { url: 'https://accounts.example.test' } }));
+    const spec = createPersonalHomeRuntimeSpec({ canonicalServerUrl: 'http://127.0.0.1:43123' });
+    const env = renderPersonalHomeRuntimeEnv({ spec, port: 43123, baseEnv: { HAPPIER_AUTH_SIGN_IN_SERVICE_MODE: 'self' } });
+    expect(env.HAPPIER_AUTH_SIGN_IN_SERVICE_MODE).toBe('self');
+    expect(env).not.toHaveProperty('HAPPIER_AUTH_SIGN_IN_SERVICE_URL');
+    expect(renderPersonalHomeRuntimeEnv({ spec, port: 43123,
+      baseEnv: { HAPPIER_AUTH_SIGN_IN_SERVICE_MODE: 'self' },
+      overrides: { HAPPIER_AUTH_SIGN_IN_SERVICE_URL: 'https://chosen-accounts.example.test' },
+    })).toMatchObject({
+      HAPPIER_AUTH_SIGN_IN_SERVICE_MODE: 'external',
+      HAPPIER_AUTH_SIGN_IN_SERVICE_URL: 'https://chosen-accounts.example.test',
+    });
+  });
   it('owns the default managed-runtime port and Team name', () => {
     expect(DEFAULT_PERSONAL_HOME_PORT).toBe(3005);
     expect(DEFAULT_PERSONAL_HOME_TEAM_NAME).toBe('Personal Home');
   });
   it('renders the fixed loopback/plaintext bootstrap environment', () => {
+    vi.stubEnv('HAPPIER_BUILD_DEFAULT_PROFILE_JSON', JSON.stringify({ accountService: { url: 'https://accounts.example.test' } }));
     const spec = createPersonalHomeRuntimeSpec({
       canonicalServerUrl: 'http://127.0.0.1:43123',
     });
@@ -38,7 +60,7 @@ describe('Personal Home runtime purpose', () => {
       HAPPIER_FEATURE_TEAMS__ENABLED: '1',
       AUTH_ANONYMOUS_SIGNUP_ENABLED: '1',
       HAPPIER_AUTH_SIGN_IN_SERVICE_MODE: 'external',
-      HAPPIER_AUTH_SIGN_IN_SERVICE_URL: 'https://api.happier.dev',
+      HAPPIER_AUTH_SIGN_IN_SERVICE_URL: 'https://accounts.example.test',
     });
   });
 

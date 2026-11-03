@@ -18,6 +18,12 @@ This matters for enterprise and embedded deployments where you may want to:
 - allow SSH bootstrap but disallow persisting remote-host profiles,
 - disallow syncing secret material (passwords/private keys) even when remote hosts are enabled.
 
+## First-run defaults (0.3 development)
+
+Custom source builds do not include hosted Happier Cloud endpoints by default. A self-hosted web deployment keeps its same-origin Home fallback; native clients and the CLI ask for a service or Home when none is configured. Existing saved selections are retained.
+
+Builds can supply independent Account-service, Home, and Personal Home defaults using the [first-run build profile](/development/app-env#first-run-build-profile-03-development). Official builds select the Cloud Account service and Home, and offer the full local Personal Home setup when the person chooses it. These defaults do not replace the setup feature gates below.
+
 ## Feature gates vs capabilities
 
 `/v1/features` contains:

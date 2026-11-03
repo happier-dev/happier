@@ -46,7 +46,7 @@ type CanonicalCloudRelayProfile = Readonly<{ serverId: string | null; serverUrl:
 
 export function resolveCanonicalCloudRelayProfile(): CanonicalCloudRelayProfile | null {
     const setupPolicy = resolveSetupSurfacePolicy();
-    if (!setupPolicy.relay.allowHappierCloud) return null;
+    if (!setupPolicy.relay.allowHappierCloud || !HAPPIER_CLOUD_SERVER_URL) return null;
     const serverUrl = normalizeServerUrl(HAPPIER_CLOUD_SERVER_URL) ?? HAPPIER_CLOUD_SERVER_URL;
     const existing = listServerProfiles().find((profile) => {
         const profileUrl = profile?.serverUrl ? normalizeServerUrl(profile.serverUrl) : '';

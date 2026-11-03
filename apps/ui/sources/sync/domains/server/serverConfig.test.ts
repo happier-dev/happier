@@ -103,24 +103,33 @@ describe('getServerUrl', () => {
         expect(getServerUrl()).toBe('');
     });
 
-    it('defaults to Happier Cloud on native when no server is configured', async () => {
+    it('leaves native source builds without a default Home', async () => {
         delete process.env.EXPO_PUBLIC_HAPPIER_SERVER_URL;
         delete process.env.EXPO_PUBLIC_HAPPY_SERVER_URL;
         delete process.env.EXPO_PUBLIC_SERVER_URL;
         delete process.env.EXPO_PUBLIC_HAPPY_PRECONFIGURED_SERVERS;
 
-        expect(getDefaultServerUrl()).toBe('https://api.happier.dev');
-        expect(getServerUrl()).toBe('https://api.happier.dev');
+        expect(getDefaultServerUrl()).toBe('');
+        expect(getServerUrl()).toBe('');
     });
 
     it('keeps the build default independent of the remembered active server', async () => {
         try {
             await setServerUrl('https://remembered.example.test');
             expect(getServerUrl()).toBe('https://remembered.example.test');
-            expect(getDefaultServerUrl()).toBe('https://api.happier.dev');
+            expect(getDefaultServerUrl()).toBe('');
         } finally {
             await setServerUrl(null);
         }
+    });
+
+    it('uses the custom build Home independently of its Account service', () => {
+        vi.stubEnv('EXPO_PUBLIC_HAPPIER_BUILD_DEFAULT_PROFILE_JSON', JSON.stringify({
+            accountService: { url: 'https://accounts.example.test' },
+            home: { url: 'https://home.example.test' },
+        }));
+        try { expect(getDefaultServerUrl()).toBe('https://home.example.test'); }
+        finally { vi.unstubAllEnvs(); }
     });
 
     it('trims EXPO_PUBLIC_HAPPY_SERVER_URL to avoid whitespace issues', async () => {

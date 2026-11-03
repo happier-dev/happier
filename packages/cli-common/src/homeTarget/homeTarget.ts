@@ -1,7 +1,7 @@
 import { ACCOUNT_DIRECTORY_MAX_URL_UTF8_BYTES, HomeApplicationOriginV1Schema, HomeConnectionDescriptorV1Schema, HomeCredentialDestinationV1Schema, createHomeCredentialDestinationV1, isHomeCredentialDestinationAllowedV1 } from '@happier-dev/protocol/auth/accountDirectory';
 import type { HomeConnectionDescriptorV1, HomeCredentialDestinationV1 } from '@happier-dev/protocol';
 
-import { DEFAULT_HAPPIER_CLOUD_SERVER_URL } from '../happierCloud.js';
+import { resolveDefaultWebappUrl } from '../happierCloud.js';
 import {
   resolveHomeCarrierPreferredTransport,
   type HomeCarrierPreferredTransport,
@@ -109,8 +109,7 @@ function parseWebappUrl(value: unknown): string {
 }
 
 function deriveWebappUrl(applicationUrl: string): string {
-  if (applicationUrl === DEFAULT_HAPPIER_CLOUD_SERVER_URL) return 'https://app.happier.dev';
-  return new URL(applicationUrl).origin;
+  return resolveDefaultWebappUrl(applicationUrl);
 }
 
 export function parseHomeTargetInput(value: unknown): HomeTargetInput {

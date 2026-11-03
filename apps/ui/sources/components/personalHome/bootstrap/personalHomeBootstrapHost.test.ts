@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolvePersonalHomeBootstrapHost } from './personalHomeBootstrapHost';
+import { resolvePersonalHomeBootstrapHost } from '@/utils/platform/personalHomeBootstrapHost';
 
 describe('resolvePersonalHomeBootstrapHost', () => {
     it('enables automatic Personal Home hosting only for the Tauri main window', () => {

@@ -17,8 +17,7 @@ import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot'
 import { resolveLegacySessionDeepLinkRoute } from '@/sync/domains/server/url/consumeLegacySessionDeepLinkFromWebLocation';
 import { resolveNewSessionAuthContinuation } from '@/components/sessions/new/navigation/newSessionAuthContinuation';
 import { useVoiceSurfaceE2eFixtureComposition } from '@/dev/testkit/harness/useVoiceSurfaceE2eFixtureComposition';
-import { isPersonalHomeBootstrapRuntimeHost } from '@/components/personalHome/bootstrap/personalHomeBootstrapHost';
-import { PersonalHomeBootstrapContent } from '@/components/personalHome/bootstrap/PersonalHomeBootstrapGate';
+import { PersonalHomeBootstrapContent, usePersonalHomeBootstrapActive } from '@/components/personalHome/bootstrap/PersonalHomeBootstrapGate';
 import { buildMachineAddHref } from '@/components/settings/machines/collection/machineCollectionModel';
 import { shouldKeepDesktopPersonalHomeShell } from '@/components/personalHome/bootstrap/personalHomeIndexRoutePolicy';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
@@ -39,6 +38,7 @@ export function Home() {
     const onboardingJourneyActive = useOnboardingJourneySessionActive();
     const onboardingTourDecision = useFeatureDecision('app.ui.onboardingTour', { scopeKind: 'runtime' });
     const voiceE2eFixture = useVoiceSurfaceE2eFixtureComposition();
+    const personalHomeBootstrapActive = usePersonalHomeBootstrapActive();
     // Explicit replay and a live journey own the viewport; a persisted machine-add
     // continuation routes to its draft instead of relaunching the setup journey.
     const hasExplicitJourneyReplayIntent =
@@ -46,16 +46,15 @@ export function Home() {
         && readJourneyReplayBeatId() != null;
     const keepDesktopPersonalHomeShell = shouldKeepDesktopPersonalHomeShell({
         isAuthenticated: auth.isAuthenticated,
-        isPersonalHomeBootstrapHost: isPersonalHomeBootstrapRuntimeHost(),
+        isPersonalHomeBootstrapActive: personalHomeBootstrapActive,
     });
     if (
         (!auth.isAuthenticated && !keepDesktopPersonalHomeShell)
         || onboardingJourneyActive
         || hasExplicitJourneyReplayIntent
     ) {
-        // The provider-level Personal Home gate is the sole Desktop bootstrap-readiness owner.
-        // Once it releases this route, adoption/auth recovery stays in the real shell rather
-        // than re-entering the retired pre-auth setup journey.
+        // Only the active provider owns bootstrap/adoption recovery in the shell. An explicit
+        // existing Home bypasses that provider and needs real pre-auth, not Account-only loading.
         return (
             <PreAuthOnboardingWizardEntry />
         );

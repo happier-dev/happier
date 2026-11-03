@@ -1,4 +1,5 @@
-import { getActiveServerUrl, HAPPIER_CLOUD_SERVER_URL } from './serverProfiles';
+import { getActiveServerUrl } from './serverProfiles';
+import { resolveBuildDefaultProfile } from '@happier-dev/cli-common/happierCloud';
 import { getResetToDefaultServerId } from './serverProfiles';
 import { setActiveServer, upsertAndActivateServer } from './serverRuntime';
 import { isStackContext } from './serverContext';
@@ -24,7 +25,7 @@ export function getDefaultServerUrl(): string {
         }
     }
 
-    return HAPPIER_CLOUD_SERVER_URL;
+    return resolveBuildDefaultProfile().home?.url ?? '';
 }
 
 export function getServerUrl(): string {

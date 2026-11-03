@@ -106,6 +106,9 @@ concurrency:
   group: publish-docker-${{ github.repository }}-${{ inputs.channel }}
   cancel-in-progress: false
 
+env:
+  EXPO_PUBLIC_HAPPIER_BUILD_DEFAULT_PROFILE_JSON: '{"accountService":{"url":"https://api.happier.dev"},"home":{"url":"https://api.happier.dev","webappUrl":"https://cloud.happier.dev"},"personalHome":{"value":"offer"}}'
+
 jobs:
   trusted_ref_guard:
     name: Trust called workflow repository and ref

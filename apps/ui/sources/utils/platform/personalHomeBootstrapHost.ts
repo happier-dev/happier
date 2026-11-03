@@ -22,7 +22,7 @@ function readCurrentTauriWindowLabel(): string | null {
 }
 
 /**
- * Sole host-eligibility decision for automatic Personal Home installation.
+ * Platform fact only; setupSurfacePolicy owns admission for Personal Home installation.
  * Call this before constructing runtime, daemon, authentication, or system-task hooks.
  */
 export function isPersonalHomeBootstrapRuntimeHost(): boolean {

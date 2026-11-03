@@ -1,5 +1,5 @@
 import { IrohEndpointDescriptorV1Schema } from '@happier-dev/protocol/connectivity/iroh/endpointDescriptorV1';
-import { DEFAULT_HAPPIER_CLOUD_SERVER_URL } from '../../happierCloud.js';
+import { resolveBuildDefaultProfile } from '../../happierCloud.js';
 import type { PersonalHomeRuntimeLayout } from './layout.js';
 
 /** Default managed-runtime port for a Personal Home. */
@@ -29,8 +29,8 @@ export type PersonalHomeRuntimeEnvironment = Readonly<{
   HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE: 'plain';
   HAPPIER_FEATURE_TEAMS__ENABLED: '1';
   AUTH_ANONYMOUS_SIGNUP_ENABLED: '1' | '0';
-  HAPPIER_AUTH_SIGN_IN_SERVICE_MODE: 'external';
-  HAPPIER_AUTH_SIGN_IN_SERVICE_URL: typeof DEFAULT_HAPPIER_CLOUD_SERVER_URL;
+  HAPPIER_AUTH_SIGN_IN_SERVICE_MODE: 'external' | 'self';
+  HAPPIER_AUTH_SIGN_IN_SERVICE_URL?: string;
   HAPPIER_IROH_RELAY_POLICY?: 'automatic' | 'disabled';
   HAPPIER_IROH_RELAY_URLS?: string;
 }>;
@@ -183,6 +183,13 @@ export function renderPersonalHomeRuntimeEnv(params: Readonly<{
         : overrides.HAPPIER_IROH_RELAY_URLS ?? baseEnv.HAPPIER_IROH_RELAY_URLS,
   };
   const relayEnvironment = normalizePersonalHomeIrohRelayEnvironment(relaySource);
+  const configuredMode = overrides.HAPPIER_AUTH_SIGN_IN_SERVICE_MODE
+    ?? (overrides.HAPPIER_AUTH_SIGN_IN_SERVICE_URL !== undefined ? 'external' : baseEnv.HAPPIER_AUTH_SIGN_IN_SERVICE_MODE);
+  const accountServiceUrl = configuredMode === 'self' ? undefined
+    : overrides.HAPPIER_AUTH_SIGN_IN_SERVICE_URL
+      ?? baseEnv.HAPPIER_AUTH_SIGN_IN_SERVICE_URL
+      ?? resolveBuildDefaultProfile().accountService?.url;
+  const signInServiceMode = accountServiceUrl ? 'external' : 'self';
   const rendered: {
     HAPPIER_SERVER_HOST: '127.0.0.1';
     PORT: string;
@@ -191,8 +198,8 @@ export function renderPersonalHomeRuntimeEnv(params: Readonly<{
     HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE: 'plain';
     HAPPIER_FEATURE_TEAMS__ENABLED: '1';
     AUTH_ANONYMOUS_SIGNUP_ENABLED: '1' | '0';
-    HAPPIER_AUTH_SIGN_IN_SERVICE_MODE: 'external';
-    HAPPIER_AUTH_SIGN_IN_SERVICE_URL: typeof DEFAULT_HAPPIER_CLOUD_SERVER_URL;
+    HAPPIER_AUTH_SIGN_IN_SERVICE_MODE: 'external' | 'self';
+    HAPPIER_AUTH_SIGN_IN_SERVICE_URL?: string;
     HAPPIER_IROH_RELAY_POLICY?: 'automatic' | 'disabled';
     HAPPIER_IROH_RELAY_URLS?: string;
   } = {
@@ -203,8 +210,8 @@ export function renderPersonalHomeRuntimeEnv(params: Readonly<{
     HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE: 'plain',
     HAPPIER_FEATURE_TEAMS__ENABLED: '1',
     AUTH_ANONYMOUS_SIGNUP_ENABLED: signup,
-    HAPPIER_AUTH_SIGN_IN_SERVICE_MODE: 'external',
-    HAPPIER_AUTH_SIGN_IN_SERVICE_URL: DEFAULT_HAPPIER_CLOUD_SERVER_URL,
+    HAPPIER_AUTH_SIGN_IN_SERVICE_MODE: signInServiceMode,
+    ...(accountServiceUrl ? { HAPPIER_AUTH_SIGN_IN_SERVICE_URL: accountServiceUrl } : {}),
     ...relayEnvironment,
   };
   for (const key of FIXED_ENVIRONMENT_KEYS) {
@@ -233,11 +240,8 @@ export function renderPersonalHomeRuntimeEnv(params: Readonly<{
       if (key === 'AUTH_ANONYMOUS_SIGNUP_ENABLED' && value !== '0' && value !== '1') {
         throw new Error('Personal Home anonymous signup value must be 0 or 1');
       }
-      if (key === 'HAPPIER_AUTH_SIGN_IN_SERVICE_MODE' && value !== 'external') {
-        throw new Error('Personal Home sign-in service mode is fixed to external');
-      }
-      if (key === 'HAPPIER_AUTH_SIGN_IN_SERVICE_URL' && value !== DEFAULT_HAPPIER_CLOUD_SERVER_URL) {
-        throw new Error('Personal Home sign-in service URL is fixed to the Happier Cloud endpoint');
+      if (key === 'HAPPIER_AUTH_SIGN_IN_SERVICE_MODE' && value !== signInServiceMode) {
+        throw new Error('Personal Home sign-in service mode must match its configured Account service');
       }
       if (key === 'AUTH_ANONYMOUS_SIGNUP_ENABLED') {
         rendered.AUTH_ANONYMOUS_SIGNUP_ENABLED = value === '0' ? '0' : '1';

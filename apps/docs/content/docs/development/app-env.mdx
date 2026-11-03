@@ -16,6 +16,20 @@ cp .env.local.example .env.local
 
 Then edit `apps/ui/.env.local` and restart the dev server (Metro) so the bundle is rebuilt with the new values.
 
+## First-run build profile (0.3 development)
+
+Source builds have no hosted Happier Cloud defaults. On first run, choose a sign-in service or Home; a self-hosted web app still uses its own origin when no Home is configured. Saved selections remain authoritative over build defaults.
+
+Set `EXPO_PUBLIC_HAPPIER_BUILD_DEFAULT_PROFILE_JSON` before bundling the app. CLI builds use `HAPPIER_BUILD_DEFAULT_PROFILE_JSON`; the CLI-common build embeds it in the published runtime, so people do not need the build environment when running the CLI.
+
+```bash
+EXPO_PUBLIC_HAPPIER_BUILD_DEFAULT_PROFILE_JSON='{"accountService":{"url":"https://accounts.example.com"},"home":{"url":"https://home.example.com","webappUrl":"https://app.example.com"},"personalHome":{"value":"offer"}}'
+```
+
+`accountService.url` selects the default sign-in service independently of `home.url`. Optional `home.webappUrl` supplies a separate web client; otherwise Home links use the Home origin. `personalHome.value` accepts `auto`, `offer`, or `off`: automatic bootstrap, a one-click full Personal Home setup offer, or no new local installation. It never stops or removes an existing Home. Each field accepts an optional `locked` boolean in the shared profile schema, reserved for policy composition; the build profile supplies defaults.
+
+Official builds supply the Cloud Account service and Home with `personalHome.value: "offer"`. A missing profile supplies no hosted endpoints. A present malformed profile is a configuration error naming its field path without echoing values. Profile values are public; do not include credentials.
+
 ## Disabling features at build time
 
 You can disable specific UI features at build time by setting:

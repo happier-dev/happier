@@ -27,6 +27,12 @@ describe('resolveAccountServiceEntryProbeTarget', () => {
         endpointRequestMock.mockReset();
     });
 
+    it('offers no discovery target before an unconfigured source build selects a service', () => {
+        expect(resolveAccountServiceEntryProbeTarget({
+            targetContext: { kind: 'none' }, deviceSelection: { url: '', source: 'default' },
+        })).toEqual({ effective: { kind: 'not_offered' }, probe: null });
+    });
+
     it('creates no probe for absent or disabled targeted policy', () => {
         expect(resolveAccountServiceEntryProbeTarget({
             targetContext: {

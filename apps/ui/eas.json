@@ -22,7 +22,7 @@
       "HAPPIER_TERMINAL_NATIVE_ANDROID_CRASH_FALLBACK_PROVEN": "1",
       "HAPPIER_TERMINAL_NATIVE_ANDROID_ACCESSIBILITY_NATIVE": "1",
       "EXPO_UNSTABLE_WEB_MODAL": "1",
-      "EXPO_PUBLIC_HAPPY_SERVER_URL": "https://api.happier.dev",
+      "EXPO_PUBLIC_HAPPIER_BUILD_DEFAULT_PROFILE_JSON": "{\"accountService\":{\"url\":\"https://api.happier.dev\"},\"home\":{\"url\":\"https://api.happier.dev\",\"webappUrl\":\"https://cloud.happier.dev\"},\"personalHome\":{\"value\":\"offer\"}}",
         "HAPPIER_UI_VENDOR_WEB_ASSETS": "0"
       },
       "android": {

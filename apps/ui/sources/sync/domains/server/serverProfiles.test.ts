@@ -105,6 +105,7 @@ describe('serverProfiles', () => {
     afterEach(() => {
         standardCleanup();
         vi.unstubAllGlobals();
+        vi.unstubAllEnvs();
         if (previousScope === undefined) delete process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE;
         else process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = previousScope;
         if (previousServerContext === undefined) delete process.env.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT;
@@ -674,6 +675,8 @@ describe('serverProfiles', () => {
 
     it('keeps Account Service endpoint separate and adopts strict Home descriptors without focus changes', async () => {
         process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = randomScope();
+        const existing = await profiles.upsertServerProfile({ serverUrl: 'https://already-selected.example.test' });
+        await profiles.setActiveServerId(existing.id);
         const initial = profiles.getActiveServerSnapshot();
         await profiles.setAccountServiceEndpoint({ url: 'https://accounts.example.test', source: 'user' });
         expect(profiles.getAccountServiceEndpointSnapshot()?.url).toBe('https://accounts.example.test');
@@ -693,14 +696,13 @@ describe('serverProfiles', () => {
         expect(profiles.getActiveServerSnapshot().serverId).toBe(initial.serverId);
     });
 
-    it('resolves the owner-defined Happier Cloud sign-in service before any explicit selection', async () => {
+    it('keeps a stable empty Account service until a source-build user selects one', async () => {
         process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = randomScope();
 
         expect(profiles.getAccountServiceEndpointSnapshot()).toBeNull();
         const fallback = profiles.resolveSelectedAccountServiceEndpoint();
         expect(fallback).toEqual({
-            url: profiles.HAPPIER_CLOUD_SERVER_URL,
-            displayName: 'Happier Cloud',
+            url: '',
             source: 'default',
         });
         // Referential stability is load-bearing: unauthenticated entry reads this through
@@ -1287,6 +1289,8 @@ describe('serverProfiles', () => {
 
     it('commits unrelated adoption before notifying independent profile observers only', async () => {
         process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = randomScope();
+        const existing = await profiles.upsertServerProfile({ serverUrl: 'https://already-selected.example.test' });
+        await profiles.setActiveServerId(existing.id);
         const laterProfileObserver = vi.fn();
         const laterActiveObserver = vi.fn();
         const reported = vi.spyOn(console, 'error').mockImplementation(() => undefined);
@@ -2770,15 +2774,23 @@ describe('serverProfiles', () => {
         });
     });
 
-    it('seeds Happier Cloud on native when no preconfigured env exists', async () => {
+    it('has no hosted Home on native without a build profile', async () => {
         const scope = randomScope();
         process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
 
-        expect(profiles.listServerProfiles().some((p) => p.serverUrl === 'https://api.happier.dev')).toBe(true);
-        expect(profiles.getActiveServerUrl()).toBe('https://api.happier.dev');
+        expect(profiles.listServerProfiles().some((p) => p.serverUrl === 'https://api.happier.dev')).toBe(false);
+        expect(profiles.getActiveServerUrl()).toBe('');
+    });
+
+    it('keeps a custom baked Home independent of the Cloud setup choice', () => {
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = randomScope();
+        vi.stubEnv('EXPO_PUBLIC_HAPPIER_BUILD_DEFAULT_PROFILE_JSON', JSON.stringify({ home: { url: 'https://custom-home.example.test' } }));
+        process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY = 'setup.relay.allowHappierCloud';
+        expect(profiles.getActiveServerUrl()).toBe('https://custom-home.example.test');
     });
 
     it('does not seed Happier Cloud on native when build policy denies the setup surface policy gate', async () => {
+        vi.stubEnv('EXPO_PUBLIC_HAPPIER_BUILD_DEFAULT_PROFILE_JSON', JSON.stringify({ home: { url: 'https://api.happier.dev' } }));
         const scope = randomScope();
         process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
         process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY = 'setup.relay.allowHappierCloud';
@@ -2812,8 +2824,8 @@ describe('serverProfiles', () => {
         stubWebRuntime('http://localhost:8081');
 
         expect(profiles.listServerProfiles().some((p) => p.serverUrl === 'http://localhost:8081')).toBe(false);
-        expect(profiles.listServerProfiles().some((p) => p.serverUrl === 'https://api.happier.dev')).toBe(true);
-        expect(profiles.getActiveServerUrl()).toBe('https://api.happier.dev');
+        expect(profiles.listServerProfiles().some((p) => p.serverUrl === 'https://api.happier.dev')).toBe(false);
+        expect(profiles.getActiveServerUrl()).toBe('');
     });
 
     it('avoids seeding Metro/local UI origins as a relay server when stack context comes from runtime config', async () => {
@@ -2827,8 +2839,8 @@ describe('serverProfiles', () => {
         stubWebRuntimeWithRuntimeConfig('http://127.0.0.1:8081', { serverContext: 'stack' });
 
         expect(profiles.listServerProfiles().some((p) => p.serverUrl === 'http://127.0.0.1:8081')).toBe(false);
-        expect(profiles.listServerProfiles().some((p) => p.serverUrl === 'https://api.happier.dev')).toBe(true);
-        expect(profiles.getActiveServerUrl()).toBe('https://api.happier.dev');
+        expect(profiles.listServerProfiles().some((p) => p.serverUrl === 'https://api.happier.dev')).toBe(false);
+        expect(profiles.getActiveServerUrl()).toBe('');
     });
 
     it('dedupes loopback-equivalent servers and prefers same-origin on web', async () => {
@@ -3303,6 +3315,7 @@ describe('serverProfiles', () => {
     it.each(['https://cloud.happier.dev', 'https://app.happier.dev'])(
         'seeds api.happier.dev on the hosted web origin %s when no preconfigured env exists',
         async (webOrigin) => {
+            vi.stubEnv('EXPO_PUBLIC_HAPPIER_BUILD_DEFAULT_PROFILE_JSON', JSON.stringify({ home: { url: 'https://api.happier.dev', webappUrl: webOrigin } }));
             const scope = randomScope();
             process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
             delete process.env.EXPO_PUBLIC_HAPPY_SERVER_URL;
@@ -3524,16 +3537,18 @@ describe('serverProfiles', () => {
     });
 
     it('does not bump server profiles generation when reading an existing Happier Cloud profile', async () => {
+        vi.stubEnv('EXPO_PUBLIC_HAPPIER_BUILD_DEFAULT_PROFILE_JSON', JSON.stringify({ home: { url: 'https://api.happier.dev' } }));
+        const configured = await importSeparateInstance();
         const scope = randomScope();
         process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
 
-        const before = profiles.getServerProfilesGeneration();
+        const before = configured.getServerProfilesGeneration();
 
-        await profiles.getOrCreateHappierCloudServerProfile();
-        const afterCreate = profiles.getServerProfilesGeneration();
+        await configured.getOrCreateHappierCloudServerProfile();
+        const afterCreate = configured.getServerProfilesGeneration();
 
-        await profiles.getOrCreateHappierCloudServerProfile();
-        const afterRead = profiles.getServerProfilesGeneration();
+        await configured.getOrCreateHappierCloudServerProfile();
+        const afterRead = configured.getServerProfilesGeneration();
 
         expect(afterCreate).toBeGreaterThanOrEqual(before);
         expect(afterRead).toBe(afterCreate);
@@ -3630,6 +3645,7 @@ describe('serverProfiles', () => {
     });
 
     it('reset-to-default targets the seeded cloud profile outside stack context when no preconfigured env exists', async () => {
+        vi.stubEnv('EXPO_PUBLIC_HAPPIER_BUILD_DEFAULT_PROFILE_JSON', JSON.stringify({ home: { url: 'https://api.happier.dev' } }));
         const scope = randomScope();
         process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
         delete process.env.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT;

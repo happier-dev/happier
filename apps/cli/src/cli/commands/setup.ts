@@ -40,7 +40,7 @@ import {
     syncInstalledFirstPartyShims,
     writeDefaultManagedReleaseChannel,
 } from '@happier-dev/cli-common/firstPartyRuntime';
-import { DEFAULT_HAPPIER_CLOUD_SERVER_URL } from '@happier-dev/cli-common/happierCloud';
+import { resolveBuildDefaultProfile } from '@happier-dev/cli-common/happierCloud';
 import { AGENTS_CORE, getAgentCliSetupRecommendedIds } from '@happier-dev/agents';
 import { resolvePublicReleaseRingIdForLabel } from '@happier-dev/release-runtime/releaseRings';
 import {
@@ -878,12 +878,15 @@ export async function handleSetupCommand(
           ? { kind: 'selected' as const, target: parsedHomeTargetArgs.target }
           : null;
     if (!planMode && !assumeYesFlag && (useDefaultAccountService || targetedAccountServiceContext)) {
+        const defaultAccountService = resolveBuildDefaultProfile().accountService;
         const accountServiceExecution = parseSetupExecutionOptions(
             parsedHomeTargetArgs.rest.filter((argument) => argument !== '--persist' && argument !== '--no-persist'),
         );
         let result = await runAccountServiceHomeEntryFn({
             context: targetedAccountServiceContext ?? { kind: 'none' },
-            builtInNoTargetDefault: { endpoint: DEFAULT_HAPPIER_CLOUD_SERVER_URL },
+            ...(defaultAccountService
+                ? { builtInNoTargetDefault: { endpoint: defaultAccountService.url } }
+                : {}),
             ...(targetedAccountServiceContext
                 ? {}
                 : { intent: { kind: 'enter' as const, target: { kind: 'automatic' as const } } }),

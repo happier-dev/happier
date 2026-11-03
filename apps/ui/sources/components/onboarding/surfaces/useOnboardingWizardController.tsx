@@ -30,7 +30,8 @@ import { confirmCanonicalHomeUrl, confirmInsecureHomeHttp, homeConnectFailureMes
 import { removeServerProfileUiAction } from '@/components/serverProfiles/removeServerProfileUiAction';
 import { presentFirstKeyCredentialLifecycle } from '@/components/account/presentFirstKeyCredentialLifecycle';
 import { useEndpointReachabilityRemediationController } from '@/components/settings/server/hooks/useEndpointReachabilityRemediationController';
-import { canHostPersonalHomeHere, resolveSetupSurfacePolicy } from '@/sync/domains/server/setup/setupSurfacePolicy';
+import { resolveSetupSurfacePolicy } from '@/sync/domains/server/setup/setupSurfacePolicy';
+import { useRequestPersonalHomeBootstrap } from '@/components/personalHome/bootstrap/personalHomeBootstrapRequest';
 import { isLocalishServerUrl } from '@/sync/domains/server/url/serverUrlClassification';
 import { toServerUrlDisplay } from '@/sync/domains/server/url/serverUrlDisplay';
 import {
@@ -41,7 +42,6 @@ import {
 import { isRunningOnMac } from '@/utils/platform/platform';
 import { isWebQrScannerSupported } from '@/utils/platform/qrScannerSupport';
 import { isWebMobileLikeQrScannerHost } from '@/utils/platform/webMobileHeuristics';
-import type { RelayHostLocalChecklistRuntimeStatus } from '../checklists/relayHostLocal/types';
 import type { RelayAccessProviderId } from '@happier-dev/cli-common/relayAccess/catalog';
 import type { RelayAccessTaskTarget } from '@happier-dev/cli-common/systemTasks';
 import type { RelayAccessControlOptions } from '@/components/settings/server/relayAccess/useRelayAccessControl';
@@ -142,6 +142,7 @@ function resolveCanScanQr(params: Readonly<{ width: number; height: number; plat
 }
 
 export function useOnboardingWizardController(props: OnboardingWizardSurfaceProps): OnboardingWizardController {
+    const requestPersonalHomeBootstrap = useRequestPersonalHomeBootstrap();
     const { theme } = useUnistyles();
     const styles = onboardingWizardSurfaceStylesheet;
     const { width, height } = useWindowDimensions();
@@ -197,8 +198,6 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
 
     const [urlDraft, setUrlDraft] = React.useState(props.initialServerUrl ?? '');
     const [relaySwitchDecision, setRelaySwitchDecision] = React.useState<RelaySwitchDecision>('switch');
-    type LocalRelayRuntimeStatus = RelayHostLocalChecklistRuntimeStatus | null;
-    const [localRelayRuntimeStatus, setLocalRelayRuntimeStatus] = React.useState<LocalRelayRuntimeStatus>(null);
     const [relayAccessTarget, setRelayAccessTarget] = React.useState<RelayAccessTaskTarget | null>(null);
     const relayAccessRunnerRef = React.useRef<RelayAccessControlOptions['runWithTarget']>(undefined);
     const relayAccessRemoteHostRef = React.useRef<RelayAccessControlOptions['remoteHost']>(undefined);
@@ -244,32 +243,9 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
             });
         },
     );
-    const canCreatePersonalHome = canHostPersonalHomeHere(setupPolicy)
+    const canCreatePersonalHome = requestPersonalHomeBootstrap != null
         && !state.context.relaySelection.locked;
 
-    const handleLocalRelayRuntimeStatusChange = React.useCallback(async (status: LocalRelayRuntimeStatus) => {
-        setLocalRelayRuntimeStatus(status);
-        const relayUrl = typeof status?.relayUrl === 'string' ? status.relayUrl.trim() : '';
-        if (!relayUrl) {
-            return;
-        }
-        setRelayAccessTarget({ kind: 'local' });
-        relayAccessRemoteHostRef.current = undefined;
-        setRelayAccessShareUrl(null);
-        const profile = await upsertServerProfileOnly({
-            serverUrl: relayUrl,
-            source: 'url',
-        });
-        dispatch({
-            type: 'wizard/setRelaySelection',
-            relaySelection: {
-                choiceId: 'thisComputer',
-                serverUrl: relayUrl,
-                relayProfileId: profile.id,
-                locked: false,
-            },
-        });
-    }, [dispatch]);
 
     const handleSelectAccountService = React.useCallback<AccountServiceSelectionFormProps['onSelect']>(async (url, options) => {
         const result = await props.onSelectAccountService?.(url, options) ?? { kind: 'unavailable' as const };
@@ -1158,7 +1134,6 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
                 || (tailscaleEnsureReadySnapshot != null && tailscaleEnsureReadySnapshot.result == null)
             )
         )
-        || (stepId === 'host_relay_local' && !localRelayRuntimeStatus?.relayUrl)
         || (stepId === 'host_relay_remote' && !normalizeServerUrl(String(state.context.relaySelection.serverUrl ?? '').trim()));
 
     const handleWelcomeAdvance = React.useCallback(() => {
@@ -1397,24 +1372,7 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
                     : stepId === 'background_service_handoff'
                         ? () => dispatch({ type: 'wizard/goToStep', stepId: state.context.authIntent === 'restore' ? 'auth_restore' : 'auth' })
                         : stepId === 'host_relay_local'
-                        ? async () => {
-                            const relayUrlRaw = localRelayRuntimeStatus?.relayUrl ?? '';
-                            const relayUrl = relayUrlRaw ? normalizeServerUrl(relayUrlRaw) : null;
-                            if (!relayUrl) {
-                                return;
-                            }
-                            setRelaySwitchDecision('switch');
-                            dispatch({
-                                type: 'wizard/setRelaySelection',
-                                relaySelection: {
-                                    choiceId: 'thisComputer',
-                                    serverUrl: relayUrl,
-                                    relayProfileId: state.context.relaySelection.relayProfileId ?? null,
-                                    locked: false,
-                                },
-                            });
-                            dispatch({ type: 'wizard/goToStep', stepId: 'relay_access' });
-                        }
+                        ? requestPersonalHomeBootstrap ?? (() => undefined)
                         : stepId === 'relay_access'
                             ? handleRelayAccessAdvance
                         : stepId === 'relay_access_prereqs'
@@ -1555,7 +1513,6 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         onRelayAccessShareUrlChange: handleRelayAccessShareUrlChange,
         relaySwitchDecision,
         onRelaySwitchDecisionChange: setRelaySwitchDecision,
-        onLocalRelayRuntimeStatusChange: handleLocalRelayRuntimeStatusChange,
         onWizardPrimaryChange: handleWizardPrimaryChange,
         onWizardBackChange: handleWizardBackChange,
         onWizardSkipChange: handleWizardSkipChange,
@@ -1590,7 +1547,7 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         onOpenRelaySelectionFromWelcome: handleOpenRelaySelectionFromWelcome,
         onOpenRelaySelectionFromAuth: handleOpenRelaySelectionPreservingSelection,
         onOpenSetup: handleOpenSetup,
-        onCreatePersonalHome: () => dispatch({ type: 'wizard/goToStep', stepId: 'host_relay_local' }),
+        onCreatePersonalHome: requestPersonalHomeBootstrap ?? undefined,
         onOpenRestore: handleOpenRestore,
         onOpenLostAccess: handleOpenLostAccess,
         onOpenSecretKeyLogin: handleOpenSecretKeyLogin,
@@ -1600,7 +1557,6 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         },
         onRestoreNavigationLockChange: setRestoreNavigationLocked,
         onLostAccessBackToAuth: () => dispatch({ type: 'wizard/back' }),
-        onHostRelayLocalAdvance: () => dispatch({ type: 'wizard/goToStep', stepId: 'relay_access' }),
         onRelayAccessAdvance: handleRelayAccessAdvance,
         onHostRelayRemoteAdvance: () => dispatch({ type: 'wizard/goToStep', stepId: 'relay_access' }),
         onHostRelayRemoteCancel: () => dispatch({ type: 'wizard/goToStep', stepId: 'relay_select' }),
