@@ -7,6 +7,55 @@ the server routes that accept/emit these values.
 
 For transport and event shapes, see `protocol.md`. For HTTP endpoints, see `api.md`.
 
+## Saved Secret recipient envelopes (0.3 development source)
+
+Personal vault-backed secrets extend the same resource content and envelope.
+The existing `v: 1` inline content remains readable; `v: 2` external content
+holds the plugin contribution identity, account and field reference, never a
+Machine selector or a copied vault value. The executing Machine reads selected
+fields at the existing asynchronous operation admission, then synchronous
+consumers share that operation's acquired material. List, link and metadata
+inspection do not read the vault; a later operation observes rotation. There is
+no durable value cache or background refresh.
+
+The bundled 1Password source is `happier.secret-source.onepassword/onepassword`.
+Its declaration supplies the editor's source choice; the personal Saved Secret
+stores the account and `op://` field reference. The executing Machine's native
+ExecService runs `op read` with captured output. For headless reads, the plugin's
+**Service account token** setting links an inline Saved Secret and supplies it as
+`OP_SERVICE_ACCOUNT_TOKEN`; it refuses an external-source bootstrap rather than
+recursively acquiring another vault value. Acquisition failures expose closed
+repair codes instead of native diagnostics. Installation/link metadata does not
+prove a live vault read; actual account unlock and token behavior remain separate
+platform validation. Published setup is under
+[Saved Secrets and profiles](../apps/docs/content/docs/agents/profiles.mdx#link-a-personal-secret-to-1password-development).
+
+Catalog rows expose optional value-free `storage` metadata: `{ kind: 'value' }`,
+`{ kind: 'passkey' }`, or `{ kind: 'external', provider: { pluginId, localId } }`.
+External provider titles come from the existing secret-source declarations. This
+descriptor carries no value, passkey identity/key, vault account or field reference.
+It is sealed alongside each new stored-content envelope and projected by the
+existing metadata reader. Saved Secret name/kind metadata is already server-visible;
+there is no separate encrypted row header, so this descriptor has the same visibility
+in both resource modes. It supplies presentation only, never use/link authority.
+Retained encrypted envelopes without it remain readable and have unknown storage
+kind until their next explicit content write; listing does not open them to backfill
+labels. Retained Plain content can supply the descriptor without decryption.
+Client catalog reads may add `storage.providerLabel` (for example `1Password`)
+from the existing Account availability declarations, matched by both provider
+identifiers. This is a client-only presentation projection: it is not written
+to the resource header or sent as new server-visible plaintext. Missing or
+conflicting declarations retain the generic vault label. The join reads no
+credential material and issues no additional network or native request.
+
+External content is personal-only. The client mutation owner refuses sharing
+for encrypted content; the Home writer refuses it for Plain content. Team
+brokering is unsupported. Linking one's own resource is the grant, while
+another person's resource retains the existing consent flow. Native vault
+acquisition on a shared Machine requires Manage access before native code runs.
+The descriptor follows the Account-mode and Home-managed edit rules below;
+Plain Accounts remain keyless.
+
 ## Managed-resource birth relationship (0.3 development)
 
 Session creation can carry `managedCreation` with the Home, managed-resource and

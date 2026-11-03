@@ -334,3 +334,24 @@ Open the profile in **Settings → Profiles** to review its requirements.
 
 - [Custom ACP Agents](/agents/acp-backends)
 - [Provider authentication](/agents/provider-authentication)
+
+### Link a personal secret to 1Password (development)
+
+In **unreleased 0.3 development source**, a personal Saved Secret can point to
+a 1Password field instead of keeping a copied value in Happier. The 1Password
+source must be installed and available on the Machine that will use it. The
+editor offers sources from the Account's available plugin declarations.
+
+In **Settings → Secrets**, add a personal secret, choose **1Password** under
+**Stored in**, and enter its **Account** and **Field reference**
+(`op://Vault/Item/field`). The Machine executing the Action reads that field
+through its local 1Password CLI setup. Opening the secret list or creating the
+link does not read the value. A later operation reads it again, so a rotated
+value is used on the next acquisition.
+
+Linked secrets are personal-only and cannot be shared with a Team. A read on a
+shared Machine requires **Manage** access. For unattended use, link an inline
+Saved Secret containing the service-account token to the 1Password plugin's
+**Service account token** setting. The token must be stored in Happier rather
+than linked back to a vault. If a read needs an unlock or sign-in, repair the
+1Password setup on the executing Machine and retry the request.

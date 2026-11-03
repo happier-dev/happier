@@ -19,6 +19,7 @@ description: Contribution families that a plugin can declare for projection and 
 | `providers` | Model-provider declarations, catalogs, connection facts, and an optional cold managed-runtime facet | ordinary Providers are descriptor-only; a managed Provider uses `providers.<id>.runtime` |
 | `connectedAccountDescriptors` | A plugin-produced account service and authentication modes | `connectedAccountDescriptors.<id>.runtime` |
 | `backgroundServices` | Daemon-occurrence background work | `backgroundServices[].runner` |
+| `secretSources` | Live external Saved Secret acquisition, metadata listing and vault storage (0.3 development source) | `secretSources.<id>.declaration` and `.runtime.acquire(input, context)`, with optional `.list` and `.store`; see [Secrets service](/plugins/services/secrets#external-secret-sources-03-development). |
 | `scmHostingProviders` | Remote forge and hosting-service integration | `scmHostingProviders.<id>.runtime` |
 | `scmBackends` | Local repository and working-tree integration | `scmBackends.<id>.runtime` |
 | `settings` | Typed settings descriptors | `context.services.settings` in invoked handlers |

@@ -5930,6 +5930,62 @@ its configuration path; executable names are not activation evidence. These
 are development-source contracts, not released availability or proof of a
 completed final-launch journey.
 
+### External Saved Secret sources (0.3 development)
+
+`secretSources` is a manifest-backed daemon contribution on the existing
+`definePlugin` / `activate(api)` registration ABI. Its cold declaration contains
+the local id, title, and optional capabilities derived from runtime methods.
+Its runtime exposes asynchronous `acquire({ account, reference }, context)` and
+optional `list({ account, vaultId?, itemId? }, context)` and
+`store({ account, vaultId, title, value }, context)`. The executable registry
+keeps `secretSources.list()` as cold declaration discovery and dispatches native
+enumeration with `listFields(...)` through the same exact-demand registrations. Listing returns
+only vault/item/field names, identities and kinds. Its successful result is
+`{ ok: true, fields, vaults? }`: the independent `vaults` metadata array includes
+empty destinations for Store-in and export. Field-only plugins remain supported;
+the picker derives their destinations from fields at its existing read owner.
+The 1Password source uses `op vault list` independently of item enumeration.
+Store returns an Account and
+field reference; it never returns the written value. The SDK's public schema
+and activation ABI also serve external plugin authors.
+
+The existing `secrets.list` Action exposes Saved Secret names and metadata,
+plus optional native field discovery when the person selects a source. UI source
+options retain their installation Machine identities; the vault choice hook carries
+an explicit Machine selection, or the source's sole installation, into both list
+queries and store/export targets. Multiple installations require an explicit selection.
+Bulk
+`secrets.link` creates one SavedSecretResource per external field in one
+`secrets.shared.promote` transaction. A whole-vault selection expands to that
+same batch; it does not create a second vault resource or discovery model.
+The optional `storeIn` on `secrets.create` and confidential Remember writes to
+the selected vault before creating a resource containing its reference.
+`secrets.export` uses the existing resource storage-conversion writer: store
+first, then compare-and-swap the original revision to an external source.
+Each failed export leaves that resource unchanged and returns a typed outcome;
+selected exports use the same operation. No separate host registry or model
+Provider is introduced.
+
+Saved Secret admission acquires external material through the already-held
+executing runtime's source projection. Values remain operation-private and do
+not enter the Account catalog snapshot. The 1Password leaf uses captured native
+`op read` output and returns closed unavailable/repair outcomes for missing,
+locked, denied, absent-field and cancelled reads. It adds no value cache, poll,
+retry or timeout. Its optional service account token comes from an inline Saved
+Secret linked to its existing declarative plugin setting; the canonical secret
+read owner enforces `sourceKind: 'inline'` before native acquisition. The token
+is supplied only in the invocation command environment. Native enumeration
+projects metadata from `op item list` / `op item get` JSON. Writes use managed
+exec argument arrays and `op item create -` with a JSON template on stdin;
+secret values never enter argv. A vault write whose response is lost may leave
+an orphan vault item: the operation reports uncertainty and never replays it.
+Connected-account configuration `secretRefs` keep their identity through
+export and acquire live material at use time, including typed vault repair.
+OAuth credential records with rotating refresh tokens stay in Happier and
+are outside this conversion flow. These are unreleased
+0.3 source contracts; package publication and native tenant QA remain separate
+evidence.
+
 ### Capture viewing and Session images (0.3 development)
 
 Manifest-owned `captureSources` register through the same activation rights and
