@@ -47,6 +47,7 @@ import { resolveVoiceProviderIdFromSettings } from '@/voice/settings/resolveVoic
 import { resolveVoiceWelcomeSelection } from '@/voice/settings/welcome';
 import { VoiceGreetingItem } from '@/voice/settings/panels/VoiceGreetingItem';
 import { applyVoiceAgentSelection } from '@/voice/settings/voiceAgentSelection';
+import { projectVoiceConfiguredAgentTarget } from '@/voice/agent/projectVoiceConfiguredAgentTarget';
 import { useProviderModelProjection } from '@/providers/hooks/useProviderModelProjection';
 import { buildAgentUniverseBackendTargetKey } from '@/agents/catalog/agentUniverse';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -154,15 +155,6 @@ export function LocalConversationSection(props: {
   }, [customChatModelRequested, customCommitModelRequested, enabled, cfg.conversationMode,
     hasConfiguredProviderChat, cfg.agent.chatModelSource, cfg.agent.commitModelSource]);
 
-  // The configured voice Agent may be any installed Agent, bundled or plugin-contributed, so its
-  // id goes to the model preflight as-is. Narrowing to the bundled ids here would preflight the
-  // default Agent's catalog and offer models the selected Agent cannot run.
-  const selectedAgentIdForModelOptions = React.useMemo(() => {
-    if (cfg.agent.agentSource !== 'agent') return null;
-    const raw = String(cfg.agent.agentId ?? '').trim();
-    return raw.length > 0 ? raw : null;
-  }, [cfg.agent.agentId, cfg.agent.agentSource]);
-
   const preflightMachineId = executionMachineId;
 
   const capabilityServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
@@ -199,14 +191,14 @@ export function LocalConversationSection(props: {
   const currentDaemonProjectionInputs = daemonMergedProjection.phase === 'ready'
     ? daemonMergedProjection.inputs
     : null;
-  const resolvedAgentEntries = React.useMemo(() => getResolvedBackendCatalogEntries({
+  const resolvedBackendEntries = React.useMemo(() => getResolvedBackendCatalogEntries({
     enabledAgentIds,
     acpCatalogSnapshot: acpCatalog?.catalog,
     backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
     mergedProviderProjectionById: currentDaemonProjectionInputs?.mergedProviderProjectionById ?? null,
     mergedBackendProjectionById: currentDaemonProjectionInputs?.mergedBackendProjectionById ?? null,
     discoveredBackendIds: currentDaemonProjectionInputs?.discoveredBackendIds,
-  }).map(entry => entry.agentCatalogEntry), [
+  }), [
     currentDaemonProjectionInputs?.discoveredBackendIds,
     currentDaemonProjectionInputs?.mergedBackendProjectionById,
     currentDaemonProjectionInputs?.mergedProviderProjectionById,
@@ -214,6 +206,13 @@ export function LocalConversationSection(props: {
     acpCatalog?.catalog,
     settings.backendEnabledByTargetKey,
   ]);
+  const resolvedAgentEntries = React.useMemo(() => resolvedBackendEntries.map(entry => entry.agentCatalogEntry), [resolvedBackendEntries]);
+  const selectedAgentTarget = React.useMemo(() => cfg.agent.agentSource === 'agent' && !hasConfiguredProviderChat
+    ? projectVoiceConfiguredAgentTarget({ selection: cfg.agent, entries: resolvedBackendEntries,
+      backendEnabledByTargetKey, mergedProviderProjectionById: currentDaemonProjectionInputs?.mergedProviderProjectionById })
+    : null, [cfg.agent.agentId, cfg.agent.agentTargetKey, cfg.agent.agentIdentity, cfg.agent.agentSource,
+      hasConfiguredProviderChat, resolvedBackendEntries, backendEnabledByTargetKey, currentDaemonProjectionInputs?.mergedProviderProjectionById]);
+  const selectedAgentIdForModelOptions = selectedAgentTarget?.ok ? selectedAgentTarget.agentId : null;
   const selectedAgentEntry = React.useMemo(() => cfg.agent.agentTargetKey
     ? resolvedAgentEntries.find((entry) => entry.backendTargetKey !== null
       && backendTargetKeysMatch(entry.backendTargetKey, cfg.agent.agentTargetKey!))
@@ -264,9 +263,7 @@ export function LocalConversationSection(props: {
   const preflightModels = useNewSessionPreflightModelsState({
     // This settings page has no admitted Session target. The session source is
     // resolved by the canonical Session reader at start, never by a default Agent.
-    backendTarget: !hasConfiguredProviderChat && selectedAgentIdForModelOptions
-      ? { kind: 'backend', backendId: selectedAgentIdForModelOptions }
-      : null,
+    backendTarget: selectedAgentTarget?.ok ? selectedAgentTarget.backendTarget : null,
     // This id is an Agent id, not a backend id, so name it as the runtime carrier:
     // a non-bundled backend id alone leaves the preflight with no Agent to probe.
     runtimeCarrierAgentId: selectedAgentIdForModelOptions,
@@ -470,7 +467,9 @@ export function LocalConversationSection(props: {
             popoverBoundaryRef={props.popoverBoundaryRef}
             itemTrigger={{
               title: t('settingsVoice.local.mediatorAgentId'),
-              subtitleFormatter: () => (agentIdMenuItems.find((it) => it.id === (selectedAgentIdForDropdown ?? ''))?.subtitle ?? t('settingsVoice.local.mediatorAgentIdSubtitle')),
+              subtitleFormatter: () => (selectedAgentTarget && !selectedAgentTarget.ok
+                ? t('settingsVoice.local.machineErrors.agent_selection_unavailable')
+                : agentIdMenuItems.find((it) => it.id === (selectedAgentIdForDropdown ?? ''))?.subtitle ?? t('settingsVoice.local.mediatorAgentIdSubtitle')),
               detailFormatter: () => selectedAgentIdLabel,
             }}
             items={agentIdMenuItems}

@@ -230,6 +230,21 @@ describe('SessionView composer typing', () => {
     })).kind).toBe('available');
   });
 
+  it('opens a retained Custom ACP Session without offering a model picker for its abstract Agent', async () => {
+    publishSessionOwnerMetadata(metadata => ({ ...metadata, flavor: 'custom-acp' }));
+    expect(readSessionOwnerMetadataView(storage.getState().sessions.s1)?.flavor).toBe('custom-acp');
+    const current = storage.getState().sessions.s1;
+    storage.getState().applySessions([{ ...current, metadataVersion: current.metadataVersion + 1,
+      metadata: { v: 1, path: '/repo', host: 'test-host', agentPresentation: { agentId: 'custom-acp' } },
+    }]);
+    const screen = await renderScreen();
+    try {
+      expect(findAgentInput(screen).props.modelContentOverride).toBeUndefined();
+    } finally {
+      await screen.unmount();
+    }
+  });
+
   it('keeps typing out of the loaded shell while the draft persists, restores and submits', async () => {
     const screen = await renderScreen();
     expect(screen.tree.findAllByType('AgentInput' as React.ElementType)).toHaveLength(1);

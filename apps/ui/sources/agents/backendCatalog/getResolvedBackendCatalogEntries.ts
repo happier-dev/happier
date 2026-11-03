@@ -1,4 +1,4 @@
-import { readBackendTargetRefV2, type BackendTargetRefV2, type BackendTargetRefV2Input, type PersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { readBackendTargetKeyV2, readBackendTargetRefV2, type BackendTargetRefV2, type BackendTargetRefV2Input, type PersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1, listAgentExecutionTargetsV1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import type { AcpCatalogRecordV1, AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 
@@ -288,6 +288,7 @@ export function resolveOperationalBackendTargetForAgentSelection(params: Readonl
     selectedEntry?: Pick<ResolvedBackendCatalogEntry, 'agentId'> | null;
     mergedProviderProjectionById?: Readonly<Record<string, MergedProviderProjectionEntry>> | null;
 }>): BackendTargetRefV2 | null {
+    if (!readBackendTargetKeyV2(params.backendTarget)) return null;
     if (params.backendTarget.kind === 'backend') return params.backendTarget;
     if (params.backendTarget.definitionId) return readBackendTargetRefV2(params.backendTarget);
     const agentId = resolveBackendTargetOperationalAgentId(params);

@@ -175,6 +175,42 @@ afterEach(async () => {
 });
 
 describe('resolveVoiceConfiguredAgentTarget', () => {
+  it('refuses a presentation-only Agent without a configured definition', async () => {
+    await expect(resolveVoiceConfiguredAgentTarget({ machineId: null, selection: {
+      agentId: 'custom-acp', agentTargetKey: null, agentIdentity: null,
+    } })).resolves.toMatchObject({ ok: false, errorCode: VOICE_AGENT_SELECTION_UNAVAILABLE_ERROR_CODE });
+  });
+
+  it('accepts the configured ACP catalog choice through the public setting binding and runtime resolver', async () => {
+    rowDefinitions = [AcpBackendDefinitionV1Schema.parse({ id: 'qa-foldseed-acp', name: 'opencode', title: 'OpenCode ACP',
+      launch: { kind: 'command', command: 'opencode', args: ['acp'] }, createdAt: 1, updatedAt: 1 })];
+    resetAcpCatalogSnapshotsForTests();
+    const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+    const { createVoiceAgentSettingsCatalogReader } = await import('@/sync/ops/actions/voiceAgentSettingsCatalog');
+    const { voiceAgentSelectionBinding } = await import('@/voice/settings/voiceSettingBinding');
+    const targetKey = 'agent:happier.agent.custom-acp/custom-acp:definition:qa-foldseed-acp';
+    const captured = await captureLazyActionAccountContext(account!.home.id);
+    try {
+      const settings = settingsParse({ voice: writeLocalConversationVoiceSettings(voiceSettingsDefaults, {
+        ...readLocalConversationVoiceSettings(voiceSettingsDefaults), conversationMode: 'agent',
+      }) });
+      if (voiceAgentSelectionBinding.kind !== 'owner') throw new Error('Expected the canonical Voice selection owner');
+      expect(voiceAgentSelectionBinding.parse(targetKey)).toEqual({ success: true, value: targetKey });
+      const prepared = await voiceAgentSelectionBinding.prepare!(settings, targetKey, {
+        readAgentCatalog: createVoiceAgentSettingsCatalogReader(captured),
+      });
+      expect(prepared).not.toBeNull();
+      const next = prepared!(settings);
+      expect(next).not.toBeNull();
+      const selection = readLocalConversationVoiceSettings(next!.voice).agent;
+      expect(selection).toMatchObject({ agentId: 'custom-acp', agentTargetKey: targetKey });
+      await expect(resolveVoiceConfiguredAgentTarget({ machineId: null, selection })).resolves.toMatchObject({
+        ok: true, targetKey, backendTarget: { kind: 'backend', backendId: 'qa-foldseed-acp',
+          configuredBackendId: 'qa-foldseed-acp', sourceKind: 'configured' },
+      });
+    } finally { captured.dispose(); }
+  });
+
   it.each(['bundled', 'installed'] as const)('resolves an exact %s Agent independently of unavailable configured-ACP rows', async kind => {
     acpAvailable = false;
     const scope = { serverId: account!.home.id, accountId: 'voice-resolver-account' };

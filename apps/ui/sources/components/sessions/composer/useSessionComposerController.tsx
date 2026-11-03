@@ -107,7 +107,7 @@ import { getAgentCore, isBundledAgentId, resolveAgentIdFromFlavor } from "@/agen
 import { formatAgentLikeIdForDisplay } from "@/agents/catalog/formatAgentLikeIdForDisplay";
 import { getResolvedBackendCatalogEntries } from "@/agents/backendCatalog/getResolvedBackendCatalogEntries";
 import { useAcpCatalogForServer } from "@/sync/store/useAcpCatalog";
-import { resolveBackendTargetKeyV2 } from "@/agents/backendCatalog/backendTargetKeyV2";
+import { readBackendTargetKeyV2, resolveBackendTargetKeyV2 } from "@/agents/backendCatalog/backendTargetKeyV2";
 import { buildRolesRailPickerOption } from "@/components/roles/rail/buildRolesRailPickerOption";
 import { useSessionRolesRailParams } from "@/components/roles/session/sessionRole";
 import { useDaemonMergedProjectionInputs } from "@/agents/backendCatalog/useDaemonMergedProjectionInputs";
@@ -910,6 +910,13 @@ export function useSessionComposerController({
         serverId: sessionRouteServerId,
     });
     const providerAgentTargetKey = resolveSessionActionDefaultTargetKey(sessionActionDefaultBackend);
+    // Shared Session presentation can name a bundled Agent while its private execution
+    // target is withheld (for example a frame). Its catalog still owns model display;
+    // this key is picker-only and never supplies execution/discovery authority.
+    const modelPickerAgentTargetKey = providerAgentTargetKey
+        ?? (agentId && isBundledAgentId(agentId)
+            ? readBackendTargetKeyV2({ kind: 'backend', backendId: agentId })
+            : null);
     const daemonMergedProjection = useDaemonMergedProjectionInputs({
         machineId,
         serverId: sessionRouteServerId,
@@ -4332,7 +4339,7 @@ export function useSessionComposerController({
         serverId: sessionRouteServerId,
     }), [machineId, sessionRouteServerId]);
     const existingSessionModelPicker = React.useMemo(() => {
-        if (!agentId || !providerAgentTargetKey) return undefined;
+        if (!agentId || !modelPickerAgentTargetKey) return undefined;
         return <SessionModelDiscoveryDetail
             agentId={agentId}
             composerOptionsInput={composerOptionsInput}
@@ -4356,7 +4363,7 @@ export function useSessionComposerController({
                 // keys the picker already applies; it never adds a model.
                 const embeddedModelNarrowing = narrowSessionModelPickerToAllowedModels({
                     allowedModels: embedded?.allowedModels,
-                    agentTargetKey: providerAgentTargetKey,
+                    agentTargetKey: modelPickerAgentTargetKey,
                     nativeModels: existingSessionNativeModels,
                     providerGroups: projectedProviderGroups,
                     hiddenNativeModelKeys: existingSessionHiddenNativeModelKeys,
@@ -4376,7 +4383,7 @@ export function useSessionComposerController({
                 return (
                     <SessionModelPicker
                         multiColumn
-                        agentTargetKey={providerAgentTargetKey}
+                        agentTargetKey={modelPickerAgentTargetKey}
                         declarationContext={declarationContext}
                         nativeModels={existingSessionNativeModels}
                         providerGroups={providerGroups}
@@ -4406,8 +4413,8 @@ export function useSessionComposerController({
                         selected={embeddedModelNarrowing && embedded?.allowedModels
                             // The model the next message runs on: the Session's own when allowed, else the
                             // first allowed one (the outgoing record applies the same protocol rule).
-                            ? providerAgentTargetKey
-                                ? readEffectiveAllowedModelRef(embedded.allowedModels, selectedRef, providerAgentTargetKey)
+                            ? modelPickerAgentTargetKey
+                                ? readEffectiveAllowedModelRef(embedded.allowedModels, selectedRef, modelPickerAgentTargetKey)
                                 : null
                             : selectedRef ?? null}
                         selectedTeamCredentialModel={selectedTeamCredentialModel}
@@ -4454,7 +4461,7 @@ export function useSessionComposerController({
         existingSessionSourceBrowse,
         selectedTeamCredentialModel,
         modelMode,
-        providerAgentTargetKey,
+        modelPickerAgentTargetKey,
         providerModelProjection.data,
         providerModelProjection.error,
         providerModelProjection.loading,

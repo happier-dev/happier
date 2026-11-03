@@ -72,9 +72,12 @@ export function projectVoiceConfiguredAgentTarget(params: Readonly<{
     });
     if (!agentId) return unavailable();
     if (!targetKeySelection && !externalIdentitySelection && !configuredCompatBackendId) {
-        return isLegacyCompatAgentType(agentId) ? unavailable() : {
+        const backendTarget = resolveOperationalBackendTargetForAgentSelection({
+            backendTarget: { kind: 'backend', backendId: agentId },
+        });
+        return isLegacyCompatAgentType(agentId) || !backendTarget ? unavailable() : {
             ok: true, kind: 'legacy', agentId,
-            backendTarget: { kind: 'backend', backendId: agentId }, targetKey: null,
+            backendTarget, targetKey: null,
         };
     }
     const backendEnabledByTargetKey = params.backendEnabledByTargetKey;

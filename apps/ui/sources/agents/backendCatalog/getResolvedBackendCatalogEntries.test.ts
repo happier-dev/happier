@@ -7,7 +7,7 @@ vi.mock('@/text', async () => {
     });
 });
 
-import { getResolvedBackendCatalogEntries as readBackendCatalog, resolveCatalogAgentIdForBackendTarget } from './getResolvedBackendCatalogEntries';
+import { getResolvedBackendCatalogEntries as readBackendCatalog, resolveCatalogAgentIdForBackendTarget, resolveOperationalBackendTargetForAgentSelection } from './getResolvedBackendCatalogEntries';
 import { BUNDLED_AGENT_CONTRIBUTION_IDENTITIES } from '@happier-dev/agents/agent-ids';
 import type { BundledAgentId } from '@/agents/catalog/catalog';
 import { AcpBackendDefinitionV1Schema, type AcpCatalogSettingsV1 } from '@happier-dev/protocol/acp/catalog/settingsV1';
@@ -45,6 +45,16 @@ function configuredAgentTargetKey(definitionId: string) {
 }
 
 describe('getResolvedBackendCatalogEntries', () => {
+    it('requires the configured definition when resolving a presentation-only ACP Agent', () => {
+        expect(resolveOperationalBackendTargetForAgentSelection({
+            backendTarget: { kind: 'backend', backendId: 'custom-acp' },
+        })).toBeNull();
+        expect(resolveOperationalBackendTargetForAgentSelection({
+            backendTarget: configuredAgentTarget('qa-foldseed-acp'),
+        })).toMatchObject({ kind: 'backend', backendId: 'qa-foldseed-acp',
+            configuredBackendId: 'qa-foldseed-acp', sourceKind: 'configured' });
+    });
+
     it('uses the admitted daemon Agent set instead of restoring an omitted bundled Agent', () => {
         const enabledAgentIds = ['claude', 'codex'];
         const mergedProviderProjectionById = { claude: {

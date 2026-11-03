@@ -317,6 +317,13 @@ before validating their values, so an invalid stored target does not discard
 valid neighboring preferences. Explicit canonical entries take precedence over
 predecessor aliases.
 
+Voice settings use the same catalog target projection as Voice execution for
+model preflight, preserving the configured definition instead of reconstructing
+a target from the presentation id. The public Voice Agent setting resolves
+catalog keys through the Protocol target reader before capturing the selection
+tuple. An unresolved presentation target stays unavailable in settings and the
+Session composer; it never becomes a substitute executable Agent.
+
 The definition id survives picker selection and draft persistence/reopening,
 then the daemon admits the installed contribution and the exact catalog row.
 Admission refreshes that row through the scoped Account catalog owner; a ready

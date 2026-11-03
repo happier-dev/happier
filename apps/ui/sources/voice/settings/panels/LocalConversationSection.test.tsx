@@ -356,6 +356,19 @@ describe('LocalConversationSection', () => {
     else expect(typeof resume?.unavailableReason).toBe('string');
   });
 
+  it('shows an unavailable selection for an abstract ACP Agent without crashing or probing a substitute', async () => {
+    const LocalConversationSection = await loadLocalConversationSection();
+    const voice = createLocalConversationVoice({ conversationMode: 'agent', agent: {
+      agentSource: 'agent', agentId: 'custom-acp', agentTargetKey: null, agentIdentity: null,
+    } });
+    const setVoice = vi.fn();
+    const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={setVoice} />);
+    const picker = findDropdownByItemTriggerTitle(screen, t('settingsVoice.local.mediatorAgentId'));
+    expect(picker?.props.itemTrigger.subtitleFormatter()).toBe(t('settingsVoice.local.machineErrors.agent_selection_unavailable'));
+    expect(capabilitiesInvoke).not.toHaveBeenCalled();
+    expect(setVoice).not.toHaveBeenCalled();
+  });
+
   it('offers a configured Agent from destination rows without a Settings catalog root', async () => {
     rowDefinitions = [AcpBackendDefinitionV1Schema.parse({ id: 'row-review', name: 'row-review', title: 'Row review',
       launch: { kind: 'command' as const, command: 'review', args: [] }, createdAt: 1, updatedAt: 1 })];
@@ -375,6 +388,13 @@ describe('LocalConversationSection', () => {
     expect(readLocalConversationVoiceSettings(setVoice.mock.calls[0]![0]).agent).toMatchObject({
       agentId: 'custom-acp', agentTargetKey: rowTargetKey,
     });
+    await screen.update(<LocalConversationSection voice={setVoice.mock.calls[0]![0]} setVoice={setVoice} />);
+    expect(findDropdownByItemTriggerTitle(screen, t('settingsVoice.local.mediatorAgentId'))?.props.selectedId).toBe(rowTargetKey);
+    await expect(resolveVoiceConfiguredAgentTarget({ machineId: 'machine-1',
+      selection: readLocalConversationVoiceSettings(setVoice.mock.calls[0]![0]).agent,
+    })).resolves.toMatchObject({ ok: true, backendTarget: {
+      kind: 'backend', backendId: 'row-review', configuredBackendId: 'row-review', sourceKind: 'configured',
+    } });
   });
 
   it('draws the Hands-free timing rows only while Hands-free is on', async () => {

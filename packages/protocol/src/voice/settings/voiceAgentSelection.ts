@@ -1,4 +1,5 @@
 import type { PluginContributionIdentityV1 } from '../../plugins/contributionIdentity.js';
+import { readBackendTargetKeyV2 } from '../../backends/targets/backendTargetRefV2.js';
 import type { VoiceSettings, VoiceLocalConversationSettings } from './voiceSettings.js';
 
 /** Catalog routing facts are selected together, never inferred from the display/routing id. */
@@ -20,9 +21,12 @@ export function voiceAgentCatalogSelectionValueV1(entry: VoiceAgentCatalogEntryV
 }
 
 export function resolveVoiceAgentCatalogSelectionV1<T extends VoiceAgentCatalogEntryV1>(entries: readonly T[], value: string): T | null {
-    const exact = entries.find(entry => entry.backendTargetKey === value);
+    const targetKey = readBackendTargetKeyV2(value);
+    const entryTargetKey = (entry: T) => readBackendTargetKeyV2(entry.backendTargetKey
+        ?? { kind: 'backend', backendId: entry.agentId });
+    const exact = targetKey ? entries.find(entry => entryTargetKey(entry) === targetKey) : null;
     if (exact) return exact;
-    const legacy = entries.filter(entry => entry.agentId === value);
+    const legacy = entries.filter(entry => entry.agentId === value && entryTargetKey(entry) !== null);
     return legacy.length === 1 ? legacy[0]! : null;
 }
 
