@@ -21,8 +21,8 @@ export type HostReviewedChildPolicyV1 = Readonly<{
   requiredActionIds?: readonly string[];
   surface: NonNullable<ActionExecutorContext['surface']>;
 }>;
-export type HostReviewedChildV1 = Readonly<{
-  action: HostReviewedChildInvocationV1['action'];
+export type HostReviewedChildV1<TAction extends ActionId = ActionId> = Readonly<{
+  action: TAction | Exclude<HostReviewedChildInvocationV1['action'], ActionId>;
   role: string;
   input: JsonValue;
 }>;
@@ -121,16 +121,16 @@ export function readHostAdmittedReviewedChildV1(context: ActionExecutorContext |
 }
 
 /** Single in-process issuer. Domain adapters supply admitted, normalized facts. */
-export async function invokeHostReviewedChildV1<T = ActionExecuteResult>(params: Readonly<{
+export async function invokeHostReviewedChildV1<T = ActionExecuteResult, TAction extends ActionId = ActionId>(params: Readonly<{
   parent: HostReviewedParentV1;
   context: ActionExecutorContext;
-  child: HostReviewedChildV1;
+  child: HostReviewedChildV1<TAction>;
   invocationServices?: HostReviewedChildInvocationV1['invocationServices'];
   /** Supplied only by the receiving custody/placement owner after ordinary admission. */
   receivingAdmission?: SocketRpcMachineAdmissionContextV1;
   admittedReview?: HostReviewedChildPolicyV1;
   environmentId?: string;
-  execute(input: unknown, context: ActionExecutorContext, actionId: ActionId): Promise<T>;
+  execute(input: unknown, context: ActionExecutorContext, actionId: TAction | 'action.invoke'): Promise<T>;
 }>): Promise<T | ActionExecuteFailure> {
   const denied = (): ActionExecuteFailure => ({ ok: false, errorCode: 'credential_scope_denied', error: 'credential_scope_denied' });
   const { context } = params;
@@ -196,7 +196,7 @@ export async function invokeHostReviewedChildV1<T = ActionExecuteResult>(params:
       value: Object.freeze(childAuthorization), enumerable: true,
     });
   }
-  return await params.execute(envelope ?? childInput, childContext, typeof action === 'string' ? action : 'action.invoke');
+  return await params.execute(envelope ?? childInput, childContext, typeof child.action === 'string' ? child.action : 'action.invoke');
 }
 
 /** One host port; domain owners supply concrete child input after their ordinary admission. */
