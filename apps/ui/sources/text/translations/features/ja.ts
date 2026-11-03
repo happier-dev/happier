@@ -2251,6 +2251,7 @@ const connectedServicesSetupTranslations = { ja: {
         deviceStepOpenWhere: ({ where }) => `${where}、使いたいアカウントでサインインした状態で`,
         deviceStepApprove: ({ service }) => `${service} で Happier を承認`,
         deviceCheckNow: '今すぐ確認',
+        accountSaved: 'あなたのアカウント',
     } } satisfies Pick<Readonly<Record<string, ConnectedServicesSetupTranslation>>, "ja">;
 
 return { connectedServicesSetupTranslations };

@@ -2273,6 +2273,7 @@ const connectedServicesSetupTranslations = { ru: {
         deviceStepOpenWhere: ({ where }) => `${where}, войдя в нужный аккаунт`,
         deviceStepApprove: ({ service }) => `Разрешите Happier в ${service}`,
         deviceCheckNow: 'Проверить сейчас',
+        accountSaved: 'Ваши аккаунты',
     } } satisfies Pick<Readonly<Record<string, ConnectedServicesSetupTranslation>>, "ru">;
 
 return { connectedServicesSetupTranslations };

@@ -2246,6 +2246,7 @@ const connectedServicesSetupTranslations = { 'zh-Hant': {
         deviceStepOpenWhere: ({ where }) => `${where}，並登入你要使用的帳號`,
         deviceStepApprove: ({ service }) => `在 ${service} 中核准 Happier`,
         deviceCheckNow: '立即檢查',
+        accountSaved: '你的帳戶',
     } } satisfies Pick<Readonly<Record<string, ConnectedServicesSetupTranslation>>, "zh-Hant">;
 
 return { connectedServicesSetupTranslations };

@@ -25,6 +25,7 @@ export type ConnectedServicesSetupTranslation = Readonly<{
     deviceStepOpenWhere: (params: Readonly<{ where: string }>) => string;
     deviceStepApprove: (params: Readonly<{ service: string }>) => string;
     deviceCheckNow: string;
+    accountSaved: string;
 }>;
 
 
@@ -53,4 +54,5 @@ export const connectedServicesSetupTranslationsEnglish = { en: {
         deviceStepOpenWhere: ({ where }) => `${where}, signed in to the account you want to use`,
         deviceStepApprove: ({ service }) => `Approve Happier in ${service}`,
         deviceCheckNow: 'Check now',
+        accountSaved: 'Your accounts',
     } } satisfies Pick<Readonly<Record<string, ConnectedServicesSetupTranslation>>, "en">;

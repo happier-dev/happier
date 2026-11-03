@@ -2246,6 +2246,7 @@ const connectedServicesSetupTranslations = { 'zh-Hans': {
         deviceStepOpenWhere: ({ where }) => `${where}，并登录你要使用的账号`,
         deviceStepApprove: ({ service }) => `在 ${service} 中批准 Happier`,
         deviceCheckNow: '立即检查',
+        accountSaved: '你的账户',
     } } satisfies Pick<Readonly<Record<string, ConnectedServicesSetupTranslation>>, "zh-Hans">;
 
 return { connectedServicesSetupTranslations };

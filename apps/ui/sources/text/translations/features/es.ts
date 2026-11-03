@@ -2251,6 +2251,7 @@ const connectedServicesSetupTranslations = { es: {
         deviceStepOpenWhere: ({ where }) => `${where}, con la sesión iniciada en la cuenta que quieres usar`,
         deviceStepApprove: ({ service }) => `Aprueba Happier en ${service}`,
         deviceCheckNow: 'Comprobar ahora',
+        accountSaved: 'Tus cuentas',
     } } satisfies Pick<Readonly<Record<string, ConnectedServicesSetupTranslation>>, "es">;
 
 return { connectedServicesSetupTranslations };
