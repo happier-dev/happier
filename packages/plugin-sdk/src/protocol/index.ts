@@ -49,3 +49,5 @@ export { encodeBase64 } from './encoding.js';
 export { pluginJsonValuesEqual } from './protocolFacade.js';
 
 export { ScmHostingRepositoryIdentityV1ProtocolSchema } from './index.public.js';
+
+export { PluginUiResourceIntentV1Schema, type PluginUiResourceIntentV1 } from './index.public.js';

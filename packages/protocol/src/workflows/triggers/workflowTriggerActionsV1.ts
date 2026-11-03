@@ -1,5 +1,6 @@
 import * as zMini from 'zod/mini';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
+import { ScmHostingProviderKindSchema } from '../../scm/pullRequests.js';
 import { z } from 'zod/mini';
 import { WorkflowDestinationsV1Schema } from '../workflowDestinationsV1.js';
 import { AutomationTriggerDefinitionInputSchema, AutomationTriggerDefinitionSchema } from '../../automations/automationTriggerDefinition.js';
@@ -179,7 +180,7 @@ export const SessionTriggerUpdateRequestV1Schema = lazyZodSchema(() => z.strictO
 }));
 export const SessionTriggerRemoveRequestV1Schema = lazyZodSchema(() => z.strictObject({ sessionId: SessionId, triggerId: AutomationTriggerIdSchema }));
 export const SessionPullRequestLinkV1Schema = lazyZodSchema(() => z.strictObject({
-  provider: z.literal('github'), repository: z.string().check(z.minLength(1)), number: z.number().check(z.int(), z.positive(), z.int()),
+  provider: ScmHostingProviderKindSchema, repository: z.string().check(z.minLength(1)), number: z.number().check(z.int(), z.positive(), z.int()),
   url: z.string().check(z.url()),
   state: z.optional(z.enum(['open', 'merged', 'closed', 'unknown'])),
   observedAt: z.optional(z.number().check(z.int(), z.nonnegative())),

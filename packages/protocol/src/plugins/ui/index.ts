@@ -227,3 +227,5 @@ export {
 } from '../../actions/actionIds.js';
 export * from './liveStream.js';
 export { selectPluginUiWidgetEntriesV1 } from '../contributions/ui/widgetInventory.js';
+
+export { PluginUiResourceIntentV1Schema, type PluginUiResourceIntentV1 } from '../contributions/ui/resourceLinks.js';

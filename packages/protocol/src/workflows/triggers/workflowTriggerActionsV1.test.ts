@@ -27,8 +27,8 @@ describe('workflow trigger Action boundary', () => {
     expect(SessionTriggerListResultV1Schema.parse({ sessionId: 'session-one', sets: [], pullRequestLinks: [] }).pullRequestLinks).toEqual([]);
     expect(SessionTriggerListResultV1Schema.safeParse({ ...unavailable, pullRequestLinks: { ...unavailable.pullRequestLinks, links: [] } }).success).toBe(false);
   });
-  it('qualifies session PR-link reads instead of accepting an unaddressed list', () => {
-    const pullRequestLinks = [{ provider: 'github', repository: 'happier-dev/happier', number: 42, url: 'https://github.com/happier-dev/happier/pull/42' }];
+  it.each(['github', 'gitlab', 'bitbucket'])('qualifies %s session PR-link reads instead of accepting an unaddressed list', provider => {
+    const pullRequestLinks = [{ provider, repository: 'happier-dev/happier', number: 42, url: 'https://forge.example/happier-dev/happier/pull/42' }];
     expect(SessionTriggerListResultV1Schema.safeParse({ sets: [], pullRequestLinks }).success).toBe(false);
     expect(SessionTriggerListResultV1Schema.parse({ sessionId: 'session-one', sets: [], pullRequestLinks }))
       .toEqual({ sessionId: 'session-one', sets: [], pullRequestLinks });
