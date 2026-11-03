@@ -1,10 +1,8 @@
 import React from 'react';
-import { Platform, View, useWindowDimensions, Pressable } from 'react-native';
+import { View, useWindowDimensions, Pressable } from 'react-native';
 import { Stack, useRouter, useLocalSearchParams, useNavigation } from 'expo-router';
 import { StyleSheet } from 'react-native-unistyles';
 import { useUnistyles } from 'react-native-unistyles';
-import { useHeaderHeight } from '@react-navigation/elements';
-import Constants from 'expo-constants';
 import { t } from '@/text';
 import { ProfileEditForm } from '@/components/profiles/edit';
 import { type AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
@@ -15,7 +13,6 @@ import { buildProfileSaveSettingsDelta, convertBuiltInProfileToCustom, createEmp
 import { Modal } from '@/modal';
 import { promptUnsavedChangesAlert } from '@/utils/ui/promptUnsavedChangesAlert';
 import { PopoverScope } from '@/components/ui/popover';
-import { KeyboardAwareScreen } from '@/components/ui/keyboardAvoidance';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { useUnsavedChangesBeforeRemoveGuard } from '@/utils/navigation/useUnsavedChangesBeforeRemoveGuard';
@@ -41,7 +38,6 @@ export default React.memo(function ProfileEditScreen() {
     const machineIdParam = Array.isArray(params.machineId) ? params.machineId[0] : params.machineId;
     const draftIdParam = Array.isArray(params.draftId) ? params.draftId[0] : params.draftId;
     const screenWidth = useWindowDimensions().width;
-    const headerHeight = useHeaderHeight();
     const profiles = useSetting('profiles');
     const secretBindingsByProfileId = useSetting('secretBindingsByProfileId');
     const [, setLastUsedProfile] = useSettingMutable('lastUsedProfile');
@@ -290,11 +286,8 @@ export default React.memo(function ProfileEditScreen() {
 
     return (
         <PopoverScope>
-            <KeyboardAwareScreen
-                mode="form"
-                keyboardVerticalOffset={Platform.OS === 'ios' ? Constants.statusBarHeight + headerHeight : 0}
-                style={profileEditScreenStyles.container}
-            >
+            {/* ProfileEditForm's keyboard-aware list owns keyboard avoidance for this screen. */}
+            <View style={profileEditScreenStyles.container}>
                 <Stack.Screen
                     options={screenOptions}
                 />
@@ -314,7 +307,7 @@ export default React.memo(function ProfileEditScreen() {
                         />
                     </View>
                 </View>
-            </KeyboardAwareScreen>
+            </View>
         </PopoverScope>
     );
 });
