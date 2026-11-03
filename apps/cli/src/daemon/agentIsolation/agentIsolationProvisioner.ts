@@ -93,7 +93,8 @@ export async function prepareAgentIsolationEffectsResult(input: Readonly<{
       ...(checked.outcome === 'not_applied' ? { setup: checked } : {}) };
   } else if (observationSteps.length) setupPlan = await checkMachineSetupEffectPlan({ basis, steps: observationSteps, backend: effects.backend ?? createMachineSetupNativeBackend() });
   const retirement = !input.enabled ? ('retirement' in intent ? intent.retirement : undefined)
-    ?? projectAgentIsolationBootstrapRetirement({ steps: observationSteps, nativeFacts: setupPlan.nativeFacts }) : undefined;
+    ?? [...projectAgentIsolationBootstrapRetirement({ steps: observationSteps, nativeFacts: setupPlan.nativeFacts }),
+      ...('retirementWarnings' in intent ? intent.retirementWarnings ?? [] : [])] : undefined;
   if (retirement) {
     const removals = new Set(retirement.filter(effect => effect.action === 'remove').map(effect => effect.stepId));
     setupPlan = createMachineSetupEffectPlan({ basis, steps: setupPlan.steps.filter(step => removals.has(step.id)),

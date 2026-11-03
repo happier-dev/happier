@@ -1,6 +1,6 @@
 import { lstat, realpath } from 'node:fs/promises';
 import { dirname, isAbsolute } from 'node:path';
-import type { MachineAgentIsolationStatusV1 } from '@happier-dev/protocol';
+import type { AgentIsolationEffectPlanV1, MachineAgentIsolationStatusV1 } from '@happier-dev/protocol';
 import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
 import { buildUserManagerGroupRefreshStep } from '@/daemon/service/userManagerGroups';
 import { buildAgentIsolationProvisioningSteps, type AgentIsolationMemberRequester } from './provisioning';
@@ -21,18 +21,23 @@ export async function resolveAgentIsolationEffectIntentResult(enabled: boolean, 
   if (!Number.isSafeInteger(sessionsToReplace) || sessionsToReplace < 0) return unavailable('session_inventory',
     'Restore the daemon Session inventory before reviewing isolation.');
   const bindingScope = !enabled ? effects.readMemberBindingScope?.() : null;
-  const memberBindings = bindingScope ? (await readAgentIsolationMemberBindings(bindingScope)).bindings : [];
+  const memberInventory = bindingScope ? await readAgentIsolationMemberBindings(bindingScope) : null;
+  const memberBindings = memberInventory?.bindings ?? [];
+  const retirementWarnings: NonNullable<AgentIsolationEffectPlanV1['retirement']> = !enabled && memberInventory?.coverage !== 'complete'
+    ? [{ stepId: 'member-runas-inventory', kind: 'file', target: 'Managed member RunAs rules',
+      observation: 'unknown', action: 'retain', reasonCode: 'native_check_unavailable',
+      remedy: 'Restore the private member binding inventory and retry, or have an administrator inspect retained managed member RunAs rules.' }] : [];
   const daemon = await effects.elevation.observe().catch(() => null);
   if (!daemon || daemon.daemonIdentity !== 'nonRoot' || daemon.daemonUid === null || daemon.daemonUid <= 0 || !daemon.daemonUsername || !daemon.daemonPrimaryGroup) {
     if (!enabled) return { kind: 'ready' as const, intent: { roots: [], ancestorAcls: [], sessionsToReplace, steps: [],
-      retirement: buildUnobservedAgentIsolationBootstrapRetirement(effects.installedCli, memberBindings) } };
+      retirement: [...buildUnobservedAgentIsolationBootstrapRetirement(effects.installedCli, memberBindings), ...retirementWarnings] } };
     return unavailable('daemon_identity', 'Run the daemon as a named non-root OS user with a primary group, then review isolation.');
   }
   if (!enabled) {
     const retirementObservations = buildAgentIsolationBootstrapRetirementObservations({ daemonUsername: daemon.daemonUsername,
       daemonPrimaryGroup: daemon.daemonPrimaryGroup, binaryPath: effects.installedCli, memberBindings });
     return { kind: 'ready' as const, intent: { roots: [], ancestorAcls: [], sessionsToReplace, daemonObservation: daemon,
-      steps: retirementObservations.filter(step => step.kind === 'file' && step.state === 'absent'), retirementObservations } };
+      steps: retirementObservations.filter(step => step.kind === 'file' && step.state === 'absent'), retirementObservations, retirementWarnings } };
   }
   if (requesterIdentity) return { kind: 'ready' as const, intent: { roots: [], ancestorAcls: [], sessionsToReplace: 0, daemonObservation: daemon,
     steps: buildAgentIsolationProvisioningSteps({ daemonUsername: daemon.daemonUsername, daemonPrimaryGroup: daemon.daemonPrimaryGroup, binaryPath: effects.installedCli, requesterIdentity, retainedMemberUid }) } };

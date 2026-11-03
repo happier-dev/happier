@@ -5961,8 +5961,16 @@ isolation refusal, which newer clients present without a private-RPC retry.
 
 ## Agent isolation bootstrap retirement (0.3 development)
 
+Cross-UID Linux Sessions and the native isolation probe place their private
+socket directories under `/tmp`, independent of a custodian-private `TMPDIR`.
+The existing ACL admits only the selected shared Agent or member UID to that
+Session leaf and socket; the Session bearer and tool authority remain unchanged.
+No custodian ancestor permissions or daemon group membership are widened.
+
 An Off review inventories the shared bootstrap and member RunAs rules derived
-from the existing private bindings, even when desired policy is already disabled. Its optional `plan.retirement` lists native presence, exact
+from the existing private bindings, even when desired policy is already disabled. An unresolved binding scope or incomplete inventory adds one retained
+`native_check_unavailable` item; Off remains ready and does not claim the member
+rules were fully inspected. Its optional `plan.retirement` lists native presence, exact
 managed RunAs removal, and typed remedies for retained resources. The legacy
 bootstrap recorded neither exclusive user/group ownership nor prior permissions
 or Git values. Those identities, shared tools and authored home/workspace data

@@ -59,7 +59,11 @@ export async function prepareSessionMcpLocalTransport(options: SessionMcpLocalTr
     }
     const sameIdentity = options.agentUid === process.getuid?.();
     if (!sameIdentity && process.platform !== 'linux') throw new SessionMcpUnavailableError();
-    const directory = await mkdtemp(join(options.runtimeRoot ?? tmpdir(), 'happier-mcp-'))
+    // Linux isolated UIDs cannot traverse a custodian-private TMPDIR. Keep the
+    // private per-Session leaf under the public temporary root; only the named
+    // UID receives traversal/socket access below it. Never open owner ancestors.
+    const runtimeRoot = options.runtimeRoot ?? (sameIdentity ? tmpdir() : '/tmp');
+    const directory = await mkdtemp(join(runtimeRoot, 'happier-mcp-'))
         .catch(() => { throw new SessionMcpUnavailableError(); });
     const bearer = randomBytes(32);
     const localContext: SessionMcpLocalContext = Object.freeze({
