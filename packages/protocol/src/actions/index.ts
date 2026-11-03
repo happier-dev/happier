@@ -646,3 +646,5 @@ export * from './actionPolicyActionFamily.js';
 export * from './actionAudiencePolicy.js';
 
 export * from './sessionSpaceMembership.js';
+
+export * from './approvalProfiles.js';
