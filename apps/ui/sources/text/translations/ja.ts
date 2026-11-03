@@ -1,3 +1,5 @@
+import { botTemplateRecipientTranslations } from './botTemplateRecipientTranslations';
+import { botTemplateTranslations } from './botTemplateTranslations';
 import { fileEditingTranslations } from './fileEditingTranslations.shared';
 import { usageChartInputTranslations } from './usageChartInputTranslations.shared';
 import { usageChartPlanetFamilyTranslations } from './usageChartPlanetFamilyTranslations.shared';
@@ -1281,6 +1283,8 @@ export const ja: TranslationStructure = {
     invalidNextStep: "ポリシーファイルが修正されたら、Happierを再起動してください。",
     guide: "ポリシーガイド",
   },
+  botTemplates: botTemplateTranslations['ja'],
+  botTemplateRecipient: botTemplateRecipientTranslations['ja'],
   transcriptPassage: {
     quote: "引用",
     annotate: "注釈を付ける",

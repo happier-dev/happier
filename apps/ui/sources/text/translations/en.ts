@@ -1,3 +1,5 @@
+import { botTemplateRecipientTranslations } from './botTemplateRecipientTranslations';
+import { botTemplateTranslations } from './botTemplateTranslations';
 import { fileEditingTranslations } from './fileEditingTranslations.shared';
 import { usageChartInputTranslations } from './usageChartInputTranslations.shared';
 import { usageChartPlanetFamilyTranslations } from './usageChartPlanetFamilyTranslations.shared';
@@ -22446,6 +22448,8 @@ const enOrganizationPolicy = {
 
 export const en: TranslationStructure = {
   organizationPolicy: enOrganizationPolicy,
+  botTemplates: botTemplateTranslations['en'],
+  botTemplateRecipient: botTemplateRecipientTranslations['en'],
   transcriptPassage: {
     quote: "Quote",
     annotate: "Annotate",
@@ -23585,7 +23589,7 @@ type EnglishNamespaces30 = TranslationOverlay<
   typeof publicIdentity
 >;
 
-export type TranslationsEn = EnglishNamespaces30 & Readonly<{ fileReviewNote: typeof fileReviewNoteTranslations.en; hunkReview: typeof hunkReviewTranslations.en; composerReferences: typeof composerReferenceTranslations.en }>;
+export type TranslationsEn = EnglishNamespaces30 & Readonly<{ botTemplates: typeof botTemplateTranslations.en; botTemplateRecipient: typeof botTemplateRecipientTranslations.en; fileReviewNote: typeof fileReviewNoteTranslations.en; hunkReview: typeof hunkReviewTranslations.en; composerReferences: typeof composerReferenceTranslations.en }>;
 
 // Shape contract for all locales: enforce identical key structure without requiring English literal
 // string values. Functions are preserved so parameter lists remain typechecked.

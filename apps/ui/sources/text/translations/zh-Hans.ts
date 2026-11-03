@@ -1,3 +1,5 @@
+import { botTemplateRecipientTranslations } from './botTemplateRecipientTranslations';
+import { botTemplateTranslations } from './botTemplateTranslations';
 import { fileEditingTranslations } from './fileEditingTranslations.shared';
 import { usageChartInputTranslations } from './usageChartInputTranslations.shared';
 import { usageChartPlanetFamilyTranslations } from './usageChartPlanetFamilyTranslations.shared';
@@ -1297,6 +1299,8 @@ export const zhHans: TranslationStructure = {
     invalidNextStep: "策略文件修复后，请重新启动 Happier。",
     guide: "策略指南",
   },
+  botTemplates: botTemplateTranslations['zh-Hans'],
+  botTemplateRecipient: botTemplateRecipientTranslations['zh-Hans'],
   transcriptPassage: {
     quote: "引用",
     annotate: "添加批注",

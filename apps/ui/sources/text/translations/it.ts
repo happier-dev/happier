@@ -1,3 +1,5 @@
+import { botTemplateRecipientTranslations } from './botTemplateRecipientTranslations';
+import { botTemplateTranslations } from './botTemplateTranslations';
 import { fileEditingTranslations } from './fileEditingTranslations.shared';
 import { usageChartInputTranslations } from './usageChartInputTranslations.shared';
 import { usageChartPlanetFamilyTranslations } from './usageChartPlanetFamilyTranslations.shared';
@@ -1296,6 +1298,8 @@ export const it: TranslationStructure = {
     invalidNextStep: "Riavvia Happier dopo che il file della politica è stato corretto.",
     guide: "Guida alla politica",
   },
+  botTemplates: botTemplateTranslations['it'],
+  botTemplateRecipient: botTemplateRecipientTranslations['it'],
   transcriptPassage: {
     quote: "Cita",
     annotate: "Annota",

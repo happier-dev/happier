@@ -1,3 +1,5 @@
+import { botTemplateRecipientTranslations } from './botTemplateRecipientTranslations';
+import { botTemplateTranslations } from './botTemplateTranslations';
 import { fileEditingTranslations } from './fileEditingTranslations.shared';
 import { usageChartInputTranslations } from './usageChartInputTranslations.shared';
 import { usageChartPlanetFamilyTranslations } from './usageChartPlanetFamilyTranslations.shared';
@@ -1264,6 +1266,8 @@ export const ca: TranslationStructure = {
     invalidNextStep: "Reinicia Happier quan s’hagi corregit el fitxer de la política.",
     guide: "Guia de la política",
   },
+  botTemplates: botTemplateTranslations['ca'],
+  botTemplateRecipient: botTemplateRecipientTranslations['ca'],
   transcriptPassage: {
     quote: "Cita",
     annotate: "Anota",

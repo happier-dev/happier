@@ -1,3 +1,5 @@
+import { botTemplateRecipientTranslations } from './botTemplateRecipientTranslations';
+import { botTemplateTranslations } from './botTemplateTranslations';
 import { fileEditingTranslations } from './fileEditingTranslations.shared';
 import { usageChartInputTranslations } from './usageChartInputTranslations.shared';
 import { usageChartPlanetFamilyTranslations } from './usageChartPlanetFamilyTranslations.shared';
@@ -1311,6 +1313,8 @@ export const ru: TranslationStructure = {
     invalidNextStep: "Перезапустите Happier после исправления файла политики.",
     guide: "Руководство по политике",
   },
+  botTemplates: botTemplateTranslations['ru'],
+  botTemplateRecipient: botTemplateRecipientTranslations['ru'],
   transcriptPassage: {
     quote: "Цитировать",
     annotate: "Добавить заметку",

@@ -1,3 +1,5 @@
+import { botTemplateRecipientTranslations } from './botTemplateRecipientTranslations';
+import { botTemplateTranslations } from './botTemplateTranslations';
 import { fileEditingTranslations } from './fileEditingTranslations.shared';
 import { usageChartInputTranslations } from './usageChartInputTranslations.shared';
 import { usageChartPlanetFamilyTranslations } from './usageChartPlanetFamilyTranslations.shared';
@@ -1089,6 +1091,8 @@ export const de: TranslationStructure = {
     invalidNextStep: "Starte Happier neu, sobald die Richtliniendatei korrigiert ist.",
     guide: "Anleitung zur Richtlinie",
   },
+  botTemplates: botTemplateTranslations['de'],
+  botTemplateRecipient: botTemplateRecipientTranslations['de'],
   transcriptPassage: {
     quote: "Zitieren",
     annotate: "Anmerken",

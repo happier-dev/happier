@@ -1,3 +1,5 @@
+import { botTemplateRecipientTranslations } from './botTemplateRecipientTranslations';
+import { botTemplateTranslations } from './botTemplateTranslations';
 import { fileEditingTranslations } from './fileEditingTranslations.shared';
 import { usageChartInputTranslations } from './usageChartInputTranslations.shared';
 import { usageChartPlanetFamilyTranslations } from './usageChartPlanetFamilyTranslations.shared';
@@ -1310,6 +1312,8 @@ export const pl: TranslationStructure = {
     invalidNextStep: "Uruchom ponownie Happier po poprawieniu pliku polityki.",
     guide: "Przewodnik po polityce",
   },
+  botTemplates: botTemplateTranslations['pl'],
+  botTemplateRecipient: botTemplateRecipientTranslations['pl'],
   transcriptPassage: {
     quote: "Cytuj",
     annotate: "Dodaj uwagę",
