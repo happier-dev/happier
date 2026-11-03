@@ -44,6 +44,8 @@ export const MachineUpdateStateRequestSchema = z.strictObject({
   ...MachineEncodedWriteBasisV1Schema.shape,
   machineId: z.optional(z.string().check(z.minLength(1))),
   daemonState: z.string(),
+  /** Non-persisted wake hint, never evidence of idle or effect admission. */
+  managedActivityChanged: z.optional(z.literal(true)),
 });
 export type MachineUpdateStateRequest = z.infer<typeof MachineUpdateStateRequestSchema>;
 
