@@ -70,7 +70,7 @@ const storageState: Partial<StorageState> = {
     workflowRunsById: {},
     workflowRunListWindows: {},
     profile: { ...profileDefaults, id: 'me' },
-    settings: { ...settingsDefaults, workspacePathDisplayModeV1: 'name' },
+    settings: { ...settingsDefaults },
     sessionMessages: {
         'session-1': createSessionMessagesFixture(),
         'hidden-voice': createSessionMessagesFixture({

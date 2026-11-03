@@ -61,7 +61,6 @@ export const WorkspaceRouteBody = React.memo(function SessionSettingsScreen() {
     const [sessionFolderViewModeV1] = useSettingMutable('sessionFolderViewModeV1');
     const [sessionListNarrowWorkingIndicatorStyle, setSessionListNarrowWorkingIndicatorStyle] = useSettingMutable('sessionListNarrowWorkingIndicatorStyle');
     const [sessionListWorkingStatusAnimatedTextEnabled, setSessionListWorkingStatusAnimatedTextEnabled] = useSettingMutable('sessionListWorkingStatusAnimatedTextEnabled');
-    const [workspacePathDisplayModeV1, setWorkspacePathDisplayModeV1] = useSettingMutable('workspacePathDisplayModeV1');
     const [workspaceFaviconsEnabled, setWorkspaceFaviconsEnabled] = useSettingMutable('workspaceFaviconsEnabled');
     const [workspaceMachineSubtitlesEnabled, setWorkspaceMachineSubtitlesEnabled] = useSettingMutable('workspaceMachineSubtitlesEnabled');
     const [hideInactiveSessions, setHideInactiveSessions] = useSettingMutable('hideInactiveSessions');
@@ -87,7 +86,6 @@ export const WorkspaceRouteBody = React.memo(function SessionSettingsScreen() {
     const [openSessionListOrderingModeMenu, setOpenSessionListOrderingModeMenu] = React.useState(false);
     const [openSessionFolderDisplayMenu, setOpenSessionFolderDisplayMenu] = React.useState(false);
     const [openSessionListFolderSortModeMenu, setOpenSessionListFolderSortModeMenu] = React.useState(false);
-    const [openWorkspacePathDisplayMenu, setOpenWorkspacePathDisplayMenu] = React.useState(false);
     const [openWorkingIndicatorMenu, setOpenWorkingIndicatorMenu] = React.useState(false);
     const [openTitleUpdatesModeMenu, setOpenTitleUpdatesModeMenu] = React.useState(false);
     const rememberProjectSelectionsEnabled = rememberLastProjectSessionSelections !== false;
@@ -306,25 +304,6 @@ export const WorkspaceRouteBody = React.memo(function SessionSettingsScreen() {
     const handleSessionListFolderSortModeSelect = React.useCallback((itemId: string) => {
         applySessionListViewOption(itemId);
     }, [applySessionListViewOption]);
-
-    const workspacePathDisplayMode = workspacePathDisplayModeV1 === 'path' ? 'path' : 'name';
-    const workspacePathDisplayItems = React.useMemo(() => [
-        {
-            id: 'name',
-            title: t('settingsSession.sessionList.workspacePathDisplayName'),
-            subtitle: t('settingsSession.sessionList.workspacePathDisplayNameDescription'),
-        },
-        {
-            id: 'path',
-            title: t('settingsSession.sessionList.workspacePathDisplayPath'),
-            subtitle: t('settingsSession.sessionList.workspacePathDisplayPathDescription'),
-        },
-    ], [preferredLanguage]);
-
-    const handleWorkspacePathDisplaySelect = React.useCallback((itemId: string) => {
-        if (itemId !== 'name' && itemId !== 'path') return;
-        setWorkspacePathDisplayModeV1(itemId);
-    }, [setWorkspacePathDisplayModeV1]);
 
     const workingIndicatorStyle = sessionListNarrowWorkingIndicatorStyle === 'pulse' ? 'pulse' : 'spinner';
     const workingIndicatorItems = React.useMemo(() => [
@@ -686,30 +665,6 @@ export const WorkspaceRouteBody = React.memo(function SessionSettingsScreen() {
                         }}
                         items={sessionListActiveColorModeItems}
                         onSelect={handleSessionListActiveColorModeSelect}
-                    />
-                </SettingAnchor>
-                <SettingAnchor setting={SESSION_SETTINGS.settings.workspacePathDisplay}>
-                    <DropdownMenu
-                        open={openWorkspacePathDisplayMenu}
-                        onOpenChange={setOpenWorkspacePathDisplayMenu}
-                        variant="selectable"
-                        search={false}
-                        selectedId={workspacePathDisplayMode}
-                        showCategoryTitles={false}
-                        matchTriggerWidth={true}
-                        connectToTrigger={true}
-                        rowKind="item"
-                        popoverBoundaryRef={popoverBoundaryRef}
-                        itemTrigger={{
-                            title: t(SESSION_SETTINGS.settings.workspacePathDisplay.titleKey),
-                            subtitle: workspacePathDisplayMode === 'path'
-                                ? t('settingsSession.sessionList.workspacePathDisplayPathSelectedSubtitle')
-                                : t('settingsSession.sessionList.workspacePathDisplayNameSelectedSubtitle'),
-                            showSelectedSubtitle: false,
-                            itemProps: { testID: 'settings-session-workspacePathDisplay-trigger' },
-                        }}
-                        items={workspacePathDisplayItems}
-                        onSelect={handleWorkspacePathDisplaySelect}
                     />
                 </SettingAnchor>
                 <SettingAnchor setting={SESSION_SETTINGS.settings.workspaceFavicons}>

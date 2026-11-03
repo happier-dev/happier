@@ -336,8 +336,8 @@ describe('createActivityAttentionStoreSourceSelector', () => {
         expect(same).toBe(first);
         expect(renamed).not.toBe(first);
         expect(renamed.workspaceRefsV1?.[0]?.label).toBe('Happier Core');
-        expect(pathMode).not.toBe(renamed);
-        expect(pathMode.workspacePathDisplayModeV1).toBe('path');
+        expect(pathMode).toBe(renamed);
+        expect(pathMode.workspacePathDisplayModeV1).toBe('name');
     });
 
     it('does not swallow a changed safe audience when the Session sequence is unchanged', () => {

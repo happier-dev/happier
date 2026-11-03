@@ -77,7 +77,6 @@ installSessionShellCommonModuleMocks({
                 useSetting: createUseSettingMock({ fallback: (key) => {
                     if (key === 'sessionTagsEnabled') return true;
                     if (key === 'hideInactiveSessions') return hideInactiveSessions;
-                    if (key === 'workspacePathDisplayModeV1') return 'path';
                     return null;
                 } }),
                 useHasUnreadMessages: () => false,

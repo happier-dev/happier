@@ -101,7 +101,6 @@ function readSessionSettingFixture(key: string): unknown {
     if (key === 'sessionListOrderingModeV1') return sessionListOrderingModeSetting;
     if (key === 'sessionListFolderSortModeV1') return sessionListFolderSortModeSetting;
     if (key === 'sessionFolderViewModeV1') return 'tree';
-    if (key === 'workspacePathDisplayModeV1') return 'name';
     if (key === 'workspaceFaviconsEnabled') return true;
     if (key === 'workspaceMachineSubtitlesEnabled') return true;
     if (key === 'sessionListNarrowWorkingIndicatorStyle') return 'spinner';
@@ -310,14 +309,7 @@ describe('Session settings session list density', () => {
         const dropdowns = screen.findAllByType(DropdownMenu);
         const workspaceNameDropdown = dropdowns.find((node: any) =>
             node.props?.itemTrigger?.itemProps?.testID === 'settings-session-workspacePathDisplay-trigger');
-        expect(workspaceNameDropdown).toBeTruthy();
-        expect(workspaceNameDropdown?.props?.selectedId).toBe('name');
-        expect(workspaceNameDropdown?.props?.items?.map((item: any) => item.id)).toEqual(['name', 'path']);
-
-        await act(async () => {
-            workspaceNameDropdown!.props.onSelect('path');
-        });
-        await expectPersistedSettings({ workspacePathDisplayModeV1: 'path' });
+        expect(workspaceNameDropdown).toBeUndefined();
 
         const faviconItem = screen.findAllByType(Item).find((node: any) =>
             node.props?.title === 'en:settingsSession.sessionList.workspaceFaviconsTitle');

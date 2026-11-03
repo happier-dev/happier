@@ -86,7 +86,6 @@ let sessionTagsV1: Record<string, string[]> = {};
 let sessionListOrderingModeV1: 'custom' | 'created' | 'updated' = 'custom';
 let sessionListIdentityDisplay: 'avatar' | 'agentLogo' | 'none' = 'avatar';
 const setSessionListOrderingModeV1 = vi.fn();
-let workspacePathDisplayModeV1: 'name' | 'path' | null = null;
 let collapsedGroupKeysV1: Record<string, boolean> = {};
 const setCollapsedGroupKeysV1 = vi.fn();
 const virtualizedListState = vi.hoisted(() => ({
@@ -402,7 +401,6 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
                     if (key === 'sessionListIdentityDisplay') return sessionListIdentityDisplay;
                     if (key === 'sessionTagsEnabled') return true;
                     if (key === 'sessionListOrderingModeV1') return sessionListOrderingModeV1;
-                    if (key === 'workspacePathDisplayModeV1') return workspacePathDisplayModeV1;
                     return null;
                 } }),
                 useHasUnreadMessages: () => false,
@@ -706,7 +704,6 @@ describe('SessionsList (native virtualization)', () => {
         mockAllowedServerIds = ['srv_server_a'];
         nativeBoundary.platformOs = 'ios';
         filteredListingEnabled = false;
-        workspacePathDisplayModeV1 = null;
         readMachineTargetForSessionMock.mockReset();
         readMachineTargetForSessionMock.mockImplementation(() => null);
         resetVisibleSessionListViewData();
@@ -2514,8 +2511,7 @@ describe('SessionsList (native virtualization)', () => {
         expect(findSessionItem(updatedScreen, 'sess_a')?.props.showServerBadge).toBe(true);
     });
 
-    it('uses the reachable machine label and base path when row metadata is stale after handoff', async () => {
-        workspacePathDisplayModeV1 = 'path';
+    it('uses the reachable machine label and canonical workspace name when row metadata is stale after handoff', async () => {
         readMachineTargetForSessionMock.mockImplementation((sessionId: string) =>
             sessionId === 'sess_a'
                 ? { machineId: 'machine-target', basePath: '/Volumes/target/repo' }
@@ -2553,7 +2549,9 @@ describe('SessionsList (native virtualization)', () => {
             findSessionItem(screen, 'sess_a'),
             'expected first session item',
         );
-        expect(item.props.subtitleOverride).toBe('Rebound workstation · /Volumes/target/repo');
+        // P5 U2 retires the old full-path preference; still prove the reachable
+        // target's repo wins over the Session's stale-repo metadata.
+        expect(item.props.subtitleOverride).toBe('Rebound workstation · repo');
     });
 
     it('does not derive reachability details for rows hidden by a collapsed group', async () => {

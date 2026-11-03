@@ -527,7 +527,7 @@ export function useSessionListViewStateFromPaneState(
     const sessionFolderViewModeV1 = useSetting('sessionFolderViewModeV1') === 'tree' ? 'tree' : 'off';
     const sessionTagsEnabled = useSetting('sessionTagsEnabled');
     const workspaceRefsV1 = useWorkspaceRefs();
-    const workspacePathDisplayModeV1 = useSetting('workspacePathDisplayModeV1');
+    const workspacePathDisplayModeV1 = 'name' as const;
     const workspaceFaviconsEnabled = useSetting('workspaceFaviconsEnabled') !== false;
     const workspaceMachineSubtitlesEnabled = useSetting('workspaceMachineSubtitlesEnabled') !== false;
     const collapsedGroupKeysV1 = useLocalSetting('collapsedGroupKeysV1');
