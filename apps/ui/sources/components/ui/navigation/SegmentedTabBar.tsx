@@ -864,7 +864,7 @@ function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) 
 }
 
 /** A value choice too wide for its row: the page's bordered field select over the same options. */
-function SegmentedValueSelect<T extends string>(props: Readonly<{
+export function SegmentedValueSelect<T extends string>(props: Readonly<{
     tabs: ReadonlyArray<SegmentedTab<T>>;
     activeTabId: T;
     onSelectTab: (tabId: T) => void;
