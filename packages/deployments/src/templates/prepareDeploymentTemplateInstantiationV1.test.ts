@@ -116,7 +116,7 @@ describe('stored template preparation', () => {
         expect(() => prepareDeploymentTemplateInstantiationV1({ ...input, bindings: [{ ...binding, source: { kind: 'value', value: 'plaintext' } }] }))
             .toThrowError(expect.objectContaining({ code: 'template_secret_reference_required' }));
         expect(() => prepareDeploymentTemplateInstantiationV1({ ...input, bindings: [{ ...binding, source: { kind: 'generated', key: 'DB_PASSWORD' } }] }))
-            .toThrowError(expect.objectContaining({ code: 'template_needs_review' }));
+            .toThrowError(expect.objectContaining({ code: 'template_generator_undeclared', details: { key: 'DB_PASSWORD' } }));
     });
 
     it('leaves per-site fallbacks unbound unless the person supplies a value, and refuses a required neighbor', () => {

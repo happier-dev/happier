@@ -22,7 +22,14 @@ export type PreparedDeploymentTemplateInstantiationV1 = Readonly<{
     template: Readonly<{ templateRef: TemplateRef; services: string[] }>
         & Pick<DeploymentTemplateV1, 'data' | 'exports' | 'loginFields' | 'firstRunSetup' | 'health'>;
 }>;
-function refuse(code: string): never { throw Object.assign(new Error(code), { code }); }
+export class DeploymentTemplatePreparationErrorV1 extends Error {
+    constructor(readonly code: string, readonly details?: Readonly<{ key: string }>) {
+        super(details ? `${code}: ${JSON.stringify(details.key)}` : code);
+    }
+}
+function refuse(code: string, details?: Readonly<{ key: string }>): never {
+    throw new DeploymentTemplatePreparationErrorV1(code, details);
+}
 function record(value: unknown): Record<string, unknown> {
     return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : refuse('template_needs_review');
 }
@@ -150,7 +157,7 @@ export function prepareDeploymentTemplateInstantiationV1(input: DeploymentTempla
         if (selected.source.kind === 'generated') {
             const generatedKey = selected.source.key;
             const generated = template.generatedSecrets.find(generated => generated.key === generatedKey && generated.key === variable.key);
-            if (!generated) return refuse('template_needs_review');
+            if (!generated) return refuse('template_generator_undeclared', { key: generatedKey });
             generatedSecrets.push({ name: selected.name, phase: selected.phase, key: generated.key, profile: generated.profile });
             continue;
         }

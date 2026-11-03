@@ -9,6 +9,11 @@ This document records the server implementation behind deployment. Operator reci
 - **Files:** S3-compatible storage or local disk, selected by `HAPPIER_FILES_BACKEND`.
 - **Metrics:** Optional Prometheus `/metrics` server on a separate port.
 
+In development, generated template bindings select the pinned descriptor's `generatedSecrets[].key`;
+they do not name a new Saved Secret. The shared planner refuses an undeclared
+selection with `template_generator_undeclared`, naming the supplied key in the
+message and `details.key`. This input refusal is distinct from catalog readiness.
+
 ## SQLite read snapshots (0.3 development)
 
 Plugin Data contract/get/query/UI-query reads, Session query/list/detail reads,
