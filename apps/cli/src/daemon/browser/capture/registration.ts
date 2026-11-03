@@ -49,7 +49,8 @@ export function registerBrowserLiveCapture(input: Readonly<{
                         // the watched view. The controller and engine remain the event producers.
                         const emitEvent = (event?: BrowserEventV1) => {
                             if (stopped || !canObserve() || event && (event.browserSessionId !== view.browserSessionId
-                                || !('viewId' in event) || event.viewId !== view.viewId)) return;
+                                || !('viewId' in event) || (event.viewId !== view.viewId
+                                    && !(event.kind === 'viewOpened' && event.openerViewId === view.viewId)))) return;
                             const occurredAt = Date.now();
                             const controller = input.automation()?.getStatus(view);
                             const navigation = input.contextCapture.getNavigationState?.(view);

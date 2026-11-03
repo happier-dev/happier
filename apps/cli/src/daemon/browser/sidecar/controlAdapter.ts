@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { browserViewKey } from '@happier-dev/protocol/browser/view/key';
 import { BrowserEventV1Schema, BrowserTitleChangedEventV1Schema } from '@happier-dev/protocol/browser/events/v1';
 import { BrowserHttpUrlV1Schema } from '@happier-dev/protocol/browser/url';
@@ -177,10 +178,12 @@ export type BrowserSidecarNavigationState = Readonly<{
     canGoForward: boolean;
 }>;
 
+type SidecarViewTarget = Extract<BrowserViewTargetV1, { kind: 'externalUrl' | 'streamedBrowser' }>;
+
 type BoundView = BrowserSidecarCdpPageHandle & {
     browserSessionId: string;
     viewId: string;
-    target: BrowserViewTargetV1;
+    target: SidecarViewTarget;
     platform: BrowserPlatformV1;
     state: BrowserSidecarNavigationState;
     loaderId?: string;
@@ -254,8 +257,33 @@ export function createBrowserSidecarCdpControlAdapter(
     const boundViews = new Map<string, BoundView>();
     const lifecycleListeners = new Set<BrowserSidecarViewLifecycleSubscriber>();
     const eventListeners = new Set<(event: BrowserEventV1) => void>();
+    // Only outstanding attach commands, never a second view-binding registry.
+    const attachingTargets = new Set<string>();
+    let unsubscribeCdp: (() => void) | undefined;
     let eventSequence = 0;
     let disposed = false;
+
+    function publishEvent(event: BrowserEventV1): void {
+        for (const listener of [...eventListeners]) { try { listener(event); } catch { /* Observers cannot break control. */ } }
+    }
+
+    function releaseCdpListener(): void {
+        if (boundViews.size !== 0) return;
+        unsubscribeCdp?.();
+        unsubscribeCdp = undefined;
+    }
+
+    function unbindView(view: BoundView, sourceDestroyed = false): BrowserEventV1 {
+        const event: BrowserEventV1 = { kind: 'viewClosed', eventId: `cdp:${++eventSequence}`, occurredAt: Date.now(),
+            browserSessionId: view.browserSessionId, viewId: view.viewId, navigationGeneration: view.state.navigationGeneration };
+        boundViews.delete(browserViewKey(view));
+        // Deliver closure while capture's metadata subscription still exists.
+        publishEvent(event);
+        emitLifecycle({ type: 'unbound', browserSessionId: view.browserSessionId, viewId: view.viewId,
+            ...(sourceDestroyed ? { sourceDestroyed: true } : {}) });
+        releaseCdpListener();
+        return event;
+    }
 
     function stateEvent(view: BoundView): BrowserEventV1 {
         // Page script can copy entered material into title or a navigation URL. Public events,
@@ -269,8 +297,19 @@ export function createBrowserSidecarCdpControlAdapter(
             browserSessionId: view.browserSessionId, viewId: view.viewId, occurredAt: Date.now(), ...state });
     }
     function publishState(view: BoundView): void {
-        const event = stateEvent(view);
-        for (const listener of [...eventListeners]) { try { listener(event); } catch { /* Observer cannot break control. */ } }
+        publishEvent(stateEvent(view));
+    }
+    function openedViewEvent(view: BoundView, openerViewId?: string): BrowserEventV1 {
+        const state = stateEvent(view);
+        return BrowserEventV1Schema.parse({ kind: 'viewOpened', eventId: `cdp:${++eventSequence}`, occurredAt: Date.now(),
+            browserSessionId: view.browserSessionId, viewId: view.viewId, target: view.target, platform: view.platform,
+            ...(openerViewId ? { openerViewId } : {}),
+            ...('currentUrl' in state && state.currentUrl ? { currentUrl: state.currentUrl } : {}),
+            adapterKind: 'chromiumSidecar', engineKind: 'streamedSurface', adapterCapabilities: {
+                adapterKind: 'chromiumSidecar', supportedTargetKinds: [view.target.kind], supportedRenderEngines: ['streamedSurface'],
+                navigation: { canNavigate: true, canGoBack: true, canGoForward: true, canReload: true, canStop: true },
+                inputRouting: 'pmsControlSideband', supportsStreamingDisplay: true, supportsPopups: true,
+            } });
     }
     async function refreshHistory(view: BoundView, scope: BrowserSidecarCdpCommandScope = {}): Promise<void> {
         const generation = view.state.navigationGeneration;
@@ -299,15 +338,90 @@ export function createBrowserSidecarCdpControlAdapter(
             ...(url.success ? { currentUrl: url.data } : {}), loadingState: bootstrap ? view.state.loadingState : 'loading' };
         publishState(view);
     }
-    const unsubscribeCdp = input.transport.subscribeCdpEvents?.(notification => {
+    async function observePage(view: BoundView, scope: BrowserSidecarCdpCommandScope = {}): Promise<void> {
+        const page = { targetId: view.targetId, ...(view.sessionId ? { sessionId: view.sessionId } : {}) };
+        await input.transport.dispatchPageCommand({ ...scope, ...page, method: 'Page.enable' });
+        const tree = recordValue(await input.transport.dispatchPageCommand({ ...scope, ...page, method: 'Page.getFrameTree' }));
+        const frame = recordValue(recordValue(tree?.frameTree)?.frame);
+        if (frame) updateFrame(view, frame, true);
+        // Creation may finish navigating before Page.enable; recover that exact document's readiness.
+        if (view.frameId && view.state.loadingState === 'loading') {
+            const generation = view.state.navigationGeneration;
+            const readiness = recordValue(await input.transport.dispatchPageCommand({ ...scope, ...page, method: 'Runtime.evaluate',
+                params: { expression: 'document.readyState', returnByValue: true, awaitPromise: false } }));
+            if (!disposed && boundViews.get(browserViewKey(view)) === view && view.state.navigationGeneration === generation
+                && recordValue(readiness?.result)?.value === 'complete') {
+                view.state = { ...view.state, loadingState: 'ready' };
+                publishState(view);
+            }
+        }
+        await refreshHistory(view, scope);
+    }
+
+    async function adoptPopup(opener: BoundView, targetId: string, url: unknown): Promise<void> {
+        attachingTargets.add(targetId);
+        let sessionId: string | undefined;
+        let view: BoundView | undefined;
+        try {
+            const attached = recordValue(await input.transport.dispatchBrowserCommand({ method: 'Target.attachToTarget', params: { targetId, flatten: true } }));
+            if (typeof attached?.sessionId !== 'string' || !attached.sessionId) throw new Error('Missing CDP page session');
+            sessionId = attached.sessionId;
+            if (disposed || boundViews.get(browserViewKey(opener)) !== opener || !attachingTargets.has(targetId)) return;
+            const viewId = randomUUID();
+            const currentUrl = BrowserHttpUrlV1Schema.safeParse(url);
+            const held = input.resolveInputControl?.(opener)?.isObservationHeld() === true;
+            // about:blank has no HTTP target yet: retain the opener's intent until its first commit.
+            const target: SidecarViewTarget = opener.target.kind === 'streamedBrowser'
+                ? { ...opener.target, targetId: viewId, streamId: browserViewKey({ browserSessionId: opener.browserSessionId, viewId }),
+                    daemonView: { browserSessionId: opener.browserSessionId, viewId } }
+                : { ...opener.target, targetId: viewId, ...(currentUrl.success && !held ? { url: currentUrl.data } : {}) };
+            view = { browserSessionId: opener.browserSessionId, viewId, target, platform: opener.platform, targetId, sessionId,
+                state: { navigationGeneration: 0, ...(currentUrl.success ? { currentUrl: currentUrl.data } : {}),
+                    loadingState: 'loading', canGoBack: false, canGoForward: false } };
+            if (held) await input.resolveInputControl?.(view)?.beginConfidentialityHold();
+            if (disposed || boundViews.get(browserViewKey(opener)) !== opener || !attachingTargets.has(targetId)) return;
+            boundViews.set(browserViewKey(view), view);
+            emitLifecycle({ type: 'bound', browserSessionId: view.browserSessionId, viewId });
+            publishEvent(openedViewEvent(view, opener.viewId));
+            publishState(view);
+            await observePage(view);
+        } catch {
+            if (view && boundViews.get(browserViewKey(view)) === view) unbindView(view);
+            if (!disposed && boundViews.get(browserViewKey(opener)) === opener) publishEvent({ kind: 'adapterUnavailable',
+                eventId: `cdp:${++eventSequence}`, occurredAt: Date.now(), browserSessionId: opener.browserSessionId,
+                viewId: opener.viewId, adapterKind: 'chromiumSidecar', reasonCode: 'popup_adoption_failed' });
+        } finally {
+            attachingTargets.delete(targetId);
+            if (sessionId && (!view || boundViews.get(browserViewKey(view)) !== view)) {
+                try { await input.transport.dispatchBrowserCommand({ method: 'Target.detachFromTarget', params: { sessionId } }); }
+                catch { /* Connection teardown also releases Chromium attachments. */ }
+            }
+        }
+    }
+
+    function handleCdpEvent(notification: BrowserSidecarCdpEventNotification): void {
         if (disposed) return;
         const params = notification.params ?? {};
         const target = recordValue(params.targetInfo);
+        if (notification.method === 'Target.targetCreated') {
+            if (target?.type !== 'page' || typeof target.targetId !== 'string' || typeof target.openerId !== 'string'
+                || attachingTargets.has(target.targetId)) return;
+            let opener: BoundView | undefined;
+            for (const candidate of boundViews.values()) {
+                if (candidate.targetId === target.targetId) return;
+                if (candidate.targetId === target.openerId) opener = candidate;
+            }
+            if (opener) void adoptPopup(opener, target.targetId, target.url);
+            return;
+        }
+        if (notification.method === 'Target.targetDestroyed') attachingTargets.delete(String(params.targetId));
         const view = [...boundViews.values()].find(candidate => notification.method === 'Target.targetInfoChanged'
-            ? candidate.targetId === target?.targetId
-            : candidate.sessionId !== undefined && candidate.sessionId === notification.sessionId);
+            ? candidate.targetId === target?.targetId : notification.method === 'Target.targetDestroyed'
+                ? candidate.targetId === params.targetId : candidate.sessionId !== undefined && candidate.sessionId === notification.sessionId);
         if (!view) return;
-        if (notification.method === 'Page.frameNavigated') {
+        if (notification.method === 'Target.targetDestroyed') {
+            unbindView(view, true);
+        } else if (notification.method === 'Page.frameNavigated') {
             const frame = recordValue(params.frame); if (frame) updateFrame(view, frame);
         } else if (notification.method === 'Page.navigatedWithinDocument' && params.frameId === view.frameId) {
             const url = BrowserHttpUrlV1Schema.safeParse(params.url);
@@ -321,7 +435,11 @@ export function createBrowserSidecarCdpControlAdapter(
             view.state = { ...view.state, ...(title.success ? { title: title.data } : {}) };
             publishState(view);
         }
-    });
+    }
+
+    function listenToCdp(): void {
+        unsubscribeCdp ??= input.transport.subscribeCdpEvents?.(handleCdpEvent);
+    }
     function dispatchState(command: BrowserCommandV1): BrowserCommandDispatchResultV1 {
         const view = 'viewId' in command ? boundViews.get(browserViewKey(command)) : undefined;
         return { ...dispatched(command), events: view ? [stateEvent(view)] : [] };
@@ -429,17 +547,12 @@ export function createBrowserSidecarCdpControlAdapter(
                 params: { targetId: boundView.targetId },
             });
             if (command.kind === 'closeView') {
-                if (recordValue(response)?.success !== true || boundViews.get(browserViewKey(command)) !== boundView) return cdpFailure(command);
-                const event: BrowserEventV1 = { kind: 'viewClosed', eventId: `cdp:${++eventSequence}`, occurredAt: Date.now(),
-                    browserSessionId: command.browserSessionId, viewId: command.viewId, navigationGeneration: boundView.state.navigationGeneration };
-                for (const listener of [...eventListeners]) { try { listener(event); } catch { /* Observers cannot break close. */ } }
-                boundViews.delete(browserViewKey(command));
-                emitLifecycle({
-                    type: 'unbound',
-                    browserSessionId: command.browserSessionId,
-                    viewId: command.viewId,
-                    sourceDestroyed: true,
-                });
+                if (recordValue(response)?.success !== true) return cdpFailure(command);
+                const current = boundViews.get(browserViewKey(command));
+                // Chromium may publish targetDestroyed before acknowledging closeTarget.
+                if (!current) return dispatched(command);
+                if (current !== boundView) return cdpFailure(command);
+                const event = unbindView(boundView, true);
                 return { ...dispatched(command), events: [event] };
             }
             return dispatchState(command);
@@ -454,10 +567,11 @@ export function createBrowserSidecarCdpControlAdapter(
             if (disposed) return;
             disposed = true;
             unsubscribeCdp?.();
-            eventListeners.clear();
+            unsubscribeCdp = undefined;
+            attachingTargets.clear();
             const views = [...boundViews.values()];
-            boundViews.clear();
-            for (const view of views) emitLifecycle({ type: 'unbound', browserSessionId: view.browserSessionId, viewId: view.viewId });
+            for (const view of views) unbindView(view);
+            eventListeners.clear();
             lifecycleListeners.clear();
         },
         subscribeViewLifecycle(listener) {
@@ -517,6 +631,7 @@ export function createBrowserSidecarCdpControlAdapter(
                             targetId: page.targetId,
                             ...(page.sessionId ? { sessionId: page.sessionId } : {}),
                         });
+                        listenToCdp();
                         emitLifecycle({
                             type: 'bound',
                             browserSessionId: command.browserSessionId,
@@ -526,31 +641,12 @@ export function createBrowserSidecarCdpControlAdapter(
                         if (bound && input.transport.subscribeCdpEvents) {
                             try {
                                 await input.transport.dispatchBrowserCommand({ ...scope, method: 'Target.setDiscoverTargets', params: { discover: true } });
-                                await input.transport.dispatchPageCommand({ ...scope, ...page, method: 'Page.enable' });
-                                const tree = recordValue(await input.transport.dispatchPageCommand({ ...scope, ...page, method: 'Page.getFrameTree' }));
-                                const frame = recordValue(recordValue(tree?.frameTree)?.frame);
-                                if (frame) updateFrame(bound, frame, true);
-                                // Target.createTarget navigates before Page.enable. A loopback page
-                                // can finish before we subscribe; recover readiness from that exact
-                                // document without letting a late reply ready a subsequent commit.
-                                if (bound.frameId && bound.state.loadingState === 'loading') {
-                                    const generation = bound.state.navigationGeneration;
-                                    const readiness = recordValue(await input.transport.dispatchPageCommand({
-                                        ...scope, ...page, method: 'Runtime.evaluate',
-                                        params: { expression: 'document.readyState', returnByValue: true, awaitPromise: false },
-                                    }));
-                                    if (!disposed && boundViews.get(browserViewKey(command)) === bound
-                                        && bound.state.navigationGeneration === generation
-                                        && recordValue(readiness?.result)?.value === 'complete') {
-                                        bound.state = { ...bound.state, loadingState: 'ready' };
-                                        publishState(bound);
-                                    }
-                                }
-                                await refreshHistory(bound, scope);
+                                await observePage(bound, scope);
                             } catch {
                                 if (boundViews.get(browserViewKey(command)) === bound) {
                                     boundViews.delete(browserViewKey(command));
                                     emitLifecycle({ type: 'unbound', browserSessionId: command.browserSessionId, viewId: command.viewId });
+                                    releaseCdpListener();
                                 }
                                 try { await input.transport.dispatchBrowserCommand({ method: 'Target.closeTarget', params: { targetId: page.targetId } }); }
                                 catch { /* Disconnected transport cannot acknowledge cleanup; the open still fails. */ }
