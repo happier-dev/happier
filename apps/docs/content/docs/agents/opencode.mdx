@@ -37,24 +37,24 @@ If you use Happier's provider installer, you can install OpenCode from the CLI:
 
 ```bash
 happier install provider opencode
-opencode --version
 ```
 
-Or install manually:
+In current development source, this installs OpenCode 2 from `@opencode/cli`
+and approves that package's required platform-binary postinstall script.
+Happier CLI 0.2.17 still targets the OpenCode 1 package, `opencode-ai`.
+Until the installer correction reaches your channel, use the manual installation
+below to install OpenCode 2.
+
+Or install manually using the [official OpenCode 2 instructions](https://dev.opencode.ai/v2/docs/):
 
 ```bash
-curl -fsSL https://opencode.ai/install | bash
+npm install -g @opencode/cli
 opencode --version
 ```
 
-On Windows, OpenCode also supports native installs such as:
-
-```bash
-npm install -g opencode-ai
-opencode --version
-```
-
-If Happier offers to run OpenCode’s vendor install recipe for you, it requires explicit confirmation before executing vendor install commands.
+Follow OpenCode's platform guidance in the linked instructions. An npm installation stays
+owned by npm: Happier shows its update command rather than running a managed
+update against it. Happier-managed installations update through Happier.
 
 ## Local authentication in Happier
 

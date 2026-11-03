@@ -45,7 +45,8 @@ export type ProviderCliManagedInstallSpec =
       kind: 'managed_package';
       packageName: string;
       binaryName: string;
-      packageBinarySetup?: Readonly<{ kind: 'opencode_platform_binary' }> | null;
+      /** Approve only this package's lifecycle build; dependencies remain unapproved. */
+      allowBuild?: boolean;
     }>;
 
 export type ProviderCliKnownCommandCandidate =
@@ -255,14 +256,15 @@ export const PROVIDER_CLI_RUNTIME_SPECS: Readonly<Record<AgentId, ProviderCliRun
     sourcePreferenceDefault: 'system-first',
     managedInstall: {
       kind: 'managed_package',
-      packageName: 'opencode-ai',
+      packageName: '@opencode/cli',
       binaryName: 'opencode',
-      packageBinarySetup: { kind: 'opencode_platform_binary' },
+      allowBuild: true,
     },
     manualInstallKind: 'command',
     manualInstallRecipes: null,
     acceptsJavaScriptFileOverride: false,
-    installGuideUrl: 'https://opencode.ai/docs',
+    installGuideUrl: 'https://dev.opencode.ai/v2/docs/',
+    npmPackageName: 'opencode-ai',
     docsUrl: 'https://opencode.ai',
     // https://opencode.ai/docs/cli/ (`opencode upgrade`); the official install script uses
     // INSTALL_DIR=$HOME/.opencode/bin.

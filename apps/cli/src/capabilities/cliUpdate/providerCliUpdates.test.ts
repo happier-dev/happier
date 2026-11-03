@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { runCommandCapture } from '@happier-dev/cli-common/process';
-import { installProviderCli } from '@happier-dev/cli-common/providers';
+import { fetchProviderCliLatestVersion, installProviderCli } from '@happier-dev/cli-common/providers';
 
 import type { Capability } from '@/capabilities/service';
 import { createTempDirSync, removeTempDirSync } from '@/testkit/fs/tempDir';
@@ -117,6 +117,29 @@ describe.skipIf(process.platform === 'win32')('withProviderCliUpdates', () => {
     await expect(cap.detect({ request, context: { cliSnapshot: null } })).resolves.toMatchObject({ latestVersion: null });
     await cap.detect({ request, context: { cliSnapshot: null } });
     expect(fetchLatestVersion).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps latest versions consistent with the installed package when switching OpenCode generations', async () => {
+    let packageName = 'opencode-ai';
+    const legacy = writeExecutable(join(root, 'prefix/lib/node_modules/opencode-ai/bin/opencode.exe'));
+    const current = writeExecutable(join(root, 'prefix/lib/node_modules/@opencode/cli/bin/opencode.exe'));
+    const cap = withProviderCliUpdates({
+      descriptor: { id: 'cli.opencode', kind: 'cli', title: 'OpenCode CLI' },
+      // Detect's executable/version probe is an OS boundary; attribution and cache stay real.
+      detect: async () => ({ available: true, resolvedPath: packageName === 'opencode-ai' ? legacy : current,
+        resolutionSource: 'system', version: packageName === 'opencode-ai' ? '1.19.5' : '2.2.5' }),
+    }, 'opencode', deps({
+      fetchLatestVersion: async (providerId, installSource, npmPackageName?: string) => fetchProviderCliLatestVersion({
+        providerId, installSource, ...{ npmPackageName },
+        deps: { fetchJson: async (url) => ({ version: url.includes('opencode-ai') ? '1.19.5' : '2.2.5' }) },
+      }),
+    }));
+    const args = { request: { id: 'cli.opencode' as const, params: { includeLatestVersion: true } }, context: { cliSnapshot: null } };
+    await expect(cap.detect(args)).resolves.toMatchObject({ latestVersion: '1.19.5', updateCommand: 'npm install -g opencode-ai@latest' });
+    packageName = '@opencode/cli';
+    await expect(cap.detect(args)).resolves.toMatchObject({ latestVersion: '2.2.5', updateCommand: 'npm install -g @opencode/cli@latest' });
+    packageName = 'opencode-ai';
+    await expect(cap.detect(args)).resolves.toMatchObject({ latestVersion: '1.19.5' });
   });
 
   it('updates through the install owner and succeeds only when the re-read version changed', async () => {

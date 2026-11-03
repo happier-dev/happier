@@ -26,6 +26,8 @@ export type ProviderCliUpdateFacts = Readonly<{
   updateCommand: string | null;
   /** Arguments for the vendor updater, run against the resolved executable. */
   nativeUpdateArgs: ReadonlyArray<string> | null;
+  /** Proven npm package identity, retained for the owner's latest-version lookup. */
+  npmPackageName?: string;
 }>;
 
 const OTHER: ProviderCliUpdateFacts = {
@@ -53,10 +55,12 @@ function quoteCommandPath(path: string, platform: ProviderCliInstallPlatform): s
 function packageManagerFacts(
   installSource: Extract<ProviderCliInstallSource, 'npm' | 'pnpm' | 'bun' | 'brew'>,
   updateCommand: string,
+  npmPackageName?: string,
 ): ProviderCliUpdateFacts {
   // Happier does not spawn package managers from product runtime paths; the
   // owner's command is surfaced for the person to run.
-  return { installSource, updateSupported: false, updateCommand, nativeUpdateArgs: null };
+  return { installSource, updateSupported: false, updateCommand, nativeUpdateArgs: null,
+    ...(npmPackageName ? { npmPackageName } : {}) };
 }
 
 /**
@@ -108,13 +112,23 @@ export function classifyProviderCliInstall(params: Readonly<{
     }
   }
 
-  const packageName = resolveProviderCliNpmPackageName(spec);
-  if (packageName) {
-    const comparablePackageName = toComparablePath(packageName, platform);
-    const packageSegment = `/node_modules/${comparablePackageName}/`;
-    const insidePackage = paths.some((path) => `${path}/`.includes(packageSegment));
+  const packages = [...new Set([resolveProviderCliNpmPackageName(spec), spec.npmPackageName])]
+    .flatMap((packageName) => packageName ? [{
+      packageName,
+      insidePackage: paths.some((path) => `${path}/`.includes(`/node_modules/${toComparablePath(packageName, platform)}/`)),
+      // POSIX npm links into the package; Windows shims sit beside node_modules.
+      windowsShimProof: existsSync(join(dirname(params.command), 'node_modules', ...packageName.split('/'), 'package.json')),
+    }] : []);
+  // Prove the package before using a generic manager-directory hint. A legacy
+  // package's real path must win over the current catalog's package name.
+  const installedPackage = packages.find((entry) => entry.insidePackage)
+    ?? packages.find((entry) => entry.windowsShimProof) ?? packages[0];
+  if (installedPackage) {
+    const { packageName, insidePackage, windowsShimProof } = installedPackage;
+    const allowBuild = spec.managedInstall?.kind === 'managed_package'
+      && spec.managedInstall.packageName === packageName && spec.managedInstall.allowBuild === true;
     if (insidePackage && paths.some((path) => path.includes('/.bun/install/global/'))) {
-      return packageManagerFacts('bun', `bun add -g ${packageName}@latest`);
+      return packageManagerFacts('bun', `bun add -g ${allowBuild ? '--trust ' : ''}${packageName}@latest`, packageName);
     }
     const pnpmHome = typeof env.PNPM_HOME === 'string' && env.PNPM_HOME.trim()
       ? toComparablePath(env.PNPM_HOME.trim(), platform)
@@ -123,13 +137,10 @@ export function classifyProviderCliInstall(params: Readonly<{
       (insidePackage && paths.some((path) => path.includes('/pnpm/global/')))
       || (pnpmHome !== null && toComparablePath(dirname(params.command), platform) === pnpmHome)
     ) {
-      return packageManagerFacts('pnpm', `pnpm add -g ${packageName}@latest`);
+      return packageManagerFacts('pnpm', `pnpm add -g ${allowBuild ? `--allow-build=${packageName} ` : ''}${packageName}@latest`, packageName);
     }
-    // POSIX npm links `<prefix>/bin/<cmd>` into the package, so the real path is the
-    // proof; Windows npm writes a `.cmd` shim beside `node_modules/<pkg>`.
-    const windowsShimProof = existsSync(join(dirname(params.command), 'node_modules', ...packageName.split('/'), 'package.json'));
     if (insidePackage || windowsShimProof) {
-      return packageManagerFacts('npm', `npm install -g ${packageName}@latest`);
+      return packageManagerFacts('npm', `npm install -g ${packageName}@latest`, packageName);
     }
   }
 
@@ -216,12 +227,15 @@ function selectManagedPackageVersion(params: Readonly<{
 export async function fetchProviderCliLatestVersion(params: Readonly<{
   providerId: AgentId;
   installSource: ProviderCliInstallSource;
+  npmPackageName?: string;
   env?: NodeJS.ProcessEnv;
   now?: () => number;
   deps?: LatestVersionDeps;
 }>): Promise<ProviderCliLatestVersionFacts> {
   const spec = getProviderCliRuntimeSpec(params.providerId);
-  const source = resolveProviderCliLatestVersionSource(spec);
+  const source = params.installSource !== 'managed' && params.npmPackageName
+    ? { kind: 'npm' as const, packageName: params.npmPackageName }
+    : resolveProviderCliLatestVersionSource(spec);
   if (!source) return { latestVersion: null, heldVersion: null };
   const env = params.env ?? process.env;
   const fetchJson = params.deps?.fetchJson ?? defaultFetchJson;

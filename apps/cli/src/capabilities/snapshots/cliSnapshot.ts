@@ -280,8 +280,8 @@ function getFirstLine(value: string): string | null {
 
 function extractSemver(value: string | null): string | null {
     if (!value) return null;
-    const match = value.match(/\b\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?\b/);
-    return match?.[0] ?? null;
+    const match = value.match(/\b[vV]?(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)\b/);
+    return match?.[1] ?? null;
 }
 
 function extractTmuxVersion(value: string | null): string | null {

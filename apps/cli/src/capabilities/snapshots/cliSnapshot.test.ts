@@ -112,21 +112,24 @@ describe('detectCliSnapshotOnDaemonPath', () => {
     },
   );
 
-  it.skipIf(process.platform === 'win32')(
-    'detects OpenCode in ~/.opencode/bin even when it is not on PATH',
-    async () => {
+  it.skipIf(process.platform === 'win32').each([
+    ['0.4.1', '0.4.1'],
+    ['opencode v2.2.5', '2.2.5'],
+  ])(
+    'detects OpenCode outside PATH from version output %s',
+    async (output, version) => {
       const opencodeBinDir = join(homeDir, '.opencode', 'bin');
       mkdirSync(opencodeBinDir, { recursive: true });
       const opencodePath = makeExecutableShim({
         dir: opencodeBinDir,
         name: 'opencode',
-        stdout: 'echo "0.4.1"',
+        stdout: `echo "${output}"`,
       });
 
-      const snapshot = await detectCliSnapshotOnDaemonPath({});
+      const snapshot = await detectCliSnapshotOnDaemonPath({ requestedCliNames: ['opencode'] });
       expect(snapshot.clis.opencode.available).toBe(true);
       expect(snapshot.clis.opencode.resolvedPath).toBe(opencodePath);
-      expect(snapshot.clis.opencode.version).toBe('0.4.1');
+      expect(snapshot.clis.opencode.version).toBe(version);
     },
   );
 

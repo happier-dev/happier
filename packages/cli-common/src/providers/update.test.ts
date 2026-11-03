@@ -47,8 +47,8 @@ describe.skipIf(process.platform === 'win32')('classifyProviderCliInstall', () =
     });
   });
 
-  it('proves an npm global install by the real path and offers only the npm command', () => {
-    const packageBin = writeExecutable(join(root, 'prefix', 'lib', 'node_modules', 'opencode-ai', 'bin', 'opencode'));
+  it.each(['@opencode/cli', 'opencode-ai'])('proves an npm global install of %s and offers only its owner command', (packageName) => {
+    const packageBin = writeExecutable(join(root, 'prefix', 'lib', 'node_modules', packageName, 'bin', 'opencode.exe'));
     const shim = join(root, 'prefix', 'bin', 'opencode');
     mkdirSync(join(root, 'prefix', 'bin'), { recursive: true });
     symlinkSync(packageBin, shim);
@@ -62,9 +62,42 @@ describe.skipIf(process.platform === 'win32')('classifyProviderCliInstall', () =
     })).toEqual({
       installSource: 'npm',
       updateSupported: false,
-      updateCommand: 'npm install -g opencode-ai@latest',
+      updateCommand: `npm install -g ${packageName}@latest`,
       nativeUpdateArgs: null,
+      npmPackageName: packageName,
     });
+  });
+
+  it('recognizes the scoped package beside a Windows npm shim', () => {
+    const prefix = join(home, 'AppData', 'Roaming', 'npm');
+    const shim = writeExecutable(join(prefix, 'opencode.cmd'));
+    mkdirSync(join(prefix, 'node_modules', '@opencode', 'cli'), { recursive: true });
+    writeFileSync(join(prefix, 'node_modules', '@opencode', 'cli', 'package.json'), JSON.stringify({ name: '@opencode/cli' }));
+
+    expect(classifyProviderCliInstall({
+      providerId: 'opencode', command: shim, source: 'system', platform: 'win32', env: { USERPROFILE: home },
+    })).toMatchObject({ installSource: 'npm', updateSupported: false, updateCommand: 'npm install -g @opencode/cli@latest' });
+  });
+
+  it.each([
+    ['pnpm', '.local/share/pnpm/global/5', 'pnpm add -g --allow-build=@opencode/cli @opencode/cli@latest'],
+    ['bun', '.bun/install/global', 'bun add -g --trust @opencode/cli@latest'],
+  ] as const)('includes the vendor build approval in the %s owner command', (installSource, prefix, updateCommand) => {
+    const binary = writeExecutable(join(home, prefix, 'node_modules', '@opencode', 'cli', 'bin', 'opencode.exe'));
+    expect(classifyProviderCliInstall({
+      providerId: 'opencode', command: binary, source: 'system', platform: 'linux', env: { HOME: home },
+    })).toMatchObject({ installSource, updateSupported: false, updateCommand });
+  });
+
+  it('keeps the proven legacy package ahead of the generic PNPM_HOME hint', () => {
+    const binary = writeExecutable(join(home, '.local/share/pnpm/global/5/node_modules/opencode-ai/bin/opencode'));
+    const binDir = join(home, '.local/share/pnpm');
+    const shim = join(binDir, 'opencode');
+    symlinkSync(binary, shim);
+    expect(classifyProviderCliInstall({
+      providerId: 'opencode', command: shim, source: 'system', platform: 'linux',
+      env: { HOME: home, PNPM_HOME: binDir },
+    })).toMatchObject({ installSource: 'pnpm', updateSupported: false, updateCommand: 'pnpm add -g opencode-ai@latest' });
   });
 
   it('names the Homebrew cask that owns the executable', () => {
@@ -115,6 +148,22 @@ describe('fetchProviderCliLatestVersion', () => {
     await expect(fetchProviderCliLatestVersion({ providerId: 'claude', installSource: 'native', deps: { fetchJson } }))
       .resolves.toEqual({ latestVersion: '1.14.2', heldVersion: null });
     expect(fetchJson.mock.calls[0]?.[0]).toBe('https://registry.npmjs.org/@anthropic-ai%2Fclaude-code/latest');
+  });
+
+  it.each(['npm', 'managed'] as const)('looks up OpenCode 2 for a %s install', async (installSource) => {
+    const fetchJson = vi.fn(async (_url: string) => ({ version: '2.2.5' }));
+    await expect(fetchProviderCliLatestVersion({
+      providerId: 'opencode', installSource, deps: { fetchJson, readMinimumReleaseAgeMs: async () => 0 },
+    })).resolves.toEqual({ latestVersion: '2.2.5', heldVersion: null });
+    expect(fetchJson.mock.calls[0]?.[0]).toBe('https://registry.npmjs.org/@opencode%2Fcli/latest');
+  });
+
+  it('uses the proven legacy package for its latest-version lookup', async () => {
+    const fetchJson = vi.fn(async (url: string) => ({ version: url.includes('opencode-ai') ? '1.19.5' : '2.2.5' }));
+    const params = {
+      providerId: 'opencode' as const, installSource: 'npm' as const, npmPackageName: 'opencode-ai', deps: { fetchJson },
+    };
+    await expect(fetchProviderCliLatestVersion(params)).resolves.toEqual({ latestVersion: '1.19.5', heldVersion: null });
   });
 
   it('reads the GitHub latest release tag for release-binary agents', async () => {

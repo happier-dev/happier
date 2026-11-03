@@ -34,6 +34,16 @@ Before adding or changing a provider/runtime/install/update flow, classify it as
 
 Provider detection, install status, daemon validation, runtime spawning, and UI/installables must reuse the same source of truth. Backend CLIs should prefer user/system installs by default over Happier-managed installs unless an explicit setting says otherwise.
 
+In current development source, the shared provider catalog selects `@opencode/cli`
+for managed OpenCode installs, latest-version lookup, and package-manager attribution.
+The managed installer approves only that package's build through pnpm; OpenCode's
+own postinstall selects and verifies its native binary, including AVX2/baseline
+and libc variants. Happier does not duplicate that selection. Other managed
+packages retain `--ignore-scripts`. Existing `opencode-ai` package-manager installs
+retain their original owner, update command, and latest-version source; managed
+updates select OpenCode 2. CLI version probing accepts the vendor's `opencode v2.x.y`
+output and exposes the normalized version.
+
 In current development source (not yet released), MCP package-runner resolution
 honors configured `npx`, `npm`, `yarn`, `pnpm`, and `bunx` commands, including explicit
 executable paths. `normalizePackageRunnerInvocation` resolves the executable using

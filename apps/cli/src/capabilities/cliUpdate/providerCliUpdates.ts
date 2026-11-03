@@ -5,6 +5,7 @@ import {
   resolvePlatformFromNodePlatform,
   type ProviderCliLatestVersionFacts,
   type ProviderCliResolutionSource,
+  type ProviderCliUpdateFacts,
 } from '@happier-dev/cli-common/providers';
 import { AsyncTtlCache } from '@happier-dev/protocol';
 import { compareVersions } from '@happier-dev/cli-common/update';
@@ -28,7 +29,7 @@ export type ProviderCliUpdatesDeps = Readonly<{
   nodePlatform?: string;
   buildContext?: CapabilitiesDetectContextBuilder;
   installProviderCli?: Parameters<typeof invokeProviderCliInstall>[0]['installProviderCli'];
-  fetchLatestVersion?: (agentId: AgentId, installSource: ProviderCliInstallSource) => Promise<ProviderCliLatestVersionFacts>;
+  fetchLatestVersion?: (agentId: AgentId, installSource: ProviderCliInstallSource, npmPackageName?: string) => Promise<ProviderCliLatestVersionFacts>;
   latestVersionTtlMs?: number;
 }>;
 
@@ -71,24 +72,24 @@ export function withProviderCliUpdates(cap: Capability, agentId: AgentId, deps: 
   const nodePlatform = deps.nodePlatform ?? process.platform;
   const platform = resolvePlatformFromNodePlatform(nodePlatform);
   const fetchLatestVersion = deps.fetchLatestVersion
-    ?? ((id: AgentId, installSource: ProviderCliInstallSource) => fetchProviderCliLatestVersion({ providerId: id, installSource, env }));
+    ?? ((id: AgentId, installSource: ProviderCliInstallSource, npmPackageName?: string) => fetchProviderCliLatestVersion({ providerId: id, installSource, npmPackageName, env }));
   const latestVersionCache = new AsyncTtlCache<ProviderCliLatestVersionFacts>({
     successTtlMs: deps.latestVersionTtlMs ?? configuration.installablesRuntimeAutoUpdateCheckIntervalMs,
     errorTtlMs: 0,
   });
 
-  // Keyed by install source: a managed install follows the managed installer's release-age
-  // rule, any other install the registry's own "latest".
+  // Managed installs follow the release-age rule; external installs retain their
+  // proven package, including when a user switches between legacy and current packages.
   const readLatestVersion = async (
-    installSource: ProviderCliInstallSource,
+    install: ProviderCliUpdateFacts,
     bypassCache: boolean,
   ): Promise<ProviderCliLatestVersionFacts | null> => {
-    const key = installSource === 'managed' ? 'managed' : 'registry';
+    const key = JSON.stringify([install.installSource === 'managed' ? 'managed' : 'registry', install.npmPackageName ?? null]);
     const cached = latestVersionCache.get(key);
     if (!bypassCache && cached?.kind === 'success' && latestVersionCache.isFresh(cached)) return cached.value;
     return await latestVersionCache.runDedupe(key, async () => {
       try {
-        const facts = await fetchLatestVersion(agentId, installSource);
+        const facts = await fetchLatestVersion(agentId, install.installSource, install.npmPackageName);
         latestVersionCache.setSuccess(key, facts);
         return facts;
       } catch (error) {
@@ -117,7 +118,7 @@ export function withProviderCliUpdates(cap: Capability, agentId: AgentId, deps: 
       updateSupported: facts.updateSupported,
       updateCommand: facts.updateCommand,
       ...(params.includeLatestVersion === true
-        ? { latestVersion: (await readLatestVersion(facts.installSource, params.bypassCache === true))?.latestVersion ?? null }
+        ? { latestVersion: (await readLatestVersion(facts, params.bypassCache === true))?.latestVersion ?? null }
         : {}),
     };
   };
@@ -158,10 +159,11 @@ export function withProviderCliUpdates(cap: Capability, agentId: AgentId, deps: 
     // The install changed what is on disk: no cached snapshot may answer the next detect.
     invalidateCliSnapshots();
     const after = await detectFresh();
-    const afterInstallSource = after && platform
-      ? classifyProviderCliInstall({ providerId: agentId, command: after.command, source: after.source, platform, env }).installSource
+    const afterInstall = after && platform
+      ? classifyProviderCliInstall({ providerId: agentId, command: after.command, source: after.source, platform, env })
       : null;
-    const latest = afterInstallSource ? await readLatestVersion(afterInstallSource, true) : null;
+    const afterInstallSource = afterInstall?.installSource ?? null;
+    const latest = afterInstall ? await readLatestVersion(afterInstall, true) : null;
     if (after?.version && after.version === before.version) {
       const held = latest?.heldVersion ?? null;
       if (held && held.version !== after.version) {

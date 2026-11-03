@@ -181,9 +181,9 @@ test('planProviderCliInstall uses a managed package for opencode', () => {
   assert.equal(opencode.plan.commands.length, 0);
   assert.deepEqual(opencode.plan.managedInstall, {
     kind: 'managed_package',
-    packageName: 'opencode-ai',
+    packageName: '@opencode/cli',
     binaryName: 'opencode',
-    packageBinarySetup: { kind: 'opencode_platform_binary' },
+    allowBuild: true,
   });
 });
 

@@ -59,9 +59,9 @@ describe('PROVIDER_CLI_RUNTIME_SPECS', () => {
       alternativeBinaryNames: ['opencode2'],
       managedInstall: {
         kind: 'managed_package',
-        packageName: 'opencode-ai',
+        packageName: '@opencode/cli',
         binaryName: 'opencode',
-        packageBinarySetup: { kind: 'opencode_platform_binary' },
+        allowBuild: true,
       },
     });
     expect(getProviderCliRuntimeSpec('gemini')).toMatchObject({
@@ -109,7 +109,7 @@ describe('PROVIDER_CLI_RUNTIME_SPECS', () => {
 
   it('keeps provider-specific setup guide links on the runtime catalog when they differ from general docs', () => {
     expect(getProviderCliRuntimeSpec('claude').installGuideUrl).toBe('https://code.claude.com/docs/en/setup');
-    expect(getProviderCliRuntimeSpec('opencode').installGuideUrl).toBe('https://opencode.ai/docs');
+    expect(getProviderCliRuntimeSpec('opencode').installGuideUrl).toBe('https://dev.opencode.ai/v2/docs/');
     expect(getProviderCliRuntimeSpec('kimi').installGuideUrl).toContain('moonshotai.github.io/kimi-code');
     expect(getProviderCliRuntimeSpec('qwen').installGuideUrl).toBe('https://qwenlm.github.io/qwen-code-docs/');
     expect(getProviderCliRuntimeSpec('pi').installGuideUrl).toBe('https://github.com/badlogic/pi-mono');
@@ -276,9 +276,9 @@ describe('PROVIDER_CLI_RUNTIME_SPECS', () => {
     expect(getProviderCliRuntimeSpec('opencode')).toMatchObject({
       managedInstall: {
         kind: 'managed_package',
-        packageName: 'opencode-ai',
+        packageName: '@opencode/cli',
         binaryName: 'opencode',
-        packageBinarySetup: { kind: 'opencode_platform_binary' },
+        allowBuild: true,
       },
       manualInstallKind: 'command',
       manualInstallRecipes: null,
@@ -307,7 +307,7 @@ describe('PROVIDER_CLI_RUNTIME_SPECS', () => {
     });
     expect(resolveProviderCliLatestVersionSource(getProviderCliRuntimeSpec('opencode'))).toEqual({
       kind: 'npm',
-      packageName: 'opencode-ai',
+      packageName: '@opencode/cli',
     });
     expect(resolveProviderCliLatestVersionSource(getProviderCliRuntimeSpec('claude'))).toEqual({
       kind: 'npm',
