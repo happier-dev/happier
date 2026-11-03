@@ -3,8 +3,7 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { AccountServiceMark } from '@/components/settings/account/AccountServiceMark';
-import { OrganizationPolicyFieldNotice, readOrganizationPolicyFieldState } from '@/components/organizationPolicy/OrganizationPolicyFieldNotice';
-import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { OrganizationPolicyFieldNotice, OrganizationPolicyManagedState, readOrganizationPolicyFieldState } from '@/components/organizationPolicy/OrganizationPolicyFieldNotice';
 import { SelectionTiles } from '@/components/ui/forms/SelectionTiles';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
@@ -137,9 +136,8 @@ export function HomeAddForm(props: Readonly<{
 
     if (homePolicy.disabled) {
         return <View testID={props.testID} style={props.layout === 'sheet' ? styles.sheet : styles.page}>
-            <OrganizationPolicyFieldNotice field="home" />
-            <RoundButton testID={`${props.testID}.blocked`} title={t('addFlows.addHome')} disabled />
-            <RoundButton testID={`${props.testID}.close`} title={t('common.cancel')} display="inverted" onPress={onClose} />
+            <OrganizationPolicyManagedState field="home" testID={`${props.testID}.managed`}
+                closeLabel={t('common.back')} closeTestID={`${props.testID}.close`} onClose={onClose} />
         </View>;
     }
 

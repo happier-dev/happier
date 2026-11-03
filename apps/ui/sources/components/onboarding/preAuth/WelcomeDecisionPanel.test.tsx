@@ -323,6 +323,24 @@ describe('WelcomeDecisionPanel', () => {
         expect(subtitles).not.toContain('Home A');
     });
 
+    it('shows a Home fixed by organization policy as managed, leaving out the ways to pick another', async () => {
+        vi.stubGlobal('isTauri', true);
+        vi.stubGlobal('document', {});
+        vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn(), __HAPPIER_WEB_RUNTIME_CONFIG__: {
+            organizationPolicyJson: JSON.stringify({ schemaVersion: 1, organization: 'Example Co',
+                home: { url: 'https://home.example.test', locked: true } }),
+        } });
+        try {
+            const screen = await renderPanel().screenPromise;
+            expect(screen.findByTestId('organization-policy-home')).toBeTruthy();
+            expect(screen.findByTestId('welcome-use-different-home')).toBeNull();
+            expect(screen.findByTestId('welcome-scan-existing-home')).toBeNull();
+            expect(screen.findByTestId('welcome-primary-start')).toBeTruthy();
+        } finally {
+            vi.unstubAllGlobals();
+        }
+    });
+
     it('routes anonymous start and restore actions from stable controls', async () => {
         const { callbacks, screenPromise } = renderPanel();
         const screen = await screenPromise;

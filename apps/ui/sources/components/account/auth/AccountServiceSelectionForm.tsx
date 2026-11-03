@@ -80,12 +80,11 @@ export const AccountServiceSelectionForm = React.memo(function AccountServiceSel
 
     return (
         <View testID="account-service-selection-form" style={styles.root}>
-            <OrganizationPolicyFieldNotice field="accountService" />
             <View style={styles.choices}>
                 {currentEndpoint ? (
                     <WizardChoiceRow
                         testID="account-service-current-choice"
-                        disabled={policy.disabled}
+                        disabled={policy.disabled && !policy.lock}
                         selected={false}
                         icon="globe"
                         title={endpointLabel(currentEndpoint)}
@@ -93,7 +92,8 @@ export const AccountServiceSelectionForm = React.memo(function AccountServiceSel
                         onPress={() => select(currentEndpoint.url)}
                     />
                 ) : null}
-                <WizardChoiceRow
+                {/* A service fixed by the organization is the only choice; it is not offered dead. */}
+                {policy.lock ? null : <WizardChoiceRow
                     testID="account-service-another-choice"
                     disabled={policy.disabled}
                     selected={showUrlInput}
@@ -103,9 +103,10 @@ export const AccountServiceSelectionForm = React.memo(function AccountServiceSel
                     onPress={() => {
                         setShowUrlInput(true);
                     }}
-                />
+                />}
+                <OrganizationPolicyFieldNotice field="accountService" />
             </View>
-            {showUrlInput ? (
+            {showUrlInput && !policy.lock ? (
                 <View style={styles.field}>
                     <Text style={styles.label}>{t('homeAdd.signInServiceAddress')}</Text>
                     <TextInput
@@ -136,7 +137,7 @@ export const AccountServiceSelectionForm = React.memo(function AccountServiceSel
                 </View>
             ) : null}
             <View style={styles.actions}>
-                {showUrlInput ? (
+                {showUrlInput && !policy.lock ? (
                     <RoundButton testID="account-service-url-submit" title={t('common.continue')} disabled={policy.disabled} action={() => select(url)} />
                 ) : null}
                 <RoundButton testID="account-service-selection-back" title={t('common.back')} display="inverted" onPress={goBack} />

@@ -146,17 +146,21 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
         ...(options.observedHomeServerIdentityId ? { observedHomeServerIdentityId: options.observedHomeServerIdentityId } : {}),
         context: { kind: 'home' },
         allowedNavigation: {
-            changeHome: props.canChangeHome !== false,
-            selectService: props.onChooseAccountService != null,
+            // A Home or sign-in service fixed by the organization policy is shown as the managed
+            // value; the ways to pick another are left out rather than offered dead.
+            changeHome: props.canChangeHome !== false && !homePolicy.disabled,
+            selectService: props.onChooseAccountService != null && !servicePolicy.disabled,
             // Camera support controls how the restore surface starts, not
             // whether it exists: every client can paste a Home link.
-            scanOrPasteHome: true,
+            scanOrPasteHome: !homePolicy.disabled,
             createPersonalHome: props.canCreatePersonalHome === true && props.onCreatePersonalHome != null,
         },
         serviceCatalogState,
         userHistory: isReturningUser ? 'returning' : 'first_time',
     });
+    // The phone doorway's paths all add a Home, so a Home fixed by policy keeps the ordinary list.
     const phoneDoorway = viewportClass === 'compact'
+        && !homePolicy.disabled
         && !isReturningUser
         && !(model.notice?.kind === 'service_unsupported' && model.notice.hasUsableHomeMethods)
         && !options.requestedHomeTarget
@@ -173,7 +177,6 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
                     key={row.id}
                     actionId={row.id}
                     testID="welcome-scan-existing-home"
-                    disabled={homePolicy.disabled}
                     primary={row.emphasis === 'primary'}
                     presentation={presentation}
                     title={t(canScanQr ? 'connect.scanExistingHomeQrTitle' : 'connect.enterUrlManually')}
@@ -183,10 +186,10 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
                 />;
             }
             if (action.kind === 'choose_home') {
-                return <WelcomeActionCard key={row.id} actionId={row.id} testID="welcome-use-different-home" disabled={homePolicy.disabled} primary={row.emphasis === 'primary'} presentation={presentation} title={t(hasHome ? 'welcome.useDifferentHome' : 'homesJourneys.pathDirectTitle')} subtitle={homePolicy.accessibilityHint ?? (hasHome ? t('welcome.useDifferentHomeSubtitle', { home: options.homeLabel ?? t('settingsAccount.thisHomeTitle') }) : t('homesJourneys.pathDirectSubtitle'))} iconName="house" onPress={props.onChangeRelay} />;
+                return <WelcomeActionCard key={row.id} actionId={row.id} testID="welcome-use-different-home" primary={row.emphasis === 'primary'} presentation={presentation} title={t(hasHome ? 'welcome.useDifferentHome' : 'homesJourneys.pathDirectTitle')} subtitle={hasHome ? t('welcome.useDifferentHomeSubtitle', { home: options.homeLabel ?? t('settingsAccount.thisHomeTitle') }) : t('homesJourneys.pathDirectSubtitle')} iconName="house" onPress={props.onChangeRelay} />;
             }
             if (action.kind === 'choose_sign_in_service') {
-                return <WelcomeActionCard key={row.id} actionId={row.id} testID="welcome-account-service-choose" disabled={servicePolicy.disabled} primary={row.emphasis === 'primary'} presentation={presentation} title={t('welcome.chooseSignInService')} subtitle={servicePolicy.accessibilityHint ?? t('welcome.signInServiceUrlPrompt')} iconName="globe" onPress={props.onChooseAccountService!} />;
+                return <WelcomeActionCard key={row.id} actionId={row.id} testID="welcome-account-service-choose" primary={row.emphasis === 'primary'} presentation={presentation} title={t('welcome.chooseSignInService')} subtitle={t('welcome.signInServiceUrlPrompt')} iconName="globe" onPress={props.onChooseAccountService!} />;
             }
             if (action.kind === 'create_personal_home') {
                 return <WelcomeActionCard key={row.id} actionId={row.id} testID="welcome-create-personal-home" primary={row.emphasis === 'primary'} title={t('setupOnboarding.setupNewRelayAction')} subtitle={t('setupOnboarding.personalHomeOfferSubtitle')} iconName="laptop" onPress={props.onCreatePersonalHome!} />;

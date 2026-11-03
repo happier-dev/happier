@@ -36,8 +36,8 @@ describe('Add Home phone path selection', () => {
         const onClose = vi.fn();
         const { HomeAddForm } = await import('./HomeAddForm');
         const screen = await renderScreen(<HomeAddForm layout="page" testID="add-home" onClose={onClose} />);
-        expect(screen.findByTestId('organization-policy-home')).not.toBeNull();
-        expect(screen.findByTestId('add-home.blocked')?.props.disabled).toBe(true);
+        expect(screen.findByTestId('add-home.managed')).not.toBeNull();
+        expect(screen.findByTestId('add-home.blocked')).toBeNull();
         await screen.pressByTestIdAsync('add-home.close');
         expect(onClose).toHaveBeenCalledOnce();
     });

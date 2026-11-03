@@ -31,6 +31,13 @@ export function getOrganizationPolicyFieldLock(field: OrganizationPolicyField): 
     return getOrganizationPolicyLock(readOrganizationPolicy(), field);
 }
 
+/** The organization that turned a feature off, so Settings can show it as managed rather than missing. */
+export function getOrganizationPolicyFeatureDenial(featureId: string): OrganizationPolicyLock | null {
+    const result = readOrganizationPolicy();
+    if (result.status !== 'loaded' || !result.policy.features?.deny.some((denied) => denied === featureId)) return null;
+    return { organization: result.policy.organization, ...(result.policy.supportUrl ? { supportUrl: result.policy.supportUrl } : {}) };
+}
+
 /** Home adoption and focus share this admission; the configured locked Home remains usable. */
 export function assertOrganizationHomeSelectionAllowed(serverUrl: string): void {
     assertOrganizationPolicyEndpointAllowed(readOrganizationPolicy(), 'home', serverUrl);

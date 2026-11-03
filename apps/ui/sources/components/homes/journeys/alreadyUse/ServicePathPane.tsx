@@ -33,7 +33,6 @@ export function ServicePathPane(props: Readonly<{
     const serviceUrl = service.discovery?.endpointUrl ?? service.entry.endpoint.url;
     return (
         <View style={styles.pane} testID="already-use-happier.pane.service">
-            <OrganizationPolicyFieldNotice field="accountService" />
             <PaneHeader
                 title={t('homesJourneys.pathServiceTitle', { service: service.name })}
                 lead={t(phone ? 'homesJourneys.phone.serviceLead' : 'homesJourneys.serviceLead')}
@@ -45,8 +44,10 @@ export function ServicePathPane(props: Readonly<{
                 subtitle={service.isDefault
                     ? `${service.host} · ${t('homesJourneys.defaultServiceFact')}`
                     : service.host}
-                trailing={<PaneLink testID="already-use-happier.service-change" disabled={policy.disabled} accessibilityHint={policy.accessibilityHint} label={t('common.change')} onPress={props.onChangeService} />}
+                trailing={policy.disabled ? undefined : <PaneLink testID="already-use-happier.service-change" label={t('common.change')} onPress={props.onChangeService} />}
             />
+            {/* The managed service is the value above; who manages it reads right beneath it. */}
+            <OrganizationPolicyFieldNotice field="accountService" />
             {request ? (
                 <ServiceSignIn key={`${request.service.endpointUrl}|${request.service.serverIdentityId}`} request={request} onDone={props.onDone} />
             ) : service.entry.status === 'loading' ? (

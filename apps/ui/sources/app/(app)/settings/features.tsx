@@ -15,6 +15,8 @@ import {
     type UiFeatureToggleDefinition,
 } from '@/sync/domains/features/featureRegistry';
 import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBuildPolicy';
+import { getOrganizationPolicyFeatureDenial } from '@/sync/domains/organizationPolicy/organizationPolicy';
+import { OrganizationPolicyManagedLine } from '@/components/organizationPolicy/OrganizationPolicyFieldNotice';
 import { useEffectiveServerSelection } from '@/hooks/server/useEffectiveServerSelection';
 import {
     useServerFeaturesMainSelectionSnapshot,
@@ -161,7 +163,8 @@ export const WorkspaceRouteBody = React.memo(function FeaturesSettingsScreen() {
 
     const visibleToggleDefinitions = React.useMemo(() => {
         return toggleDefinitions.filter((d) => {
-            if (getFeatureBuildPolicyDecision(d.featureId) === 'deny') return false;
+            // An organization's denial stays visible as a managed row; a build that lacks the feature hides it.
+            if (getFeatureBuildPolicyDecision(d.featureId) === 'deny') return getOrganizationPolicyFeatureDenial(d.featureId) !== null;
             if (isFeatureHardDisabledByServer(d)) return false;
             return true;
         });
@@ -198,6 +201,20 @@ export const WorkspaceRouteBody = React.memo(function FeaturesSettingsScreen() {
     }, [writeSetting]);
 
     const renderToggleRow = (d: UiFeatureToggleDefinition) => {
+        const denial = getOrganizationPolicyFeatureDenial(d.featureId);
+        if (denial) {
+            const setting = resolveFeatureToggleSetting(d.featureId);
+            const row = (
+                <Item
+                    testID={`settings-feature-managed-${d.featureId}`}
+                    title={t(d.titleKey)}
+                    subtitle={<OrganizationPolicyManagedLine lock={denial} />}
+                    detail={t('common.off')}
+                    showChevron={false}
+                />
+            );
+            return setting ? <SettingAnchor key={d.featureId} setting={setting}>{row}</SettingAnchor> : <React.Fragment key={d.featureId}>{row}</React.Fragment>;
+        }
         const blockedByDependencies = isLocallyBlockedByDependencies(d.featureId);
         const enabled = blockedByDependencies ? false : resolveUiFeatureToggleEnabled(toggleSettings, d.featureId);
         const setting = resolveFeatureToggleSetting(d.featureId);

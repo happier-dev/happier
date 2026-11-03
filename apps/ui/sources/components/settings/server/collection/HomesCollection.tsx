@@ -210,16 +210,18 @@ export const HomesCollectionList = React.memo(function HomesCollectionList(props
     if (!rail) {
         return (
             <>
-                <OrganizationPolicyFieldNotice field="home" />
                 <ItemGroup>{deviceRow}</ItemGroup>
                 <ItemGroup>
                     {homeRows}
-                    <ItemAddRow
-                        testID="settings.homes.add"
-                        disabled={homePolicy.disabled}
-                        title={t('addFlows.addHome')}
-                        onPress={() => openHref(router, HOMES_ADD_ROUTE, false, 'HomesCollectionList.add')}
-                    />
+                    {/* A Home fixed by the organization says so where the add row would be. */}
+                    {homePolicy.lock ? <OrganizationPolicyFieldNotice field="home" placement="rows" /> : (
+                        <ItemAddRow
+                            testID="settings.homes.add"
+                            disabled={homePolicy.disabled}
+                            title={t('addFlows.addHome')}
+                            onPress={() => openHref(router, HOMES_ADD_ROUTE, false, 'HomesCollectionList.add')}
+                        />
+                    )}
                 </ItemGroup>
                 {groupRows.length > 0 ? <ItemGroup title={t('addFlows.groupsTitle')}>{groupRows}</ItemGroup> : null}
             </>
@@ -231,12 +233,12 @@ export const HomesCollectionList = React.memo(function HomesCollectionList(props
             testID="settings.homes.rail"
             title={t('settings.servers')}
             count={collection.homes.length}
-            headerAction={<AddHomesMenu replace={onDetailRoute} />}
+            headerAction={homePolicy.lock ? undefined : <AddHomesMenu replace={onDetailRoute} />}
         >
-            <OrganizationPolicyFieldNotice field="home" />
             {selectedKey === 'homeDraft' ? <HomeDraftRow /> : null}
             {deviceRow}
             {homeRows}
+            <OrganizationPolicyFieldNotice field="home" placement="rows" />
             {selectedKey === 'groupDraft' || groupRows.length > 0 ? (
                 <CollectionListGroupLabel title={t('addFlows.groupsTitle')} count={collection.groups.length} />
             ) : null}

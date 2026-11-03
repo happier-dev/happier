@@ -44,7 +44,7 @@ describe('AccountServiceSelectionForm', () => {
         vi.unstubAllGlobals();
     });
 
-    it('keeps a policy-locked service visible and disables changing it while Back remains available', async () => {
+    it('offers a policy-locked service as its managed value, without a dead way to pick another', async () => {
         vi.stubGlobal('isTauri', true);
         vi.stubGlobal('document', {});
         vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn(), __HAPPIER_WEB_RUNTIME_CONFIG__: {
@@ -58,8 +58,9 @@ describe('AccountServiceSelectionForm', () => {
             currentEndpoint={{ url: 'https://directory.example.test', source: 'default' }}
             onBack={onBack} onSelect={vi.fn()}
         />);
-        expect(screen.findByTestId('account-service-current-choice')?.props.disabled).toBe(true);
-        expect(screen.findByTestId('account-service-another-choice')?.props.disabled).toBe(true);
+        expect(screen.findByTestId('account-service-current-choice')?.props.disabled).toBe(false);
+        expect(screen.findByTestId('account-service-another-choice')).toBeNull();
+        expect(screen.findByTestId('account-service-url-input')).toBeNull();
         expect(screen.findByTestId('organization-policy-accountService')).not.toBeNull();
         expect(screen.findByTestId('organization-policy-accountService-support')).not.toBeNull();
         await screen.pressByTestIdAsync('account-service-selection-back');

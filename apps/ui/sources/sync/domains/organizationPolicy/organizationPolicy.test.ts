@@ -13,6 +13,16 @@ function desktopPolicy(value: Record<string, unknown> | string) {
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 describe('organization policy setup and feature consumers', () => {
+    it('names the organization behind a denied feature so Settings shows it as managed, not missing', async () => {
+        desktopPolicy({ supportUrl: 'https://help.example.test', features: { deny: ['bots'] } });
+        const { getOrganizationPolicyFeatureDenial } = await import('./organizationPolicy');
+        expect(getFeatureBuildPolicyDecision('bots')).toBe('deny');
+        expect(getOrganizationPolicyFeatureDenial('bots')).toEqual({ organization: 'Example', supportUrl: 'https://help.example.test' });
+        expect(getOrganizationPolicyFeatureDenial('workflows')).toBeNull();
+        const { resolveFeatureToggleSetting } = await import('@/components/settings/features/featuresSettings');
+        expect(resolveFeatureToggleSetting('bots')).toBeDefined();
+    });
+
     it('allows an explicit Personal Home choice above a policy default and below a policy lock', () => {
         desktopPolicy({ personalHome: { value: 'offer', locked: false } });
         expect(resolvePersonalHomeAdmission(undefined, { host: true, personalHome: 'auto' })).toBe('auto');
