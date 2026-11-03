@@ -2,6 +2,28 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
 
+test('authors both cold Machine setup families with an exact setup-only Preset reference', async () => {
+  const { machineSetupAuthoring: example } = await import('../dist/daemon.js');
+  const { parsePluginManifest } = await import('@happier-dev/plugin-sdk/manifest');
+  const parsed = parsePluginManifest(example.manifest);
+  assert.equal(parsed.ok, true, JSON.stringify(parsed));
+  const [recipe] = parsed.manifest.contributes.machineRecipes;
+  const [preset] = parsed.manifest.contributes.machineSetupPresets;
+  assert.equal(recipe.id, 'fonts');
+  assert.equal(recipe.revision, '1');
+  assert.equal(recipe.inputHints.fields[0].path, 'identity.name');
+  assert.equal(recipe.inputHints.fields[0].widget, 'text');
+  assert.deepEqual(recipe.steps[0].packages, [{ kind: 'input', path: 'identity' }]);
+  assert.deepEqual(preset.setup.items, [{ kind: 'softwareRecipe', selection: {
+    ref: { pluginId: example.manifest.id, recipeId: recipe.id, revision: recipe.revision }, inputs: { identity: { name: 'fonts-dejavu-core' } },
+  } }]);
+  assert.equal(example.manifest.entrypoints?.daemon, undefined);
+  const mismatched = { ...example.manifest, contributes: { ...example.manifest.contributes,
+    machineRecipes: [{ ...recipe, revision: '2' }],
+  } };
+  assert.equal(parsePluginManifest(mismatched).ok, false);
+});
+
 test('authors independently bound UsageQuery fields and subscribes to their admitted host read', async () => {
   const { usageQueryAuthoring: example } = await import('../dist/daemon.js');
   assert.ok(example, 'the public author build must expose the UsageQuery consumer');
