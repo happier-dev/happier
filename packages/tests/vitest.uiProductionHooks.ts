@@ -7,8 +7,7 @@ import type { Plugin, UserConfig } from 'vitest/config';
 
 import {
   createWorkspacePackageSourcesPlugin,
-  readBundledPluginWorkspacePackageSpecs,
-  type WorkspacePackageSpec,
+  readHostWorkspacePackageSpecs,
 } from '../../scripts/testing/vitestWorkspacePackageResolution';
 
 const packageRoot = dirname(fileURLToPath(import.meta.url));
@@ -101,57 +100,11 @@ function resolveExpoNodeModuleStub(id: string, importer?: string): string | null
   return null;
 }
 
-const workspacePackages: readonly WorkspacePackageSpec[] = [
-  {
-    packageName: 'privacy-kit',
-    packageSourceRoot: resolve(repoRoot, 'packages/privacy-kit/src'),
-  },
-  {
-    packageName: '@happier-dev/protocol',
-    packageSourceRoot: resolve(repoRoot, 'packages/protocol/src'),
-  },
-  {
-    packageName: '@happier-dev/plugin-sdk',
-    packageSourceRoot: resolve(repoRoot, 'packages/plugin-sdk/src'),
-  },
-  {
-    packageName: '@happier-dev/triage-protocol',
-    packageSourceRoot: resolve(repoRoot, 'packages/triage-protocol/src'),
-  },
-  {
-    packageName: '@happier-dev/agents',
-    packageSourceRoot: resolve(repoRoot, 'packages/agents/src'),
-  },
-  {
-    packageName: '@happier-dev/cli-common',
-    packageSourceRoot: resolve(repoRoot, 'packages/cli-common/src'),
-  },
-  {
-    packageName: '@happier-dev/release-runtime',
-    packageSourceRoot: resolve(repoRoot, 'packages/release-runtime/src'),
-  },
-  {
-    packageName: '@happier-dev/connection-supervisor',
-    packageSourceRoot: resolve(repoRoot, 'packages/connection-supervisor/src'),
-  },
-  {
-    packageName: '@happier-dev/peer-mediation',
-    packageSourceRoot: resolve(repoRoot, 'packages/peer-mediation/src'),
-  },
-  {
-    packageName: '@happier-dev/iroh-native',
-    packageSourceRoot: resolve(repoRoot, 'packages/iroh-native/src'),
-  },
-  {
-    packageName: '@happier-dev/session-core',
-    packageSourceRoot: resolve(repoRoot, 'packages/session-core/src'),
-  },
-  {
-    packageName: '@happier-dev/sync-client',
-    packageSourceRoot: resolve(repoRoot, 'packages/sync-client/src'),
-  },
-  ...readBundledPluginWorkspacePackageSpecs(repoRoot),
-] as const;
+const workspacePackages = readHostWorkspacePackageSpecs(repoRoot, resolve(repoRoot, 'apps/cli'), [
+  ...readHostWorkspacePackageSpecs(repoRoot, resolve(repoRoot, 'apps/server')),
+  ...readHostWorkspacePackageSpecs(repoRoot, uiRoot),
+  { packageName: 'privacy-kit', packageSourceRoot: resolve(repoRoot, 'packages/privacy-kit/src') },
+]);
 
 const workspaceSourcesPlugin = createWorkspacePackageSourcesPlugin(
   workspacePackages,
