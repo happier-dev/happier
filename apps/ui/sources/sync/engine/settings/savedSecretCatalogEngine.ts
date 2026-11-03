@@ -1,5 +1,5 @@
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import { readSavedSecretCatalogInContext } from '@/sync/api/account/apiSavedSecretCatalog';
+import { readSavedSecretCatalogInContext, readSavedSecretCatalogMetadataInContext } from '@/sync/api/account/apiSavedSecretCatalog';
 import { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
 import { createScopedSnapshotLoader, type ScopedLoadTarget } from '@/sync/engine/scope/scopedSnapshotLoader';
 import { materializeSavedSecretResources } from '@/sync/engine/settings/materializeSavedSecretResources';
@@ -23,7 +23,7 @@ import {
 type Target = ScopedLoadTarget & Readonly<{ scope: ServerAccountScope }>;
 type CatalogProjection =
     | Readonly<{ ok: true; materialized: Awaited<ReturnType<typeof materializeSavedSecretResources>>;
-        legacyImport?: SavedSecretLegacyImportResult; observedAt: number }>
+        includesMaterial: boolean; legacyImport?: SavedSecretLegacyImportResult; observedAt: number }>
     | Readonly<{ ok: false; error: ScopedSnapshotError }>;
 
 const targetFor = (scope: ServerAccountScope): Target => ({
@@ -32,8 +32,23 @@ const targetFor = (scope: ServerAccountScope): Target => ({
     scope,
 });
 
+/** Material consumers share the same loader and snapshot as metadata-only pickers. */
+const materialDemand = new Map<string, number>();
+function retainMaterialDemand(scope: ServerAccountScope): () => void {
+    const key = targetFor(scope).key;
+    materialDemand.set(key, (materialDemand.get(key) ?? 0) + 1);
+    return () => {
+        const remaining = (materialDemand.get(key) ?? 1) - 1;
+        if (remaining > 0) materialDemand.set(key, remaining);
+        else materialDemand.delete(key);
+    };
+}
+
 const loader = createScopedSnapshotLoader<Target>({
     load: async ({ scope }, context) => {
+        // Maintenance belongs to the foreground read that acquired this demand.
+        // A one-shot refresh may release its caller before maintenance settles.
+        const includeMaterial = materialDemand.has(targetFor(scope).key);
         beginSavedSecretCatalogLoad(scope);
         return context.readWithMaintenance<CatalogProjection>({
             read: async publication => {
@@ -47,6 +62,21 @@ const loader = createScopedSnapshotLoader<Target>({
                     captured.assertCurrent();
                     const mode = await captured.resolveAccountMode();
                     const project = async (legacyImport?: SavedSecretLegacyImportResult): Promise<CatalogProjection> => {
+                        if (!includeMaterial) {
+                            const outcome = await readSavedSecretCatalogMetadataInContext(captured, context.signal);
+                            captured.assertCurrent();
+                            if (!outcome.ok) return { ok: false, error: {
+                                kind: outcome.failure.kind === 'conflict' || outcome.failure.kind === 'outcome_unknown'
+                                    ? 'unknown' : outcome.failure.kind,
+                                retryable: outcome.failure.retryable, code: outcome.failure.code,
+                            } };
+                            return { ok: true, includesMaterial: false, materialized: {
+                                entries: outcome.resources.filter(row => row.materialStatus !== 'resource_corrupt'),
+                                corruptEntries: outcome.resources.filter(row => row.materialStatus === 'resource_corrupt'),
+                                materializedSecrets: [],
+                                contents: new Map(),
+                            }, observedAt: Date.now() };
+                        }
                         const outcome = await readSavedSecretCatalogInContext(captured);
                         if (!outcome.ok) return { ok: false, error: {
                             kind: outcome.failure.kind === 'conflict' || outcome.failure.kind === 'outcome_unknown'
@@ -67,7 +97,7 @@ const loader = createScopedSnapshotLoader<Target>({
                             const currentMode = (await fetchAccountEncryptionMode(captured.credentials, { request: captured.request })).mode;
                             captured.assertCurrent();
                             if (currentMode !== mode) throw new Error('account-mode-mismatch');
-                            return { ok: true, materialized, ...(legacyImport ? { legacyImport } : {}), observedAt: Date.now() };
+                            return { ok: true, materialized, includesMaterial: true, ...(legacyImport ? { legacyImport } : {}), observedAt: Date.now() };
                         } catch {
                             return { ok: false, error: { kind: 'invalid', retryable: false } };
                         }
@@ -77,6 +107,7 @@ const loader = createScopedSnapshotLoader<Target>({
                     const foreground = await project();
                     if (!foreground.ok) return foreground;
                     publication.onReady(foreground, captured.accountLifetime.isCurrent);
+                    if (!foreground.includesMaterial) return foreground;
                     if (publication.hasPendingCleanup()) return foreground;
                     const { importLegacySavedSecretsInContext } = await import('@/sync/ops/settings/savedSecretResourceOperations');
                     let legacyImport: SavedSecretLegacyImportResult;
@@ -104,6 +135,7 @@ const loader = createScopedSnapshotLoader<Target>({
                     throw new Error(`Saved Secret material catalog read failed: ${projection.error.kind}`);
                 }
                 applySavedSecretCatalogPage({ scope, ...projection.materialized,
+                    includesMaterial: projection.includesMaterial,
                     ...(projection.legacyImport ? { legacyImport: projection.legacyImport } : {}),
                     observedAt: projection.observedAt, current });
             },
@@ -123,14 +155,28 @@ const loader = createScopedSnapshotLoader<Target>({
         && !isArtifactOnlyHomeAccountChange(event) && event.profileCatalogAffects !== false,
 });
 
-export function observeSavedSecretCatalog(scope: ServerAccountScope): () => void {
-    return loader.observe(targetFor(scope));
+export function observeSavedSecretCatalog(scope: ServerAccountScope, options?: Readonly<{ includeMaterial?: boolean }>): () => void {
+    const includeMaterial = options?.includeMaterial !== false;
+    const upgrade = includeMaterial && !materialDemand.has(targetFor(scope).key)
+        && getSavedSecretCatalogSnapshot(scope)?.includesMaterial === false;
+    const releaseMaterial = includeMaterial ? retainMaterialDemand(scope) : () => {};
+    const releaseObservation = loader.observe(targetFor(scope));
+    if (upgrade) fireAndForget(loader.invalidate(targetFor(scope)), { tag: 'savedSecretCatalog.materialDemand' });
+    let released = false;
+    return () => {
+        if (released) return;
+        released = true;
+        releaseMaterial();
+        releaseObservation();
+    };
 }
 
-export function refreshSavedSecretCatalog(scope: ServerAccountScope): Promise<void> {
+export async function refreshSavedSecretCatalog(scope: ServerAccountScope, options?: Readonly<{ includeMaterial?: boolean }>): Promise<void> {
     // Mutation completions also use this entry point. A read begun before the
     // write must not satisfy their reload; the loader owns the trailing reread.
-    return loader.invalidate(targetFor(scope));
+    const releaseMaterial = options?.includeMaterial !== false ? retainMaterialDemand(scope) : () => {};
+    try { await loader.invalidate(targetFor(scope)); }
+    finally { releaseMaterial(); }
 }
 
 export function invalidateSavedSecretCatalogProjection(scope: ServerAccountScope): Promise<void> {
@@ -158,4 +204,5 @@ export async function applySavedSecretCatalogDeletion(scope: ServerAccountScope,
 
 export function resetSavedSecretCatalogEngineForTests(): void {
     loader.resetForTests();
+    materialDemand.clear();
 }

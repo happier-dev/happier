@@ -188,6 +188,9 @@ export async function createSecretSettingsTestHarness(options: Readonly<{
             return Response.json({ success: true, version: settingsVersion });
         }
         if (path === '/v1/account/saved-secrets/resources/materials') return Response.json({ resources });
+        if (path === '/v1/account/saved-secrets/resources' && (!init?.method || init.method === 'GET')) {
+            return Response.json({ resources: resources.map(resource => resource.entry) });
+        }
         if (path === '/v1/account/saved-secrets/resources' && init?.method === 'POST') {
             const body=SharedSavedSecretCreateInputV1Schema.parse(JSON.parse(String(init.body)));
             creations.push(body);

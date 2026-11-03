@@ -20,6 +20,8 @@ export type SavedSecretCatalogSnapshot = Readonly<{
     data: readonly SavedSecretCatalogEntryV1[] | null;
     corruptEntries: readonly SavedSecretCatalogCorruptEntryV1[];
     materializedSecrets: readonly SavedSecret[];
+    /** Metadata-only reads cannot establish material readiness, including for an empty catalog. */
+    includesMaterial?: boolean;
     legacyImport: SavedSecretLegacyImportResult | null;
     lastObservedAt: number | null;
     stale: boolean;
@@ -91,6 +93,7 @@ export function beginSavedSecretCatalogLoad(scope: ServerAccountScope): void {
         // A read alone does not revoke the admitted material. Wakes, receipts,
         // observer gaps and failures withdraw its authority through invalidation.
         materializedSecrets: hasCurrentMaterial(current) ? current.materializedSecrets : EMPTY_MATERIALIZED_SECRETS,
+        includesMaterial: hasCurrentMaterial(current) && current.includesMaterial === true,
         legacyImport: current?.legacyImport ?? null,
         lastObservedAt: current?.lastObservedAt ?? null,
         stale: current?.stale ?? false,
@@ -99,7 +102,7 @@ export function beginSavedSecretCatalogLoad(scope: ServerAccountScope): void {
     });
 }
 
-export function applySavedSecretCatalogPage(params: Readonly<{ scope: ServerAccountScope; entries: readonly SavedSecretCatalogEntryV1[]; corruptEntries?: readonly SavedSecretCatalogCorruptEntryV1[]; materializedSecrets?: readonly SavedSecret[]; legacyImport?: SavedSecretLegacyImportResult; observedAt: number; current?: boolean }>): void {
+export function applySavedSecretCatalogPage(params: Readonly<{ scope: ServerAccountScope; entries: readonly SavedSecretCatalogEntryV1[]; corruptEntries?: readonly SavedSecretCatalogCorruptEntryV1[]; materializedSecrets?: readonly SavedSecret[]; includesMaterial?: boolean; legacyImport?: SavedSecretLegacyImportResult; observedAt: number; current?: boolean }>): void {
     const previous = getSavedSecretCatalogSnapshot(params.scope);
     for (const entry of params.entries) receiptOrdering.retain(params.scope, entry.ref, entry.revision);
     for (const entry of params.corruptEntries ?? []) {
@@ -117,6 +120,7 @@ export function applySavedSecretCatalogPage(params: Readonly<{ scope: ServerAcco
         data: preserveRows(previous?.data ?? null, params.entries),
         corruptEntries: Object.freeze([...(params.corruptEntries ?? [])]),
         materializedSecrets: Object.freeze([...(params.materializedSecrets ?? [])]),
+        includesMaterial: params.includesMaterial !== false,
         legacyImport: params.legacyImport ?? null,
         lastObservedAt: params.observedAt,
         stale: params.current === false,
@@ -229,6 +233,7 @@ export function resolveSavedSecretReference(
     scope: ServerAccountScope | null | undefined,
     personalSecrets: readonly SavedSecret[],
     ref: string,
+    options?: Readonly<{ includeMaterial?: boolean }>,
 ): SavedSecretReferenceResolution {
     const personalSecret = personalSecrets.find((candidate) => candidate.id === ref) ?? null;
     if (personalSecret) {
@@ -237,7 +242,7 @@ export function resolveSavedSecretReference(
             kind: 'personal',
             status: 'ready',
             entry: null,
-            secret: personalSecret,
+            secret: options?.includeMaterial === false ? null : personalSecret,
             revision: personalSecret.updatedAt,
             fingerprint: formatSavedSecretCatalogFingerprintV1({ ref, source: 'personal', revision: personalSecret.updatedAt }),
         });
@@ -263,7 +268,7 @@ export function resolveSavedSecretReference(
             kind: 'personal',
             status: secret ? 'ready' : 'deleted',
             entry: null,
-            secret,
+            secret: options?.includeMaterial === false ? null : secret,
             revision: secret?.updatedAt ?? null,
             fingerprint: formatSavedSecretCatalogFingerprintV1({ ref, source: 'personal', revision: secret?.updatedAt ?? null }),
         });
@@ -298,19 +303,21 @@ export function resolveSavedSecretReference(
             fingerprint: null,
         });
     }
-    const materialized = entry.materialStatus === 'ready' && entry.capabilities.use
+    const usable = entry.materialStatus === 'ready' && entry.capabilities.use;
+    const materialized = usable && options?.includeMaterial !== false
         ? snapshot.materializedSecrets.find((secret) => (
             secret.id === ref && secret.updatedAt === entry.revision
         )) ?? null
         : null;
+    const currentMaterial = materialized?.updatedAt === entry.revision ? materialized : null;
     return Object.freeze({
         ref,
         kind: 'shared_resource',
-        status: materialized ? 'ready' : entry.materialStatus === 'ready'
+        status: currentMaterial || (usable && options?.includeMaterial === false) ? 'ready' : entry.materialStatus === 'ready'
             ? 'temporarily_unavailable'
             : entry.materialStatus,
         entry,
-        secret: materialized,
+        secret: currentMaterial,
         revision,
         fingerprint,
     });

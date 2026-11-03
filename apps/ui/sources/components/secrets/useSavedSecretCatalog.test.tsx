@@ -35,6 +35,31 @@ afterEach(async () => {
 });
 
 describe('useSavedSecretCatalog resource authority', () => {
+    it('reads metadata without bodies for reference demand and preserves a material consumer joining the same catalog', async () => {
+        home = await createSecretSettingsTestHarness({ settings: settingsParse({ secrets: [] }) });
+        const { entry } = await home.addOwnerResource();
+        const { useSavedSecretCatalog } = await import('./useSavedSecretCatalog');
+        const metadata = await renderHook(() => useSavedSecretCatalog({ scope: home!.scope, includeMaterial: false }));
+        await act(async () => metadata.getCurrent().reload());
+        const materialReads = () => home!.request.mock.calls.filter(([url]) =>
+            new URL(String(url)).pathname === '/v1/account/saved-secrets/resources/materials').length;
+        expect(metadata.getCurrent().entries.map(row => row.ref)).toEqual([entry.ref]);
+        expect(metadata.getCurrent().materializedSecrets).toEqual([]);
+        expect(materialReads()).toBe(0);
+
+        const material = await renderHook(() => useSavedSecretCatalog({ scope: home!.scope }));
+        await vi.waitFor(() => expect(material.getCurrent().usableSecrets.map(secret => secret.id)).toEqual([entry.ref]));
+        expect(materialReads()).toBeGreaterThan(0);
+        expect(metadata.getCurrent().materializedSecrets).toEqual([]);
+        expect(metadata.getCurrent().resolveReference(entry.ref)).toMatchObject({ status: 'ready', secret: null });
+        await material.unmount();
+        const before = materialReads();
+        await act(async () => metadata.getCurrent().reload());
+        expect(metadata.getCurrent().entries.map(row => row.ref)).toEqual([entry.ref]);
+        expect(metadata.getCurrent().materializedSecrets).toEqual([]);
+        expect(materialReads() - before).toBe(0);
+        await metadata.unmount();
+    });
     it('keeps the retained replacement bridge idle across unrelated Settings revisions', async () => {
         home = await createSecretSettingsTestHarness({ settings: settingsParse({ secrets: [] }) });
         const { useSavedSecretsMutable } = await import('./useSavedSecretsMutable');

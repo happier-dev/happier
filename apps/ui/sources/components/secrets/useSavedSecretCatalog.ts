@@ -110,6 +110,8 @@ export function useSavedSecretCatalog(options?: Readonly<{
     scope?: AccountSettingsScope | null;
     /** Legacy caller input; the engine imports Settings material rather than projecting it here. */
     personalSecrets?: readonly SavedSecret[];
+    /** Reference-only consumers never request or receive decrypted catalog material. */
+    includeMaterial?: boolean;
 }>): SavedSecretCatalogProjection {
     const activeScope = useAccountSettingsScope();
     const scope = options && Object.prototype.hasOwnProperty.call(options, 'scope')
@@ -123,6 +125,7 @@ export function useSavedSecretCatalog(options?: Readonly<{
     );
     const sharedEnabled = Boolean(scope) && options?.sharedEnabled !== false;
     const catalogEnabled = Boolean(scope);
+    const includeMaterial = options?.includeMaterial !== false;
     const serverId = scope?.serverId;
     const accountId = scope?.accountId;
     const snapshot = React.useSyncExternalStore(
@@ -135,16 +138,16 @@ export function useSavedSecretCatalog(options?: Readonly<{
         if (!serverId || !accountId || !catalogEnabled) return;
         // The loader owns credential/currentness transitions. Equivalent
         // Settings scope objects must not retire its admitted material read.
-        return observeSavedSecretCatalog({ serverId, accountId });
-    }, [serverId, accountId, catalogEnabled]);
+        return observeSavedSecretCatalog({ serverId, accountId }, { includeMaterial });
+    }, [serverId, accountId, catalogEnabled, includeMaterial]);
 
     const sharedEntries = snapshot?.data ?? EMPTY_SHARED_ENTRIES;
     const corruptEntries = snapshot?.corruptEntries ?? EMPTY_CORRUPT_ENTRIES;
     const entries = sharedEntries;
 
     const reload = React.useCallback(async () => {
-        if (scope && catalogEnabled) await refreshSavedSecretCatalog(scope);
-    }, [scope, catalogEnabled]);
+        if (scope && catalogEnabled) await refreshSavedSecretCatalog(scope, { includeMaterial });
+    }, [scope, catalogEnabled, includeMaterial]);
 
     const deleteCorruptResource = React.useCallback(async (entry: SavedSecretCatalogCorruptOwnerEntry): Promise<SavedSecretResourceDeleteResult> => {
         if (!scope || !scopeIsActive || !catalogEnabled || entry.repair.kind !== 'delete_resource') {
@@ -289,8 +292,8 @@ export function useSavedSecretCatalog(options?: Readonly<{
         rotate: rotatePersonal,
         delete: deletePersonal,
     }), [createPersonal, deletePersonal, renamePersonal, rotatePersonal]);
-    const usableSecrets = React.useMemo(() => catalogEnabled ? getUsableSavedSecrets(scope, EMPTY_MATERIALIZED_SECRETS) : EMPTY_MATERIALIZED_SECRETS,
-        [scope, catalogEnabled, snapshot]);
+    const usableSecrets = React.useMemo(() => catalogEnabled && includeMaterial ? getUsableSavedSecrets(scope, EMPTY_MATERIALIZED_SECRETS) : EMPTY_MATERIALIZED_SECRETS,
+        [scope, catalogEnabled, includeMaterial, snapshot]);
     const personalSecrets = React.useMemo(() => {
         if (!scopeIsActive) return EMPTY_MATERIALIZED_SECRETS;
         const privateRefs = new Set(entries.filter(entry => entry.relationship === 'owner'
@@ -323,9 +326,9 @@ export function useSavedSecretCatalog(options?: Readonly<{
     }, [personalSecrets, scope, scopeIsActive]);
     const resolveReference = React.useCallback(
         (ref: string) => {
-            return resolveSavedSecretReference(scope, EMPTY_MATERIALIZED_SECRETS, ref);
+            return resolveSavedSecretReference(scope, EMPTY_MATERIALIZED_SECRETS, ref, { includeMaterial });
         },
-        [scope, snapshot],
+        [scope, snapshot, includeMaterial],
     );
 
     return Object.freeze({
@@ -342,7 +345,7 @@ export function useSavedSecretCatalog(options?: Readonly<{
         updateResource: updateCatalogResource,
         corruptEntries,
         deleteCorruptResource,
-        materializedSecrets: getMaterializedSavedSecrets(scope),
+        materializedSecrets: includeMaterial ? getMaterializedSavedSecrets(scope) : EMPTY_MATERIALIZED_SECRETS,
         usableSecrets,
         resolveReference,
         status: catalogEnabled ? (snapshot?.status ?? 'loading') : 'ready',
