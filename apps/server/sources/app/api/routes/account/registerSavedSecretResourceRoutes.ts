@@ -122,20 +122,21 @@ export function registerSavedSecretResourceRoutes(app: Fastify): void {
                 return reply.code(403).send({ error: 'forbidden' });
             }
             const result = await inReadSnapshot(async tx => {
-                if (selection.resourceId) {
-                    // Check management and exact currentness without reading the body.
-                    if (selection.requireManage) {
-                        const current = await admitSavedSecretResourceManagementInTx(tx, { accountId: request.userId,
-                            resourceId: selection.resourceId, expectedRevision: selection.expectedRevision });
-                        if (!current.ok) return current;
-                    } else if (selection.expectedRevision !== undefined) {
-                        const current = await tx.savedSecretResource.findUnique({ where: { id: selection.resourceId }, select: { revision: true } });
-                        if (!current) return { ok: false as const, error: 'resource_not_found' as const };
-                        if (current.revision !== selection.expectedRevision) return { ok: false as const, error: 'resource_changed' as const };
-                    }
+                // Check management and exact currentness without reading the body.
+                if (selection.resourceId && selection.requireManage) {
+                    const current = await admitSavedSecretResourceManagementInTx(tx, { accountId: request.userId,
+                        resourceId: selection.resourceId, expectedRevision: selection.expectedRevision, authentication });
+                    if (!current.ok) return current;
                 }
-                return { ok: true as const, rows: await listSavedSecretResourceMaterialsForAccountInTx(tx, request.userId, authentication,
-                    selection.resourceId ? [selection.resourceId] : undefined, selection.includeReferenceCensus === true) };
+                const rows = await listSavedSecretResourceMaterialsForAccountInTx(tx, request.userId, authentication,
+                    selection.resourceId ? [selection.resourceId] : undefined, selection.includeReferenceCensus === true);
+                if (selection.resourceId && !selection.requireManage && selection.expectedRevision !== undefined) {
+                    // The qualified loader decides access first; an unauthorized resource answers like a missing one.
+                    if (rows.length === 0) return { ok: false as const, error: 'resource_not_found' as const };
+                    const current = await tx.savedSecretResource.findUnique({ where: { id: selection.resourceId }, select: { revision: true } });
+                    if (current?.revision !== selection.expectedRevision) return { ok: false as const, error: 'resource_changed' as const };
+                }
+                return { ok: true as const, rows };
             });
             if (!result.ok) return reply.code(savedSecretResourceErrorHttpStatus(result.error, 404)).send({ error: result.error });
             const rows = result.rows;
@@ -180,6 +181,7 @@ export function registerSavedSecretResourceRoutes(app: Fastify): void {
             resourceId: parsed.data.resourceId,
             cursor: parsed.data.cursor,
             limit: parsed.data.limit,
+            authentication: readTeamOperationAuthenticationFromRequest(request),
         }));
         if (!result.ok) {
             return reply.code(savedSecretResourceErrorHttpStatus(result.error, 404)).send({ error: result.error });

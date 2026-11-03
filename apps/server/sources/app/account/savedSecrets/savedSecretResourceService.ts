@@ -1015,16 +1015,32 @@ export type SavedSecretResourceEnvelopeCensusProjection = Readonly<{
 }>;
 
 /** Owner-only effective-recipient census used to prepare/repair current E2EE envelopes. */
+/**
+ * Refusal for a caller who is not the resource owner. Only a caller the qualified
+ * catalog/material retention already admits learns that the resource exists
+ * (`forbidden`); every other caller gets the same answer as a missing resource.
+ */
+async function refuseSavedSecretNonOwnerInTx(tx: Tx, input: Readonly<{
+    accountId: string; resourceId: string; authentication?: TeamOperationAuthenticationContext;
+}>): Promise<"forbidden" | "resource_not_found"> {
+    const rows = await tx.savedSecretResource.findMany({
+        where: { id: input.resourceId },
+        select: authorizedSavedSecretRowSelect(input.accountId),
+    });
+    const retained = await retainQualifiedSavedSecretRowsInTx(tx, { rows, accountId: input.accountId, authentication: input.authentication });
+    return retained.rows.length > 0 ? "forbidden" : "resource_not_found";
+}
+
 export async function listSavedSecretResourceEnvelopeCensusInTx(
     tx: Tx,
-    input: Readonly<{ accountId: string; resourceId: string; cursor?: string; limit: number }>,
+    input: Readonly<{ accountId: string; resourceId: string; cursor?: string; limit: number; authentication?: TeamOperationAuthenticationContext }>,
 ): Promise<SavedSecretResourceServiceResult<SavedSecretResourceEnvelopeCensusProjection, "resource_not_found" | "forbidden" | "invalid_resource">> {
     const resource = await tx.savedSecretResource.findUnique({
         where: { id: input.resourceId },
         select: { ownerAccountId: true, encryptionMode: true, revision: true },
     });
     if (!resource) return { ok: false, error: "resource_not_found" };
-    if (resource.ownerAccountId !== input.accountId) return { ok: false, error: "forbidden" };
+    if (resource.ownerAccountId !== input.accountId) return { ok: false, error: await refuseSavedSecretNonOwnerInTx(tx, input) };
     if (resource.encryptionMode !== "e2ee") return { ok: false, error: "invalid_resource" };
 
     const authorizedIds = (await listAuthorizedAccountIdsForResourceInTx(tx, input.resourceId))
@@ -1087,13 +1103,13 @@ export async function listSavedSecretResourceEnvelopeCensusInTx(
 
 /** Returns authorized ciphertext/plain storage plus only the caller's envelope. */
 export async function admitSavedSecretResourceManagementInTx(tx: Tx, input: Readonly<{
-    accountId: string; resourceId: string; expectedRevision?: number;
+    accountId: string; resourceId: string; expectedRevision?: number; authentication?: TeamOperationAuthenticationContext;
 }>): Promise<SavedSecretResourceServiceResult<{ ownerAccountId: string; revision: number; displayName: string }>> {
     // Management is the resource owner's authority, independent of audience/use.
     const row = await tx.savedSecretResource.findUnique({ where: { id: input.resourceId },
         select: { ownerAccountId: true, revision: true, displayName: true } });
     if (!row) return { ok: false, error: 'resource_not_found' };
-    if (row.ownerAccountId !== input.accountId) return { ok: false, error: 'forbidden' };
+    if (row.ownerAccountId !== input.accountId) return { ok: false, error: await refuseSavedSecretNonOwnerInTx(tx, input) };
     if (input.expectedRevision !== undefined && row.revision !== input.expectedRevision) return { ok: false, error: 'resource_changed' };
     return { ok: true, value: row };
 }

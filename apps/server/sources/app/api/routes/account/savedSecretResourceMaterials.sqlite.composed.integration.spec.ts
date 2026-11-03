@@ -155,6 +155,95 @@ describe("Saved Secret material route (SQLite integration)", () => {
         } finally { await app.close(); }
     });
 
+    it('answers an unauthorized revision probe exactly like a nonexistent resource while owners keep currentness', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const stranger = await db.account.create({ data: { encryptionMode: 'plain' } });
+        expect(await inTx(tx => createSavedSecretResourceInTx(tx, {
+            accountId: owner.id, resourceId: 'probe-target', displayName: 'probe-target', kind: 'password', encryptionMode: 'plain',
+            storedContent: { t: 'plain', v: { v: 1, name: 'probe-target', kind: 'password', value: 'probe-target-sentinel' } },
+        }))).toMatchObject({ ok: true, value: { revision: 1 } });
+        let accountId = stranger.id;
+        const app = createAuthenticatedTestApp();
+        app.addHook('onRequest', async request => { request.headers['x-test-user-id'] = accountId; });
+        registerSavedSecretResourceRoutes(app);
+        const probe = (resourceId: string, revision: number) => app.inject({ method: 'GET',
+            url: `/v1/account/saved-secrets/resources/materials?resourceId=${resourceId}&expectedRevision=${revision}` });
+        try {
+            const probes = await Promise.all([probe('probe-target', 1), probe('probe-target', 2), probe('probe-missing', 1)]);
+            const observed = probes.map(response => ({ status: response.statusCode, body: response.body }));
+            expect(observed[0]).toEqual(observed[2]);
+            expect(observed[1]).toEqual(observed[2]);
+            expect(observed[2]).toEqual({ status: 404, body: JSON.stringify({ error: 'resource_not_found' }) });
+            accountId = owner.id;
+            const current = await probe('probe-target', 1);
+            expect(current.statusCode).toBe(200);
+            expect(current.json().resources.map((row: { resourceId: string }) => row.resourceId)).toEqual(['probe-target']);
+            const stale = await probe('probe-target', 2);
+            expect(stale.statusCode).toBe(409);
+            expect(stale.json()).toEqual({ error: 'resource_changed' });
+            expect((await probe('probe-missing', 1)).json()).toEqual({ error: 'resource_not_found' });
+        } finally { await app.close(); }
+    });
+
+    it('answers no-access management probes like a missing resource and keeps forbidden for use-only recipients', async () => {
+        Object.assign(process.env, { HAPPIER_FEATURE_AUTH_EMAIL_PASSWORD__ENABLED: '1',
+            HAPPIER_FEATURE_E2EE__KEYLESS_ACCOUNTS_ENABLED: '1', HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional' });
+        const emailPassword = { kind: 'home_method' as const, methodId: 'email_password' };
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const stranger = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const recipient = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const member = await db.account.create({ data: { encryptionMode: 'plain' } });
+        await db.userRelationship.create({ data: { fromUserId: owner.id, toUserId: recipient.id, status: 'friend' } });
+        const team = await db.team.create({ data: { name: 'Restricted audience',
+            authenticationPolicy: { v: 1, mode: 'restricted', accepted: [emailPassword] } } });
+        await db.teamMembership.createMany({ data: [
+            { teamId: team.id, accountId: owner.id, role: 'owner' },
+            { teamId: team.id, accountId: member.id, role: 'member' },
+        ] });
+        for (const accountId of [owner.id, member.id]) {
+            await db.accountIdentity.create({ data: { accountId, provider: 'email', providerUserId: `${accountId}@example.test`, profile: {} } });
+            await db.accountPasswordCredential.create({ data: { accountId, credential: { v: 1, kind: 'plain_password_hash',
+                hash: await hashPasswordMaterial(new TextEncoder().encode(`${accountId} password factor`)) } } });
+        }
+        expect(await inTx(tx => createSavedSecretResourceInTx(tx, {
+            accountId: owner.id, resourceId: 'managed-target', displayName: 'managed-target', kind: 'password', encryptionMode: 'plain',
+            authentication: { env: process.env, authenticationAuthority: 'present_user', authenticationEvidence: [emailPassword] },
+            accountGrants: [recipient.id], teamGrants: [team.id],
+            storedContent: { t: 'plain', v: { v: 1, name: 'managed-target', kind: 'password', value: 'managed-target-sentinel' } },
+        }))).toMatchObject({ ok: true, value: { revision: 1 } });
+        let headers: Record<string, string> = {};
+        const app = createAuthenticatedTestApp();
+        app.addHook('onRequest', async request => { Object.assign(request.headers, headers); });
+        registerSavedSecretResourceRoutes(app);
+        const as = (accountId: string, evidence?: readonly unknown[]) => {
+            headers = { 'x-test-user-id': accountId, ...(evidence ? { 'x-test-authentication-evidence': JSON.stringify(evidence) } : {}) };
+        };
+        const ask = async (resourceId: string) => {
+            const responses = await Promise.all([
+                app.inject({ method: 'GET', url: `/v1/account/saved-secrets/resources/envelope-census?resourceId=${resourceId}` }),
+                app.inject({ method: 'GET', url: `/v1/account/saved-secrets/resources/materials?resourceId=${resourceId}&expectedRevision=1&requireManage=true` }),
+                app.inject({ method: 'GET', url: `/v1/account/saved-secrets/resources/materials?resourceId=${resourceId}&expectedRevision=1` }),
+            ]);
+            return responses.map(response => ({ status: response.statusCode, body: response.body }));
+        };
+        try {
+            as(stranger.id);
+            const missing = await ask('managed-missing');
+            expect(missing.map(row => row.status)).toEqual([404, 404, 404]);
+            expect(await ask('managed-target')).toEqual(missing);
+            // A Team member whose credential does not qualify for the restricted Team grant has no access.
+            as(member.id);
+            expect(await ask('managed-target')).toEqual(missing);
+            // Callers with use access already know the resource exists; they lack only management.
+            as(member.id, [emailPassword]);
+            expect((await ask('managed-target')).map(row => row.status)).toEqual([403, 403, 200]);
+            as(recipient.id);
+            expect((await ask('managed-target')).map(row => row.status)).toEqual([403, 403, 200]);
+            as(owner.id, [emailPassword]);
+            expect((await ask('managed-target')).map(row => row.status)).toEqual([400, 200, 200]);
+        } finally { await app.close(); }
+    });
+
     it.each([true, false])('promotes a personal registry token through the real Action route and refuses its deletion (explicit mapping: %s)', async explicitMapping => {
         const personal = { id: 'registry-personal', name: 'Registry token', kind: 'token' as const,
             encryptedValue: { _isSecretValue: true as const, value: 'private-registry-token' }, createdAt: 1, updatedAt: 1 };
