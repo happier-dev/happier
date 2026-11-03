@@ -161,6 +161,9 @@ export async function createAgentDesktopComputerDriver(params: Readonly<{ displa
     let admitted = false;
     try {
       assertTarget(target);
+      if ((operation.kind === 'press' || operation.kind === 'click') && operation.modifiers?.includes('fn')) {
+        return { status: 'failed', code: 'input_not_supported' };
+      }
       const observed = captureId === null ? undefined : binding;
       const grounded = operation.kind !== 'press' && operation.kind !== 'type';
       if ((captureId !== null || grounded) && (!observed || observed.captureId !== captureId
@@ -175,14 +178,18 @@ export async function createAgentDesktopComputerDriver(params: Readonly<{ displa
       switch (operation.kind) {
         case 'element': args = operation.action === 'click' ? ['click', operation.elementId]
           : ['set-value', operation.elementId, '--', operation.value]; break;
-        case 'press': args = [...(target.kind === 'display' ? ['--headed'] : []), 'press', operation.key,
+        case 'press': args = [...(target.kind === 'display' ? ['--headed'] : []), 'press',
+          [...(operation.modifiers ?? []).map(modifier => modifier === 'control' ? 'ctrl' : modifier),
+            operation.key.replace(/^Arrow(Left|Right|Up|Down)$/, '$1')].join('+'),
           ...(target.kind === 'window' ? ['--window-id', String(target.windowId)] : [])]; break;
         case 'type': {
           const ref = observed?.focusedRef ?? (await snapshot(target)).focusedRef;
           if (!ref) return { status: 'failed', code: 'computer_element_stale' };
           args = ['type', ref, '--', operation.text]; break;
         }
-        case 'click': { const p = point(operation.x, operation.y); args = ['--headed', 'mouse-click', `--xy=${p.x},${p.y}`, '--button', operation.button ?? 'left']; break; }
+        case 'click': { const p = point(operation.x, operation.y); args = ['--headed', 'mouse-click', `--xy=${p.x},${p.y}`, '--button', operation.button ?? 'left',
+          ...(operation.clickCount ? ['--count', String(operation.clickCount)] : []),
+          ...(operation.modifiers ?? []).flatMap(modifier => ['--modifiers', modifier === 'control' ? 'ctrl' : modifier])]; break; }
         case 'drag': { const from = point(operation.fromX, operation.fromY); const to = point(operation.toX, operation.toY);
           args = ['--headed', 'drag', `--from-xy=${from.x},${from.y}`, `--to-xy=${to.x},${to.y}`]; break; }
         case 'wheel': { const p = point(operation.x, operation.y); args = ['--headed', 'mouse-wheel', `--x=${p.x}`, `--y=${p.y}`,

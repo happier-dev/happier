@@ -295,7 +295,7 @@ function clickedTarget(capture: Readonly<{ geometry: ComputerCaptureGeometryV1;
 
 function viewerOperation(control: MachineLiveStreamControlSidebandV1, capture: { geometry: { captureWidth: number; captureHeight: number } } | null): ComputerInputOperationV1 | null {
   if (control.kind === 'keyboard_text') return { kind: 'type', text: control.text };
-  if (control.kind === 'keyboard_key') return { kind: 'press', key: control.key };
+  if (control.kind === 'keyboard_key') return { kind: 'press', key: control.key, ...(control.modifiers ? { modifiers: control.modifiers } : {}) };
   if (control.kind === 'tap' && capture) return { kind: 'click', x: control.x * capture.geometry.captureWidth, y: control.y * capture.geometry.captureHeight };
   return null;
 }

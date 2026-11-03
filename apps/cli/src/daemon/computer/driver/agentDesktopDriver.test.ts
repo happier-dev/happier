@@ -1,9 +1,11 @@
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { MachineLiveStreamControlSidebandV1Schema } from '@happier-dev/protocol';
 
 import { createAgentDesktopComputerDriver } from './agentDesktopDriver';
 import { createManagedComputerDriver } from './managedComputerDriver';
+import { createComputerCaptureSource } from '../source';
 
 const boundary = vi.hoisted(() => ({ spawn: vi.fn(), calls: [] as string[][] }));
 // Only the native subprocess boundary is replaced; schemas, grounding and settlement run normally.
@@ -12,20 +14,23 @@ vi.mock('node:child_process', async original => ({ ...await original<typeof impo
 const target = { kind: 'window', displayId: ':73', pid: 42, windowId: 'atspi:1.42:/window/1' } as const;
 const png = 'iVBORw0KGgoAAAANSUhEUgAAAMgAAABk';
 const window = { id: target.windowId, pid: target.pid, title: 'Fixture', app_name: 'Fixture', bounds: { x: 20, y: 30, width: 200, height: 100 } };
-function setup(respond: (args: string[]) => unknown = args => args.includes('list-windows') ? [window]
+function nativeResponse(args: string[]): unknown {
+  return args.includes('list-windows') ? [window]
   : args.includes('list-displays') ? [{ id: '0', bounds: { x: 0, y: 0, width: 800, height: 600 }, is_primary: true, scale: 1 }]
     : args.includes('snapshot') ? { snapshot_id: 's1', window, complete: true, tree: { role: 'window', children: [
       { ref_id: '@s1:e1', role: 'button', name: 'Apply', bounds: { x: 30, y: 40, width: 20, height: 10 } },
       { ref_id: '@s1:e2', role: 'textfield', name: 'Name', value: 'old', states: ['focused'] },
     ] } }
       : args.includes('screenshot') ? { data: png, format: 'png', width: 200, height: 100, scale_factor: 1 }
-        : { action: args[0], disposition: { delivery: 'delivered_unverified', retry: 'unsafe' } }) {
+        : { action: args[0], disposition: { delivery: 'delivered_unverified', retry: 'unsafe' } };
+}
+function setup(respond: (args: string[]) => unknown = nativeResponse) {
   boundary.calls.length = 0;
   boundary.spawn.mockImplementation((_path: string, args: string[]) => {
     boundary.calls.push(args);
     const child = Object.assign(new EventEmitter(), { stdout: new PassThrough(), stderr: new PassThrough(), stdin: new PassThrough(), kill: vi.fn(), exitCode: null });
-    queueMicrotask(() => {
-      const data = respond(args);
+    queueMicrotask(async () => {
+      const data = await respond(args);
       const envelope = typeof data === 'object' && data !== null && 'ok' in data ? data : { version: '2.5', ok: true, command: args.find(a => !a.startsWith('--')), data };
       child.stdout.end(JSON.stringify(envelope));
       child.emit('close', 0, null);
@@ -36,6 +41,64 @@ function setup(respond: (args: string[]) => unknown = args => args.includes('lis
 afterEach(() => { vi.restoreAllMocks(); });
 
 describe('agent-desktop native driver', () => {
+  it('delivers viewer arrow chords using the pinned native key names without dropping modifiers', async () => {
+    const delivered: string[] = [];
+    const accepted = new Set(['ctrl+shift+left', 'alt+up', 'meta+right', 'down']);
+    setup(args => {
+      if (!args.includes('press')) return nativeResponse(args);
+      const chord = args[args.indexOf('press') + 1].toLowerCase();
+      // v1.0.2 platform key maps accept left/up/right/down, not DOM Arrow* names.
+      if (!accepted.has(chord)) return { version: '2.5', ok: false, command: 'press',
+        error: { code: 'INVALID_ARGS', disposition: { delivery: 'not_delivered', retry: 'safe' } } };
+      delivered.push(chord);
+      return nativeResponse(args);
+    });
+    const source = createComputerCaptureSource({ sessionId: 'viewer-arrows', target: { kind: 'display', displayId: ':73' },
+      provider: 'agent-desktop', executablePath: '/managed/agent-desktop' });
+    const failures: string[] = [];
+    const stream = await source.adapter.start({ streamId: 'viewer-arrows', streamFamily: 'screen', sourceMachineId: 'machine', targetMachineId: 'machine', caps: {},
+      startRequest: { v: 1, streamId: 'viewer-arrows', streamFamily: 'screen', sourceId: source.sourceId, codecId: 'image.frame.v1',
+        routeKind: 'loopback_direct', sourceMachineId: 'machine', targetMachineId: 'machine' },
+      startedAtMs: 0, expiresAtMs: 60_000, nowMs: () => 0, offerFrame: () => ({ ok: true }), applyControl: () => ({ ok: true }),
+      emitReceipt(receipt) { if (receipt.reasonCode) failures.push(receipt.reasonCode); } });
+    if (!stream.ok) throw new Error(stream.reasonCode);
+    try {
+      for (const event of [
+        { key: 'ArrowLeft', modifiers: ['control', 'shift'] }, { key: 'ArrowUp', modifiers: ['alt'] },
+        { key: 'ArrowRight', modifiers: ['meta'] }, { key: 'ArrowDown' },
+      ]) {
+        const sideband = MachineLiveStreamControlSidebandV1Schema.parse({ v: 1, streamId: 'viewer-arrows', sourceId: source.sourceId,
+          eventId: event.key, kind: 'keyboard_key', ...event });
+        expect(stream.session.applySidebandControl?.(sideband)).toEqual({ ok: true });
+      }
+      await vi.waitFor(() => expect(boundary.calls.filter(args => args.includes('press'))).toHaveLength(4));
+      await vi.waitFor(() => expect(source.handBack()).toBe(true));
+      expect(delivered).toEqual(['ctrl+shift+left', 'alt+up', 'meta+right', 'down']);
+      expect(failures).toEqual([]);
+    } finally { await stream.session.stop(); await source.close(); }
+  });
+  it('reports unsupported Fn before native input instead of silently dropping the modifier', async () => {
+    setup();
+    const driver = await createAgentDesktopComputerDriver({ displayId: ':73', executablePath: '/managed/agent-desktop' });
+    try {
+      expect(await driver.input(target, null, { kind: 'press', key: 'Tab', modifiers: ['fn'] }))
+        .toEqual({ status: 'failed', code: 'input_not_supported' });
+      expect(boundary.calls.some(args => args.includes('press'))).toBe(false);
+    } finally { await driver.close(); }
+  });
+  it('maps modifier chords and modified double clicks to the pinned atomic native commands', async () => {
+    setup();
+    const driver = await createAgentDesktopComputerDriver({ displayId: ':73', executablePath: '/managed/agent-desktop' });
+    try {
+      expect(await driver.input(target, null, { kind: 'press', key: 'Tab', modifiers: ['control', 'shift'] })).toEqual({ status: 'dispatched' });
+      expect(boundary.calls.find(args => args.includes('press'))).toContain('ctrl+shift+Tab');
+      const capture = await driver.capture(target);
+      expect(await driver.input(target, capture.captureId, { kind: 'click', x: 10, y: 20, button: 'right', clickCount: 2, modifiers: ['meta', 'control'] }))
+        .toEqual({ status: 'dispatched' });
+      expect(boundary.calls.find(args => args.includes('mouse-click')))
+        .toEqual(['--headed', 'mouse-click', '--xy=30,50', '--button', 'right', '--count', '2', '--modifiers', 'meta', '--modifiers', 'ctrl']);
+    } finally { await driver.close(); }
+  });
   it('refuses clipboard writes without exposing text in native argv and preserves clipboard reads', async () => {
     let clipboard: string | null = 'remote 日本';
     setup(args => {

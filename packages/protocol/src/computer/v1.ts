@@ -5,6 +5,7 @@ import { SessionImageMediaReferenceV1Schema } from '../sessions/media/imageRefer
 import { BrowserActiveTargetV1Schema } from '../browser/events/activeTarget.js';
 import { COMPUTER_CUA_DRIVER_INSTALLABLE_KEY } from '../installables/definitions/computerCuaDriver.js';
 import { COMPUTER_AGENT_DESKTOP_INSTALLABLE_KEY } from '../installables/definitions/computerAgentDesktop.js';
+import { MachineLiveStreamKeyModifierV1Schema } from '../machines/peer/mediation/stream/inputModifiersV1.js';
 
 const IdSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1)));
 const PositiveSafeIntSchema = lazyZodSchema(() => z.number().check(z.int(), z.positive()));
@@ -71,8 +72,9 @@ export const ComputerCaptureGeometryV1Schema = lazyZodSchema(() => z.strictObjec
 export type ComputerCaptureGeometryV1 = z.infer<typeof ComputerCaptureGeometryV1Schema>;
 
 export const ComputerInputOperationV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
-  z.strictObject({ kind: z.literal('click'), x: CoordinateSchema, y: CoordinateSchema, button: z.optional(z.enum(['left', 'right', 'middle'])) }),
-  z.strictObject({ kind: z.literal('press'), key: IdSchema }),
+  z.strictObject({ kind: z.literal('click'), x: CoordinateSchema, y: CoordinateSchema, button: z.optional(z.enum(['left', 'right', 'middle'])),
+    clickCount: z.optional(z.literal(2)), modifiers: z.optional(z.array(MachineLiveStreamKeyModifierV1Schema)) }),
+  z.strictObject({ kind: z.literal('press'), key: IdSchema, modifiers: z.optional(z.array(MachineLiveStreamKeyModifierV1Schema)) }),
   z.strictObject({ kind: z.literal('type'), text: z.string() }),
   z.strictObject({ kind: z.literal('drag'), fromX: CoordinateSchema, fromY: CoordinateSchema, toX: CoordinateSchema, toY: CoordinateSchema }),
   z.strictObject({ kind: z.literal('wheel'), x: CoordinateSchema, y: CoordinateSchema, deltaX: CoordinateSchema, deltaY: CoordinateSchema }),

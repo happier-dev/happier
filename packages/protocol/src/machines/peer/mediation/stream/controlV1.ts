@@ -1,6 +1,7 @@
 import { lazyZodSchema } from '../../../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 import type { MachineLiveStreamCaptureSourceKindV1 } from './captureV1.js';
+import { MachineLiveStreamKeyModifierV1Schema } from './inputModifiersV1.js';
 
 const PositiveIntSchema = lazyZodSchema(() => z.number().check(z.int(), z.positive()));
 const NonNegativeIntSchema = lazyZodSchema(() => z.number().check(z.int(), z.nonnegative()));
@@ -93,6 +94,7 @@ export const MachineLiveStreamControlSidebandV1Schema = lazyZodSchema(() => z.di
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(BaseSidebandControlSchema, {
     kind: z.literal('keyboard_key'),
     key: z.string().check(z.minLength(1)),
+    modifiers: z.optional(z.array(MachineLiveStreamKeyModifierV1Schema)),
   })),
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(BaseSidebandControlSchema, {
     kind: z.literal('hardware_button'),
