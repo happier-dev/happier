@@ -16,6 +16,18 @@ import { executeOriginalAccountActionTransport, executeOriginalAccountMachineAct
 
 const failure = (errorCode: string): ActionExecuteResult => ({ ok: false, errorCode, error: errorCode });
 
+// Retained controls use this owner's controller branch; controllerless controls
+// use its Account branch. Callers consume this classification before approval.
+const RETAINED_CONTROL_ACTION_IDS = [
+    'machines.managed.power.set', 'machines.managed.inspect',
+    'machines.managed.bootstrap.retry', 'machines.managed.delete',
+] as const satisfies readonly ManagedMachineActionIdV1[];
+
+export function isManagedMachineRetainedControlAction(actionId: string):
+    actionId is typeof RETAINED_CONTROL_ACTION_IDS[number] {
+    return RETAINED_CONTROL_ACTION_IDS.some(candidate => candidate === actionId);
+}
+
 type ManagedMachineNativeActionParams = Readonly<{
     account: LazyActionAccountContext;
     actionId: ManagedMachineActionIdV1;

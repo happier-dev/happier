@@ -267,7 +267,7 @@ import { executeApiTokenAction, type ApiTokenActionTransport } from './apiTokenA
 import { createMachinePoolActionClient, MachinePoolActionError } from '@/sync/api/machines/machinePoolActions';
 import { createMachinePresetActionClient, MachinePresetActionError } from '@/sync/api/machines/managedMachinePresets';
 import { createManagedMachineActionClient, ManagedMachineActionError } from '@/sync/api/machines/managedMachineActions';
-import { executeManagedMachineNativeAction } from '@/sync/api/machines/managedMachineOrigination';
+import { executeManagedMachineNativeAction, isManagedMachineRetainedControlAction } from '@/sync/api/machines/managedMachineOrigination';
 import { subscribeActionOperationByRequestId } from '@/sync/domains/actionOperations/subscribeActionOperationByRequestId';
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 import { createUiManagedMachineReferenceReader, createUiMachineDeploymentReferenceReader } from './managedMachineReferenceDeps';
@@ -5066,13 +5066,11 @@ async function resolveNativeManagedAction(actionId: ActionId, input: unknown, ac
   if (opts?.admittedClientActionId) return null;
   // Retained control runs where the resource's controller lives. The static
   // Account placement also covers resources without a controller.
-  if (actionId === 'machines.managed.power.set' || actionId === 'machines.managed.inspect'
-    || actionId === 'machines.managed.bootstrap.retry' || actionId === 'machines.managed.delete') {
+  if (isManagedMachineRetainedControlAction(actionId)) {
     // Other surfaces retain their existing Account Action admission path.
     if (context?.surface && context.surface !== 'ui' && context.surface !== 'voice') return null;
     const parsed = ManagedMachineActionInputSchemasV1[actionId].safeParse(input);
     if (!parsed.success) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
-    if (parsed.data.homeId !== account.serverIdentityId) return { ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' };
     try {
       const retainedMachine = await createManagedMachineActionClient({ request: account.request }).execute('machines.managed.get', {
         homeId: parsed.data.homeId, managedId: parsed.data.managedId,
