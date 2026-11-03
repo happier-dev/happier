@@ -29,6 +29,7 @@ import {
   describeDaemonServiceInstallConflict,
   installDaemonService,
   previewDaemonServiceInstall,
+  readDaemonServicePreservedInstallOptions,
   readInstalledDaemonServiceDefinition,
   uninstallDaemonService,
 } from './installer';
@@ -71,8 +72,6 @@ import {
   isInstalledDaemonServiceForHappierHome,
   resolveInstalledDaemonServiceDefinitionPath,
   readInstalledDaemonServiceAutostartMode,
-  readInstalledDaemonServiceBundleId,
-  readInstalledDaemonServiceManagedBy,
   readInstalledDaemonServiceTargetMode,
 } from './discoverInstalledDaemonServiceEntries';
 import { createStepPrinter } from '@happier-dev/cli-common/output';
@@ -1063,38 +1062,6 @@ export async function resolveDaemonServiceListEntries(
     entryPath: runtime.entryPath,
   }));
 
-  // An installed service declares the autostart mode it was installed with, and the expected
-  // definition has to be built with that same mode — otherwise every on-demand installation
-  // reads as drifted and the repair paths keyed off this field would reinstall it at-login.
-  const buildExpectedDefaultPlan = (
-    autostart: DaemonServiceAutostartMode,
-    managedBy: ReturnType<typeof readInstalledDaemonServiceManagedBy> = null,
-    bundleId: string | null = null,
-  ) => planDaemonServiceInstall({
-    platform: runtime.platform,
-    mode: options.mode,
-    systemUser: options.mode === 'system' ? String(options.systemUser ?? '').trim() : undefined,
-    channel: runtime.channel,
-    targetMode: 'default-following',
-    autostart,
-    managedBy,
-    bundleId,
-    instanceId: runtime.instanceId,
-    activeServerId: runtime.activeServerId,
-    uid: runtime.uid ?? undefined,
-    userHomeDir: runtime.userHomeDir,
-    happierHomeDir: runtime.happierHomeDir,
-    serverUrl: runtime.serverUrl,
-    webappUrl: runtime.webappUrl,
-    publicServerUrl: runtime.publicServerUrl,
-    nodePath: expectedDefaultRuntimeTarget.nodePath,
-    entryPath: expectedDefaultRuntimeTarget.entryPath,
-  });
-  const expectedDefaultFile = buildExpectedDefaultPlan('at-login').files[0] ?? null;
-  if (!expectedDefaultFile) {
-    return resolvedEntries;
-  }
-
   return resolvedEntries.map((entry) => {
     if (
       entry.targetMode !== 'default-following'
@@ -1103,16 +1070,25 @@ export async function resolveDaemonServiceListEntries(
       return entry;
     }
 
-    const declaredAutostart = readInstalledDaemonServiceAutostartMode({
+    const expectedFile = planDaemonServiceInstall({
       platform: runtime.platform,
-      path: entry.path,
-    });
-    // The installed marker is kept by every rewrite, so the expected definition carries it too.
-    const managedBy = readInstalledDaemonServiceManagedBy({ platform: runtime.platform, path: entry.path });
-    const bundleId = readInstalledDaemonServiceBundleId({ platform: runtime.platform, path: entry.path });
-    const expectedFile = (declaredAutostart && declaredAutostart !== 'at-login') || managedBy
-      ? buildExpectedDefaultPlan(declaredAutostart ?? 'at-login', managedBy, bundleId).files[0] ?? null
-      : expectedDefaultFile;
+      mode: options.mode,
+      systemUser: options.mode === 'system' ? String(options.systemUser ?? '').trim() : undefined,
+      channel: runtime.channel,
+      targetMode: 'default-following',
+      // Status and rewrites must preserve the same definition-owned settings.
+      ...readDaemonServicePreservedInstallOptions({ platform: runtime.platform, path: entry.path }),
+      instanceId: runtime.instanceId,
+      activeServerId: runtime.activeServerId,
+      uid: runtime.uid ?? undefined,
+      userHomeDir: runtime.userHomeDir,
+      happierHomeDir: runtime.happierHomeDir,
+      serverUrl: runtime.serverUrl,
+      webappUrl: runtime.webappUrl,
+      publicServerUrl: runtime.publicServerUrl,
+      nodePath: expectedDefaultRuntimeTarget.nodePath,
+      entryPath: expectedDefaultRuntimeTarget.entryPath,
+    }).files[0] ?? null;
 
     if (!expectedFile || entry.path !== expectedFile.path) {
       return { ...entry, installedDefinitionMatchesExpected: false };
@@ -1619,11 +1595,12 @@ export async function runDaemonServiceCliCommand(params: Readonly<{
     // installed definition to inherit from. A process the service itself started carries that env
     // from the definition it was launched with, so letting it outrank the file would let a stale
     // value re-arm the login trigger with no flag and no prompt.
+    const preservedInstallOptions = readDaemonServicePreservedInstallOptions({
+      platform: installRuntime.platform,
+      path: paths.installedPath,
+    });
     const effectiveAutostart: DaemonServiceAutostartMode = flags.autostart
-      ?? readInstalledDaemonServiceAutostartMode({
-        platform: installRuntime.platform,
-        path: paths.installedPath,
-      })
+      ?? preservedInstallOptions.autostart
       ?? inheritedAutostart
       ?? 'at-login';
     const plan = planDaemonServiceInstall({
@@ -1633,14 +1610,8 @@ export async function runDaemonServiceCliCommand(params: Readonly<{
       channel: installRuntime.channel,
       targetMode: installRuntime.targetMode,
       autostart: effectiveAutostart,
-      managedBy: requestedManagedBy ?? readInstalledDaemonServiceManagedBy({
-        platform: installRuntime.platform,
-        path: paths.installedPath,
-      }),
-      bundleId: requestedBundleId ?? readInstalledDaemonServiceBundleId({
-        platform: installRuntime.platform,
-        path: paths.installedPath,
-      }),
+      managedBy: requestedManagedBy ?? preservedInstallOptions.managedBy,
+      bundleId: requestedBundleId ?? preservedInstallOptions.bundleId,
       instanceId: installRuntime.instanceId,
       activeServerId: installRuntime.activeServerId,
       uid: installRuntime.uid ?? undefined,
@@ -2037,18 +2008,7 @@ export async function runDaemonServiceCliCommand(params: Readonly<{
           systemUser: mode === 'system' ? systemUser : undefined,
           channel: runtime.channel,
           targetMode: runtime.targetMode,
-          // Refreshing a drifted definition must not re-arm a login trigger the
-          // user turned off, so the installed declaration decides here.
-          autostart: readInstalledDaemonServiceAutostartMode({
-            platform: runtime.platform,
-            path: paths.installedPath,
-          }) ?? 'at-login',
-          // …and so does its management marker.
-          managedBy: readInstalledDaemonServiceManagedBy({
-            platform: runtime.platform,
-            path: paths.installedPath,
-          }),
-          bundleId: readInstalledDaemonServiceBundleId({
+          ...readDaemonServicePreservedInstallOptions({
             platform: runtime.platform,
             path: paths.installedPath,
           }),
