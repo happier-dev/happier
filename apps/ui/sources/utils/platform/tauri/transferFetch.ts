@@ -48,7 +48,12 @@ async function loadTauriRuntimeFetch(): Promise<RuntimeFetch | null> {
     try {
         const mod = await import('@tauri-apps/plugin-http');
         const pluginFetch = mod.fetch;
-        return typeof pluginFetch === 'function' ? (pluginFetch as RuntimeFetch) : null;
+        if (typeof pluginFetch !== 'function') return null;
+        return (input, init) => pluginFetch(input, {
+            ...init,
+            // The Tauri plugin serializes maxRedirections, not RequestInit.redirect.
+            ...(init?.redirect === 'manual' ? { maxRedirections: 0 } : {}),
+        });
     } catch {
         return null;
     }
