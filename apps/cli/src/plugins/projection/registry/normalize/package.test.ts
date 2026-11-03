@@ -78,7 +78,7 @@ describe('target package contribution projection', () => {
         ui: { translations: [{ locale: 'en', messages: { greeting: 'Hello' } }] },
       })],
     });
-    expect(registry.uiTranslationsV2[0]?.definition.messages).toEqual({ greeting: 'Hello' });
+    expect(registry.uiTranslationsV2[0]?.definition).toEqual({ locale: 'en', messages: { greeting: 'Hello' } });
     expect(registry).not.toHaveProperty('uiTranslations');
     expect(registry).not.toHaveProperty('hostedWeb');
   });
@@ -86,8 +86,9 @@ describe('target package contribution projection', () => {
   it('projects every declared catalog family through the authoritative semantic inventory', () => {
     const registry = buildPluginContributionRegistry({
       loadedPlugins: [loaded('com.acme.locale', {
+        resources: [{ id: 'copy-en', kind: 'asset', path: 'assets/i18n/en-US.json', contentType: 'application/json' }],
         ui: {
-          translations: [{ locale: 'en-US', messages: { greeting: 'Hello' } }],
+          translations: [{ locale: 'en-US', resourceId: 'copy-en' }],
         },
       })],
     });

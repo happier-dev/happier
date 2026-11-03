@@ -1385,6 +1385,26 @@ describe('canonical plugin manifest ingestion', () => {
     })).ok).toBe(true);
   });
 
+  it('admits translation references only to same-plugin packaged JSON assets', () => {
+    const resource = { id: 'copy-en', kind: 'asset', path: 'assets/i18n/en.json', contentType: 'application/json' };
+    const withTranslations = (resources: unknown[], translations: unknown[] = [{ locale: 'en', resourceId: 'copy-en' }]) => manifest({
+      contributes: { resources, ui: { translations } },
+    });
+    expect(ingestPluginManifestV2(withTranslations([resource])).ok).toBe(true);
+    expect(ingestPluginManifestV2(withTranslations([], [{ locale: 'en', messages: { title: 'Title' } }])).ok).toBe(true);
+    expect(ingestPluginManifestV2(withTranslations([resource], [{ locale: 'en', resourceId: 'missing' }]))).toMatchObject({
+      ok: false, diagnostics: expect.arrayContaining([expect.objectContaining({ code: 'plugin_manifest_dangling_reference' })]),
+    });
+    for (const invalid of [
+      { ...resource, kind: 'template' },
+      { ...resource, contentType: 'text/plain' },
+      { id: resource.id, source: 'dynamic', kind: 'asset', contentType: 'application/json' },
+      ...['../en.json', '/en.json', 'C:\\en.json', 'assets/../../en.json', 'assets\\..\\en.json'].map(path => ({ ...resource, path })),
+    ]) {
+      expect(ingestPluginManifestV2(withTranslations([invalid])).ok, JSON.stringify(invalid)).toBe(false);
+    }
+  });
+
   it('enforces the catalog local-id grammar for every identified family', () => {
     const result = ingestPluginManifestV2(manifest({
       contributes: { resources: [{ id: 'legacy.dotted', kind: 'asset', path: 'asset.txt', contentType: 'text/plain' }] },

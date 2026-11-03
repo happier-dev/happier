@@ -775,12 +775,22 @@ export const PluginUiSettingsPageV1Schema = lazyZodSchema(() => z.strictObject({
 }));
 export type PluginUiSettingsPageV1 = z.infer<typeof PluginUiSettingsPageV1Schema>;
 
-export const PluginUiTranslationBundleV2Schema = lazyZodSchema(() => z.strictObject({
-  locale: z.string().check(z.minLength(2), z.refine((value) => {
-    try { return Intl.getCanonicalLocales(value)[0] === value; } catch { return false; }
-  }, 'Locale must be a canonical BCP 47 language tag.')),
-  messages: z.record(z.string(), z.string()),
-}));
+const PluginUiTranslationLocaleV2Schema = lazyZodSchema(() => z.string().check(z.minLength(2), z.refine((value) => {
+  try { return Intl.getCanonicalLocales(value)[0] === value; } catch { return false; }
+}, 'Locale must be a canonical BCP 47 language tag.')));
+// Transitional while I18NRES migrates in-tree producers to packaged locale
+// Resources; the inline `messages` arm is removed together with the last
+// inline producer (I18NRES step 4).
+export const PluginUiTranslationBundleV2Schema = lazyZodSchema(() => z.union([
+  z.strictObject({
+    locale: PluginUiTranslationLocaleV2Schema,
+    resourceId: asProtocolZod(PluginContributionLocalIdSchema),
+  }),
+  z.strictObject({
+    locale: PluginUiTranslationLocaleV2Schema,
+    messages: z.record(z.string(), z.string()),
+  }),
+]));
 export type PluginUiTranslationBundleV2 = z.infer<typeof PluginUiTranslationBundleV2Schema>;
 export const PluginUiContributionsV2Schema = lazyZodSchema(() => z._default(z.strictObject({
   views: z._default(z.array(PluginUiViewV2Schema), []),

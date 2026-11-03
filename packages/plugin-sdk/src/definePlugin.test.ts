@@ -114,6 +114,26 @@ import type { VoiceProvidersRegistrationApi } from './voice/projections.js';
 import type { SpeechProviderRuntime, VoiceSpeechSynthesizeRequest } from './voice/speech.js';
 
 describe('declarative plugin workflows', () => {
+    it('projects public UI translation Resource references into an admitted manifest', () => {
+        const plugin = definePlugin({
+            id: 'com.acme.copy', version: '1.0.0',
+            resources: { 'copy-en': { kind: 'asset', path: 'assets/i18n/en.json', contentType: 'application/json' } },
+            ui: { translations: [{ locale: 'en', resourceId: 'copy-en' }] },
+        });
+        const parsed = parsePluginManifest(plugin.manifest);
+        expect(parsed.ok).toBe(true);
+        if (!parsed.ok) throw new Error(JSON.stringify(parsed.diagnostics));
+        expect(parsed.manifest.contributes.ui?.translations).toEqual([{ locale: 'en', resourceId: 'copy-en' }]);
+        const inline = definePlugin({
+            id: 'com.acme.inline-copy', version: '1.0.0',
+            ui: { translations: [{ locale: 'en', messages: { title: 'Title' } }] },
+        });
+        const inlineParsed = parsePluginManifest(inline.manifest);
+        expect(inlineParsed.ok).toBe(true);
+        if (!inlineParsed.ok) throw new Error(JSON.stringify(inlineParsed.diagnostics));
+        expect(inlineParsed.manifest.contributes.ui?.translations).toEqual([{ locale: 'en', messages: { title: 'Title' } }]);
+    });
+
     it('retains static system prompts without granting retired adapter registration', async () => {
         const plugin = definePlugin({
             id: 'com.acme.prompts',

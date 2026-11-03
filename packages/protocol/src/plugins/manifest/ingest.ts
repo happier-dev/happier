@@ -23,6 +23,7 @@ import {
 } from '../../automations/automationEventHistoryGapResetActionV1.js';
 import { createPluginEventAutomationSetupResultV1JsonSchema } from '../../automations/automationEventSetupResultV1.js';
 import { normalizeStrictJsonValue } from '../../json/strictJsonValue.js';
+import { isPortableRelativePath } from '../../filesystem/portablePathSegment.js';
 import type { core } from 'zod/mini';
 import { dropEmptyRetiredContributionFamilies, skipInvalidPluginContributions } from './contributionAdmission.js';
 
@@ -717,6 +718,26 @@ function readDynamicResourceHostAccessDiagnostics(
   return diagnostics;
 }
 
+function readTranslationResourceDiagnostics(manifest: ParsedPluginManifestV2): PluginManifestIngestionDiagnostic[] {
+  if (manifest.contributes.ui.translations.length === 0) return [];
+  const resourcesById = new Map(manifest.contributes.resources.map(resource => [resource.id, resource] as const));
+  return manifest.contributes.ui.translations.flatMap((translation, index) => {
+    if (!('resourceId' in translation)) return [];
+    const resource = resourcesById.get(translation.resourceId);
+    // The catalog owns missing and wrong-family Resource reference diagnostics.
+    if (!resource) return [];
+    if (!isDynamicPluginResourceContributionV2(resource)
+      && resource.kind === 'asset'
+      && resource.contentType === 'application/json'
+      && isPortableRelativePath(resource.path)) return [];
+    return [{
+      code: 'plugin_manifest_invalid' as const,
+      path: ['contributes', 'ui', 'translations', index, 'resourceId'],
+      message: 'Translation Resources must be packaged JSON assets with a confined portable relative path.',
+    }];
+  });
+}
+
 /**
  * Openable-content bindings are host-custodied workspace-file viewer mounts.
  * The details destination persists only the qualified destination identity, so
@@ -1100,6 +1121,7 @@ export function admitDecodedPluginManifestV2(input: unknown, options: PluginMani
     ...readEventAutomationSetupActionDiagnostics(manifest),
     ...readEventAutomationHistoryGapResetActionDiagnostics(manifest),
     ...readDynamicResourceHostAccessDiagnostics(manifest),
+    ...readTranslationResourceDiagnostics(manifest),
     ...readOpenableContentViewerDestinationDiagnostics(manifest),
     ...readDeclarativeDocumentSourceDiagnostics(manifest),
     ...readTranscriptActivityDiagnostics(manifest),

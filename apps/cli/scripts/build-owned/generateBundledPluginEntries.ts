@@ -4235,11 +4235,38 @@ function collectVisibleMessageResolverSources(
   });
 }
 
+type BundledTranslationPackage = Readonly<{
+  pluginPackageId: string;
+  manifest: Readonly<{ contributes?: unknown }>;
+}>;
+
+function readBundledPluginUiTranslationMessages(
+  pluginPackage: BundledTranslationPackage,
+  translation: Record<string, unknown>,
+  rootDir: string,
+): Record<string, unknown> {
+  // I18NRES step 4 removes inline reads together with the final inline producer.
+  if (isRecord(translation.messages)) return translation.messages;
+  const contributes = isRecord(pluginPackage.manifest.contributes) ? pluginPackage.manifest.contributes : {};
+  const resources = Array.isArray(contributes.resources) ? contributes.resources : [];
+  const resource = resources.find(entry => isRecord(entry) && entry.id === translation.resourceId);
+  if (typeof translation.resourceId !== 'string' || !isRecord(resource)
+    || resource.kind !== 'asset' || resource.contentType !== 'application/json' || typeof resource.path !== 'string') {
+    throw new Error(`Invalid bundled UI translation Resource in ${pluginPackage.pluginPackageId}`);
+  }
+  // References and package confinement were admitted by the canonical manifest
+  // owner. This build-time bridge keeps the old generated consumers working
+  // until step 4 migrates them; runtime locale selection stays in UI i18n.
+  const messages: unknown = JSON.parse(readFileSync(resolve(
+    rootDir, 'packages/plugins', pluginPackage.pluginPackageId, resource.path,
+  ), 'utf8'));
+  if (!isRecord(messages)) throw new Error(`Invalid bundled UI translation JSON in ${pluginPackage.pluginPackageId}`);
+  return messages;
+}
+
 export function collectBundledPluginUiTranslations(
-  pluginPackages: readonly Readonly<{
-    pluginPackageId: string;
-    manifest: Readonly<{ contributes?: unknown }>;
-  }>[],
+  pluginPackages: readonly BundledTranslationPackage[],
+  rootDir = CANONICAL_GENERATOR_REPO_ROOT,
 ): JsonObject {
   const messagesByLocale = new Map<string, Map<string, { owner: string; value: string }>>();
   // Bundled packages may each embed the same shared UI source. The aggregate
@@ -4256,12 +4283,13 @@ export function collectBundledPluginUiTranslations(
     const ui = isRecord(contributes.ui) ? contributes.ui : {};
     const translations = Array.isArray(ui.translations) ? ui.translations : [];
     for (const translation of translations) {
-      if (!isRecord(translation) || typeof translation.locale !== 'string' || !isRecord(translation.messages)) {
+      if (!isRecord(translation) || typeof translation.locale !== 'string') {
         throw new Error(`Invalid bundled UI translation contribution in ${pluginPackage.pluginPackageId}`);
       }
+      const messages = readBundledPluginUiTranslationMessages(pluginPackage, translation, rootDir);
       const localeMessages = messagesByLocale.get(translation.locale) ?? new Map();
       messagesByLocale.set(translation.locale, localeMessages);
-      for (const [key, value] of Object.entries(translation.messages)) {
+      for (const [key, value] of Object.entries(messages)) {
         if (typeof value !== 'string') {
           throw new Error(`Invalid bundled UI translation '${key}' in ${pluginPackage.pluginPackageId}`);
         }
@@ -4295,6 +4323,7 @@ export function collectBundledPluginUiTranslations(
 
 function assertDescriptorConnectedServiceLabelTranslations(
   pluginPackages: readonly BundledPluginPackage[],
+  rootDir: string,
 ): void {
   for (const pluginPackage of pluginPackages) {
     const descriptor = pluginPackage.agentUiDescriptor;
@@ -4311,8 +4340,7 @@ function assertDescriptorConnectedServiceLabelTranslations(
     const ownsEnglishLabel = translations.some((translation) => (
       isRecord(translation)
       && translation.locale === 'en'
-      && isRecord(translation.messages)
-      && typeof translation.messages[labelKey] === 'string'
+      && typeof readBundledPluginUiTranslationMessages(pluginPackage, translation, rootDir)[labelKey] === 'string'
     ));
     if (!ownsEnglishLabel) {
       throw new Error(
@@ -4445,7 +4473,7 @@ async function generateBundledPluginEntries(
       pluginPackages,
       dependencies,
     );
-  assertDescriptorConnectedServiceLabelTranslations(pluginPackages);
+  assertDescriptorConnectedServiceLabelTranslations(pluginPackages, options.rootDir);
   const todayUtc = new Date().toISOString().slice(0, 10);
   for (const entry of pluginPackages) {
     const providerContributions = readManifestContributionArray(entry.manifest, 'providers');
@@ -4527,7 +4555,7 @@ async function generateBundledPluginEntries(
   const agentUiBehaviorDescriptorSources = collectAgentUiBehaviorDescriptorSources(pluginPackages);
   const sessionAgentBehaviorSources = collectAgentSessionBehaviorSources(pluginPackages);
   const visibleMessageResolverSources = collectVisibleMessageResolverSources(pluginPackages);
-  const bundledPluginUiTranslations = collectBundledPluginUiTranslations(pluginPackages);
+  const bundledPluginUiTranslations = collectBundledPluginUiTranslations(pluginPackages, options.rootDir);
 
   const cliOut = renderCliBundledPluginEntriesTs({ pluginPackages });
   const cliManifestOut = renderCliBundledPluginManifestEntriesTs({ pluginPackages });

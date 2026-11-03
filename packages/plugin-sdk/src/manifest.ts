@@ -736,10 +736,9 @@ skills?: readonly PluginSkillContributionV1[];
         id: string;
         readonly [key: string]: unknown;
       }> & Readonly<{ renderer: string }>)[];
-      translations?: readonly Readonly<{
-        locale: string;
-        messages: Readonly<Record<string, string>>;
-      }>[];
+      // I18NRES step 4 removes inline authoring with the last inline producer.
+      translations?: readonly (Readonly<{ locale: string; resourceId: string }>
+        | Readonly<{ locale: string; messages: Readonly<Record<string, string>> }>)[];
     }>;
     requestInterceptors?: readonly PluginRequestInterceptorContribution[];
     browserTargets?: readonly PluginBrowserTargetContributionInput[];

@@ -113,36 +113,6 @@ function addEntry(
 }
 
 
-const TRANSLATION_FALLBACK_LOCALE = 'en';
-
-/**
- * The single rule for which contributed bundles reach the wire.
- *
- * A client reads exactly two: its preferred locale merged over English. Shipping
- * the rest is pure transfer — measured at 629,256 B across the bundled plugin set
- * for 11 locales, of which a client can use at most 125,531 B. A request that
- * names no locale is an older client (or an older-shaped call), and still
- * receives everything.
- *
- * This narrows only `bundles`. `locales` remains the complete availability fact,
- * and duplicate-locale diagnostics are still derived from the full contributed
- * set, so no fact is lost — only bytes no reader consumes.
- */
-function narrowProjectedTranslationBundles(
-    bundles: Readonly<Record<string, Readonly<Record<string, string>>>>,
-    requestedLocale: string | undefined,
-): Readonly<Record<string, Readonly<Record<string, string>>>> {
-    if (requestedLocale === undefined) return bundles;
-    const retained: Record<string, Readonly<Record<string, string>>> = {};
-    for (const locale of [TRANSLATION_FALLBACK_LOCALE, requestedLocale]) {
-        const bundle = bundles[locale];
-        if (bundle !== undefined && !Object.hasOwn(retained, locale)) {
-            retained[locale] = bundle;
-        }
-    }
-    return retained;
-}
-
 export function projectPluginUiTranslationsV1(
     registry: PluginUiPresentationRegistryV1,
     entriesById: Record<string, PluginUiProjectedEntryCandidate>,
@@ -168,21 +138,34 @@ export function projectPluginUiTranslationsV1(
         v2ByPluginId.set(pluginId, contributions);
     }
     for (const [pluginId, contributions] of [...v2ByPluginId.entries()].sort(([left], [right]) => left.localeCompare(right))) {
+        const resourceIdsByLocale: Record<string, string> = {};
+        // I18NRES step 4 removes inline bundles with the last inline producer.
         const bundles: Record<string, Readonly<Record<string, string>>> = {};
+        const locales = new Set<string>();
         const duplicateLocales = new Set<string>();
         for (const contribution of contributions) {
             const locale = contribution.definition.locale;
-            if (Object.hasOwn(bundles, locale)) duplicateLocales.add(locale);
-            bundles[locale] = Object.freeze(Object.fromEntries(
-                Object.entries(contribution.definition.messages).sort(([left], [right]) => left.localeCompare(right)),
-            ));
+            if (locales.has(locale)) duplicateLocales.add(locale);
+            locales.add(locale);
+            delete resourceIdsByLocale[locale];
+            delete bundles[locale];
+            if ('resourceId' in contribution.definition) {
+                resourceIdsByLocale[locale] = contribution.definition.resourceId;
+            } else {
+                bundles[locale] = Object.freeze(Object.fromEntries(
+                    Object.entries(contribution.definition.messages).sort(([left], [right]) => left.localeCompare(right)),
+                ));
+            }
         }
         addEntry(entriesById, {
             id: `translations:${pluginId}`,
             pluginId,
             contributionKind: 'translations',
-            locales: Object.freeze(Object.keys(bundles).sort()),
-            bundles: Object.freeze(narrowProjectedTranslationBundles(bundles, requestedLocale)),
+            locales: Object.freeze([...locales].sort()),
+            ...(Object.keys(resourceIdsByLocale).length > 0 ? { resourceIdsByLocale: Object.freeze(resourceIdsByLocale) } : {}),
+            ...(Object.keys(bundles).length > 0 ? { bundles: Object.freeze(requestedLocale === undefined ? bundles : Object.fromEntries(
+                Object.entries(bundles).filter(([locale]) => locale === 'en' || locale === requestedLocale),
+            )) } : {}),
             ...(duplicateLocales.size > 0
                 ? { diagnostics: Object.freeze(['duplicate_translation_locale']) }
                 : {}),
