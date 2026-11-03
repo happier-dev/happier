@@ -22,6 +22,8 @@ import {
     type PluginUiAtmospherePictureProjection,
     type PluginUiRegistrySourceProjection,
     type PluginUiStoreKindProjection,
+    type PluginUiMachineRecipeProjection,
+    type PluginUiMachineSetupPresetProjection,
     type PluginUiSkillProjection,
 } from './projection';
 import { arePluginMachineExecutionOriginsEqual, getPluginMachineExecutionOriginRef, type PluginMachineExecutionOriginV1 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
@@ -286,6 +288,8 @@ function deriveInstalledPluginUiProjection(
         atmospherePicturesById: merge(model => model.atmospherePicturesById),
         registrySourcesById: merge(model => model.registrySourcesById),
         storeKindsById: merge(model => model.storeKindsById),
+        machineRecipesById: merge(model => model.machineRecipesById),
+        machineSetupPresetsById: merge(model => model.machineSetupPresetsById),
         skillsById: merge(model => model.skillsById),
         unknownEntriesById: merge(model => model.unknownEntriesById, { uiCensus: true }),
     });
@@ -607,7 +611,7 @@ function declarationMaps(model: PluginUiProjectionModel): readonly Readonly<Reco
 const DECLARATION_MAP_KEYS = ['translationsByPluginId', 'sessionHeaderActionsById', 'searchProvidersById',
     'hostedWebById', 'reactNativeBundlesById', 'surfacePlacementsById', 'settingsGroupsById', 'settingsPagesById',
     'actionsById', 'voiceProvidersById', 'dragSourcesById', 'workItemsById', 'dropTargetsById',
-    'atmospherePicturesById', 'registrySourcesById', 'storeKindsById', 'skillsById', 'unknownEntriesById', 'inputTypesById',
+    'atmospherePicturesById', 'registrySourcesById', 'storeKindsById', 'machineRecipesById', 'machineSetupPresetsById', 'skillsById', 'unknownEntriesById', 'inputTypesById',
     'composerControlsById', 'composerRegionsById', 'composerReferencesById'] as const;
 const UNION_MAP_KEYS = [...DECLARATION_MAP_KEYS, 'resourcesById', 'connectedAccountDescriptorsById', 'installedPackagesById'] as const;
 type UnionMapKey = typeof UNION_MAP_KEYS[number];
@@ -1745,6 +1749,8 @@ function derivePluginUiProjectionUnion(
     const atmospherePicturesById: Record<string, PluginUiAtmospherePictureProjection> = {};
     const registrySourcesById: Record<string, PluginUiRegistrySourceProjection> = {};
     const storeKindsById: Record<string, PluginUiStoreKindProjection> = {};
+    const machineRecipesById: Record<string, PluginUiMachineRecipeProjection> = {};
+    const machineSetupPresetsById: Record<string, PluginUiMachineSetupPresetProjection> = {};
     const skillsById: Record<string, PluginUiSkillProjection> = {};
     const unknownEntriesById: Record<string, UnknownRecord> = {};
     const composerControlsById: Record<string, PluginUiProjectionModel['composerControlsById'][string]> = {};
@@ -1935,6 +1941,20 @@ function derivePluginUiProjectionUnion(
             // only the selected hostOrigin may authorize Resource or picker effects.
             if (origin) publishFirstAdmitted(member, inputTypesById, id, entry, origin, true);
         }
+        for (const [id, entry] of Object.entries(model.machineRecipesById)) {
+            const representative = selectedMembersByPluginId.get(entry.pluginId)?.projection.machineRecipesById[id]
+                ?? machineRecipesById[id];
+            if (representative && !sameDeclarationContent(entry.definition, representative.definition, comparisons)) continue;
+            const origin = model.installedPackagesById[entry.pluginId]?.enabled === true ? originFor(entry) : null;
+            if (origin) publishFirstAdmitted(member, machineRecipesById, id, entry, origin);
+        }
+        for (const [id, entry] of Object.entries(model.machineSetupPresetsById)) {
+            const representative = selectedMembersByPluginId.get(entry.pluginId)?.projection.machineSetupPresetsById[id]
+                ?? machineSetupPresetsById[id];
+            if (representative && !sameDeclarationContent(entry.definition, representative.definition, comparisons)) continue;
+            const origin = model.installedPackagesById[entry.pluginId]?.enabled === true ? originFor(entry) : null;
+            if (origin) publishFirstAdmitted(member, machineSetupPresetsById, id, entry, origin);
+        }
         for (const [id, entry] of Object.entries(model.registrySourcesById)) {
             // Source visibility and suppliers are installation declarations;
             // Administration's executable selection does not remove an equivalent supplier.
@@ -1991,7 +2011,7 @@ function derivePluginUiProjectionUnion(
     // keep their reported supplies for Administration's origin picker.
     const publishedMaps: readonly Record<string, unknown>[] = [translationsByPluginId, sessionHeaderActionsById, searchProvidersById,
         hostedWebById, reactNativeBundlesById, surfacePlacementsById, settingsGroupsById, settingsPagesById, actionsById,
-        voiceProvidersById, dragSourcesById, workItemsById, dropTargetsById, atmospherePicturesById, registrySourcesById, storeKindsById, skillsById, unknownEntriesById, inputTypesById,
+        voiceProvidersById, dragSourcesById, workItemsById, dropTargetsById, atmospherePicturesById, registrySourcesById, storeKindsById, machineRecipesById, machineSetupPresetsById, skillsById, unknownEntriesById, inputTypesById,
         composerControlsById, composerRegionsById, composerReferencesById, resourcesById];
     for (const [index, map] of publishedMaps.entries()) {
         for (const [key, entry] of Object.entries(map)) {
@@ -2022,6 +2042,8 @@ function derivePluginUiProjectionUnion(
         + Object.keys(atmospherePicturesById).length
         + Object.keys(registrySourcesById).length
         + Object.keys(storeKindsById).length
+        + Object.keys(machineRecipesById).length
+        + Object.keys(machineSetupPresetsById).length
         + Object.keys(skillsById).length
         + Object.keys(composerControlsById).length
         + Object.keys(composerRegionsById).length
@@ -2076,6 +2098,8 @@ function derivePluginUiProjectionUnion(
         atmospherePicturesById: Object.freeze(atmospherePicturesById),
         registrySourcesById: Object.freeze(registrySourcesById),
         storeKindsById: Object.freeze(storeKindsById),
+        machineRecipesById: Object.freeze(machineRecipesById),
+        machineSetupPresetsById: Object.freeze(machineSetupPresetsById),
         skillsById: Object.freeze(skillsById),
         // Openable viewers are scoped to a session/project details host. There is
         // no app-union consumer, so do not make app scope a second projection
