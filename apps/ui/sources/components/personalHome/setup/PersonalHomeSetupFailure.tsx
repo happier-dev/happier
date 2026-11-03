@@ -19,9 +19,11 @@ export const PersonalHomeSetupFailure = React.memo(function PersonalHomeSetupFai
     /**
      * The state-specific body. The generic fallback promises the user's completed
      * setup work is safe, which is false after an erase, so a state that knows
-     * better supplies its own sentence.
+     * better supplies its own sentence; `null` when the status line above already says it all.
      */
-    body?: string;
+    body?: string | null;
+    /** The quiet way out sits with the other actions: one row, so Retry stays the one thing that leads. */
+    children?: React.ReactNode;
     onRetry?: () => void;
     onOpenDetails?: () => void;
 }>) {
@@ -32,7 +34,7 @@ export const PersonalHomeSetupFailure = React.memo(function PersonalHomeSetupFai
             accessibilityRole="alert"
             style={styles.root}
         >
-            <Text style={styles.message}>{props.body?.trim() || t('personalHome.bootstrap.failureBody')}</Text>
+            {props.body === null ? null : <Text style={styles.message}>{props.body?.trim() || t('personalHome.bootstrap.failureBody')}</Text>}
             <View style={styles.actions}>
                 {props.onRetry ? (
                     <RoundButton
@@ -55,6 +57,7 @@ export const PersonalHomeSetupFailure = React.memo(function PersonalHomeSetupFai
                         title={t('common.details')}
                     />
                 ) : null}
+                {props.children}
             </View>
         </View>
     );

@@ -4,7 +4,6 @@ import { View } from 'react-native';
 import { useRequestPersonalHomeBootstrap } from '@/components/personalHome/bootstrap/personalHomeBootstrapRequest';
 import { OrganizationPolicyFieldNotice } from '@/components/organizationPolicy/OrganizationPolicyFieldNotice';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 
 
@@ -28,7 +27,6 @@ export function RelayHostLocalChecklistStep(props: Readonly<{
     return (
         <View testID={props.testID}>
             <OrganizationPolicyFieldNotice field="personalHome" />
-            <Text>{t('setupOnboarding.relayOnThisComputerSubtitle')}</Text>
             {!onWizardPrimaryChange ? (
                 <RoundButton title={label} disabled={!request} onPress={request ?? undefined} />
             ) : null}

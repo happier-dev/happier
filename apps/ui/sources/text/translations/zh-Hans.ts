@@ -14583,6 +14583,7 @@ settingsSession: {
 	          scanQrCode: '扫描二维码',
     recommendedBadge: '推荐',
     relayCloudTitle: 'Happier 云端',
+    personalHomeOfferSubtitle: '数据保存在这台电脑上。',
 	          relayOnThisComputerTitle: '在这台电脑上',
 	          relayOnYourComputerTitle: '在你的电脑上',
 	          relayAccessWizardTitle: '你的手机应如何访问此中继？',

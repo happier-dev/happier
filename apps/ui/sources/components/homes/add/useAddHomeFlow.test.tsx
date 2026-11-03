@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
 import { installLocalStorageMock, installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
+import { installBrowserRuntimeForTests } from '@/dev/testkit/harness/browserRuntimeHarness';
 
 installTokenStorageWebPlatformMocks();
 
@@ -20,6 +21,7 @@ describe('Add a Home focus at entry', () => {
 
     it('focuses the first usable Home, but leaves an existing usable Home focused', async () => {
         process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = `add_home_focus_${Date.now()}_${Math.random()}`;
+        const browser = await installBrowserRuntimeForTests({ url: 'https://client.example.test' });
         const storage = installLocalStorageMock();
         const locks = installWebLockManagerMock();
         const tabValues = new Map<string, string>();
@@ -28,8 +30,6 @@ describe('Add a Home focus at entry', () => {
             setItem: (key: string, value: string) => { tabValues.set(key, value); },
             removeItem: (key: string) => { tabValues.delete(key); },
         });
-        vi.stubGlobal('window', { location: { origin: 'https://client.example.test' } });
-        vi.stubGlobal('document', { getElementById: () => null });
         try {
             const [{ renderHook }, renderer, profiles, projection, { TokenStorage }, { useAddHomeFlow }] = await Promise.all([
                 import('@/dev/testkit'),
@@ -96,6 +96,7 @@ describe('Add a Home focus at entry', () => {
         } finally {
             locks.restore();
             storage.restore();
+            browser.restore();
         }
     });
 });

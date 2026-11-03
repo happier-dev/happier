@@ -13815,6 +13815,7 @@ settingsSession: {
         scanQrCode: 'Escaneja el codi QR',
         recommendedBadge: 'Recomanat',
 	        relayCloudTitle: 'Happier Cloud',
+	        personalHomeOfferSubtitle: 'Conserva les teves dades en aquest ordinador.',
 	        relayOnThisComputerTitle: 'En aquest ordinador',
 	        relayOnYourComputerTitle: 'Al teu ordinador',
 	        relayAccessWizardTitle: 'Com ha d’accedir el teu telèfon a aquest relay?',

@@ -1,5 +1,11 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
+
+// These sign-in scenarios use the Cloud distributor's configured defaults.
+vi.hoisted(() => vi.stubEnv('EXPO_PUBLIC_HAPPIER_BUILD_DEFAULT_PROFILE_JSON', JSON.stringify({
+    home: { url: 'https://api.happier.dev' },
+    accountService: { url: 'https://api.happier.dev' },
+})));
 import { act } from 'react-test-renderer';
 
 import { renderScreen } from '@/dev/testkit';
@@ -309,7 +315,8 @@ describe('WelcomeDecisionPanel', () => {
         }
         const subtitles = [...subtitleByCard.values()];
 
-        expect(subtitles.length).toBeGreaterThanOrEqual(4);
+        // Quiet rows carry their description as the accessible hint, so only the cards show one.
+        expect(subtitles.length).toBeGreaterThanOrEqual(1);
         // One message per card: no two sibling cards describe themselves with the same words,
         // and the Home's bare name never stands in for what a card does.
         expect(new Set(subtitles).size).toBe(subtitles.length);
@@ -503,8 +510,9 @@ describe('WelcomeDecisionPanel', () => {
         expect(screen.findByTestId('welcome-scan-existing-home')).toBeTruthy();
         expect(screen.findByTestId('welcome-scan-existing-home-title')?.props.children)
             .toBe('Enter URL manually');
-        expect(screen.findByTestId('welcome-scan-existing-home-subtitle')?.props.children)
-            .toBe('Paste the pairing link shown on the other device.');
+        // A quiet row: the pairing-link meaning stays as its accessible hint.
+        expect(screen.findAll((node) => node.props.testID === 'welcome-scan-existing-home'
+            && node.props.accessibilityHint === 'Paste the pairing link shown on the other device.').length).toBeGreaterThan(0);
         expect(screen.findByTestId('welcome-use-different-home')).toBeTruthy();
     });
 

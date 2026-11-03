@@ -14844,6 +14844,7 @@ settingsSession: {
 	    scanQrCode: "Сканировать QR-код",
     recommendedBadge: "Рекомендуется",
 	    relayCloudTitle: "Happier Cloud",
+    personalHomeOfferSubtitle: 'Хранит данные на этом компьютере.',
 	    relayOnThisComputerTitle: "На этом компьютере",
 	    relayOnYourComputerTitle: "На вашем компьютере",
 	    relayAccessWizardTitle: "Как телефону подключаться к этому Relay?",

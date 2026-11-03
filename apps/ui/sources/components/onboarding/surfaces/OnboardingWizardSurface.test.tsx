@@ -2,6 +2,12 @@ import React from 'react';
 import { act, type ReactTestInstance } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+// These scenarios exercise the Cloud distributor; an unconfigured build has no hosted defaults.
+vi.hoisted(() => vi.stubEnv('EXPO_PUBLIC_HAPPIER_BUILD_DEFAULT_PROFILE_JSON', JSON.stringify({
+    home: { url: 'https://api.happier.dev' },
+    accountService: { url: 'https://api.happier.dev' },
+})));
+
 import { createRootLayoutFeaturesResponse, flushHookEffects, renderHook, renderScreen as renderScreenWithProviders, standardCleanup } from '@/dev/testkit';
 import type { IModal } from '@/modal';
 import type { ServerProfile } from '@/sync/domains/server/serverProfiles';

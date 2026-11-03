@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { isHappierCloudServerUrl } from '@happier-dev/cli-common/happierCloud';
 
 import { resolveHomeDisplayName } from '@/components/settings/server/homeDisplayName';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
@@ -46,9 +47,10 @@ export function resolveAccountServiceDisplayName(input: AccountServiceNameInput)
     if (advertised) return advertised;
     const saved = input.savedName?.trim();
     if (saved && !isAddressOnlyName(saved)) return saved;
+    if (isHappierCloudServerUrl(input.url)) return t('setupOnboarding.relayCloudTitle');
     const defaultUrl = normalizeAccountDirectoryEndpoint(DEFAULT_ACCOUNT_SERVICE_ENDPOINT.url);
-    if (defaultUrl && normalizeAccountDirectoryEndpoint(input.url) === defaultUrl) {
-        return DEFAULT_ACCOUNT_SERVICE_ENDPOINT.displayName ?? null;
+    if (defaultUrl && normalizeAccountDirectoryEndpoint(input.url) === defaultUrl && DEFAULT_ACCOUNT_SERVICE_ENDPOINT.displayName) {
+        return DEFAULT_ACCOUNT_SERVICE_ENDPOINT.displayName;
     }
     const identity = input.serverIdentityId?.trim();
     const home = input.profiles.find((profile) => (

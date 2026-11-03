@@ -15022,6 +15022,7 @@ settingsSession: {
         recommendedBadge: 'Empfohlen',
         relayCloudTitle: 'Happier Cloud',
         relayCloudSubtitle: 'Verknüpfte Homes finden und verbinden',
+        personalHomeOfferSubtitle: 'Behält deine Daten auf diesem Computer.',
         relayOnThisComputerTitle: 'Auf diesem Computer',
         relayOnThisComputerSubtitle: 'Ein persönliches Home auf diesem Computer erstellen',
         relayOnYourComputerTitle: 'Auf deinem Computer',

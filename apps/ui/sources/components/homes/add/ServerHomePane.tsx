@@ -2,6 +2,8 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
+import { OrganizationPolicyFieldNotice } from '@/components/organizationPolicy/OrganizationPolicyFieldNotice';
+import { useRequestPersonalHomeBootstrap } from '@/components/personalHome/bootstrap/personalHomeBootstrapRequest';
 import { RelayHostLocalChecklistStep } from '@/components/onboarding/checklists/relayHostLocal/RelayHostLocalChecklistStep';
 import { RemoteSshChecklistStep } from '@/components/onboarding/checklists/remoteSsh/RemoteSshChecklistStep';
 import { HOMES_ADD_SETTINGS } from '@/components/settings/server/serverSettings';
@@ -11,7 +13,7 @@ import { SegmentedTabBar, type SegmentedTab } from '@/components/ui/navigation/S
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { t } from '@/text';
 
-import { PaneHeader } from '../journeys/alreadyUse/journeyPaneKit';
+import { PaneHelp } from '../journeys/alreadyUse/journeyPaneKit';
 
 type Where = 'thisComputer' | 'ssh';
 
@@ -30,7 +32,11 @@ export function ServerHomePane(props: Readonly<{
     testID: string;
     onHomeReady: (address: string) => void;
 }>) {
-    const [where, setWhere] = React.useState<Where>('thisComputer');
+    // Admission owns whether this computer can host one. When it can't, setup over SSH is the only
+    // path left, so the choice between two places goes away rather than leading to a dead button.
+    const canCreateHere = useRequestPersonalHomeBootstrap() != null;
+    const [chosen, setWhere] = React.useState<Where>('thisComputer');
+    const where: Where = canCreateHere ? chosen : 'ssh';
     const [primary, setPrimary] = React.useState<PrimaryAction | null>(null);
     const tabs = React.useMemo((): ReadonlyArray<SegmentedTab<Where>> => [
         { id: 'thisComputer', label: t('addFlows.pathThisComputerTitle') },
@@ -42,15 +48,20 @@ export function ServerHomePane(props: Readonly<{
     return (
         <SettingAnchor setting={HOMES_ADD_SETTINGS.settings.createPersonalHome}>
             <View testID={props.testID} style={styles.pane}>
-                <PaneHeader title={t('homesJourneys.addServerHome')} lead={t('homesJourneys.addServerHomeSubtitle')} />
-                <SegmentedTabBar
-                    tabs={tabs}
-                    activeTabId={where}
-                    onSelectTab={(next) => { setPrimary(null); setWhere(next); }}
-                    testIDPrefix={`${props.testID}.where`}
-                    segmentSizing="content"
-                    role="radiogroup"
-                />
+                {/* The chosen path card already names this pane; the pane opens on where it runs. */}
+                {canCreateHere ? (
+                    <SegmentedTabBar
+                        tabs={tabs}
+                        activeTabId={where}
+                        onSelectTab={(next) => { setPrimary(null); setWhere(next); }}
+                        testIDPrefix={`${props.testID}.where`}
+                        segmentSizing="content"
+                        role="radiogroup"
+                    />
+                ) : <OrganizationPolicyFieldNotice field="personalHome" />}
+                <PaneHelp>
+                    {where === 'thisComputer' ? t('setupOnboarding.personalHomeOfferSubtitle') : t('homesJourneys.addServerHomeSubtitle')}
+                </PaneHelp>
                 {where === 'thisComputer' ? (
                     <RelayHostLocalChecklistStep
                         testID={`${props.testID}.thisComputer`}
@@ -85,9 +96,9 @@ export function ServerHomePane(props: Readonly<{
     );
 }
 
-const stylesheet = StyleSheet.create(() => ({
+const stylesheet = StyleSheet.create((theme) => ({
     pane: {
-        gap: 14,
+        gap: theme.space.s16,
         minWidth: 0,
     },
     actions: {

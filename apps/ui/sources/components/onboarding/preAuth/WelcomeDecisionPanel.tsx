@@ -19,7 +19,7 @@ import { PhoneWelcomeDoorway } from '@/components/homes/journeys/phone/PhoneWelc
 import { OrganizationPolicyFieldNotice, readOrganizationPolicyFieldState } from '@/components/organizationPolicy/OrganizationPolicyFieldNotice';
 import { useViewportClass } from '@/utils/platform/useViewportClass';
 import { useReturningGreeting } from './useReturningGreeting';
-import { WelcomeActionCard } from './WelcomeActionCard';
+import { WELCOME_ACTION_TEXT_INSET, WelcomeActionCard } from './WelcomeActionCard';
 import { WelcomeActionList, type WelcomeActionAdmission } from './WelcomeActionList';
 import {
     composeWelcomeEntryModel,
@@ -94,6 +94,9 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
     const accountServiceEntry = props.accountServiceEntry;
     const requestedHomeTarget = options.requestedHomeTarget;
     const homeTarget = options.homeTarget;
+    // A build without a default Home has nothing to report on: status lines about "this Home" would
+    // describe a Home nobody chose.
+    const hasHome = homeTarget != null && options.serverUrlForCopy.trim().length > 0;
     const homeMethods: WelcomeAuthenticationMethod[] = homeTarget
         && options.showAuthActions
         && props.onContinueWithHomeAuthentication
@@ -162,6 +165,8 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
     const renderActions = () => {
         const renderAction = (row: WelcomeEntryModelAction, index: number) => {
             const action = row.action;
+            const quiet = row.emphasis === 'tertiary';
+            const presentation = quiet ? 'row' as const : undefined;
             if (action.kind === 'scan_or_paste_home') {
                 const canScanQr = props.canScanQr === true;
                 return <WelcomeActionCard
@@ -170,6 +175,7 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
                     testID="welcome-scan-existing-home"
                     disabled={homePolicy.disabled}
                     primary={row.emphasis === 'primary'}
+                    presentation={presentation}
                     title={t(canScanQr ? 'connect.scanExistingHomeQrTitle' : 'connect.enterUrlManually')}
                     subtitle={t(canScanQr ? 'welcome.welcomeSecondarySubtitle' : 'connect.pairingLinkRequired')}
                     iconName={canScanQr ? 'qr-code' : 'link'}
@@ -177,18 +183,18 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
                 />;
             }
             if (action.kind === 'choose_home') {
-                return <WelcomeActionCard key={row.id} actionId={row.id} testID="welcome-use-different-home" disabled={homePolicy.disabled} primary={row.emphasis === 'primary'} title={t('welcome.useDifferentHome')} subtitle={homePolicy.accessibilityHint ?? t('welcome.useDifferentHomeSubtitle', { home: options.homeLabel ?? t('settingsAccount.thisHomeTitle') })} iconName="house" onPress={props.onChangeRelay} />;
+                return <WelcomeActionCard key={row.id} actionId={row.id} testID="welcome-use-different-home" disabled={homePolicy.disabled} primary={row.emphasis === 'primary'} presentation={presentation} title={t(hasHome ? 'welcome.useDifferentHome' : 'homesJourneys.pathDirectTitle')} subtitle={homePolicy.accessibilityHint ?? (hasHome ? t('welcome.useDifferentHomeSubtitle', { home: options.homeLabel ?? t('settingsAccount.thisHomeTitle') }) : t('homesJourneys.pathDirectSubtitle'))} iconName="house" onPress={props.onChangeRelay} />;
             }
             if (action.kind === 'choose_sign_in_service') {
-                return <WelcomeActionCard key={row.id} actionId={row.id} testID="welcome-account-service-choose" disabled={servicePolicy.disabled} primary={row.emphasis === 'primary'} title={t('welcome.chooseSignInService')} subtitle={servicePolicy.accessibilityHint ?? t('welcome.signInServiceUrlPrompt')} iconName="globe" onPress={props.onChooseAccountService!} />;
+                return <WelcomeActionCard key={row.id} actionId={row.id} testID="welcome-account-service-choose" disabled={servicePolicy.disabled} primary={row.emphasis === 'primary'} presentation={presentation} title={t('welcome.chooseSignInService')} subtitle={servicePolicy.accessibilityHint ?? t('welcome.signInServiceUrlPrompt')} iconName="globe" onPress={props.onChooseAccountService!} />;
             }
             if (action.kind === 'create_personal_home') {
-                return <WelcomeActionCard key={row.id} actionId={row.id} testID="welcome-create-personal-home" primary={row.emphasis === 'primary'} title={t('setupOnboarding.setupNewRelayAction')} subtitle={t('setupOnboarding.relayOnThisComputerSubtitle')} iconName="house" onPress={props.onCreatePersonalHome!} />;
+                return <WelcomeActionCard key={row.id} actionId={row.id} testID="welcome-create-personal-home" primary={row.emphasis === 'primary'} title={t('setupOnboarding.setupNewRelayAction')} subtitle={t('setupOnboarding.personalHomeOfferSubtitle')} iconName="laptop" onPress={props.onCreatePersonalHome!} />;
             }
             if (action.kind !== 'authenticate') return null;
             const request = action.request;
             const provider = request.method.presentation?.displayName ?? getAuthProvider(request.method.id)?.displayName ?? request.method.id;
-            const presentation = describeHomeAuthenticationAction({
+            const authenticationPresentation = describeHomeAuthenticationAction({
                 execution: request.execution,
                 providerName: provider,
             });
@@ -200,11 +206,11 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
                 ? isKey ? 'welcome-account-service-key' : `welcome-account-service-provider-${request.method.id}`
                 : isNewHere ? 'welcome-primary-start'
                     : isMtls ? (row.emphasis === 'primary' ? 'welcome-mtls-primary' : 'welcome-mtls-login')
-                        : request.execution.kind === 'email_password' ? `welcome-${presentation.slug}`
+                        : request.execution.kind === 'email_password' ? `welcome-${authenticationPresentation.slug}`
                             : index === 0 ? 'welcome-provider-primary' : 'welcome-login-provider';
             const title = isNewHere
                 ? (isReturningUser ? t('welcome.welcomeReturningStartFreshButton') : t('welcome.welcomePrimaryButton'))
-                : presentation.title;
+                : authenticationPresentation.title;
             const subtitle = isNewHere
                 ? isService
                     ? t('welcome.newHereServiceSubtitle', { service: serviceName ?? t('welcome.yourSignInService') })
@@ -213,7 +219,7 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
                     ? serviceName ?? t('welcome.yourSignInService')
                     // The Home is named once (New here, Use a different Home); each of its
                     // own methods says what it does instead of repeating that name.
-                    : presentation.description;
+                    : authenticationPresentation.description;
             const invoke = () => {
                 if (request.authority.purpose === 'account_service') {
                     return request.execution.kind === 'oauth'
@@ -222,24 +228,27 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
                 }
                 return props.onContinueWithHomeAuthentication?.(request);
             };
-            return <WelcomeActionCard key={row.id} actionId={row.id} testID={testID} primary={row.emphasis === 'primary'} title={title} subtitle={subtitle} iconName={presentation.iconName} accentColor={request.method.presentation?.connectButtonColor} onPress={invoke} />;
+            return <WelcomeActionCard key={row.id} actionId={row.id} testID={testID} primary={row.emphasis === 'primary'} presentation={presentation} title={title} subtitle={subtitle} iconName={authenticationPresentation.iconName} accentColor={request.method.presentation?.connectButtonColor} onPress={invoke} />;
         };
+        const doors = model.actions.filter((row) => row.emphasis !== 'tertiary');
+        const quietWays = model.actions.filter((row) => row.emphasis === 'tertiary');
+        const showHomeStatus = model.showHomeStatus && hasHome;
         return (
             <View style={styles.actionStack}>
-                {model.showHomeStatus && options.serverAvailability === 'loading' ? (
+                {showHomeStatus && options.serverAvailability === 'loading' ? (
                     <View testID="welcome-auth-loading" style={styles.statusBlock}>
                         <ActivitySpinner color={theme.colors.text.primary} />
                         <Text style={styles.statusText}>{t('common.loading')}</Text>
-                        <WelcomeActionCard testID="welcome-auth-loading-retry" title={t('common.retry')} onPress={options.retryServerCheck} />
+                        <WelcomeActionCard testID="welcome-auth-loading-retry" presentation="button" title={t('common.retry')} onPress={options.retryServerCheck} />
                     </View>
                 ) : null}
-                {model.showHomeStatus && showBlocked ? (
+                {showHomeStatus && showBlocked ? (
                     <View testID="welcome-auth-blocked" style={styles.statusBlock}>
                         <Text style={styles.statusTitle}>{options.serverAvailability === 'incompatible' ? t('welcome.serverIncompatibleTitle') : t('welcome.serverUnavailableTitle')}</Text>
                         <Text style={styles.statusText}>{options.serverAvailability === 'incompatible'
                             ? t('welcome.serverIncompatibleBody', { serverUrl: options.homeLabel ?? t('settingsAccount.thisHomeTitle') })
                             : t('welcome.serverUnavailableBody', { serverUrl: options.homeLabel ?? t('settingsAccount.thisHomeTitle') })}</Text>
-                        <WelcomeActionCard testID="welcome-auth-blocked-retry" title={t('common.retry')} onPress={options.retryServerCheck} />
+                        <WelcomeActionCard testID="welcome-auth-blocked-retry" presentation="button" title={t('common.retry')} onPress={options.retryServerCheck} />
                     </View>
                 ) : null}
                 {/*
@@ -249,7 +258,7 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
                   * later is its own announced block, named for the service the
                   * user chose and explaining what they can do about it.
                   */}
-                {model.notice && !(model.showHomeStatus && model.notice.kind === 'service_loading' && options.serverAvailability === 'loading') ? (
+                {model.notice && !(showHomeStatus && model.notice.kind === 'service_loading' && options.serverAvailability === 'loading') ? (
                     <View testID={model.notice.kind === 'service_loading' ? 'welcome-account-service-loading' : 'welcome-account-service-recovery'}
                         style={styles.statusBlock}
                         accessibilityLiveRegion="polite"
@@ -277,14 +286,22 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
                                         : t('welcome.signInServiceUnsupportedBody')}
                             </Text>
                         )}
-                        {model.notice.kind !== 'service_loading' && accountServiceEntry ? <WelcomeActionCard testID="welcome-account-service-retry" title={t('common.retry')} onPress={accountServiceEntry.retry} /> : null}
+                        {model.notice.kind !== 'service_loading' && accountServiceEntry ? <WelcomeActionCard testID="welcome-account-service-retry" presentation="button" title={t('common.retry')} onPress={accountServiceEntry.retry} /> : null}
                     </View>
                 ) : null}
-                {model.actions.map(renderAction)}
-                {model.showHomeStatus && options.authEntryUnavailable ? (
+                {doors.map((row) => renderAction(row, model.actions.indexOf(row)))}
+                {quietWays.length > 0 ? (
+                    <View testID="welcome-quiet-ways" style={styles.quietWays}>
+                        {!isReturningUser ? (
+                            <Text accessibilityRole="header" style={styles.quietWaysTitle}>{t('homesJourneys.alreadyUseTitle')}</Text>
+                        ) : null}
+                        {quietWays.map((row) => renderAction(row, model.actions.indexOf(row)))}
+                    </View>
+                ) : null}
+                {showHomeStatus && options.authEntryUnavailable ? (
                     <View testID="welcome-auth-entry-degraded" style={styles.statusBlock}>
                         <Text style={styles.statusText}>{t('welcome.signInOptionsPartialTitle')}</Text>
-                        <WelcomeActionCard testID="welcome-auth-entry-degraded-retry" title={t('common.retry')} onPress={options.retryServerCheck} />
+                        <WelcomeActionCard testID="welcome-auth-entry-degraded-retry" presentation="button" title={t('common.retry')} onPress={options.retryServerCheck} />
                     </View>
                 ) : null}
             </View>
@@ -309,7 +326,7 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
                 </Text>
             </View> : null}
             <OrganizationPolicyFieldNotice field={homePolicy.lock ? 'home' : servicePolicy.lock ? 'accountService' : 'personalHome'} />
-            {model.showHomeStatus && options.showAuthActions
+            {model.showHomeStatus && hasHome && options.showAuthActions
                 && (options.serverAvailability === 'ready' || options.serverAvailability === 'legacy')
                 && options.authenticationActions !== undefined
                 && !options.authenticationActions.some(({ action }) => action.id === 'provision') ? (
@@ -362,6 +379,17 @@ const stylesheet = StyleSheet.create((theme) => ({
     actionStack: {
         gap: theme.space.s12,
         width: '100%',
+    },
+    // The cards' own text edge, so the quiet ways line up under the doors.
+    quietWays: {
+        marginTop: theme.space.s8,
+        gap: theme.space.s2,
+    },
+    quietWaysTitle: {
+        ...Typography.variant('meta'),
+        color: theme.colors.text.secondary,
+        paddingHorizontal: WELCOME_ACTION_TEXT_INSET,
+        paddingBottom: theme.space.s4,
     },
     statusBlock: {
         width: '100%',

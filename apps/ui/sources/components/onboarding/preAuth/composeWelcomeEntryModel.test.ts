@@ -37,6 +37,102 @@ describe('composeWelcomeEntryModel', () => {
         expect(model.notice).toEqual({ kind: 'service_loading', serviceName: 'Happier', hasUsableHomeMethods: true });
     });
 
+    describe('first-run hierarchy', () => {
+        const serviceAuthority = {
+            endpointUrl: 'https://accounts.example.test',
+            serverIdentityId: 'service-a',
+            canonicalServerUrl: 'https://accounts.example.test',
+        } as unknown as VerifiedAccountServiceAuthority;
+        const serviceMethod = (id: string, actionId: 'login' | 'provision', mode: 'keyed' | 'keyless'): WelcomeAuthenticationMethod => ({
+            ...method(id, actionId, mode),
+            authority: { purpose: 'account_service', service: serviceAuthority },
+            intendedHome: null,
+        } as WelcomeAuthenticationMethod);
+        const shape = (model: ReturnType<typeof composeWelcomeEntryModel>) => model.actions.map((row) => [
+            row.action.kind === 'authenticate'
+                ? (row.action.labelRole === 'new_here' ? 'new_here' : row.action.request.method.id)
+                : row.action.kind,
+            row.emphasis,
+        ]);
+        const navigation = { changeHome: true, selectService: true, scanOrPasteHome: true, createPersonalHome: true };
+
+        it('leads a first run with the service door, offers the Personal Home next, and quiets everything else', () => {
+            const model = composeWelcomeEntryModel({
+                target: { kind: 'none' },
+                homeMethods: [],
+                context: { kind: 'home' },
+                allowedNavigation: navigation,
+                serviceCatalogState: {
+                    kind: 'ready',
+                    authority: serviceAuthority,
+                    name: 'Happier Cloud',
+                    methods: [serviceMethod('key_challenge', 'login', 'keyed'), serviceMethod('key_challenge', 'provision', 'keyed'), serviceMethod('github', 'login', 'keyless')],
+                },
+                userHistory: 'first_time',
+            });
+
+            expect(shape(model)).toEqual([
+                ['new_here', 'primary'],
+                ['create_personal_home', 'secondary'],
+                ['key_challenge', 'tertiary'],
+                ['github', 'tertiary'],
+                ['scan_or_paste_home', 'tertiary'],
+                ['choose_home', 'tertiary'],
+                ['choose_sign_in_service', 'tertiary'],
+            ]);
+        });
+
+        it('gives a build without hosted defaults its own Home and service doors', () => {
+            const model = composeWelcomeEntryModel({
+                target: { kind: 'none' },
+                homeMethods: [],
+                context: { kind: 'home' },
+                allowedNavigation: navigation,
+                serviceCatalogState: { kind: 'not_offered' },
+                userHistory: 'first_time',
+            });
+
+            expect(shape(model)).toEqual([
+                ['create_personal_home', 'primary'],
+                ['choose_home', 'secondary'],
+                ['choose_sign_in_service', 'secondary'],
+                ['scan_or_paste_home', 'tertiary'],
+            ]);
+        });
+
+        it('leads with connecting to a Home when no Personal Home can be created', () => {
+            const model = composeWelcomeEntryModel({
+                target: { kind: 'none' },
+                homeMethods: [],
+                context: { kind: 'home' },
+                allowedNavigation: { ...navigation, createPersonalHome: false },
+                serviceCatalogState: { kind: 'not_offered' },
+                userHistory: 'first_time',
+            });
+
+            expect(shape(model)[0]).toEqual(['choose_home', 'primary']);
+        });
+
+        it('keeps a returning person on their own sign-in, with the rest quiet', () => {
+            const model = composeWelcomeEntryModel({
+                target: { kind: 'selected_home', home: target, label: 'Home A' },
+                homeMethods: [method('github', 'login', 'keyless'), method('key_challenge', 'provision', 'keyed')],
+                context: { kind: 'home' },
+                allowedNavigation: { ...navigation, selectService: false },
+                serviceCatalogState: { kind: 'not_offered' },
+                userHistory: 'returning',
+            });
+
+            expect(shape(model)).toEqual([
+                ['github', 'primary'],
+                ['scan_or_paste_home', 'tertiary'],
+                ['choose_home', 'tertiary'],
+                ['create_personal_home', 'secondary'],
+                ['new_here', 'secondary'],
+            ]);
+        });
+    });
+
     it('distinguishes an optional-service failure from a Home entry dead end', () => {
         const base = {
             target: { kind: 'selected_home' as const, home: target, label: 'Home A' },

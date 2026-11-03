@@ -5723,6 +5723,7 @@ const ja: HomesJourneysTranslation = {
     addLinkOrQrSubtitle: 'アカウント不要。接続済みのデバイスから取得します。',
     addServerHome: 'サーバーに Home をセットアップ',
     addServerHomeSubtitle: '自分で管理する開発マシンや VPS に SSH でセットアップします。',
+    addServerHomeCardSubtitle: '自分で管理するコンピューターで動きます。',
     haveHomeAddress: 'Home のアドレスをお持ちですか？',
     enterIt: '入力する',
 

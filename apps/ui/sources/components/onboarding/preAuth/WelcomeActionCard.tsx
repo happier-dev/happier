@@ -1,4 +1,4 @@
-import { HAPPIER_FOCUS_RING_DELEGATED_STYLE, HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_FOCUS_RING_DELEGATED_STYLE, HAPPIER_PAGE_METRICS, HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
 import { View } from 'react-native';
 import Animated from 'react-native-reanimated';
@@ -13,14 +13,22 @@ import { Typography } from '@/constants/Typography';
 import { isValidThemeProfileColorValue } from '@/theme/profiles/themeProfileColorValidation';
 import { WelcomeActionAdmissionContext } from './WelcomeActionList';
 
+const CARD_INSET = 18;
+const CARD_BORDER = 1;
+/** Where a card's title starts, so a heading over a group of cards and quiet rows shares their edge. */
+export const WELCOME_ACTION_TEXT_INSET = CARD_INSET + CARD_BORDER;
+
 export const WelcomeActionCard = React.memo(function WelcomeActionCard(props: Readonly<{
     testID: string;
     actionId?: string;
     title: string;
     subtitle?: string;
     primary?: boolean;
-    /** A centred welcome CTA with its glyph before the label, rather than an action card. */
-    presentation?: 'card' | 'button' | 'link';
+    /**
+     * `button`: a centred welcome CTA with its glyph before the label, rather than an action card.
+     * `row`: a quiet way in beneath the cards, on their text edge; its subtitle is the accessible hint.
+     */
+    presentation?: 'card' | 'button' | 'link' | 'row';
     iconName?: IconName;
     /**
      * A provider's own connect colour, exactly as its Home projected it
@@ -63,7 +71,8 @@ export const WelcomeActionCard = React.memo(function WelcomeActionCard(props: Re
     const escape = props.escape === true;
     const actionId = props.actionId ?? props.testID;
     const pending = !escape && admission.pendingActionId === actionId;
-    const subtitleId = props.subtitle ? `welcome-action-description-${encodeURIComponent(actionId)}` : undefined;
+    const row = props.presentation === 'row';
+    const subtitleId = props.subtitle && !row ? `welcome-action-description-${encodeURIComponent(actionId)}` : undefined;
     const foreground = primary ? theme.colors.button.primary.tint : props.presentation === 'link' ? theme.colors.text.secondary : theme.colors.text.primary;
     const subtitleColor = primary ? theme.colors.button.primary.tint : theme.colors.text.secondary;
     const pressFeedback = usePressFeedback();
@@ -116,10 +125,13 @@ export const WelcomeActionCard = React.memo(function WelcomeActionCard(props: Re
                         styles.card,
                         button ? styles.button : null,
                         link ? styles.link : null,
+                        row ? styles.row : null,
                         primary
                             ? { backgroundColor: theme.colors.button.primary.background, borderColor: theme.colors.button.primary.background }
                             : link
                                 ? { backgroundColor: 'transparent', borderColor: 'transparent' }
+                            : row
+                                ? { backgroundColor: hovered ? theme.colors.surface.pressed : 'transparent', borderColor: 'transparent' }
                             : button
                                 ? { backgroundColor: hovered ? theme.colors.surface.pressed : theme.colors.surface.elevated, borderColor: 'transparent' }
                                 : { backgroundColor: hovered ? theme.colors.surface.elevated : theme.colors.surface.base, borderColor: theme.colors.border.default },
@@ -131,8 +143,8 @@ export const WelcomeActionCard = React.memo(function WelcomeActionCard(props: Re
                         <Icon testID={`${props.testID}-icon`} name={props.iconName} size={20} color={foreground} />
                     ) : null}
                     <View testID={`${props.testID}-text`} style={button ? styles.buttonText : styles.textBlock}>
-                        <Text testID={`${props.testID}-title`} style={[styles.title, { color: foreground }]}>{props.title}</Text>
-                        {props.subtitle ? <Text nativeID={subtitleId} testID={`${props.testID}-subtitle`} style={[styles.subtitle, { color: subtitleColor }]}>{props.subtitle}</Text> : null}
+                        <Text testID={`${props.testID}-title`} style={[row ? styles.rowTitle : styles.title, { color: foreground }]}>{props.title}</Text>
+                        {props.subtitle && !row ? <Text nativeID={subtitleId} testID={`${props.testID}-subtitle`} style={[styles.subtitle, { color: subtitleColor }]}>{props.subtitle}</Text> : null}
                     </View>
                     {!button && pending ? <ActivitySpinner color={foreground} /> : !button && !link && props.iconName ? (
                         <View
@@ -145,7 +157,7 @@ export const WelcomeActionCard = React.memo(function WelcomeActionCard(props: Re
                                 testID={`${props.testID}-icon`}
                                 name={props.iconName}
                                 size={20}
-                                color={accent ? theme.colors.button.primary.tint : foreground}
+                                color={accent ? theme.colors.button.primary.tint : row ? theme.colors.text.secondary : foreground}
                             />
                         </View>
                     ) : null}
@@ -158,9 +170,9 @@ export const WelcomeActionCard = React.memo(function WelcomeActionCard(props: Re
 const stylesheet = StyleSheet.create((theme) => ({
     card: {
         minHeight: 66,
-        borderWidth: 1,
+        borderWidth: CARD_BORDER,
         borderRadius: 14,
-        paddingHorizontal: 18,
+        paddingHorizontal: CARD_INSET,
         paddingVertical: theme.space.s10,
         flexDirection: 'row',
         alignItems: 'center',
@@ -171,6 +183,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     button: { minHeight: 50, justifyContent: 'center', gap: theme.space.s8 },
     link: { paddingHorizontal: 0, paddingVertical: theme.space.s8, borderWidth: 0 },
     buttonText: { gap: 0, alignItems: 'center', flexShrink: 1 },
+    row: { minHeight: HAPPIER_PAGE_METRICS.compactRowMinHeightPx, paddingVertical: theme.space.s4 },
     // The same frame, quieter: its words still read while its action waits.
     unavailableText: { opacity: 0.6 },
     accentMark: {
@@ -181,5 +194,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         justifyContent: 'center',
     },
     title: {  ...Typography.variant('heading'),  },
+    rowTitle: {  ...Typography.variant('label'),  },
     subtitle: {  ...Typography.variant('body'),  },
 }));

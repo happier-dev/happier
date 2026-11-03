@@ -5,6 +5,7 @@ import { useHappierHitArea } from '@happier-dev/plugin-ui/presentation';
 
 import type { SystemTaskRunState } from '@/components/systemTasks/types';
 import { presentActiveCliAcquisition, resolveCliAcquisitionFailureMessage } from '@/components/systemTasks/cliAcquisitionPresentation';
+import { Icon } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
 import { GlassSurface } from '@/components/ui/glass/GlassSurface';
 import { useGlassBlurSetting } from '@/components/ui/glass/useGlassBlurSetting';
@@ -27,9 +28,12 @@ const CONTENT_MAX_WIDTH = 520;
 /** The mark's room when no Loading host places the planet in it (the former setup mark's size). */
 const MARK_FALLBACK_SIZE = 76;
 const RECOVERY_MAX_WIDTH = 420;
+/** Failure's semantic glyph, centred in the ring where the planet would stand. */
+const FAILURE_GLYPH_SIZE = 28;
 
 const styles = StyleSheet.create((theme) => ({
     root: { flex: 1 },
+    failureMark: { width: MARK_FALLBACK_SIZE, height: MARK_FALLBACK_SIZE, alignItems: 'center', justifyContent: 'center' },
     scroll: { flex: 1 },
     scrollContent: { flexGrow: 1, paddingHorizontal: theme.space.s32, paddingVertical: theme.space.s40, alignItems: 'center' },
     // Auto margins centre the composition while keeping BOTH overflow edges reachable at compact
@@ -50,6 +54,7 @@ const styles = StyleSheet.create((theme) => ({
         textAlign: 'center',
     },
     recovery: { width: '100%', maxWidth: RECOVERY_MAX_WIDTH, alignItems: 'center' },
+    quietActions: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', alignItems: 'center', gap: theme.space.s4 },
     detailsButton: { alignSelf: 'center', paddingHorizontal: theme.space.s12, paddingVertical: theme.space.s10, justifyContent: 'center' },
     detailsText: {  color: theme.colors.text.secondary, ...Typography.variant('label', 'semiBold') },
     details: { width: '100%', maxWidth: RECOVERY_MAX_WIDTH },
@@ -153,6 +158,8 @@ export const PersonalHomeSetupSurface = React.memo(function PersonalHomeSetupSur
     // guidance unless this state contradicts it — the erased Home must not be told its
     // completed setup work is safe.
     const blockedBody = hasFailure ? blockedFailureBodyCopy(props.snapshot) : null;
+    // With no state-specific reason, the status and the failure body are one message: say it once.
+    const genericFailure = showFailure && !acquisitionFailure && !blockedBody && blockedStatusCopy(props.snapshot) === null;
     const hasLocalDetails = props.activeTask != null || props.snapshot.detail != null;
     const showDetails = detailsOpen && hasLocalDetails;
     const toggleDetails = React.useCallback(() => setDetailsOpen((value) => !value), []);
@@ -223,7 +230,13 @@ export const PersonalHomeSetupSurface = React.memo(function PersonalHomeSetupSur
                             accessibilityValue={{ min: 0, max: progress.totalMilestones, now: progress.completedMilestones }}
                         >
                             <CapacityRing ratio={progress.fraction} color={theme.colors.text.secondary} size={MARK_FALLBACK_SIZE}>
-                                <LoadingPlanetSlot fallbackSize={MARK_FALLBACK_SIZE} testID="personal-home-bootstrap-mark" />
+                                {hasFailure ? (
+                                    <View style={styles.failureMark} testID="personal-home-bootstrap-failure-mark">
+                                        <Icon name="warning-circle" size={FAILURE_GLYPH_SIZE} color={theme.colors.text.secondary} />
+                                    </View>
+                                ) : (
+                                    <LoadingPlanetSlot fallbackSize={MARK_FALLBACK_SIZE} testID="personal-home-bootstrap-mark" />
+                                )}
                             </CapacityRing>
                         </View>
                         <Text style={styles.title} accessibilityRole="header">
@@ -234,7 +247,7 @@ export const PersonalHomeSetupSurface = React.memo(function PersonalHomeSetupSur
                             accessibilityLiveRegion="polite"
                             style={styles.status}
                         >
-                            {acquisitionFailure ?? acquisition?.status ?? phaseCopy(props.snapshot)}
+                            {genericFailure ? t('personalHome.bootstrap.failureBody') : acquisitionFailure ?? acquisition?.status ?? phaseCopy(props.snapshot)}
                         </Text>
                         {acquisition?.downloadProgress ? (
                             <Text testID="personal-home-bootstrap-download-progress" style={styles.status}>
@@ -271,32 +284,31 @@ export const PersonalHomeSetupSurface = React.memo(function PersonalHomeSetupSur
                         </View>
                     ) : null}
 
-                    {!showExistingDecision && !hasFailure && props.onUseAnotherHome ? (
-                        <View style={styles.recovery}>
-                            <PersonalHomeUseAnotherHomeAction onUseAnotherHome={props.onUseAnotherHome} />
-                        </View>
-                    ) : null}
-
                     {showFailure ? (
                         <View style={styles.recovery}>
                             <PersonalHomeSetupFailure
                                 retryControlRef={(instance) => { retryRef.current = instance; }}
                                 detailsControlRef={(instance) => { failureDetailsRef.current = instance; }}
-                                {...(blockedBody ? { body: blockedBody } : {})}
+                                {...(genericFailure ? { body: null } : blockedBody ? { body: blockedBody } : {})}
                                 onRetry={props.snapshot.action === 'retry' ? props.onRetry : undefined}
                                 onOpenDetails={failureDetailsAction}
-                            />
+                            >
+                                {/* U10: a failure Retry cannot fix must never trap the user behind the gate. */}
+                                {!showExistingDecision && props.onUseAnotherHome ? (
+                                    <PersonalHomeUseAnotherHomeAction quiet onUseAnotherHome={props.onUseAnotherHome} />
+                                ) : null}
+                            </PersonalHomeSetupFailure>
                         </View>
                     ) : null}
 
-                    {/* U10: a failure Retry cannot fix must never trap the user behind the gate. */}
-                    {showFailure && !showExistingDecision && props.onUseAnotherHome ? (
-                        <View style={styles.recovery}>
-                            <PersonalHomeUseAnotherHomeAction onUseAnotherHome={props.onUseAnotherHome} />
+                    {!showExistingDecision && !hasFailure && (props.onUseAnotherHome || hasLocalDetails) ? (
+                        <View style={styles.quietActions}>
+                            {props.onUseAnotherHome ? (
+                                <PersonalHomeUseAnotherHomeAction quiet onUseAnotherHome={props.onUseAnotherHome} />
+                            ) : null}
+                            {hasLocalDetails ? detailsToggle : null}
                         </View>
                     ) : null}
-
-                    {hasLocalDetails && !hasFailure && !showExistingDecision ? detailsToggle : null}
                     {showDetails && !showExistingDecision ? detailsPanel : null}
                 </View>
             </ScrollView>

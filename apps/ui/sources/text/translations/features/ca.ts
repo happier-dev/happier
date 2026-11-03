@@ -5727,6 +5727,7 @@ const ca: HomesJourneysTranslation = {
     addLinkOrQrSubtitle: 'No cal cap compte. Obtén-lo d’un dispositiu que ja estigui connectat.',
     addServerHome: 'Configura un Home en un servidor',
     addServerHomeSubtitle: 'Un entorn de desenvolupament o un VPS que controles, configurat per SSH.',
+    addServerHomeCardSubtitle: 'Funciona en un ordinador que controles.',
     haveHomeAddress: 'Tens l’adreça d’un Home?',
     enterIt: 'Introdueix-la',
 

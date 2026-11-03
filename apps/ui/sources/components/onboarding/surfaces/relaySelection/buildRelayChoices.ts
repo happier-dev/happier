@@ -43,7 +43,8 @@ export function buildRelayChoices(params: Readonly<{
     if (params.wizardCapabilities.allowRemoteSshRelayChoice) {
         choices.push({
             id: 'remoteComputer',
-            title: t('setupOnboarding.relayOnRemoteComputerTitle'),
+            // The same place names Add a Home uses: "On this machine" beside "A machine over SSH".
+            title: t('addFlows.pathSshTitle'),
             subtitle: t('setupOnboarding.relayOnRemoteComputerSubtitle'),
             icon: 'desktop',
         });

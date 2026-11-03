@@ -15203,6 +15203,7 @@ settingsSession: {
 	          scanQrCode: 'QRコードをスキャン',
           recommendedBadge: 'おすすめ',
 	          relayCloudTitle: 'Happier Cloud',
+    personalHomeOfferSubtitle: 'データをこのコンピューターに保存します。',
 	          relayOnThisComputerTitle: 'このコンピューターで',
 	          relayOnYourComputerTitle: 'あなたのコンピューターで',
 	          relayAccessWizardTitle: '電話からこのRelayにどうアクセスしますか？',

@@ -136,6 +136,14 @@ function withoutSameServerDuplicates(
     )));
 }
 
+/** A door someone walks through stays a card; everything else is a quiet way in beneath the doors. */
+function emphasisOf(action: WelcomeAction, hasAuthentication: boolean): 'secondary' | 'tertiary' {
+    if (action.kind === 'create_personal_home') return 'secondary';
+    if (action.kind === 'authenticate' && action.labelRole === 'new_here') return 'secondary';
+    if (!hasAuthentication && (action.kind === 'choose_home' || action.kind === 'choose_sign_in_service')) return 'secondary';
+    return 'tertiary';
+}
+
 export function composeWelcomeEntryModel(input: ComposeWelcomeEntryModelInput): WelcomeEntryModel {
     // A verified Home without account sign-in still offers its own key/recovery
     // methods. Only same-endpoint evidence can resolve a mistaken service entry;
@@ -161,27 +169,40 @@ export function composeWelcomeEntryModel(input: ComposeWelcomeEntryModelInput): 
     // enables a second provisioning method offers a genuinely different
     // journey, and two identically labelled cards would be unchoosable.
     const [primaryProvision, ...remainingProvision] = homeProvision;
-    const primaryServiceProvision = serviceMethods.find((row) => row.action.id === 'provision');
+    const newHereService = primaryProvision
+        ? undefined
+        : serviceMethods.find((row) => row.action.id === 'provision');
+    const signInOnService = serviceMethods.filter((row) => row !== newHereService).map((row) => methodAction(row));
+    const createPersonalHome: readonly WelcomeAction[] = input.allowedNavigation.createPersonalHome
+        ? [{ kind: 'create_personal_home' }]
+        : [];
+    const changeHome: readonly WelcomeAction[] = input.allowedNavigation.changeHome ? [{ kind: 'choose_home' }] : [];
+    const chooseService: readonly WelcomeAction[] = input.allowedNavigation.selectService && (input.target.kind === 'none' || input.target.kind === 'selected_service')
+        ? [{ kind: 'choose_sign_in_service' }]
+        : [];
+    const scanOrPaste: readonly WelcomeAction[] = input.allowedNavigation.scanOrPasteHome ? [{ kind: 'scan_or_paste_home' }] : [];
 
     if (input.userHistory === 'first_time') {
+        // The two ways to begin lead: an account here, or a Home of your own. Signing in to something
+        // you already use, and every way to point elsewhere, follows quietly.
         if (primaryProvision) actions.push(methodAction(primaryProvision, 'new_here'));
-        actions.push(...homeDirect.map((row) => methodAction(row)));
-        actions.push(...remainingProvision.map((row) => methodAction(row)));
+        if (newHereService) actions.push(methodAction(newHereService, 'new_here'));
+        actions.push(...createPersonalHome);
+        const signIn = [
+            ...homeDirect.map((row) => methodAction(row)),
+            ...remainingProvision.map((row) => methodAction(row)),
+            ...signInOnService,
+        ];
+        actions.push(...signIn);
+        // Without anything to sign in to, reaching a Home or a service is the first decision.
+        if (actions.length === createPersonalHome.length) actions.push(...changeHome, ...chooseService, ...scanOrPaste);
+        else actions.push(...scanOrPaste, ...changeHome, ...chooseService);
     } else {
         actions.push(...homeDirect.map((row) => methodAction(row)));
-    }
-
-    if (input.userHistory === 'returning' && input.allowedNavigation.scanOrPasteHome) {
-        actions.push({ kind: 'scan_or_paste_home' });
-    }
-    actions.push(...serviceMethods.map((row) => methodAction(row, row === primaryServiceProvision && !primaryProvision ? 'new_here' : 'method')));
-    if (input.userHistory === 'first_time' && input.allowedNavigation.scanOrPasteHome) {
-        actions.push({ kind: 'scan_or_paste_home' });
-    }
-    if (input.allowedNavigation.changeHome) actions.push({ kind: 'choose_home' });
-    if (input.allowedNavigation.selectService && (input.target.kind === 'none' || input.target.kind === 'selected_service')) actions.push({ kind: 'choose_sign_in_service' });
-    if (input.allowedNavigation.createPersonalHome) actions.push({ kind: 'create_personal_home' });
-    if (input.userHistory === 'returning') {
+        actions.push(...scanOrPaste);
+        if (newHereService) actions.push(methodAction(newHereService, 'new_here'));
+        actions.push(...signInOnService);
+        actions.push(...changeHome, ...chooseService, ...createPersonalHome);
         if (primaryProvision) actions.push(methodAction(primaryProvision, 'new_here'));
         actions.push(...remainingProvision.map((row) => methodAction(row)));
     }
@@ -216,6 +237,7 @@ export function composeWelcomeEntryModel(input: ComposeWelcomeEntryModelInput): 
             hasUsableHomeMethods: input.homeMethods.length > 0,
         };
 
+    const hasAuthentication = unique.some((action) => action.kind === 'authenticate');
     return {
         heading: input.userHistory,
         showHomeStatus,
@@ -224,7 +246,7 @@ export function composeWelcomeEntryModel(input: ComposeWelcomeEntryModelInput): 
             : { targetContext: { label: input.target.label } }),
         actions: unique.map((action, index) => ({
             id: actionIdentity(action),
-            emphasis: index === 0 ? 'primary' : 'secondary',
+            emphasis: index === 0 ? 'primary' : emphasisOf(action, hasAuthentication),
             action,
         })),
         ...(notice ? { notice } : {}),

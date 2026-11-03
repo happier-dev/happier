@@ -5718,6 +5718,7 @@ const zhHant: HomesJourneysTranslation = {
     addLinkOrQrSubtitle: '不需要帳號。從已連線的裝置取得。',
     addServerHome: '在伺服器上設定 Home',
     addServerHomeSubtitle: '你掌控的開發機或 VPS，透過 SSH 設定。',
+    addServerHomeCardSubtitle: '在你掌控的電腦上執行。',
     haveHomeAddress: '有 Home 位址？',
     enterIt: '輸入位址',
 

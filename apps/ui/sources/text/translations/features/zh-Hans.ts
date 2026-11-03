@@ -5718,6 +5718,7 @@ const zhHans: HomesJourneysTranslation = {
     addLinkOrQrSubtitle: '无需账户。从已连接的设备获取。',
     addServerHome: '在服务器上设置 Home',
     addServerHomeSubtitle: '你掌控的开发机或 VPS，通过 SSH 设置。',
+    addServerHomeCardSubtitle: '在你掌控的电脑上运行。',
     haveHomeAddress: '有 Home 地址？',
     enterIt: '输入地址',
 

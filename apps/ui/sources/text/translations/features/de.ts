@@ -5719,6 +5719,7 @@ const de: HomesJourneysTranslation = {
     addLinkOrQrSubtitle: 'Kein Konto nötig. Hol ihn dir von einem bereits verbundenen Gerät.',
     addServerHome: 'Home auf einem Server einrichten',
     addServerHomeSubtitle: 'Eine Dev-Box oder ein VPS unter deiner Kontrolle, per SSH eingerichtet.',
+    addServerHomeCardSubtitle: 'Läuft auf einem Rechner unter deiner Kontrolle.',
     haveHomeAddress: 'Hast du eine Home-Adresse?',
     enterIt: 'Eingeben',
 

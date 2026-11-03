@@ -20,8 +20,23 @@ const styles = StyleSheet.create((theme) => ({
  * so a second computer is not given a new empty Home before the user can say no.
  */
 export const PersonalHomeUseAnotherHomeAction = React.memo(function PersonalHomeUseAnotherHomeAction(props: Readonly<{
+    /** Beside setup's progress or failure it is a way out, not a competing choice. */
+    quiet?: boolean;
     onUseAnotherHome: () => void;
 }>) {
+    if (props.quiet) {
+        return (
+            <RoundButton
+                size="normal"
+                display="inverted"
+                testID="personal-home-use-another"
+                accessibilityLabel={t('personalHome.bootstrap.useAnother')}
+                accessibilityHint={t('personalHome.bootstrap.useAnotherDetail')}
+                onPress={props.onUseAnotherHome}
+                title={t('personalHome.bootstrap.useAnother')}
+            />
+        );
+    }
     return (
         <WelcomeActionCard
             testID="personal-home-use-another"

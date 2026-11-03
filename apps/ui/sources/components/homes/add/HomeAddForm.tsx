@@ -70,7 +70,8 @@ function pathPresentation(service: JourneyAccountService, path: AddHomePath, col
             return {
                 glyph: <Icon name="desktop" size={17} color={color} />,
                 title: t('homesJourneys.addServerHome'),
-                subtitle: t('homesJourneys.addServerHomeSubtitle'),
+                // Neutral to place: the pane's tabs choose this computer or a server over SSH.
+                subtitle: t('homesJourneys.addServerHomeCardSubtitle'),
             };
     }
 }

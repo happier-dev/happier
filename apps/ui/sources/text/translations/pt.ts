@@ -15038,6 +15038,7 @@ settingsSession: {
 	          scanQrCode: 'Escanear código QR',
           recommendedBadge: 'Recomendado',
 	          relayCloudTitle: 'Happier Cloud',
+    personalHomeOfferSubtitle: 'Mantém seus dados neste computador.',
 	          relayOnThisComputerTitle: 'Neste computador',
 	          relayOnYourComputerTitle: 'No seu computador',
 	          relayAccessWizardTitle: 'Como seu telefone deve acessar este relay?',

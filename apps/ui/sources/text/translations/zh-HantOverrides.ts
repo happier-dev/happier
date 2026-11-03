@@ -12037,6 +12037,7 @@ settingsSession: {
 	        scanQrCode: '掃描 QR Code',
         recommendedBadge: '推薦',
 	        relayCloudTitle: 'Happier 雲端',
+	        personalHomeOfferSubtitle: '資料保存在這台電腦上。',
 	        relayOnThisComputerTitle: '在這台電腦上',
 	        relayOnYourComputerTitle: '在你的電腦上',
 	        relayAccessWizardTitle: '你的手機應如何連線到此中繼？',

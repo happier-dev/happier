@@ -92,6 +92,8 @@ export function PersonalHomeBootstrapContent(props: Readonly<{ children: React.R
     const loadingMoment = useAtmosphereMoment('loading');
     const moment = useHomeLoadingMoment({
         waiting: gating && loadingMoment.on, start: 'first-wait', paused: gating && !working, reducedMotion,
+        // Failure and recovery have their own glyph and copy to read; the cloud does not stay behind them.
+        abort: gating && frameSnapshot?.phase === 'blocked',
         theme: theme.dark ? 'dark' : 'light', pane, rootRef,
     });
     return <>{moment.provide(

@@ -1,5 +1,11 @@
 import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+// The unsupported-default scenario requires a configured account service to select.
+vi.hoisted(() => vi.stubEnv('EXPO_PUBLIC_HAPPIER_BUILD_DEFAULT_PROFILE_JSON', JSON.stringify({
+    home: { url: 'https://api.happier.dev' },
+    accountService: { url: 'https://api.happier.dev' },
+})));
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { installUiListsCommonModuleMocks } from '@/components/ui/lists/uiListsTestHelpers';
 

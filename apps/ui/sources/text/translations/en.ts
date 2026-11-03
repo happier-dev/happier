@@ -18247,6 +18247,7 @@ const enSetupOnboarding = {
   recommendedBadge: 'Recommended',
   relayCloudTitle: 'Happier Cloud',
   relayCloudSubtitle: 'Find and connect your linked Homes',
+  personalHomeOfferSubtitle: 'Keeps your data on this computer.',
   relayOnThisComputerTitle: 'On this computer',
   relayOnThisComputerSubtitle: 'Create a Personal Home on this computer',
   relayOnYourComputerTitle: 'On your computer',

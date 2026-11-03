@@ -5727,6 +5727,7 @@ const es: HomesJourneysTranslation = {
     addLinkOrQrSubtitle: 'No necesitas cuenta. Obtenlo de un dispositivo que ya esté conectado.',
     addServerHome: 'Configurar un Home en un servidor',
     addServerHomeSubtitle: 'Una máquina de desarrollo o un VPS que controlas, configurado por SSH.',
+    addServerHomeCardSubtitle: 'Funciona en un ordenador que controlas.',
     haveHomeAddress: '¿Tienes la dirección de un Home?',
     enterIt: 'Introdúcela',
 

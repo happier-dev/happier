@@ -127,6 +127,7 @@ export type HomesJourneysTranslation = Readonly<{
     addLinkOrQrSubtitle: string;
     addServerHome: string;
     addServerHomeSubtitle: string;
+    addServerHomeCardSubtitle: string;
     haveHomeAddress: string;
     enterIt: string;
 
@@ -267,6 +268,7 @@ export const en: HomesJourneysTranslation = {
     addLinkOrQrSubtitle: 'No account needed. Get it from a device that’s already connected.',
     addServerHome: 'Set up a Home on a server',
     addServerHomeSubtitle: 'A dev box or VPS you control, set up over SSH.',
+    addServerHomeCardSubtitle: 'Runs on a computer you control.',
     haveHomeAddress: 'Have a Home address?',
     enterIt: 'Enter it',
 

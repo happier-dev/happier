@@ -14756,6 +14756,7 @@ settingsSession: {
           scanQrCode: 'Skanuj kod QR',
           recommendedBadge: 'Polecane',
 	          relayCloudTitle: 'Happier Cloud',
+    personalHomeOfferSubtitle: 'Przechowuje Twoje dane na tym komputerze.',
 	          relayOnThisComputerTitle: 'Na tym komputerze',
 	          relayOnYourComputerTitle: 'Na Twoim komputerze',
 	          relayAccessWizardTitle: 'Jak telefon ma łączyć się z tym Relay?',

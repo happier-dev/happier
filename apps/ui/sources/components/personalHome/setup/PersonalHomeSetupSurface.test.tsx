@@ -261,7 +261,9 @@ describe('PersonalHomeSetupSurface', () => {
                 />,
             );
 
-            expect(screen.findAllHostsByTestId('personal-home-bootstrap-mark')).toHaveLength(1);
+            // A failure holds its glyph in the ring instead of the planet; either way there is one mark.
+            expect(screen.findAllHostsByTestId('personal-home-bootstrap-mark').length
+                + screen.findAllHostsByTestId('personal-home-bootstrap-failure-mark').length).toBe(1);
             expect(screen.root.findAll((node) => typeof node.type === 'string' && node.props.accessibilityRole === 'header')).toHaveLength(1);
             expect(screen.findAllHostsByTestId('personal-home-bootstrap-phase')).toHaveLength(1);
         }
@@ -332,7 +334,8 @@ describe('PersonalHomeSetupSurface', () => {
         };
         const unmappedScreen = await renderScreen(<PersonalHomeSetupSurface snapshot={unmapped} onRetry={() => {}} />);
         const unmappedText = unmappedScreen.getTextContent();
-        expect(unmappedText).toContain(tLoose('personalHome.bootstrap.blockedStatus'));
+        // No state-specific reason: the generic failure is said once, as the status.
+        expect(unmappedText).toContain(tLoose('personalHome.bootstrap.failureBody'));
         expect(unmappedText).not.toContain('abcdef0123456789abcdef0123456789');
     });
 });

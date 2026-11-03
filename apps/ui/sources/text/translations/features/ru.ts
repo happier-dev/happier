@@ -5749,6 +5749,7 @@ const ru: HomesJourneysTranslation = {
     addLinkOrQrSubtitle: 'Аккаунт не нужен. Получите её на уже подключённом устройстве.',
     addServerHome: 'Настроить Home на сервере',
     addServerHomeSubtitle: 'Машина для разработки или VPS под вашим управлением, настроенные по SSH.',
+    addServerHomeCardSubtitle: 'Работает на компьютере под вашим управлением.',
     haveHomeAddress: 'Есть адрес Home?',
     enterIt: 'Ввести',
 

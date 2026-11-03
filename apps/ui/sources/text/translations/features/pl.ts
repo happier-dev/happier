@@ -5740,6 +5740,7 @@ const pl: HomesJourneysTranslation = {
     addLinkOrQrSubtitle: 'Konto nie jest potrzebne. Pobierz go z urządzenia, które jest już połączone.',
     addServerHome: 'Skonfiguruj Home na serwerze',
     addServerHomeSubtitle: 'Maszyna deweloperska lub VPS pod Twoją kontrolą, skonfigurowane przez SSH.',
+    addServerHomeCardSubtitle: 'Działa na komputerze pod Twoją kontrolą.',
     haveHomeAddress: 'Masz adres Home?',
     enterIt: 'Wpisz go',
 
