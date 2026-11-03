@@ -345,6 +345,13 @@ export const SESSION_AUTHORING_FIELD_CATALOG = defineSessionAuthoringFields({
     },
     default: null,
   },
+  approvalProfileId: {
+    schema: z.optional(SessionAuthoringSelectionFieldsV1.approvalProfileId),
+    description: 'Reusable Action approval profile reference; null detaches the profile.',
+    storageClass: 'template', draftStorage: 'sync', contexts: [...ALL_AUTHORING_CONTEXTS],
+    defaultSurface: 'hidden',
+    defaultEditabilityByContext: { newSession: 'editable', liveSession: 'editable', automationNewSession: 'editable', automationExistingSession: 'inherited' },
+  },
   profileId: {
     schema: SessionAuthoringSelectionFieldsV1.profileId,
     description: 'Selected profile id to apply when the authored session starts.',
