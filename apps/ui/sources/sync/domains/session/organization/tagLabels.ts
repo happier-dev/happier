@@ -1,12 +1,9 @@
 import type { UiSessionOrganizationTag } from './types';
+import { readSessionSpaceMembershipTagDisplayV1 } from '@happier-dev/protocol/sessions/organization/tags';
+import { readSessionOrganizationDisplayRecord } from './displayRecord';
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return !!value && typeof value === 'object' && !Array.isArray(value);
-}
-
-function readPlainDisplayRecord(value: unknown): Record<string, unknown> | null {
-    if (!isRecord(value) || value.t !== 'plain' || !isRecord(value.v)) return null;
-    return value.v;
+export function readSessionOrganizationSpaceMembership(tag: UiSessionOrganizationTag | undefined) {
+    return tag ? readSessionSpaceMembershipTagDisplayV1(readSessionOrganizationDisplayRecord(tag.displayState, tag.display)) : null;
 }
 
 export function normalizeSessionTagLabels(tags: readonly string[] | null | undefined): string[] {
@@ -22,10 +19,8 @@ export function normalizeSessionTagLabels(tags: readonly string[] | null | undef
 }
 
 export function readSessionOrganizationTagLabel(tag: UiSessionOrganizationTag): string | null {
-    if (tag.displayState.status !== 'available') return null;
-    const display = isRecord(tag.displayState.value)
-        ? tag.displayState.value
-        : readPlainDisplayRecord(tag.display);
+    const display = readSessionOrganizationDisplayRecord(tag.displayState, tag.display);
+    if (readSessionSpaceMembershipTagDisplayV1(display)) return null;
     const displayLabel = typeof display?.label === 'string' ? display.label.trim() : '';
     return displayLabel || null;
 }

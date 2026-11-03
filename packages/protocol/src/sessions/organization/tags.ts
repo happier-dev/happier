@@ -1,5 +1,6 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
+import { QualifiedSessionSpaceTagV1Schema } from '../../collections/spaces/collectionSpacesV1.js';
 
 import {
   SESSION_ORGANIZATION_MAX_ID_LENGTH,
@@ -16,6 +17,19 @@ const SessionOrganizationSessionIdSchema = lazyZodSchema(() => z.string().check(
 const SessionOrganizationTagIdSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.maxLength(SESSION_ORGANIZATION_MAX_ID_LENGTH)));
 const SessionOrganizationTagKeySchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.maxLength(SESSION_ORGANIZATION_MAX_KEY_LENGTH)));
 const SessionOrganizationSortKeySchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.maxLength(SESSION_ORGANIZATION_MAX_SORT_KEY_LENGTH)));
+
+/** Private presentation identity inside the existing Account content envelope. */
+export const SessionSpaceMembershipTagDisplayV1Schema = lazyZodSchema(() => z.object({
+    kind: z.literal('space_membership'),
+    spaceId: z.string().check(z.trim(), z.minLength(1)),
+    spaceSettingsTarget: z.omit(QualifiedSessionSpaceTagV1Schema, { tagId: true }),
+}));
+export type SessionSpaceMembershipTagDisplayV1 = z.infer<typeof SessionSpaceMembershipTagDisplayV1Schema>;
+
+export function readSessionSpaceMembershipTagDisplayV1(value: unknown): SessionSpaceMembershipTagDisplayV1 | null {
+    const parsed = SessionSpaceMembershipTagDisplayV1Schema.safeParse(value);
+    return parsed.success ? parsed.data : null;
+}
 
 export const SessionOrganizationTagSchema = lazyZodSchema(() => z.strictObject({
     tagId: SessionOrganizationTagIdSchema,
