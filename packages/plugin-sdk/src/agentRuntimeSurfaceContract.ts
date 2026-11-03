@@ -668,6 +668,7 @@ type _SessionControlContextMustNotExposeReflectiveRuntimeExtensions = AssertTrue
 type _SessionHostServicesMustStayNarrowAndProviderNeutral = AssertTrue<
   Equal<
     keyof AgentSessionHostServices,
+    | 'publishWorkStatus'
     | 'sessionHooks'
     | 'nativeLaunch'
     | 'transcripts'
