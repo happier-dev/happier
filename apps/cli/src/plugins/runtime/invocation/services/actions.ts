@@ -39,6 +39,8 @@ import { resolvePluginActionCaller, resolvePluginInvocationCallerExecutionOrigin
 import type { PluginExternalActionContext } from './types';
 import { runTracedExternalActionInnerStage } from '@/daemon/externalActions/externalActionPhase';
 import { resolveSessionRoleRpcOrigin } from '@/session/actions/sessionRoleRpcOrigin';
+import { observeContributedActionRead } from './resourceActions';
+import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
 
 export type PluginActionsServiceSeed = Readonly<{
     sessionListAccess?: ActionExecutorContext['sessionListAccess'];
@@ -75,6 +77,8 @@ export type PluginActionsServiceSeed = Readonly<{
     /** Host-private active-turn authority for Agent-placed Action execution. */
     readActiveTurnAdmissionWitness?(): import('./types').AgentInvocationTurnAdmissionWitness | null;
     signal: AbortSignal;
+    /** Host-only authority withdrawal of the enclosing observed read. */
+    retireReadObservation?(): void;
     isOccurrenceCurrent(): boolean;
     /** Host-private recursion fence; only hook invocation owners may set this. */
     bypassActionInterception?: true;
@@ -118,6 +122,9 @@ export type InvokeContributedAction = (params: Readonly<{
     input: JsonValue | undefined;
     /** Host-only constrained nested source read; not a public service option. */
     requiredDangerLevel?: 'safe';
+    requiredReadOnly?: true;
+    resourceSessionId?: string;
+    readObservation?: Readonly<{ invalidate(): void; retire?(): void; accept(subscription: import('@happier-dev/plugin-sdk').Disposable): void }>;
     /** A plugin-to-plugin invocation is always authorized on the target plugin surface. */
     surface: 'plugin';
     /** Diagnostic origin, deliberately separate from the target authorization surface. */
@@ -342,15 +349,18 @@ export function createPluginInvocationActionsService(params: Readonly<{
     const selectedActionInputClaimed = { current: false };
     const actionExecutor = params.actionExecutor.bindInvocation?.(params.seed.signal)
         ?? params.actionExecutor;
-    const executeAdmittedTargetedContribution = async (
-        admittedTargetedOperation: AdmittedTargetedOperationExecutionBinding,
+    const invokeContributedActionWithCaller = async (
+        target: AdmittedTargetedOperationExecutionBinding | PluginContributionRef,
         input: JsonValue,
         options: PluginCancellationOptions | undefined,
         originalOperation: unknown,
         captureExecutionOrigin: boolean,
         expectedExecutionOrigin?: unknown,
         expectedExecutionRouting?: unknown,
+        readObservation?: Parameters<InvokeContributedAction>[0]['readObservation'],
     ): Promise<Extract<ContributedActionInvocationResult, { status: 'executed' }>> => {
+        const admittedTargetedOperation = 'action' in target ? target : undefined;
+        const action = 'action' in target ? target.action : target;
         const signal = composeActionSignal(params.seed.signal, options?.signal);
         throwIfInactive(params.seed, signal, undefined, true);
         const parsedExpectedExecutionOrigin = readExpectedExecutionOrigin(expectedExecutionOrigin);
@@ -371,9 +381,10 @@ export function createPluginInvocationActionsService(params: Readonly<{
         }
         throwIfContributedActionCallerInactive(params.seed, signal, actionCaller);
         const invoke = () => params.invokeContributedAction({
-            action: admittedTargetedOperation.action,
+            action,
             input,
             surface: 'plugin',
+            ...(readObservation ? { requiredReadOnly: true as const, readObservation } : {}),
             ...(caller.originSurface ? { originSurface: caller.originSurface } : {}),
             caller,
             initiatingActionCaller: actionCaller,
@@ -385,7 +396,7 @@ export function createPluginInvocationActionsService(params: Readonly<{
             ...(parsedExpectedExecutionRouting === undefined
                 ? {}
                 : { expectedExecutionRouting: parsedExpectedExecutionRouting }),
-            admittedTargetedOperation: Object.freeze({
+            ...(admittedTargetedOperation ? { admittedTargetedOperation: Object.freeze({
                 action: Object.freeze({ ...admittedTargetedOperation.action }),
                 target: Object.freeze({
                     pluginId: admittedTargetedOperation.targetPluginId,
@@ -393,13 +404,12 @@ export function createPluginInvocationActionsService(params: Readonly<{
                 }),
                 contributorOccurrenceId: admittedTargetedOperation.contributorOccurrenceId,
                 targetProtocol: admittedTargetedOperation.targetProtocol,
-            }),
-            beforeHandlerInvocation: async () => {
+            }), beforeHandlerInvocation: async () => {
                 throwIfInactive(params.seed, signal, undefined, true);
                 requireAdmittedTargetedOperationExecutionBinding(originalOperation, params.seed,
                     await params.seed.readCurrentTargetedDeclarations?.(signal));
                 throwIfInactive(params.seed, signal, undefined, true);
-            },
+            } } : {}),
             ...(params.seed.session ? { sessionId: params.seed.session.id } : {}),
             signal,
         });
@@ -439,7 +449,7 @@ export function createPluginInvocationActionsService(params: Readonly<{
             selectedActionInputClaimed,
             signal,
         });
-        const result = await executeAdmittedTargetedContribution(
+        const result = await invokeContributedActionWithCaller(
             binding,
             admittedInput,
             options,
@@ -447,6 +457,37 @@ export function createPluginInvocationActionsService(params: Readonly<{
             false,
         );
         return result.value as TResult;
+    };
+    const observeAdmittedTargetedOperation: ActionsService['observeAdmittedTargetedOperation'] = async (operation, input, invalidate, options) => {
+        const sourceSignal = composeActionSignal(params.seed.signal, options?.signal);
+        const binding = requireAdmittedTargetedOperationExecutionBinding(operation, params.seed,
+            await params.seed.readCurrentTargetedDeclarations?.(sourceSignal));
+        const admittedInput = await resolveAdmittedTargetedOperationInput({
+            seed: params.seed, assertCurrent: () => throwIfInactive(params.seed, sourceSignal, undefined, true),
+            binding, input, expectedSelectedConnectedAccountRef: options?.expectedSelectedConnectedAccountRef,
+            selectedActionInputClaimed, signal: sourceSignal,
+        });
+        return await observeContributedActionRead({
+            signal: sourceSignal, invalidate, isCurrent: params.seed.isOccurrenceCurrent,
+            retire: params.seed.retireReadObservation,
+            invoke: (observation, signal) => invokeContributedActionWithCaller(
+                binding, admittedInput, { ...options, signal }, operation, false, undefined, undefined, observation,
+            ),
+        });
+    };
+    const observe: ActionsService['observe'] = async (action, input, invalidate, options) => {
+        const reference = PluginContributionIdentityV1Schema.safeParse(action);
+        if (!reference.success) throw createPluginActionHandlerNotStartedError({
+            code: 'plugin_action_reference_invalid', message: 'Read observation requires a contributed Action reference',
+        });
+        const sourceSignal = composeActionSignal(params.seed.signal, options?.signal);
+        throwIfInactive(params.seed, sourceSignal, undefined, true);
+        return await observeContributedActionRead({ signal: sourceSignal, invalidate,
+            isCurrent: params.seed.isOccurrenceCurrent, retire: params.seed.retireReadObservation,
+            invoke: (observation, signal) => invokeContributedActionWithCaller(reference.data, input,
+                { ...options, signal }, undefined, false, options?.expectedExecutionOrigin,
+                options?.expectedExecutionRouting, observation),
+        });
     };
     const executeOnce = async (
         actionOrRef: PluginInvocableActionId | PluginContributionRef,
@@ -753,7 +794,7 @@ export function createPluginInvocationActionsService(params: Readonly<{
             selectedActionInputClaimed,
             signal,
         });
-        const result = await executeAdmittedTargetedContribution(
+        const result = await invokeContributedActionWithCaller(
             binding,
             admittedInput,
             options,
@@ -785,7 +826,9 @@ export function createPluginInvocationActionsService(params: Readonly<{
             return Object.freeze(getPluginMachineExecutionRouting(origin));
         },
         execute,
+        observe,
         executeAdmittedTargetedOperation,
+        observeAdmittedTargetedOperation,
         executeWithExecutionOrigin,
         executeAdmittedTargetedOperationWithExecutionOrigin,
     }) as ActionsService;

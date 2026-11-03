@@ -18,13 +18,21 @@ import type { PluginDiagnosticData } from '../diagnostics.js';
 import type { JsonValue, PluginContributionRef, PluginJsonSchema } from '../identity.js';
 import type { Disposable, PluginCancellationOptions } from '../lifecycle.js';
 import type { PluginAccountStorageScope } from '../storage.js';
+import type { ActionExecuteResult } from '../actions/service.js';
 
 export type { PluginResourceKind } from '@happier-dev/protocol';
+/** @realm any */
 export type PluginResourceDescriptor = Readonly<{ id: string; kind: PluginResourceKind; contentType: string; digest: string; size: number }>;
+/** @realm any */
 export interface ResourcesService {
     describe(id: string): PluginResourceDescriptor;
     read(id: string, options?: { maxBytes?: number; signal?: AbortSignal }): Promise<{ kind: PluginResourceKind; contentType: string; digest: string; bytes: Uint8Array }>;
-    watch(id: string, listener: (change: { digest: string }) => void): Disposable;
+    /**
+     * Await installation before treating the dependency as live. Rejection
+     * preserves the source failure; the bound invocation lifetime cancels
+     * pending attachment and disposes any subscription that arrives late.
+     */
+    watch(id: string, listener: (change: { digest: string }) => void): Promise<Disposable>;
 }
 
 /**
@@ -40,18 +48,48 @@ export interface ResourcesService {
  *
  * A packaged resource has no runtime and registers nothing.
  */
+/** @realm any */
 export type PluginDynamicResourceInvocationOptionsV1 = Readonly<{
     /** The exact host-owned read or observe lifetime. */
     signal: AbortSignal;
-    /** Host-stamped Resource scope; never caller-provided metadata. */
+    /** Host-stamped scope and exact admitted physical target/SCM facts; never caller-provided metadata. */
     context: PluginResourceContextV1;
+    /** Own-plugin Resources in this exact host context. Reads share live demanded snapshots. */
+    resources: ResourcesService;
     /** Present only when this dynamic Resource declares an admitted storage.account request. */
     accountStorage?: PluginAccountStorageScope;
+    /** Explicit read operands only, through the canonical Action executor as this Resource's plugin. */
+    readAction(ref: PluginContributionRef, input: JsonValue, options?: PluginCancellationOptions): Promise<ActionExecuteResult>;
+    /** Installs the target Action's own qualified dependencies without executing its read handler. */
+    observeAction(ref: PluginContributionRef, input: JsonValue, invalidate: () => void, options?: PluginCancellationOptions): Promise<Disposable>;
 }>;
 
-export type PluginDynamicResourceRuntime = Readonly<{
+/** @realm any */
+export type PluginDynamicResourceProducer = Readonly<{
     read(options: PluginDynamicResourceInvocationOptionsV1): Promise<Uint8Array | string> | Uint8Array | string;
-    observe(invalidate: () => void, options: PluginDynamicResourceInvocationOptionsV1): Disposable;
+    /**
+     * Return the installed dependency subscription, awaiting asynchronous
+     * admission. Rejection fails watch establishment; the host disposes late
+     * subscriptions if options.signal aborts while admission is pending.
+     */
+    observe(invalidate: () => void, options: PluginDynamicResourceInvocationOptionsV1): Disposable | Promise<Disposable>;
+    /** Releases this exact admitted context's producer and all of its pending work. */
+    dispose(): void | Promise<void>;
+}>;
+
+/** @realm any */
+export type PluginDynamicResourceRuntime = Readonly<{
+    read: PluginDynamicResourceProducer['read'];
+    observe: PluginDynamicResourceProducer['observe'];
+    /**
+     * Daemon-only context lifetime. The host creates one producer for the exact
+     * admitted context, independently of individual read/observe callbacks,
+     * and aborts/disposes it when that context or its authority retires.
+     * Other placements must reject this arm explicitly. Direct callbacks must
+     * fail explicitly on a host without context-producer support.
+     */
+    createProducer?(options: Pick<PluginDynamicResourceInvocationOptionsV1,
+        'signal' | 'context' | 'readAction' | 'observeAction'>): PluginDynamicResourceProducer | Promise<PluginDynamicResourceProducer>;
 }>;
 
 export type PluginMcpContributionRef = PluginContributionRef;

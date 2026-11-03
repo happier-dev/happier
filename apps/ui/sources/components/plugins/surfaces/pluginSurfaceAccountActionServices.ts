@@ -1,13 +1,7 @@
 import { PluginError, type JsonValue, type PluginContributionRef } from '@happier-dev/plugin-sdk';
 import type { PluginAccountActionContext, AdmittedTargetedOperationExecutionHandle, AdmittedTargetedOperationExecutionOptions } from '@happier-dev/plugin-sdk/actions';
-import {
-    createManifestTargetedContributionsService,
-    createPluginActionHandlerNotStartedError,
-    requireAdmittedTargetedOperationExecutionBinding,
-    resolveAdmittedTargetedOperationInput,
-    validateTargetedOperationInput,
-    validateTargetedOperationResult,
-} from '@happier-dev/plugin-sdk/host/registration';
+import { createManifestTargetedContributionsService, requireAdmittedTargetedOperationExecutionBinding, resolveAdmittedTargetedOperationInput, validateTargetedOperationInput, validateTargetedOperationResult } from '@happier-dev/cli-common/plugins/registration';
+import { createPluginActionHandlerNotStartedError } from '@happier-dev/cli-common/plugins/registration/actionHandlerInvocation';
 import type { PluginSourceCustodyV1 } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 import { readPluginAccountAvailability } from '@/sync/domains/plugins/availability/projection';
 import { createPluginUiAccountStorageScope } from '@/sync/api/plugins/data/pluginUiDataClient';
@@ -15,22 +9,37 @@ import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/acti
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 import { createUiAccountActionSettingsService } from '@/sync/domains/plugins/settings/accountActionSettings';
 import { createPluginSurfaceTargetedDeclarationSource } from './pluginSurfaceTargetedDeclarations';
+import { observePluginSurfaceActionRead } from './pluginSurfaceActionReadObservation';
+import type { DispatchPluginSurfaceActionInput } from './pluginSurfaceActionDispatch';
+import { createPluginSurfaceAccountNetworkServices } from './pluginSurfaceAccountNetworkServices';
+import { createUiConnectedAccountActionServices } from '@/sync/ops/connectedAccounts/connectedAccountActionServices';
 
 /** Physical UI services over the existing Account Data, Action and admission owners. */
 export function createPluginSurfaceAccountActionServices(input: Readonly<{
     pluginId: string;
+    actionId?: string;
     occurrenceId: string;
-    sourceCustody: PluginSourceCustodyV1;
+    /** Client contributions may carry a materialization instead of durable source custody. */
+    sourceCustody?: PluginSourceCustodyV1;
     accountLifetime: ActiveServerAccountScopeLifetime;
     signal: AbortSignal;
+    retireReadObservation?(): void;
     machine?: Readonly<{ machineId: string; serverId?: string | null }>;
     isCurrent(): boolean;
     execute(action: string | PluginContributionRef, value: JsonValue, options: Readonly<{
         signal: AbortSignal;
         expectedContributorOccurrenceId?: string;
+        requiredReadOnly?: true;
+        readObservation?: DispatchPluginSurfaceActionInput['readObservation'];
         isCurrent(): boolean;
     }>): Promise<JsonValue>;
-}>) {
+}>): {
+    services: PluginAccountActionContext['services'];
+    signal: AbortSignal;
+    redactDiagnosticText(value: string): string;
+    snapshotRedactor(): (value: string) => string;
+    dispose(): void;
+} {
     const lifecycle = new AbortController();
     const invocation = mergeAbortSignals([input.signal, lifecycle.signal]);
     const availability = readPluginAccountAvailability(input.accountLifetime.scope);
@@ -55,44 +64,118 @@ export function createPluginSurfaceAccountActionServices(input: Readonly<{
         finally { cancellation.dispose(); }
     }) as PluginAccountActionContext['services']['actions']['execute'];
 
+    const observe: PluginAccountActionContext['services']['actions']['observe'] = async (
+        action, value, invalidate, options,
+    ) => {
+        assertCurrent();
+        // Account Actions have no Machine origin, and this in-process dispatcher
+        // cannot enforce Machine placement pins. Never erase an author precondition.
+        if (options?.expectedExecutionOrigin !== undefined || options?.expectedExecutionRouting !== undefined) {
+            throw new PluginError({ code: 'plugin_action_read_observation_unavailable',
+                message: 'Pinned Machine Action observation is unavailable in this Account runtime' });
+        }
+        const cancellation = mergeAbortSignals([invocation.signal, options?.signal]);
+        try {
+            const subscription = await observePluginSurfaceActionRead({
+                signal: cancellation.signal, isCurrent, invalidate,
+                ...(input.retireReadObservation ? { retire: input.retireReadObservation } : {}),
+                invoke: (observation, signal) => input.execute(action, value, {
+                    signal, isCurrent, requiredReadOnly: true, readObservation: observation,
+                }),
+            });
+            return Object.freeze({ dispose() {
+                try { return subscription.dispose(); } finally { cancellation.dispose(); }
+            } });
+        } catch (error) { cancellation.dispose(); throw error; }
+    };
+
+    const prepareAdmittedTargetedOperation = async <TInput extends JsonValue, TResult extends JsonValue | void>(
+        operation: AdmittedTargetedOperationExecutionHandle<TInput, TResult>, value: TInput,
+        options: AdmittedTargetedOperationExecutionOptions | undefined, signal: AbortSignal,
+    ) => {
+        const seed = { plugin: { id: input.pluginId }, occurrenceId: input.occurrenceId, sourceCustody: input.sourceCustody };
+        const requireCurrent = () => {
+            assertCurrent();
+            if (signal.aborted) throw new PluginError({ code: 'plugin_action_aborted' });
+            return requireAdmittedTargetedOperationExecutionBinding(operation, seed, declarations());
+        };
+        await readCurrentDeclarations(signal);
+        const binding = requireCurrent();
+        const selected = await resolveAdmittedTargetedOperationInput({ seed, binding, input: value,
+            expectedSelectedConnectedAccountRef: options?.expectedSelectedConnectedAccountRef,
+            selectedActionInputClaimed: { current: false }, signal, assertCurrent: requireCurrent });
+        const parsed = validateTargetedOperationInput(binding.targetProtocol, selected);
+        if (!parsed.ok) throw createPluginActionHandlerNotStartedError({ code: parsed.result.errorCode, message: parsed.result.error });
+        return { binding, value: parsed.value as JsonValue,
+            isCurrent() { try { requireCurrent(); return true; } catch { return false; } } };
+    };
+
     const executeAdmittedTargetedOperation = async <TInput extends JsonValue, TResult extends JsonValue | void>(
         operation: AdmittedTargetedOperationExecutionHandle<TInput, TResult>, value: TInput,
         options?: AdmittedTargetedOperationExecutionOptions,
     ): Promise<TResult> => {
         assertCurrent();
         const cancellation = mergeAbortSignals([invocation.signal, options?.signal]);
-        const seed = { plugin: { id: input.pluginId }, occurrenceId: input.occurrenceId, sourceCustody: input.sourceCustody };
-        const requireCurrent = () => {
-            assertCurrent();
-            return requireAdmittedTargetedOperationExecutionBinding(operation, seed, declarations());
-        };
         try {
-            await readCurrentDeclarations(cancellation.signal);
-            const binding = requireCurrent();
-            const selected = await resolveAdmittedTargetedOperationInput({ seed, binding, input: value,
-                expectedSelectedConnectedAccountRef: options?.expectedSelectedConnectedAccountRef,
-                selectedActionInputClaimed: { current: false }, signal: cancellation.signal, assertCurrent: requireCurrent });
-            const parsed = validateTargetedOperationInput(binding.targetProtocol, selected);
-            if (!parsed.ok) throw createPluginActionHandlerNotStartedError({ code: parsed.result.errorCode, message: parsed.result.error });
-            const result = await input.execute(binding.action, parsed.value as JsonValue, {
-                signal: cancellation.signal, expectedContributorOccurrenceId: binding.contributorOccurrenceId,
-                isCurrent: () => { requireCurrent(); return true; },
+            const admitted = await prepareAdmittedTargetedOperation(operation, value, options, cancellation.signal);
+            const result = await input.execute(admitted.binding.action, admitted.value, {
+                signal: cancellation.signal, expectedContributorOccurrenceId: admitted.binding.contributorOccurrenceId,
+                isCurrent: admitted.isCurrent,
             });
-            const accepted = validateTargetedOperationResult(binding.targetProtocol, result);
+            const accepted = validateTargetedOperationResult(admitted.binding.targetProtocol, result);
             if (!accepted.ok) throw new PluginError({ code: accepted.result.errorCode, message: accepted.result.error });
             // The target-owned parser proves the exact public handle result relationship.
             return accepted.value as TResult;
         } finally { cancellation.dispose(); }
     };
 
+    const observeAdmittedTargetedOperation: PluginAccountActionContext['services']['actions']['observeAdmittedTargetedOperation'] = async (
+        operation, value, invalidate, options,
+    ) => {
+        assertCurrent();
+        const cancellation = mergeAbortSignals([invocation.signal, options?.signal]);
+        try {
+            const subscription = await observePluginSurfaceActionRead({
+                signal: cancellation.signal, isCurrent, invalidate,
+                ...(input.retireReadObservation ? { retire: input.retireReadObservation } : {}),
+                async invoke(observation, signal) {
+                    const admitted = await prepareAdmittedTargetedOperation(operation, value, options, signal);
+                    return await input.execute(admitted.binding.action, admitted.value, {
+                        signal, expectedContributorOccurrenceId: admitted.binding.contributorOccurrenceId,
+                        requiredReadOnly: true, readObservation: observation,
+                        isCurrent: admitted.isCurrent,
+                    });
+                },
+            });
+            return Object.freeze({ dispose() {
+                try { return subscription.dispose(); } finally { cancellation.dispose(); }
+            } });
+        } catch (error) { cancellation.dispose(); throw error; }
+    };
+
+    const network = createPluginSurfaceAccountNetworkServices({ pluginId: input.pluginId, accountLifetime: input.accountLifetime,
+        signal: invocation.signal, isCurrent });
+    let connectedAccounts: PluginAccountActionContext['services']['connectedAccounts'];
+    try {
+        connectedAccounts = createUiConnectedAccountActionServices({ ...input, signal: invocation.signal, isCurrent,
+            registerRawForRedaction: network.registerRawForRedaction });
+    } catch (error) {
+        network.dispose(); invocation.dispose();
+        throw error;
+    }
     const services: PluginAccountActionContext['services'] = {
+        http: network.http, secrets: network.secrets,
+        connectedAccounts,
         settings: createUiAccountActionSettingsService({ pluginId: input.pluginId, accountLifetime: input.accountLifetime,
             signal: invocation.signal, isCurrent }),
         storage: { account: createPluginUiAccountStorageScope({
             pluginId: input.pluginId, accountLifetime: input.accountLifetime, readAvailability: () => availability,
             signal: invocation.signal, isCurrent,
         }) },
-        actions: { execute, executeAdmittedTargetedOperation }, targetedContributions,
+        actions: { execute, observe, executeAdmittedTargetedOperation, observeAdmittedTargetedOperation }, targetedContributions,
     };
-    return { services, dispose() { lifecycle.abort(); invocation.dispose(); } };
+    return { services, signal: invocation.signal,
+        redactDiagnosticText: network.redactDiagnosticText, snapshotRedactor: network.snapshotRedactor,
+        dispose() { lifecycle.abort(); network.dispose(); invocation.dispose(); },
+    };
 }

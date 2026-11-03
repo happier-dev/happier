@@ -3,7 +3,7 @@ import { lstat, open, realpath } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
 import { isPluginError, PluginError, type Disposable } from '@happier-dev/plugin-sdk';
-import { type ResourceDescriptor as PluginResourceDescriptor, type PluginResourceKind, type ResourcesService as PluginResourcesService } from '@happier-dev/plugin-sdk/resources';
+import { type PluginDynamicResourceInvocationOptionsV1, type ResourceDescriptor as PluginResourceDescriptor, type PluginResourceKind, type ResourcesService as PluginResourcesService } from '@happier-dev/plugin-sdk/resources';
 import type { PluginRuntimeRegistration } from '@happier-dev/plugin-sdk/host/registration';
 import type { PluginAccountStorageScope } from '@happier-dev/plugin-sdk/storage';
 import { createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
@@ -17,19 +17,15 @@ import {
     resolveContainedPluginResourcePath,
     resolvePluginResourcePath,
 } from '@/plugins/projection/resources/package/resolve';
-import { runWithOptionalTimeout } from '@/plugins/runtime/lifecycle/utils';
 import { logger } from '@/ui/logger';
 import type { ResolvedManifestHostAccessRequest } from '@/plugins/runtime/hostAccess/manifestRequests';
 import {
     getActiveAccountSettingsSnapshotLifetimeToken,
-    subscribeActiveAccountSettingsSnapshot,
+    subscribeActiveAccountSettingsKeys,
 } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import type { ImmutablePluginGenerationRecord } from '@/plugins/store/registry/generationStore';
 
 export const MAX_PLUGIN_RESOURCE_BYTES = 16 * 1024 * 1024;
-// Preserve the incumbent in-flight admission memory policy. Descriptor sizes
-// are not retained payloads and therefore do not consume this read budget.
-const MAX_PLUGIN_RESOURCE_ADMISSION_BYTES = 64 * 1024 * 1024;
 export const MAX_PLUGIN_BRAND_ICON_BYTES = 256 * 1024;
 const MIN_PLUGIN_BRAND_ICON_DIMENSION = 64;
 const MAX_PLUGIN_BRAND_ICON_DIMENSION = 512;
@@ -67,6 +63,12 @@ type BindPluginResources = Readonly<{
     surfaceAccessAdmission?: SurfaceResourceAccessAdmission;
     /** Host-private terminal callback for one bound Session Resource watch. */
     onSessionResourceUnavailable?: () => void;
+    /** Host-private withdrawal of bytes admitted under this watch's former read authority. */
+    onReadAuthorityRetired?: () => void;
+    /** Host-private dependency chain of invocation-bound own Resource reads. */
+    readChain?: readonly DynamicResourceContextState[];
+    /** Only producer composition consumes an already demanded snapshot. Host reads stay fresh. */
+    preferDemandedSnapshot?: boolean;
 }>;
 
 const sessionResourceAccessAdmissionBrand = Symbol('sessionResourceAccessAdmission');
@@ -104,7 +106,9 @@ type AdmittedPackagedResource = Readonly<{
 /**
  * A dynamic resource has no package file. Its observed digest/size are the
  * last bytes its producer returned through this owner — a *read* fact that
- * keeps `describe` honest. The context retains metadata, never payload bytes.
+ * keeps `describe` honest. Bytes are retained only by a live demanded watch or
+ * in-flight read; ending that demand clears them while descriptor metadata
+ * remains occurrence-owned.
  *
  * It is deliberately **not** the delivery fact: what each watcher has been
  * told lives on that watcher (`deliveredDigest`), because an ordinary read by
@@ -124,6 +128,19 @@ type DynamicResourceContextState = {
     observedSize: number;
     /** Exact live host bindings retaining a surface mount context. */
     surfaceBindingReferences: number;
+    demandedSnapshot: Readonly<{ bytes: Uint8Array; digest: string }> | null;
+    inFlight: {
+        promise: Promise<Readonly<{ bytes: Uint8Array; digest: string }>>;
+        controller: AbortController;
+        consumers: Set<() => boolean>;
+    } | null;
+    readonly readDependencies: Set<DynamicResourceContextState>;
+    producer: {
+        controller: AbortController;
+        runtime: Promise<ContextDynamicResourceProducer>;
+        unsubscribe: (() => void) | null;
+        accountLifetimeToken: number | null;
+    } | null;
 };
 
 type AdmittedDynamicResource = {
@@ -152,10 +169,16 @@ type AdmittedDynamicResource = {
 
 type AdmittedResource = AdmittedPackagedResource | AdmittedDynamicResource;
 
-function deepFreezeJson(value: JsonValue): JsonValue {
+function deepFreezeJson<T extends JsonValue>(value: T): T {
     if (value === null || typeof value !== 'object' || Object.isFrozen(value)) return value;
     for (const nested of Object.values(value)) deepFreezeJson(nested);
     return Object.freeze(value);
+}
+
+function resourceContextSessionId(context: PluginResourceContextV1): string | null {
+    return context.kind === 'session' ? context.sessionId
+        : context.kind === 'surface' && context.target?.kind === 'session' ? context.target.sessionId
+            : null;
 }
 
 function createDynamicContextState(
@@ -168,27 +191,27 @@ function createDynamicContextState(
 ): DynamicResourceContextState {
     return {
         context: context.kind === 'session'
-            ? Object.freeze({ kind: 'session' as const, sessionId: context.sessionId })
+            ? Object.freeze({ kind: 'session' as const, sessionId: context.sessionId,
+                ...(context.target ? { target: deepFreezeJson(context.target) } : {}) })
             : context.kind === 'surface'
                 ? Object.freeze({
                     kind: 'surface' as const,
                     mountInstanceKey: context.mountInstanceKey,
                     launchInput: deepFreezeJson(normalizeStrictJsonValue(context.launchInput)),
+                    ...(context.target ? { target: deepFreezeJson(context.target) } : {}),
                 })
                 : Object.freeze({ kind: 'global' as const }),
-        sessionAccessAccountId: context.kind === 'session'
-            ? sessionAccess?.accountId ?? null
-            : null,
-        sessionAccessWitnessCursor: context.kind === 'session'
-            ? sessionAccess?.throughCursor ?? null
-            : null,
-        sessionAccessAdmission: context.kind === 'session'
-            ? sessionAccess?.admission ?? null
-            : null,
+        sessionAccessAccountId: sessionAccess?.accountId ?? null,
+        sessionAccessWitnessCursor: sessionAccess?.throughCursor ?? null,
+        sessionAccessAdmission: sessionAccess?.admission ?? null,
         observedAccountLifetimeToken: null,
         observedDigest: '',
         observedSize: 0,
         surfaceBindingReferences: 0,
+        demandedSnapshot: null,
+        inFlight: null,
+        readDependencies: new Set(),
+        producer: null,
     };
 }
 
@@ -216,6 +239,7 @@ function resourceDescriptor(
  */
 /** The registered runtime behind one dynamic resource, derived from the canonical registration union. */
 type PluginDynamicResourceRuntime = Extract<PluginRuntimeRegistration, { family: 'resources' }>['value'];
+type ContextDynamicResourceProducer = Awaited<ReturnType<NonNullable<PluginDynamicResourceRuntime['createProducer']>>>;
 
 export type StableDynamicPluginResourceProducer = Readonly<{
     pluginId: string;
@@ -234,6 +258,22 @@ export type BindDynamicResourceAccountStorage = (input: Readonly<{
     signal: AbortSignal;
     isOccurrenceCurrent(): boolean | Promise<boolean>;
 }>) => PluginAccountStorageScope | undefined;
+
+export type BindDynamicResourceActions = (input: Readonly<{
+    pluginId: string;
+    resourceId: string;
+    occurrenceId: string;
+    context: PluginResourceContextV1;
+    signal: AbortSignal;
+    isOccurrenceCurrent(): boolean | Promise<boolean>;
+    /** Retire this exact callback authority; live observation also reattaches its existing demand. */
+    retireObservation?(): void;
+}>) => Pick<PluginDynamicResourceInvocationOptionsV1, 'readAction' | 'observeAction'>;
+
+const unavailableResourceActions: Pick<PluginDynamicResourceInvocationOptionsV1, 'readAction' | 'observeAction'> = Object.freeze({
+    async readAction() { return fail('plugin_action_registry_unavailable', 'Resource Action reads are unavailable'); },
+    async observeAction() { return fail('plugin_action_registry_unavailable', 'Resource Action observation is unavailable'); },
+});
 
 /**
  * The one bounded Resource availability fact a bound UI surface may consume.
@@ -302,7 +342,7 @@ async function withStableResourceErrors<T>(operation: () => Promise<T>): Promise
         return await operation();
     } catch (error) {
         if (isPluginError(error)) throw error;
-        throw new PluginError({ code: 'plugin_resource_io_failed', message: 'Resource operation failed' }, { cause: error });
+        throw new PluginError({ code: 'plugin_resource_io_failed', message: 'Resource operation failed', retryable: true }, { cause: error });
     }
 }
 
@@ -487,7 +527,7 @@ function normalizeImmutableContribution(params: Readonly<{
             pluginId: identity.pluginId,
             pluginRootPath: boundedString(
                 params.pluginRootPath,
-                4_096,
+                null,
             ),
             id: identity.localId,
             kind: resourceKind(
@@ -504,11 +544,11 @@ function normalizeImmutableContribution(params: Readonly<{
                 ? null
                 : boundedString(
                     ownData(params.declaration, 'path'),
-                    4_096,
+                    null,
                 ),
             contentType: boundedString(
                 ownData(params.declaration, 'contentType'),
-                512,
+                null,
             ),
             digest: declaredSource === 'dynamic'
                 ? null
@@ -752,7 +792,11 @@ async function readDynamicBytes(
     guard: () => void,
     signal: AbortSignal,
     isOccurrenceCurrent: () => boolean | Promise<boolean>,
+    resources: PluginResourcesService,
+    retireObservation: () => void,
     bindAccountStorage?: BindDynamicResourceAccountStorage,
+    bindActions?: BindDynamicResourceActions,
+    runtime: Pick<PluginDynamicResourceRuntime, 'read' | 'observe'> = resource.runtime,
 ): Promise<Readonly<{ bytes: Uint8Array; digest: string }>> {
     guard();
     if (!await isOccurrenceCurrent()) {
@@ -776,9 +820,13 @@ async function readDynamicBytes(
     const runtimeOptions = Object.freeze({
         signal,
         context: context.context,
+        resources,
         ...(accountStorage === undefined ? {} : { accountStorage }),
+        ...(bindActions?.({ pluginId: resource.pluginId, resourceId: resource.id,
+            occurrenceId: resource.occurrenceId, context: context.context, signal, isOccurrenceCurrent,
+            retireObservation }) ?? unavailableResourceActions),
     });
-    const produced = await withStableResourceErrors(async () => await resource.runtime.read(
+    const produced = await withStableResourceErrors(async () => await runtime.read(
         runtimeOptions,
     ));
     if (!await isOccurrenceCurrent()) {
@@ -790,74 +838,6 @@ async function readDynamicBytes(
         return fail('plugin_resource_too_large', 'Resource read exceeds its byte limit');
     }
     return Object.freeze({ bytes, digest: computePluginResourceDigest(bytes) });
-}
-
-/**
- * The admission read of one dynamic producer inherits a supplied startup
- * deadline through the shared timeout owner. Cancellation is delivered to the
- * producer as an abort signal rather than only abandoned, so a well-behaved
- * `read()` can release whatever it was waiting on.
- */
-async function readAdmissionBytes(
-    resource: AdmittedDynamicResource,
-    context: DynamicResourceContextState,
-    deadlineMs: number | null,
-    bindAccountStorage?: BindDynamicResourceAccountStorage,
-    isBindingCurrent?: () => boolean | Promise<boolean>,
-): Promise<Readonly<{ bytes: Uint8Array; digest: string }>> {
-    const remainingMs = deadlineMs === null ? null : deadlineMs - performance.now();
-    if (remainingMs !== null && remainingMs <= 0) {
-        throw new PluginError({
-            code: 'plugin_resource_producer_timed_out',
-            message: 'Dynamic resource producer did not answer within its admission budget',
-        });
-    }
-    const controller = new AbortController();
-    let bindingCurrent = true;
-    const isLiveBindingCurrent = async (): Promise<boolean> => (
-        !controller.signal.aborted
-        && (isBindingCurrent === undefined || await isBindingCurrent())
-    );
-    const assertBindingCurrent = async (): Promise<void> => {
-        bindingCurrent = await isLiveBindingCurrent();
-        if (!bindingCurrent) {
-            return fail('plugin_generation_stale', 'Plugin occurrenceId is stale');
-        }
-    };
-    try {
-        await assertBindingCurrent();
-        return await runWithOptionalTimeout(
-            remainingMs,
-            async () => {
-                const observed = await readDynamicBytes(
-                    resource,
-                    context,
-                    MAX_PLUGIN_RESOURCE_BYTES,
-                    () => {
-                        if (!bindingCurrent || controller.signal.aborted) {
-                            return fail('plugin_generation_stale', 'Plugin occurrenceId is stale');
-                        }
-                    },
-                    controller.signal,
-                    isLiveBindingCurrent,
-                    bindAccountStorage,
-                );
-                await assertBindingCurrent();
-                return observed;
-            },
-            () => new PluginError({
-                code: 'plugin_resource_producer_timed_out',
-                message: 'Dynamic resource producer did not answer within its admission budget',
-            }),
-        );
-    } catch (error) {
-        controller.abort(error);
-        throw error;
-    } finally {
-        // Account storage is vended only for this admission callback. Any
-        // scope retained by plugin code becomes unusable as soon as it settles.
-        controller.abort();
-    }
 }
 
 function readLimit(value: unknown): number {
@@ -908,6 +888,7 @@ export async function createStablePluginResourcesOwner(params: Readonly<{
     isDynamicOccurrenceCurrent?: (pluginId: string, occurrenceId: string) => boolean | Promise<boolean>;
     dynamicProducers?: readonly StableDynamicPluginResourceProducer[];
     bindDynamicResourceAccountStorage?: BindDynamicResourceAccountStorage;
+    bindDynamicResourceActions?: BindDynamicResourceActions;
     resolveSessionResourceAccess?: ResolveSessionResourceAccess;
     isPluginCurrent?: (pluginId: string) => boolean | Promise<boolean>;
 }>): Promise<StablePluginResourcesOwner> {
@@ -929,6 +910,7 @@ export async function createStablePluginResourcesOwner(params: Readonly<{
         ...(params.bindDynamicResourceAccountStorage
             ? { bindDynamicResourceAccountStorage: params.bindDynamicResourceAccountStorage }
             : {}),
+        ...(params.bindDynamicResourceActions ? { bindDynamicResourceActions: params.bindDynamicResourceActions } : {}),
         ...(params.resolveSessionResourceAccess
             ? { resolveSessionResourceAccess: params.resolveSessionResourceAccess }
             : {}),
@@ -951,6 +933,7 @@ export async function createStableImmutablePluginResourcesOwner(
         brandMonochrome?: boolean;
         dynamicProducers?: readonly StableDynamicPluginResourceProducer[];
         bindDynamicResourceAccountStorage?: BindDynamicResourceAccountStorage;
+        bindDynamicResourceActions?: BindDynamicResourceActions;
         resolveSessionResourceAccess?: ResolveSessionResourceAccess;
         isOccurrenceCurrent?: () => boolean | Promise<boolean>;
     }>,
@@ -988,6 +971,7 @@ export async function createStableImmutablePluginResourcesOwner(
         ...(params.bindDynamicResourceAccountStorage
             ? { bindDynamicResourceAccountStorage: params.bindDynamicResourceAccountStorage }
             : {}),
+        ...(params.bindDynamicResourceActions ? { bindDynamicResourceActions: params.bindDynamicResourceActions } : {}),
         ...(params.resolveSessionResourceAccess
             ? { resolveSessionResourceAccess: params.resolveSessionResourceAccess }
             : {}),
@@ -1082,6 +1066,7 @@ async function createStablePluginResourcesOwnerFromNormalized(
         isDynamicOccurrenceCurrent?: (pluginId: string, occurrenceId: string) => boolean | Promise<boolean>;
         dynamicProducers: readonly StableDynamicPluginResourceProducer[];
         bindDynamicResourceAccountStorage?: BindDynamicResourceAccountStorage;
+        bindDynamicResourceActions?: BindDynamicResourceActions;
         resolveSessionResourceAccess?: ResolveSessionResourceAccess;
         isPluginCurrent?: (pluginId: string) => boolean | Promise<boolean>;
     }>,
@@ -1273,7 +1258,7 @@ async function createStablePluginResourcesOwnerFromNormalized(
     function captureDynamicResourceAccountLifetime(
         resource: AdmittedDynamicResource,
     ): number | null {
-        return resource.hostAccessRequests.length > 0
+        return resource.hostAccessRequests.length > 0 || params.bindDynamicResourceActions !== undefined
             ? getActiveAccountSettingsSnapshotLifetimeToken()
             : null;
     }
@@ -1282,7 +1267,7 @@ async function createStablePluginResourcesOwnerFromNormalized(
         resource: AdmittedDynamicResource,
         accountLifetimeToken: number | null,
     ): boolean {
-        return resource.hostAccessRequests.length === 0
+        return resource.hostAccessRequests.length === 0 && params.bindDynamicResourceActions === undefined
             || (
                 accountLifetimeToken !== null
                 && accountLifetimeToken === getActiveAccountSettingsSnapshotLifetimeToken()
@@ -1302,6 +1287,7 @@ async function createStablePluginResourcesOwnerFromNormalized(
         context.observedAccountLifetimeToken = null;
         context.observedSize = 0;
         context.observedDigest = '';
+        clearDemandedDynamicBytes(context);
     }
 
     function admitDynamicObservation(
@@ -1314,6 +1300,7 @@ async function createStablePluginResourcesOwnerFromNormalized(
         context.observedAccountLifetimeToken = accountLifetimeToken;
         context.observedDigest = observed.digest;
         context.observedSize = observed.bytes.byteLength;
+        if (dynamicWatches.has(context)) context.demandedSnapshot = observed;
         return true;
     }
 
@@ -1334,13 +1321,17 @@ async function createStablePluginResourcesOwnerFromNormalized(
         let observed: Readonly<{ bytes: Uint8Array; digest: string }>;
         const admissionStartedAt = Date.now();
         try {
-            observed = await readAdmissionBytes(
-                dynamic,
-                context,
-                null,
-                params.bindDynamicResourceAccountStorage,
-                isAdmissionCurrent,
-            );
+            const controller = new AbortController();
+            try {
+                observed = await readSharedDynamicBytes(dynamic, context, controller.signal, () => {
+                    if (!isDynamicResourceAccountLifetimeCurrent(dynamic, accountLifetimeToken)) {
+                        return fail('plugin_generation_stale', 'Plugin occurrenceId is stale');
+                    }
+                });
+                if (!await isAdmissionCurrent()) return fail('plugin_generation_stale', 'Plugin occurrenceId is stale');
+            } finally {
+                controller.abort();
+            }
         } catch (error) {
             // The sole active Account lifetime changed while this callback was
             // in flight. Its old bytes are not an admission failure for B and
@@ -1382,7 +1373,6 @@ async function createStablePluginResourcesOwnerFromNormalized(
             const prepareRuntime = dynamic.prepareRuntime;
             dynamic.preparation = (async () => {
                 await prepareRuntime();
-                await admitGlobalDynamicResource(dynamic);
             })();
         }
         const preparation = dynamic.preparation;
@@ -1397,23 +1387,6 @@ async function createStablePluginResourcesOwnerFromNormalized(
     }
     // Session and surface declarations remain structural until an exact host
     // binding requests them; only global declarations run here.
-    const globalDynamicResources = admittedDynamicResources.filter((dynamic) => (
-        dynamic.globalContext && !dynamic.prepareRuntime
-    ));
-    const admissionConcurrency = Math.min(
-        globalDynamicResources.length,
-        Math.max(1, Math.floor(MAX_PLUGIN_RESOURCE_ADMISSION_BYTES / MAX_PLUGIN_RESOURCE_BYTES)),
-    );
-    let nextAdmissionIndex = 0;
-    const admissions = await Promise.allSettled(Array.from({ length: admissionConcurrency }, async () => {
-        while (nextAdmissionIndex < globalDynamicResources.length) {
-            const dynamic = globalDynamicResources[nextAdmissionIndex++];
-            await admitGlobalDynamicResource(dynamic!);
-        }
-    }));
-    const rejectedAdmission = admissions.find((result) => result.status === 'rejected');
-    if (rejectedAdmission?.status === 'rejected') throw rejectedAdmission.reason;
-
     const retiredPluginIds = new Set<string>();
     const admittedPluginIds = new Set([
         ...immutableGenerationIdsByPluginId.keys(),
@@ -1427,12 +1400,14 @@ async function createStablePluginResourcesOwnerFromNormalized(
         readonly releaseContext: () => void;
         /** Ends the exact host watch when its Session context is retired. */
         readonly onSessionResourceUnavailable?: () => void;
+        readonly onReadAuthorityRetired?: () => void;
         deliveredDigest: string;
     };
     type DynamicWatch = {
         readonly resource: AdmittedDynamicResource;
         readonly context: DynamicResourceContextState;
         readonly watchers: Set<DynamicWatcher>;
+        readonly dependencies: Map<DynamicResourceContextState, number>;
         /** Cancels every settlement read when this exact watch loses ownership. */
         readonly settlementController: AbortController;
         /**
@@ -1444,6 +1419,9 @@ async function createStablePluginResourcesOwnerFromNormalized(
         /** Present only while this Account-backed Resource watch is active. */
         accountChangeUnsubscribe: (() => void) | null;
         producerSubscription: Disposable | null;
+        producerAttachment: Promise<Disposable> | null;
+        /** The final release result, retained for aborted and repeatedly disposed handles. */
+        cleanupPromise: Promise<void> | null;
         settling: boolean;
         pending: boolean;
         /** One same-digest wake drives stale LKG; success wakes recovery once. */
@@ -1453,6 +1431,218 @@ async function createStablePluginResourcesOwnerFromNormalized(
     };
     /** One producer observation per exact Resource context, never per plugin/session globally. */
     const dynamicWatches = new Map<DynamicResourceContextState, DynamicWatch>();
+
+    function clearDemandedDynamicBytes(context: DynamicResourceContextState): void {
+        context.demandedSnapshot = null;
+        context.inFlight?.controller.abort();
+        context.inFlight = null;
+        context.readDependencies.clear();
+    }
+
+    function retireContextProducer(context: DynamicResourceContextState): void {
+        const held = context.producer;
+        if (!held) return;
+        context.producer = null;
+        held.controller.abort();
+        held.unsubscribe?.();
+        void held.runtime.then(producer => producer.dispose(), () => undefined).catch(() => undefined);
+    }
+
+    async function contextRuntime(resource: AdmittedDynamicResource, context: DynamicResourceContextState): Promise<Pick<PluginDynamicResourceRuntime, 'read' | 'observe'>> {
+        const createProducer = resource.runtime.createProducer;
+        if (!createProducer) return resource.runtime;
+        if (context.producer && !isDynamicResourceAccountLifetimeCurrent(resource, context.producer.accountLifetimeToken)) {
+            retireContextProducer(context);
+        }
+        if (!context.producer) {
+            const controller = new AbortController();
+            const accountLifetimeToken = captureDynamicResourceAccountLifetime(resource);
+            const isCurrent = () => !controller.signal.aborted && !retiredPluginIds.has(resource.pluginId)
+                && isDynamicContextCurrent(resource, context)
+                && isDynamicResourceAccountLifetimeCurrent(resource, accountLifetimeToken);
+            const retireAuthority = () => {
+                if (context.producer?.controller !== controller) return;
+                const watch = dynamicWatches.get(context);
+                if (watch) {
+                    rebindDynamicResourceAccountStorageWatch(watch);
+                    return;
+                }
+                retireContextProducer(context);
+                clearDemandedDynamicBytes(context);
+            };
+            // Publish custody before invoking plugin code, including synchronous
+            // factories. Late asynchronous creation is disposed by the same owner.
+            const runtime = Promise.resolve().then(async () => {
+                if (!isCurrent()) return fail('plugin_resource_context_unavailable', 'Resource context is unavailable');
+                const producer = await createProducer.call(resource.runtime, {
+                    signal: controller.signal, context: context.context,
+                    ...(params.bindDynamicResourceActions?.({ pluginId: resource.pluginId,
+                        resourceId: resource.id, occurrenceId: resource.occurrenceId, context: context.context,
+                        signal: controller.signal, isOccurrenceCurrent: composeAccountStorageCurrentness(resource, isCurrent),
+                        retireObservation: retireAuthority }) ?? unavailableResourceActions),
+                });
+                if (!producer || typeof producer.read !== 'function' || typeof producer.observe !== 'function'
+                    || typeof producer.dispose !== 'function') {
+                    return fail('plugin_resource_producer_invalid', 'Resource context producer is invalid');
+                }
+                return producer;
+            });
+            const held = { controller, runtime, unsubscribe: null as (() => void) | null, accountLifetimeToken };
+            context.producer = held;
+            held.unsubscribe = subscribeActiveAccountSettingsKeys({}, () => {
+                if (!isDynamicResourceAccountLifetimeCurrent(resource, accountLifetimeToken)) retireAuthority();
+            });
+            void runtime.catch(() => {
+                if (context.producer === held) retireContextProducer(context);
+            });
+        }
+        const held = context.producer;
+        const runtime = await withStableResourceErrors(() => held.runtime);
+        if (held.controller.signal.aborted || context.producer !== held) {
+            return fail('plugin_resource_context_unavailable', 'Resource context is unavailable');
+        }
+        return runtime;
+    }
+
+    function bindOwnResources(
+        resource: AdmittedDynamicResource,
+        context: DynamicResourceContextState,
+        signal: AbortSignal,
+        readChain: readonly DynamicResourceContextState[],
+    ): PluginResourcesService {
+        const bind = (id: string): PluginResourcesService => {
+            const target = admittedByPlugin.get(resource.pluginId)?.get(id);
+            const binding: BindPluginResources = {
+                pluginId: resource.pluginId,
+                signal,
+                isOccurrenceCurrent: () => !signal.aborted
+                    && !retiredPluginIds.has(resource.pluginId)
+                    && isDynamicContextCurrent(resource, context),
+                context: context.context,
+                ...(context.sessionAccessAdmission ? { sessionAccessAdmission: context.sessionAccessAdmission } : {}),
+                readChain,
+                preferDemandedSnapshot: true,
+                onReadAuthorityRetired() {
+                    const parent = dynamicWatches.get(context);
+                    if (!parent || parent.callbackController.signal !== signal || !isDynamicWatchCurrent(parent)) return;
+                    rebindDynamicResourceAccountStorageWatch(parent);
+                },
+            };
+            if (target?.source === 'dynamic' && context.context.kind === 'surface') {
+                return resourceOwner.bind({ ...binding,
+                    surfaceAccessAdmission: admitSurfaceResourceBinding(binding, target, context.context) });
+            }
+            return resourceOwner.bind(binding);
+        };
+        return Object.freeze({
+            describe(id) { return bind(id).describe(id); },
+            async read(id, options) { return await bind(id).read(id, options); },
+            async watch(id, listener) { return await bind(id).watch(id, listener); },
+        } satisfies PluginResourcesService);
+    }
+
+    function reachesReadDependency(from: DynamicResourceContextState, target: DynamicResourceContextState,
+        visited = new Set<DynamicResourceContextState>()): boolean {
+        if (from === target) return true;
+        if (visited.has(from)) return false;
+        visited.add(from);
+        return [...from.readDependencies].some((dependency) => reachesReadDependency(dependency, target, visited));
+    }
+
+    function reachesWatchDependency(from: DynamicResourceContextState, target: DynamicResourceContextState,
+        visited = new Set<DynamicResourceContextState>()): boolean {
+        if (from === target) return true;
+        if (visited.has(from)) return false;
+        visited.add(from);
+        return [...(dynamicWatches.get(from)?.dependencies.keys() ?? [])]
+            .some((dependency) => reachesWatchDependency(dependency, target, visited));
+    }
+
+    async function readSharedDynamicBytes(
+        resource: AdmittedDynamicResource,
+        context: DynamicResourceContextState,
+        signal: AbortSignal,
+        guard: () => void,
+        preferDemandedSnapshot = false,
+        readChain: readonly DynamicResourceContextState[] = [],
+    ): Promise<Readonly<{ bytes: Uint8Array; digest: string }>> {
+        guard();
+        const parent = readChain.at(-1);
+        if (readChain.includes(context) || (parent && reachesReadDependency(context, parent))) {
+            return fail('plugin_resource_dependency_cycle', 'Resource dependency contains a cycle');
+        }
+        parent?.readDependencies.add(context);
+        if (!context.inFlight && preferDemandedSnapshot && context.demandedSnapshot) {
+            return context.demandedSnapshot;
+        }
+        const consumerCurrent = () => {
+            try { guard(); return true; } catch { return false; }
+        };
+        if (!context.inFlight) {
+            const controller = new AbortController();
+            const accountLifetimeToken = captureDynamicResourceAccountLifetime(resource);
+            const consumers = new Set([consumerCurrent]);
+            const isCurrent = () => !controller.signal.aborted
+                && !retiredPluginIds.has(resource.pluginId)
+                && isDynamicContextCurrent(resource, context)
+                && isDynamicResourceAccountLifetimeCurrent(resource, accountLifetimeToken)
+                && [...consumers].some((isConsumerCurrent) => isConsumerCurrent());
+            const assertCurrent = () => {
+                if (!isCurrent()) return fail('plugin_resource_context_unavailable', 'Resource context is unavailable');
+            };
+            const promise = contextRuntime(resource, context).then(runtime => readDynamicBytes(resource, context, MAX_PLUGIN_RESOURCE_BYTES,
+                assertCurrent, controller.signal, composeAccountStorageCurrentness(resource, isCurrent),
+                bindOwnResources(resource, context, controller.signal, [...readChain, context]),
+                () => controller.abort(),
+                params.bindDynamicResourceAccountStorage, params.bindDynamicResourceActions, runtime)).then((observed) => {
+                    assertCurrent();
+                    // Publish to the demanded owner before releasing in-flight
+                    // custody, so a dependent read cannot fall between them.
+                    admitDynamicObservation(resource, context, observed, accountLifetimeToken);
+                    return observed;
+                });
+            const held = { promise, controller, consumers };
+            context.inFlight = held;
+            void promise.finally(() => {
+                if (context.inFlight === held) {
+                    context.inFlight = null;
+                    context.readDependencies.clear();
+                }
+                controller.abort();
+            }).catch(() => undefined);
+        }
+        const held = context.inFlight;
+        held.consumers.add(consumerCurrent);
+        const releaseConsumer = () => {
+            held.consumers.delete(consumerCurrent);
+            if (held.consumers.size === 0 && context.inFlight === held) {
+                held.controller.abort();
+                context.inFlight = null;
+                context.readDependencies.clear();
+            }
+        };
+        let onAbort: (() => void) | undefined;
+        try {
+            const observed = await Promise.race([held.promise, new Promise<never>((_resolve, reject) => {
+                onAbort = () => {
+                    releaseConsumer();
+                    reject(new PluginError({ code: 'plugin_resource_aborted', message: 'Resource operation was aborted' }));
+                };
+                if (signal.aborted) onAbort();
+                else signal.addEventListener('abort', onAbort, { once: true });
+            })]);
+            guard();
+            return observed;
+        } catch (error) {
+            // A joined acquisition has several callers; preserve this exact
+            // caller's cancellation/currentness result at its own boundary.
+            guard();
+            throw error;
+        } finally {
+            if (onAbort) signal.removeEventListener('abort', onAbort);
+            releaseConsumer();
+        }
+    }
     let sessionAccessAccountId: string | null = null;
     let sessionAccessWitnessCursor: number | null = null;
     let sessionAccessWitnessAvailable = false;
@@ -1619,7 +1809,8 @@ async function createStablePluginResourcesOwnerFromNormalized(
         right: Extract<PluginResourceContextV1, { kind: 'surface' }>,
     ): boolean {
         if (left.mountInstanceKey !== right.mountInstanceKey) return false;
-        return pluginJsonValuesEqual(left.launchInput, right.launchInput);
+        return pluginJsonValuesEqual(left.launchInput, right.launchInput)
+            && pluginJsonValuesEqual(left.target ?? null, right.target ?? null);
     }
 
     function requireContextForDynamicResource(
@@ -1647,6 +1838,7 @@ async function createStablePluginResourcesOwnerFromNormalized(
                 || surfaceAccessAdmission.context.context.kind !== 'surface'
                 || resource.surfaceContexts.get(boundContext.mountInstanceKey) !== surfaceAccessAdmission.context
                 || !surfaceContextsMatch(surfaceAccessAdmission.context.context, boundContext)
+                || !isDynamicContextCurrent(resource, surfaceAccessAdmission.context)
             ) {
                 return fail('plugin_resource_context_unavailable', 'Resource context is unavailable');
             }
@@ -1656,6 +1848,9 @@ async function createStablePluginResourcesOwnerFromNormalized(
             return fail('plugin_resource_context_unavailable', 'Resource context is unavailable');
         }
         const existing = resource.sessionContexts.get(boundContext.sessionId);
+        if (existing && !pluginJsonValuesEqual(existing.context, boundContext)) {
+            return fail('plugin_resource_context_unavailable', 'Resource context is unavailable');
+        }
         // A context already held by this exact admission continues through
         // later carrier pages until its own Session is retired. A page is not
         // an inventory, so its omission cannot invalidate another live
@@ -1684,13 +1879,13 @@ async function createStablePluginResourcesOwnerFromNormalized(
     ): boolean {
         if (resource.scope === 'global') return resource.globalContext === context;
         if (resource.scope === 'surface') {
-            return context.context.kind === 'surface'
-                && resource.surfaceContexts.get(context.context.mountInstanceKey) === context;
-        }
+            if (context.context.kind !== 'surface'
+                || resource.surfaceContexts.get(context.context.mountInstanceKey) !== context) return false;
+            if (resourceContextSessionId(context.context) === null) return true;
+        } else if (context.context.kind !== 'session'
+            || resource.sessionContexts.get(context.context.sessionId) !== context) return false;
         if (
-            context.context.kind !== 'session'
-            || resource.sessionContexts.get(context.context.sessionId) !== context
-            || !sessionAccessWitnessAvailable
+            !sessionAccessWitnessAvailable
             || context.sessionAccessAccountId === null
             || context.sessionAccessWitnessCursor === null
             || context.sessionAccessAccountId !== sessionAccessAccountId
@@ -1714,6 +1909,9 @@ async function createStablePluginResourcesOwnerFromNormalized(
             return false;
         }
         resource.surfaceContexts.delete(context.context.mountInstanceKey);
+        retireContextProducer(context);
+        clearDemandedDynamicBytes(context);
+        if (context.sessionAccessAdmission) context.sessionAccessAdmission.revoked = true;
         context.observedAccountLifetimeToken = null;
         context.observedSize = 0;
         context.observedDigest = '';
@@ -1732,6 +1930,8 @@ async function createStablePluginResourcesOwnerFromNormalized(
             return false;
         }
         resource.sessionContexts.delete(context.context.sessionId);
+        retireContextProducer(context);
+        clearDemandedDynamicBytes(context);
         if (context.sessionAccessAdmission) context.sessionAccessAdmission.revoked = true;
         context.observedAccountLifetimeToken = null;
         context.observedSize = 0;
@@ -1786,6 +1986,7 @@ async function createStablePluginResourcesOwnerFromNormalized(
         watch: DynamicWatch,
         context: DynamicResourceContextState,
         callbackController: AbortController,
+        error?: unknown,
     ): Promise<boolean> {
         if (!await isDynamicWatchSettlementCurrent(watch, callbackController)) return false;
         if (!watch.failureWakeDelivered && context.observedDigest !== '') {
@@ -1794,6 +1995,9 @@ async function createStablePluginResourcesOwnerFromNormalized(
             deliverDynamicWatchers(watch, context.observedDigest, true);
         }
         if (!isDynamicWatchCurrent(watch, callbackController)) return false;
+        // A typed refusal settles this refresh. Keep the producer observation
+        // for a real readiness/change signal instead of polling the same read.
+        if (isPluginError(error) && !error.retryable) return false;
         await waitForDynamicResettlementRetry(watch);
         return isDynamicWatchCurrent(watch, callbackController);
     }
@@ -1804,6 +2008,7 @@ async function createStablePluginResourcesOwnerFromNormalized(
     ): void {
         const watch = dynamicWatches.get(context);
         if (!watch || watch.resource !== resource || !isDynamicWatchCurrent(watch)) return;
+        context.demandedSnapshot = null;
         if (watch.settling) {
             watch.pending = true;
             return;
@@ -1817,11 +2022,8 @@ async function createStablePluginResourcesOwnerFromNormalized(
                     watch.pending = false;
                     if (watch.producerSubscription === null) {
                         try {
-                            watch.producerSubscription = observeCurrentDynamicProducer(
-                                resource,
-                                context,
-                                watch,
-                            );
+                            await ensureDynamicProducer(watch);
+                            if (!isDynamicWatchCurrent(watch, callbackController)) return;
                         } catch (error) {
                             if (!isPendingInitialAccountDataUnavailable(resource, error)) {
                                 terminateDynamicWatchAfterProducerFailure(watch);
@@ -1840,33 +2042,27 @@ async function createStablePluginResourcesOwnerFromNormalized(
                         // settlement merely because `observe()` remains live.
                         const settlementReadController = new AbortController();
                         try {
-                            observed = await readDynamicBytes(
+                            observed = await readSharedDynamicBytes(
                                 resource,
                                 context,
-                                MAX_PLUGIN_RESOURCE_BYTES,
-                                () => guardDynamicWatchCurrent(watch, callbackController),
                                 AbortSignal.any([
                                     watch.settlementController.signal,
                                     callbackController.signal,
                                     settlementReadController.signal,
                                 ]),
-                                composeAccountStorageCurrentness(watch.resource, () => (
-                                    !settlementReadController.signal.aborted
-                                    && isDynamicWatchCurrent(watch, callbackController)
-                                    && isDynamicResourceAccountLifetimeCurrent(resource, accountLifetimeToken)
-                                )),
-                                params.bindDynamicResourceAccountStorage,
+                                () => guardDynamicWatchCurrent(watch, callbackController),
                             );
                         } finally {
                             settlementReadController.abort();
                         }
-                    } catch {
-                        // Producer and admission failures share one stale/LKG
-                        // episode and one retry cadence at the watch owner.
+                    } catch (error) {
+                        // Surface one stale/LKG episode; only transient failures
+                        // use the watch owner's retry cadence.
                         if (!await retryDynamicWatchAfterSettlementFailure(
                             watch,
                             context,
                             callbackController,
+                            error,
                         )) return;
                         continue;
                     }
@@ -1914,16 +2110,34 @@ async function createStablePluginResourcesOwnerFromNormalized(
     function releaseDynamicWatch(
         context: DynamicResourceContextState,
         watch: DynamicWatch,
-    ): void {
+    ): Promise<void> {
+        if (watch.cleanupPromise) return watch.cleanupPromise;
+        let completeCleanup!: () => void;
+        let rejectCleanup!: (error: unknown) => void;
+        const cleanup = new Promise<void>((resolve, reject) => {
+            completeCleanup = resolve;
+            rejectCleanup = reject;
+        });
+        watch.cleanupPromise = cleanup;
+        // Synchronous retirement starts cleanup without awaiting it. Keep its
+        // rejection observed while returning the original result to awaiters.
+        void cleanup.catch(() => undefined);
         watch.accountChangeUnsubscribe?.();
         watch.accountChangeUnsubscribe = null;
         watch.callbackController.abort();
         watch.settlementController.abort();
         if (dynamicWatches.get(context) === watch) dynamicWatches.delete(context);
+        context.demandedSnapshot = null;
         cancelDynamicResettlementRetry(watch);
         const subscription = watch.producerSubscription;
         watch.producerSubscription = null;
-        subscription?.dispose();
+        watch.producerAttachment = null;
+        try {
+            void Promise.resolve(subscription?.dispose()).then(completeCleanup, rejectCleanup);
+        } catch (error) {
+            rejectCleanup(error);
+        }
+        return cleanup;
     }
 
     function retireDynamicSessionContext(
@@ -1934,7 +2148,9 @@ async function createStablePluginResourcesOwnerFromNormalized(
         // Delete the exact context before a producer's disposal callback can
         // run. A producer that ignores abort therefore loses both its signal
         // and the Resource-map identity needed to mutate/deliver after await.
-        if (!releaseSessionDynamicContext(resource, context)) return;
+        if (!(resource.scope === 'surface'
+            ? releaseSurfaceDynamicContext(resource, context)
+            : releaseSessionDynamicContext(resource, context))) return;
         if (!watch || watch.resource !== resource) return;
         const watchers = [...watch.watchers];
         // The public Resource watch API is digest-only, but the host UI watch
@@ -1972,20 +2188,21 @@ async function createStablePluginResourcesOwnerFromNormalized(
 
     function retireSessionContexts(sessionId: string): void {
         for (const resource of admittedDynamicResources) {
-            if (resource.scope !== 'session') continue;
             const context = resource.sessionContexts.get(sessionId);
             if (context) retireDynamicSessionContext(resource, context);
+            for (const surface of [...resource.surfaceContexts.values()]) {
+                if (resourceContextSessionId(surface.context) === sessionId) retireDynamicSessionContext(resource, surface);
+            }
         }
     }
 
     function retireAllSessionContexts(): void {
         for (const resource of admittedDynamicResources) {
-            if (resource.scope !== 'session') continue;
             for (const context of [...resource.sessionContexts.values()]) {
                 retireDynamicSessionContext(resource, context);
             }
             for (const context of [...resource.surfaceContexts.values()]) {
-                retireDynamicSurfaceContext(resource, context);
+                if (resourceContextSessionId(context.context) !== null) retireDynamicSessionContext(resource, context);
             }
         }
     }
@@ -2045,25 +2262,26 @@ async function createStablePluginResourcesOwnerFromNormalized(
         context: DynamicResourceContextState,
         watch: DynamicWatch,
         watcher: DynamicWatcher,
-    ): void {
-        if (!watch.watchers.delete(watcher)) return;
-        if (watch.watchers.size === 0) releaseDynamicWatch(context, watch);
+    ): Promise<void> | void {
+        if (!watch.watchers.delete(watcher)) return watch.cleanupPromise ?? undefined;
+        const cleanup = watch.watchers.size === 0 ? releaseDynamicWatch(context, watch) : undefined;
         watcher.releaseContext();
+        return cleanup;
     }
 
     /**
      * The `observe()` boundary. A producer is trusted but not assumed
-     * well-formed: a synchronous throw becomes a typed resource failure, a
+     * well-formed: an attachment rejection becomes a typed resource failure, a
      * subscription that is not disposable is refused rather than stored, and
      * the returned handle makes repeated or late disposal harmless.
      */
-    function observeDynamicProducer(
+    async function observeDynamicProducer(
         resource: AdmittedDynamicResource,
         context: DynamicResourceContextState,
         notify: () => void,
         watch: DynamicWatch,
         callbackController: AbortController,
-    ): Disposable {
+    ): Promise<Disposable> {
         let produced: unknown;
         try {
             const accountStorage = params.bindDynamicResourceAccountStorage?.({
@@ -2083,12 +2301,23 @@ async function createStablePluginResourcesOwnerFromNormalized(
             ) {
                 return fail('plugin_account_storage_unavailable', 'Plugin Account storage is unavailable');
             }
-            produced = resource.runtime.observe(
+            const runtime = await contextRuntime(resource, context);
+            produced = await runtime.observe(
                 notify,
                 Object.freeze({
                     signal: callbackController.signal,
                     context: context.context,
+                    resources: bindOwnResources(resource, context, callbackController.signal, [context]),
                     ...(accountStorage === undefined ? {} : { accountStorage }),
+                    ...(params.bindDynamicResourceActions?.({
+                        pluginId: resource.pluginId, resourceId: resource.id, occurrenceId: resource.occurrenceId,
+                        context: context.context, signal: callbackController.signal,
+                        isOccurrenceCurrent: composeAccountStorageCurrentness(resource, () => isDynamicWatchCurrent(watch, callbackController)),
+                        retireObservation() {
+                            if (!isDynamicWatchCurrent(watch, callbackController)) return;
+                            rebindDynamicResourceAccountStorageWatch(watch);
+                        },
+                    }) ?? unavailableResourceActions),
                 }),
             );
         } catch (error) {
@@ -2109,13 +2338,18 @@ async function createStablePluginResourcesOwnerFromNormalized(
             return fail('plugin_resource_producer_invalid', 'Dynamic resource producer returned an invalid subscription');
         }
         const subscription = produced as Disposable;
+        if (!await isDynamicWatchSettlementCurrent(watch, callbackController)
+            || !isDynamicWatchCurrent(watch, callbackController)) {
+            try { await subscription.dispose(); } catch { /* Retirement still owns cleanup. */ }
+            return fail('plugin_resource_aborted', 'Resource observation was aborted');
+        }
         let disposed = false;
         return Object.freeze({
             dispose() {
                 if (disposed) return;
                 disposed = true;
                 try {
-                    subscription.dispose();
+                    return subscription.dispose();
                 } catch {
                     // Producer disposal failures never block retirement.
                 }
@@ -2127,7 +2361,7 @@ async function createStablePluginResourcesOwnerFromNormalized(
         resource: AdmittedDynamicResource,
         context: DynamicResourceContextState,
         watch: DynamicWatch,
-    ): Disposable {
+    ): Promise<Disposable> {
         const callbackController = watch.callbackController;
         return observeDynamicProducer(resource, context, () => {
             // A producer can retain and invoke an old callback after its
@@ -2138,28 +2372,47 @@ async function createStablePluginResourcesOwnerFromNormalized(
         }, watch, callbackController);
     }
 
+    function ensureDynamicProducer(watch: DynamicWatch): Promise<Disposable> {
+        if (watch.producerSubscription) return Promise.resolve(watch.producerSubscription);
+        if (watch.producerAttachment) return watch.producerAttachment;
+        const callbackController = watch.callbackController;
+        const pending = observeCurrentDynamicProducer(watch.resource, watch.context, watch).then(async (subscription) => {
+            if (!isDynamicWatchCurrent(watch, callbackController)) {
+                try { await subscription.dispose(); } catch { /* Retirement still owns cleanup. */ }
+                return fail('plugin_resource_aborted', 'Resource observation was aborted');
+            }
+            watch.producerSubscription = subscription;
+            return subscription;
+        }).finally(() => {
+            if (watch.producerAttachment === pending) watch.producerAttachment = null;
+        });
+        watch.producerAttachment = pending;
+        return pending;
+    }
+
     function rebindDynamicResourceAccountStorageWatch(watch: DynamicWatch): void {
         if (!isDynamicWatchCurrent(watch)) return;
         retireAccountBoundDynamicObservation(watch);
         const previousCallbackController = watch.callbackController;
         previousCallbackController.abort();
+        retireContextProducer(watch.context);
         const previousSubscription = watch.producerSubscription;
         watch.producerSubscription = null;
-        previousSubscription?.dispose();
-        watch.callbackController = new AbortController();
+        watch.producerAttachment = null;
         try {
-            watch.producerSubscription = observeCurrentDynamicProducer(
-                watch.resource,
-                watch.context,
-                watch,
-            );
-        } catch (error) {
-            // Account availability is represented by the existing settlement
-            // failure/LKG path. An Account publication must not throw out of
-            // its owner or leave an old producer binding alive.
-            if (!isPendingInitialAccountDataUnavailable(watch.resource, error)) {
-                terminateDynamicWatchAfterProducerFailure(watch);
-                return;
+            void Promise.resolve(previousSubscription?.dispose()).catch(() => {
+                // Cleanup cannot restore the retired authority or block its replacement.
+            });
+        } catch {
+            // The old callback is already aborted and fenced, even if disposal throws.
+        }
+        watch.callbackController = new AbortController();
+        for (const watcher of [...watch.watchers]) {
+            if (!watcher.isCurrent()) continue;
+            try {
+                watcher.onReadAuthorityRetired?.();
+            } catch {
+                // Withdrawal remains authoritative if a consumer has already retired.
             }
         }
         settleDynamicInvalidation(watch.resource, watch.context);
@@ -2173,14 +2426,14 @@ async function createStablePluginResourcesOwnerFromNormalized(
 
     function retireAccountBoundDynamicObservation(watch: DynamicWatch): void {
         const context = watch.context;
-        // This is called only from the Account-scope subscription held by an
-        // Account-backed Resource watch. Account B must never inherit A's
-        // descriptor or delivery baseline, even if its first B read is typed
-        // unavailable. Same-Account retries never enter this path.
+        // An Account switch or admitted Action-authority retirement revokes
+        // this callback's descriptor and delivery baseline. Its replacement
+        // must not inherit those facts even if its first read is unavailable.
         context.observedAccountLifetimeToken = null;
         context.observedSize = 0;
         context.observedDigest = '';
         watch.failureWakeDelivered = false;
+        clearDemandedDynamicBytes(context);
         for (const watcher of watch.watchers) watcher.deliveredDigest = '';
     }
 
@@ -2198,20 +2451,24 @@ async function createStablePluginResourcesOwnerFromNormalized(
         );
     }
 
-    function watchDynamic(
+    async function watchDynamic(
         resource: AdmittedDynamicResource,
         context: DynamicResourceContextState,
         watcher: DynamicWatcher,
-    ): Disposable {
+        signal: AbortSignal,
+    ): Promise<Disposable> {
         const existing = dynamicWatches.get(context);
         const held: DynamicWatch = existing ?? {
             resource,
             context,
             watchers: new Set(),
+            dependencies: new Map(),
             settlementController: new AbortController(),
             callbackController: new AbortController(),
             accountChangeUnsubscribe: null,
             producerSubscription: null,
+            producerAttachment: null,
+            cleanupPromise: null,
             settling: false,
             pending: false,
             failureWakeDelivered: false,
@@ -2225,33 +2482,42 @@ async function createStablePluginResourcesOwnerFromNormalized(
         if (!existing) dynamicWatches.set(context, held);
         held.watchers.add(watcher);
         if (!existing) {
-            if (resource.hostAccessRequests.length > 0) {
-                held.accountChangeUnsubscribe = subscribeActiveAccountSettingsSnapshot((previous, next) => {
+            if (!resource.runtime.createProducer
+                && (resource.hostAccessRequests.length > 0 || params.bindDynamicResourceActions !== undefined)) {
+                held.accountChangeUnsubscribe = subscribeActiveAccountSettingsKeys({}, (previous, next) => {
                     if ((previous?.scopeKey ?? null) === (next?.scopeKey ?? null)) return;
                     rebindDynamicResourceAccountStorageWatch(held);
                 });
             }
-            try {
-                held.producerSubscription = observeCurrentDynamicProducer(resource, context, held);
-            } catch (error) {
-                // Account publication is asynchronous during daemon startup.
-                // Keep the exact watch and its Account-change subscription so
-                // the existing rebind owner can attach the producer once the
-                // first Account becomes available. Other producer failures
-                // remain establishment failures and cannot poison a watch.
-                if (!isPendingInitialAccountDataUnavailable(resource, error)) {
-                    held.watchers.delete(watcher);
-                    releaseDynamicWatch(context, held);
-                    throw error;
-                }
+        }
+        const attachmentSignal = AbortSignal.any([signal, held.settlementController.signal, held.callbackController.signal]);
+        let onAbort: (() => void) | undefined;
+        try {
+            await Promise.race([ensureDynamicProducer(held), new Promise<never>((_resolve, reject) => {
+                onAbort = () => {
+                    releaseDynamicWatcher(context, held, watcher);
+                    reject(new PluginError({ code: 'plugin_resource_aborted', message: 'Resource observation was aborted' }));
+                };
+                if (attachmentSignal.aborted) onAbort();
+                else attachmentSignal.addEventListener('abort', onAbort, { once: true });
+            })]);
+            if (!isDynamicWatchCurrent(held) || !watcher.isCurrent()) {
+                return fail('plugin_resource_aborted', 'Resource observation was aborted');
             }
+        } catch (error) {
+            releaseDynamicWatcher(context, held, watcher);
+            throw error;
+        } finally {
+            if (onAbort) attachmentSignal.removeEventListener('abort', onAbort);
         }
         let disposed = false;
+        let cleanup: Promise<void> | void;
         const subscription = Object.freeze({
             dispose() {
-                if (disposed) return;
+                if (disposed) return cleanup;
                 disposed = true;
-                releaseDynamicWatcher(context, held, watcher);
+                cleanup = releaseDynamicWatcher(context, held, watcher);
+                return cleanup;
             },
         });
         // Establishment resynchronizes only when this exact context already
@@ -2260,7 +2526,7 @@ async function createStablePluginResourcesOwnerFromNormalized(
         // that authoritative read. A synchronous/early producer notification
         // still settles through the callback above, so this does not create a
         // read→watch gap.
-        if (held.producerSubscription === null || context.observedDigest !== '') {
+        if (!existing && !held.settling && (held.producerSubscription === null || context.observedDigest !== '')) {
             settleDynamicInvalidation(resource, context);
         }
         return subscription;
@@ -2284,9 +2550,11 @@ async function createStablePluginResourcesOwnerFromNormalized(
             if (resource.source !== 'dynamic') continue;
             const global = resource.globalContext;
             if (global) {
+                retireContextProducer(global);
                 global.observedAccountLifetimeToken = null;
                 global.observedSize = 0;
                 global.observedDigest = '';
+                clearDemandedDynamicBytes(global);
             }
             for (const context of [...resource.sessionContexts.values()]) {
                 retireDynamicSessionContext(resource, context);
@@ -2312,7 +2580,7 @@ async function createStablePluginResourcesOwnerFromNormalized(
 
     async function admitSessionResourceBinding(
         bindParams: BindPluginResources,
-        context: Extract<PluginResourceContextV1, { kind: 'session' }>,
+        sessionId: string,
     ): Promise<SessionResourceAccessAdmission> {
         guardSessionResourceBinding(bindParams);
         const carrier = requireSessionAccessCarrier();
@@ -2327,7 +2595,7 @@ async function createStablePluginResourcesOwnerFromNormalized(
         try {
             resolved = await resolveAccess({
                 accountId: carrier.accountId,
-                sessionId: context.sessionId,
+                sessionId,
                 signal: bindParams.signal,
             });
         } catch {
@@ -2359,7 +2627,7 @@ async function createStablePluginResourcesOwnerFromNormalized(
         return {
             [sessionResourceAccessAdmissionBrand]: true,
             accountId: carrier.accountId,
-            sessionId: context.sessionId,
+            sessionId,
             // The server proof may cover a later page, but the admission is
             // anchored to the exact local carrier whose liveness it checked.
             throughCursor: carrier.throughCursor,
@@ -2376,6 +2644,9 @@ async function createStablePluginResourcesOwnerFromNormalized(
         if (resource.scope !== 'surface') {
             return fail('plugin_resource_context_unavailable', 'Resource context is unavailable');
         }
+        const sessionId = resourceContextSessionId(context);
+        const sessionAccess = sessionId === null ? undefined
+            : requireSessionAccessAdmission(sessionId, bindParams.sessionAccessAdmission);
         const existing = resource.surfaceContexts.get(context.mountInstanceKey);
         if (
             existing
@@ -2392,7 +2663,7 @@ async function createStablePluginResourcesOwnerFromNormalized(
         // mount. An invalid replacement must leave the current mount alone.
         let candidate: DynamicResourceContextState;
         try {
-            candidate = createDynamicContextState(context);
+            candidate = createDynamicContextState(context, sessionAccess);
         } catch {
             return fail('plugin_resource_context_unavailable', 'Resource context is unavailable');
         }
@@ -2409,7 +2680,16 @@ async function createStablePluginResourcesOwnerFromNormalized(
     resourceOwner = Object.freeze({
         async preparePlugin(pluginId: string): Promise<void> {
             for (const dynamic of admittedDynamicResources) {
-                if (dynamic.pluginId === pluginId) await prepareDynamicResource(dynamic);
+                if (dynamic.pluginId !== pluginId) continue;
+                await prepareDynamicResource(dynamic);
+                const context = dynamic.globalContext;
+                // An existing watch owns its baseline acquisition. A producer
+                // preparing same-plugin Action services must also not await
+                // its own in-flight read through global descriptor admission.
+                if (context?.observedDigest === '' && !dynamic.admissionFailure
+                    && !dynamicWatches.has(context) && context.inFlight === null) {
+                    await admitGlobalDynamicResource(dynamic);
+                }
             }
         },
         hasPlugin(pluginId: string): boolean {
@@ -2455,7 +2735,7 @@ async function createStablePluginResourcesOwnerFromNormalized(
             const resource = resources.get(resourceId)
                 ?? fail('plugin_resource_not_found', 'Resource is not declared for this plugin');
             if (resource.source === 'dynamic' && resource.prepareRuntime) {
-                await resourceOwner.preparePlugin(bindParams.pluginId);
+                await prepareDynamicResource(resource);
                 guardSessionResourceBinding(bindParams);
             }
             if (resource.source !== 'dynamic' || resource.scope === 'global') {
@@ -2466,14 +2746,25 @@ async function createStablePluginResourcesOwnerFromNormalized(
                 return fail('plugin_resource_context_unavailable', 'Resource context is unavailable');
             }
             if (context.kind === 'session') {
-                const sessionAccessAdmission = await admitSessionResourceBinding(bindParams, context);
+                const sessionAccessAdmission = await admitSessionResourceBinding(bindParams, context.sessionId);
+                const existing = resource.sessionContexts.get(context.sessionId);
+                if (existing && !pluginJsonValuesEqual(existing.context, context)) retireDynamicSessionContext(resource, existing);
+                if (!resource.sessionContexts.has(context.sessionId)) {
+                    const admission = requireSessionAccessAdmission(context.sessionId, sessionAccessAdmission);
+                    resource.sessionContexts.set(context.sessionId, createDynamicContextState(context, admission));
+                }
                 return resourceOwner.bind({ ...bindParams, context, sessionAccessAdmission });
             }
-            const surfaceAccessAdmission = admitSurfaceResourceBinding(bindParams, resource, context);
+            const sessionId = resourceContextSessionId(context);
+            const sessionAccessAdmission = sessionId === null ? undefined
+                : await admitSessionResourceBinding(bindParams, sessionId);
+            const surfaceAccessAdmission = admitSurfaceResourceBinding({ ...bindParams,
+                ...(sessionAccessAdmission ? { sessionAccessAdmission } : {}) }, resource, context);
             return resourceOwner.bind({
                 ...bindParams,
                 context: surfaceAccessAdmission.context.context,
                 surfaceAccessAdmission,
+                ...(sessionAccessAdmission ? { sessionAccessAdmission } : {}),
             });
         },
         bind(bindParams): PluginResourcesService {
@@ -2552,10 +2843,6 @@ async function createStablePluginResourcesOwnerFromNormalized(
                     const resource = find(id);
                     const normalizedOptions = normalizeReadOptions(options);
                     if (resource.source === 'dynamic') {
-                        if (resource.prepareRuntime) {
-                            await resourceOwner.preparePlugin(bindParams.pluginId);
-                            guard(normalizedOptions.signal);
-                        }
                         const acquired = acquireDynamicContext(
                             resource,
                             boundContext,
@@ -2563,16 +2850,23 @@ async function createStablePluginResourcesOwnerFromNormalized(
                             bindParams.surfaceAccessAdmission,
                         );
                         try {
+                            if (bindParams.readChain?.includes(acquired.context)) {
+                                return fail('plugin_resource_dependency_cycle', 'Resource dependency contains a cycle');
+                            }
+                            if (resource.prepareRuntime) {
+                                await prepareDynamicResource(resource);
+                                guard(normalizedOptions.signal);
+                            }
+                            const attachment = dynamicWatches.get(acquired.context)?.producerAttachment;
+                            if (attachment) {
+                                await attachment;
+                                guard(normalizedOptions.signal);
+                            }
                             retireStaleAccountBoundDynamicObservation(resource, acquired.context);
                             const accountLifetimeToken = captureDynamicResourceAccountLifetime(resource);
                             const operationSignal = normalizedOptions.signal
                                 ? AbortSignal.any([bindParams.signal, normalizedOptions.signal])
                                 : bindParams.signal;
-                            const callbackController = new AbortController();
-                            const callbackSignal = AbortSignal.any([
-                                operationSignal,
-                                callbackController.signal,
-                            ]);
                             const guardDynamicRead = (): void => {
                                 guard(normalizedOptions.signal);
                                 if (!isDynamicContextCurrent(resource, acquired.context)) {
@@ -2582,30 +2876,17 @@ async function createStablePluginResourcesOwnerFromNormalized(
                                     return fail('plugin_resource_context_unavailable', 'Resource context is unavailable');
                                 }
                             };
-                            const observed = await withStableResourceErrors(async () => {
-                                try {
-                                    const value = await readDynamicBytes(
-                                        resource,
-                                        acquired.context,
-                                        normalizedOptions.maxBytes,
-                                        guardDynamicRead,
-                                        callbackSignal,
-                                        composeAccountStorageCurrentness(resource, () => (
-                                            !callbackController.signal.aborted
-                                            && bindParams.isOccurrenceCurrent()
-                                            && isDynamicContextCurrent(resource, acquired.context)
-                                            && isDynamicResourceAccountLifetimeCurrent(resource, accountLifetimeToken)
-                                        )),
-                                        params.bindDynamicResourceAccountStorage,
-                                    );
-                                    guardDynamicRead();
-                                    return value;
-                                } finally {
-                                    // A read callback cannot retain Account authority
-                                    // for the surrounding UI/service binding lifetime.
-                                    callbackController.abort();
-                                }
-                            });
+                            const observed = await withStableResourceErrors(() => readSharedDynamicBytes(
+                                resource,
+                                acquired.context,
+                                operationSignal,
+                                guardDynamicRead,
+                                bindParams.preferDemandedSnapshot,
+                                bindParams.readChain,
+                            ));
+                            if (observed.bytes.byteLength > normalizedOptions.maxBytes) {
+                                return fail('plugin_resource_too_large', 'Resource read exceeds its byte limit');
+                            }
                             // The inner producer guard is deliberately not
                             // the final authority: this outer `await` yields
                             // before we mutate the context's observed descriptor
@@ -2624,7 +2905,7 @@ async function createStablePluginResourcesOwnerFromNormalized(
                                 kind: resource.kind,
                                 contentType: resource.contentType,
                                 digest: observed.digest,
-                                bytes: observed.bytes,
+                                bytes: observed.bytes.slice(),
                             });
                         } finally {
                             acquired.release();
@@ -2647,7 +2928,7 @@ async function createStablePluginResourcesOwnerFromNormalized(
                         bytes,
                     });
                 },
-                watch(id: string, listener: (change: { digest: string }) => void) {
+                async watch(id: string, listener: (change: { digest: string }) => void) {
                     const resource = find(id);
                     if (resource.source !== 'dynamic') {
                         // A packaged resource is a file of an immutable
@@ -2665,9 +2946,27 @@ async function createStablePluginResourcesOwnerFromNormalized(
                         bindParams.surfaceAccessAdmission,
                     );
                     retireStaleAccountBoundDynamicObservation(resource, acquired.context);
+                    if (bindParams.readChain?.includes(acquired.context)) {
+                        acquired.release();
+                        return fail('plugin_resource_dependency_cycle', 'Resource dependency contains a cycle');
+                    }
+                    const sourceContext = bindParams.readChain?.at(-1);
+                    const sourceWatch = sourceContext ? dynamicWatches.get(sourceContext) : undefined;
+                    if (sourceContext && sourceWatch && reachesWatchDependency(acquired.context, sourceContext)) {
+                        acquired.release();
+                        return fail('plugin_resource_dependency_cycle', 'Resource dependency contains a cycle');
+                    }
+                    if (sourceWatch) sourceWatch.dependencies.set(acquired.context,
+                        (sourceWatch.dependencies.get(acquired.context) ?? 0) + 1);
+                    const releaseDependency = () => {
+                        if (!sourceWatch) return;
+                        const remaining = (sourceWatch.dependencies.get(acquired.context) ?? 1) - 1;
+                        if (remaining === 0) sourceWatch.dependencies.delete(acquired.context);
+                        else sourceWatch.dependencies.set(acquired.context, remaining);
+                    };
                     let producer: Disposable;
                     try {
-                        producer = watchDynamic(resource, acquired.context, {
+                        producer = await watchDynamic(resource, acquired.context, {
                             listener,
                             isCurrent: () => (
                                 !bindingRetired
@@ -2676,8 +2975,11 @@ async function createStablePluginResourcesOwnerFromNormalized(
                                 && bindParams.isOccurrenceCurrent()
                             ),
                             releaseContext: acquired.release,
+                            ...(bindParams.onReadAuthorityRetired
+                                ? { onReadAuthorityRetired: bindParams.onReadAuthorityRetired }
+                                : {}),
                             ...(
-                                resource.scope === 'session' && bindParams.onSessionResourceUnavailable
+                                resourceContextSessionId(acquired.context.context) !== null && bindParams.onSessionResourceUnavailable
                                     ? { onSessionResourceUnavailable: bindParams.onSessionResourceUnavailable }
                                     : {}
                             ),
@@ -2685,19 +2987,23 @@ async function createStablePluginResourcesOwnerFromNormalized(
                             // snapshot. Establishment immediately re-reads to
                             // close the read→watch handoff race.
                             deliveredDigest: acquired.context.observedDigest,
-                        });
+                        }, bindParams.signal);
                     } catch (error) {
+                        releaseDependency();
                         acquired.release();
                         throw error;
                     }
                     let disposed = false;
+                    let cleanup: ReturnType<Disposable['dispose']>;
                     let tracked!: Disposable;
                     tracked = Object.freeze({
                         dispose() {
-                            if (disposed) return;
+                            if (disposed) return cleanup;
                             disposed = true;
                             bindingSubscriptions.delete(tracked);
-                            producer.dispose();
+                            releaseDependency();
+                            cleanup = producer.dispose();
+                            return cleanup;
                         },
                     });
                     bindingSubscriptions.add(tracked);
@@ -2713,5 +3019,13 @@ async function createStablePluginResourcesOwnerFromNormalized(
             retireDynamicContexts(pluginId);
         },
     });
+    // The owner must exist before an admitted global producer can compose an
+    // own Resource. Production cold producers still use prepareRuntime.
+    const globalDynamicResources = admittedDynamicResources.filter((dynamic) => (
+        dynamic.globalContext && !dynamic.prepareRuntime
+    ));
+    const admissions = await Promise.allSettled(globalDynamicResources.map(admitGlobalDynamicResource));
+    const rejectedAdmission = admissions.find((result) => result.status === 'rejected');
+    if (rejectedAdmission?.status === 'rejected') throw rejectedAdmission.reason;
     return resourceOwner;
 }

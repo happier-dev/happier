@@ -1,8 +1,15 @@
 import * as React from 'react';
+import type { Disposable, PluginAccountApi } from '@happier-dev/plugin-sdk';
+import type { PluginActionReadInvalidation } from '@happier-dev/plugin-sdk/actions';
+import { PluginError } from '@happier-dev/plugin-sdk';
+import { parsePluginManifest } from '@happier-dev/plugin-sdk/manifest';
+import type { PluginDynamicResourceRuntime } from '@happier-dev/plugin-sdk/resources';
+import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
+import { publishCommittedAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
 import renderer, { act } from 'react-test-renderer';
 import { Text } from 'react-native';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { PluginUiResourceSnapshot } from '@happier-dev/plugin-ui/hostApi';
+import type { PluginUiResourceSnapshot, PluginUiResourceProjection as PluginUiResourceValueProjection } from '@happier-dev/plugin-ui/hostApi';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { captureActiveServerAccountScopeLifetime, retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
@@ -34,6 +41,7 @@ import { createWidgetSnapshotCaptureSlot, WidgetSnapshotCaptureContext } from '@
 import { WidgetSnapshotConfirmPanel } from '@/components/widgets/definitions/WidgetSnapshotConfirmPanel';
 import { t } from '@/text';
 import { normalizePluginInstalledUiDeclarations } from '@/sync/domains/plugins/ui/projection';
+import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 import { WidgetDefinitionV1Schema } from '@happier-dev/protocol/widgets/widgetDefinitionV1';
 
 vi.mock('socket.io-client', async (importOriginal) => (
@@ -169,6 +177,548 @@ function binding(
         context: Object.freeze({ kind: 'session' as const, sessionId: 'session-1' }),
     });
 }
+
+it('fails factory-backed Resource admission explicitly in an unsupported Account placement', async () => {
+    let directReads = 0;
+    const harness = await createPortableAccountResourceHarness({
+        read() { directReads++; return '{}'; }, observe: () => ({ dispose() {} }),
+        createProducer() { throw new Error('Daemon producer must not start in Account placement'); },
+    });
+    const store = createPluginDeclaredResourceStore(harness.input)!;
+    try {
+        const snapshot = await store.getEntry('status').refresh();
+        expect(snapshot.error?.code).toBe('plugin_resource_producer_placement_unavailable');
+        expect(snapshot.value).toBeUndefined();
+        expect(directReads).toBe(0);
+    } finally { store.dispose(); await harness.dispose(); }
+});
+
+async function createPortableAccountResourceHarness(runtime?: PluginDynamicResourceRuntime,
+    dependencies: Readonly<Record<string, PluginDynamicResourceRuntime>> = {}, scope: 'global' | 'session' | 'surface' = 'session') {
+    const account = await createAccountLifetime({ accountId: 'portable-resource-account' });
+    const { createPluginReactNativeBundleCache } = await import('@/components/plugins/reactNative/bundleCache');
+    const { createPluginUiCommonJsLoaderBackend } = await import('@/components/plugins/reactNative/commonJsLoaderBackend');
+    const { getInstalledPluginUiClientExecutableComposition } = await import('@/components/plugins/reactNative/clientExecutableContributions');
+    const { EMPTY_PLUGIN_UI_PROJECTION } = await import('@/sync/domains/plugins/ui/projection');
+    const pluginId = 'acme.portable-resource';
+    const hostAccountOrigin = { ...account.lifetime.scope, custodyId: 'portable-resource-custody',
+        sourceCustody: { kind: 'bundled_first_party' as const, packagedRuntime: { kind: 'source_declaration' as const, packageName: '@acme/portable-resource' } } };
+    const target = { realm: 'account' as const, artifactId: 'portable-resource', exportName: 'activate', platform: 'web' as const };
+    const declaration = { pluginId, id: 'status', source: 'dynamic' as const, resourceKind: 'config' as const,
+        scope, contentType: 'application/json', occurrenceId: hostAccountOrigin.custodyId,
+        execution: { target: 'account' as const, account: { artifactId: target.artifactId, exportName: target.exportName } }, hostAccountOrigin };
+    const declarations = [declaration, ...Object.keys(dependencies).map(id => ({ ...declaration, id }))];
+    const resourcesById = Object.fromEntries(declarations.map(resource => [`${pluginId}/${resource.id}`, resource]));
+    const projection = { ...EMPTY_PLUGIN_UI_PROJECTION, resourcesById };
+    const unpublish = publishCommittedAppShellPluginUiProjection(() => projection);
+    const cache = createPluginReactNativeBundleCache();
+    const identity = { pluginId, contributionId: 'resources/status', artifactId: target.artifactId,
+        artifactDigest: `sha256:${'a'.repeat(64)}` as const, platform: 'web' as const };
+    cache.putInstalledArtifact({ identity, format: 'plainJs', bytes: new TextEncoder().encode(
+        "exports.activate = function(api) { let reads = 0; api.resources.registerDynamicResource('status', {read(options) { return JSON.stringify({sessionId: options.context.sessionId, reads: ++reads}); }, observe() { return {dispose() {}}; }}); };",
+    ) });
+    const composition = getInstalledPluginUiClientExecutableComposition();
+    let activationEntered = false;
+    let activationError: unknown;
+    try {
+        const reconciled = await composition.reconcile([{ pluginId, contributes: { resources: declarations }, target,
+            executionOrigin: null, occurrenceId: hostAccountOrigin.custodyId, pluginVersion: '1.0.0', accountLifetime: account.lifetime,
+            hostUiApiRange: '^1.0.0', cache, identity, moduleReference: { exportName: 'activate' },
+            // Executable module loading is the genuine boundary. The registered
+            // runtime, Account custody and Resource store below stay real.
+            backend: runtime ? { backendId: 'commonJs', available: true, diagnostics: [],
+                loadInstalledBundle: async () => (api: PluginAccountApi) => {
+                    activationEntered = true;
+                    try {
+                        api.resources.registerDynamicResource('status', runtime);
+                        for (const [id, dependency] of Object.entries(dependencies)) api.resources.registerDynamicResource(id, dependency);
+                    } catch (error) { activationError = error; throw error; }
+                } }
+                : createPluginUiCommonJsLoaderBackend(),
+            authority: { kind: 'account', ...account.lifetime.scope, custodyId: hostAccountOrigin.custodyId },
+            isCurrent: account.lifetime.isCurrent }]);
+        expect(reconciled, JSON.stringify({ results: reconciled.map(row => row.result), activationEntered,
+            activationError: activationError instanceof Error ? { name: activationError.name, message: activationError.message, stack: activationError.stack }
+                : activationError ?? null })).toMatchObject([{ result: { ok: true } }]);
+        const input = { accountLifetime: account.lifetime, pluginId, machineId: null, serverId: account.lifetime.scope.serverId,
+            expectedCallerOccurrenceId: hostAccountOrigin.custodyId, resourcesById, resourceDeclarationsComplete: true, sessionId: 'session-portable' };
+        return { account, input, composition, pluginId,
+            async dispose() { unpublish(); await composition.invalidatePlugin(pluginId); } };
+    } catch (error) { unpublish(); await composition.invalidatePlugin(pluginId); throw error; }
+}
+
+it('reads a global Account Resource on an app surface when its complete namespace also contains static assets', async () => {
+    const harness = await createPortableAccountResourceHarness({
+        read: options => JSON.stringify({ context: options.context.kind }),
+        observe: () => ({ dispose() {} }),
+    }, {}, 'global');
+    // Channels publishes global management Resources alongside brand/i18n
+    // assets, which have no dynamic context scope (src/manifest.ts).
+    const resourcesById = { ...harness.input.resourcesById,
+        brand: { id: 'brand-icon', pluginId: harness.pluginId, resourceKind: 'asset' as const,
+            path: 'assets/brand.png', contentType: 'image/png' } };
+    const projection = widgetProjectionOf([], {}, resourcesById);
+    let resourceDeclarations: PluginUiProjectionModel['resourcesById'] | undefined;
+    const controller = createBoundPluginSurfaceController({ facts: {
+        pluginId: harness.pluginId, contributionId: 'settings', surfaceId: 'settings-native',
+        placement: 'appSurface', platform: 'web', channel: 'internal', resourceScope: [],
+        accountLifetime: harness.account.lifetime, machineId: 'machine-1', serverId: harness.input.serverId,
+        occurrenceId: harness.input.expectedCallerOccurrenceId,
+        resourceCapability: { readable: true, dynamic: true },
+        resourceContext: { kind: 'surface', mountInstanceKey: 'settings', launchInput: null, target: { kind: 'app' } },
+        pluginUiProjection: projection,
+        readActionInputFacts: () => ({ pluginUiProjection: projection, resourceDeclarations }),
+        interactionEnabled: true, daemonInteractionEnabled: true,
+    } });
+    // A global daemon Resource rejects a containing surface context; this is
+    // the network boundary's real refusal, not a replacement Resource owner.
+    machineResourceRpc.read.mockResolvedValue({ supported: true,
+        result: { ok: false, reason: 'unavailable', code: 'plugin_resource_context_unavailable' } });
+    try {
+        // The current mounted target delivers its complete declarations late;
+        // the physical surface does not remount or need re-adoption.
+        resourceDeclarations = resourcesById;
+        controller.updateMountedBindings?.({});
+        const entry = controller.resourceStore?.getEntry('status');
+        expect(entry).toBeDefined();
+        const snapshot = await entry!.refresh();
+        expect(snapshot.error).toBeUndefined();
+        expect(JSON.parse(new TextDecoder().decode(snapshot.value!.bytes))).toEqual({ context: 'global' });
+        expect(machineResourceRpc.read).not.toHaveBeenCalled();
+        machineResourceRpc.read.mockResolvedValue(resourceResponse('a'));
+        const asset = await controller.resourceStore!.getEntry('brand-icon').refresh();
+        expect(asset.error).toBeUndefined();
+        expect(asset.value).toBeDefined();
+        expect(machineResourceRpc.read).toHaveBeenLastCalledWith('machine-1', expect.objectContaining({ context: { kind: 'global' } }));
+    } finally { controller.dispose(); await harness.dispose(); }
+});
+
+it.each([
+    { code: 'collection_index_not_ready', composed: false },
+    { code: 'collection_update_required', composed: false },
+    { code: 'collection_content_mode_mismatch', composed: false },
+    { code: 'collection_contract_inconsistent', composed: false },
+    { code: 'collection_update_required', composed: true },
+])('settles the Account Resource Collection refusal $code (composed=$composed) until its producer changes', async ({ code, composed }) => {
+    let refused = true;
+    let reads = 0;
+    let observations = 0;
+    let invalidate: (() => void) | undefined;
+    // Only executable-module loading is substituted by the existing harness;
+    // registration, Account Resource client and shared Resource store stay real.
+    const leaf: PluginDynamicResourceRuntime = {
+        read() {
+            reads += 1;
+            if (refused) throw new PluginError({ code });
+            return '{}';
+        },
+        observe(notify) {
+            observations += 1;
+            invalidate = notify;
+            return { dispose() { invalidate = undefined; } };
+        },
+    };
+    const harness = await createPortableAccountResourceHarness(composed ? {
+        async read(options) { return (await options.resources.read('leaf')).bytes; },
+        observe(notify, options) { return options.resources.watch('leaf', notify); },
+    } : leaf, composed ? { leaf } : {});
+    vi.useFakeTimers();
+    const store = createPluginDeclaredResourceStore(harness.input)!;
+    const entry = store.getEntry('status');
+    const release = entry.subscribe(() => {}, true);
+    try {
+        await vi.advanceTimersByTimeAsync(1_000);
+        expect({ reads, observations }).toEqual({ reads: 1, observations: 1 });
+        expect(entry.getSnapshot()).toMatchObject({ pending: 'idle', error: { code, retryable: false } });
+        expect(invalidate).toBeTypeOf('function');
+        refused = false;
+        invalidate!();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(reads).toBe(2);
+        expect(entry.getSnapshot()).toMatchObject({ freshness: 'fresh', subscription: 'live' });
+    } finally {
+        release(); store.dispose();
+        await harness.dispose();
+        vi.useRealTimers();
+    }
+});
+
+it('shares one portable Account Resource read for the exact Session and withdraws its retired producer', async () => {
+    const harness = await createPortableAccountResourceHarness();
+    const { account, input, composition, pluginId } = harness;
+    const first = createPluginDeclaredResourceStore(input)!;
+    const second = createPluginDeclaredResourceStore(input)!;
+    let releaseFirst = () => {};
+    let releaseSecond = () => {};
+    try {
+        const a = first.getEntry('status');
+        const b = second.getEntry('status');
+        releaseFirst = a.subscribe(() => {}, true);
+        releaseSecond = b.subscribe(() => {}, true);
+        await vi.waitFor(() => expect(a.getSnapshot().value).toBeDefined());
+        expect(b.getSnapshot().value).toBe(a.getSnapshot().value);
+        expect(JSON.parse(new TextDecoder().decode(a.getSnapshot().value!.bytes))).toEqual({ sessionId: 'session-portable', reads: 1 });
+        expect(machineResourceRpc.read).not.toHaveBeenCalled();
+        await composition.invalidatePlugin(pluginId);
+        expect(a.getSnapshot().value).toBeUndefined();
+        expect(b.getSnapshot().value).toBeUndefined();
+        account.retire();
+    } finally {
+        releaseFirst(); releaseSecond(); first?.dispose(); second?.dispose();
+        await harness.dispose();
+    }
+});
+
+it('retires nested Account Action read authority immediately while ordinary invalidation retains Resource bytes', async () => {
+    const account = await createAccountLifetime({ accountId: 'nested-read-retirement' });
+    const { installPortableAccountPluginForTest } = await import('@/dev/testkit/harness/portableAccountPlugin');
+    const pluginId = 'example.retiring-account-source';
+    const execution = { target: 'account', account: { artifactId: 'read-retirement', exportName: 'activate' } };
+    const parsed = parsePluginManifest({ schemaVersion: 2, id: pluginId, version: '1.0.0', displayName: 'Read retirement source',
+        engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 }, contributes: {
+            actions: ['source', 'relay'].map(id => ({ id, title: id, scopes: ['global'], surfaces: ['plugin'],
+                execution, dangerLevel: 'safe', readOnly: true })),
+            resources: [{ id: 'status', source: 'dynamic', scope: 'session', kind: 'config',
+                contentType: 'application/json', execution }],
+        } });
+    if (!parsed.ok) throw new Error(`Invalid authored read fixture: ${JSON.stringify(parsed.diagnostics)}`);
+    let nativeReads = 0;
+    let holdNative = false;
+    let sourceDisposals = 0;
+    const invalidations: PluginActionReadInvalidation[] = [];
+    const observerSignals: AbortSignal[] = [];
+    const nativePending: Array<Readonly<{ gate: ReturnType<typeof createDeferred<{ value: string }>>; signal: AbortSignal }>> = [];
+    const source = { pluginId, localId: 'source' };
+    const relay = { pluginId, localId: 'relay' };
+    const fixture = await installPortableAccountPluginForTest({ manifest: parsed.manifest, accountLifetime: account.lifetime,
+        activate(api) {
+            api.actions.register('source', async (_input, context) => {
+                nativeReads++;
+                if (!holdNative) return { value: 'initial-private-value' };
+                const gate = createDeferred<{ value: string }>();
+                nativePending.push({ gate, signal: context.signal });
+                return await gate.promise;
+            }, { observeRead(_input, invalidate, context) {
+                invalidations.push(invalidate); observerSignals.push(context.signal);
+                return { dispose() { sourceDisposals++; } };
+            } });
+            api.actions.register('relay', async (_input, context) => context.services.actions.execute(source, {}),
+                { observeRead: (_input, invalidate, context) => context.services.actions.observe(source, {}, invalidate) });
+            api.resources.registerDynamicResource('status', {
+                async read(options) {
+                    const result = await options.readAction(relay, {}, { signal: options.signal });
+                    if (!result.ok) throw new PluginError({ code: result.errorCode });
+                    return JSON.stringify(result.result);
+                },
+                observe: (invalidate, options) => options.observeAction(relay, {}, invalidate, { signal: options.signal }),
+            });
+        } });
+    const unpublish = publishCommittedAppShellPluginUiProjection(() => fixture.projection);
+    const declaration = fixture.projection.resourcesById[`${pluginId}/status`];
+    if (!declaration) throw new Error('Expected admitted Account Resource declaration');
+    const lease = acquirePluginContextualResourceStore({ accountLifetime: account.lifetime, pluginId, machineId: null,
+        serverId: account.lifetime.scope.serverId, expectedCallerOccurrenceId: declaration.occurrenceId!,
+        accountResource: declaration, context: { kind: 'session', sessionId: 'read-retirement-session' } });
+    if (!lease) throw new Error('Expected current Account Resource lease');
+    const entry = lease.store.getEntry('status');
+    const decode = vi.fn((content: NonNullable<PluginUiResourceSnapshot['value']>, _previous: { text: string } | undefined) => ({
+        text: new TextDecoder().decode(content.bytes),
+    }));
+    const projection: PluginUiResourceValueProjection<{ text: string }> = { decode };
+    const selected = entry.select(projection, snapshot => snapshot.value);
+    const release = selected.subscribe(() => {}, true);
+    try {
+        await vi.waitFor(() => expect(selected.getSnapshot()?.text).toContain('initial-private-value'));
+        await vi.waitFor(() => expect(entry.getSnapshot().subscription).toBe('live'));
+        expect(nativeReads).toBe(1);
+        expect(invalidations).toHaveLength(1);
+        const oldBytes = entry.getSnapshot().value;
+        const oldTypedValue = selected.getSnapshot();
+        holdNative = true;
+        invalidations[0]!();
+        await vi.waitFor(() => expect(nativePending).toHaveLength(1));
+        expect(entry.getSnapshot().value).toBe(oldBytes);
+        expect(selected.getSnapshot()).toBe(oldTypedValue);
+
+        invalidations[0]!.retire();
+        expect(entry.getSnapshot().value).toBeUndefined();
+        expect(entry.getSnapshot().digest).toBeUndefined();
+        expect(selected.getSnapshot()).toBeUndefined();
+        expect(nativePending[0]!.signal.aborted).toBe(true);
+        expect(observerSignals[0]!.aborted).toBe(true);
+        expect(sourceDisposals).toBe(1);
+        expect(account.lifetime.isCurrent()).toBe(true);
+        invalidations[0]!.retire(); invalidations[0]!();
+        await vi.waitFor(() => expect(nativePending).toHaveLength(2));
+        await vi.waitFor(() => expect(invalidations).toHaveLength(2));
+        nativePending[0]!.gate.resolve({ value: 'late-old-private-value' });
+        await new Promise<void>(resolve => setTimeout(resolve, 0));
+        expect(entry.getSnapshot().value).toBeUndefined();
+        expect(selected.getSnapshot()).toBeUndefined();
+        nativePending[1]!.gate.resolve({ value: 'replacement-private-value' });
+        await vi.waitFor(() => expect(selected.getSnapshot()?.text).toContain('replacement-private-value'));
+        expect(decode).toHaveBeenLastCalledWith(expect.anything(), undefined);
+        expect(entry.getSnapshot().subscription).toBe('live');
+        expect(invalidations).toHaveLength(2);
+        expect(nativeReads).toBe(3);
+        release();
+        await vi.waitFor(() => expect(sourceDisposals).toBe(2));
+        invalidations[1]!.retire(); invalidations[1]!();
+        await new Promise<void>(resolve => setTimeout(resolve, 0));
+        expect(nativeReads).toBe(3);
+        expect(invalidations).toHaveLength(2);
+    } finally {
+        release(); lease.dispose();
+        for (const pending of nativePending) pending.gate.resolve({ value: 'disposed' });
+        unpublish(); await fixture.dispose();
+    }
+});
+
+it('keeps a portable Resource watch establishing until async attachment succeeds and preserves attach failure', async () => {
+    const attached = createDeferred<Disposable>();
+    const runtime: PluginDynamicResourceRuntime = { read: () => '{}', observe: () => attached.promise };
+    const harness = await createPortableAccountResourceHarness(runtime);
+    const store = createPluginDeclaredResourceStore(harness.input)!;
+    const entry = store.getEntry('status');
+    const release = entry.subscribe(() => {}, true);
+    const failure = Object.assign(new Error('Dependency admission failed'), { code: 'dependency_denied', retryable: false });
+    try {
+        expect(entry.getSnapshot().subscription).toBe('establishing');
+        expect(entry.getSnapshot().value).toBeUndefined();
+        attached.reject(failure);
+        await vi.waitFor(() => expect(entry.getSnapshot().subscription).toBe('ended'));
+        expect(entry.getSnapshot().error).toMatchObject({ code: 'dependency_denied' });
+    } finally { attached.resolve({ dispose() {} }); release(); store.dispose(); await harness.dispose(); }
+});
+
+it.each(['request', 'registration', 'Account'] as const)('disposes a late async Resource observer after %s cancellation', async cause => {
+    const attached = createDeferred<Disposable>();
+    const observing = createDeferred<void>();
+    const dispose = vi.fn();
+    const harness = await createPortableAccountResourceHarness({ read: () => '{}', observe() { observing.resolve(); return attached.promise; } });
+    const store = createPluginDeclaredResourceStore(harness.input)!;
+    const entry = store.getEntry('status');
+    const release = entry.subscribe(() => {}, true);
+    try {
+        expect(entry.getSnapshot().subscription).toBe('establishing');
+        await observing.promise;
+        if (cause === 'request') release();
+        else if (cause === 'registration') await harness.composition.invalidatePlugin(harness.pluginId);
+        else harness.account.retire();
+        attached.resolve({ dispose });
+        await vi.waitFor(() => expect(dispose).toHaveBeenCalledTimes(1));
+        expect(entry.getSnapshot().subscription).not.toBe('live');
+    } finally { attached.resolve({ dispose }); release(); store.dispose(); await harness.dispose(); }
+});
+
+it('admits a completed async Resource observer and rejects an invalid observer', async () => {
+    const attached = createDeferred<Disposable>();
+    const dispose = vi.fn();
+    const harness = await createPortableAccountResourceHarness({ read: () => '{}', observe: () => attached.promise });
+    const store = createPluginDeclaredResourceStore(harness.input)!;
+    const entry = store.getEntry('status');
+    const release = entry.subscribe(() => {}, true);
+    try {
+        attached.resolve({ dispose });
+        await vi.waitFor(() => expect(entry.getSnapshot().subscription).toBe('live'));
+        release(); release();
+        expect(dispose).toHaveBeenCalledTimes(1);
+    } finally { release(); store.dispose(); await harness.dispose(); }
+    const invalid = await createPortableAccountResourceHarness({ read: () => '{}',
+        // A trusted JS plugin can still violate its typed runtime boundary.
+        observe: () => Promise.resolve({}) as Promise<Disposable> });
+    const invalidStore = createPluginDeclaredResourceStore(invalid.input)!;
+    const invalidEntry = invalidStore.getEntry('status');
+    const releaseInvalid = invalidEntry.subscribe(() => {}, true);
+    try { await vi.waitFor(() => expect(invalidEntry.getSnapshot().error).toMatchObject({ code: 'plugin_resource_observation_invalid' })); }
+    finally { releaseInvalid(); invalidStore.dispose(); await invalid.dispose(); }
+});
+
+it('fails Account watch admission when its shared baseline read fails and releases the attached observer', async () => {
+    const failure = Object.assign(new Error('Baseline read denied'), { code: 'baseline_denied', retryable: false });
+    const dispose = vi.fn();
+    const harness = await createPortableAccountResourceHarness({ read: () => { throw failure; }, observe: () => ({ dispose }) });
+    const store = createPluginDeclaredResourceStore(harness.input)!;
+    const entry = store.getEntry('status');
+    const release = entry.subscribe(() => {}, true);
+    try {
+        await vi.waitFor(() => expect(entry.getSnapshot().error?.code).toBe('baseline_denied'));
+        expect(entry.getSnapshot().subscription).not.toBe('live');
+        await vi.waitFor(() => expect(dispose).toHaveBeenCalledTimes(1));
+    } finally { release(); store.dispose(); await harness.dispose(); }
+});
+
+it('settles an explicit warm Account Resource refresh when the retained bytes are unchanged', async () => {
+    let nextRead: ReturnType<typeof createDeferred<string>> | undefined;
+    const unchanged = JSON.stringify({ connections: [] });
+    const harness = await createPortableAccountResourceHarness({
+        read: () => nextRead?.promise ?? unchanged,
+        observe: () => ({ dispose() {} }),
+    }, {}, 'global');
+    const store = createPluginDeclaredResourceStore(harness.input)!;
+    const entry = store.getEntry('status');
+    const release = entry.subscribe(() => {}, true);
+    try {
+        await vi.waitFor(() => expect(entry.getSnapshot()).toMatchObject({
+            subscription: 'live', pending: 'idle', freshness: 'fresh',
+        }));
+        const retained = entry.getSnapshot().value;
+        expect(retained).toBeDefined();
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+            nextRead = createDeferred<string>();
+            const refreshed = entry.refresh();
+            await vi.waitFor(() => expect(entry.getSnapshot()).toMatchObject({ pending: 'refresh', freshness: 'stale' }));
+            expect(entry.getSnapshot().value).toBe(retained);
+            nextRead.resolve(unchanged);
+            await expect(refreshed).resolves.toMatchObject({ subscription: 'live', pending: 'idle', freshness: 'fresh' });
+            expect(entry.getSnapshot().value).toBe(retained);
+        }
+    } finally {
+        nextRead?.resolve(unchanged);
+        release(); store.dispose(); await harness.dispose();
+    }
+});
+
+it('shares a parent Resource dependency with direct UI demand and releases it when parent demand ends', async () => {
+    let value = 'first';
+    let invalidate = () => {};
+    let reads = 0;
+    const stopped = vi.fn();
+    const harness = await createPortableAccountResourceHarness({
+        async read(options) { return (await options.resources.read('relations', { signal: options.signal })).bytes; },
+        async observe(changed, options) { return await options.resources.watch('relations', () => changed()); },
+    }, { relations: { read() { reads += 1; return JSON.stringify({ value }); },
+        observe(changed) { invalidate = changed; return { dispose: stopped }; } } });
+    const parent = createPluginDeclaredResourceStore(harness.input)!;
+    const direct = createPluginDeclaredResourceStore(harness.input)!;
+    const a = parent.getEntry('status');
+    const b = direct.getEntry('relations');
+    let releaseA = a.subscribe(() => {}, true);
+    const releaseB = b.subscribe(() => {}, true);
+    try {
+        await vi.waitFor(() => {
+            expect(a.getSnapshot()).toMatchObject({ subscription: 'live', pending: 'idle' });
+            expect(a.getSnapshot().value).toBeDefined();
+            expect(b.getSnapshot()).toMatchObject({ subscription: 'live', pending: 'idle' });
+        });
+        expect(JSON.parse(new TextDecoder().decode(a.getSnapshot().value!.bytes))).toEqual({ value: 'first' });
+        expect(a.getSnapshot().value?.bytes).toEqual(b.getSnapshot().value?.bytes);
+        expect(reads).toBe(1);
+        value = 'second'; invalidate();
+        await vi.waitFor(() => expect(JSON.parse(new TextDecoder().decode(a.getSnapshot().value!.bytes))).toEqual({ value: 'second' }));
+        expect(reads).toBe(2);
+        releaseA();
+        expect(stopped).not.toHaveBeenCalled();
+        releaseA = a.subscribe(() => {}, true);
+        await vi.waitFor(() => expect(a.getSnapshot().subscription).toBe('live'));
+        expect(reads).toBe(2);
+        releaseB();
+        expect(stopped).not.toHaveBeenCalled();
+        releaseA();
+        expect(stopped).toHaveBeenCalledTimes(1);
+    } finally { releaseA(); releaseB(); parent.dispose(); direct.dispose(); await harness.dispose(); }
+});
+
+it('isolates own Resource read bytes from the child snapshot shared with direct UI demand', async () => {
+    let reads = 0;
+    class AliasingBytes extends Uint8Array {
+        override slice(): this { return this; }
+    }
+    const harness = await createPortableAccountResourceHarness({
+        async read(options) {
+            const child = await options.resources.read('relations', { signal: options.signal });
+            child.bytes.fill(0);
+            return '{}';
+        },
+        async observe(changed, options) { return await options.resources.watch('relations', () => changed()); },
+    }, { relations: { read() { reads += 1; return new AliasingBytes(new TextEncoder().encode('{"value":"intact"}')); },
+        observe: () => ({ dispose() {} }) } });
+    const parent = createPluginDeclaredResourceStore(harness.input)!;
+    const direct = createPluginDeclaredResourceStore(harness.input)!;
+    const a = parent.getEntry('status');
+    const b = direct.getEntry('relations');
+    const releaseA = a.subscribe(() => {}, true);
+    const releaseB = b.subscribe(() => {}, true);
+    try {
+        await vi.waitFor(() => expect(a.getSnapshot()).toMatchObject({ subscription: 'live', pending: 'idle' }));
+        expect(a.getSnapshot().value).toBeDefined();
+        expect(JSON.parse(new TextDecoder().decode(b.getSnapshot().value!.bytes))).toEqual({ value: 'intact' });
+        expect(reads).toBe(1);
+    } finally { releaseA(); releaseB(); parent.dispose(); direct.dispose(); await harness.dispose(); }
+});
+
+it.each([false, true])('releases child live demand when its parent becomes static, preserving independent child demand: %s', async directDemand => {
+    let invalidate = () => {};
+    let reads = 0;
+    const stopped = vi.fn();
+    const harness = await createPortableAccountResourceHarness({
+        async read(options) { return (await options.resources.read('relations', { signal: options.signal })).bytes; },
+        async observe(changed, options) { return await options.resources.watch('relations', () => changed()); },
+    }, { relations: { read() { reads += 1; return JSON.stringify({ reads }); },
+        observe(changed) { invalidate = changed; return { dispose: stopped }; } } });
+    const parent = createPluginDeclaredResourceStore(harness.input)!;
+    const direct = createPluginDeclaredResourceStore(harness.input)!;
+    const a = parent.getEntry('status');
+    const b = direct.getEntry('relations');
+    const releaseLive = a.subscribe(() => {}, true);
+    const releaseStatic = a.subscribe(() => {}, false);
+    const releaseDirect = directDemand ? b.subscribe(() => {}, true) : () => {};
+    try {
+        await vi.waitFor(() => expect(a.getSnapshot()).toMatchObject({ subscription: 'live', pending: 'idle' }));
+        expect(reads).toBe(1);
+        releaseLive();
+        await vi.waitFor(() => expect(a.getSnapshot().subscription).not.toBe('live'));
+        expect(a.getSnapshot().value).toBeDefined();
+        if (directDemand) {
+            expect(stopped).not.toHaveBeenCalled();
+            invalidate();
+            await vi.waitFor(() => expect(reads).toBe(2));
+            expect(JSON.parse(new TextDecoder().decode(a.getSnapshot().value!.bytes))).toEqual({ reads: 1 });
+            releaseDirect();
+        }
+        await vi.waitFor(() => expect(stopped).toHaveBeenCalledTimes(1));
+        const settledReads = reads;
+        invalidate();
+        await Promise.resolve();
+        expect(reads).toBe(settledReads);
+    } finally { releaseLive(); releaseStatic(); releaseDirect(); parent.dispose(); direct.dispose(); await harness.dispose(); }
+});
+
+it('releases an explicitly disposed child watch while its parent remains live', async () => {
+    let stopChild: Disposable | undefined;
+    const stopped = vi.fn();
+    const harness = await createPortableAccountResourceHarness({
+        read: () => '{}',
+        async observe(_changed, options) {
+            stopChild = await options.resources.watch('relations', () => {});
+            return { dispose: () => stopChild?.dispose() };
+        },
+    }, { relations: { read: () => '{}', observe: () => ({ dispose: stopped }) } });
+    const store = createPluginDeclaredResourceStore(harness.input)!;
+    const entry = store.getEntry('status');
+    const release = entry.subscribe(() => {}, true);
+    try {
+        await vi.waitFor(() => expect(entry.getSnapshot().subscription).toBe('live'));
+        await stopChild!.dispose();
+        expect(stopped).toHaveBeenCalledTimes(1);
+        expect(entry.getSnapshot().subscription).toBe('live');
+    } finally { release(); store.dispose(); await harness.dispose(); }
+});
+
+it('rejects cyclic own Resource dependencies without leaving attachment pending', async () => {
+    const harness = await createPortableAccountResourceHarness({
+        async read(options) { return (await options.resources.read('relations')).bytes; },
+        async observe(changed, options) { return await options.resources.watch('relations', () => changed()); },
+    }, { relations: {
+        async read(options) { return (await options.resources.read('status')).bytes; },
+        async observe(changed, options) { return await options.resources.watch('status', () => changed()); },
+    } });
+    const store = createPluginDeclaredResourceStore(harness.input)!;
+    const entry = store.getEntry('status');
+    const release = entry.subscribe(() => {}, true);
+    try { await vi.waitFor(() => expect(entry.getSnapshot().error?.code).toBe('plugin_resource_dependency_cycle')); }
+    finally { release(); store.dispose(); await harness.dispose(); }
+});
 
 function installLiveResourceRpc(input?: Readonly<{
     read?: (call: number) => ReturnType<typeof resourceResponse>;

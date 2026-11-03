@@ -6,6 +6,7 @@ import type { z } from 'zod/mini';
 import {
   PLUGIN_CORE_CONTRIBUTION_FAMILIES_V2,
   isDynamicPluginResourceContributionV2,
+  PluginDynamicResourceExecutionV1Schema,
   type PluginConnectedAccountDescriptorContributionV2,
 } from './v2.js';
 import { PluginActionDeclaredExecutionV2Schema } from '../actions/v2.js';
@@ -218,7 +219,7 @@ secretSources: { identityField: 'id', disposition: 'retained', activationDemand:
   actions: { identityField: 'id', disposition: 'reshaped', activationDemand: 'registration', projectionFamily: null, allowedRuntimeRegistration: 'actions', registrationHost: 'discriminated', consumer: 'action-dispatch', platforms: ALL_PLATFORMS },
   commands: { identityField: 'id', disposition: 'reshaped', activationDemand: 'none', projectionFamily: null, allowedRuntimeRegistration: null, consumer: 'cli-commands', platforms: CLI_PLATFORMS },
   tools: { identityField: 'id', disposition: 'reshaped', activationDemand: 'none', projectionFamily: null, allowedRuntimeRegistration: null, consumer: 'agent-tools', platforms: CLI_PLATFORMS },
-  resources: { identityField: 'id', disposition: 'reshaped', activationDemand: 'conditional', projectionFamily: null, allowedRuntimeRegistration: 'resources', registrationHost: 'daemon', consumer: 'resource-service', platforms: ALL_PLATFORMS },
+  resources: { identityField: 'id', disposition: 'reshaped', activationDemand: 'conditional', projectionFamily: null, allowedRuntimeRegistration: 'resources', registrationHost: 'discriminated', consumer: 'resource-service', platforms: ALL_PLATFORMS },
   inputTypes: { identityField: 'id', disposition: 'retained', activationDemand: 'none', projectionFamily: 'inputTypes', allowedRuntimeRegistration: null, consumer: 'input-fields', platforms: ALL_PLATFORMS },
   atmospherePictures: { identityField: 'id', disposition: 'retained', activationDemand: 'none', projectionFamily: 'atmospherePictures', allowedRuntimeRegistration: null, consumer: 'atmosphere-picture-catalog', platforms: ALL_PLATFORMS },
   registrySources: { identityField: 'id', disposition: 'retained', activationDemand: 'none', projectionFamily: 'registrySources', allowedRuntimeRegistration: null, consumer: 'registry-source-list', platforms: ALL_PLATFORMS },
@@ -310,8 +311,9 @@ function extractNestedReferences(family: string, value: Readonly<Record<string, 
       path: ['authentication', 'account', 'artifactId'],
     }] : [];
   }
-  if (family === 'actions') {
-    const parsed = PluginActionDeclaredExecutionV2Schema.safeParse(value.execution);
+  if (family === 'actions' || (family === 'resources' && isDynamicPluginResourceContributionV2(value))) {
+    const parsed = family === 'resources' ? PluginDynamicResourceExecutionV1Schema.safeParse(value.execution)
+      : PluginActionDeclaredExecutionV2Schema.safeParse(value.execution);
     if (!parsed.success || parsed.data.target === 'daemon') return [];
     const execution = parsed.data;
     const artifact = execution.target === 'account' ? execution.account : execution.client;
@@ -1035,10 +1037,12 @@ export const PLUGIN_CONTRIBUTION_CATALOG_V2: readonly PluginContributionCatalogE
         ]);
       },
       requiresRegistration(value) { return requiresFamilyRegistration(descriptor.family, value, policy.activationDemand); },
-      ...(descriptor.family === 'actions'
+      ...(descriptor.family === 'actions' || descriptor.family === 'resources'
         ? {
             runtimeRegistrationTarget: (value: Readonly<Record<string, unknown>>) => {
-              const parsed = PluginActionDeclaredExecutionV2Schema.safeParse(value.execution);
+              const parsed = descriptor.family === 'resources'
+                ? PluginDynamicResourceExecutionV1Schema.safeParse(value.execution ?? { target: 'daemon' })
+                : PluginActionDeclaredExecutionV2Schema.safeParse(value.execution);
               if (!parsed.success) return null;
               if (parsed.data.target === 'daemon') return Object.freeze({ realm: 'daemon' as const });
               if (parsed.data.target === 'account') return Object.freeze({ realm: 'account' as const, ...parsed.data.account });

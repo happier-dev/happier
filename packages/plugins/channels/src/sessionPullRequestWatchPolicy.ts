@@ -34,10 +34,6 @@ export const SESSION_PULL_REQUEST_WATCH_SETTINGS_DECLARATION = {
                 fallback: 'After this many fixing rounds on one pull request, the agent stops fixing it and asks you. Leave it empty to never stop.' },
             schema: { anyOf: [{ type: 'integer', minimum: 1 }, { type: 'null' }] },
             presentation: { control: 'number' }, default: 3 },
-        { id: SESSION_PULL_REQUEST_WATCH_SETTINGS.stopWhenMerged,
-            title: { key: 'plugins.channels.prWatch.settings.stopWhenMerged', fallback: 'Stop watching when merged' },
-            description: { key: 'plugins.channels.prWatch.settings.stopWhenMergedDescription', fallback: 'The link stays in the session.' },
-            schema: { type: 'boolean' }, default: true },
         { id: SESSION_PULL_REQUEST_WATCH_SETTINGS.archiveAfterMerge,
             title: { key: 'plugins.channels.prWatch.settings.archiveAfterMerge', fallback: 'Also archive the session' },
             description: { key: 'plugins.channels.prWatch.settings.archiveAfterMergeDescription',
@@ -48,10 +44,10 @@ export const SESSION_PULL_REQUEST_WATCH_SETTINGS_DECLARATION = {
 
 export type SessionPullRequestWatchDefaults = Readonly<{
     defaultMode: SessionPullRequestWatchPolicyV1['mode']; fixAttemptLimit: number | null;
-    stopWhenMerged: boolean; archiveAfterMerge: boolean;
+    archiveAfterMerge: boolean;
 }>;
 export const SESSION_PULL_REQUEST_OFF_POLICY: SessionPullRequestWatchPolicyV1 = Object.freeze({
-    mode: 'off', stopWhenMerged: true, archiveAfterMerge: false,
+    mode: 'off', archiveAfterMerge: false,
 });
 export function resolveSessionPullRequestWatchDefaults(values: Readonly<Record<string, JsonValue>>): SessionPullRequestWatchDefaults {
     const boolean = (key: string, baseline: boolean) => {
@@ -64,7 +60,6 @@ export function resolveSessionPullRequestWatchDefaults(values: Readonly<Record<s
         defaultMode: SessionPullRequestWatchModeV1Schema.parse(values[SESSION_PULL_REQUEST_WATCH_SETTINGS.defaultMode] ?? 'notify'),
         fixAttemptLimit: SessionPullRequestFixAttemptLimitV1Schema.parse(Object.hasOwn(values, SESSION_PULL_REQUEST_WATCH_SETTINGS.fixAttemptLimit)
             ? values[SESSION_PULL_REQUEST_WATCH_SETTINGS.fixAttemptLimit] : 3),
-        stopWhenMerged: boolean(SESSION_PULL_REQUEST_WATCH_SETTINGS.stopWhenMerged, true),
         archiveAfterMerge: boolean(SESSION_PULL_REQUEST_WATCH_SETTINGS.archiveAfterMerge, false),
     };
 }

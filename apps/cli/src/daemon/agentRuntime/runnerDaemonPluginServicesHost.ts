@@ -668,7 +668,7 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
         subscriptionId: string,
         register: (
             publish: (event: SubscriptionEvent) => Promise<void>,
-        ) => Readonly<{ dispose(): void | Promise<void> }> | null,
+        ) => Readonly<{ dispose(): void | Promise<void> }> | Promise<Readonly<{ dispose(): void | Promise<void> }>> | null,
         queueMode: Subscription['queueMode'],
         authorityScope: Subscription['authorityScope'] = 'agent',
         awaitDeliverySettlement = false,
@@ -696,8 +696,16 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
             subscription,
         );
         try {
-            subscription.disposable = register((event) =>
+            const registered = register((event) =>
                 enqueueSubscriptionEvent(subscription, event));
+            if (registered && 'then' in registered) {
+                subscription.acquisition = Promise.resolve(registered).then(disposable => {
+                    subscription.disposable = disposable;
+                }).catch(error => {
+                    if (invocation.subscriptions.get(subscriptionId) === subscription) invocation.subscriptions.delete(subscriptionId);
+                    throw error;
+                });
+            } else subscription.disposable = registered;
         } catch (error) {
             invocation.subscriptions.delete(subscriptionId);
             throw error;

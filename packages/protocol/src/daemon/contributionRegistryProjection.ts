@@ -80,7 +80,7 @@ import { PluginUiHostMethodV1Schema } from '../plugins/ui/hostApiDefinition.js';
 import {
   PluginUiQualifiedActionReferenceV1Schema as CanonicalPluginUiQualifiedActionReferenceV1Schema,
 } from '../plugins/ui/hostApiRequests.js';
-import { PluginUiResourceSubscriptionEventV1Schema } from '../plugins/ui/subscriptions.js';
+import { PluginUiReadAuthorityReferenceV1Schema, PluginUiResourceSubscriptionEventV1Schema } from '../plugins/ui/subscriptions.js';
 import { PluginUiResolvedSemanticCommandV1Schema } from '../plugins/ui/semanticCommands.js';
 import {
   ComposerSurfaceRoleV1Schema,
@@ -91,6 +91,7 @@ import {
   AgentUiProjectedDeclarationV1Schema,
   PluginResourceContextV1Schema,
   PluginDynamicResourceScopeV1Schema,
+  PluginDynamicResourceExecutionV1Schema,
   PluginResourceKindV2Schema,
   PluginWorkflowContributionV1Schema,
   PluginInputTypeContributionV1Schema,
@@ -1057,10 +1058,13 @@ export const DaemonPluginUiResourceWatchOpenRequestSchema = lazyZodSchema(() => 
   expectedCallerOccurrenceId: PluginUiRuntimeOccurrenceIdV1Schema,
   callerPluginId: z.string().check(z.trim(), z.minLength(1)),
   subscriptionId: z.string().check(z.trim(), z.minLength(1), z.maxLength(256)),
-  resource: z.strictObject({
+  resource: z.union([z.strictObject({
     pluginId: z.string().check(z.trim(), z.minLength(1)),
     localId: z.string().check(z.trim(), z.minLength(1)),
-  }),
+  }), PluginUiReadAuthorityReferenceV1Schema, z.strictObject({
+    /** Private observation of the same admitted Action ingress; never a second read. */
+    actionRead: DaemonPluginStructuredMessageActionExecuteRequestSchema,
+  })]),
   /** The watch owns this exact contextual binding until it is closed or retired. */
   context: zMini.optional(PluginResourceContextV1Schema),
 }));
@@ -1084,7 +1088,7 @@ export const DaemonPluginUiResourceWatchOpenResponseSchema = lazyZodSchema(() =>
   z.strictObject({
     ok: z.literal(true),
     subscriptionId: z.string().check(z.trim(), z.minLength(1), z.maxLength(256)),
-    digest: PluginUiArtifactDigestV1Schema,
+    digest: z.optional(PluginUiArtifactDigestV1Schema),
   }),
   DaemonPluginUiResourceWatchFailureSchema,
 ]));
@@ -1116,7 +1120,11 @@ export const DaemonPluginUiResourceWatchNextResponseSchema = lazyZodSchema(() =>
   z.strictObject({
     ok: z.literal(true),
     status: z.literal('event'),
-    event: PluginUiResourceSubscriptionEventV1Schema,
+    event: z.union([PluginUiResourceSubscriptionEventV1Schema, z.strictObject({
+      version: z.literal(1),
+      subscriptionId: z.string().check(z.trim(), z.minLength(1)),
+      kind: z.literal('readInvalidated'),
+    })]),
   }),
   z.strictObject({
     ok: z.literal(true),
@@ -1414,6 +1422,8 @@ export const PluginProjectedResourceV2Schema = lazyZodSchema(() => z.strictObjec
   path: z.optional(z.string().check(z.trim(), z.minLength(1))),
   /** Current declaration fact; absent older rows cannot serve contextual refresh. */
   scope: zMini.optional(PluginDynamicResourceScopeV1Schema),
+  /** Explicit producer placement; omitted historical projections remain Machine-owned. */
+  execution: zMini.optional(PluginDynamicResourceExecutionV1Schema),
   /** Exact admitted Resource HostAccess, never a widget-owned credential choice. */
   connectedAccountPurposes: z.optional(z.array(PluginProjectedConnectedAccountPurposeDeclarationV1Schema)),
   digest: PluginOptionalStringSchema,

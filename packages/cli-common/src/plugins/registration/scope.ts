@@ -486,7 +486,7 @@ export function createPluginRegistrationScope(
         dragSources: Object.freeze({ register: (id: string, runtime: unknown) => register(REGISTRATION_FAMILY.dragSources, id, runtime) }),
         dropTargets: Object.freeze({ register: (id: string, runtime: unknown) => register(REGISTRATION_FAMILY.dropTargets, id, runtime) }),
     });
-    const accountApi = Object.freeze({ actions: accountActions,
+    const accountApi = Object.freeze({ actions: accountActions, resources: daemonApi.resources,
         connectedAccounts: daemonApi.connectedAccounts });
     const api = params.target.realm === 'account'
         ? accountApi : params.target.realm === 'client'

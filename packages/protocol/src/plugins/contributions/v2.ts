@@ -1,3 +1,4 @@
+import { PluginClientExecutionReferenceV1Schema } from './clientExecution.js';
 import { PluginStoreKindContributionV1Schema, validatePluginStoreKindContributionsV1 } from './storeKinds.js';
 export * from './storeKinds.js';
 import { DeploymentTargetContributionV1Schema, validateDeploymentTargetContributionsV1 } from './deploymentTargets.js';
@@ -94,6 +95,7 @@ import {
   PluginUiInstanceKeyV1Schema,
   PluginUiLaunchInputV1Schema,
 } from '../ui/semanticCommands.js';
+import { PluginUiHostApiSurfaceTargetV1Schema } from '../ui/surfaceContext.js';
 import {
   PluginSessionHeaderActionDescriptorV1Schema,
 } from './ui/sessionHeaderActions.js';
@@ -791,11 +793,14 @@ export const PluginResourceContextV1Schema = lazyZodSchema(() => z.discriminated
   z.strictObject({
     kind: z.literal('session'),
     sessionId: z.string().check(z.trim(), z.minLength(1), z.maxLength(256)),
-  }),
+    target: z.optional(PluginUiHostApiSurfaceTargetV1Schema),
+  }).check(z.refine(value => value.target === undefined
+    || value.target.kind === 'session' && value.target.sessionId === value.sessionId)),
   z.strictObject({
     kind: z.literal('surface'),
     mountInstanceKey: PluginUiInstanceKeyV1Schema,
     launchInput: PluginUiLaunchInputV1Schema,
+    target: z.optional(PluginUiHostApiSurfaceTargetV1Schema),
   }),
 ]));
 export type PluginResourceContextV1 = z.infer<typeof PluginResourceContextV1Schema>;
@@ -819,6 +824,12 @@ export type PluginPackagedResourceContributionV2 =
 
 export const MAX_PLUGIN_DYNAMIC_RESOURCE_DECLARED_BYTES_V2 = 16 * 1024 * 1024;
 
+export const PluginDynamicResourceExecutionV1Schema = lazyZodSchema(() => z.discriminatedUnion('target', [
+  z.strictObject({ target: z.literal('daemon') }),
+  z.strictObject({ target: z.literal('account'), account: PluginClientExecutionReferenceV1Schema }),
+]));
+export type PluginDynamicResourceExecutionV1 = z.infer<typeof PluginDynamicResourceExecutionV1Schema>;
+
 export const PluginDynamicResourceContributionV2Schema = lazyZodSchema(() => z.strictObject({
   id: asProtocolZod(PluginContributionLocalIdSchema),
   source: z.literal('dynamic'),
@@ -826,6 +837,8 @@ export const PluginDynamicResourceContributionV2Schema = lazyZodSchema(() => z.s
   contentType: z.string().check(z.trim(), z.minLength(1)),
   /** Omitted legacy dynamic declarations retain their existing global bytes. */
   scope: z._default(PluginDynamicResourceScopeV1Schema, 'global'),
+  /** Scope selects context; only this explicit declaration selects the host. */
+  execution: z.optional(PluginDynamicResourceExecutionV1Schema),
   hostAccess: z.optional(z.array(asProtocolZod(PluginContributionLocalIdSchema)).check(z.minLength(1), z.refine((values) => new Set(values).size === values.length, 'Entries must be unique.'))),
   maxBytes: z.optional(z.number().check(z.int(), z.positive(), z.maximum(MAX_PLUGIN_DYNAMIC_RESOURCE_DECLARED_BYTES_V2))),
   metadata: z.optional(z.record(z.string(), PluginJsonValueV2Schema)),

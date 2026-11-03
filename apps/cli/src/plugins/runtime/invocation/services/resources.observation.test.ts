@@ -19,6 +19,7 @@ import {
     createStablePluginResourcesOwner,
     type StableDynamicPluginResourceProducer,
     type StablePluginResourcesOwner,
+    type BindDynamicResourceActions,
 } from './resources';
 
 /**
@@ -149,6 +150,121 @@ afterEach(() => {
     resetActiveAccountSettingsSnapshotForTests();
 });
 
+describe('context-owned dynamic Resource producers', () => {
+    it('preserves rejected factory failure, permits fresh demand, and disposes a late producer after context retirement', async () => {
+        let created = 0;
+        let disposed = 0;
+        let complete!: () => void;
+        let lifetime: AbortSignal | undefined;
+        const owner = await createStablePluginResourcesOwner({
+            registry: registry([dynamicContribution('acme.alpha', 'context-producer', 'surface')]),
+            generations: new Map(), dynamicOccurrenceIdsByPluginId: dynamicGenerationIds(),
+            dynamicProducers: [{ pluginId: 'acme.alpha', localId: 'context-producer', runtime: {
+                read: () => '"unsupported"', observe: () => ({ dispose() {} }),
+                async createProducer(options) {
+                    lifetime = options.signal;
+                    if (++created === 1) throw new PluginError({ code: 'native_dependency_unavailable' });
+                    await new Promise<void>(resolve => { complete = resolve; });
+                    return { read: () => '{}', observe: () => ({ dispose() {} }), dispose() { disposed++; } };
+                },
+            } }],
+        });
+        const binding = new AbortController();
+        const bound = await owner.bindForResource({ pluginId: 'acme.alpha', resourceId: 'context-producer',
+            signal: binding.signal, isOccurrenceCurrent: () => true,
+            context: { kind: 'surface', mountInstanceKey: 'async-context', launchInput: null } });
+        try {
+            await expect(bound.read('context-producer')).rejects.toMatchObject({ code: 'native_dependency_unavailable' });
+            expect(lifetime?.aborted).toBe(true);
+            const pending = bound.read('context-producer');
+            await vi.waitFor(() => expect(created).toBe(2));
+            binding.abort();
+            await expect(pending).rejects.toMatchObject({ code: 'plugin_resource_aborted' });
+            expect(lifetime?.aborted).toBe(true);
+            complete();
+            await vi.waitFor(() => expect(disposed).toBe(1));
+        } finally { binding.abort(); owner.retirePlugin('acme.alpha'); }
+    });
+
+    it.each(['read-first', 'watch-first'])('retains one admitted producer beyond read settlement and until final binding release: %s', async order => {
+        const accountSnapshot = { source: 'network' as const, settings: accountSettingsParse({}), settingsVersion: 1,
+            loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: 'initial-account' };
+        setActiveAccountSettingsSnapshot(accountSnapshot);
+        let created = 0;
+        let disposed = 0;
+        let reads = 0;
+        let producerSignal: AbortSignal | undefined;
+        let readFromProducer: (() => Promise<unknown>) | undefined;
+        // Action execution is the genuine external boundary. The Resource
+        // owner, contextual admission, sharing and disposal remain real.
+        const owner = await createStablePluginResourcesOwner({
+            registry: registry([dynamicContribution('acme.alpha', 'context-producer', 'surface')]),
+            generations: new Map(), dynamicOccurrenceIdsByPluginId: dynamicGenerationIds(),
+            bindDynamicResourceActions: binding => ({
+                async readAction() {
+                    if (binding.signal.aborted || !await binding.isOccurrenceCurrent()) throw new PluginError({ code: 'plugin_resource_aborted' });
+                    return { ok: true, result: { reads: ++reads } };
+                },
+                async observeAction() { return { dispose() {} }; },
+            }),
+            dynamicProducers: [{ pluginId: 'acme.alpha', localId: 'context-producer', runtime: {
+                read: () => '"unsupported"', observe: () => ({ dispose() {} }),
+                createProducer(options) {
+                    created++;
+                    producerSignal = options.signal;
+                    readFromProducer = () => options.readAction({ pluginId: 'acme.alpha', localId: 'source' }, {});
+                    return {
+                        async read() { const result = await readFromProducer!(); return JSON.stringify(result); },
+                        observe: () => ({ dispose() {} }),
+                        dispose() { disposed++; },
+                    };
+                },
+            } }],
+        });
+        const first = new AbortController();
+        const second = new AbortController();
+        const bind = (signal: AbortSignal) => owner.bindForResource({ pluginId: 'acme.alpha', resourceId: 'context-producer',
+            signal, isOccurrenceCurrent: () => true,
+            context: { kind: 'surface', mountInstanceKey: 'native-context', launchInput: null } });
+        const a = await bind(first.signal);
+        const b = await bind(second.signal);
+        let observer: Disposable | undefined;
+        try {
+            if (order === 'watch-first') observer = await a.watch('context-producer', () => {});
+            const result = await a.read('context-producer');
+            expect(JSON.parse(Buffer.from(result.bytes).toString())).toMatchObject({ ok: true });
+            if (!observer) observer = await a.watch('context-producer', () => {});
+            expect(created).toBe(1);
+            expect(producerSignal?.aborted).toBe(false);
+            expect(await readFromProducer!()).toMatchObject({ ok: true });
+            const beforePreferenceReads = reads;
+            setActiveAccountSettingsSnapshot({ ...accountSnapshot, settings: accountSettingsParse({ analyticsOptOut: true }),
+                settingsVersion: 2, loadedAtMs: 2 });
+            await Promise.resolve();
+            expect(created).toBe(1);
+            expect(disposed).toBe(0);
+            expect(reads).toBe(beforePreferenceReads);
+            await observer.dispose();
+            first.abort();
+            expect(disposed).toBe(0);
+            await b.read('context-producer');
+            expect(created).toBe(1);
+            const oldRead = readFromProducer!;
+            const oldSignal = producerSignal;
+            setActiveAccountSettingsSnapshot({ source: 'network', settings: accountSettingsParse({}), settingsVersion: 1,
+                loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: 'replacement-account' });
+            expect(oldSignal?.aborted).toBe(true);
+            await expect(oldRead()).rejects.toMatchObject({ code: 'plugin_resource_aborted' });
+            await b.read('context-producer');
+            expect(created).toBe(2);
+            second.abort();
+            expect(producerSignal?.aborted).toBe(true);
+            await vi.waitFor(() => expect(disposed).toBe(2));
+            await expect(readFromProducer!()).rejects.toMatchObject({ code: 'plugin_resource_aborted' });
+        } finally { first.abort(); second.abort(); await observer?.dispose(); owner.retirePlugin('acme.alpha'); }
+    });
+});
+
 function deferred<T>(): Readonly<{
     promise: Promise<T>;
     resolve(value: T): void;
@@ -168,6 +284,280 @@ function deferred<T>(): Readonly<{
 }
 
 describe('dynamic Resource HostAccess callback binding (SDK-RESOURCE-01)', () => {
+    it.each(['resolve', 'reject'] as const)('retains final own Resource cleanup after abort and repeated dispose (%s)', async (outcome) => {
+        const cleanup = deferred<void>();
+        const failure = new Error('Resource dependency cleanup failed');
+        let disposals = 0;
+        const owner = await createStablePluginResourcesOwner({
+            registry: registry(['leaf', 'composed'].map((id) => dynamicContribution('acme.alpha', id))),
+            generations: new Map(), dynamicOccurrenceIdsByPluginId: dynamicGenerationIds(),
+            dynamicProducers: [{ pluginId: 'acme.alpha', localId: 'leaf', runtime: {
+                read() { return 'admitted'; },
+                observe() { return { dispose() { disposals += 1; return cleanup.promise; } }; },
+            } }, { pluginId: 'acme.alpha', localId: 'composed', runtime: {
+                async read({ resources }) { return (await resources.read('leaf')).bytes; },
+                observe(invalidate, { resources }) { return resources.watch('leaf', invalidate); },
+            } }],
+        });
+        const visible = owner.bind({ pluginId: 'acme.alpha', signal: new AbortController().signal, isOccurrenceCurrent: () => true });
+        const visibleWatch = await visible.watch('leaf', () => undefined);
+        const controller = new AbortController();
+        const composed = owner.bind({ pluginId: 'acme.alpha', signal: controller.signal, isOccurrenceCurrent: () => true });
+        const watch = await composed.watch('composed', () => undefined);
+        await visibleWatch.dispose();
+        expect(disposals).toBe(0);
+        controller.abort();
+        expect(disposals).toBe(1);
+        const pending = watch.dispose();
+        const repeated = watch.dispose();
+        try {
+            expect(pending).toBeInstanceOf(Promise);
+            expect(repeated).toBe(pending);
+            let completed = false;
+            const completion = Promise.resolve(pending).then(() => { completed = true; }, () => { completed = true; });
+            await Promise.resolve();
+            expect(completed).toBe(false);
+            const successor = await visible.watch('leaf', () => undefined);
+            expect(Buffer.from((await visible.read('leaf')).bytes).toString()).toBe('admitted');
+            if (outcome === 'reject') {
+                const rejected = expect(pending).rejects.toBe(failure);
+                cleanup.reject(failure);
+                await rejected;
+            } else {
+                cleanup.resolve();
+                await pending;
+            }
+            await completion;
+            expect(watch.dispose()).toBe(pending);
+            // Completing the old cleanup cannot retire the successor's demand.
+            expect(Buffer.from((await visible.read('leaf')).bytes).toString()).toBe('admitted');
+            try { await successor.dispose(); } catch (error) { expect(error).toBe(failure); }
+            expect(disposals).toBe(2);
+        } finally {
+            cleanup.resolve();
+        }
+    });
+
+    it.each(['throw', 'reject'] as const)('retires Action authority despite disposer %s while ordinary invalidation preserves its callback', async (cleanupFailure) => {
+        setActiveAccountSettingsSnapshot({ source: 'network', settings: accountSettingsParse({}),
+            settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: 'account-a' });
+        const ports: Parameters<BindDynamicResourceActions>[0][] = [];
+        const observations: { signal: AbortSignal; invalidate(): void; disposed: boolean; readsAtAttachment: number }[] = [];
+        let reads = 0;
+        let pendingRead: ReturnType<typeof deferred<string>> | undefined;
+        const owner = await createStablePluginResourcesOwner({
+            registry: registry([dynamicContribution('acme.alpha', 'authority')]),
+            generations: new Map(), dynamicOccurrenceIdsByPluginId: dynamicGenerationIds(),
+            bindDynamicResourceActions(port) {
+                ports.push(port);
+                return {
+                    async readAction() { throw new Error('No Action read is needed by this observer'); },
+                    async observeAction() { return { dispose() {} }; },
+                };
+            },
+            dynamicProducers: [{ pluginId: 'acme.alpha', localId: 'authority', runtime: {
+                read() { reads += 1; return pendingRead?.promise ?? 'same-facts'; },
+                observe(invalidate, { signal }) {
+                    const observation = { signal, invalidate, disposed: false, readsAtAttachment: reads };
+                    observations.push(observation);
+                    return { dispose() {
+                        observation.disposed = true;
+                        if (observation !== observations[0]) return;
+                        if (cleanupFailure === 'throw') throw new Error('Observer cleanup failed');
+                        return Promise.reject(new Error('Observer cleanup failed asynchronously'));
+                    } };
+                },
+            } }],
+        });
+        let withdrawals = 0;
+        const withdrawnDescriptors: unknown[] = [];
+        const service = owner.bind({ pluginId: 'acme.alpha', signal: new AbortController().signal, isOccurrenceCurrent: () => true,
+            onReadAuthorityRetired() {
+                withdrawals += 1;
+                try { withdrawnDescriptors.push(service.describe('authority')); }
+                catch (error) { withdrawnDescriptors.push(error); }
+            },
+        });
+        const changes: string[] = [];
+        const watch = await service.watch('authority', (change) => changes.push(change.digest));
+        await settle();
+        const first = observations[0]!;
+        const firstPort = ports.find((port) => port.signal === first.signal)!;
+        expect(firstPort.retireObservation).toBeTypeOf('function');
+        expect(ports.every((port) => typeof port.retireObservation === 'function')).toBe(true);
+        const beforeInvalidation = reads;
+        first.invalidate();
+        await vi.waitFor(() => expect(reads).toBe(beforeInvalidation + 1));
+        await settle();
+        expect(observations).toHaveLength(1);
+        expect(first.signal.aborted).toBe(false);
+        expect(first.disposed).toBe(false);
+        expect(changes).toEqual([]);
+        expect(withdrawals).toBe(0);
+
+        pendingRead = deferred<string>();
+        const beforeRetirement = reads;
+        expect(() => firstPort.retireObservation!()).not.toThrow();
+        expect(first.signal.aborted).toBe(true);
+        expect(first.disposed).toBe(true);
+        expect(withdrawals).toBe(1);
+        expect(withdrawnDescriptors).toEqual([expect.objectContaining({ code: 'plugin_resource_context_unavailable' })]);
+        expect(() => service.describe('authority')).toThrowError(expect.objectContaining({ code: 'plugin_resource_context_unavailable' }));
+        await vi.waitFor(() => expect(observations).toHaveLength(2));
+        expect(observations[1]!.signal).not.toBe(first.signal);
+        expect(observations[1]!.signal.aborted).toBe(false);
+        expect(observations[1]!.readsAtAttachment).toBe(beforeRetirement);
+        const readsAfterRetirement = reads;
+        firstPort.retireObservation!();
+        first.invalidate();
+        expect(withdrawals).toBe(1);
+        expect(observations).toHaveLength(2);
+        expect(reads).toBe(readsAfterRetirement);
+        pendingRead.resolve('same-facts');
+        await vi.waitFor(() => expect(changes).toEqual([digest(Buffer.from('same-facts'))]));
+        expect(service.describe('authority').digest).toBe(digest(Buffer.from('same-facts')));
+        watch.dispose();
+        expect(observations[1]!.disposed).toBe(true);
+    });
+
+    it('withdraws composed Resource authority immediately when its own Resource dependency retires', async () => {
+        setActiveAccountSettingsSnapshot({ source: 'network', settings: accountSettingsParse({}),
+            settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: 'account-a' });
+        const ports: Parameters<BindDynamicResourceActions>[0][] = [];
+        let withdrawals = 0;
+        let pendingRead: ReturnType<typeof deferred<string>> | undefined;
+        const owner = await createStablePluginResourcesOwner({
+            registry: registry(['leaf', 'composed'].map((id) => dynamicContribution('acme.alpha', id))),
+            generations: new Map(), dynamicOccurrenceIdsByPluginId: dynamicGenerationIds(),
+            bindDynamicResourceActions(port) {
+                ports.push(port);
+                return { async readAction() { throw new Error('Unexpected Action read'); },
+                    async observeAction() { return { dispose() {} }; } };
+            },
+            dynamicProducers: [{ pluginId: 'acme.alpha', localId: 'leaf', runtime: {
+                read() { return pendingRead?.promise ?? 'admitted'; }, observe() { return { dispose() {} }; },
+            } }, { pluginId: 'acme.alpha', localId: 'composed', runtime: {
+                async read({ resources }) { return (await resources.read('leaf')).bytes; },
+                observe(invalidate, { resources }) { return resources.watch('leaf', invalidate); },
+            } }],
+        });
+        const service = owner.bind({ pluginId: 'acme.alpha', signal: new AbortController().signal, isOccurrenceCurrent: () => true,
+            onReadAuthorityRetired() { withdrawals += 1; },
+        });
+        const watch = await service.watch('composed', () => undefined);
+        await service.read('composed');
+        const original = ports.find((port) => port.resourceId === 'leaf' && port.retireObservation && !port.signal.aborted)!;
+        pendingRead = deferred<string>();
+        original.retireObservation!();
+        expect(withdrawals).toBe(1);
+        expect(() => service.describe('composed')).toThrowError(expect.objectContaining({ code: 'plugin_resource_context_unavailable' }));
+        original.retireObservation!();
+        expect(withdrawals).toBe(1);
+        pendingRead.resolve('replacement');
+        await vi.waitFor(() => expect(service.describe('composed').digest).toBe(digest(Buffer.from('replacement'))));
+        watch.dispose();
+    });
+
+    it('preserves a rejected async observer attachment instead of publishing a live snapshot', async () => {
+        const attachment = deferred<Disposable>();
+        const failure = new PluginError({ code: 'dependency_denied', message: 'Dependency is unavailable' });
+        let reads = 0;
+        const owner = await createStablePluginResourcesOwner({
+            registry: registry([dynamicContribution('acme.alpha', 'async-observe')]),
+            generations: new Map(), dynamicOccurrenceIdsByPluginId: dynamicGenerationIds(),
+            dynamicProducers: [{ pluginId: 'acme.alpha', localId: 'async-observe', runtime: {
+                read() { reads += 1; return 'snapshot'; }, observe() { return attachment.promise; },
+            } }],
+        });
+        const service = owner.bind({ pluginId: 'acme.alpha', signal: new AbortController().signal, isOccurrenceCurrent: () => true });
+        const changes: string[] = [];
+        const watch = service.watch('async-observe', (change) => changes.push(change.digest));
+        const rejectedWatch = expect(watch).rejects.toBe(failure);
+        const baseline = service.read('async-observe');
+        const rejected = expect(baseline).rejects.toBe(failure);
+        attachment.reject(failure);
+        await rejected;
+        await rejectedWatch;
+        expect(reads).toBe(1);
+        expect(changes).toEqual([]);
+    });
+
+    it('disposes an async observer that attaches after its demand was cancelled', async () => {
+        const attachment = deferred<Disposable>();
+        let disposals = 0;
+        let reads = 0;
+        let notify: (() => void) | undefined;
+        const owner = await createStablePluginResourcesOwner({
+            registry: registry([dynamicContribution('acme.alpha', 'async-observe')]),
+            generations: new Map(), dynamicOccurrenceIdsByPluginId: dynamicGenerationIds(),
+            dynamicProducers: [{ pluginId: 'acme.alpha', localId: 'async-observe', runtime: {
+                read() { reads += 1; return 'snapshot'; },
+                observe(invalidate) { notify = invalidate; return attachment.promise; },
+            } }],
+        });
+        const controller = new AbortController();
+        const service = owner.bind({ pluginId: 'acme.alpha', signal: controller.signal, isOccurrenceCurrent: () => true });
+        const changes: string[] = [];
+        const watch = service.watch('async-observe', (change) => changes.push(change.digest));
+        const rejectedWatch = expect(watch).rejects.toMatchObject({ code: 'plugin_resource_aborted' });
+        controller.abort();
+        attachment.resolve({ async dispose() { await Promise.resolve(); disposals += 1; } });
+        await expect.poll(() => disposals).toBe(1);
+        await rejectedWatch;
+        notify!();
+        await settle();
+        expect(reads).toBe(1);
+        expect(changes).toEqual([]);
+        expect(disposals).toBe(1);
+    });
+
+    it('composes only the exact admitted Session snapshot and retires own dependency demand', async () => {
+        const reads: string[] = [];
+        const retired: string[] = [];
+        const owner = await createStablePluginResourcesOwner({
+            registry: registry(['links', 'composed'].map((id) => dynamicContribution('acme.alpha', id, 'session'))),
+            generations: new Map(),
+            dynamicOccurrenceIdsByPluginId: dynamicGenerationIds(),
+            resolveSessionResourceAccess: allowSessionResourceAccess,
+            dynamicProducers: [{ pluginId: 'acme.alpha', localId: 'links', runtime: {
+                read({ context }) {
+                    if (context.kind !== 'session') throw new Error('Expected exact Session');
+                    reads.push(context.sessionId);
+                    return context.sessionId;
+                },
+                observe(_notify, { context, signal }) {
+                    if (context.kind !== 'session') throw new Error('Expected exact Session');
+                    signal.addEventListener('abort', () => retired.push(context.sessionId), { once: true });
+                    return { dispose() {} };
+                },
+            } }, { pluginId: 'acme.alpha', localId: 'composed', runtime: {
+                async read({ resources }) { return (await resources.read('links')).bytes; },
+                observe(notify, { resources }) { return resources.watch('links', notify); },
+            } }],
+        });
+        establishSessionAccessWitness(owner);
+        const visible = await bindSessionResource(owner, { resourceId: 'links', sessionId: 'session-a' });
+        const composed = await bindSessionResource(owner, { resourceId: 'composed', sessionId: 'session-a' });
+        const watch = await visible.watch('links', () => undefined);
+        await visible.read('links');
+        const dependent = await composed.watch('composed', () => undefined);
+        expect(Buffer.from((await composed.read('composed')).bytes).toString()).toBe('session-a');
+        expect(reads).toEqual(['session-a']);
+        const other = await bindSessionResource(owner, { resourceId: 'composed', sessionId: 'session-b' });
+        expect(Buffer.from((await other.read('composed')).bytes).toString()).toBe('session-b');
+        expect(reads).toEqual(['session-a', 'session-b']);
+        watch.dispose();
+        expect(retired).toEqual([]);
+        dependent.dispose();
+        expect(retired).toEqual(['session-a']);
+        // No demanded bytes survive disposal, even though describe metadata remains.
+        await composed.read('composed');
+        expect(reads).toEqual(['session-a', 'session-b', 'session-a']);
+        establishSessionAccessWitness(owner, { throughCursor: 2,
+            entries: [{ sessionId: 'session-a', cursor: 2, status: 'unavailable' }] });
+        await expect(composed.read('composed')).rejects.toMatchObject({ code: 'plugin_resource_session_access_unavailable' });
+    });
+
     it('expires real Account storage captured from each completed admission or read callback', async () => {
         const httpGet = vi.fn(async () => ({
             status: 200,
@@ -298,7 +688,7 @@ describe('dynamic Resource HostAccess callback binding (SDK-RESOURCE-01)', () =>
             signal: new AbortController().signal,
             isOccurrenceCurrent: () => true,
         });
-        const subscription = service.watch('live', () => undefined);
+        const subscription = await service.watch('live', () => undefined);
         try {
             await settle();
             expect(readScopes).toHaveLength(2); // admission + watch settlement
@@ -601,7 +991,7 @@ describe('dynamic Resource HostAccess callback binding (SDK-RESOURCE-01)', () =>
             signal: new AbortController().signal,
             isOccurrenceCurrent: () => true,
         });
-        const subscription = service.watch('live', () => undefined);
+        const subscription = await service.watch('live', () => undefined);
         if (!observedAccountStorage) throw new Error('Expected the Resource observation Account storage scope');
 
         occurrenceCurrent = false;
@@ -685,7 +1075,7 @@ describe('dynamic Resource HostAccess callback binding (SDK-RESOURCE-01)', () =>
             signal: new AbortController().signal,
             isOccurrenceCurrent: () => true,
         });
-        const subscription = service.watch('live', () => undefined);
+        const subscription = await service.watch('live', () => undefined);
         await vi.waitFor(() => expect(reads).toBe(2));
         if (!invalidate) throw new Error('Expected a dynamic Resource invalidation callback');
 
@@ -738,7 +1128,7 @@ describe('dynamic Resource HostAccess callback binding (SDK-RESOURCE-01)', () =>
             signal: new AbortController().signal,
             isOccurrenceCurrent: () => true,
         });
-        const subscription = service.watch('live', listener);
+        const subscription = await service.watch('live', listener);
         await vi.waitFor(() => expect(reads).toBe(2));
         const before = service.describe('live');
         listener.mockClear();
@@ -836,7 +1226,7 @@ describe('dynamic Resource HostAccess callback binding (SDK-RESOURCE-01)', () =>
             isOccurrenceCurrent: () => true,
         });
         const changes: Array<{ digest: string }> = [];
-        const subscription = service.watch('live', (change) => { changes.push(change); });
+        const subscription = await service.watch('live', (change) => { changes.push(change); });
         await settle();
         expect(observations).toHaveLength(1);
         expect(observations[0]?.accountStorage).toBe(accountA);
@@ -971,7 +1361,7 @@ describe('dynamic Resource HostAccess callback binding (SDK-RESOURCE-01)', () =>
             isOccurrenceCurrent: () => true,
         });
         const changes: Array<{ digest: string }> = [];
-        const subscription = service.watch('live', (change) => { changes.push(change); });
+        const subscription = await service.watch('live', (change) => { changes.push(change); });
         await settle();
         expect(observations).toHaveLength(1);
         expect(observations[0]?.accountStorage).toBe(accountA);
@@ -1066,7 +1456,7 @@ describe('dynamic Resource HostAccess callback binding (SDK-RESOURCE-01)', () =>
             signal: new AbortController().signal,
             isOccurrenceCurrent: () => true,
         });
-        const subscription = service.watch('live', vi.fn());
+        const subscription = await service.watch('live', vi.fn());
         await settle();
         const readsBeforeB = reads.length;
 
@@ -1175,7 +1565,7 @@ describe('dynamic Resource HostAccess callback binding (SDK-RESOURCE-01)', () =>
         );
     });
 
-    it('retries an initial approved Account observation failure without requiring an Account transition', async () => {
+    it('allows a fresh watch after an initial Account observation failure without requiring an Account transition', async () => {
         const accountStorage = accountStorageFixture();
         let accountAvailable = false;
         let observeCalls = 0;
@@ -1236,13 +1626,13 @@ describe('dynamic Resource HostAccess callback binding (SDK-RESOURCE-01)', () =>
         });
         const changes: Array<{ digest: string }> = [];
 
-        let subscription: Disposable | undefined;
-        expect(() => {
-            subscription = service.watch('live', (change) => { changes.push(change); });
-        }).not.toThrow();
+        await expect(service.watch('live', (change) => { changes.push(change); })).rejects.toMatchObject({
+            code: 'plugin_account_storage_unavailable',
+        });
         expect(observeCalls).toBe(1);
 
         accountAvailable = true;
+        const subscription = await service.watch('live', (change) => { changes.push(change); });
         await vi.waitFor(() => {
             expect(observeCalls).toBe(2);
             expect(observations).toHaveLength(1);
@@ -1425,7 +1815,7 @@ describe('dynamic Resource HostAccess callback binding (SDK-RESOURCE-01)', () =>
         const service = owner.bind({ pluginId: 'acme.alpha', signal: new AbortController().signal, isOccurrenceCurrent: () => true });
         await expect(service.read('live')).rejects.toMatchObject({ code });
         expect(() => service.describe('live')).toThrowError(expect.objectContaining({ code }));
-        expect(() => service.watch('live', () => undefined)).toThrowError(expect.objectContaining({ code }));
+        await expect(service.watch('live', () => undefined)).rejects.toThrowError(expect.objectContaining({ code }));
         await expect(service.read('healthy')).resolves.toMatchObject({ bytes: new Uint8Array(Buffer.from('healthy')) });
     });
 
@@ -1480,7 +1870,7 @@ describe('dynamic Resource HostAccess callback binding (SDK-RESOURCE-01)', () =>
             isOccurrenceCurrent: () => true,
         });
         await service.read('live');
-        const watch = service.watch('live', () => undefined);
+        const watch = await service.watch('live', () => undefined);
         expect(callbackOptions.at(-1)).toMatchObject({
             accountStorage,
             context: { kind: 'global' },
@@ -1689,7 +2079,7 @@ describe('dynamic resource invalidation is owed to observers, not to the last re
         await expect(rejected.read('session-live')).rejects.toMatchObject({
             code: 'plugin_resource_session_access_unavailable',
         });
-        expect(() => rejected.watch('session-live', () => undefined)).toThrowError(
+        await expect(rejected.watch('session-live', () => undefined)).rejects.toThrowError(
             expect.objectContaining({ code: 'plugin_resource_session_access_unavailable' }),
         );
         expect(read).not.toHaveBeenCalled();
@@ -1737,7 +2127,7 @@ describe('dynamic resource invalidation is owed to observers, not to the last re
         await expect(bound.read('session-live')).rejects.toMatchObject({
             code: 'plugin_resource_session_access_unavailable',
         });
-        expect(() => bound.watch('session-live', () => undefined)).toThrowError(
+        await expect(bound.watch('session-live', () => undefined)).rejects.toThrowError(
             expect.objectContaining({ code: 'plugin_resource_session_access_unavailable' }),
         );
         expect(read).not.toHaveBeenCalled();
@@ -1903,7 +2293,7 @@ describe('dynamic resource invalidation is owed to observers, not to the last re
         });
         await retired.read('retired');
         const changes: Array<{ digest: string }> = [];
-        const subscription = retired.watch('retired', (change) => { changes.push(change); });
+        const subscription = await retired.watch('retired', (change) => { changes.push(change); });
         try {
             await settle();
             changes.length = 0;
@@ -2091,7 +2481,7 @@ describe('dynamic resource invalidation is owed to observers, not to the last re
                 pluginId: 'acme.alpha',
                 localId: 'live',
                 runtime: {
-                    read: (options: { signal: AbortSignal; context: { kind: 'global' } | { kind: 'session'; sessionId: string } }) => {
+                    read: (options) => {
                         const sessionId = options.context.kind === 'session' ? options.context.sessionId : null;
                         reads.push(sessionId);
                         return new Uint8Array(Buffer.from(
@@ -2100,7 +2490,7 @@ describe('dynamic resource invalidation is owed to observers, not to the last re
                     },
                     observe: (
                         notify: () => void,
-                        options: { signal: AbortSignal; context: { kind: 'global' } | { kind: 'session'; sessionId: string } },
+                        options,
                     ) => {
                         const sessionId = options.context.kind === 'session' ? options.context.sessionId : null;
                         observes.push(sessionId);
@@ -2141,9 +2531,9 @@ describe('dynamic resource invalidation is owed to observers, not to the last re
         const changesA: Array<{ digest: string }> = [];
         const changesA2: Array<{ digest: string }> = [];
         const changesB: Array<{ digest: string }> = [];
-        const firstA = sessionA.watch('live', (change) => { changesA.push(change); });
-        const secondA = sessionA.watch('live', (change) => { changesA2.push(change); });
-        const firstB = sessionB.watch('live', (change) => { changesB.push(change); });
+        const firstA = await sessionA.watch('live', (change) => { changesA.push(change); });
+        const secondA = await sessionA.watch('live', (change) => { changesA2.push(change); });
+        const firstB = await sessionB.watch('live', (change) => { changesB.push(change); });
         await settle();
 
         // Same exact Session shares the one producer observe; a distinct
@@ -2162,7 +2552,7 @@ describe('dynamic resource invalidation is owed to observers, not to the last re
         // A departing surface stops producer observation but cannot erase the
         // still-live Session's LKG. A future mount reuses that exact context.
         expect(sessionA.describe('live')).toEqual(retainedSessionADescriptor);
-        sessionA.watch('live', () => undefined);
+        await sessionA.watch('live', () => undefined);
         await settle();
         expect(observes).toEqual(['session-a', 'session-b', 'session-a']);
         firstB.dispose();
@@ -2179,7 +2569,7 @@ describe('dynamic resource invalidation is owed to observers, not to the last re
                 localId: 'live',
                 runtime: {
                     read: () => new Uint8Array(),
-                    observe: (_notify, options: { signal: AbortSignal; context: { kind: 'global' } | { kind: 'session'; sessionId: string } }) => {
+                    observe: (_notify, options) => {
                         const sessionId = options.context.kind === 'session' ? options.context.sessionId : 'missing';
                         return {
                             dispose: () => {
@@ -2204,16 +2594,16 @@ describe('dynamic resource invalidation is owed to observers, not to the last re
             async (_unused, index) => (await bind(`session-${index}`)).watch('live', () => undefined),
         )));
         // A second observer joins the exact Resource/Session context.
-        const shared = (await bind('session-0')).watch('live', () => undefined);
+        const shared = await (await bind('session-0')).watch('live', () => undefined);
 
         const overflow = await bind('session-overflow');
-        const overflowSubscription = overflow.watch('live', () => undefined);
+        const overflowSubscription = await overflow.watch('live', () => undefined);
 
         subscriptions[0]!.dispose();
         shared.dispose();
         expect(disposalsBySession.get('session-0')).toBe(1);
         const overflowAfterUnmount = await bind('session-overflow');
-        const remountedOverflow = overflowAfterUnmount.watch('live', () => undefined);
+        const remountedOverflow = await overflowAfterUnmount.watch('live', () => undefined);
         overflowSubscription.dispose();
         remountedOverflow.dispose();
 
@@ -2298,9 +2688,9 @@ describe('dynamic resource invalidation is owed to observers, not to the last re
         await retained.read('second');
         await global.read('global');
         const removedChanges: Array<{ digest: string }> = [];
-        const removedWatch = removed.watch('first', (change) => { removedChanges.push(change); });
-        const retainedWatch = retained.watch('first', () => undefined);
-        const globalWatch = global.watch('global', () => undefined);
+        const removedWatch = await removed.watch('first', (change) => { removedChanges.push(change); });
+        const retainedWatch = await retained.watch('first', () => undefined);
+        const globalWatch = await global.watch('global', () => undefined);
         await settle();
         // Observation establishment legitimately resettles its own snapshot;
         // the permanent-removal assertion begins after that baseline.
@@ -2415,7 +2805,7 @@ describe('dynamic resource invalidation is owed to observers, not to the last re
                     localId: 'live',
                     runtime: {
                         read: () => new Uint8Array(),
-                        observe: (_notify, options: { signal: AbortSignal; context: { kind: 'global' } | { kind: 'session'; sessionId: string } }) => ({
+                        observe: (_notify, options) => ({
                             dispose: () => {
                                 const sessionId = options.context.kind === 'session' ? options.context.sessionId : 'missing';
                                 retiredDisposals.set(
@@ -2449,13 +2839,13 @@ describe('dynamic resource invalidation is owed to observers, not to the last re
         ));
 
         const betaBeforeRetire = await bind('acme.beta', 'beta-before-retire');
-        const betaSubscription = betaBeforeRetire.watch('live', () => undefined);
+        const betaSubscription = await betaBeforeRetire.watch('live', () => undefined);
 
         owner.retirePlugin('acme.alpha');
         expect([...retiredDisposals.values()]).toHaveLength(FORMER_ACTIVE_CONTEXT_LIMIT);
         expect([...retiredDisposals.values()].every((count) => count === 1)).toBe(true);
         const betaAfterRetire = await bind('acme.beta', 'beta-after-retire');
-        expect(() => betaAfterRetire.watch('live', () => undefined)).not.toThrow();
+        await expect(betaAfterRetire.watch('live', () => undefined)).resolves.toBeDefined();
         betaSubscription.dispose();
 
         for (const subscription of alphaSubscriptions) subscription.dispose();
@@ -2496,7 +2886,7 @@ describe('dynamic resource invalidation is owed to observers, not to the last re
         expect(first.digest).toBe(digest(Buffer.from('A')));
 
         const changes: { digest: string }[] = [];
-        watcherService.watch('live', (change) => { changes.push(change); });
+        await watcherService.watch('live', (change) => { changes.push(change); });
         await settle();
         expect(changes).toEqual([]);
 
@@ -2540,7 +2930,7 @@ describe('dynamic resource invalidation is owed to observers, not to the last re
             isOccurrenceCurrent: () => true,
         });
         const changes: { digest: string }[] = [];
-        service.watch('live', (change) => { changes.push(change); });
+        await service.watch('live', (change) => { changes.push(change); });
         await settle();
 
         expect(changes).toEqual([{ digest: digest(Buffer.from('B')) }]);
@@ -2569,7 +2959,7 @@ describe('dynamic resource invalidation is owed to observers, not to the last re
         current = Buffer.from('B');
 
         const changes: { digest: string }[] = [];
-        service.watch('live', (change) => { changes.push(change); });
+        await service.watch('live', (change) => { changes.push(change); });
         await settle();
 
         expect(changes).toEqual([{ digest: digest(Buffer.from('B')) }]);
@@ -2597,7 +2987,7 @@ describe('dynamic resource invalidation is owed to observers, not to the last re
             isOccurrenceCurrent: () => true,
         });
         const changes: { digest: string }[] = [];
-        service.watch('live', (change) => { changes.push(change); });
+        await service.watch('live', (change) => { changes.push(change); });
         await settle();
 
         expect(changes).toEqual([]);
@@ -2639,7 +3029,7 @@ describe('dynamic resource invalidation is owed to observers, not to the last re
             isOccurrenceCurrent: () => true,
         });
         const changes: Array<{ digest: string }> = [];
-        const subscription = service.watch('live', (change) => { changes.push(change); });
+        const subscription = await service.watch('live', (change) => { changes.push(change); });
         await settle(); // watch-establishment resync is read #2
 
         invalidate!();
@@ -2727,7 +3117,7 @@ describe('dynamic resource invalidation is owed to observers, not to the last re
             signal: new AbortController().signal,
             isOccurrenceCurrent: () => true,
         });
-        alpha.watch('live', () => undefined);
+        await alpha.watch('live', () => undefined);
         await settle(); // alpha watch-establishment resync is read #2
         invalidate!();
         await settle();
@@ -2784,7 +3174,7 @@ describe('dynamic resource invalidation is owed to observers, not to the last re
                 isOccurrenceCurrent: () => true,
             });
             const changes: Array<{ digest: string }> = [];
-            service.watch('live', (change) => { changes.push(change); });
+            await service.watch('live', (change) => { changes.push(change); });
             await vi.advanceTimersByTimeAsync(1);
 
             invalidate!();
@@ -2872,13 +3262,13 @@ describe('dynamic resource producer lifetime and failures (EU-4b)', () => {
             isOccurrenceCurrent: () => true,
         });
 
-        expect(() => service.watch('live', () => undefined)).toThrowError(
+        await expect(service.watch('live', () => undefined)).rejects.toThrowError(
             expect.objectContaining({ code: 'plugin_resource_producer_invalid' }),
         );
         // The failed establishment must not leave a poisoned watch behind: a
         // second attempt reaches the producer again rather than silently
         // joining a subscription that never existed.
-        expect(() => service.watch('live', () => undefined)).toThrowError(
+        await expect(service.watch('live', () => undefined)).rejects.toThrowError(
             expect.objectContaining({ code: 'plugin_resource_producer_invalid' }),
         );
         expect(observeCalls).toBe(2);
@@ -2903,7 +3293,7 @@ describe('dynamic resource producer lifetime and failures (EU-4b)', () => {
             isOccurrenceCurrent: () => true,
         });
 
-        expect(() => service.watch('live', () => undefined)).toThrowError(
+        await expect(service.watch('live', () => undefined)).rejects.toThrowError(
             expect.objectContaining({ code: 'plugin_resource_producer_invalid' }),
         );
     });
@@ -2932,7 +3322,7 @@ describe('dynamic resource producer lifetime and failures (EU-4b)', () => {
             pluginId: 'acme.alpha', signal: new AbortController().signal,
             isOccurrenceCurrent: () => true,
         });
-        const subscription = service.watch('live', () => undefined);
+        const subscription = await service.watch('live', () => undefined);
         await settle();
 
         expect(() => subscription.dispose()).not.toThrow();
@@ -3017,7 +3407,7 @@ describe('dynamic resource descriptor observations', () => {
                 isOccurrenceCurrent: () => true,
             });
             const changes: Array<{ digest: string }> = [];
-            service.watch('r1', (change) => { changes.push(change); });
+            await service.watch('r1', (change) => { changes.push(change); });
             await vi.advanceTimersByTimeAsync(1);
 
             currentById.set('r0', grown);
@@ -3040,6 +3430,72 @@ describe('dynamic resource descriptor observations', () => {
 });
 
 describe('surface-scoped dynamic Resources (SDK-EU-28)', () => {
+    describe('surface Session authority', () => {
+        const context = { kind: 'surface' as const, mountInstanceKey: 'session-rail', launchInput: { sessionId: 'foreign-session' },
+            target: { kind: 'session' as const, sessionId: 'session-a' } };
+        it.each(['missing-witness', 'inaccessible', 'foreign-account', 'home-proof-unavailable'] as const)(
+            'denies %s before producer or Action authority is issued', async refusal => {
+                let factories = 0;
+                let actions = 0;
+                const owner = await createStablePluginResourcesOwner({
+                    registry: registry([dynamicContribution('acme.alpha', 'session-rail', 'surface')]),
+                    generations: new Map(), dynamicOccurrenceIdsByPluginId: dynamicGenerationIds(),
+                    resolveSessionResourceAccess: async request => {
+                        if (refusal === 'home-proof-unavailable') throw new Error('Authenticated Home transport is unavailable');
+                        return { accountId: refusal === 'foreign-account' ? 'foreign-account' : request.accountId,
+                            throughCursor: 1_000_000, status: refusal === 'inaccessible' ? 'unavailable' : 'available' };
+                    },
+                    bindDynamicResourceActions: () => ({ async readAction() { actions++; return { ok: true, result: null }; },
+                        async observeAction() { actions++; return { dispose() {} }; } }),
+                    dynamicProducers: [{ pluginId: 'acme.alpha', localId: 'session-rail', runtime: {
+                        read: () => '{}', observe: () => ({ dispose() {} }),
+                        createProducer() { factories++; return { read: () => '{}', observe: () => ({ dispose() {} }), dispose() {} }; },
+                    } }],
+                });
+                if (refusal !== 'missing-witness') establishSessionAccessWitness(owner);
+                try {
+                    await expect(owner.bindForResource({ pluginId: 'acme.alpha', resourceId: 'session-rail', context,
+                        signal: new AbortController().signal, isOccurrenceCurrent: () => true }))
+                        .rejects.toMatchObject({ code: 'plugin_resource_session_access_unavailable' });
+                    expect(factories).toBe(0);
+                    expect(actions).toBe(0);
+                } finally { owner.retirePlugin('acme.alpha'); }
+            });
+
+        it('retires its admitted producer and observer when that exact Session access is withdrawn', async () => {
+            let producerSignal: AbortSignal | undefined;
+            let disposed = 0;
+            const probedSessions: string[] = [];
+            const unavailable = vi.fn();
+            const owner = await createStablePluginResourcesOwner({
+                registry: registry([dynamicContribution('acme.alpha', 'session-rail', 'surface')]),
+                generations: new Map(), dynamicOccurrenceIdsByPluginId: dynamicGenerationIds(),
+                resolveSessionResourceAccess: request => { probedSessions.push(request.sessionId); return allowSessionResourceAccess(request); },
+                dynamicProducers: [{ pluginId: 'acme.alpha', localId: 'session-rail', runtime: {
+                    read: () => '{}', observe: () => ({ dispose() {} }),
+                    createProducer(options) { producerSignal = options.signal;
+                        return { read: () => '{}', observe: () => ({ dispose() {} }), dispose() { disposed++; } }; },
+                } }],
+            });
+            establishSessionAccessWitness(owner);
+            const binding = new AbortController();
+            const bound = await owner.bindForResource({ pluginId: 'acme.alpha', resourceId: 'session-rail', context,
+                signal: binding.signal, isOccurrenceCurrent: () => true, onSessionResourceUnavailable: unavailable });
+            const watch = await bound.watch('session-rail', () => {});
+            try {
+                expect(probedSessions).toEqual(['session-a']);
+                await bound.read('session-rail');
+                expect(producerSignal?.aborted).toBe(false);
+                establishSessionAccessWitness(owner, { throughCursor: 2,
+                    entries: [{ sessionId: 'session-a', cursor: 2, status: 'unavailable' }] });
+                expect(producerSignal?.aborted).toBe(true);
+                expect(unavailable).toHaveBeenCalledOnce();
+                await vi.waitFor(() => expect(disposed).toBe(1));
+                await expect(bound.read('session-rail')).rejects.toMatchObject({ code: 'plugin_resource_context_unavailable' });
+            } finally { binding.abort(); await watch.dispose(); owner.retirePlugin('acme.alpha'); }
+        });
+    });
+
     it('rejects a surface binding without its host-stamped launch input before invoking its producer', async () => {
         const read = vi.fn(() => new Uint8Array(Buffer.from('unexpected')));
         const owner = await createStablePluginResourcesOwner({
@@ -3304,7 +3760,7 @@ describe('surface-scoped dynamic Resources (SDK-EU-28)', () => {
         });
         await first.read('targeted-document');
         const changes: Array<{ digest: string }> = [];
-        first.watch('targeted-document', (change) => { changes.push(change); });
+        await first.watch('targeted-document', (change) => { changes.push(change); });
         await settle(); // existing snapshot causes the canonical watch resync
 
         invalidate!();

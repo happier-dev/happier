@@ -9,7 +9,7 @@ import type { ActionContract, ActionHandler, PluginAccountActionHandler } from '
 import {
     attachPluginActionInputParser,
     attachPluginActionResultParser,
-} from './host/registration/actionInputParser.js';
+} from '@happier-dev/cli-common/plugins/registration/actionInputParser';
 import type {
     HookHandler,
     PluginEventHandler,
@@ -134,6 +134,7 @@ export type PluginResourceDefinition =
         kind: 'prompt' | 'skill' | 'template' | 'asset' | 'config';
         contentType: string;
         scope: 'global' | 'session' | 'surface';
+        execution?: Exclude<PluginActionExecutionV2, { target: 'client' }>;
         hostAccess?: readonly string[];
         maxBytes?: number;
         metadata?: Readonly<Record<string, JsonValue>>;
@@ -243,6 +244,8 @@ type ActionContribution = Readonly<{
     hostAccess?: readonly string[];
     priority?: number;
     dangerLevel: 'safe' | 'writesLocal' | 'writesRemote' | 'externalSideEffect' | 'destructive';
+    /** Only matching normalized operands are admitted to a Resource's read-only Action seam. */
+    readOnly?: boolean | InputPredicate;
     /** Conditional default over normalized input, optionally scoped to present-user UI. */
     confirmationWhen?: ActionConfirmationWhen;
     confirmation?: Readonly<{
@@ -294,6 +297,7 @@ export type PluginActionDeclaration = Readonly<{
     availability?: NonNullable<PublicActionContribution['availability']>;
     hostAccess?: readonly string[];
     priority?: number;
+    readOnly?: boolean | InputPredicate;
     /** Explicit user approval settings take precedence over this conditional default. */
     confirmationWhen?: ActionConfirmationWhen;
     confirmation?: Readonly<{
@@ -332,14 +336,21 @@ export type PluginActionRuntimeDeclaration<TDefinition extends PluginActionDecla
             ProtocolActionSchemaInput<TDefinition extends { inputSchema: infer TSchema } ? TSchema : undefined>,
             ProtocolActionSchemaOutput<TDefinition extends { resultSchema: infer TSchema } ? TSchema : undefined>
         >;
+        observeRead?: import('./actions/contracts.js').PluginActionReadObserver<
+            ProtocolActionSchemaInput<TDefinition extends { inputSchema: infer TSchema } ? TSchema : undefined>,
+            import('./actions/contracts.js').PluginAccountActionContext
+        >;
     }>
     : TDefinition extends Readonly<{ execution: Readonly<{ target: 'client' }> }>
-    ? Readonly<{ execution: Extract<PluginActionExecutionV2, Readonly<{ target: 'client' }>>; run?: never }>
+    ? Readonly<{ execution: Extract<PluginActionExecutionV2, Readonly<{ target: 'client' }>>; run?: never; observeRead?: never }>
     : Readonly<{
         execution?: Extract<PluginActionExecutionV2, Readonly<{ target: 'daemon' }>>;
         run: ActionHandler<
             ProtocolActionSchemaInput<TDefinition extends { inputSchema: infer TSchema } ? TSchema : undefined>,
             ProtocolActionSchemaOutput<TDefinition extends { resultSchema: infer TSchema } ? TSchema : undefined>
+        >;
+        observeRead?: import('./actions/contracts.js').PluginActionReadObserver<
+            ProtocolActionSchemaInput<TDefinition extends { inputSchema: infer TSchema } ? TSchema : undefined>
         >;
     }>;
 
@@ -1236,10 +1247,10 @@ type DaemonPluginActionDefinition = Exclude<
     PluginActionDefinition,
     Readonly<{ execution: Readonly<{ target: 'client' | 'account' }> }>
 > & Readonly<{ run: ActionHandler }>;
-type AccountPluginActionDefinition = PluginActionDefinition & Readonly<{
-    execution: Extract<PluginActionExecutionV2, { target: 'account' }>;
-    run?: PluginAccountActionHandler;
-}>;
+type AccountPluginActionDefinition = PluginActionDefinition<Extract<
+    PluginActionDeclaration,
+    Readonly<{ execution: Readonly<{ target: 'account' }> }>
+>>;
 
 const DAEMON_ACTION_EXECUTION: PluginActionExecutionV2 = Object.freeze({ target: 'daemon' });
 
@@ -1303,6 +1314,7 @@ function projectAction(localId: string, definition: PluginActionDefinition): Act
     assertRootActionHandlerDeclaration(definition);
     const {
         run: _run,
+        observeRead: _observeRead,
         execution,
         scopes,
         surfaces,
@@ -1897,7 +1909,8 @@ const ACTIONS_ADAPTER: DefinePluginFamilyAdapter = Object.freeze({
             if (!isDaemonPluginActionDefinition(definition)) {
                 throw new TypeError('Daemon Action declarations require a root handler');
             }
-            api.actions.register(localId, normalizeActionHandler(definition));
+            api.actions.register(localId, normalizeActionHandler(definition),
+                definition.observeRead ? { observeRead: definition.observeRead } : undefined);
         }
     },
 });
@@ -2124,6 +2137,8 @@ const RESOURCES_ADAPTER: DefinePluginFamilyAdapter = Object.freeze({
         > | undefined;
         for (const [localId, definition] of Object.entries(definitions ?? {})) {
             if (definition.source !== 'dynamic') continue;
+            const execution = definition.execution as PluginActionExecutionV2 | undefined;
+            if (execution?.target === 'account') continue;
             api.resources.registerDynamicResource(
                 localId,
                 definition.runtime as PluginDynamicResourceRuntime,
@@ -3059,6 +3074,15 @@ function definePluginImplementation<
         const targets = new Map(accountDefinitions.map(([, definition]) => [
             JSON.stringify([definition.execution.account.artifactId, definition.execution.account.exportName]), definition.execution.account,
         ]));
+        const resourceDefinitions = Object.entries(capturedInput.resources ?? {}).filter(
+            (entry): entry is [string, Extract<PluginResourceDefinition, { source: 'dynamic' }> & Readonly<{
+                execution: Extract<PluginActionExecutionV2, { target: 'account' }>;
+            }>] => entry[1].source === 'dynamic' && entry[1].execution?.target === 'account',
+        );
+        for (const [, definition] of resourceDefinitions) {
+            const account = definition.execution.account;
+            targets.set(JSON.stringify([account.artifactId, account.exportName]), account);
+        }
         const authenticationDefinitions = Object.entries(capturedInput.connectedAccountDescriptors ?? {})
             .filter(([, definition]) => definition.declaration.authentication.account !== undefined);
         for (const [, definition] of authenticationDefinitions) {
@@ -3075,7 +3099,13 @@ function definePluginImplementation<
             if (typeof definition.run !== 'function') {
                 throw new TypeError(`Account Action '${localId}' requires its separately declared portable activation handler`);
             }
-            api.actions.register(localId, normalizeActionHandler({ ...definition, run: definition.run }));
+            api.actions.register(localId, normalizeActionHandler({ ...definition, run: definition.run }),
+                definition.observeRead ? { observeRead: definition.observeRead } : undefined);
+        }
+        for (const [localId, definition] of resourceDefinitions) {
+            if (definition.execution.account.artifactId !== target?.artifactId
+                || definition.execution.account.exportName !== target.exportName) continue;
+            api.resources.registerDynamicResource(localId, definition.runtime);
         }
         for (const [localId, definition] of authenticationDefinitions) {
             const account = definition.declaration.authentication.account!;

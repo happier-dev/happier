@@ -205,6 +205,8 @@ export const DaemonPluginStructuredMessageActionExecuteRequestSchema = lazyZodSc
   machineId: z.string().check(z.trim(), z.minLength(1)),
   requestId: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(2_000))),
   qualifiedActionId: z.string().check(z.trim(), z.minLength(1)),
+  /** A narrowing read ceiling; an older strict receiver refuses this operation. */
+  requiredReadOnly: z.optional(z.literal(true)),
   input: zMini.optional(PluginJsonValueV2Schema),
   sessionId: z.optional(z.string().check(z.trim(), z.minLength(1))),
   executionSurface: PluginActionDaemonInvocationV1Shape.executionSurface,

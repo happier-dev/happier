@@ -7,6 +7,7 @@ import type {
 import { PluginUiHostReadReferenceV1Schema } from '@happier-dev/protocol/plugins/ui/client';
 import type { PluginUiResourceClient, PluginUiResourceEntry, PluginUiResourceStore } from '@happier-dev/plugin-ui/advanced';
 import type { PluginUiResourceSnapshot } from '@happier-dev/plugin-ui/hostApi';
+import { PluginError } from '@happier-dev/plugin-sdk';
 
 import {
     machinePluginUiResourceRead,
@@ -17,6 +18,8 @@ import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 
 import {
     createPluginSurfaceHostApiError,
+    createPluginSurfaceHostApiPluginErrorData,
+    readPluginSurfaceHostApiFailureMetadata,
     type PluginSurfaceHostApiRequestOptions,
 } from './createPluginSurfaceHostApi';
 
@@ -44,8 +47,10 @@ export type PluginResourceHostRequest = Readonly<{
 }>;
 
 export type PluginSurfaceResourceBinding = Readonly<{
-    machineId: string;
+    machineId: string | null;
     serverId?: string | null;
+    /** Captured host Account target, never a field in the Resource reference. */
+    accountId?: string;
     expectedCallerOccurrenceId: string;
     /**
      * Host-stamped contextual Resource authority for this exact mounted
@@ -65,7 +70,8 @@ export type PluginSurfaceResourceBinding = Readonly<{
 }>;
 
 /** Hold static demand until admitted bytes are available or the read settles. */
-export function readPluginResourceStoreSnapshot(entry: PluginUiResourceEntry, signal?: AbortSignal, refresh = false): Promise<PluginUiResourceSnapshot> {
+export function readPluginResourceStoreSnapshot(entry: PluginUiResourceEntry, signal?: AbortSignal, refresh = false,
+    awaitIdle = false): Promise<PluginUiResourceSnapshot> {
     return new Promise((resolve, reject) => {
         let release = () => {};
         let settled = false;
@@ -74,7 +80,7 @@ export function readPluginResourceStoreSnapshot(entry: PluginUiResourceEntry, si
             if (settled) return;
             if (!error && !refreshSettled) return;
             const snapshot = entry.getSnapshot();
-            if (!error && snapshot.value === undefined && snapshot.pending !== 'idle') return;
+            if (!error && snapshot.pending !== 'idle' && (awaitIdle || snapshot.value === undefined)) return;
             settled = true;
             release();
             signal?.removeEventListener('abort', abort);
@@ -141,7 +147,10 @@ export function readPluginSurfaceResourceReference(
     return pluginId && localId ? { pluginId, localId } : null;
 }
 
-function resourceClientFailure(code: string, message: string): never {
+function resourceClientFailure(code: string, message: string,
+    transportFailure?: ReturnType<typeof mapMachinePluginUiResourceTransportFailure>): never {
+    if (transportFailure) throw new PluginError(createPluginSurfaceHostApiPluginErrorData(code, [], message,
+        { layer: 'transport', phase: 'invocation', retryable: transportFailure.retryable }));
     throw Object.assign(new Error(message), { code });
 }
 
@@ -169,9 +178,10 @@ export function createPluginContextualResourceReadClient(input: Readonly<{
     resource: PluginContextualResourceBinding;
     isCurrent?: () => boolean;
 }>): Pick<PluginUiResourceClient, 'readResource'> {
-    const read = input.resource.read ?? machinePluginUiResourceRead;
     return Object.freeze({
         async readResource(resource, options) {
+            const read = input.resource.read ?? machinePluginUiResourceRead;
+            if (!input.pluginId) return resourceClientFailure('plugin_resource_not_found', 'Resource caller is unavailable');
             const reference = readPluginSurfaceResourceReference(input.pluginId, resource);
             if (!reference) {
                 return resourceClientFailure(
@@ -184,6 +194,7 @@ export function createPluginContextualResourceReadClient(input: Readonly<{
             }
             const signal = options?.signal;
             assertCurrentContextualResourceClient(input.isCurrent, signal);
+            if (input.resource.machineId === null) return resourceClientFailure('plugin_resource_transport_unavailable', 'Resource requires a Machine');
             const outcome = await read(input.resource.machineId, {
                 serverId: input.resource.serverId ?? null,
                 expectedCallerOccurrenceId: input.resource.expectedCallerOccurrenceId,
@@ -199,6 +210,7 @@ export function createPluginContextualResourceReadClient(input: Readonly<{
                 return resourceClientFailure(
                     transportFailure.code,
                     'Resource transport is unavailable',
+                    transportFailure,
                 );
             }
             if (!outcome.result.ok) {
@@ -272,7 +284,7 @@ export function createPluginSurfaceResourceReadHandler(input: Readonly<{
         if (reference.pluginId !== input.pluginId) {
             return errorPayload('unavailable', 'plugin_resource_not_found');
         }
-        if (!input.resource || input.isDaemonAvailable?.() === false) {
+        if (!input.resource || (input.isDaemonAvailable?.() === false && input.resource.store?.requiresMachine?.(reference) !== false)) {
             return errorPayload('unavailable', 'plugin_resource_transport_unavailable');
         }
         if (input.isCurrent?.() === false) {
@@ -302,6 +314,7 @@ export function createPluginSurfaceResourceReadHandler(input: Readonly<{
             }
         }
 
+        if (input.resource.machineId === null) return errorPayload('unavailable', 'plugin_resource_transport_unavailable');
         let outcome: Awaited<ReturnType<PluginSurfaceResourceReadTransport>>;
         try {
             outcome = await read(input.resource.machineId, {

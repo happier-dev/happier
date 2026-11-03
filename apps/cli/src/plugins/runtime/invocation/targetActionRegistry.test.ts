@@ -10,7 +10,7 @@ import {
 import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
 import type { PluginManifest } from '@happier-dev/plugin-sdk/manifest';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
-import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import { createPluginTestkit, createTestResourceInvocationContext } from '@happier-dev/plugin-sdk/testing';
 import * as actionContractProducer from '../../../../../../packages/plugin-sdk/examples/action-contract-producer/src/index';
 import type { MessageActionAvailableSnapshotV1, PluginHostAccessRequestV2 } from '@happier-dev/protocol';
 import type {
@@ -151,7 +151,7 @@ describe('target action invocation registry', () => {
         const read = async () => {
             const resource = plugin.registration('resources', 'rows');
             if (!resource) throw new Error('Rows Resource missing');
-            return JSON.parse(String(await resource.read({ context: { kind: 'global' }, signal: new AbortController().signal })));
+            return JSON.parse(String(await resource.read(createTestResourceInvocationContext({ context: { kind: 'global' }, signal: new AbortController().signal }))));
         };
         const invoke = (surface: 'ui' | 'agent' | 'mcp', completed: boolean, ask?: boolean,
             invocationAuthority: 'present_user' | 'account_automation' = surface === 'ui' ? 'present_user' : 'account_automation') => registry.invoke({

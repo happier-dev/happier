@@ -1,8 +1,10 @@
 import { PluginError, type Disposable } from '@happier-dev/plugin-sdk';
 import { DAEMON_PLUGIN_UI_RESOURCE_WATCH_DEFAULT_WAIT_MS, DAEMON_PLUGIN_UI_RESOURCE_WATCH_MAX_WAIT_MS, DAEMON_PLUGIN_UI_RESOURCE_WATCH_MIN_WAIT_MS } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import type { DaemonPluginUiResourceWatchNextResponse } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { PluginResourceContextV1 } from '@happier-dev/protocol';
 import { PluginUiResourceSubscriptionEventV1Schema } from '@happier-dev/protocol/plugins/ui/subscriptions';
 import type { PluginUiResourceSubscriptionEventV1 } from '@happier-dev/protocol/plugins/ui';
+import type { PluginUiReadAuthorityReferenceV1 } from '@happier-dev/protocol/plugins/ui/client';
 
 import type { HostRuntimeLimitMeasurementRecorder } from '@/agent/runtime/state/runtimeLimitMeasurement';
 
@@ -26,7 +28,8 @@ import type { StablePluginResourcesOwner } from './resources';
  * let a plugin's declared event deliver a fabricated invalidation to a
  * `watchResource` observer.
  *
- * **No payload channel.** The event carries a digest and nothing else; the
+ * **No payload channel.** Resource events carry a digest; admitted Action
+ * dependencies carry only the private `readInvalidated` signal. The
  * observer re-reads through `readResource`, which stays the single snapshot
  * authority. That is also why a dropped delivery under backpressure cannot
  * strand an observer: the broker only refuses an emit when that subscription
@@ -44,7 +47,7 @@ import type { StablePluginResourcesOwner } from './resources';
 const UI_RESOURCE_WATCH_IDLE_RECLAIM_MS = DAEMON_PLUGIN_UI_RESOURCE_WATCH_MAX_WAIT_MS * 3;
 
 export type PluginUiResourceWatchPollResult =
-    | Readonly<{ status: 'event'; event: PluginUiResourceSubscriptionEventV1 }>
+    | Readonly<{ status: 'event'; event: Extract<DaemonPluginUiResourceWatchNextResponse, { ok: true; status: 'event' }>['event'] }>
     | Readonly<{ status: 'idle' }>;
 
 export type PluginUiResourceWatchOwner = Readonly<{
@@ -58,10 +61,13 @@ export type PluginUiResourceWatchOwner = Readonly<{
     open(params: Readonly<{
         subscriptionId: string;
         callerPluginId: string;
-        resourceId: string;
+        resourceId?: string;
+        readAuthority?: PluginUiReadAuthorityReferenceV1['readAuthority'];
+        /** Host-private binding admitted through the same Action ingress as a finite read. */
+        bindRead?(signal: AbortSignal, invalidate: () => void, retire: () => void): Promise<Disposable>;
         /** Host-stamped only; required by contextual dynamic Resources. */
         context?: PluginResourceContextV1;
-    }>): Promise<Readonly<{ subscriptionId: string; digest: string }>>;
+    }>): Promise<Readonly<{ subscriptionId: string; digest?: string }>>;
     next(params: Readonly<{
         callerPluginId: string;
         subscriptionId: string;
@@ -121,7 +127,7 @@ function boundedId(value: unknown, message: string): string {
 }
 
 type PendingSignal = Readonly<{
-    event: PluginUiResourceSubscriptionEventV1;
+    event: Extract<PluginUiResourceWatchPollResult, { status: 'event' }>['event'];
     /** Releases the broker listener that produced this signal, so its queue slot frees. */
     release: () => void;
 }>;
@@ -150,7 +156,13 @@ type UiResourceWatch = {
 };
 
 export function createStablePluginUiResourceWatchOwner(params: Readonly<{
-    resources: StablePluginResourcesOwner;
+    resources?: StablePluginResourcesOwner;
+    observeReadAuthority?(input: Readonly<{
+        authority: PluginUiReadAuthorityReferenceV1['readAuthority'];
+        context?: PluginResourceContextV1;
+        signal: AbortSignal;
+        retire(): void;
+    }>): Disposable | Promise<Disposable>;
     isPluginConsumerCurrent: (pluginId: string) => boolean;
     readPluginOccurrenceId: (pluginId: string) => string | null;
     /** Injectable only so a composed host can share one broker factory; defaults to its own instance. */
@@ -179,10 +191,16 @@ export function createStablePluginUiResourceWatchOwner(params: Readonly<{
     }
 
     function releaseWatch(watch: UiResourceWatch, terminal: PluginUiResourceWatchPollResult | null): void {
-        if (watch.closed) return;
+        if (watch.closed) {
+            if ((!terminal || terminal.status === 'idle') && watches.get(watch.key) === watch) watches.delete(watch.key);
+            return;
+        }
         watch.terminal = terminal;
         watch.closed = true;
-        watches.delete(watch.key);
+        // Keep the existing terminal slot until a later poll takes its error.
+        // An authority withdrawal must not disappear between polling requests.
+        if ((!terminal || terminal.status !== 'event' || terminal.event.kind !== 'error' || watch.waiter)
+            && watches.get(watch.key) === watch) watches.delete(watch.key);
         const pending = watch.pending;
         watch.pending = null;
         pending?.release();
@@ -220,7 +238,7 @@ export function createStablePluginUiResourceWatchOwner(params: Readonly<{
      * queue the real bound: a producer that outruns the app fills that bounded
      * queue and is refused there, instead of accumulating in this owner.
      */
-    function handOff(watch: UiResourceWatch, event: PluginUiResourceSubscriptionEventV1): Promise<void> {
+    function handOff(watch: UiResourceWatch, event: Extract<PluginUiResourceWatchPollResult, { status: 'event' }>['event']): Promise<void> {
         return new Promise<void>((resolve) => {
             if (watch.closed) {
                 resolve();
@@ -244,8 +262,54 @@ export function createStablePluginUiResourceWatchOwner(params: Readonly<{
             sweepIdle();
             const pluginId = boundedId(openParams.callerPluginId, 'Resource watch caller is invalid');
             const subscriptionId = boundedId(openParams.subscriptionId, 'Resource watch subscription id is invalid');
+            if (openParams.readAuthority || openParams.bindRead) {
+                const authority = openParams.readAuthority;
+                if (!params.isPluginConsumerCurrent(pluginId) || (authority
+                    ? authority.consumer.pluginId !== pluginId || !params.observeReadAuthority
+                    : !openParams.bindRead)) fail('plugin_action_read_observation_unavailable', 'Read authority is unavailable');
+                const key = watchKey(pluginId, subscriptionId);
+                const existing = watches.get(key);
+                if (existing) releaseWatch(existing, { status: 'idle' });
+                const watch: UiResourceWatch = { key, subscriptionId, pluginId, resourceId: authority?.consumer.localId
+                    ?? boundedId(openParams.resourceId, 'Observed Action id is invalid'),
+                    bindingController: new AbortController(), producer: null, brokerSubscription: null, pending: null,
+                    waiter: null, lastPolledAtMs: nowMs(), terminal: null, closed: false };
+                watches.set(key, watch);
+                try {
+                    const retire = () => releaseWatch(watch, { status: 'event', event: terminalErrorEvent(subscriptionId,
+                        'expired_resource', ['plugin_read_authority_retired']) });
+                    let invalidate = () => {};
+                    if (openParams.bindRead) {
+                        const occurrenceId = params.readPluginOccurrenceId(pluginId);
+                        if (!occurrenceId) fail('plugin_generation_stale', 'Plugin occurrence is stale');
+                        const identity = { pluginId, pluginVersion: '0.0.0', contributionId: watch.resourceId,
+                            contributionQualifiedId: `${pluginId}/${watch.resourceId}`, occurrenceId,
+                            correlationId: `${pluginId}/${watch.resourceId}#${subscriptionId}`, surface: 'ui' as const };
+                        const ref = { pluginId, localId: subscriptionId };
+                        watch.brokerSubscription = broker.subscribe({ ref, identity, isCurrent: () => isWatchCurrent(watch),
+                            listener: () => handOff(watch, { version: 1, subscriptionId, kind: 'readInvalidated' }) });
+                        invalidate = () => {
+                            if (!isWatchCurrent(watch)) return;
+                            void broker.emit({ event: { ref, payload: {} }, identity }).catch(() => {
+                                // The incumbent queue already retains a current-read invalidation.
+                            });
+                        };
+                    }
+                    const producer = openParams.bindRead
+                        ? await openParams.bindRead(watch.bindingController.signal, invalidate, retire)
+                        : await params.observeReadAuthority!({ authority: authority!, signal: watch.bindingController.signal,
+                            ...(openParams.context === undefined ? {} : { context: openParams.context }), retire });
+                    if (!isWatchCurrent(watch)) {
+                        await producer.dispose();
+                        fail('plugin_action_generation_retired', 'Read authority retired during admission');
+                    }
+                    watch.producer = producer;
+                    return Object.freeze({ subscriptionId });
+                } catch (error) { releaseWatch(watch, null); throw error; }
+            }
             const resourceId = boundedId(openParams.resourceId, 'Resource watch resource id is invalid');
-            if (!params.isPluginConsumerCurrent(pluginId) || !params.resources.hasPlugin(pluginId)) {
+            const resources = params.resources;
+            if (!params.isPluginConsumerCurrent(pluginId) || !resources?.hasPlugin(pluginId)) {
                 fail('plugin_resource_service_unavailable', 'Committed plugin resources are unavailable');
             }
             const key = watchKey(pluginId, subscriptionId);
@@ -281,7 +345,7 @@ export function createStablePluginUiResourceWatchOwner(params: Readonly<{
             };
             let service: Awaited<ReturnType<StablePluginResourcesOwner['bindForResource']>>;
             try {
-                service = await params.resources.bindForResource({
+                service = await resources.bindForResource({
                     pluginId,
                     resourceId,
                     signal: bindingController.signal,
@@ -344,7 +408,7 @@ export function createStablePluginUiResourceWatchOwner(params: Readonly<{
                 },
             });
             try {
-                const producer = service.watch(resourceId, (change) => {
+                const producer = await service.watch(resourceId, (change) => {
                     void broker.emit({ event: { ref, payload: { digest: change.digest } }, identity })
                         .catch(() => {
                             // Backpressure is the bound doing its job. The refused
@@ -403,6 +467,12 @@ export function createStablePluginUiResourceWatchOwner(params: Readonly<{
             if (nextParams.signal?.aborted) {
                 releaseWatch(watch, null);
                 return { status: 'idle' };
+            }
+            if (watch.terminal) {
+                const terminal = watch.terminal;
+                watch.terminal = null;
+                watches.delete(watch.key);
+                return terminal;
             }
             if (!isWatchCurrent(watch)) {
                 releaseWatch(watch, null);

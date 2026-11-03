@@ -393,6 +393,8 @@ export async function executeContributedAction(params: Readonly<{
   /** Host-only read constraint; checked before activation on this registry lease. */
   requiredDangerLevel?: 'safe';
   requiredReadOnly?: true;
+  resourceSessionId?: string;
+  readObservation?: import('../targetActionRegistry').InvokeTargetActionParams['readObservation'];
   /** Host-admitted settings snapshot; scoped runtimes must never consult ambient Account policy. */
   actionsSettings?: ActionsSettingsV1;
   /** Host-private request from ActionsService.executeWithExecutionOrigin only. */
@@ -499,8 +501,8 @@ export async function executeContributedAction(params: Readonly<{
     && action.definition.execution !== null
     && 'target' in action.definition.execution
     && action.definition.execution.target === 'account';
-  if (params.requiredReadOnly
-    && (clientTarget || action.definition.readOnly === undefined || action.definition.readOnly === false)) {
+  if ((params.requiredReadOnly || params.readObservation)
+    && (clientTarget || !params.readObservation && (action.definition.readOnly === undefined || action.definition.readOnly === false))) {
     return { matched: true, result: actionHandlerNotStartedFailure(
       'plugin_action_read_only_required', 'This Resource requires an explicitly declared read operand',
     ) };
@@ -918,6 +920,8 @@ export async function executeContributedAction(params: Readonly<{
       pluginId,
       localId: action.definition.id,
       ...(params.requiredReadOnly ? { requiredReadOnly: true as const } : {}),
+      ...(params.resourceSessionId ? { resourceSessionId: params.resourceSessionId } : {}),
+      ...(params.readObservation ? { readObservation: params.readObservation } : {}),
       input: validatedInput === null ? params.input : validatedInput.value,
       surface: actionSurface,
       invocationSurface,
@@ -1027,7 +1031,7 @@ export async function executeContributedAction(params: Readonly<{
           deferredApprovalArtifactId: targetResult.artifactId,
         };
       }
-      const validatedResult = targetResult.status !== 'executed' || admittedTargetedOperation === undefined
+      const validatedResult = targetResult.status !== 'executed' || admittedTargetedOperation === undefined || params.readObservation !== undefined
         ? null
         : validateTargetedOperationResult(admittedTargetedOperation.targetProtocol, targetResult.value);
       if (validatedResult !== null && !validatedResult.ok) return validatedResult.result;

@@ -1,5 +1,5 @@
 import { PluginError } from '@happier-dev/plugin-sdk';
-import type { TargetedContributionManifestDeclaration } from '@happier-dev/plugin-sdk/host/registration';
+import type { TargetedContributionManifestDeclaration } from '@happier-dev/cli-common/plugins/registration';
 import { DaemonPluginUiTargetedContributionsReadRequestSchema, DaemonPluginUiTargetedContributionsReadResponseSchema,
     DaemonPluginStructuredMessageActionExecuteResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { DaemonPluginStructuredMessageActionExecuteRequestSchema } from '@happier-dev/protocol/plugins/actions/daemonInvocationV1';
@@ -10,6 +10,7 @@ import type { StoredCredentials } from '@/persistence';
 import type { InvokeContributedAction } from '../services/actions';
 import type { CanonicalPluginManifest } from '@/plugins/manifest/types';
 import type { PluginSourceCustody } from '../../sourceAuthority';
+import { observeAccountMachineActionRead } from './accountMachineReadObservation';
 
 type AccountMachineTransport = Readonly<{ credentials: StoredCredentials; serverUrl: string; machineId: string }>;
 
@@ -45,6 +46,7 @@ export async function invokeAccountMachineSourceAction(input: AccountMachineTran
     await input.request.beforeHandlerInvocation?.();
     const request = DaemonPluginStructuredMessageActionExecuteRequestSchema.parse({ machineId: input.machineId,
         qualifiedActionId: buildQualifiedPluginContributionKey(input.request.action), input: input.request.input,
+        ...(input.request.requiredReadOnly || input.request.readObservation ? { requiredReadOnly: true } : {}),
         executionSurface: input.request.originSurface === 'agent' ? 'agent' : input.request.originSurface === 'mcp' ? 'mcp' : 'cli',
         expectedContributorOccurrenceId: input.source.occurrenceId,
         ...(input.request.sessionId ? { sessionId: input.request.sessionId } : {}),
@@ -53,6 +55,9 @@ export async function invokeAccountMachineSourceAction(input: AccountMachineTran
             contributionLocalId, occurrenceId: caller.occurrenceId, sourceCustody: input.callerSourceCustody,
         } },
     });
+    if (input.request.readObservation) return await observeAccountMachineActionRead({ credentials: input.credentials,
+        serverUrl: input.serverUrl, machineId: input.machineId, targetPluginId: input.request.action.pluginId,
+        request, signal: input.request.signal, observation: input.request.readObservation });
     try {
         const result = DaemonPluginStructuredMessageActionExecuteResponseSchema.parse(await callExactMachineRpc({
             credentials: input.credentials, serverUrl: input.serverUrl, machineId: input.machineId,

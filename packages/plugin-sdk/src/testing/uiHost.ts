@@ -816,7 +816,7 @@ function requireString(value: JsonValue | undefined, label: string): string {
 
 function readResourceReference(value: JsonValue | undefined, label: string): PluginUiResourceReference {
     const parsed = PluginUiResourceSubscriptionTargetV1Schema.safeParse(value);
-    if (!parsed.success) throw fixtureError('invalid_payload', `${label} must be a Resource reference.`);
+    if (!parsed.success || typeof parsed.data !== 'string' && 'readAuthority' in parsed.data) throw fixtureError('invalid_payload', `${label} must be a Resource reference.`);
     return parsed.data;
 }
 

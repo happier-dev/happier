@@ -120,6 +120,8 @@ export type StablePluginConnectedAccountsOwner = Readonly<{
             listener(change?: Readonly<{
                 account: PluginConnectedAccountRef | null;
                 group?: Readonly<{ groupId: string; generation: number }>;
+                /** Exact selected authority changed; presentation-only resync is false. */
+                authorityChanged?: boolean;
             }>): Promise<void>;
         }>,
     ): Disposable;
@@ -919,7 +921,13 @@ export function createStablePluginConnectedAccountsHost(
                             ? { exactPurposeBindingSubjectId }
                             : {}),
                         ...(seed.session ? { sessionId: seed.session.id } : {}),
-                        listener: schedule,
+                        listener: change => {
+                            if (!disposed && change?.authorityChanged === true && seed.retireReadObservation) {
+                                seed.retireReadObservation();
+                                return Promise.resolve();
+                            }
+                            return schedule();
+                        },
                     });
                     const abort = () => subscription.dispose();
                     const subscription: Disposable = Object.freeze({

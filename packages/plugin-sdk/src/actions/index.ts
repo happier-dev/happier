@@ -30,6 +30,8 @@ export type { ActionInputPredicate } from './inputHints.js';
 export type { ActionSessionTargetDeclarationV1 } from './dtos/pluginActionDtoSupport.generated.js';
 export type { ActionSpec } from './service.js';
 export type { ActionsService } from './service.js';
+export type { PluginActionReadObserver } from './service.js';
+export type { PluginActionReadInvalidation } from './service.js';
 export type { AdmittedTargetedOperationExecutionHandle } from './admittedTargetedOperation.js';
 export type { AdmittedTargetedOperationExecutionOptions } from './service.js';
 export type { AdmittedTargetedOperationExecutionWithOriginOptions } from './service.js';
@@ -89,6 +91,7 @@ export type { ComputerControlActionResultById } from './dtos/computerControlActi
 export type { ConnectedServicesConfigurationActionInputById } from './dtos/connectedServicesConfigurationActionDtos.generated.js';
 export type { ConnectedServicesConfigurationActionResultById } from './dtos/connectedServicesConfigurationActionDtos.generated.js';
 export type { ContributedActionExecutionWithOriginOptions } from './service.js';
+export type { ContributedActionReadObservationOptions } from './service.js';
 export type { ContributedActionExecutionWithOriginResult } from './service.js';
 export type { CurrentUiContextActionInputById } from './dtos/currentUiContextActionDtos.generated.js';
 export type { CurrentUiContextActionResultById } from './dtos/currentUiContextActionDtos.generated.js';

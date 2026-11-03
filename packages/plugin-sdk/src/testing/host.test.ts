@@ -2574,3 +2574,67 @@ describe('createPluginTestkit', () => {
     expect(cleanup).toHaveBeenCalledOnce();
   });
 });
+
+it.each(['daemon', 'account'] as const)('observes one registered read without running it and retires its subscription (%s)', async (localId) => {
+  let runs = 0;
+  let disposed = 0;
+  const contexts: unknown[] = [];
+  const inputSchema = defineProtocolObject({ id: defineProtocolString({ minLength: 1 }) }, { policy: 'closed' });
+  const resultSchema = defineProtocolObject({ done: defineProtocolLiteral(true) }, { policy: 'closed' });
+  const observeRead = (input: Readonly<{ id: string }>, invalidate: import('../actions/contracts.js').PluginActionReadInvalidation, context: Readonly<{ signal: AbortSignal }>) => {
+    expect(input).toEqual({ id: 'selected' });
+    contexts.push(context);
+    invalidate();
+    return { dispose() { disposed++; } };
+  };
+  const plugin = definePlugin({ id: 'acme.read-observer', version: '1.0.0', actions: {
+    daemon: { title: 'Read', surfaces: ['plugin'], readOnly: true, inputSchema, resultSchema,
+      run: () => { runs++; return { done: true as const }; }, observeRead },
+    account: { title: 'Read Account', surfaces: ['plugin'], readOnly: true, inputSchema, resultSchema,
+      execution: { target: 'account', account: { artifactId: 'portable', exportName: 'activate' } },
+      run: () => { runs++; return { done: true as const }; }, observeRead },
+    write: { title: 'Write', surfaces: ['plugin'], inputSchema, resultSchema,
+      run: () => { runs++; return { done: true as const }; }, observeRead },
+  } });
+  const kit = await createPluginTestkit({ manifest: plugin.manifest, module: plugin });
+  const controller = new AbortController();
+  const invalidate = Object.assign(vi.fn(), { retire: vi.fn() });
+  try {
+    await expect(kit.observeAction(localId, { id: '' }, invalidate)).rejects.toMatchObject({ code: 'plugin_action_input_schema_invalid' });
+    await expect(kit.observeAction('write', { id: 'selected' }, invalidate)).rejects.toMatchObject({ code: 'plugin_action_read_observation_unavailable' });
+    const subscription = await kit.observeAction(localId, { id: 'selected' }, invalidate, { signal: controller.signal });
+    expect(invalidate).toHaveBeenCalledOnce();
+    expect(contexts).toHaveLength(1);
+    expect(contexts[0]).toMatchObject({ plugin: { id: plugin.manifest.id }, contribution: { id: localId } });
+    expect(runs).toBe(0);
+    controller.abort();
+    await subscription.dispose();
+    expect(disposed).toBe(1);
+    const ownedSubscription = await kit.observeAction(localId, { id: 'selected' }, invalidate);
+    await kit.dispose();
+    await ownedSubscription.dispose();
+    expect(disposed).toBe(2);
+  } finally { await kit.dispose(); }
+  expect(disposed).toBe(2);
+});
+
+it('refuses unsupported read observation in daemon and Account test hosts without running the target', async () => {
+  const ref = { pluginId: 'acme.read-target', localId: 'read' };
+  const plugin = definePlugin({ id: 'acme.observe-fixture', version: '1.0.0', actions: {
+    daemon: { title: 'Observe', surfaces: ['plugin'], run: async (_input, context) => {
+      await context.services.actions.observe(ref, null, () => undefined);
+      return null;
+    } },
+    account: { title: 'Observe Account', surfaces: ['plugin'], execution: { target: 'account',
+      account: { artifactId: 'portable', exportName: 'activate' } }, run: async (_input, context) => {
+      await context.services.actions.observe(ref, null, () => undefined);
+      return null;
+    } },
+  } });
+  const testkit = await createPluginTestkit({ manifest: plugin.manifest, module: plugin });
+  try {
+    for (const id of ['daemon', 'account']) {
+      await expect(testkit.invokeAction(id, null)).rejects.toMatchObject({ code: 'plugin_action_read_observation_unavailable' });
+    }
+  } finally { await testkit.dispose(); }
+});

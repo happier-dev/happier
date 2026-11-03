@@ -1,15 +1,15 @@
-import { activate as activateAuthentication, portableAuthentication } from '../../examples/public-authoring/portableAuthentication.js';
-import { PLUGIN_CONTRIBUTION_CATALOG_V2 } from '@happier-dev/protocol/plugins/contributions/catalog';
-import { PluginConnectedAccountDescriptorContributionV2Schema } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
-import { createPluginHttpFixture } from './http.js';
-import type { ConnectedAccountAuthenticationContext, ConnectedAccountPortableReadContext } from '../connectedAccounts.js';
-import { createConnectedAccountEstablishedRuntimeDispatcher } from '@happier-dev/cli-common/connectedAccounts';
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import { derivePluginAccountContributionRegistrationRights, derivePluginContributionRegistrationRights, derivePluginDaemonContributionRegistrationRights } from '@happier-dev/protocol/plugins/contributions/catalog';
 import { createPluginRegistrationScope } from '../registration/scope.js';
 import { definePlugin } from '../definePlugin.js';
 import type { PluginInvocationContext } from '../invocation.js';
 import type { PluginAccountActionContext } from '../actions/contracts.js';
+import { activate as activateAuthentication, portableAuthentication } from '../../examples/public-authoring/portableAuthentication.js';
+import { PLUGIN_CONTRIBUTION_CATALOG_V2 } from '@happier-dev/protocol/plugins/contributions/catalog';
+import { PluginConnectedAccountDescriptorContributionV2Schema } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
+import { createPluginHttpFixture } from './http.js';
+import type { ConnectedAccountAuthenticationContext, ConnectedAccountPortableReadContext } from '../connectedAccounts.js';
+import { createConnectedAccountEstablishedRuntimeDispatcher } from '@happier-dev/cli-common/connectedAccounts';
 
 describe('Account action registration through the shared activation ABI', () => {
     it('admits a public authentication artifact through exact Account rights while retaining the native runtime', async () => {
@@ -138,16 +138,48 @@ describe('Account action registration through the shared activation ABI', () => 
         await Promise.all([scope.dispose(), second.dispose(), undeclared.dispose(), daemon.dispose(), authOnly.dispose()]);
         expect(scope.registrations()).toEqual([]);
     });
+    it('activates portable Resource-only artifacts through the same exact Account target and retires their producers', async () => {
+        const target = { artifactId: 'portable-resources', exportName: 'activate' };
+        const plugin = definePlugin({ id: 'acme.account-resources', version: '1.0.0', resources: {
+            personal: { source: 'dynamic', kind: 'config', contentType: 'application/json', scope: 'session',
+                execution: { target: 'account', account: target },
+                runtime: { read: ({ context }) => JSON.stringify(context), observe: () => ({ dispose() {} }) } },
+        } });
+        const scope = createPluginRegistrationScope({ pluginId: plugin.manifest.id, target: { realm: 'account', ...target },
+            rights: derivePluginAccountContributionRegistrationRights(plugin.manifest.contributes, target) });
+        plugin.activateAccount(scope.api);
+        expect(scope.commit()).toMatchObject([{ family: 'resources', localId: 'personal' }]);
+        const daemon = createPluginRegistrationScope({ pluginId: plugin.manifest.id, target: { realm: 'daemon' },
+            rights: derivePluginDaemonContributionRegistrationRights(plugin.manifest.contributes) });
+        await plugin.activate(daemon.api);
+        expect(daemon.commit()).toEqual([]);
+        await scope.dispose();
+        expect(scope.registrations()).toEqual([]);
+        expect(() => scope.api.resources.registerDynamicResource('personal', {
+            read: () => 'retired', observe: () => ({ dispose() {} }),
+        })).toThrow();
+        await daemon.dispose();
+    });
     it('infers each handler context from its declared target including the daemon default', () => {
         const plugin = definePlugin({ id: 'acme.inference', version: '1.0.0', actions: {
             daemon: { title: 'Daemon', surfaces: ['plugin'], run: (_input, context) => {
                 expectTypeOf(context).toEqualTypeOf<PluginInvocationContext>();
                 return null;
+            }, observeRead: (_input, invalidate, context) => {
+                expectTypeOf(context).toEqualTypeOf<PluginInvocationContext>();
+                invalidate();
+                invalidate.retire();
+                return { dispose() {} };
             } },
             account: { title: 'Account', surfaces: ['plugin'], execution: { target: 'account',
                 account: { artifactId: 'portable', exportName: 'activate' } }, run: (_input, context) => {
                 expectTypeOf(context).toEqualTypeOf<PluginAccountActionContext>();
                 return null;
+            }, observeRead: (_input, invalidate, context) => {
+                expectTypeOf(context).toEqualTypeOf<PluginAccountActionContext>();
+                invalidate();
+                invalidate.retire();
+                return { dispose() {} };
             } },
         } });
         expect(plugin.manifest.contributes.actions).toMatchObject([
@@ -212,7 +244,7 @@ describe('Account action registration through the shared activation ABI', () => 
         activate(scope.api);
         const [registration] = scope.commit();
         expect(registration).toMatchObject({ family: 'actions', localId: 'read' });
-        expect(Object.keys(scope.api)).toEqual(['actions']);
+        expect(Object.keys(scope.api)).toEqual(['actions', 'resources', 'connectedAccounts']);
         await scope.dispose();
         expect(scope.registrations()).toEqual([]);
     });

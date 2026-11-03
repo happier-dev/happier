@@ -1,8 +1,5 @@
 import { PluginError } from '@happier-dev/plugin-sdk';
-import {
-    mergeTargetedContributionManifestDeclarations,
-    type TargetedContributionManifestDeclaration,
-} from '@happier-dev/plugin-sdk/host/registration';
+import { mergeTargetedContributionManifestDeclarations, type TargetedContributionManifestDeclaration } from '@happier-dev/cli-common/plugins/registration';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { readPluginAccountAvailability } from '@/sync/domains/plugins/availability/projection';
 import {

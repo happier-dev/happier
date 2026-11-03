@@ -5,7 +5,8 @@ import { buildQualifiedPluginContributionKey, createPluginContributionIdentity }
 import { derivePluginAccountContributionRegistrationRights, derivePluginClientContributionRegistrationRights, type PluginContributionClientPlatform, type PluginContributionRegistrationRight } from '@happier-dev/protocol/plugins/contributions/catalog';
 import type { PluginProjectedActionV2, PluginProjectedDragSourceEntryV1, PluginProjectedDropTargetEntryV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { PluginAccountApi, PluginClientApi } from '@happier-dev/plugin-sdk';
-import type { PluginUiConnectedAccountDescriptorProjection } from '@/sync/domains/plugins/ui/projection';
+import type { PluginDynamicResourceRuntime } from '@happier-dev/plugin-sdk/resources';
+import type { PluginUiResourceProjection, PluginUiConnectedAccountDescriptorProjection } from '@/sync/domains/plugins/ui/projection';
 import type { PluginDragSourceRuntime, PluginDropTargetRuntime } from '@happier-dev/plugin-sdk';
 import type { PluginProjectedWorkItemsEntryV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { mergeAbortSignals, throwIfAborted } from '@/utils/runtime/abortSignals';
@@ -99,6 +100,28 @@ export type PluginUiClientExecutableFailure = Readonly<{
     diagnostics: readonly string[];
 }>;
 
+/** Exact portable Resource from the same committed Account registration transaction. */
+export function resolvePluginUiAccountResourceRegistration(input: Readonly<{
+    resource: PluginUiResourceProjection;
+    platform: PluginContributionClientPlatform;
+    reader?: PluginUiClientExecutableRegistrationReader;
+}>): Readonly<{ registration: PluginUiClientExecutableRegistration; runtime: PluginDynamicResourceRuntime }> | null {
+    const { resource } = input;
+    if (resource.execution?.target !== 'account') return null;
+    const origin = readPluginUiAccountExecutableOrigin(resource);
+    if (!origin || resource.occurrenceId !== origin.custodyId) return null;
+    const registration = (input.reader ?? getInstalledPluginUiClientExecutableComposition()).read({
+        family: 'resources', pluginId: resource.pluginId, localId: resource.id,
+        target: { realm: 'account', ...resource.execution.account, platform: input.platform },
+        executionOrigin: null, occurrenceId: origin.custodyId,
+    });
+    if (!registration || registration.registration.family !== 'resources' || registration.right.target.realm !== 'account'
+        || !registration.authority || !('kind' in registration.authority)
+        || registration.authority.serverId !== origin.serverId || registration.authority.accountId !== origin.accountId
+        || registration.authority.custodyId !== origin.custodyId) return null;
+    // The SDK registration scope validates the declared Resource runtime ABI.
+    return Object.freeze({ registration, get runtime() { return registration.registration.value as PluginDynamicResourceRuntime; } });
+}
 
 /** The selected Account authentication uses the same committed lazy index as Resources and Actions. */
 export async function resolvePluginUiAccountConnectedAccountRegistration(input: Readonly<{

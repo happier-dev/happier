@@ -3847,7 +3847,7 @@ describe('runner daemon PluginServices proxy', () => {
         const listener = vi.fn((event: { digest: string }) => {
             if (event.digest === 'B') resolveBothEvents();
         });
-        const watch = services.resources.watch('prompt', listener);
+        const watch = await services.resources.watch('prompt', listener);
 
         await bothEvents;
         watch.dispose();
@@ -3942,7 +3942,7 @@ describe('runner daemon PluginServices proxy', () => {
             pluginId: 'fixture.plugin',
             localId: 'changed',
         }, listener);
-        const resourceWatch = services.resources.watch('prompt', vi.fn());
+        const resourceWatch = await services.resources.watch('prompt', vi.fn());
 
         await observed;
         watch.dispose();

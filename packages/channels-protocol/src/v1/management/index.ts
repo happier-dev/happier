@@ -22,6 +22,8 @@ import {
     ConversationDeliveryReadInputV1Schema, ConversationDeliveryReadResultV1Schema,
 } from './reads.js';
 export * from './sessionPullRequestBindings.js';
+export * from './sessionPullRequestUpdates.js';
+export * from './sessionPullRequestWatch.js';
 export * from './conversationStart.js';
 import { ConversationStartInputV1Schema, ConversationStartResultV1Schema } from './conversationStart.js';
 import {

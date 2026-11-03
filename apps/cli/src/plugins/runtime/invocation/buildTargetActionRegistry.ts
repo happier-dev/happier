@@ -23,6 +23,7 @@ import type { PluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
 import {
     createTargetActionInvocationRegistry,
     type TargetActionDefinition,
+    type TargetActionInvocationRegistration,
 } from './targetActionRegistry';
 import {
     resolveCatalogTargetActionPolicy,
@@ -56,10 +57,7 @@ import type { ActionHandler, PluginAccountActionContext } from '@happier-dev/plu
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { PLUGIN_ACCOUNT_STORAGE_UNAVAILABLE_CODE } from '../context/storage';
 import { createPluginAccountActionSettingsService } from '@happier-dev/cli-common/plugins/registration/accountActionSettings';
-import {
-    readPluginActionInputParser,
-    readPluginActionResultParser,
-} from '@happier-dev/plugin-sdk/host/registration';
+import { readPluginActionInputParser, readPluginActionReadObserver, readPluginActionResultParser } from '@happier-dev/cli-common/plugins/registration/actionInputParser';
 
 type TargetRegistration = Readonly<{
     pluginId: string;
@@ -115,36 +113,47 @@ function readTargetDefinition(value: unknown): TargetActionDefinition {
  * owner has selected the target realm. The target registry validates both
  * JSON input and result around this call.
  */
-function invokeCapturedActionHandler(
+async function invokeCapturedActionHandler(
     handler: Extract<ContributionRuntimeRegistration, Readonly<{ family: 'actions' }>>['value'],
     input: JsonValue,
     context: PluginInvocationContext,
     account = false,
-): ReturnType<ActionHandler> {
+    readAccountScope?: (signal: AbortSignal) => Promise<PluginAccountActionContext['accountScope']>,
+): Promise<Awaited<ReturnType<ActionHandler>>> {
     if (!account) return Reflect.apply(handler, undefined, [input, context]);
-    const invocationContext = Object.freeze({
+    return Reflect.apply(handler, undefined, [input, createAccountInvocationContext(context, await readAccountScope?.(context.signal))]);
+}
+
+function createAccountInvocationContext(context: PluginInvocationContext, accountScope?: PluginAccountActionContext['accountScope']): PluginAccountActionContext {
+    return Object.freeze({
         plugin: context.plugin, contribution: context.contribution, surface: context.surface,
         invokedAtMs: context.invokedAtMs, signal: context.signal,
         ...(context.caller ? { caller: context.caller } : {}),
+        ...(accountScope ? { accountScope } : {}),
         services: Object.freeze({
+            http: context.services.http,
+            secrets: context.services.secrets,
             ...(context.services.machineConnectorSecrets ? { machineConnectorSecrets: context.services.machineConnectorSecrets } : {}),
+            connectedAccounts: context.services.connectedAccounts,
             storage: Object.freeze({ get account() {
                 const accountStorage = context.services.storage.account;
                 if (!accountStorage) throw new PluginError({ code: PLUGIN_ACCOUNT_STORAGE_UNAVAILABLE_CODE, message: 'Account storage is unavailable' });
                 return accountStorage;
             } }),
-            actions: Object.freeze({ execute: context.services.actions.execute,
-                executeAdmittedTargetedOperation: context.services.actions.executeAdmittedTargetedOperation }),
+            actions: Object.freeze({ execute: context.services.actions.execute, observe: context.services.actions.observe,
+                executeAdmittedTargetedOperation: context.services.actions.executeAdmittedTargetedOperation,
+                observeAdmittedTargetedOperation: context.services.actions.observeAdmittedTargetedOperation }),
             targetedContributions: context.services.targetedContributions,
             settings: createPluginAccountActionSettingsService(context.services.settings),
         }),
     }) satisfies PluginAccountActionContext;
-    return Reflect.apply(handler, undefined, [input, invocationContext]);
 }
 
 export function buildTargetActionInvocationRegistry(params: Readonly<{
     contributes: ResolvedContributionRegistry;
     executionRealm?: 'account';
+    /** Authenticated scope captured by the Account runtime; absent is unavailable. */
+    readAccountScope?(signal: AbortSignal): Promise<PluginAccountActionContext['accountScope']>;
     /** The same runtime-owned Resource reader used by Action options discovery. */
     readRuntimeRegistry?(): Pick<ResolvedExecutablePluginRuntimeRegistry, 'contributes' | 'readUiResource'> | null;
     readCurrentPluginOccurrenceId?(pluginId: string): PluginRuntimeOccurrenceId | null;
@@ -251,6 +260,7 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
             const hostAccessIds = readStringArray(actionDefinition.hostAccess);
             const inputParser = readPluginActionInputParser(capturedHandler);
             const resultParser = readPluginActionResultParser(capturedHandler);
+            const observeRead = readPluginActionReadObserver(capturedHandler);
             const occurrenceId = params.readCurrentPluginOccurrenceId?.(entry.pluginId);
             const sourceCustody = params.readCurrentPluginSourceCustody?.(entry.pluginId);
             const secretInputLabels = Object.fromEntries((actionDefinition.inputHints?.fields ?? [])
@@ -284,11 +294,15 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
                 },
                 ...(inputParser === undefined ? {} : { inputParser }),
                 ...(resultParser === undefined ? {} : { resultParser }),
+                ...(observeRead === undefined ? {} : { observeRead: (async (input, invalidate, context) =>
+                    Reflect.apply(observeRead, undefined, [input, invalidate, actionDefinition.execution.target === 'account'
+                        ? createAccountInvocationContext(context, await params.readAccountScope?.(context.signal)) : context])) satisfies NonNullable<TargetActionInvocationRegistration['observeRead']> }),
                 handler: (input: JsonValue, context: PluginInvocationContext) => invokeCapturedActionHandler(
                     capturedHandler,
                     input,
                     context,
                     actionDefinition.execution.target === 'account',
+                    params.readAccountScope,
                 ),
             }];
         });

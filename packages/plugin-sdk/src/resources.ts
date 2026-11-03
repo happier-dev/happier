@@ -1,4 +1,4 @@
-/** @moduleRealm daemon */
+/** @moduleRealm any */
 
 /** @realm any */
 export type {

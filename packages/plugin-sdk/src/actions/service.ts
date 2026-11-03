@@ -4,6 +4,7 @@ import { getActionSpec as canonicalGetActionSpec } from '@happier-dev/protocol/a
 import type { JsonValue, PluginContributionRef } from '../identity.js';
 import type { QualifiedConnectedAccountRef } from '../connectedAccounts.js';
 import type { PluginCancellationOptions } from '../lifecycle.js';
+import type { Disposable } from '../lifecycle.js';
 import {
   actionInputOptionValueKey,
   isSameActionInputOptionValue,
@@ -47,6 +48,8 @@ export type { PluginActionHandlerInvocation } from '../errors.js';
 
 export type {
   ActionContract,
+  PluginActionReadObserver,
+  PluginActionReadInvalidation,
   ActionHandler,
   PluginActionInvocationSurfaceV2,
   PluginClientActionUi,
@@ -132,6 +135,12 @@ export type ContributedActionExecutionWithOriginOptions = PluginCancellationOpti
   expectedExecutionRouting?: PluginMachineExecutionRoutingV1;
 }>;
 
+/** Equality-only target currentness pins for an admitted contributed read. @realm any */
+export type ContributedActionReadObservationOptions = PluginCancellationOptions & Readonly<{
+  expectedExecutionOrigin?: PluginMachineExecutionOriginV1;
+  expectedExecutionRouting?: PluginMachineExecutionRoutingV1;
+}>;
+
 /**
  * One outer target Action's exact credential correspondence for a selected
  * admitted operation. The host validates it before the target contributor can
@@ -197,6 +206,20 @@ export interface ActionsService {
   >;
 
   /**
+   * Observes an admitted contributed read without running its handler. Session
+   * operands must already be host-resolved exact Session ids; unresolved selectors
+   * are refused by the read boundary. Cancellation retires the observer.
+   */
+  observe<TRef extends PluginContributionRef>(
+    action: TRef,
+    input: NoInfer<
+      TRef extends ActionContract<infer TInput, JsonValue | void> ? TInput : JsonValue
+    >,
+    invalidate: () => void,
+    options?: ContributedActionReadObservationOptions,
+  ): Promise<Disposable>;
+
+  /**
    * Executes one original host-created admitted target operation. A copied
    * descriptive handle has no execution authority and is refused before the
    * target contributor can run.
@@ -206,6 +229,20 @@ export interface ActionsService {
     input: NoInfer<TInput>,
     options?: AdmittedTargetedOperationExecutionOptions,
   ): Promise<TResult>;
+
+  /**
+   * Installs the target's registered read observer without executing its Action.
+   * The original handle, normalized input and readOnly declaration must still
+   * be admitted. A target without an observer rejects with
+   * plugin_action_read_observation_unavailable; other admission failures remain
+   * failures rather than a snapshot-only observation.
+   */
+  observeAdmittedTargetedOperation<TInput extends JsonValue, TResult extends JsonValue | void>(
+    operation: AdmittedTargetedOperationExecutionHandle<TInput, TResult>,
+    input: NoInfer<TInput>,
+    invalidate: () => void,
+    options?: AdmittedTargetedOperationExecutionOptions,
+  ): Promise<Disposable>;
 
   /**
    * Invokes one contributed Action and returns its ordinary result with the

@@ -29,7 +29,11 @@ import {
     type PluginActionOperationProgressUpdateV1,
     type PluginInvocationCaller,
     type PluginInvocationContext,
+    type Disposable,
 } from '@happier-dev/plugin-sdk';
+import type { PluginActionReadObserver } from '@happier-dev/plugin-sdk/actions';
+import { readActionSessionTargetOperands } from '@happier-dev/protocol/actions/executor/sessionTargets';
+import { normalizeSessionTargetV1 } from '@happier-dev/protocol/actions/sessionTargetV1';
 import {
     type ActionHandler,
     type PluginActionHandlerInvocation,
@@ -76,10 +80,15 @@ import {
     type HostCurrentSessionUiServices,
 } from '@/agent/runtime/state/currentSessionUiTypes';
 
+function isJsonArray(value: JsonValue): value is readonly JsonValue[] {
+    return Array.isArray(value);
+}
+
 export type TargetActionDefinition = Readonly<{
     id: string;
     dangerLevel: PluginActionDangerLevelV2;
     readOnly?: import('@happier-dev/protocol/plugins/actions/v2').PluginActionContributionV2['readOnly'];
+    sessionTarget?: import('@happier-dev/protocol/plugins/actions/v2').PluginActionContributionV2['sessionTarget'];
     scopes: readonly string[];
     surfaces: readonly string[];
     inputSchema?: object;
@@ -115,6 +124,7 @@ export type TargetActionInvocationRegistration = Readonly<{
     inputParser?: PluginActionInputParser;
     resultParser?: PluginActionInputParser;
     handler: ActionHandler<JsonValue, JsonValue | void>;
+    observeRead?: PluginActionReadObserver;
 }>;
 
 export type TargetActionInvocationResult = TargetActionExecutionResult;
@@ -170,6 +180,9 @@ export type InvokeTargetActionParams = Readonly<{
     sessionId?: string;
     signal?: AbortSignal;
     requiredReadOnly?: true;
+    resourceSessionId?: string;
+    /** Host-private subscription sink; never authored Action input. */
+    readObservation?: Readonly<{ authorityPurpose?: string; invalidate(): void; retire?(): void; accept(subscription: Disposable): void }>;
     facts?: ContributionPolicyFacts;
     requestCurrentIntent?: (request: TargetActionCurrentIntentRequest) => Promise<TargetActionCurrentIntentResult>;
     /** Host-stamped durable target for exact API approval replay. */
@@ -393,6 +406,7 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                 id: registration.definition.id,
                 dangerLevel: registration.definition.dangerLevel,
                 ...(registration.definition.readOnly === undefined ? {} : { readOnly: registration.definition.readOnly }),
+                ...(registration.definition.sessionTarget === undefined ? {} : { sessionTarget: registration.definition.sessionTarget }),
                 scopes: Object.freeze([...registration.definition.scopes]),
                 surfaces: Object.freeze([...registration.definition.surfaces]),
                 ...(registration.definition.confirmation === undefined
@@ -487,7 +501,8 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
             ? invocation.operationProgress
             : undefined;
         let operationSettled = false;
-        const result = await preparedInput.invoke({
+        const invokePrepared = invocation.readObservation ? preparedInput.observe : preparedInput.invoke;
+        const result = await invokePrepared({
             ...(invocation.signal ? { signal: invocation.signal } : {}),
             ...(invocation.retainHandlerResultAfterCancellation
                 ? { retainHandlerResultAfterCancellation: () => actionHandlerInvocation === undefined }
@@ -529,6 +544,18 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                 const messageAction = invocation.messageAction
                     ? Object.freeze({ ...invocation.messageAction })
                     : undefined;
+                let observedAuthorityRetired = false;
+                const retireObservedRead = () => {
+                    if (observedAuthorityRetired) return;
+                    observedAuthorityRetired = true;
+                    if (invocation.readObservation?.retire) invocation.readObservation.retire();
+                    else invocation.readObservation?.invalidate();
+                };
+                const retireReadObservation = () => {
+                    if (lifetime.signal.aborted || !indexed.isCurrent()) return;
+                    retireObservedRead();
+                    lifetime.settleContext();
+                };
                 const seed = Object.freeze({
                     ...(invocation.machineConnectorSecrets ? { machineConnectorSecrets: invocation.machineConnectorSecrets } : {}),
                     plugin: Object.freeze({ id: registration.pluginId, version: registration.pluginVersion }),
@@ -568,6 +595,7 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                     redactionLifetimeSignal: lifetime.redactionLifetimeSignal,
                     isOccurrenceCurrent: indexed.isCurrent,
                     retainCleanup: lifetime.retainCleanup,
+                    ...(invocation.readObservation ? { retireReadObservation } : {}),
                     ...(invocation.managedBootstrapCredential
                         ? { managedBootstrapCredential: invocation.managedBootstrapCredential }
                         : {}),
@@ -689,6 +717,47 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                         }
                     }
                     actionHandlerInvocation = undefined;
+                    if (invocation.readObservation) {
+                        const observer = registration.observeRead;
+                        if (!observer && !invocation.readObservation.authorityPurpose) throw new PluginError({ code: 'plugin_action_read_observation_unavailable', message: 'The read Action has no dependency observer' });
+                        const invalidation = Object.freeze(Object.assign(() => {
+                            if (!lifetime.signal.aborted && indexed.isCurrent()) invocation.readObservation?.invalidate();
+                        }, { retire: retireReadObservation }));
+                        const subscription = invocation.readObservation.authorityPurpose
+                            ? context.services.connectedAccounts.watch(invocation.readObservation.authorityPurpose, () => {})
+                            : await observer!(input, invalidation, context);
+                        if (!subscription || typeof subscription.dispose !== 'function') {
+                            throw new PluginError({ code: 'plugin_action_read_observation_invalid', message: 'The read Action returned an invalid dependency observer' });
+                        }
+                        if (lifetime.signal.aborted || !indexed.isCurrent()) {
+                            await subscription.dispose();
+                            throw new PluginError({ code: 'plugin_action_generation_retired', message: 'Observed Action authority retired during attachment' });
+                        }
+                        let disposed = false;
+                        let cleanup: void | Promise<void>;
+                        const onAbort = () => {
+                            void Promise.resolve(dispose()).catch(() => {});
+                            // A target can retire while its caller Resource remains
+                            // demanded. Its authority must be re-read, not silently kept.
+                            retireObservedRead();
+                        };
+                        const dispose = () => {
+                            if (disposed) return cleanup;
+                            disposed = true;
+                            lifetime.signal.removeEventListener('abort', onAbort);
+                            try { cleanup = subscription.dispose(); }
+                            catch (error) { cleanup = Promise.reject(error); }
+                            // Abort cleanup cannot replace the admitted read fact;
+                            // the invocation's existing private-cleanup owner retains it.
+                            if (cleanup) void cleanup.catch(() => {});
+                            return cleanup;
+                        };
+                        lifetime.retainCleanup({ async dispose() { await dispose(); } });
+                        lifetime.signal.addEventListener('abort', onAbort, { once: true });
+                        if (lifetime.signal.aborted || !indexed.isCurrent()) dispose();
+                        invocation.readObservation.accept(Object.freeze({ dispose }));
+                        return null;
+                    }
                     return await runTracedExternalActionInnerStage('contributed.handler', () =>
                         registration.handler(input, context), { invocationId: correlationId });
                 } finally {
@@ -696,9 +765,13 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                         'abort',
                         abortConnectedAccountOperationBinding,
                     );
-                    disposeConnectedAccountOperationBinding();
+                    if (invocation.readObservation && !lifetime.signal.aborted) {
+                        // Its exact purpose selection belongs to the observed
+                        // dependency lifetime, not only observer installation.
+                        lifetime.retainCleanup({ async dispose() { disposeConnectedAccountOperationBinding(); } });
+                    } else disposeConnectedAccountOperationBinding();
                     signal.removeEventListener('abort', abortContext);
-                    lifetime.settleContext();
+                    if (!invocation.readObservation) lifetime.settleContext();
                 }
             },
         });
@@ -797,11 +870,43 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                             rawInput.success ? { input: rawInput.data, secretInputPaths: indexed.registration.definition.secretInputPaths ?? [] } : undefined) });
                 } finally { await complete(); }
             }
-            if (invocation.requiredReadOnly
+            if (invocation.readObservation && !invocation.readObservation.authorityPurpose && !indexed.registration.observeRead) {
+                await complete();
+                return Object.freeze({ kind: 'settled' as const, result: {
+                    ...unavailable('plugin_action_read_observation_unavailable', 'The read Action has no dependency observer'),
+                    actionHandlerInvocation: 'notStarted' as const,
+                } });
+            }
+            if ((invocation.requiredReadOnly || invocation.readObservation)
                 && !pluginActionDeclarationIsReadOnlyForInput(indexed.registration.definition, preparedInput.input)) {
                 await complete();
                 return Object.freeze({ kind: 'settled' as const,
                     result: { ...unavailable('plugin_action_read_only_required', 'This Resource requires an explicitly declared read operand'), actionHandlerInvocation: 'notStarted' as const } });
+            }
+            if (invocation.resourceSessionId && indexed.registration.definition.sessionTarget
+                && preparedInput.input !== null && typeof preparedInput.input === 'object' && !isJsonArray(preparedInput.input)) {
+                const operands = readActionSessionTargetOperands(preparedInput.input, indexed.registration.definition.sessionTarget.field);
+                if (operands.some(operand => operand.value !== invocation.resourceSessionId)) {
+                    await complete();
+                    return Object.freeze({ kind: 'settled' as const, result: {
+                        ...unavailable('plugin_action_resource_session_mismatch', 'Resource reads retain their exact host-stamped Session'),
+                        actionHandlerInvocation: 'notStarted' as const,
+                    } });
+                }
+            }
+            if (invocation.readObservation && indexed.registration.definition.sessionTarget
+                && preparedInput.input !== null && typeof preparedInput.input === 'object' && !isJsonArray(preparedInput.input)) {
+                const operands = readActionSessionTargetOperands(preparedInput.input, indexed.registration.definition.sessionTarget.field);
+                if (operands.some(operand => {
+                    try { return typeof normalizeSessionTargetV1(operand.value) !== 'string'; }
+                    catch { return true; }
+                })) {
+                    await complete();
+                    return Object.freeze({ kind: 'settled' as const, result: {
+                        ...unavailable('plugin_action_read_observation_session_unresolved', 'Read observation requires exact host-resolved Session operands'),
+                        actionHandlerInvocation: 'notStarted' as const,
+                    } });
+                }
             }
             beginDiagnosticScope(preparedInput.input);
             const resolveCurrentAction = (): ResolvedTargetAction | null => {
@@ -987,7 +1092,11 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                     operationProgress = options?.operationProgress ?? operationProgress;
                     runPromise = prepared.run().then(async result => {
                         try {
-                            await complete();
+                            if (invocation.readObservation && result.status === 'executed' && !lifetime.signal.aborted) {
+                                // A successful observation retains target-owned services until
+                                // its Resource demand or the target occurrence retires.
+                                lifetime.signal.addEventListener('abort', () => { void complete().catch(() => {}); }, { once: true });
+                            } else await complete();
                         } catch (error) {
                             // An issued, validated native fact remains true
                             // when releasing its private local lease fails.

@@ -1,6 +1,8 @@
 import {
   PluginError,
   type JsonValue,
+  type Disposable,
+  type PluginInvocationContext,
 } from '@happier-dev/plugin-sdk';
 import { definePlugin } from '../../src/definePlugin.js';
 import {
@@ -15,6 +17,9 @@ import type {
   ActionsService,
   ContributedActionExecutionWithOriginOptions,
   ContributedActionExecutionWithOriginResult,
+  ContributedActionReadObservationOptions,
+  PluginAccountActionContext,
+  PluginActionReadInvalidation,
   PluginActionInputById,
   PluginActionResultById,
   PluginInvocableActionId,
@@ -104,6 +109,27 @@ function remotePermissionResponseInput(
 
 class ActionsBoundaryFixture implements ActionsService {
   readonly calls: BoundaryCall[] = [];
+
+  async observe<TRef extends FixtureContributionRef>(
+    _action: TRef,
+    _input: NoInfer<TRef extends ActionContract<infer TInput, JsonValue | void> ? TInput : JsonValue>,
+    _invalidate: () => void,
+    _options?: ContributedActionReadObservationOptions,
+  ): Promise<Disposable> {
+    throw new PluginError({ code: 'plugin_action_read_observation_unavailable',
+      message: 'The external fixture has no connected read observer owner' });
+  }
+
+  async observeAdmittedTargetedOperation<TInput extends JsonValue, TResult extends JsonValue | void>(
+    _operation: AdmittedTargetedOperationExecutionHandle<TInput, TResult>,
+    _input: NoInfer<TInput>,
+    _invalidate: () => void,
+    _options?: FixtureCancellationOptions,
+  ): Promise<Disposable> {
+    throw new PluginError({ code: 'plugin_action_read_observation_unavailable',
+      message: 'The external fixture has no connected read observer owner' });
+  }
+
 
   execute<K extends PluginInvocableActionId>(
     actionId: K,
@@ -259,10 +285,49 @@ const targetPlugin = definePlugin({
       inputSchema: targetInputSchema,
       resultSchema: targetResultSchema,
       run: async (input) => ({ accepted: input.title.length > 0, title: input.title }),
+      observeRead: (_input, invalidate) => {
+        invalidate();
+        invalidate.retire();
+        return { dispose() {} };
+      },
+    },
+    'read-account': {
+      title: 'Read Account', surfaces: ['plugin'], inputSchema: targetInputSchema,
+      execution: { target: 'account', account: { artifactId: 'portable', exportName: 'activate' } },
+      run: async input => ({ title: input.title }),
+      observeRead: (_input, invalidate) => {
+        invalidate();
+        invalidate.retire();
+        return { dispose() {} };
+      },
     },
   },
 });
 const targetPublish = targetPlugin.actionContracts.publish;
+
+/** The host-owned callback distinguishes refresh from exact source retirement. */
+export function consumeReadInvalidation(invalidate: PluginActionReadInvalidation): void {
+  invalidate();
+  invalidate.retire();
+}
+
+/** Both public invocation realms observe the same contributed contract and retain its input type. */
+export function compileReadObservationContexts(
+  daemon: PluginInvocationContext,
+  account: PluginAccountActionContext,
+  options: ContributedActionReadObservationOptions,
+): readonly Promise<Disposable>[] {
+  const invalidate = () => undefined;
+  const observations = [
+    daemon.services.actions.observe(targetPublish, { title: 'Ready' }, invalidate, options),
+    account.services.actions.observe(targetPublish, { title: 'Ready' }, invalidate, options),
+  ];
+  // @ts-expect-error The contributed Action contract requires its title operand.
+  void account.services.actions.observe(targetPublish, { id: 'wrong' }, invalidate);
+  // @ts-expect-error Observation admits contributed references only, never a host Action id.
+  void daemon.services.actions.observe('session.transcript.get', { sessionId: 'exact-session' }, invalidate);
+  return observations;
+}
 
 const { manifest, activate } = definePlugin({
   id: 'example.actions-author',

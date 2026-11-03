@@ -1,3 +1,4 @@
+export { createTestResourceInvocationContext } from './resourceInvocation.js';
 export { createPluginHttpFixture } from './http.js';
 export type { AgentSessionRuntimeEventKind } from './runtimeEvents.js';
 export type { ObservedAgentLaunch, AgentLaunchObserverBoundaries } from './observeAgentLaunch.js';

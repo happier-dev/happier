@@ -1852,10 +1852,10 @@ function deriveAccountUiProjection(input: Readonly<{
     }
     const entries = Object.assign({}, ...bundles.map(bundle => bundle.entriesById),
         ...selections.map(selected => {
-            const declarations = projectPluginPortableUiDeclarationsV1(
+            const declarations = selected.release ? projectPluginPortableUiDeclarationsV1(
                 selected.manifest, accountActionArtifactGraphs(selected, candidates),
-            );
-            return selected.release && selected.manifest.contributes.actions?.some(action => action.execution.target === 'account')
+            ) : bundles.find(bundle => bundle.pluginId === selected.manifest.id)?.entriesById ?? {};
+            return selected.release
                 ? declarations
                 : Object.fromEntries(Object.entries(declarations).filter(([, entry]) => entry.contributionKind === 'uiRenderer'));
         }));
@@ -1863,6 +1863,7 @@ function deriveAccountUiProjection(input: Readonly<{
         Object.freeze({ ...input.scope, custodyId, sourceCustody }),
     ] as const));
     const actions: Record<string, PluginUiActionProjection> = {};
+    const resources: Record<string, PluginUiProjectionModel['resourcesById'][string]> = {};
     const connectedAccountDescriptors: Record<string, NonNullable<PluginUiProjectionModel['connectedAccountDescriptorsById']>[string]> = {};
     for (const selected of selections) {
         const { manifest, custodyId } = selected;
@@ -1893,6 +1894,25 @@ function deriveAccountUiProjection(input: Readonly<{
             }
             connectedAccountDescriptors[buildQualifiedPluginContributionKey({ pluginId: manifest.id, localId: definition.id })] = Object.freeze({
                 id: definition.id, pluginId: manifest.id, occurrenceId: custodyId, definition, hostAccountOrigin,
+            });
+        }
+        const packageAssetsById = new Map(selected.release?.packageAssetArchive?.resources.map(resource => [resource.resourceId, resource]));
+        for (const resource of manifest.contributes.resources ?? []) {
+            if (resource.source !== 'dynamic') {
+                const descriptor = packageAssetsById.get(resource.id);
+                resources[buildQualifiedPluginContributionKey({ pluginId: manifest.id, localId: resource.id })] = Object.freeze({
+                    id: resource.id, pluginId: manifest.id, occurrenceId: custodyId, resourceKind: resource.kind,
+                    path: resource.path, contentType: resource.contentType,
+                    ...(descriptor ? { digest: descriptor.digestSha256 } : {}), hostAccountOrigin,
+                });
+                continue;
+            }
+            if (resource.execution?.target !== 'account') continue;
+            projectAccountArtifact(`resources/${resource.id}`, resource.execution.account);
+            resources[buildQualifiedPluginContributionKey({ pluginId: manifest.id, localId: resource.id })] = Object.freeze({
+                id: resource.id, pluginId: manifest.id, occurrenceId: custodyId, resourceKind: resource.kind,
+                scope: resource.scope, contentType: resource.contentType, execution: resource.execution,
+                hostAccountOrigin, accountResourceDeclaration: resource,
             });
         }
         for (const action of manifest.contributes.actions ?? []) {
@@ -1926,19 +1946,30 @@ function deriveAccountUiProjection(input: Readonly<{
 
         }
     }
-    const projection = normalizePluginInstalledUiDeclarations(entries);
     const withAccountOccurrence = <T extends Readonly<{ pluginId: string }>>(entry: T): T => {
         const hostAccountOrigin = accountUiOrigins.get(entry.pluginId);
         return hostAccountOrigin ? Object.freeze({ ...entry, occurrenceId: hostAccountOrigin.custodyId }) : entry;
     };
-    const model = Object.keys(entries).length > 0 || Object.keys(actions).length > 0
+    // Normalization requires hosted descriptors to already carry their source
+    // occurrence. Account custody owns that identity before remote guards run.
+    for (const key of Object.keys(entries)) {
+        const entry = entries[key];
+        if (entry.contributionKind === 'hostedWeb' || entry.contributionKind === 'reactNativeBundle'
+            || entry.contributionKind === 'searchProvider') {
+            entries[key] = withAccountOccurrence(entry);
+        }
+    }
+    const projection = normalizePluginInstalledUiDeclarations(entries);
+    const model = Object.keys(entries).length > 0 || Object.keys(actions).length > 0 || Object.keys(resources).length > 0
         || Object.keys(connectedAccountDescriptors).length > 0 ? Object.freeze({ ...projection,
         actionsById: Object.freeze(actions),
         connectedAccountDescriptorsById: Object.freeze(connectedAccountDescriptors),
-        reactNativeBundlesById: Object.freeze(Object.fromEntries(Object.entries(projection.reactNativeBundlesById)
-            .map(([key, entry]) => [key, withAccountOccurrence(entry)]))),
-        hostedWebById: Object.freeze(Object.fromEntries(Object.entries(projection.hostedWebById)
-            .map(([key, entry]) => [key, withAccountOccurrence(entry)]))),
+        resourcesById: Object.freeze(resources),
+        searchProvidersById: Object.freeze(Object.fromEntries(Object.entries(projection.searchProvidersById).flatMap(([key, provider]) => {
+            const action = actions[buildQualifiedPluginContributionKey(provider.action)];
+            return action ? [[key, Object.freeze({ ...provider, occurrenceId: action.occurrenceId,
+                hostAccountOrigin: action.hostAccountOrigin })]] : [];
+        }))),
         surfacePlacementsById: Object.freeze(Object.fromEntries(Object.entries(projection.surfacePlacementsById)
             .map(([key, entry]) => {
                 const hostAccountOrigin = accountUiOrigins.get(entry.pluginId);
@@ -1955,13 +1986,17 @@ function deriveAccountUiProjection(input: Readonly<{
             id: bundle.pluginId, displayName: bundle.displayName,
             version: bundle.pluginVersion, enabled: true, source: { kind: 'bundled' as const, locator: bundle.packageName },
             ...(bundle.declaredExecution ? { declaredExecution: bundle.declaredExecution } : {}),
-        }])), ...Object.fromEntries(selections.filter(selected => selected.manifest.contributes.actions?.some(action => action.execution.target === 'account')
-            || (selected.manifest.contributes.connectedAccountDescriptors?.length ?? 0) > 0)
+        }])), ...Object.fromEntries(selections.filter(selected => (selected.release && selected.manifest.contributes.ui !== undefined)
+            || selected.manifest.contributes.actions?.some(action => action.execution.target === 'account')
+            || (selected.manifest.contributes.connectedAccountDescriptors?.length ?? 0) > 0
+            || selected.manifest.contributes.resources?.some(resource => resource.source !== 'dynamic' || resource.execution?.target === 'account'))
             .map(selected => {
                 const bundle = bundles.find(candidate => candidate.pluginId === selected.manifest.id);
                 return [selected.manifest.id, { id: selected.manifest.id,
                 displayName: typeof selected.manifest.displayName === 'string' ? selected.manifest.displayName : selected.manifest.displayName.fallback,
                 version: selected.manifest.version, enabled: true, occurrenceId: selected.custodyId,
+                ...((selected.manifest.contributes.resources ?? []).every(resource => resource.source !== 'dynamic'
+                    || resource.execution?.target === 'account') ? { resourceDeclarationsComplete: true as const } : {}),
                 source: selected.release ? { kind: 'archive', locator: selected.release.archiveDigestSha256 }
                     : { kind: 'bundled', locator: bundle!.packageName },
                 ...(bundle?.declaredExecution ? { declaredExecution: bundle.declaredExecution } : {}),

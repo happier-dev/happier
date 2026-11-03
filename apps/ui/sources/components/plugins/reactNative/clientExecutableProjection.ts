@@ -57,7 +57,7 @@ export type PluginUiClientExecutableArtifactAnchor =
     }>
     | Readonly<{
         artifactOwnerKind: 'clientContribution';
-        clientContribution: Readonly<{ family: 'connectedAccountDescriptors' | 'dragSources' | 'dropTargets' | 'workItems'; contribution: Readonly<{ pluginId: string; localId: string }> }>;
+        clientContribution: Readonly<{ family: 'resources' | 'connectedAccountDescriptors' | 'dragSources' | 'dropTargets' | 'workItems'; contribution: Readonly<{ pluginId: string; localId: string }> }>;
     }>
     | Readonly<{
         artifactOwnerKind: 'voiceProvider';
@@ -104,7 +104,7 @@ type ProjectedExecutableOrigin = Readonly<{
 }>;
 
 type ResolvedProjectedClientExecutableContribution = Readonly<{
-    family: 'actions' | 'connectedAccountDescriptors' | 'voiceProviders' | 'dragSources' | 'dropTargets' | 'workItems';
+    family: 'actions' | 'resources' | 'connectedAccountDescriptors' | 'voiceProviders' | 'dragSources' | 'dropTargets' | 'workItems';
     localId: string;
     pluginId: string;
     occurrenceId: string;
@@ -124,6 +124,7 @@ type ResolvedProjectedClientExecutableContribution = Readonly<{
     artifactAnchor: PluginUiClientExecutableArtifactAnchor;
     artifactSelectionOwner?: 'accountRelease' | 'daemonProjection';
     action?: PluginUiProjectionModel['actionsById'][string];
+    resource?: PluginUiProjectionModel['resourcesById'][string];
     connectedAccountDescriptor?: NonNullable<PluginUiProjectionModel['connectedAccountDescriptorsById']>[string];
     entityDeclaration?: PluginProjectedDragSourceEntryV1['definition'] | PluginProjectedDropTargetEntryV1['definition'] | PluginProjectedWorkItemsEntryV1['definition'];
     voiceProvider?: PluginUiProjectedClientExecutableVoiceProvider;
@@ -275,7 +276,7 @@ function readActionCandidate(input: Readonly<{
 
 /** The same artifact/currentness admission serves every client callback family. */
 function readClientContributionCandidate(input: Readonly<{
-    family: 'actions' | 'connectedAccountDescriptors' | 'dragSources' | 'dropTargets' | 'workItems';
+    family: 'actions' | 'resources' | 'connectedAccountDescriptors' | 'dragSources' | 'dropTargets' | 'workItems';
     entry: UnknownRecord & Readonly<{ pluginId: string; occurrenceId?: string }>;
     localId: string;
     contributionId: string;
@@ -283,6 +284,7 @@ function readClientContributionCandidate(input: Readonly<{
     source: PluginUiClientExecutableProjectionSource;
     platform: PluginContributionClientPlatform;
     action?: PluginUiProjectionModel['actionsById'][string];
+    resource?: PluginUiProjectionModel['resourcesById'][string];
     connectedAccountDescriptor?: NonNullable<PluginUiProjectionModel['connectedAccountDescriptorsById']>[string];
     entityDeclaration?: PluginProjectedDragSourceEntryV1['definition'] | PluginProjectedDropTargetEntryV1['definition'] | PluginProjectedWorkItemsEntryV1['definition'];
 }>): ResolvedProjectedClientExecutableContribution | null {
@@ -290,7 +292,8 @@ function readClientContributionCandidate(input: Readonly<{
     if (!entry.occurrenceId) return null;
     const origin = readCurrentProjectedExecutableOrigin({ entry, source: input.source });
     if (!origin || !originServesPlugin(origin, entry.pluginId)) return null;
-    const account = input.action?.execution.target === 'account' || input.connectedAccountDescriptor !== undefined;
+    const account = input.action?.execution.target === 'account' || input.resource?.execution?.target === 'account'
+        || input.connectedAccountDescriptor !== undefined;
     if (account !== ('kind' in origin.authority)
         || (account && 'kind' in origin.authority && entry.occurrenceId !== origin.authority.custodyId)) return null;
     const bundle = input.source.projection.reactNativeBundlesById[
@@ -379,6 +382,7 @@ function readClientContributionCandidate(input: Readonly<{
             ? { artifactSelectionOwner: bundle.artifactSelectionOwner }
             : {}),
         ...(input.action ? { action: input.action } : {}),
+        ...(input.resource ? { resource: input.resource } : {}),
         ...(input.connectedAccountDescriptor ? { connectedAccountDescriptor: input.connectedAccountDescriptor } : {}),
         ...(input.entityDeclaration ? { entityDeclaration: input.entityDeclaration } : {}),
     });
@@ -510,6 +514,13 @@ export function resolveProjectedPluginUiClientExecutables(input: Readonly<{
                 connectedAccountDescriptor: descriptor, source: input.actionProjection, platform: input.platform });
             if (candidate) candidates.push(candidate);
         }
+        for (const resource of Object.values(input.actionProjection.projection.resourcesById)) {
+            if (resource.execution?.target !== 'account') continue;
+            const candidate = readClientContributionCandidate({ family: 'resources', entry: resource,
+                localId: resource.id, contributionId: `resources/${resource.id}`, client: resource.execution.account,
+                resource, source: input.actionProjection, platform: input.platform });
+            if (candidate) candidates.push(candidate);
+        }
         for (const family of ['dragSources', 'dropTargets', 'workItems'] as const) {
             const entries = family === 'dragSources' ? input.actionProjection.projection.dragSourcesById
                 : family === 'workItems' ? input.actionProjection.projection.workItemsById : input.actionProjection.projection.dropTargetsById;
@@ -589,6 +600,10 @@ export function resolveProjectedPluginUiClientExecutables(input: Readonly<{
             const contributes = Object.freeze({
                 connectedAccountDescriptors: Object.freeze(contributions.flatMap(candidate => candidate.connectedAccountDescriptor
                     ? [candidate.connectedAccountDescriptor.definition] : [])),
+                resources: Object.freeze(contributions.flatMap(candidate => candidate.resource ? [{
+                    id: candidate.resource.id, source: 'dynamic' as const, kind: candidate.resource.resourceKind,
+                    contentType: candidate.resource.contentType, scope: candidate.resource.scope, execution: candidate.resource.execution,
+                }] : [])),
                 ...Object.fromEntries((['dragSources', 'dropTargets', 'workItems'] as const).map(family => [family,
                     Object.freeze(contributions.flatMap(candidate => candidate.family === family && candidate.entityDeclaration ? [candidate.entityDeclaration] : []))])),
                 ...(actions.length > 0 ? { actions } : {}),

@@ -1,4 +1,5 @@
 import { join } from 'node:path';
+import { openDaemonActionReadWatch } from './actionReadWatch';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { DaemonPluginUiCaptureSourceReadRequestSchema, DaemonPluginUiCaptureSourceReadResponseSchema } from '@happier-dev/protocol/daemon/pluginCaptureSources';
@@ -2653,7 +2654,7 @@ export function registerDaemonContributionRegistryProjectionHandler(
             await lease.release();
         }
     });
-    rpc.registerHandler(RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN, async (raw: unknown) => {
+    rpc.registerHandler(RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN, async (raw: unknown, context) => {
         const request = DaemonPluginUiResourceWatchOpenRequestSchema.safeParse(raw);
         if (!request.success) {
             return DaemonPluginUiResourceWatchOpenResponseSchema.parse({
@@ -2685,18 +2686,24 @@ export function registerDaemonContributionRegistryProjectionHandler(
             // Caller-scoped by construction, exactly like the snapshot read: the
             // watch owner binds the resource service to the host-stamped calling
             // plugin, so a reference naming another plugin is not declared.
-            if (request.data.resource.pluginId !== request.data.callerPluginId) {
+            if (!('actionRead' in request.data.resource) && ('readAuthority' in request.data.resource ? request.data.resource.readAuthority.consumer.pluginId
+                : request.data.resource.pluginId) !== request.data.callerPluginId) {
                 return DaemonPluginUiResourceWatchOpenResponseSchema.parse({
                     ok: false,
                     code: 'plugin_resource_not_found',
                     reason: 'not_found',
                 });
             }
-            const opened = await lease.registry.openUiResourceWatch({
+            const opened = 'actionRead' in request.data.resource ? await openDaemonActionReadWatch({
+                registry: lease.registry, ...request.data, actionRead: request.data.resource.actionRead,
+                signal: context?.signal,
+                execute: (actionRead, signal, observation) => executeStructuredMessageAction(actionRead, { ...context, signal }, observation),
+            }) : await lease.registry.openUiResourceWatch({
                 expectedCallerOccurrenceId: request.data.expectedCallerOccurrenceId,
                 callerPluginId: request.data.callerPluginId,
                 subscriptionId: request.data.subscriptionId,
-                resourceId: request.data.resource.localId,
+                ...('readAuthority' in request.data.resource ? { readAuthority: request.data.resource.readAuthority }
+                    : { resourceId: request.data.resource.localId }),
                 ...(request.data.context === undefined ? {} : { context: request.data.context }),
             });
             if (!isExpectedPluginOccurrenceCurrent(
@@ -2799,7 +2806,8 @@ export function registerDaemonContributionRegistryProjectionHandler(
             await lease.release();
         }
     });
-    rpc.registerHandler(RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE, async (raw: unknown, context) => {
+    async function executeStructuredMessageAction(raw: unknown, context?: RpcHandlerContext,
+        readObservation?: Parameters<typeof executeContributedAction>[0]['readObservation']) {
         const request = DaemonPluginStructuredMessageActionExecuteRequestSchema.safeParse(raw);
         if (!request.success) {
             return DaemonPluginStructuredMessageActionExecuteResponseSchema.parse({
@@ -2973,7 +2981,9 @@ export function registerDaemonContributionRegistryProjectionHandler(
             }> | null = null;
             const attempt = await traceStage('contributed.execute', () => executeContributedAction({
                 runtimeRegistry: lease.registry,
+                ...(readObservation ? { readObservation } : {}),
                 actionId: request.data.qualifiedActionId,
+                ...(readObservation || request.data.requiredReadOnly ? { requiredReadOnly: true as const } : {}),
                 ...(request.data.input === undefined ? {} : { input: request.data.input }),
                 expectedContributorOccurrenceId: request.data.expectedContributorOccurrenceId,
                 approvalContext: {
@@ -3075,7 +3085,8 @@ export function registerDaemonContributionRegistryProjectionHandler(
         } finally {
             if (releaseLease) await lease.release();
         }
-    });
+    }
+    rpc.registerHandler(RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE, executeStructuredMessageAction);
     // Action schemas are not in the describe projection; a reader fetches one
     // Action's declared schemas here, for the exact occurrence it projected.
     rpc.registerHandler(RPC_METHODS.DAEMON_PLUGIN_ACTION_SCHEMAS_READ, async (raw: unknown) => {

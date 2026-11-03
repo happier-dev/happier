@@ -1,5 +1,6 @@
 import { DaemonContributionRegistryProjectionDescribeRequestSchema, DaemonPluginUiTargetedContributionsReadRequestSchema, DaemonPluginSettingsGetRequestSchema, DaemonPluginSettingsGetResponseSchema, DaemonPluginSettingsSetRequestSchema, DaemonPluginSettingsSetResponseSchema, DaemonPluginSecretStatusRequestSchema, DaemonPluginSecretStatusResponseSchema, DaemonPluginSecretSetRequestSchema, DaemonPluginSecretSetResponseSchema, DaemonPluginSecretDeleteRequestSchema, DaemonPluginSecretDeleteResponseSchema, DaemonPluginStructuredMessageActionExecuteResponseSchema, DaemonPluginActionFormConnectedAccountOptionsResolveRequestSchema, DaemonPluginActionFormConnectedAccountOptionsResolveResponseSchema, DaemonPluginActionSchemasReadRequestSchema, DaemonPluginActionSchemasReadResponseSchema, DaemonPluginUiResourceReadRequestSchema, DaemonPluginUiResourceReadResponseSchema, DaemonPluginUiResourceWatchOpenRequestSchema, DaemonPluginUiResourceWatchOpenResponseSchema, DaemonPluginUiResourceWatchNextRequestSchema, DaemonPluginUiResourceWatchNextResponseSchema, DaemonPluginUiResourceWatchCloseRequestSchema, DaemonPluginUiResourceWatchCloseResponseSchema, type DaemonPluginSettingsSnapshot, type DaemonPluginSettingsMutation, type DaemonPluginSettingsSetResponse, type DaemonPluginSecretStatusResponse, type DaemonPluginSecretSetResponse, type DaemonPluginSecretDeleteResponse, type DaemonPluginStructuredMessageActionExecuteResponse, type DaemonPluginActionFormConnectedAccountOptionsResolveRequest, type DaemonPluginActionFormConnectedAccountOptionsResolveResponse, type DaemonPluginActionSchemasReadRequest, type DaemonPluginActionSchemasReadResponse, type DaemonPluginUiResourceReadRequest, type DaemonPluginUiResourceReadResponse, type DaemonPluginUiResourceWatchOpenRequest, type DaemonPluginUiResourceWatchOpenResponse, type DaemonPluginUiResourceWatchNextRequest, type DaemonPluginUiResourceWatchNextResponse, type DaemonPluginUiResourceWatchCloseRequest, type DaemonContributionRegistryProjectionAutomationEligibleEventsV1, type DaemonPluginUiComposerSurfaceCatalogEntryV1, type DaemonPluginUiTargetedSurfaceMountV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
-import { DaemonPluginStructuredMessageActionExecuteRequestSchema, type DaemonPluginStructuredMessageActionExecuteRequest } from '@happier-dev/protocol/plugins/actions/daemonInvocationV1';
+import type { DaemonPluginStructuredMessageActionExecuteRequest } from '@happier-dev/protocol/plugins/actions/daemonInvocationV1';
+import { buildMachinePluginActionExecuteRequest, isMachinePluginActionScopeCurrent } from './machinePluginActionRequest';
 import type { PluginActionInvocationSurfaceV2 } from '@happier-dev/plugin-sdk/actions';
 import type { PluginUiTargetedContributionsV1 } from '@happier-dev/protocol/plugins/ui';
 import type { DaemonPluginTargetedSourceDeclarationV1, DaemonPluginUiResourceDeclarationsByPluginIdV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
@@ -920,26 +921,10 @@ export async function machinePluginStructuredMessageActionExecute(
 ): Promise<MachinePluginStructuredMessageActionResult> {
     let issued = false;
     try {
-        if (opts.accountLifetime !== undefined && (opts.accountLifetime?.isCurrent() !== true
-            || (opts.serverId && !areServerProfileIdentifiersEquivalent(opts.serverId, opts.accountLifetime.scope.serverId)))) {
+        if (!isMachinePluginActionScopeCurrent(opts)) {
             return { supported: false, reason: 'error' };
         }
-        const payload = DaemonPluginStructuredMessageActionExecuteRequestSchema.parse({
-            machineId,
-            ...(opts.requestId ? { requestId: opts.requestId } : {}),
-            expectedContributorOccurrenceId: opts.expectedContributorOccurrenceId,
-            qualifiedActionId: opts.qualifiedActionId,
-            ...(opts.input === undefined ? {} : { input: opts.input }),
-            ...(opts.selectedActionInputCarrier === undefined
-                ? {}
-                : { selectedActionInputCarrier: opts.selectedActionInputCarrier }),
-            ...(opts.sessionId ? { sessionId: opts.sessionId } : {}),
-            ...(opts.messageActionReference ? { messageActionReference: opts.messageActionReference } : {}),
-            ...(opts.resolveClientMessageContext ? { resolveClientMessageContext: true } : {}),
-            executionSurface: opts.executionSurface,
-            ...(opts.invocation ? { invocation: opts.invocation } : {}),
-            ...(opts.presentUserIntent ? { presentUserIntent: opts.presentUserIntent } : {}),
-        });
+        const payload = buildMachinePluginActionExecuteRequest(machineId, opts);
         const response = await machineRpcWithServerScope<unknown, typeof payload>({
             machineId,
             serverId: opts.accountLifetime?.scope.serverId ?? opts.serverId,

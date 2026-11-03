@@ -306,6 +306,8 @@ export type PluginUiTargetedContributionSelectorV1 = ProtocolPluginUiTargetedCon
  * Protocol type, while Protocol remains the sole runtime parser.
  */
 export type PluginUiHostApiSurfaceContextV1 = {
+    /** Read-only identity from the mounted host's admitted Account lifetime; never a grant. */
+    readonly accountScope?: Readonly<NonNullable<ProtocolPluginUiHostApiSurfaceContextV1['accountScope']>>;
     mount: PluginUiMountContextV1;
     target: PluginUiHostApiSurfaceTargetV1;
     /** Host page chrome for app pages; absent on other surface placements. */

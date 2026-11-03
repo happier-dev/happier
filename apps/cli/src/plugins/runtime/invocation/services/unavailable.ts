@@ -696,7 +696,7 @@ export const PLUGIN_SERVICE_DESCRIPTORS = Object.freeze({
         id: 'resources', publicProperty: 'resources', availabilityOwner: 'host', unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
         createUnavailable(code?: string, diagnostic?: PluginServiceUnavailableDiagnostic): PluginResourcesService {
             const fail = unavailableMethod('resources', code, diagnostic);
-            return Object.freeze({ describe: fail, read: fail, watch: fail });
+            return Object.freeze({ describe: fail, read: fail, async watch() { return fail(); } });
         },
         createAvailable({ seed, binding, params }): PluginResourcesService | null {
             if (
@@ -762,7 +762,9 @@ export const PLUGIN_SERVICE_DESCRIPTORS = Object.freeze({
             const fail = unavailableMethod('actions', code, diagnostic);
             return Object.freeze({
                 execute: fail,
+                observe: fail,
                 executeAdmittedTargetedOperation: fail,
+                observeAdmittedTargetedOperation: fail,
                 executeWithExecutionOrigin: fail,
                 executeAdmittedTargetedOperationWithExecutionOrigin: fail,
             }) as ActionsService;
@@ -820,6 +822,7 @@ export const PLUGIN_SERVICE_DESCRIPTORS = Object.freeze({
                         ? { actionRequestAttributionV1 }
                         : {}),
                     signal: seed.signal,
+                    ...(seed.retireReadObservation ? { retireReadObservation: seed.retireReadObservation } : {}),
                     isOccurrenceCurrent: seed.isOccurrenceCurrent,
                     ...(seed.bypassActionInterception === true
                         ? { bypassActionInterception: true as const }

@@ -38,6 +38,7 @@ import { normalizeStrictJsonValue, projectNativeJsonValueForTransport, sameStric
 import {
     publishPluginUiContributionSupplies,
     readPluginUiAccountExecutableOrigin,
+    readPluginUiContributionOrigin,
     readPluginUiContributionSupplies,
     readPluginUiProjectionEntryExecutionOrigin,
     retainPluginUiProjectionValue,
@@ -61,6 +62,65 @@ type UnionSupplyFacts = Readonly<{
     /** Previous carriers are available only during this synchronous publication. */
     previousFacts?: ReadonlyMap<UnknownRecord, PluginUiContributionSupplyV1>;
 }>;
+
+/**
+ * Capture execution from an already-selected publication, not its descriptive
+ * representative. Account custody and a renderer's optional Machine supply are
+ * independent; this conversion never selects a candidate or changes the catalog.
+ */
+export function resolvePluginUiExecutionDeclaration<T extends UnknownRecord & Readonly<{ id: string; pluginId: string }>>(
+    declaration: T,
+    input: Readonly<{ current?: T | null; machineResource?: PluginUiResourceProjection | null }> = {},
+): T | null {
+    const current = input.current === undefined ? declaration : input.current;
+    if (!current || current.pluginId !== declaration.pluginId || current.id !== declaration.id) return null;
+    if (input.machineResource) {
+        const resource = input.machineResource;
+        if (resource.pluginId !== declaration.pluginId || resource.execution?.target === 'account') return null;
+        const supplies = readPluginUiContributionSupplies(current);
+        // Direct Session/Project projections retain their incumbent scoped
+        // admission. Union rows instead require the exact selected Resource.
+        if (supplies.length === 0) return Object.hasOwn(current, 'hostSupplies') ? null : current;
+        const origin = readPluginUiProjectionEntryExecutionOrigin(resource);
+        const bound = readPluginUiContributionOrigin(current);
+        // A selected placement already owns authority; a Resource cannot
+        // replace it with a sibling supplier. Scoped Resource rows can
+        // omit their redundant stamps, but any stamps present must agree.
+        if (bound) return bound.executionOrigin && bound.phase === 'current' && bound.interactionEnabled
+            && typeof current.occurrenceId === 'string'
+            && (resource.occurrenceId === undefined || current.occurrenceId === resource.occurrenceId)
+            && (!origin || arePluginMachineExecutionOriginsEqual(bound.executionOrigin, origin)) ? current : null;
+        if (!origin || !resource.occurrenceId) return null;
+        const selected = supplies.find(supply => supply.executionOrigin
+            && arePluginMachineExecutionOriginsEqual(supply.executionOrigin, origin)
+            && supply.occurrenceId === resource.occurrenceId);
+        if (!selected || selected.phase !== 'current' || !selected.interactionEnabled) return null;
+        return Object.freeze({ ...current, occurrenceId: selected.occurrenceId,
+            executionOrigin: selected.executionOrigin, hostOrigin: selected,
+            runtime: Object.freeze({ ...asRecord(current.runtime), resourceCapability: selected.resourceCapability }) });
+    }
+    const execution = asRecord(declaration.execution);
+    const currentExecution = asRecord(current.execution);
+    if (execution?.target !== currentExecution?.target) return null;
+    const executable = asRecord(execution?.target === 'account' ? execution.account : execution?.target === 'client' ? execution.client : null);
+    const currentExecutable = asRecord(currentExecution?.target === 'account' ? currentExecution.account
+        : currentExecution?.target === 'client' ? currentExecution.client : null);
+    if (executable?.artifactId !== currentExecutable?.artifactId || executable?.exportName !== currentExecutable?.exportName) return null;
+    if (execution?.target === 'account') {
+        const captured = readPluginUiAccountExecutableOrigin(declaration);
+        const selected = readPluginUiAccountExecutableOrigin(current);
+        if (!selected || captured && (captured.serverId !== selected.serverId || captured.accountId !== selected.accountId
+            || captured.custodyId !== selected.custodyId)) return null;
+        return current;
+    }
+    // An occurrence-less union row has not captured an executable yet. Once
+    // bound, replacement is a retirement, including source changes in place.
+    if (declaration.occurrenceId !== undefined && declaration.occurrenceId !== current.occurrenceId) return null;
+    const captured = readPluginUiProjectionEntryExecutionOrigin(declaration);
+    const selected = readPluginUiProjectionEntryExecutionOrigin(current);
+    if (captured && (!selected || !arePluginMachineExecutionOriginsEqual(captured, selected))) return null;
+    return current;
+}
 
 export type PluginUiProjectionUnionMember = Readonly<{
     machineId: string;

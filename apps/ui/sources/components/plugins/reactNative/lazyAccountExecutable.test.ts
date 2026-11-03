@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { PluginContributesV2Schema } from '@happier-dev/protocol';
 import { derivePluginAccountContributionRegistrationRights } from '@happier-dev/protocol/plugins/contributions/catalog';
+import { readPluginActionInputParser, readPluginActionReadObserver } from '@happier-dev/cli-common/plugins/registration/actionInputParser';
 import { createPluginRegistrationScope } from '@/sync/domains/plugins/registrationScope';
 import { evaluatePluginUiCommonJsBundle } from './commonJsEvaluator';
 import { createLazyAccountExecutable } from './lazyAccountExecutable';
@@ -12,6 +13,7 @@ function fixture(held = false) {
     const execution = { target: 'account', account: { artifactId: target.artifactId, exportName: target.exportName } } as const;
     const contributes = PluginContributesV2Schema.parse({
         actions: ['echo', 'plain'].map(id => ({ id, title: id, execution, scopes: ['global'], surfaces: ['ui'], placementBindings: [], dangerLevel: 'safe' })),
+        resources: [{ id: 'context', source: 'dynamic', kind: 'config', contentType: 'application/json', scope: 'global', execution }],
         connectedAccountDescriptors: [{ id: 'account', title: 'Account', authentication: {
             account: execution.account, defaultModeId: 'device',
             modes: [{ id: 'device', kind: 'oauthDeviceCode', outcomeReconciliation: 'none' }],
@@ -36,6 +38,8 @@ function fixture(held = false) {
                 fixture.observations++; return { dispose() {} };
             } });
             api.actions.register('plain', echo);
+            api.resources.registerDynamicResource('context', { read: options => JSON.stringify(options.context),
+                observe: () => { fixture.observations++; return { dispose() {} }; } });
             api.connectedAccounts.register('account', { authentication: { modes: {
                 device: { kind: 'oauthDeviceCode',
                     begin: async () => ({ status: 'awaitingDeviceAuthorization', verificationUri: 'https://auth.example.test/device',
@@ -61,6 +65,39 @@ function fixture(held = false) {
     return { ...lazy, boundary, registrations, started, release: () => release(),
         async dispose() { await scope.dispose(); await dispose(); } };
 }
+
+it('leaves descriptors unevaluated, shares real evaluation, and exposes exact parser/observer metadata after preparation', async () => {
+    const state = fixture();
+    try {
+        expect(state.registrations).toHaveLength(4);
+        expect(state.boundary.evaluations).toBe(0);
+        const echo = state.registrations.find(value => value.localId === 'echo')!;
+        const plain = state.registrations.find(value => value.localId === 'plain')!;
+        const [prepared, repeated, nonObserved] = await Promise.all([
+            state.prepareRegistration(echo), state.prepareRegistration(echo), state.prepareRegistration(plain),
+        ]);
+        expect(prepared).toBe(repeated);
+        expect(state.boundary.evaluations).toBe(1);
+        expect(state.boundary.activations).toBe(1);
+        expect(readPluginActionInputParser(prepared.value)?.('input')).toEqual({ success: true, data: { transformed: 'input' } });
+        expect(readPluginActionReadObserver(prepared.value)).toBeTypeOf('function');
+        expect(readPluginActionReadObserver(nonObserved.value)).toBeUndefined();
+        const resource = state.registrations.find(value => value.family === 'resources')!;
+        const runtime = resource.value as import('@happier-dev/plugin-sdk/resources').PluginDynamicResourceRuntime;
+        const options: import('@happier-dev/plugin-sdk/resources').PluginDynamicResourceInvocationOptionsV1 = {
+            signal: new AbortController().signal, context: { kind: 'global' },
+            resources: { describe() { throw new Error('Unused'); }, read: async () => { throw new Error('Unused'); },
+                watch: async () => { throw new Error('Unused'); } },
+            readAction: async () => { throw new Error('Unused'); }, observeAction: async () => { throw new Error('Unused'); },
+        };
+        expect(await runtime.read(options)).toBe(JSON.stringify(options.context));
+        const observation = await runtime.observe(() => {}, options);
+        expect(state.boundary.observations).toBe(1);
+        await observation.dispose();
+        expect(state.boundary.evaluations).toBe(1);
+    } finally { await state.dispose(); }
+    expect(state.boundary.cleanups).toBe(1);
+});
 
 it('publishes a portable authentication callback through the same lazy Account activation', async () => {
     const state = fixture();

@@ -1,4 +1,4 @@
-import { QualifiedConnectedAccountConfigurationSnapshotV4Schema, QualifiedConnectedAccountConfigurationTargetV4Schema, QualifiedConnectedAccountCredentialSnapshotV4Schema, QualifiedConnectedAccountGroupRefSchema, QualifiedConnectedAccountServiceRefSchema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
+import { QualifiedConnectedAccountConfigurationSnapshotV4Schema, QualifiedConnectedAccountConfigurationTargetV4Schema, QualifiedConnectedAccountCredentialSnapshotV4Schema, QualifiedConnectedAccountGroupRefSchema, QualifiedConnectedAccountServiceRefSchema, QualifiedConnectedAccountListResponseV4Schema, type QualifiedConnectedAccountListResponseV4 } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
 import { QualifiedConnectedAccountGroupActiveAccountV4Schema, QualifiedConnectedAccountGroupCreateV4Schema, QualifiedConnectedAccountGroupDeleteV4Schema, QualifiedConnectedAccountGroupListResponseV4Schema, QualifiedConnectedAccountGroupMemberDeleteV4Schema, QualifiedConnectedAccountGroupMemberMutationV4Schema, QualifiedConnectedAccountGroupPatchV4Schema, QualifiedConnectedAccountGroupResponseV4Schema, QualifiedConnectedAccountQuotaResponseV4Schema, type QualifiedConnectedAccountConfigurationSnapshotV4, type QualifiedConnectedAccountCredentialSnapshotV4, type QualifiedConnectedAccountGroupRef, type QualifiedConnectedAccountGroupV4, type QualifiedConnectedAccountServiceRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { QualifiedConnectedAccountRefSchema, type QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import { encodeQualifiedConnectedAccountV4StructuredQueryValue } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4QueryCodec';
@@ -144,19 +144,34 @@ export async function getQualifiedConnectedAccountCredentialV4(
   });
 }
 
+export async function listQualifiedConnectedAccountsV4(
+  credentials: AuthCredentials,
+  params: Readonly<{ service: QualifiedConnectedAccountServiceRef }> & QualifiedConnectedAccountReadOptions,
+): Promise<QualifiedConnectedAccountListResponseV4> {
+  const { service, ...options } = params;
+  return await readQualifiedSnapshot({
+    credentials,
+    path: `/v4/connect/qualified/accounts?${structuredQuery('service', QualifiedConnectedAccountServiceRefSchema, service)}`,
+    parse: value => QualifiedConnectedAccountListResponseV4Schema.parse(value),
+    ...options,
+  });
+}
+
 export async function listQualifiedConnectedAccountGroupsV4(
   credentials: AuthCredentials,
-  params: Readonly<{ service: QualifiedConnectedAccountServiceRef }>,
+  params: Readonly<{ service: QualifiedConnectedAccountServiceRef }> & QualifiedConnectedAccountReadOptions,
 ): Promise<{ groups: QualifiedConnectedAccountGroupV4[] }> {
+  const { service, ...options } = params;
   return await readQualifiedSnapshot({
     credentials,
     path: `/v4/connect/qualified/groups?${structuredQuery(
       'service',
       QualifiedConnectedAccountServiceRefSchema,
-      params.service,
+      service,
     )}`,
     parse: (value) =>
       QualifiedConnectedAccountGroupListResponseV4Schema.parse(value),
+    ...options,
   });
 }
 
@@ -165,21 +180,21 @@ export async function getQualifiedConnectedAccountGroupV4(
   params: Readonly<{
     group: QualifiedConnectedAccountGroupRef;
     expectedRuntimeStateRevision?: number;
-    request?: ServerFetch;
-  }>,
+  }> & QualifiedConnectedAccountReadOptions,
 ): Promise<{ group: QualifiedConnectedAccountGroupV4 }> {
+  const { group, expectedRuntimeStateRevision, ...options } = params;
   const query = new URLSearchParams();
   query.set(
     'group',
     encodeQualifiedConnectedAccountV4StructuredQueryValue(
       QualifiedConnectedAccountGroupRefSchema,
-      params.group,
+      group,
     ),
   );
-  if (params.expectedRuntimeStateRevision !== undefined) {
+  if (expectedRuntimeStateRevision !== undefined) {
     query.set(
       'expectedRuntimeStateRevision',
-      String(params.expectedRuntimeStateRevision),
+      String(expectedRuntimeStateRevision),
     );
   }
   return await readQualifiedSnapshot({
@@ -187,7 +202,7 @@ export async function getQualifiedConnectedAccountGroupV4(
     path: `/v4/connect/qualified/group?${query.toString()}`,
     parse: (value) =>
       QualifiedConnectedAccountGroupResponseV4Schema.parse(value),
-    ...(params.request ? { request: params.request } : {}),
+    ...options,
   });
 }
 

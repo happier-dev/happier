@@ -181,7 +181,7 @@ export type ConnectedAccountPurposeBindingOwnerDependencies = Readonly<{
     signal: AbortSignal,
   ) => Promise<string | null>;
   /** Account/group/credential/materializer invalidations not represented by the binding store. */
-  subscribeInvalidations?: (listener: () => void) => Disposable;
+  subscribeInvalidations?: (listener: () => void, serviceRefs: readonly PluginContributionRef[]) => Disposable;
 }>;
 
 export type ConnectedAccountPurposeAuthorizationScope = Readonly<{
@@ -2024,28 +2024,37 @@ export function createConnectedAccountPurposeBindingOwner(
             ? profile ? profile.configurationRevision
               : await dependencies.resolveCredentialConfigurationRevision?.(resolved.resolved.account, controller.signal)
             : undefined;
-          return { ok: true as const, resolved, credentialRevision, configurationRevision };
+          return { ok: true as const, resolved, credentialRevision, configurationRevision,
+            selectedRevisioned: profile?.revisionSemantics === 'revisioned'
+              || resolved?.resolved.observation === undefined && typeof credentialRevision === 'string' };
         } catch {
           // A failed read cannot establish unchanged authority. Preserve fail-closed delivery.
           return { ok: false as const };
         }
       });
       let observation = read();
-      const notify = (): Promise<void> => {
+      const notify = (sourceInvalidated = false): Promise<void> => {
         const next = observation.then(async previous => {
           if (disposed) return previous;
           const current = await read();
           if (disposed) return current;
-          const unchanged = previous.ok && current.ok && (
-            !previous.resolved && !current.resolved
+          const authorityUnchanged = previous.ok && current.ok && (
+            // Null binding reads carry no native credential revision. Only
+            // binding-store refreshes can prove unchanged unbound authority;
+            // a source invalidation must retire an unversioned native read.
+            !sourceInvalidated && !previous.resolved && !current.resolved
             || previous.resolved && current.resolved
               && !previous.resolved.directMaterialOrigin && !current.resolved.directMaterialOrigin
               && sameResolvedTarget(previous.resolved, current.resolved)
-              && previous.resolved.resolved.displayName === current.resolved.resolved.displayName
+              && previous.selectedRevisioned && current.selectedRevisioned
               && typeof previous.credentialRevision === 'string'
-              && (previous.resolved.resolved.observation?.profiles.every(profile => profile.revisionSemantics === 'revisioned') ?? true)
               && previous.credentialRevision === current.credentialRevision
               && previous.configurationRevision === current.configurationRevision
+          );
+          const unchanged = authorityUnchanged && previous.ok && current.ok && (
+            !previous.resolved && !current.resolved
+            || previous.resolved && current.resolved
+              && previous.resolved.resolved.displayName === current.resolved.resolved.displayName
               && isDeepStrictEqual(previous.resolved.resolved.observation, current.resolved.resolved.observation)
           );
           if (!unchanged) {
@@ -2054,6 +2063,7 @@ export function createConnectedAccountPurposeBindingOwner(
             await Promise.resolve().then(() => input.listener({
               account: affected?.resolved.account ?? null,
               ...(affected?.resolved.group ? { group: affected.resolved.group } : {}),
+              authorityChanged: !authorityUnchanged,
             })).catch(() => undefined);
           }
           return current;
@@ -2062,7 +2072,7 @@ export function createConnectedAccountPurposeBindingOwner(
         return next.then(() => undefined);
       };
       const storeSubscription = dependencies.store.subscribe(notify);
-      const projectionSubscription = dependencies.subscribeInvalidations?.(notify);
+      const projectionSubscription = dependencies.subscribeInvalidations?.(() => notify(true), input.serviceRefs);
       const sessionListeners = input.sessionId
         ? sessionInvalidationListenersBySessionId.get(input.sessionId) ?? new Set<() => void>()
         : null;

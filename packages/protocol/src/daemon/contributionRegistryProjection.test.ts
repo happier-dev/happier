@@ -2229,6 +2229,12 @@ describe('daemon contribution registry projection (wire)', () => {
     } as const;
     expect(PluginProjectedResourceV2Schema.parse(resource)).toMatchObject({ executionOrigin });
     expect(PluginProjectedResourceV2Schema.safeParse({ ...resource, occurrenceId: undefined }).success).toBe(false);
+    const portable = { ...resource, executionOrigin: undefined,
+      execution: { target: 'account', account: { artifactId: 'portable', exportName: 'activate' } } };
+    expect(PluginProjectedResourceV2Schema.parse(portable)).toMatchObject({ execution: portable.execution });
+    expect(PluginProjectedResourceV2Schema.safeParse({ ...portable, execution: {
+      ...portable.execution, account: { ...portable.execution.account, machineId: 'untrusted' },
+    } }).success).toBe(false);
     for (const schemaAndRow of [
       { schema: PluginProjectionInstalledPackageV2Schema, row: installedPackage },
       { schema: PluginProjectedResourceV2Schema, row: resource },

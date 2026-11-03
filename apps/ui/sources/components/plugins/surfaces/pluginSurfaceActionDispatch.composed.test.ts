@@ -113,6 +113,7 @@ const { createPluginSurfaceActionHostApi: createPluginSurfaceActionHostApiImpl, 
 const { createBoundPluginSurfaceController, useBoundPluginSurfaceController } = await import('./boundPluginSurfaceController');
 const { createPluginActionInputSelectionFactsPublication } = await import('./pluginActionInputSelectionFacts');
 const { createPluginSurfaceStoredImageOwner } = await import('./pluginSurfaceStoredImage');
+const { observePluginSurfaceActionRead } = await import('./pluginSurfaceActionReadObservation');
 const { dispatchPluginResolvedSemanticCommand } = await import('./dispatchPluginResolvedSemanticCommand');
 const { dispatchPluginAppPageHeaderAction } = await import('@/components/appShell/plugins/pluginAppPageHeaderActions');
 const { getPluginUiEphemeralSharedScope } = await import('./pluginUiEphemeralSharedScope');
@@ -391,6 +392,7 @@ function createClientActionActivation(input: Readonly<{
     handler?: PluginClientActionHandler;
     accountHandler?: PluginAccountActionHandler;
     readOnly?: import('@happier-dev/protocol/plugins/actions/v2').PluginActionContributionV2['readOnly'];
+    observeRead?: import('@happier-dev/plugin-sdk/actions').PluginActionReadObserver<PluginUiJsonValueV1, import('@happier-dev/plugin-sdk/actions').PluginAccountActionContext>;
     accountLifetime?: ActiveServerAccountScopeLifetime;
     occurrenceId?: string;
     artifactGraph?: PluginUiArtifactsManifestEntryV2;
@@ -519,7 +521,8 @@ function createClientActionActivation(input: Readonly<{
         // system-boundary test double.
         if (input.accountHandler) {
             // The selected Account realm is checked by the real registration scope.
-            (api as unknown as import('@happier-dev/plugin-sdk').PluginAccountApi).actions.register(localId, input.accountHandler);
+            (api as unknown as import('@happier-dev/plugin-sdk').PluginAccountApi).actions.register(localId, input.accountHandler,
+                input.observeRead ? { observeRead: input.observeRead } : undefined);
         } else api.actions.register(localId, input.handler ?? (() => { throw new Error('Handler fixture missing'); }));
     });
     const backend: PluginReactNativeLoaderBackend = Object.freeze({
@@ -1046,6 +1049,173 @@ describe('Account Action placement through the executable dispatcher', () => {
                 expectedContributorOccurrenceId: provider.occurrenceId, executionSurface: 'ui' });
         } finally {
             await activation.composition.unload(); accountLifetime.retire(); clearPluginAccountAvailabilityProjection();
+        }
+    });
+
+    it.each(['get', 'list', 'configure', 'client', 'origin', 'routing', 'late', 'cleanup-reject'] as const)('observes an ordinary mixed Account Action without executing its handler (%s)', async scenario => {
+        const accountLifetime = clientAccountLifetime();
+        const demand = new AbortController();
+        const observerCancellation = new AbortController();
+        const cleanupFailure = new Error('External observer cleanup refused');
+        let rejectCleanup: ((error: unknown) => void) | undefined;
+        const cleanupBarrier = new Promise<void>((_resolve, reject) => { rejectCleanup = reject; });
+        let handlers = 0;
+        let observerCalls = 0;
+        let disposed = 0;
+        let nestedSignal: AbortSignal | undefined;
+        let observedCaller: unknown;
+        let nestedObserver: import('@happier-dev/plugin-sdk').Disposable | undefined;
+        let publish = () => {};
+        let release: ((subscription: import('@happier-dev/plugin-sdk').Disposable) => void) | undefined;
+        const target = createClientActionActivation({ pluginId: 'example.ordinary-observed-source',
+            accountPlacement: scenario !== 'client', accountLifetime, surfaces: ['plugin'],
+            readOnly: { op: 'or', any: [{ op: 'eq', path: 'kind', value: 'get' }, { op: 'eq', path: 'kind', value: 'list' }] },
+            inputSchema: { type: 'object', properties: { kind: { enum: ['get', 'list', 'configure'] } }, required: ['kind'], additionalProperties: false },
+            ...(scenario === 'client' ? { handler: async () => { handlers++; return null; } }
+                : { accountHandler: async () => { handlers++; return null; },
+                    observeRead: (_value, invalidate, context) => {
+                        observerCalls++; nestedSignal = context.signal; observedCaller = context.caller; publish = invalidate;
+                        if (scenario === 'late') return new Promise(resolve => { release = resolve; });
+                        return { dispose() { disposed++;
+                            if (scenario === 'cleanup-reject') return cleanupBarrier;
+                        } };
+                    } }),
+        });
+        const activation = createClientActionActivation({ accountPlacement: true, accountLifetime,
+            surfaces: ['plugin'], readOnly: true, accountHandler: async () => { handlers++; return null; },
+            observeRead: async (_value, invalidate, context) => {
+                nestedObserver = await context.services.actions.observe(
+                    { pluginId: target.action.pluginId, localId: target.action.id },
+                    { kind: scenario === 'list' || scenario === 'configure' ? scenario : 'get' }, invalidate,
+                    scenario === 'origin' ? { expectedExecutionOrigin: CLIENT_ACTION_ORIGIN }
+                        : scenario === 'routing' ? { expectedExecutionRouting: { serverIdentityId: CLIENT_ACTION_ORIGIN.serverIdentityId,
+                            machineId: CLIENT_ACTION_ORIGIN.materializationRef.machineId, pluginId: target.action.pluginId } }
+                        : scenario === 'cleanup-reject' ? { signal: observerCancellation.signal } : undefined,
+                );
+                return nestedObserver;
+            },
+        });
+        const actions = { ...activation.projection.actionsById, ...target.projection.actionsById };
+        const invalidated = vi.fn();
+        let observer: import('@happier-dev/plugin-sdk').Disposable | undefined;
+        await activation.composition.unload();
+        try {
+            await activation.composition.reconcile([activation.activation, target.activation]);
+            const pending = dispatchPluginSurfaceAction({ action: { pluginId: CALLER_PLUGIN_ID, localId: activation.action.id }, input: {},
+                invocationSurface: 'plugin', originSurface: 'ui', clientAction: {}, requiredReadOnly: true,
+                signal: demand.signal, isCurrent: () => accountLifetime.isCurrent(),
+                pluginUiProjection: { ...activation.projection, actionsById: actions },
+                resolveContributedAction: identity => actions[`${identity.pluginId}/${identity.localId}`] ?? null,
+                readObservation: { invalidate: invalidated, accept(value) { observer = value; } },
+            });
+            if (scenario === 'late') {
+                await vi.waitFor(() => expect(nestedSignal).toBeDefined());
+                demand.abort();
+                release?.({ async dispose() { disposed++; } });
+            }
+            const result = await pending;
+            expect(handlers).toBe(0);
+            if (scenario === 'configure' || scenario === 'client') {
+                expect(result).toMatchObject({ ok: false, reason: 'plugin_action_read_only_required' });
+                expect(observerCalls).toBe(0);
+            } else if (scenario === 'origin' || scenario === 'routing') {
+                expect(result).toMatchObject({ ok: false, reason: 'plugin_action_read_observation_unavailable' });
+                expect(observerCalls).toBe(0);
+            } else if (scenario === 'late') {
+                expect(result).toMatchObject({ ok: false });
+                expect(observer).toBeUndefined();
+                expect(nestedSignal?.aborted).toBe(true);
+                expect(disposed).toBe(1);
+            } else {
+                expect(result).toEqual({ ok: true, result: null });
+                expect(observerCalls).toBe(1);
+                expect(observedCaller).toMatchObject({ kind: 'plugin', pluginId: CALLER_PLUGIN_ID,
+                    contribution: { id: activation.action.id }, occurrenceId: activation.action.occurrenceId });
+                publish(); expect(invalidated).toHaveBeenCalledTimes(1);
+                if (scenario === 'cleanup-reject') {
+                    observerCancellation.abort();
+                    expect(nestedSignal?.aborted).toBe(true);
+                    expect(disposed).toBe(1);
+                    const firstCleanup = nestedObserver?.dispose();
+                    expect(firstCleanup).toBeInstanceOf(Promise);
+                    expect(nestedObserver?.dispose()).toBe(firstCleanup);
+                    const rejected = expect(firstCleanup).rejects.toBe(cleanupFailure);
+                    rejectCleanup?.(cleanupFailure);
+                    await rejected;
+                    // Let AbortSignal's EventTarget rejection handling run before the test ends.
+                    await new Promise<void>(resolve => setTimeout(resolve, 0));
+                    publish(); expect(invalidated).toHaveBeenCalledTimes(1);
+                    return;
+                }
+                await observer?.dispose();
+                expect(nestedSignal?.aborted).toBe(true);
+                expect(disposed).toBe(1);
+                publish(); expect(invalidated).toHaveBeenCalledTimes(1);
+            }
+        } finally { demand.abort(); observerCancellation.abort(); release?.({ dispose() { disposed++; } });
+            if (scenario === 'cleanup-reject') {
+                rejectCleanup?.(cleanupFailure);
+                await Promise.resolve(observer?.dispose()).catch(() => {});
+            } else await observer?.dispose();
+            await activation.composition.unload(); accountLifetime.retire(); }
+    });
+
+    it('awaits accepted external observer cleanup when cancellation wins before dispatch settlement', async () => {
+        const accountLifetime = clientAccountLifetime();
+        const demand = new AbortController();
+        const cleanupFailure = new Error('External admission cleanup refused');
+        let rejectCleanup: ((error: unknown) => void) | undefined;
+        const cleanupBarrier = new Promise<void>((_resolve, reject) => { rejectCleanup = reject; });
+        let disposed = 0;
+        let accepted = false;
+        let completed = false;
+        let handlers = 0;
+        let admissionFailure: PluginError | undefined;
+        const target = createClientActionActivation({ pluginId: 'example.admission-observed-source',
+            accountPlacement: true, accountLifetime, surfaces: ['plugin'], readOnly: true,
+            accountHandler: async () => { handlers++; return null; },
+            observeRead: () => ({ dispose() { disposed++; return cleanupBarrier; } }),
+        });
+        await target.composition.unload();
+        let outcome: Promise<Readonly<{ kind: 'value' }> | Readonly<{ kind: 'error'; error: unknown }>> | undefined;
+        try {
+            await target.composition.reconcile([target.activation]);
+            outcome = observePluginSurfaceActionRead({ signal: demand.signal, isCurrent: () => accountLifetime.isCurrent(),
+                invalidate() {},
+                async invoke(observation, signal) {
+                    const result = await dispatchPluginSurfaceAction({
+                        action: { pluginId: target.action.pluginId, localId: target.action.id }, input: {},
+                        invocationSurface: 'plugin', originSurface: 'ui', clientAction: {}, requiredReadOnly: true,
+                        signal, pluginUiProjection: target.projection, resolveContributedAction: resolveExactClientAction(target.action),
+                        readObservation: { invalidate: observation.invalidate, accept(subscription) {
+                            observation.accept(subscription);
+                            accepted = true;
+                            // Cancellation is allowed after the registered handle was accepted
+                            // but before the asynchronous canonical invocation has settled.
+                            demand.abort();
+                        } },
+                    });
+                    if (!result.ok) {
+                        admissionFailure = new PluginError({ code: result.reason });
+                        throw admissionFailure;
+                    }
+                    return result.result;
+                },
+            }).then(() => ({ kind: 'value' as const }), error => ({ kind: 'error' as const, error }))
+                .finally(() => { completed = true; });
+            await vi.waitFor(() => expect(disposed).toBe(1));
+            expect(accepted).toBe(true);
+            expect(handlers).toBe(0);
+            await new Promise<void>(resolve => setTimeout(resolve, 0));
+            expect(completed).toBe(false);
+            rejectCleanup?.(cleanupFailure);
+            const result = await outcome;
+            expect(admissionFailure).toBeDefined();
+            expect(result).toEqual({ kind: 'error', error: admissionFailure });
+            expect(disposed).toBe(1);
+        } finally {
+            demand.abort(); rejectCleanup?.(cleanupFailure); await outcome;
+            await target.composition.unload(); accountLifetime.retire();
         }
     });
 

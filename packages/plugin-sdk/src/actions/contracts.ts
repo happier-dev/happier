@@ -1,4 +1,6 @@
-import type { MachineConnectorSecretsService } from '../secrets.js';
+import type { HttpService } from '../services/io.js';
+import type { MachineConnectorSecretsService, SecretsService } from '../secrets.js';
+import type { ConnectedAccountsService } from '../connectedAccounts.js';
 import type { CurrentUiContextSnapshotV1, PluginUiTargetedContributionsV1 } from '@happier-dev/protocol/plugins/ui';
 
 import type {
@@ -14,6 +16,10 @@ import type { PluginActionContributionV2 } from './actionTypeMap.generated.js';
 import type { ActionsService } from './service.js';
 import type { PluginAccountStorageScope } from '../storage.js';
 import type { TargetedContributionsService } from '../services/targetedContributions.js';
+import type { PluginActionReadObserver as RegistrationActionReadObserver } from '@happier-dev/cli-common/plugins/registration/contracts';
+export type { PluginActionReadInvalidation } from '@happier-dev/cli-common/plugins/registration/contracts';
+
+export type PluginActionReadObserver<I extends JsonValue = JsonValue, TContext = PluginInvocationContext> = RegistrationActionReadObserver<I, TContext>;
 import type { ScopedSettingsService } from '../services/core.js';
 
 /**
@@ -39,8 +45,9 @@ export type PluginActionInvocationSurfaceV2 = PluginActionContributionV2['surfac
 /** The bounded UI capability available to client-targeted Action handlers. */
 export type PluginClientActionUi = Readonly<{
     version: PluginUiHostApi['version'];
-    /** Exact current contributions to this Action's plugin; no UI mount is implied. */
-    context(options?: Parameters<PluginUiHostApi['context']>[0]): Promise<Readonly<{
+    /** Exact current contributions and admitted Account identity; no UI mount is implied. */
+    context(options?: Parameters<PluginUiHostApi['context']>[0]): Promise<Readonly<Pick<
+        Awaited<ReturnType<PluginUiHostApi['context']>>, 'accountScope'> & {
         targetedContributions: PluginUiTargetedContributionsV1 | null;
     }>>;
     selectActionInput: PluginUiHostApi['selectActionInput'];
@@ -74,15 +81,24 @@ export type PluginAccountActionContext = Readonly<{
     invokedAtMs: number;
     caller?: PluginInvocationContext['caller'];
     signal: AbortSignal;
+    /** Authenticated invoking Account, never derived from Action input. */
+    accountScope?: Awaited<ReturnType<PluginClientActionUi['context']>>['accountScope'];
+    /** Present only when this invocation has ordinary client authoring capability. */
+    ui?: PluginClientActionUi;
     services: Readonly<{
         machineConnectorSecrets?: MachineConnectorSecretsService;
-
+        /** Host HTTP with credential-scoped redirects and invocation cancellation. */
+        http: HttpService;
+        /** Selected Account Saved Secret custody; native-only material remains unavailable. */
+        secrets: SecretsService;
+        /** Exact purpose-bound Account materialization; no native credential fallback. */
+        connectedAccounts: Pick<ConnectedAccountsService, 'getBinding' | 'materialize' | 'listAccounts' | 'materializeListedAccount'>;
         storage: Readonly<{ account: PluginAccountStorageScope }>;
         /** Declaration-bound Account reads; mutation remains with the Settings Actions. */
         settings: Readonly<{
             forScope: (scope: Readonly<{ kind: 'account' }>) => Pick<ScopedSettingsService, 'snapshot' | 'get' | 'describe' | 'watch'>;
         }>;
-        actions: Pick<ActionsService, 'execute' | 'executeAdmittedTargetedOperation'>;
+        actions: Pick<ActionsService, 'execute' | 'observe' | 'executeAdmittedTargetedOperation' | 'observeAdmittedTargetedOperation'>;
         targetedContributions: TargetedContributionsService;
     }>;
 }>;

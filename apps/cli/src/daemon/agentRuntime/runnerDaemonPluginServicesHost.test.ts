@@ -1807,7 +1807,7 @@ describe('runner daemon PluginServices host', () => {
                         bytes: new Uint8Array([111, 107]),
                     };
                 },
-                watch(
+                async watch(
                     _id: Parameters<
                         PluginServices['resources']['watch']
                     >[0],

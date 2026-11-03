@@ -1,6 +1,6 @@
 /** @moduleRealm daemon */
 import { arePluginMachineMaterializationRefsEqual, PluginMachineExecutionOriginV1Schema, PluginMachineMaterializationExecutionOriginV1Schema, PluginMachineExecutionRoutingV1Schema, getPluginMachineExecutionRouting, arePluginMachineExecutionRoutingsEqual, type PluginMachineExecutionRoutingV1 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
-import { createPluginActionInvocation, readPluginActionFailureAuthorPayload } from '@happier-dev/protocol/plugins/actions/invocation';
+import { createPluginActionInvocation, pluginActionDeclarationIsReadOnlyForInput, readPluginActionFailureAuthorPayload, type PluginActionInvocationHandlerInput } from '@happier-dev/protocol/plugins/actions/invocation';
 import { MessageActionAvailableSnapshotV1Schema } from '@happier-dev/protocol/sessions/messages/messageActionReferenceV1';
 import { PluginMachineMaterializationRefV1Schema } from '@happier-dev/protocol/plugins/availability/materializationRefV1';
 import { PluginContributionPointProtocolV1Schema, rehydratePluginContributionPointSemanticsV1 } from '@happier-dev/protocol/plugins/contributions/targeted';
@@ -21,7 +21,10 @@ import type {
     ContributedActionExecutionWithOriginResult,
 } from '../actions/service.js';
 import type { PluginCleanup } from '../activation.js';
-import { readPluginActionInputParser } from '../host/registration/actionInputParser.js';
+import { readPluginActionInputParser, readPluginActionResultParser, readPluginActionReadObserver } from '@happier-dev/cli-common/plugins/registration/actionInputParser';
+import type { PluginActionReadInvalidation } from '../actions/contracts.js';
+import type { Disposable } from '../lifecycle.js';
+import { createActionObservationScope } from './actionObservation.js';
 import { PluginError } from '../errors.js';
 import {
     parsePluginManifest,
@@ -39,10 +42,7 @@ import type {
 import { arePluginMachineExecutionOriginsEqual } from '../executionOrigin.js';
 import type { PresentationService } from '../interactions.js';
 import type { PluginCancellationOptions } from '../lifecycle.js';
-import {
-    createPluginActionHandlerNotStartedError,
-    readPluginActionResultParser,
-} from '../host/registration/index.js';
+import { createPluginActionHandlerNotStartedError } from '@happier-dev/cli-common/plugins/registration/actionHandlerInvocation';
 import { createPluginRegistrationScope } from '../registration/scope.js';
 import { createPluginAccountActionSettingsService } from '@happier-dev/cli-common/plugins/registration/accountActionSettings';
 import type { PluginRuntimeRegistration } from '../registration/valueByFamily.js';
@@ -120,6 +120,11 @@ type TestkitRegisteredActionInvocation = Readonly<{
     services?: PluginTestServicesFixture;
     presentation?: PresentationService;
     contributedTarget?: true;
+    observation?: Readonly<{
+        invalidate: PluginActionReadInvalidation;
+        signal: AbortSignal;
+        subscribed(subscription: Disposable): void;
+    }>;
 }>;
 
 const actionTargetsByTestkit = new WeakMap<PluginTestkit, TestkitActionTarget>();
@@ -233,7 +238,13 @@ function createUnavailableService<K extends Exclude<keyof PluginServices, 'avail
     serviceId: K,
 ): PluginServices[K] {
     const unavailable = new Proxy(Object.freeze({}), {
-        get() {
+        get(_target, property) {
+            if (serviceId === 'actions' && property === 'observe') {
+                return async () => {
+                    throw unavailableBoundaryError('plugin_action_read_observation_unavailable',
+                        'Use the composed Action owner harness for dependency observation');
+                };
+            }
             throw unavailableBoundaryError(
                 'plugin_test_service_unavailable',
                 `Plugin test service '${serviceId}' is unavailable; pass an explicit services fixture`,
@@ -479,6 +490,7 @@ export async function createPluginTestkit(
         await Promise.all([registrationScope.dispose(), ...accountRegistrationScopes.map(({ scope }) => scope.dispose())]);
     }
     const invocationLifetime = new AbortController();
+    const actionObservations = createActionObservationScope();
     const defaultServicesFixture = options.services ?? {};
     const defaultPresentation = options.presentation ?? createUnavailablePresentation();
     const fixtureContributorTestkits = options.targetedContributionContributors ?? [];
@@ -649,6 +661,8 @@ export async function createPluginTestkit(
         currentnessListeners.clear();
         disposalPromise = (async () => {
             const errors: unknown[] = [];
+            try { await actionObservations.dispose(); }
+            catch (error) { errors.push(error); }
             try {
                 await disposeRegistrationScopes();
             } catch (error) {
@@ -1204,7 +1218,13 @@ export async function createPluginTestkit(
                 return caller?.executionOrigin === undefined ? null : Object.freeze(getPluginMachineExecutionRouting(caller.executionOrigin));
             },
             execute,
+            async observe() {
+                throw new PluginError({ code: 'plugin_action_read_observation_unavailable', message: 'Use the composed Action owner harness for dependency observation' });
+            },
             executeAdmittedTargetedOperation,
+            async observeAdmittedTargetedOperation() {
+                throw new PluginError({ code: 'plugin_action_read_observation_unavailable', message: 'Use the composed Resource owner harness for dependency observation' });
+            },
             executeWithExecutionOrigin,
             executeAdmittedTargetedOperationWithExecutionOrigin,
         }) as ActionsService;
@@ -1250,9 +1270,21 @@ export async function createPluginTestkit(
         const messageAction = invocationOptions.messageAction === undefined
             ? undefined
             : Object.freeze(MessageActionAvailableSnapshotV1Schema.parse(invocationOptions.messageAction));
-        const result = await invocation.invoke(invocationOptions.input, {
-            ...(invocationOptions.signal ? { signal: invocationOptions.signal } : {}),
-            handler: async ({ input, qualifiedId, signal }) => {
+        const invokeHandler = async ({ input, qualifiedId, signal: invocationSignal }: PluginActionInvocationHandlerInput) => {
+                // Installation uses canonical invocation admission; the observer
+                // keeps a signal linked for its whole subscription lifetime.
+                const observation = invocationOptions.observation;
+                const signal = observation?.signal ?? invocationSignal;
+                async function executeOrObserve<TContext>(actionHandler: (input: JsonValue, context: TContext) => JsonValue | void | Promise<JsonValue | void>, context: TContext) {
+                    if (!observation) return await actionHandler(input, context);
+                    const observer = readPluginActionReadObserver(actionHandler);
+                    if (!definition || !pluginActionDeclarationIsReadOnlyForInput(definition, input) || !observer) {
+                        throw new PluginError({ code: 'plugin_action_read_observation_unavailable', message: 'This Action does not declare an observable read' });
+                    }
+                    const subscription = await observer(input, observation.invalidate, context);
+                    observation.subscribed(actionObservations.track(subscription, signal, observation.invalidate));
+                    return null;
+                }
                 const invocationServices = createInvocationServices(invocationOptions.services, {
                     localId: invocationOptions.localId, qualifiedId, surface: invocationOptions.surface,
                     ...(invocationOptions.caller === undefined ? {} : { caller: invocationOptions.caller }),
@@ -1271,7 +1303,10 @@ export async function createPluginTestkit(
                     // The test host supplies only the portable public capability
                     // set. Machine services cannot accidentally make this test pass.
                     const accountHandler = handler as unknown as PluginAccountActionHandler;
-                    return await accountHandler(input, Object.freeze({ ...commonContext, services: Object.freeze({
+                    return await executeOrObserve(accountHandler, Object.freeze({ ...commonContext, services: Object.freeze({
+                        http: invocationServices.http,
+                        secrets: invocationServices.secrets,
+                        connectedAccounts: invocationServices.connectedAccounts,
                         storage: Object.freeze({ get account() {
                             const account = invocationServices.storage.account;
                             if (!account) throw unavailableBoundaryError('plugin_test_service_unavailable', 'Account storage fixture is unavailable');
@@ -1279,7 +1314,9 @@ export async function createPluginTestkit(
                         } }),
                         actions: Object.freeze({
                             get execute() { return invocationServices.actions.execute.bind(invocationServices.actions); },
+                            get observe() { return invocationServices.actions.observe.bind(invocationServices.actions); },
                             get executeAdmittedTargetedOperation() { return invocationServices.actions.executeAdmittedTargetedOperation.bind(invocationServices.actions); },
+                            get observeAdmittedTargetedOperation() { return invocationServices.actions.observeAdmittedTargetedOperation.bind(invocationServices.actions); },
                         }),
                         targetedContributions: invocationServices.targetedContributions,
                         settings: createPluginAccountActionSettingsService(invocationServices.settings),
@@ -1295,9 +1332,16 @@ export async function createPluginTestkit(
                     services: invocationServices,
                     ui: invocationOptions.presentation ?? defaultPresentation,
                 });
-                return await handler(input, context);
-            },
+                return await executeOrObserve(handler, context);
+        };
+        const prepared = invocation.prepare(invocationOptions.input, {
+            ...(invocationOptions.signal ? { signal: invocationOptions.signal } : {}),
         });
+        const dispatch = { handler: invokeHandler, ...(invocationOptions.signal ? { signal: invocationOptions.signal } : {}) };
+        const result = prepared.kind === 'settled' ? prepared.result
+            : invocationOptions.observation
+                ? await prepared.observe(dispatch)
+                : await prepared.invoke(dispatch);
         if (result.status === 'executed') return result.value;
         // The canonical projection carries the target's own `retryable` signal
         // and published payload, so an author's test observes the same failure
@@ -1464,6 +1508,25 @@ export async function createPluginTestkit(
                     ? {}
                     : { presentation: invocationOptions.presentation }),
             });
+        },
+        async observeAction(
+            localId: PluginContributionLocalId,
+            input: JsonValue,
+            invalidate: PluginActionReadInvalidation,
+            invocationOptions: PluginTestkitInvokeActionOptions = {},
+        ): Promise<Disposable> {
+            let subscription: Disposable | undefined;
+            const signal = composeActionSignal(invocationLifetime.signal, invocationOptions.signal);
+            await invokeRegisteredAction({
+                ...invocationOptions,
+                localId,
+                input,
+                surface: invocationOptions.surface ?? 'cli',
+                signal,
+                observation: { invalidate, signal, subscribed(value) { subscription = value; } },
+            });
+            if (!subscription) throw new PluginError({ code: 'plugin_action_read_observation_unavailable', message: 'Action observation was not installed' });
+            return subscription;
         },
         readTargetedContributionFixture,
         issueAdmittedTargetedOperation,

@@ -3,6 +3,17 @@ import { z } from 'zod/mini';
 
 import { PluginUiArtifactDigestV1Schema } from './artifactIntegrity.js';
 import { PluginUiJsonValueV1Schema } from '../contributions/ui/json.js';
+import { QualifiedConnectedAccountPurposeV1Schema } from '../../connect/connectedAccountPurposeIdentity.js';
+
+/** Closed, invocation-qualified authority observation; it never returns credential material. */
+export const PluginUiReadAuthorityReferenceV1Schema = lazyZodSchema(() => z.strictObject({
+  readAuthority: z.strictObject({
+    consumer: QualifiedConnectedAccountPurposeV1Schema.shape.consumer,
+    purpose: QualifiedConnectedAccountPurposeV1Schema.shape.purpose,
+    input: PluginUiJsonValueV1Schema,
+  }),
+}));
+export type PluginUiReadAuthorityReferenceV1 = z.infer<typeof PluginUiReadAuthorityReferenceV1Schema>;
 
 /** Closed host-read identity. Action admission still owns caller policy and input validation. */
 export const PluginUiHostReadReferenceV1Schema = lazyZodSchema(() => z.strictObject({
@@ -29,6 +40,7 @@ export const PluginUiResourceSubscriptionTargetV1Schema = lazyZodSchema(() => z.
     localId: z.string().check(z.trim(), z.minLength(1)),
   }),
   PluginUiHostReadReferenceV1Schema,
+  PluginUiReadAuthorityReferenceV1Schema,
 ]));
 export type PluginUiResourceSubscriptionTargetV1 =
   z.infer<typeof PluginUiResourceSubscriptionTargetV1Schema>;

@@ -53,6 +53,8 @@ export {
   PluginUiResourceSubscriptionEventV1Schema,
   PluginUiResourceSubscriptionTargetV1Schema,
   PluginUiHostReadReferenceV1Schema,
+  PluginUiReadAuthorityReferenceV1Schema,
+  type PluginUiReadAuthorityReferenceV1,
   type PluginUiHostReadReferenceV1,
   type PluginUiDisposeHostResourceRequestV1,
   type PluginUiResourceSubscriptionEventV1,

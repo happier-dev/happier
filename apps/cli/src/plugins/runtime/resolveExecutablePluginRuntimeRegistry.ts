@@ -230,6 +230,7 @@ import {
     resolveManifestHostAccessRequests,
     resolveManifestHostAccessRequestsForQualifiedContribution,
 } from './hostAccess/manifestRequests';
+import { createDynamicResourceActionBinding } from './invocation/services/resourceActions';
 import { createPluginResourceAccountStorageResolver } from './hostAccess/resolve';
 import type { StablePluginConnectedAccountsOwner } from './invocation/services/connectedAccounts';
 import type { StablePluginNotificationsOwner } from './invocation/services/notifications';
@@ -249,6 +250,7 @@ import {
 import {
     createStablePluginUiResourceWatchOwner,
     type PluginUiResourceWatchPollResult,
+    type PluginUiResourceWatchOwner,
 } from './invocation/services/uiResourceWatch';
 import {
     resolveStablePluginStructuredMessageConsumer,
@@ -610,6 +612,8 @@ export type ManagedProviderAdoptedPublicOutcome = Readonly<{
 }>;
 
 export type ResolvedExecutablePluginRuntimeRegistry = Readonly<{
+    /** Incumbent Resource continuation owner; host Account demand carries no plugin occurrence. */
+    uiResourceWatches?: PluginUiResourceWatchOwner;
     executionRealm?: 'account';
     revalidateAccountExecution?(pluginId: string, signal?: AbortSignal): Promise<boolean>;
     readAccountExecutionSelection?(pluginId: string): import('@happier-dev/protocol/plugins/availability').PluginAccountExecutionSelectionV1 | null;
@@ -1134,10 +1138,11 @@ export type ResolvedExecutablePluginRuntimeRegistry = Readonly<{
         expectedCallerOccurrenceId: string;
         callerPluginId: string;
         subscriptionId: string;
-        resourceId: string;
+        resourceId?: string;
+        readAuthority?: import('@happier-dev/protocol/plugins/ui/client').PluginUiReadAuthorityReferenceV1['readAuthority'];
         /** Host-stamped exact target context; contextual Resources require it. */
         context?: PluginResourceContextV1;
-    }>): Promise<Readonly<{ subscriptionId: string; digest: string }>>;
+    }>): Promise<Readonly<{ subscriptionId: string; digest?: string }>>;
     pollUiResourceWatch?(params: Readonly<{
         expectedCallerOccurrenceId: string;
         callerPluginId: string;
@@ -2570,6 +2575,22 @@ agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').Ho
             return entry.registration.value;
         };
         const cold = !activatedRegistry.targetActivationFacts.some((fact) => fact.pluginId === pluginId);
+        const revalidateResourceSource = async (signal: AbortSignal) => {
+            if (accountActivationSources && !await accountActivationSources.revalidate(pluginId, signal)) {
+                signal.throwIfAborted();
+                throw new PluginError({ code: 'plugin_generation_stale', message: 'Account Resource custody is no longer current' });
+            }
+        };
+        type DynamicRuntime = StableDynamicPluginResourceProducer['runtime'];
+        // Host-private preparation adds the optional method only when the
+        // admitted registration supplies it; absence is not an undefined arm.
+        const runtime: { -readonly [Key in keyof DynamicRuntime]: DynamicRuntime[Key] } = {
+            async read(options) {
+                await revalidateResourceSource(options.signal);
+                return await readRegisteredRuntime().read(options);
+            },
+            observe(invalidate, options) { return readRegisteredRuntime().observe(invalidate, options); },
+        };
         return [Object.freeze({
             pluginId, localId,
             hostAccessRequests: resolveManifestHostAccessRequests({
@@ -2581,16 +2602,27 @@ agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').Ho
             // the Resource callback boundary so admission can contain the
             // failure and preserve activation's plugin-scoped diagnostic.
             // Eager resolution here would reject the entire daemon registry.
-            runtime: {
-                async read(options) { return await readRegisteredRuntime().read(options); },
-                observe(invalidate, options) { return readRegisteredRuntime().observe(invalidate, options); },
-            },
-            ...(cold ? { async prepareRuntime() {
+            runtime,
+            // Resource callbacks can call the Action owner and other Resources.
+            // Admit their first bytes after the complete registry is published.
+            async prepareRuntime() {
                 const previousFacts = activatedRegistry.targetActivationFacts;
-                await activatedRegistry.activateContributionsOnDemand([{ pluginId, family: 'resources', localId }]);
-                refreshActivatedConsumersIfChanged(previousFacts);
-                readRegisteredRuntime();
-            } } : {}),
+                if (cold) await activatedRegistry.activateContributionsOnDemand([{ pluginId, family: 'resources', localId }]);
+                await refreshActivatedConsumersIfChanged(previousFacts);
+                const createProducer = readRegisteredRuntime().createProducer;
+                if (createProducer) runtime.createProducer = async options => {
+                    await revalidateResourceSource(options.signal);
+                    const producer = await createProducer.call(readRegisteredRuntime(), options);
+                    return {
+                        async read(readOptions) {
+                            await revalidateResourceSource(readOptions.signal);
+                            return await producer.read(readOptions);
+                        },
+                        observe: (invalidate, observeOptions) => producer.observe(invalidate, observeOptions),
+                        dispose: () => producer.dispose(),
+                    };
+                };
+            },
         })];
     });
     resourcesOwner = committed && (
@@ -2631,6 +2663,19 @@ agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').Ho
                 ))
                 : dynamicResourceProducers,
             bindDynamicResourceAccountStorage,
+            bindDynamicResourceActions: binding => createDynamicResourceActionBinding({
+                binding,
+                invoke: request => invokeContributedAction(request),
+                readCaller: () => {
+                    if (!isCurrentPluginOccurrence(binding.pluginId, binding.occurrenceId)) return null;
+                    const sourceCustody = readCurrentPluginSourceCustody(binding.pluginId);
+                    if (!sourceCustody) return null;
+                    return Object.freeze({ kind: 'plugin' as const, pluginId: binding.pluginId,
+                        occurrenceId: binding.occurrenceId, sourceCustody,
+                        contribution: Object.freeze({ id: binding.resourceId, qualifiedId: `${binding.pluginId}/resources/${binding.resourceId}` }),
+                    });
+                },
+            }),
             ...(params?.resolveSessionResourceAccess
                 ? { resolveSessionResourceAccess: params.resolveSessionResourceAccess }
                 : {}),
@@ -2654,7 +2699,8 @@ agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').Ho
     async function prepareUiResourceDemand(input: Readonly<{
         callerPluginId: string;
         expectedCallerOccurrenceId: string;
-        resourceId: string;
+        resourceId?: string;
+        readAuthority?: import('@happier-dev/protocol/plugins/ui/client').PluginUiReadAuthorityReferenceV1['readAuthority'];
         signal?: AbortSignal;
     }>): Promise<void> {
         if (isCurrentPluginOccurrence(input.callerPluginId, input.expectedCallerOccurrenceId)) return;
@@ -2663,17 +2709,21 @@ agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').Ho
         if (!consumerAssembly.isOccurrenceCurrent()
             || !consumerAssembly.isPluginCurrent(input.callerPluginId)
             || candidateOccurrenceIdsByPluginId.get(input.callerPluginId) !== input.expectedCallerOccurrenceId) return;
-        const resource = committedResourceContributes.find((candidate) => (
+        const localId = input.readAuthority?.consumer.localId ?? input.resourceId;
+        const family = input.readAuthority ? 'actions' as const : 'resources' as const;
+        const resource = input.readAuthority ? authoritativeContributes.actions.find(candidate => (
+            candidate.pluginId === input.callerPluginId && candidate.definition.id === localId
+        )) : committedResourceContributes.find((candidate) => (
             candidate.pluginId === input.callerPluginId
-            && candidate.definition.id === input.resourceId
+            && candidate.definition.id === localId
             && isDynamicPluginResourceContributionV2(candidate.definition)
         ));
-        if (!resource) return;
+        if (!resource || !localId || input.readAuthority && input.readAuthority.consumer.pluginId !== input.callerPluginId) return;
         if (input.signal?.aborted) {
             throw new PluginError({ code: 'plugin_resource_aborted', message: 'Resource operation was aborted' });
         }
         await activateContributionsOnDemand([{
-            pluginId: input.callerPluginId, family: 'resources', localId: input.resourceId,
+            pluginId: input.callerPluginId, family, localId,
         }]);
     }
     const readCurrentPluginSourceCustody = (pluginId: string): PluginSourceCustody | null => isPluginConsumerCurrent(pluginId)
@@ -3122,19 +3172,38 @@ agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').Ho
     };
     /**
      * EU-4b: the daemon half of the live-resource transport for mounted plugin
-     * UI surfaces. It exists only when this generation has an admitted resource
-     * owner, so a generation with no resources advertises no watch at all.
+     * UI surfaces. Resource invalidation and admitted read-authority withdrawal
+     * share this subscription owner; each producer retains its own admission.
      */
-    const uiResourceWatches = resourcesOwner
-        ? createStablePluginUiResourceWatchOwner({
+    const uiResourceWatches = createStablePluginUiResourceWatchOwner({
             resources: resourcesOwner,
             isPluginConsumerCurrent,
             readPluginOccurrenceId: (pluginId) => readCurrentPluginOccurrenceId(pluginId),
+            async observeReadAuthority({ authority, context, signal, retire }) {
+                const runtimeRegistry = resolvedRuntimeRegistryOwner;
+                if (!runtimeRegistry) throw new PluginError({ code: 'plugin_action_registry_unavailable' });
+                let subscription: import('@happier-dev/plugin-sdk').Disposable | undefined;
+                const attempt = await executeContributedAction({ runtimeRegistry,
+                    actionId: buildQualifiedPluginContributionKey(authority.consumer), input: authority.input,
+                    requiredReadOnly: true,
+                    readObservation: { authorityPurpose: authority.purpose, invalidate() {}, retire,
+                        accept(value) { subscription = value; } },
+                    ...(params?.scopedActionRuntime ? { actionsSettings: params.scopedActionRuntime.actionsSettingsProvider.getActionsSettings() } : {}),
+                    context: { surface: 'ui', signal,
+                        ...(context?.kind === 'session' ? { defaultSessionId: context.sessionId } : {}) },
+                });
+                if (!attempt.matched || !attempt.result.ok || !subscription) {
+                    await subscription?.dispose();
+                    throw new PluginError(!attempt.matched || attempt.result.ok
+                        ? { code: 'plugin_action_read_observation_unavailable' }
+                        : { code: attempt.result.errorCode ?? 'plugin_action_read_observation_unavailable', message: attempt.result.error });
+                }
+                return subscription;
+            },
             ...(params?.recordRuntimeLimitMeasurement
                 ? { recordRuntimeLimitMeasurement: params.recordRuntimeLimitMeasurement }
                 : {}),
-        })
-        : undefined;
+        });
     const composePluginConsumerSignal = consumerAssembly.composeSignal;
     const prepareDaemonDatabases = async (input: Readonly<{
         pluginIds: readonly string[];
@@ -4375,6 +4444,9 @@ agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').Ho
             ),
             input: request.input,
             ...(request.requiredDangerLevel ? { requiredDangerLevel: request.requiredDangerLevel } : {}),
+            ...(request.requiredReadOnly ? { requiredReadOnly: true as const } : {}),
+            ...(request.resourceSessionId ? { resourceSessionId: request.resourceSessionId } : {}),
+            ...(request.readObservation ? { readObservation: request.readObservation } : {}),
             ...(params?.scopedActionRuntime
                 ? {
                     actionsSettings:
@@ -4406,7 +4478,7 @@ agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').Ho
                     }
                     await request.beforeHandlerInvocation?.();
                 } } : {}),
-                signal: request.signal,
+                signal: request.readObservation ? composePluginConsumerSignal(request.action.pluginId, request.signal) : request.signal,
             },
         });
         if (!attempt.matched) {
@@ -5362,6 +5434,14 @@ agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').Ho
         }
     };
     targetActionInvocations = buildTargetActionInvocationRegistry({
+        async readAccountScope(signal) {
+            const authority = params?.accountExecution;
+            if (signal.aborted || !authority?.serverId || !await authority.isCurrent()) return undefined;
+            const credentials = await readSessionCredentials();
+            const accountId = credentials ? readAccountIdFromToken(credentials.token) : null;
+            if (signal.aborted || !accountId || !await authority.isCurrent()) return undefined;
+            return Object.freeze({ serverId: authority.serverId, accountId });
+        },
         ...(params?.accountExecution ? { readCurrentTargetedDeclarations: readCurrentAccountTargetedDeclarations } : {}),
         ...(accountActivationSources ? { executionRealm: 'account' as const } : {}),
         contributes: authoritativeContributes,
@@ -8858,7 +8938,8 @@ agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').Ho
             return await watches.open({
                 callerPluginId: watchParams.callerPluginId,
                 subscriptionId: watchParams.subscriptionId,
-                resourceId: watchParams.resourceId,
+                ...(watchParams.resourceId === undefined ? {} : { resourceId: watchParams.resourceId }),
+                ...(watchParams.readAuthority === undefined ? {} : { readAuthority: watchParams.readAuthority }),
                 ...(watchParams.context === undefined ? {} : { context: watchParams.context }),
             });
         },
@@ -8969,6 +9050,7 @@ agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').Ho
                 throw new AggregateError(failures, 'Failed to dispose executable plugin runtime registry owners');
             }
         },
+        uiResourceWatches,
         fencePluginConsumers,
         subscribePluginOccurrenceFence(listener) {
             pluginOccurrenceFenceListeners.add(listener);

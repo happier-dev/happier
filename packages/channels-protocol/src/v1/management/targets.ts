@@ -31,6 +31,7 @@ import {
 } from '../json.js';
 import { ConversationResolvedEndpointV1ProtocolSchema } from '../provider/resolution.js';
 import { ConversationPullRequestV1Schema, ConversationScopedPullRequestTriggerV1Schema } from './sessionPullRequestBindings.js';
+import { SessionPullRequestWatchBindingV1Schema } from './sessionPullRequestWatch.js';
 
 const positiveSafeInteger = defineProtocolNumber({
     integer: true,
@@ -112,6 +113,7 @@ const conversationSessionBindingTargetV1 = defineProtocolObject({
     kind: defineProtocolLiteral('session'),
     sessionId: sessionIdV1,
     pullRequestLink: ConversationPullRequestV1Schema.optional(),
+    pullRequestWatch: SessionPullRequestWatchBindingV1Schema.optional(),
     policy: conversationSessionBindingPolicyV1,
 }, { policy: 'closed' });
 

@@ -4,9 +4,9 @@ import { sameStrictJsonValue, type JsonValue } from '@happier-dev/protocol/json/
 import { freezePluginDeclarativeDataNodeV1, type PluginDeclarativeDataNodeV1 } from '@happier-dev/protocol/plugins/contributions/ui/declarativeDataV1';
 import type { PluginUiResourceSnapshot } from '@happier-dev/plugin-ui/hostApi';
 import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
-import { PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY, readPluginUiContributionOrigin } from '@/sync/domains/plugins/ui/projectionUnion';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import type { PluginContextualResourceBinding } from './PluginContextualResourceStoreProvider';
+import { resolvePluginContextualResourceBinding } from './pluginResourceBinding';
 
 export type DeclarativeDataResourceAdmission = Readonly<{
     projection: PluginUiProjectionModel | null;
@@ -28,22 +28,8 @@ export function resolveDeclarativeDataResourceBinding(input: DeclarativeDataReso
     const declarations = Object.values(input.projection?.resourcesById ?? {}).filter(row => row.pluginId === source.resource.pluginId
         && row.id === source.resource.localId);
     const declaration = declarations.length === 1 ? declarations[0] : null;
-    const plugin = input.projection?.installedPackagesById[source.resource.pluginId];
     if (!declaration || declaration.pluginId !== source.resource.pluginId || declaration.id !== source.resource.localId
-        || declaration.contentType !== 'application/json' || !declaration.scope || !plugin?.enabled
-        || typeof plugin.occurrenceId !== 'string' || !plugin.occurrenceId
-        || declaration.occurrenceId !== undefined && declaration.occurrenceId !== plugin.occurrenceId) return null;
-    const origin = readPluginUiContributionOrigin(declaration);
-    // A union declaration without a selected producer is descriptive only.
-    // Direct scoped projections have no hostOrigin field and use their host's facts.
-    if (Object.hasOwn(declaration, PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY) && !origin) return null;
-    if (input.requireReadAuthority && origin && (origin.phase !== 'current' || !origin.interactionEnabled)) return null;
-    const packageOrigin = readPluginUiContributionOrigin(plugin);
-    const machineId = input.machineId ?? origin?.machineId;
-    const serverId = input.serverId ?? origin?.serverId;
-    if (!machineId || serverId !== input.accountLifetime.scope.serverId
-        || origin && (origin.machineId !== machineId || origin.serverId !== serverId)
-        || packageOrigin && (packageOrigin.machineId !== machineId || packageOrigin.serverId !== serverId)) return null;
+        || declaration.contentType !== 'application/json' || !declaration.scope) return null;
     try {
         if (!isValidPluginJsonSchemaValue(compilePluginJsonSchema(source.inputSchema), input.input)
             || source.input !== undefined && !sameStrictJsonValue(source.input, input.input)) return null;
@@ -53,8 +39,7 @@ export function resolveDeclarativeDataResourceBinding(input: DeclarativeDataReso
         : declaration.scope === 'surface' && mountInstanceKey
             ? { kind: 'surface' as const, mountInstanceKey, launchInput: { ...input.input } } : null;
     if (!context) return null;
-    return { pluginId: source.resource.pluginId, expectedCallerOccurrenceId: plugin.occurrenceId, machineId,
-        serverId, context, accountLifetime: input.accountLifetime };
+    return resolvePluginContextualResourceBinding(input, declaration, context);
 }
 
 export type DeclarativeDataSourceProjection = Readonly<{

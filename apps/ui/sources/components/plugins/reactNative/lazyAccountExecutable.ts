@@ -1,5 +1,6 @@
 import type { PluginAccountApi } from '@happier-dev/plugin-sdk';
 import type { PluginAccountActionHandler } from '@happier-dev/plugin-sdk/actions';
+import type { PluginDynamicResourceRuntime } from '@happier-dev/plugin-sdk/resources';
 import { derivePluginAccountContributionRegistrationRights } from '@happier-dev/protocol/plugins/contributions/catalog';
 import { createPluginRegistrationScope, type PluginRuntimeRegistration } from '@/sync/domains/plugins/registrationScope';
 import { throwIfAborted } from '@/utils/runtime/abortSignals';
@@ -58,16 +59,24 @@ export function createLazyAccountExecutable(input: Readonly<{
         });
         return pending;
     };
-    const registration = async (family: 'actions' | 'connectedAccountDescriptors', localId: string) => {
+    const registration = async (family: 'actions' | 'resources' | 'connectedAccountDescriptors', localId: string) => {
         const registrations = await prepare();
         assertCurrent();
         const selected = registrations.find(value => value.family === family && value.localId === localId);
         if (!selected) throw new Error('client_executable_registration_right_missing');
         return selected;
     };
+    const resource = async (id: string, signal: AbortSignal) => {
+        throwIfAborted(signal);
+        const selected = await registration('resources', id);
+        throwIfAborted(signal);
+        const runtime = selected.value as PluginDynamicResourceRuntime;
+        if (runtime.createProducer) throw Object.assign(new Error('Context producers require daemon Resource placement'), { code: 'plugin_resource_producer_placement_unavailable' });
+        return runtime;
+    };
     return {
         prepareRegistration: async (selected: PluginRuntimeRegistration): Promise<PluginRuntimeRegistration> => {
-            if (selected.family !== 'actions' && selected.family !== 'connectedAccountDescriptors') return selected;
+            if (selected.family !== 'actions' && selected.family !== 'resources' && selected.family !== 'connectedAccountDescriptors') return selected;
             return registration(selected.family, selected.localId);
         },
         activate(api: PluginAccountApi) {
@@ -78,6 +87,11 @@ export function createLazyAccountExecutable(input: Readonly<{
                         const selected = await registration('actions', right.localId);
                         throwIfAborted(context.signal);
                         return (selected.value as unknown as PluginAccountActionHandler)(value, context);
+                    });
+                } else if (right.family === 'resources') {
+                    api.resources.registerDynamicResource(right.localId, {
+                        read: async options => (await resource(right.localId, options.signal)).read(options),
+                        observe: async (invalidate, options) => (await resource(right.localId, options.signal)).observe(invalidate, options),
                     });
                 } else if (right.family === 'connectedAccountDescriptors') {
                     // Consumers prepare this existing registration before reading its

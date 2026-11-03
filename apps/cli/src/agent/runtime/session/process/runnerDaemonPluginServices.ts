@@ -959,9 +959,18 @@ export async function prepareRunnerDaemonPluginServices(
         });
     }
 
+    async function observeContributedAction(): Promise<never> {
+        throw new PluginError({
+            code: 'plugin_action_read_observation_unavailable',
+            message: 'A retained Runner has no contributed Action read-observation callback transport',
+        });
+    }
+
     const actions: PluginServices['actions'] = Object.freeze({
         execute: executeAction,
+        observe: observeContributedAction,
         executeAdmittedTargetedOperation,
+        observeAdmittedTargetedOperation: executeAdmittedTargetedOperation,
         executeWithExecutionOrigin: executeContributedActionWithOrigin,
         executeAdmittedTargetedOperationWithExecutionOrigin: executeAdmittedTargetedOperation,
     } satisfies PluginServices['actions']);
@@ -1151,6 +1160,7 @@ export async function prepareRunnerDaemonPluginServices(
          * subscription keeps its fire-and-forget transport semantics.
          */
         acknowledgeDelivery = false,
+        admission?: Readonly<{ opened(): void; failed(error: unknown): void }>,
     ): Readonly<{ dispose(): void }> => {
         assertAvailable(serviceId);
         const controller = new AbortController();
@@ -1194,6 +1204,17 @@ export async function prepareRunnerDaemonPluginServices(
                 { once: true },
             );
         }
+        const abortAdmission = () => {
+            admission?.failed(controller.signal.reason);
+            if (activeSubscriptionId) {
+                close(activeSubscriptionId);
+                activeSubscriptionId = null;
+            }
+        };
+        if (admission) {
+            if (controller.signal.aborted) abortAdmission();
+            else controller.signal.addEventListener('abort', abortAdmission, { once: true });
+        }
         const deliver = async (
             event: T,
         ): Promise<'settled' | 'rejected'> => {
@@ -1232,8 +1253,11 @@ export async function prepareRunnerDaemonPluginServices(
                     ) {
                         continue;
                     }
+                    admission?.failed(error);
                     return;
                 }
+                if (controller.signal.aborted) return;
+                admission?.opened();
                 try {
                     let acknowledgement:
                         | 'settled'
@@ -1315,6 +1339,7 @@ export async function prepareRunnerDaemonPluginServices(
                     'abort',
                     abortFromCancellation,
                 );
+                controller.signal.removeEventListener('abort', abortAdmission);
                 controller.abort();
                 if (activeSubscriptionId) {
                     close(activeSubscriptionId);
@@ -1819,13 +1844,16 @@ export async function prepareRunnerDaemonPluginServices(
                     : {}),
             }, options?.signal ? { signal: options.signal } : undefined);
         },
-        watch(id, listener) {
+        async watch(id, listener) {
             assertSubscriptionAvailable(
                 'resources',
                 prepared.subscriptionCapabilities.resourceWatches
                     .includes(id),
             );
-            return createDaemonSubscription(
+            let opened!: () => void;
+            let failed!: (error: unknown) => void;
+            const admission = new Promise<void>((resolve, reject) => { opened = resolve; failed = reject; });
+            const subscription = createDaemonSubscription(
                 'resources',
                 'resource watch',
                 (subscriptionId) => ({
@@ -1840,7 +1868,12 @@ export async function prepareRunnerDaemonPluginServices(
                     : null,
                 listener,
                 true,
+                undefined,
+                false,
+                { opened, failed },
             );
+            try { await admission; return subscription; }
+            catch (error) { subscription.dispose(); throw error; }
         },
     } satisfies PluginServices['resources']);
     const mcp: PluginServices['mcp'] = Object.freeze({

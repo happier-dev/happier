@@ -8,6 +8,8 @@ import type {
 } from '../invocation.js';
 import type { PresentationService } from '../interactions.js';
 import type { AdmittedTargetedOperationExecutionHandle } from '../actions/service.js';
+import type { PluginActionReadInvalidation } from '../actions/contracts.js';
+import type { Disposable } from '../lifecycle.js';
 import type { PluginTestkitManifest } from '../manifest.js';
 import type { PluginServices } from '../services/index.js';
 import type { PluginTargetedContributionSourceCustodyV1 } from '../targetedContributionAuthoring.js';
@@ -226,6 +228,13 @@ export interface PluginTestkit {
         input: JsonValue,
         options?: PluginTestkitInvokeActionOptions,
     ): Promise<JsonValue | null>;
+    /** Observe a registered read without executing it; disposal retires its subscription. */
+    observeAction(
+        localId: PluginContributionLocalId,
+        input: JsonValue,
+        invalidate: PluginActionReadInvalidation,
+        options?: PluginTestkitInvokeActionOptions,
+    ): Promise<Disposable>;
     /**
      * Returns this testkit's current structural fixture for one exact target
      * point. The snapshot is derived from parsed target/contributor

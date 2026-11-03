@@ -41,15 +41,17 @@ export const SessionPullRequestBindingInputV1Schema = defineProtocolUnion([
 ]);
 export type SessionPullRequestBindingInputV1 = ReturnType<typeof SessionPullRequestBindingInputV1Schema.parse>;
 export const SessionPullRequestBindingInputV1JsonSchema = /* @__PURE__ */ (() => SessionPullRequestBindingInputV1Schema.jsonSchema)();
-const sessionPullRequestLinksFieldsV1 = {
-  sessionId: SessionIdSchema,
-  pullRequestLinks: defineProtocolArray(defineProtocolObject({
+export const SessionPullRequestLinkV1Schema = defineProtocolObject({
     provider: defineProtocolLiteral('github'),
     ...conversationPullRequestFieldsV1,
     url: defineProtocolString({ minLength: 1 }),
     state: conversationPullRequestStateFieldsV1.state.optional(),
     observedAt: conversationPullRequestStateFieldsV1.observedAt.optional(),
-  }, { policy: 'closed' })),
+  }, { policy: 'closed' });
+export const SessionPullRequestLinkV1JsonSchema = /* @__PURE__ */ (() => SessionPullRequestLinkV1Schema.jsonSchema)();
+const sessionPullRequestLinksFieldsV1 = {
+  sessionId: SessionIdSchema,
+  pullRequestLinks: defineProtocolArray(SessionPullRequestLinkV1Schema),
 };
 export const SessionPullRequestLinksV1Schema = defineProtocolObject(sessionPullRequestLinksFieldsV1, { policy: 'closed' });
 export type SessionPullRequestLinksV1 = ReturnType<typeof SessionPullRequestLinksV1Schema.parse>;

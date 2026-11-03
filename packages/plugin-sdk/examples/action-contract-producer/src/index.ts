@@ -246,7 +246,7 @@ const plugin = definePlugin({
         const resource = await context.services.resources.read(DOCUMENT_REVIEW_SERVICE_RESOURCE, {
           signal: context.signal,
         });
-        const resourceWatch = context.services.resources.watch(
+        const resourceWatch = await context.services.resources.watch(
           DOCUMENT_REVIEW_SERVICE_RESOURCE,
           () => undefined,
         );

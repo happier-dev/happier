@@ -21,6 +21,7 @@
       "types": "./dist/targetedContributions.d.ts",
       "default": "./dist/targetedContributions.js"
     },
+    "./happier-plugin-ui/channels-account-runtime": "./src/accountRuntime.ts",
     "./happier-plugin-ui/channels-app-native": "./src/ui/renderSurface.tsx",
     "./happier-plugin-ui/channels-glance-native": "./src/ui/glance/channelsGlance.tsx",
     "./happier-plugin-ui/channel-state-migrations": "./src/collectionMigrationArtifact.ts",

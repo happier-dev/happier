@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { DaemonPluginUiResourceWatchOpenRequestSchema, DaemonPluginUiResourceWatchOpenResponseSchema } from '../../daemon/contributionRegistryProjection.js';
 
 import {
   PluginUiResourceSubscriptionEventV1Schema,
@@ -6,6 +7,19 @@ import {
 } from './subscriptions.js';
 
 describe('plugin UI resource subscriptions', () => {
+  it('admits an exact consumer and purpose authority watch without accepting credential or routing inputs', () => {
+    const resource = { readAuthority: { consumer: { pluginId: 'acme.external', localId: 'read-ci' }, purpose: 'github', input: {} } };
+    expect(PluginUiResourceSubscriptionRequestV1Schema.parse({ resource, subscriptionId: 'authority' }).resource).toEqual(resource);
+    expect(DaemonPluginUiResourceWatchOpenRequestSchema.parse({ machineId: 'machine-1', callerPluginId: 'acme.external',
+      expectedCallerOccurrenceId: 'occurrence-7', subscriptionId: 'authority', resource }).resource).toEqual(resource);
+    expect(DaemonPluginUiResourceWatchOpenResponseSchema.parse({ ok: true, subscriptionId: 'authority' }))
+      .toEqual({ ok: true, subscriptionId: 'authority' });
+    for (const extra of [{ accountId: 'selected' }, { tokenHash: 'private' }, { machineId: 'foreign' }]) {
+      expect(PluginUiResourceSubscriptionRequestV1Schema.safeParse({ resource: {
+        readAuthority: { ...resource.readAuthority, ...extra },
+      }, subscriptionId: 'authority' }).success).toBe(false);
+    }
+  });
   it('admits closed host read references through the incumbent subscription target', () => {
     for (const hostRead of ['usage.query', 'connectedServices.quota.get', 'connectedServices.pools.selection.get']) {
       const resource = { hostRead, input: { queries: [] } };

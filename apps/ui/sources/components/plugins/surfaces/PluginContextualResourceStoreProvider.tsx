@@ -1,15 +1,22 @@
 import * as React from 'react';
 
-import type { PluginResourceContextV1 } from '@happier-dev/protocol';
+import type { PluginResourceContextV1 } from '@happier-dev/protocol/plugins/contributions/v2';
+import { PluginCollectionReadErrorCodeV1Schema } from '@happier-dev/protocol/plugins/data/collectionsV1';
+import type { PluginUiHostApiSurfaceTargetV1 } from '@happier-dev/protocol/plugins/ui';
+import type { SessionExecutionTargetV1 } from '@happier-dev/protocol/sessions/creation/sessionExecutionTargetV1';
+import type { ResourcesService } from '@happier-dev/plugin-sdk/resources';
+import { MAX_PLUGIN_DYNAMIC_RESOURCE_DECLARED_BYTES_V2 } from '@happier-dev/protocol/plugins/contributions/v2';
 import { createPluginUiResourceStore, pluginUiResourceReferenceKey, type PluginUiResourceEntry, type PluginUiResourceStore } from '@happier-dev/plugin-ui/advanced';
 import type {
     PluginUiResourceReference,
     PluginUiResourceSnapshot,
     PluginUiResourceProjectionSnapshot,
 } from '@happier-dev/plugin-ui/hostApi';
-import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
+import type { PluginUiProjectionModel, PluginUiResourceProjection } from '@/sync/domains/plugins/ui/projection';
+import { createPluginAccountResourceClient } from './pluginAccountResourceClient';
 
 import { createPluginContextualResourceReadClient } from './pluginSurfaceResourceRead';
+import { readPluginResourceStoreSnapshot } from './pluginSurfaceResourceRead';
 import { readPluginSurfaceResourceReference } from './pluginSurfaceResourceRead';
 import { createPluginContextualResourceWatchClient } from './pluginSurfaceResourceWatch';
 import { logPluginSurfaceDiagnostic } from '@/components/plugins/shared/pluginSurfaceDiagnosticLog';
@@ -19,6 +26,11 @@ import { useLayoutPresentationActive } from '@/components/ui/presentation/Plugin
 import { useWidgetFrameResourceActivity } from '@/components/widgets/frame/widgetFrameResourceActivity';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { readCurrentAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
+import { readPluginUiResourceProjection } from '@/sync/domains/plugins/ui/projection';
+import { readPluginUiAccountExecutableOrigin } from '@/sync/domains/plugins/ui/projectionOrigins';
+import { resolvePluginUiExecutionDeclaration } from '@/sync/domains/plugins/ui/projectionUnion';
+import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 
 type PluginContextualResourceStore = ReturnType<typeof createPluginUiResourceStore>;
 
@@ -38,10 +50,14 @@ export type PluginContextualResourceStoreOwner = Readonly<{
     acquire(input: Readonly<{
         accountLifetime: ActiveServerAccountScopeLifetime;
         pluginId: string;
-        machineId: string;
+        machineId: string | null;
         serverId: string | null;
         expectedCallerOccurrenceId: string;
+        /** Host-selected address for nested Actions, independent of Account Resource custody. */
+        actionExecutionTarget?: SessionExecutionTargetV1;
         context: PluginResourceContextV1;
+        /** Exact selected portable declaration; Machine bindings omit it. */
+        accountResource?: PluginUiResourceProjection;
     }>): PluginContextualResourceStoreLease | null;
 }>;
 
@@ -54,6 +70,8 @@ type ResourceStoreEntry = {
     readonly store: PluginContextualResourceStore;
     readonly bindingFamilyKey: string;
     consumers: Set<ResourceStoreConsumer>;
+    readonly dependencies: Set<string>;
+    releaseDependencies(): void;
     disposed: boolean;
 };
 
@@ -69,7 +87,7 @@ function accountBindingKey(input: ResourceStoreBinding): readonly [string, strin
     return [input.accountLifetime.scope.serverId, input.accountLifetime.scope.accountId];
 }
 
-function resourceBindingKey(input: ResourceStoreBinding): string {
+export function resourceBindingKey(input: ResourceStoreBinding): string {
     return JSON.stringify([
         accountBindingKey(input),
         input.pluginId,
@@ -77,6 +95,8 @@ function resourceBindingKey(input: ResourceStoreBinding): string {
         input.serverId,
         input.expectedCallerOccurrenceId,
         input.context,
+        input.accountResource?.id ?? null,
+        input.accountResource ? input.actionExecutionTarget ?? null : null,
     ]);
 }
 
@@ -88,6 +108,8 @@ function resourceBindingFamilyKey(input: ResourceStoreBinding): string {
         input.machineId,
         input.serverId,
         input.context,
+        input.accountResource?.id ?? null,
+        input.accountResource ? input.actionExecutionTarget ?? null : null,
     ]);
 }
 
@@ -106,12 +128,13 @@ function createPluginContextualResourceStoreOwner(): PluginContextualResourceSto
         // cannot reenter through a stale map key.
         entries.delete(key);
         entry.disposed = true;
+        entry.releaseDependencies();
         for (const consumer of entry.consumers) consumer.retirement.dispose();
         entry.consumers.clear();
         entry.store.dispose();
     };
 
-    return Object.freeze({
+    const owner: PluginContextualResourceStoreOwner = Object.freeze({
         acquire(requestedBinding) {
             if (!requestedBinding.accountLifetime.isCurrent()) return null;
             if (requestedBinding.serverId !== null && !areServerProfileIdentifiersEquivalent(
@@ -140,7 +163,24 @@ function createPluginContextualResourceStoreOwner(): PluginContextualResourceSto
             let entry = entries.get(key);
             if (!entry || entry.disposed) {
                 let createdEntry: ResourceStoreEntry | null = null;
-                const resource = Object.freeze({
+                const dependencies = new Set<string>();
+                type Dependency = {
+                    lease: PluginContextualResourceStoreLease;
+                    entry: PluginUiResourceEntry;
+                    declaration: PluginUiResourceProjection;
+                    grants: Set<() => void>;
+                    listeners: Set<(change: { digest: string }) => void>;
+                    notify(): void;
+                };
+                const children = new Map<string, Dependency>();
+                const releaseDependencies = () => {
+                    const previous = [...children.values()];
+                    for (const child of previous) {
+                        child.listeners.clear();
+                        for (const release of [...child.grants]) release();
+                    }
+                };
+                const resource = input.machineId === null ? null : Object.freeze({
                     machineId: input.machineId,
                     serverId: input.serverId,
                     expectedCallerOccurrenceId: input.expectedCallerOccurrenceId,
@@ -151,20 +191,181 @@ function createPluginContextualResourceStoreOwner(): PluginContextualResourceSto
                     for (const consumer of createdEntry.consumers) if (consumer.accountLifetime.isCurrent()) return true;
                     return false;
                 };
-                const client = Object.freeze({
+                const resourceFailure = (code: string, message = code, retryable?: boolean): never => {
+                    throw Object.assign(new Error(message), { code,
+                        ...(retryable === undefined ? {} : { retryable }),
+                        ...(code === 'plugin_resource_dependency_cycle' ? { retryable: false } : {}) });
+                };
+                const targetBinding = (id: string) => {
+                    if (!isCurrent()) return resourceFailure('plugin_surface_retired');
+                    const projection = readCurrentAppShellPluginUiProjection({ scope: accountLifetime.scope, declarationsOnly: true });
+                    const declaration = readPluginUiResourceProjection(projection?.resourcesById, { pluginId: input.pluginId, localId: id });
+                    const origin = readPluginUiAccountExecutableOrigin(declaration);
+                    if (!declaration || declaration.execution?.target !== 'account' || !origin
+                        || origin.accountId !== accountLifetime.scope.accountId || origin.serverId !== accountLifetime.scope.serverId
+                        || origin.custodyId !== input.expectedCallerOccurrenceId) return resourceFailure('plugin_resource_not_found');
+                    const context: PluginResourceContextV1 | undefined = declaration.scope === 'global' ? { kind: 'global' }
+                        : declaration.scope === input.context.kind ? input.context : undefined;
+                    if (!context) return resourceFailure('plugin_resource_context_unavailable');
+                    const binding = { ...input, context, accountResource: declaration, machineId: null,
+                        expectedCallerOccurrenceId: origin.custodyId };
+                    return { declaration, binding, key: resourceBindingKey(binding) };
+                };
+                const dependsOn = (from: string, target: string, visited = new Set<string>()): boolean => {
+                    if (from === target) return true;
+                    if (visited.has(from)) return false;
+                    visited.add(from);
+                    return [...(entries.get(from)?.dependencies ?? [])].some(child => dependsOn(child, target, visited));
+                };
+                const dependency = (id: string, live: boolean) => {
+                    const target = targetBinding(id);
+                    let child = children.get(target.key);
+                    if (!child) {
+                        if (dependsOn(target.key, key)) return resourceFailure('plugin_resource_dependency_cycle');
+                        const lease = owner.acquire(target.binding);
+                        if (!lease) return resourceFailure('plugin_surface_retired');
+                        const targetEntry = lease.store.getEntry({ pluginId: input.pluginId, localId: id });
+                        const created: Dependency = { lease, entry: targetEntry, declaration: target.declaration,
+                            grants: new Set(), listeners: new Set(), notify: () => {} };
+                        dependencies.add(target.key);
+                        children.set(target.key, created);
+                        let digest = targetEntry.getSnapshot().digest;
+                        let error = targetEntry.getSnapshot().error;
+                        created.notify = () => {
+                            const snapshot = targetEntry.getSnapshot();
+                            if (snapshot.pending !== 'idle') return;
+                            const changedError = error !== snapshot.error;
+                            error = snapshot.error;
+                            if (snapshot.digest === digest && !changedError) return;
+                            const previous = digest;
+                            digest = snapshot.digest;
+                            const currentDigest = digest ?? previous;
+                            // The first readable bytes can follow a refused
+                            // baseline; existing observers still need that wake.
+                            if (currentDigest === undefined) return;
+                            for (const listener of [...created.listeners]) listener({ digest: currentDigest });
+                        };
+                        child = created;
+                    }
+                    const admitted = child;
+                    let released = false;
+                    let releaseSubscription = () => {};
+                    const dispose = () => {
+                        if (released) return;
+                        released = true;
+                        releaseSubscription();
+                        admitted.grants.delete(dispose);
+                        if (admitted.grants.size !== 0) return;
+                        if (children.get(target.key) === admitted) {
+                            children.delete(target.key);
+                            dependencies.delete(target.key);
+                        }
+                        admitted.lease.dispose();
+                    };
+                    admitted.grants.add(dispose);
+                    try { releaseSubscription = admitted.entry.subscribe(() => admitted.notify(), live); }
+                    catch (error) { dispose(); throw error; }
+                    if (released) releaseSubscription();
+                    return { child: admitted, dispose };
+                };
+                const bindResources = (invocation: Readonly<{ signal: AbortSignal; isCurrent(): boolean }>): ResourcesService => {
+                    const assertCurrent = () => {
+                        if (invocation.signal.aborted) return resourceFailure('plugin_resource_aborted');
+                        if (!isCurrent() || !invocation.isCurrent()) return resourceFailure('plugin_surface_retired');
+                    };
+                    return Object.freeze<ResourcesService>({
+                        describe(id) {
+                            assertCurrent();
+                            const target = targetBinding(id);
+                            const snapshot = entries.get(target.key)?.store.getEntry({ pluginId: input.pluginId, localId: id }).getSnapshot();
+                            if (!snapshot?.value || !snapshot.digest || snapshot.error) return resourceFailure(snapshot?.error?.code ?? 'plugin_resource_unavailable');
+                            return { id, kind: target.declaration.resourceKind, contentType: snapshot.value.contentType,
+                                digest: snapshot.digest, size: snapshot.value.bytes.byteLength };
+                        },
+                        async read(id, options) {
+                            assertCurrent();
+                            const maxBytes = options?.maxBytes ?? MAX_PLUGIN_DYNAMIC_RESOURCE_DECLARED_BYTES_V2;
+                            if (!Number.isSafeInteger(maxBytes) || maxBytes < 0 || maxBytes > MAX_PLUGIN_DYNAMIC_RESOURCE_DECLARED_BYTES_V2) {
+                                return resourceFailure('plugin_resource_invalid_limit');
+                            }
+                            if (options?.signal?.aborted) return resourceFailure('plugin_resource_aborted');
+                            const grant = dependency(id, false);
+                            const { child } = grant;
+                            const signals = mergeAbortSignals([invocation.signal, options?.signal]);
+                            try {
+                                const snapshot = await readPluginResourceStoreSnapshot(child.entry, signals.signal);
+                                assertCurrent();
+                                if (!snapshot.value || snapshot.error) return resourceFailure(snapshot.error?.code ?? 'plugin_resource_unavailable', snapshot.error?.message, snapshot.error?.retryable);
+                                if (snapshot.value.bytes.byteLength > maxBytes) return resourceFailure('plugin_resource_too_large');
+                                return { ...snapshot.value, bytes: new Uint8Array(snapshot.value.bytes), kind: child.declaration.resourceKind };
+                            } finally { signals.dispose(); grant.dispose(); }
+                        },
+                        async watch(id, listener) {
+                            assertCurrent();
+                            const grant = dependency(id, true);
+                            const { child } = grant;
+                            let release = () => {};
+                            let abortWait = () => {};
+                            const ready = new Promise<void>((resolve, reject) => {
+                                const finish = () => {
+                                    const snapshot = child.entry.getSnapshot();
+                                    if (invocation.signal.aborted || !invocation.isCurrent()) { reject(Object.assign(new Error('Resource operation was aborted'), { code: 'plugin_resource_aborted' })); return; }
+                                    const collectionRefusal = snapshot.error?.retryable === false
+                                        && PluginCollectionReadErrorCodeV1Schema.safeParse(snapshot.error.code).success;
+                                    if (snapshot.error && !collectionRefusal) {
+                                        reject(Object.assign(new Error(snapshot.error.message), { ...snapshot.error,
+                                            ...(snapshot.error.code === 'plugin_resource_dependency_cycle' ? { retryable: false } : {}) }));
+                                        return;
+                                    }
+                                    if (snapshot.subscription === 'live') resolve();
+                                    else if (snapshot.subscription === 'ended' || snapshot.subscription === 'unsupported' && snapshot.pending === 'idle') {
+                                        reject(Object.assign(new Error('Resource observation is unavailable'), { code: 'plugin_resource_observation_unavailable' }));
+                                    }
+                                };
+                                release = child.entry.subscribe(finish, false);
+                                abortWait = finish;
+                                invocation.signal.addEventListener('abort', finish, { once: true });
+                                finish();
+                            });
+                            try { await ready; assertCurrent(); }
+                            catch (error) { grant.dispose(); throw error; }
+                            finally { release(); invocation.signal.removeEventListener('abort', abortWait); }
+                            const notify = (change: { digest: string }) => { if (!invocation.signal.aborted && invocation.isCurrent()) listener(change); };
+                            child.listeners.add(notify);
+                            const dispose = () => {
+                                child.listeners.delete(notify);
+                                invocation.signal.removeEventListener('abort', dispose);
+                                grant.dispose();
+                            };
+                            invocation.signal.addEventListener('abort', dispose, { once: true });
+                            if (invocation.signal.aborted) dispose();
+                            return { dispose };
+                        },
+                    });
+                };
+                if (!input.accountResource && !resource) return null;
+                const transport = input.accountResource ? createPluginAccountResourceClient({
+                        pluginId: input.pluginId, declaration: input.accountResource, accountLifetime,
+                        actionExecutionTarget: input.actionExecutionTarget,
+                        context: input.context, isCurrent, bindResources,
+                        readBaseline: signal => readPluginResourceStoreSnapshot(createdEntry!.store.getEntry(input.accountResource!.id), signal, false, true),
+                    }) : {
                     ...createPluginContextualResourceReadClient({
                         pluginId: input.pluginId,
-                        resource,
+                        resource: resource!,
                         isCurrent,
                     }),
                     ...createPluginContextualResourceWatchClient({
                         pluginId: input.pluginId,
-                        resource,
+                        resource: resource!,
                         // Transport identity is bounded independently of context;
                         // Account and Resource authority stay in the binding above.
                         subscriptionIdPrefix: `contextual-resource:${randomUUID()}`,
                         isCurrent,
                     }),
+                    };
+                const client = Object.freeze({
+                    ...transport,
                     // A contextual mount has no plugin-authored surface to route
                     // `hostApi.diagnostic` through, but its author still needs to
                     // learn when the store refused their Resource. Report into the
@@ -189,8 +390,12 @@ function createPluginContextualResourceStoreOwner(): PluginContextualResourceSto
                     store: createPluginUiResourceStore({
                         client,
                         pluginId: input.pluginId,
+                        onDemandEnd: releaseDependencies,
+                        ...('lifetime' in transport ? { accountLifetime: transport.lifetime } : {}),
                     }),
                     bindingFamilyKey,
+                    dependencies,
+                    releaseDependencies,
                     consumers: new Set(),
                     disposed: false,
                 };
@@ -232,6 +437,7 @@ function createPluginContextualResourceStoreOwner(): PluginContextualResourceSto
             });
         },
     });
+    return owner;
 }
 
 const PluginContextualResourceStoreContext = React.createContext<PluginContextualResourceStoreOwner | null>(null);
@@ -248,6 +454,7 @@ export function createPluginDeclaredResourceStore(input: Omit<PluginContextualRe
     /** Undefined is unknown; a complete empty publication withdraws the ordinary namespace. */
     resourceDeclarationsComplete?: boolean;
     sessionId?: string;
+    target?: PluginUiHostApiSurfaceTargetV1;
     surfaceContext?: Extract<PluginResourceContextV1, { kind: 'surface' }>;
     createFallbackStore?: () => PluginUiResourceStore;
 }>): (PluginUiResourceStore & Readonly<{
@@ -256,13 +463,22 @@ export function createPluginDeclaredResourceStore(input: Omit<PluginContextualRe
     readNamespaceKey(): string;
     onDeclaredNamespaceAdmission(listener: () => void): () => void;
 }>) | null {
-    const readDeclarations = () => Object.values(input.resourcesById).filter(row => row.pluginId === input.pluginId);
-    const isScopedNamespace = (rows: ReturnType<typeof readDeclarations>) => (
-        input.resourceDeclarationsComplete === true && rows.every(row => row.scope !== undefined)
-    );
-    // Preserve the incumbent ordinary transport until scoped declarations
+    const readDeclaredRows = () => Object.values(input.resourcesById).filter(row => row.pluginId === input.pluginId);
+    const readDeclarations = () => {
+        const projection = readCurrentAppShellPluginUiProjection({ scope: input.accountLifetime.scope, declarationsOnly: true });
+        return readDeclaredRows().flatMap(row => {
+            if (row.execution?.target !== 'account') return [row];
+            const selected = resolvePluginUiExecutionDeclaration(row, { current: readPluginUiResourceProjection(
+                projection?.resourcesById, { pluginId: row.pluginId, localId: row.id }) });
+            return selected ? [selected] : [];
+        });
+    };
+    // Full-describe coverage is producer-owned. Packaged assets legitimately
+    // omit dynamic scope; they cannot withdraw sibling Account declarations.
+    const namespaceIsComplete = () => input.resourceDeclarationsComplete === true;
+    // Preserve the incumbent ordinary transport until complete declarations
     // actually arrive. Once admitted, their withdrawal cannot reopen it.
-    let hasDeclaredNamespace = isScopedNamespace(readDeclarations());
+    let hasDeclaredNamespace = namespaceIsComplete();
     let fallbackStore: PluginUiResourceStore | null = null;
     const namespaceListeners = new Set<() => void>();
     const entries = new Map<string, Readonly<{
@@ -294,20 +510,21 @@ export function createPluginDeclaredResourceStore(input: Omit<PluginContextualRe
         plugin_surface_retired: unavailableEntry(surfaceRetired),
         plugin_resource_not_found: unavailableEntry(declarationWithdrawn),
         plugin_resource_context_unavailable: unavailableEntry(unavailableSnapshot('plugin_resource_context_unavailable')),
+        plugin_resource_transport_unavailable: unavailableEntry(unavailableSnapshot('plugin_resource_transport_unavailable')),
     };
     const fail = (code: keyof typeof failures) => failures[code];
     const contractKey = (row: PluginUiProjectionModel['resourcesById'][string]) => {
         // Canonical projected Resource fields, excluding host publication
         // metadata and arbitrary UI projection extensions.
-        const { id, pluginId, occurrenceId, executionOrigin, resourceKind, path,
-            scope, connectedAccountPurposes, digest, contentType } = row;
-        return stableJsonStringify({ id, pluginId, occurrenceId, executionOrigin, resourceKind, path,
-            scope, connectedAccountPurposes, digest, contentType });
+        const { id, pluginId, occurrenceId, executionOrigin, execution, hostAccountOrigin, resourceKind, path,
+            scope, connectedAccountPurposes, digest, contentType, sessionInbox } = row;
+        return stableJsonStringify({ id, pluginId, occurrenceId, executionOrigin, execution, hostAccountOrigin, resourceKind, path,
+            scope, connectedAccountPurposes, digest, contentType, sessionInbox });
     };
     const reconcile = () => {
         const declarations = readDeclarations();
-        const admittedNamespace = !hasDeclaredNamespace && isScopedNamespace(declarations);
-        hasDeclaredNamespace ||= isScopedNamespace(declarations);
+        const admittedNamespace = !hasDeclaredNamespace && namespaceIsComplete();
+        hasDeclaredNamespace ||= namespaceIsComplete();
         for (const [key, mounted] of entries) {
             const declaration = declarations.find(row => row.id === mounted.localId);
             if (!disposed && input.accountLifetime.isCurrent()
@@ -328,13 +545,18 @@ export function createPluginDeclaredResourceStore(input: Omit<PluginContextualRe
     };
     return Object.freeze({
         reconcile,
-        hasDeclaredNamespace: () => hasDeclaredNamespace || isScopedNamespace(readDeclarations()),
+        requiresMachine(resource) {
+            const reference = readPluginSurfaceResourceReference(input.pluginId, resource);
+            return !reference || reference.pluginId !== input.pluginId
+                || readDeclaredRows().find(row => row.id === reference.localId)?.execution?.target !== 'account';
+        },
+        hasDeclaredNamespace: () => hasDeclaredNamespace || namespaceIsComplete(),
         readNamespaceKey: () => stableJsonStringify([
-            hasDeclaredNamespace || isScopedNamespace(readDeclarations()),
+            hasDeclaredNamespace || namespaceIsComplete(),
             readDeclarations().map(contractKey).sort(),
         ]),
         onDeclaredNamespaceAdmission(listener) {
-            if (disposed || hasDeclaredNamespace || isScopedNamespace(readDeclarations())) return () => {};
+            if (disposed || hasDeclaredNamespace || namespaceIsComplete()) return () => {};
             namespaceListeners.add(listener);
             return () => { namespaceListeners.delete(listener); };
         },
@@ -351,11 +573,21 @@ export function createPluginDeclaredResourceStore(input: Omit<PluginContextualRe
             let lease: PluginContextualResourceStoreLease | null = null;
             let shared: PluginUiResourceEntry;
             if (declaration) {
-                const context: PluginResourceContextV1 | undefined = declaration.scope === 'global' ? { kind: 'global' }
-                    : declaration.scope === 'session' && input.sessionId ? { kind: 'session', sessionId: input.sessionId }
+                const context: PluginResourceContextV1 | undefined = declaration.scope === 'global'
+                    || declaration.scope === undefined && declaration.path !== undefined ? { kind: 'global' }
+                    : declaration.scope === 'session' && input.sessionId
+                        && (!input.target || input.target.kind === 'session' && input.target.sessionId === input.sessionId)
+                        ? { kind: 'session', sessionId: input.sessionId, ...(input.target ? { target: input.target } : {}) }
                     : declaration.scope === 'surface' ? input.surfaceContext : undefined;
                 if (!context) return fail('plugin_resource_context_unavailable');
-                lease = acquirePluginContextualResourceStore({ ...input, context });
+                const accountPlaced = declaration.execution?.target === 'account';
+                if (accountPlaced && !declaration.occurrenceId) return fail('plugin_resource_not_found');
+                if (!accountPlaced && input.machineId === null) return fail('plugin_resource_transport_unavailable');
+                lease = acquirePluginContextualResourceStore({ ...input, context,
+                    ...(accountPlaced ? { machineId: null, expectedCallerOccurrenceId: declaration.occurrenceId ?? '', accountResource: declaration,
+                        actionExecutionTarget: input.actionExecutionTarget ?? (input.machineId ? {
+                            machineId: input.machineId, serverId: input.serverId ?? input.accountLifetime.scope.serverId,
+                        } : undefined) } : {}) });
                 if (!lease) return fail('plugin_surface_retired');
                 try { shared = lease.store.getEntry(reference); }
                 catch (error) { lease.dispose(); throw error; }
@@ -377,7 +609,7 @@ export function createPluginDeclaredResourceStore(input: Omit<PluginContextualRe
                 const current = currentDeclarations.find(row => row.id === reference.localId);
                 // Snapshot reads may run while React renders. Hide withdrawn
                 // data now; committed reconciliation releases and notifies.
-                const admitted = contract === null ? !hasDeclaredNamespace && !isScopedNamespace(currentDeclarations)
+                const admitted = contract === null ? !hasDeclaredNamespace && !namespaceIsComplete()
                     : current && contractKey(current) === contract;
                 return admitted ? null : declarationWithdrawn;
             };

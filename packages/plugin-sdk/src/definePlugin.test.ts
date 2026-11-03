@@ -1,3 +1,4 @@
+import { createTestResourceInvocationContext } from '@happier-dev/plugin-sdk/testing';
 import { normalizePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { describe, expect, expectTypeOf, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -500,7 +501,7 @@ describe('definePlugin', () => {
         const register = vi.fn();
         await plugin.activate({ actions: { register } } as never);
         expect(register).toHaveBeenCalledOnce();
-        expect(register).toHaveBeenCalledWith('daemonAction', daemonRun);
+        expect(register).toHaveBeenCalledWith('daemonAction', daemonRun, undefined);
 
         expect(() => definePlugin({
             id: 'acme.client-action-inline-handler',
@@ -544,7 +545,7 @@ describe('definePlugin', () => {
         }]);
         const register = vi.fn();
         await plugin.activate({ actions: { register } } as never);
-        expect(register).toHaveBeenCalledWith('inspect', run);
+        expect(register).toHaveBeenCalledWith('inspect', run, undefined);
 
         expect(() => definePlugin({
             id: 'acme.action-without-target',
@@ -645,7 +646,7 @@ describe('definePlugin', () => {
         const [registration] = scope.commit();
         if (registration?.family !== 'resources') throw new Error('Expected Resource registration');
         runtime.read = () => 'replacement';
-        expect(registration.value.read({ signal: new AbortController().signal, context: { kind: 'global' } })).toBe('committed:1');
+        expect(registration.value.read(createTestResourceInvocationContext({ signal: new AbortController().signal, context: { kind: 'global' } }))).toBe('committed:1');
         expect(runtime.reads).toBe(1);
     });
 
@@ -1811,7 +1812,7 @@ describe('definePlugin', () => {
         } as never);
 
         expect(register).toHaveBeenCalledOnce();
-        expect(register).toHaveBeenCalledWith('inspect', run);
+        expect(register).toHaveBeenCalledWith('inspect', run, undefined);
     });
 
     it('does not manufacture a human placement for a plugin-only Action declaration', () => {

@@ -10,7 +10,7 @@ import type { PluginDeclarativeNodeV2, PluginLocalizedStringV2 } from './actions
 import type { PluginDeclarativeDataNodeV1 as DtoPluginDeclarativeDataNodeV1 } from './actions/dtos/pluginActionDtoSupport.generated.js';
 import { compilePluginJsonSchema as canonicalCompilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import type { PluginAvailabilityDescriptor } from './availability.js';
-import type { PluginActionExecutionV2 } from './definePlugin.js';
+import type { PluginActionDeclaration, PluginActionExecutionV2 } from './definePlugin.js';
 export type { PluginAvailabilityDescriptor } from './availability.js';
 import { createPluginContributionIdentity as canonicalCreatePluginContributionIdentity, PluginContributionIdentityV1JsonSchema as canonicalPluginContributionIdentityV1JsonSchema, PluginContributionIdentityV1Schema as canonicalPluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
 import { ingestPluginManifestV2, validatePublicPluginManifestPolicy } from '@happier-dev/protocol/plugins/manifest/ingest';
@@ -635,6 +635,7 @@ export interface PluginManifest {
     }> & Readonly<{
       inputSchema?: PluginJsonSchema | null;
       resultSchema?: PluginJsonSchema | null;
+      readOnly?: PluginActionDeclaration['readOnly'];
       surfaces: readonly string[];
       confirmVerb?: PluginLocalizedStringV2;
       irreversible?: true;
@@ -758,6 +759,7 @@ export type PluginContributes = Readonly<{
     execution: PluginActionExecutionV2;
     inputSchema?: PluginJsonSchema;
     resultSchema?: PluginJsonSchema;
+    readOnly?: PluginActionDeclaration['readOnly'];
     surfaces: readonly string[];
     dangerLevel: string;
     confirmVerb?: PluginLocalizedStringV2;

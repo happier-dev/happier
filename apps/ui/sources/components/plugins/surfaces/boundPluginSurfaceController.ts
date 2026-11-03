@@ -1019,14 +1019,31 @@ export function createBoundPluginSurfaceController(input: Readonly<{
     // Navigation/context remain useful without lending retained data authority.
     const isMethodAvailable = (method: PluginUiHostMethodV1): boolean => (
         method === 'context' || method === 'openSurface' || method === 'openConnectedAccounts'
-        || (isInteractionCurrent() && ((canAdmitHostReads && (method === 'readResource' || method === 'watchResource'))
+        || (isInteractionCurrent() && (((canAdmitHostReads || hasAccountResources()) && (method === 'readResource' || method === 'watchResource'))
             || !isDaemonOwnedPluginSurfaceMethod(method) || isDaemonInteractionEnabled(false)))
     );
-    let canReadResource = machineBindingFacts.resourceCapability?.readable === true;
+    const readCompleteResourceDeclarations = () => {
+        const facts = readActionInputFacts();
+        // Account custody owns this caller's Resource declarations. The Session's
+        // Machine remains the execution target for nested source Actions.
+        if (facts.accountExecutionOrigin && accountLifetime) {
+            return readCompletePluginUiResourceDeclarations(
+                readPluginAccountAvailability(accountLifetime.scope).readAccountUiProjection(),
+                input.facts.pluginId,
+                facts.accountExecutionOrigin.custodyId,
+            );
+        }
+        if (facts.resourceDeclarations !== undefined) return facts.resourceDeclarations;
+        return readCompletePluginUiResourceDeclarations(facts.pluginUiProjection, input.facts.pluginId,
+            facts.accountExecutionOrigin?.custodyId ?? daemon?.expectedOccurrenceId);
+    };
+    const hasAccountResources = () => Object.values(readCompleteResourceDeclarations() ?? {})
+        .some(resource => resource.pluginId === input.facts.pluginId && resource.execution?.target === 'account');
+    let canReadResource = machineBindingFacts.resourceCapability?.readable === true || hasAccountResources();
     // A dynamic capability without a readable snapshot is not a usable
     // subscription contract. The daemon owns exact-resource admission once
     // this selected-member gate has installed the transport.
-    let canWatchResource = canReadResource && machineBindingFacts.resourceCapability?.dynamic === true;
+    let canWatchResource = (canReadResource && machineBindingFacts.resourceCapability?.dynamic === true) || hasAccountResources();
     const createOrdinaryResourceStore = () => {
         const admittedDaemon = daemon;
         const readable = canReadResource;
@@ -1064,15 +1081,12 @@ export function createBoundPluginSurfaceController(input: Readonly<{
         },
         });
     };
-    const readCompleteResourceDeclarations = () => {
-        const facts = readActionInputFacts();
-        if (facts.resourceDeclarations !== undefined) return facts.resourceDeclarations;
-        return readCompletePluginUiResourceDeclarations(facts.pluginUiProjection, input.facts.pluginId, daemon?.expectedOccurrenceId);
-    };
-    const createDeclaredResourceStore = () => canReadResource && daemon && accountLifetime
+    const createDeclaredResourceStore = () => canReadResource && (daemon || hasAccountResources()) && accountLifetime
         ? createPluginDeclaredResourceStore({ accountLifetime, pluginId: input.facts.pluginId,
-            machineId: daemon.machineId, serverId: daemon.serverId ?? null,
-            expectedCallerOccurrenceId: daemon.expectedOccurrenceId,
+            machineId: daemon?.machineId ?? null, serverId: daemon?.serverId ?? accountLifetime.scope.serverId,
+            ...(machineBindingFacts.machineId ? { actionExecutionTarget: { machineId: machineBindingFacts.machineId,
+                serverId: machineBindingFacts.serverId ?? accountLifetime.scope.serverId } } : {}),
+            expectedCallerOccurrenceId: daemon?.expectedOccurrenceId ?? input.facts.occurrenceId ?? '',
             createFallbackStore: createOrdinaryResourceStore,
             get resourceDeclarationsComplete() { return readCompleteResourceDeclarations() !== undefined; },
             get resourcesById() {
@@ -1184,7 +1198,7 @@ export function createBoundPluginSurfaceController(input: Readonly<{
     const createActionInputHost = () => ({
         machineId: daemon?.machineId,
         machineDisplayName: input.facts.machineDisplayName ?? null,
-        serverId: daemon?.serverId ?? null,
+        serverId: daemon?.serverId ?? accountLifetime?.scope.serverId ?? null,
         targetPluginId: input.facts.pluginId,
         ...(surfaceContext.sessionId ? { sessionId: surfaceContext.sessionId } : {}),
         accountLifetime,
@@ -1357,9 +1371,9 @@ export function createBoundPluginSurfaceController(input: Readonly<{
                 ...(surfaceContext.sessionId ? { sessionId: surfaceContext.sessionId } : {}),
                 ...(binding?.executeContributedAction ? { execute: binding.executeContributedAction } : {}),
             } } : {}),
-            ...(target && canReadResource ? { resource: {
-                machineId: target.machineId, serverId: target.serverId,
-                expectedCallerOccurrenceId: target.expectedOccurrenceId,
+            ...((target || declaredStore) && (canReadResource || target !== null) ? { resource: {
+                machineId: target?.machineId ?? null, serverId: target?.serverId ?? accountLifetime?.scope.serverId,
+                expectedCallerOccurrenceId: target?.expectedOccurrenceId ?? input.facts.occurrenceId ?? '',
                 ...(resourceContext === undefined ? {} : { context: resourceContext }),
                 ...(binding?.readResource ? { read: binding.readResource } : {}),
                 get store() { return declaredStore?.hasDeclaredNamespace() ? declaredStore : undefined; },
@@ -1530,6 +1544,7 @@ export function createBoundPluginSurfaceController(input: Readonly<{
                 // the incumbent store and this physical controller.
                 publishedResourceStore = Object.freeze({
                     getEntry: resource => currentStore.getEntry(resource),
+                    requiresMachine: resource => currentStore.requiresMachine?.(resource) ?? true,
                     dispose: () => currentStore.dispose(),
                 } satisfies PluginUiResourceStore);
             }
@@ -1571,8 +1586,8 @@ export function createBoundPluginSurfaceController(input: Readonly<{
                 machineAuthorityKey = nextAuthorityKey;
                 machineBindingsKey = nextMachineBindingsKey;
                 daemon = resolveDaemonBinding(currentFacts);
-                canReadResource = currentFacts.resourceCapability?.readable === true;
-                canWatchResource = canReadResource && currentFacts.resourceCapability?.dynamic === true;
+                canReadResource = currentFacts.resourceCapability?.readable === true || hasAccountResources();
+                canWatchResource = (canReadResource && currentFacts.resourceCapability?.dynamic === true) || hasAccountResources();
                 declaredResourceStore = createDeclaredResourceStore();
                 resourceStore = hostReadResourceStore ?? declaredResourceStore;
                 if (authorityChanged) {

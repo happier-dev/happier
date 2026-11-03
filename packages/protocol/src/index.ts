@@ -1,3 +1,4 @@
+export type { ConnectedAccountInvocationPurposeBinding } from './connect/connectedAccountInvocationPurposeBinding.js';
 export { projectPluginStoreKindDeclarationV1, PluginStoreKindContributionV1Schema, PluginStoreItemReferenceV1Schema, PluginStoreItemReferenceV1ProtocolSchema,
   PluginStoreItemV1Schema, PluginStoreItemV1ProtocolSchema, type PluginStoreKindContributionV1,
   type PluginStoreItemReferenceV1, type PluginStoreItemV1 } from './plugins/contributions/storeKinds.js';

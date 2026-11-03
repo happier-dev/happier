@@ -30,6 +30,9 @@ import {
   SESSION_PULL_REQUEST_BINDING_ACTION_ID_V1,
   SessionPullRequestBindingInputV1Schema,
   SessionPullRequestBindingResultV1Schema,
+  SESSION_PULL_REQUEST_WATCH_ACTION_ID_V1,
+  SessionPullRequestWatchInputV1Schema,
+  SessionPullRequestWatchResultV1Schema,
 } from '@happier-dev/channels-protocol/v1';
 
 import { deliverConversationAutomationResultForInvocation } from './automationResultDelivery.js';
@@ -113,6 +116,9 @@ import {
   CHANNELS_PAGE_VIEW_ID,
 } from './sessionSurfaceIds.js';
 import { CHANNELS_UI_TRANSLATION_BUNDLES } from './ui/translations.js';
+import { manageSessionPullRequestWatchForInvocation, observeSessionPullRequestWatchAction,
+  SESSION_PULL_REQUEST_WATCH_ACCOUNT_EXECUTION_V1 } from './sessionPullRequestWatch.js';
+import { SESSION_PULL_REQUEST_WATCH_SETTINGS_DECLARATION } from './sessionPullRequestWatchPolicy.js';
 import { CHANNEL_FILE_ATTACHMENT } from './channelAttachment.js';
 import { CHANNEL_FILE_ATTACHMENT_RUNTIME } from './channelAttachmentRuntime.js';
 import {
@@ -391,6 +397,7 @@ function createChannelsPlugin() {
       [CHANNEL_STATE_COLLECTION_ID]: CHANNEL_STATE_COLLECTION,
       [CHANNEL_DELIVERIES_COLLECTION_ID]: CHANNEL_DELIVERIES_COLLECTION,
     },
+    settings: { 'pull-request-watch': SESSION_PULL_REQUEST_WATCH_SETTINGS_DECLARATION },
     events: {
       'connections-invalidated-v1': {
         declaration: {
@@ -644,6 +651,25 @@ function createChannelsPlugin() {
         },
         hostAccess: ['account-storage'],
         run: manageSessionPullRequestBindingForInvocation,
+      },
+      [SESSION_PULL_REQUEST_WATCH_ACTION_ID_V1]: {
+        title: 'Manage pull request watch',
+        description: 'Reads linked pull requests, configures their Session response loop, or delivers a configured Fix request.',
+        inputSchema: SessionPullRequestWatchInputV1Schema,
+        resultSchema: SessionPullRequestWatchResultV1Schema,
+        execution: SESSION_PULL_REQUEST_WATCH_ACCOUNT_EXECUTION_V1,
+        surfaces: ['cli', 'ui', 'plugin', 'agent', 'mcp'],
+        dangerLevel: 'writesLocal',
+        readOnly: { op: 'or', any: [{ op: 'eq', path: 'kind', value: 'get' }, { op: 'eq', path: 'kind', value: 'list' }] },
+        confirmationWhen: {
+          default: { op: 'not', predicate: { op: 'or', any: [{ op: 'eq', path: 'kind', value: 'get' }, { op: 'eq', path: 'kind', value: 'list' }] } },
+          presentUserUi: false,
+        },
+        sessionTarget: { field: 'sessionId', cardinality: 'one' },
+        confirmation: { title: 'Manage pull request watch?', body: 'This can change how the selected Session responds to its pull request or send a configured Fix request.', confirmLabel: 'Continue' },
+        hostAccess: ['account-storage'],
+        run: manageSessionPullRequestWatchForInvocation,
+        observeRead: observeSessionPullRequestWatchAction,
       },
       [CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionTransfer]: {
         ...CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.connectionTransfer,

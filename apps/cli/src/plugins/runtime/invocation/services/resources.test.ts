@@ -4,7 +4,8 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createContext, Script } from 'node:vm';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { PluginDynamicResourceInvocationOptionsV1 } from '@happier-dev/plugin-sdk/resources';
 
 import type { ResolvedContributionRegistry, ResolvedResourceContribution } from '@/plugins/projection/registry/types';
 import { resolveBuiltInContributions } from '@/plugins/projection/registry/resolveBuiltInContributions';
@@ -449,7 +450,7 @@ describe('stable plugin resources owner', () => {
             generations: new Map([['acme.alpha', { pluginId: 'acme.alpha', immutableGenerationId: 'alpha-7', rootPath: value.rootPath, files: [value.file] }]]),
         });
         const service = owner.bind({ pluginId: 'acme.alpha', signal: new AbortController().signal, isOccurrenceCurrent: () => true });
-        expect(() => service.watch('shared', () => {})).toThrowError(expect.objectContaining({ code: 'plugin_resource_watch_unavailable' }));
+        await expect(service.watch('shared', () => {})).rejects.toThrowError(expect.objectContaining({ code: 'plugin_resource_watch_unavailable' }));
 
         const hostile = Object.create(null) as ResolvedResourceContribution;
         Object.defineProperty(hostile, 'pluginId', { enumerable: true, get: () => { throw new Error('SECRET GETTER TEXT'); } });
@@ -487,6 +488,177 @@ describe('dynamic plugin resources (EU-4b §3.6.1)', () => {
             },
         };
     }
+
+    it('admits independent global producers without an unrelated four-read throttle', async () => {
+        const localIds = Array.from({ length: 6 }, (_, index) => `resource-${index}`);
+        const reads = new Map<string, number>();
+        let release!: () => void;
+        const pending = new Promise<void>((resolve) => { release = resolve; });
+        const creating = createStablePluginResourcesOwner({
+            registry: registry(localIds.map((localId) => dynamicContribution('acme.admission', localId))),
+            generations: new Map(),
+            dynamicOccurrenceIdsByPluginId: new Map([['acme.admission', 'admission-1']]),
+            dynamicProducers: localIds.map((localId) => ({ pluginId: 'acme.admission', localId, runtime: {
+                async read() {
+                    reads.set(localId, (reads.get(localId) ?? 0) + 1);
+                    await pending;
+                    return localId;
+                },
+                observe: () => ({ dispose() {} }),
+            } })),
+        });
+        try {
+            await vi.waitFor(() => expect(reads.size).toBe(localIds.length));
+        } finally {
+            release();
+            await creating;
+        }
+        const owner = await creating;
+        expect([...reads.values()]).toEqual(localIds.map(() => 1));
+        const service = owner.bind({ pluginId: 'acme.admission', signal: new AbortController().signal, isOccurrenceCurrent: () => true });
+        expect(new TextDecoder().decode((await service.read('resource-5')).bytes)).toBe('resource-5');
+        expect(reads.get('resource-5')).toBe(2);
+        expect(reads.get('resource-0')).toBe(1);
+    });
+
+    it('leaves an in-flight Resource read in charge when its same-plugin Action prepares services', async () => {
+        let reads = 0;
+        const owner = await createStablePluginResourcesOwner({
+            registry: registry([dynamicContribution('acme.prepare-read', 'live')]),
+            generations: new Map(),
+            dynamicOccurrenceIdsByPluginId: new Map([['acme.prepare-read', 'prepare-read-1']]),
+            dynamicProducers: [{ pluginId: 'acme.prepare-read', localId: 'live',
+                prepareRuntime: async () => undefined,
+                runtime: {
+                    async read() {
+                        reads += 1;
+                        await owner.preparePlugin('acme.prepare-read');
+                        return 'prepared';
+                    },
+                    observe() { return { dispose() {} }; },
+                },
+            }],
+        });
+        const service = owner.bind({ pluginId: 'acme.prepare-read', signal: new AbortController().signal, isOccurrenceCurrent: () => true });
+        expect(() => service.describe('live')).toThrowError(expect.objectContaining({ code: 'plugin_resource_context_unavailable' }));
+        expect(Buffer.from((await service.read('live')).bytes).toString()).toBe('prepared');
+        expect(reads).toBe(1);
+        await service.read('live');
+        expect(reads).toBe(2);
+    });
+
+    it('shares own Resource snapshots while demanded and preserves explicit fresh reads', async () => {
+        let relation = 'one';
+        let reads = 0;
+        let invalidate: (() => void) | undefined;
+        const owner = await createStablePluginResourcesOwner({
+            registry: registry(['links', 'composed'].map((id) => dynamicContribution('acme.compose', id))),
+            generations: new Map(),
+            dynamicOccurrenceIdsByPluginId: new Map([['acme.compose', 'compose-1']]),
+            dynamicProducers: [{
+                pluginId: 'acme.compose', localId: 'links',
+                runtime: {
+                    read() { reads += 1; return relation; },
+                    observe(notify) { invalidate = notify; return { dispose() { invalidate = undefined; } }; },
+                },
+            }, {
+                pluginId: 'acme.compose', localId: 'composed',
+                runtime: {
+                    async read({ resources }) { return (await resources.read('links')).bytes; },
+                    observe(notify, { resources }) { return resources.watch('links', notify); },
+                },
+            }],
+        });
+        const controller = new AbortController();
+        const service = owner.bind({ pluginId: 'acme.compose', signal: controller.signal, isOccurrenceCurrent: () => true });
+        const linksWatch = await service.watch('links', () => undefined);
+        await service.read('links');
+        const before = reads;
+        const composedWatch = await service.watch('composed', () => undefined);
+        await expect(service.read('composed')).resolves.toMatchObject({ bytes: new Uint8Array(Buffer.from('one')) });
+        expect(reads).toBe(before);
+        relation = 'two';
+        // An explicit host read refreshes even though a demanded snapshot exists.
+        await expect(service.read('links')).resolves.toMatchObject({ bytes: new Uint8Array(Buffer.from('two')) });
+        expect(reads).toBe(before + 1);
+        relation = 'three';
+        invalidate!();
+        await expect.poll(async () => Buffer.from((await service.read('composed')).bytes).toString()).toBe('three');
+        composedWatch.dispose();
+        linksWatch.dispose();
+        relation = 'four';
+        const afterDisposal = reads;
+        await expect(service.read('composed')).resolves.toMatchObject({ bytes: new Uint8Array(Buffer.from('four')) });
+        expect(reads).toBe(afterDisposal + 1);
+        controller.abort();
+    });
+
+    it('coalesces concurrent reads without sharing mutable returned bytes or caller cancellation', async () => {
+        let finish: ((value: string) => void) | undefined;
+        let reads = 0;
+        const owner = await createStablePluginResourcesOwner({
+            registry: registry([dynamicContribution('acme.concurrent', 'live')]),
+            generations: new Map(),
+            dynamicOccurrenceIdsByPluginId: new Map([['acme.concurrent', 'concurrent-1']]),
+            dynamicProducers: [{ pluginId: 'acme.concurrent', localId: 'live', runtime: {
+                read() { reads += 1; return finish === undefined ? 'admitted' : new Promise<string>((resolve) => { finish = resolve; }); },
+                observe() { return { dispose() {} }; },
+            } }],
+        });
+        finish = () => undefined;
+        const service = owner.bind({ pluginId: 'acme.concurrent', signal: new AbortController().signal, isOccurrenceCurrent: () => true });
+        const cancellation = new AbortController();
+        const cancelled = service.read('live', { signal: cancellation.signal });
+        const rejected = expect(cancelled).rejects.toMatchObject({ code: 'plugin_resource_aborted' });
+        const second = service.read('live');
+        const third = service.read('live');
+        await expect.poll(() => reads).toBe(2);
+        cancellation.abort();
+        finish!('shared');
+        await rejected;
+        const [a, b] = await Promise.all([second, third]);
+        a.bytes[0] = 0;
+        expect(Buffer.from(b.bytes).toString()).toBe('shared');
+        expect(reads).toBe(2);
+    });
+
+    it('rejects direct and indirect own Resource read cycles', async () => {
+        const owner = await createStablePluginResourcesOwner({
+            registry: registry(['direct', 'a', 'b'].map((id) => dynamicContribution('acme.cycles', id))),
+            generations: new Map(),
+            dynamicOccurrenceIdsByPluginId: new Map([['acme.cycles', 'cycles-1']]),
+            dynamicProducers: ['direct', 'a', 'b'].map((id) => ({
+                pluginId: 'acme.cycles', localId: id,
+                runtime: {
+                    async read({ resources }: PluginDynamicResourceInvocationOptionsV1) { return (await resources.read(id === 'direct' ? 'direct' : id === 'a' ? 'b' : 'a')).bytes; },
+                    observe() { return { dispose() {} }; },
+                },
+            })),
+        });
+        const service = owner.bind({ pluginId: 'acme.cycles', signal: new AbortController().signal, isOccurrenceCurrent: () => true });
+        await expect(service.read('direct')).rejects.toMatchObject({ code: 'plugin_resource_dependency_cycle' });
+        await expect(service.read('a')).rejects.toMatchObject({ code: 'plugin_resource_dependency_cycle' });
+    });
+
+    it('rejects recursive Resource observations without retaining circular demand', async () => {
+        const aborted: AbortSignal[] = [];
+        const owner = await createStablePluginResourcesOwner({
+            registry: registry(['a', 'b'].map((id) => dynamicContribution('acme.observer-cycle', id))),
+            generations: new Map(),
+            dynamicOccurrenceIdsByPluginId: new Map([['acme.observer-cycle', 'observer-cycle-1']]),
+            dynamicProducers: ['a', 'b'].map((id) => ({ pluginId: 'acme.observer-cycle', localId: id, runtime: {
+                read() { return id; },
+                observe(notify: () => void, { resources, signal }: PluginDynamicResourceInvocationOptionsV1) {
+                    aborted.push(signal);
+                    return resources.watch(id === 'a' ? 'b' : 'a', notify);
+                },
+            } })),
+        });
+        const service = owner.bind({ pluginId: 'acme.observer-cycle', signal: new AbortController().signal, isOccurrenceCurrent: () => true });
+        await expect(service.watch('a', () => undefined)).rejects.toThrow(expect.objectContaining({ code: 'plugin_resource_dependency_cycle' }));
+        expect(aborted).toHaveLength(2);
+        expect(aborted.every((signal) => signal.aborted)).toBe(true);
+    });
 
     it('admits more than the former declaration count within one plugin occurrence', async () => {
         const pluginCount = 513;
@@ -604,7 +776,7 @@ describe('dynamic plugin resources (EU-4b §3.6.1)', () => {
         expect(first.digest).toBe(digest(Buffer.from('{"count":1}')));
 
         const changes: { digest: string }[] = [];
-        const subscription = service.watch('live', (change) => { changes.push(change); });
+        const subscription = await service.watch('live', (change) => { changes.push(change); });
         expect(invalidate).toBeTypeOf('function');
 
         current = Buffer.from('{"count":2}');
@@ -674,7 +846,7 @@ describe('dynamic plugin resources (EU-4b §3.6.1)', () => {
             isOccurrenceCurrent: () => true,
         });
         const changes: { digest: string }[] = [];
-        service.watch('live', (change) => { changes.push(change); });
+        await service.watch('live', (change) => { changes.push(change); });
         invalidate!();
         invalidate!();
         invalidate!();
@@ -717,7 +889,7 @@ describe('dynamic plugin resources (EU-4b §3.6.1)', () => {
             isOccurrenceCurrent: () => true,
         });
         const changes: { digest: string }[] = [];
-        service.watch('live', (change) => { changes.push(change); });
+        await service.watch('live', (change) => { changes.push(change); });
         // Let establishment resynchronization settle before arming the failure
         // intended only for the producer invalidation below.
         await new Promise((resolve) => setTimeout(resolve, 10));
@@ -789,7 +961,7 @@ describe('dynamic resource watch retirement (EU-4b)', () => {
             isOccurrenceCurrent: () => generationCurrent,
         });
         const changes: { digest: string }[] = [];
-        service.watch('live', (change) => { changes.push(change); });
+        await service.watch('live', (change) => { changes.push(change); });
 
         current = Buffer.from('b');
         invalidate!();

@@ -79,6 +79,8 @@ export type PluginInvocationServicesSeed = Readonly<{
     managedBootstrapCredential?: ManagedBootstrapCredentialInvocationBinding;
     /** Canonical invocation owner retains private material cleanup. */
     retainCleanup?(cleanup: Readonly<{ dispose(): Promise<void> }>): void;
+    /** Host-only observed read authority withdrawal; never a plugin-authored event. */
+    retireReadObservation?(): void;
     /** Host-only absence of an admitted Session-list corpus. */
     sessionListAccess?: import('@happier-dev/protocol').ActionExecutorContext['sessionListAccess'];
     plugin: Readonly<{ id: string; version: string }>;

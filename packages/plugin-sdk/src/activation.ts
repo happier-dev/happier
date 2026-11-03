@@ -346,6 +346,7 @@ export type PluginRequestInterceptor = (request: PluginInterceptedRequest, conte
     PluginInterceptorResult | Promise<PluginInterceptorResult>;
 export interface PluginInterceptorRegistrationApi { register(id: string, interceptor: PluginRequestInterceptor): void }
 
+/** @realm any */
 export interface ResourcesRegistrationApi {
     /**
      * Bind the runtime producer for one manifest-declared dynamic resource
@@ -366,6 +367,7 @@ export interface PluginApi {
         register<I extends JsonValue = JsonValue, O extends JsonValue | void = JsonValue | void>(
             id: string,
             handler: ActionHandler<I, O>,
+            options?: Readonly<{ observeRead?: import('./actions/contracts.js').PluginActionReadObserver<I> }>,
         ): void;
     };
     readonly hooks: { register(id: string, handler: HookHandler): void };
@@ -434,12 +436,14 @@ export interface PluginClientApi {
 
 /** Portable Account artifact uses the same activate(api) registration ABI. @realm any */
 export interface PluginAccountApi {
+    readonly resources: ResourcesRegistrationApi;
     readonly connectedAccounts: {
         register(id: string, runtime: ConnectedAccountPortableRuntime): void;
     };
     readonly actions: {
         register<I extends JsonValue = JsonValue, O extends JsonValue | void = JsonValue | void>(
             id: string, handler: PluginAccountActionHandler<I, O>,
+            options?: Readonly<{ observeRead?: import('./actions/contracts.js').PluginActionReadObserver<I, import('./actions/contracts.js').PluginAccountActionContext> }>,
         ): void;
     };
 }
