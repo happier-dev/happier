@@ -135,6 +135,7 @@ export const WorkflowRunPeekDetailsView = React.memo(
                 invocationId={invocationId}
                 pathname={pageRoute}
                 visible={props.active}
+                acknowledgeFailure={false}
                 navigation={navigation}
               />
             </NavigationBackChromeProvider>

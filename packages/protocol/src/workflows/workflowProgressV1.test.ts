@@ -169,6 +169,7 @@ describe('workflow progress v1', () => {
 
   it('requires current Run ownership and visibility facts while attention remains operation-specific', () => {
     const summary = { id: 'run-1', sourceArtifactId: null, ownerAccountId: 'account-1', visibleTeamId: null,
+      attentionRequired: false, failureUnseen: false, invocationAttentionRequired: false, attentionSeenFailureAt: null, finishedAt: null,
       origin: { kind: 'direct' }, state: 'queued', revision: 0, machineId: 'machine-1',
       workflowCustodyState: 'pending', originDeliveryAckRevision: null,
       availability: { pause: true, resumeBoundary: false, restoreWorkspace: false,
@@ -630,6 +631,7 @@ describe('workflow progress v1', () => {
 
   it('projects the origin delivery acknowledgement separately from terminal Run lifecycle', () => {
     const summary = WorkflowRunSummaryV1Schema.parse({ sourceArtifactId: null, ownerAccountId: 'account-1', visibleTeamId: null,
+      attentionRequired: false, failureUnseen: false, invocationAttentionRequired: false, attentionSeenFailureAt: null, finishedAt: null,
       id: 'run-1',
       origin: { kind: 'direct', originSessionId: 'session-1' },
       state: 'succeeded',

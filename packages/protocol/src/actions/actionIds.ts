@@ -100,6 +100,7 @@ import { PUBLIC_PROFILE_ACTION_IDS_V1 } from '../account/publicProfileActionIds.
 
 export const WORKFLOW_ACTION_IDS_V1 = [
   'workflow.validate', 'workflow.run.start', 'workflow.run.list', 'workflow.run.summaries', 'workflow.run.get', 'workflow.run.wait',
+  'workflow.run.read_state.set',
   'workflow.run.pause', 'workflow.run.resume', 'workflow.run.cancel', 'workflow.run.invocations.list',
   'workflow.run.invocations.get', 'workflow.run.invocations.retry', 'workflow.run.delete',
   'workflow.run.invocations.publish_draft', 'workflow.run.invocations.complete_review',

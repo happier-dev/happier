@@ -33,6 +33,11 @@ export function createWorkflowRunSummaryFixture(overrides: SummaryOverrides = {}
         machineId: 'machine-1',
         workflowCustodyState: 'pending',
         originDeliveryAckRevision: null,
+        attentionSeenFailureAt: null,
+        failureUnseen: false,
+        invocationAttentionRequired: false,
+        attentionRequired: false,
+        finishedAt: null,
         availability: {
             pause: true,
             resumeBoundary: false,

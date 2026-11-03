@@ -4,7 +4,7 @@ import { AutomationAccountCurrentnessWitnessV1Schema } from '@happier-dev/protoc
 import { EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES } from '@happier-dev/protocol/actions/externalActionLimits';
 import { isWorkflowRunExecutorStorageOperationV1 } from '@happier-dev/protocol/workflows/workflowRunStorageV1';
 import { WorkflowInvocationLifecycleV1Schema, WorkflowRunDirectOriginV1Schema, WorkflowRunStateV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
-import { WorkflowRunListRequestV1Schema, WorkflowRunSummariesRequestV1Schema, WorkflowRunWaitConditionsV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
+import { WorkflowRunListRequestV1Schema, WorkflowRunSummariesRequestV1Schema, WorkflowRunWaitConditionsV1Schema, WorkflowRunReadStateSetRequestV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 import { WorkflowDefinitionIdV1Schema, WorkflowInvocationRecordIdSchema } from '@happier-dev/protocol/workflows/workflowIdsV1';
 import { WorkflowRunRecipientCensusInputV1Schema, WorkflowRunRecipientKeyEnvelopeCommitInputV1Schema, WorkflowRunRecipientKeyEnvelopesV1Schema } from '@happier-dev/protocol/workflows/workflowRunKeyV1';
 import { WorkflowRunOnCompleteV1Schema } from '@happier-dev/protocol/workflows/workflowDestinationsV1';
@@ -18,6 +18,7 @@ import {
     completeWorkflowInvocationReview,
     deleteWorkflowRun,
     getWorkflowRun,
+    setWorkflowRunReadState,
     getWorkflowRunInvocation,
     getCurrentWorkflowRunInvocation,
     initializeWorkflowRunExecution,
@@ -78,6 +79,7 @@ const InvocationFactOperationSchema = z.strictObject({
     }
 }));
 const OperationSchema = z.discriminatedUnion("operation", [
+    extend(WorkflowRunReadStateSetRequestV1Schema, { operation: z.literal("read_state.set") }),
     extend(WorkflowRunRecipientCensusInputV1Schema, { operation: z.literal("run-key.census"), publisherMachineId: z.optional(z.string().check(z.minLength(1))) }),
     extend(WorkflowRunRecipientKeyEnvelopeCommitInputV1Schema, { operation: z.literal("run-key.commit"), publisherMachineId: z.optional(z.string().check(z.minLength(1))) }),
     z.strictObject({ operation: z.literal("admit"), publisherMachineId: z.string().check(z.minLength(1)), runId: z.string().check(z.minLength(1)), origin: WorkflowRunDirectOriginV1Schema, machineId: z.string().check(z.minLength(1)), sourceArtifactId: z.optional(z.nullable(WorkflowDefinitionIdV1Schema)), visibleTeamId: z.optional(z.nullable(z.string().check(z.minLength(1)))), recipientKeyEnvelopes: z.optional(WorkflowRunRecipientKeyEnvelopesV1Schema), accountCurrentness: AutomationAccountCurrentnessWitnessV1Schema, acceptedEnvelope: z.string().check(z.minLength(1)), resultDelivery: z.optional(WorkflowRunOnCompleteV1Schema), discussionTargetSessionIds: z.optional(z.array(z.string().check(z.minLength(1)))) }),
@@ -121,6 +123,7 @@ export function registerWorkflowRunStorageRoutes(
     app.post(PATH, { preHandler: app.authenticate, schema: { body: OperationSchema } }, async (request, reply) => {
         const body = request.body;
         const executorOperation = isWorkflowRunExecutorStorageOperationV1(body.operation);
+        const publisherMachineId = 'publisherMachineId' in body ? body.publisherMachineId : undefined;
         const externalAction = request.externalActionExecutionAuthorized === true;
         if (body.operation === "invocations.complete_review" && request.authAuthority !== "present_user") return reply.code(401).send(null);
         if (!executorOperation && !externalAction && isRestrictedAuthTokenKind(request.authTokenKind)) {
@@ -128,14 +131,14 @@ export function registerWorkflowRunStorageRoutes(
         }
         // Explicit host shapes and verified external Actions retain exact publisher proof.
         // Ordinary Account reads/controls have no executor Machine requirement.
-        if (executorOperation || externalAction || body.publisherMachineId !== undefined) {
-            if (body.publisherMachineId === undefined) return reply.code(401).send(null);
+        if (executorOperation || externalAction || publisherMachineId !== undefined) {
+            if (publisherMachineId === undefined) return reply.code(401).send(null);
             const publisher = await resolveExactAutomationWorkerPublisher({
                 dependencies,
                 accountId: request.userId,
                 request,
                 path: PATH,
-                machineId: body.publisherMachineId,
+                machineId: publisherMachineId,
             });
             if (!publisher) return reply.code(401).send(null);
             if (body.operation === "admit" && body.machineId !== publisher.machineId) {
@@ -178,6 +181,7 @@ export function registerWorkflowRunStorageRoutes(
                 case "summaries": return await summarizeWorkflowRuns({ accountId: request.userId, ...body.request, pageByteLimit: body.pageByteLimit });
                 case "delivery.pull": return await pullWorkflowRunOriginDelivery({ accountId: request.userId, originSessionId: body.originSessionId, ...(body.cursor ? { cursor: body.cursor } : {}), ...(body.limit ? { limit: body.limit } : {}), pageByteLimit: body.pageByteLimit });
                 case "delivery.ack": return await ackWorkflowRunOriginDelivery({ accountId: request.userId, runId: body.runId, revision: body.revision });
+                case "read_state.set": return await setWorkflowRunReadState({ accountId: request.userId, runId: body.runId, revision: body.revision, failedAt: body.failedAt });
                 case "origin-input.withdrawn": return await recordWorkflowRunOriginInputWithdrawn({ accountId: request.userId, originSessionId: body.originSessionId, runId: body.runId, invocationRecordId: body.invocationRecordId, expectedRevision: body.expectedRevision, accountCurrentness: body.accountCurrentness });
                 case "recovery.list": return await listWorkflowRunsForRecovery({ accountId: request.userId, machineId: body.publisherMachineId, ...(body.cursor ? { cursor: body.cursor } : {}), ...(body.limit ? { limit: body.limit } : {}), pageByteLimit: body.pageByteLimit });
                 case "invocations.list": return await listWorkflowRunInvocations({ accountId: request.userId, runId: body.runId, ...(body.cursor ? { cursor: body.cursor } : {}), ...(body.limit ? { limit: body.limit } : {}), ...(body.invocationId !== undefined ? { invocationId: body.invocationId } : {}), ...(body.parentRecordId !== undefined ? { parentRecordId: body.parentRecordId } : {}), ...(body.parentRecordIds !== undefined ? { parentRecordIds: body.parentRecordIds } : {}), ...(body.memberOrdinal !== undefined ? { memberOrdinal: body.memberOrdinal } : {}), ...(body.lifecycles ? { lifecycles: body.lifecycles } : {}), ...(body.progressEnvelopes ? { progressEnvelopes: body.progressEnvelopes } : {}), pageByteLimit: body.pageByteLimit });

@@ -117,7 +117,9 @@ describe('workflow Action contracts', () => {
     ]) expect(input.safeParse(invalid).success).toBe(false);
     const result = { automationSummaries: [{ automationId: 'habit-a', lastRun: {
       id: 'run-a', state: 'succeeded', workflowCustodyState: 'settled', attentionRequired: false,
+      failureUnseen: false, invocationAttentionRequired: false,
       createdAt: '2026-10-21T00:00:00.000Z',
+      startedAt: '2026-10-21T00:01:00.000Z',
     } }, { automationId: 'habit-b', lastRun: null }], remainingAutomationIds: [] };
     expect(WorkflowActionOutputSchemasV1['workflow.run.summaries'].parse(result)).toEqual(result);
     expect(WorkflowActionOutputSchemasV1['workflow.run.summaries'].safeParse({ ...result, remainingSourceArtifactIds: [] }).success).toBe(false);
@@ -182,6 +184,7 @@ describe('workflow Action contracts', () => {
       'workflow.run.summaries',
       'workflow.run.get',
       'workflow.run.wait',
+      'workflow.run.read_state.set',
       'workflow.run.pause',
       'workflow.run.resume',
       'workflow.run.cancel',
@@ -343,6 +346,7 @@ describe('workflow Action contracts', () => {
 
   it('projects accepted execution context without the admitted authorization', () => {
     const run = { sourceArtifactId: null, ownerAccountId: 'account-1', visibleTeamId: null,
+      attentionRequired: false, failureUnseen: false, invocationAttentionRequired: false, attentionSeenFailureAt: null, finishedAt: null,
       id: 'run-1', origin: { kind: 'direct' }, state: 'succeeded', revision: 1,
       machineId: 'machine-1', workflowCustodyState: 'settled', originDeliveryAckRevision: null,
       availability: {
@@ -398,6 +402,7 @@ describe('workflow Action contracts', () => {
 
   it('keeps public Run summaries title-free while carrying private display metadata beside list rows', () => {
     const run = { sourceArtifactId: null, ownerAccountId: 'account-1', visibleTeamId: null,
+      attentionRequired: false, failureUnseen: false, invocationAttentionRequired: false, attentionSeenFailureAt: null, finishedAt: null,
       id: 'run-1', origin: { kind: 'direct' }, state: 'running', revision: 1,
       machineId: 'machine-1', workflowCustodyState: 'pending', originDeliveryAckRevision: null,
       availability: { pause: true, resumeBoundary: false,
@@ -509,6 +514,7 @@ describe('workflow Action contracts', () => {
 
     const response = {
       run: { sourceArtifactId: null, ownerAccountId: 'account-1', visibleTeamId: null,
+        attentionRequired: false, failureUnseen: false, invocationAttentionRequired: false, attentionSeenFailureAt: null, finishedAt: null,
         id: start.runId,
         origin: { kind: 'direct', originSessionId: 'sess-7' },
         state: 'running', revision: 3, machineId: 'machine-1',

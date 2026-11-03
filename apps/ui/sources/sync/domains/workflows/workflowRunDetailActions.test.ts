@@ -38,6 +38,14 @@ beforeEach(async () => {
 afterEach(async () => { await home.reset(); storage.setState(previous); publishAppliedActiveServerSnapshot(applied, available); });
 
 describe('workflow Run detail Actions through Account HTTP and native RPC', () => {
+    it('acknowledges the observed failure through the real front door and rejects stale observations', async () => {
+        const input = { runId: 'run-1', revision: 2, failedAt: '2026-10-23T10:00:00.000Z' };
+        home.answer(serverId, route, { body: { runId: input.runId, attentionSeenFailureAt: input.failedAt } });
+        expect(await actions.markFailureSeen(input)).toEqual({ runId: input.runId, attentionSeenFailureAt: input.failedAt });
+        expect(home.requestsFor(route).map(request => request.input)).toEqual([{ operation: 'read_state.set', ...input }]);
+        home.answer(serverId, route, { status: 409, body: { error: 'currentness_conflict' } });
+        await expect(actions.markFailureSeen(input)).rejects.toMatchObject({ code: 'currentness_conflict' });
+    });
     it('opens one exact Run with its producer-frozen definition and context through Account storage', async () => {
         const run = createWorkflowRunSummaryFixture({ id: 'run-1', ownerAccountId: 'detail-owner', origin: { kind: 'direct' } });
         const definition = createWorkflowDefinitionFixture({ blocks: [{ kind: 'wait', id: 'wait', document: { text: 'Continue', references: [], attachments: [] } }] });

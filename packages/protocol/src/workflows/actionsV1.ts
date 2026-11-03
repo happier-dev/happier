@@ -294,6 +294,15 @@ export const WorkflowRunGetRequestV1Schema = lazyZodSchema(() => z.strictObject(
   /** Scope readers need the accepted frame, without opening usage history. */
   includeUsage: z.optional(z.boolean()),
 }));
+export const WorkflowRunReadStateSetRequestV1Schema = lazyZodSchema(() => z.strictObject({
+  runId: WorkflowRunIdV1Schema,
+  revision: z.number().check(z.int(), z.nonnegative()),
+  failedAt: z.string().check(z.iso.datetime()),
+}));
+export const WorkflowRunReadStateSetResultV1Schema = lazyZodSchema(() => z.strictObject({
+  runId: WorkflowRunIdV1Schema,
+  attentionSeenFailureAt: z.nullable(z.string().check(z.iso.datetime())),
+}));
 export const WorkflowRunSourceSummariesRequestV1Schema = lazyZodSchema(() => z.strictObject({
   sourceArtifactIds: z.array(WorkflowDefinitionIdV1Schema).check(z.superRefine((ids, context) => {
     if (new Set(ids).size !== ids.length) context.addIssue({ code: "custom", message: 'Duplicate source artifacts' });
@@ -309,11 +318,15 @@ export const WorkflowRunSummariesRequestV1Schema = lazyZodSchema(() => z.union([
   WorkflowRunSourceSummariesRequestV1Schema, WorkflowRunAutomationSummariesRequestV1Schema,
 ]));
 export type WorkflowRunSummariesRequestV1 = z.infer<typeof WorkflowRunSummariesRequestV1Schema>;
-const WorkflowRunRecentSummaryV1Schema = lazyZodSchema(() => z.strictObject({ runId: WorkflowRunIdV1Schema, state: WorkflowRunStateV1Schema }));
+const WorkflowRunRecentSummaryV1Schema = lazyZodSchema(() => z.strictObject({
+  runId: WorkflowRunIdV1Schema, state: WorkflowRunStateV1Schema,
+  workflowCustodyState: WorkflowRunSummaryV1Schema.shape.workflowCustodyState,
+  attentionRequired: z.boolean(), failureUnseen: z.boolean(), invocationAttentionRequired: z.boolean(),
+}));
 export const WorkflowRunSourceSummariesResultV1Schema = lazyZodSchema(() => z.strictObject({
   summaries: z.array(z.strictObject({
     sourceArtifactId: WorkflowDefinitionIdV1Schema,
-    lastRun: z.nullable((<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(WorkflowRunRecentSummaryV1Schema, { createdAt: z.string().check(z.iso.datetime()), finishedAt: z.nullable(z.string().check(z.iso.datetime())) }))),
+    lastRun: z.nullable((<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(WorkflowRunRecentSummaryV1Schema, { createdAt: z.string().check(z.iso.datetime()), startedAt: z.string().check(z.iso.datetime()), finishedAt: z.nullable(z.string().check(z.iso.datetime())) }))),
     recent: z.array(WorkflowRunRecentSummaryV1Schema),
     needsYouCount: z.number().check(z.int(), z.nonnegative(), z.int()),
     needsYouRunId: zMini.nullable(WorkflowRunIdV1Schema),
@@ -329,7 +342,10 @@ export const WorkflowRunAutomationSummariesResultV1Schema = lazyZodSchema(() => 
       state: WorkflowRunStateV1Schema,
       workflowCustodyState: WorkflowRunSummaryV1Schema.shape.workflowCustodyState,
       attentionRequired: z.boolean(),
+      failureUnseen: z.boolean(),
+      invocationAttentionRequired: z.boolean(),
       createdAt: z.string().check(z.iso.datetime()),
+      startedAt: z.string().check(z.iso.datetime()),
     })),
   })),
   remainingAutomationIds: z.array(asProtocolZod(AutomationIdV1Schema)),
@@ -547,6 +563,7 @@ export const WorkflowActionInputSchemasV1 = {
   'workflow.run.list': WorkflowRunListRequestV1Schema,
   'workflow.run.summaries': WorkflowRunSummariesRequestV1Schema,
   'workflow.run.get': WorkflowRunGetRequestV1Schema,
+  'workflow.run.read_state.set': WorkflowRunReadStateSetRequestV1Schema,
   'workflow.run.wait': WorkflowRunWaitRequestV1Schema,
   'workflow.run.pause': WorkflowRunPauseRequestV1Schema,
   'workflow.run.resume': WorkflowResumeInputV1Schema,
@@ -577,12 +594,48 @@ export const WorkflowActionInputSchemasV1 = {
   'session.trigger.remove': SessionTriggerRemoveRequestV1Schema,
 } as const satisfies Record<WorkflowActionIdV1, z.ZodMiniType>;
 
-export const WorkflowActionOutputSchemasV1 = {
+export const WorkflowActionOutputSchemasV1: {
+  readonly 'workflow.validate': typeof WorkflowValidateResultV1Schema;
+  readonly 'workflow.run.start': typeof WorkflowRunStartResultV1Schema;
+  readonly 'workflow.run.list': typeof WorkflowRunListResultV1Schema;
+  readonly 'workflow.run.summaries': typeof WorkflowRunSummariesResultV1Schema;
+  readonly 'workflow.run.get': typeof WorkflowRunGetResultV1Schema;
+  readonly 'workflow.run.read_state.set': typeof WorkflowRunReadStateSetResultV1Schema;
+  readonly 'workflow.run.wait': typeof WorkflowRunWaitResultV1Schema;
+  readonly 'workflow.run.pause': typeof WorkflowRunControlResultV1Schema;
+  readonly 'workflow.run.resume': typeof WorkflowRunControlResultV1Schema;
+  readonly 'workflow.run.cancel': typeof WorkflowRunControlResultV1Schema;
+  readonly 'workflow.run.invocations.list': typeof WorkflowInvocationListResultV1Schema;
+  readonly 'workflow.run.invocations.get': typeof WorkflowInvocationGetResultV1Schema;
+  readonly 'workflow.run.invocations.retry': typeof WorkflowInvocationRetryResultV1Schema;
+  readonly 'workflow.run.invocations.publish_draft': typeof WorkflowInvocationPublishDraftResultV1Schema;
+  readonly 'workflow.run.invocations.complete_review': typeof WorkflowInvocationCompleteReviewResultV1Schema;
+  readonly 'workflow.run.delete': typeof WorkflowRunDeleteResultV1Schema;
+  readonly 'workflow.definition.list': typeof WorkflowDefinitionListResultV1Schema;
+  readonly 'workflow.definition.get': typeof WorkflowDefinitionGetResultV1Schema;
+  readonly 'workflow.definition.create': typeof WorkflowDefinitionCreateResultV1Schema;
+  readonly 'workflow.definition.update': typeof WorkflowDefinitionUpdateResultV1Schema;
+  readonly 'workflow.definition.edit': typeof WorkflowDefinitionEditResultV1Schema;
+  readonly 'workflow.definition.delete': typeof WorkflowDefinitionDeleteResultV1Schema;
+  readonly 'workflow.definition.import': typeof WorkflowDefinitionImportResultV1Schema;
+  readonly 'workflow.definition.capture': typeof WorkflowDefinitionCaptureResultV1Schema;
+  readonly 'workflow.definition.export': typeof WorkflowDefinitionExportResultV1Schema;
+  readonly 'workflow.trigger.list': typeof WorkflowTriggerListResultV1Schema;
+  readonly 'workflow.trigger.add': typeof WorkflowTriggerWriteResultV1Schema;
+  readonly 'workflow.trigger.update': typeof WorkflowTriggerWriteResultV1Schema;
+  readonly 'workflow.trigger.remove': typeof WorkflowTriggerRemoveResultV1Schema;
+  readonly 'workflow.trigger.run_now': typeof AutomationV3RunMutationResponseSchema;
+  readonly 'session.trigger.list': typeof SessionTriggerListResultV1Schema;
+  readonly 'session.trigger.add': typeof WorkflowTriggerWriteResultV1Schema;
+  readonly 'session.trigger.update': typeof WorkflowTriggerWriteResultV1Schema;
+  readonly 'session.trigger.remove': typeof WorkflowTriggerWriteResultV1Schema;
+} = {
   'workflow.validate': WorkflowValidateResultV1Schema,
   'workflow.run.start': WorkflowRunStartResultV1Schema,
   'workflow.run.list': WorkflowRunListResultV1Schema,
   'workflow.run.summaries': WorkflowRunSummariesResultV1Schema,
   'workflow.run.get': WorkflowRunGetResultV1Schema,
+  'workflow.run.read_state.set': WorkflowRunReadStateSetResultV1Schema,
   'workflow.run.wait': WorkflowRunWaitResultV1Schema,
   'workflow.run.pause': WorkflowRunControlResultV1Schema,
   'workflow.run.resume': WorkflowRunControlResultV1Schema,

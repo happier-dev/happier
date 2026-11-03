@@ -262,6 +262,7 @@ export function createWorkflowActionExecutor(deps: Readonly<{
         case 'workflow.run.list':
         case 'workflow.run.summaries':
         case 'workflow.run.get':
+        case 'workflow.run.read_state.set':
         case 'workflow.run.wait':
         case 'workflow.run.pause':
         case 'workflow.run.resume':

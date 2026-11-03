@@ -305,6 +305,7 @@ export function WorkflowRunScreen(props: Readonly<{
      * surface and leaves the host route's header alone; the pane owns Back.
      */
     embedded?: boolean;
+    acknowledgeFailure?: boolean;
 }> = {}): React.ReactElement {
     const router = useDestinationRouter();
     const params = useDestinationParams<{ runId?: string | string[]; invocationId?: string | string[]; serverId?: string | string[];
@@ -334,12 +335,12 @@ export function WorkflowRunScreen(props: Readonly<{
                 : target === null ? <RunStateFrame embedded={props.embedded === true}>
                     <SurfaceStateCard testID="workflow-run-unavailable" kind="unavailable"
                         title={t('workflows.destination.history.loadFailedTitle')} reason={t('workflows.destination.history.loadFailedBody')} />
-                </RunStateFrame> : <WorkflowRunBody onCloseInvocation={onBack} embedded={props.embedded === true} />}
+                </RunStateFrame> : <WorkflowRunBody onCloseInvocation={onBack} embedded={props.embedded === true} acknowledgeFailure={props.acknowledgeFailure !== false} />}
         </NavigationBackChromeProvider>
     </>;
 }
 
-function WorkflowRunBody(props: Readonly<{ onCloseInvocation: () => void; embedded?: boolean }>): React.ReactElement {
+function WorkflowRunBody(props: Readonly<{ onCloseInvocation: () => void; embedded?: boolean; acknowledgeFailure: boolean }>): React.ReactElement {
     const { theme } = useUnistyles();
     const contentStyle = React.useMemo(() => ({
         paddingHorizontal: theme.space.s16,
@@ -846,6 +847,32 @@ function WorkflowRunBody(props: Readonly<{ onCloseInvocation: () => void; embedd
     } }) : undefined;
     const visibleDefinition = contentBelongsToActiveScope ? definition : null;
     const visibleAcceptedContext = contentBelongsToActiveScope ? acceptedContext : null;
+    const failureToAcknowledge = props.acknowledgeFailure && activelyViewed && contentBelongsToActiveScope && detail && visibleAcceptedContext
+        && summary?.failureUnseen && summary.state === 'failed' && summary.finishedAt !== null
+        && summary.ownerAccountId === activeAccountScope?.accountId && loadState === 'ready'
+        ? { runId: summary.id, revision: summary.revision, failedAt: summary.finishedAt } : null;
+    const seenRunId = failureToAcknowledge?.runId;
+    const seenRevision = failureToAcknowledge?.revision;
+    const seenFailedAt = failureToAcknowledge?.failedAt;
+    React.useEffect(() => {
+        if (!seenRunId || seenRevision === undefined || !seenFailedAt || !accountLifetime?.isCurrent()) return;
+        const abort = new AbortController();
+        const retirement = accountLifetime.onRetire(() => abort.abort());
+        let current = true;
+        void workflowRunDetailActions.markFailureSeen({ runId: seenRunId, revision: seenRevision, failedAt: seenFailedAt }, abort.signal)
+            .then(async () => {
+                if (current && accountLifetime.isCurrent() && isContentIdentityCurrent(contentIdentity)) {
+                    // Only a fresh canonical summary clears the notice; the acknowledgement
+                    // response never fabricates local lifecycle or hold facts.
+                    await refreshWorkflowRunById(seenRunId, { accountLifetime, signal: abort.signal });
+                }
+            }).catch(error => {
+                if (current && !abort.signal.aborted && accountLifetime.isCurrent() && isContentIdentityCurrent(contentIdentity)) {
+                    setControlError(resolveWorkflowProblemPresentation(error, 'run'));
+                }
+            });
+        return () => { current = false; abort.abort(); retirement.dispose(); };
+    }, [accountLifetime, contentIdentity, isContentIdentityCurrent, loadAttempt, seenRunId, seenRevision, seenFailedAt, workflowRunDetailActions]);
     const callerAccess = contentBelongsToActiveScope ? detail?.callerAccess : undefined;
     const canEdit = callerAccess?.canEdit === true;
     const acceptedSource = visibleAcceptedContext?.source;

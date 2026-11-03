@@ -2487,9 +2487,11 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
         translateStorageError(error);
       }
     }
-    if (args.actionId === 'workflow.run.pause' || args.actionId === 'workflow.run.cancel' || args.actionId === 'workflow.run.delete') {
+    if (args.actionId === 'workflow.run.pause' || args.actionId === 'workflow.run.cancel' || args.actionId === 'workflow.run.delete'
+      || args.actionId === 'workflow.run.read_state.set') {
       try {
-        const operation = { 'workflow.run.pause': 'pause', 'workflow.run.cancel': 'cancel', 'workflow.run.delete': 'delete' } as const;
+        const operation = { 'workflow.run.pause': 'pause', 'workflow.run.cancel': 'cancel',
+          'workflow.run.delete': 'delete', 'workflow.run.read_state.set': 'read_state.set' } as const;
         return WorkflowActionOutputSchemasV1[args.actionId].parse(await deps.storage.execute({ operation: operation[args.actionId], ...args.input }, {
           ...(args.context.signal ? { signal: args.context.signal } : {}),
           ...(args.actionId === 'workflow.run.delete' && args.context.onTransportIssued

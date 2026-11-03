@@ -132,6 +132,7 @@ export function createWorkflowRunStorageTestkit(params: Readonly<{
     && [...rows.values()].some(value => ATTENTION_LIFECYCLES.some(lifecycle => lifecycle === value.index.lifecycle));
 
   const summary = (): WorkflowRunSummaryV1 => ({ sourceArtifactId: null, ownerAccountId: keyCensus.ownerAccountId, visibleTeamId: keyCensus.visibleTeamId,
+    failureUnseen: false, invocationAttentionRequired: requiresAttention(), attentionSeenFailureAt: null, finishedAt: null,
     id: params.runId,
     origin: params.origin,
     state,

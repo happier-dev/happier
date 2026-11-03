@@ -202,8 +202,12 @@ export const WorkflowRunSummaryV1Schema = lazyZodSchema(() => z.strictObject({
   heldCount: z.optional(z.number().check(z.int(), z.nonnegative(), z.int())),
   /** Opened by the authorized list host; null is unreadable, omission is an operation that did not open it. */
   where: zMini.optional(zMini.nullable(WorkflowProjectTargetV1Schema)),
-  /** Current server attention membership; absent on projections that did not read it. */
-  attentionRequired: z.optional(z.boolean()),
+  /** Current server attention membership, combining the owner notice and genuine invocation holds. */
+  attentionRequired: z.boolean(),
+  failureUnseen: z.boolean(),
+  invocationAttentionRequired: z.boolean(),
+  /** Owner-private acknowledgement; non-owner projections redact it to null. */
+  attentionSeenFailureAt: z.nullable(z.string().check(z.iso.datetime())),
   sourceArtifactId: zMini.nullable(WorkflowDefinitionIdV1Schema),
   ownerAccountId: preservedBoundedNfcString(191, 'Account ids'),
   visibleTeamId: zMini.nullable(preservedBoundedNfcString(191, 'Team ids')),
@@ -221,10 +225,9 @@ export const WorkflowRunSummaryV1Schema = lazyZodSchema(() => z.strictObject({
   updatedAt: z.string().check(z.iso.datetime()),
   /**
    * When the Run reached its terminal state, as the server recorded that transition; null while it
-   * has not. Unlike `updatedAt`, later custody or delivery bookkeeping never moves it. Absent on a
-   * projection that did not read it.
+   * has not. Unlike `updatedAt`, later custody or delivery bookkeeping never moves it.
    */
-  finishedAt: z.optional(z.nullable(z.string().check(z.iso.datetime()))),
+  finishedAt: z.nullable(z.string().check(z.iso.datetime())),
 }));
 export type WorkflowRunSummaryV1 = z.infer<typeof WorkflowRunSummaryV1Schema>;
 

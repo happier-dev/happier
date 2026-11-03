@@ -7,6 +7,7 @@ import { callWorkflowAction, type WorkflowActionExecute } from './callWorkflowAc
 
 import { WorkflowActionError } from './workflowActionError';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { WorkflowRunReadStateSetRequestV1Schema, WorkflowRunReadStateSetResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 
 /**
  * The exact Run **detail** reader and control caller.
@@ -51,6 +52,9 @@ export function createWorkflowRunDetailActions(dependencies: Readonly<{
     return {
         getRun: (runId: string, signal?: AbortSignal) =>
             call('workflow.run.get', { runId }, (value) => WorkflowRunGetResultV1Schema.parse(value), signal),
+        markFailureSeen: (input: Readonly<{ runId: string; revision: number; failedAt: string }>, signal?: AbortSignal) =>
+            call('workflow.run.read_state.set', WorkflowRunReadStateSetRequestV1Schema.parse(input),
+                value => WorkflowRunReadStateSetResultV1Schema.parse(value), signal),
 
         /**
          * One page of a Run's invocations. `lifecycles` asks the server's

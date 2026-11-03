@@ -4,7 +4,7 @@ import { deriveAutomationOccurrenceKeyV1 } from '@happier-dev/protocol/automatio
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import type { Tx } from "@/storage/inTx";
 import { resolveWorkflowRunAccessInTx } from "@/app/workflows/workflowRunAccess";
-import { workflowRunAttentionWhere } from "@/app/workflows/workflowRunAttention";
+import { readWorkflowRunInvocationAttentionInTx, workflowRunFailureUnseen } from "@/app/workflows/workflowRunAttention";
 import { AUTOMATION_RUN_TERMINAL_STATES } from "./automationTypes";
 import { AutomationValidationError } from "./automationValidation";
 import { admitAutomationRunTx } from "./automationRunAdmissionService";
@@ -82,16 +82,18 @@ export async function admitWorkflowRunLifecycleAutomationRunsTx(tx: Tx, runId: s
         select: { automation: { select: { accountId: true } } }, distinct: ["automationId"] });
     if (watchers.length === 0) return;
     const source = await tx.automationRun.findUnique({ where: { id: runId }, select: {
-        id: true, state: true, revision: true, updatedAt: true, workflowCustodyState: true } });
+        id: true, accountId: true, state: true, revision: true, updatedAt: true, workflowCustodyState: true,
+        finishedAt: true, attentionSeenFailureAt: true } });
     if (!source || source.workflowCustodyState === null) return;
     const locked = await tx.automationRun.updateMany({ where: { id: runId, revision: source.revision },
         data: { revision: { increment: 0 }, updatedAt: source.updatedAt } });
     if (locked.count !== 1) throw new AutomationValidationError("currentness_conflict");
     const terminal = AUTOMATION_RUN_TERMINAL_STATES.some(state => state === source.state);
-    const attention = await tx.automationRun.findFirst({ where: { id: runId, AND: [workflowRunAttentionWhere()] }, select: { id: true } }) !== null;
-    if (!terminal && !attention) return;
+    const invocationAttention = source.state !== 'cancelled' && (await readWorkflowRunInvocationAttentionInTx(tx, [runId])).has(runId);
+    if (!terminal && !invocationAttention) return;
     for (const accountId of new Set(watchers.map(row => row.automation.accountId))) {
         if (!await resolveWorkflowRunAccessInTx(tx, { actorAccountId: accountId, runId })) continue;
+        const attention = invocationAttention || workflowRunFailureUnseen(source, accountId);
         for (const condition of ["terminal", "needs_attention"] as const) {
             if (condition === "terminal" ? !terminal : !attention) continue;
             await admitRunLifecycleOccurrenceTx(tx, accountId, { v: 1, kind: "runLifecycle", source: { kind: "workflow_run", runId },

@@ -6,6 +6,7 @@
 export function isWorkflowRunExecutorStorageOperationV1(operation: unknown): boolean {
   switch (operation) {
     case 'get':
+    case 'read_state.set':
     case 'wait':
     case 'list':
     case 'summaries':

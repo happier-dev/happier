@@ -3008,6 +3008,8 @@ model AutomationRun {
     /// Null means no pending boundary Resume; a successful claim consumes the revision.
     workflowResumeRequestedRevision Int?
     originDeliveryAckRevision Int?
+    /// Owner acknowledgement of the failed terminal occurrence, independent of operational revision.
+    attentionSeenFailureAt DateTime?
     accountId          String
     account            Account            @relation(fields: [accountId], references: [id], onDelete: Cascade)
     state              AutomationRunState @default(queued)

@@ -23,7 +23,8 @@ describe("workflow Run attention to Inbox through SQLite", () => {
     it("indexes only human attention and keeps SQL summaries consistent with relational membership", async () => {
         const account = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: "plain" } });
         const machine = await db.machine.create({ data: { id: randomUUID(), accountId: account.id, metadata: "{}" } });
-        const scenarios = [
+        const finishedAt = new Date('2026-10-23T10:00:00.000Z');
+        const scenarios: ReadonlyArray<{ state: string; lifecycle: string; attention: boolean; seen?: Date | null; finishedAt?: Date }> = [
             { state: "cancelled", lifecycle: "cancel_requested", attention: false },
             { state: "cancelled", lifecycle: "waiting_for_review", attention: false },
             { state: "interrupted", lifecycle: "failed", attention: false },
@@ -33,8 +34,11 @@ describe("workflow Run attention to Inbox through SQLite", () => {
             { state: "running", lifecycle: "waiting_for_review", attention: true },
             { state: "running", lifecycle: "waiting_for_approval", attention: true },
             { state: "failed", lifecycle: "failed", attention: true },
+            { state: "failed", lifecycle: "failed", attention: false, seen: finishedAt, finishedAt },
+            { state: "failed", lifecycle: "failed", attention: true, seen: finishedAt, finishedAt: new Date('2026-10-23T11:00:00.000Z') },
+            { state: "failed", lifecycle: "waiting_for_approval", attention: true, seen: finishedAt, finishedAt },
             { state: "succeeded", lifecycle: "completed", attention: false },
-        ] as const;
+        ];
         const expectedIds = new Set<string>();
         const expectedHeldCounts = new Map<string, number>();
         for (const scenario of scenarios) {
@@ -53,6 +57,7 @@ describe("workflow Run attention to Inbox through SQLite", () => {
                 automationId: null, causeKind: null, causeOccurredAt: null,
                 workflowAcceptedSnapshotEnvelope: acceptedEnvelope,
                 state: scenario.state, scheduledAt: new Date(), dueAt: new Date(), workflowCustodyState: "pending",
+                finishedAt: scenario.finishedAt ?? (scenario.state === 'failed' ? finishedAt : null), attentionSeenFailureAt: scenario.seen ?? null,
                 assignments: { create: { machineId: machine.id, priority: 0 } } } });
             await db.workflowRunInvocation.create({ data: { id: randomUUID(), runId: run.id, sequence: 0n,
                 memberOrdinal: 0n, lifecycle: scenario.lifecycle, contentEnvelope: "unopened-private-progress" } });
@@ -60,11 +65,11 @@ describe("workflow Run attention to Inbox through SQLite", () => {
             expectedHeldCounts.set(run.id, scenario.state !== "cancelled" && scenario.lifecycle === "waiting_for_review" ? 1 : 0);
         }
         const relational = await db.automationRun.findMany({ where: { accountId: account.id,
-            AND: [workflowRunAttentionWhere()] }, select: { id: true } });
+            AND: [workflowRunAttentionWhere(account.id)] }, select: { id: true } });
         const id = workflowRunSqlIdentifier;
         const sql = await db.$queryRaw<Array<{ id: string }>>(prismaRuntime.sql`
             SELECT r.${id("id")} AS ${id("id")} FROM ${id("AutomationRun")} r
-            WHERE r.${id("accountId")} = ${account.id} AND ${workflowRunAttentionSql()}`);
+            WHERE r.${id("accountId")} = ${account.id} AND ${workflowRunAttentionSql(account.id)}`);
         expect(new Set(relational.map(run => run.id))).toEqual(expectedIds);
         expect(new Set(sql.map(run => run.id))).toEqual(expectedIds);
         // Exercise the actual Run projection, rather than a hand-written summary

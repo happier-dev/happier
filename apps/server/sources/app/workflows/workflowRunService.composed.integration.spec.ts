@@ -735,7 +735,8 @@ describe("workflowRunService (integration)", () => {
                 const summaries = await read({ operation: "summaries", request: { sourceArtifactIds, recent: 8 }, pageByteLimit: 24_000_000 });
                 expect(summaries).toEqual({ summaries: sourceArtifactIds.map(id => id === sourceArtifactId ? {
                     sourceArtifactId: id, lastRun: expect.objectContaining({ runId: seeded.runId, state: "running" }),
-                    recent: [{ runId: seeded.runId, state: "running" }], needsYouCount: 0, needsYouRunId: null,
+                    recent: [{ runId: seeded.runId, state: "running", workflowCustodyState: 'pending', attentionRequired: false,
+                        failureUnseen: false, invocationAttentionRequired: false }], needsYouCount: 0, needsYouRunId: null,
                 } : { sourceArtifactId: id, lastRun: null, recent: [], needsYouCount: 0, needsYouRunId: null }),
                     remainingSourceArtifactIds: [] });
             }
@@ -773,7 +774,7 @@ describe("workflowRunService (integration)", () => {
         const artifact = await db.artifact.create({ data: { id: randomUUID(), accountId: seeded.accountId,
             header: new Uint8Array(), body: new Uint8Array(), dataEncryptionKey: new Uint8Array() } });
         await db.automationRun.update({ where: { id: seeded.runId }, data: {
-            originKind: "automation", automationId: first.id, causeKind: "manual", causeOccurredAt: createdAt, createdAt,
+            originKind: "automation", automationId: first.id, causeKind: "manual", causeOccurredAt: createdAt, createdAt, startedAt: createdAt,
         } });
         const latestId = "ffffffff-ffff-4fff-bfff-ffffffffffff";
         const succeededId = randomUUID();
@@ -781,7 +782,7 @@ describe("workflowRunService (integration)", () => {
             { id: latestId, automationId: first.id, state: "failed", workflowCustodyState: "pending" },
             { id: succeededId, automationId: second.id, state: "succeeded", workflowCustodyState: "settled" },
         ].map(row => ({ ...row, accountId: seeded.accountId, originKind: "automation", causeKind: "manual",
-            causeOccurredAt: createdAt, scheduledAt: createdAt, dueAt: createdAt, createdAt,
+            causeOccurredAt: createdAt, scheduledAt: createdAt, dueAt: createdAt, createdAt, startedAt: createdAt,
             sourceArtifactId: artifact.id,
             // Public status does not depend on opening even malformed/unavailable private content.
             workflowAcceptedSnapshotEnvelope: "unopened private content", workflowCheckpointEnvelope: "private checkpoint" })) });
@@ -799,8 +800,8 @@ describe("workflowRunService (integration)", () => {
             };
             const result = await read(requested);
             expect(result).toEqual({ automationSummaries: [
-                { automationId: second.id, lastRun: { id: succeededId, state: "succeeded", workflowCustodyState: "settled", attentionRequired: false, createdAt: createdAt.toISOString() } },
-                { automationId: first.id, lastRun: { id: latestId, state: "failed", workflowCustodyState: "pending", attentionRequired: true, createdAt: createdAt.toISOString() } },
+                { automationId: second.id, lastRun: { id: succeededId, state: "succeeded", workflowCustodyState: "settled", attentionRequired: false, failureUnseen: false, invocationAttentionRequired: false, createdAt: createdAt.toISOString(), startedAt: createdAt.toISOString() } },
+                { automationId: first.id, lastRun: { id: latestId, state: "failed", workflowCustodyState: "pending", attentionRequired: true, failureUnseen: true, invocationAttentionRequired: false, createdAt: createdAt.toISOString(), startedAt: createdAt.toISOString() } },
                 { automationId: empty.id, lastRun: null }, { automationId: "foreign-or-absent", lastRun: null },
             ], remainingAutomationIds: [] });
             const fullResponse = await app.inject({ method: "POST", url: "/v3/automations/runs/workflow-storage", headers,
@@ -808,7 +809,10 @@ describe("workflowRunService (integration)", () => {
             expect(fullResponse.statusCode, fullResponse.body).toBe(200);
             const full: Awaited<ReturnType<typeof listWorkflowRuns>> = fullResponse.json();
             for (const summary of result.automationSummaries) if (summary.lastRun) {
-                expect(full.runs.find(run => run.id === summary.lastRun?.id)).toMatchObject(summary.lastRun);
+                // The latest-start projection adds its intrinsic start time;
+                // the ordinary list's existing public summary is unchanged.
+                const { startedAt: _startedAt, ...publicSummary } = summary.lastRun;
+                expect(full.runs.find(run => run.id === summary.lastRun?.id)).toMatchObject(publicSummary);
             }
             console.info("PERF-S4-workflow-summary", JSON.stringify({ fullBytes: Buffer.byteLength(fullResponse.body),
                 statusBytes: Buffer.byteLength(JSON.stringify(result)), fullRuns: full.runs.length, statusRows: result.automationSummaries.length }));
@@ -2411,7 +2415,7 @@ describe("workflowRunService (integration)", () => {
             .resolves.toEqual(rejoinedBefore);
     });
 
-    it("settles exact recovery-shaped terminal custody without replaying Automation terminal effects", async () => {
+    it.each(["succeeded", "failed"] as const)("settles exact recovery-shaped %s custody without replaying Automation terminal effects", async (state) => {
         const seeded = await seed();
         const automation = await db.automation.create({ data: {
             accountId: seeded.accountId,
@@ -2458,11 +2462,35 @@ describe("workflowRunService (integration)", () => {
             machineId: seeded.machineId,
             parentAttempt: 1,
             expectedRevision: 1,
-            state: "succeeded",
+            state,
             checkpointEnvelope: checkpoint,
             custodyState: "pending",
             invocationTransitions: [{ id: rootId, expectedLifecycle: "pending", lifecycle: "completed" }],
         });
+        const terminalBeforeSettlement = await db.automationRun.findUniqueOrThrow({
+            where: { id: runId },
+            select: { revision: true, finishedAt: true },
+        });
+        expect(terminalBeforeSettlement.revision).toBe(2);
+        expect(terminalBeforeSettlement.finishedAt).toBeInstanceOf(Date);
+        if (state === "failed") {
+            const { app, headers } = await createReviewStorageApp(seeded.accountId);
+            try {
+                const opened = await getWorkflowRun({ accountId: seeded.accountId, runId });
+                expect(opened.run).toMatchObject({ failureUnseen: true, attentionSeenFailureAt: null });
+                const seen = await app.inject({ method: "POST", url: "/v3/automations/runs/workflow-storage", headers,
+                    payload: { operation: "read_state.set", runId, revision: 2,
+                        failedAt: terminalBeforeSettlement.finishedAt!.toISOString() } });
+                expect(seen.statusCode, seen.body).toBe(200);
+                expect(seen.json()).toEqual({ runId, attentionSeenFailureAt: terminalBeforeSettlement.finishedAt!.toISOString() });
+                const repeat = await app.inject({ method: "POST", url: "/v3/automations/runs/workflow-storage", headers,
+                    payload: { operation: "read_state.set", runId, revision: 2,
+                        failedAt: terminalBeforeSettlement.finishedAt!.toISOString() } });
+                expect(repeat.statusCode, repeat.body).toBe(200);
+                expect((await getWorkflowRun({ accountId: seeded.accountId, runId })).run)
+                    .toMatchObject({ revision: 2, failureUnseen: false, attentionRequired: false });
+            } finally { await app.close(); }
+        }
         const invocationBeforeSettlement = await db.workflowRunInvocation.findUniqueOrThrow({
             where: { id: rootId },
             select: { lifecycle: true, contentEnvelope: true, updatedAt: true },
@@ -2474,7 +2502,7 @@ describe("workflowRunService (integration)", () => {
             machineId: seeded.machineId,
             parentAttempt: 1,
             expectedRevision: 2,
-            state: "succeeded",
+            state,
             checkpointEnvelope: checkpointEnvelope(seeded.accountId, runId, rootId, 2n),
             custodyState: "settled",
             invocationTransitions: [{ id: rootId, expectedLifecycle: "completed", lifecycle: "completed" }],
@@ -2485,7 +2513,7 @@ describe("workflowRunService (integration)", () => {
             machineId: seeded.machineId,
             parentAttempt: 1,
             expectedRevision: 2,
-            state: "succeeded",
+            state,
             checkpointEnvelope: checkpoint,
             custodyState: "settled",
             invocationTransitions: [{ id: rootId, expectedLifecycle: "completed", lifecycle: "needs_attention" }],
@@ -2497,25 +2525,28 @@ describe("workflowRunService (integration)", () => {
             machineId: seeded.machineId,
             parentAttempt: 1,
             expectedRevision: 2,
-            state: "succeeded",
+            state,
             checkpointEnvelope: checkpoint,
             custodyState: "settled",
             invocationTransitions: [{ id: rootId, expectedLifecycle: "completed", lifecycle: "completed" }],
         })).resolves.toMatchObject({
-            state: "succeeded",
+            state,
             workflowCustodyState: "settled",
             revision: 3,
         });
+        if (state === "failed") expect((await getWorkflowRun({ accountId: seeded.accountId, runId })).run)
+            .toMatchObject({ state: "failed", revision: 3, failureUnseen: false, attentionRequired: false });
         await expect(db.automationRun.findUniqueOrThrow({
             where: { id: runId },
-            select: { workflowCheckpointEnvelope: true, resultEnvelope: true },
-        })).resolves.toEqual({ workflowCheckpointEnvelope: checkpoint, resultEnvelope: null });
+            select: { workflowCheckpointEnvelope: true, resultEnvelope: true, finishedAt: true },
+        })).resolves.toEqual({ workflowCheckpointEnvelope: checkpoint, resultEnvelope: null,
+            finishedAt: terminalBeforeSettlement.finishedAt });
         await expect(db.workflowRunInvocation.findUniqueOrThrow({
             where: { id: rootId },
             select: { lifecycle: true, contentEnvelope: true, updatedAt: true },
         })).resolves.toEqual(invocationBeforeSettlement);
         await expect(db.automationRunEvent.findMany({ where: { runId }, select: { type: true } }))
-            .resolves.toEqual([{ type: "run_succeeded" }]);
+            .resolves.toEqual([{ type: state === "failed" ? "run_failed" : "run_succeeded" }]);
     });
 
     it.each(["ready", "handingOff"] as const)(

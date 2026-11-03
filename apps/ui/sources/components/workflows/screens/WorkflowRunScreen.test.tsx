@@ -133,6 +133,7 @@ const routeState = vi.hoisted((): { runId: string; invocationId?: string; server
 const platformViewport = vi.hoisted(() => ({ width: 800, height: 600, scale: 1, fontScale: 1 }));
 // Per-Action transport replies. The real detail client still parses every reply.
 const detailActions = vi.hoisted(() => ({
+    markFailureSeen: vi.fn(),
     getRun: vi.fn(),
     listRuns: vi.fn(),
     listInvocations: vi.fn(),
@@ -529,6 +530,7 @@ async function workflowStorageResponse(operation: Record<string, unknown>, signa
     const { operation: kind, progressEnvelopes, pageByteLimit: _budget, ...fields } = operation;
     const input = { ...fields, ...(progressEnvelopes ? { includeContent: true } : {}) };
     switch (kind) {
+        case 'read_state.set': return detailActions.markFailureSeen(fields, signal);
         case 'get': return acceptedStorage(await detailActions.getRun(fields.runId, signal));
         case 'list': {
             const page = fixtureRecord(await detailActions.listRuns(fixtureRecord(operation.request), signal));
@@ -757,6 +759,26 @@ afterEach(async () => {
 });
 
 describe('WorkflowRunScreen', () => {
+    it.each(['owner', 'viewer', 'peek'] as const)('acknowledges only an actually opened owner detail (%s)', async audience => {
+        const failedAt = '2026-10-23T10:00:00.000Z';
+        const run = createWorkflowRunSummaryFixture({ state: 'failed', finishedAt: failedAt,
+            failureUnseen: audience !== 'viewer', attentionRequired: audience !== 'viewer',
+            ownerAccountId: audience === 'viewer' ? 'another-account' : 'account-a' });
+        // Hold the response in flight: detail rendering must not await or fabricate a seen summary.
+        detailActions.markFailureSeen.mockImplementation(() => new Promise(() => {}));
+        if (audience === 'peek') Object.assign(platformViewport, { width: 1440, height: 900 });
+        const screen = await renderRunScreen({ run,
+            ...(audience === 'peek' ? { wrap: () => <AppPaneProvider><ModalProvider><LeadRunPeekHost
+                home={servedHomeId} runId={run.id} visible /></ModalProvider></AppPaneProvider> } : {}) });
+        try {
+            if (audience === 'peek') await screen.pressByTestIdAsync('lead-open-workflow');
+            await vi.waitFor(() => expect(readContentProps()?.run.state).toBe('failed'));
+            if (audience === 'owner') {
+                await vi.waitFor(() => expect(detailActions.markFailureSeen).toHaveBeenCalledWith(
+                    { runId: run.id, revision: run.revision, failedAt }, expect.anything()));
+            } else expect(detailActions.markFailureSeen).not.toHaveBeenCalled();
+        } finally { await screen.unmount(); }
+    });
     it('settles an addressed Run read silently when navigation retires its Home binding', async () => {
         routeState.serverId = servedHomeId;
         let readSignal: AbortSignal | undefined;

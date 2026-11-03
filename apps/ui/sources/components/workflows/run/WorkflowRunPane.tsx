@@ -20,6 +20,7 @@ export const WorkflowRunPane = React.memo(function WorkflowRunPane(props: Readon
     invocationId?: string | null;
     pathname: string;
     visible: boolean;
+    acknowledgeFailure?: boolean;
     navigation: DestinationNavigation;
 }>) {
     const { runId, invocationId, serverId } = props;
@@ -37,7 +38,7 @@ export const WorkflowRunPane = React.memo(function WorkflowRunPane(props: Readon
             navigation={props.navigation}
         >
             <WorkflowsGate>
-                <WorkflowRunScreen embedded />
+                <WorkflowRunScreen embedded acknowledgeFailure={props.acknowledgeFailure} />
             </WorkflowsGate>
         </DestinationInstanceHost>
     );
