@@ -1,3 +1,7 @@
+import { openManagedCreationActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import type { HostReviewedParentV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { invokeManagedReviewedChild } from './managedReviewedChild';
+import { resolveExternalActionRootInvocationAuthority } from '@/api/externalActionExecutionAuthorization';
 import { isManagedControllerCodecActionV1, openManagedControllerActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { projectExternalActionWorkflowSessionLeafContextV1 } from '@happier-dev/protocol/actions/externalActionApi';
@@ -283,6 +287,7 @@ export async function executeExternalAction(input: Readonly<{
     && isManagedControllerCodecActionV1(executionAuthorization.data.binding);
   let envelopeCodecMaterial: Readonly<{ type: 'dataKey'; machineKey: Uint8Array }> | null = null;
   let controllerInvocation: import('@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1').ExternalActionRequesterInvocationV1 | undefined;
+  let managedReviewedParent: HostReviewedParentV1 | undefined;
   // The opening target Home already proved for this root; an unchanged resolved
   // target spends that one admission rather than repeating the same POST.
   let rootAdmittedTarget: ExternalActionTargetV1 | undefined;
@@ -304,6 +309,24 @@ export async function executeExternalAction(input: Readonly<{
       errorCode: envelope.data.v === 2 ? 'invalid_encrypted_envelope' : 'invalid_envelope',
       ...(envelope.data.requestId ? { requestId: envelope.data.requestId } : {}) };
     rootAdmittedTarget = authorization.binding.target;
+  }
+  if (envelope.data.managedCreationCodec) {
+    const authorization = executionAuthorization?.success ? executionAuthorization.data : undefined;
+    const current = authorization && await runExternalActionPhase('managed_creation_codec_currentness', input.currentMachineId, () =>
+      input.verifyExecutionAuthorization!({ authorization, effectActionId: actionId.data,
+        target: authorization.binding.target, ...(input.signal ? { signal: input.signal } : {}) }));
+    const opened = authorization && current && current.ok && current.value && !input.signal?.aborted
+      ? openManagedCreationActionCodecV1({ authorization, envelope: envelope.data, includeInvocation: true,
+        machineId: input.currentMachineId, installationId: input.currentInstallationId!,
+        serverIdentityId: authorization.binding.serverIdentityId,
+        installationPrivateKey: typeof input.externalActionMachineRequestPrivateKey === 'string'
+          ? decodeBase64(input.externalActionMachineRequestPrivateKey, 'base64url') : input.externalActionMachineRequestPrivateKey!,
+      }) : null;
+    envelopeCodecMaterial = opened?.material ?? null;
+    controllerInvocation = opened?.invocation;
+    if (!opened || managedControllerCodec) return { kind: 'invalid_request',
+      errorCode: envelope.data.v === 2 ? 'invalid_encrypted_envelope' : 'invalid_envelope', requestId: envelope.data.requestId };
+    managedReviewedParent = opened.reviewedParent;
   }
   let pluginRuntimeLease: PluginRuntimeRegistryLease | null = null;
   // Diagnose the ordinary input corridor without serializing its carrier or
@@ -644,6 +667,15 @@ export async function executeExternalAction(input: Readonly<{
     ...(envelope.data.requestId ? { requestId: envelope.data.requestId } : {}),
     execution: { ok: false, errorCode: 'plugin_mounted_caller_unavailable', error: 'plugin_mounted_caller_unavailable' } });
   const invocation = requesterContext?.invocation ?? controllerInvocation;
+  // A creation codec is the SOURCE's packet, which may belong to another person.
+  // Surface selects this Account's Require and a named Session opens delegated
+  // decisions, so those facts come only from this Account's own admitted invocation.
+  const ownInvocation = envelope.data.managedCreationCodec ? requesterContext?.invocation : invocation;
+  // The new child codec cannot turn an unstamped Account request into a human
+  // click via the ordinary Account surface default. Signed causal origins and
+  // explicit invocation stamps retain their existing authority owner.
+  const unstampedManagedChild = envelope.data.managedCreationCodec
+    && !invocation && !sessionActionOrigin && !workflowActionOrigin;
   // This new same-Session mutation must retain its initiating cause. An Account
   // credential on the destination is custody, never evidence of a human click.
   if (actionId.data === 'session.agent.transition' && !sessionActionOrigin && !apiTokenPrincipal && !invocation) {
@@ -664,13 +696,19 @@ export async function executeExternalAction(input: Readonly<{
     ...(recordActionStartDiagnostic ? { recordActionStartDiagnostic } : {}),
     surface: pluginCaller ? 'plugin' : sessionActionOrigin ? 'agent' : apiTokenPrincipal
       ? 'api'
-      : resolveExternalActionAccountInvocationSurface(accountPrincipal?.authentication.kind, invocation?.surface ?? input.surface),
-    authority: invocation && invocation.authority !== 'present_user' ? 'account_automation' : input.principal.authority,
+      : resolveExternalActionAccountInvocationSurface(accountPrincipal?.authentication.kind, ownInvocation?.surface ?? input.surface),
+    authority: unstampedManagedChild || invocation && invocation.authority !== 'present_user'
+      ? 'account_automation'
+      // Home authenticates terminal continuations at an automation floor. Only
+      // the restored private host invocation establishes the person's CLI use.
+      : requesterContext?.invocation && accountPrincipal?.authentication.kind === 'terminal' && admittedAuthorization
+        ? resolveExternalActionRootInvocationAuthority(admittedAuthorization)
+        : input.principal.authority,
     actionCaller: pluginCaller ?? sessionActionOrigin?.caller ?? invocation?.caller ?? { kind: 'host' },
     ...(invocation ? { callerPermissionMode: invocation.callerPermissionMode,
       ...(invocation.callerInputConstraints ? { callerInputConstraints: invocation.callerInputConstraints } : {}),
       ...(invocation.workspaceWrites ? { workspaceWrites: invocation.workspaceWrites } : {}),
-      ...(invocation.defaultSessionId ? { defaultSessionId: invocation.defaultSessionId } : {}),
+      ...(ownInvocation?.defaultSessionId ? { defaultSessionId: ownInvocation.defaultSessionId } : {}),
     } : {}),
     ...(admittedAuthorization ? projectExternalActionWorkflowSessionLeafContextV1(admittedAuthorization) : {}),
     ...(sessionActionOrigin ? {
@@ -733,8 +771,15 @@ export async function executeExternalAction(input: Readonly<{
   let internalExecution: ActionExecuteResult;
   try {
     trace('action_execution.begin');
-    internalExecution = await withWebLatencyTrace(envelope.data.requestId, () => timeWebLatencyPhase('daemon.action.execute', () =>
-      (requesterContext?.executor ?? input.executor).execute(actionId.data, decodedInput, context)));
+    internalExecution = await withWebLatencyTrace(envelope.data.requestId, () => timeWebLatencyPhase('daemon.action.execute', async () => {
+        const executor = requesterContext?.executor ?? input.executor;
+        const reviewed = await invokeManagedReviewedChild({ parent: managedReviewedParent ?? requesterContext?.invocation?.reviewedParent,
+          requesterOwnedReview: !managedReviewedParent && Boolean(requesterContext?.invocation?.reviewedParent),
+          context, actionId: actionId.data, actionInput: decodedInput,
+          execute: (childInput, childContext) => executor.execute(actionId.data, childInput, childContext) });
+        if (reviewed) return reviewed;
+        return executor.execute(actionId.data, decodedInput, context);
+    }));
     trace('action_execution.end');
   } catch (error) {
     trace('action_execution.threw');

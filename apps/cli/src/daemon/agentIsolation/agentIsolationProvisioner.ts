@@ -4,8 +4,9 @@ import { applyMachineSetupEffectPlan, checkMachineSetupEffectPlan, createMachine
 import { resolveMachineAgentExecutionPlacementV1, readMachineAgentIsolationPolicyV1, type AgentIsolationEffectPlanV1, type MachineAgentIsolationPolicyV1,
   type MachineAgentIsolationPreviewResultV1, type MachineAgentIsolationStatusV1, type MachineElevatedResultV1 } from '@happier-dev/protocol';
 import type { MachineSetupEffectPlanV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
+import { MachineSetupObservationReasonV1Schema } from '@happier-dev/protocol/machines/setup/machineSetupObservationReasonV1';
 import type { MachineMetadataFieldPortV1 } from '@happier-dev/protocol/machines/machineMetadataFieldV1';
-import { checkElevatedMachineSetupPlan, runElevatedEffect, runElevatedMachineSetupIntent, type MachineElevationDependencies } from '@/machines/adminAccess/runElevatedEffect';
+import { checkElevatedMachineSetupPlanResult, runElevatedEffect, runElevatedMachineSetupIntent, type MachineElevationDependencies } from '@/machines/adminAccess/runElevatedEffect';
 import { buildAgentIsolationProvisioningSteps, buildAgentIsolationMemberAccountStep, buildAgentIsolationMemberRetirementSteps,
   deriveAgentIsolationMemberIdentity, type AgentIsolationMemberRequester, type AgentIsolationDaemonObservation } from './provisioning';
 import { readAgentIsolationNativeIdentity, type AgentIsolationMemberNativeIdentity } from './agentIsolationNativeIdentity';
@@ -88,33 +89,53 @@ export async function resolveAgentIsolationEffectIntent(enabled: boolean, effect
 }
 
 /** One review/digest owner, reused before every CAS and inside elevated APPLY. */
-export async function prepareAgentIsolationEffects(input: Readonly<{
+export async function prepareAgentIsolationEffects(input: Parameters<typeof prepareAgentIsolationEffectsResult>[0],
+  effects: AgentIsolationEffectDependencies): Promise<PreparedAgentIsolationEffects | null> {
+  const result = await prepareAgentIsolationEffectsResult(input, effects);
+  return 'preview' in result ? result : null;
+}
+
+/** Read-only preparation preserves the native/elevation owner's prerequisite;
+ * mutation callers retain their existing null contract through the wrapper. */
+export async function prepareAgentIsolationEffectsResult(input: Readonly<{
   machineId: string; enabled: boolean; port: MachineMetadataFieldPortV1;
   status: MachineAgentIsolationStatusV1; expectedPolicy?: MachineAgentIsolationPolicyV1;
   operationId?: string; signal?: AbortSignal; verifyCurrent?: () => Promise<boolean>;
   memberProvisioning?: 'linuxUsersV1';
   requesterIdentity?: AgentIsolationMemberRequester;
-}>, effects: AgentIsolationEffectDependencies): Promise<PreparedAgentIsolationEffects | null> {
-  if (effects.platform !== 'linux') return null;
+}>, effects: AgentIsolationEffectDependencies): Promise<PreparedAgentIsolationEffects
+  | Extract<MachineAgentIsolationPreviewResultV1, { kind: 'unavailable' }>> {
+  const unavailable = (code: Extract<MachineAgentIsolationStatusV1, { kind: 'unavailable' }>['code'] = 'provisioning_unavailable') =>
+    ({ kind: 'unavailable', status: { kind: 'unavailable', code } } as const);
+  if (effects.platform !== 'linux') return unavailable('unsupported_platform');
   if (input.requesterIdentity && (input.requesterIdentity.requester.machineId !== input.machineId
-    || input.requesterIdentity.requester.installationId !== effects.elevation.installationId)) return null;
+    || input.requesterIdentity.requester.installationId !== effects.elevation.installationId)) return unavailable();
   const snapshot = await input.port.read();
-  if (snapshot.status !== 'ready') return null;
+  if (snapshot.status !== 'ready') return unavailable('metadata_unavailable');
   const policy = readMachineAgentIsolationPolicyV1(snapshot.metadata);
-  if (policy.status !== 'ready') return null;
+  if (policy.status !== 'ready') return unavailable('metadata_unavailable');
   const intent = await resolveAgentIsolationEffectIntent(input.enabled, effects, input.requesterIdentity);
-  if (!intent) return null;
+  if (!intent) return unavailable();
   const { roots, ancestorAcls, sessionsToReplace, steps } = intent;
   const memberReview = input.enabled && input.memberProvisioning === 'linuxUsersV1'
     ? { memberProvisioning: 'linuxUsersV1' as const } : {};
   const basis: MachineSetupEffectPlanV1['basis'] = { kind: 'agentIsolation', machineId: input.machineId, enabled: input.enabled,
     expectedPolicy: input.expectedPolicy ?? policy.policy, review: { roots, ancestorAcls, sessionsToReplace, ...memberReview } };
-  const setupPlan = !effects.backend && input.enabled && input.operationId && input.verifyCurrent
-    ? await checkElevatedMachineSetupPlan({ machineId: input.machineId, operationId: input.operationId,
-      basis, steps, signal: input.signal }, { ...effects.elevation, verifyCurrent: input.verifyCurrent })
-    : await checkMachineSetupEffectPlan({ basis, steps, backend: effects.backend ?? createMachineSetupNativeBackend() });
-  if (!setupPlan) return null;
-  if (setupPlan.nativeFacts.some(fact => fact.status === 'unavailable' || fact.status === 'unsupported')) return null;
+  let setupPlan: MachineSetupEffectPlanV1;
+  if (!effects.backend && input.enabled && input.operationId && input.verifyCurrent) {
+    const checked = await checkElevatedMachineSetupPlanResult({ machineId: input.machineId, operationId: input.operationId,
+      basis, steps, signal: input.signal }, { ...effects.elevation, verifyCurrent: input.verifyCurrent });
+    if (checked.outcome !== 'checked') return { ...unavailable(),
+      ...(checked.outcome === 'not_applied' ? { setup: checked } : {}) };
+    setupPlan = checked.plan;
+  } else setupPlan = await checkMachineSetupEffectPlan({ basis, steps, backend: effects.backend ?? createMachineSetupNativeBackend() });
+  const nativeFailure = setupPlan.nativeFacts.find(fact => fact.status === 'unavailable' || fact.status === 'unsupported');
+  if (nativeFailure) {
+    const reasonCode = nativeFailure.status === 'unsupported' ? 'native_check_unsupported' : 'native_check_unavailable';
+    const reason = MachineSetupObservationReasonV1Schema.safeParse(nativeFailure.reason);
+    return { ...unavailable(), setup: { outcome: 'not_applied', reasonCode,
+      failure: { kind: reasonCode, ...(reason.success ? { reason: reason.data } : {}) } } };
+  }
   const plan: AgentIsolationEffectPlanV1 = { ...memberReview, roots: roots.map(root => ({ ...root,
     changes: input.enabled && setupPlan.nativeFacts.find(fact => fact.stepId === `workspace-${root.rootId}`)?.status !== 'satisfied'
       ? ['group', 'setgid', 'mode', 'gitShared', 'safeDirectory'] : [] })), ancestorAcls, sessionsToReplace,

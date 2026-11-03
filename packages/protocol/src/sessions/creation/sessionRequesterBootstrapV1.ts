@@ -1,3 +1,7 @@
+import { ExternalActionRequestEnvelopeSchema, isExternalActionRequestVersionAllowedForAccountModeV1,
+  type ExternalActionRequestEnvelope, type ExternalActionRequestEnvelopeV2 } from '../../actions/externalActionApi.js';
+import { computeExternalActionRequestEnvelopeDigestV1 } from '../../actions/externalActionExecutionAuthorization.js';
+import { ManagedEnrollmentInstallationV1Schema } from '../../machines/managed/actionsV1.js';
 import { isSessionStopChildRootV1, readSessionStopChildTargetV1 } from '../../actions/sessionSectionArchive.js';
 import { RPC_METHODS } from '../../rpc/methods.js';
 import { WorkflowApprovedOperationParentV1Schema } from '../../actions/approvedOperationV1.js';
@@ -105,8 +109,12 @@ export const ExternalActionRequesterInvocationV1Schema = lazyZodSchema(() => z.s
   callerInputConstraints: z.optional(CallerInputConstraintsV1Schema),
   workspaceWrites: z.optional(z.enum(['allow', 'deny'])),
   defaultSessionId: z.optional(z.string().check(z.trim(), z.minLength(1))),
+  /** Admitted host operation facts; the receiving issuer still matches the declared child plan. */
+  reviewedParent: z.optional(WorkflowApprovedOperationParentV1Schema),
 }).check(z.refine(value => value.caller.kind !== 'plugin' || value.authority === 'account_automation', {
   message: 'A Plugin invocation cannot carry present-user authority.',
+}), z.refine(value => !value.reviewedParent || value.caller.kind === 'host', {
+  message: 'A reviewed parent belongs to a host invocation.',
 })));
 export type ExternalActionRequesterInvocationV1 = z.infer<typeof ExternalActionRequesterInvocationV1Schema>;
 const installationContextRootShape = () => ({
@@ -128,6 +136,105 @@ const ManagedControllerCodecPlaintextV1Schema = lazyZodSchema(() => z.strictObje
 
 /** Nested purpose discriminants select an already parsed closed context arm. */
 
+
+type SealManagedCreationActionCodecInput = Readonly<{
+  authorization: ExternalActionExecutionAuthorizationV1;
+  actionId: typeof MANAGED_MACHINE_CREATION_CHILD_ACTION_IDS_V1[number];
+  invocation?: ExternalActionRequesterInvocationV1;
+  reviewedParent?: z.infer<typeof WorkflowApprovedOperationParentV1Schema>;
+  continuation: Pick<z.infer<typeof ExternalActionManagedContinuationV1Schema>, 'managedId' | 'creationRequestId' | 'expectedIntentRevision'>;
+  envelope: ExternalActionRequestEnvelope;
+  recipient: z.infer<typeof ManagedEnrollmentInstallationV1Schema>;
+  material?: Readonly<{ type: 'dataKey'; machineKey: Uint8Array }>;
+  randomBytes(length: number): Uint8Array;
+}>;
+
+/** The existing source signature, not recipient encryption, authenticates this continuation. */
+export function sealManagedCreationActionCodecV1(input: SealManagedCreationActionCodecInput & Readonly<{ envelope: ExternalActionRequestEnvelopeV2 }>): ExternalActionRequestEnvelopeV2;
+export function sealManagedCreationActionCodecV1(input: SealManagedCreationActionCodecInput): ExternalActionRequestEnvelope;
+export function sealManagedCreationActionCodecV1(input: SealManagedCreationActionCodecInput): ExternalActionRequestEnvelope {
+  const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(input.authorization);
+  const root = authorization.binding;
+  const recipient = ManagedEnrollmentInstallationV1Schema.parse(input.recipient);
+  const envelope = ExternalActionRequestEnvelopeSchema.parse(input.envelope);
+  const needsCodecMaterial = root.accountEncryptionMode === 'e2ee' && root.accountId !== root.custodianAccountId;
+  if (!isManagedCreationCodecParent(root, input.actionId) || envelope.managedCreationCodec
+    || envelope.target?.kind !== 'machine' || envelope.target.machineId !== recipient.machineId
+    || envelope.requestId !== root.requestId
+    || root.actionId === 'machines.managed.acquire' && input.continuation.creationRequestId !== root.requestId
+    || !root.accountEncryptionMode || !isExternalActionRequestVersionAllowedForAccountModeV1({ accountEncryptionMode: root.accountEncryptionMode, envelopeVersion: envelope.v })
+    || needsCodecMaterial && !input.material)
+    throw new Error('managed_creation_codec_root_mismatch');
+  const plaintext = ManagedCreationCodecPlaintextV1Schema.parse({ v: 1, authorization,
+    ...(input.invocation ? { invocation: input.invocation } : {}),
+    ...(input.reviewedParent ? { reviewedParent: input.reviewedParent } : {}),
+    purpose: { kind: 'managed_creation_codec', actionId: input.actionId,
+      continuation: { ...input.continuation, controller: { machineId: root.machineId, installationId: root.installationId },
+        acquireRequestEnvelopeDigest: root.requestEnvelopeDigest },
+      recipient: { machineId: recipient.machineId, installationId: recipient.installationId },
+      requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) },
+    ...(needsCodecMaterial ? { codec: { machineKey: encodeBase64(input.material!.machineKey) } } : {}) });
+  return { ...envelope, managedCreationCodec: sealInstallationContext({ plaintext, installationId: recipient.installationId,
+    installationPublicKey: decodeBase64(recipient.installationPublicKey, 'base64url'), randomBytes: input.randomBytes }) };
+}
+
+function isManagedCreationCodecParent(root: ExternalActionExecutionAuthorizationV1['binding'], actionId: string) {
+  return 'authentication' in root && (root.accountEncryptionMode === 'plain' || root.accountEncryptionMode === 'e2ee')
+    && root.target.kind === 'machine' && root.target.machineId === root.machineId
+    && MANAGED_MACHINE_CREATION_CHILD_ACTION_IDS_V1.some(id => id === actionId)
+    && (root.actionId === 'machines.managed.acquire' || root.actionId === 'machines.managed.bootstrap.retry'
+      && (actionId === 'machines.setup.adminAccess.set' || actionId === 'machines.agentIsolation.preview' || actionId === 'machines.agentIsolation.set'));
+}
+
+/** Called only after Home verifies the child root; no Account credentials are recovered. */
+type OpenManagedCreationActionCodecInput = Readonly<{
+  authorization: unknown; envelope: ExternalActionRequestEnvelope;
+  machineId: string; installationId: string; serverIdentityId: string; installationPrivateKey: Uint8Array;
+}>;
+export function openManagedCreationActionCodecV1(input: OpenManagedCreationActionCodecInput & Readonly<{ includeInvocation: true }>):
+  Readonly<{ material: ManagedControllerCodecMaterial | null; invocation?: ExternalActionRequesterInvocationV1;
+    reviewedParent?: z.infer<typeof WorkflowApprovedOperationParentV1Schema> }> | null;
+export function openManagedCreationActionCodecV1(input: OpenManagedCreationActionCodecInput): ManagedControllerCodecMaterial | null;
+export function openManagedCreationActionCodecV1(input: OpenManagedCreationActionCodecInput & Readonly<{ includeInvocation?: boolean }>) {
+  try {
+    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(input.authorization);
+    const root = authorization.binding;
+    const envelope = ExternalActionRequestEnvelopeSchema.parse(input.envelope);
+    const sealed = envelope.managedCreationCodec;
+    if (!sealed || !root.managedContinuation || !('authentication' in root) || root.accountId !== root.custodianAccountId
+      || !root.accountEncryptionMode || !isExternalActionRequestVersionAllowedForAccountModeV1({ accountEncryptionMode: root.accountEncryptionMode, envelopeVersion: envelope.v })
+      || root.serverIdentityId !== input.serverIdentityId
+      || root.machineId !== input.machineId || root.installationId !== input.installationId
+      || root.target.kind !== 'machine' || root.target.machineId !== input.machineId
+      || envelope.target?.kind !== 'machine' || envelope.target.machineId !== input.machineId
+      || envelope.requestId !== root.requestId || sealed.installationId !== input.installationId
+      || root.requestEnvelopeDigest !== computeExternalActionRequestEnvelopeDigestV1(envelope)) return null;
+    const plaintext = openInstallationSealedContext(sealed, input.installationPrivateKey);
+    if (!plaintext || !hasManagedCodecPurpose(plaintext, 'managed_creation_codec')) return null;
+    const parent = plaintext.authorization.binding;
+    // The final Home-signed digest includes the box. Its internal base digest
+    // commits all other envelope bytes, avoiding a circular digest definition.
+    const { managedCreationCodec: _codec, ...baseEnvelope } = envelope;
+    if (!isManagedCreationCodecParent(parent, root.actionId) || parent.serverIdentityId !== root.serverIdentityId
+      || parent.accountId !== root.accountId || !('authentication' in parent)
+      || createCanonicalJsonSigningInput(parent.authentication) !== createCanonicalJsonSigningInput(root.authentication)
+      || parent.requestId !== root.requestId || plaintext.purpose.actionId !== root.actionId
+      || plaintext.purpose.recipient.machineId !== input.machineId || plaintext.purpose.recipient.installationId !== input.installationId
+      || plaintext.purpose.continuation.controller?.machineId !== parent.machineId
+      || plaintext.purpose.continuation.controller?.installationId !== parent.installationId
+      || plaintext.purpose.continuation.acquireRequestEnvelopeDigest !== parent.requestEnvelopeDigest
+      || createCanonicalJsonSigningInput(plaintext.purpose.continuation) !== createCanonicalJsonSigningInput(root.managedContinuation)
+      || plaintext.reviewedParent && plaintext.reviewedParent.actionId !== parent.actionId
+      || plaintext.purpose.requestEnvelopeDigest !== computeExternalActionRequestEnvelopeDigestV1(baseEnvelope)) return null;
+    const needsCodecMaterial = parent.accountEncryptionMode === 'e2ee' && parent.accountId !== parent.custodianAccountId;
+    if (parent.accountEncryptionMode !== root.accountEncryptionMode || needsCodecMaterial !== Boolean(plaintext.codec)) return null;
+    const material: ManagedControllerCodecMaterial | null = plaintext.codec
+      ? { type: 'dataKey', machineKey: decodeBase64(plaintext.codec.machineKey) } : null;
+    return input.includeInvocation ? { material,
+      ...('reviewedParent' in plaintext && plaintext.reviewedParent ? { reviewedParent: plaintext.reviewedParent } : {}),
+      ...('invocation' in plaintext && plaintext.invocation ? { invocation: plaintext.invocation } : {}) } : material;
+  } catch { return null; }
+}
 
 function openInstallationSealedContext(sealed: z.infer<typeof SessionRequesterInstallationSealedBootstrapV1Schema>, privateKey: Uint8Array) {
   if (privateKey.length !== ED25519_SECRET_KEY_BYTES) return null;

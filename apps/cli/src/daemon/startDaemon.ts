@@ -1,3 +1,4 @@
+import { createDaemonAgentIsolationEffects } from './agentIsolation/createDaemonAgentIsolationEffects';
 import { createDaemonMachineReachabilityRoutes } from '@/machines/reachability/createDaemonMachineReachabilityRoutes';
 import { getActiveProjectAccountRowsSnapshot } from '@/workspaces/projectAccountRows';
 
@@ -1689,6 +1690,13 @@ const readIsolationRoots = () => {
         ?.map(ref => ({ rootId: ref.id, path: ref.rootPath })) ?? null;
     };
 
+    const isolationEffects = createDaemonAgentIsolationEffects({ getMachineClient: () => apiMachineForSessions,
+      adminAccess: machineAdminAccessRoutes, readRoots: readIsolationRoots,
+      trackedSessions: pidToTrackedSession,
+      protectedRoots: [configuration.happyHomeDir, '/opt/happier', '/var/lib/happier-agent'],
+      privateRoots: [configuration.happyHomeDir],
+    });
+    machineRpcRouteAttachments.attachMachineAgentIsolationRoutes(isolationEffects);
 const agentIsolation: import('./agentIsolation/agentIsolationLaunchPolicy').HostAgentIsolationLaunchContext = {
 
 

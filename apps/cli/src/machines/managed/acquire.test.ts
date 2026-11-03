@@ -59,7 +59,7 @@ import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettin
 import * as privateFiles from '@/daemon/privateBearerFile';
 import { computeAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 import { projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
-import { EXTERNAL_ACTION_EFFECT_ACTION_HEADER, EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER, ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { EXTERNAL_ACTION_EFFECT_ACTION_HEADER, EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER, ExternalActionExecutionAuthorizationV1Schema, ExternalActionExecutionAuthorizationRequestV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { EXTERNAL_ACTION_HTTP_BODY_LIMIT_BYTES } from '@happier-dev/protocol/actions/externalActionApi';
 import { verifyExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { sealQualifiedConnectedAccountContentEnvelope } from '@happier-dev/protocol';
@@ -125,6 +125,117 @@ function driver() {
     return createManagedMachineAcquisitionDriver({ token: 'token', serverUrl: 'https://home.example', homeId: 'home', controller, runtimeRegistry, ...accountInputs });
 }
 describe('creation environment stage', () => {
+    it.each([
+        { action: 'machines.managed.acquire', outcome: 'applied', storedEnabled: false },
+        { action: 'machines.managed.acquire', outcome: 'outcomeUnknown', storedEnabled: false },
+        { action: 'machines.managed.acquire', outcome: 'adminApproval', storedEnabled: false },
+        { action: 'machines.managed.acquire', outcome: 'isolationApproval', storedEnabled: false },
+        { action: 'machines.managed.acquire', outcome: 'previewRefusal', storedEnabled: false },
+        { action: 'machines.managed.acquire', outcome: 'isolationUnavailable', storedEnabled: false },
+        { action: 'machines.managed.bootstrap.retry', outcome: 'applied', storedEnabled: false },
+        { action: 'machines.managed.bootstrap.retry', outcome: 'applied', storedEnabled: true },
+        { action: 'machines.managed.bootstrap.retry', outcome: 'conflict', storedEnabled: false },
+        { action: 'machines.managed.bootstrap.retry', outcome: 'isolationUnavailable', storedEnabled: false },
+        { action: 'machines.managed.bootstrap.retry', outcome: 'applied', storedEnabled: false, freshEnrollment: true },
+    ] as const)('records the reviewed administrator policy and isolation through the enrolled guest Action ($action/$outcome/$storedEnabled)', async (scenario) => {
+        const { action, outcome, storedEnabled } = scenario;
+        const freshEnrollment = 'freshEnrollment' in scenario && scenario.freshEnrollment;
+        const identity = { kind: 'dedicatedDaemonUser' as const, username: 'happier' as const, serviceMode: 'user' as const,
+            role: 'deployTarget' as const, adminAccessAtCreation: 'preauthorized' as const };
+        const retained = ManagedMachineV1Schema.parse({ ...machine, enrollmentIdentity: identity, allocation: 'bound', enrolledMachineId: 'guest',
+            resource: { contributionRef: input.selection.launch.provider, schemaVersion: 1, value: { id: 'same-paid-target' } } });
+        const isRetry = action === 'machines.managed.bootstrap.retry';
+        const childRequestId = isRetry ? 'retry-policy' : 'creation-policy';
+        const original = originAuthorization('home', childRequestId);
+        const wire = { ...original, binding: { ...original.binding, actionId: action } };
+        const keys = tweetnacl.sign.keyPair();
+        let policyWritten = false;
+        let isolationWritten = false;
+        const isolationInputs: unknown[] = [];
+        const post = vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+            if (String(url).endsWith('/verify')) return { status: 200, data: { ok: true } };
+            if (String(url).endsWith('/v1/actions/machines.setup.adminAccess.set')) {
+                const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+                expect(request.managedContinuation).toEqual({ managedId: retained.id, creationRequestId: 'creation-policy', expectedIntentRevision: 0 });
+                expect(request.envelope).toMatchObject({ v: 1, requestId: childRequestId, target: { kind: 'machine', machineId: 'guest' },
+                    input: { machineId: 'guest', serverId: 'home', expectedAdminAccess: { version: 1, mode: 'none' },
+                        adminAccess: { version: 1, mode: 'preauthorized' }, comparison: 'field' } });
+                policyWritten = true;
+                return { status: 200, data: { v: 1, actionId: 'machines.setup.adminAccess.set', requestId: childRequestId,
+                    execution: { ok: true, result: outcome === 'adminApproval'
+                        ? { kind: 'approval_request_created', artifactId: 'admin-approval', actionId: 'machines.setup.adminAccess.set' }
+                        : outcome === 'outcomeUnknown' ? { status: 'outcomeUnknown' }
+                        : { status: 'applied', policy: { version: 1, mode: 'preauthorized' }, metadataVersion: 2 } } } };
+            }
+            if (String(url).endsWith('/v1/actions/machines.agentIsolation.preview')) {
+                expect(policyWritten).toBe(!isRetry || freshEnrollment);
+                const carrier = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+                expect(carrier.envelope).toMatchObject({ requestId: childRequestId, input: { serverId: 'home', machineId: 'guest', enabled: true } });
+                if (carrier.envelope.v === 1) isolationInputs.push(carrier.envelope.input);
+                if (outcome === 'previewRefusal') return { status: 200, data: { v: 1, actionId: 'machines.agentIsolation.preview',
+                    requestId: childRequestId, execution: { ok: false, errorCode: 'RPC_FORBIDDEN', error: 'PRIVATE_NATIVE_MESSAGE',
+                        details: { token: 'PRIVATE_TOKEN' } } } };
+                if (outcome === 'isolationUnavailable') return { status: 200, data: { v: 1, actionId: 'machines.agentIsolation.preview',
+                    requestId: childRequestId, execution: { ok: true, result: {
+                        kind: 'unavailable', status: { kind: 'unavailable', code: 'provisioning_unavailable' },
+                    } } } };
+                return { status: 200, data: { v: 1, actionId: 'machines.agentIsolation.preview', requestId: childRequestId, execution: { ok: true, result: {
+                    kind: 'ready', policy: { enabled: storedEnabled }, metadataVersion: 2,
+                    status: { kind: 'unavailable', code: 'provisioning_unavailable' },
+                    plan: { roots: [], ancestorAcls: [], sessionsToReplace: 0, requiresAdmin: false, planDigest: 'actual-guest-review' },
+                } } } };
+            }
+            if (String(url).endsWith('/v1/actions/machines.agentIsolation.set')) {
+                const carrier = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+                expect(carrier.managedContinuation).toEqual({ managedId: retained.id, creationRequestId: 'creation-policy', expectedIntentRevision: 0 });
+                expect(carrier.envelope).toMatchObject({ requestId: childRequestId, input: { serverId: 'home', machineId: 'guest', enabled: true,
+                    expectedPolicy: { enabled: storedEnabled }, expectedMetadataVersion: 2, expectedPlanDigest: 'actual-guest-review' } });
+                if (carrier.envelope.v === 1) isolationInputs.push(carrier.envelope.input);
+                isolationWritten = true;
+                return { status: 200, data: { v: 1, actionId: 'machines.agentIsolation.set', requestId: childRequestId, execution: { ok: true, result: outcome === 'conflict'
+                    ? { kind: 'conflict', policy: { enabled: false }, metadataVersion: 2 } : outcome === 'isolationApproval'
+                    ? { kind: 'approval_request_created', artifactId: 'isolation-approval', actionId: 'machines.agentIsolation.set' } : {
+                    kind: 'accepted', operationId: 'isolation-operation', metadataVersion: 3,
+                    status: { kind: 'applying', phase: 'runtime_replacement' },
+                } } } };
+            }
+            // Home can publish the completed enrollment between the retained
+            // retry context and its next current read; no second spend occurs.
+            return { status: 200, data: { machine: freshEnrollment && String(url).endsWith('/context')
+                ? { ...retained, allocation: 'may-exist', resource: undefined, enrolledMachineId: undefined }
+                : retained, ...(String(url).endsWith('/admit') ? { replayed: true } : {}),
+                ...(String(url).endsWith('/context') ? { requestId: 'creation-policy' } : {}) } };
+        });
+        const authorization = await projectExternalActionRequesterHttpAuthorization({ authorization: wire,
+            serverId: 'daemon-local-profile', serverIdentityId: 'home', serverHttpBaseUrl: 'https://home.example',
+            target: wire.binding.target, installationId: controller.installationId, privateKey: keys.secretKey, isCurrent: async () => true });
+        if (!authorization) throw new Error('Requester authority was not established');
+        const runtimeRegistry = { contributes: createResolvedContributionRegistry({}) } as ResolvedExecutablePluginRuntimeRegistry;
+        const enrolledDriver = createManagedMachineAcquisitionDriver({ ...accountInputs, token: 'token', serverUrl: 'https://home.example',
+            homeId: 'home', controller, runtimeRegistry, externalActionMachineRequestPrivateKey: keys.secretKey });
+        const phases: string[] = [];
+        const execution = enrolledDriver.execute(action, isRetry ? { homeId: 'home', managedId: retained.id, expectedIntentRevision: 0 }
+            : { ...input, enrollmentIdentity: identity }, {
+            requestId: childRequestId, context: { surface: 'cli', externalActionExecutionAuthorization: authorization,
+                operationProgress: { update: progress => { if (progress.phase) phases.push(progress.phase); } },
+                operationAcceptance: { operationId: 'creation-operation', accept() {} } },
+        });
+        if (outcome === 'applied' || outcome === 'isolationUnavailable') await expect(execution).resolves.toMatchObject({ managedId: 'managed', operation: { operationId: 'creation-operation' } });
+        else if (outcome === 'previewRefusal') {
+            await expect(execution).rejects.toMatchObject({ name: 'ManagedMachineControllerError', code: 'RPC_FORBIDDEN', details: {
+                kind: 'actionException', errorClass: 'ManagedMachineControllerError', errorCode: 'RPC_FORBIDDEN', phase: 'machines.agentIsolation.preview',
+            } });
+            await execution.catch(error => expect(JSON.stringify(error)).not.toMatch(/PRIVATE_/));
+            expect(phases.at(-1)).toBe('machines.agentIsolation.preview');
+        }
+        else await expect(execution).rejects.toMatchObject({ code: outcome === 'conflict' ? 'conflict'
+            : outcome === 'adminApproval' || outcome === 'isolationApproval' ? 'approval_context_unavailable' : 'action_outcome_unknown' });
+        expect(policyWritten).toBe(!isRetry || freshEnrollment);
+        expect(isolationWritten).toBe(outcome !== 'outcomeUnknown' && outcome !== 'adminApproval' && outcome !== 'previewRefusal' && outcome !== 'isolationUnavailable');
+        for (const requestedPolicy of isolationInputs) expect(requestedPolicy).toMatchObject({ enabled: true, memberProvisioning: 'linuxUsersV1' });
+        expect(post.mock.calls.some(([url]) => String(url).endsWith('/submit'))).toBe(false);
+    });
+
     const runHomeRecoveryScenario = async (scenario: 'recover' | 'expire' | 'late-confirmation' | 'install-recover' | 'install-expire' | 'payload-memory') => {
         const root = await filesystem.mkdtemp(join(tmpdir(), 'managed-controller-home-recovery-'));
         const guestHome = join(root, 'guest');

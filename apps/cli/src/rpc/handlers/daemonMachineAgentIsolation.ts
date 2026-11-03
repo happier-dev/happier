@@ -4,12 +4,13 @@ import { MACHINE_AGENT_ISOLATION_ACTION_IDS, MACHINE_AGENT_ISOLATION_ACTION_INPU
   agentIsolationMetadataFieldV1, readMachineAgentIsolationPolicyV1,
   type MachineAgentIsolationStatusV1, type MachineAgentIsolationPolicyV1, type ActionExecutorDeps } from '@happier-dev/protocol';
 import { mutateMachineMetadataFieldV1, type MachineMetadataFieldPortV1 } from '@happier-dev/protocol/machines/machineMetadataFieldV1';
+import { projectMachineAgentIsolationUnavailableStatusV1 } from '@happier-dev/protocol/machines/agentIsolationV1';
 import { RPC_ERROR_CODES, RpcError } from '@happier-dev/protocol/rpcErrors';
 import type { RpcHandlerContext, RpcHandlerRegistrar } from '@/api/rpc/types';
 import { buildActionExecutorContextForRpc } from '@/rpc/handlers/_actionDispatchAdapter';
 import { doesMachineRpcTargetMatchAdmission } from '@/api/machine/machineRpcAuthorization';
 import type { AgentIsolationSnapshot } from '@/daemon/agentIsolation/agentIsolationPolicy';
-import { prepareAgentIsolationEffects, resolveAgentIsolationEffectIntent, type AgentIsolationEffectDependencies,
+import { prepareAgentIsolationEffects, prepareAgentIsolationEffectsResult, resolveAgentIsolationEffectIntent, type AgentIsolationEffectDependencies,
   type PreparedAgentIsolationEffects } from '@/daemon/agentIsolation/agentIsolationProvisioner';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { runElevatedEffect } from '@/machines/adminAccess/runElevatedEffect';
@@ -102,9 +103,15 @@ export function registerDaemonMachineAgentIsolationRpcHandlers(rpc: RpcHandlerRe
         ...(desired.memberProvisioning ? { memberProvisioning: desired.memberProvisioning } : {}),
         verifyCurrent: verify, ...(expectedPolicy ? { expectedPolicy } : {}) }, effects);
       if (actionId === 'machines.agentIsolation.preview') {
-        const prepared = await prepare().catch(() => null);
+        const prepared = await prepareAgentIsolationEffectsResult({ machineId: request.machineId,
+          enabled: desired.enabled, port, status: options.read().status, operationId, signal: context?.signal,
+          ...(desired.memberProvisioning ? { memberProvisioning: desired.memberProvisioning } : {}),
+          verifyCurrent: verify }, effects).catch(() => null);
         if (!await verify()) throw new RpcError('Current Machine admission is required', RPC_ERROR_CODES.FORBIDDEN);
-        return prepared?.preview ?? unavailable();
+        const preview = MachineAgentIsolationPreviewResultV1Schema.parse(prepared && 'preview' in prepared
+          ? prepared.preview : prepared ?? unavailable());
+        if (preview.kind === 'unavailable') await effects.publishStatus(projectMachineAgentIsolationUnavailableStatusV1(preview));
+        return preview;
       }
       const mutation = MACHINE_AGENT_ISOLATION_ACTION_INPUT_SCHEMAS['machines.agentIsolation.set'].parse(raw);
       const desiredPolicy: MachineAgentIsolationPolicyV1 = { enabled: mutation.enabled,

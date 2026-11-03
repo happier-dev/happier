@@ -1,3 +1,4 @@
+import type { AgentIsolationEffectDependencies } from './agentIsolation/agentIsolationProvisioner';
 
 import type { DaemonMachineAdminAccessRoutes } from '@/rpc/handlers/daemonMachineAdminAccess';
 import type { ApiMachineClient } from '@/api/apiMachine';
@@ -29,6 +30,7 @@ export type DaemonMachineRpcRouteRegistrar = Pick<
   | 'registerMachineResourcesPolicyRoutes'
   | 'registerMachineAdminAccessRoutes'
   | 'registerMachineReachabilityRoutes'
+  | 'registerMachineAgentIsolationRoutes'
   | 'registerMachineGuardRoutes'
   | 'registerStorageRoutes'
   | 'registerComputerRoutes'
@@ -57,6 +59,7 @@ export type DaemonMachineRpcRouteAttachmentCache = Readonly<{
   attachMachineResourcesPolicyRoutes(routes: DaemonMachineResourcesPolicyRoutes): void;
   attachMachineAdminAccessRoutes(routes: DaemonMachineAdminAccessRoutes): void;
   attachMachineReachabilityRoutes(routes: DaemonMachineReachabilityRoutes): void;
+  attachMachineAgentIsolationRoutes(routes: AgentIsolationEffectDependencies): void;
   attachMachineGuardRoutes(routes: DaemonMachineGuardRoutes): void;
   attachStorageRoutes(routes: DaemonStorageRoutes): void;
   attachComputerRoutes(resolveComputer: () => ComputerRoutes | null): void;
@@ -87,6 +90,7 @@ export function createDaemonMachineRpcRouteAttachmentCache(input: Readonly<{
   let machineResourcesPolicyRoutes: DaemonMachineResourcesPolicyRoutes | null = null;
   let machineAdminAccessRoutes: DaemonMachineAdminAccessRoutes | null = null;
   let machineReachabilityRoutes: DaemonMachineReachabilityRoutes | null = null;
+  let machineAgentIsolationRoutes: AgentIsolationEffectDependencies | null = null;
 
   let machineGuardRoutes: DaemonMachineGuardRoutes | null = null;
   let storageRoutes: DaemonStorageRoutes | null = null;
@@ -184,6 +188,10 @@ export function createDaemonMachineRpcRouteAttachmentCache(input: Readonly<{
       input.getApiMachineForSessions()?.registerMachineAdminAccessRoutes(routes);
     },
 
+    attachMachineAgentIsolationRoutes(routes) {
+      machineAgentIsolationRoutes = routes;
+      input.getApiMachineForSessions()?.registerMachineAgentIsolationRoutes(routes);
+    },
     attachMachineGuardRoutes(routes) {
       machineGuardRoutes = routes;
       input.getApiMachineForSessions()?.registerMachineGuardRoutes(routes);
@@ -296,6 +304,9 @@ export function createDaemonMachineRpcRouteAttachmentCache(input: Readonly<{
         apiMachineForSessions.registerMachineAdminAccessRoutes(machineAdminAccessRoutes);
       }
 
+      if (machineAgentIsolationRoutes) {
+        apiMachineForSessions.registerMachineAgentIsolationRoutes(machineAgentIsolationRoutes);
+      }
       if (machineGuardRoutes) {
         apiMachineForSessions.registerMachineGuardRoutes(machineGuardRoutes);
       }

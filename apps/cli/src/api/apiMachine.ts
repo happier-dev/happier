@@ -1,3 +1,4 @@
+import type { AgentIsolationEffectDependencies } from '@/daemon/agentIsolation/agentIsolationProvisioner';
 import { admitDeploymentArchiveFilesystemForHost } from '@/deployments/targets/ownServer/archiveFilesystemAdmission';
 import { isHostRequesterUnrestrictedOwner, resolveHostRequesterAgentPlacementForHost } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import type { NativeTransferSessionOwner } from '@happier-dev/transfers/node';
@@ -2857,6 +2858,22 @@ export class ApiMachineClient {
         return result;
     }
 
+    registerMachineAgentIsolationRoutes(effects: AgentIsolationEffectDependencies): void {
+        registerDaemonMachineAgentIsolationRpcHandlers(this.rpcHandlerManager, {
+            runActionOperation: request => this.runActionOperation(request),
+            read: () => this.getAgentIsolationSnapshot(), effects,
+            readCanonicalHomeServerIdentityId: () => this.lifecycleDependencies.resolveCurrentServerIdentityId?.() ?? null,
+            captureMetadataPort: () => this.captureMachineMetadataFieldPort(),
+            target: () => {
+                const custodianAccountId = readAccountIdFromToken(this.token);
+                return custodianAccountId && this.machineRuntimeInstallationId ? {
+                    serverId: this.machineRuntimeServerId, machineId: this.machine.id,
+                    installationId: this.machineRuntimeInstallationId, custodianAccountId,
+                } : null;
+            },
+        });
+    }
+
     registerMachineGuardRoutes(options: DaemonMachineGuardRoutes): void {
         this.machineGuardLocalAction = registerDaemonMachineGuardRpcHandlers(this.rpcHandlerManager, { ...options,
             dispatchUndoAction: options.dispatchUndoAction ?? (async (input, context) => {
@@ -4622,6 +4639,22 @@ export class ApiMachineClient {
     }
 
 
+
+    async publishAgentIsolationStatus(status: AgentIsolationSnapshot['status']): Promise<void> {
+        try {
+            const outcome = await this.updateDaemonState(state => {
+                if (!state) throw new Error('machine_agent_isolation_publication_unavailable');
+                return { ...state, agentIsolation: status };
+            });
+            if (outcome === 'suppressed') throw new Error('machine_agent_isolation_publication_unavailable');
+            this.agentIsolationPublicationFailed = false;
+        } catch (error) {
+            // Settle public own-status without inventing a successful receipt or
+            // changing the last acknowledged CAS basis. A later status write recovers.
+            this.agentIsolationPublicationFailed = true;
+            throw error;
+        }
+    }
 
     async compareAndSwapMachineMetadata(
         input: Parameters<MachineMetadataFieldPortV1['compareAndSwap']>[0],

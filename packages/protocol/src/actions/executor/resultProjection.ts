@@ -19,7 +19,8 @@ import { ArtifactAccessErrorCodeV1Schema } from '../../artifacts/artifactAccessV
 import { WorkflowOperationErrorCodeV1Schema } from '../../workflows/workflowProgressV1.js';
 import { MemoryDecisionSourceErrorCodeV1Schema } from '../../prompts/library/memoryActionsV1.js';
 import { SkillUnavailableReasonV1Schema } from '../../prompts/library/skills/skillLibraryItemV1.js';
-import { isActionOutcomeUnknownErrorCodeV1 } from '../actionExecutionResult.js';
+import { isActionOutcomeUnknownErrorCodeV1, ActionExceptionFailureDetailsV1Schema,
+  projectActionExceptionFailureDetailsV1 } from '../actionExecutionResult.js';
 import { ExecutionRunSendResponseSchema, ExecutionRunStopResponseSchema, ExecutionRunTransportErrorCodeSchema } from '../../execution/runs/responseSchemas.js';
 import type { ActionExecuteResult } from './types.js';
 import { readActionFailureEnvelope, readFailureEnvelopeDetails } from './actionFailureEnvelope.js';
@@ -31,7 +32,7 @@ import { SessionSpawnNewResultV1Schema, projectSessionSpawnNewActionResultV1 } f
 
 const RPC_ERROR_CODE_SET: ReadonlySet<string> = new Set(Object.values(RPC_ERROR_CODES));
 
-export function normalizeActionExecutorThrownError(error: unknown): Readonly<{ errorCode: string; error: string; details?: unknown }> {
+export function normalizeActionExecutorThrownError(error: unknown, phase?: ActionId): Readonly<{ errorCode: string; error: string; details?: unknown }> {
   if (error instanceof PublicProfileAccountScopeError) return { errorCode: error.code, error: error.code };
   if (error instanceof RegistryFetchErrorV1) {
     const status = RegistrySourceStatusV1Schema.safeParse(error.status);
@@ -77,7 +78,7 @@ export function normalizeActionExecutorThrownError(error: unknown): Readonly<{ e
   if (managedNative.success && rawCodes[0]) {
     return { errorCode: rawCodes[0], error: rawCodes[0], details: managedNative.data };
   }
-  if (rawCodes[0] && readRecord(rawDetails).kind === 'managedBootstrap') {
+  if (rawCodes[0] && (readRecord(rawDetails).kind === 'managedBootstrap' || readRecord(rawDetails).kind === 'managedAgentIsolation')) {
     const failure = ActionOperationFailureV1Schema.safeParse({ errorCode: rawCodes[0], error: rawCodes[0], details: rawDetails });
     if (failure.success) return failure.data;
   }
@@ -156,10 +157,11 @@ export function normalizeActionExecutorThrownError(error: unknown): Readonly<{ e
     };
   }
 
+  const cause = ActionExceptionFailureDetailsV1Schema.safeParse(rawDetails);
   return {
     errorCode: 'action_failed',
-    error: message || 'action_failed',
-    ...(details !== undefined ? { details } : {}),
+    error: 'action_failed',
+    details: { ...(cause.success ? cause.data : projectActionExceptionFailureDetailsV1(error, phase)), ...details },
   };
 }
 

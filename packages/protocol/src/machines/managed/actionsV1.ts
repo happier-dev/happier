@@ -1,3 +1,4 @@
+import { MachineInstallationPublicKeySchema } from '../identity/installationKeySchemas.js';
 import { MachineSetupExclusionsV1Schema } from '../setup/machineSetupSourcesV1.js';
 import { ManagedCredentialInstallInputV1Schema, ManagedCredentialDeliveryResultV1Schema } from './credentialDeliveryV1.js';
 import { ManagedMachineEnrollmentIdentityV1Schema } from './enrollmentIdentityV1.js';
@@ -157,8 +158,16 @@ export const ManagedAdmissionComputeInputV1Schema = lazyZodSchema(() => z.union(
 ]));
 export const ManagedAdmissionInputV1Schema = lazyZodSchema(() => z.strictObject({ input: ManagedAdmissionComputeInputV1Schema, requestId: id(), continuationPresent: mini.boolean() }));
 export const ManagedAdmissionOutputV1Schema = lazyZodSchema(() => z.strictObject({ machine: ManagedMachineV1Schema, replayed: mini.boolean() }));
-export const ManagedControllerContextInputV1Schema = lazyZodSchema(() => z.strictObject({ ...target(), expectedIntentRevision: revision(), controller: ManagedControllerV1Schema }));
-export const ManagedControllerContextOutputV1Schema = lazyZodSchema(() => z.strictObject({ machine: ManagedMachineV1Schema, requestId: id() }));
+export const ManagedControllerContextInputV1Schema = lazyZodSchema(() => z.strictObject({ ...target(), expectedIntentRevision: revision(), controller: z.optional(ManagedControllerV1Schema),
+  includeEnrollmentInstallation: z.optional(z.literal(true)),
+}));
+/** The admitted creation's exact enrolled installation, never guest Account content. */
+export const ManagedEnrollmentInstallationV1Schema = lazyZodSchema(() => z.strictObject({
+  machineId: id(), installationId: id(), installationPublicKey: MachineInstallationPublicKeySchema,
+}));
+export const ManagedControllerContextOutputV1Schema = lazyZodSchema(() => z.strictObject({ machine: ManagedMachineV1Schema, requestId: id(),
+  enrollmentInstallation: z.optional(ManagedEnrollmentInstallationV1Schema),
+}));
 export const ManagedControllerMachineOutputV1Schema = lazyZodSchema(() => z.strictObject({ machine: ManagedMachineV1Schema }));
 export const ManagedControllerSubmitOutputV1Schema = lazyZodSchema(() => z.strictObject({ machine: ManagedMachineV1Schema, submitted: mini.boolean() }));
 /** Only the admitted controller captures this source-owned metadata before native spend. */

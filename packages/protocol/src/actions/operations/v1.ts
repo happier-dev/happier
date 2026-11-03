@@ -3,7 +3,7 @@ import { MachineVitalsHostFactsV1Schema } from '../../machines/vitals/machineVit
 import { MachineSudoPasswordPromptV1Schema } from '../../machines/adminAccessV1.js';
 import { MachineAdministratorUsernameV1Schema } from '../../machines/adminAccessV1.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { MachineAgentIsolationReadyPreviewV1Schema } from '../../machines/agentIsolationV1.js';
+import { MachineAgentIsolationReadyPreviewV1Schema, MachineAgentIsolationUnavailableStatusV1Schema } from '../../machines/agentIsolationV1.js';
 import { z } from 'zod/mini';
 
 import { SessionForkStrategySchema } from '../../sessions/fork.js';
@@ -16,7 +16,7 @@ import { LocalServiceManagedServiceActionTargetV1Schema, ProjectServiceDeclarati
 import { createCanonicalJsonSigningInput } from '../../crypto/canonicalJson.js';
 import { ManagedControllerV1Schema } from '../../machines/managed/managedMachineV1.js';
 import { ManagedResourceV1Schema, MachineProvisionerNativeCauseV1Schema } from '../../machines/managed/providerFactsV1.js';
-import { ActionApprovalRequestCreatedResultSchema, ActionOperationCredentialUseV1Schema } from '../actionExecutionResult.js';
+import { ActionApprovalRequestCreatedResultSchema, ActionOperationCredentialUseV1Schema, ActionExceptionFailureDetailsV1Schema } from '../actionExecutionResult.js';
 import { WorkspaceExecutionConfigAddressV1Schema } from '../../workspaces/projectWorkerPreferencesV1.js';
 
 /** Existing operations that may hold their original Project setup invocation. */
@@ -147,13 +147,25 @@ export const ManagedBootstrapFailureDetailsV1Schema = lazyZodSchema(() => z.stri
   ? value.resultStatus !== undefined
   : value.resultStatus === undefined && value.reason === undefined)));
 export type ManagedBootstrapFailureDetailsV1 = Readonly<z.infer<typeof ManagedBootstrapFailureDetailsV1Schema>>;
+/** Preserve the isolation owner's closed refusal without native output or recovery payloads. */
+export const ManagedAgentIsolationFailureDetailsV1Schema = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('managedAgentIsolation'),
+  phase: z.literal('machines.agentIsolation.preview'),
+  status: MachineAgentIsolationUnavailableStatusV1Schema,
+}));
+export type ManagedAgentIsolationFailureDetailsV1 = Readonly<z.infer<typeof ManagedAgentIsolationFailureDetailsV1Schema>>;
 export const ActionOperationFailureV1Schema = lazyZodSchema(() => z.strictObject({
   errorCode: ActionOperationErrorCodeV1Schema,
   error: z.string().check(z.trim(), z.minLength(1), z.maxLength(ACTION_OPERATION_ERROR_MAX_LENGTH_V1)),
   details: z.optional(z.union([ProjectSetupConsentFailureDetailsV1Schema, ProjectScriptEffectChangedFailureDetailsV1Schema,
-    ProjectWorkerNoAcceptanceFailureDetailsV1Schema, ApprovalStaleFailureDetailsSchema, ManagedControllerRequestFailureDetailsV1Schema, ManagedNativeFailureDetailsV1Schema])),
+    ProjectWorkerNoAcceptanceFailureDetailsV1Schema, ApprovalStaleFailureDetailsSchema, ManagedControllerRequestFailureDetailsV1Schema, ManagedNativeFailureDetailsV1Schema,
+    ManagedAgentIsolationFailureDetailsV1Schema, ActionExceptionFailureDetailsV1Schema])),
 }).check(z.refine(failure => !failure.details || (!('kind' in failure.details)
   ? failure.errorCode === 'approval_stale'
+  : failure.details.kind === 'actionException'
+  ? failure.errorCode === 'action_failed'
+  : failure.details.kind === 'managedAgentIsolation'
+  ? failure.details.status.code === failure.errorCode
   : failure.details.kind === 'managedNative'
   ? true
   : failure.details.kind === 'managedControllerRequest'

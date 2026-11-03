@@ -1,3 +1,7 @@
+import { MachineAgentIsolationPreviewInputV1Schema, MachineAgentIsolationSetInputV1Schema } from '@happier-dev/protocol';
+import { ManagedEnrollmentInstallationV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { sealManagedCreationActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import type { ResolvedHomeTarget } from '@happier-dev/cli-common/homeTarget';
 import { createDeploymentChildExecutionProofV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { readHostAdmittedReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { type WorkspaceSyncSourceExecutionV1 } from '@happier-dev/protocol/socketRpc';
@@ -15,9 +19,9 @@ import { matchesManagedMachineEnrollmentAgentIsolationV1 } from '@happier-dev/pr
 import { readMachineSetupPlanChildInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { isSessionStopChildRootV1 } from '@happier-dev/protocol/actions/sessionSections';
 import { isSessionStopChildV1 } from '@happier-dev/protocol/actions/sessionSections';
-import { type MachineSetupPlanInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { MachineSetupPlanInputV1Schema, type MachineSetupPlanInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { matchesMachineSetupCreationSourcesV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
-import { type MachineSetupApplyInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { MachineSetupApplyInputV1Schema, type MachineSetupApplyInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { RecordedApprovalExecutionObservationArgs } from '@/session/actions/createCliActionExecutorHarness';
 import { MachineAdminAccessSetInputV1Schema } from '@happier-dev/protocol';
 import { readHostReviewedParentV1 } from '@happier-dev/protocol/actions/actionExecutor';
@@ -326,6 +330,7 @@ type OriginalAccountActionInput = Readonly<{
   serverHttpBaseUrl: string;
   serverIdentityId?: string;
   authority?: ActionExecutorContext['authority'];
+  managedContinuation?: ExternalActionExecutionAuthorizationRequestV1['managedContinuation'];
   /** Host provenance retained inside the existing installation-bound private box. */
   invocation?: ExternalActionRequesterInvocationV1;
   /** A human confidentiality decision, distinct from the target Action's Ask first policy. */
@@ -376,7 +381,8 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
   const accountId = readAccountIdFromToken(input.credentials.token);
   const homeUrl = normalizeServerHttpBaseUrl(input.serverHttpBaseUrl);
   if (input.target.kind === 'session' && input.actionId !== 'session.message.send') return fail('target_unavailable');
-  const requiresMachineProof = requiresOriginalAccountMachineActionProof(input.actionId, input.input);
+  const requiresMachineProof = input.managedContinuation !== undefined
+    || requiresOriginalAccountMachineActionProof(input.actionId, input.input);
   const isCurrent = async () => !input.signal?.aborted && (!input.isCurrent || await phase('currentness', () => input.isCurrent!()));
   if (!await isCurrent()) return fail('target_unavailable');
   // This branch only chooses the incumbent own-account path. Home still owns
@@ -476,6 +482,7 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
     if (!installed) return fail('admission_unavailable');
     const minted = await phase('mint_authorization', () => mintExternalActionExecutionAuthorization({ actionId, envelope, machineId: machine.id,
       pat: input.credentials.token, serverHttpBaseUrl: homeUrl,
+      ...(input.managedContinuation ? { managedContinuation: input.managedContinuation } : {}),
       ...(input.authority === 'account_automation' ? { authorityCeiling: 'account_automation' as const } : {}),
       ...(input.signal ? { signal: input.signal } : {}) }));
     if (!minted.ok) return fail(minted.code);
@@ -487,7 +494,12 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
       || root.accountEncryptionMode !== mode.mode || root.actionId !== actionId || root.requestId !== input.requestId
       || root.requestEnvelopeDigest !== computeExternalActionRequestEnvelopeDigestV1(envelope)
       || !externalActionTargetsEqualV1(root.target, input.target) || root.sessionActionOrigin || root.sessionActionSource
-      || root.workflowActionOrigin || root.managedContinuation || root.handoffContinuation
+      || root.workflowActionOrigin || root.handoffContinuation
+      || (input.managedContinuation ? !root.managedContinuation
+        || root.managedContinuation.managedId !== input.managedContinuation.managedId
+        || root.managedContinuation.creationRequestId !== input.managedContinuation.creationRequestId
+        || root.managedContinuation.expectedIntentRevision !== input.managedContinuation.expectedIntentRevision
+        : root.managedContinuation !== undefined)
       || !await isCurrent()) return fail('admission_unavailable');
     const confirmDisclosure = async (recipient: CurrentAccountMachineInventoryItem): Promise<ActionExecuteResult | null> => {
       if (kind === 'account' && input.authority === 'account_automation'
@@ -1103,17 +1115,23 @@ export function isManagedSessionStartTransportAvailable(params: Readonly<{
   const root = params.authorization?.binding;
   return root?.actionId === 'machines.managed.acquire' && root.installationId === params.installationId
     && root.target.kind === 'machine' && root.target.machineId === root.machineId
-    && (root.accountEncryptionMode === 'plain' || (root.accountEncryptionMode === 'e2ee' && params.material?.machineKey.length === 32));
+    && (root.accountEncryptionMode === 'plain' || root.accountEncryptionMode === 'e2ee'
+      && ('authentication' in root && root.accountId !== root.custodianAccountId || params.material?.machineKey.length === 32));
 }
 
 type ManagedChildDispatchParams = Readonly<{
   input: SessionSpawnNewInputV2;
+  /** Host-local caller and parent projection only; never a serialized executor context. */
+  context?: ActionExecutorContext;
+  observeRecordedApprovalExecution?: (args: RecordedApprovalExecutionObservationArgs) => Promise<ActionExecuteResult>;
   authority?: ActionRequiredAuthority;
+  invocation?: ExternalActionRequesterInvocationV1;
   continuation: NonNullable<ExternalActionExecutionAuthorizationRequestV1['managedContinuation']>;
   authorization: ExternalActionExecutionAuthorizationV1;
   installationId: string;
   privateKey: ExternalActionMachineRequestSigningKey;
   serverHttpBaseUrl: string;
+  homeTarget?: ResolvedHomeTarget;
   material?: Extract<AccountScopedCryptoMaterial, Readonly<{ type: 'dataKey' }>>;
   signal?: AbortSignal;
 }>;
@@ -1123,17 +1141,30 @@ export async function dispatchManagedSessionStart(params: ManagedChildDispatchPa
 }
 
 async function dispatchManagedChild(params: Omit<ManagedChildDispatchParams, 'input'> & Readonly<{
-  input: SessionSpawnNewInputV2 | MachineEnvironmentApplyInputV1;
-  actionId: 'session.spawn_new' | 'machines.environment.apply'; serverId: string; targetMachineId: string;
+  input: SessionSpawnNewInputV2 | MachineEnvironmentApplyInputV1 | MachineSetupApplyInputV1 | MachineSetupPlanInputV1 | ReturnType<typeof MachineAdminAccessSetInputV1Schema.parse>
+    | MachineAgentIsolationPreviewInputV1 | MachineAgentIsolationSetInputV1;
+  actionId: 'session.spawn_new' | 'machines.environment.apply' | 'machines.setup.apply' | 'machines.setup.plan' | 'machines.setup.adminAccess.set'
+    | 'machines.agentIsolation.preview' | 'machines.agentIsolation.set'; serverId: string; targetMachineId: string;
+  retainedCreationSetup?: Parameters<typeof matchesMachineSetupCreationSourcesV1>[1];
 }>): Promise<ActionExecuteResult> {
   const fail = (code: string): ActionExecuteResult => ({ ok: false, errorCode: code, error: code });
   const root = params.authorization.binding;
-  if (!isManagedSessionStartTransportAvailable(params)
-    || root.requestId !== params.continuation.creationRequestId) return fail('admission_unavailable');
+  const reviewedParent = readHostReviewedParentV1(params.context);
+  const invocation = params.context ? readExternalActionRequesterInvocation(params.context) : params.invocation;
+  const managedChildCodec = 'authentication' in root && root.accountId !== root.custodianAccountId
+    && root.accountEncryptionMode === 'e2ee';
+  const carriesInvocation = managedChildCodec || invocation !== undefined || reviewedParent !== null;
+  const enrollmentPolicy = params.actionId === 'machines.setup.adminAccess.set'
+    || params.actionId === 'machines.agentIsolation.preview' || params.actionId === 'machines.agentIsolation.set';
+  const retryAvailable = enrollmentPolicy && root.actionId === 'machines.managed.bootstrap.retry'
+    && root.installationId === params.installationId && root.target.kind === 'machine' && root.target.machineId === root.machineId
+    && (root.accountEncryptionMode === 'plain' || root.accountEncryptionMode === 'e2ee' && (managedChildCodec || params.material?.machineKey.length === 32));
+  if (!(isManagedSessionStartTransportAvailable(params) || retryAvailable)
+    || root.actionId === 'machines.managed.acquire' && root.requestId !== params.continuation.creationRequestId) return fail('admission_unavailable');
   if (params.signal?.aborted) return fail('cancelled');
-  let input: SessionSpawnNewInputV2 | MachineEnvironmentApplyInputV1;
+  let input: typeof params.input;
   try {
-    const home = await resolveCliHomeTarget({ kind: 'saved_profile', profileRef: params.serverId });
+    const home = params.homeTarget ?? await resolveCliHomeTarget({ kind: 'saved_profile', profileRef: params.serverId });
     const serverIdentityId = assertResolvedHomeTargetIdentity(home, root.serverIdentityId);
     const destination = normalizeServerHttpBaseUrl(params.serverHttpBaseUrl);
     const capturedHome = params.authorization.requesterHttpProjection;
@@ -1147,6 +1178,25 @@ async function dispatchManagedChild(params: Omit<ManagedChildDispatchParams, 'in
     if (params.actionId === 'session.spawn_new') {
       const parsed = SessionSpawnNewInputV2Schema.parse(params.input);
       input = { ...parsed, executionTarget: { ...parsed.executionTarget, serverId: serverIdentityId } };
+    } else if (params.actionId === 'machines.setup.adminAccess.set') {
+      const parsed = MachineAdminAccessSetInputV1Schema.parse(params.input);
+      if (parsed.serverId !== serverIdentityId || parsed.machineId !== params.targetMachineId) return fail('target_unavailable');
+      input = parsed;
+    } else if (params.actionId === 'machines.agentIsolation.preview' || params.actionId === 'machines.agentIsolation.set') {
+      const parsed = (params.actionId === 'machines.agentIsolation.preview'
+        ? MachineAgentIsolationPreviewInputV1Schema : MachineAgentIsolationSetInputV1Schema).parse(params.input);
+      if (parsed.serverId !== serverIdentityId || parsed.machineId !== params.targetMachineId) return fail('target_unavailable');
+      input = parsed;
+    } else if (params.actionId === 'machines.setup.plan') {
+      const parsed = MachineSetupPlanInputV1Schema.parse(params.input);
+      if (parsed.homeId !== serverIdentityId || parsed.machineId !== params.targetMachineId
+        || parsed.sources !== undefined && (parsed.mode !== 'effects' || !params.retainedCreationSetup
+          || !matchesMachineSetupCreationSourcesV1(parsed.sources, params.retainedCreationSetup))) return fail('target_unavailable');
+      input = parsed;
+    } else if (params.actionId === 'machines.setup.apply') {
+      const parsed = MachineSetupApplyInputV1Schema.parse(params.input);
+      if (parsed.homeId !== serverIdentityId || parsed.machineId !== params.targetMachineId) return fail('target_unavailable');
+      input = parsed;
     } else {
       const parsed = MachineEnvironmentApplyInputV1Schema.parse(params.input);
       if (parsed.homeId !== serverIdentityId || parsed.machineId !== params.targetMachineId) return fail('target_unavailable');
@@ -1162,16 +1212,51 @@ async function dispatchManagedChild(params: Omit<ManagedChildDispatchParams, 'in
     accountId: root.accountId, actionId: params.actionId, requestId, target,
     ...('authentication' in root ? { authentication: { kind: root.authentication.kind, tokenEpoch: root.authentication.tokenEpoch } }
       : { credentialId: root.credentialId }) };
-  const envelope = root.accountEncryptionMode === 'e2ee'
-    ? sealExternalActionRequestV2({ binding, input, material: params.material!, randomBytes,
+  const actionInput = input;
+  let recipient: ReturnType<typeof ManagedEnrollmentInstallationV1Schema.parse> | undefined;
+  if (carriesInvocation) {
+    const path = '/v1/machines/managed/controller/context';
+    const body = { homeId: root.serverIdentityId, managedId: params.continuation.managedId,
+      expectedIntentRevision: params.continuation.expectedIntentRevision,
+      controller: { machineId: root.machineId, installationId: root.installationId }, includeEnrollmentInstallation: true as const };
+    try {
+      const response = await axios.post<unknown>(`${params.serverHttpBaseUrl}${path}`, body, {
+        headers: createExternalActionAuthorizedRequestHeaders({ authorization: params.authorization,
+          effectActionId: root.actionId, target: root.target, installationId: params.installationId,
+          method: 'POST', path, body, privateKey: params.privateKey }),
+        ...(params.signal ? { signal: params.signal } : {}), validateStatus: () => true,
+      });
+      const context = z.looseObject({ requestId: z.string(), enrollmentInstallation: ManagedEnrollmentInstallationV1Schema }).safeParse(response.data);
+      if (response.status !== 200 || !context.success || context.data.requestId !== params.continuation.creationRequestId
+        || context.data.enrollmentInstallation.machineId !== params.targetMachineId) return fail('admission_unavailable');
+      recipient = context.data.enrollmentInstallation;
+    } catch { return fail(params.signal?.aborted ? 'cancelled' : 'admission_unavailable'); }
+  }
+  // Each child is an independent invocation, not a reuse of the parent codec or
+  // either Account's encryption key. Only the exact enrolled guest can open it.
+  const childMaterial = managedChildCodec ? { type: 'dataKey' as const, machineKey: randomBytes(32) } : params.material;
+  const baseEnvelope = ExternalActionRequestEnvelopeSchema.parse(projectNativeJsonValueForTransport(root.accountEncryptionMode === 'e2ee'
+    ? sealExternalActionRequestV2({ binding, input: actionInput, material: childMaterial!, randomBytes,
         ...(params.actionId === 'session.spawn_new' ? { sessionSpawnAdmission: projectApiTokenSessionSpawnAdmissionV1(SessionSpawnNewInputV2Schema.parse(input)) } : {}) })
-    : { v: 1 as const, requestId, target, input };
+    : { v: 1 as const, requestId, target, input: actionInput }));
+  const envelope = recipient && params.actionId !== 'machines.environment.apply'
+    ? sealManagedCreationActionCodecV1({ authorization: params.authorization, actionId: params.actionId,
+      continuation: params.continuation, envelope: baseEnvelope, recipient,
+      ...(managedChildCodec && childMaterial ? { material: childMaterial } : {}), randomBytes,
+      ...(invocation ? { invocation } : {}),
+      ...(reviewedParent ? { reviewedParent } : {}) }) : baseEnvelope;
   const body = ExternalActionExecutionAuthorizationRequestV1Schema.parse({ v: 1, machineId: target.machineId,
     envelope, managedContinuation: params.continuation });
   const path = `${EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1}${params.actionId}`;
   const headers = createExternalActionAuthorizedRequestHeaders({ authorization: params.authorization,
-    effectActionId: 'machines.managed.acquire', target: root.target, installationId: params.installationId,
+    effectActionId: root.actionId, target: root.target, installationId: params.installationId,
     method: 'POST', path, body, privateKey: params.privateKey });
+  const observe = (execution: ActionExecuteResult) => observeManagedChildApprovalExecution({ execution,
+    context: params.context, signal: params.signal,
+    expectedOrigin: { actionId: params.actionId, requestId, accountId: root.accountId,
+      serverIdentityId: root.serverIdentityId, machineId: target.machineId },
+    isCurrent: () => params.authorization.requesterHttpProjection?.isCurrent() ?? Promise.resolve(false),
+    observeRecordedApprovalExecution: params.observeRecordedApprovalExecution });
   try {
     const response = await axios.post<unknown>(`${params.serverHttpBaseUrl}${path}`, body, {
       headers: { ...headers, 'Content-Type': 'application/json',
@@ -1184,19 +1269,35 @@ async function dispatchManagedChild(params: Omit<ManagedChildDispatchParams, 'in
         && error.data.requestId !== envelope.requestId) return fail('invalid_action_output');
       if (error.success && 'code' in error.data
         && (error.data.code === 'action_not_admitted' || error.data.code === 'action_outcome_unknown')) {
-        return projectUnexpectedActionFailureV1(error.data.code === 'action_not_admitted' ? false : null, error.data.requestId);
+        return { ...projectUnexpectedActionFailureV1(error.data.code === 'action_not_admitted' ? false : null, error.data.requestId),
+          ...('diagnostic' in error.data ? { details: error.data } : {}) };
       }
       return fail(error.success ? 'code' in error.data ? error.data.code : error.data.error : 'target_unavailable');
     }
-    if (envelope.v === 2 && params.material) return openExternalActionResponseV2({ envelope: response.data,
-      binding, request: envelope, material: params.material }) ?? fail('invalid_encrypted_envelope');
+    if (envelope.v === 2 && childMaterial) return await observe(openExternalActionResponseV2({ envelope: response.data,
+      binding, request: envelope, material: childMaterial }) ?? fail('invalid_encrypted_envelope'));
     const responseEnvelope = ExternalActionResponseEnvelopeV1Schema.safeParse(response.data);
-    return responseEnvelope.success && responseEnvelope.data.actionId === params.actionId
-      && responseEnvelope.data.requestId === requestId ? responseEnvelope.data.execution : fail('invalid_envelope');
+    return await observe(responseEnvelope.success && responseEnvelope.data.actionId === params.actionId
+      && responseEnvelope.data.requestId === requestId ? responseEnvelope.data.execution : fail('invalid_envelope'));
   } catch (error) {
     refuseExternalActionPhase('managed_child_http', params.targetMachineId, error);
     return fail(params.signal?.aborted ? 'cancelled' : 'target_unavailable');
   }
+}
+
+export async function dispatchManagedMachineSetup(params: Omit<Parameters<typeof dispatchManagedSessionStart>[0], 'input'> & Readonly<{
+  input: MachineSetupApplyInputV1;
+  serverId: string;
+}>): Promise<ActionExecuteResult> {
+  return dispatchManagedChild({ ...params, actionId: 'machines.setup.apply', targetMachineId: params.input.machineId });
+}
+
+/** The retained creation may read only its enrolled guest's current setup. */
+export async function dispatchManagedMachineSetupPlan(params: Omit<ManagedChildDispatchParams, 'input'> & Readonly<{
+  input: MachineSetupPlanInputV1; serverId: string;
+  retainedCreationSetup?: Parameters<typeof matchesMachineSetupCreationSourcesV1>[1];
+}>): Promise<ActionExecuteResult> {
+  return dispatchManagedChild({ ...params, actionId: 'machines.setup.plan', targetMachineId: params.input.machineId });
 }
 
 export async function dispatchManagedMachineEnvironment(params: Omit<Parameters<typeof dispatchManagedSessionStart>[0], 'input'> & Readonly<{
@@ -1204,6 +1305,22 @@ export async function dispatchManagedMachineEnvironment(params: Omit<Parameters<
   serverId: string;
 }>): Promise<ActionExecuteResult> {
   return dispatchManagedChild({ ...params, actionId: 'machines.environment.apply', targetMachineId: params.input.machineId });
+}
+
+/** Records creation intent through the existing signed child Action, on its exact guest. */
+export async function dispatchManagedMachineAdminAccess(params: Omit<ManagedChildDispatchParams, 'input'> & Readonly<{
+  input: ReturnType<typeof MachineAdminAccessSetInputV1Schema.parse>; serverId: string;
+}>): Promise<ActionExecuteResult> {
+  return dispatchManagedChild({ ...params, actionId: 'machines.setup.adminAccess.set', targetMachineId: params.input.machineId });
+}
+
+type ManagedAgentIsolationChild = Readonly<
+  { actionId: 'machines.agentIsolation.preview'; input: MachineAgentIsolationPreviewInputV1 }
+  | { actionId: 'machines.agentIsolation.set'; input: MachineAgentIsolationSetInputV1 }>;
+
+export async function dispatchManagedMachineAgentIsolation(params: Omit<ManagedChildDispatchParams, 'input'>
+  & ManagedAgentIsolationChild & Readonly<{ serverId: string }>): Promise<ActionExecuteResult> {
+  return dispatchManagedChild({ ...params, targetMachineId: params.input.machineId });
 }
 
 /** Provenance for the incumbent local host Account path, not effect authority.
@@ -1234,14 +1351,57 @@ export async function dispatchLocalManagedMachineEnvironment(params: Readonly<{
   custodianAccountId: string;
   serverHttpBaseUrl: string;
   isCurrent(): Promise<boolean>;
+  observeRecordedApprovalExecution?: (args: RecordedApprovalExecutionObservationArgs) => Promise<ActionExecuteResult>;
 }>): Promise<ActionExecuteResult> {
-  if (!isOriginalLocalManagedSetupContext({ ...params, homeId: params.input.homeId }))
+  return dispatchLocalManagedCreationAction({ ...params, actionId: 'machines.environment.apply', homeId: params.input.homeId });
+}
+
+export async function dispatchLocalManagedMachineSetupPlan(params: Omit<Parameters<typeof dispatchLocalManagedMachineEnvironment>[0], 'input'> & Readonly<{
+  input: MachineSetupPlanInputV1;
+  retainedCreationSetup?: Parameters<typeof matchesMachineSetupCreationSourcesV1>[1];
+}>): Promise<ActionExecuteResult> {
+  if (params.input.sources !== undefined && (params.input.mode !== 'effects' || !params.retainedCreationSetup
+    || !matchesMachineSetupCreationSourcesV1(params.input.sources, params.retainedCreationSetup))) {
     return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
-  return dispatchOriginalAccountAction({ actionId: 'machines.environment.apply', input: params.input,
+  }
+  return dispatchLocalManagedCreationAction({ ...params, actionId: 'machines.setup.plan', homeId: params.input.homeId });
+}
+
+export async function dispatchLocalManagedMachineAdminAccess(params: Omit<Parameters<typeof dispatchLocalManagedMachineEnvironment>[0], 'input'> & Readonly<{
+  input: ReturnType<typeof MachineAdminAccessSetInputV1Schema.parse>; homeId: string;
+  managedContinuation?: ExternalActionExecutionAuthorizationRequestV1['managedContinuation'];
+}>): Promise<ActionExecuteResult> {
+  return dispatchLocalManagedCreationAction({ ...params, actionId: 'machines.setup.adminAccess.set' });
+}
+
+export async function dispatchLocalManagedMachineAgentIsolation(params: Omit<Parameters<typeof dispatchLocalManagedMachineEnvironment>[0], 'input'>
+  & ManagedAgentIsolationChild & Readonly<{ homeId: string;
+    managedContinuation: NonNullable<ExternalActionExecutionAuthorizationRequestV1['managedContinuation']> }>): Promise<ActionExecuteResult> {
+  return dispatchLocalManagedCreationAction(params);
+}
+
+async function dispatchLocalManagedCreationAction(params: Omit<Parameters<typeof dispatchLocalManagedMachineEnvironment>[0], 'input'> & Readonly<{
+  input: MachineEnvironmentApplyInputV1 | MachineSetupPlanInputV1 | ReturnType<typeof MachineAdminAccessSetInputV1Schema.parse>
+    | MachineAgentIsolationPreviewInputV1 | MachineAgentIsolationSetInputV1;
+  homeId: string; actionId: 'machines.environment.apply' | 'machines.setup.plan' | 'machines.setup.adminAccess.set'
+    | 'machines.agentIsolation.preview' | 'machines.agentIsolation.set';
+  managedContinuation?: ExternalActionExecutionAuthorizationRequestV1['managedContinuation'];
+}>): Promise<ActionExecuteResult> {
+  if (!isOriginalLocalManagedSetupContext({ ...params, homeId: params.homeId }))
+    return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
+  const reviewedParent = readHostReviewedParentV1(params.context);
+  const invocation = reviewedParent && params.managedContinuation ? readExternalActionRequesterInvocation(params.context) : undefined;
+  const execution = await dispatchOriginalAccountAction({ actionId: params.actionId, input: params.input,
     requestId: params.context.actionRequestId!, target: { kind: 'machine', machineId: params.input.machineId },
-    credentials: params.credentials, serverHttpBaseUrl: params.serverHttpBaseUrl, serverIdentityId: params.input.homeId,
+    credentials: params.credentials, serverHttpBaseUrl: params.serverHttpBaseUrl, serverIdentityId: params.homeId,
+    ...(params.managedContinuation ? { managedContinuation: params.managedContinuation } : {}),
+    ...(invocation && reviewedParent ? { invocation: { ...invocation, reviewedParent } } : {}),
     ...(params.context.authority ? { authority: params.context.authority } : {}), isCurrent: params.isCurrent,
     ...(params.context.signal ? { signal: params.context.signal } : {}) });
+  return observeManagedChildApprovalExecution({ execution, context: params.context, isCurrent: params.isCurrent,
+    expectedOrigin: { actionId: params.actionId, requestId: params.context.actionRequestId!,
+      accountId: params.custodianAccountId, serverIdentityId: params.homeId, machineId: params.input.machineId },
+    observeRecordedApprovalExecution: params.observeRecordedApprovalExecution });
 }
 
 export async function mintExternalActionExecutionAuthorization(input: Readonly<{
@@ -1255,6 +1415,7 @@ export async function mintExternalActionExecutionAuthorization(input: Readonly<{
   workflowActionOrigin?: ExternalActionExecutionAuthorizationRequestV1['workflowActionOrigin'];
   sessionActionSource?: ExternalActionExecutionAuthorizationRequestV1['sessionActionSource'];
   installationProof?: ExternalActionExecutionAuthorizationRequestV1['installationProof'];
+  managedContinuation?: ExternalActionExecutionAuthorizationRequestV1['managedContinuation'];
   signal?: AbortSignal;
 }>): Promise<ExternalActionAuthorizationHttpResult> {
   const path = bindExternalActionExecutionAuthorizationHttpPathV1(input.actionId);
@@ -1266,6 +1427,7 @@ export async function mintExternalActionExecutionAuthorization(input: Readonly<{
         ...(input.sessionActionOrigin ? { sessionActionOrigin: input.sessionActionOrigin } : {}),
         ...(input.workflowActionOrigin ? { workflowActionOrigin: input.workflowActionOrigin } : {}),
         ...(input.sessionActionSource ? { sessionActionSource: input.sessionActionSource } : {}),
+        ...(input.managedContinuation ? { managedContinuation: input.managedContinuation } : {}),
         ...(input.installationProof ? { installationProof: input.installationProof } : {}) },
       {
         headers: { Authorization: `Bearer ${input.pat}`, 'Content-Type': 'application/json',

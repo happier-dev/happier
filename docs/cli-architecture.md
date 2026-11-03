@@ -32,6 +32,13 @@ installs the promoted CLI and explicitly restarts its existing background servic
 before waiting for registration. An unchanged service definition or CLI version
 does not prove that its running process adopted the promoted payload.
 
+Agent isolation is an optional enrollment capability. An unavailable isolation
+preview does not fail acquisition or retained bootstrap retry. The guest publishes
+its typed unavailable status and prerequisite reason through the existing Machine
+daemon-state owner; the controller preserves that same closed cause when reporting
+an isolation failure. Native recovery payloads are excluded. Authentication,
+admission and unknown failures still fail the operation.
+
 
 This document describes the Happier CLI (`apps/cli`) and its daemon. The CLI is both an interactive tool and a background session manager that keeps machine state in sync with the server.
 

@@ -6,3 +6,4 @@ export * from './reconcile.js';
 
 
 export { prepareManagedMachineSetupApplyInput } from './setupApply.js';
+export * from './enrollmentIsolation.js';

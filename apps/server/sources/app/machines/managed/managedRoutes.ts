@@ -1,3 +1,4 @@
+import { readManagedEnrollmentAccountId, projectManagedControllerAccess } from './managedRows';
 import type { FastifyRequest, FastifyReply } from "fastify";
 import { z } from 'zod/mini';
 import type { Fastify } from "@/app/api/types";
@@ -289,9 +290,22 @@ export function registerManagedMachineRoutes(app: Fastify): void {
             const row = await readManagedMachineInTx(tx, request.body);
             if (row.custodianAccountId !== proof.custodianAccountId) throw new ManagedMachineError("permission_denied");
             const requestAuthority = 'requestAuthority' in proof ? proof.requestAuthority : managedRequestAuthority(request);
+            if (request.body.includeEnrollmentInstallation && requestAuthority !== 'creation') throw new ManagedMachineError('permission_denied');
             const requestId = requestAuthority === 'creation' ? row.admittedActionRequestId : readManagedCurrentRequestId(row);
             const current = await requireCurrentManagedMachineInTx(tx, { ...request.body, requestId }, { requestAuthority, allowInactiveCurrentIntent: requestAuthority === 'intent' });
-            return { machine: await projectManagedMachineInTx(tx, current), requestId };
+            const enrollmentInstallation = request.body.includeEnrollmentInstallation ? await (async () => {
+                if (!current.enrolledMachineId) throw new ManagedMachineError('permission_denied');
+                const guest = await tx.machine.findUnique({ where: { id: current.enrolledMachineId }, select: {
+                    id: true, accountId: true, kind: true, installationId: true, installationPublicKey: true,
+                    revokedAt: true, replacedByMachineId: true,
+                } });
+                if (!guest?.installationId || guest.accountId !== readManagedEnrollmentAccountId(current)) throw new ManagedMachineError('permission_denied');
+                const access = projectManagedControllerAccess(guest, { installationId: guest.installationId });
+                if (!access) throw new ManagedMachineError('permission_denied');
+                return { machineId: guest.id, installationId: guest.installationId, installationPublicKey: access.installationPublicKey };
+            })() : undefined;
+            return { machine: await projectManagedMachineInTx(tx, current), requestId,
+                ...(enrollmentInstallation ? { enrollmentInstallation } : {}) };
         });
     }));
     app.post("/v1/machines/managed/controller/current", { preHandler: app.authenticate, schema: { body: ManagedControllerCurrentInputV1Schema } }, async (request, reply) => respond(reply, async () => {

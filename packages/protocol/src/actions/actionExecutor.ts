@@ -7116,3 +7116,6 @@ export type { ActionApprovedOperationAdmissionV1 } from './executor/types.js';
 export { readHostAdmittedReviewedChildV1 } from './executor/deploymentRoleChild.js';
 
 export { readHostAdmittedReviewedParentV1 } from './executor/deploymentRoleChild.js';
+
+export { createHostReviewedChildPortV1 } from './executor/deploymentRoleChild.js';
+export type { HostReviewedParentV1 } from './executor/deploymentRoleChild.js';

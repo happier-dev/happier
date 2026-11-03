@@ -1,6 +1,7 @@
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
+import { MachineElevatedNotAppliedResultV1Schema } from './adminAccessV1.js';
 import { readMachineMetadataFieldV1, type MachineMetadataFieldDefinitionV1 } from './machineMetadataFieldV1.js';
 
 const id = z.string().check(z.trim(), z.minLength(1));
@@ -36,6 +37,8 @@ export const MachineAgentIsolationUnavailableStatusV1Schema = lazyZodSchema(() =
     'workspace_not_ready', 'payload_not_accessible', 'workspace_ancestor_not_traversable',
     'agent_launch_kind_unavailable', 'provisioning_unavailable', 'launch_probe_failed',
     'mcp_socket_access_unavailable', 'local_admin_api_accessible', 'metadata_unavailable']),
+  // Publish only the prerequisite cause, without native recovery payloads.
+  setup: z.optional(z.pick(MachineElevatedNotAppliedResultV1Schema, { outcome: true, reasonCode: true, failure: true })),
 }));
 export const MachineAgentIsolationStatusV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ kind: z.literal('effective'), platform: z.literal('linux'), agentUser: z.literal('happier-agent') }),
@@ -67,9 +70,19 @@ export const MachineAgentIsolationReadyPreviewV1Schema = lazyZodSchema(() => z.s
 }));
 export const MachineAgentIsolationPreviewResultV1Schema = lazyZodSchema(() => z.union([
   MachineAgentIsolationReadyPreviewV1Schema,
-  z.strictObject({ kind: z.literal('unavailable'), status: MachineAgentIsolationUnavailableStatusV1Schema }),
+  z.strictObject({ kind: z.literal('unavailable'), status: MachineAgentIsolationUnavailableStatusV1Schema,
+    setup: z.optional(MachineElevatedNotAppliedResultV1Schema) }),
 ]));
 export type MachineAgentIsolationPreviewResultV1 = z.infer<typeof MachineAgentIsolationPreviewResultV1Schema>;
+/** The Machine state and controller failure expose the same closed prerequisite cause. */
+export function projectMachineAgentIsolationUnavailableStatusV1(
+  preview: Extract<MachineAgentIsolationPreviewResultV1, { kind: 'unavailable' }>,
+): Extract<MachineAgentIsolationStatusV1, { kind: 'unavailable' }> {
+  return { ...preview.status, ...(preview.setup ? { setup: {
+    outcome: preview.setup.outcome, reasonCode: preview.setup.reasonCode,
+    ...(preview.setup.failure ? { failure: preview.setup.failure } : {}),
+  } } : {}) };
+}
 export const MachineAgentIsolationSetInputV1Schema = lazyZodSchema(() => z.strictObject({
   ...previewInput, expectedMetadataVersion: version, expectedPolicy: MachineAgentIsolationPolicyV1Schema, expectedPlanDigest: id,
 }));

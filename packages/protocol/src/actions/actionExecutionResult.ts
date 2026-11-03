@@ -7,6 +7,7 @@ import { asProtocolZod, projectZodProtocolSchema } from '../plugins/actions/inte
 import { MACHINE_RPC_TIMEOUT_ERROR_CODE, RPC_ERROR_CODES } from '../rpc/errors.js';
 import { ActionErrorClassV1Schema, type ActionErrorClassV1 } from './actionErrorClassV1.js';
 import { isPluginError } from '../plugins/errors.js';
+import { ActionIdSchema, type ActionId } from './actionIds.js';
 
 const goalControlDiagnosticStages = ['client_creation', 'initialize', 'thread/goal/get', 'thread/goal/set',
   'thread/goal/clear', 'host_publication'] as const;
@@ -136,6 +137,35 @@ export const ActionExecuteFailureSchema = lazyZodSchema(() => z.strictObject({
 
 export type ActionExecuteFailure = Readonly<z.infer<typeof ActionExecuteFailureSchema>>;
 
+/** Closed code-only cause; never exception messages, native output or arbitrary fields. */
+export type ActionExceptionFailureDetailsV1 = Readonly<{
+  kind: 'actionException';
+  phase: ActionId | 'dispatch';
+  errorClass: ActionErrorClassV1;
+  errorCode: string | null;
+  httpStatus: number | null;
+  /** Existing accepted-spawn recovery identity, when this exception follows admission. */
+  accepted?: true;
+  spawnNonce?: string;
+}>;
+export const ActionExceptionFailureDetailsV1Schema: z.ZodMiniType<ActionExceptionFailureDetailsV1> = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('actionException'),
+  phase: z.union([z.literal('dispatch'), ActionIdSchema]),
+  errorClass: ActionErrorClassV1Schema,
+  errorCode: z.nullable(z.string()),
+  httpStatus: z.nullable(z.number().check(z.int(), z.minimum(100), z.maximum(599))),
+  accepted: z.optional(z.literal(true)),
+  spawnNonce: z.optional(z.string().check(z.minLength(1))),
+}).check(z.refine(value => readUnexpectedActionErrorDiagnosticV1({ name: value.errorClass,
+  code: value.errorClass === 'JsonRpcApplicationError' && value.errorCode !== null
+    ? Number(value.errorCode) : value.errorCode,
+}).errorCode === value.errorCode && (value.accepted === true) === (value.spawnNonce !== undefined))));
+
+export function projectActionExceptionFailureDetailsV1(error: unknown, phase: ActionId | 'dispatch' = 'dispatch'): ActionExceptionFailureDetailsV1 {
+  const { errorClass, errorCode, httpStatus } = readUnexpectedActionErrorDiagnosticV1(error);
+  return { kind: 'actionException', phase, errorClass, errorCode, httpStatus };
+}
+
 export type ActionExecuteResult = Readonly<{
   /** Host-only settlement annotation; public failure envelopes remain unchanged. Never Action input. */
   operationCredentialUses?: readonly ActionOperationCredentialUseV1[];
@@ -207,7 +237,7 @@ export function readUnexpectedActionErrorDiagnosticV1(error: unknown): Readonly<
         'SQLITE_CANTOPEN', 'SQLITE_CORRUPT',
         'session_detail_invalid_response', 'session_detail_projection_unavailable', 'not_authenticated', 'client-upgrade-required',
         'database_transaction_conflict_exhausted', 'database_transaction_timeout', 'database_connection_unavailable',
-      ].includes(code))) errorCode = code;
+      ].includes(code) || Object.values(RPC_ERROR_CODES).some(known => known === code))) errorCode = code;
       // JSON-RPC reserves these protocol/server codes. Preserve only that
       // bounded vocabulary, never native application data or message text.
       if (name === 'JsonRpcApplicationError' && typeof code === 'number' && Number.isInteger(code)

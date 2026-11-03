@@ -1,3 +1,5 @@
+import { encodeBase64 } from 'privacy-kit';
+import { ManagedControllerAccessV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { ManagedControllerV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { Prisma } from "@prisma/client";
 import * as z from "zod/mini";
@@ -43,6 +45,16 @@ export async function resolveManagedMachineRoleInTx(tx: Tx, row: Pick<StoredMana
 }
 
 
+export function projectManagedControllerAccess(controller: Readonly<{
+    kind: string; accountId: string; installationId: string | null; installationPublicKey: Uint8Array | null;
+    revokedAt: Date | null; replacedByMachineId: string | null;
+}> | null, expected: Readonly<{ installationId: string }>) {
+    if (!controller || controller.kind !== 'persistent' || classifyMachineAvailabilityState(controller) !== 'available'
+        || controller.installationId !== expected.installationId || !controller.installationPublicKey) return null;
+    const parsed = ManagedControllerAccessV1Schema.safeParse({ custodian: { accountId: controller.accountId },
+        installationPublicKey: encodeBase64(new Uint8Array(controller.installationPublicKey), 'base64url').replace(/=+$/u, '') });
+    return parsed.success ? parsed.data : null;
+}
 export type ManagedDeclaration = Pick<MachineProvisionerContributionV1, "resourceKind" | "actions" | "schemaVersion" | "launchSchema" | "resourceSchema" | "billing" | "retention" | "reconciliation" | "credentialPurposeRequirements"> & Readonly<{
     acquireCredentialRequests: readonly PluginActionConnectedAccountUseRequestV2[];
 }>;
