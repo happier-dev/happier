@@ -154,7 +154,7 @@ describe('provisioner picker demand', () => {
     const firstRead = createDeferred<void>();
     onTestFinished(() => firstRead.resolve());
     let managedMachines = [absent];
-    harness.answer(serverId, listPath, { select: () => ({ body: { machines: managedMachines }, respondAfter: firstRead.promise }) });
+    harness.answer(serverId, `POST ${listPath}`, { select: () => ({ body: { machines: managedMachines }, respondAfter: firstRead.promise }) });
     storage.setState({ machineListByServerId: { srv_build: [
       createControllerMachineFixture({ id: 'ghost', installationId: 'ghost-installation', active: false, activeAt: 0 }),
       createControllerMachineFixture({ id: 'live', installationId: 'live-installation', activeAt: Date.now() }),
@@ -209,7 +209,7 @@ describe('provisioner picker demand', () => {
       controller, allocation: 'confirmed-absent', creationState: 'active', desired: 'delete', desiredWhen: 'now', intentRevision: 1,
       retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
     const listPath = '/v1/machines/managed/actions/list';
-    harness.answer(serverId, listPath, { body: { machines: [absent] } });
+    harness.answer(serverId, `POST ${listPath}`, { body: { machines: [absent] } });
     storage.setState({ machineListByServerId: { srv_build: [createControllerMachineFixture({ id: 'ghost',
       installationId: controller.installationId, active: false, activeAt: 0 })] }, machineListStatusByServerId: { srv_build: 'idle' } });
     const screen = await renderPicker(<MachineProvisionerPicker serverId={serverId} />);
