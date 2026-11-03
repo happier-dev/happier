@@ -1,13 +1,23 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { cp, mkdir, mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
+import { DatabaseSync } from 'node:sqlite';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { fileURLToPath } from 'node:url';
 import * as privacyKit from 'privacy-kit';
+import { renderPrismaCompatibleSqliteDatabaseUrl } from '@happier-dev/cli-common/firstPartyRuntime/server';
+import { PrismaClient as SqlitePrismaClient } from '../../../../generated/sqlite-client/index.js';
+import { applySqliteMigrations } from '../../../../scripts/prismaMigrations';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol';
 import { PROJECT_SOURCES_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { db } from '@/storage/db';
+import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
 import { inTx } from '@/storage/inTx';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { createProjectSourceInTx, readProjectSourceInTx, updateProjectSourceInTx, deleteProjectSourceInTx, listProjectSourcesInTx } from './projectSourceService';
 import { projectSourceRoutes } from '@/app/api/routes/projects/projectSourceRoutes';
 import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
+import { observeSqliteRequests } from '@/testkit/observeSqliteRequests';
 
 const repository = { provider: { id: 'happier.scm.forge.github/github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' }, repository: { nameWithOwner: 'acme/repo', cloneUrl: 'https://github.com/acme/repo.git', visibility: 'private' }, protocol: 'https' };
 const serverId = 'home';
@@ -16,6 +26,178 @@ describe('Source catalog real SQLite owner', () => {
     beforeAll(async () => { harness = await createLightSqliteHarness({ tempDirPrefix: 'happier-source-catalog-', initEncrypt: true }); }, 180_000);
     afterAll(async () => { if (harness) await harness.close(); });
     const account = () => db.account.create({ data: { encryptionMode: 'plain' } });
+    it('widens retained SQLite Sources without losing either FK child, data, indexes or integrity', async () => {
+        const migrationName = '20261027122000_project_source_optional_repository';
+        const migrationsDir = fileURLToPath(new URL('../../../../prisma/sqlite/migrations/', import.meta.url));
+        const directory = await mkdtemp(join(tmpdir(), 'happier-source-nullable-upgrade-'));
+        const previousMigrations = join(directory, 'migrations');
+        const databasePath = join(directory, 'upgrade.sqlite');
+        await mkdir(previousMigrations);
+        for (const entry of await readdir(migrationsDir, { withFileTypes: true })) {
+            if (entry.isDirectory() && entry.name !== migrationName) await cp(join(migrationsDir, entry.name), join(previousMigrations, entry.name), { recursive: true });
+        }
+        const client = new SqlitePrismaClient({ datasources: { db: { url: renderPrismaCompatibleSqliteDatabaseUrl({ dbPath: databasePath, platform: process.platform }) } } });
+        try {
+            await applySqliteMigrations({ databasePath, migrationsDir: previousMigrations });
+            const creator = await client.account.create({ data: { encryptionMode: 'plain' } });
+            const team = await client.team.create({ data: { name: 'Retained owner' } });
+            const sources = await Promise.all([
+                client.projectSource.create({ data: { createdByAccountId: creator.id, name: 'Personal retained', repository,
+                    owner: { kind: 'account', accountId: creator.id }, audience: [], attachments: [] } }),
+                client.projectSource.create({ data: { createdByAccountId: creator.id, name: 'Team retained', repository,
+                    owner: { kind: 'team', teamId: team.id }, audience: [], attachments: [] } }),
+            ]);
+            const machine = await client.machine.create({ data: { id: crypto.randomUUID(), accountId: creator.id, metadata: '{}' } });
+            const artifact = await client.artifact.create({ data: { id: crypto.randomUUID(), accountId: creator.id,
+                header: new Uint8Array([1]), body: new Uint8Array([2]), dataEncryptionKey: new Uint8Array([3]) } });
+            const environment = await client.deploymentEnvironment.create({ data: { projectSourceId: sources[0].id,
+                createdByAccountId: creator.id, protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers',
+                controllerMachineId: machine.id, contentArtifactId: artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1 } });
+            const defaults = await client.projectDeploymentDefaults.create({ data: { projectSourceId: sources[0].id } });
+            const childFks = await Promise.all(['DeploymentEnvironment', 'ProjectDeploymentDefaults']
+                .map(table => client.$queryRawUnsafe(`PRAGMA foreign_key_list("${table}")`)));
+            expect(await client.projectSource.count()).toBe(2);
+            expect(await client.deploymentEnvironment.count()).toBe(1);
+            expect(await client.projectDeploymentDefaults.count()).toBe(1);
+            expect(await applySqliteMigrations({ databasePath, migrationsDir })).toEqual({ applied: [migrationName] });
+            expect(await applySqliteMigrations({ databasePath, migrationsDir })).toEqual({ applied: [] });
+            expect(await client.projectSource.findMany({ orderBy: { id: 'asc' } })).toEqual([...sources].sort((a, b) => a.id.localeCompare(b.id)));
+            expect(await client.deploymentEnvironment.findMany()).toEqual([environment]);
+            expect(await client.projectDeploymentDefaults.findMany()).toEqual([defaults]);
+            expect(await Promise.all(['DeploymentEnvironment', 'ProjectDeploymentDefaults']
+                .map(table => client.$queryRawUnsafe(`PRAGMA foreign_key_list("${table}")`)))).toEqual(childFks);
+            expect(await client.$queryRawUnsafe('PRAGMA index_info("ProjectSource_createdByAccountId_id_idx")'))
+                .toMatchObject([{ name: 'createdByAccountId' }, { name: 'id' }]);
+            expect(await client.$queryRawUnsafe('PRAGMA integrity_check')).toEqual([{ integrity_check: 'ok' }]);
+            expect(await client.$queryRawUnsafe('PRAGMA foreign_key_check')).toEqual([]);
+            const repositoryFree = await client.projectSource.create({ data: { createdByAccountId: creator.id,
+                name: 'Stored after upgrade', owner: { kind: 'account', accountId: creator.id }, audience: [], attachments: [] } });
+            expect(repositoryFree.repository).toBeNull();
+            const sqlNull = await client.$queryRawUnsafe<Array<{ absent: number | bigint }>>(
+                'SELECT COUNT(*) AS absent FROM "ProjectSource" WHERE "id" = ? AND "repository" IS NULL', repositoryFree.id);
+            expect(Number(sqlNull[0]?.absent)).toBe(1);
+            expect(await client.projectSource.count()).toBe(3);
+        } finally {
+            await client.$disconnect();
+            await rm(directory, { recursive: true, force: true });
+        }
+    });
+    it('backfills retained SQLite Sources to creator ownership without deriving an owner from plural audience', async () => {
+        const retained = new DatabaseSync(':memory:');
+        try {
+            retained.exec('CREATE TABLE "Account" ("id" TEXT PRIMARY KEY)');
+            retained.exec(await readFile(new URL('../../../../prisma/sqlite/migrations/20261008131000_add_project_sources/migration.sql', import.meta.url), 'utf8'));
+            retained.exec('INSERT INTO "Account" ("id") VALUES (\'retained-creator\')');
+            const audience = ['team-a', 'team-b'].map(teamId => ({ principal: { kind: 'team', teamId }, level: 'view' }));
+            retained.prepare('INSERT INTO "ProjectSource" ("id","createdByAccountId","name","repository","audience","attachments","updatedAt") VALUES (?,?,?,?,?,?,?)')
+                .run('retained-source', 'retained-creator', 'Retained', JSON.stringify(repository), JSON.stringify(audience), '[]', '2026-10-26T00:00:00Z');
+            retained.exec(await readFile(new URL('../../../../prisma/sqlite/migrations/20261027103000_add_project_source_owner/migration.sql', import.meta.url), 'utf8'));
+            const row = retained.prepare('SELECT "owner","repository","audience","revision" FROM "ProjectSource"').get();
+            expect(row).toBeDefined();
+            expect(JSON.parse(String(row?.owner))).toEqual({ kind: 'account', accountId: 'retained-creator' });
+            expect(JSON.parse(String(row?.repository))).toEqual(repository);
+            expect(JSON.parse(String(row?.audience))).toEqual(audience);
+            expect(row?.revision).toBe(1);
+            expect(retained.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
+        } finally { retained.close(); }
+    });
+    it('keeps one admitted owner independent of plural audience and protects owner changes with current authority and CAS', async () => {
+        const [creator, administrator, outsider] = await Promise.all([account(), account(), account()]);
+        const teams = await Promise.all(['Owner team', 'Audience team'].map(name => db.team.create({ data: { name } })));
+        for (const team of teams) await db.teamMembership.create({ data: { teamId: team.id, accountId: creator.id, role: 'owner' } });
+        await db.teamMembership.create({ data: { teamId: teams[0].id, accountId: administrator.id, role: 'admin' } });
+        const audience = teams.map(team => ({ principal: { kind: 'team', teamId: team.id }, level: 'view' }));
+        const input = { serverId, requestKey: crypto.randomUUID(), name: 'Owned source', repository, audience };
+        const personal = await inTx(tx => createProjectSourceInTx(tx, creator.id, input));
+        expect(personal).toMatchObject({ ok: true, source: { owner: { kind: 'account', accountId: creator.id } } });
+        if (!personal.ok) throw new Error(personal.error);
+        expect(await inTx(tx => createProjectSourceInTx(tx, creator.id, { ...input,
+            owner: { kind: 'account', accountId: creator.id } }))).toEqual(personal);
+        const teamOwner = { kind: 'team', teamId: teams[0].id };
+        expect(await inTx(tx => updateProjectSourceInTx(tx, administrator.id, { serverId, sourceId: personal.source.id,
+            expectedRevision: personal.source.revision, patch: { owner: teamOwner } }))).toEqual({ ok: false, error: 'source_access_denied' });
+        expect(await inTx(tx => createProjectSourceInTx(tx, outsider.id, { ...input, requestKey: crypto.randomUUID(),
+            audience: [], owner: teamOwner }))).toEqual({ ok: false, error: 'source_access_denied' });
+        expect(await inTx(tx => createProjectSourceInTx(tx, creator.id, { ...input, owner: teamOwner })))
+            .toEqual({ ok: false, error: 'source_conflict' });
+        const owned = await inTx(tx => createProjectSourceInTx(tx, creator.id, { ...input,
+            requestKey: crypto.randomUUID(), audience: [], owner: teamOwner }));
+        expect(owned).toMatchObject({ ok: true, source: { owner: teamOwner } });
+        if (!owned.ok) throw new Error(owned.error);
+        expect(await inTx(tx => readProjectSourceInTx(tx, administrator.id, { serverId, sourceId: owned.source.id })))
+            .toMatchObject({ ok: true, canManage: true });
+        const moved = await inTx(tx => updateProjectSourceInTx(tx, creator.id, { serverId, sourceId: personal.source.id,
+            expectedRevision: personal.source.revision, patch: { owner: teamOwner, audience: [] } }));
+        expect(moved).toMatchObject({ ok: true, source: { owner: teamOwner, createdByAccountId: creator.id, audience: [] } });
+        if (!moved.ok) throw new Error(moved.error);
+        expect(await inTx(tx => readProjectSourceInTx(tx, administrator.id, { serverId, sourceId: personal.source.id })))
+            .toMatchObject({ ok: true, canManage: true, source: { owner: teamOwner } });
+        expect(await inTx(tx => listProjectSourcesInTx(tx, administrator.id, { serverId, query: 'Owned source' })))
+            .toMatchObject({ ok: true, sources: expect.arrayContaining([expect.objectContaining({ id: personal.source.id })]) });
+        const mutations: string[] = [];
+        const stop = observeSqliteRequests({ before: request => {
+            if (request.model === 'ProjectSource' && ['create', 'update', 'updateMany', 'delete', 'deleteMany'].includes(request.action)) mutations.push(request.action);
+        } });
+        try {
+            expect(await inTx(tx => updateProjectSourceInTx(tx, creator.id, { serverId, sourceId: personal.source.id,
+                expectedRevision: moved.source.revision, patch: { owner: teamOwner } }))).toEqual(moved);
+            expect(mutations).toEqual([]);
+        } finally { stop(); }
+        expect(await inTx(tx => updateProjectSourceInTx(tx, creator.id, { serverId, sourceId: personal.source.id,
+            expectedRevision: personal.source.revision, patch: { owner: { kind: 'account', accountId: creator.id } } })))
+            .toMatchObject({ ok: false, error: 'source_conflict' });
+        await db.teamMembership.updateMany({ where: { teamId: teams[0].id, accountId: creator.id }, data: { status: 'suspended' } });
+        expect(await inTx(tx => updateProjectSourceInTx(tx, creator.id, { serverId, sourceId: personal.source.id,
+            expectedRevision: moved.source.revision, patch: { owner: { kind: 'account', accountId: creator.id } } })))
+            .toEqual({ ok: false, error: 'source_unavailable' });
+        expect(await inTx(tx => updateProjectSourceInTx(tx, administrator.id, { serverId, sourceId: personal.source.id,
+            expectedRevision: moved.source.revision, patch: { owner: { kind: 'team', teamId: teams[0].id, accountId: creator.id } } })))
+            .toEqual({ ok: false, error: 'source_invalid' });
+    });
+    it('persists repository-free Sources with one explicit owner, canonical replay and repository attachment under CAS', async () => {
+        const owner = await account();
+        const input = { serverId, requestKey: crypto.randomUUID(), name: 'Stored application' };
+        const created = await inTx(tx => createProjectSourceInTx(tx, owner.id, input));
+        expect(created).toMatchObject({ ok: true, source: { owner: { kind: 'account', accountId: owner.id } } });
+        if (!created.ok) throw new Error(created.error);
+        expect(created.source).not.toHaveProperty('repository');
+        expect((await db.projectSource.findUniqueOrThrow({ where: { id: created.source.id } })).repository).toBeNull();
+        expect(await inTx(tx => listProjectSourcesInTx(tx, owner.id, { serverId, query: 'Stored application' })))
+            .toMatchObject({ ok: true, sources: [{ id: created.source.id }] });
+        expect(await inTx(tx => readProjectSourceInTx(tx, owner.id, { serverId, sourceId: created.source.id }))).toEqual(created);
+        expect(await inTx(tx => createProjectSourceInTx(tx, owner.id, input))).toEqual(created);
+        const beforeReplay = await db.accountChange.findFirstOrThrow({ where: {
+            accountId: owner.id, entityId: PROJECT_SOURCES_ACCOUNT_CHANGE_ENTITY_ID_V1,
+        } });
+        const attached = await inTx(tx => updateProjectSourceInTx(tx, owner.id, { serverId, sourceId: created.source.id,
+            expectedRevision: created.source.revision, patch: { repository } }));
+        expect(attached).toMatchObject({ ok: true, source: { repository, owner: { kind: 'account', accountId: owner.id } } });
+        if (!attached.ok) throw new Error(attached.error);
+        expect(await inTx(tx => createProjectSourceInTx(tx, owner.id, input))).toEqual(attached);
+        const afterChange = await db.accountChange.findFirstOrThrow({ where: {
+            accountId: owner.id, entityId: PROJECT_SOURCES_ACCOUNT_CHANGE_ENTITY_ID_V1,
+        } });
+        expect(afterChange.cursor).toBeGreaterThan(beforeReplay.cursor);
+        expect(await inTx(tx => updateProjectSourceInTx(tx, owner.id, { serverId, sourceId: created.source.id,
+            expectedRevision: attached.source.revision, patch: { repository } }))).toEqual(attached);
+        expect((await db.accountChange.findFirstOrThrow({ where: {
+            accountId: owner.id, entityId: PROJECT_SOURCES_ACCOUNT_CHANGE_ENTITY_ID_V1,
+        } })).cursor).toBe(afterChange.cursor);
+        expect(await inTx(tx => listProjectSourcesInTx(tx, owner.id, { serverId, query: 'Stored application' })))
+            .toMatchObject({ ok: true, sources: [{ id: created.source.id }] });
+        const cleared = await inTx(tx => updateProjectSourceInTx(tx, owner.id, { serverId, sourceId: created.source.id,
+            expectedRevision: attached.source.revision, patch: { repository: null } }));
+        expect(cleared).toMatchObject({ ok: true, source: { revision: attached.source.revision + 1 } });
+        if (!cleared.ok) throw new Error(cleared.error);
+        expect(cleared.source).not.toHaveProperty('repository');
+        expect((await db.projectSource.findUniqueOrThrow({ where: { id: created.source.id } })).repository).toBeNull();
+        expect(await inTx(tx => readProjectSourceInTx(tx, owner.id, { serverId, sourceId: created.source.id }))).toEqual(cleared);
+        expect(await inTx(tx => updateProjectSourceInTx(tx, owner.id, { serverId, sourceId: created.source.id,
+            expectedRevision: cleared.source.revision, patch: { repository: null } }))).toEqual(cleared);
+        expect(await inTx(tx => updateProjectSourceInTx(tx, owner.id, { serverId, sourceId: created.source.id,
+            expectedRevision: attached.source.revision, patch: { repository } })))
+            .toMatchObject({ ok: false, error: 'source_conflict' });
+    });
     it('serves acknowledged mutations and current conflicts through authenticated HTTP, with exact path/body identity', async () => {
         const owner = await account();
         await withAuthenticatedTestApp(projectSourceRoutes, async app => {
@@ -113,6 +295,7 @@ describe('Source catalog real SQLite owner', () => {
         const team = await db.team.create({ data: { name: 'Overlapping' } });
         await db.teamMembership.create({ data: { teamId: team.id, accountId: owner.id, role: 'owner' } });
         const membership = await db.teamMembership.create({ data: { teamId: team.id, accountId: member.id, role: 'member' } });
+        await makeShareEligibleForTest(owner.id, member.id);
         const first = await source(owner.id, [{ principal: { kind: 'account', accountId: member.id }, level: 'view' }, { principal: { kind: 'team', teamId: team.id }, level: 'view' }]);
         const second = await source(owner.id, [{ principal: { kind: 'account', accountId: member.id }, level: 'view' }]);
         await source(outsider.id);
@@ -125,6 +308,7 @@ describe('Source catalog real SQLite owner', () => {
     });
     it('attaches independent exact documents under CAS without granting rights; detach and delete retain document bytes and grants', async () => {
         const [owner, recipient] = await Promise.all([account(), account()]);
+        await makeShareEligibleForTest(owner.id, recipient.id);
         const row = await source(owner.id, [{ principal: { kind: 'account', accountId: recipient.id }, level: 'view' }]);
         async function artifact(kind = 'widget-area-layout.v1') {
             return db.artifact.create({ data: { id: crypto.randomUUID(), accountId: owner.id,

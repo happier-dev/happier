@@ -1,3 +1,4 @@
+import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
 import { type ManagedResourceDependencyV1, type ManagedResourceDispositionV1 } from '@happier-dev/protocol/machines/managed/managedDependencyV1';
 import { formatSharedSavedSecretRefV1, SHARED_SAVED_SECRET_REF_V1_PREFIX } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { isSessionEncryptionModeAllowedByStoragePolicy } from '@happier-dev/protocol/encryption/storagePolicyDecisions';
@@ -2549,4 +2550,28 @@ export async function promoteSavedSecretResourceInTx(
         ...(Object.keys(catalogRevisions).length ? { catalogRevisions } : {}),
         ...(notificationChannelRevision === undefined ? {} : { notificationChannelRevision }),
         ...(remoteHostRevision === undefined ? {} : { remoteHostRevision }) } };
+}
+
+export async function readSavedSecretResourcesForPrincipalInTx(tx: Tx,
+    principal: Extract<PrincipalRefV1, { kind: 'account' | 'team' }>, resourceIds: readonly string[],
+): Promise<readonly SavedSecretCatalogResultV1[]> {
+    if (principal.kind === 'account') return readSavedSecretResourcesForAccountInTx(tx, principal.accountId, undefined, resourceIds);
+    if (resourceIds.length === 0) return [];
+    const result: SavedSecretCatalogEntryV1[] = [];
+    // The exact-id query adds the Team id and Prisma's root OFFSET binding.
+    for (const ids of portableQueryChunks({ values: [...new Set(resourceIds)], bindingsPerValue: 1, fixedBindings: 2 })) {
+        const rows = await tx.savedSecretResource.findMany({ where: { id: { in: [...ids] },
+            teamGrants: { some: { teamId: principal.teamId, ...ACTIVE_SAVED_SECRET_TEAM_GRANT_WHERE } } },
+            select: { id: true, ownerAccountId: true, displayName: true, kind: true, encryptionMode: true, revision: true, storedContent: true } });
+        for (const row of rows) {
+            const metadata = readSavedSecretMetadata(row);
+            if (!metadata) continue;
+            result.push(SavedSecretCatalogEntryV1Schema.parse({ ref: formatSharedSavedSecretRefV1(row.id), source: 'shared_resource',
+                relationship: 'recipient', name: row.displayName, kind: metadata.kind, encryptionMode: metadata.encryptionMode,
+                ...(metadata.storage ? { storage: metadata.storage } : {}),
+                ownerAccountId: row.ownerAccountId, revision: row.revision, materialStatus: 'ready',
+                capabilities: { use: true, rename: false, rotate: false, manageAccess: false, delete: false } }));
+        }
+    }
+    return result;
 }

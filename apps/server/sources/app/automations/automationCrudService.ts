@@ -1,3 +1,6 @@
+import { getDbProviderFromEnv } from '@/storage/prisma';
+import { resolveDbSqlDialect } from "@/config/databaseProvider";
+import { applyAutomationEnabledTransitionTx } from './automationEnabledTransition';
 import { randomUUID } from "node:crypto";
 import type { Prisma } from "@prisma/client";
 
@@ -1173,9 +1176,27 @@ export async function loadAutomationTx(
         accountId: string;
         automationId: string;
         includeDeleted?: boolean;
-
+        lockForMutation?: boolean;
     },
 ): Promise<AutomationListItem | null> {
+    if (params.lockForMutation) {
+        // Publication and Account admission precede this resource lock. Read
+        // the revision only after earlier same-definition writers commit;
+        // child CAS still rejects stale edits to the same trigger.
+        const dialect = resolveDbSqlDialect(getDbProviderFromEnv(process.env, "postgres"));
+        if (dialect === "postgres") {
+            await tx.$queryRawUnsafe(
+                'SELECT "id" FROM "Automation" WHERE "id" = $1 AND "accountId" = $2 FOR NO KEY UPDATE',
+                params.automationId, params.accountId,
+            );
+        } else if (dialect === "mysql") {
+            await tx.$queryRawUnsafe(
+                'SELECT `id` FROM `Automation` WHERE `id` = ? AND `accountId` = ? FOR UPDATE',
+                params.automationId, params.accountId,
+            );
+        }
+        // SQLite's Account admission already reserves its single writer.
+    }
     const row = await tx.automation.findFirst({
         where: {
             id: params.automationId,
@@ -6425,4 +6446,36 @@ export async function getAutomationRun(params: {
             select: { id: true },
         }) === null;
     return { ...row, triggerRetired } as AutomationRunDetailItem;
+}
+
+export async function disableAutomationInTx(
+    tx: Tx,
+    params: Readonly<{ accountId: string; automationId: string }>,
+): Promise<AutomationListItem | null> {
+    await acquireWorkflowPublicationLocksInTx(tx, {
+        accountId: params.accountId,
+        automationIds: [params.automationId],
+        runSourceTriggerWhere: { automationId: params.automationId },
+    });
+    const existing = await loadAutomationTx(tx, { ...params, lockForMutation: true });
+    if (!existing || !existing.enabled) return existing;
+
+    const now = new Date();
+    const changed = await tx.automation.updateMany({
+        where: { id: existing.id, accountId: params.accountId, enabled: true, deletedAt: null },
+        data: { enabled: false, updatedAt: now },
+    });
+    if (changed.count !== 1) return null;
+    await applyAutomationEnabledTransitionTx({
+        tx,
+        accountId: params.accountId,
+        existing,
+        enabled: false,
+        now,
+    });
+    const disabled = await loadAutomationTx(tx, params);
+    if (!disabled) return null;
+    const cursor = await markAutomationChangedTx(tx, params);
+    emitAutomationMutationAfterTx({ tx, accountId: params.accountId, automation: disabled, cursor });
+    return disabled;
 }

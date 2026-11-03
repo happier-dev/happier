@@ -658,3 +658,25 @@ export async function commitMachineRecipientKeyEnvelopesInTx(tx: Tx, input: Mach
     await markAccountsChanged(tx, { accountIds: prepared.map(envelope => envelope.recipientAccountId), kind: 'machine', entityId: row.id });
     return { appliedRecipientAccountIds: prepared.map(envelope => envelope.recipientAccountId), skippedRecipientAccountIds: [] };
 }
+
+export async function resolveMachinePrincipalAccessForMachinesInTx(tx: Tx, input: Readonly<{
+    machineIds: readonly string[]; principal: Extract<PrincipalRefV1, { kind: 'account' | 'team' }>;
+}>): Promise<Map<string, MachineAccessRoleV1 | null>> {
+    const principal = input.principal;
+    if (principal.kind === 'account') {
+        const access = await resolveEffectiveMachineAccessForMachinesInTx(tx, { machineIds: input.machineIds, accountIds: [principal.accountId] });
+        return new Map([...access].map(([id, roles]) => [id, roles.get(principal.accountId) ?? null]));
+    }
+    const result = new Map<string, MachineAccessRoleV1 | null>();
+    for (const ids of portableQueryChunks({ values: [...new Set(input.machineIds)], bindingsPerValue: 1, fixedBindings: 2 })) {
+        const rows = await tx.machine.findMany({ where: { id: { in: [...ids] } }, select: {
+            id: true, kind: true, teamGrants: { where: { teamId: principal.teamId, team: { archivedAt: null } }, select: { accessLevel: true } },
+        } });
+        for (const row of rows) {
+            const grant = row.kind === 'persistent' ? row.teamGrants[0] : undefined;
+            result.set(row.id, grant ? grant.accessLevel === 'admin' ? 'manage' : 'use' : null);
+        }
+    }
+    return result;
+}
+/** The current structural audience includes the original custodian, irrespective of key delivery. */

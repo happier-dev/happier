@@ -3497,7 +3497,8 @@ model ProjectSource {
     createdByAccount Account @relation(fields: [createdByAccountId], references: [id], onDelete: Cascade)
     revision Int @default(1)
     name String @db.Text
-    repository Json
+    repository Json?
+    owner Json?
     defaultRef String? @db.Text
     subdir String? @db.Text
     audience Json
