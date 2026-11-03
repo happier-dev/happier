@@ -6,12 +6,21 @@ export type { McpServerCatalogMutationV1, McpServerCatalogSnapshotV1, McpServerC
   McpServerCatalogScopeV1, McpServerCatalogMutationResponseV1 } from "./catalogSchemasV1.js";
 import type { AccountScopedCryptoMaterial } from '../../crypto/accountScopedCipher.js';
 import { projectStoredMcpServerCatalogV1, openMcpServerCatalogContentV1, type McpServerCatalogV1, type McpServerCatalogRowReadResponseV1, type McpServerCatalogRowMutationResponseV1, McpServerCatalogV1Schema } from './serverRowsV1.js';
-import { isMcpPluginItemIdV1, type McpServersSettingsV1 } from './settingsV1.js';
+import { isMcpPluginItemIdV1, McpServerCatalogEntryV1Schema, type McpServersSettingsV1 } from './settingsV1.js';
 import { applyReachRulesChangeV1, resolveCreateReachV1, type ReachRulesWriteContextV1 } from '../../reach/reachRulesChangeV1.js';
 export type McpServerCatalogWriteContextV1 = ReachRulesWriteContextV1 & Readonly<{ pluginItemIds?: readonly string[] }>;
 
 export { listMcpServerCatalogSavedSecretRefsV1, rewriteMcpServerCatalogSavedSecretRefsV1,
   remapMcpServerCatalogSavedSecretReferencesV1 } from './serverRowsV1.js';
+
+
+/** Catalog-authored imports and copies share one collision-free name vocabulary. */
+export function uniqueMcpServerNameV1(baseName: string, servers: readonly Readonly<{ name: string }>[]): string {
+  const names = new Set(servers.map(server => server.name));
+  let name = baseName;
+  for (let index = 2; names.has(name) || !McpServerCatalogEntryV1Schema.shape.name.safeParse(name).success; index += 1) name = `${baseName}_${index}`;
+  return name;
+}
 
 
 /** Definitions and their bindings share one validation and one durable row CAS. */

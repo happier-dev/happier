@@ -32,6 +32,7 @@ import { encodeMcpServerInstallLinkV1, parseMcpServerImportV1 } from './import/p
 import { McpImportPreviewV1Schema, McpImportCommitV1Schema, McpImportValuesV1Schema, McpImportValueChoiceV1Schema,
   prepareMcpServerImportV1, prepareDetectedMcpServerImportV1, materializeMcpServerImportV1 } from './import/mcpServerImportV1.js';
 import { PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1 } from '../../account/settings/personalSavedSecretActionsV1.js';
+import { uniqueMcpServerNameV1 } from './serverCatalogV1.js';
 export { MCP_SERVER_ACTION_IDS_V1, isMcpServerActionIdV1, type McpServerActionIdV1 } from './serverActionIdsV1.js';
 
 const revision = lazyZodSchema(() => z.number().check(z.int(), z.nonnegative(), z.maximum(Number.MAX_SAFE_INTEGER)));
@@ -255,8 +256,7 @@ export function createMcpServerActionExecuteV1(ports: McpServerActionPortsV1) {
       if (snapshot.status !== 'ready' || snapshot.authority !== 'active') throw Object.assign(new Error('Catalog unavailable'), { code: 'mcp_catalog_unavailable' });
       const ctx = ports.ruleWriteContext?.() ?? { nowMs: Date.now(), newId: () => globalThis.crypto.randomUUID() };
       const baseName = name ?? previous?.name ?? (item.payload.server.name.split('/').at(-1)!.toLowerCase().replace(/[^a-z0-9_-]/gu, '_') || 'server');
-      let uniqueName = baseName; let suffix = 2;
-      if (!name && !previous) while (snapshot.catalog.servers.some(server => server.name === uniqueName) || !McpServerCatalogEntryV1Schema.shape.name.safeParse(uniqueName).success) uniqueName = `${baseName}_${suffix++}`;
+      const uniqueName = !name && !previous ? uniqueMcpServerNameV1(baseName, snapshot.catalog.servers) : baseName;
       const mapped = mapMcpRegistryServerV1({ server: item.payload.server, id: previous?.id ?? ctx.newId(), name: uniqueName,
         nowMs: ctx.nowMs, inputs, previous, oauth });
       if (!mapped.ok) return mapped;
@@ -451,9 +451,7 @@ export function createMcpServerActionExecuteV1(ports: McpServerActionPortsV1) {
         const source = snapshot.catalog.servers.find(server => server.id === serverId);
         if (!source) return projectMcpServerActionFailureV1({ code: 'mcp_server_not_found' });
         const ctx = ports.ruleWriteContext?.() ?? { nowMs: Date.now(), newId: () => globalThis.crypto.randomUUID() };
-        const names = new Set(snapshot.catalog.servers.map(server => server.name));
-        let name = `${source.name}_copy`;
-        for (let index = 2; names.has(name); index += 1) name = `${source.name}_copy_${index}`;
+        const name = uniqueMcpServerNameV1(`${source.name}_copy`, snapshot.catalog.servers);
         // Only configuration lives on the catalog entry. OAuth grants and
         // attempts belong to Connected Accounts under the source id.
         const entry = { ...source, id: ctx.newId(), name,
