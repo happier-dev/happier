@@ -1,23 +1,5 @@
 /**
- * Renders the Plugin SDK availability reference from `capability-matrix.json`.
- *
- * The corridor already treats that file as the authority — `plugins/quickstart.mdx`
- * calls it "the sole product-availability authority" — but the hand-written table in
- * `manifest/contributions.mdx` had drifted badly from it:
- *
- *   - 22 of 44 contribution families were absent from the page, 17 of them
- *     `available`, so authors had no way to discover working capabilities;
- *   - six families disagreed outright, in both directions. `mcp.servers` and
- *     `voiceModelPacks` are deferred in the matrix and read as usable on the
- *     page — the worst direction, because an author builds against them and
- *     finds out at registration time. `scmBackends`, `settings`, `ui.views` and
- *     `voiceProviders` are available and were marked deferred, which quietly
- *     tells people not to use working features.
- *
- * A curated subset of a machine-readable contract will always drift. This
- * projects all four matrix sections instead, so the page cannot disagree with
- * the artifact it cites.
- *
+ * Projects author availability from the SDK's canonical capability matrix.
  * Regenerate with `pnpm --dir apps/docs run generate:reference`.
  */
 import { readFileSync } from 'node:fs';
@@ -41,35 +23,9 @@ function table(headers, rows) {
 
 function split(entries) {
   return {
-    available: entries.filter((e) => e.availabilityDisposition === 'available'),
+    implemented: entries.filter((e) => ['available', 'preview'].includes(e.availabilityDisposition)),
     deferred: entries.filter((e) => e.availabilityDisposition === 'deferred'),
   };
-}
-
-function evidenceValue(value) {
-  return code(value ?? 'not-recorded');
-}
-
-/**
- * Product availability and the evidence currently recorded for it are separate
- * facts. Keep that distinction in the projection instead of letting a source
- * declaration imply a loaded runtime or published release.
- */
-function evidenceTable(entries, idKey) {
-  return table(
-    ['Name', 'Availability', 'Source API', 'Source consumer', 'Loaded-platform proof', 'Release availability'],
-    entries
-      .slice()
-      .sort((a, b) => String(a[idKey]).localeCompare(String(b[idKey])))
-      .map((e) => [
-        code(e[idKey]),
-        evidenceValue(e.availabilityDisposition),
-        evidenceValue(e.sourceApiAvailability),
-        code(e.sourceConsumer),
-        evidenceValue(e.loadedPlatformProof),
-        evidenceValue(e.releaseAvailability),
-      ]),
-  );
 }
 
 /** Deferred entries carry the condition that would unblock them; surface it. */
@@ -91,25 +47,31 @@ export async function renderPluginAvailabilityMarkdown({ matrixPath = MATRIX } =
   const hostAccess = split(m.hostAccess);
   const subpaths = split(m.subpaths);
 
-  const familyRows = families.available
+  const familyRows = families.implemented
     .slice()
     .sort((a, b) => a.manifestFamily.localeCompare(b.manifestFamily))
-    .map((e) => [code(e.manifestFamily), code(e.definePluginAuthorKey), code(e.authorEntrypoint), e.realm ?? '—']);
+    .map((e) => [code(e.manifestFamily), code(e.availabilityDisposition), code(e.definePluginAuthorKey), code(e.authorEntrypoint), e.realm ?? '—']);
 
-  const serviceRows = services.available
+  const serviceRows = services.implemented
     .slice()
     .sort((a, b) => a.serviceId.localeCompare(b.serviceId))
     .map((e) => [
       `\`context.services.${e.property}\``,
+      code(e.availabilityDisposition),
       code(e.publicType),
       (e.authorEntrypoints ?? []).map(code).join(', ') || '—',
       e.lifecycle ?? '—',
     ]);
 
-  const hostAccessRows = hostAccess.available
+  const hostAccessRows = hostAccess.implemented
     .slice()
     .sort((a, b) => String(a.capability ?? a.hostAccessCapability).localeCompare(String(b.capability ?? b.hostAccessCapability)))
-    .map((e) => [code(e.capability ?? e.hostAccessCapability), e.authorizationClass ?? e.realm ?? '—']);
+    .map((e) => [code(e.capability ?? e.hostAccessCapability), code(e.availabilityDisposition), e.authorizationClass ?? e.realm ?? '—']);
+
+  const subpathRows = subpaths.implemented
+    .slice()
+    .sort((a, b) => a.specifier.localeCompare(b.specifier))
+    .map((e) => [code(e.specifier), code(e.availabilityDisposition), e.realm ?? '—']);
 
   return `---
 title: Developer Preview availability
@@ -123,47 +85,25 @@ manifest schema accepts are not yet wired end to end. \`capability-matrix.json\`
 projection of it — so it cannot disagree with the artifact the rest of the
 corridor cites.
 
-**Available in Developer Preview** means the applicable realm has a complete
-current producer, registration/projection path, and lifecycle. A maintained
-consumer is useful evidence, but it is not required for an implemented
-capability to exist. **Deferred** means the lifecycle is incomplete in that
-realm and is not supported or advertised for ordinary author use; do not rely
-on it; consult its unblock condition.
+**Available** families have a current authoring and implementation path.
+**Preview** families retain an implemented author API while awaiting a current
+production consumer. Both are usable in the package's Developer Preview;
+\`preview\` is a label, not a registration restriction for external plugins.
+**Deferred** means the lifecycle is incomplete in the applicable realm and is
+not supported for ordinary author use; consult its unblock condition.
 
-Product availability is distinct from source API availability, source consumer,
-loaded-platform proof, and release availability. The evidence fields record
-only what the matrix has established: a source declaration or consumer does not
-by itself prove that the current platform loaded it or that it was published,
-and the absence of a consumer does not make a complete lifecycle unavailable.
-Likewise, \`not-recorded\` does not infer the opposite state.
+This reference describes 0.3 development source. It does not establish released
+availability or verify a loaded runtime.
 
-At the time this page was generated: **${families.available.length} of ${m.manifestFamilies.length} contribution families**,
-**${services.available.length} of ${m.services.length} services**, **${hostAccess.available.length} of ${m.hostAccess.length} host-access capabilities**
-and **${subpaths.available.length} of ${m.subpaths.length} SDK entrypoints** are available.
-
-## Evidence recorded by the capability matrix
-
-### Contribution family evidence
-
-${evidenceTable(m.manifestFamilies, 'manifestFamily')}
-
-### Service evidence
-
-${evidenceTable(m.services, 'serviceId')}
-
-### Host-access evidence
-
-${evidenceTable(m.hostAccess, 'capability')}
-
-### SDK entrypoint evidence
-
-${evidenceTable(m.subpaths, 'specifier')}
+At the time this page was generated: **${families.implemented.length} of ${m.manifestFamilies.length} contribution families**,
+**${services.implemented.length} of ${m.services.length} services**, **${hostAccess.implemented.length} of ${m.hostAccess.length} host-access capabilities**
+and **${subpaths.implemented.length} of ${m.subpaths.length} SDK entrypoints** are implemented.
 
 ## Contribution families available in Developer Preview
 
 \`definePlugin(...)\` key and the entrypoint that exports its types.
 
-${table(['Family', 'Author key', 'Entrypoint', 'Realm'], familyRows)}
+${table(['Family', 'Availability', 'Author key', 'Entrypoint', 'Realm'], familyRows)}
 
 ## Contribution families that are deferred
 
@@ -173,7 +113,7 @@ ${deferredTable(families.deferred, 'manifestFamily')}
 
 Reached through \`context.services\` inside a plugin invocation.
 
-${table(['Service', 'Type', 'Entrypoint', 'Lifecycle'], serviceRows)}
+${table(['Service', 'Availability', 'Type', 'Entrypoint', 'Lifecycle'], serviceRows)}
 
 ## Services that are deferred
 
@@ -185,9 +125,15 @@ What each authorization class actually enforces is on
 [Host access](/plugins/security/permissions) — the classes differ more than the
 names suggest.
 
-${hostAccessRows.length ? table(['Capability', 'Class'], hostAccessRows) : '_None available._'}
+${hostAccessRows.length ? table(['Capability', 'Availability', 'Class'], hostAccessRows) : '_None available._'}
 
 ${hostAccess.deferred.length ? `### Deferred\n\n${deferredTable(hostAccess.deferred, 'capability')}` : ''}
+
+## SDK entrypoints available in Developer Preview
+
+${table(['Entrypoint', 'Availability', 'Realm'], subpathRows)}
+
+${subpaths.deferred.length ? `### Deferred\n\n${deferredTable(subpaths.deferred, 'specifier')}` : ''}
 
 ## Related
 

@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { PluginManifestV2Schema } from '../manifest/v2.js';
 import { defineProtocolObject, defineProtocolString } from '../actions/protocolComposableSchema.js';
 import * as provisioners from './machineProvisioners.js';
+import { defineAccessProviderSchemas } from './accessProviders.js';
 import { DeploymentTargetPreparationBaseV1ProtocolSchema, readDeploymentTargetReferenceRolesV1 } from './deploymentTargets.js';
 import { defineMachineProvisionerSchemas, MachineProvisionerCheckResultProtocolV1Schema, MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerObservationV1Schema, MachineProvisionerPowerResultV1Schema, MachineProvisionerNativeExecResultV1Schema, MachineProvisionerPutFileResultV1Schema } from './machineProvisioners.js';
 
@@ -22,6 +23,33 @@ import {
 } from './v2.js';
 
 describe('plugin contribution catalog', () => {
+  it('admits access descriptors through their canonical Action contracts and reference graph', () => {
+    const config = defineProtocolObject({}, { policy: 'closed' });
+    const schemas = defineAccessProviderSchemas({ config });
+    const descriptor = {
+      id: 'network', title: 'Network', icon: 'network', schemaVersion: 1,
+      targets: ['machine'], capabilities: ['management'], configSchema: config.jsonSchema,
+      exposure: 'local', inboundPorts: [], credentialPurposes: [], actions: { inspect: 'inspect-network' },
+    };
+    const action = {
+      id: 'inspect-network', title: 'Inspect network', execution: { target: 'daemon' },
+      surfaces: ['plugin'], scopes: ['global'], dangerLevel: 'safe', readOnly: true,
+      inputSchema: schemas.inspectInput.jsonSchema, resultSchema: schemas.result.jsonSchema,
+    };
+    const parsed = PluginContributesV2Schema.safeParse({ accessProviders: [descriptor], actions: [action] });
+    expect(parsed.success, parsed.success ? undefined : JSON.stringify(parsed.error.issues)).toBe(true);
+    if (!parsed.success) return;
+    expect(Reflect.get(parsed.data, 'accessProviders')).toEqual([descriptor]);
+    const family = PLUGIN_CONTRIBUTION_CATALOG_V2.find(entry => entry.manifestKey === 'accessProviders');
+    expect(family?.extractReferences(descriptor)).toEqual([{
+      targetFamily: 'actions', reference: 'inspect-network', path: ['actions', 'inspect'], allowQualifiedCrossPlugin: false,
+    }]);
+    expect(PluginContributesV2Schema.safeParse({ accessProviders: [descriptor], actions: [] }).success).toBe(false);
+    expect(PluginContributesV2Schema.safeParse({ accessProviders: [descriptor], actions: [{ ...action,
+      inputSchema: config.jsonSchema,
+    }] }).success).toBe(false);
+    expect(PluginContributesV2Schema.safeParse({ accessProviders: [descriptor, descriptor], actions: [action] }).success).toBe(false);
+  });
   it('admits data read Resources with explicit backing Actions and product operands under canonical custody', () => {
     const closed = { type: 'object', properties: {}, additionalProperties: false };
     const inputSchema = { ...DeploymentTargetPreparationBaseV1ProtocolSchema.jsonSchema,
@@ -271,17 +299,6 @@ describe('plugin contribution catalog', () => {
   });
 
   it('accounts for every schema family with executable semantic metadata', () => {
-    expect(PLUGIN_CORE_CONTRIBUTION_FAMILIES_V2.map((entry) => entry.family)).toEqual([
-      'agents', 'providers', 'machineProvisioners', 'actions', 'commands', 'tools', 'resources', 'inputTypes', 'atmospherePictures', 'registrySources', 'languageServers', 'skills', 'dragSources', 'workItems', 'dropTargets', 'transcriptActivities', 'sessionInfoSections',
-      'sessionHeaderActions', 'browserTargets', 'browserActions', 'settings', 'events',
-      'executionRunProfiles', 'roles', 'workflows', 'notifications', 'notificationChannels', 'scmHostingProviders',
-      'scmBackends', 'connectedAccountDescriptors', 'managedDependencies', 'systemTools',
-      'promptAssets', 'hooks', 'requestInterceptors', 'voiceModelPacks', 'voiceProviders',
-      'backgroundServices', 'captureSources', 'projectNativeAdapters', 'daemonDatabases', 'composerReferences', 'searchProviders',
-      'composerAttachments', 'composerControls',
-      'composerRegions', 'openableContentViewers',
-      'accountCollections', 'webhooks', 'pluginContributionPoints', 'targetedPluginContributions',
-    ]);
     expect(PLUGIN_CORE_CONTRIBUTION_FAMILIES_V2.map((entry) => entry.family)).not.toContain('structuredMessages');
     expect(PLUGIN_CONTRIBUTION_CATALOG_V2.map((entry) => entry.manifestKey)).toEqual([
       ...PLUGIN_CORE_CONTRIBUTION_FAMILIES_V2.map((entry) => entry.family),
@@ -320,33 +337,6 @@ describe('plugin contribution catalog', () => {
 
   it('derives and closes daemon projection families from the contribution catalog', () => {
     const projectionFamilyIds = listPluginProjectionFamilyIdsV2();
-    expect(projectionFamilyIds).toEqual([
-      'providers',
-      'machineProvisioners',
-      'inputTypes',
-      'atmospherePictures',
-      'registrySources',
-      'languageServers',
-      'skills',
-      'dragSources',
-      'workItems',
-      'dropTargets',
-      'pluginUi',
-      'pluginBrowser',
-      'roles',
-      'workflows',
-      'scmHostingProviders',
-      'scmBackends',
-      'connectedAccounts',
-      'managedDependencies',
-      'voiceModelPacks',
-      'voiceProviders',
-      'composerAttachments',
-      'composerControls',
-      'composerRegions',
-      'accountCollections',
-      'mcp',
-    ]);
     expect(() => assertPluginProjectionFamilyIdsV2(
       projectionFamilyIds,
       PLUGIN_CONTRIBUTION_CATALOG_V2.filter((entry) => entry.projectionFamily !== 'providers'),

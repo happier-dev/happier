@@ -1,4 +1,4 @@
-import { type AccessProviderContributionV1 } from './accessProviders.js';
+import { readAccessProviderActionRolesV1, type AccessProviderContributionV1 } from './accessProviders.js';
 import type { MachineSetupPresetContributionV1 } from './machineSetupPresets.js';
 import { zodSchemaToJsonSchemaObject } from '../../actions/actionInputJsonSchema.js';
 import type { z } from 'zod/mini';
@@ -214,6 +214,7 @@ secretSources: { identityField: 'id', disposition: 'retained', activationDemand:
   agents: { identityField: 'id', disposition: 'reshaped', activationDemand: 'conditional', projectionFamily: null, allowedRuntimeRegistration: 'agents', consumer: 'agent-runtime', platforms: CLI_PLATFORMS },
   providers: { identityField: 'id', disposition: 'delegated', activationDemand: 'conditional', projectionFamily: 'providers', allowedRuntimeRegistration: 'providers', registrationHost: 'daemon', consumer: 'providers-first-class', platforms: CLI_PLATFORMS },
   machineProvisioners: { identityField: 'id', disposition: 'reshaped', activationDemand: 'declarative', projectionFamily: 'machineProvisioners', allowedRuntimeRegistration: null, consumer: 'managed-machine-admission', platforms: CLI_PLATFORMS },
+  accessProviders: { identityField: 'id', disposition: 'reshaped', activationDemand: 'declarative', projectionFamily: 'accessProviders', allowedRuntimeRegistration: null, consumer: 'machine-reachability', platforms: CLI_PLATFORMS },
   machineRecipes: { identityField: 'id', disposition: 'retained', activationDemand: 'none', projectionFamily: 'machineRecipes', allowedRuntimeRegistration: null, consumer: 'machine-recipe-catalog', platforms: ALL_PLATFORMS },
   machineSetupPresets: { identityField: 'id', disposition: 'retained', activationDemand: 'none', projectionFamily: 'machineSetupPresets', allowedRuntimeRegistration: null, consumer: 'machine-recipe-catalog', platforms: ALL_PLATFORMS },
   actions: { identityField: 'id', disposition: 'reshaped', activationDemand: 'registration', projectionFamily: null, allowedRuntimeRegistration: 'actions', registrationHost: 'discriminated', consumer: 'action-dispatch', platforms: ALL_PLATFORMS },
@@ -288,6 +289,21 @@ function extractNestedReferences(family: string, value: Readonly<Record<string, 
     return Object.entries(operations).map(([role, reference]) => ({
       targetFamily: 'actions', reference, path: ['operations', role],
     }));
+  }
+  if (family === 'accessProviders') {
+    const descriptor = value as Readonly<AccessProviderContributionV1>;
+    const references: PluginContributionReferenceCandidateV2[] = readAccessProviderActionRolesV1(descriptor).map(binding => ({
+      targetFamily: 'actions', reference: binding.action, path: ['actions', binding.role], allowQualifiedCrossPlugin: false,
+    }));
+    if (descriptor.install?.kind === 'recipe') references.push({
+      targetFamily: 'machineRecipes', reference: { pluginId: descriptor.install.ref.pluginId, localId: descriptor.install.ref.recipeId },
+      revision: descriptor.install.ref.revision, path: ['install', 'ref'], allowQualifiedSamePlugin: true, allowQualifiedCrossPlugin: true,
+    });
+    else if (descriptor.install) references.push({
+      targetFamily: descriptor.install.kind === 'managedDependency' ? 'managedDependencies' : 'systemTools',
+      reference: descriptor.install.id, path: ['install', 'id'], allowQualifiedSamePlugin: true,
+    });
+    return references;
   }
   if (family === 'deploymentTargets') {
     return readDeploymentTargetReferenceRolesV1(value as DeploymentTargetContributionV1).map(binding => ({
