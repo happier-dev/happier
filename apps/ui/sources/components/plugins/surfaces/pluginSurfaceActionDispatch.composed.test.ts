@@ -1,4 +1,8 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
+import {
+    type ActionSessionTargetDeclarationV1} from '@happier-dev/protocol/actions/sessionTargetV1';
+import {
+    formatQualifiedPluginActionId} from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { act } from 'react-test-renderer';
 import { renderHook } from '@/dev/testkit';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
@@ -131,6 +135,9 @@ const { readPluginAccountAvailability, replacePluginAccountAvailabilityProjectio
 const { serverScopedRpcSocketPool } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcSocketPool');
 const { resetScopedMachineTransportCacheForTests } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcPool');
 const { setActiveServer } = await import('@/sync/domains/server/serverRuntime');
+const { createCurrentUiContextVoiceToolPort } = await import('@/components/appShell/currentUiContext/currentUiContextVoiceToolPort');
+const { executeCurrentUiContextContributedAction, registerCurrentUiContextActionPort } = await import('@/components/appShell/currentUiContext/currentUiContextActionRuntime');
+const { markSessionListQueryResultV1 } = await import('@happier-dev/protocol/sessions/awareness/action');
 const { listServerProfiles } = await import('@/sync/domains/server/serverProfiles');
 const rpcHomes = new Map<string, Awaited<ReturnType<typeof network.addHome>>>();
 
@@ -345,9 +352,11 @@ const CLIENT_ACTION_AUTHORIZATION = Object.freeze({
 
 function createClientTargetAction(input: Readonly<{
     identity: PluginContributionIdentityV1;
-    dangerLevel?: 'safe' | 'writesRemote';
+    dangerLevel?: PluginProjectedActionV2['dangerLevel'];
+    confirmationWhen?: PluginProjectedActionV2['confirmationWhen'];
     surfaces?: PluginProjectedActionV2['surfaces'];
     accountPlacement?: boolean;
+    sessionTarget?: ActionSessionTargetDeclarationV1;
 }>): PluginProjectedActionV2 {
     const dangerLevel = input.dangerLevel ?? 'safe';
     const executionOrigin = clientActionExecutionOrigin(input.identity.pluginId);
@@ -371,6 +380,8 @@ function createClientTargetAction(input: Readonly<{
         },
         ...(input.accountPlacement ? {} : { executionOrigin }),
         dangerLevel,
+        ...(input.sessionTarget ? { sessionTarget: input.sessionTarget } : {}),
+        ...(input.confirmationWhen ? { confirmationWhen: input.confirmationWhen } : {}),
         ...(dangerLevel === 'safe'
             ? {}
             : {
@@ -387,7 +398,8 @@ function createClientTargetAction(input: Readonly<{
 function createClientActionActivation(input: Readonly<{
     pluginId?: string;
     localId?: string;
-    dangerLevel?: 'safe' | 'writesRemote';
+    dangerLevel?: PluginProjectedActionV2['dangerLevel'];
+    confirmationWhen?: PluginProjectedActionV2['confirmationWhen'];
     surfaces?: PluginProjectedActionV2['surfaces'];
     inputSchema?: object;
     outputSchema?: object;
@@ -402,6 +414,7 @@ function createClientActionActivation(input: Readonly<{
     authoredAccount?: boolean;
     accountManifest?: typeof authoredAccountManifest;
     accountAvailability?: { when: { fact: 'session.exists'; operator: 'equals'; value: boolean } };
+    sessionTarget?: ActionSessionTargetDeclarationV1;
 }>) {
     const pluginId = input.authoredAccount ? authoredAccountManifest.id : input.pluginId ?? CALLER_PLUGIN_ID;
     const pluginVersion = input.authoredAccount ? authoredAccountManifest.version : '1.2.3';
@@ -417,6 +430,8 @@ function createClientActionActivation(input: Readonly<{
         dangerLevel: input.dangerLevel,
         surfaces: input.surfaces,
         accountPlacement: input.accountPlacement,
+        sessionTarget: input.sessionTarget,
+        confirmationWhen: input.confirmationWhen,
     });
     const authoredDeclaration = input.authoredAccount ? authoredAccountManifest.contributes?.actions?.find(row => row.id === localId) : undefined;
     if (input.authoredAccount && !authoredDeclaration) throw new Error('Authored Account Action missing');
@@ -5172,5 +5187,140 @@ describe('client Action Session-open continuation', () => {
         }
     });
 
+
+});
+
+describe('client Action declared SessionTarget admission', () => {
+    it.each(['ui', 'agent', 'mcp', 'workers', 'foreignHome', 'presenter', 'retired', 'readRelations'] as const)(
+        'admits the real Channels daemon Session operand before confirmation and serialized dispatch (%s)', async mode => {
+        const { PLUGIN_MANIFEST } = await import('../../../../../../packages/plugins/channels/src/manifest');
+        const { SessionIdSchema } = await import('@happier-dev/plugin-sdk/sessions');
+        const declaration = PLUGIN_MANIFEST.contributes?.actions?.find(action => action.id === 'session-pull-request-binding-v1');
+        if (!declaration) throw new Error('Channels binding declaration is unavailable');
+        const source = createClientActionActivation({ pluginId: PLUGIN_MANIFEST.id, localId: declaration.id,
+            dangerLevel: declaration.dangerLevel, confirmationWhen: declaration.confirmationWhen,
+            sessionTarget: declaration.sessionTarget, inputSchema: declaration.inputSchema, surfaces: declaration.surfaces });
+        const action = { ...source.action, execution: { target: 'daemon' as const } };
+        const invocationSurface = mode === 'mcp' || mode === 'readRelations' ? 'mcp'
+            : mode === 'agent' || mode === 'retired' ? 'agent' : 'ui';
+        const common = { action: { pluginId: action.pluginId, localId: action.id },
+            input: mode === 'readRelations' ? { kind: 'readRelations', credentialRef: null }
+                : { kind: 'attach', sessionId: { selector: mode === 'workers' ? 'workers' : 'manager', of: 'parent' },
+                    pullRequestUrl: 'https://github.com/example/repository/pull/1' } } satisfies PluginUiJsonValueV1;
+        // Automated UI entry reaches the daemon through a genuinely registered
+        // client handler, which owns the strict clientPluginAction provenance.
+        const wrapper = createClientActionActivation({ surfaces: ['agent', 'mcp'],
+            handler: (_value, context) => context.ui.executeAction(common.action, common.input) });
+        const projection = { ...source.projection,
+            installedPackagesById: { ...source.projection.installedPackagesById, ...wrapper.projection.installedPackagesById },
+            reactNativeBundlesById: { ...source.projection.reactNativeBundlesById, ...wrapper.projection.reactNativeBundlesById },
+            actionsById: { ...wrapper.projection.actionsById, [`${action.pluginId}/${action.id}`]: action } };
+        const previousSettings = getStorage().getState().settings;
+        if (mode === 'presenter' || mode === 'retired') getStorage().setState({ settings: { ...previousSettings,
+            actionsSettingsV1: normalizeActionsSettingsV1({ v: 1, actions: {
+                [formatQualifiedPluginActionId(common.action)]: { approvalRequiredSurfaces: [invocationSurface] },
+            } }) } });
+        let manager = 'reviewed-session';
+        let resolutions = 0;
+        let confirmations = 0;
+        let current = true;
+        const issued: Array<{ sessionId?: string; invocation: unknown; serverId?: string }> = [];
+        daemonRpc.mockImplementation(async (request: Readonly<{ method: string; serverId?: string; payload?: unknown }>) => {
+            if (request.method !== RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE) return answerActionSchemasRead(request);
+            const payload = DaemonPluginStructuredMessageActionExecuteRequestSchema.parse(request.payload);
+            const value = payload.input;
+            if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Expected the admitted Channels operand');
+            // This is the same exact-ID gate used by the real Channels management handler.
+            const sessionId = value.kind === 'readRelations' ? undefined : SessionIdSchema.parse(value.sessionId);
+            issued.push({ sessionId, invocation: payload.invocation, serverId: request.serverId });
+            if (value.kind === 'readRelations') return { ok: true, result: { kind: 'relations', links: [] } };
+            return { ok: true, result: { kind: 'attached', bindingId: 'binding-exact-target' } };
+        });
+        const createPort = (invocationSurface: Parameters<typeof createCurrentUiContextVoiceToolPort>[0]['invocationSurface'],
+            hostAction?: Parameters<typeof createCurrentUiContextVoiceToolPort>[0]['hostAction']) => createCurrentUiContextVoiceToolPort({
+            invocationSurface, hostAction, readProjection: () => projection, readNavigationBinding: () => null,
+            reader: { readCurrentUiContext: () => null, resolveCurrentUiCommand: () => null, subscribe: () => () => {} },
+        });
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({
+            listContributedActionDefinitions: () => createPort('ui').listCurrentContributedActionDefinitions?.('allSurfaces') ?? [],
+            resolveSessionReference: async ({ sessionId }) => ({ kind: 'unique', address: { serverId: 'server-client-action', sessionId: sessionId! } }),
+            readSessionManager: async () => { resolutions += 1; return { kind: 'manager', address: {
+                serverId: mode === 'foreignHome' ? 'other-target-home' : 'server-client-action', sessionId: manager } }; },
+            sessionList: async ({ query }) => markSessionListQueryResultV1({ sessions: ['worker-a', 'worker-b'].map(id => ({ id,
+                active: false, presence: 'offline', updatedAt: 1, manager: { sessionId: query?.underSessionId } })),
+                nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false }),
+            isActionApprovalRequired: () => false,
+            invokeContributedAction: request => executeCurrentUiContextContributedAction(request, {
+                execute: Object.assign(executor.execute, { prepare: executor.prepare }), context: request.context,
+            }),
+        }));
+        const unregister = registerCurrentUiContextActionPort(createPort);
+        nestedActionConfirmation.onShow = approve => {
+            confirmations += 1;
+            expect(issued).toEqual([]);
+            expect(resolutions).toBe(1);
+            manager = 'replacement-session';
+            if (mode === 'retired') current = false;
+            approve();
+        };
+        try {
+            await wrapper.composition.unload();
+            if (invocationSurface !== 'ui') await wrapper.composition.reconcile([wrapper.activation]);
+            const binding = { resolveContributedAction: (identity: PluginContributionIdentityV1) =>
+                resolveExactClientAction(action)(identity) ?? resolveExactClientAction(wrapper.action)(identity),
+                isCurrent: () => current,
+                contributedAction: { serverId: 'server-client-action', machineId: CLIENT_ACTION_ORIGIN.materializationRef.machineId },
+                hostAction: { execute: Object.assign(executor.execute, { prepare: executor.prepare }), context: {
+                    serverId: 'server-client-action', defaultSessionId: 'reviewed-session',
+                    authority: invocationSurface === 'ui' ? 'present_user' as const : 'account_automation' as const,
+                    actionCaller: { kind: 'host' as const },
+                } } };
+            const result = invocationSurface === 'ui' && mode !== 'presenter'
+                ? await createPluginSurfaceActionHostApi({ ...binding, surfaceContext: surfaceContext(),
+                    callerBinding: mountedCallerBinding({ machineId: CLIENT_ACTION_ORIGIN.materializationRef.machineId }),
+                    callerSourceCustody: TARGET_SOURCE_CUSTODY }).handleRequest(executeActionRequest(common))
+                : await dispatchPluginSurfaceAction({ ...binding,
+                    ...(invocationSurface === 'ui' ? common : { action: { pluginId: wrapper.action.pluginId, localId: wrapper.action.id }, clientAction: {} }),
+                    invocationSurface,
+                    ...(mode === 'presenter' ? { requestCurrentIntent: async (
+                        request: Parameters<NonNullable<DispatchPluginSurfaceActionInput['requestCurrentIntent']>>[0],
+                    ) => {
+                        confirmations += 1;
+                        expect(issued).toEqual([]);
+                        expect(resolutions).toBe(1);
+                        manager = 'replacement-session';
+                        return { status: 'approved' as const, fingerprint: request.fingerprint };
+                    } } : {}) });
+            if (mode === 'readRelations') {
+                expect(result).toEqual({ ok: true, result: { kind: 'relations', links: [] } });
+                expect(resolutions).toBe(0);
+                expect(confirmations).toBe(0);
+                expect(issued).toHaveLength(1);
+                expect(issued[0]!.sessionId).toBeUndefined();
+            } else if (mode === 'retired') {
+                expect(result).toMatchObject({ ok: false });
+                expect(confirmations, JSON.stringify({ result, resolutions, issued })).toBe(1);
+                expect(issued).toEqual([]);
+            } else if (mode === 'workers' || mode === 'foreignHome') {
+                expect(result).toMatchObject({ code: 'unavailable', diagnostics: [mode === 'workers'
+                    ? 'session_target_cardinality_mismatch' : 'session_target_home_mismatch'] });
+                expect(confirmations).toBe(0);
+                expect(issued).toEqual([]);
+            } else {
+                expect(result, JSON.stringify({ result, resolutions, confirmations, issued })).toMatchObject(invocationSurface === 'ui' && mode !== 'presenter' ? { kind: 'attached' }
+                    : { ok: true, result: { kind: 'attached' } });
+                expect(resolutions).toBe(1);
+                expect(confirmations).toBe(mode === 'presenter' ? 1 : 0);
+                expect(issued).toHaveLength(1);
+                expect(issued[0]!.sessionId).toBe('reviewed-session');
+                if (invocationSurface === 'ui' && mode !== 'presenter') expect(issued[0]!.invocation).toMatchObject({ kind: 'mountedPluginSurface',
+                    mountedBinding: { pluginId: CALLER_PLUGIN_ID, occurrenceId: mountedCallerBinding().occurrenceId } });
+                if (invocationSurface !== 'ui') expect(issued[0]!.invocation).toMatchObject({ kind: 'clientPluginAction',
+                    clientActionBinding: { pluginId: wrapper.action.pluginId, contributionLocalId: wrapper.action.id,
+                        occurrenceId: wrapper.action.occurrenceId } });
+            }
+        } finally { nestedActionConfirmation.onShow = null; unregister();
+            getStorage().setState({ settings: previousSettings }); await wrapper.composition.unload(); }
+    });
 
 });
