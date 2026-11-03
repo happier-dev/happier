@@ -211,6 +211,8 @@ type RpcHandlerCommonConfig = {
         authorization?: SocketRpcAuthorizationContext;
         transportResponseEnvelopeVersion?: 1;
         machineAdmission?: SocketRpcMachineAdmissionContextV1;
+        /** Host-private admitted Session wake lifetime; never read from RPC input. */
+        verifyMachineAdmissionCurrent?: () => Promise<boolean>;
         workspaceSyncSourceRouting?: WorkspaceSyncSourceRoutingV1;
         workspaceSyncSourceExecution?: import('@happier-dev/protocol/socketRpc').WorkspaceSyncSourceExecutionV1;
         workspaceSyncTargetRouting?: WorkspaceSyncTargetRoutingV1;

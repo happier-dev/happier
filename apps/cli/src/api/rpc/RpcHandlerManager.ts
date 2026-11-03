@@ -1178,6 +1178,7 @@ export class RpcHandlerManager {
                 };
                 const authorization = options?.admissionResult ?? await this.authorizeRequest({ method: prefixedMethod, params,
                     machineAdmission: options?.rpcContext?.machineAdmission,
+                    verifyMachineAdmissionCurrent: options?.rpcContext?.verifyMachineAdmissionCurrent,
                     callerAuthority,
                     callerInputAuthorization: options?.rpcContext?.callerInputAuthorization,
                     sessionActionOrigin: options?.rpcContext?.sessionActionOrigin,

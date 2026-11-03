@@ -5,11 +5,17 @@ import type { SpawnSessionOptions } from '@/session/shared/spawnSessionContract'
 
 const http = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn() }));
 // HTTP and Machine RPC are external boundaries; admission and resume logic stay real.
-vi.mock('axios', () => ({ default: http }));
-vi.mock('@/configuration', () => ({ configuration: {
+vi.mock('axios', async importOriginal => {
+  const actual = await importOriginal<typeof import('axios')>();
+  return { ...actual, default: { ...actual.default, ...http } };
+});
+vi.mock('@/configuration', async importOriginal => {
+  const actual = await importOriginal<typeof import('@/configuration')>();
+  return { ...actual, configuration: { ...actual.configuration,
   serverUrl: 'https://home.example', apiServerUrl: 'https://home.example', sessionControlHttpTimeoutMs: 1000,
   clientEncryptionRequirement: 'follow_account',
-} }));
+  } };
+});
 
 const sessionId = 'c123456789012345678901234';
 let receiverActive = false;
@@ -229,6 +235,22 @@ it('keeps an accepted returned answer pending when its exact Machine cannot resu
     receiverResumeFailure: { ok: false, code: 'resume_failed' },
   });
 });
+it('marks accepted input visibly blocked when Machine wake admission is refused', async () => {
+  const machineResumeTransport = vi.fn(async () => ({ errorCode: 'RPC_FORBIDDEN', error: 'Forbidden' }));
+  http.post.mockImplementation(async (url: string) => {
+    if (url.endsWith('/pending')) return { status: 200, data: { didWrite: true, terminal: false, suppressed: false } };
+    if (url.endsWith('/delivery/block')) return { status: 200, data: { ok: true } };
+    throw new Error(`Unexpected HTTP request: ${url}`);
+  });
+  expect(await sendSessionMessage({ credentials: { token: 'account-token', encryption: null }, idOrPrefix: sessionId,
+    message: 'continue', localId: 'wake-refused', wait: false, timeoutMs: 1000, machineResumeTransport,
+  })).toMatchObject({ ok: false, code: 'authority_unavailable', admissionResult: { status: 'accepted', localId: 'wake-refused' } });
+  expect(http.post.mock.calls).toContainEqual([
+    `https://home.example/v2/sessions/${sessionId}/pending/wake-refused/delivery/block`,
+    { reason: 'session_input_target_unavailable' }, expect.anything(),
+  ]);
+});
+
 it.each(['SESSION_DIRECTORY_MISSING', 'SPAWN_FAILED'])('maps the Machine resume refusal %s to resume_failed while retaining accepted input', async (errorCode) => {
   const machineResumeTransport = vi.fn(async () => ({ type: 'error', errorCode, errorMessage: 'Machine could not resume' }));
   await expect(sendSessionMessage({

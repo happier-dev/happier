@@ -602,6 +602,17 @@ describe('requestInactiveSessionResume', () => {
     }));
   });
 
+  it.each(['returned', 'thrown'] as const)('preserves a typed Machine access refusal (%s)', async transport => {
+    const diagnostic = vi.spyOn(logger, 'infoFile').mockImplementation(() => {});
+    if (transport === 'returned') callMachineRpc.mockResolvedValueOnce({ errorCode: RPC_ERROR_CODES.FORBIDDEN, error: 'Forbidden' });
+    else callMachineRpc.mockRejectedValueOnce(new RpcError('Forbidden', RPC_ERROR_CODES.FORBIDDEN));
+    await expect(requestInactiveSessionResume({ credentials, sessionId: 'session-1', localId: 'local-1',
+      rawSession: rawSession(), metadata })).resolves.toMatchObject({ ok: false, code: 'authority_unavailable' });
+    expect(diagnostic).toHaveBeenCalledWith('[SessionResume] Readiness refused', expect.objectContaining({
+      phase: 'spawn_rpc', cause: RPC_ERROR_CODES.FORBIDDEN, outcomeCode: 'authority_unavailable',
+    }));
+  });
+
   it('retains custody when resume times out', async () => {
     const diagnostic = vi.spyOn(logger, 'infoFile').mockImplementation(() => {});
     callMachineRpc.mockRejectedValue(Object.assign(new Error('timed out'), { code: 'MACHINE_RPC_TIMEOUT' }));

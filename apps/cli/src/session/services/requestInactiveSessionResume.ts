@@ -2,7 +2,7 @@ import { normalizeSpawnSessionNonceResolution } from '@happier-dev/protocol/sess
 import { resolveLinkedExternalSessionAuthorityV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
 import { SPAWN_SESSION_ERROR_CODES, SpawnSessionExecutionAuthorizationSchema, normalizeSpawnSessionErrorDetail } from '@happier-dev/protocol/spawnSession';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
-import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError } from '@happier-dev/protocol/rpcErrors';
+import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError, readRpcErrorCode, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 
 import { buildInactiveSessionResumeSpawnOptions, type InactiveSessionResumeRuntimeOptions } from '@/daemon/sessions/runtimeSnapshot/buildInactiveSessionResumeSpawnOptions';
 import type { StoredCredentials } from '@/persistence';
@@ -21,6 +21,7 @@ const resumeDiagnosticCauseCodes = new Set<string>([
   ...Object.values(SPAWN_SESSION_ERROR_CODES),
   'MACHINE_RPC_TIMEOUT',
   'machine_target_not_current',
+  RPC_ERROR_CODES.FORBIDDEN,
   'session_identity_mismatch',
 ]);
 
@@ -118,7 +119,8 @@ export function buildMachineResumeRequest(
 function resolveThrownResumeFailureCode(
   error: unknown,
   code: unknown,
-): 'unsupported' | 'resume_failed' | 'timeout' | 'machine_target_not_current' {
+): 'unsupported' | 'resume_failed' | 'timeout' | 'machine_target_not_current' | 'authority_unavailable' {
+  if (code === RPC_ERROR_CODES.FORBIDDEN) return 'authority_unavailable';
   if (code === 'MACHINE_RPC_TIMEOUT') return 'timeout';
   if (code === 'machine_target_not_current') return 'machine_target_not_current';
   if (isRpcMethodNotAvailableError(error) || isRpcMethodNotFoundError(error)) return 'unsupported';
@@ -138,7 +140,7 @@ export async function requestInactiveSessionResume(params: Readonly<{
   approvedNewDirectoryCreation?: boolean;
   initialGoal?: SessionInitialGoalRequestV1;
   executionAuthority?: ActionExecutorContext['authority'];
-  /** Existing admitted Action context; the Machine still rechecks launch authority. */
+  /** Existing admitted Action context; the native Session owner retains launch custody. */
   actionContext?: ActionExecutorContext;
   externalAction?: Parameters<typeof callMachineRpc>[0]['externalAction'];
   /** The hosting daemon reuses its existing exact-machine launch owner. */
@@ -281,7 +283,9 @@ export async function requestInactiveSessionResume(params: Readonly<{
         : 'Inactive session resume was rejected; pending custody was retained';
       const detail = response && typeof response === 'object'
         ? normalizeSpawnSessionErrorDetail(Reflect.get(response, 'errorDetail')) : undefined;
-      const code = detail?.kind === 'launch_error' && detail.code === 'plugin_disabled' ? 'plugin_disabled'
+      const code = response && typeof response === 'object'
+        && Reflect.get(response, 'errorCode') === RPC_ERROR_CODES.FORBIDDEN ? 'authority_unavailable'
+        : detail?.kind === 'launch_error' && detail.code === 'plugin_disabled' ? 'plugin_disabled'
         : response && typeof response === 'object'
         && (response as { errorCode?: unknown }).errorCode === SPAWN_SESSION_ERROR_CODES.SESSION_DIRECTORY_MISSING
         ? SPAWN_SESSION_ERROR_CODES.SESSION_DIRECTORY_MISSING : 'resume_failed';
@@ -348,7 +352,7 @@ export async function requestInactiveSessionResume(params: Readonly<{
     }
     return { ok: true };
   } catch (error) {
-    const code = error && typeof error === 'object' ? (error as { code?: unknown }).code : null;
+    const code = readRpcErrorCode(error) ?? (error && typeof error === 'object' ? Reflect.get(error, 'code') : null);
     return refuse({
       ok: false,
       code: resolveThrownResumeFailureCode(error, code),

@@ -2417,3 +2417,44 @@ describe('RpcHandlerManager owned handler replacement', () => {
     });
   });
 });
+
+it.each([RPC_METHODS.SPAWN_HAPPY_SESSION, RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE])(
+  'reuses admitted Session wake authority without admitting the private raw transport (%s)', async method => {
+    let active = true;
+    let rawAdmissions = 0;
+    const rpc = new RpcHandlerManager({ scopePrefix: 'machine-a', encryptionMode: 'plain', logger: () => {},
+      authorizeRequest: request => authorizeMachineRpcRequest(request, { machineId: 'machine-a',
+        resolveCustodianAccountId: async () => 'alice', resolveInstallationId: () => 'installation-a',
+        // Home refuses direct raw spawn for a grantee; the Action ingress has
+        // already admitted Use. Only this genuine network boundary is replaced.
+        verifyMachineAdmission: async () => { rawAdmissions++; return false; },
+      }) });
+    rpc.registerHandler(method, async (_input, context) => ({ type: 'success', sessionId: 'session-a',
+      actor: context?.machineAdmission?.actorAccountId }));
+    const request = { type: 'resume-session', sessionId: 'session-a', directory: '/repo' };
+    for (const actor of ['bob', 'alice']) {
+      const rpcContext = { machineAdmission: { actorAccountId: actor, custodianAccountId: 'alice',
+        machineId: 'machine-a', installationId: 'installation-a', role: 'use' as const, encryptionMode: 'plain' as const },
+        verifyMachineAdmissionCurrent: async () => active };
+      expect(await rpc.invokeLocal(method, request, { rpcContext }))
+        .toEqual({ type: 'success', sessionId: 'session-a', actor });
+      expect(rawAdmissions).toBe(0);
+      active = false;
+      expect(await rpc.invokeLocal(method, request, { rpcContext })).toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
+      active = true;
+      expect(await rpc.invokeLocal(method, { ...request, machineId: 'foreign-machine' }, { rpcContext }))
+        .toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
+      expect(await rpc.invokeLocal(method, request, { rpcContext: { ...rpcContext,
+        machineAdmission: { ...rpcContext.machineAdmission, installationId: 'replaced-installation' } } }))
+        .toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
+    }
+    const machineAdmission = { actorAccountId: 'bob', custodianAccountId: 'alice', machineId: 'machine-a',
+      installationId: 'installation-a', role: 'use' as const, encryptionMode: 'plain' as const };
+    expect(await rpc.invokeLocal(method, request, { rpcContext: { machineAdmission } }))
+      .toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
+    expect(await rpc.invokeLocal(method, { directory: '/repo' }, { rpcContext: { machineAdmission,
+      verifyMachineAdmissionCurrent: async () => true } })).toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
+    expect(rawAdmissions).toBe(2);
+  },
+);
+

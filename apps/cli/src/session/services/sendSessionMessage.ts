@@ -29,6 +29,7 @@ import { fetchEncryptedTranscriptPageAfterSeq } from '@/api/session/fetchEncrypt
 import { readSessionDeliveryMutedScopes } from '@/api/sessionDeliveryMuteTransport';
 import {
   enqueuePendingQueueV2MessageViaHttp,
+  blockPendingQueueV2Delivery,
   enqueuePendingExecutionRunMessageViaHttp,
   listPendingQueueV2DeliveryStatusesFromServer,
   readPendingQueueV2DeliveryFailureByLocalIdFromServer,
@@ -1975,6 +1976,12 @@ export async function sendSessionMessage(
       ...(params.spawnSession ? { spawnSession: params.spawnSession } : {}),
     });
     if (!resumeResult.ok) {
+      if (resumeResult.code === 'authority_unavailable') {
+        // The input is already in custody. Keep it recoverable and visible as
+        // blocked rather than claiming it is still waiting for a runner.
+        await blockPendingQueueV2Delivery({ token: params.credentials.token, sessionId, localId,
+          reason: 'session_input_target_unavailable', ...(params.signal ? { signal: params.signal } : {}) });
+      }
       if (informationDelivery) {
         return { ok: true, sessionId, localId, waited: false, admissionResult,
           receiverDelivery: { disposition: 'hold', reason: resumeResult.code === 'held_by_person' ? 'explicit_stop' : 'receiver_unavailable' },

@@ -541,6 +541,8 @@ export async function authorizeMachineRpcRequest(request: Readonly<{
   authorization?: SocketRpcAuthorizationContext;
   transportResponseEnvelopeVersion?: 1;
   machineAdmission?: SocketRpcMachineAdmissionContextV1;
+  /** Host-private admitted Session wake lifetime; never read from RPC input. */
+  verifyMachineAdmissionCurrent?: () => Promise<boolean>;
   receivingMachineAdmission?: SocketRpcMachineAdmissionContextV1;
   workspaceSyncSourceRouting?: WorkspaceSyncSourceRoutingV1;
   workspaceSyncSourceExecution?: WorkspaceSyncSourceExecutionV1;
@@ -677,7 +679,18 @@ export async function authorizeMachineRpcRequest(request: Readonly<{
       // independently verifies the installed relationship controller's signer.
       if (!writerTargetRouting && !seedRouting && !isFiniteSource
         && context.custodianAccountId !== custodianAccountId) return forbidden('machine_custodian');
-      const verifiedAdmission = await machine.verifyMachineAdmission({ context, method: request.method,
+      const rpcMethod = request.method.slice(machine.machineId.length + 1);
+      const privateSpawn = privateSessionMethods.includes(rpcMethod)
+        ? SpawnDaemonSessionRequestSchema.safeParse(request.params)
+        : null;
+      // Resume resolves the stored Session owner/birth before runner launch.
+      // Its local transport consumes the Action's admission, not the distinct
+      // custodian-only raw spawn permission. Fresh spawns still use raw admission.
+      const nativeSessionResume = privateSpawn?.success
+        && privateSpawn.data.type === 'resume-session' && !!privateSpawn.data.sessionId;
+      const verifiedAdmission = nativeSessionResume && request.verifyMachineAdmissionCurrent
+        ? await request.verifyMachineAdmissionCurrent()
+        : await machine.verifyMachineAdmission({ context, method: request.method,
           ...(sourceRouting ? { workspaceSyncSourceRouting: sourceRouting } : {}),
           ...((request.workspaceSyncSourceExecution?.originalActionEnvelope || seedRouting || isProjectSource || isFiniteSource || writerTargetRouting && request.callerInputAuthorization?.binding.actionId === 'projects.open')
             && request.workspaceSyncSourceExecution ? { workspaceSyncSourceExecution: request.workspaceSyncSourceExecution } : {}),
@@ -691,7 +704,6 @@ export async function authorizeMachineRpcRequest(request: Readonly<{
       if (!verifiedAdmission) return forbidden('machine_currentness');
       if (installationId !== machine.resolveInstallationId()) return forbidden('machine_installation');
       if (request.signal?.aborted) return forbidden('request_cancelled');
-      const rpcMethod = request.method.slice(machine.machineId.length + 1);
       // These native bind phases do not launch requester processes. Home has
       // just verified the exact child/controller route; the workspace owner
       // must still map its own current native root before any copy, and retain
@@ -712,16 +724,6 @@ export async function authorizeMachineRpcRequest(request: Readonly<{
         request.callerInputAuthorization?.binding,
         { machineId: machine.machineId, installationId },
       );
-      const privateSpawn = privateSessionMethods.includes(rpcMethod)
-        ? SpawnDaemonSessionRequestSchema.safeParse(request.params)
-        : null;
-      // A raw member fresh spawn has no requester bootstrap. Existing resume
-      // dispatch instead resolves the stored Session owner/birth before runner
-      // launch; historical birth is never reconstructed from today's viewer.
-      const nativeSessionResume =
-        privateSpawn?.success &&
-        privateSpawn.data.type === 'resume-session' &&
-        !!privateSpawn.data.sessionId;
       // These registered owners already consume the P11 payload finalizer.
       // Session creation leaves the trusted runner unchanged and records birth
       // attribution before its payload; finite Project Exec carries ingress
