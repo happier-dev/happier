@@ -12,6 +12,7 @@ import { createPluginSkillSourceIdentityPublication, EMPTY_PLUGIN_SKILL_SOURCE_I
     type PluginSkillSourceIdentity } from '@/sync/domains/skills/pluginSkillSourceIdentity';
 
 import type { PluginMachineExecutionOriginV1 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
+import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contributionIdentity';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useServerProfilesGeneration } from '@/hooks/server/useServerProfilesGeneration';
@@ -481,10 +482,12 @@ export function AppShellPluginUiProjectionProvider(props: Readonly<{
         : null;
     const voiceExecutionMachineId = useVoiceExecutionMachineId();
     const voiceProviderIds = useVoiceProviderRuntimeDemand();
+    const voiceProjectionDemand = Array.from(voiceProviderIds).some((id) => parseQualifiedPluginContributionKey(id) !== null);
     // Voice execution stays bound to the USER-selected execution machine. When
-    // that machine is already a union member its probe owns the description; a
+    // that machine is already a union member its observer owns acquisition; a
     // voice machine outside the eligible set (active but past the presence
-    // grace) still gets its own dedicated currentness.
+    // grace) uses dedicated currentness. A selected or active contributed
+    // provider demands the declarations needed by generic executable activation.
     const voiceMachineIsUnionMember = Boolean(voiceExecutionMachineId) && projectionTargets.some(
         (projectionTarget) => projectionTarget.machineId === voiceExecutionMachineId,
     );
@@ -501,6 +504,7 @@ export function AppShellPluginUiProjectionProvider(props: Readonly<{
         machineId: voiceExecutionMachineId,
         serverId: activeServer.serverId,
         enabled: requiresDedicatedVoiceProjection,
+        load: voiceProjectionDemand,
     });
     const voiceProjectionCurrentness = voiceUnionMember ?? dedicatedVoiceProjectionCurrentness;
     const {
@@ -724,6 +728,7 @@ export function AppShellPluginUiProjectionProvider(props: Readonly<{
                     machineId={projectionTarget.machineId}
                     serverId={projectionTarget.serverId}
                     reloadRevision={connectedAccountProjectionReloadRevision}
+                    load={voiceProjectionDemand && projectionTarget.machineId === voiceExecutionMachineId}
                     accountLifetime={accountLifetime}
                     onCurrentness={publishMachineProjectionCurrentness}
                 />
@@ -811,6 +816,7 @@ const AppShellPluginUiMachineProjection = React.memo(function AppShellPluginUiMa
     machineId: string;
     serverId: string | null;
     reloadRevision: number;
+    load: boolean;
     accountLifetime: ActiveServerAccountScopeLifetime | null;
     onCurrentness: (
         machineId: string,
@@ -822,6 +828,7 @@ const AppShellPluginUiMachineProjection = React.memo(function AppShellPluginUiMa
         machineId: props.machineId,
         serverId: props.serverId,
         reloadRevision: props.reloadRevision,
+        load: props.load,
     });
     const { accountLifetime, machineId, onCurrentness } = props;
     // Publish retained presentation before paint, so the first rail fit uses

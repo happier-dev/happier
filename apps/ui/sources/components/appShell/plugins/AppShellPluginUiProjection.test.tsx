@@ -1995,7 +1995,7 @@ describe('AppShellPluginUiProjectionProvider', () => {
         }));
     });
 
-    it('normalizes Tauri originless Voice preparation to web, then unwinds it offline until fresh re-description', async () => {
+    it('acquires the selected Voice provider from a cold shell, then unwinds it offline until fresh re-description', async () => {
         const consoleErrors = vi.spyOn(console, 'error');
         onTestFinished(() => consoleErrors.mockRestore());
         // Two live machines deliberately disagree with the fixed Voice choice.
@@ -2183,6 +2183,7 @@ describe('AppShellPluginUiProjectionProvider', () => {
         });
         expect(activate).toHaveBeenCalledTimes(1);
         expect(getVoiceAdapterRegistry().get(providerId)).not.toBeNull();
+        expect(projectionDescribeSpy.mock.calls.every(([machineId]) => machineId === 'machine-voice')).toBe(true);
         expect(screen.findByType('ProjectionProbe' as never).props.value.machineId).toBeNull();
         expect(registration()?.executionOrigin).toBeNull();
         expect(registration()?.authority).toEqual({
