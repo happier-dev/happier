@@ -21,12 +21,7 @@ import {
 import { PluginUiJsonValueV1Schema } from '../contributions/ui/json.js';
 import { asProtocolZod } from '../actions/internalProtocolZodAdapter.js';
 
-/**
- * The one Data-owned operation arm carried through an authenticated hosted-web
- * bridge. This name is intentionally about the complete mounted Account Data
- * client, not just the static Collection query subset.
- */
-export const PLUGIN_HOSTED_WEB_ACCOUNT_DATA_BRIDGE_KIND_V1 = 'accountData' as const;
+export { PLUGIN_HOSTED_WEB_ACCOUNT_DATA_BRIDGE_KIND_V1 } from './hostedWebAccountDataBridgeKindV1.js';
 
 export const OpaqueHostedWebAccountDataQueryIdV1Schema = lazyZodSchema(() => z.string().check(z.minLength(1), z.maxLength(128), z.regex(/^[A-Za-z0-9_-]+$/u)));
 

@@ -13,9 +13,9 @@ import {
   PluginHostedWebBridgeMessageKindV1Schema,
 } from '../contributions/ui/hostedWeb.js';
 import {
-  PLUGIN_HOSTED_WEB_ACCOUNT_DATA_BRIDGE_KIND_V1,
   PluginHostedWebAccountDataBridgeChangeV1Schema,
 } from '../data/hostedWebAccountDataBridgeV1.js';
+import { PLUGIN_HOSTED_WEB_ACCOUNT_DATA_BRIDGE_KIND_V1 } from '../data/hostedWebAccountDataBridgeKindV1.js';
 import { PluginUiJsonValueV1Schema } from '../contributions/ui/json.js';
 import {
   PLUGIN_UI_HOST_API_WIRE_VERSION_V1,
