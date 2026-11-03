@@ -794,6 +794,8 @@ export async function projectExternalActionRequesterHttpAuthorization(input: Rea
     || authorization.binding.actionId === 'localServices.launcher.start'
     || authorization.binding.actionId === 'projects.worker.status' ? requesterContext : undefined;
   const projectRowReadCustody = Object.hasOwn(PROJECT_FINITE_ACTION_RPC_METHODS_V1, authorization.binding.actionId)
+    || authorization.binding.actionId === 'machines.terminal.open'
+    || authorization.binding.actionId === 'machines.terminal.restart'
     || authorization.binding.actionId === 'projects.inspect'
     || authorization.binding.actionId === 'projects.worker.status'
     || authorization.binding.actionId === 'projects.execution.output.read'

@@ -1,4 +1,6 @@
 import axios from 'axios';
+import { resolveProjectSetupAcceptedWorkspace } from '@/workspaces/projectSetup/projectSetupAcceptedWorkspace';
+import { createPlainProjectAccountRefRow, projectAccountRowsReadHttpResponse } from '@/workspaces/projectAccountRows.testkit';
 import nacl from 'tweetnacl';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FeaturesResponseSchema } from '@happier-dev/protocol';
@@ -440,7 +442,7 @@ describe('admitted requester Action projection', () => {
     expect(failures).toEqual([expected]);
   });
   it.each(['projects.prepare', 'projects.script.run', 'projects.compute.exec', 'projects.inspect', 'projects.worker.status', 'localServices.launcher.start',
-    'execution.run.start', 'execution.run.ensure', 'execution.run.send', 'execution.run.ensure_or_start'] as const)('uses retained requester custody only for private Project preparation reads on %s', async actionId => {
+    'machines.terminal.open', 'machines.terminal.restart', 'execution.run.start', 'execution.run.ensure', 'execution.run.send', 'execution.run.ensure_or_start'] as const)('uses retained requester custody only for private Project preparation reads on %s', async actionId => {
     const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'finite-root', binding: {
       accountId: 'bob', custodianAccountId: 'alice', authentication: { kind: 'account', tokenEpoch: 1 },
       accountEncryptionMode: 'plain', serverIdentityId: 'stable-home', machineId: 'machine', installationId: 'installation',
@@ -463,9 +465,32 @@ describe('admitted requester Action projection', () => {
     try {
       const carrier = await projectExternalActionRequesterHttpAuthorization({ ...input, authorization: admitted.authorization });
       if (!carrier?.requesterHttpProjection) throw new Error('Missing requester HTTP port');
+      if (actionId === 'machines.terminal.open' || actionId === 'machines.terminal.restart') {
+        const workspace = { id: 'bob-checkout', serverId: input.serverId, machineId: 'machine', rootPath: '/bob/repo',
+          projectKey: 'bob-project', createdAtMs: 1 };
+        const rows = [createPlainProjectAccountRefRow(workspace)];
+        // A terminal effect proof does not grant private Account-row reads.
+        vi.mocked(axios.post).mockImplementation(async (url, body, options) => {
+          if (String(url).includes('/v1/account/project-rows/')) {
+            if (options?.headers?.Authorization !== 'Bearer bob-preparation') return { status: 403, data: { error: 'forbidden' } };
+            return projectAccountRowsReadHttpResponse(rows, String(url), body);
+          }
+          return { status: 200, data: { ok: true } };
+        });
+        const accepted = { authorization: carrier, effectActionId: actionId, serverId: input.serverId,
+          serverHttpBaseUrl: input.serverHttpBaseUrl, address: { serverId: input.serverId,
+            workspaceId: workspace.id, machineId: workspace.machineId, rootPath: workspace.rootPath } };
+        await expect(resolveProjectSetupAcceptedWorkspace(accepted)).resolves.toEqual({ workspace,
+          project: { serverId: workspace.serverId, projectId: workspace.projectKey } });
+        await expect(resolveProjectSetupAcceptedWorkspace({ ...accepted, address: { ...accepted.address, workspaceId: 'alice-checkout' } }))
+          .rejects.toMatchObject({ code: 'project_workspace_unavailable' });
+        await expect(resolveProjectSetupAcceptedWorkspace({ ...accepted, address: { ...accepted.address, machineId: 'foreign-machine' } }))
+          .rejects.toMatchObject({ code: 'project_workspace_changed' });
+      }
       const headers = (method: string, path: string) => carrier.requesterHttpProjection!.createRequestHeaders({ effectActionId: actionId, method, path });
       const machineRead = await headers('GET', '/v1/machines/source-machine');
-      if (actionId === 'projects.prepare' || actionId === 'projects.inspect') {
+      if (actionId === 'projects.prepare' || actionId === 'projects.inspect'
+        || actionId === 'machines.terminal.open' || actionId === 'machines.terminal.restart') {
         expect(machineRead).toMatchObject({ [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: root.token });
       } else expect(machineRead).toEqual({ Authorization: 'Bearer bob-preparation' });
       for (const path of ['/v1/account/project-rows/read', '/v1/account/project-rows/list']) {
