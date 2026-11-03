@@ -748,7 +748,7 @@ export function ProfileEditForm({
     }, [handleSave, saveRef]);
 
     return (
-        <ItemList ref={popoverBoundaryRef} style={containerStyle} keyboardShouldPersistTaps="handled">
+        <ItemList ref={popoverBoundaryRef} style={containerStyle} keyboardAware keyboardShouldPersistTaps="handled">
             <ItemGroup title={t('profiles.profileName')}>
                 <React.Fragment>
                     <View style={styles.inputContainer}>
