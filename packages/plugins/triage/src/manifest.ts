@@ -1,3 +1,6 @@
+import { observeTriageSourceSessionLinks } from './sessions/sessionLinksObservation.js';
+import { TRIAGE_SESSION_PULL_REQUEST_STATUS_RESOURCE_LOCAL_ID_V1, TRIAGE_SESSION_PULL_REQUEST_STATUS_RESOURCE_RUNTIME } from './sessions/sessionPullRequestResource.js';
+import { TRIAGE_SESSION_LINKS_RESOURCE_LOCAL_ID_V1, TRIAGE_SESSION_LINKS_RESOURCE_RUNTIME } from './sessions/sessionLinksResource.js';
 import { TRIAGE_DATA_ACTION_EXECUTION_V1 } from './accountExecution.js';
 import {
   definePlugin,
@@ -54,7 +57,7 @@ import {
 } from './actions/searchEntriesProtocol.js';
 import { createTriageReadEntryDetailActionHandler } from './actions/readEntryDetail.js';
 import { createTriageReobserveEntryActionHandler } from './actions/reobserveEntry.js';
-import { createTriageReadPullRequestStatusActionHandler } from './actions/readPullRequestStatus.js';
+import { createTriageReadPullRequestStatusActionHandler, createTriageReadPullRequestStatusObserver } from './actions/readPullRequestStatus.js';
 import {
   TRIAGE_REOBSERVE_ENTRY_ACTION_LOCAL_ID_V1,
   TriageReobserveEntryInputV1Schema,
@@ -190,6 +193,20 @@ function createTriagePlugin() {
     brand: { iconResourceId: 'brand-icon', monochrome: true },
     resources: {
       'brand-icon': { kind: 'asset', path: 'assets/brand.png', contentType: 'image/png' },
+      [TRIAGE_SESSION_LINKS_RESOURCE_LOCAL_ID_V1]: {
+        source: 'dynamic',
+        kind: 'config',
+        scope: 'session',
+        contentType: 'application/json',
+        hostAccess: ['account-storage'],
+        execution: TRIAGE_DATA_ACTION_EXECUTION_V1,
+        runtime: TRIAGE_SESSION_LINKS_RESOURCE_RUNTIME,
+      },
+      [TRIAGE_SESSION_PULL_REQUEST_STATUS_RESOURCE_LOCAL_ID_V1]: {
+        source: 'dynamic', kind: 'config', scope: 'session', contentType: 'application/json',
+        hostAccess: ['account-storage'], execution: TRIAGE_DATA_ACTION_EXECUTION_V1,
+        runtime: TRIAGE_SESSION_PULL_REQUEST_STATUS_RESOURCE_RUNTIME,
+      },
     },
     inputTypes: {
       'pull-request-comparison': {
@@ -473,6 +490,7 @@ function createTriagePlugin() {
         hostAccess: ['account-storage'],
         execution: TRIAGE_DATA_ACTION_EXECUTION_V1,
         run: createTriageReadSourceSessionLinksActionHandler(),
+        observeRead: observeTriageSourceSessionLinks,
       },
       [TRIAGE_START_ENTRY_SESSION_ACTION_LOCAL_ID_V1]: {
         title: 'Start a session on an entry',
@@ -615,13 +633,16 @@ function createTriagePlugin() {
       [TRIAGE_READ_PULL_REQUEST_STATUS_ACTION_LOCAL_ID_V1]: {
         title: 'Read pull request status',
         description: 'Reads checks, reviews, mergeability and branches for the exact selected pull request.',
-        surfaces: ['ui', 'agent', 'mcp', 'cli'],
+        surfaces: ['ui', 'plugin', 'agent', 'mcp', 'cli'],
         placementBindings: [],
         dangerLevel: 'safe',
+        readOnly: true,
         inputSchema: TriageReobserveEntryInputV1Schema,
         resultSchema: TriagePullRequestStatusResultV1Schema,
         hostAccess: ['account-storage'],
+        execution: TRIAGE_DATA_ACTION_EXECUTION_V1,
         run: createTriageReadPullRequestStatusActionHandler(),
+        observeRead: createTriageReadPullRequestStatusObserver(),
       },
       [TRIAGE_READ_SAVED_VIEWS_ACTION_LOCAL_ID_V1]: {
         title: 'Read the saved views',

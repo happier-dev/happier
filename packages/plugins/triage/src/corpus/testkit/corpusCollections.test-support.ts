@@ -1,6 +1,8 @@
 import type { AccountScopedCryptoMaterial } from '@happier-dev/protocol';
+import type { PluginAccountCollection } from '@happier-dev/plugin-sdk/collections';
 
 import type { CorpusCollectionsV1 } from '../collections/bindCorpusCollections.js';
+import type { CorpusStoredValueV1 } from '../collections/handles.js';
 import {
     CORPUS_SESSION_LINKS_COLLECTION,
     CORPUS_SOURCE_INSTANCES_COLLECTION,
@@ -18,6 +20,8 @@ export function testkitAccountMaterial(seed: number): AccountScopedCryptoMateria
 
 export type TestkitCorpusCollections = Readonly<{
     collections: CorpusCollectionsV1;
+    /** Full persistence-boundary handles for owner-level observation tests. */
+    watchableCollections: Readonly<Record<keyof CorpusCollectionsV1, PluginAccountCollection<CorpusStoredValueV1>>>;
     control: Readonly<Record<keyof CorpusCollectionsV1, InMemoryAccountCollection>>;
 }>;
 
@@ -44,6 +48,8 @@ export function createTestkitCorpusCollections(options: Readonly<{
     const userMarks = bind(CORPUS_USER_MARKS_COLLECTION);
 
     return {
+        watchableCollections: Object.freeze({ sourceInstances: sourceInstances.collection,
+            sessionLinks: sessionLinks.collection, userMarks: userMarks.collection }),
         collections: Object.freeze({
             sourceInstances: sourceInstances.collection,
             sessionLinks: sessionLinks.collection,

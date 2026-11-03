@@ -101,8 +101,19 @@ export { readTriageResponseHeaderV1 } from './httpHeaders.js';
 export { TriageSourceFailureV1Schema } from './diagnostics.js';
 export type { TriageSourceFailureV1 } from './diagnostics.js';
 
-export { TriagePullRequestStatusResultV1Schema } from './pullRequestStatus.js';
-export type { TriagePullRequestStatusResultV1, TriagePullRequestStatusV1 } from './pullRequestStatus.js';
+export {
+    TRIAGE_PULL_REQUEST_MERGE_METHODS_V1,
+    TriagePullRequestStatusV1Schema,
+    TriagePullRequestRequirementRefV1Schema,
+    TriagePullRequestOperationOfferV1Schema,
+    TriagePullRequestOperationsV1Schema,
+    TriagePullRequestStatusCheckTimeV1Schema,
+    TriagePullRequestStatusResultV1Schema,
+    reconcileTriagePullRequestStatusV1,
+} from './pullRequestStatus.js';
+export type { TriagePullRequestStatusResultV1, TriagePullRequestStatusV1,
+    TriagePullRequestRequirementRefV1, TriagePullRequestOperationOfferV1,
+    TriagePullRequestOperationsV1 } from './pullRequestStatus.js';
 
 export {
     TRIAGE_READ_FIX_PULL_REQUESTS_ACTION_ID_V1,
@@ -282,3 +293,13 @@ export {
     TriageSourcesContributionPointV1,
     TriageSourcesContributionProtocolV1,
 } from './contribution.js';
+export {
+    SessionPullRequestStatusResourceInputV1Schema,
+    SessionPullRequestStatusResourceResultV1Schema,
+    SessionPullRequestNativeStatusV1Schema,
+} from './sessionPullRequestStatus.js';
+export type {
+    SessionPullRequestStatusResourceInputV1,
+    SessionPullRequestStatusResourceResultV1,
+    SessionPullRequestNativeStatusV1,
+} from './sessionPullRequestStatus.js';
