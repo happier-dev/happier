@@ -367,6 +367,7 @@ type ResolvedActionDefinitionBase = Readonly<
 >;
 
 type ResolvedActionPresentation = Readonly<{
+    availability?: PluginActionContributionV2['availability'];
     /** Authored contribution surfaces retained by the canonical Action projection. */
     contributionSurfaces?: PluginActionContributionV2['surfaces'];
     confirmationWhen?: PluginActionContributionV2['confirmationWhen'];
