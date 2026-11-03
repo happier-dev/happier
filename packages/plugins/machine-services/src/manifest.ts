@@ -5,8 +5,7 @@ import { systemdRuntime } from './systemd.js';
 import { composeRuntime } from './compose.js';
 import { HealthCheckSourceConfigV1ProtocolSchema, HealthCheckSetupInputV1ProtocolSchema,
     HealthCheckHttpConfigV1ProtocolSchema } from '@happier-dev/plugin-sdk';
-import { MACHINE_SERVICES_PLUGIN_ID } from './healthSetup.js';
-import { computeCanonicalDomainSeparatedDigest, createCanonicalJsonSigningInput } from '@happier-dev/plugin-sdk';
+import { createHealthCheckSourceInstanceIdV1, MACHINE_SERVICES_PLUGIN_ID } from './healthSetup.js';
 import { createPluginEventAutomationSetupResultV1JsonSchema } from '@happier-dev/plugin-sdk/events';
 import { savedHealthActions, HEALTH_STATUS_EVENT, HEALTH_CHECK_FAILED_EVENT, HEALTH_CHECK_RECOVERED_EVENT,
     healthTransition, runHealthCheckObserver } from './healthObserver.js';
@@ -31,8 +30,7 @@ export const plugin = definePlugin({
         resultSchema: createPluginEventAutomationSetupResultV1JsonSchema(1, HealthCheckSourceConfigV1ProtocolSchema.jsonSchema),
         async run(input, context) {
             const draft = HealthCheckSetupInputV1ProtocolSchema.parse(input);
-            const sourceInstanceId = `health:${computeCanonicalDomainSeparatedDigest('happier.health.subject.v1',
-                [createCanonicalJsonSigningInput(draft.subject)])}`;
+            const sourceInstanceId = createHealthCheckSourceInstanceIdV1(draft.subject);
             const sourceConfig = await context.services.healthChecks.setup({ sourceInstanceId, sourceConfig: draft,
                 heartbeatContributionId: 'health-heartbeat' }, { signal: context.signal });
             return { v: 1, sourceInstanceId, sourceContractVersion: 1, sourceConfig,

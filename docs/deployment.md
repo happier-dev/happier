@@ -619,3 +619,10 @@ Save, a saved-check read correctly reports `source_unavailable`: a successful
 setup proposal alone is not a saved or enabled source. The Event declaration
 supplies observation-only intent for both new and edited checks; no recipe,
 execution assignment or separate health-check store is required.
+
+Opening setup again carries the plugin's canonical source identity. The existing
+Account Automation inventory and private-definition reader resolve that exact
+Event source before Configure, retaining its checks and selected monitoring
+Machine. An unavailable or ambiguous saved source stays unavailable instead of
+opening an empty replacement draft; a subject with no saved source starts a new
+draft through the same writer.

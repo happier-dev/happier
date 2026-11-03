@@ -33,6 +33,7 @@ export function TriggerPluginEventRows(props: Readonly<{
     onEditingChange?: (editing: boolean) => void;
     editorMaxHeight?: number;
     initialEventSeed?: PluginUiOpenAutomationEventRequestV1;
+    initialEventEditSeed?: PluginEventAutomationEditSeed;
 }>) {
     const [inlineEditing, setInlineEditing] = React.useState(false);
     const editing = props.editing ?? inlineEditing;
@@ -57,7 +58,7 @@ export function TriggerPluginEventRows(props: Readonly<{
     const triggerId = props.eventEdit?.triggerId;
     const needsSeed = editing && props.when.value === null && automationId !== undefined && triggerId !== undefined;
     React.useEffect(() => {
-        if (!needsSeed || !automationId || !triggerId) return;
+        if (!needsSeed || props.initialEventEditSeed || !automationId || !triggerId) return;
         const lifetime = captureActiveServerAccountScopeLifetime();
         let alive = true;
         setSeedRead({ status: 'loading', seed: null, automationId, triggerId });
@@ -67,9 +68,10 @@ export function TriggerPluginEventRows(props: Readonly<{
             if (alive && lifetime?.isCurrent()) setSeedRead({ status: 'unavailable', seed: null, automationId, triggerId });
         });
         return () => { alive = false; };
-    }, [automationId, triggerId, needsSeed, retry]);
+    }, [automationId, triggerId, needsSeed, props.initialEventEditSeed, retry]);
     const eventRef = props.when.value?.eventRef ?? props.when.eventRef;
-    const readStatus = seedRead.automationId === automationId && seedRead.triggerId === triggerId ? seedRead.status : 'loading';
+    const readStatus = props.initialEventEditSeed ? 'ready'
+        : seedRead.automationId === automationId && seedRead.triggerId === triggerId ? seedRead.status : 'loading';
     return <>
         {editing ? needsSeed && readStatus !== 'ready' ? <FloatingOverlay maxHeight={props.editorMaxHeight}
             surfaceChrome="theme" footer={<RoundButton testID="automation-plugin-event-cancel" size="small" display="inverted"
@@ -78,7 +80,7 @@ export function TriggerPluginEventRows(props: Readonly<{
             onPress={readStatus === 'unavailable' ? () => setRetry((value) => value + 1) : undefined}
             detail={readStatus === 'unavailable' ? t('common.retry') : undefined} showChevron={false} /></FloatingOverlay> : <PluginEventAutomationEditor
                 automationId={automationId ?? 'trigger-draft'} clientId={triggerId ?? 'event-draft'}
-                value={props.when.value} seed={needsSeed ? seedRead.seed : null} initialEventRef={eventRef ?? null}
+                value={props.when.value} seed={needsSeed ? props.initialEventEditSeed ?? seedRead.seed : null} initialEventRef={eventRef ?? null}
                 authoringMachineId={props.initialEventSeed ? props.initialEventSeed.monitoringMachineId ?? null : props.machineId} serverId={props.serverId}
                 initialSetupSeed={props.initialEventSeed}
                 observationOnly={props.when.observationOnly}

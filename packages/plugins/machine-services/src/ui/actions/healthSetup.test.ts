@@ -13,6 +13,7 @@ it('opens authoring for the exact watched service without enrolling or choosing 
     const declaration = PLUGIN_MANIFEST.contributes.events?.find(row => row.id === 'health-check-failed');
     expect(declaration?.kind).toBe('event');
     expect(opened).toEqual([{ eventRef: { pluginId: PLUGIN_MANIFEST.id, localId: declaration?.id },
+        sourceInstanceId: expect.stringMatching(/^health:.+$/),
         setupInput: { v: 1, subject } }]);
 });
 

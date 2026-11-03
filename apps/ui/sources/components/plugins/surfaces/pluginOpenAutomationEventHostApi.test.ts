@@ -28,7 +28,8 @@ afterEach(() => {
 });
 
 describe('Automation Event host navigation', () => {
-    it.each([seed, { eventRef: seed.eventRef, setupInput: seed.setupInput }])('hands a complete or partial private seed to the existing Account trigger owner using only an opaque route handle: %j', async (intent) => {
+    it.each([seed, { eventRef: seed.eventRef, setupInput: seed.setupInput },
+        { ...seed, sourceInstanceId: 'repository:acme/widgets' }])('hands a complete or partial private seed to the existing Account trigger owner using only an opaque route handle: %j', async (intent) => {
         const navigate = vi.fn<NonNullable<Parameters<typeof createPluginOpenAutomationEventHandler>[0]['navigate']>>();
         const open = createPluginOpenAutomationEventHandler({ accountLifetime: lifetime, isCurrent: () => true, navigate });
         expect(await open(intent)).toBeNull();

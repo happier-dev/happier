@@ -5,6 +5,7 @@ import type { JsonValue, TriggerTargetV1, WorkflowDefinitionV1 } from '@happier-
 import { resolveEffectiveActionInputFields } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
 import type { AutomationRunPluginEventTriggerEvidenceV1 } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
 import type { PluginUiOpenAutomationEventRequestV1 } from '@happier-dev/protocol/plugins/ui';
+import type { PluginEventAutomationEditSeed } from '@/sync/domains/automations/pluginEventAutomationEditSeed';
 
 import { RoundButton, RoundButtonSizeScope } from '@/components/ui/buttons/RoundButton';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -105,6 +106,7 @@ type TriggerPopoverBaseProps = Readonly<{
     /** A new trigger's starting When (the "When this turn finishes…" entry binds it to that turn). */
     initialWhen?: TriggerWhenValue;
     initialEventSeed?: PluginUiOpenAutomationEventRequestV1;
+    initialEventEditSeed?: PluginEventAutomationEditSeed;
     /**
      * The Machine whose options an Action's fields and "A session…" read: the session's own Machine,
      * or the trigger set's Runs on Machine.
@@ -419,7 +421,7 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
         >
             {({ maxHeight, placement, presentation }) => eventEditing && when.kind === 'pluginEvent' ? (
                 <TriggerPluginEventRows testID={props.testID} when={when} onChange={setWhen}
-                    machineId={props.machineId ?? null} serverId={props.serverId ?? null} initialEventSeed={props.initialEventSeed}
+                    machineId={props.machineId ?? null} serverId={props.serverId ?? null} initialEventSeed={props.initialEventSeed} initialEventEditSeed={props.initialEventEditSeed}
                     eventEdit={props.eventEdit} activityEvent={props.activityEvent}
                     editing onEditingChange={setEventEditing} editorMaxHeight={maxHeight} />
             ) : (
@@ -505,7 +507,7 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
                             {!props.manual && when.kind === 'schedule' ? <ScheduleRows testID={props.testID} when={when} onChange={setWhen} /> : null}
                             {!props.manual && when.kind === 'pluginEvent' ? <TriggerPluginEventRows
                                 testID={props.testID} when={when} onChange={setWhen} machineId={props.machineId ?? null}
-                                serverId={props.serverId ?? null} eventEdit={props.eventEdit} activityEvent={props.activityEvent} initialEventSeed={props.initialEventSeed}
+                                serverId={props.serverId ?? null} eventEdit={props.eventEdit} activityEvent={props.activityEvent} initialEventSeed={props.initialEventSeed} initialEventEditSeed={props.initialEventEditSeed}
                                 onEditingChange={setEventEditing} /> : null}
                             {(when.kind === 'prComment' || when.kind === 'ciFailed') && props.sessionId !== null ? (
                                 <SessionTriggerPullRequestPicker

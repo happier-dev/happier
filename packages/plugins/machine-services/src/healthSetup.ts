@@ -1,4 +1,5 @@
-import { HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1, HealthCheckSubjectV1ProtocolSchema } from '@happier-dev/plugin-sdk';
+import { HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1, HealthCheckSubjectV1ProtocolSchema,
+    computeCanonicalDomainSeparatedDigest, createCanonicalJsonSigningInput, type HealthCheckSubjectV1 } from '@happier-dev/plugin-sdk';
 import { defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-sdk/protocol';
 
 export { HealthCheckSetupInputV1ProtocolSchema, HealthCheckSetupDraftV1ProtocolSchema,
@@ -11,6 +12,11 @@ export const HEALTH_CHECK_FAILED_EVENT = 'health-check-failed';
 export const HEALTH_CHECK_RECOVERED_EVENT = 'health-check-recovered';
 export const HEALTH_SETUP_OPEN_ACTION_ID = 'health/open-setup';
 
+export function createHealthCheckSourceInstanceIdV1(subject: HealthCheckSubjectV1): string {
+    return `health:${computeCanonicalDomainSeparatedDigest('happier.health.subject.v1',
+        [createCanonicalJsonSigningInput(subject)])}`;
+}
+
 /** Opening carries the watched subject; the existing editor chooses the observer independently. */
 export const MachineServiceHealthSetupOpenInputV1Schema = defineProtocolObject({
     subject: HealthCheckSubjectV1ProtocolSchema,
@@ -20,6 +26,7 @@ export const MachineServiceHealthSetupOpenInputV1Schema = defineProtocolObject({
 export function createMachineServiceHealthSetupSeedV1(input: ReturnType<typeof MachineServiceHealthSetupOpenInputV1Schema.parse>) {
     return {
         eventRef: { pluginId: MACHINE_SERVICES_PLUGIN_ID, localId: HEALTH_CHECK_FAILED_EVENT },
+        sourceInstanceId: createHealthCheckSourceInstanceIdV1(input.subject),
         ...(input.monitoringMachineId ? { monitoringMachineId: input.monitoringMachineId } : {}),
         setupInput: { v: 1 as const, subject: input.subject },
     };

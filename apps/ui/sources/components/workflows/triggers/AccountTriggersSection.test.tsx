@@ -103,6 +103,7 @@ let serverId: string;
 let disposeLoader: (() => void) | undefined;
 let disposeCredentials: (() => void) | undefined;
 let syncLoader: Awaited<ReturnType<typeof loadSyncSingletonForTests>>;
+let sourceIntakeConnection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
 let rows: AutomationDefinitionDetail[] = [];
 let listReply: (() => Promise<ReturnType<typeof AutomationDefinitionListResponseSchema.parse>>) | undefined;
 let holdLegacyRead = false;
@@ -212,6 +213,8 @@ beforeEach(async () => {
 });
 afterEach(async () => {
     await standardCleanup();
+    await sourceIntakeConnection?.dispose();
+    sourceIntakeConnection = undefined;
     legacyRead.resolve();
     publishAppliedActiveServerRuntimeAvailability(false);
     resetTriggerSets();
@@ -257,13 +260,19 @@ async function confirmAction(screen: Awaited<ReturnType<typeof renderAccountScre
 
 describe('Account trigger editing', () => {
     it.each(['account', 'activity'] as const)('stores and reopens Inbox-only source enrollment from %s without a Project or executable target', async (entry) => {
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const credentials = await TokenStorage.getCredentialsForServerUrl(getActiveServerSnapshot().serverUrl);
+        if (!credentials) throw new Error('Account credential fixture required');
+        sourceIntakeConnection = await restoreServerAccountForTest({ serverUrl: getActiveServerSnapshot().serverUrl,
+            accountId: 'account-a', credentials, request: home.request });
         const { AutomationTriggerDefinitionInputSchema } = await import('@happier-dev/protocol/automations/automationTriggerDefinition');
         const { AutomationRunPluginEventTriggerEvidenceV1Schema } = await import('@happier-dev/protocol/automations/automationRunExecutionRecipeV1');
         const { TriggerFromActivityEvent } = await import('./TriggerFromActivityEvent');
         const { PluginEventAutomationEditor } = await import('@/components/automations/editor/PluginEventAutomationEditor');
+        const sourceConfig = { project: '42', checks: [{ id: 'retained-check' }] };
         const source = AutomationTriggerDefinitionInputSchema.parse({ kind: 'pluginEvent', enabled: true,
             eventRef: { pluginId: 'acme.monitor', localId: 'issue-transition' }, sourceInstanceId: 'project:42',
-            sourceContractVersion: 1, sourceConfig: { project: '42' }, displayLabel: 'Production issues', filter: null,
+            sourceContractVersion: 1, sourceConfig, displayLabel: 'Production issues', filter: null,
             maximumObservationAgeMs: null, observationTransport: { kind: 'checkpointedPull', watcherMaterializationRef: {
                 machineId: 'observer-machine', pluginId: 'acme.monitor', materializationId: 'monitor-1',
             } } });
@@ -312,6 +321,23 @@ describe('Account trigger editing', () => {
         const id = rows[0]!.id;
         await screen.unmount();
 
+        if (entry === 'account') {
+            const requestsBeforeIntake = home.requests.length;
+            const intake = await renderAccountScreen(<NewAccountTriggerPopover anchorRef={React.createRef()}
+                onRequestClose={() => undefined} eventSeed={{ eventRef: source.eventRef,
+                    sourceInstanceId: source.sourceInstanceId, setupInput: { subject: 'prebound-subject' } }} />);
+            await waitForHomeGovernance(() => expect(intake.findByType(TriggerPopover).props.eventEdit)
+                .toEqual({ automationId: id, triggerId: saved.triggers[0]!.id }));
+            expect(intake.findByType(TriggerPopover).props.initialEventSeed).toMatchObject({
+                monitoringMachineId: 'observer-machine',
+                setupInput: { ...sourceConfig, subject: 'prebound-subject' },
+            });
+            expect(rows).toHaveLength(1);
+            expect(home.requests.slice(requestsBeforeIntake).filter(request => request.method === 'GET'
+                && request.path === `/v3/automations/${id}`)).toHaveLength(1);
+            await intake.unmount();
+        }
+
         const reopened = await renderAccountScreen(<AccountTriggersSection />);
         await waitForHomeGovernance(() => expect(reopened.findByTestId(`workflows-column:trigger:${id}`)).not.toBeNull());
         await reopened.pressByTestIdAsync(`workflows-column:trigger:${id}`);
@@ -333,6 +359,43 @@ describe('Account trigger editing', () => {
         expect(writes().at(-1)?.triggers[0]).toMatchObject({ kind: 'existing', triggerId: rows[0]?.triggers[0]?.id });
     });
 
+    it.each(['ambiguous', 'unavailable'] as const)('refuses to replace an %s saved source with a new draft', async (condition) => {
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const credentials = await TokenStorage.getCredentialsForServerUrl(getActiveServerSnapshot().serverUrl);
+        if (!credentials) throw new Error('Account credential fixture required');
+        sourceIntakeConnection = await restoreServerAccountForTest({ serverUrl: getActiveServerSnapshot().serverUrl,
+            accountId: 'account-a', credentials, request: home.request });
+        const { AutomationTriggerDefinitionInputSchema } = await import('@happier-dev/protocol/automations/automationTriggerDefinition');
+        const { addWorkflowTrigger } = await import('@/sync/domains/workflows/workflowTriggerActions');
+        const source = AutomationTriggerDefinitionInputSchema.parse({ kind: 'pluginEvent', enabled: true,
+            eventRef: { pluginId: 'acme.monitor', localId: 'issue-transition' }, sourceInstanceId: 'project:42',
+            sourceContractVersion: 1, sourceConfig: { checks: [{ id: 'retained-check' }] }, displayLabel: 'Production issues',
+            filter: null, maximumObservationAgeMs: null, observationTransport: { kind: 'checkpointedPull',
+                watcherMaterializationRef: { machineId: 'observer-machine', pluginId: 'acme.monitor', materializationId: 'monitor-1' } } });
+        await addWorkflowTrigger({ trigger: source, observationOnly: { kind: 'observationOnly' } });
+        if (condition === 'ambiguous') {
+            await addWorkflowTrigger({ trigger: source, observationOnly: { kind: 'observationOnly' } });
+        } else {
+            // The inventory's batched POST remains readable; only the later
+            // exact private GET fails, so this reaches saved-source resolution.
+            home.answer(serverId, `GET /v3/automations/${rows[0]!.id}`, { select: (_input, request) =>
+                (request.init?.method ?? 'GET').toUpperCase() === 'GET'
+                    ? { status: 503, body: { error: 'unavailable' } }
+                    : { body: rows[0] } });
+        }
+        const savedCount = rows.length;
+        const requestsBeforeIntake = home.requests.length;
+        const screen = await renderAccountScreen(<NewAccountTriggerPopover anchorRef={React.createRef()}
+            onRequestClose={() => undefined} eventSeed={{ eventRef: { pluginId: 'acme.monitor', localId: 'issue-transition' },
+                sourceInstanceId: 'project:42', setupInput: { subject: 'prebound-subject' } }} />);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('automation-event-source-intake-unavailable')).not.toBeNull());
+        expect(home.requests.slice(requestsBeforeIntake).filter(request => request.method === 'GET'
+            && rows.some(row => request.path === `/v3/automations/${row.id}`)).map(request => request.path).sort())
+            .toEqual(rows.map(row => `/v3/automations/${row.id}`).sort());
+        expect(screen.findAllByType(TriggerPopover)).toHaveLength(0);
+        expect(rows).toHaveLength(savedCount);
+        expect(writes()).toHaveLength(0);
+    });
 
     it('settles acknowledged trigger creation while the unrelated Automation listing refresh is pending', async () => {
         const { TokenStorage } = await import('@/auth/storage/tokenStorage');

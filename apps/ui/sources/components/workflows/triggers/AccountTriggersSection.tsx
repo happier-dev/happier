@@ -1,3 +1,4 @@
+import type { PluginEventAutomationEditSeed } from '@/sync/domains/automations/pluginEventAutomationEditSeed';
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -264,7 +265,9 @@ function AccountTriggerPopover(props: Readonly<{
     workflowOptions: ReturnType<typeof useTriggerThenOptions>['workflowOptions'];
     onRequestClose: () => void;
     onWritten: () => void;
-    onSaveAsWorkflow: (target: TriggerTargetV1) => void;
+    onSaveAsWorkflow?: (target: TriggerTargetV1) => void;
+    initialEventSeed?: PluginUiOpenAutomationEventRequestV1;
+    initialEventEditSeed?: PluginEventAutomationEditSeed;
 }>) {
     const activeMachines = useAllMachines();
     const addressedMachines = useMachineListForServer(props.accountLifetime?.scope.serverId ?? '');
@@ -287,6 +290,8 @@ function AccountTriggerPopover(props: Readonly<{
             serverId={props.accountLifetime?.scope.serverId}
             accountLifetime={props.accountLifetime}
             initial={form}
+            initialEventSeed={props.initialEventSeed}
+            initialEventEditSeed={props.initialEventEditSeed}
             manual={triggerId === null}
             subtitle={needsReview ? t('workflows.triggers.legacy.reviewRequired') : set.legacy ? t('workflows.triggers.legacy.editNotice') : undefined}
             submitNotice={needsReview ? t('workflows.triggers.legacy.reviewConversionNotice') : set.legacy ? t('workflows.triggers.legacy.conversionBoundary') : undefined}
@@ -348,12 +353,80 @@ function AccountTriggerPopover(props: Readonly<{
  * The column "+" menu's **New trigger** (04 §3.3, F1): an Account trigger that holds its own steps,
  * with its set's Runs on, written through `workflow.trigger.add`. It joins the Triggers section.
  */
-export function NewAccountTriggerPopover(props: Readonly<{
+type NewAccountTriggerPopoverProps = Readonly<{
     anchorRef: React.RefObject<View | null>;
     onRequestClose: () => void;
     eventSeed?: PluginUiOpenAutomationEventRequestV1;
     accountLifetime?: ServerAccountScopeLifetime | null;
+}>;
+
+export function NewAccountTriggerPopover(props: NewAccountTriggerPopoverProps): React.ReactElement {
+    const eventSeed = props.eventSeed;
+    return eventSeed?.sourceInstanceId
+        ? <ExistingAccountEventSourceIntake {...props} eventSeed={eventSeed} sourceInstanceId={eventSeed.sourceInstanceId} />
+        : <NewAccountTriggerDraftPopover {...props} />;
+}
+
+/** Resolve private source identity once; an opened revision remains the editor's draft. */
+function ExistingAccountEventSourceIntake(props: Omit<NewAccountTriggerPopoverProps, 'eventSeed'> & Readonly<{
+    eventSeed: PluginUiOpenAutomationEventRequestV1;
+    sourceInstanceId: string;
 }>): React.ReactElement {
+    const inventory = useWorkflowTriggerSets({ scope: 'account_inline' }, props.accountLifetime);
+    const inventorySets = React.useRef(inventory.sets);
+    inventorySets.current = inventory.sets;
+    const thenOptions = useTriggerThenOptions(props.accountLifetime === undefined ? {} : { accountLifetime: props.accountLifetime });
+    const [resolution, setResolution] = React.useState<
+        | Readonly<{ kind: 'loading' }>
+        | Readonly<{ kind: 'unavailable' }>
+        | Readonly<{ kind: 'new' }>
+        | Readonly<{ kind: 'existing'; set: WorkflowTriggerSetV1; seed: PluginEventAutomationEditSeed }>
+    >({ kind: 'loading' });
+    const { pluginId, localId } = props.eventSeed.eventRef;
+    React.useEffect(() => {
+        if (resolution.kind !== 'loading' || inventory.status !== 'ready') return;
+        const lifetime = props.accountLifetime === undefined ? captureActiveServerAccountScopeLifetime() : props.accountLifetime;
+        let alive = true;
+        void (async () => {
+            const matches: Array<Readonly<{ set: WorkflowTriggerSetV1; seed: PluginEventAutomationEditSeed }>> = [];
+            for (const set of inventorySets.current) {
+                for (const trigger of set.triggers) {
+                    if (trigger.kind !== 'pluginEvent' || trigger.eventRef.pluginId !== pluginId || trigger.eventRef.localId !== localId) continue;
+                    const seed = await sync.getAutomationPluginEventEditSeed(set.automationId, trigger.id);
+                    if (!seed) throw new Error('Saved Event source is unavailable');
+                    if (seed.source.sourceInstanceId === props.sourceInstanceId) matches.push({ set, seed });
+                }
+            }
+            if (!alive || lifetime?.isCurrent() !== true) return;
+            if (matches.length === 0) setResolution({ kind: 'new' });
+            else if (matches.length === 1 && readWorkflowTriggerSetForm(matches[0]!.set, matches[0]!.seed.triggerId)) {
+                setResolution({ kind: 'existing', ...matches[0]! });
+            } else setResolution({ kind: 'unavailable' });
+        })().catch(() => {
+            if (alive && lifetime?.isCurrent()) setResolution({ kind: 'unavailable' });
+        });
+        return () => { alive = false; };
+    }, [inventory.status, localId, pluginId, props.accountLifetime, props.sourceInstanceId, resolution.kind]);
+    if (resolution.kind === 'unavailable' || (resolution.kind === 'loading' && inventory.status === 'failed')) return <SurfaceStateCard
+        testID="automation-event-source-intake-unavailable" size="line" kind="unavailable"
+        title={t('automations.form.trigger.sourceUnavailable')}
+        action={{ label: t('common.retry'), onPress: () => { inventory.retry(); setResolution({ kind: 'loading' }); } }} />;
+    if (resolution.kind === 'loading') return <SurfaceStateCard size="line" kind="loading" title={t('common.loading')} />;
+    if (resolution.kind === 'new') return <NewAccountTriggerDraftPopover {...props} />;
+    const { seed, set } = resolution;
+    const eventSeed: PluginUiOpenAutomationEventRequestV1 = {
+        ...props.eventSeed,
+        ...(seed.observation.kind === 'durablePush' ? {} : { monitoringMachineId: seed.observation.watcherMaterializationRef.machineId }),
+        setupInput: { ...Object.fromEntries<PluginEventAutomationEditSeed['source']['sourceConfig']>(
+            Object.entries(seed.source.sourceConfig ?? {})), ...props.eventSeed.setupInput },
+    };
+    return <AccountTriggerPopover set={set} triggerId={seed.triggerId} anchorRef={props.anchorRef}
+        accountLifetime={props.accountLifetime} workflowOptions={thenOptions.workflowOptions}
+        initialEventSeed={eventSeed} initialEventEditSeed={seed} onRequestClose={props.onRequestClose}
+        onWritten={() => { fireAndForget(sync.refreshAutomations()); props.onRequestClose(); }} />;
+}
+
+function NewAccountTriggerDraftPopover(props: NewAccountTriggerPopoverProps): React.ReactElement {
     const thenOptions = useTriggerThenOptions(props.accountLifetime === undefined ? {} : { accountLifetime: props.accountLifetime });
     const [project, setProject] = React.useState<WorkflowProjectTargetV1 | null>(null);
     return (

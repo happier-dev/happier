@@ -1,6 +1,7 @@
 import * as zMini from 'zod/mini';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
+import { AutomationEventSourceInstanceIdV1Schema } from '../../automations/automationEventJsonBoundsV1.js';
 import { SessionIdentityAdditionsV1Schema } from '../../sessions/identity/sessionBotV1.js';
 import { SessionPromptStackV1Schema } from '../../sessions/context/sessionContextV1.js';
 import { AgentExecutionTargetV1Schema } from '../../agents/executionTargetV1.js';
@@ -80,6 +81,7 @@ export { PluginUiNewSessionSeedOriginV1Schema, StoredPluginUiNewSessionSeedOrigi
 /** Authoring intent only. Source setup and trigger writes still require explicit submission. */
 export const PluginUiOpenAutomationEventRequestV1Schema = lazyZodSchema(() => z.strictObject({
   eventRef: asProtocolZod(PluginContributionIdentityV1Schema),
+  sourceInstanceId: z.optional(AutomationEventSourceInstanceIdV1Schema),
   monitoringMachineId: z.optional(z.string().check(z.trim(), z.minLength(1))),
   connectedAccount: z.optional(asProtocolZod(QualifiedConnectedAccountRefSchema)),
   setupInput: z.record(z.string(), PluginUiJsonValueV1Schema),
