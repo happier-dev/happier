@@ -1,4 +1,4 @@
-import { readSessionPreparationFailureCode, readSessionStartupFailurePreview } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { readAgentStartupFailureDetails, readSessionStartupFailurePreview } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import {
   type AgentExecutionRunConversationRuntimeV1,
   type AgentExecutionRunConversationSendOptionsV1,
@@ -15,7 +15,7 @@ import type {
   AgentSessionRealtimeConversation,
   AgentSessionRealtimeRuntime as ExperimentalAgentSessionRealtimeRuntime,
 } from '@happier-dev/plugin-sdk/agents/runtime';
-import type { JsonValue, PluginDiagnosticData } from '@happier-dev/plugin-sdk';
+import type { JsonValue, PluginDiagnosticData, LoggerService } from '@happier-dev/plugin-sdk';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { AGENT_DEFINITION } from '../../definition.js';
 import { isDeepStrictEqual } from 'node:util';
@@ -44,6 +44,12 @@ import {
 } from './runtime.js';
 import {
   isCodexAppServerRejectedStartModelEntitlementError,
+  createCodexAppServerTurnFailure,
+  readCodexAppServerFailureCause,
+  readCodexAppServerFailureCode,
+  readCodexAppServerRuntimeIssueSource,
+  readCodexAppServerPrimaryFailure,
+  readCodexAppServerStartupFailure,
   sanitizeCodexAppServerRuntimeAuthClassification,
 } from './turns/failure.js';
 import { parseCodexProviderBindingEngineConfigV1 } from '../../providerBinding/runtimeConfig.js';
@@ -57,17 +63,9 @@ import {
 } from '../../../protocol/runtimeDescriptorV1.js';
 import {
   createCodexSharedAppServer,
-  readCodexNativeTransportStartupFailure,
-  readCodexSharedAppServerStartupFailure,
-  type CodexSharedAppServerStartupFailure,
 } from './sharedServer.js';
 import { buildCodexExecutionRunBaseEnv } from '../../executionRuns/environment.js';
 import { assignInjectedServerKeys, buildCodexAppServerConfigOverrides, listCodexAppServerMcpServerNames } from './config/overrides.js';
-import {
-  AGENT_STARTUP_FAILURE_PREVIEWS,
-  readAgentStartupFailureCode,
-  type AgentStartupFailureCode,
-} from '@happier-dev/plugin-sdk/agents/runtime';
 
 type CodexSharedAppServer = NonNullable<Awaited<ReturnType<typeof createCodexSharedAppServer>>>;
 
@@ -363,79 +361,78 @@ function toJsonValue(value: unknown) {
 
 function readBoundedRuntimeAuthDiagnosticDetails(
   error: unknown,
-): PluginDiagnosticData['details'] | undefined {
+): Readonly<{ runtimeAuthClassification: JsonValue }> | undefined {
   if (!(error instanceof Error)) return undefined;
   const classification = sanitizeCodexAppServerRuntimeAuthClassification(
     (error as { runtimeAuthClassification?: unknown }).runtimeAuthClassification,
   );
   if (!classification) return undefined;
-  return toJsonValue({ runtimeAuthClassification: classification });
+  return { runtimeAuthClassification: toJsonValue(classification) };
 }
 
-class CodexAppServerStartupError extends Error {
-  constructor(readonly code: AgentStartupFailureCode, readonly startupFailure?: CodexSharedAppServerStartupFailure) {
-    // Keep the closed code in the message as well: runner loggers may render
-    // only Error's name/message/stack, rather than its own data properties.
-    super(`${code}: ${AGENT_STARTUP_FAILURE_PREVIEWS[code]}.${startupFailure ? ` ${JSON.stringify(startupFailure)}` : ''}`);
-    this.name = 'CodexAppServerStartupError';
-  }
-}
-
-function createSanitizedNativeStartupError(error: unknown): Error {
-  if (error instanceof PluginError && (
+function createSanitizedNativeStartupError(error: unknown, phase: 'client_start' | 'thread_open'): Error {
+  const startupCause = readCodexAppServerPrimaryFailure(error);
+  const failure = createCodexAppServerTurnFailure({ value: startupCause, phase });
+  const toolRestrictionCode = error instanceof PluginError && (
     error.code === 'codex_tool_restriction_unsupported_runtime'
     || error.code === 'codex_tool_restriction_unsupported_model'
     || error.code === 'codex_tool_restriction_unsupported_auth'
     || error.code === 'codex_tool_restriction_catalog_unavailable'
-  )) {
+  ) ? error.code : null;
+  if (toolRestrictionCode) {
     // These are closed eligibility reasons authored by this adapter. Do not
     // carry native messages, config, process output or arbitrary error details.
-    const message = error.code === 'codex_tool_restriction_unsupported_runtime'
+    const message = toolRestrictionCode === 'codex_tool_restriction_unsupported_runtime'
       ? CODEX_TOOL_RESTRICTION_RUNTIME_REMEDY
       : 'Codex cannot enforce the requested native tool policy for this configuration.';
-    return new PluginError({ code: error.code, message: `${error.code}: ${message}` });
+    return new PluginError({ code: toolRestrictionCode, message: `${toolRestrictionCode}: ${message}`,
+      details: { v: 1, agentId: 'codex', source: readCodexAppServerRuntimeIssueSource(failure),
+        failureCause: readCodexAppServerFailureCause(failure) },
+    });
   }
-  const startupCause = error instanceof AggregateError ? error.errors[0] : error;
-  const descriptor = startupCause instanceof Error ? Object.getOwnPropertyDescriptor(startupCause, 'code') : undefined;
-  const errorCode: unknown = descriptor && 'value' in descriptor ? descriptor.value : undefined;
-  if (readSessionPreparationFailureCode(errorCode) === 'agent_cli_not_runnable') {
-    return new PluginError({ code: 'agent_cli_not_runnable', retryable: false,
-      message: readSessionStartupFailurePreview(errorCode)! });
-  }
-  const nativeTransportFailure = readCodexNativeTransportStartupFailure(startupCause);
-  const code = readAgentStartupFailureCode(errorCode)
-    ?? (error instanceof TypeError ? 'agent_startup_invalid_state'
-      : error instanceof Error && error.name === 'JsonRpcApplicationError' && typeof errorCode === 'number'
-        ? 'agent_startup_rpc_rejected'
-      : nativeTransportFailure
-        ? 'agent_startup_transport_failed'
-        : 'agent_startup_failed');
+  const startupFailure = readCodexAppServerStartupFailure(failure);
+  const code = readCodexAppServerFailureCode(failure) ?? 'agent_startup_failed';
   // Shared startup cleanup can aggregate the original failure. Preserve that
   // owner's closed diagnostic, or a closed Node system-error identity, without
   // copying either exception's raw cause, paths, addresses or values.
-  const startupFailure = readCodexSharedAppServerStartupFailure(
-    startupCause && typeof startupCause === 'object'
-      ? (startupCause as Readonly<{ startupFailure?: unknown }>).startupFailure
-      : undefined,
-  ) ?? nativeTransportFailure;
-  const sanitized = new CodexAppServerStartupError(code,
-    startupFailure ?? undefined);
-  const classification = error instanceof Error
-    ? sanitizeCodexAppServerRuntimeAuthClassification(
-        (error as { runtimeAuthClassification?: unknown }).runtimeAuthClassification,
-      )
-    : null;
+  const details = readAgentStartupFailureDetails(failure);
+  // The host preserves structured startup facts through the public PluginError
+  // boundary. An ordinary Error's ad-hoc details are discarded on reconstruction.
+  const sanitized = new PluginError({
+    code,
+    message: `${code}: ${readSessionStartupFailurePreview(code) ?? 'Agent startup failed'}.${startupFailure ? ` ${JSON.stringify(startupFailure)}` : ''}`,
+    retryable: 'retryable' in failure && typeof failure.retryable === 'boolean' ? failure.retryable : undefined,
+    details: { v: 1, agentId: 'codex', source: readCodexAppServerRuntimeIssueSource(failure), ...details,
+      failureCause: readCodexAppServerFailureCause(failure) },
+  });
+  if (startupFailure) Object.assign(sanitized, { startupFailure });
+  const classification = sanitizeCodexAppServerRuntimeAuthClassification(
+    (failure as Error & { runtimeAuthClassification?: unknown }).runtimeAuthClassification,
+  );
   if (classification) {
     Object.assign(sanitized, { runtimeAuthClassification: classification });
   }
   if (
-    typeof error === 'object'
-    && error !== null
-    && (error as Readonly<{ happierNativeResumeIdentityMismatch?: unknown }>)
+    (failure as Readonly<{ happierNativeResumeIdentityMismatch?: unknown }>)
       .happierNativeResumeIdentityMismatch === true
   ) {
     Object.assign(sanitized, { happierNativeResumeIdentityMismatch: true });
   }
+  return sanitized;
+}
+
+function logCodexNativeStartupFailure(error: unknown, logger: LoggerService,
+  stage: 'configuration' | 'skills' | 'native_session' | 'client_start'): Error {
+  const sanitized = createSanitizedNativeStartupError(error, stage === 'native_session' ? 'thread_open' : 'client_start');
+  const causeCode = (sanitized as Error & { code?: string }).code;
+  const fields = { stage, ...buildCodexAppServerSafeErrorIdentity(error),
+    ...(causeCode ? { causeCode } : {}),
+    failureCause: readCodexAppServerFailureCause(sanitized),
+  };
+  const startupFailure = readCodexAppServerStartupFailure(sanitized);
+  if (startupFailure) {
+    logger.warn('Codex native startup failed', { ...fields, startupFailure });
+  } else logger.debug('Codex native startup failed', fields);
   return sanitized;
 }
 
@@ -512,6 +509,7 @@ function mapCodexAppServerEvent(event: CodexAppServerEvent): NativeSessionEventI
           event.issue.code,
           event.issue.sanitizedPreview ?? event.issue.code,
           { v: 1, source: event.issue.source,
+            ...(event.issue.failureCause ? { failureCause: event.issue.failureCause } : {}),
             ...(event.runtimeAuthClassification ? { runtimeAuthClassification: toJsonValue(event.runtimeAuthClassification) } : {}) },
         ),
       };
@@ -819,7 +817,7 @@ function createCodexNativeAppServerConversationRuntime(
         const failure = diagnostic(
           'codex_send_outcome_unknown',
           'Codex send outcome is unknown.',
-          readBoundedRuntimeAuthDiagnosticDetails(error),
+          { failureCause: readCodexAppServerFailureCause(error), ...readBoundedRuntimeAuthDiagnosticDetails(error) },
         );
         emit({
           kind: 'input-custody-unknown',
@@ -1083,7 +1081,7 @@ export async function openCodexNativeAppServerSession(
         processEnv,
         onStartupWaiting: waiting => context.session.services.publishWorkStatus?.(waiting ? 'waiting_for_startup_lock' : null),
         signal: context.signal,
-      });
+      }).catch(error => { throw logCodexNativeStartupFailure(error, context.services.logger, 'client_start'); });
 
   const runtime = createCodexAppServerRuntime({
     host: createCodexNativeAppServerRuntimeHost({
@@ -1147,16 +1145,7 @@ export async function openCodexNativeAppServerSession(
       await runtime.prepareProviderCliAttach();
     }
   } catch (error) {
-    const sanitized = createSanitizedNativeStartupError(error);
-    if (sanitized instanceof CodexAppServerStartupError && sanitized.startupFailure) {
-      context.services.logger.warn('Codex native startup failed', {
-        stage: startupStage, ...buildCodexAppServerSafeErrorIdentity(sanitized), startupFailure: sanitized.startupFailure,
-      });
-    } else {
-      context.services.logger.debug('Codex native startup failed', {
-        stage: startupStage, ...buildCodexAppServerSafeErrorIdentity(error),
-      });
-    }
+    const sanitized = logCodexNativeStartupFailure(error, context.services.logger, startupStage);
     await sharedAppServer?.dispose();
     throw sanitized;
   }
@@ -1260,7 +1249,7 @@ export async function openCodexNativeAppServerExecutionRunConversation(
     logger: context.services.logger,
     processEnv,
     signal: context.signal,
-  });
+  }).catch(error => { throw logCodexNativeStartupFailure(error, context.services.logger, 'client_start'); });
   const runtime = createCodexAppServerRuntime({
     host: createCodexNativeAppServerExecutionRunRuntimeHost({ context, processEnv, sharedAppServer }),
     directory: request.cwd,
@@ -1295,16 +1284,7 @@ export async function openCodexNativeAppServerExecutionRunConversation(
       });
     }
   } catch (error) {
-    const sanitized = createSanitizedNativeStartupError(error);
-    if (sanitized instanceof CodexAppServerStartupError && sanitized.startupFailure) {
-      context.services.logger.warn('Codex native startup failed', {
-        stage: startupStage, ...buildCodexAppServerSafeErrorIdentity(sanitized), startupFailure: sanitized.startupFailure,
-      });
-    } else {
-      context.services.logger.debug('Codex native startup failed', {
-        stage: startupStage, ...buildCodexAppServerSafeErrorIdentity(error),
-      });
-    }
+    const sanitized = logCodexNativeStartupFailure(error, context.services.logger, startupStage);
     await sharedAppServer?.dispose();
     throw sanitized;
   }

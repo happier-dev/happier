@@ -118,6 +118,9 @@ import {
 } from './connectedServiceRuntimeIdentity.js';
 import {
   createCodexAppServerTurnFailure,
+  readCodexAppServerFailureCause,
+  readCodexAppServerFailureCode,
+  readCodexAppServerRuntimeIssueSource,
   readCodexAppServerTurnFailureDiagnostic,
   sanitizeCodexAppServerRuntimeAuthClassification,
   isCodexAppServerRejectedStartModelEntitlementError,
@@ -669,25 +672,6 @@ function isCodexRuntimeAuthQuotaFailure(error: Error): boolean {
   return kind === 'usage_limit' || kind === 'rate_limit';
 }
 
-function resolveCodexRuntimeIssueSource(error: Error): CodexAppServerRuntimeIssue['source'] {
-  const classification = readRecord((error as { runtimeAuthClassification?: unknown }).runtimeAuthClassification);
-  const kind = trimStringValue(classification?.kind);
-  switch (kind) {
-    case 'usage_limit':
-    case 'rate_limit':
-      return 'usage_limit';
-    case 'auth_expired':
-    case 'account_changed':
-    case 'refresh_failed':
-      return 'auth_error';
-    case 'temporary_throttle':
-    case 'permission_denied':
-      return 'agent_status_error';
-    default:
-      return 'agent_session_error';
-  }
-}
-
 function buildCodexAppServerBackgroundCompletionFailureDiagnostics(
   error: unknown,
 ): Record<string, unknown> {
@@ -708,7 +692,7 @@ function buildCodexAppServerBackgroundCompletionFailureDiagnostics(
     : null;
   return {
     ...buildCodexAppServerSafeErrorIdentity(error),
-    runtimeIssueSource: resolveCodexRuntimeIssueSource(error),
+    runtimeIssueSource: readCodexAppServerRuntimeIssueSource(error),
     ...(runtimeAuthKind ? { runtimeAuthKind } : {}),
     ...(runtimeAuthSource ? { runtimeAuthSource } : {}),
     ...(runtimeAuthLimitCategory ? { runtimeAuthLimitCategory } : {}),
@@ -747,7 +731,7 @@ export function buildCodexAppServerSafeErrorIdentity(error: unknown): Record<str
 
 function buildCodexAppServerTurnFailureIssue(
   error: Error,
-  activeTurn: PendingTurn,
+  activeTurn?: PendingTurn,
 ): CodexAppServerRuntimeIssue {
   const modelUnavailable = readCodexAppServerTurnFailureDiagnostic(error).providerErrorCode === 'model_not_found';
   return {
@@ -757,11 +741,12 @@ function buildCodexAppServerTurnFailureIssue(
     code: modelUnavailable ? 'provider_model_not_found'
       : isCodexAppServerContextWindowExhaustedError(error, { structuredOnly: true })
       ? 'agent_context_window_exceeded'
-      : CODEX_APP_SERVER_TURN_FAILURE_CODE,
-    source: resolveCodexRuntimeIssueSource(error),
+      : readCodexAppServerFailureCode(error) ?? CODEX_APP_SERVER_TURN_FAILURE_CODE,
+    source: readCodexAppServerRuntimeIssueSource(error),
     occurredAt: Date.now(),
     agentId: 'codex',
-    ...(activeTurn.agentTurnId ? { agentTurnId: activeTurn.agentTurnId } : {}),
+    failureCause: readCodexAppServerFailureCause(error),
+    ...(activeTurn?.agentTurnId ? { agentTurnId: activeTurn.agentTurnId } : {}),
     sanitizedPreview: modelUnavailable ? 'The selected model is unavailable. Choose another model.'
       : isCodexAppServerWorkspaceRoutingUnauthorizedError(error)
       ? CODEX_APP_SERVER_WORKSPACE_ROUTING_AUTH_PREVIEW
@@ -2388,7 +2373,7 @@ export function createCodexAppServerRuntime(
         threadId: errorThreadId,
         turnId: errorTurnId,
         willRetry: record?.willRetry === true,
-        runtimeIssueSource: resolveCodexRuntimeIssueSource(providerError),
+        runtimeIssueSource: readCodexAppServerRuntimeIssueSource(providerError),
         ...readCodexAppServerTurnFailureDiagnostic(providerError),
         providerErrorSummary: isCodexAppServerWorkspaceRoutingUnauthorizedError(providerError)
           ? CODEX_APP_SERVER_WORKSPACE_ROUTING_ERROR_SUMMARY
@@ -2510,7 +2495,7 @@ export function createCodexAppServerRuntime(
           }
         } catch (error) {
           await createdClient.dispose().catch(() => undefined);
-          throw error;
+          throw createCodexAppServerTurnFailure({ value: error, phase: 'authentication' });
         }
         if (disposed) {
           await createdClient.dispose().catch(() => undefined);
@@ -2524,7 +2509,13 @@ export function createCodexAppServerRuntime(
         return createdClient;
       }).catch((error: unknown) => {
         clientPromise = null;
-        throw error;
+        const failure = createCodexAppServerTurnFailure({ value: error, phase: 'client_start' });
+        // The enclosing startup owner still needs the original native failure for recovery.
+        if (error instanceof Error) {
+          Object.assign(error, { runtimeIssueV1: buildCodexAppServerTurnFailureIssue(failure) });
+          throw error;
+        }
+        throw failure;
       });
     }
     return clientPromise;
@@ -2757,6 +2748,7 @@ export function createCodexAppServerRuntime(
           if (!isCodexAppServerApplicationRejectionForMethod(error, 'thread/start')) throw error;
           const failure = createCodexAppServerTurnFailure({
             value: error,
+            phase: 'thread_open',
             sourceAccountIdentity: latestConnectedServiceRuntimeIdentity,
             providerStartRejected: turnSeq === 0 && pendingTurn === null,
           });
@@ -3038,6 +3030,7 @@ export function createCodexAppServerRuntime(
       const classifiedFailure = isCodexAppServerApplicationRejectionForMethod(error, 'turn/start')
         ? createCodexAppServerTurnFailure({
             value: error,
+            phase: 'turn_start',
             sourceAccountIdentity: activeTurn.providerOperationIdentity,
             providerStartRejected: pendingTurn === activeTurn
               && !activeTurn.providerStartAcknowledged

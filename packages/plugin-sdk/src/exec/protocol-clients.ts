@@ -18,3 +18,6 @@ export type {
     PluginProtocolClientSpec,
     PluginProtocolClientSpecByKind,
 } from '../services/io.js';
+
+export { readJsonRpcApplicationRejection } from './jsonRpcOutcome.js';
+export type { JsonRpcApplicationError, JsonRpcApplicationRejectionDetails } from './jsonRpcOutcome.js';

@@ -1,3 +1,8 @@
+import { readJsonRpcApplicationRejection } from '@happier-dev/plugin-sdk/exec/protocol-clients';
+import { RunnerDaemonPluginServicesPreparationCauseV1Schema, SessionRuntimeFailureCauseV1Schema, sanitizeSessionRuntimeIssueV1, readAgentStartupFailureCode, readAgentStartupFailureDetails, readSessionPreparationFailureCode, readSessionStartupFailurePreview, type SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { ProviderBrokerAdmissionFailureCodeV1Schema } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import { readCodexNativeTransportStartupFailure, readCodexSharedAppServerStartupFailure, type CodexSharedAppServerStartupFailure } from '../sharedServer.js';
+
 import { redactBugReportSensitiveText } from '@happier-dev/plugin-sdk';
 import { classifyProviderLimitEvidence } from '@happier-dev/plugin-sdk/first-party/connected-accounts';
 
@@ -46,8 +51,8 @@ const CODEX_APP_SERVER_RUNTIME_AUTH_KIND_VALUES = [
 ] as const;
 const CODEX_APP_SERVER_RUNTIME_AUTH_KINDS: ReadonlySet<string> = new Set(CODEX_APP_SERVER_RUNTIME_AUTH_KIND_VALUES);
 
-type CodexTurnFailureReason = typeof CODEX_APP_SERVER_RUNTIME_AUTH_KIND_VALUES[number]
-    | 'workspace_routing_unauthorized' | 'context_window_exceeded' | 'auth_account_changed' | 'unclassified_provider_error';
+type CodexFailureCause = NonNullable<SessionRuntimeIssueV1['failureCause']>;
+type CodexTurnFailureReason = CodexFailureCause['failureReason'];
 const CODEX_APP_SERVER_RUNTIME_AUTH_LIMIT_CATEGORIES = new Set([
     'usage_limit',
     'rate_limit',
@@ -80,9 +85,11 @@ type CodexAppServerErrorPayload = Readonly<{
 }>;
 
 class CodexAppServerTurnFailure extends Error {
-    declare readonly code?: 'provider_model_not_found';
+    declare readonly code?: string;
+    declare readonly details?: Readonly<{ failureCause?: CodexFailureCause }>;
+    readonly failurePhase: CodexFailureCause['phase'];
     readonly failureReason: CodexTurnFailureReason;
-    declare readonly providerErrorCode?: string;
+    declare readonly providerErrorCode?: string | number;
     declare readonly httpStatus?: number;
     readonly isAuthAccountChanged: boolean;
     readonly contextWindowExhaustionEvidence: 'structured' | 'message' | null;
@@ -92,17 +99,21 @@ class CodexAppServerTurnFailure extends Error {
     readonly isRejectedStartModelEntitlement: boolean;
 
     constructor(message: string, options: Readonly<{
+        code?: string;
+        phase?: CodexFailureCause['phase'];
         isAuthAccountChanged: boolean;
         contextWindowExhaustionEvidence: 'structured' | 'message' | null;
         isTemporaryRecoverableTurnFailure: boolean;
         runtimeAuthClassification: unknown | null;
         isWorkspaceRoutingUnauthorized: boolean;
         isRejectedStartModelEntitlement: boolean;
-        providerErrorCode?: string;
+        providerErrorCode?: string | number;
         httpStatus?: number;
     }>) {
         super(message);
         this.name = 'CodexAppServerTurnFailure';
+        this.failurePhase = options.phase ?? 'turn';
+        if (options.code) this.code = options.code;
         this.isAuthAccountChanged = options.isAuthAccountChanged;
         this.contextWindowExhaustionEvidence = options.contextWindowExhaustionEvidence;
         this.isTemporaryRecoverableTurnFailure = options.isTemporaryRecoverableTurnFailure;
@@ -114,7 +125,7 @@ class CodexAppServerTurnFailure extends Error {
             : options.contextWindowExhaustionEvidence === 'structured' ? 'context_window_exceeded'
                 : options.isAuthAccountChanged ? 'auth_account_changed'
                     : CODEX_APP_SERVER_RUNTIME_AUTH_KIND_VALUES.find(kind => kind === classification?.kind) ?? 'unclassified_provider_error';
-        if (options.providerErrorCode) this.providerErrorCode = options.providerErrorCode;
+        if (options.providerErrorCode !== undefined) this.providerErrorCode = options.providerErrorCode;
         if (options.providerErrorCode === 'model_not_found') this.code = 'provider_model_not_found';
         if (options.httpStatus !== undefined) this.httpStatus = options.httpStatus;
     }
@@ -122,16 +133,103 @@ class CodexAppServerTurnFailure extends Error {
 
 export function readCodexAppServerTurnFailureDiagnostic(error: unknown): Readonly<{
     failureReason: CodexTurnFailureReason;
-    providerErrorCode?: string;
+    providerErrorCode?: string | number;
     httpStatus?: number;
 }> {
     return error instanceof CodexAppServerTurnFailure
         ? {
             failureReason: error.failureReason,
-            ...(error.providerErrorCode ? { providerErrorCode: error.providerErrorCode } : {}),
+            ...(error.providerErrorCode === undefined ? {} : { providerErrorCode: error.providerErrorCode }),
             ...(error.httpStatus === undefined ? {} : { httpStatus: error.httpStatus }),
         }
         : { failureReason: 'unclassified_provider_error' };
+}
+
+function readRetainedFailureCause(error: unknown): CodexFailureCause | null {
+  const candidate =
+    readRecord(readRecord(error)?.details)?.failureCause ??
+    readRecord(readRecord(error)?.runtimeIssueV1)?.failureCause;
+  const retained = SessionRuntimeFailureCauseV1Schema.safeParse(candidate);
+  return retained.success ? retained.data : null;
+}
+
+export function readCodexAppServerFailureCause(
+  error: unknown,
+): CodexFailureCause {
+  if (error instanceof CodexAppServerTurnFailure && error.details?.failureCause)
+    return error.details.failureCause;
+  const retained = readRetainedFailureCause(error);
+  if (retained) return retained;
+  const diagnostic = readCodexAppServerTurnFailureDiagnostic(error);
+  const rejection =
+    readJsonRpcApplicationRejection(error);
+  const nativeStartup = readCodexAppServerStartupFailure(error);
+  const code =
+    // This reader already admits only closed OS identities. Keep the cause
+    // beneath the public startup category, never native prose or paths.
+    (nativeStartup?.phase === 'native_system_error' ? nativeStartup.errnoCode : null) ??
+    readCodexAppServerFailureCode(error);
+  return SessionRuntimeFailureCauseV1Schema.parse({
+    ...(code ? { code } : {}),
+    phase:
+      error instanceof CodexAppServerTurnFailure ? error.failurePhase : 'turn',
+    ...diagnostic,
+    ...readAgentStartupFailureDetails(error),
+    ...(rejection ? { providerErrorCode: rejection.providerErrorCode } : {}),
+  });
+}
+
+export function readCodexAppServerFailureCode(error: unknown): string | null {
+  return error instanceof CodexAppServerTurnFailure
+    ? (error.code ?? null)
+    : null;
+}
+
+export function readCodexAppServerRuntimeIssueSource(
+  error: unknown,
+): SessionRuntimeIssueV1['source'] {
+  const projected = sanitizeSessionRuntimeIssueV1(
+    readRecord(error)?.runtimeIssueV1,
+  );
+  if (projected) return projected.source;
+  if (
+    ProviderBrokerAdmissionFailureCodeV1Schema.safeParse(
+      readRecord(error)?.code,
+    ).success
+  )
+    return 'team_credential';
+  const kind = trimStringValue(
+    readRecord(readRecord(error)?.runtimeAuthClassification)?.kind,
+  );
+  switch (kind) {
+    case 'usage_limit':
+    case 'rate_limit':
+      return 'usage_limit';
+    case 'auth_expired':
+    case 'account_changed':
+    case 'refresh_failed':
+      return 'auth_error';
+    case 'temporary_throttle':
+    case 'permission_denied':
+      return 'agent_status_error';
+    default:
+      return 'agent_session_error';
+  }
+}
+
+export function readCodexAppServerPrimaryFailure(error: unknown): unknown {
+  return error instanceof AggregateError ? error.errors[0] : error;
+}
+
+export function readCodexAppServerStartupFailure(
+  error: unknown,
+): CodexSharedAppServerStartupFailure | null {
+  const primary = readCodexAppServerPrimaryFailure(error);
+  return (
+    readCodexSharedAppServerStartupFailure(
+      readRecord(primary)?.startupFailure,
+    ) ?? readCodexNativeTransportStartupFailure(primary)
+  );
 }
 
 function readBoundedString(value: unknown, maxLength = 256): string | null {
@@ -309,11 +407,30 @@ export function shouldDeferCodexAppServerTurnFailureToPromptLoop(error: unknown)
 
 export function createCodexAppServerTurnFailure(params: Readonly<{
     value: unknown;
+    phase?: CodexFailureCause['phase'];
     authContext?: CodexAppServerTurnFailureAuthContext | null;
     sourceAccountIdentity?: CodexAppServerTurnFailureSourceAccountIdentity | null;
     /** The native request owner proved application rejection before any provider work. */
     providerStartRejected?: boolean;
 }>): Error {
+    const primary = readCodexAppServerPrimaryFailure(params.value);
+    if (primary !== params.value) return createCodexAppServerTurnFailure({ ...params, value: primary });
+    if (params.value instanceof CodexAppServerTurnFailure) return params.value;
+    const retainedCause = readRetainedFailureCause(params.value);
+    const phase = retainedCause?.phase ?? params.phase;
+    const startupFailure = readCodexAppServerStartupFailure(params.value);
+    const rawCode = readRecord(params.value)?.code;
+    const knownCode = readAgentStartupFailureCode(rawCode) ?? readSessionPreparationFailureCode(rawCode);
+    const phaseCode = phase === 'client_start' || phase === 'thread_open' || phase === 'authentication'
+        ? params.value instanceof Error && params.value.name === 'JsonRpcApplicationError' && typeof rawCode === 'number'
+            ? 'agent_startup_rpc_rejected' : params.value instanceof TypeError ? 'agent_startup_invalid_state'
+                : startupFailure ? 'agent_startup_transport_failed' : 'agent_startup_failed'
+        : undefined;
+    const code = knownCode ?? phaseCode;
+    const daemonPreparationCause = RunnerDaemonPluginServicesPreparationCauseV1Schema.safeParse(
+        readRecord(readRecord(params.value)?.details)?.cause);
+    const preparationCause = retainedCause?.preparationCause
+        ?? (daemonPreparationCause.success ? daemonPreparationCause.data : undefined);
     const payload = readCodexAppServerErrorPayload(params.value);
     const authContext = params.authContext ?? {
         profileId: params.sourceAccountIdentity?.profileId ?? null,
@@ -341,10 +458,13 @@ export function createCodexAppServerTurnFailure(params: Readonly<{
         : null;
     const sanitizedClassification = sanitizeCodexAppServerRuntimeAuthClassification(runtimeAuthClassification);
     const providerErrorCode = payload?.providerErrorCode ?? [...CODEX_APP_SERVER_DIAGNOSTIC_ERROR_CODES].find(code =>
-        normalizeCodexErrorInfo(code) === normalizeCodexErrorInfo(payload?.codexErrorInfo ?? null));
-    return new CodexAppServerTurnFailure(
-        CODEX_APP_SERVER_TURN_FAILURE_MESSAGE,
+        normalizeCodexErrorInfo(code) === normalizeCodexErrorInfo(payload?.codexErrorInfo ?? null))
+        ?? readJsonRpcApplicationRejection(params.value)?.providerErrorCode;
+    const failure = new CodexAppServerTurnFailure(
+        readSessionStartupFailurePreview(code) ?? CODEX_APP_SERVER_TURN_FAILURE_MESSAGE,
         {
+            ...(code ? { code } : {}),
+            phase,
             isAuthAccountChanged: payload ? isCodexAppServerAuthAccountChangedPayload(payload) : false,
             contextWindowExhaustionEvidence: payload ? readCodexAppServerContextWindowExhaustionEvidence(payload) : null,
             isTemporaryRecoverableTurnFailure: runtimeAuthClassification?.kind === 'capacity',
@@ -359,6 +479,18 @@ export function createCodexAppServerTurnFailure(params: Readonly<{
             ...(payload?.httpStatus === undefined ? {} : { httpStatus: payload.httpStatus }),
         },
     );
+    if (startupFailure) Object.assign(failure, { startupFailure });
+    const startupDetails = readAgentStartupFailureDetails(params.value);
+    if (startupDetails) Object.assign(failure, { reason: startupDetails.reason });
+    Object.assign(failure, { details: {
+        v: 1, agentId: 'codex', source: readCodexAppServerRuntimeIssueSource(failure), ...startupDetails,
+        failureCause: { ...readCodexAppServerFailureCause(failure), ...retainedCause,
+            ...(preparationCause ? { preparationCause } : {}) },
+    } });
+    if (readRecord(params.value)?.happierNativeResumeIdentityMismatch === true) {
+        Object.assign(failure, { happierNativeResumeIdentityMismatch: true });
+    }
+    return failure;
 }
 
 export function isCodexAppServerRejectedStartModelEntitlementError(error: unknown): error is Error {

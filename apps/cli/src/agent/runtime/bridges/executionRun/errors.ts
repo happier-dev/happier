@@ -1,3 +1,4 @@
+import { AgentIdV1Schema } from '@happier-dev/protocol';
 import { logger } from '@/ui/logger';
 import { sanitizeConnectedServiceRuntimeFailureClassification } from '@/daemon/connectedServices/runtimeAuth/sanitizeConnectedServiceRuntimeFailureClassification';
 import type { ConnectedServiceRuntimeFailureClassification } from '@/daemon/connectedServices/runtimeAuth/types';
@@ -101,6 +102,13 @@ export function readExecutionRunRuntimeIssue(error: unknown): NonNullable<Execut
   if (!error || typeof error !== 'object') return undefined;
   const issue = sanitizeSessionRuntimeIssueV1('runtimeIssueV1' in error ? error.runtimeIssueV1 : undefined);
   if (issue) return issue;
+  const details = 'details' in error && error.details && typeof error.details === 'object' ? error.details : null;
+  if (details && 'failureCause' in details) {
+    const agent = AgentIdV1Schema.safeParse(details && 'agentId' in details ? details.agentId : undefined);
+    const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', provider: agent.success ? agent.data : undefined,
+      error: { code: readExecutionRunErrorCode(error), severity: 'error', message: 'Agent runtime failed.', details } });
+    if (issue.failureCause) return issue;
+  }
   const event = readRuntimeTurnFailureAlreadySurfacedEvent(error);
   return event ? classifyPrimarySessionRuntimeIssue({ cause: 'session_error', error: event.diagnostic,
     occurredAt: event.emittedAtMs, agentTurnId: event.turnId }) : undefined;

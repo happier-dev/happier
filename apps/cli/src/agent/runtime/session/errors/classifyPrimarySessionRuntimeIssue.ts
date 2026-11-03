@@ -1,3 +1,4 @@
+import { SessionRuntimeFailureCauseV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { readSessionStartupFailurePreview } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { resolveAgentDisplayTitle } from '@/agent/catalog/agentDisplayTitle';
 import type {
@@ -495,6 +496,8 @@ export function classifyPrimarySessionRuntimeIssue(
     : null;
   const typedDiagnostic = diagnostic?.success ? diagnostic.data : null;
   const diagnosticDetails = readRecord(typedDiagnostic?.details);
+  const failureCause = SessionRuntimeFailureCauseV1Schema.safeParse(diagnosticDetails?.failureCause
+    ?? readRecord(readRecord(input.error)?.details)?.failureCause);
   const requestErrorCode = typeof diagnosticDetails?.requestErrorCode === 'number'
     && Number.isSafeInteger(diagnosticDetails.requestErrorCode) ? diagnosticDetails.requestErrorCode : null;
   // Reuse SessionRuntimeIssueV1.sanitizedPreview's existing 2,000-code-unit boundary.
@@ -618,6 +621,7 @@ export function classifyPrimarySessionRuntimeIssue(
     ...(usageLimit === null ? {} : { usageLimit }),
     ...(teamCredential === null ? {} : { teamCredential }),
     ...(temporaryThrottle === null ? {} : { temporaryThrottle }),
+    ...(failureCause.success ? { failureCause: failureCause.data } : {}),
     ...(agentProcessExitAfterSwitch === undefined ? {} : { agentProcessExitAfterSwitch }),
   };
 }

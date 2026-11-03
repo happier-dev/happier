@@ -16,3 +16,6 @@ export type { ProtocolClientsService } from '../protocol-clients.js';
 export { PluginJsonRpcConnectionSpec } from './index.public.js';
 
 export { PluginJsonRpcConnection } from './index.public.js';
+
+export { readJsonRpcApplicationRejection } from '../jsonRpcOutcome.js';
+export type { JsonRpcApplicationError, JsonRpcApplicationRejectionDetails } from '../jsonRpcOutcome.js';

@@ -22,7 +22,7 @@ import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/action
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { TeamCredentialRouteV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
 import { SessionIdSchema } from '@happier-dev/protocol/sessions/idsV1';
-import { SessionRuntimeTeamCredentialDenialDetailsV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { RunnerDaemonPluginServicesPreparationCauseV1Schema, SessionRuntimeTeamCredentialDenialDetailsV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { asHostProtocolZod } from '@/plugins/runtime/protocolComposableZodAdapter';
 import { WorkflowProjectTargetV1Schema } from '@happier-dev/protocol/workflows/workflowWorkspaceV1';
 import { McpRequestAuthOpenV1Schema, McpRequestAuthCloseV1Schema, McpRequestAuthResultV1Schema, McpRequestAuthClosedV1Schema } from '@/mcp/runtime/mcpRequestAuth';
@@ -54,19 +54,10 @@ import {
   AgentRuntimeDaemonServiceTurnWitnessV1Schema,
 } from './agentRuntimeDaemonServiceTurnWitness';
 
-// Diagnostic only: reuse the daemon refusal owner's existing code bound. Never
-// transport raw exception text, paths, environment or arbitrary PluginError details.
-export const RunnerDaemonPluginServicesPreparationCauseV1Schema = z.strictObject({
-  code: z.string().check(z.regex(/^[A-Za-z][A-Za-z0-9_]{0,127}$/u)),
-  stage: z.enum([
-    'dispatch', 'runner_authority', 'invocation_context', 'registry_acquisition',
-    'current_registration', 'turn_authority', 'managed_provider',
-    'retained_agent_services', 'invocation_projection',
-  ]),
-});
-
-export type RunnerDaemonPluginServicesPreparationCauseV1 =
-  z.infer<typeof RunnerDaemonPluginServicesPreparationCauseV1Schema>;
+export {
+  RunnerDaemonPluginServicesPreparationCauseV1Schema,
+  type RunnerDaemonPluginServicesPreparationCauseV1,
+} from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 
 export {
   AgentRuntimeDaemonServiceTurnWitnessV1Schema,

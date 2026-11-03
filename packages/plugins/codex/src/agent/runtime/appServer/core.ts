@@ -8,7 +8,7 @@ import type {
   AgentSessionRuntimeEvent,
   AgentSessionRuntime,
 } from '@happier-dev/plugin-sdk/agents/runtime';
-import type { SessionRuntimeIssueV1 } from '@happier-dev/plugin-sdk/sessions';
+import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import type { sanitizeCodexAppServerRuntimeAuthClassification } from './turns/failure.js';
 
 export type CodexAppServerRuntimeIssue = SessionRuntimeIssueV1;

@@ -3338,6 +3338,18 @@ generator replacement stay at their existing host owners. See
 [SCM comparisons and walkthroughs](scm-diff-summary.md) for output, revision,
 discussion and currently unverified integration contracts.
 
+## Native Agent failure diagnostics
+
+In 0.3 development source, the protocol owns the optional, strictly parsed
+`SessionRuntimeIssueV1.failureCause`. Codex startup, Session and Run boundaries
+retain its typed phase and cause through the same sanitizer and public issue
+projection. A recognized native OS error retains its closed errno in
+`failureCause.code` beneath the public startup category, including after repeated
+sanitization. Native output, paths, response data and arbitrary provider prose
+are excluded; absent evidence remains unclassified rather than guessing a cause.
+The field is optional: earlier issues remain valid, and older readers can ignore
+this diagnostic projection without changing lifecycle or recovery authority.
+
 ## Rules for changes
 
 - Extend the owning host path and migrate its callers together. Do not add another Agent registry, lifecycle loop, prompt queue, permission owner, thinking flag or whole-metadata state writer.

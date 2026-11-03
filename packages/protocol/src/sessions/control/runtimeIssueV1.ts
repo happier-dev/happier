@@ -58,6 +58,29 @@ export function readAgentStartupFailureCode(value: unknown): AgentStartupFailure
     : null;
 }
 
+const CODEX_REFRESH_FREE_AUTH_FAILURE_REASONS = [
+  'refresh_bridge_unavailable', 'provider_account_identity_unavailable',
+  'experimental_api_unavailable', 'workspace_incompatible',
+  'credential_family_mismatch', 'live_hot_auth_failed',
+] as const;
+
+export type AgentStartupFailureDetails = Readonly<{
+  reason: typeof CODEX_REFRESH_FREE_AUTH_FAILURE_REASONS[number];
+}>;
+
+/** Only the known startup code's closed diagnostic may survive error redaction. */
+export function readAgentStartupFailureDetails(error: unknown): AgentStartupFailureDetails | null {
+  if (!error || typeof error !== 'object' || !('code' in error)
+    || error.code !== 'codex_refresh_free_auth_unsupported') return null;
+  const details = 'details' in error ? error.details : undefined;
+  const reason = 'reason' in error ? error.reason
+    : details && typeof details === 'object' && 'reason' in details ? details.reason : undefined;
+  for (const known of CODEX_REFRESH_FREE_AUTH_FAILURE_REASONS) {
+    if (reason === known) return { reason: known };
+  }
+  return null;
+}
+
 export const TEAM_CREDENTIAL_FAILURE_PREVIEW = 'Shared Team credential refused the request';
 
 /** Code-only failures returned by daemon preparation and skill delivery.
@@ -243,11 +266,54 @@ export const SessionRuntimeTemporaryThrottleDetailsV1Schema = lazyZodSchema(() =
 export type SessionRuntimeTemporaryThrottleDetailsV1 =
   z.infer<typeof SessionRuntimeTemporaryThrottleDetailsV1Schema>;
 
+const SessionRuntimeIssueCodeV1Schema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.maxLength(256)));
+const SessionRuntimeFailureCauseCodeV1Schema = lazyZodSchema(() => SessionRuntimeIssueCodeV1Schema.check(
+  z.regex(/^[A-Za-z0-9][A-Za-z0-9_.-]*$/u),
+));
+
+/** Non-content cause identifiers reuse the existing issue-code boundary. */
+export function readSessionRuntimeIssueCode(value: unknown): string | null {
+  const parsed = SessionRuntimeFailureCauseCodeV1Schema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
+/** Diagnostic identifiers shared by daemon preparation and public runtime issues. */
+export const RunnerDaemonPluginServicesPreparationCauseV1Schema = lazyZodSchema(() => z.strictObject({
+  code: z.string().check(z.regex(/^[A-Za-z][A-Za-z0-9_]{0,127}$/u)),
+  stage: z.enum([
+    'dispatch', 'runner_authority', 'invocation_context', 'registry_acquisition',
+    'current_registration', 'turn_authority', 'managed_provider',
+    'retained_agent_services', 'invocation_projection',
+  ]),
+}));
+
+export type RunnerDaemonPluginServicesPreparationCauseV1 =
+  z.infer<typeof RunnerDaemonPluginServicesPreparationCauseV1Schema>;
+
+/** Content-free evidence, never provider prose or an authority/retry decision. */
+export const SessionRuntimeFailureCauseV1Schema = lazyZodSchema(() => z.strictObject({
+  code: z.optional(SessionRuntimeFailureCauseCodeV1Schema),
+  phase: z.enum(['authentication', 'client_start', 'thread_open', 'turn_start', 'turn']),
+  preparationCause: z.optional(RunnerDaemonPluginServicesPreparationCauseV1Schema),
+  reason: z.optional(z.enum(CODEX_REFRESH_FREE_AUTH_FAILURE_REASONS)),
+  failureReason: z.enum([
+    'usage_limit', 'rate_limit', 'temporary_throttle', 'capacity', 'auth_expired',
+    'account_changed', 'refresh_failed', 'permission_denied', 'plan', 'unknown',
+    'authentication_required', 'workspace_routing_unauthorized', 'context_window_exceeded',
+    'auth_account_changed', 'unclassified_provider_error',
+  ]),
+  providerErrorCode: z.optional(z.union([
+    z.enum(['ContextWindowExceeded', 'UsageLimitExceeded', 'Unauthorized', 'Other', 'HttpConnectionFailed', 'model_not_found']),
+    z.number().check(z.int()),
+  ])),
+  httpStatus: z.optional(z.number().check(z.int(), z.minimum(100), z.maximum(599))),
+}));
+
 export const SessionRuntimeIssueV1Schema = lazyZodSchema(() => (<I extends z.core.$ZodType, O extends z.core.$ZodType>(input: I, output: O) => new z.ZodMiniPipe({ type: 'pipe', in: input, out: output }) as z.ZodMiniPipe<I, O>)(z.transform(normalizeLegacyRuntimeIssueV1), z.readonly(z.object({
     v: z.literal(1),
     scope: z.literal('primary_session'),
     status: z.literal('failed'),
-    code: z.string().check(z.trim(), z.minLength(1), z.maxLength(256)),
+    code: SessionRuntimeIssueCodeV1Schema,
     source: SessionRuntimeIssueSourceV1Schema,
     occurredAt: z.number().check(z.int(), z.nonnegative()),
     sessionSeq: z.optional(z.number().check(z.int(), z.nonnegative())),
@@ -257,6 +323,7 @@ export const SessionRuntimeIssueV1Schema = lazyZodSchema(() => (<I extends z.cor
     usageLimit: z.optional(SessionRuntimeUsageLimitDetailsV1Schema),
     teamCredential: z.optional(SessionRuntimeTeamCredentialDenialDetailsV1Schema),
     temporaryThrottle: z.optional(SessionRuntimeTemporaryThrottleDetailsV1Schema),
+    failureCause: z.optional(SessionRuntimeFailureCauseV1Schema),
     agentProcessExitAfterSwitch: z.optional(SessionRuntimeAgentProcessExitAfterSwitchDetailsV1Schema),
   }))));
 export type SessionRuntimeIssueV1 = z.infer<typeof SessionRuntimeIssueV1Schema>;

@@ -297,6 +297,7 @@ export function createSessionTurnLifecycle(params: SessionTurnLifecycleParams): 
                         occurredAt: input.issue.occurredAt,
                         ...(input.issue.agentId ? { agentId: input.issue.agentId } : {}),
                         ...(input.issue.agentTurnId ? { agentTurnId: input.issue.agentTurnId } : {}),
+                        ...(input.issue.failureCause ? { failureCause: input.issue.failureCause } : {}),
                     },
                 },
             });

@@ -1,3 +1,6 @@
+import { sanitizeNativeAgentSessionBoundaryError } from '@/agent/runtime/registry/engineRegistry/nativeAgentSessionBoundaryError';
+import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
+import { SessionRuntimeIssueV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { describe, expect, it, vi } from 'vitest';
 import { buildConnectedServiceCredentialRecord, StrictJsonValueSchema } from '@happier-dev/protocol';
 import type { AgentExecutionRunConversationEventV1, AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/runtime';
@@ -17,6 +20,33 @@ vi.mock('node:os', async importOriginal => {
 });
 
 describe('native Codex attachment preparation', () => {
+  it.skipIf(process.platform === 'win32').each(['session', 'run'] as const)(
+    'retains the native permission cause through sanitized %s startup and public issue projection',
+    async (scope) => {
+      const logs: unknown[] = [];
+      await withFixture(async ({ openConfiguredSession, openConfiguredRun }) => {
+        const failure: unknown = await (scope === 'session' ? openConfiguredSession() : openConfiguredRun())
+          .then(() => null, error => error);
+        expect(failure).toMatchObject({ code: 'agent_startup_transport_failed', details: {
+          failureCause: { code: 'EACCES', phase: 'client_start' },
+        } });
+        const retained = sanitizeNativeAgentSessionBoundaryError(failure, true);
+        const issue = SessionRuntimeIssueV1Schema.parse(classifyPrimarySessionRuntimeIssue({
+          cause: 'session_error', error: retained, provider: 'codex', occurredAt: 100,
+        }));
+        expect(issue.failureCause).toMatchObject({ code: 'EACCES', phase: 'client_start' });
+        expect(logs).toContainEqual(expect.objectContaining({ failureCause: expect.objectContaining({ code: 'EACCES' }) }));
+        expect(JSON.stringify([failure, retained, issue, logs])).not.toContain('PRIVATE_');
+      }, {
+        nativeSpawnFailure: Object.assign(new Error('PRIVATE_NATIVE_STDERR'), {
+          code: 'EACCES', syscall: 'spawn /PRIVATE_BINARY', path: '/PRIVATE_HOME',
+        }),
+        logger: { debug: (_message, fields) => { logs.push(fields); }, warn: (_message, fields) => { logs.push(fields); } },
+        skills: { pluginRoot: '/fixture', skillsRoot: '/fixture/skills', items: [], nativeDisables: [] },
+      });
+    },
+  );
+
   it('projects a flattened upstream model_not_found through the real native failure wiring', async () => {
     await withFixture(async ({ openConfiguredSession, emitNotification }) => {
       const session = await openConfiguredSession();

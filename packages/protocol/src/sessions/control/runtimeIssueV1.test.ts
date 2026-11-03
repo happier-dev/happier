@@ -9,6 +9,30 @@ import {
 } from './runtimeIssueV1.js';
 
 describe('runtime authentication recovery', () => {
+  it('retains closed failure evidence while refusing provider prose in the cause', () => {
+    const failureCause = { phase: 'turn', failureReason: 'authentication_required', httpStatus: 401 };
+    const issue = { v: 1, scope: 'primary_session', status: 'failed', occurredAt: 1,
+      code: 'provider_endpoint_auth_required', source: 'auth_error', agentId: 'codex', failureCause };
+    expect(sanitizeSessionRuntimeIssueV1(issue)).toMatchObject({ failureCause });
+    expect(sanitizeSessionRuntimeIssueV1({ ...issue, failureCause: { ...failureCause, message: 'PRIVATE_PROVIDER' } })).toBeNull();
+    expect(sanitizeSessionRuntimeIssueV1({ ...issue, failureCause: { ...failureCause, failureReason: 'PRIVATE_PROVIDER' } })).toBeNull();
+    expect(sanitizeSessionRuntimeIssueV1({ ...issue, failureCause: { ...failureCause, code: 'PRIVATE provider prose' } })).toBeNull();
+    expect(sanitizeSessionRuntimeIssueV1({ ...issue, failureCause: undefined })).not.toBeNull();
+    const authentication = { phase: 'authentication', failureReason: 'unclassified_provider_error', reason: 'refresh_bridge_unavailable' };
+    expect(sanitizeSessionRuntimeIssueV1({ ...issue, failureCause: authentication })).toMatchObject({ failureCause: authentication });
+    expect(sanitizeSessionRuntimeIssueV1({ ...issue, failureCause: { ...authentication, reason: 'PRIVATE_PROVIDER' } })).toBeNull();
+    const preparationCause = { code: 'ENOENT', stage: 'registry_acquisition' };
+    const preparation = { phase: 'client_start', failureReason: 'unclassified_provider_error', preparationCause };
+    expect(sanitizeSessionRuntimeIssueV1({ ...issue, failureCause: preparation })).toMatchObject({ failureCause: preparation });
+    for (const invalid of [
+      { ...preparationCause, stage: 'PRIVATE_PROVIDER' },
+      { ...preparationCause, code: 'PRIVATE provider prose' },
+      { ...preparationCause, message: 'PRIVATE_PROVIDER' },
+    ]) {
+      expect(sanitizeSessionRuntimeIssueV1({ ...issue, failureCause: { ...preparation, preparationCause: invalid } })).toBeNull();
+    }
+  });
+
   it('targets the failing Agent on the same machine, including normalized predecessor issues', () => {
     const issue = SessionRuntimeIssueV1Schema.parse({ v: 1, scope: 'primary_session', status: 'failed',
       code: 'auth_failed', source: 'auth_error', occurredAt: 1, provider: 'codex' });
