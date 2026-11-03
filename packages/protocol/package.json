@@ -4305,6 +4305,11 @@
       "types": "./dist/connect/qualifiedConnectedAccountGroupRequestsV4.d.ts",
       "default": "./dist/connect/qualifiedConnectedAccountGroupRequestsV4.js"
     },
+    "./connect/qualifiedConnectedAccountCredentialMutationV4": {
+      "happier-source": "./src/connect/qualifiedConnectedAccountCredentialMutationV4.ts",
+      "types": "./dist/connect/qualifiedConnectedAccountCredentialMutationV4.d.ts",
+      "default": "./dist/connect/qualifiedConnectedAccountCredentialMutationV4.js"
+    },
     "./connect/qualifiedConnectedAccountPersistence": {
       "happier-source": "./src/connect/qualifiedConnectedAccountPersistence.ts",
       "types": "./dist/connect/qualifiedConnectedAccountPersistence.d.ts",

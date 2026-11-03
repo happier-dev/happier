@@ -1,4 +1,3 @@
-import { QualifiedConnectedAccountCredentialMutationV4Schema, QualifiedConnectedAccountCredentialMutationSuccessV4Schema } from '../../connect/qualifiedConnectedAccountsV4.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 import { ManagedResourceDependencyV1Schema, ManagedResourceDispositionV1Schema } from '../../machines/managed/managedDependencyV1.js';
@@ -18,6 +17,7 @@ import { parseSavedSecretRefV1 } from './savedSecretReferenceV1.js';
 import { RemoteHostCatalogRowMutationV1Schema } from '../../remoteHosts/remoteHostSchemasV1.js';
 import { NotificationChannelCatalogMutationV1Schema } from './notificationChannelSchemasV1.js';
 import { PromptLibraryRowMutationV1Schema } from '../../prompts/library/promptLibrarySchemasV1.js';
+import { QualifiedConnectedAccountCredentialMutationV4Schema, QualifiedConnectedAccountCredentialMutationSuccessV4Schema } from '../../connect/qualifiedConnectedAccountCredentialMutationV4.js';
 
 import { SHARED_SAVED_SECRET_ACTION_IDS_V1, type SharedSavedSecretActionIdV1 } from './savedSecretResourceActionIdsV1.js';
 export { SHARED_SAVED_SECRET_ACTION_IDS_V1, type SharedSavedSecretActionIdV1 } from './savedSecretResourceActionIdsV1.js';

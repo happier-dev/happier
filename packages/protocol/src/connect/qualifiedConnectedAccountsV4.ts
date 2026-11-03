@@ -7,9 +7,6 @@ import type { PluginContributionIdentityV1 } from '../plugins/contributionIdenti
 import { StoredJsonContentEnvelopeSchema } from '../storage/storedJsonContentEnvelope.js';
 import type { AccountScopedCryptoMaterial } from '../crypto/accountScopedCipher.js';
 import {
-  CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1,
-} from './pluginConnectedAccountAuthenticationV2.js';
-import {
   ConnectedServiceAuthGroupIdSchema,
   ConnectedServiceCredentialHealthV1Schema,
   ConnectedServiceCredentialRevisionV1Schema,
@@ -41,7 +38,6 @@ import {
   QualifiedConnectedAccountConfigurationRevisionV4Schema,
   QualifiedConnectedAccountCredentialMetadataV4Schema,
   QualifiedConnectedAccountCredentialSnapshotV4Schema,
-  QualifiedConnectedAccountModeIdV4Schema,
   QualifiedConnectedAccountPresentationMetadataV4Schema,
   QualifiedConnectedAccountProfileV4Schema,
   QualifiedConnectedAccountProviderIdentityV4Schema,
@@ -79,8 +75,6 @@ export {
 
 const RevisionSchema =
   QualifiedConnectedAccountConfigurationRevisionV4Schema;
-const ModeIdSchema = QualifiedConnectedAccountModeIdV4Schema;
-const ModeIdZodSchema = asProtocolZod(ModeIdSchema);
 const ServiceRefZodSchema = asProtocolZod(QualifiedConnectedAccountServiceRefSchema);
 
 export const CONNECTED_ACCOUNT_V4_PROTOCOL_VERSION = 4 as const;
@@ -130,46 +124,12 @@ export const QualifiedConnectedAccountListQueryV4Schema = lazyZodSchema(() => z.
   service: ServiceRefZodSchema,
 }));
 
-const QualifiedConnectedAccountCredentialMutationCommonV4Shape = {
-  ref: asProtocolZod(QualifiedConnectedAccountRefSchema),
-  authenticationModeId: ModeIdZodSchema,
-  content: StoredJsonContentEnvelopeSchema,
-  metadata: QualifiedConnectedAccountCredentialMetadataV4Schema,
-  directExportContract: z.optional(z.nullable(z.literal(CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1))),
-  /**
-   * Server-visible custody fact (ids only, no material): the Saved Secret
-   * resources this credential references. Omission on an update retains the
-   * stored set; legacy readers refuse a referencing credential with their
-   * released typed unsupported-format result.
-   */
-  savedSecretResourceIds: z.optional(z.array(z.string().check(z.minLength(1), z.maxLength(128))).check(z.maxLength(64),
-    z.refine(ids => new Set(ids).size === ids.length, 'Saved Secret resource ids must be unique'))),
-  contributionContractVersion: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(512))),
-  reconnect: z.optional(z.strictObject({
-    allowProviderIdentityChange: z._default(z.optional(z.boolean()), false),
-  })),
-  refreshLeaseOwnerId: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(256))),
-} as const;
-
-export const QualifiedConnectedAccountCredentialCreateV4Schema = lazyZodSchema(() => z.strictObject({
-  ...QualifiedConnectedAccountCredentialMutationCommonV4Shape,
-  expectedCredentialRevision: z.null(),
-  initialConfiguration: z.optional(z.strictObject({
-    expectedConfigurationRevision: z.null(),
-    replacementContentEnvelope: StoredJsonContentEnvelopeSchema,
-  })),
-}));
-
-export const QualifiedConnectedAccountCredentialUpdateV4Schema = lazyZodSchema(() => z.strictObject({
-  ...QualifiedConnectedAccountCredentialMutationCommonV4Shape,
-  expectedCredentialRevision: ConnectedServiceCredentialRevisionV1Schema,
-  expectedConfigurationRevision: z.nullable(RevisionSchema),
-}));
-
-export const QualifiedConnectedAccountCredentialMutationV4Schema = lazyZodSchema(() => z.union([
+export {
   QualifiedConnectedAccountCredentialCreateV4Schema,
   QualifiedConnectedAccountCredentialUpdateV4Schema,
-]));
+  QualifiedConnectedAccountCredentialMutationV4Schema,
+  QualifiedConnectedAccountCredentialMutationSuccessV4Schema,
+} from './qualifiedConnectedAccountCredentialMutationV4.js';
 
 export const QualifiedConnectedAccountCredentialReadV4Schema = lazyZodSchema(() => z.strictObject({
   ref: asProtocolZod(QualifiedConnectedAccountRefSchema),
@@ -188,13 +148,6 @@ export const QualifiedConnectedAccountCredentialDeleteResponseV4Schema = lazyZod
   QualifiedConnectedAccountSuccessV4Schema,
   z.strictObject({ status: z.literal('ready') }),
 ]));
-
-export const QualifiedConnectedAccountCredentialMutationSuccessV4Schema =
-  lazyZodSchema(() => z.strictObject({
-    success: z.literal(true),
-    credentialRevision: ConnectedServiceCredentialRevisionV1Schema,
-    configurationRevision: z.nullable(RevisionSchema),
-  }));
 
 export const QualifiedConnectedAccountCredentialMutationSupersededV4Schema =
   lazyZodSchema(() => z.strictObject({
