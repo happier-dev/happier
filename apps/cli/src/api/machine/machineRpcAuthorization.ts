@@ -1,3 +1,22 @@
+import {
+  resolveMachineRpcRoutePolicy,
+  resolveMachineRpcExternalActionEffectV1,
+} from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
+import {
+  isHostRequesterUnrestrictedOwner,
+  selectHostRequesterExecutionIdentity,
+} from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+import { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/projectActionFamily';
+import {
+  collectActionSpecRpcMethodsForScopes,
+  SESSION_SPAWN_NEW_RPC_SCOPES,
+  MACHINE_SESSION_LIFECYCLE_RPC_SCOPES,
+} from '@/rpc/handlers/actionSpecRpcRegistration';
+import { ACTION_SPECS } from '@happier-dev/protocol/actions/actionSpecs';
+import {
+  PRIVATE_SPAWN_SESSION_RPC_METHODS,
+  SpawnDaemonSessionRequestSchema,
+} from '@/rpc/handlers/spawnSessionOptionsContract';
 import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpcErrors';
 import { isProjectWorkspaceSyncPreparationActionV1 } from '@happier-dev/protocol/actions/projectActionFamily';
 import { DaemonLocalServiceLauncherStartRequestV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
@@ -36,6 +55,68 @@ import { ProjectServiceRelocateInputV1Schema } from '@happier-dev/protocol/works
 import { logger } from '@/ui/logger';
 import { classifyServerEndpointError } from '@/api/client/classifyServerEndpointError';
 import { createHttpStatusError, readHttpStatus } from '@/api/client/httpStatusError';
+
+const finiteProjectMethods: readonly string[] = Object.values(
+  PROJECT_FINITE_ACTION_RPC_METHODS_V1,
+);
+// Only registered file owners with the consumed whole-operation native
+// transport may finalize member payloads after this single admission.
+const nativeFilesystemMethods: readonly string[] = [
+  RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT,
+  RPC_METHODS.READ_FILE,
+  RPC_METHODS.DAEMON_FILESYSTEM_READ_FILE,
+  RPC_METHODS.WRITE_FILE,
+  RPC_METHODS.DAEMON_FILESYSTEM_WRITE_FILE,
+  RPC_METHODS.LIST_DIRECTORY,
+  RPC_METHODS.GET_DIRECTORY_TREE,
+  RPC_METHODS.DAEMON_FILESYSTEM_GET_DIRECTORY_TREE,
+  RPC_METHODS.CREATE_DIRECTORY,
+  RPC_METHODS.DAEMON_FILESYSTEM_CREATE_DIRECTORY,
+  RPC_METHODS.RENAME_PATH,
+  RPC_METHODS.DAEMON_FILESYSTEM_RENAME,
+  RPC_METHODS.DELETE_PATH,
+  RPC_METHODS.DAEMON_FILESYSTEM_DELETE,
+  RPC_METHODS.COPY_PATH,
+  RPC_METHODS.DAEMON_FILESYSTEM_COPY,
+  RPC_METHODS.STAT_FILE,
+  RPC_METHODS.DAEMON_FILESYSTEM_LIST_ROOTS,
+  RPC_METHODS.DAEMON_FILESYSTEM_LIST_DIRECTORY,
+  RPC_METHODS.DAEMON_WORKSPACE_FILES_LIST,
+  RPC_METHODS.DAEMON_WORKSPACE_FILES_SEARCH,
+  RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT,
+  RPC_METHODS.DAEMON_TRANSFER_UPLOAD_CHUNK,
+  RPC_METHODS.DAEMON_TRANSFER_UPLOAD_FINALIZE,
+  RPC_METHODS.DAEMON_TRANSFER_UPLOAD_ABORT,
+  RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_INIT,
+  RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_CHUNK,
+  RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_FINALIZE,
+  RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_ABORT,
+  RPC_METHODS.DAEMON_FILESYSTEM_UPLOAD,
+  RPC_METHODS.DAEMON_FILESYSTEM_DOWNLOAD,
+  RPC_METHODS.DAEMON_FILESYSTEM_TRANSFER_CANCEL,
+];
+const nativeSessionMethods = collectActionSpecRpcMethodsForScopes(
+  ACTION_SPECS,
+  [...SESSION_SPAWN_NEW_RPC_SCOPES, ...MACHINE_SESSION_LIFECYCLE_RPC_SCOPES],
+);
+const privateSessionMethods: readonly string[] = Object.values(
+  PRIVATE_SPAWN_SESSION_RPC_METHODS,
+);
+// These terminal owners finalize native birth and retain its exact identity for
+// subsequent controls. Verified people gain member delegation; the owner's
+// Agent may open through the same placement owner, but cannot gain raw controls.
+const nativeTerminalMethods: readonly string[] = [
+  RPC_METHODS.DAEMON_TERMINAL_ENSURE,
+  RPC_METHODS.DAEMON_TERMINAL_RESTART,
+  RPC_METHODS.DAEMON_TERMINAL_CLOSE,
+  RPC_METHODS.DAEMON_TERMINAL_LIST,
+  RPC_METHODS.DAEMON_TERMINAL_INPUT,
+  RPC_METHODS.DAEMON_TERMINAL_RESIZE,
+  RPC_METHODS.DAEMON_TERMINAL_STREAM_READ,
+  RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES,
+  RPC_METHODS.DAEMON_TERMINAL_STREAM_ACK,
+  RPC_METHODS.DAEMON_TERMINAL_STREAM_INPUT,
+];
 
 /** Local binding only; Home must independently verify the original root and current grants. */
 export function doesWorkspaceSyncSourceRootMatchRouting(authorization: ExternalActionExecutionAuthorizationV1, source: WorkspaceSyncSourceRoutingV1): boolean {
@@ -170,7 +251,7 @@ export type MachineRpcAdmissionBoundary = Readonly<{
     workspaceSyncSeedRouting?: WorkspaceSyncSeedRoutingV1;
     callerInputAuthorization?: ExternalActionExecutionAuthorizationV1;
     signal?: AbortSignal;
-  }>) => Promise<boolean>;
+  }>) => Promise<boolean | ReturnType<typeof MachineAdmissionVerifyResponseV1Schema.parse> | null>;
 
 resolveHomeServerIdentityId?: (
     signal?: AbortSignal,
@@ -452,9 +533,15 @@ export function doesWorkspaceSyncTargetRequestMatchRouting(params: unknown, rout
 export async function authorizeMachineRpcRequest(request: Readonly<{
   method: string;
   params: unknown;
+    callerAuthority?: import('@/api/rpc/types').RpcHandlerContext['callerAuthority'];
+    sessionActionOrigin?: import('@/api/rpc/types').RpcHandlerContext['sessionActionOrigin'];
+    localActionContext?: import('@/api/rpc/types').RpcHandlerContext['localActionContext'];
+    inheritedLocalActionContext?: import('@/api/rpc/types').RpcHandlerContext['localActionContext'];
+    requesterSessionBootstrap?: import('@/api/rpc/types').RpcHandlerContext['requesterSessionBootstrap'];
   authorization?: SocketRpcAuthorizationContext;
   transportResponseEnvelopeVersion?: 1;
   machineAdmission?: SocketRpcMachineAdmissionContextV1;
+  receivingMachineAdmission?: SocketRpcMachineAdmissionContextV1;
   workspaceSyncSourceRouting?: WorkspaceSyncSourceRoutingV1;
   workspaceSyncSourceExecution?: WorkspaceSyncSourceExecutionV1;
   workspaceSyncTargetRouting?: WorkspaceSyncTargetRoutingV1;
@@ -462,7 +549,7 @@ export async function authorizeMachineRpcRequest(request: Readonly<{
   workspaceSyncSeedRouting?: WorkspaceSyncSeedRoutingV1;
   callerInputAuthorization?: ExternalActionExecutionAuthorizationV1;
   signal?: AbortSignal;
-}>, machine?: MachineRpcAdmissionBoundary): Promise<RpcAuthorizationResult> {
+}>, machine?: MachineRpcAdmissionBoundary, source?: 'authenticated_home_socket'): Promise<RpcAuthorizationResult> {
   if (isSocketRpcMachineReadServerOriginAuthorizationContext(request.authorization)) {
     const authority = request.authorization;
     if (!machine || authority.machineId !== machine.machineId
@@ -590,7 +677,7 @@ export async function authorizeMachineRpcRequest(request: Readonly<{
       // independently verifies the installed relationship controller's signer.
       if (!writerTargetRouting && !seedRouting && !isFiniteSource
         && context.custodianAccountId !== custodianAccountId) return forbidden('machine_custodian');
-      if (!await machine.verifyMachineAdmission({ context, method: request.method,
+      const verifiedAdmission = await machine.verifyMachineAdmission({ context, method: request.method,
           ...(sourceRouting ? { workspaceSyncSourceRouting: sourceRouting } : {}),
           ...((request.workspaceSyncSourceExecution?.originalActionEnvelope || seedRouting || isProjectSource || isFiniteSource || writerTargetRouting && request.callerInputAuthorization?.binding.actionId === 'projects.open')
             && request.workspaceSyncSourceExecution ? { workspaceSyncSourceExecution: request.workspaceSyncSourceExecution } : {}),
@@ -600,9 +687,161 @@ export async function authorizeMachineRpcRequest(request: Readonly<{
           ...((request.workspaceSyncSourceExecution?.originalActionEnvelope || sourceRouting || writerTargetRouting || seedRouting) && request.callerInputAuthorization ? { callerInputAuthorization: request.callerInputAuthorization } : {}),
           ...(custodyRequest?.success && 'subjectAccountId' in custodyRequest.data
             ? { custodySubjectAccountId: custodyRequest.data.subjectAccountId } : {}),
-          ...(request.signal ? { signal: request.signal } : {}) })) return forbidden('machine_currentness');
+          ...(request.signal ? { signal: request.signal } : {}) });
+      if (!verifiedAdmission) return forbidden('machine_currentness');
       if (installationId !== machine.resolveInstallationId()) return forbidden('machine_installation');
       if (request.signal?.aborted) return forbidden('request_cancelled');
+      const rpcMethod = request.method.slice(machine.machineId.length + 1);
+      // These native bind phases do not launch requester processes. Home has
+      // just verified the exact child/controller route; the workspace owner
+      // must still map its own current native root before any copy, and retain
+      // exact input/claimant/operation custody for settlement. Raw files and
+      // commands, Project/finite SOURCE and seed transport keep isolation.
+      const nativeManagedBindPhase =
+        context.machineId !== machine.machineId &&
+        !seedRouting &&
+        request.callerInputAuthorization?.binding.actionId !==
+          'projects.open' &&
+        !isProjectWorkspaceSyncPreparationActionV1(
+          request.callerInputAuthorization?.binding.actionId,
+        ) &&
+        ((isSourcePhase && sourceRouting?.sourceContext !== undefined) ||
+          targetRouting !== undefined);
+      const nativeSessionEffect = resolveMachineRpcExternalActionEffectV1(
+        rpcMethod,
+        request.callerInputAuthorization?.binding,
+        { machineId: machine.machineId, installationId },
+      );
+      const privateSpawn = privateSessionMethods.includes(rpcMethod)
+        ? SpawnDaemonSessionRequestSchema.safeParse(request.params)
+        : null;
+      // A raw member fresh spawn has no requester bootstrap. Existing resume
+      // dispatch instead resolves the stored Session owner/birth before runner
+      // launch; historical birth is never reconstructed from today's viewer.
+      const nativeSessionResume =
+        privateSpawn?.success &&
+        privateSpawn.data.type === 'resume-session' &&
+        !!privateSpawn.data.sessionId;
+      // These registered owners already consume the P11 payload finalizer.
+      // Session creation leaves the trusted runner unchanged and records birth
+      // attribution before its payload; finite Project Exec carries ingress
+      // selection through both native helpers and the final tuple. File owners
+      // execute their whole effect in that tuple; Project Open forces private
+      // member checkout or refuses. Capabilities select their classified whole
+      // effect at the same native owner; machine_install retains Manage.
+      // Routed deputies and
+      // unrelated spawn-looking method names retain their separate refusals.
+      const nativeEffectOwner =
+        context.machineId === machine.machineId &&
+        !sourceRouting &&
+        !targetRouting &&
+        !writerTargetRouting &&
+        !seedRouting &&
+        (finiteProjectMethods.includes(rpcMethod) ||
+          // Workspace linking owns native root mapping and copy custody. It
+          // launches no requester command and needs no raw Session authority.
+          rpcMethod === RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE ||
+          rpcMethod === RPC_METHODS.BASH ||
+          nativeFilesystemMethods.includes(rpcMethod) ||
+          rpcMethod === RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_START ||
+          rpcMethod === RPC_METHODS.DAEMON_MCP_SERVERS_TEST ||
+          rpcMethod === RPC_METHODS.PROJECTS_OPEN ||
+          rpcMethod === RPC_METHODS.CAPABILITIES_DETECT ||
+          rpcMethod === RPC_METHODS.CAPABILITIES_INVOKE ||
+          nativeSessionMethods.includes(rpcMethod) ||
+          nativeSessionResume ||
+          nativeSessionEffect === 'session.spawn_new' ||
+          nativeSessionEffect === 'session.agent.transition');
+      const nativeRequesterControl =
+        context.machineId === machine.machineId &&
+        !sourceRouting &&
+        !targetRouting &&
+        !writerTargetRouting &&
+        !seedRouting;
+      const nativePersonTerminal = nativeRequesterControl && nativeTerminalMethods.includes(rpcMethod);
+      const nativePersonalComputer = nativeRequesterControl && (rpcMethod === RPC_METHODS.DAEMON_COMPUTER_PERSONAL_ACTION_EXECUTE
+        || rpcMethod === RPC_METHODS.DAEMON_MACHINE_LIVE_STREAM_SOURCE_ADMIT
+        || rpcMethod === RPC_METHODS.DAEMON_MACHINE_LIVE_STREAM_PERSONAL_RELAY_START);
+      if (
+        !nativeManagedBindPhase &&
+        !nativeEffectOwner &&
+        // The scoped computer owner selects and verifies the requester's desktop.
+        !nativePersonalComputer &&
+        // Byte reads acquire no execution identity: the registered terminal
+        // owner distinguishes finite output and enforces retained custody.
+        // Keep the route flag for Session admission and older-receiver floors.
+        !(nativePersonTerminal && rpcMethod === RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES) &&
+        resolveMachineRpcRoutePolicy(rpcMethod)
+          .requesterExecutionIsolationRequired === true
+      ) {
+        const physicalCustodianAccountId = custodianAccountId
+          ?? await machine.resolveCustodianAccountId(request.signal);
+        const receivingAdmission = source === 'authenticated_home_socket'
+          ? request.receivingMachineAdmission
+          : verifiedAdmission && typeof verifiedAdmission === 'object'
+            ? verifiedAdmission.receivingMachineAdmission : undefined;
+        const receivingManager = receivingAdmission?.role === 'manage'
+          && receivingAdmission.actorAccountId === context.actorAccountId
+          && receivingAdmission.actorAccountId === request.callerInputAuthorization?.binding.accountId
+          && receivingAdmission.machineId === machine.machineId
+          && receivingAdmission.installationId === installationId;
+        const identity = selectHostRequesterExecutionIdentity({
+          actionContext: {
+            authority: request.callerAuthority,
+            machineAdmission: context,
+            sessionActionOrigin: request.sessionActionOrigin,
+            callerInputAuthorization: request.callerInputAuthorization,
+            localActionContext: request.localActionContext,
+            inheritedLocalActionContext: request.inheritedLocalActionContext,
+            requesterSessionBootstrap: request.requesterSessionBootstrap,
+            signal: request.signal,
+            verifyMachineAdmissionCurrent: async () => true,
+          },
+          hostHomeServerIdentityId: await machine.resolveHomeServerIdentityId?.(
+            request.signal,
+          ),
+          hostCustodianAccountId: physicalCustodianAccountId,
+          hostExecutionTarget: { machineId: machine.machineId, installationId },
+          // Exact route/root/phase checks and Home admission above bind the
+          // retained SOURCE actor across placement. Physical receiver custody,
+          // not the original child's custodian or role, still decides ownership.
+          // Rootless release and unrelated routed work cannot mint this fact.
+          ...(request.callerInputAuthorization &&
+          (sourceRouting ||
+            seedRouting ||
+            (writerTargetRouting && writerTargetRouting.target.phase !== 'release'))
+            ? {
+                verifiedReceivingChild: {
+                  actorAccountId: context.actorAccountId,
+                  custodianAccountId: context.custodianAccountId,
+                  machineId: context.machineId,
+                  installationId: context.installationId,
+                },
+              }
+            : {}),
+        });
+        if (request.signal?.aborted) return forbidden('request_cancelled');
+        if (installationId !== machine.resolveInstallationId())
+          return forbidden('machine_installation');
+        // Home-admitted Manage on this physical receiver permits raw work.
+        // Otherwise retain owner custody and identity-bound terminal protection.
+        if (
+          !receivingManager && !isHostRequesterUnrestrictedOwner(identity) &&
+          !(
+            nativePersonTerminal &&
+            identity.kind === 'isolated' &&
+            (identity.presentPerson === true ||
+              (rpcMethod === RPC_METHODS.DAEMON_TERMINAL_ENSURE &&
+                !identity.separationRequired))
+          )
+        ) {
+          return {
+            ok: false,
+            errorCode: 'agent_isolation_unavailable',
+            error: 'Requester execution protection is unavailable',
+          };
+        }
+      }
       if (SessionTransferRpcMethodV1Schema.safeParse(request.method.slice(machine.machineId.length + 1)).success) {
         const preparedTransfer = PreparedTransferRpcRequestV1Schema.safeParse(request.params);
         if (preparedTransfer.success && request.method === `${machine.machineId}:${resolvePreparedTransferRpcPhaseV1(

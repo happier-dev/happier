@@ -16,6 +16,7 @@ import type {
     RpcHandlerActiveExecution,
     RpcHandlerContext,
     RpcOperationDiagnostics,
+    RpcAuthorizationResult,
 } from './types';
 import { RPC_ADMISSION_PREDICATES, type RpcAdmissionPredicate } from './types';
 import type { Socket } from 'socket.io-client';
@@ -43,7 +44,7 @@ import { WorkspaceSyncSourceRoutingV1Schema, WorkspaceSyncSourceExecutionV1Schem
     WorkspaceSyncSeedRoutingV1Schema } from '@happier-dev/protocol/socketRpc';
 import { WorkspaceSyncHandoffSourcePhaseRequestV1Schema, WorkspaceSyncPrepareBetweenRequestV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { isDeepStrictEqual } from 'node:util';
-import { resolveMachineRpcExternalActionEffectV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
+import { resolveMachineRpcExternalActionEffectV1, resolveMachineRpcRoutePolicy } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import { doesWorkspaceSyncSourceRootMatchRouting, doesWorkspaceSyncSourceWriterTargetRootMatchRouting,
     doesWorkspaceSyncTargetRoutingMatchWriterTarget, doesWorkspaceSyncProjectSourceRequestMatchRouting,
     doesWorkspaceSyncSeedRootMatchRouting, doesWorkspaceSyncFinitePrepareRequestMatchRouting } from '@/api/machine/machineRpcAuthorization';
@@ -175,6 +176,7 @@ export class RpcHandlerManager {
     private readonly scopePrefix: string;
     private readonly localMachineId: string | null;
     private rpcContent: SocketRpcContent | null;
+    private readonly scopeKind: RpcHandlerConfig['scopeKind'];
     private readonly authorizeRequest: RpcHandlerConfig['authorizeRequest'];
     private readonly resolveSessionDecisionContext: RpcHandlerConfig['resolveSessionDecisionContext'];
     private readonly prepareRequesterAccountContext: RpcHandlerConfig['prepareRequesterAccountContext'];
@@ -215,6 +217,7 @@ export class RpcHandlerManager {
         this.scopePrefix = config.scopePrefix;
         this.localMachineId = config.localMachineId ?? null;
         this.rpcContent = this.createEncryptionContent(config);
+        this.scopeKind = config.scopeKind;
         const authorizeRequest = config.authorizeRequest;
         this.authorizeRequest = authorizeRequest ? async request => {
             request.signal?.throwIfAborted();
@@ -1125,11 +1128,12 @@ export class RpcHandlerManager {
      */
     async invokeLocal(method: string, params: unknown, options?: Readonly<{
         signal?: AbortSignal;
+        admissionResult?: Extract<RpcAuthorizationResult, { ok: true }>;
         localActionContext?: import('./types').RpcLocalActionContext;
         verifiedPeerAuthority?: 'present_user' | 'account_automation';
         /** Installed host forwards an already-admitted requester; input never supplies authority. */
         rpcContext?: Pick<RpcHandlerContext, 'machineAdmission' | 'verifyMachineAdmissionCurrent' | 'callerInputAuthorization'
-            | 'callerAuthority' | 'callerInputConstraints' | 'sessionActionOrigin' | 'originalActionEnvelope' | 'requesterSessionBootstrap'>;
+            | 'callerAuthority' | 'callerInputConstraints' | 'sessionActionOrigin' | 'originalActionEnvelope' | 'requesterSessionBootstrap' | 'localActionContext'>;
     }>): Promise<unknown> {
         return await this.invokeLocalHandler(method, params, this.handlers.get(this.getPrefixedMethod(method)), options);
     }
@@ -1147,12 +1151,45 @@ export class RpcHandlerManager {
         const admittedContentMode = this.rpcContent?.mode;
         const callerInputConstraints = options?.rpcContext?.callerInputConstraints
             ?? options?.localActionContext?.callerInputConstraints;
+        // Admission and the native handler consume the same host-private authority.
+        const callerAuthority = options?.localActionContext?.authority === 'account_automation'
+            || options?.localActionContext?.actionCaller?.kind === 'session' ? 'account_automation'
+            : options?.rpcContext?.callerAuthority ?? options?.verifiedPeerAuthority ?? options?.localActionContext?.authority;
         return this.observeRequest(prefixedMethod, undefined, async diagnostic => {
             diagnostic.admissionPredicate = 'handler_admission';
             if (!handler) {
                 return { error: RPC_ERROR_MESSAGES.METHOD_NOT_FOUND, errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND };
             }
             const signal = options?.signal ?? new AbortController().signal;
+            const localRequester = options?.rpcContext !== undefined
+                || options?.localActionContext?.authority === 'account_automation'
+                || options?.localActionContext?.actionCaller?.kind === 'session'
+                || options?.verifiedPeerAuthority === 'account_automation';
+            if ((localRequester || this.scopeKind === 'session')
+                && resolveMachineRpcRoutePolicy(method).requesterExecutionIsolationRequired === true) {
+                // A fresh Action's local delegation is not an owner-person default.
+                // Re-enter the installed receiving owner unless this exact direct
+                // invocation already completed its admission at that owner.
+                // Closed host calls with no requester keep their own authority.
+                if ((!options?.rpcContext && this.scopeKind !== 'session') || !this.authorizeRequest) return {
+                    errorCode: 'agent_isolation_unavailable',
+                    error: 'Requester execution admission is unavailable. Update or restart the controller daemon and retry through authenticated Machine ingress.',
+                    effectAttempted: false,
+                };
+                const authorization = options?.admissionResult ?? await this.authorizeRequest({ method: prefixedMethod, params,
+                    machineAdmission: options?.rpcContext?.machineAdmission,
+                    callerAuthority,
+                    callerInputAuthorization: options?.rpcContext?.callerInputAuthorization,
+                    sessionActionOrigin: options?.rpcContext?.sessionActionOrigin,
+                    localActionContext: options?.localActionContext,
+                    inheritedLocalActionContext: options?.rpcContext?.localActionContext,
+                    requesterSessionBootstrap: options?.rpcContext?.requesterSessionBootstrap,
+                    signal,
+                });
+                signal.throwIfAborted();
+                if (!authorization.ok) return { error: authorization.error,
+                    ...(authorization.errorCode ? { errorCode: authorization.errorCode } : {}), effectAttempted: false };
+            }
             let countedInFlight = !this.pausedRequestAdmission.has(method);
             if (countedInFlight) this.beginInFlightRequest(method);
             let handlerExecutionId: number | null = null;

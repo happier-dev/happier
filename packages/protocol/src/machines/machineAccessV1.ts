@@ -19,7 +19,7 @@ export const MachineAccessRefusalCodeV1Schema = lazyZodSchema(() => z.enum([
   'access_denied', 'machine_unavailable', 'recipient_encryption_incompatible', 'recipient_key_pending',
   'encryption_material_unavailable', 'recipient_binding_changed', 'machine_key_changed',
   'invalid_recipient_envelope', 'principal_not_found', 'principal_ineligible', 'custodian_protected',
-  'data_key_not_required', 'unsupported_operation',
+  'data_key_not_required', 'unsupported_operation', 'custodian_only',
 ]));
 export type MachineAccessRoleV1 = z.infer<typeof MachineAccessRoleV1Schema>;
 export type MachineAccessLevelV1 = z.infer<typeof MachineAccessLevelV1Schema>;
@@ -144,6 +144,7 @@ export type SocketRpcMachineAdmissionContextV1 = Readonly<z.infer<typeof SocketR
 export const MachineAdmissionVerifyResponseV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1), ok: z.literal(true),
   destinationInstallation: z.optional(MachineInstallationPublicIdentityV1Schema),
+  receivingMachineAdmission: z.optional(SocketRpcMachineAdmissionContextV1Schema),
 }));
 
 /** Internal Home-to-installation custody request; routing identities are transport-owned. */

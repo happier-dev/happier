@@ -23,13 +23,27 @@ const request = { method: `controller:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATI
 
 function boundary(current = true): MachineRpcAdmissionBoundary {
     return { machineId: 'controller', resolveInstallationId: () => 'installation',
-        resolveCustodianAccountId: async () => 'owner',
+        resolveCustodianAccountId: async () => 'owner', resolveHomeServerIdentityId: async () => 'home',
         // Home verification is the external admission boundary; requester classification stays real.
         verifyMachineAdmission: async () => current };
 }
 
 describe('worker link requester admission', () => {
-    it.each(['socket'] as const)('reports %s admission refusal as no effect at the Action boundary', async ingress => {
+    it('admits the native workspace copy owner without granting raw Session execution', async () => {
+        expect(await authorizeMachineRpcRequest(request, boundary())).toEqual({ ok: true });
+        expect(await authorizeMachineRpcRequest({ ...request,
+            method: `controller:${RPC_METHODS.SCM_STATUS_SNAPSHOT}` }, boundary()))
+            .toMatchObject({ ok: false, errorCode: 'agent_isolation_unavailable' });
+        for (const machineAdmission of [{ ...admission, machineId: 'foreign' },
+            { ...admission, installationId: 'foreign' }, { ...admission, custodianAccountId: 'foreign' }]) {
+            expect(await authorizeMachineRpcRequest({ ...request, machineAdmission }, boundary()))
+                .toMatchObject({ ok: false, errorCode: 'RPC_FORBIDDEN' });
+        }
+        expect(await authorizeMachineRpcRequest(request, boundary(false)))
+            .toMatchObject({ ok: false, errorCode: 'RPC_FORBIDDEN' });
+    });
+
+    it.each(['local', 'socket'] as const)('reports %s admission refusal as no effect at the Action boundary', async ingress => {
         const rpc = new RpcHandlerManager({ scopePrefix: 'controller', localMachineId: 'controller',
             encryptionMode: 'plain', logger: () => {},
             authorizeRequest: incoming => authorizeMachineRpcRequest(incoming, boundary(false)) });

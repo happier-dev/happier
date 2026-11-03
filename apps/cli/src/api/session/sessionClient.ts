@@ -1,3 +1,4 @@
+import { createSessionRpcAuthorization } from './client/sessionRpcAuthorization';
 import { createSessionUsageLimitRecoveryRuntime } from '@/session/usageLimitRecoveryControls/createSessionUsageLimitRecoveryRuntime';
 import { createDiscussionActionDeps } from '@/discussions/discussionActionDeps';
 import { materializeDiscussionInputAttachments, DiscussionAttachmentPreparationError,
@@ -1707,28 +1708,13 @@ export class ApiSessionClient extends EventEmitter {
             };
         this.rpcHandlerManager = new RpcHandlerManager({
             scopePrefix: this.sessionId,
+            scopeKind: 'session',
             localMachineId: options.localMachineId,
             ...rpcTransportConfig,
-            authorizeRequest: async ({ callerInputAuthorization: authorization, signal }) => {
-                // API roots retain only their verified principal and captured grant, never Account custody.
-                if (!authorization || !('grant' in authorization.binding) || authorization.requesterAccountContext) return { ok: true };
-                try {
-                    const installation = readInstallationIdentityIfExistsSync();
-                    const origin = await createCurrentMachineExecutionOriginContextResolver({
-                        serverUrl: this.serverBinding.serverUrl,
-                        resolveCurrentMachineId: () => this.closed ? null : options.localMachineId ?? null,
-                    })(signal);
-                    const binding = authorization.binding;
-                    if (this.closed || signal?.aborted || !installation || !origin
-                        || installation.installationId !== binding.installationId
-                        || origin.machineId !== binding.machineId || origin.serverIdentityId !== binding.serverIdentityId
-                        || !await verifyExternalActionExecutionAuthorizationCurrent({ authorization,
-                            effectActionId: binding.actionId, target: binding.target, installationId: installation.installationId,
-                            privateKey: installation.privateKey, serverHttpBaseUrl: this.serverBinding.serverUrl,
-                            ...(signal ? { signal } : {}) })) return { ok: false, error: 'Forbidden', errorCode: 'RPC_FORBIDDEN' };
-                    return { ok: true };
-                } catch { return { ok: false, error: 'Forbidden', errorCode: 'RPC_FORBIDDEN' }; }
-            },
+            authorizeRequest: createSessionRpcAuthorization({ sessionId: this.sessionId, localMachineId: options.localMachineId,
+                serverUrl: this.serverBinding.serverUrl, isClosed: () => this.closed,
+                readHomeServerIdentityId: () => this.getServerIdentityId(),
+                readOwnerCredentials: () => this.readCurrentOwnerCredentials() }),
             prepareRequesterAccountContext: async ({ authorization, purpose, signal }) => {
                 if (this.closed || !options.localMachineId || !purpose) return null;
                 const ownCredentials = await this.readCurrentOwnerCredentials();

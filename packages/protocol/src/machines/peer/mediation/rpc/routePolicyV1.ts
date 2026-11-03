@@ -75,6 +75,8 @@ export type MachineRpcRoutePolicyV1 = Readonly<{
   actionSpecId?: string;
   /** Machine permission only; Session, Source, root and work custody remain additional checks. */
   sharedMachineAccess: 'use' | 'manage' | 'custodian_only';
+  /** Non-custodian effects require the exact daemon enforce-or-refuse capability. */
+  requesterExecutionIsolationRequired?: true;
   commandReceiptRequired: boolean;
   scope: MachineRpcRoutePolicyScopeV1;
   serverRequiredReason?: MachineRpcServerRequiredReason;
@@ -878,12 +880,43 @@ const MACHINE_REQUESTER_TERMINAL_METHODS = new Set<string>([
     RPC_METHODS.DAEMON_TERMINAL_CLOSE, RPC_METHODS.DAEMON_TERMINAL_RESTART,
 ]);
 
+const REQUESTER_EXECUTION_METHODS = new Set<string>([
+  RPC_METHODS.DAEMON_COMPUTER_PERSONAL_ACTION_EXECUTE,
+  RPC_METHODS.DAEMON_MACHINE_LIVE_STREAM_SOURCE_ADMIT,
+  RPC_METHODS.DAEMON_MACHINE_LIVE_STREAM_PERSONAL_RELAY_START,
+  // cli-v0.2.17 / supported predecessor rpc.ts: retained raw Session search.
+  'ripgrep',
+  RPC_METHODS.BASH, RPC_METHODS.MACHINES_COMMAND_RUN, RPC_METHODS.PREVIEW_ENV,
+  // Capability detection/invocation may execute tools or mutate host files.
+  RPC_METHODS.CAPABILITIES_DETECT, RPC_METHODS.CAPABILITIES_INVOKE,
+  // Includes cli-v0.2.17's exact Session literal and stable bug-report reader.
+  RPC_METHODS.DAEMON_SESSION_LOG_TAIL, RPC_METHODS.SESSION_LOG_TAIL,
+  RPC_METHODS.BUGREPORT_GET_LOG_TAIL, RPC_METHODS.BUGREPORT_COLLECT_DIAGNOSTICS,
+  RPC_METHODS.SPAWN_HAPPY_SESSION, RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE,
+  RPC_METHODS.SESSION_SPAWN_NEW, RPC_METHODS.SESSION_CONTINUE_WITH_REPLAY,
+  RPC_METHODS.SESSION_FORK, RPC_METHODS.SESSION_FORK_PROVIDER_SAFE,
+  RPC_METHODS.READ_FILE, RPC_METHODS.WRITE_FILE, RPC_METHODS.STAT_FILE,
+  RPC_METHODS.CREATE_DIRECTORY, RPC_METHODS.LIST_DIRECTORY, RPC_METHODS.GET_DIRECTORY_TREE,
+  RPC_METHODS.RENAME_PATH, RPC_METHODS.DELETE_PATH, RPC_METHODS.COPY_PATH,
+  RPC_METHODS.DIFFTASTIC, RPC_METHODS.WORKSPACE_ANCHORS_RESOLVE, RPC_METHODS.WORKSPACE_FAVICON_RESOLVE,
+  RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_START, RPC_METHODS.MACHINES_PROCESSES_START_AGAIN,
+  RPC_METHODS.PROJECTS_OPEN, RPC_METHODS.DAEMON_LOCAL_SERVICES_ACTIONS_RESTART_MANAGED,
+  ...Object.values(PROJECT_FINITE_ACTION_RPC_METHODS_V1),
+]);
+
 function withSharedMachineAccess(policy: MachineRpcRoutePolicyV1): MachineRpcRoutePolicyV1 {
   // Private relationship and work inventories keep their custodian authority.
   // These terminal routes establish exact requester custody at their canonical owner.
   const requesterTerminal = MACHINE_REQUESTER_TERMINAL_METHODS.has(policy.method);
   const handoffRead = policy.method === RPC_METHODS.DAEMON_SESSION_HANDOFF_EXISTING_STATE_CHECK_V3
     || policy.method === RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V3_GET;
+  // These exact native-control owners prove their installed Workspace root,
+  // current target admission and retained operation/receipt before effects.
+  // They do not borrow unrestricted person execution or raw filesystem rights.
+  const nativeWorkspaceTargetCustody = policy.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT
+    || policy.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE
+    || policy.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE
+    || policy.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_INSPECT;
   // The daemon's detached Run manager is custodian-scoped, not partitioned by
   // Machine requester. Attached Runs keep their separate exact Session access.
   const custodianOnly = resolveSocketRpcSessionAuthorization(policy.method)?.machineScope === true
@@ -899,6 +932,19 @@ function withSharedMachineAccess(policy: MachineRpcRoutePolicyV1): MachineRpcRou
     || policy.method.startsWith('daemon.directSessions.');
   return {
     ...policy,
+    ...(REQUESTER_EXECUTION_METHODS.has(policy.method)
+      || policy.method.startsWith('daemon.terminal.')
+      || policy.method.startsWith('daemon.filesystem.')
+      || policy.method.startsWith('daemon.workspaceFiles.')
+      || policy.method.startsWith('daemon.workspaceSync.') && !nativeWorkspaceTargetCustody
+      || policy.method.startsWith('daemon.sessionCreation.')
+      || policy.method.startsWith('daemon.spawnSession.')
+      || policy.method.startsWith('daemon.lsp.')
+      || policy.method.startsWith('daemon.bulkTransfer.')
+      || policy.method.startsWith('daemon.directTransfer.')
+      || policy.method.startsWith('daemon.mcpServers.')
+      || policy.method.startsWith('scm.')
+      ? { requesterExecutionIsolationRequired: true as const } : {}),
     sharedMachineAccess: custodianOnly ? 'custodian_only' : requesterTerminal ? 'use'
       : MACHINE_MANAGEMENT_METHODS.has(policy.method) ? 'manage' : policy.sharedMachineAccess,
   };

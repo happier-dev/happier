@@ -260,6 +260,9 @@ export const RPC_METHODS = {
   DAEMON_BROWSER_CONTROL_DISPATCH: 'daemon.browser.control.dispatch',
   // Owner-scoped present-user computer Actions (choose a window, look, stop, hand back, permission pane).
   DAEMON_COMPUTER_ACTION_EXECUTE: 'daemon.computer.actions.execute',
+  DAEMON_MACHINE_LIVE_STREAM_SOURCE_ADMIT: 'daemon.machines.liveStream.source.admit',
+  DAEMON_MACHINE_LIVE_STREAM_PERSONAL_RELAY_START: 'daemon.machines.liveStream.personal.relay.start',
+  DAEMON_COMPUTER_PERSONAL_ACTION_EXECUTE: 'daemon.computer.personal.actions.execute',
   DAEMON_BROWSER_VIEW_LIST: 'daemon.browser.view.list',
   DAEMON_BROWSER_CONTEXT_DISPATCH: 'daemon.browser.context.dispatch',
   DAEMON_BROWSER_DIAGNOSTICS_SNAPSHOT: 'daemon.browser.diagnostics.snapshot',

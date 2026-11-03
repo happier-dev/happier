@@ -139,7 +139,16 @@ export async function resolveEffectiveMachineRoleInTx(tx: Tx, input: MachineActo
     const row = await readFactsInTx(tx, input.machineId);
     return row ? effectiveRole(row, input.actorAccountId) : null;
 }
-export async function resolveEffectiveMachineAccessForMachinesInTx(tx: Tx, input: Readonly<{ machineIds: readonly string[]; accountIds: readonly string[] }>): Promise<Map<string, Map<string, MachineAccessRoleV1 | null>>> {
+function resolveMachineRpcRequiredRole(input: Readonly<{
+    method: string; owned: boolean; requiredRole: MachineAccessRoleV1; actionId?: string;
+}>): MachineAccessRoleV1 | null {
+    const policy = resolveMachineRpcRoutePolicy(input.method).sharedMachineAccess;
+    if (policy === 'custodian_only' && !input.owned) return null;
+    // Capability discovery and installation share a transport, not a role.
+    return policy === 'manage' || input.actionId === 'machines.capabilities.install' ? 'manage' : input.requiredRole;
+}
+
+export async function resolveEffectiveMachineAccessForMachinesInTx(tx: Tx, input: Readonly<{ machineIds: readonly string[]; accountIds: readonly string[]; rpcMethod?: string }>): Promise<Map<string, Map<string, MachineAccessRoleV1 | null>>> {
     const result = new Map<string, Map<string, MachineAccessRoleV1 | null>>();
     const machineIds = [...new Set(input.machineIds)];
     if (machineIds.length === 0) return result;
@@ -152,7 +161,12 @@ export async function resolveEffectiveMachineAccessForMachinesInTx(tx: Tx, input
     for (const machineId of machineIds) {
         const row = byId.get(machineId);
         const sources = row ? contributions(row) : [];
-        result.set(machineId, new Map(input.accountIds.map(accountId => [accountId, row ? effectiveRole(row, accountId, sources) : null])));
+        result.set(machineId, new Map(input.accountIds.map(accountId => {
+            const role = row ? effectiveRole(row, accountId, sources) : null;
+            const required = input.rpcMethod && row ? resolveMachineRpcRequiredRole({ method: input.rpcMethod,
+                owned: row.accountId === accountId, requiredRole: 'use' }) : 'use';
+            return [accountId, required !== null && (required !== 'manage' || role === 'manage') ? role : null] as const;
+        })));
     }
     return result;
 }
@@ -399,9 +413,9 @@ async function resolveMachineAdmissionFromFactsInTx(tx: Tx, row: MachineFacts | 
         }
     }
     if (method) {
-        const policy = resolveMachineRpcRoutePolicy(method).sharedMachineAccess;
-        if (policy === 'custodian_only' && !access.owned) return { kind: 'denied', code: 'unsupported_operation' };
-        if (policy === 'manage') requiredRole = 'manage';
+        const rpcRole = resolveMachineRpcRequiredRole({ method, owned: access.owned, requiredRole, actionId: input.actionId });
+        if (rpcRole === null) return { kind: 'denied', code: 'custodian_only' };
+        requiredRole = rpcRole;
     }
     if (requiredRole === 'manage' && access.role !== 'manage') return { kind: 'denied', code: 'access_denied' };
     if (access.accessState === 'refused') return { kind: 'denied', code: 'recipient_encryption_incompatible' };

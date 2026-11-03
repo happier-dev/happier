@@ -184,6 +184,9 @@ export type RpcResponseCallback = (response: unknown) => void;
  */
 type RpcHandlerCommonConfig = {
     scopePrefix: string;
+    /** Installed receiving lifecycle, never a caller-selected RPC parameter. */
+    scopeKind?: 'session';
+
     /** Actual local runtime Machine, independently of Session metadata. */
     localMachineId?: string | null;
     /** Opens only the owner Session's existing codec after live Home admission. */
@@ -197,6 +200,12 @@ type RpcHandlerCommonConfig = {
     authorizeRequest?: (request: Readonly<{
         method: string;
         params: unknown;
+        callerAuthority?: ActionExecutorContext['authority'];
+        sessionActionOrigin?: SessionActionRpcOriginV1;
+        /** Existing in-process provenance, never parsed from transported RPC input. */
+        localActionContext?: RpcLocalActionContext;
+        inheritedLocalActionContext?: RpcLocalActionContext;
+        requesterSessionBootstrap?: AdmittedRequesterSessionBootstrap;
         authorization?: SocketRpcAuthorizationContext;
         transportResponseEnvelopeVersion?: 1;
         machineAdmission?: SocketRpcMachineAdmissionContextV1;

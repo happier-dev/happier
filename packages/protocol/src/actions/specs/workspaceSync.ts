@@ -43,7 +43,7 @@ export const WORKSPACE_SYNC_ACTION_SPECS = Object.freeze([
     inputSchema: WorkspaceSyncConflictResolveActionInputV1Schema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'workspace.sync.relationship.create', executionPlacement: 'session', approval: {result: 'required',flow: 'deferred'},
+    id: 'workspace.sync.relationship.create', executionPlacement: 'session', sideEffectClass: 'danger', approval: {result: 'required',flow: 'deferred'},
     workspaceWrite: true,
     operation: {
       version: 1,
