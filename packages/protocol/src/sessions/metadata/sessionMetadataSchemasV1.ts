@@ -1491,18 +1491,25 @@ const SessionOwnerHandoffV1Schema = lazyZodSchema(() => z.strictObject({
  * Strict plaintext inside the account/domain encrypted owner ciphertext.
  * Categories are deliberately disjoint; there is no raw metadata carrier.
  */
-export const SessionOwnerMetadataV1Schema = lazyZodSchema(() => z.strictObject({
-  v: z.literal(SESSION_OWNER_METADATA_VERSION_V1),
-  workspace: z.optional(SessionOwnerWorkspaceV1Schema),
-  nativeSession: z.optional(SessionOwnerNativeSessionV1Schema),
-  runtime: z.optional(SessionOwnerRuntimeV1Schema),
-  connectedServices: z.optional(SessionOwnerConnectedServicesV1Schema),
-  history: z.optional(SessionOwnerHistoryV1Schema),
-  handoff: z.optional(SessionOwnerHandoffV1Schema),
-  cursors: z.optional(SessionOwnerCursorsV1Schema),
-  work: z.optional(SessionOwnerWorkV1Schema),
-  system: z.optional(SessionOwnerSystemV1Schema),
-}));
+function createSessionOwnerMetadataV1Schema() {
+  return z.strictObject({
+    v: z.literal(SESSION_OWNER_METADATA_VERSION_V1),
+    workspace: z.optional(SessionOwnerWorkspaceV1Schema),
+    nativeSession: z.optional(SessionOwnerNativeSessionV1Schema),
+    runtime: z.optional(SessionOwnerRuntimeV1Schema),
+    connectedServices: z.optional(SessionOwnerConnectedServicesV1Schema),
+    history: z.optional(SessionOwnerHistoryV1Schema),
+    handoff: z.optional(SessionOwnerHandoffV1Schema),
+    cursors: z.optional(SessionOwnerCursorsV1Schema),
+    work: z.optional(SessionOwnerWorkV1Schema),
+    system: z.optional(SessionOwnerSystemV1Schema),
+  });
+}
+
+/** Preserve this concrete schema identity through nested public declarations. */
+export interface SessionOwnerMetadataSchemaV1 extends ReturnType<typeof createSessionOwnerMetadataV1Schema> {}
+export const SessionOwnerMetadataV1Schema: SessionOwnerMetadataSchemaV1 =
+  lazyZodSchema(createSessionOwnerMetadataV1Schema);
 export type SessionOwnerMetadataV1 = z.infer<
   typeof SessionOwnerMetadataV1Schema
 >;

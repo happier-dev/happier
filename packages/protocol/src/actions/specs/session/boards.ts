@@ -7,7 +7,7 @@ import { SESSION_BOARD_ACTION_INPUT_SCHEMAS_V1, SESSION_BOARD_ACTION_OUTPUT_SCHE
 import { SESSION_BOARD_GET_CLI_PROJECTION, SESSION_BOARD_ITEM_REMOVE_CLI_PROJECTION, SESSION_BOARD_ITEM_UPSERT_CLI_PROJECTION, SESSION_BOARD_LAYOUT_UPDATE_CLI_PROJECTION, SESSION_VISUAL_DESTINATION_HINT } from '../sessionBoardCli.js';
 import { SESSION_BOARD_ACTION_MCP_TOOL_NAMES_V1 } from '../../../sessions/board/actionIds.js';
 import { describeSessionVisualApprovalSummary } from '../definition.js';
-import type { PreNormalizedActionSpec } from '../definition.js';
+import type { ActionSpecProjectionMetadata, PreNormalizedActionSpec } from '../definition.js';
 
 export const WORK_BOARD_ACTION_TITLES: Readonly<Record<WorkBoardActionIdV1, string>> = {
   'boards.list': 'List Boards',
@@ -51,7 +51,18 @@ export const WORK_BOARD_ACTION_SPECS_V1: readonly PreNormalizedActionSpec[] = WO
   cli: { acceptsServerId: true, commands: [{ path: id.split('.'), visibility: 'canonical' }] },
 }));
 
-export const SESSION_BOARD_ACTION_SPECS = Object.freeze([
+type SessionBoardActionSpec = {
+  [Id in keyof typeof SESSION_BOARD_ACTION_INPUT_SCHEMAS_V1]: ActionSpecProjectionMetadata & Readonly<{
+    id: Id;
+    approval: Id extends 'session.board.get'
+      ? Readonly<{ result: 'required' }>
+      : Readonly<{ result: 'optional'; flow: 'deferred' }>;
+    inputSchema: (typeof SESSION_BOARD_ACTION_INPUT_SCHEMAS_V1)[Id];
+    outputSchema: (typeof SESSION_BOARD_ACTION_OUTPUT_SCHEMAS_V1)[Id];
+  }>;
+}[keyof typeof SESSION_BOARD_ACTION_INPUT_SCHEMAS_V1];
+
+export const SESSION_BOARD_ACTION_SPECS: readonly SessionBoardActionSpec[] = Object.freeze([
   {
     id: 'session.board.get', executionPlacement: 'session', toolExposure: { agent: 'direct', mcp: 'direct' }, approval: {result: 'required'},
     title: 'Read Session visuals',
