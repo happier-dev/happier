@@ -49,7 +49,7 @@ import type { Fastify } from "../../types";
 import { isRestrictedAuthTokenKind } from "../../utils/apiTokenRouteAdmission";
 import {
     DEFAULT_AUTOMATION_WORKER_PUBLISHER_DEPENDENCIES,
-    resolveExactAutomationWorkerPublisher,
+    resolveWorkflowAutomationWorkerPublisher,
     type AutomationWorkerPublisherDependencies,
 } from "./automationWorkerPublisher";
 
@@ -133,12 +133,15 @@ export function registerWorkflowRunStorageRoutes(
         // Ordinary Account reads/controls have no executor Machine requirement.
         if (executorOperation || externalAction || publisherMachineId !== undefined) {
             if (publisherMachineId === undefined) return reply.code(401).send(null);
-            const publisher = await resolveExactAutomationWorkerPublisher({
+            const publisher = await resolveWorkflowAutomationWorkerPublisher({
                 dependencies,
                 accountId: request.userId,
                 request,
                 path: PATH,
                 machineId: publisherMachineId,
+                ...('runId' in body && body.runId ? { runId: body.runId } : {}),
+                ...(body.operation === 'admit' ? { purpose: 'admission' as const } : {}),
+                ...(body.operation === 'get' || body.operation === 'wait' ? { purpose: 'ordinary_read' as const } : {}),
             });
             if (!publisher) return reply.code(401).send(null);
             if (body.operation === "admit" && body.machineId !== publisher.machineId) {
