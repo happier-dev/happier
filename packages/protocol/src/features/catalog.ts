@@ -57,6 +57,12 @@ const FEATURE_CATALOG_DEFINITION = {
     dependencies: ['automations'],
     representation: 'server',
   },
+  bots: {
+    description: 'Bot creation and template authoring, releases, and instantiation.',
+    defaultFailMode: 'fail_closed',
+    dependencies: [],
+    representation: 'server',
+  },
   'execution.runs': {
     description: 'Execution runs / sub-agent orchestration surfaces and runtime.',
     defaultFailMode: 'fail_closed',

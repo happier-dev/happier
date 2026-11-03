@@ -85,6 +85,7 @@ const BASE_ROOT_LAYOUT_FEATURES: RootLayoutFeatures = {
         account: FeatureGatesSchema.shape.account.parse(undefined),
         // Current Homes advertise deployments by default; schema omission models an older Home.
         deployments: { enabled: true },
+        bots: FeatureGatesSchema.shape.bots.parse(undefined),
         teams: FeatureGatesSchema.shape.teams.parse(undefined),
         bugReports: { enabled: true },
         e2ee: {

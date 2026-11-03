@@ -28,6 +28,15 @@ export const UI_FEATURE_REGISTRY = {
             subtitleKey: 'settingsFeatures.featureOptOutSubtitle',
         },
     },
+    bots: {
+        settingsToggle: {
+            showInSettings: true,
+            isExperimental: false,
+            defaultEnabled: true,
+            titleKey: 'settingsFeatures.bots',
+            subtitleKey: 'settingsFeatures.featureOptOutSubtitle',
+        },
+    },
     'artifacts.queryHints': {
         settingsToggle: undefined,
     },
