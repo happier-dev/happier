@@ -223,12 +223,11 @@ export async function awaitTrackedRunnerAgentSessionOpen(
           request: attestation.request,
         });
       }
-      if (timeoutMs === null && hasObservedRunnerExited(tracked)) {
+      if (hasObservedRunnerExited(tracked)) {
         return await exited();
       }
     } else if (
-      timeoutMs === null
-      && observedTrackedSession
+      observedTrackedSession
       && matches.length === 0
     ) {
       // The daemon removes a tracked runner only after its child-exit owner has

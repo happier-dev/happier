@@ -2893,6 +2893,39 @@ describe('runHostSessionRuntime', () => {
     }));
   });
 
+  it('keeps the live Session realtime RPC producer registered while native open is pending', async () => {
+    const harness = createHarness('session-1');
+    harness.config.policyAgentId = 'codex';
+    const provider = { pluginId: 'happier.agent.codex', localId: 'realtime-codex' } as const;
+    setAgentSessionRealtimeVoiceAuthority(harness.config, resolveBundledAgentSessionRealtimeVoiceAuthorityFixture({
+      runtimeRegistry: runtimeRegistryLease?.registry ?? null, provider,
+      policyAgentRef: { pluginId: 'happier.agent.codex', localId: 'codex' },
+      agentGeneration: 'bundled-registry-generation',
+    }));
+    const factory = harness.config.createSessionRuntime!;
+    const entered = createDeferred<void>();
+    const release = createDeferred<void>();
+    setSessionRuntimeFactory(harness.config, async params => {
+      entered.resolve();
+      await release.promise;
+      return await factory(params);
+    });
+    const running = runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+    try {
+      await entered.promise;
+      for (const method of [SESSION_RPC_METHODS.SESSION_AGENT_REALTIME_INSPECT,
+        SESSION_RPC_METHODS.SESSION_AGENT_REALTIME_START, SESSION_RPC_METHODS.SESSION_AGENT_REALTIME_WATCH,
+        SESSION_RPC_METHODS.SESSION_AGENT_REALTIME_STOP]) {
+        expect(harness.handlers.has(method), method).toBe(true);
+      }
+      expect(await harness.handlers.get(SESSION_RPC_METHODS.SESSION_AGENT_REALTIME_INSPECT)!({ provider }))
+        .toMatchObject({ ok: false, status: 'unavailable' });
+    } finally {
+      release.resolve();
+      await running;
+    }
+  });
+
   it('composes the bound UI Agent-realtime service through the host runtime RPC producer', async () => {
     const createAgentSessionRealtimeService = await loadAgentSessionRealtimeService();
     const harness = createHarness('session-1', { credentials: {

@@ -1,4 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
+import { SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import { projectSessionSpawnFailure } from '@/session/creation/projectSessionSpawnFailure';
+import { once } from 'node:events';
+import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
 import { projectCurrentAgentSessionView } from '@happier-dev/agents';
 
@@ -20,6 +24,54 @@ import { runRequesterSessionLifecycle } from './requesterSessionLifecycle';
 import { attemptNativeForkOpen } from './fork/attemptNativeForkOpen';
 
 describe('Session startup operation custody', () => {
+  it('settles a carrier still waiting for native open with the Session startup owner timeout', async () => {
+    vi.stubEnv('HAPPIER_DAEMON_SESSION_WEBHOOK_TIMEOUT_MS', '100');
+    // The OS child is the native boundary; handler, startup observation,
+    // operation settlement and strict Action projection remain real.
+    const child = spawn(process.execPath, ['-e', 'process.stdin.resume()'], { stdio: ['pipe', 'ignore', 'ignore'] });
+    const exited = once(child, 'exit');
+    const sessionId = 'voice-home-carrier';
+    const tracked: TrackedSession = { pid: child.pid!, startedBy: 'daemon', happySessionId: sessionId,
+      childProcess: child, agentRuntimeDaemonServiceAuthorityFilePath: '/fixture/carrier-authority' };
+    const operations = createHostActionOperationRuntime({ machineId: 'machine', resolveAccountId: async () => 'account',
+      generateOperationId: () => 'carrier-startup', supportsCoreCancellation: () => true });
+    const scope = { machineId: 'machine', accountId: 'account' };
+    const handler = createMachineSessionSpawnRpcHandler({ handlers: {
+      spawnSession: async () => ({ type: 'success', sessionId }),
+      stopSession: async () => { throw new Error('An observation timeout must not stop admitted native startup'); },
+    }, awaitAgentSessionOpen: input => awaitTrackedRunnerAgentSessionOpen({ ...input, getTrackedSessions: () => [tracked] }) });
+    let result: unknown;
+    const response = operations.observeExecution({ actionId: 'session.spawn_new', input: { creationKey: 'voice-home' },
+      execute: async operation => ({ ok: true, result: await handler({ directory: '/project',
+        agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+      }, { signal: operation.signal, localActionContext: operation }) }) });
+    void response.then(value => { result = value; }, error => { result = error; });
+    try {
+      await vi.waitFor(() => expect(result).toMatchObject({ ok: true, result: { type: 'error',
+        errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
+        errorDetail: { kind: 'launch_error', code: SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT } } }));
+      const terminal = await operations.handlers.getV2({ operationId: 'carrier-startup', waitForTerminal: true });
+      expect(terminal).toMatchObject({ kind: 'found', operation: { state: 'succeeded' } });
+      if (terminal.kind !== 'found') throw new Error('Missing carrier operation');
+      const failure = terminal.operation.result;
+      if (!failure || typeof failure !== 'object' || !('errorCode' in failure) || !('errorDetail' in failure)) {
+        throw new Error('Missing typed carrier failure');
+      }
+      expect(SessionSpawnNewResultV1Schema.parse(projectSessionSpawnFailure({
+        errorCode: String(failure.errorCode), errorMessage: 'Native open did not settle', errorDetail: failure.errorDetail,
+      }))).toMatchObject({ type: 'error', code: 'spawn_failed',
+        launchError: { code: SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT } });
+      expect(child.exitCode).toBeNull();
+      expect(tracked.stopRequestedAtMs).toBeUndefined();
+    } finally {
+      operations.runner.cancel(scope, 'carrier-startup');
+      await response.catch(() => undefined);
+      child.stdin.end();
+      await exited;
+      vi.unstubAllEnvs();
+    }
+  });
+
   it.each(['current', 'replacement', 'changed-birth', 'stop-throws', 'stop-incomplete'] as const)(
     'retires only the attested refused generation and preserves its typed failure (%s)', async scenario => {
     const sessionId = 'refused-child';

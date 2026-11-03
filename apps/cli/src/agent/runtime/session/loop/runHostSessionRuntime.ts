@@ -2998,6 +2998,38 @@ export async function runHostSessionRuntime(
     throw new Error('Host session runtime config must define createSessionRuntime');
   }
   if (await terminalizeBeforeAgentAdmission()) return;
+  // Session RPC availability belongs to the host lifetime, including native startup.
+  const voiceAuthority = config.agentSessionRealtimeVoiceAuthority;
+  if (voiceAuthority) {
+    disposeAgentSessionRealtimeVoiceRpc =
+      registerAgentSessionRealtimeVoiceRpc({
+        rpc: currentControlRpcRegistrar.registrar,
+        get runtime() { return constructedRuntimeForConstructionCleanup; },
+        getHappierSessionId: () => session.sessionId,
+        resolvePromptPreparation: async ({ sessionId, signal }) => {
+          if (currentLifecycleSession.sessionId !== sessionId) throw new Error('Voice Session changed');
+          const credentials = runtimeAuthority.scope === 'account' ? runtimeAuthority.accountCredentials : runtimeAuthority.sessionCredentials;
+          const accountId = credentials ? readAccountIdFromToken(credentials.token) : null;
+          const serverId = credentials?.requesterSessionCredentialScope?.serverId ?? configuration.activeServerId;
+          const prepared = await resolveCliVoicePromptPreparation({
+            credentials,
+            sessionId,
+            sessionMetadata: currentLifecycleSession.getMetadataSnapshot?.() ?? runtimeMetadata,
+            roleContext: await sessionRoleContext.resolvePromptContext(signal, { modality: 'voice' }),
+            machineId, directory: runtimeDirectory, signal,
+            serverId, scope: accountId ? { serverId, accountId, sessionId } : null,
+          });
+          if (currentLifecycleSession.sessionId !== sessionId) throw new Error('Voice Session changed');
+          return prepared;
+        },
+        ownerId: sessionTag,
+        agentGeneration: voiceAuthority.occurrenceId,
+        isOccurrenceCurrent: voiceAuthority.isCurrent,
+        resolveProviderOccurrenceId: voiceAuthority.resolveProviderOccurrenceId,
+        resolveRetirementSignal: voiceAuthority.resolveRetirementSignal,
+        resolveConversation: voiceAuthority.resolveConversation,
+      }).dispose;
+  }
   startupPhase = 'agent_runtime_open';
   try {
     createdRuntime = await config.createSessionRuntime(sessionRuntimeParams);
@@ -3679,37 +3711,6 @@ export async function runHostSessionRuntime(
         daemonTurnContributionsBridge,
         () => currentLifecycleSession.sessionId,
       );
-    const voiceAuthority = config.agentSessionRealtimeVoiceAuthority;
-    if (voiceAuthority) {
-      disposeAgentSessionRealtimeVoiceRpc =
-        registerAgentSessionRealtimeVoiceRpc({
-          rpc: currentControlRpcRegistrar.registrar,
-          runtime: nativeRuntime,
-          getHappierSessionId: () => session.sessionId,
-          resolvePromptPreparation: async ({ sessionId, signal }) => {
-            if (currentLifecycleSession.sessionId !== sessionId) throw new Error('Voice Session changed');
-            const credentials = runtimeAuthority.scope === 'account' ? runtimeAuthority.accountCredentials : runtimeAuthority.sessionCredentials;
-            const accountId = credentials ? readAccountIdFromToken(credentials.token) : null;
-            const serverId = credentials?.requesterSessionCredentialScope?.serverId ?? configuration.activeServerId;
-            const prepared = await resolveCliVoicePromptPreparation({
-              credentials,
-              sessionId,
-              sessionMetadata: currentLifecycleSession.getMetadataSnapshot?.() ?? runtimeMetadata,
-              roleContext: await sessionRoleContext.resolvePromptContext(signal, { modality: 'voice' }),
-              machineId, directory: runtimeDirectory, signal,
-              serverId, scope: accountId ? { serverId, accountId, sessionId } : null,
-            });
-            if (currentLifecycleSession.sessionId !== sessionId) throw new Error('Voice Session changed');
-            return prepared;
-          },
-          ownerId: sessionTag,
-          agentGeneration: voiceAuthority.occurrenceId,
-          isOccurrenceCurrent: voiceAuthority.isCurrent,
-          resolveProviderOccurrenceId: voiceAuthority.resolveProviderOccurrenceId,
-          resolveRetirementSignal: voiceAuthority.resolveRetirementSignal,
-          resolveConversation: voiceAuthority.resolveConversation,
-        }).dispose;
-    }
     currentLifecycleSession.setSessionRuntimeControls({
       readReferenceAction,
       readPermissionHandler: () => permissionHandler,

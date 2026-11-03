@@ -1,5 +1,6 @@
 import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract';
 import { SessionStartupInputRefusalError } from '@/agent/runtime/session/input/sessionStartupInputRefusal';
+import { resolveSessionStartupTimeoutMs } from '@/daemon/spawn/waitForSessionWebhook';
 import type { ProjectSetupOperationContext } from '@/workspaces/projectSetup/projectSetupExecution';
 import { logger } from '@/ui/logger';
 import { readSessionPreparationFailureCode, SESSION_PREPARATION_FAILURE_PREVIEWS } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
@@ -24,6 +25,8 @@ export function createSessionStartupProjectSpawn(input: Readonly<{
             ...(local.requesterWorkAttributionV1 ? { requesterWorkAttributionV1: local.requesterWorkAttributionV1 } : {}) }
         : undefined;
     return async options => {
+        // Webhook acknowledgement and native open consume one startup budget.
+        const startupDeadline = operation ? Date.now() + resolveSessionStartupTimeoutMs() : null;
         if (operation && (!input.awaitAgentSessionOpen || !input.stopSession)) {
             return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
                 errorMessage: 'Session native startup observation or retirement unavailable' };
@@ -39,7 +42,7 @@ export function createSessionStartupProjectSpawn(input: Readonly<{
             operation.operationAcceptance.accept({ type: 'pending', retryWithSameCreationKey: true, outcome: 'accepted' });
         }
         const opened = await input.awaitAgentSessionOpen!({ sessionId: result.sessionId,
-            timeoutMs: null, signal: operation.signal });
+            timeoutMs: Math.max(0, startupDeadline! - Date.now()), signal: operation.signal });
         operation.signal.throwIfAborted();
         // Startup has already been admitted. Returning a spawn response would
         // let creation reconciliation turn the committed row into success.
@@ -62,6 +65,11 @@ export function createSessionStartupProjectSpawn(input: Readonly<{
             }
             throw new SessionStartupInputRefusalError({ code: opened.code,
                 message: 'The selected native Agent mode is not available in this Session.' });
+        }
+        if (opened.status === 'timeout') {
+            const message = 'Agent native Session startup did not complete within the configured startup budget';
+            return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED, errorMessage: message,
+                errorDetail: { kind: 'launch_error', code: SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT, message } };
         }
         if (opened.status !== 'opened') {
             const code = opened.status === 'runner_exited' ? readSessionPreparationFailureCode(opened.code) : null;
