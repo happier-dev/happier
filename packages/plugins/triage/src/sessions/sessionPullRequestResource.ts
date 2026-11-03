@@ -48,7 +48,7 @@ type State = {
     observer?: { invalidate(): void; options: PluginDynamicResourceInvocationOptionsV1; controller: AbortController };
 };
 type StagedRead = Extract<SessionPullRequestStatusResourceResultV1, { kind: 'unavailable' }>
-    | { kind: 'ready'; sessionId: string; bindings: readonly { binding: Binding; demand: NativeDemand | null }[] };
+    | { kind: 'ready'; sessionId: string; bindings: readonly { binding: Binding; demand: NativeDemand | null; unavailableStatus?: NativeStatus }[] };
 
 // The host owns this object's exact Account/plugin occurrence/Session lifetime.
 // Last-demand abort deletes our admitted bytes even when the host retains its descriptor context.
@@ -71,9 +71,11 @@ function unavailable(failure: TriageSourceFailureV1): NativeStatus {
     return { kind: 'unavailable', failure };
 }
 
-function withSourceSetupRecovery(status: NativeStatus, relations: TriageReadSourceSessionLinksResultV1 | undefined): NativeStatus {
-    const offers = relations?.configureSources;
-    return status.kind === 'unavailable' && status.failure.code === 'configuredSourceUnavailable' && offers?.length
+function withSourceSetupRecovery(status: NativeStatus, relations: TriageReadSourceSessionLinksResultV1 | undefined, sourcePluginId?: string): NativeStatus {
+    const offers = sourcePluginId === undefined ? relations?.configureSources
+        : relations?.configureSources?.filter(offer => offer.destination.pluginId === sourcePluginId);
+    return status.kind === 'unavailable' && (status.failure.code === 'configuredSourceUnavailable'
+        || status.failure.code === 'sessionLinksSourceInstanceRequired') && offers?.length
         ? { ...status, recovery: { kind: 'configureSources', offers } } : status;
 }
 
@@ -112,7 +114,12 @@ function resolveDemand(binding: Binding, relations: TriageReadSourceSessionLinks
     const matches = relations?.links.filter(link => link.sessionId === id && link.locator?.webUrl === binding.link.url);
     if (matches?.length !== 1) return null;
     const link = matches[0]!;
-    if (link.sourceInstanceId === undefined || link.sourceInstanceRevision === undefined || link.locator === undefined) return null;
+    // The relation owner retained the link but did not select a configured authority.
+    // This says nothing about whether its repository is configured or readable.
+    if (link.sourceInstanceId === undefined) return { failure: withSourceSetupRecovery(unavailable({
+        class: 'unsupportedContract', code: 'sessionLinksSourceInstanceRequired',
+    }), relations, link.entryRef.source.pluginId) };
+    if (link.sourceInstanceRevision === undefined || link.locator === undefined) return null;
     const input: TriageReobserveEntryActionInputV1 = { v: 1, entryRef: link.entryRef,
         sourceInstanceId: link.sourceInstanceId, lastKnownLocator: link.locator };
     // Storage revisions include label edits; the observed authority lifetime owns retirement.
@@ -272,7 +279,7 @@ async function read(state: State, options: PluginDynamicResourceInvocationOption
     const wanted = new Map<string, NativeDemand>();
     const bindings = metadata.bindings.map(binding => {
         const resolved = resolveDemand(binding, state.relations, id);
-        if (!resolved) return { binding, demand: null };
+        if (!resolved || resolved.failure !== undefined) return { binding, demand: null, unavailableStatus: resolved?.failure };
         const demand = wanted.get(resolved.key) ?? state.native.get(resolved.key) ?? { input: resolved.input, dirty: true };
         wanted.set(resolved.key, demand);
         return { binding, demand };
@@ -304,9 +311,9 @@ export const TRIAGE_SESSION_PULL_REQUEST_STATUS_RESOURCE_RUNTIME: PluginDynamicR
             const result = await read(state, options, updates);
             throwIfAborted(options.signal);
             const value: SessionPullRequestStatusResourceResultV1 = result.kind === 'ready'
-                ? { kind: 'ready', sessionId: result.sessionId, pullRequests: result.bindings.map(({ binding, demand }) => ({ ...binding,
+                ? { kind: 'ready', sessionId: result.sessionId, pullRequests: result.bindings.map(({ binding, demand, unavailableStatus }) => ({ ...binding,
                     ...(demand ? { entry: { entryRef: demand.input.entryRef, sourceInstanceId: demand.input.sourceInstanceId } } : {}),
-                    nativeStatus: withSourceSetupRecovery((demand && (updates.get(demand)?.status ?? demand.status))
+                    nativeStatus: unavailableStatus ?? withSourceSetupRecovery((demand && (updates.get(demand)?.status ?? demand.status))
                         ?? unavailable(state.relationFailure ?? { class: 'unsupportedContract', code: 'configuredSourceUnavailable' }), state.relations),
                 })) } : result;
             const encoded = JSON.stringify(value);

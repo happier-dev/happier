@@ -925,6 +925,11 @@ canonical entry identity, the binding also carries optional
 authorization grant. Missing or ambiguous correspondence omits it; a valid
 Channels binding need not have a Triage entry. No extra lookup or provider read
 is performed, and consumers must not synthesize an entry from a URL or PR number.
+When the relation owner retains one linked entry but omits its configured-source
+identity (including when several configured instances report the same relation),
+the PR Resource reports `sessionLinksSourceInstanceRequired`, not
+`configuredSourceUnavailable`. Relation reads and link navigation can still work;
+native checks, review and merge status require one selected configured authority.
 That Account metadata path does not require a Machine. GitHub's native status
 role remains daemon-placed: the current portable Account Action services do not
 provide its Connected Account materialization and admitted HTTP capabilities.

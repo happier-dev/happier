@@ -23,6 +23,7 @@ import { TESTKIT_SOURCE_INSTANCE_ID, testkitEntryRef, testkitLocator } from '../
 import { TRIAGE_SESSION_PULL_REQUEST_STATUS_RESOURCE_RUNTIME as runtime } from './sessionPullRequestResource.js';
 import { createTriageSourceSessionRelations } from './sourceSessionRelations.js';
 import { requireTriageAccountStorage } from '../requiredAccountStorage.js';
+import { testkitConfiguredInstance, testkitReadOnlySourceSnapshot } from './testkit/entrySessionTestkit.test-support.js';
 
 const url = 'https://github.com/example/repository/pull/17';
 const entryRef = testkitEntryRef();
@@ -669,13 +670,58 @@ describe('the composed Session PR Resource', () => {
         }
     });
 
+    it('preserves the relation owner’s unselected source result without claiming the linked repository is missing', async () => {
+        const { collections, control } = createTestkitCorpusCollections();
+        const first = testkitConfiguredInstance();
+        const second = { ...first, instance: { ...first.instance, sourceInstanceId: '22222222-2222-4222-8222-222222222222' } };
+        for (const [index, configured] of [first, second].entries()) control.sourceInstances.seed(toCorpusStoredValue({
+            instanceTag: `${index}${'a'.repeat(42)}`, lifecycle: CORPUS_SOURCE_INSTANCE_LIFECYCLE.active, configuredAtMs: 1,
+            sourceQualifiedId: `${configured.instance.source.pluginId}/${configured.instance.source.localId}`, configured,
+        }));
+        const source = testkitReadOnlySourceSnapshot().contributions[0]!;
+        const context = { signal: new AbortController().signal, services: {
+            targetedContributions: { observeForSelf: () => ({ readCurrent: async () => ({ contributions: [{ ...source,
+                descriptor: { ...source.descriptor, settingsPageId: 'triage-sources' },
+                operations: { readSessionLinks: { role: 'readSessionLinks' }, linkSession: { role: 'linkSession' } },
+            }, { ...source, contributor: { pluginId: 'acme.other', contributionId: 'other' },
+                descriptor: { ...source.descriptor, displayName: 'Other source', settingsPageId: 'other-sources' },
+            }] }), dispose() {} }) },
+            actions: { executeAdmittedTargetedOperation: async () => ({ kind: 'complete', links: [{
+                localRef: { kindId: entryRef.kindId, collisionScope: entryRef.collisionScope, entryId: entryRef.entryId },
+                sessionId: 'session-a', linkedAtMs: 1, displayPath: 'Same PR', locator,
+            }] }) },
+        } } as unknown as TriageDataActionContext; // Host contribution/Action transport fixture; domain decisions stay real.
+        const readRelations = () => createTriageSourceSessionRelations(context, collections).read({ sessionId: 'session-a' });
+        const admitted = await readRelations();
+        expect(admitted.links).toHaveLength(1);
+        expect(admitted.links[0]).not.toHaveProperty('sourceInstanceId');
+        expect(admitted.configureSources).toHaveLength(2);
+        const host = boundary({ readRelations });
+        try {
+            expect(await host.read()).toMatchObject({ kind: 'ready', pullRequests: [{ link: { url }, nativeStatus: {
+                kind: 'unavailable', failure: { class: 'unsupportedContract', code: 'sessionLinksSourceInstanceRequired' },
+                recovery: { kind: 'configureSources', offers: [{ destination: {
+                    pluginId: first.instance.source.pluginId, localId: 'triage-sources',
+                } }] },
+            } }] });
+            expect(host.counts().nativeReads).toBe(0);
+            expect(host.nativeObservationCount()).toBe(0);
+            control.sourceInstances.seed(toCorpusStoredValue({
+                instanceTag: `1${'a'.repeat(42)}`, lifecycle: CORPUS_SOURCE_INSTANCE_LIFECYCLE.retired, configuredAtMs: 1,
+                sourceQualifiedId: `${second.instance.source.pluginId}/${second.instance.source.localId}`, configured: second,
+            }));
+            host.changed('relations');
+            expect(await host.read()).toMatchObject({ kind: 'ready', pullRequests: [{ nativeStatus: { kind: 'current' } }] });
+            expect(host.counts().nativeReads).toBe(1);
+        } finally { await host.dispose(); }
+    });
+
     it('requires exact source relations for native status and recovers when they are restored', async () => {
         for (const invalid of [
             { ...relations(), links: [] },
             { ...relations(), links: relations().links.map(link => ({ ...link, sessionId: 'other-session' })) },
             { ...relations(), links: relations().links.map(link => ({ ...link, locator: testkitLocator({ webUrl: undefined, displayPath: url }) })) },
             { ...relations(), links: [...relations().links, ...relations().links] },
-            { ...relations(), links: relations().links.map(({ sourceInstanceId: _id, ...link }) => link) },
         ]) {
             const host = boundary();
             host.setRelations(invalid);
