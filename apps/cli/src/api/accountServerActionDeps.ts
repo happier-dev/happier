@@ -634,7 +634,7 @@ export function createAccountServerActionDeps(input: Readonly<{
         const detail = await readCliUsageDetail({ queries: request.queries.filter(query => query.includeAccounting && (query.includeSessionEvidence || query.includeWorkEvidence)),
           accounting, credentials, serverId, serverHttpBaseUrl, accountEncryptionMode,
           allowPrivateRead: !context.externalActionCredential && !context.externalActionExecutionAuthorization,
-          nowMs: accountingNowMs, signal: context.signal, assertCurrent: check, read,
+          nowMs: accountingNowMs, signal: context.signal, assertCurrent: check,
           resolveHeaders: request => {
             const authorization = resolveRequestHeaders({ context, effectActionId: 'usage.query', ...request });
             return authorization.ok ? authorization.headers : null;
