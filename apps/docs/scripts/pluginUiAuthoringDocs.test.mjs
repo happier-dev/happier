@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
@@ -192,23 +192,13 @@ test('keeps final UI author contracts scoped to the one public owner', () => {
   assert.match(uiArtifacts, /entry\.cjs\.bundle/u);
 });
 
-test('documents the canonical same-realm host map exactly', () => {
-  const canonicalSource = readFileSync(hostRuntimeExternalsSourcePath, 'utf8');
-  const canonicalBlock = canonicalSource.match(
-    /PLUGIN_UI_HOST_RUNTIME_EXTERNAL_SPECIFIERS = Object\.freeze\(\[([\s\S]*?)\] as const\)/u,
-  );
-  assert.ok(canonicalBlock, 'canonical host-runtime external list must remain parseable');
-  const canonicalSpecifiers = [...canonicalBlock[1].matchAll(/'([^']+)'/gu)]
-    .map((match) => match[1]);
-
+test('routes the same-realm host map reference to its canonical source', () => {
   const documentationSource = readFileSync(uiArtifactsDocPath, 'utf8');
-  const documentationBlock = documentationSource.match(
-    /The same-realm host map supplies only these exact specifiers:\s*```text\n([\s\S]*?)\n```/u,
-  );
-  assert.ok(documentationBlock, 'UI artifact docs must publish the exact host map');
-  const documentedSpecifiers = documentationBlock[1].split('\n').map((line) => line.trim());
-
-  assert.deepEqual(documentedSpecifiers, canonicalSpecifiers);
+  const repositoryPath = relative(repoRoot, hostRuntimeExternalsSourcePath).replaceAll('\\', '/');
+  const linkedRepositoryPaths = [...documentationSource.matchAll(/\[[^\]]+\]\((https:\/\/github\.com\/happier-dev\/happier\/blob\/[^)]+)\)/gu)]
+    .map(([, href]) => new URL(href).pathname.split('/').slice(5).join('/'));
+  assert.ok(existsSync(hostRuntimeExternalsSourcePath), 'canonical host map must exist');
+  assert.ok(linkedRepositoryPaths.includes(repositoryPath), 'UI artifact docs must link the canonical host map');
 });
 
 test('keeps development observation and renderer failure recovery with their current owners', () => {

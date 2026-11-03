@@ -60,6 +60,7 @@ the public surface; it does not create a separate stability tier per export.
 | Import | Purpose | Example |
 | --- | --- | --- |
 | `@happier-dev/plugin-sdk` | Define a plugin and use the root authoring, identity, lifecycle, and error contracts. | `import { definePlugin } from '@happier-dev/plugin-sdk';` |
+| `@happier-dev/plugin-sdk/access-providers` | Access-provider declarations, route and private-network observations, role results, and composable schemas. | `import { defineAccessProviderSchemas } from '@happier-dev/plugin-sdk/access-providers';` |
 | `@happier-dev/plugin-sdk/actions` | Action, tool, command, and action-service contracts. | `import type * as Actions from '@happier-dev/plugin-sdk/actions';` |
 | `@happier-dev/plugin-sdk/agents` | Cold Agent contribution and model configuration contracts. | `import type * as Agents from '@happier-dev/plugin-sdk/agents';` |
 | `@happier-dev/plugin-sdk/agents/runtime` | Daemon-realm custom Agent runtime, factory, and session contracts. | `import type * as AgentRuntime from '@happier-dev/plugin-sdk/agents/runtime';` |

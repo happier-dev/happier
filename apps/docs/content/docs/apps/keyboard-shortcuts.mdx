@@ -3,7 +3,7 @@ title: Keyboard shortcuts
 description: Every rebindable shortcut and Search, with the defaults for web and native.
 ---
 
-Happier has 87 keyboard commands. Every one can be rebound, and the defaults
+Happier has 169 keyboard commands. Every one can be rebound, and the defaults
 differ between the web client and the native apps where the platform already
 claims a key.
 
@@ -26,11 +26,18 @@ files and commits in one grouped list.
 
 In unreleased 0.3 development source, file quick open uses this same Search
 surface, scoped to the workspace. Its registered shortcut is
-`Mod+P` (desktop) · `Mod+P` (everywhere else); the general shortcut registry must be enabled.
+`Mod+P` (desktop) · `Mod+P` (browser) · `Mod+P` (everywhere else); the general shortcut registry must be enabled.
 The browser or operating system may claim a binding before Happier receives it.
 See [Files and the editor](/code/files-and-editor) for the file workflow.
 
 ## Shortcuts
+
+In unreleased 0.3 development source, Open list filters and Select space follow
+the focused Sessions, Workflows or Discussions list. Space numbers follow that
+list's displayed space order. Turning spaces off suspends space selection
+shortcuts while leaving the filter command available. The default space-number
+bindings do not apply in Windows or Linux browsers; the title menu remains
+available there. Space selection leaves the workspace tab shortcuts unchanged.
 
 ### Moving between sessions
 
@@ -48,13 +55,23 @@ See [Files and the editor](/code/files-and-editor) for the file workflow.
 | --- | --- |
 | Move the focused session up | `Alt+Shift+ArrowUp` |
 | Move the focused session down | `Alt+Shift+ArrowDown` |
-| Move to a folder | `Alt+Shift+F` |
+| Move to a folder | `Alt+Shift+G` |
 | Move out to the workspace root | `Alt+Shift+R` |
 | Select or deselect the focused row | `x` (web) |
 | Extend the selection up | `Shift+ArrowUp` (web) |
 | Extend the selection down | `Shift+ArrowDown` (web) |
 | Select every session | `Mod+A` (web) |
 | Clear the selection | `Escape` (web) |
+| Open list filters | `Alt+F` (desktop) |
+| Select space 1 | `Ctrl+1` (macOS) · `Alt+1` (Windows, Linux desktop) |
+| Select space 2 | `Ctrl+2` (macOS) · `Alt+2` (Windows, Linux desktop) |
+| Select space 3 | `Ctrl+3` (macOS) · `Alt+3` (Windows, Linux desktop) |
+| Select space 4 | `Ctrl+4` (macOS) · `Alt+4` (Windows, Linux desktop) |
+| Select space 5 | `Ctrl+5` (macOS) · `Alt+5` (Windows, Linux desktop) |
+| Select space 6 | `Ctrl+6` (macOS) · `Alt+6` (Windows, Linux desktop) |
+| Select space 7 | `Ctrl+7` (macOS) · `Alt+7` (Windows, Linux desktop) |
+| Select space 8 | `Ctrl+8` (macOS) · `Alt+8` (Windows, Linux desktop) |
+| Select space 9 | `Ctrl+9` (macOS) · `Alt+9` (Windows, Linux desktop) |
 
 ### Writing and sending
 
@@ -72,8 +89,6 @@ See [Files and the editor](/code/files-and-editor) for the file workflow.
 
 | Action | Default |
 | --- | --- |
-| Next message | _Unbound by default_ |
-| Previous message | _Unbound by default_ |
 | Jump to the top | `Home` |
 | Jump to the live tail | `End` |
 | Page up | `PageUp` |
@@ -87,7 +102,7 @@ See [Files and the editor](/code/files-and-editor) for the file workflow.
 
 | Action | Default |
 | --- | --- |
-| Open a workspace file | `Mod+P` (desktop) · `Mod+P` (everywhere else) |
+| Open a workspace file | `Mod+P` (desktop) · `Mod+P` (browser) · `Mod+P` (everywhere else) |
 | Find a symbol in the open file | `Mod+Shift+O` |
 | Search text in workspace files | `Mod+Shift+F` |
 
@@ -105,16 +120,88 @@ See [Files and the editor](/code/files-and-editor) for the file workflow.
 | --- | --- |
 | `code.goToDefinition` | `F12` |
 | `code.findReferences` | `Shift+F12` |
+| `code.showInfo` | _Unbound by default_ |
+| `code.goToTypeDefinition` | `Mod+F12` |
+| `code.goToImplementation` | `Mod+Shift+F12` |
+| `code.peekReferences` | `Alt+F12` |
+| `code.suggest` | `Mod+Space` |
+| `code.signatureHelp` | `Mod+Shift+Space` |
+| `code.format` | `Alt+Shift+F` |
+| `code.expandSelection` | `Alt+Shift+ArrowRight` |
+| `code.shrinkSelection` | `Alt+Shift+ArrowLeft` |
+| `code.formatSelection` | _Unbound by default_ |
+| `code.organizeImports` | _Unbound by default_ |
 | `code.problem.next` | `F8` |
 | `code.problem.previous` | `Shift+F8` |
+| `code.showProblems` | _Unbound by default_ |
+| `code.checkProjectProblems` | _Unbound by default_ |
+| `code.restart` | _Unbound by default_ |
 | `code.rename` | `F2` |
-| `code.quickFix` | `Alt+Enter` · `Mod+B` (everywhere else) · `Mod+B` (desktop) · `Alt+B` (browser) · `Mod+Alt+B` (everywhere else) · `Mod+Alt+B` (desktop) · `Alt+Shift+B` (browser) · `Mod+Shift+E` (everywhere else) · `Mod+Shift+E` (desktop) · `Alt+Shift+E` (browser) · `Mod+Alt+E` (everywhere else) · `Mod+Alt+E` (desktop) · `Alt+Shift+L` (browser) · `F6` (everywhere else) · `Ctrl+F6` (everywhere else) · `F6` (desktop) · `Alt+F6` (browser) · `Shift+F6` (everywhere else) · `Ctrl+Shift+F6` (everywhere else) · `Shift+F6` (desktop) · `Alt+Shift+F6` (browser) · `j` · `k` · `r` · `d` · `/` · `Shift+j` · `Shift+k` · `Mod+z` · `Alt+i` (browser) · `Mod+i` (desktop) · `Mod+i` (everywhere else) · `ArrowDown` · `j` · `ArrowUp` · `k` · `Enter` · `Escape` |
-| `appearance.theme.toggle` | `Mod+Shift+L` (desktop) · `Mod+Shift+L` (everywhere else) |
-| `browser.address.focus` | `Alt+L` (web) · `Mod+L` (everywhere else) |
+| `code.quickFix` | `Alt+Enter` |
+| `media.previous` | `ArrowLeft` |
+| `media.next` | `ArrowRight` |
+| `media.zoomIn` | `Shift+=` · `NumpadAdd` |
+| `media.zoomOut` | `-` |
+| `media.fit` | `0` |
+| `media.actualSize` | `1` |
+| `media.playPause` | `Space` |
+| `media.annotate` | `e` |
+| `screenCapture.chooseSession` | `Mod+K` (desktop and native) |
+| `screenCapture.recording.playPause` | `Space` |
+| `screenCapture.copy` | `Mod+C` |
+| `annotation.select` | `v` |
+| `annotation.arrow` | `a` |
+| `annotation.rectangle` | `r` |
+| `annotation.ellipse` | `o` |
+| `annotation.freehand` | `d` |
+| `annotation.highlighter` | `h` |
+| `annotation.step` | `n` |
+| `annotation.element` | `p` |
+| `annotation.crop` | `c` |
+| `annotation.cropApply` | `Enter` |
+| `annotation.text` | `t` |
+| `annotation.blur` | `b` |
+| `annotation.undo` | `Mod+z` |
+| `annotation.redo` | `Mod+Shift+z` |
+| `annotation.delete` | `Delete` · `Backspace` |
+| `annotation.duplicate` | `Mod+d` |
+| `annotation.nextMark` | `Tab` |
+| `annotation.previousMark` | `Shift+Tab` |
+| `annotation.nudgeLeft` | `ArrowLeft` |
+| `annotation.nudgeRight` | `ArrowRight` |
+| `annotation.nudgeUp` | `ArrowUp` |
+| `annotation.nudgeDown` | `ArrowDown` |
+| `annotation.nudgeLeftLarge` | `Shift+ArrowLeft` |
+| `annotation.nudgeRightLarge` | `Shift+ArrowRight` |
+| `annotation.nudgeUpLarge` | `Shift+ArrowUp` |
+| `annotation.nudgeDownLarge` | `Shift+ArrowDown` |
+| `shell.column.toggle` | `Mod+B` (everywhere else) · `Mod+B` (desktop) · `Alt+B` (browser) |
+| `panes.main.toggle` | `Mod+Alt+B` (everywhere else) · `Mod+Alt+B` (desktop) · `Alt+Shift+B` (browser) |
+| `panes.side.toggle` | `Mod+Shift+E` (everywhere else) · `Mod+Shift+E` (desktop) · `Alt+Shift+E` (browser) |
+| `panes.arrangement.toggle` | `Mod+Alt+E` (everywhere else) · `Mod+Alt+E` (desktop) · `Alt+Shift+L` (browser) |
+| `panes.region.next` | `F6` (everywhere else) · `Ctrl+F6` (Windows, Linux everywhere else) · `F6` (desktop) · `Alt+F6` (browser) |
+| `panes.region.previous` | `Shift+F6` (everywhere else) · `Ctrl+Shift+F6` (Windows, Linux everywhere else) · `Shift+F6` (desktop) · `Alt+Shift+F6` (browser) |
+| `review.change.next` | `j` |
+| `review.change.previous` | `k` |
+| `review.change.keep` | `r` |
+| `review.change.discard` | `d` |
+| `review.change.ask` | `/` |
+| `review.file.next` | `Shift+j` |
+| `review.file.previous` | `Shift+k` |
+| `review.undo` | `Mod+z` |
+| `editor.selection.ask` | `Alt+i` (browser) · `Mod+i` (desktop) · `Mod+i` (everywhere else) |
+| `files.track.toggle` | _Unbound by default_ |
+| `file.blame.toggle` | _Unbound by default_ |
+| `inbox.item.next` | `ArrowDown` · `j` |
+| `inbox.item.previous` | `ArrowUp` · `k` |
+| `inbox.item.open` | `Enter` |
+| `inbox.item.close` | `Escape` |
+| `appearance.theme.toggle` | `Mod+Shift+L` (desktop) · `Mod+Shift+L` (browser) · `Mod+Shift+L` (everywhere else) |
+| `browser.address.focus` | `Mod+L` (desktop) · `Alt+L` (browser) · `Mod+L` (everywhere else) |
 | `browser.back` | `Alt+[` (web) · `Mod+[` (everywhere else) |
 | `browser.forward` | `Alt+]` (web) · `Mod+]` (everywhere else) |
 | `browser.reload` | `Alt+R` (web) · `Mod+R` (everywhere else) |
-| `composer.prompts.open` | `Ctrl+R` (browser and native) · `Ctrl+R` (desktop and native) |
+| `composer.prompts.open` | `Ctrl+R` (macOS browser and native) · `Ctrl+R` (desktop and native) |
 | `composer.sendInterrupt` | `Mod+Shift+Enter` |
 | `search.replaceInFiles` | `Mod+Shift+H` (desktop) · `Alt+Shift+H` (browser) · `Mod+Shift+H` (everywhere else) |
 | `search.replace.apply` | `Mod+Alt+Enter` |
@@ -139,7 +226,7 @@ See [Files and the editor](/code/files-and-editor) for the file workflow.
 | `terminal.jump` | `Alt+J` (web) · `Mod+J` (everywhere else) |
 | `terminal.toggle` | `Ctrl+`` |
 | `terminal.newShell` | `Ctrl+Shift+`` |
-| `terminal.split` | `Mod+\\` |
+| `terminal.split` | `Mod+\` |
 | `workspace.focusDown` | `Ctrl+Alt+ArrowDown` (web) · `Mod+Alt+ArrowDown` (everywhere else) |
 | `workspace.focusLeft` | `Ctrl+Alt+ArrowLeft` (web) · `Mod+Alt+ArrowLeft` (everywhere else) |
 | `workspace.focusRight` | `Ctrl+Alt+ArrowRight` (web) · `Mod+Alt+ArrowRight` (everywhere else) |
@@ -150,6 +237,8 @@ See [Files and the editor](/code/files-and-editor) for the file workflow.
 | `workspace.toggleMaximize` | `Alt+M` |
 | `files.editor.change.next` | `Alt+F5` |
 | `files.editor.change.previous` | `Alt+Shift+F5` |
+| `workflow.new` | _Unbound by default_ |
+| `workflow.createWithAgent` | _Unbound by default_ |
 | `workflow.save` | `Alt+S` (web) · `Mod+S` (everywhere else) |
 | `files.editor.save` | `Alt+S` (browser) · `Mod+S` (desktop) · `Mod+S` (everywhere else) |
 | `workflow.run` | `Mod+Enter` |

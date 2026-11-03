@@ -3,7 +3,7 @@ title: What ships in the box
 description: Every plugin Happier bundles — agents, model providers, voice engines, source control and channels — generated from their projected manifests.
 ---
 
-Happier bundles 64 plugins. That number is the clearest statement
+Happier bundles 84 plugins. That number is the clearest statement
 of how this version is built: coding agents, model providers, voice engines,
 version-control backends and hosting forges all use the plugin platform.
 
@@ -60,12 +60,14 @@ Model sources that compatible agents can draw from, configured under **Settings 
 | Plugin | Id | What it does |
 | --- | --- | --- |
 | **CLIProxyAPI** | `happier.provider.cliproxyapi` | Use models served by an external or locally detected CLIProxyAPI gateway. |
+| **Cloudflare AI Gateway** | `happier.provider.cloudflare-ai-gateway` | Use Cloudflare AI Gateway with an account gateway token; Claude pass-through also uses your own Anthropic API key. |
 | **DeepSeek** | `happier.provider.deepseek` | Use DeepSeek models through Anthropic- or OpenAI-compatible agents. |
 | **LM Studio** | `happier.provider.lmstudio` | Use models served locally by LM Studio 0.4.1 or newer. |
 | **MiniMax** | `happier.provider.minimax` | Use MiniMax models through compatible agents on the global or China endpoint. |
 | **Ollama** | `happier.provider.ollama` | Use models served locally by Ollama. |
 | **OpenAI** | `happier.provider.openai` | Use OpenAI API models through a SavedSecret-backed provider connection. |
 | **OpenRouter** | `happier.provider.openrouter` | Use OpenRouter models through one provider connection. |
+| **Vercel AI Gateway** | `happier.provider.vercel-ai-gateway` | Use Vercel AI Gateway models through one provider connection. |
 | **Z.AI** | `happier.provider.zai` | Use Z.AI Coding Plan models through compatible agents. |
 
 ### Voice engines
@@ -120,13 +122,22 @@ Machine provisioning plugins in the 0.3 development source.
 | **Boat Machines** | `happier.machine.boat` | Create and manage Boat sandboxes as ordinary Happier Machines. |
 | **Crabbox Machines** | `happier.machine.crabbox` | Native Crabbox leases with exact resource custody and host-owned SSH enrollment. |
 | **Cua Machines** | `happier.machine.cua` | Exact Cua local and BYOC resources with private native bootstrap IO. |
+| **Daytona Machines** | `happier.machine.daytona` | Create and manage Daytona sandboxes as ordinary Happier Machines. |
 | **DigitalOcean Machines** | `happier.machine.digitalocean` | Manage exact reviewed DigitalOcean resources through captured cloud credentials. |
 | **Docker Sandbox Machines** | `happier.machine.docker-sandboxes` | Native local Docker Sandboxes with retained names and private bootstrap IO. |
+| **E2B Machines** | `happier.machine.e2b` | A Linux sandbox on E2B, connected as an ordinary Happier Machine. |
 | **Fly Machines** | `happier.machine.fly` | Native Fly Machine control and private buffered bootstrap IO. |
+| **Freestyle Machines** | `happier.machine.freestyle` | Create and manage Freestyle VMs as ordinary Happier Machines. |
 | **Hetzner Machines** | `happier.machine.hetzner` | Manage exact reviewed Hetzner resources through captured cloud credentials. |
 | **Lima Machines** | `happier.machine.lima` | Managed local Lima guests using native, private bootstrap IO. |
 | **Lume Machines** | `happier.machine.lume` | Managed Lume guests on the selected Apple silicon Mac. |
+| **Machine recipes** | `happier.machine.recipes` | Declarative software choices for machine setup. |
+| **Machine services** | `happier.machine.services` | Observe and control existing native services on the selected Machine. |
 | **Modal Machines** | `happier.machine.modal` | Finite Modal Sandboxes with private native bootstrap IO. |
+| **Railway Machines** | `happier.machine.railway` | Create and manage Railway sandboxes as ordinary Happier Machines. |
+| **Superserve Machines** | `happier.machine.superserve` | Create and manage Superserve sandboxes as ordinary Happier Machines. |
+| **Upstash Box Machines** | `happier.machine.upstash-box` | Create and manage Upstash Box sandboxes as ordinary Happier Machines. |
+| **Vercel Machines** | `happier.machine.vercel` | Sandboxes that keep their files between runs. |
 
 ### Language intelligence
 
@@ -134,7 +145,37 @@ On-demand language servers in the 0.3 development source.
 
 | Plugin | Id | What it does |
 | --- | --- | --- |
+| **Markdown** | `happier.language.markdown` | Markdown links, headings, references and diagnostics on the workspace Machine. |
 | **TypeScript** | `happier.language.typescript` | TypeScript and JavaScript language intelligence on the workspace Machine. |
+| **Web languages** | `happier.language.web` | JSON, CSS, SCSS, Less and HTML language intelligence on the workspace Machine. |
+
+### Deployments
+
+Deploy targets, managed databases and deployment templates in the 0.3 development source.
+
+| Plugin | Id | What it does |
+| --- | --- | --- |
+| **Cloudflare deployments** | `happier.deploy.cloudflare` | — |
+| **Deployment templates** | `happier.deployment.templates` | — |
+| **Neon deployments** | `happier.deploy.neon` | — |
+| **Supabase deployments** | `happier.deploy.supabase` | — |
+| **Vercel deployments** | `happier.deploy.vercel` | — |
+
+### Backups
+
+Backup destinations in the 0.3 development source.
+
+| Plugin | Id | What it does |
+| --- | --- | --- |
+| **Backup destinations** | `happier.backup.destinations` | — |
+
+### Secret sources
+
+External secret sources in the 0.3 development source.
+
+| Plugin | Id | What it does |
+| --- | --- | --- |
+| **1Password** | `happier.secret-source.onepassword` | Link, read and store Saved Secret fields using 1Password CLI on this Machine. |
 
 ### Everything else
 
@@ -142,8 +183,8 @@ Single-purpose plugins that do not belong to a family.
 
 | Plugin | Id | What it does |
 | --- | --- | --- |
-| **App context** | `happier.app-context` | Attach the captured current screen to an Agent message. |
-| **Conversation Channels** | `happier.channels` | Connects external conversations to Happier sessions and automations. |
+| **App context** | `happier.app-context` | Attach captured app context and transcript annotations to an Agent message. |
+| **Conversation Channels** | `happier.channels` | Connects external conversations to Happier sessions and workflows. |
 | **Jira** | `happier.jira` | Jira Cloud issues, native workflows and linked work in PRs, Issues & Tasks. |
 | **Linear** | `happier.linear` | Live Linear team issues in PRs, Issues & Tasks. |
 | **Plugin Inspector** | `happier.inspector` | First-party Plugin SDK inspector for installed plugin state and reload diagnostics. |
@@ -159,40 +200,51 @@ useful to know before you build on it.
 
 | Family | Plugins |
 | --- | --- |
-| `mcp` | 64 |
-| `ui` | 64 |
-| `resources` | 39 |
-| `systemTools` | 28 |
-| `actions` | 26 |
-| `connectedAccountDescriptors` | 24 |
+| `mcp` | 84 |
+| `ui` | 84 |
+| `resources` | 61 |
+| `actions` | 39 |
+| `connectedAccountDescriptors` | 34 |
+| `systemTools` | 31 |
 | `agents` | 22 |
-| `settings` | 13 |
+| `machineProvisioners` | 17 |
+| `settings` | 16 |
 | `targetedPluginContributions` | 13 |
-| `machineProvisioners` | 10 |
-| `managedDependencies` | 10 |
-| `providers` | 9 |
+| `managedDependencies` | 12 |
+| `providers` | 11 |
+| `backgroundServices` | 9 |
+| `events` | 9 |
 | `voiceProviders` | 6 |
-| `events` | 5 |
-| `backgroundServices` | 4 |
+| `accountCollections` | 5 |
+| `notifications` | 5 |
+| `deploymentTargets` | 4 |
 | `hooks` | 4 |
 | `scmHostingProviders` | 4 |
-| `accountCollections` | 3 |
 | `composerAttachments` | 3 |
+| `inputTypes` | 3 |
+| `languageServers` | 3 |
 | `pluginContributionPoints` | 3 |
+| `webhooks` | 3 |
 | `composerControls` | 2 |
 | `composerReferences` | 2 |
 | `executionRunProfiles` | 2 |
 | `promptAssets` | 2 |
 | `scmBackends` | 2 |
+| `backupDestinations` | 1 |
+| `composerRegions` | 1 |
 | `dragSources` | 1 |
 | `dropTargets` | 1 |
-| `inputTypes` | 1 |
-| `languageServers` | 1 |
+| `healthCheckKinds` | 1 |
+| `machineRecipes` | 1 |
+| `machineSetupPresets` | 1 |
+| `projectNativeAdapters` | 1 |
+| `registrySources` | 1 |
 | `searchProviders` | 1 |
+| `secretSources` | 1 |
 | `sessionHeaderActions` | 1 |
 | `sessionInfoSections` | 1 |
 | `transcriptActivities` | 1 |
-| `webhooks` | 1 |
+| `workItems` | 1 |
 
 ## Related
 

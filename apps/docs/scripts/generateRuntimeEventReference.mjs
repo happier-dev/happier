@@ -52,9 +52,9 @@ const FAMILIES = [
     kinds: ['runtime-activity-snapshot'],
   },
   {
-    title: 'Available commands',
-    lede: 'The commands the current agent runtime can accept. This lets the host refresh command discovery without treating that catalog as transcript output.',
-    kinds: ['available-commands'],
+    title: 'Session observations',
+    lede: 'The commands and configuration options the current Agent runtime advertises, and the connected-account identity observed in its native session. The host projects these observations into Session state rather than transcript output.',
+    kinds: ['available-commands', 'config-options', 'connected-account-identity-observed'],
   },
 ];
 
