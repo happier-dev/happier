@@ -108,3 +108,27 @@ test('compute-changed-components unions changes and commits across --bases', asy
   const both = run(dir, process.execPath, [script, '--base', mainBase, '--bases', previewBase, '--head', head]);
   assert.notEqual(both.status, 0);
 });
+
+test('compute-changed-components treats channel bases at the same commit as one base', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'happier-compute-changed-samebase-'));
+  git(dir, ['init']);
+  git(dir, ['config', 'user.email', 'test@example.com']);
+  git(dir, ['config', 'user.name', 'Test']);
+  await mkdir(join(dir, 'apps', 'cli'), { recursive: true });
+  await writeFile(join(dir, 'apps', 'cli', 'README.md'), 'base\n', 'utf8');
+  git(dir, ['add', '.']);
+  git(dir, ['commit', '-m', 'base']);
+  const base = git(dir, ['rev-parse', 'HEAD']);
+  await writeFile(join(dir, 'apps', 'cli', 'README.md'), 'head\n', 'utf8');
+  git(dir, ['add', '.']);
+  git(dir, ['commit', '-m', 'head']);
+  const head = git(dir, ['rev-parse', 'HEAD']);
+
+  const script = resolve(process.cwd(), 'scripts', 'pipeline', 'release', 'compute-changed-components.mjs');
+  // preview and main both at `base` (e.g. right after a production promotion).
+  const res = run(dir, process.execPath, [script, '--bases', `${base},${base}`, '--head', head]);
+  assert.equal(res.status, 0, res.stderr || res.stdout);
+  const parsed = JSON.parse(String(res.stdout).trim());
+  assert.equal(parsed.changed_cli, 'true');
+  assert.equal(parsed.commit_count, '1');
+});

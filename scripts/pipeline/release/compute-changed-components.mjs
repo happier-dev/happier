@@ -47,10 +47,9 @@ function main() {
   if (!base && !bases) fail('--base or --bases is required');
   if (!head) fail('--head is required');
 
-  const baseRefs = (bases || base).split(',').map((value) => value.trim()).filter(Boolean);
-  if (baseRefs.length === 0 || new Set(baseRefs).size !== baseRefs.length) {
-    fail('--base/--bases must contain unique non-empty git revisions');
-  }
+  // Channel bases may resolve to the same commit (preview == main after a promotion); one base then.
+  const baseRefs = [...new Set((bases || base).split(',').map((value) => value.trim()).filter(Boolean))];
+  if (baseRefs.length === 0) fail('--base/--bases must contain at least one non-empty git revision');
 
   // A combined release validates the union of changes since every channel base.
   const commits = new Set();
