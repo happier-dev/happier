@@ -1,3 +1,4 @@
+import { createProjectSourceInTx } from '@/app/projects/sources/projectSourceService';
 import { actionSpecToActionDefinitionV1, freezeWorkflowActionContractV1 } from '@happier-dev/protocol/actions/actionCatalog';
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { createWorkflowActionExecutor } from '@happier-dev/protocol/actions/executor/workflowAccountActions';
@@ -9604,4 +9605,44 @@ describe("external Action execution authorization", () => {
             await unqualifiedApp.close();
         }
     });
+    it('refuses a sealed Manage root at replay after the grantee is downgraded to Use', async () => {
+        const fixture = await createFixture({ qualifiedPat: false });
+        const requester = await db.account.create({ data: { encryptionMode: 'plain' } });
+        await db.teamMembership.create({ data: { teamId: fixture.team.id, accountId: requester.id, role: 'member' } });
+        const grant = await db.machineTeamGrant.create({ data: { machineId: fixture.machine.id, teamId: fixture.team.id,
+            accessLevel: 'admin', createdByAccountId: fixture.account.id } });
+        const token = await auth.createToken(requester.id, undefined, { kind: 'account', authority: 'present_user' });
+        const homeId = await getOrCreateServerIdentityId();
+        const actionId = 'deployments.environments.create';
+        const source = await inTx(tx => createProjectSourceInTx(tx, requester.id, {
+            serverId: homeId, requestKey: crypto.randomUUID(), name: 'Downgraded Manage Project', audience: [],
+        }));
+        if (!source.ok) throw new Error(source.error);
+        const input = { serverId: homeId, projectSourceId: source.source.id, requestKey: crypto.randomUUID(),
+            protection: 'nonProduction', purpose: 'standard', deployerMode: 'members', controllerMachineId: fixture.machine.id,
+            mode: 'apply', name: 'App', definition: { from: 'image', image: 'nginx:1', port: 80 } };
+        const { app } = await createApp(fixture.team.id);
+        try {
+            const minted = await app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
+                headers: { authorization: `Bearer ${token}` }, payload: { v: 1, machineId: fixture.machine.id,
+                    envelope: { ...fixture.envelope, input } } });
+            expect(minted.statusCode, minted.body).toBe(200);
+            const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(minted.json());
+            expect(authorization.binding.admittedMachineRole).toBe('manage');
+            authorizationRequests.set(authorization.token, { target: authorization.binding.target,
+                installationId: fixture.machine.installationId!, requestId: authorization.binding.requestId });
+            const path = bindExternalActionExecutionAuthorizationVerifyHttpPathV1(actionId);
+            const body = { v: 1, admittedMachineRole: 'manage' } as const;
+            const replay = () => app.inject({ method: 'POST', url: path, payload: body,
+                headers: machineHeaders({ authorizationToken: authorization.token, effectActionId: actionId,
+                    method: 'POST', path, body, privateKey: fixture.keyPair.secretKey }) });
+            expect((await replay()).statusCode).toBe(200);
+            await db.machineTeamGrant.update({ where: { machineId_teamId: { machineId: grant.machineId, teamId: grant.teamId } },
+                data: { accessLevel: 'view' } });
+            const downgraded = await replay();
+            expect(downgraded.statusCode, downgraded.body).not.toBe(200);
+            expect(downgraded.json()).not.toEqual({ ok: true });
+        } finally { await app.close(); }
+    });
+
 });
