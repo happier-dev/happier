@@ -54,8 +54,10 @@ export function createSavedHealthChecksHost(input: Readonly<{
                 signal.throwIfAborted();
                 const detail = DeploymentEnvironmentGetResultV1Schema.parse(loaded);
                 if (!detail.ok) return unavailable(detail.error);
-                if (detail.environment.id !== environmentId || detail.environment.serverId !== input.serverId
-                    || detail.environment.deletedAtMs !== undefined) return unavailable('health_check_subject_mismatch');
+                // The deployment Action admits the exact Home; its portable id can differ from this local profile id.
+                if (detail.environment.id !== environmentId || detail.environment.deletedAtMs !== undefined) {
+                    return unavailable('health_check_subject_mismatch');
+                }
                 if (!detail.environment.capabilities.manage) return unavailable('deployment_access_denied');
                 return detail;
             };
