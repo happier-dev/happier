@@ -10,6 +10,7 @@ This folder documents how Happier works internally, with a focus on protocol, ba
 - actions.md: The Actions platform — the spec registry, host-stamped authority/placement/transport, the Q/M/H classes, approval routing, and the CLI result contract.
 - encryption.md: Encryption boundaries, on-wire encoding, and session storage modes.
 - feature-gating.md: Canonical feature catalog, payload, policy, and gate-consumption contracts.
+- [organization-policy.md](organization-policy.md): Machine-level desktop and CLI/daemon policy ownership, defaults, locks, and recovery (unreleased 0.3 development).
 - peer-mediation.md: Route decision, grants, transports and observability for device↔machine flows; the enablement contract and current reachability.
 - compatibility.md: Released and live `../0.2` predecessor baselines, mixed-version seams, rollout directions, and compatibility-path lifecycle.
 - testing.md: Repository test lanes, placement rules, and e2e conventions.

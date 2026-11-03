@@ -1255,6 +1255,13 @@ function plural({ count, singular, plural }: { count: number; singular: string; 
  * Must match the exact structure of the English translations
  */
 export const ca: TranslationStructure = {
+  organizationPolicy: {
+    managedBy: ({ organization }: { organization: string }) => `Gestionat per ${organization}`,
+    lockedExplanation: "La teva organització estableix aquesta opció. Contacta amb l’administrador per canviar-la.",
+    support: "Contacta amb el suport",
+    invalidTitle: "Cal revisar la política de l’organització",
+    invalidBody: "No es pot canviar el servei de compte o el Home ni configurar un Home nou fins que l’administrador corregeixi la política.",
+  },
   transcriptPassage: {
     quote: "Cita",
     annotate: "Anota",

@@ -4,6 +4,7 @@ import { getServerProfile, upsertServerProfileByUrl, useServerProfile } from '@/
 import { resolveCliHomeTarget } from '@/server/homeTarget';
 import type { ResolvedHomeTarget } from '@happier-dev/cli-common/homeTarget';
 import { resolveDefaultWebappUrl } from '@happier-dev/cli-common/happierCloud';
+import { assertOrganizationPolicyEndpointAllowed } from '@happier-dev/protocol/organizationPolicy/organizationPolicyV1';
 
 function takeFlagValue(args: string[], name: string): { value: string | null; rest: string[] } {
   const rest: string[] = [];
@@ -268,6 +269,7 @@ function applySelectionEnv(selection: Readonly<{
   webappUrl: string;
   activeServerId: string;
 }>): void {
+  assertOrganizationPolicyEndpointAllowed(configuration.organizationPolicy, 'home', selection.serverUrl);
   const local = selection.localServerUrl;
   if (local && local !== selection.serverUrl) {
     process.env.HAPPIER_PUBLIC_SERVER_URL = selection.serverUrl;

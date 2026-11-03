@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { OrganizationPolicyFieldNotice, readOrganizationPolicyFieldState } from '@/components/organizationPolicy/OrganizationPolicyFieldNotice';
 import { View } from 'react-native';
 import { createServerFetchAtEndpoint } from '@/sync/http/client';
 import { AccountServiceContinuation } from '@/components/account/auth/AccountServiceContinuation';
@@ -151,6 +152,7 @@ function projectEnrollmentFailure(result: AccountPostAuthResult | null): Enrollm
  * signed in. Changing the service opens in place.
  */
 export function AccountServiceSettingsSection(): React.ReactElement {
+    const policy = readOrganizationPolicyFieldState('accountService');
     const router = useRouter();
     const { theme } = useUnistyles();
     const activeServer = useActiveServerSnapshot();
@@ -766,7 +768,7 @@ export function AccountServiceSettingsSection(): React.ReactElement {
             trailing={changingService ? <Icon name="caret-up" size={14} color={theme.colors.text.secondary} /> : undefined}
             expanded={changingService}
             onPress={toggleChangingService}
-            disabled={busy}
+            disabled={busy || policy.disabled}
         />
     );
     const noticeRow = (testID: string, title: string, body: string, actions: React.ReactNode) => (
@@ -1009,6 +1011,7 @@ export function AccountServiceSettingsSection(): React.ReactElement {
                 description={t('settingsAccount.accountServiceDescription')}
                 action={noticeCarriesChange ? undefined : changeServiceButton('settings-account-service-change-service', 'inverted')}
             >
+                {policy.lock ? <SectionContentRow><OrganizationPolicyFieldNotice field="accountService" /></SectionContentRow> : null}
                 <SettingAnchor setting={ACCOUNT_SETTINGS.settings.accountService}>
                     {primaryRows ?? (
                         <SectionContentRow testID="settings-account-service-invitation" leading={serviceMark}>

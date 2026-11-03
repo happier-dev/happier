@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { OrganizationPolicyFieldNotice, readOrganizationPolicyFieldState } from '@/components/organizationPolicy/OrganizationPolicyFieldNotice';
 import { Platform } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
@@ -157,6 +158,7 @@ function RootStep(props: React.ComponentProps<typeof AccountPopoverContent> & Re
     const { theme } = useUnistyles();
     const { service } = props;
     const homeRows = useAccountPopoverHomeRows(props);
+    const homePolicy = readOrganizationPolicyFieldState('home');
     const secondaryIconColor = theme.colors.text.secondary;
     const linkOffer = service.linkOffer;
     const serviceName = service.namedService ?? t('welcome.yourSignInService');
@@ -170,6 +172,7 @@ function RootStep(props: React.ComponentProps<typeof AccountPopoverContent> & Re
                 onOpenAccount={() => props.onStepChange('account')}
             />
 
+            <OrganizationPolicyFieldNotice field="home" />
             <ActionListSection
                 separatorAbove
                 title={t('accountPopover.homesTitle')}
@@ -178,6 +181,8 @@ function RootStep(props: React.ComponentProps<typeof AccountPopoverContent> & Re
                     {
                         id: 'add-home-or-sign-in',
                         testID: 'connection-popover-add-home',
+                        disabled: homePolicy.disabled,
+                        subtitle: homePolicy.accessibilityHint,
                         label: t('accountPopover.addHome'),
                         icon: <Icon name="plus" size={16} color={secondaryIconColor} />,
                         onPress: props.onAddHome,
@@ -375,6 +380,7 @@ function AccountStep(props: Readonly<{
 
 /** One row per Home (and Home group): its mark, name, one health line and the fix that applies. */
 function useAccountPopoverHomeRows(props: React.ComponentProps<typeof AccountPopoverContent>): ActionListItem[] {
+    const homePolicy = readOrganizationPolicyFieldState('home');
     const { theme } = useUnistyles();
     const router = useRouter();
     const { setHomeViewSelectionSettings } = useHomeViewSelectionSettingsMutable();
@@ -476,6 +482,7 @@ function useAccountPopoverHomeRows(props: React.ComponentProps<typeof AccountPop
                 return {
                     id: `target-use-${target.kind}-${target.id}`,
                     testID: `connection-popover-home-${target.kind}-${target.id}`,
+                    disabled: homePolicy.disabled,
                     label,
                     subtitle,
                     accessibilityLabel: [label, subtitle].join(', '),
@@ -504,6 +511,7 @@ function useAccountPopoverHomeRows(props: React.ComponentProps<typeof AccountPop
             return {
                 id: `target-use-${target.kind}-${target.id}`,
                 testID: `connection-popover-home-${target.kind}-${target.id}`,
+                disabled: homePolicy.disabled,
                 label,
                 subtitle: health.label,
                 subtitleLeading: health.tone === 'attention'
@@ -527,6 +535,7 @@ function useAccountPopoverHomeRows(props: React.ComponentProps<typeof AccountPop
             };
         });
     }, [
+        homePolicy.disabled,
         authStatusByServerId,
         machineListStatusByServerId,
         props.activeTargetKey,

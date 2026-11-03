@@ -2871,6 +2871,11 @@ export type ActionExecutorDeps = Readonly<{
   updatesAction?: (args: Readonly<{
     actionId: UpdatesActionId; input: unknown; context: ActionExecutorContext;
   }>) => Promise<unknown>;
+  /** The answering client's platform URL effect; transient URL values never enter observation records. */
+  externalUrlOpen?: (args: Readonly<{ url: string; signal?: AbortSignal }>) => Promise<
+    Readonly<{ status: 'opened' }> | ActionExecuteFailure
+  >;
+
   /** The answering client's platform clipboard boundary; copied text never enters observation records. */
   clipboardWrite?: (args: Readonly<{ text: string; signal?: AbortSignal }>) => Promise<
     z.infer<typeof ClipboardWriteResultSchema> | ActionExecuteFailure

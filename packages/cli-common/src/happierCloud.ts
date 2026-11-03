@@ -1,21 +1,6 @@
-import { z } from 'zod';
+import { BuildDefaultProfileSchema, type BuildDefaultProfile } from '@happier-dev/protocol/organizationPolicy/buildDefaultProfile';
+export { BuildDefaultProfileFields, BuildDefaultProfileSchema, type BuildDefaultProfile } from '@happier-dev/protocol/organizationPolicy/buildDefaultProfile';
 import { BAKED_BUILD_DEFAULT_PROFILE_JSON } from './bakedBuildDefaultProfile.js';
-
-const profileUrl = z.string().trim().url().refine((value) => {
-  try {
-    const url = new URL(value);
-    return (url.protocol === 'http:' || url.protocol === 'https:') && !url.username && !url.password && !url.search && !url.hash;
-  } catch { return false; }
-}).transform((value) => value.replace(/\/+$/u, ''));
-
-/** Shared field schemas for baked defaults and the future organization policy document. */
-export const BuildDefaultProfileFields = {
-  accountService: z.object({ url: profileUrl, locked: z.boolean().optional() }).strict().optional(),
-  home: z.object({ url: profileUrl, webappUrl: profileUrl.optional(), locked: z.boolean().optional() }).strict().optional(),
-  personalHome: z.object({ value: z.enum(['auto', 'offer', 'off']), locked: z.boolean().optional() }).strict().optional(),
-};
-export const BuildDefaultProfileSchema = z.object(BuildDefaultProfileFields).strict();
-export type BuildDefaultProfile = Readonly<z.infer<typeof BuildDefaultProfileSchema>>;
 
 export class BuildDefaultProfileError extends Error {
   readonly name = 'BuildDefaultProfileError';

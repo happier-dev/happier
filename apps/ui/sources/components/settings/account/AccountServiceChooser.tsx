@@ -7,6 +7,7 @@ import { useAccountServiceSelection } from '@/components/account/auth/useAccount
 import { resolveAccountServiceDisplayName } from '@/components/account/auth/accountServiceDisplayName';
 import { resolveHomeDisplayName } from '@/components/settings/server/homeDisplayName';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { OrganizationPolicyFieldNotice, readOrganizationPolicyFieldState } from '@/components/organizationPolicy/OrganizationPolicyFieldNotice';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
@@ -122,6 +123,7 @@ export const AccountServiceChooser = React.memo(function AccountServiceChooser(p
     onClose: () => void;
 }>) {
     const { theme } = useUnistyles();
+    const policy = readOrganizationPolicyFieldState('accountService');
     const known = React.useMemo(
         () => listKnownAccountServices(props.currentEndpoint, props.profiles, props.homeTitle, props.activeServerId),
         [props.activeServerId, props.currentEndpoint, props.homeTitle, props.profiles],
@@ -219,6 +221,7 @@ export const AccountServiceChooser = React.memo(function AccountServiceChooser(p
 
     return (
         <View testID="settings-account-service-chooser">
+            <OrganizationPolicyFieldNotice field="accountService" />
             {props.showHeading ? (
                 <View style={styles.heading}>
                     <Text style={styles.headingTitle}>{t('settingsAccount.accountServiceChooserTitle')}</Text>
@@ -233,6 +236,8 @@ export const AccountServiceChooser = React.memo(function AccountServiceChooser(p
                     <View key={service.id}>
                         <Item
                             testID={`settings-account-service-choice-${service.id}`}
+                            disabled={policy.disabled}
+                            accessibilityHint={policy.accessibilityHint}
                             icon={<AccountServiceMark url={service.url} fallback={service.mark} />}
                             title={service.title}
                             subtitle={service.description}
@@ -251,6 +256,8 @@ export const AccountServiceChooser = React.memo(function AccountServiceChooser(p
                 ))}
                 <Item
                     testID="settings-account-service-choice-another"
+                    disabled={policy.disabled}
+                    accessibilityHint={policy.accessibilityHint}
                     icon={<Icon name="globe" size={20} color={theme.colors.text.secondary} />}
                     title={t('settingsAccount.accountServiceChooserAnother')}
                     subtitle={t('settingsAccount.accountServiceChooserAnotherDescription')}
@@ -267,6 +274,8 @@ export const AccountServiceChooser = React.memo(function AccountServiceChooser(p
                     <View style={styles.fieldRow}>
                         <FieldTextInput
                             testID="settings-account-service-address"
+                            editable={!policy.disabled}
+                            accessibilityHint={policy.accessibilityHint}
                             value={address}
                             onChangeText={(value) => {
                                 setAddress(value);
@@ -277,12 +286,13 @@ export const AccountServiceChooser = React.memo(function AccountServiceChooser(p
                             placeholder={t('common.urlPlaceholder')}
                             keyboardType="url"
                             returnKeyType="go"
-                            autoFocus
-                            onSubmitEditing={() => { void check(ANOTHER_SERVICE, address); }}
+                            autoFocus={!policy.disabled}
+                            onSubmitEditing={policy.disabled ? undefined : () => { void check(ANOTHER_SERVICE, address); }}
                             style={styles.fieldInput}
                         />
                         <RoundButton
                             testID="settings-account-service-check"
+                            disabled={policy.disabled}
                             size="small"
                             display="secondary"
                             title={t('settingsAccount.accountServiceCheck')}
@@ -307,7 +317,7 @@ export const AccountServiceChooser = React.memo(function AccountServiceChooser(p
                     title={verifiedName
                         ? t('settingsAccount.accountServiceUse', { accountService: verifiedName })
                         : t('settingsAccount.accountServiceUseThis')}
-                    disabled={!verifiedService || using}
+                    disabled={policy.disabled || !verifiedService || using}
                     loading={using}
                     onPress={() => { void use(); }}
                 />

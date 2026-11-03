@@ -22434,7 +22434,16 @@ const enConversationSearch = {
     searching: 'Searching conversations…',
 };
 
+const enOrganizationPolicy = {
+    managedBy: ({ organization }: { organization: string }) => `Managed by ${organization}`,
+    lockedExplanation: "This choice is set by your organization. Contact your administrator to change it.",
+    support: "Contact support",
+    invalidTitle: "Organization policy needs attention",
+    invalidBody: "Changing the account service or Home, and setting up a new Home, is unavailable until your administrator fixes the policy.",
+  };
+
 export const en: TranslationStructure = {
+  organizationPolicy: enOrganizationPolicy,
   transcriptPassage: {
     quote: "Quote",
     annotate: "Annotate",
@@ -23111,6 +23120,7 @@ type EnglishNamespaces0 = {
   readonly sidebarFooter: typeof enSidebarFooter;
   readonly accountPopover: typeof enAccountPopover;
   readonly homesHub: typeof enHomesHub;
+  readonly organizationPolicy: typeof enOrganizationPolicy;
   readonly homesJourneys: typeof enHomesJourneys;
   readonly homeAdd: typeof enHomeAdd;
   readonly accountDisplay: typeof enAccountDisplay;

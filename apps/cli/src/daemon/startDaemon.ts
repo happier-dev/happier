@@ -147,7 +147,8 @@ import { listAgentExecutionTargetsV1 } from '@happier-dev/protocol/agents/execut
 
 import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabledBit';
 import type { ConnectedServiceId } from '@happier-dev/protocol';
-import { readIrohRelayConfigFromEnv, trimProcessAllocator } from '@happier-dev/iroh-native/node';
+import { trimProcessAllocator } from '@happier-dev/iroh-native/node';
+import { resolveDaemonServiceIrohRelayConfig } from './service/resolveDaemonServiceIrohRelayConfig';
 import { readHomeApplicationCarrierEligibilityFromEnv } from '@happier-dev/cli-common/homeEnrollment';
 import { readOrCreateInstallationIdentity } from './identity/store';
 import { createInstalledProjectFiniteRuntime } from './startup/createInstalledProjectFiniteRuntime';
@@ -519,7 +520,7 @@ export async function startDaemon(
           applicationCarrierEligibility,
           readRuntimeOptions: () => ({
             happyHomeDir: configuration.happyHomeDir,
-            relayConfig: readIrohRelayConfigFromEnv(process.env),
+            relayConfig: resolveDaemonServiceIrohRelayConfig({ processEnv: process.env }),
           }),
         });
         if (createdIrohRuntime?.available) {

@@ -1,6 +1,7 @@
 import { evaluateFeatureBuildPolicy, type FeatureBuildPolicy, type FeatureBuildPolicyEvaluation } from '@happier-dev/protocol/features/buildPolicy';
 import { resolveEmbeddedFeaturePolicyEnv, resolveFeatureBuildPolicyFromEnvOrEmbedded } from '@happier-dev/protocol/features/embeddedFeaturePolicy';
 import type { FeatureId } from '@happier-dev/protocol/features/catalog';
+import { readOrganizationPolicy } from '@/sync/domains/organizationPolicy/organizationPolicy';
 
 let cachedBuildPolicy: FeatureBuildPolicy | null = null;
 let cachedBuildPolicyKey: string | null = null;
@@ -8,7 +9,9 @@ let cachedBuildPolicyKey: string | null = null;
 function resolveBuildPolicyFromEnv(): FeatureBuildPolicy {
     const embeddedEnv = resolveEmbeddedFeaturePolicyEnv(process.env.EXPO_PUBLIC_HAPPIER_FEATURE_POLICY_ENV) ?? undefined;
     const allowRaw = process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_ALLOW;
-    const denyRaw = process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY;
+    const organizationPolicy = readOrganizationPolicy();
+    const policyDenials = organizationPolicy.status === 'loaded' ? organizationPolicy.policy.features?.deny ?? [] : [];
+    const denyRaw = [process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY, ...policyDenials].filter(Boolean).join(',');
     const key = `${embeddedEnv ?? ''}::${allowRaw ?? ''}::${denyRaw ?? ''}`;
 
     if (cachedBuildPolicy && cachedBuildPolicyKey === key) {

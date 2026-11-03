@@ -1302,6 +1302,13 @@ function plural({
  * Must match the exact structure of the English translations
  */
 export const ru: TranslationStructure = {
+  organizationPolicy: {
+    managedBy: ({ organization }: { organization: string }) => `Управляется: ${organization}`,
+    lockedExplanation: "Этот выбор задан вашей организацией. Для изменения обратитесь к администратору.",
+    support: "Связаться с поддержкой",
+    invalidTitle: "Политика организации требует внимания",
+    invalidBody: "Смена сервиса аккаунта или Home и настройка нового Home недоступны, пока администратор не исправит политику.",
+  },
   transcriptPassage: {
     quote: "Цитировать",
     annotate: "Добавить заметку",

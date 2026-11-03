@@ -7,7 +7,8 @@ import { homedir } from 'node:os';
 import { dirname, join, posix as posixPath } from 'node:path';
 
 import { normalizePublicReleaseRingId, type PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
-import { DEFAULT_HAPPIER_CLOUD_SERVER_URL } from '../happierCloud.js';
+import { DEFAULT_HAPPIER_CLOUD_SERVER_URL, resolveBuildDefaultProfile } from '../happierCloud.js';
+import { OrganizationPolicyActionError, type OrganizationPolicyLoadResult } from '@happier-dev/protocol/organizationPolicy/organizationPolicyV1';
 import { parsePowerShellQuotedText } from '../service/discovery/_shared.js';
 
 import {
@@ -270,6 +271,7 @@ function resolveEffectiveLocalMutationPurpose(params: Readonly<{
 export type RelayHostEngineDeps = Readonly<{
   installRemoteComponent: RemoteInstaller;
   localInstallPolicy?: Readonly<{
+    organizationPolicy?: OrganizationPolicyLoadResult;
     runServiceCommands?: boolean;
     skipHealthCheck?: boolean;
   }>;
@@ -1625,6 +1627,19 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
       persisted: persistedPurpose,
       requested: parsed.purpose,
     });
+    const organizationPolicy = deps.localInstallPolicy?.organizationPolicy ?? { status: 'absent' as const };
+    const freshPersonalHome = purpose?.kind === 'personal-home' && persistedPurpose === undefined && !preservedHomeDataPresent;
+    if (freshPersonalHome) {
+      if (organizationPolicy.status === 'invalid') {
+        throw new OrganizationPolicyActionError('organization_policy_invalid', organizationPolicy.error.path, organizationPolicy.error.code);
+      }
+      const personalHome = (organizationPolicy.status === 'loaded' ? organizationPolicy.policy.personalHome : undefined) ?? resolveBuildDefaultProfile().personalHome;
+      if (personalHome?.value === 'off') throw new OrganizationPolicyActionError('organization_policy_off', 'personalHome');
+    }
+    const forcedRelays = organizationPolicy.status === 'loaded' ? organizationPolicy.policy.relays : undefined;
+    if (forcedRelays) {
+      parsed = { ...parsed, env: { ...parsed.env, HAPPIER_IROH_RELAY_POLICY: forcedRelays.policy, HAPPIER_IROH_RELAY_URLS: forcedRelays.urls?.join(',') ?? '' } };
+    }
     const desiredRelayUrl = await resolveLocalDesiredRelayUrl({
       mode,
       channel,

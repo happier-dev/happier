@@ -3,6 +3,7 @@ import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { AccountServiceMark } from '@/components/settings/account/AccountServiceMark';
+import { OrganizationPolicyFieldNotice, readOrganizationPolicyFieldState } from '@/components/organizationPolicy/OrganizationPolicyFieldNotice';
 import type { AuthenticatedAccountEntryRequest } from '@/components/navigation/accountEntry/authenticatedAccountEntryRoute';
 import { useAccountEntryFlow } from '@/components/navigation/accountEntry/useAccountEntryFlow';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -26,11 +27,13 @@ export function ServicePathPane(props: Readonly<{
     onDone: () => void;
 }>) {
     const { service } = props;
+    const policy = readOrganizationPolicyFieldState('accountService');
     const phone = useViewportClass() === 'compact';
     const request = useJourneySignInRequest(service.discovery, props.shouldFocusNewHome);
     const serviceUrl = service.discovery?.endpointUrl ?? service.entry.endpoint.url;
     return (
         <View style={styles.pane} testID="already-use-happier.pane.service">
+            <OrganizationPolicyFieldNotice field="accountService" />
             <PaneHeader
                 title={t('homesJourneys.pathServiceTitle', { service: service.name })}
                 lead={t(phone ? 'homesJourneys.phone.serviceLead' : 'homesJourneys.serviceLead')}
@@ -42,7 +45,7 @@ export function ServicePathPane(props: Readonly<{
                 subtitle={service.isDefault
                     ? `${service.host} · ${t('homesJourneys.defaultServiceFact')}`
                     : service.host}
-                trailing={<PaneLink testID="already-use-happier.service-change" label={t('common.change')} onPress={props.onChangeService} />}
+                trailing={<PaneLink testID="already-use-happier.service-change" disabled={policy.disabled} accessibilityHint={policy.accessibilityHint} label={t('common.change')} onPress={props.onChangeService} />}
             />
             {request ? (
                 <ServiceSignIn key={`${request.service.endpointUrl}|${request.service.serverIdentityId}`} request={request} onDone={props.onDone} />
@@ -58,7 +61,7 @@ export function ServicePathPane(props: Readonly<{
                     title={t('welcome.signInServiceUnsupportedTitle')}
                     reason={t('welcome.signInServiceUnsupportedBody')}
                     accessibilitySemantics="alert"
-                    action={{ label: t('homesJourneys.pathOtherServiceTitle'), onPress: props.onChangeService }}
+                    action={{ label: t('homesJourneys.pathOtherServiceTitle'), disabled: policy.disabled, onPress: props.onChangeService }}
                 />
             ) : (
                 <SurfaceStateCard

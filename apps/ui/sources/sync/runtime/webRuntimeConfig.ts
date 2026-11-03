@@ -1,6 +1,8 @@
 export type HappierWebRuntimeConfig = Readonly<{
     serverUrl?: string;
     serverContext?: string;
+    organizationPolicyJson?: string;
+    organizationPolicyError?: Readonly<{ path: string; code: string }>;
 }>;
 
 type RuntimeWindow = Window & {

@@ -4,6 +4,7 @@ import { usePathname, useRouter, type Href } from '@/components/appShell/workspa
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { HomeMark } from '@/components/homes/HomeMark';
+import { OrganizationPolicyFieldNotice, readOrganizationPolicyFieldState } from '@/components/organizationPolicy/OrganizationPolicyFieldNotice';
 import { homeAdministrationOverviewPath, homeAdministrationRuntimePath } from '@/components/settings/home/governance/homeAdministrationRoutes';
 import { resolveHomeDisplayName } from '@/components/settings/server/homeDisplayName';
 import { buildHomeRecoveryHref } from '@/components/settings/server/navigation/serverSettingsRouteParams';
@@ -68,6 +69,7 @@ const HomeSettingsPageMissing = React.memo(function HomeSettingsPageMissing() {
 });
 
 const HomeSettingsPageContent = React.memo(function HomeSettingsPageContent(props: Readonly<{ row: HomeCollectionRow }>) {
+    const homePolicy = readOrganizationPolicyFieldState('home');
     const { row } = props;
     const { theme } = useUnistyles();
     const router = useRouter();
@@ -113,8 +115,10 @@ const HomeSettingsPageContent = React.memo(function HomeSettingsPageContent(prop
         testID: `settings.homes.home.menu.${id}`,
         title: id === 'rename' && resolveHomeDisplayName(profile) === null ? t('server.homes.nameThisHome') : MENU_TITLES[id](),
         destructive: id === 'remove',
+        disabled: homePolicy.disabled && id !== 'rename' && id !== 'remove',
+        subtitle: id !== 'rename' && id !== 'remove' ? homePolicy.accessibilityHint : undefined,
         onSelect: () => runMenu(id),
-    })), [menu, profile, runMenu]);
+    })), [homePolicy.disabled, homePolicy.accessibilityHint, menu, profile, runMenu]);
 
     const meta = [
         { key: 'status', text: t(row.summary.statusLabelKey), testID: 'settings.homes.home.status' },
@@ -136,6 +140,7 @@ const HomeSettingsPageContent = React.memo(function HomeSettingsPageContent(prop
                         {primary ? (
                             <RoundButton
                                 testID={`settings.homes.home.${primary}`}
+                                disabled={primary === 'switch' && homePolicy.disabled}
                                 size="small"
                                 display={primary === 'switch' ? 'secondary' : undefined}
                                 title={primary === 'switch' ? t('server.homes.switch') : primary === 'signIn' ? t('server.homes.signIn') : t('common.retry')}
@@ -147,6 +152,7 @@ const HomeSettingsPageContent = React.memo(function HomeSettingsPageContent(prop
                 )}
             />
 
+            <OrganizationPolicyFieldNotice field="home" />
             {attention ? (
                 <AttentionBanner
                     testID="settings.homes.home.attention"

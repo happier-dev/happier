@@ -1278,6 +1278,13 @@ function plural({ count, singular, plural }: { count: number; singular: string; 
 
 
 const zhHantOverrides: DeepPartial<TranslationStructure> = {
+    organizationPolicy: {
+        managedBy: ({ organization }: { organization: string }) => `管理方：${organization}`,
+        lockedExplanation: '此選項由您的組織設定。請聯絡管理員進行變更。',
+        support: '聯絡支援',
+        invalidTitle: '組織原則需要處理',
+        invalidBody: '在管理員修復原則之前，無法變更帳戶服務或 Home，也無法設定新的 Home。',
+    },
   panes: { mainColumn: paneMainColumnTranslations['zh-Hant'], emptyEditor: paneEmptyEditorTranslations['zh-Hant'], shortcutsSheet: paneShortcutsSheetTranslations['zh-Hant'] },
   capabilities: capabilityKitTranslations.zhHant,
     resourceProposal: resourceProposalTranslations.zhHant,

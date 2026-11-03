@@ -4,6 +4,7 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { WelcomeActionCard } from '@/components/onboarding/preAuth/WelcomeActionCard';
+import { readOrganizationPolicyFieldState } from '@/components/organizationPolicy/OrganizationPolicyFieldNotice';
 import { WelcomeActionAdmissionContext } from '@/components/onboarding/preAuth/WelcomeActionList';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -32,6 +33,8 @@ export function PhoneWelcomeDoorway(props: Readonly<{
     onScan: () => void;
 }>) {
     const service = useJourneyAccountService();
+    const homePolicy = readOrganizationPolicyFieldState('home');
+    const servicePolicy = readOrganizationPolicyFieldState('accountService');
     const admission = React.useContext(WelcomeActionAdmissionContext);
     const { theme } = useUnistyles();
     const serviceUrl = service.discovery?.endpointUrl ?? service.entry.endpoint.url;
@@ -39,6 +42,7 @@ export function PhoneWelcomeDoorway(props: Readonly<{
         <>
             <WelcomeActionCard
                 testID="welcome-doorway-scan"
+                disabled={homePolicy.disabled}
                 primary
                 presentation="button"
                 title={t(props.canScanQr ? 'homesJourneys.phone.scanComputerCode' : 'connect.enterUrlManually')}
@@ -57,6 +61,8 @@ export function PhoneWelcomeDoorway(props: Readonly<{
                     <Text style={styles.serviceText}>·</Text>
                     <HappierPressable
                         testID="welcome-doorway-change-service"
+                        disabled={servicePolicy.disabled}
+                        accessibilityHint={servicePolicy.accessibilityHint}
                         accessibilityRole="button"
                         accessibilityLabel={t('homesJourneys.changeServiceLabel', { service: service.name })}
                         onPress={() => { presentAlreadyUseHappierSheet('other_service'); }}
@@ -72,7 +78,8 @@ export function PhoneWelcomeDoorway(props: Readonly<{
                 title={t('homesJourneys.pathDirectTitle')}
                 subtitle={t('homesJourneys.pathDirectSubtitle')}
                 icon={<Icon name="hard-drives" size={20} color={theme.colors.text.secondary} />}
-                disabled={admission.pendingActionId !== null}
+                disabled={homePolicy.disabled || admission.pendingActionId !== null}
+                accessibilityHint={homePolicy.accessibilityHint}
                 onPress={() => { void admission.run('welcome-doorway-direct', () => { presentAlreadyUseHappierSheet('direct'); }); }}
             />
             {service.hostsHome ? (
@@ -81,7 +88,8 @@ export function PhoneWelcomeDoorway(props: Readonly<{
                     title={t('homesJourneys.noComputerYet')}
                     subtitle={t('homesJourneys.serviceAsHomeTitle', { service: service.name })}
                     icon={<AccountServiceMark url={serviceUrl} size={20} />}
-                    disabled={admission.pendingActionId !== null}
+                    disabled={homePolicy.disabled || admission.pendingActionId !== null}
+                    accessibilityHint={homePolicy.accessibilityHint}
                     onPress={() => { void admission.run('welcome-doorway-service-as-home', () => { presentUseServiceAsHomeSheet({ serviceName: service.name, serviceUrl }); }); }}
                 />
             ) : null}

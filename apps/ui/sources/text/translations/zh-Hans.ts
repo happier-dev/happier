@@ -1288,6 +1288,13 @@ function plural({
 
 
 export const zhHans: TranslationStructure = {
+  organizationPolicy: {
+    managedBy: ({ organization }: { organization: string }) => `管理方： ${organization}`,
+    lockedExplanation: "此选项由您的组织设置。请联系管理员进行更改。",
+    support: "联系支持",
+    invalidTitle: "组织策略需要处理",
+    invalidBody: "在管理员修复策略之前，无法更改账户服务或 Home，也无法设置新的 Home。",
+  },
   transcriptPassage: {
     quote: "引用",
     annotate: "添加批注",

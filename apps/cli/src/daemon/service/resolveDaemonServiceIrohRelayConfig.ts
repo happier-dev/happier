@@ -7,14 +7,22 @@ import {
 
 import { readInstalledDaemonServiceEnvValue } from './discoverInstalledDaemonServiceEntries';
 import type { DaemonServicePlatform } from './plan';
+import type { OrganizationPolicyLoadResult } from '@happier-dev/protocol/organizationPolicy/organizationPolicyV1';
+import { configuration } from '@/configuration';
 
 export function resolveDaemonServiceIrohRelayConfig(params: Readonly<{
   processEnv: NodeJS.ProcessEnv;
+  organizationPolicy?: OrganizationPolicyLoadResult;
   installedService?: Readonly<{
     platform: DaemonServicePlatform;
     path: string;
   }>;
 }>): IrohRelayEnvConfig {
+  const organizationPolicy = params.organizationPolicy ?? configuration.organizationPolicy;
+  const forced = organizationPolicy.status === 'loaded' ? organizationPolicy.policy.relays : undefined;
+  if (forced) {
+    return { relayPolicy: forced.policy, relayUrls: forced.urls ?? [], explicitlyConfigured: true };
+  }
   const requested = readIrohRelayConfigFromEnv(params.processEnv);
   if (requested.explicitlyConfigured || !params.installedService) {
     return requested;

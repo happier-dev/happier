@@ -52,6 +52,7 @@ export const WelcomeActionCard = React.memo(function WelcomeActionCard(props: Re
      */
     unavailable?: Readonly<{ accessory?: React.ReactNode }>;
     selected?: boolean;
+    disabled?: boolean;
     controlRef?: React.ComponentProps<typeof HappierPressable>['controlRef'];
     onPress: () => Promise<void> | void;
 }>) {
@@ -99,7 +100,7 @@ export const WelcomeActionCard = React.memo(function WelcomeActionCard(props: Re
             accessibilityLabel={props.title}
             accessibilityHint={props.subtitle}
             describedById={subtitleId}
-            disabled={!escape && admission.pendingActionId !== null}
+            disabled={props.disabled || (!escape && admission.pendingActionId !== null)}
             busy={pending}
             onPress={escape ? () => props.onPress() : () => admission.run(actionId, props.onPress)}
             onPressIn={pressFeedback.onPressIn}

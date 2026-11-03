@@ -17,6 +17,7 @@
     "auth-enterprise-identity",
     "auth-custom-providers",
     "setup-and-bootstrap-policy",
+    "organization-policy",
     "home-owner",
     "home-administration",
     "encryption",

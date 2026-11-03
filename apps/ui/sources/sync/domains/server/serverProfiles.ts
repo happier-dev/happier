@@ -9,6 +9,7 @@ import type { HomeCarrier } from '@/sync/runtime/homeCarrier';
 import { normalizeAccountDirectoryEndpoint } from '@/sync/domains/accountDirectory/accountDirectoryEndpoint';
 import { isStackContext } from './serverContext';
 import { canonicalizeServerUrl, createServerUrlComparableKey } from './url/serverUrlCanonical';
+import { readWebServerUrlOverrideFromLocation } from './url/webServerUrlOverride';
 import { sanitizeServerUrlForShareableLink } from './url/shareableServerUrl';
 import { readConfiguredServerUrlEnv, readConfiguredServerUrlEnvRaw } from './readConfiguredServerUrlEnv';
 import { resolveSetupSurfacePolicy } from './setup/setupSurfacePolicy';
@@ -17,6 +18,9 @@ import { ALL_HOMES_MINIMUM_HOME_COUNT, isAllHomesSelectionTargetId } from './sel
 import { normalizeStoredServerSelectionGroups } from './selection/serverSelectionMutations';
 import type { ServerSelectionGroup } from './selection/serverSelectionTypes';
 import { withHomeMutationAuthority, type HomeMutationAuthority } from './homeMutationLock';
+import { parseHomeAddressSelection, readHomeAddressSelection, resolveHomeConnectionAddress, type HomeAddressSelection } from './homeAddressSelection';
+import { readOrganizationPolicy, assertOrganizationHomeSelectionAllowed } from '@/sync/domains/organizationPolicy/organizationPolicy';
+import { assertOrganizationPolicyActionAllowed } from '@happier-dev/protocol/organizationPolicy/organizationPolicyV1';
 
 export type ServerProfileSource =
     | 'manual' | 'qr' | 'account-directory' | 'desktop-personal-home' | 'legacy'
@@ -54,6 +58,7 @@ export type ServerProfile = Readonly<{
     /** Original unknown persisted source retained for lossless downgrade/round-trip. */
     legacySource?: string;
     canonicalServerUrl?: string;
+    addressSelection?: HomeAddressSelection;
     publicServerUrl?: string | null;
     /** Exact server-published outer descriptor retained for transport and share flows. */
     homeConnectionDescriptor?: HomeConnectionDescriptorV1;
@@ -159,10 +164,14 @@ type ActiveRuntimeOriginLease = Readonly<{
     carrier: 'https' | 'iroh';
 }>;
 let activeRuntimeOriginLease: ActiveRuntimeOriginLease | null = null;
+// URL cleanup retires the admission command, not the Home/address chosen for this load.
+// A deliberate focus change retires this entry context; nothing is persisted.
+let admittedWebServerEntry: Readonly<{ profileId: string; serverUrl: string }> | null = null;
 let activeServerSnapshotBasis: Readonly<{
     state: Required<PersistedServerState>;
     tabId: string | null;
     webOrigin: string | null;
+    webHref: string | null;
     web: boolean;
     desktop: boolean;
     stack: boolean;
@@ -650,9 +659,9 @@ function createUniqueServerId(
     return id;
 }
 
-function applyRuntimeSeedPolicy(servers: Record<string, ServerProfile>): Record<string, ServerProfile> {
+function applyRuntimeSeedPolicy(servers: Record<string, ServerProfile>, configuredServers = parsePreconfiguredServersFromEnv()): Record<string, ServerProfile> {
     const next = { ...servers };
-    for (const configured of parsePreconfiguredServersFromEnv()) {
+    for (const configured of configuredServers) {
         const existing = findProfileByEquivalentUrl(next, configured.url);
         if (existing) continue;
 
@@ -741,6 +750,7 @@ function parseProfile(id: string, value: unknown): ServerProfile | null {
     const publicServerUrl = record.publicServerUrl === null
         ? null
         : typeof record.publicServerUrl === 'string' ? normalizeUrl(record.publicServerUrl) : undefined;
+    const addressSelection = parseHomeAddressSelection(record.addressSelection);
     // Only the exact server-published descriptor owns transport facts. The
     // never-released scalar endpoint/revision drafts are not persistence inputs.
     const homeConnectionDescriptorResult = StoredHomeConnectionDescriptorV1Schema.safeParse(
@@ -757,6 +767,7 @@ function parseProfile(id: string, value: unknown): ServerProfile | null {
         name,
         serverUrl,
         ...(canonicalServerUrl ? { canonicalServerUrl } : {}),
+        ...(addressSelection ? { addressSelection } : {}),
         ...(publicServerUrl !== undefined ? { publicServerUrl } : {}),
         ...(homeConnectionDescriptorResult.success
             ? { homeConnectionDescriptor: homeConnectionDescriptorResult.data }
@@ -1398,10 +1409,15 @@ function readPersistedState(): Required<PersistedServerState> {
             homeViewStateInitialized = true;
         }
 
+        const organizationPolicy = readOrganizationPolicy();
+        const policyHome = organizationPolicy.status === 'loaded' ? organizationPolicy.policy.home : undefined;
+        const effectiveServers = policyHome
+            ? applyRuntimeSeedPolicy(deduped.servers, [{ url: policyHome.url, name: '', source: 'preconfigured' }])
+            : deduped.servers;
         const state: Required<PersistedServerState> = {
             activeServerIdIsExplicit,
             activeServerId,
-            servers: deduped.servers,
+            servers: effectiveServers,
             accountServiceEndpoint,
             homeViewState,
             homeViewStateInitialized,
@@ -1618,12 +1634,24 @@ function buildActiveSnapshotFromState(
     state: Required<PersistedServerState>,
     tabId: string | null,
 ): ActiveServerSnapshot {
-    const tabProfile = findProfileByServerIdentifier(state.servers, tabId);
+    const organizationPolicy = readOrganizationPolicy();
+    const policyHome = organizationPolicy.status === 'loaded' ? organizationPolicy.policy.home : undefined;
+    const lockedHome = policyHome?.locked ? findProfileByEquivalentUrl(state.servers, policyHome.url) : null;
+    const tabProfile = lockedHome ?? findProfileByServerIdentifier(state.servers, tabId);
     const tabExplicit = Boolean(tabProfile);
+    const implicitPolicyHome = policyHome && !tabProfile && !state.activeServerIdIsExplicit
+        ? findProfileByEquivalentUrl(state.servers, policyHome.url) : null;
     const selectedId = tabProfile
         ? tabProfile.id
-        : resolvePrimaryActiveServerId(state.servers, state.activeServerId);
+        : implicitPolicyHome?.id ?? resolvePrimaryActiveServerId(state.servers, state.activeServerId);
     const selected = selectedId ? state.servers[selectedId] : null;
+    const suppliedHome = lockedHome ? null : readWebServerUrlOverrideFromLocation();
+    const entryOrigin = selected ? resolveWebServerEntryOrigin(selected, suppliedHome) : null;
+    if (suppliedHome && !entryOrigin) {
+        // Retain the saved selection, but publish no ambient request authority
+        // until the mounted Home-connect flow admits the supplied address.
+        return { serverId: '', serverUrl: '', isSelectionExplicit: false, generation: activeServerGeneration };
+    }
     const sameOriginUrl = getWebSameOriginServerUrl();
     // Navigating to a Home's own web UI names that Home, just as ?server= does.
     // Static Cloud/Metro and desktop bundle origins are not serving Homes.
@@ -1650,10 +1678,10 @@ function buildActiveSnapshotFromState(
             ...(selected.homeConnectionDescriptor === undefined
                 ? {}
                 : { connectionDescriptorRevision: selected.homeConnectionDescriptor.revision }),
-            ...(runtimeLease ? {
+            ...(entryOrigin ? { runtimeOrigin: entryOrigin, carrier: 'https' as const } : runtimeLease ? {
                 ...(runtimeLease.runtimeOrigin ? { runtimeOrigin: runtimeLease.runtimeOrigin } : {}),
                 carrier: runtimeLease.carrier,
-            } : {}),
+            } : projectHomeRuntimeOrigin(selected, null)),
             generation: activeServerGeneration,
         };
     }
@@ -1827,6 +1855,12 @@ export type SavedServerProfileUrlResolution =
     | Readonly<{ kind: 'resolved'; profile: ServerProfile }>
     | Readonly<{ kind: 'missing' | 'ambiguous' }>;
 
+function serverProfileMatchesUrlKey(profile: ServerProfile, targetKey: string, includeCanonicalServerUrl: boolean): boolean {
+    return comparableUrlKey(profile.serverUrl) === targetKey
+        || (includeCanonicalServerUrl && comparableUrlKey(profile.canonicalServerUrl ?? '') === targetKey)
+        || comparableUrlKey(readHomeAddressSelection(profile)?.enteredUrl ?? '') === targetKey;
+}
+
 /** URL-only intents may select a saved Home only when that address names exactly one profile. */
 export function resolveSavedServerProfileByUrl(
     serverUrl: string,
@@ -1834,10 +1868,7 @@ export function resolveSavedServerProfileByUrl(
 ): SavedServerProfileUrlResolution {
     const targetKey = comparableUrlKey(serverUrl);
     if (!targetKey) return { kind: 'missing' };
-    const matches = listServerProfiles().filter((profile) => (
-        comparableUrlKey(profile.serverUrl) === targetKey
-        || (options.includeCanonicalServerUrl === true && comparableUrlKey(profile.canonicalServerUrl ?? '') === targetKey)
-    ));
+    const matches = listServerProfiles().filter((profile) => serverProfileMatchesUrlKey(profile, targetKey, options.includeCanonicalServerUrl === true));
     if (matches.length === 0) return { kind: 'missing' };
     if (matches.length > 1) return { kind: 'ambiguous' };
     return { kind: 'resolved', profile: matches[0]! };
@@ -1849,6 +1880,56 @@ export function resolveUniqueServerProfileByUrl(
 ): ServerProfile | null {
     const resolution = resolveSavedServerProfileByUrl(serverUrl, options);
     return resolution.kind === 'resolved' ? resolution.profile : null;
+}
+
+type SavedHomeConnectionTarget = Readonly<{
+    canonicalServerUrl: string;
+    serverIdentityId?: string | null;
+}>;
+
+function resolveSavedHomeConnectionProfile(target: SavedHomeConnectionTarget): ServerProfile | null {
+    const profile = target.serverIdentityId
+        ? getServerProfileById(target.serverIdentityId)
+        : resolveUniqueServerProfileByUrl(target.canonicalServerUrl, { includeCanonicalServerUrl: true });
+    return profile && (profile.canonicalServerUrl ?? profile.serverUrl) === target.canonicalServerUrl
+        ? profile : null;
+}
+
+/** The carrier policy consumes the profile owner's one selected-address reader. */
+export function getSavedHomeConnectionAddress(target: SavedHomeConnectionTarget): string {
+    const profile = resolveSavedHomeConnectionProfile(target);
+    return profile ? resolveWebServerEntryOrigin(profile) ?? resolveHomeConnectionAddress(profile) : target.canonicalServerUrl;
+}
+
+function resolveWebServerEntryOrigin(
+    profile: ServerProfile,
+    supplied = readWebServerUrlOverrideFromLocation(),
+): string | null {
+    if (supplied) {
+        if (!serverProfileMatchesUrlKey(profile, comparableUrlKey(supplied.serverUrl), true)) return null;
+        const choice = readHomeAddressSelection(profile);
+        return choice?.enteredUrl === supplied.serverUrl && choice.useCanonical
+            ? choice.canonicalServerUrl : supplied.serverUrl;
+    }
+    return admittedWebServerEntry?.profileId === profile.id ? admittedWebServerEntry.serverUrl : null;
+}
+
+function projectHomeRuntimeOrigin(
+    profile: ServerProfile,
+    entryOrigin = resolveWebServerEntryOrigin(profile),
+): Readonly<{ runtimeOrigin?: string; carrier?: 'https' }> {
+    const runtimeOrigin = entryOrigin ?? resolveHomeConnectionAddress(profile);
+    return entryOrigin || runtimeOrigin !== (profile.canonicalServerUrl ?? profile.serverUrl)
+        ? { runtimeOrigin, carrier: 'https' } : {};
+}
+
+/** Secondary targets consume the saved descriptor or the focused snapshot's URL-only projection. */
+export function getSavedHomeConnectionSnapshot(target: SavedHomeConnectionTarget): Readonly<{
+    homeConnectionDescriptor?: HomeConnectionDescriptorV1;
+    runtimeOrigin?: string;
+}> | null {
+    const profile = resolveSavedHomeConnectionProfile(target);
+    return profile ? { homeConnectionDescriptor: profile.homeConnectionDescriptor, ...projectHomeRuntimeOrigin(profile) } : null;
 }
 
 export function getServerProfilesGeneration(): number {
@@ -1884,8 +1965,19 @@ export function getAccountServiceEndpointSnapshot(): AccountServiceEndpointV1 | 
  * pure selection read: it never creates a `ServerProfile`, group member, or Home runtime.
  */
 export function resolveSelectedAccountServiceEndpoint(): AccountServiceEndpointV1 {
-    return getAccountServiceEndpointSnapshot() ?? DEFAULT_ACCOUNT_SERVICE_ENDPOINT;
+    const organizationPolicy = readOrganizationPolicy();
+    const policyEndpoint = organizationPolicy.status === 'loaded' ? organizationPolicy.policy.accountService : undefined;
+    const selected = getAccountServiceEndpointSnapshot();
+    if (policyEndpoint && (policyEndpoint.locked || !selected || selected.source === 'default')) {
+        if (organizationAccountServiceEndpoint?.url !== policyEndpoint.url) {
+            organizationAccountServiceEndpoint = Object.freeze({ url: policyEndpoint.url, source: 'default' });
+        }
+        return organizationAccountServiceEndpoint;
+    }
+    return selected ?? DEFAULT_ACCOUNT_SERVICE_ENDPOINT;
 }
+
+let organizationAccountServiceEndpoint: AccountServiceEndpointV1 | null = null;
 
 export function subscribeAccountServiceEndpoint(listener: (endpoint: AccountServiceEndpointV1 | null) => void): () => void {
     accountServiceEndpointListeners.add(listener);
@@ -1894,6 +1986,7 @@ export function subscribeAccountServiceEndpoint(listener: (endpoint: AccountServ
 }
 
 export function setAccountServiceEndpoint(endpoint: AccountServiceEndpointV1): Promise<void> {
+    assertOrganizationPolicyActionAllowed(readOrganizationPolicy(), 'accountService');
     const parsed = parseAccountServiceEndpoint(endpoint);
     if (!parsed) throw new Error('Invalid Account Service endpoint');
     return withPersistedStateMutation(() => {
@@ -1929,6 +2022,7 @@ type HomeProfileAdoptionParams = Readonly<{
     preserveProfileSource?: boolean;
     descriptorAuthority?: HomeProfileDescriptorAuthority;
     suggestedName?: string;
+    addressSelection?: HomeAddressSelection;
 }>;
 
 export type HomeProfileAdoptionPreflight = Readonly<{
@@ -2037,12 +2131,26 @@ function reconcileServerProfileHomeConnectionDescriptorUnlocked(params: Readonly
         }
     }
 
+    // First authenticated discovery establishes the canonical audience; it does
+    // not replace the address this device already admitted and connected to.
+    const retainEnteredAddress = profile.homeConnectionDescriptor === undefined
+        && !readHomeAddressSelection(profile)
+        && normalizeUrl(params.serverUrl) === profile.serverUrl
+        && profile.serverUrl !== descriptor.canonicalServerUrl;
     const updated = adoptHomeProfileWithOptionsUnlocked({
         descriptor,
         source: profile.source ?? 'manual',
         preserveUserLabel: true,
         preserveProfileSource: true,
         descriptorAuthority: 'current_connection_observation',
+        ...(retainEnteredAddress ? {
+            addressSelection: {
+                serverIdentityId: observedIdentity,
+                enteredUrl: profile.serverUrl,
+                canonicalServerUrl: descriptor.canonicalServerUrl,
+                useCanonical: false,
+            },
+        } : {}),
     });
     return { kind: 'applied', profile: updated };
 }
@@ -2113,6 +2221,12 @@ function resolveHomeProfileAdoption(
         || (byIdentity.length === 1 && profile.id !== byIdentity[0]!.id)
     ))) throw new Error('Home identity conflicts with URL');
     const existing = byIdentity[0] ?? byUrl;
+    // An authenticated refresh of the same Home is not a new selection. A new
+    // profile or canonical audience still goes through selection admission.
+    if (params.descriptorAuthority !== 'current_connection_observation' || !existing
+        || comparableUrlKey(url) !== comparableUrlKey(existing.canonicalServerUrl ?? existing.serverUrl)) {
+        assertOrganizationHomeSelectionAllowed(url);
+    }
     const parsedCanonicalDescriptor = HomeConnectionDescriptorV1Schema.safeParse(descriptor);
     if (
         existing?.homeConnectionDescriptor
@@ -2213,6 +2327,7 @@ function adoptHomeProfileWithOptionsUnlocked(
     if (
         (descriptorAdjudication === 'unchanged' || descriptorAdjudication === 'stale')
         && options.completePersonalHomeBootstrap !== true
+        && params.addressSelection === undefined
     ) {
         persistCanonicalStateAfterNoop(state);
         return profile;
@@ -2240,8 +2355,14 @@ function adoptHomeProfileWithOptionsUnlocked(
                 : 'publicServerUrl' in descriptor && descriptor.publicServerUrl
                     ? { publicServerUrl: normalizeUrl(descriptor.publicServerUrl) }
                     : {};
-    const updated: ServerProfile = {
+    // Answering an address prompt for an already identity-bound Home cannot
+    // replace descriptor facts (including advisory provenance) through an alias.
+    // An unbound configured URL still needs its first identity adoption.
+    const selectionOnly = existing && existing.serverIdentityId === identity && params.addressSelection
+        && comparableUrlKey(existing.canonicalServerUrl ?? existing.serverUrl) === comparableUrlKey(url);
+    const updated: ServerProfile = selectionOnly ? { ...profile, addressSelection: params.addressSelection } : {
         ...profile,
+        ...(params.addressSelection ? { addressSelection: params.addressSelection } : {}),
         // Adoption source is mutable provenance. Durable managed-Home readiness lives
         // on the identity-bound completion scalar preserved by the profile itself.
         ...(acceptsDescriptorSnapshot
@@ -2448,6 +2569,7 @@ function buildUpsertedServerProfile(
 }
 
 function upsertServerProfileUnlocked(params: UpsertServerProfileParams): ServerProfile {
+    assertOrganizationHomeSelectionAllowed(params.serverUrl);
     const state = readPersistedState();
     const profile = buildUpsertedServerProfile(state, params);
 
@@ -2603,6 +2725,10 @@ export function setActiveServerId(
     if (opts.scope === 'tab') {
         const state = readPersistedState();
         const profile = findProfileByServerIdentifier(state.servers, id);
+        if (profile) {
+            try { assertOrganizationHomeSelectionAllowed(profile.canonicalServerUrl ?? profile.serverUrl); }
+            catch (error) { return Promise.reject(error); }
+        }
         if (!profile) {
             const previousSnapshot = getActiveServerSnapshot();
             writeTabActiveServerId(null);
@@ -2611,6 +2737,7 @@ export function setActiveServerId(
         }
         const previousSnapshot = getActiveServerSnapshot();
         writeTabActiveServerId(profile.id);
+        if (admittedWebServerEntry?.profileId !== profile.id) admittedWebServerEntry = null;
         emitActiveServerChanged(previousSnapshot, { force: true });
         return Promise.resolve();
     }
@@ -2618,6 +2745,7 @@ export function setActiveServerId(
     return withPersistedStateMutation(() => {
         const state = readPersistedState();
         const profile = findProfileByServerIdentifier(state.servers, id);
+        if (profile) assertOrganizationHomeSelectionAllowed(profile.canonicalServerUrl ?? profile.serverUrl);
         if (!profile) {
             persistCanonicalStateAfterNoop(state);
             return;
@@ -2625,6 +2753,7 @@ export function setActiveServerId(
         const previousSnapshot = getActiveServerSnapshot();
         const now = nowMs();
         const existing = state.servers[profile.id]!;
+        if (admittedWebServerEntry?.profileId !== profile.id) admittedWebServerEntry = null;
         writePersistedState({
             ...state,
             activeServerIdIsExplicit: true,
@@ -2650,6 +2779,7 @@ export function activateServerProfileIfSelectionImplicit(idRaw: string): Promise
     return withPersistedStateMutation(() => {
         const state = readPersistedState();
         const profile = findProfileByServerIdentifier(state.servers, id);
+        if (profile) assertOrganizationHomeSelectionAllowed(profile.canonicalServerUrl ?? profile.serverUrl);
         if (!profile || state.activeServerIdIsExplicit || findProfileByServerIdentifier(state.servers, readTabActiveServerId())) {
             persistCanonicalStateAfterNoop(state);
             return false;
@@ -2712,42 +2842,57 @@ export function isActiveServerSelectionExplicit(): boolean {
 }
 
 export function getActiveServerUrl(): string {
-    const state = readPersistedState();
-    const tab = readTabActiveServerId();
-    const tabProfile = findProfileByServerIdentifier(state.servers, tab);
-    if (tabProfile) return tabProfile.canonicalServerUrl ?? tabProfile.serverUrl;
+    return getActiveServerSnapshot().serverUrl;
+}
 
-    const explicit = findProfileByServerIdentifier(state.servers, state.activeServerId);
-    if (state.activeServerIdIsExplicit && explicit) {
-        return explicit.canonicalServerUrl ?? explicit.serverUrl;
+/** One entry result for sign-in routing and onboarding, including after admission consumes the query. */
+export function readWebServerEntry(): Readonly<{ serverUrl: string; isAdmitted: boolean }> | null {
+    const supplied = readWebServerUrlOverrideFromLocation();
+    if (!supplied && !admittedWebServerEntry) return null;
+    const snapshot = getActiveServerSnapshot();
+    if (supplied) return { serverUrl: snapshot.runtimeOrigin ?? (snapshot.serverId ? snapshot.serverUrl : supplied.serverUrl), isAdmitted: Boolean(snapshot.serverId) };
+    const profile = getServerProfileById(snapshot.serverId);
+    const serverUrl = profile ? resolveWebServerEntryOrigin(profile, null) : null;
+    return serverUrl ? { serverUrl, isAdmitted: true } : null;
+}
+
+/** Consume an admitted or dismissed URL intent and publish the resulting Home selection. */
+export function consumeWebServerUrlOverrideFromLocation(params: Readonly<{
+    serverUrl: string;
+    signal?: AbortSignal;
+    retainSelection?: boolean;
+}>): void {
+    if (params.signal?.aborted) return;
+    const current = readWebServerUrlOverrideFromLocation();
+    if (current?.serverUrl !== params.serverUrl) return;
+    const previous = getActiveServerSnapshot();
+    const profile = getServerProfileById(previous.serverId);
+    const entryOrigin = previous.runtimeOrigin;
+    if (params.retainSelection && profile && entryOrigin) {
+        admittedWebServerEntry = { profileId: profile.id, serverUrl: entryOrigin };
     }
-
-    const fallbackId = resolvePrimaryActiveServerId(state.servers, state.activeServerId);
-    if (fallbackId && state.servers[fallbackId]) return state.servers[fallbackId]!.canonicalServerUrl ?? state.servers[fallbackId]!.serverUrl;
-
-    const sameOrigin = getWebSameOriginServerUrl();
-    if (sameOrigin) return sameOrigin;
-
-    return '';
+    window.history.replaceState(window.history.state, '', current.cleanedRelativeUrl);
+    emitActiveServerChanged(previous);
 }
 
 export function getActiveServerSnapshot(): ActiveServerSnapshot {
     const state = readPersistedState();
     const tabId = readTabActiveServerId();
     const webOrigin = typeof window !== 'undefined' ? window.location?.origin ?? null : null;
+    const webHref = typeof window !== 'undefined' ? window.location?.href ?? null : null;
     const web = isWebRuntime();
     const desktop = isDesktopHost();
     const stack = isStackContext();
     const previous = activeServerSnapshotBasis;
     if (activeServerSnapshotCache && previous?.state === state && previous.tabId === tabId
-        && previous.webOrigin === webOrigin && previous.web === web && previous.desktop === desktop
+        && previous.webOrigin === webOrigin && previous.webHref === webHref && previous.web === web && previous.desktop === desktop
         && previous.stack === stack && previous.generation === activeServerGeneration
         && previous.runtimeTargetGeneration === activeRuntimeTargetGeneration
         && previous.runtimeOriginLease === activeRuntimeOriginLease) return activeServerSnapshotCache;
     // Reuse the existing snapshot before URL/profile derivation, not only after
     // deriving an equal result for every external-store read and notification.
     const snapshot = getStableActiveServerSnapshot(buildActiveSnapshotFromState(state, tabId));
-    activeServerSnapshotBasis = { state, tabId, webOrigin, web, desktop, stack,
+    activeServerSnapshotBasis = { state, tabId, webOrigin, webHref, web, desktop, stack,
         generation: activeServerGeneration, runtimeTargetGeneration: activeRuntimeTargetGeneration,
         runtimeOriginLease: activeRuntimeOriginLease };
     return snapshot;
@@ -2879,6 +3024,7 @@ export function resetServerProfilesRuntimeForTests(options?: Readonly<{ preserve
     activeServerSnapshotCache = null;
     activeServerSnapshotBasis = null;
     activeRuntimeOriginLease = null;
+    admittedWebServerEntry = null;
     persistedStateStorage = null;
     persistedStateParseCache = null;
     demoPersistenceSuspendDepth = 0;

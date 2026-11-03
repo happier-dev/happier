@@ -3,6 +3,7 @@ import { readConfiguredServerUrlEnv } from '../readConfiguredServerUrlEnv';
 import { desktopHostKind } from '@/utils/platform/desktopHost';
 import { isPersonalHomeBootstrapRuntimeHost } from '@/utils/platform/personalHomeBootstrapHost';
 import { resolveBuildDefaultProfile } from '@happier-dev/cli-common/happierCloud';
+import { readOrganizationPolicy } from '@/sync/domains/organizationPolicy/organizationPolicy';
 
 export type SetupSurfacePolicy = Readonly<{
     relay: Readonly<{
@@ -31,7 +32,10 @@ function isAllowedByBuildPolicy(featureId: Parameters<typeof getFeatureBuildPoli
 }
 
 export function resolveSetupSurfacePolicy(): SetupSurfacePolicy {
-    const allowRelaySelection = isAllowedByBuildPolicy('setup.relay.allowRelaySelection');
+    const organizationPolicy = readOrganizationPolicy();
+    const governedHomeSelection = organizationPolicy.status === 'invalid'
+        || (organizationPolicy.status === 'loaded' && organizationPolicy.policy.home?.locked === true);
+    const allowRelaySelection = !governedHomeSelection && isAllowedByBuildPolicy('setup.relay.allowRelaySelection');
     const configuredServerUrl = readConfiguredServerUrlEnv();
 
     return {
@@ -73,10 +77,14 @@ export function resolvePersonalHomeAdmission(
         personalHome?: PersonalHomeAdmission;
     }> = {},
 ): PersonalHomeAdmission {
+    const organizationPolicy = readOrganizationPolicy();
+    if (organizationPolicy.status === 'invalid') return 'off';
     if (!(input.host ?? isPersonalHomeBootstrapRuntimeHost())
         || !policy.relay.allowRelaySelection
         || !policy.relay.allowLocalRelayHost) return 'off';
-    return input.personalHome ?? resolveBuildDefaultProfile().personalHome?.value ?? 'offer';
+    const personalHome = organizationPolicy.status === 'loaded' ? organizationPolicy.policy.personalHome : undefined;
+    return (personalHome?.locked ? personalHome.value : input.personalHome)
+        ?? personalHome?.value ?? resolveBuildDefaultProfile().personalHome?.value ?? 'offer';
 }
 
 export function canHostPersonalHomeHere(policy: SetupSurfacePolicy = resolveSetupSurfacePolicy()): boolean {

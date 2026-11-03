@@ -1272,6 +1272,13 @@ const settingsSessionHandoffTranslationExtensions = {
 
 
 export const ja: TranslationStructure = {
+  organizationPolicy: {
+    managedBy: ({ organization }: { organization: string }) => `管理元: ${organization}`,
+    lockedExplanation: "この選択は組織によって設定されています。変更するには管理者にお問い合わせください。",
+    support: "サポートに問い合わせる",
+    invalidTitle: "組織ポリシーの確認が必要です",
+    invalidBody: "管理者がポリシーを修正するまで、アカウントサービスやHomeの変更、新しいHomeの設定は利用できません。",
+  },
   transcriptPassage: {
     quote: "引用",
     annotate: "注釈を付ける",

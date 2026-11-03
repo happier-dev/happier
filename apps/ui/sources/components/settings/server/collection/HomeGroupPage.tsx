@@ -4,6 +4,7 @@ import { useLocalSearchParams, useRouter } from '@/components/appShell/workspace
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { HomeMark } from '@/components/homes/HomeMark';
+import { OrganizationPolicyFieldNotice, readOrganizationPolicyFieldState } from '@/components/organizationPolicy/OrganizationPolicyFieldNotice';
 import { resolveHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
 import { parseServerSettingsRouteParams } from '@/components/settings/server/navigation/serverSettingsRouteParams';
 import { ServerGroupsSection } from '@/components/settings/server/sections/ServerGroupsSection';
@@ -39,6 +40,7 @@ export const HomeGroupPage = React.memo(function HomeGroupPage(props: Readonly<{
 });
 
 const ExistingHomeGroupPage = React.memo(function ExistingHomeGroupPage(props: Readonly<{ groupId: string }>) {
+    const homePolicy = readOrganizationPolicyFieldState('home');
     const router = useRouter();
     const { controller, collection } = useHomesCollection();
     const row = collection.groups.find((group) => group.id === props.groupId) ?? null;
@@ -97,6 +99,7 @@ const ExistingHomeGroupPage = React.memo(function ExistingHomeGroupPage(props: R
                         {row.current ? null : (
                             <RoundButton
                                 testID="settings.homes.group.switch"
+                                disabled={homePolicy.disabled}
                                 size="small"
                                 display="secondary"
                                 title={t('server.homes.switch')}
@@ -107,6 +110,7 @@ const ExistingHomeGroupPage = React.memo(function ExistingHomeGroupPage(props: R
                     </View>
                 )}
             />
+            <OrganizationPolicyFieldNotice field="home" />
             {nameDraft !== null ? (
                 <ItemGroup>
                     <View style={styles.fields}>
@@ -133,6 +137,7 @@ const ExistingHomeGroupPage = React.memo(function ExistingHomeGroupPage(props: R
 });
 
 const NewHomeGroupPage = React.memo(function NewHomeGroupPage() {
+    const homePolicy = readOrganizationPolicyFieldState('home');
     const homeGroupDraftTitle = useCollectionDraftTitle();
     const { theme } = useUnistyles();
     const router = useRouter();
@@ -171,7 +176,7 @@ const NewHomeGroupPage = React.memo(function NewHomeGroupPage() {
         }
     }, [controller, leave, memberIds, name, saving]);
 
-    const canSave = !saving && name.trim().length > 0 && memberIds.length > 0;
+    const canSave = !homePolicy.disabled && !saving && name.trim().length > 0 && memberIds.length > 0;
     return (
         <ItemList keyboardShouldPersistTaps="handled">
             <PageHeader
@@ -188,6 +193,7 @@ const NewHomeGroupPage = React.memo(function NewHomeGroupPage() {
                     onPress: save,
                 }}
             />
+            <OrganizationPolicyFieldNotice field="home" />
             <ItemGroup>
                 <View style={styles.fields}>
                     <FieldItem label={t('server.serverGroupNameLabel')} labelNativeID="settings-homes-group-name-label" style={styles.field}>

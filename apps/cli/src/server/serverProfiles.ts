@@ -9,6 +9,8 @@ import { chmod, copyFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { areServerProfileIdentifiersEquivalent } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
+import { assertOrganizationPolicyEndpointAllowed } from '@happier-dev/protocol/organizationPolicy/organizationPolicyV1';
+import { configuration } from '@/configuration';
 
 function normalizeServerUrlForEnvId(url: string): string {
   return String(url ?? '').trim().replace(/\/+$/, '');
@@ -451,6 +453,7 @@ export async function useServerProfile(idRaw: string): Promise<ServerProfile> {
     }
     const nextProfile = { ...existing, lastUsedAt: now, updatedAt: now };
     selectedProfile = requireProfileProjection(nextProfile, resolvedId);
+    assertOrganizationPolicyEndpointAllowed(configuration.organizationPolicy, 'home', selectedProfile.serverUrl);
     return {
       ...current,
       activeServerId: resolvedId,
@@ -489,6 +492,7 @@ export async function addServerProfile(opts: Readonly<{
   const localServerUrl = String(opts.localServerUrl ?? '').trim();
   const webappUrl = String(opts.webappUrl ?? '').trim();
   const shouldUse = opts.use === true;
+  if (shouldUse) assertOrganizationPolicyEndpointAllowed(configuration.organizationPolicy, 'home', serverUrl);
   const now = Date.now();
   let createdProfile!: ServerProfile;
 
@@ -631,6 +635,9 @@ export async function adoptServerProfileHomeConnectionDescriptor(opts: Readonly<
 
     const rawExisting = servers[resolvedId];
     const existing = rawExisting ? coerceProfile(rawExisting) : null;
+    if (opts.use === true || (current?.activeServerId === resolvedId && existing && !urlsReferToSameServer(existing.serverUrl, incoming.canonicalServerUrl))) {
+      assertOrganizationPolicyEndpointAllowed(configuration.organizationPolicy, 'home', incoming.canonicalServerUrl);
+    }
     const previous = existing?.homeConnectionDescriptor;
     const previousAuthority = existing?.homeConnectionDescriptorAuthority ?? (previous ? 'exact' : undefined);
     const descriptor = incoming;
@@ -719,6 +726,7 @@ export async function upsertServerProfileByUrl(opts: Readonly<{
   const localServerUrl = String(opts.localServerUrl ?? '').trim();
   const webappUrl = String(opts.webappUrl ?? '').trim();
   const shouldUse = opts.use === true;
+  if (shouldUse) assertOrganizationPolicyEndpointAllowed(configuration.organizationPolicy, 'home', serverUrl);
   const now = Date.now();
 
   let resolvedId: string | null = null;
@@ -808,6 +816,9 @@ export async function setServerProfileEndpointsById(opts: Readonly<{
   const requestedName = String(opts.name ?? '').trim();
   const shouldUse = opts.use === true;
   const before = await readSettings();
+  if (shouldUse || (before.activeServerId === id && before.servers?.[id]?.serverUrl !== serverUrl)) {
+    assertOrganizationPolicyEndpointAllowed(configuration.organizationPolicy, 'home', serverUrl);
+  }
   const previous = before.servers?.[id] ? requireProfileProjection(before.servers[id], id) : null;
   const previousDescriptor = previous?.homeConnectionDescriptor;
   // A URL change cannot rewrite Home authority. Refresh the published routes
@@ -909,6 +920,9 @@ export async function removeServerProfile(
 
     const { [resolvedId]: _removed, ...rest } = servers as any;
     const nextActive = resolvedId === current?.activeServerId ? 'cloud' : current?.activeServerId;
+    if (resolvedId === current?.activeServerId) {
+      assertOrganizationPolicyEndpointAllowed(configuration.organizationPolicy, 'home', coerceProfile((rest as Record<string, unknown>).cloud)?.serverUrl ?? '');
+    }
     if (nextActive === resolvedId) {
       throw new Error(`Refusing to keep ${resolvedId} as active after removal`);
     }

@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
+import { parseOrganizationPolicyV1 } from '@happier-dev/protocol/organizationPolicy/organizationPolicyV1';
 
 import {
   createCliAccountServiceSessionOwner,
@@ -66,6 +67,24 @@ async function settleLateCompletion(): Promise<void> {
 }
 
 describe('CLI Account Service session owner', () => {
+  it('locked policy admits its endpoint, rejects alternate selection, and retains the prior selection after policy removal', async () => {
+    const happyHomeDir = await createHome();
+    const unlocked = createCliAccountServiceSessionOwner({ happyHomeDir, organizationPolicy: { status: 'absent' } });
+    await unlocked.selectService(service());
+    const organizationPolicy = parseOrganizationPolicyV1('{"schemaVersion":1,"organization":"Example","accountService":{"url":"https://company.example.test","locked":true}}');
+    const locked = createCliAccountServiceSessionOwner({ happyHomeDir, organizationPolicy });
+    await expect(locked.readSelection()).resolves.toBeNull();
+    await expect(locked.selectService(service())).rejects.toThrow('organization_policy_locked');
+    await expect(unlocked.readSelection()).resolves.toMatchObject({ endpoint: 'https://accounts.example.test' });
+    await expect(locked.selectService(service({ endpoint: 'https://company.example.test', canonicalServerUrl: 'https://company.example.test', serverIdentityId: 'srv_company' }))).resolves.toMatchObject({ endpoint: 'https://company.example.test' });
+  });
+
+  it('invalid policy refuses Account-service selection without writing state', async () => {
+    const happyHomeDir = await createHome();
+    const owner = createCliAccountServiceSessionOwner({ happyHomeDir, organizationPolicy: { status: 'invalid', error: { path: '$', code: 'invalid_json' } } });
+    await expect(owner.selectService(service())).rejects.toThrow('organization_policy_invalid');
+    expect(await readdir(happyHomeDir)).toEqual([]);
+  });
   it('stores one strict versioned record only in its dedicated protected namespace', async () => {
     const happyHomeDir = await createHome();
     const owner = createCliAccountServiceSessionOwner({ happyHomeDir });

@@ -27,6 +27,8 @@ import {
 import { DEFAULT_SESSION_WEBHOOK_TIMEOUT_MS } from '@happier-dev/protocol/sessions/creation/sessionSpawnBudget';
 import type { ClientEncryptionRequirement } from '@happier-dev/protocol';
 import { readFiniteTransferConfig } from '@happier-dev/transfers/node'
+import type { OrganizationPolicyLoadResult } from '@happier-dev/protocol/organizationPolicy/organizationPolicyV1';
+import { loadOrganizationPolicy } from '@happier-dev/cli-common/organizationPolicy/readOrganizationPolicyFile';
 import { TerminalPresentUserPolicySchema } from '@happier-dev/protocol/actions/invocationAuthority';
 import type { TerminalPresentUserPolicy } from '@happier-dev/protocol/actions/invocationAuthority';
 
@@ -88,6 +90,7 @@ function normalizeDaemonProcessInheritedEnv(params: Readonly<{
 }
 
 class Configuration {
+  public readonly organizationPolicy: OrganizationPolicyLoadResult;
   /** Canonical Home identity for profiles, enrollment and links; not the runtime HTTP destination. */
   public readonly serverUrl: string
   /** Configured profile route. Runtime requests use resolveServerHttpBaseUrl() instead. */
@@ -271,7 +274,8 @@ class Configuration {
   public readonly clientEncryptionRequirement: ClientEncryptionRequirement
   public readonly terminalPresentUserPolicy: TerminalPresentUserPolicy | undefined
 
-  constructor() {
+  constructor(organizationPolicy: OrganizationPolicyLoadResult = loadOrganizationPolicy()) {
+    this.organizationPolicy = organizationPolicy;
     // Check if we're running as daemon based on process args
     const { args } = parseRuntimeContextPrefixArgs(readCliProcessArgs())
     this.isDaemonProcess = isDaemonProcessArgv(args)
@@ -310,6 +314,7 @@ class Configuration {
       envActiveServerId,
       persisted,
       serversDir: this.serversDir,
+      organizationPolicy: this.organizationPolicy,
     });
 
     this.serverUrl = resolved.serverUrl
@@ -895,5 +900,5 @@ applyRuntimeContextPrefixEnv(readCliProcessArgs(), process.env)
 export let configuration: Configuration = new Configuration()
 
 export function reloadConfiguration(): void {
-  configuration = new Configuration()
+  configuration = new Configuration(configuration.organizationPolicy)
 }

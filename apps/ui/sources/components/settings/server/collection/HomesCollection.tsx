@@ -5,6 +5,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import { HappierCollectionListMark } from '@happier-dev/plugin-ui/presentation';
 
 import { HomeMark } from '@/components/homes/HomeMark';
+import { OrganizationPolicyFieldNotice, readOrganizationPolicyFieldState } from '@/components/organizationPolicy/OrganizationPolicyFieldNotice';
 import { useCollectionDraftTitle } from '@/components/ui/lists/collection/CollectionDraftTitle';
 import { useServerSettingsScreenController } from '@/components/settings/server/hooks/useServerSettingsScreenController';
 import { IconButton } from '@/components/ui/buttons/IconButton';
@@ -89,12 +90,13 @@ function openHref(router: ReturnType<typeof useRouter>, href: string, replace: b
 export { describeHomeRow } from './homeCollectionModel';
 /** The collection's "+": add a Home (a draft in the collection) or make a group of Homes. */
 export const AddHomesMenu = React.memo(function AddHomesMenu(props: Readonly<{ replace: boolean }>) {
+    const homePolicy = readOrganizationPolicyFieldState('home');
     const router = useRouter();
     const [open, setOpen] = React.useState(false);
     const items = React.useMemo((): ReadonlyArray<DropdownMenuItem> => [
-        { id: 'home', title: t('addFlows.addHome'), subtitle: t('addFlows.addHomeSubtitle') },
-        { id: 'group', title: t('addFlows.newGroup'), subtitle: t('addFlows.newGroupSubtitle') },
-    ], []);
+        { id: 'home', title: t('addFlows.addHome'), subtitle: homePolicy.accessibilityHint ?? t('addFlows.addHomeSubtitle'), disabled: homePolicy.disabled },
+        { id: 'group', title: t('addFlows.newGroup'), subtitle: homePolicy.accessibilityHint ?? t('addFlows.newGroupSubtitle'), disabled: homePolicy.disabled },
+    ], [homePolicy.disabled, homePolicy.accessibilityHint]);
     return (
         <DropdownMenu
             testID="settings.homes.addMenu"
@@ -131,6 +133,7 @@ export const AddHomesMenu = React.memo(function AddHomesMenu(props: Readonly<{ r
  * `page` is the same list where no rail shows (rows push). Selection comes from the route.
  */
 export const HomesCollectionList = React.memo(function HomesCollectionList(props: Readonly<{ variant: 'rail' | 'page' }>) {
+    const homePolicy = readOrganizationPolicyFieldState('home');
     const { theme } = useUnistyles();
     const router = useRouter();
     const pathname = usePathname().replace(/\/+$/, '');
@@ -207,11 +210,13 @@ export const HomesCollectionList = React.memo(function HomesCollectionList(props
     if (!rail) {
         return (
             <>
+                <OrganizationPolicyFieldNotice field="home" />
                 <ItemGroup>{deviceRow}</ItemGroup>
                 <ItemGroup>
                     {homeRows}
                     <ItemAddRow
                         testID="settings.homes.add"
+                        disabled={homePolicy.disabled}
                         title={t('addFlows.addHome')}
                         onPress={() => openHref(router, HOMES_ADD_ROUTE, false, 'HomesCollectionList.add')}
                     />
@@ -228,6 +233,7 @@ export const HomesCollectionList = React.memo(function HomesCollectionList(props
             count={collection.homes.length}
             headerAction={<AddHomesMenu replace={onDetailRoute} />}
         >
+            <OrganizationPolicyFieldNotice field="home" />
             {selectedKey === 'homeDraft' ? <HomeDraftRow /> : null}
             {deviceRow}
             {homeRows}

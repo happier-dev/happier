@@ -6,6 +6,7 @@ import { useAccountServiceSelection } from '@/components/account/auth/useAccount
 import { readAccountServiceDisplayName } from '@/components/account/auth/accountServiceDisplayName';
 import { AccountServiceMark } from '@/components/settings/account/AccountServiceMark';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { OrganizationPolicyFieldNotice, readOrganizationPolicyFieldState } from '@/components/organizationPolicy/OrganizationPolicyFieldNotice';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { formatAccountServiceHost } from '@/sync/domains/accountDirectory/accountDirectoryEndpoint';
 import {
@@ -34,6 +35,7 @@ export function OtherServicePathPane(props: Readonly<{
     onConnectAsHome: (address: string) => void;
 }>) {
     const [address, setAddress] = React.useState(props.initialAddress ?? '');
+    const policy = readOrganizationPolicyFieldState('accountService');
     const [verified, setVerified] = React.useState<Verified | null>(null);
     // A Home at this address (it answered with a Home identity but offers no account sign-in).
     const [homeAddress, setHomeAddress] = React.useState<string | null>(null);
@@ -72,12 +74,15 @@ export function OtherServicePathPane(props: Readonly<{
 
     return (
         <View style={styles.pane} testID="already-use-happier.pane.other-service">
+            <OrganizationPolicyFieldNotice field="accountService" />
             <PaneHeader title={t('homesJourneys.pathOtherServiceTitle')} lead={t('homesJourneys.otherServiceLead')} />
             <View style={styles.field}>
                 <PaneLabel nativeID={ADDRESS_LABEL_ID}>{t('homesJourneys.serviceAddressLabel')}</PaneLabel>
                 <View style={styles.fieldRow}>
                     <FieldTextInput
                         testID="already-use-happier.service-address"
+                        editable={!policy.disabled}
+                        accessibilityHint={policy.accessibilityHint}
                         value={address}
                         onChangeText={(value) => {
                             setAddress(value);
@@ -91,11 +96,12 @@ export function OtherServicePathPane(props: Readonly<{
                         keyboardType="url"
                         autoCapitalize="none"
                         returnKeyType="go"
-                        onSubmitEditing={() => { void check(); }}
+                        onSubmitEditing={policy.disabled ? undefined : () => { void check(); }}
                         style={styles.fieldInput}
                     />
                     <RoundButton
                         testID="already-use-happier.service-check"
+                        disabled={policy.disabled}
                         size="small"
                         display="secondary"
                         title={t('settingsAccount.accountServiceCheck')}
@@ -116,6 +122,7 @@ export function OtherServicePathPane(props: Readonly<{
                     <View style={styles.actions}>
                         <RoundButton
                             testID="already-use-happier.service-use"
+                            disabled={policy.disabled}
                             size="small"
                             title={t('homesJourneys.useThisService', { service: verifiedName })}
                             loading={using}

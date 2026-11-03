@@ -16,6 +16,7 @@ import { formatAccountServiceHost } from '@/sync/domains/accountDirectory/accoun
 import { createServerUrlComparableKey } from '@/sync/domains/server/url/serverUrlCanonical';
 import { t } from '@/text';
 import { PhoneWelcomeDoorway } from '@/components/homes/journeys/phone/PhoneWelcomeDoorway';
+import { OrganizationPolicyFieldNotice, readOrganizationPolicyFieldState } from '@/components/organizationPolicy/OrganizationPolicyFieldNotice';
 import { useViewportClass } from '@/utils/platform/useViewportClass';
 import { useReturningGreeting } from './useReturningGreeting';
 import { WelcomeActionCard } from './WelcomeActionCard';
@@ -54,6 +55,8 @@ type WelcomeEntryModelAction = WelcomeEntryModel['actions'][number];
 export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(props: WelcomeDecisionPanelProps) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
+    const homePolicy = readOrganizationPolicyFieldState('home');
+    const servicePolicy = readOrganizationPolicyFieldState('accountService');
     const options = props.authEntryOptions;
     const showBlocked = options.serverAvailability === 'unavailable' || options.serverAvailability === 'incompatible';
     const handleLogin = props.onOpenRestore;
@@ -165,6 +168,7 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
                     key={row.id}
                     actionId={row.id}
                     testID="welcome-scan-existing-home"
+                    disabled={homePolicy.disabled}
                     primary={row.emphasis === 'primary'}
                     title={t(canScanQr ? 'connect.scanExistingHomeQrTitle' : 'connect.enterUrlManually')}
                     subtitle={t(canScanQr ? 'welcome.welcomeSecondarySubtitle' : 'connect.pairingLinkRequired')}
@@ -173,10 +177,10 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
                 />;
             }
             if (action.kind === 'choose_home') {
-                return <WelcomeActionCard key={row.id} actionId={row.id} testID="welcome-use-different-home" primary={row.emphasis === 'primary'} title={t('welcome.useDifferentHome')} subtitle={t('welcome.useDifferentHomeSubtitle', { home: options.homeLabel ?? t('settingsAccount.thisHomeTitle') })} iconName="house" onPress={props.onChangeRelay} />;
+                return <WelcomeActionCard key={row.id} actionId={row.id} testID="welcome-use-different-home" disabled={homePolicy.disabled} primary={row.emphasis === 'primary'} title={t('welcome.useDifferentHome')} subtitle={homePolicy.accessibilityHint ?? t('welcome.useDifferentHomeSubtitle', { home: options.homeLabel ?? t('settingsAccount.thisHomeTitle') })} iconName="house" onPress={props.onChangeRelay} />;
             }
             if (action.kind === 'choose_sign_in_service') {
-                return <WelcomeActionCard key={row.id} actionId={row.id} testID="welcome-account-service-choose" primary={row.emphasis === 'primary'} title={t('welcome.chooseSignInService')} subtitle={t('welcome.signInServiceUrlPrompt')} iconName="globe" onPress={props.onChooseAccountService!} />;
+                return <WelcomeActionCard key={row.id} actionId={row.id} testID="welcome-account-service-choose" disabled={servicePolicy.disabled} primary={row.emphasis === 'primary'} title={t('welcome.chooseSignInService')} subtitle={servicePolicy.accessibilityHint ?? t('welcome.signInServiceUrlPrompt')} iconName="globe" onPress={props.onChooseAccountService!} />;
             }
             if (action.kind === 'create_personal_home') {
                 return <WelcomeActionCard key={row.id} actionId={row.id} testID="welcome-create-personal-home" primary={row.emphasis === 'primary'} title={t('setupOnboarding.setupNewRelayAction')} subtitle={t('setupOnboarding.relayOnThisComputerSubtitle')} iconName="house" onPress={props.onCreatePersonalHome!} />;
@@ -304,6 +308,7 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
                     {isReturningUser ? returningGreeting.subtitle : t('welcome.welcomeQuestionSubtitle')}
                 </Text>
             </View> : null}
+            <OrganizationPolicyFieldNotice field={homePolicy.lock ? 'home' : servicePolicy.lock ? 'accountService' : 'personalHome'} />
             {model.showHomeStatus && options.showAuthActions
                 && (options.serverAvailability === 'ready' || options.serverAvailability === 'legacy')
                 && options.authenticationActions !== undefined

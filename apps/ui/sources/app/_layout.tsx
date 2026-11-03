@@ -12,6 +12,7 @@ import {
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { AuthProvider, ConcurrentSessionCacheRuntime } from '@/auth/context/AuthContext';
 import { WebServerOverrideGate } from '@/components/navigation/root/RootLayoutRedirectGate';
+import { OrganizationPolicyDiagnostic } from '@/components/organizationPolicy/OrganizationPolicyFieldNotice';
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { initialWindowMetrics, SafeAreaProvider } from 'react-native-safe-area-context';
@@ -847,6 +848,7 @@ function AppBoot() {
                 <MainAppTabStateProvider>
                     <CurrentUiContextProvider>
                         <CurrentUiContextActionHost />
+                        <OrganizationPolicyDiagnostic />
                         {/* Routes and hosted workspace destinations share the retained source owner.
                             Keep its portal beneath the same keyboard and current-UI contexts. */}
                         <BrowserPresentationRetentionProvider>

@@ -34,10 +34,49 @@ vi.mock('@/text', async () => {
     return createTextModuleMock({ translate: (key) => key });
 });
 
+// Load the real owner graph before installing a native runtime-config boundary fixture.
+await import('./AccountServiceSelectionForm');
+
 describe('AccountServiceSelectionForm', () => {
     afterEach(() => {
         network.request.mockReset();
         standardCleanup();
+        vi.unstubAllGlobals();
+    });
+
+    it('keeps a policy-locked service visible and disables changing it while Back remains available', async () => {
+        vi.stubGlobal('isTauri', true);
+        vi.stubGlobal('document', {});
+        vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn(), __HAPPIER_WEB_RUNTIME_CONFIG__: {
+            organizationPolicyJson: JSON.stringify({ schemaVersion: 1, organization: 'Example Co',
+                supportUrl: 'https://support.example.test',
+                accountService: { url: 'https://directory.example.test', locked: true } }),
+        } });
+        const onBack = vi.fn();
+        const { AccountServiceSelectionForm } = await import('./AccountServiceSelectionForm');
+        const screen = await renderScreen(<AccountServiceSelectionForm
+            currentEndpoint={{ url: 'https://directory.example.test', source: 'default' }}
+            onBack={onBack} onSelect={vi.fn()}
+        />);
+        expect(screen.findByTestId('account-service-current-choice')?.props.disabled).toBe(true);
+        expect(screen.findByTestId('account-service-another-choice')?.props.disabled).toBe(true);
+        expect(screen.findByTestId('organization-policy-accountService')).not.toBeNull();
+        expect(screen.findByTestId('organization-policy-accountService-support')).not.toBeNull();
+        await screen.pressByTestIdAsync('account-service-selection-back');
+        expect(onBack).toHaveBeenCalledOnce();
+    });
+
+    it('disables URL entry when the organization policy is invalid', async () => {
+        vi.stubGlobal('isTauri', true);
+        vi.stubGlobal('document', {});
+        vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn(), __HAPPIER_WEB_RUNTIME_CONFIG__: { organizationPolicyJson: '{' } });
+        const { AccountServiceSelectionForm } = await import('./AccountServiceSelectionForm');
+        const screen = await renderScreen(<AccountServiceSelectionForm
+            currentEndpoint={null} onBack={vi.fn()} onSelect={vi.fn()}
+        />);
+        expect(screen.findByTestId('account-service-url-input')?.props.editable).toBe(false);
+        expect(screen.findByTestId('account-service-url-submit')?.props.disabled).toBe(true);
+        expect(screen.findByTestId('account-service-another-choice')?.props.disabled).toBe(true);
     });
 
     function supportedAccountService(serverIdentityId: string) {

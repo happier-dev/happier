@@ -4,6 +4,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import type { AccountServiceEndpointV1 } from '@/sync/domains/server/serverProfiles';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { OrganizationPolicyFieldNotice, readOrganizationPolicyFieldState } from '@/components/organizationPolicy/OrganizationPolicyFieldNotice';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { WizardChoiceRow } from '@/components/onboarding/ui/WizardChoiceRow';
 import { Typography } from '@/constants/Typography';
@@ -55,6 +56,7 @@ function endpointLabel(endpoint: AccountServiceEndpointV1): string {
 export const AccountServiceSelectionForm = React.memo(function AccountServiceSelectionForm(props: AccountServiceSelectionFormProps) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
+    const policy = readOrganizationPolicyFieldState('accountService');
     const inputRef = React.useRef<React.ElementRef<typeof TextInput>>(null);
     const currentEndpoint = props.currentEndpoint?.url ? props.currentEndpoint : null;
     const [showUrlInput, setShowUrlInput] = React.useState(currentEndpoint == null);
@@ -78,10 +80,12 @@ export const AccountServiceSelectionForm = React.memo(function AccountServiceSel
 
     return (
         <View testID="account-service-selection-form" style={styles.root}>
+            <OrganizationPolicyFieldNotice field="accountService" />
             <View style={styles.choices}>
                 {currentEndpoint ? (
                     <WizardChoiceRow
                         testID="account-service-current-choice"
+                        disabled={policy.disabled}
                         selected={false}
                         icon="globe"
                         title={endpointLabel(currentEndpoint)}
@@ -91,6 +95,7 @@ export const AccountServiceSelectionForm = React.memo(function AccountServiceSel
                 ) : null}
                 <WizardChoiceRow
                     testID="account-service-another-choice"
+                    disabled={policy.disabled}
                     selected={showUrlInput}
                     icon="plus-circle"
                     title={t('homeAdd.otherSignInService')}
@@ -107,6 +112,9 @@ export const AccountServiceSelectionForm = React.memo(function AccountServiceSel
                         ref={inputRef}
                         testID="account-service-url-input"
                         accessibilityLabel={t('homeAdd.signInServiceAddress')}
+                        editable={!policy.disabled}
+                        accessibilityState={{ disabled: policy.disabled }}
+                        accessibilityHint={policy.accessibilityHint}
                         style={styles.input}
                         placeholder={t('common.urlPlaceholder')}
                         placeholderTextColor={theme.colors.input.placeholder}
@@ -115,10 +123,10 @@ export const AccountServiceSelectionForm = React.memo(function AccountServiceSel
                             setUrl(value);
                             if (error) selection.clearError();
                         }}
-                        onSubmitEditing={() => {
+                        onSubmitEditing={policy.disabled ? undefined : () => {
                             void select(url);
                         }}
-                        autoFocus={props.currentEndpoint == null}
+                        autoFocus={!policy.disabled && props.currentEndpoint == null}
                         autoCapitalize="none"
                         autoCorrect={false}
                         keyboardType="url"
@@ -129,7 +137,7 @@ export const AccountServiceSelectionForm = React.memo(function AccountServiceSel
             ) : null}
             <View style={styles.actions}>
                 {showUrlInput ? (
-                    <RoundButton testID="account-service-url-submit" title={t('common.continue')} action={() => select(url)} />
+                    <RoundButton testID="account-service-url-submit" title={t('common.continue')} disabled={policy.disabled} action={() => select(url)} />
                 ) : null}
                 <RoundButton testID="account-service-selection-back" title={t('common.back')} display="inverted" onPress={goBack} />
             </View>

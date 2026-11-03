@@ -14225,6 +14225,16 @@
       "happier-source": "./src/workspaces/workspaceSyncTopology.ts",
       "types": "./dist/workspaces/workspaceSyncTopology.d.ts",
       "default": "./dist/workspaces/workspaceSyncTopology.js"
+    },
+    "./organizationPolicy/buildDefaultProfile": {
+      "happier-source": "./src/organizationPolicy/buildDefaultProfile.ts",
+      "types": "./dist/organizationPolicy/buildDefaultProfile.d.ts",
+      "default": "./dist/organizationPolicy/buildDefaultProfile.js"
+    },
+    "./organizationPolicy/organizationPolicyV1": {
+      "happier-source": "./src/organizationPolicy/organizationPolicyV1.ts",
+      "types": "./dist/organizationPolicy/organizationPolicyV1.d.ts",
+      "default": "./dist/organizationPolicy/organizationPolicyV1.js"
     }
   },
   "files": [

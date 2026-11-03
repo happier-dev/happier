@@ -1080,6 +1080,13 @@ function plural({ count, singular, plural }: { count: number; singular: string; 
  * - New translation keys must be added to ALL language files
  */
 export const de: TranslationStructure = {
+  organizationPolicy: {
+    managedBy: ({ organization }: { organization: string }) => `Verwaltet von ${organization}`,
+    lockedExplanation: "Deine Organisation legt diese Auswahl fest. Wende dich für Änderungen an die Administration.",
+    support: "Support kontaktieren",
+    invalidTitle: "Organisationsrichtlinie überprüfen",
+    invalidBody: "Kontodienst und Home können erst wieder geändert und neue Homes eingerichtet werden, wenn die Administration die Richtlinie korrigiert hat.",
+  },
   transcriptPassage: {
     quote: "Zitieren",
     annotate: "Anmerken",

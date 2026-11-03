@@ -6,6 +6,12 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
+    "./organizationPolicy/readOrganizationPolicyFile": {
+      "happier-source": "./src/organizationPolicy/readOrganizationPolicyFile.ts",
+      "types": "./dist/organizationPolicy/readOrganizationPolicyFile.d.ts",
+      "import": "./dist/organizationPolicy/readOrganizationPolicyFile.js",
+      "default": "./dist/organizationPolicy/readOrganizationPolicyFile.js"
+    },
     "./machineSetup": {
       "happier-source": "./src/machineSetup/index.ts",
       "types": "./dist/machineSetup/index.d.ts",

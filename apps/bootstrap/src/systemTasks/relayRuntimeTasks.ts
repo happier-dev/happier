@@ -26,6 +26,9 @@ import {
   ensureLocalFirstPartyComponentCommand,
 } from '@happier-dev/cli-common/systemTasks';
 import { normalizeBootstrapChannel, parseFirstJsonObject, runCommandCapture, type CommandExecutionResult } from './taskRuntime.js';
+import { loadOrganizationPolicy } from '@happier-dev/cli-common/organizationPolicy/readOrganizationPolicyFile';
+
+const organizationPolicy = loadOrganizationPolicy();
 
 export type SshConnectionConfig = SystemTaskSshConnectionConfig;
 type SshConnectionWithPasswordConfig = SshConnectionConfig & Readonly<{ password?: string }>;
@@ -308,7 +311,7 @@ function buildRelayHostEngineDeps(params: Readonly<{
         versionId: result.versionId,
       };
     },
-    ...(params.localInstallPolicy ? { localInstallPolicy: params.localInstallPolicy } : {}),
+    localInstallPolicy: { ...params.localInstallPolicy, organizationPolicy },
     ...(params.resolveLocalInstallVersion ? { resolveLocalInstallVersion: params.resolveLocalInstallVersion } : {}),
   };
 }

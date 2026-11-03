@@ -1,7 +1,9 @@
-#[cfg(desktop)]
 use serde::Serialize;
 
-#[cfg(desktop)]
+#[path = "organization_policy.rs"]
+mod organization_policy;
+use organization_policy::OrganizationPolicyReadError;
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct DesktopWebRuntimeConfig {
@@ -9,9 +11,12 @@ struct DesktopWebRuntimeConfig {
     server_url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     server_context: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    organization_policy_json: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    organization_policy_error: Option<OrganizationPolicyReadError>,
 }
 
-#[cfg(desktop)]
 fn read_non_empty_env_with<F>(read_env: &F, key: &str) -> Option<String>
 where
     F: Fn(&str) -> Option<String>,
@@ -21,7 +26,6 @@ where
         .filter(|value| !value.is_empty())
 }
 
-#[cfg(desktop)]
 fn has_explicit_runtime_override_with<F>(read_env: &F) -> bool
 where
     F: Fn(&str) -> Option<String>,
@@ -30,7 +34,6 @@ where
         || read_non_empty_env_with(read_env, "HAPPIER_TAURI_WEB_RUNTIME_SERVER_CONTEXT").is_some()
 }
 
-#[cfg(desktop)]
 fn has_stack_runtime_hint_with<F>(read_env: &F) -> bool
 where
     F: Fn(&str) -> Option<String>,
@@ -52,7 +55,6 @@ where
         .unwrap_or(false)
 }
 
-#[cfg(desktop)]
 fn resolve_runtime_server_url_with<F>(read_env: &F) -> Option<String>
 where
     F: Fn(&str) -> Option<String>,
@@ -72,7 +74,6 @@ where
         .or_else(|| read_non_empty_env_with(read_env, "HAPPIER_STACK_SERVER_URL"))
 }
 
-#[cfg(desktop)]
 fn resolve_runtime_server_context_with<F>(read_env: &F) -> Option<String>
 where
     F: Fn(&str) -> Option<String>,
@@ -88,28 +89,35 @@ where
         })
 }
 
-#[cfg(desktop)]
-fn resolve_desktop_web_runtime_config_with<F>(read_env: F) -> Option<DesktopWebRuntimeConfig>
+fn resolve_desktop_web_runtime_config_with<F>(
+    read_env: F,
+    policy: Result<Option<String>, OrganizationPolicyReadError>,
+) -> Option<DesktopWebRuntimeConfig>
 where
     F: Fn(&str) -> Option<String>,
 {
-    if !has_stack_runtime_hint_with(&read_env) {
-        return None;
-    }
-
-    let config = DesktopWebRuntimeConfig {
-        server_url: resolve_runtime_server_url_with(&read_env),
-        server_context: resolve_runtime_server_context_with(&read_env),
+    let mut config = if has_stack_runtime_hint_with(&read_env) {
+        DesktopWebRuntimeConfig {
+            server_url: resolve_runtime_server_url_with(&read_env),
+            server_context: resolve_runtime_server_context_with(&read_env),
+            ..Default::default()
+        }
+    } else {
+        DesktopWebRuntimeConfig::default()
     };
 
-    if config.server_url.is_none() && config.server_context.is_none() {
+    match policy {
+        Ok(raw) => config.organization_policy_json = raw,
+        Err(error) => config.organization_policy_error = Some(error),
+    }
+
+    if config == DesktopWebRuntimeConfig::default() {
         return None;
     }
 
     Some(config)
 }
 
-#[cfg(desktop)]
 fn build_desktop_web_runtime_config_init_script(
     config: &DesktopWebRuntimeConfig,
 ) -> Option<String> {
@@ -119,16 +127,16 @@ fn build_desktop_web_runtime_config_init_script(
     ))
 }
 
-#[cfg(desktop)]
 pub(crate) fn build_desktop_web_runtime_config_init_script_from_env() -> Option<String> {
-    let config = resolve_desktop_web_runtime_config_with(|key| std::env::var(key).ok())?;
+    let config = resolve_desktop_web_runtime_config_with(
+        |key| std::env::var(key).ok(),
+        organization_policy::read_machine_policy(),
+    )?;
     build_desktop_web_runtime_config_init_script(&config)
 }
 
-#[cfg(desktop)]
 const PERSONAL_HOME_QA_OBSERVER_ENV: &str = "HAPPIER_TAURI_PERSONAL_HOME_QA_OBSERVE_NO_WELCOME";
 
-#[cfg(desktop)]
 fn build_personal_home_qa_observer_init_script_with<F>(read_env: F) -> Option<String>
 where
     F: Fn(&str) -> Option<String>,
@@ -143,7 +151,6 @@ where
     )
 }
 
-#[cfg(desktop)]
 pub(crate) fn build_personal_home_qa_observer_init_script_from_env() -> Option<String> {
     build_personal_home_qa_observer_init_script_with(|key| std::env::var(key).ok())
 }
@@ -168,15 +175,17 @@ mod tests {
             ),
         ]);
 
-        let resolved = resolve_desktop_web_runtime_config_with(|key| {
-            env.get(key).map(|value| (*value).to_string())
-        });
+        let resolved = resolve_desktop_web_runtime_config_with(
+            |key| env.get(key).map(|value| (*value).to_string()),
+            Ok(None),
+        );
 
         assert_eq!(
             resolved,
             Some(DesktopWebRuntimeConfig {
                 server_url: Some("http://127.0.0.1:3009".to_string()),
                 server_context: Some("stack".to_string()),
+                ..Default::default()
             })
         );
     }
@@ -185,9 +194,10 @@ mod tests {
     fn skips_runtime_injection_without_stack_or_explicit_runtime_hints() {
         let env = HashMap::<&str, &str>::new();
 
-        let resolved = resolve_desktop_web_runtime_config_with(|key| {
-            env.get(key).map(|value| (*value).to_string())
-        });
+        let resolved = resolve_desktop_web_runtime_config_with(
+            |key| env.get(key).map(|value| (*value).to_string()),
+            Ok(None),
+        );
 
         assert_eq!(resolved, None);
     }
@@ -196,15 +206,17 @@ mod tests {
     fn resolves_runtime_config_from_the_launched_server_url_even_without_stack_hints() {
         let env = HashMap::from([("HAPPIER_SERVER_URL", "http://127.0.0.1:3009")]);
 
-        let resolved = resolve_desktop_web_runtime_config_with(|key| {
-            env.get(key).map(|value| (*value).to_string())
-        });
+        let resolved = resolve_desktop_web_runtime_config_with(
+            |key| env.get(key).map(|value| (*value).to_string()),
+            Ok(None),
+        );
 
         assert_eq!(
             resolved,
             Some(DesktopWebRuntimeConfig {
                 server_url: Some("http://127.0.0.1:3009".to_string()),
                 server_context: Some("stack".to_string()),
+                ..Default::default()
             })
         );
     }
@@ -214,6 +226,7 @@ mod tests {
         let script = build_desktop_web_runtime_config_init_script(&DesktopWebRuntimeConfig {
             server_url: Some("http://127.0.0.1:3009".to_string()),
             server_context: Some("stack".to_string()),
+            ..Default::default()
         })
         .expect("expected runtime init script");
 
@@ -224,6 +237,44 @@ mod tests {
         assert!(script.contains("history.replaceState"));
         assert!(script.contains("searchParams.set("));
         assert!(script.contains("\"server\""));
+    }
+
+    #[test]
+    fn injects_raw_policy_without_stack_hints_and_preserves_javascript_string_content() {
+        let raw = "{\"organization\":\"a\\\";throw 'unexpected'\\n</script>\"}\n\u{2028}\u{2029}";
+        let config = resolve_desktop_web_runtime_config_with(|_| None, Ok(Some(raw.to_string())))
+            .expect("ordinary production desktop must inject organization policy");
+        let script = build_desktop_web_runtime_config_init_script(&config).unwrap();
+        let payload = script
+            .split_once("const next=")
+            .unwrap()
+            .1
+            .split_once(";if(!next")
+            .unwrap()
+            .0;
+        let serialized: serde_json::Value = serde_json::from_str(payload).unwrap();
+        assert_eq!(
+            serialized,
+            serde_json::json!({"organizationPolicyJson": raw})
+        );
+    }
+
+    #[test]
+    fn injects_typed_file_error_without_stack_hints() {
+        let error = super::OrganizationPolicyReadError {
+            path: "/etc/happier/policy.json".to_string(),
+            code: "organization_policy_unreadable",
+        };
+        let config = resolve_desktop_web_runtime_config_with(|_| None, Err(error))
+            .expect("a present unreadable policy must reach the UI diagnostic owner");
+        assert_eq!(
+            serde_json::to_value(config).unwrap(),
+            serde_json::json!({
+                "organizationPolicyError": {
+                    "path": "/etc/happier/policy.json", "code": "organization_policy_unreadable"
+                }
+            })
+        );
     }
 
     #[test]

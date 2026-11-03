@@ -38,9 +38,9 @@ export function PaneHelp(props: Readonly<{ children: React.ReactNode; tone?: 'he
 }
 
 /** A quiet inline action in the journey's identity row. */
-export function PaneLink(props: Readonly<{ label: string; onPress: () => void; testID?: string }>) {
+export function PaneLink(props: Readonly<{ label: string; onPress: () => void; testID?: string; disabled?: boolean; accessibilityHint?: string }>) {
     return (
-        <HappierPressable testID={props.testID} accessibilityRole="link" onPress={props.onPress}>
+        <HappierPressable testID={props.testID} accessibilityRole="link" disabled={props.disabled} accessibilityHint={props.accessibilityHint} onPress={props.onPress}>
             <Text style={styles.link}>{props.label}</Text>
         </HappierPressable>
     );

@@ -1,6 +1,7 @@
 import { isStackContext } from './serverContext';
 import { readWebRuntimeConfigServerUrl } from '@/sync/runtime/webRuntimeConfig';
 import { isLoopbackHostname } from '@happier-dev/protocol/server/urls/loopbackHostname';
+import { readOrganizationPolicy } from '@/sync/domains/organizationPolicy/organizationPolicy';
 
 function readFirstNonEmptyEnv(...values: Array<string | undefined>): string {
     for (const value of values) {
@@ -11,11 +12,15 @@ function readFirstNonEmptyEnv(...values: Array<string | undefined>): string {
 }
 
 export function readConfiguredServerUrlEnvRaw(): string {
+    const policy = readOrganizationPolicy();
+    const home = policy.status === 'loaded' ? policy.policy.home : undefined;
+    if (home?.locked) return home.url;
     return readFirstNonEmptyEnv(
         readWebRuntimeConfigServerUrl(),
         process.env.EXPO_PUBLIC_HAPPIER_SERVER_URL,
         process.env.EXPO_PUBLIC_HAPPY_SERVER_URL,
         process.env.EXPO_PUBLIC_SERVER_URL,
+        home?.url,
     );
 }
 

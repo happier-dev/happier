@@ -111,6 +111,7 @@ import { ProjectContextUpdateInputV1Schema } from '@happier-dev/protocol/project
 import { decodeTerminalStreamBytesFrame } from '@happier-dev/protocol/terminal/stream';
 import { createTerminalUtf8ProjectionDecoder, TERMINAL_OUTPUT_GAP_MARKER } from '@/sync/domains/terminal/stream/runtime';
 import { setClipboardStringSafe } from '@/utils/ui/clipboard';
+import { openExternalUrl } from '@/utils/url/openExternalUrl';
 import { createPromptDocInLibrary, updatePromptBundleInLibrary, setPromptDocFavorite, listPromptLibrary, readPromptDocInLibrary, updatePromptDocInLibrary, readSkillInLibrary } from '@happier-dev/protocol/prompts/library/promptLibraryActionOperations';
 import { SkillReadResultV1Schema, type SkillReadInputV1 } from '@happier-dev/protocol/prompts/library/skills/skillReadV1';
 import { resolvePromptDocCreateActionInputV1 } from '@happier-dev/protocol/prompts/library/promptDocV2';
@@ -1283,6 +1284,14 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     bugReportSubmit: createBugReportSubmitAction(accountContext ?? null),
     appUpdateAction: executeAppUpdateAction,
     updatesAction: createUpdatesAction(accountContext),
+    externalUrlOpen: async ({ url, signal }) => {
+      throwIfAborted(signal);
+      accountContext?.assertCurrent();
+      // Keep the platform open in this invocation: no pre-opened popup on refusal,
+      // deferred task, retry, URL publication or second opener.
+      return await openExternalUrl(url) ? { status: 'opened' }
+        : { ok: false, errorCode: 'external_link_unavailable', error: 'external_link_unavailable' };
+    },
     clipboardWrite: async ({ text, signal }) => {
       throwIfAborted(signal);
       accountContext?.assertCurrent();
@@ -4524,7 +4533,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       && surface === 'ui' && context?.actionCaller?.kind === 'host'
       && !context.externalActionCredential && !context.externalActionExecutionAuthorization && !context.rpcSessionAuthorization
       && !context.signal?.aborted && storage.getState().settingsScope === null && isSettingsOwnerCurrent()
-      && isBuiltInLocalSettingMutation(actionId, input);
+      && (actionId === 'links.openExternal' || isBuiltInLocalSettingMutation(actionId, input));
     const voiceCanApproveRequests = surface === 'voice' && credential === 'account'
       && (!context?.actionCaller || context.actionCaller.kind === 'host')
       && !context?.externalActionCredential && !context?.externalActionExecutionAuthorization

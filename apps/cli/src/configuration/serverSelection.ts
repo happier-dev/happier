@@ -3,6 +3,7 @@ import { join } from 'node:path';
 
 import { createServerUrlComparableKey } from '@happier-dev/protocol/server/urls/serverUrlComparableKey';
 import { resolveBuildDefaultProfile, resolveDefaultWebappUrl } from '@happier-dev/cli-common/happierCloud';
+import type { OrganizationPolicyLoadResult } from '@happier-dev/protocol/organizationPolicy/organizationPolicyV1';
 
 import { deriveServerIdFromUrl, sanitizeServerIdForFilesystem } from '@/server/serverId';
 import { isLocalishServerUrl } from '@/server/serverUrlClassification';
@@ -93,8 +94,20 @@ export function resolveServerSelection(params: Readonly<{
   envActiveServerId: string | null;
   persisted: PersistedServerSettings | null;
   serversDir: string;
+  organizationPolicy?: OrganizationPolicyLoadResult;
 }>): Readonly<{ activeServerId: string; serverUrl: string; apiServerUrl: string; webappUrl: string }> {
-  const defaultHome = resolveBuildDefaultProfile().home;
+  const policyHome = params.organizationPolicy?.status === 'loaded' ? params.organizationPolicy.policy.home : undefined;
+  const defaultHome = policyHome ?? resolveBuildDefaultProfile().home;
+  if (policyHome?.locked) {
+    const comparableKey = createServerUrlComparableKey(policyHome.url);
+    const matchingProfile = Object.values(params.persisted?.servers ?? {}).find((profile) => safeCreateComparableServerUrlKey(profile.serverUrl) === comparableKey);
+    return {
+      activeServerId: matchingProfile?.id ?? deriveServerIdFromUrl(policyHome.url),
+      serverUrl: policyHome.url,
+      apiServerUrl: policyHome.url,
+      webappUrl: resolveDefaultWebappUrl(policyHome.url),
+    };
+  }
   const resolveActiveServerId = (fallbackId: string): string =>
     sanitizeServerIdForFilesystem(params.envActiveServerId ?? fallbackId, 'cloud');
 

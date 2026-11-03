@@ -2,6 +2,8 @@ import { lstat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
 import { normalizeServerIdentityIdCapability } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
+import { assertOrganizationPolicyEndpointAllowed, type OrganizationPolicyLoadResult } from '@happier-dev/protocol/organizationPolicy/organizationPolicyV1';
+import { configuration } from '@/configuration';
 
 import {
   readProtectedLocalStateFile,
@@ -293,8 +295,10 @@ export function resolveCliAccountServiceSessionRecordPath(happyHomeDir: string):
 
 export function createCliAccountServiceSessionOwner(input: Readonly<{
   happyHomeDir: string;
+  organizationPolicy?: OrganizationPolicyLoadResult;
   protectedLocalStateOptions?: ProtectedLocalStateOptions;
 }>): CliAccountServiceSessionOwner {
+  const organizationPolicy = input.organizationPolicy ?? configuration.organizationPolicy;
   const recordPath = resolveCliAccountServiceSessionRecordPath(input.happyHomeDir);
   const namespacePath = dirname(recordPath);
   const protectedLocalStateOptions = combineStorageOptions(input.protectedLocalStateOptions);
@@ -414,7 +418,16 @@ export function createCliAccountServiceSessionOwner(input: Readonly<{
 
   return {
     async readSelection() {
-      return await serialize(async () => (await readStoredRecord())?.selectedService ?? null);
+      return await serialize(async () => {
+        const selected = (await readStoredRecord())?.selectedService ?? null;
+        // Keep the saved choice intact: removing policy restores it. A policy
+        // endpoint is discovered normally and never inherits another credential.
+        if (selected && organizationPolicy.status === 'loaded' && organizationPolicy.policy.accountService?.locked) {
+          try { assertOrganizationPolicyEndpointAllowed(organizationPolicy, 'accountService', selected.endpoint); }
+          catch { return null; }
+        }
+        return selected;
+      });
     },
 
     async readCredential(serviceInput) {
@@ -428,6 +441,7 @@ export function createCliAccountServiceSessionOwner(input: Readonly<{
 
     async selectService(serviceInput) {
       const service = requireSelection(serviceInput);
+      assertOrganizationPolicyEndpointAllowed(organizationPolicy, 'accountService', service.endpoint);
       return await serialize(async () => {
         let record: StoredCliAccountServiceSessionV1 | null;
         try {

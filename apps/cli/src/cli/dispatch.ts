@@ -104,6 +104,16 @@ function debugCliStart(rawArgv: readonly string[]): void {
     .catch(() => undefined);
 }
 
+async function reportOrganizationPolicyDiagnostic(visible: boolean): Promise<void> {
+  const { configuration } = await import('@/configuration');
+  if (configuration.organizationPolicy.status !== 'invalid') return;
+  const { logger } = await import('@/ui/logger');
+  const { path, code } = configuration.organizationPolicy.error;
+  const diagnostic = `organization_policy_invalid: ${path} (${code})`;
+  if (visible) logger.warn(diagnostic);
+  else logger.warnLocalFile(diagnostic);
+}
+
 async function failClosedReservedRootCommand(args: readonly string[], command: string): Promise<boolean> {
   if (!findCommandSurfaceEntry(command)) return false;
 
@@ -310,7 +320,9 @@ export async function dispatchCli(params: Readonly<{
   const buildCommandContext = async (
     contextArgs: string[],
     startsSession: boolean,
-  ): Promise<CommandContext> => ({
+  ): Promise<CommandContext> => {
+    await reportOrganizationPolicyDiagnostic(!startsSession);
+    return ({
     args: contextArgs,
     rawArgv,
     terminalRuntime: startsSession
@@ -323,7 +335,8 @@ export async function dispatchCli(params: Readonly<{
       ? { explicitServerSelection: params.explicitServerSelection }
       : {}),
     ...(scopedEnvironment ? { scopedEnvironment } : {}),
-  });
+    });
+  };
 
   // Handle top-level version requests before backend resolution/auth flows.
   if (isTopLevelVersionRequest(args)) {
@@ -331,11 +344,13 @@ export async function dispatchCli(params: Readonly<{
     return;
   }
   if (isTopLevelHelpRequest(args)) {
+    await reportOrganizationPolicyDiagnostic(true);
     const { printRootHelp } = await import('./rootHelp');
     await printRootHelp();
     return;
   }
   if (isFamilyHelpRequest(args)) {
+    await reportOrganizationPolicyDiagnostic(true);
     const { tryPrintFamilyHelp } = await import('./familyHelp');
     if (await tryPrintFamilyHelp(args)) return;
   }

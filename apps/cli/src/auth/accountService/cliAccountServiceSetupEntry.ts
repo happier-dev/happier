@@ -59,6 +59,9 @@ import {
   authenticateCliAccountService,
   parseCliAccountServiceRecoveryKey,
 } from './cliAccountServiceAuth';
+import { configuration } from '@/configuration';
+import { resolveBuildDefaultProfile } from '@happier-dev/cli-common/happierCloud';
+import { assertOrganizationPolicyEndpointAllowed } from '@happier-dev/protocol/organizationPolicy/organizationPolicyV1';
 import { fetchCliHomeAuthEntry } from './cliAuthEntryClient';
 
 type CliHomeEnrollmentTransport = Extract<
@@ -355,12 +358,20 @@ export async function runCliAccountServiceSetupEntry(
   input: CliAccountServiceSetupEntryInput,
 ): Promise<CliAccountServiceSetupEntryOutcome> {
   if (input.signal?.aborted) return { kind: 'cancelled' };
+  const organizationPolicy = configuration.organizationPolicy;
+  const policyAccountService = organizationPolicy.status === 'loaded' ? organizationPolicy.policy.accountService : undefined;
+  if (input.endpoint !== undefined || organizationPolicy.status === 'invalid') {
+    assertOrganizationPolicyEndpointAllowed(organizationPolicy, 'accountService', input.endpoint ?? '');
+  }
   const session = createCliAccountServiceSessionOwner({ happyHomeDir: resolveHappyHomeDirFromEnvironment(process.env) });
   const persistedSelection = input.endpoint === undefined
     ? await session.readSelection()
     : null;
   const context = input.context ?? { kind: 'none' };
-  const builtInNoTargetDefault = input.builtInNoTargetDefault;
+  const defaultAccountService = policyAccountService ?? resolveBuildDefaultProfile().accountService;
+  const builtInNoTargetDefault = policyAccountService
+    ? { endpoint: policyAccountService.url }
+    : input.builtInNoTargetDefault ?? (defaultAccountService ? { endpoint: defaultAccountService.url } : undefined);
   let contextTarget: Awaited<ReturnType<typeof resolveCliHomeTarget>> | null = null;
   let contextPolicy = context.kind === 'none' ? undefined : context.policy;
   let selfTransport: CliHomeEnrollmentTransport | null = null;
@@ -420,7 +431,9 @@ export async function runCliAccountServiceSetupEntry(
         : { kind: 'account_service_unavailable' };
     }
   }
-  const effectiveService = input.endpoint
+  const effectiveService = policyAccountService?.locked
+    ? { kind: 'no_target_default' as const, endpoint: policyAccountService.url }
+    : input.endpoint
     ? { kind: 'no_target_default' as const, endpoint: input.endpoint, ...(input.expectedServerIdentityId ? { expectedServerIdentityId: input.expectedServerIdentityId } : {}) }
     : resolveEffectiveSignInService({
         targetContext: context.kind === 'none'
@@ -482,6 +495,7 @@ export async function runCliAccountServiceSetupEntry(
   const canonicalEndpoint = effectiveService.kind === 'self'
     ? selfTarget!.canonicalAuthUrl
     : effectiveService.endpoint;
+  assertOrganizationPolicyEndpointAllowed(organizationPolicy, 'accountService', canonicalEndpoint);
   const expectedServerIdentityId = effectiveService.kind === 'self'
     ? selfTarget!.homeServerIdentityId ?? undefined
     : effectiveService.expectedServerIdentityId;

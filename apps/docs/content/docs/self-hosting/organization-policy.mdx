@@ -1,0 +1,108 @@
+---
+title: Organization policy
+description: Set machine-level defaults and locks for Account services, Homes, and local setup on organization-managed desktops.
+---
+
+Give people on an organization-managed computer the right Account service and Home, and lock those choices when your deployment requires it. One local JSON file configures the desktop app and the CLI/daemon on that machine.
+
+<Callout>
+  Organization policy v1 is unreleased 0.3 development work. This guide does not
+  establish availability in a stable or preview release. Browser and mobile
+  clients do not consume this machine file.
+</Callout>
+
+## Before you deploy
+
+Use a desktop and CLI build that includes organization policy v1. You need administrator access to place the file in the machine location and control who can change the file and its parent directory.
+
+Choose the URLs separately: the **Account service** handles identity and Account discovery; a **Home** hosts your Happier data and sessions; an **Iroh relay** helps transport connections. Setting one does not set the others. Deploy the services first using the [server quickstart](/self-hosting/quickstart) and [identity configuration](/self-hosting/auth).
+
+Keep credentials, tokens, and private keys out of the policy file. Policy configures the installed clients; it does not distribute itself or provide protection against modified clients.
+
+## Install the file
+
+Place a UTF-8 JSON document at the location for the computer's operating system:
+
+| Operating system | Location |
+| --- | --- |
+| macOS | `/Library/Application Support/Happier/policy.json` |
+| Linux | `/etc/happier/policy.json` |
+| Windows | `<KnownFolder ProgramFiles>\Happier\policy.json` |
+
+On Windows, Happier asks the operating system for its Program Files known folder. Changing the `ProgramFiles` environment variable does not change the policy location. Production builds do not accept a custom policy path.
+
+For example, this policy selects your organization's Account service and Home and locks both selections:
+
+```json
+{
+  "schemaVersion": 1,
+  "organization": "Example Organization",
+  "supportUrl": "https://support.example.com/happier",
+  "accountService": {
+    "url": "https://accounts.example.com",
+    "locked": true
+  },
+  "home": {
+    "url": "https://home.example.com",
+    "locked": true
+  }
+}
+```
+
+Replace the example URLs with reachable services you operate. Account-service, Home, and relay URLs must be absolute HTTP(S) URLs without embedded credentials, query strings, or fragments. The document is strict: spelling mistakes, unknown keys, unsupported schema versions, and invalid values produce a policy error. Every supplied `accountService`, `home`, or `personalHome` object requires a boolean `locked` field.
+
+Restart the desktop app and daemon after installing or changing the file. New CLI processes read the current file; already running processes retain what they loaded at startup. Reconnecting a client does not reload the daemon's policy.
+
+## Choose defaults or locks
+
+Set `locked` to `false` to suggest a default. A person's explicit saved choice wins over that default. Set `locked` to `true` to fix the effective choice and prevent changing it.
+
+The order, from lowest to highest priority, is built-in defaults, the build's defaults, organization policy defaults, explicit user choices, then organization policy locks. A policy lock does not replace the saved choice. Setting `locked` to `false`, or removing the whole field, and restarting restores normal selection behavior.
+
+Locked controls display **Managed by {organization}**, with an accessible explanation and your support link when supplied. A Home lock also applies to alternate selection paths such as a URL or QR code; hiding the selection control is not its enforcement boundary.
+
+## Personal Home creation
+
+`personalHome.value` chooses `auto`, `offer`, or `off`. `auto` permits automatic local setup where the desktop and setup policy allow it. `offer` waits for the person to choose Personal Home setup. `off` prevents new local Personal Home installations.
+
+This choice does not override a Home-selection lock or a setup gate that disallows local hosting. To offer Personal Home creation, leave Home selection available as well.
+
+An already installed Home remains available for its existing lifecycle and recovery. Policy does not stop it or delete its data. The `off` option is part of the development contract; its inclusion remains subject to final owner confirmation before release.
+
+## Disable features or configure local relays
+
+To deny a feature, add its existing [feature id](/extras/feature-flags) to `features.deny`:
+
+```json
+"features": {
+  "deny": ["voice"]
+}
+```
+
+This is a fragment to add to the main document. Policy can only deny features. It cannot enable a feature that the build or server disallows, and server feature decisions continue to narrow availability.
+
+For an enforced Iroh relay configuration on the local Home/daemon, add a `relays` object:
+
+```json
+"relays": {
+  "policy": "automatic",
+  "urls": ["https://relay.example.com"]
+}
+```
+
+Use `"policy": "disabled"` without `urls` to disable Iroh relay use there. These are transport relays, separate from the Happier sync server. The setting does not restrict which relay candidates the desktop uses to connect to other Homes. It does not configure editable relay defaults or user-added relays. See [Iroh transport relay](/self-hosting/iroh-relay) for the transport's deployment requirements.
+
+## Correct or remove a policy
+
+If no file exists, Happier uses its normal build defaults and user choices. If a file exists but cannot be read or validated, Happier shows a policy diagnostic and blocks governed actions: first-run installation and Account-service/Home selection. Other operation and recovery remain available.
+
+The diagnostic identifies the policy field and issue without displaying rejected values. Correct the file's syntax or field value, or remove the file if the machine should no longer have policy, then restart the affected processes. A locked-selection error means the file loaded successfully and the requested change conflicts with a lock; use the displayed organization support link for that change.
+
+Policy is loaded once per process. There is no live reload, background polling, or policy download, and no plist, registry, or mobile MDM adapter in v1.
+
+## Related
+
+- [Setup and bootstrap policy](/self-hosting/setup-and-bootstrap-policy) — build and server controls for setup surfaces.
+- [Home owner setup and recovery](/self-hosting/home-owner) — establish or recover the Home's owner.
+- [Home administration](/self-hosting/home-administration) — manage people and policy inside a Home.
+- [First-run build profile](/development/app-env#first-run-build-profile-03-development) — defaults for distributors building Happier.

@@ -3,6 +3,8 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { AccountServiceMark } from '@/components/settings/account/AccountServiceMark';
+import { OrganizationPolicyFieldNotice, readOrganizationPolicyFieldState } from '@/components/organizationPolicy/OrganizationPolicyFieldNotice';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { SelectionTiles } from '@/components/ui/forms/SelectionTiles';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
@@ -95,6 +97,7 @@ export function HomeAddForm(props: Readonly<{
     onAddressChange?: (address: string) => void;
 }>) {
     const { theme } = useUnistyles();
+    const homePolicy = readOrganizationPolicyFieldState('home');
     const phone = useViewportClass() === 'compact';
     const service = useJourneyAccountService();
     const flow = useAddHomeFlow({
@@ -111,6 +114,7 @@ export function HomeAddForm(props: Readonly<{
         ...pathPresentation(service, availability.id, theme.colors.text.secondary),
     })), [flow.paths, service, theme.colors.text.secondary]);
     const active = addHomePathOfPane(flow.pane.pane);
+    const personalHomeNotice = flow.pane.pane === 'server_home' ? null : <OrganizationPolicyFieldNotice field="personalHome" />;
     const phonePaths = phone && props.layout === 'page' ? (
         <ListPresentationProvider value="page">
             <ItemGroup accessibilityRole="radiogroup" accessibilityLabel={t('addFlows.addHome')}>
@@ -129,6 +133,14 @@ export function HomeAddForm(props: Readonly<{
         const result = await flow.onConnected(flow.pane.profile);
         if (result.kind === 'focused') (onFocusedHome ?? onClose)();
     }, [flow, onClose, onFocusedHome]);
+
+    if (homePolicy.disabled) {
+        return <View testID={props.testID} style={props.layout === 'sheet' ? styles.sheet : styles.page}>
+            <OrganizationPolicyFieldNotice field="home" />
+            <RoundButton testID={`${props.testID}.blocked`} title={t('addFlows.addHome')} disabled />
+            <RoundButton testID={`${props.testID}.close`} title={t('common.cancel')} display="inverted" onPress={onClose} />
+        </View>;
+    }
 
     let pane: React.ReactNode;
     if (flow.completion?.kind === 'connected') {
@@ -172,7 +184,7 @@ export function HomeAddForm(props: Readonly<{
     }
 
     if (props.layout === 'sheet') {
-        return <View testID={`${props.testID}.${flow.pane.pane}`} style={styles.sheet}>{pane}</View>;
+        return <View testID={`${props.testID}.${flow.pane.pane}`} style={styles.sheet}>{personalHomeNotice}{pane}</View>;
     }
 
     if (props.layout === 'panel') {
@@ -184,7 +196,7 @@ export function HomeAddForm(props: Readonly<{
                 paths={paths.filter((path) => ALREADY_USE_PATHS.has(path.id))}
                 active={active}
                 onChoose={flow.choosePath}
-                pane={pane}
+                pane={<>{personalHomeNotice}{pane}</>}
                 foot={offersHosted ? (
                     <View style={styles.foot}>
                         <Text style={styles.footText}>{t('homesJourneys.hostedPrompt')}</Text>
@@ -202,6 +214,7 @@ export function HomeAddForm(props: Readonly<{
 
     return (
         <View testID={props.testID} style={styles.page}>
+            {personalHomeNotice}
             {phone ? phonePaths : <SelectionTiles<AddHomePath>
                 testIdPrefix={`${props.testID}.path`}
                 accessibilityLabel={t('addFlows.addHome')}

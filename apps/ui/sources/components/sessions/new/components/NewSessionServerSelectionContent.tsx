@@ -1,4 +1,5 @@
 import { resolveHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
+import { OrganizationPolicyFieldNotice, readOrganizationPolicyFieldState } from '@/components/organizationPolicy/OrganizationPolicyFieldNotice';
 import * as React from 'react';
 import { Platform, View } from 'react-native';
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
@@ -82,6 +83,7 @@ function normalizeServerIds(serverIds: readonly string[]): string[] {
 export function NewSessionServerSelectionContent(props: NewSessionServerSelectionContentProps) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
+    const homePolicy = readOrganizationPolicyFieldState('home');
     const {
         maxHeight,
         onClose,
@@ -213,6 +215,7 @@ export function NewSessionServerSelectionContent(props: NewSessionServerSelectio
                 style={styles.list}
                 containerStyle={styles.listContent}
             >
+                <OrganizationPolicyFieldNotice field="home" />
                 <ItemGroup
                     accessibilityRole="radiogroup"
                     accessibilityLabel={t('server.switchToServer')}
@@ -239,6 +242,8 @@ export function NewSessionServerSelectionContent(props: NewSessionServerSelectio
                                     />
                                 )}
                                 selected={isSelected}
+                                disabled={homePolicy.disabled}
+                                accessibilityHint={homePolicy.accessibilityHint}
                                 accessibilityRole="radio"
                                 onPress={() => handleServerPress(serverId)}
                                 showChevron={false}

@@ -2,15 +2,17 @@ import { evaluateFeatureBuildPolicy } from '@happier-dev/protocol/features/build
 import type { ProcessEnvInput } from '@/utils/processEnv/buildScopedProcessEnv';
 import { resolveEmbeddedFeaturePolicyEnv, resolveFeatureBuildPolicyFromEnvOrEmbedded } from '@happier-dev/protocol/features/embeddedFeaturePolicy';
 import type { FeatureBuildPolicyEvaluation, FeatureId } from '@happier-dev/protocol';
+import type { OrganizationPolicyLoadResult } from '@happier-dev/protocol/organizationPolicy/organizationPolicyV1';
+import { configuration } from '@/configuration';
 
-export function readCliFeatureBuildPolicyInputs(env: ProcessEnvInput) {
+export function readCliFeatureBuildPolicyInputs(env: ProcessEnvInput, organizationPolicy: OrganizationPolicyLoadResult = configuration.organizationPolicy) {
   const embeddedEnv = resolveEmbeddedFeaturePolicyEnv(
     env.HAPPIER_FEATURE_POLICY_ENV ?? env.HAPPIER_EMBEDDED_POLICY_ENV,
   );
   return {
     embeddedEnv: embeddedEnv ?? undefined,
     allowRaw: env.HAPPIER_BUILD_FEATURES_ALLOW,
-    denyRaw: env.HAPPIER_BUILD_FEATURES_DENY,
+    denyRaw: [env.HAPPIER_BUILD_FEATURES_DENY, ...(organizationPolicy.status === 'loaded' ? organizationPolicy.policy.features?.deny ?? [] : [])].filter(Boolean).join(','),
   };
 }
 

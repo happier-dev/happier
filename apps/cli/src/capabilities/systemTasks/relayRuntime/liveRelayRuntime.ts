@@ -20,6 +20,7 @@ import {
   probeLocalRelayRuntimeHealth,
 } from '@happier-dev/cli-common/relayHost';
 import { normalizePublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
+import { configuration } from '@/configuration';
 
 type LiveRelayRuntimeServiceStatus = RelayRuntimeStatusSnapshot['service'];
 
@@ -36,6 +37,7 @@ function requireLocalRelayRuntimeParams(params: RelayRuntimeTaskParams): RelayRu
 // engine.
 export function createLocalRelayHostEngine(extraDeps: Partial<Pick<RelayHostEngineDeps, 'resolveLocalInstallVersion'>> = {}): RelayHostEngine {
   return createRelayHostEngine({
+    localInstallPolicy: { organizationPolicy: configuration.organizationPolicy },
     installRemoteComponent: async () => {
       throw new Error('Remote component installation is not available for live relay runtime tasks.');
     },

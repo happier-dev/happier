@@ -1288,6 +1288,13 @@ function plural({
  * Must match the exact structure of the English translations
  */
 export const es: TranslationStructure = {
+  organizationPolicy: {
+    managedBy: ({ organization }: { organization: string }) => `Administrado por ${organization}`,
+    lockedExplanation: "Tu organización establece esta opción. Contacta con tu administrador para cambiarla.",
+    support: "Contactar con soporte",
+    invalidTitle: "La política de la organización requiere atención",
+    invalidBody: "No se puede cambiar el servicio de cuenta o el Home ni configurar un Home nuevo hasta que tu administrador corrija la política.",
+  },
   transcriptPassage: {
     quote: "Citar",
     annotate: "Anotar",
