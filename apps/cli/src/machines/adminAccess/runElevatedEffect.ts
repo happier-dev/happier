@@ -261,9 +261,14 @@ async function runElevatedProcessInternal(input: Pick<RunElevatedEffectInput, 'm
     type Refusal = Extract<MachineElevatedResultV1, { outcome: 'not_applied' }>;
     const refused = (reasonCode: Refusal['reasonCode']): MachineElevatedResultV1 => ({ outcome: 'not_applied', reasonCode });
     let nativeFailure: Refusal['failure'];
-    const rememberNativeFailure = (kind: NonNullable<Refusal['failure']>['kind'], nativeReason?: string) => {
+    const rememberNativeFailure = (kind: NonNullable<Refusal['failure']>['kind'], nativeReason?: string, requiredFact?: string) => {
         const reason = MachineSetupObservationReasonV1Schema.safeParse(nativeReason);
-        nativeFailure ??= { kind, ...(reason.success ? { reason: reason.data } : {}) };
+        const missingFact = requiredFact ?? (nativeReason === 'needs_admin_to_check' ? 'administrator'
+            : nativeReason === 'required_fact_unavailable' ? 'nativeSetupObservation' : undefined);
+        nativeFailure ??= { kind, ...(reason.success ? { reason: reason.data } : {}), ...(missingFact ? {
+            requiredFact: missingFact,
+            remedy: `Required native fact ${missingFact} is unavailable. Check this Machine's administrator access and the named prerequisite, then retry the operation.`,
+        } : {}) };
         return nativeReason === 'platform_unsupported' ? 'platform_unsupported' : kind;
     };
     const nativeRefused = (reasonCode: Refusal['reasonCode']): MachineElevatedResultV1 => ({
@@ -513,7 +518,8 @@ async function runElevatedProcessInternal(input: Pick<RunElevatedEffectInput, 'm
                     const unavailable = plans.flatMap(entry => entry.plan.nativeFacts)
                         .find(fact => fact.status === 'unavailable' || fact.status === 'unsupported');
                     if (unavailable) { await stop(rememberNativeFailure(unavailable.status === 'unsupported'
-                        ? 'native_check_unsupported' : 'native_check_unavailable', unavailable.reason)); continue; }
+                        ? 'native_check_unsupported' : 'native_check_unavailable', unavailable.reason,
+                        typeof unavailable.facts.requiredFact === 'string' ? unavailable.facts.requiredFact : unavailable.stepId)); continue; }
                     dependencies.emit?.({ type: 'machine.setup.checked', data: { plans } });
                     if (input.signal?.aborted || stopReason) { await stop(input.signal?.aborted ? 'cancelled' : stopReason); continue; }
                     checkedFirewallPlans = plans;
@@ -534,7 +540,8 @@ async function runElevatedProcessInternal(input: Pick<RunElevatedEffectInput, 'm
                     if (request.kind === 'check') { terminal = record; if (connectorSession) child.stdin.end(); continue; }
                     const unavailable = plan.nativeFacts.find(fact => fact.status === 'unavailable' || fact.status === 'unsupported');
                     if (unavailable) { await stop(rememberNativeFailure(unavailable.status === 'unsupported'
-                        ? 'native_check_unsupported' : 'native_check_unavailable', unavailable.reason)); continue; }
+                        ? 'native_check_unsupported' : 'native_check_unavailable', unavailable.reason,
+                        typeof unavailable.facts.requiredFact === 'string' ? unavailable.facts.requiredFact : unavailable.stepId)); continue; }
                     if (request.acceptPlan && !await request.acceptPlan(plan)) { await stop('denied'); continue; }
                     dependencies.emit?.({ type: 'machine.setup.checked', data: { plan } });
                     const requestRefusal = await currentRefusal();
@@ -593,20 +600,26 @@ async function runElevatedProcessInternal(input: Pick<RunElevatedEffectInput, 'm
             try { return { outcome: 'applied', observation: await dependencies.observe() }; }
             catch { return { outcome: 'outcome_unknown' }; }
         }
+        const requiredFact = result.requiredFact ?? (result.reason === 'required_fact_unavailable' || result.reason === 'needs_admin_to_check'
+            ? result.stepId : undefined);
         if (result.status === 'plan_changed') return refused('plan_stale');
+        if (result.status === 'unavailable' && !effectStarted && result.completedStepIds.length === 0) {
+            return nativeRefused(rememberNativeFailure('native_check_unavailable', result.reason, requiredFact));
+        }
         if (result.status === 'cancelled' && (result.completedStepIds.length === 0 || result.restoration)) {
             return { outcome: 'not_applied', reasonCode: 'cancelled', ...(result.restoration ? { restoration: result.restoration } : {}) };
         }
         // A missing prerequisite before any completed step is a known refusal.
         // A failed native command may have partly run despite zero completed steps.
         if (result.status === 'failed' && result.reason === 'required_fact_unavailable' && result.completedStepIds.length === 0) {
-            return nativeRefused(rememberNativeFailure('native_effect_failed', result.reason));
+            return nativeRefused(rememberNativeFailure('native_effect_failed', result.reason, requiredFact));
         }
         if (result.status === 'outcome_unknown' || effectStarted || result.completedStepIds.length > 0) {
-            rememberNativeFailure('native_effect_failed', result.reason);
+            rememberNativeFailure('native_effect_failed', result.reason, requiredFact);
             return { outcome: 'outcome_unknown', failure: nativeFailure, ...(result.restoration ? { restoration: result.restoration } : {}) };
         }
-        return nativeRefused(rememberNativeFailure(result.reason === 'invalid_request' ? 'native_protocol_invalid' : 'native_effect_failed', result.reason));
+        return nativeRefused(rememberNativeFailure(result.reason === 'invalid_request' ? 'native_protocol_invalid' : 'native_effect_failed',
+            result.reason, requiredFact));
     } catch {
         await stop(rememberNativeFailure('native_protocol_invalid'));
         return planSent ? { outcome: 'outcome_unknown', failure: nativeFailure } : nativeRefused(stopReason ?? 'native_protocol_invalid');

@@ -94,7 +94,7 @@ export type MachineSetupNativeEffectIntentV1 = Readonly<{
 }>;
 export type MachineSetupApplyResultV1 = Readonly<{
     status: 'applied' | 'plan_changed' | 'unsupported' | 'unavailable' | 'failed' | 'cancelled' | 'outcome_unknown';
-    completedStepIds: readonly string[]; daemonRestartRequired: boolean; stepId?: string; reason?: string;
+    completedStepIds: readonly string[]; daemonRestartRequired: boolean; stepId?: string; reason?: string; requiredFact?: string;
     restoration?: MachineSetupFirewallRestorationV1;
 }>;
 
@@ -229,9 +229,10 @@ export async function applyMachineSetupEffectPlans(input: Readonly<{
     const completedStepIds: string[] = [];
     let daemonRestartRequired = false;
     let restoration: MachineSetupFirewallRestorationV1 | undefined;
-    const result = (status: MachineSetupApplyResultV1['status'], stepId?: string, reason?: string): MachineSetupApplyResultV1 => ({
+    const result = (status: MachineSetupApplyResultV1['status'], stepId?: string, reason?: string, requiredFact?: string): MachineSetupApplyResultV1 => ({
         status, completedStepIds: [...completedStepIds], daemonRestartRequired,
         ...(stepId ? { stepId } : {}), ...(reason ? { reason } : {}),
+        ...(requiredFact ? { requiredFact } : {}),
         ...(restoration ? { restoration } : {}),
     });
     const establishment = input.administratorEstablishment;
@@ -297,7 +298,8 @@ export async function applyMachineSetupEffectPlans(input: Readonly<{
                 ...('selectedCheckIds' in plan && plan.selectedCheckIds !== undefined ? { selectedCheckIds: plan.selectedCheckIds } : {}) });
             if (reviewed?.basis.kind === 'agentIsolation' && current.planDigest !== reviewed.planDigest) return result('plan_changed', undefined, 'plan_stale');
             const blocked = findMachineSetupBlockingObservationV1(current);
-            if (blocked) return result(blocked.status === 'unsupported' ? 'unsupported' : 'unavailable', blocked.stepId, blocked.reason);
+            if (blocked) return result(blocked.status === 'unsupported' ? 'unsupported' : 'unavailable', blocked.stepId, blocked.reason,
+                typeof blocked.facts.requiredFact === 'string' ? blocked.facts.requiredFact : blocked.stepId);
             if (administratorStep) {
                 const account = nativeFacts.find(fact => fact.stepId === administratorStep.id)!;
                 if (account.facts.present !== false && (!Number.isSafeInteger(account.facts.uid) || Number(account.facts.uid) <= 0)) {

@@ -49,12 +49,15 @@ describe('Action operation v1 contract', () => {
   });
   it('retains closed Software Apply causes for current readers without native output', () => {
     const error = { errorCode: 'outcome_unknown', error: 'outcome_unknown', details: {
-      kind: 'machineSetup', failure: { kind: 'native_effect_failed', reason: 'required_fact_unavailable' },
+      kind: 'machineSetup', failure: { kind: 'native_effect_failed', reason: 'required_fact_unavailable',
+        requiredFact: 'administratorIdentity', remedy: 'Check administratorIdentity with administrator access, then retry.' },
     } };
     const current = ActionOperationSnapshotV1Schema.parse({ ...baseSnapshot, actionId: 'machines.setup.apply',
       state: 'failed', startedAt: 110, settledAt: 120, error });
     expect(current.error).toEqual(error);
     expect(projectActionOperationSnapshotForV1Reader(current).error).toEqual({ errorCode: error.errorCode, error: error.error });
+    expect(ActionOperationFailureV1Schema.safeParse({ ...error, details: { kind: 'machineSetup',
+      failure: { kind: 'native_effect_failed', reason: 'required_fact_unavailable' } } }).success).toBe(true);
     for (const failure of [
       { ...error.details.failure, stderr: 'private native output' },
       { ...error.details.failure, reason: 'arbitrary native prose' },

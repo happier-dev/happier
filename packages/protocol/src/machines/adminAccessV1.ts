@@ -89,6 +89,8 @@ const MachineElevationFailureKindV1Schema = lazyZodSchema(() => z.enum([
 export const MachineElevationFailureV1Schema = lazyZodSchema(() => z.strictObject({
   kind: MachineElevationFailureKindV1Schema,
   reason: z.optional(MachineSetupObservationReasonV1Schema),
+  requiredFact: z.optional(z.string().check(z.minLength(1))),
+  remedy: z.optional(z.string().check(z.minLength(1))),
 }));
 
 export const MachineElevatedNotAppliedResultV1Schema = lazyZodSchema(() =>

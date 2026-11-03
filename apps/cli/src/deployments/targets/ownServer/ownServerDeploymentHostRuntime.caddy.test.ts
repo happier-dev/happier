@@ -152,6 +152,7 @@ it.each(['preauthorized', 'ask', 'failed-setup'] as const)('runs the canonical C
                 if (mode === 'failed-setup') {
                     stdout.write(JSON.stringify({ type: 'progress', stepId: 'caddy-state-directory', phase: 'apply', status: 'started' }) + '\n');
                     stdout.write(JSON.stringify({ type: 'result', result: { status: 'failed', reason: 'required_fact_unavailable',
+                        requiredFact: 'administratorIdentity',
                         completedStepIds: [], daemonRestartRequired: false } }) + '\n');
                     return { code: 1, signal: null };
                 }
@@ -186,7 +187,8 @@ it.each(['preauthorized', 'ask', 'failed-setup'] as const)('runs the canonical C
     });
     if (mode === 'failed-setup') {
         await expect(result).rejects.toMatchObject({ code: 'native_effect_failed', details: {
-            failure: { kind: 'native_effect_failed', reason: 'required_fact_unavailable' }, remedy: expect.any(String),
+            failure: { kind: 'native_effect_failed', reason: 'required_fact_unavailable', requiredFact: 'administratorIdentity',
+                remedy: expect.stringContaining('administratorIdentity') }, remedy: expect.stringContaining('administratorIdentity'),
         } });
         expect(dockerCommands).toEqual([]);
         return;

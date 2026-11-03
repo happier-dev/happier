@@ -90,12 +90,17 @@ async function retainedSetup(state: 'failed' | 'cancelled' | 'succeeded', errorC
 
 describe('Combined Machine setup child settlement', () => {
   it.each([
+    { actionId: 'machines.setup.apply', errorCode: 'native_check_unavailable', reason: 'required_fact_unavailable' },
     { actionId: 'machines.setup.apply', errorCode: 'native_effect_failed', reason: 'required_fact_unavailable' },
     { actionId: 'machines.setup.apply', errorCode: 'outcome_unknown', reason: 'native_effect_failed' },
     { actionId: 'machines.setup.remove', errorCode: 'outcome_unknown', reason: 'native_effect_failed' },
     { actionId: 'machines.setup.updates.apply', errorCode: 'outcome_unknown', reason: 'native_effect_failed' },
   ] as const)('retains the closed $errorCode diagnostic through Workflow and $actionId', async ({ actionId, errorCode, reason }) => {
-    const details = { kind: 'machineSetup', failure: { kind: 'native_effect_failed', reason } };
+    const details = { kind: 'machineSetup', failure: {
+      kind: errorCode === 'native_check_unavailable' ? errorCode : 'native_effect_failed', reason,
+      ...(errorCode === 'native_check_unavailable' ? { requiredFact: 'administratorIdentity',
+        remedy: 'Check administratorIdentity with administrator access, then retry.' } : {}),
+    } };
     const fixture = await retainedSetup('failed', errorCode, details);
     const store = createActionOperationStore();
     const spec = getActionSpec(actionId);

@@ -107,6 +107,7 @@ const Result = z.object({
     daemonRestartRequired: z.boolean(),
     stepId: z.string().optional(),
     reason: z.string().optional(),
+    requiredFact: z.string().min(1).optional(),
     restoration: z.optional(MachineFirewallRestorationV1Schema),
 }).strict() satisfies z.ZodType<machineSetup.MachineSetupApplyResultV1>;
 const Checked: z.ZodType<CheckedResult> = z.union([

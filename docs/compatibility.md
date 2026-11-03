@@ -2,6 +2,18 @@
 
 This document defines when Happier preserves old behavior across UI, CLI, daemon, server, installers, and persisted state. The goal is safe upgrades and mixed-version operation without turning undeployed implementation history into permanent compatibility debt.
 
+## Native administrator refusal diagnostics (unreleased 0.3)
+
+The shared elevation owner retains the missing native fact and its remedy for
+Software Apply and Domain setup refusals. Native observations supply their fact
+name; an observation without a separate fact name retains its checked step id.
+The existing failure projection adds optional `remedy` beside `requiredFact`;
+readers still accept retained failures without either field. Raw native output
+and credentials remain private, and admission and administrator policy do not
+change. Load the updated managed CLI on the executing Machine before replaying
+these diagnostics. Older strict 0.3 diagnostic readers need the matching update;
+the existing V1 operation adapter continues to omit these details.
+
 ## Idle compaction records and capabilities (unreleased 0.3)
 
 This is an in-place development SDK contraction: one strict compaction
