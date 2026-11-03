@@ -1,11 +1,17 @@
 import type {
-  TargetedContributionPointRef,
   TargetedContributionSnapshot,
   TargetedContributionsService,
+  DefinedPluginManifest,
 } from '@happier-dev/plugin-sdk';
+import type { TargetedContributionPointRef } from '@happier-dev/plugin-sdk/contributions';
 import type { PluginTestkit } from '@happier-dev/plugin-sdk/testing';
 
 import { CHANNELS_PROVIDER_POINT_REF } from '../manifest.js';
+
+function addressesPoint(target: unknown, point: TargetedContributionPointRef<unknown>): boolean {
+  return typeof target === 'object' && target !== null && 'pluginId' in target && 'pointId' in target
+    && target.pluginId === point.targetPluginId && target.pointId === point.id;
+}
 
 /**
  * Explicit adapter for operation-only test composition, defaulting to Channels
@@ -43,6 +49,23 @@ export function channelsOperationOnlyTargetedContributionsFixture(
       });
     },
   });
+}
+
+/** Host metadata boundary for consumers that never invoke a provider operation. */
+export function channelsProviderDescriptorFixture(manifest: DefinedPluginManifest): TargetedContributionsService {
+  return { observeForSelf<TContribution>(point: TargetedContributionPointRef<TContribution>) {
+    return { dispose() {}, async readCurrent(): Promise<TargetedContributionSnapshot<TContribution>> {
+      const sourceCustody = { kind: 'development', registeredRootId: 'channels-provider-descriptor-fixture' } as const;
+      const contributions = (manifest.contributes.targetedPluginContributions ?? [])
+        .filter(entry => addressesPoint(entry.target, point))
+        .map(entry => ({ contributor: { pluginId: manifest.id, contributionId: entry.id,
+          occurrenceId: 'descriptor-fixture', sourceCustody }, protocol: entry.protocol, descriptor: entry.descriptor,
+          operations: {} }));
+      // Operations are intentionally absent at this host boundary: these readers
+      // consume only real declaration facts, not fabricated executable handles.
+      return { occurrenceId: 'descriptor-fixture', sourceCustody, contributions: contributions as unknown as readonly TContribution[] };
+    } };
+  } };
 }
 
 export function channelsTargetedContributionServices(

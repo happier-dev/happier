@@ -261,6 +261,9 @@ describe('useInboxModel work groups (ORC R-10)', () => {
         const { PLUGIN_MANIFEST } = await import('@happier-dev/plugins-triage/manifest');
         const { activate } = await import('@happier-dev/plugins-triage/happier-plugin-ui/triage-account-runtime');
         const { CHANNELS_PLUGIN } = await import('@happier-dev/plugins-channels/manifest');
+        const { GITHUB_PLUGIN } = await import('../../../../../packages/plugins/scm-github/src/manifest');
+        const { channelsProviderDescriptorFixture } =
+            await import('../../../../../packages/plugins/channels/src/testkit/operationOnlyTargetedContributionsFixture');
         const { createPluginTestkit } = await import('@happier-dev/plugin-sdk/testing');
         const { observeSessionPullRequestWatchAction } = await import('../../../../../packages/plugins/channels/src/sessionPullRequestWatch');
         const { MemoryCollection } = await import('../../../../../packages/plugins/channels/src/testkit/memoryCollection');
@@ -275,6 +278,7 @@ describe('useInboxModel work groups (ORC R-10)', () => {
         }
         // Only persistent Data, Settings IO and host Session discovery are boundaries; both plugin owners stay real.
         const services = {
+            targetedContributions: channelsProviderDescriptorFixture(GITHUB_PLUGIN.manifest),
             storage: {
                 // The real testkit accepts the full host service; this fixture admits Account Data only.
                 get ephemeral(): never { throw new Error('Watch metadata must not acquire ephemeral storage'); },
@@ -295,7 +299,7 @@ describe('useInboxModel work groups (ORC R-10)', () => {
             settings: { forScope: () => ({ snapshot: async () => ({ scope: { kind: 'account' as const }, revision: '1', values: {} }),
                 get: async () => null, describe: () => [], watch: () => ({ dispose() {} }),
                 set: async () => { throw new Error('Read only'); }, reset: async () => { throw new Error('Read only'); } }) },
-        } satisfies Pick<import('@happier-dev/plugin-sdk').PluginServices, 'storage' | 'actions' | 'settings'>;
+        } satisfies Pick<import('@happier-dev/plugin-sdk').PluginServices, 'storage' | 'actions' | 'settings' | 'targetedContributions'>;
         const channels = await createPluginTestkit({ manifest: CHANNELS_PLUGIN.manifest, module: CHANNELS_PLUGIN, services });
         const session = createSessionFixture({ id: 'linked-session', serverId, updatedAt: 123 });
         storage.setState({ sessions: { [session.id]: session },
