@@ -24,8 +24,7 @@ import { resolveSessionProjectPromptStack } from '@/agent/prompting/coding/sessi
 import { prepareActivePromptLibraryRecord } from '@/settings/prompts/hydratePromptLibraryCatalog';
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSavedSecretCatalog';
 import { runWithServerHttpBaseUrl, resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
-import { fetchServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
-import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
+import { resolveFirstPartySkillFeatures } from './resolveFirstPartySkillFeatures';
 import type { FeatureId } from '@happier-dev/protocol/features/catalog';
 import { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
@@ -147,15 +146,9 @@ async function resolveRunnerSkillsForHome(input: ResolveRunnerSkillsInput, trans
     const candidates = [...new Set([...rules.map(rule => rule.skillId),
       ...(selection.skills?.forceIncludeSkillIds ?? []), ...(selection.skills?.forceExcludeSkillIds ?? []),
       ...FIRST_PARTY_SKILLS_V1.map(skill => skill.skillId)])];
-    // One shared Home observation feeds all first-party requirements. The feature
-    // engine owns dependencies, local opt-outs and Account preferences.
-    const serverSnapshot = await fetchServerFeaturesSnapshot({ serverUrl: resolveServerHttpBaseUrl() });
+    const featureEnabled = await resolveFirstPartySkillFeatures({ serverUrl: resolveServerHttpBaseUrl(),
+      env: process.env, settings: snapshot.settings });
     await current();
-    const featureEnabled: Partial<Record<FeatureId, boolean>> = {};
-    for (const skill of FIRST_PARTY_SKILLS_V1) if (skill.requiresFeature && featureEnabled[skill.requiresFeature] === undefined) {
-      featureEnabled[skill.requiresFeature] = resolveCliFeatureDecision({ featureId: skill.requiresFeature,
-        env: process.env, serverSnapshot, settings: snapshot.settings }).state === 'enabled';
-    }
     const selected = resolveSessionCapabilitiesV1({ context, mcp: null,
       isFeatureEnabled: featureId => featureEnabled[featureId] === true,
       skills: { items: candidates.map(skillId => ({ skillId, name: skillId })), rules: normalizedRules },

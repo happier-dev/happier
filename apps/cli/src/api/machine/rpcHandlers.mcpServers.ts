@@ -28,6 +28,7 @@ import { detectProviderMcpServers } from '@/mcp/providerDetection/detectProvider
 import { resolveSessionMcpPreview } from '@/mcp/preview/resolveSessionMcpPreview';
 import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { readSkillLibraryInventory } from '@/prompts/skills/library/readSkillLibraryContent';
+import { resolveFirstPartySkillFeatures } from '@/prompts/skills/runtime/resolveFirstPartySkillFeatures';
 import { readAccountPluginSkills } from '@/prompts/skills/library/readAccountPluginSkills';
 import { readAvailablePluginSkillItemsV1 } from '@happier-dev/protocol/prompts/library/skills/readSkillLibraryCatalog';
 import { createCliPromptLibraryStore } from '@/settings/prompts/promptLibraryStore';
@@ -542,7 +543,7 @@ export function registerMachineMcpServersRpcHandlers(params: Readonly<{
           }
           // Finite previews observe current destinations without starting retained-source
           // maintenance. Their independent inventories share only this request's lifetime.
-          const [ruleCatalog, inventory, mcpPluginItems, pluginSkills, detected] = await Promise.all([
+          const [ruleCatalog, inventory, mcpPluginItems, pluginSkills, detected, featureEnabled] = await Promise.all([
             createCliPromptLibraryStore({ credentials, operationContext, signal: context?.signal })
               .readCatalog(context?.signal, 'skill-rules'),
             inventoryRead,
@@ -555,6 +556,8 @@ export function registerMachineMcpServersRpcHandlers(params: Readonly<{
               serverHttpBaseUrl: operationContext.serverHttpBaseUrl, signal: context?.signal, availableOnly: true,
               isCurrent: () => operationContext.isCurrent() }), context?.signal),
             detectProviderMcpServersImpl({ directory, providers: [agentId], env: depsEnv, signal: context?.signal, assertCurrent }),
+            resolveFirstPartySkillFeatures({ serverUrl: operationContext.serverHttpBaseUrl, env: depsEnv,
+              settings: operationContext.readSnapshot()?.settings, signal: context?.signal }),
           ]);
           await assertCurrent();
           const rules = readPromptLibraryCatalogRecordV1({ ...ruleCatalog, key: 'skill-rules' });
@@ -569,6 +572,7 @@ export function registerMachineMcpServersRpcHandlers(params: Readonly<{
             ...(parsed.data.projectKey !== undefined ? { projectKey: parsed.data.projectKey } : {}),
             sessionProject: { credentials, metadata, signal: context?.signal },
             capabilitySelection,
+            isFeatureEnabled: featureId => featureEnabled[featureId] === true,
             sessionMetadata: metadata, sessionRunning,
             signal: context?.signal,
             skillLibrary: { inventory, artifacts, rules: rules.record.value.rules, pluginSkills }, mcpPluginItems,

@@ -8,6 +8,13 @@ const server = { id: 's', name: 'server', transport: 'stdio' as const, stdio: { 
 const settings: McpServersSettingsV1 = { v: 1, strictMode: false, servers: [server], bindings: [{ id: 'r', serverId: 's', target: { t: 'allMachines' }, enabled: false, createdAt: 1, updatedAt: 1 }] };
 
 describe('resolveSessionCapabilitiesV1', () => {
+  it('reports a disabled first-party feature as managed off rather than a portability failure', () => {
+    const result = resolveSessionCapabilitiesV1({ context, mcp: null, agentAcceptsUserMcp: true,
+      skills: { items: [{ skillId: 'happier:deploy', name: 'deploy' }], rules: [] },
+      isFeatureEnabled: () => false, selection: { skills: { v: 1, forceIncludeSkillIds: ['happier:deploy'],
+        forceExcludeSkillIds: [], excludeNativeSkillNames: [] } } });
+    expect(result.skills.items[0]).toMatchObject({ selected: false, selectable: false, reason: 'managed_off' });
+  });
   it('resolves MCP and skills through the same session level with exclude winning', () => {
     const result = resolveSessionCapabilitiesV1({ context, mcp: settings, skills: { items: [{ skillId: 'lint', name: 'lint' }], rules: [] }, selection: { mcp: { v: 1, managedServersEnabled: true, forceIncludeServerIds: ['s'], forceExcludeServerIds: [] }, skills: { v: 1, forceIncludeSkillIds: ['lint'], forceExcludeSkillIds: [], excludeNativeSkillNames: ['native'] } }, agentAcceptsUserMcp: true });
     expect(result.mcp.items[0]).toMatchObject({ selected: true, reason: 'session_added', sessionOverride: 'added', decidedBy: { ruleId: 'r' } });

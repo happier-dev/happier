@@ -82,9 +82,10 @@ export type CapabilitySelectionReasonV1 = 'rule_on' | 'rule_off' | 'no_rule' | '
 
 /** Rules choose defaults. Selectability describes actual item/Agent admission, never rule applicability. */
 export function applySessionSelectionV1(input: Readonly<{ reach: ReachDecisionV1; selectable: boolean;
+  unselectableReason?: CapabilitySelectionReasonV1;
   forceIncluded: boolean; forceExcluded: boolean; managedEnabled: boolean }>): Readonly<{ selected: boolean; reason: CapabilitySelectionReasonV1 }> {
   if (input.forceExcluded) return { selected: false, reason: 'session_removed' };
-  if (!input.selectable) return { selected: false, reason: 'not_portable' };
+  if (!input.selectable) return { selected: false, reason: input.unselectableReason ?? 'not_portable' };
   if (input.forceIncluded) return { selected: true, reason: 'session_added' };
   if (!input.managedEnabled) return { selected: false, reason: 'managed_off' };
   return { selected: input.reach.enabled, reason: input.reach.decidedBy ? input.reach.enabled ? 'rule_on' : 'rule_off' : 'no_rule' };

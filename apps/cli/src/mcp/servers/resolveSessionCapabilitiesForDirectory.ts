@@ -14,6 +14,7 @@ type DirectoryCapabilityParams = Readonly<{
   agentId?: string | null; projectKey?: string | null; machinePlatform?: ReachContextV1['machinePlatform'];
   selection?: SessionCapabilitySelectionV1 | null; agentAcceptsUserMcp?: boolean;
   skills?: Parameters<typeof resolveSessionCapabilitiesV1>[0]['skills'];
+  isFeatureEnabled?: Parameters<typeof resolveSessionCapabilitiesV1>[0]['isFeatureEnabled'];
   mcpPluginItems?: readonly McpPluginItemV1[];
   nativeServerNames?: readonly string[];
 }>;
@@ -66,6 +67,7 @@ function resolveForContext(params: DirectoryCapabilityParams): DirectoryCapabili
   const mcpPluginItems = params.mcpPluginItems?.map(item => ({ ...item, rules: realpathReachRules(item.rules, normalizePath) }));
   const skills = params.skills ? { ...params.skills, rules: realpathReachRules(params.skills.rules, normalizePath) } : null;
   const result = resolveSessionCapabilitiesV1({ context, mcp: settings, mcpPluginItems, skills, selection: params.selection ?? {},
+    isFeatureEnabled: params.isFeatureEnabled,
     // A neutral machine projection has no Agent; named Agents supply their declared fact.
     agentAcceptsUserMcp: params.agentAcceptsUserMcp ?? params.agentId == null });
   // Undefined means no association read was required; null is an observed unassociated Session.

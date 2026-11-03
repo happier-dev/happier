@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -9,12 +9,32 @@ import { withdrawActiveProjectAccountRowsSnapshot } from '@/workspaces/projectAc
 import { McpServersSettingsV1Schema } from '@happier-dev/protocol/mcp/servers/settingsV1';
 import { SpawnCapabilitiesPreviewSuccessV1Schema } from '@happier-dev/protocol/actions/specs/sessionCapabilities';
 import { projectSpawnMcpServersPreviewInventory } from '@/session/actions/cliActionDeps/resolveSpawnMcpServersPreviewInventory';
+import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 
 import { resolveSessionMcpPreview } from './resolveSessionMcpPreview';
 
 afterEach(() => { vi.restoreAllMocks(); withdrawActiveProjectAccountRowsSnapshot(); });
 
 describe('resolveSessionMcpPreview detection warnings', () => {
+  let runtime: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>>;
+  beforeAll(async () => { runtime = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
+    runtimeOptions: { pluginIds: ['codex'] } }); });
+  afterAll(async () => { await runtime?.dispose(); });
+  it('delivers feature-enabled first-party guides and preserves explicit Session exclusions', async () => {
+    const artifacts: SkillArtifactStore = { list: async () => ({ items: [], coverage: 'complete' }), read: async () => null };
+    const input = { settings: McpServersSettingsV1Schema.parse({ v: 1 }), machineId: 'machine', directory: null,
+      agentId: 'codex', detectedServers: [], skillLibrary: { inventory: [], artifacts, rules: [] },
+      isFeatureEnabled: () => true };
+    const preview = await resolveSessionMcpPreview(input);
+    for (const id of ['happier:deploy', 'happier:workflows']) {
+      expect(preview.skills.items.find(item => item.id === id)).toMatchObject({ selected: true, selectable: true, state: 'delivered' });
+    }
+    const excluded = await resolveSessionMcpPreview({ ...input, capabilitySelection: { skills: {
+      v: 1, forceIncludeSkillIds: [], forceExcludeSkillIds: ['happier:deploy'], excludeNativeSkillNames: [] } } });
+    expect(excluded.skills.items.find(item => item.id === 'happier:deploy'))
+      .toMatchObject({ selected: false, reason: 'session_removed', state: 'excluded' });
+  });
   it('uses host-published runtime facts instead of the Agent declaration for running Session timing', async () => {
     const preview = await resolveSessionMcpPreview({ settings: McpServersSettingsV1Schema.parse({ v: 1 }),
       machineId: 'machine', directory: null, agentId: 'codex', detectedServers: [], sessionRunning: true,

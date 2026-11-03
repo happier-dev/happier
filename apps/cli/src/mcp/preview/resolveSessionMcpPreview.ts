@@ -22,6 +22,7 @@ import { FIRST_PARTY_SKILLS_V1, type ReadOnlySkillV1 } from '@happier-dev/protoc
 import { readReadOnlySkillContentV1 } from '@happier-dev/protocol/prompts/library/promptBundleSchemas';
 import { resolveCapabilityApplyTimingV1, readCapabilityLaunchRestartFromMetadataV1 } from '@happier-dev/protocol/reach/capabilityApplyTimingV1';
 import type { SpawnCapabilitiesPreviewOutputV1 } from '@happier-dev/protocol/actions/specs/sessionCapabilities';
+import type { FeatureId } from '@happier-dev/protocol/features/catalog';
 import { readLoadedMcpNativeServerNames } from '../runtime/assignMcpWireNames';
 
 import { buildManagedMcpPreviewEntries } from './buildManagedMcpPreviewEntries';
@@ -55,6 +56,7 @@ export async function resolveSessionMcpPreview(params: Readonly<{
   projectKey?: string | null;
   sessionProject?: Omit<SessionProjectPromptStackInput, 'machineId' | 'directory'>;
   capabilitySelection?: SessionCapabilitySelectionV1 | null;
+  isFeatureEnabled?: (featureId: FeatureId) => boolean;
   detectedServers: ReadonlyArray<DetectedMcpServerV1>;
   mcpPluginItems?: readonly McpPluginItemV1[];
   detectedWarnings?: ReadonlyArray<DaemonMcpServersDetectWarningV1>;
@@ -74,6 +76,7 @@ export async function resolveSessionMcpPreview(params: Readonly<{
     machineId: params.machineId,
     directory: params.directory,
     selection: params.capabilitySelection ?? {},
+    isFeatureEnabled: params.isFeatureEnabled,
     agentId: params.agentId,
     mcpPluginItems: params.mcpPluginItems,
     machinePlatform,

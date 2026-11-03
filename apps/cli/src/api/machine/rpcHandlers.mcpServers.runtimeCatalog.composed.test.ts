@@ -8,6 +8,7 @@ import { DaemonMcpServersTestResponseSchema, DetectedMcpServerV1Schema, type Det
 import { McpServerCatalogRowMutationV1Schema, openMcpServerCatalogContentV1, type McpServerCatalogV1 } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
 import { DaemonMcpServersPreviewResponseSchema } from '@happier-dev/protocol/mcp/servers/previewV1';
 import { bootstrapAccountSettingsContext, resetInMemoryAccountSettingsContextForTests } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
+import { resetServerFeaturesClientForTests } from '@/features/serverFeaturesClient';
 import { resolveAccountSettingsCachePath } from '@/settings/accountSettings/accountSettingsCache';
 import { getActiveAccountSettingsSnapshot, setActiveAccountSettingsSnapshot, subscribeActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { registerMachineMcpServersRpcHandlers } from './rpcHandlers.mcpServers';
@@ -49,6 +50,7 @@ const catalog = { v: 1 as const, servers: settings.servers, bindings: settings.b
 
 function register(input: Readonly<{ unavailable?: boolean; retire?: boolean; retireDuringMaterialization?: boolean; project?: boolean;
   realProbe?: boolean; env?: NodeJS.ProcessEnv;
+  featureToggles?: Record<string, boolean>;
   rules?: typeof catalog.bindings;
   retireDuringDetection?: boolean; reenterDuringHandoff?: boolean;
   detected?: readonly DetectedMcpServerV1[];
@@ -113,7 +115,7 @@ function register(input: Readonly<{ unavailable?: boolean; retire?: boolean; ret
       return { status: 200, data: input.unavailable ? { status: 'account-mode-mismatch' }
         : { status: 'present', revision: 3, content: { t: 'plain', v: { ...rowCatalog, bindings: input.rules ?? rowCatalog.bindings } } } };
     }
-    if (path === '/v2/account/settings') return { status: 200, data: { version: 4, content: { t: 'plain', v: {} } } };
+    if (path === '/v2/account/settings') return { status: 200, data: { version: 4, content: { t: 'plain', v: { featureToggles: input.featureToggles ?? {} } } } };
     throw new Error(`Unexpected HTTP path: ${path}`);
   });
   vi.mocked(axios.post).mockImplementation(async url => new URL(String(url)).pathname === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`
@@ -123,10 +125,10 @@ function register(input: Readonly<{ unavailable?: boolean; retire?: boolean; ret
     rpcHandlerManager,
     deps: {
       env, readCredentials: async () => ({ token: 'rpc-mcp-account', encryption: null }),
-      bootstrapAccountSettingsContext: input => bootstrapAccountSettingsContext({ ...input,
+      bootstrapAccountSettingsContext: request => bootstrapAccountSettingsContext({ ...request,
         honorAccountSettingsModeEnv: false, deps: { resolveCachePath: resolveAccountSettingsCachePath,
           readCache: async () => null, writeCache: async () => undefined,
-          fetchFromServer: async () => ({ settingsVersion: 4, settingsContent: { t: 'plain', v: {} } }),
+          fetchFromServer: async () => ({ settingsVersion: 4, settingsContent: { t: 'plain', v: { featureToggles: input.featureToggles ?? {} } } }),
         },
       }),
       probeMcpStdioServerTools: probe,
@@ -149,6 +151,39 @@ describe('Machine MCP catalog admission', () => {
   afterAll(async () => { await runtime?.dispose(); });
   beforeEach(() => { resetInMemoryAccountSettingsContextForTests(); vi.mocked(axios.get).mockReset(); });
   afterEach(() => resetInMemoryAccountSettingsContextForTests());
+
+  it('previews first-party skills through the admitted Home feature and Account preference owners', async () => {
+    // Fetch is the external Home boundary; settings, feature decisions, reach and delivery stay real.
+    const featureHttp = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      features: { automations: { enabled: true }, workflows: { enabled: true }, deployments: { enabled: true } }, capabilities: {},
+    })));
+    resetServerFeaturesClientForTests();
+    try {
+      const owner = register({ featureToggles: { automations: true, deployments: true } });
+      const preview = DaemonMcpServersPreviewResponseSchema.parse(await owner.rpcHandlerManager.invokeLocal(
+        RPC_METHODS.DAEMON_MCP_SERVERS_PREVIEW, { machineId: 'm1', agentId: 'codex' },
+      ));
+      expect(preview.ok).toBe(true);
+      if (!preview.ok) throw new Error('preview unavailable');
+      for (const id of ['happier:deploy', 'happier:workflows']) {
+        expect(preview.skills.items.find(item => item.id === id)).toMatchObject({ selected: true, selectable: true, state: 'delivered' });
+      }
+      expect(new URL(String(featureHttp.mock.calls[0]?.[0])).pathname).toBe('/v1/features');
+      resetInMemoryAccountSettingsContextForTests();
+      const disabled = register({ featureToggles: { automations: false, deployments: false } });
+      const off = DaemonMcpServersPreviewResponseSchema.parse(await disabled.rpcHandlerManager.invokeLocal(
+        RPC_METHODS.DAEMON_MCP_SERVERS_PREVIEW, { machineId: 'm1', agentId: 'codex' },
+      ));
+      expect(off.ok).toBe(true);
+      if (!off.ok) throw new Error('preview unavailable');
+      for (const id of ['happier:deploy', 'happier:workflows']) {
+        expect(off.skills.items.find(item => item.id === id)).toMatchObject({ selected: false, selectable: false, reason: 'managed_off' });
+      }
+    } finally {
+      featureHttp.mockRestore();
+      resetServerFeaturesClientForTests();
+    }
+  });
 
   it('settles the retained preview through its real RPC entry and strict response consumer', async () => {
     const { rpcHandlerManager, diagnostics } = register({ detected: [DetectedMcpServerV1Schema.parse({

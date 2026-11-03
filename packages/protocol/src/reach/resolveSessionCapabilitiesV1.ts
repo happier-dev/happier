@@ -40,7 +40,8 @@ export function resolveSessionCapabilitiesV1(input: Readonly<{ context: ReachCon
   }) }, skills: { items: (input.skills?.items ?? []).map(item => {
     const reach = resolveSkillReachV1(item.skillId, input.skills!.rules.filter(rule => rule.skillId === item.skillId), input.context, input.isFeatureEnabled);
     const forceIncluded = skillIncludes.has(item.skillId), forceExcluded = skillExcludes.has(item.skillId);
-    return { kind: 'skill', id: item.skillId, name: item.name, ...applySessionSelectionV1({ reach, selectable: reach.available, forceIncluded, forceExcluded, managedEnabled: true }),
+    return { kind: 'skill', id: item.skillId, name: item.name, ...applySessionSelectionV1({ reach, selectable: reach.available,
+      unselectableReason: 'managed_off', forceIncluded, forceExcluded, managedEnabled: true }),
       selectable: reach.available, decidedBy: reach.decidedBy, sessionOverride: forceExcluded ? 'removed' : forceIncluded ? 'added' : null };
   }), excludeNativeSkillNames: skillSelection.excludeNativeSkillNames } };
 }
