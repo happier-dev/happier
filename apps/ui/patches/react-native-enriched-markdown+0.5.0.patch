@@ -72,31 +72,47 @@ index 16137fa..0eb4004 100644
          if (permissiveAutolinksField) {
            md4cFlags.permissiveAutolinks = env->GetBooleanField(flags, permissiveAutolinksField) == JNI_TRUE;
 diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/accessibility/AccessibleMarkdownTextView.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/accessibility/AccessibleMarkdownTextView.kt
-index bf9ffc0..3c50679 100644
+index bf9ffc0..782cbbb 100644
 --- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/accessibility/AccessibleMarkdownTextView.kt
 +++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/accessibility/AccessibleMarkdownTextView.kt
-@@ -16,6 +16,40 @@ abstract class AccessibleMarkdownTextView
+@@ -5,6 +5,7 @@
+ import android.util.AttributeSet
+ import android.view.KeyEvent
+ import android.view.MotionEvent
++import android.widget.ScrollView
+ import androidx.appcompat.widget.AppCompatTextView
+ 
+ /** AppCompatTextView with built-in TalkBack support via MarkdownAccessibilityHelper. */
+@@ -16,6 +17,52 @@
      defStyleAttr: Int = 0,
    ) : AppCompatTextView(context, attrs, defStyleAttr) {
      val accessibilityHelper = MarkdownAccessibilityHelper(this)
++    private var isTouchGestureActive = false
 +    private var isGainingTouchFocus = false
-+    private var lastTouchY: Int? = null
 +
 +    override fun onTouchEvent(event: MotionEvent): Boolean {
-+      lastTouchY = event.y.toInt()
-+      return super.onTouchEvent(event)
++      if (event.actionMasked == MotionEvent.ACTION_DOWN) isTouchGestureActive = true
++      try {
++        return super.onTouchEvent(event)
++      } finally {
++        if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) {
++          isTouchGestureActive = false
++        }
++      }
 +    }
 +
 +    // Selectable text takes focus on tap, and ReactScrollView.requestChildFocus then scrolls the
-+    // focused child's drawing rect on screen. That moves the transcript under the finger, so a
-+    // touch focus reports only the touched line, which is on screen by definition. It can't report
-+    // the visible part instead: React Native views disable clipChildren, so getLocalVisibleRect
-+    // returns the whole view. Keyboard focus still reveals the view.
++    // focused child's drawing rect on screen, moving the transcript under the finger. The touched
++    // point is already visible, so focus taken by a touch reports a rect inside the nearest scroll
++    // ancestor's visible window. It is placed through the same transform-blind offsets the scroll
++    // view applies, so rotated (inverted list) cells cannot mirror it off screen. getLocalVisibleRect
++    // can't be used: React Native disables clipChildren, so it returns the whole view. Keyboard and
++    // accessibility focus still reveal the view.
 +    override fun requestFocus(
 +      direction: Int,
 +      previouslyFocusedRect: Rect?,
 +    ): Boolean {
-+      if (!isInTouchMode) return super.requestFocus(direction, previouslyFocusedRect)
++      if (!isTouchGestureActive) return super.requestFocus(direction, previouslyFocusedRect)
 +      isGainingTouchFocus = true
 +      try {
 +        return super.requestFocus(direction, previouslyFocusedRect)
@@ -106,12 +122,16 @@ index bf9ffc0..3c50679 100644
 +    }
 +
 +    override fun getDrawingRect(outRect: Rect) {
-+      val touchY = lastTouchY
-+      if (isGainingTouchFocus && touchY != null) {
-+        outRect.set(scrollX, scrollY + touchY, scrollX + width, scrollY + touchY)
-+        return
-+      }
 +      super.getDrawingRect(outRect)
++      if (!isGainingTouchFocus) return
++      var ancestor = parent
++      while (ancestor != null && ancestor !is ScrollView) ancestor = ancestor.parent
++      val scrollView = ancestor as? ScrollView ?: return
++      val offset = Rect()
++      scrollView.offsetDescendantRectToMyCoords(this, offset)
++      val visibleY = scrollView.scrollY + scrollView.height / 2 - offset.top
++      outRect.top = visibleY
++      outRect.bottom = visibleY
 +    }
  
      override fun dispatchHoverEvent(event: MotionEvent): Boolean =
