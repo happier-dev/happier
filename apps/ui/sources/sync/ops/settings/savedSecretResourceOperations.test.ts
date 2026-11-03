@@ -3096,6 +3096,18 @@ describe('Saved Secret operations through their real Account and Action owners',
     });
 
 
+    it('on an E2EE Account, "Keep Home-managed" sends the confirmed Plain directive for a resource that is already Plain', async () => {
+        const account = await openAccount('e2ee');
+        const content = { v: 1 as const, name: 'Key', kind: 'token' as const, value: 'old-value' };
+        account.materialRow('resource-a', 'plain', sealSavedSecretResourceStoredContentV1({ resourceId: 'resource-a', mode: 'plain', content }), 3);
+        account.setEffect((_path, body) => Response.json({ resourceId: SharedSavedSecretUpdateInputV1Schema.parse(body).resourceId, revision: 4 }));
+        expect(await updateSavedSecretResource({ scope: account.scope, resourceId: 'resource-a', expectedRevision: 3, toMode: 'plain',
+            nextValue: 'rotated-value', decryptDataKeyEnvelope: async () => null })).toEqual({ ok: true });
+        const input = SharedSavedSecretUpdateInputV1Schema.parse(account.writes[0]!.body);
+        expect(input).toMatchObject({ toMode: 'plain', storedContent: { t: 'plain', v: { value: 'rotated-value' } } });
+        expect(input.keyEnvelopes).toBeUndefined();
+    });
+
 });
 // Native filesystem classes are an OS boundary, not part of this source-driven UI journey.
 vi.mock('expo-file-system', async () =>
