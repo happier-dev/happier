@@ -55,6 +55,7 @@ export const SessionStateCapabilitiesV1Schema = lazyZodSchema(() => z.strictObje
         title: z.optional(SessionStateFieldCapabilitySchema),
         statusReason: z.optional(SessionStateFieldCapabilitySchema),
         bot: z.optional(SessionStateFieldCapabilitySchema),
+        botFace: z.optional(SessionStateFieldCapabilitySchema),
       })),
     runtime: z.optional(z.strictObject({
         workState: z.optional(SessionStateFieldCapabilitySchema),

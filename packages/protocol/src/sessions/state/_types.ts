@@ -1,3 +1,4 @@
+import type { SessionBotFaceV1 } from '../identity/sessionBotFaceV1.js';
 import type { BotTemplateInstanceV1 } from '../../bots/templates/templateInstanceV1.js';
 import type { BotTemplateDraftRefV1Schema } from '../../bots/templates/botTemplateV1.js';
 import type { z } from 'zod/mini';
@@ -74,6 +75,7 @@ export interface SessionStateFieldRegistry {
   'display.title': { value: string };
   'display.statusReason': { value: string | null };
   'display.bot': { value: SessionBotV1 | null };
+  'display.botFace': { value: SessionBotFaceV1 | null };
   'runtime.workState': { value: SessionWorkStateV1 };
   'runtime.activity': { value: SessionRuntimeActivitySnapshot };
   'runtime.externalAgent': { value: ExternalAgentObservationSnapshotV1 };

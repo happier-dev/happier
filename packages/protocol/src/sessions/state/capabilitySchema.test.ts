@@ -57,6 +57,7 @@ describe('SessionStateCapabilitiesV1Schema', () => {
       'display.title',
       'display.statusReason',
       'display.bot',
+      'display.botFace',
       'runtime.workState',
       'runtime.activity',
       'runtime.externalAgent',
@@ -73,10 +74,10 @@ describe('SessionStateCapabilitiesV1Schema', () => {
     };
     expect(SessionStateCapabilitiesV1Schema.parse({
       intent: { memoryEnabled: capability, voicePreference: capability, context: capability },
-      display: { bot: capability }, view: { transcriptToolCalls: capability },
+      display: { bot: capability, botFace: capability }, view: { transcriptToolCalls: capability },
     })).toEqual({
       intent: { memoryEnabled: admitted, voicePreference: admitted, context: admitted },
-      display: { bot: admitted }, view: { transcriptToolCalls: admitted },
+      display: { bot: admitted, botFace: admitted }, view: { transcriptToolCalls: admitted },
     });
   });
 

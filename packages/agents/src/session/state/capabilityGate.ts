@@ -26,6 +26,7 @@ const FIELD_CAPABILITY_PATH = {
   'display.title': ['display', 'title'],
   'display.statusReason': ['display', 'statusReason'],
   'display.bot': ['display', 'bot'],
+  'display.botFace': ['display', 'botFace'],
   'runtime.workState': ['runtime', 'workState'],
   'runtime.activity': ['runtime', 'activity'],
   'runtime.externalAgent': ['runtime', 'externalAgent'],

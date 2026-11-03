@@ -24,7 +24,7 @@ import { sessionWorkStateBinding } from './workState.js';
 import { sessionRoleBinding, sessionRoleConfigurationBinding } from './role.js';
 import { sessionUsageLimitRecoveryBinding } from './usageLimitRecovery.js';
 import { summaryTextBinding } from './summaryText.js';
-import { sessionBotBinding } from './sessionIdentity.js';
+import { sessionBotBinding, sessionBotFaceBinding } from './sessionIdentity.js';
 import { sessionStatusReasonBinding } from './statusReason.js';
 import { sessionMemoryEnabledBinding, sessionContextBinding, sessionVoicePreferenceBinding } from './context.js';
 import { transcriptToolCallsBinding } from './transcriptToolCalls.js';
@@ -50,6 +50,7 @@ const SESSION_STATE_METADATA_BINDINGS = {
   'intent.acpConfigOption': acpConfigOptionIntentBinding,
   'display.title': summaryTextBinding,
   'display.bot': sessionBotBinding,
+  'display.botFace': sessionBotFaceBinding,
   'display.statusReason': sessionStatusReasonBinding,
   'view.transcriptToolCalls': transcriptToolCallsBinding,
   'runtime.workState': sessionWorkStateBinding,
@@ -146,6 +147,8 @@ export function clearSessionStateFieldFromMetadata(
       break;
     case 'display.bot':
       return sessionBotBinding.write(metadata, { value: null });
+    case 'display.botFace':
+      return sessionBotFaceBinding.write(metadata, { value: null });
     case 'display.statusReason':
       return sessionStatusReasonBinding.write(metadata, { value: null });
     case 'view.transcriptToolCalls':

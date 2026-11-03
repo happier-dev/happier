@@ -32,6 +32,7 @@ const CLI_SESSION_STATE_METADATA_CAPABILITIES: SessionStateCapabilitiesV1 = {
     statusReason: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
     title: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
     bot: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
+    botFace: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
   },
   view: { transcriptToolCalls: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } } },
 };

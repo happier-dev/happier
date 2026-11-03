@@ -53,6 +53,7 @@ export function getActionRequiredServerFeatureId(
     return 'browser.automation';
   }
   if (actionId.startsWith('artifact.public_link.')) return 'sharing.public';
+  if (actionId === 'session.bot.face.set') return 'bots';
   if (workflowActionIds.includes(actionId)) return 'workflows';
   // Item Actions also serve transcript visuals; their operands decide layout
   // admission at execution. Only the layout-only Action is Board availability.

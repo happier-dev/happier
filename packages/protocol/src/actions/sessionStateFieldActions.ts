@@ -1,5 +1,6 @@
+import type { AdmittedActionInputById } from './actionSpecs.js';
 import { z } from 'zod/mini';
-import { BotSetInputSchema, type SessionBotV1 } from '../sessions/identity/sessionBotV1.js';
+import { BotSetInputSchema, type SessionBotV1, type SessionBotFaceV1 } from '../sessions/identity/sessionBotV1.js';
 import type { ActionExecutorContext } from './executor/types.js';
 import { SessionIdSchema } from '../sessions/idsV1.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
@@ -43,6 +44,7 @@ export const SESSION_STATE_FIELD_ACTIONS = {
   'session.title.set': { fieldId: 'display.title', inputKey: 'title' },
   'session.status.set_reason': { fieldId: 'display.statusReason', inputKey: 'reason' },
   'session.bot.set': { fieldId: 'display.bot', inputKey: 'bot' },
+  'session.bot.face.set': { fieldId: 'display.botFace', inputKey: 'face' },
   'session.view.toolCalls.set': { fieldId: 'view.transcriptToolCalls', inputKey: 'showToolCalls' },
   'session.memory.set': { fieldId: 'intent.memoryEnabled', inputKey: 'enabled' },
   'session.voice.preference.set': { fieldId: 'intent.voicePreference', inputKey: 'preference' },
@@ -55,6 +57,7 @@ export type SessionStateFieldActionValue =
   | Readonly<{ fieldId: 'display.title'; value: string }>
   | Readonly<{ fieldId: 'display.statusReason'; value: string | null }>
   | Readonly<{ fieldId: 'display.bot'; value: SessionBotV1 | null }>
+  | Readonly<{ fieldId: 'display.botFace'; value: SessionBotFaceV1 | null }>
   | Readonly<{ fieldId: 'view.transcriptToolCalls'; value: boolean | null }>
   | Readonly<{ fieldId: 'intent.memoryEnabled'; value: boolean; expectedMetadataRevision: number }>
   | Readonly<{ fieldId: 'intent.voicePreference'; value: SessionVoicePreferenceV1 | null; expectedMetadataRevision: number }>
@@ -104,6 +107,9 @@ export function resolveSessionStateFieldActionWrite(
   }
   if (actionId === 'session.bot.set') {
     return { fieldId: SESSION_STATE_FIELD_ACTIONS[actionId].fieldId, value: BotSetInputSchema.parse(input).bot };
+  }
+  if (actionId === 'session.bot.face.set') {
+    return { fieldId: 'display.botFace', value: (input as AdmittedActionInputById['session.bot.face.set']).face };
   }
   if (actionId === 'session.view.toolCalls.set') {
     return { fieldId: SESSION_STATE_FIELD_ACTIONS[actionId].fieldId, value: SessionToolCallsSetInputSchema.parse(input).showToolCalls };

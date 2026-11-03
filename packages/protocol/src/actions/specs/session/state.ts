@@ -9,7 +9,7 @@ import { SessionStatusActionResultV1Schema, SessionArchiveActionInputV1Schema, S
 import { QualifiedConnectedAccountPurposeV1Schema } from '../../../connect/connectedAccountPurposeIdentity.js';
 import { QualifiedConnectedAccountPurposeTeamResourceSelectionV1Schema } from '../../../connect/connectedAccountPurposeBindings.js';
 import { SessionModelMutationExpectedV1Schema, SessionModelSetResultV1Schema } from '../../../sessions/control/modelTransitionV1.js';
-import { BotSetInputSchema } from '../../../sessions/identity/sessionBotV1.js';
+import { BotSetInputSchema, BotFaceSetInputSchema, BotFaceStyleSchema, BotFaceBodySchema, BotFacePaletteSchema } from '../../../sessions/identity/sessionBotV1.js';
 import { SessionTitleSetInputSchema, SessionStatusReasonSetInputSchema, SessionStatusReasonSetResultSchema, SessionToolCallsSetInputSchema, SessionMemorySetInputV1Schema, SessionVoicePreferenceSetInputV1Schema, SessionContextUpdateInputV1Schema, SessionInstructionsSetInputV1Schema } from '../../sessionStateFieldActions.js';
 import { z } from 'zod/mini';
 import { SetSessionTagAssignmentsRequestSchema, SetSessionTagAssignmentsResponseSchema } from '../../../sessions/organization/mutations.js';
@@ -36,6 +36,7 @@ export const SessionTargetsResolveInputV1Schema: z.ZodMiniType<
 }));
 
 const SessionDeleteInputSchema = lazyZodSchema(() => z.strictObject({ sessionId: z.string().check(z.trim(), z.minLength(1)) }));
+const BOT_FACE_SHAPE_AUTHORING_GUIDANCE = 'For requests such as "make me a cat", set shape: {v:1, fill:[closed path], mouth:[x,y,scale], stroke?:[[path,width]], cut?:[path or [path,width]], origin:"custom"}. Paths use M L C Q A Z (either case), finite numbers and the 0–100 source-coordinate convention; the Action centres the outline at x=45 without rescaling. Mouth only: no eyes. Mouth scale is 0.5–1.2 and stroke width is greater than 0 through 24. Shape wins over body, which remains the fallback.';
 
 export const SessionPermissionModeSetInputSchema = lazyZodSchema(() => z.strictObject({
   sessionId: z.string().check(z.minLength(1)),
@@ -188,6 +189,21 @@ export const SESSION_STATE_ACTION_SPECS = Object.freeze([
     ] },
     inputSchema: BotSetInputSchema, outputSchema: StrictJsonValueSchema,
     cli: { acceptsServerId: true, commands: [{ path: ['session', 'bot', 'set'], positionals: ['sessionId'], visibility: 'canonical' }] },
+  } satisfies PreNormalizedActionSpec,
+  {
+    id: 'session.bot.face.set', approval: { result: 'none' },
+    title: 'Set a Bot face',
+    description: `Save shared cosmetic face overrides without changing the Bot marker or waking its execution host; null inherits the default face. ${BOT_FACE_SHAPE_AUTHORING_GUIDANCE}`,
+    safety: 'safe', sideEffectClass: 'write', executionPlacement: 'account', placements: [],
+    bindings: { mcpToolName: 'session_bot_face_set', voiceClientToolName: 'setSessionBotFace' },
+    surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },
+    inputHints: { description: 'Choose cosmetic Bot face overrides, or reset them.', title: 'Bot face', fields: [
+      { path: 'sessionId', title: 'Session id', prompt: 'Which session?', widget: 'text', required: true },
+      { path: 'face', title: 'Face overrides, or null to inherit', widget: 'json', required: true,
+        description: `Optional style (${BotFaceStyleSchema.options.join(', ')}), body (${BotFaceBodySchema.options.join(', ')}), palette colour (${BotFacePaletteSchema.options.join(', ')}), seed and shape. ${BOT_FACE_SHAPE_AUTHORING_GUIDANCE} Solid is matte. Use null to inherit all choices.` },
+    ] },
+    inputSchema: BotFaceSetInputSchema, outputSchema: StrictJsonValueSchema,
+    cli: { acceptsServerId: true, commands: [{ path: ['session', 'bot', 'face', 'set'], positionals: ['sessionId'], visibility: 'canonical' }] },
   } satisfies PreNormalizedActionSpec,
   {
     id: 'session.memory.set', approval: {result: 'none'}, title: 'Use memory in this session',

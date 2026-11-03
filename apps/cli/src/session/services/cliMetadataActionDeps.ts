@@ -235,7 +235,7 @@ export function createCliMetadataActionDeps(
       }
       return { ok: true, sessionId: res.sessionId, ...(fieldId === 'display.title' ? { title: value }
         : fieldId === 'display.statusReason' ? { reason: value }
-        : fieldId === 'display.bot' ? { bot: value } : fieldId === 'intent.memoryEnabled' ? { enabled: value }
+        : fieldId === 'display.bot' ? { bot: value } : fieldId === 'display.botFace' ? { face: value } : fieldId === 'intent.memoryEnabled' ? { enabled: value }
         : fieldId === 'intent.voicePreference' ? { preference: value }
         : fieldId === 'intent.context' ? { work: res.metadata.work } : { showToolCalls: value }), version: res.version };
     },

@@ -66,6 +66,7 @@ export const CURRENT_SESSION_CONTEXT_ACTION_IDS = new Set<ActionId>([
   'session.pending.edit',
   'session.title.set',
   'session.bot.set',
+  'session.bot.face.set',
   'session.organization.pin.set',
   'session.view.toolCalls.set',
   'session.memory.set',

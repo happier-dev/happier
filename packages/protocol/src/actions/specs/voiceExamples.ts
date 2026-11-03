@@ -165,6 +165,7 @@ export const ACTION_VOICE_ARGS_EXAMPLES: Readonly<Partial<Record<ActionId, strin
   "session.pending.dismiss": "{\"sessionId\":\"session-1\",\"localId\":\"example\"}",
   "session.pending.sendAsNew": "{\"sessionId\":\"session-1\",\"localId\":\"example\"}",
   "session.bot.set": "{\"sessionId\":\"session-1\",\"bot\":{\"kind\":\"bot\"}}",
+  "session.bot.face.set": "{\"sessionId\":\"session-1\",\"face\":{\"style\":\"dither\",\"body\":\"crab\",\"seed\":\"chosen-face\"}}",
   "session.memory.set": "{\"sessionId\":\"session-1\",\"serverId\":\"home\",\"expectedMetadataRevision\":0,\"enabled\":false}",
   "session.voice.preference.set": "{\"sessionId\":\"session-1\",\"serverId\":\"home\",\"expectedMetadataRevision\":0,\"preference\":{\"providerContributionId\":\"example.voice/speech\",\"settingFieldPath\":\"voice\",\"value\":\"example\"}}",
   "session.context.update": "{\"sessionId\":\"session-1\",\"serverId\":\"home\",\"expectedMetadataRevision\":0,\"intent\":{\"kind\":\"set\",\"entry\":{\"id\":\"example\",\"ref\":{\"kind\":\"doc\",\"artifactId\":\"example\"}}}}",

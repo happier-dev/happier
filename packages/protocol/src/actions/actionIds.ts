@@ -343,6 +343,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'session.status.set_reason',
     'session.coordinator.enable',
     'session.bot.set',
+  'session.bot.face.set',
     'session.memory.set',
     'session.voice.preference.set',
     'session.context.update',

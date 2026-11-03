@@ -74,6 +74,20 @@ const canonicalSessionSpawnInput = {
 } as const;
 
 describe('createActionExecutor (session control)', () => {
+  it('discovers a safe Account face Action on every public surface without overloading the Bot marker', () => {
+    const spec = getActionSpec(ActionIdSchema.parse('session.bot.face.set'));
+    const face = { style: 'dither', body: 'hopper', palette: 'lagoon', seed: 'preview-seed' };
+    for (const surface of ['ui', 'cli', 'agent', 'mcp', 'voice'] as const) {
+      expect(listActionSpecsForCatalogSurface(surface).some(candidate => candidate.id === spec.id)).toBe(true);
+    }
+    expect(spec).toMatchObject({ safety: 'safe', executionPlacement: 'account', approval: { result: 'none' } });
+    expect(spec.inputSchema.parse({ sessionId: 's1', face })).toEqual({ sessionId: 's1', face });
+    expect(spec.inputSchema.parse({ sessionId: 's1', face: null })).toEqual({ sessionId: 's1', face: null });
+    expect(spec.inputSchema.safeParse({ sessionId: 's1', face: { style: 'digits' } }).success).toBe(false);
+    expect(spec.inputSchema.safeParse({ sessionId: 's1', face: { style: 'solid', finish: 'gloss' } }).success).toBe(false);
+    expect(spec.inputSchema.safeParse({ sessionId: 's1', face, bot: { kind: 'bot' } }).success).toBe(false);
+    expect(getActionSpec('session.bot.set').inputSchema.safeParse({ sessionId: 's1', bot: null, face }).success).toBe(false);
+  });
   it('discovers control switching and applies Off, Ask and Allowed without changing the mode neighbour', async () => {
     const id = ActionIdSchema.parse('session.control.switch');
     for (const surface of ['ui', 'agent', 'mcp', 'cli'] as const) {

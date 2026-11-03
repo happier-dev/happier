@@ -15,6 +15,7 @@ export const SESSION_STATE_FIELD_IDS = [
   'display.title',
   'display.statusReason',
   'display.bot',
+  'display.botFace',
   'runtime.workState',
   'runtime.activity',
   'runtime.externalAgent',
