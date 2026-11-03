@@ -1918,8 +1918,10 @@ async function executeContributedAction(
     // Missing confidential operands enter the existing request producer before
     // either placement's executable schema can reject the value-free input.
     if (readActionSecretInputAdmission(projectedAction, settlement.input).missingPaths.length > 0) {
+        const targetServerId = projectedAction.execution.target === 'daemon' ? undefined
+            : resolveClientContributedActionSelection(input, identity, projectedAction)?.registration.authority?.serverId;
         return prepareContributedActionInvocation(input, identity, projectedAction, settlement.input,
-            await contributedInvocationAuthority(input));
+            await contributedInvocationAuthority(input, targetServerId));
     }
     let clientPreparation: PreparedClientContributedAction | undefined;
     let normalizedInput = settlement.input;

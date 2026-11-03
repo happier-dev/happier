@@ -5194,8 +5194,11 @@ describe('client Action Session-open continuation', () => {
 });
 
 describe('client Action declared SessionTarget admission', () => {
-    it.each(['global daemon', 'Session daemon', 'global client', 'global account'] as const)(
-        'creates a private-input request before executable validation for a confidential %s Action', async placement => {
+    it.each([
+        ['global daemon', false], ['Session daemon', false], ['global client', false], ['global account', false],
+        ['global client', true], ['global account', true],
+    ] as const)(
+        'creates a private-input request before executable validation for a confidential %s Action (registration Home=%s)', async (placement, useRegistrationHome) => {
         const sessionScoped = placement === 'Session daemon';
         const inputSchema = { type: 'object', properties: { token: { type: 'string' },
             ...(sessionScoped ? { sessionId: { type: 'string' } } : {}) },
@@ -5210,6 +5213,17 @@ describe('client Action declared SessionTarget admission', () => {
             ? { ...activation.action, execution: { target: 'daemon' as const } } : activation.action;
         const identity = { pluginId: action.pluginId, localId: action.id };
         let mountServerId = 'server-client-action';
+        if (useRegistrationHome) {
+            expect((await activation.composition.reconcile([activation.activation])).map(attempt => attempt.result))
+                .toEqual([{ ok: true }]);
+            const terminalToken = `header.${Buffer.from(JSON.stringify({ sub: 'test-account', tokenEpoch: 0,
+                provenance: AuthTokenProvenanceSchema.parse({ v: 1, kind: 'terminal', authority: 'account_automation' }),
+            })).toString('base64url')}.signature`;
+            const mountHome = await network.addHome('https://confidential-mount.example.test', 'test-account', {
+                credentials: { token: terminalToken },
+            });
+            mountServerId = mountHome.id;
+        }
         const requests: ApprovalRequest[] = [];
         const executor = createActionExecutor(createActionExecutorBoundaryFixture({
             listContributedActionDefinitions: () => [projectedActionToDefinition(action, activation.projection)],
@@ -5245,7 +5259,7 @@ describe('client Action declared SessionTarget admission', () => {
                     } },
                 hostAction: { execute: Object.assign(executor.execute, { prepare: executor.prepare }), context: {
                     serverId: mountServerId, runtimeAccountId: 'test-account',
-                    authority: 'present_user' as const,
+                    ...(useRegistrationHome ? {} : { authority: 'present_user' as const }),
                     defaultSessionMachineId: CLIENT_ACTION_ORIGIN.materializationRef.machineId,
                     actionRequestId: 'confidential-input-request', actionCaller: { kind: 'host' },
                 } },
