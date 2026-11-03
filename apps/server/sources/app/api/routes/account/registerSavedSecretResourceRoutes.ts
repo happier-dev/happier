@@ -214,6 +214,7 @@ export function registerSavedSecretResourceRoutes(app: Fastify): void {
             resourceId: parsed.data.resourceId,
             expectedRevision: parsed.data.expectedRevision,
             keyEnvelopes,
+            authentication: readTeamOperationAuthenticationFromRequest(request),
         }), { /* Secret recipient keys, effective grants and cross-owner reference censuses must stay coherent. */ isolationLevel: "Serializable" });
         if (!result.ok) {
             return reply.code(savedSecretResourceErrorHttpStatus(result.error, 404)).send({ error: result.error });
@@ -345,6 +346,7 @@ export function registerSavedSecretResourceRoutes(app: Fastify): void {
         if (!keyEnvelopes) return reply.code(400).send({ error: "invalid_resource" });
         const result = await inTx((tx) => updateSavedSecretResourceInTx(tx, {
             accountId: request.userId,
+            authentication: readTeamOperationAuthenticationFromRequest(request),
             resourceId: body.resourceId,
             expectedRevision: body.expectedRevision,
             displayName: body.displayName,
@@ -409,6 +411,7 @@ export function registerSavedSecretResourceRoutes(app: Fastify): void {
         try {
             result = await inTx((tx) => deleteSavedSecretResourceInTx(tx, {
                 accountId: request.userId,
+                authentication: readTeamOperationAuthenticationFromRequest(request),
                 resourceId: body.resourceId,
                 expectedRevision: body.expectedRevision,
                 expectedSettingsVersion: body.expectedSettingsVersion,

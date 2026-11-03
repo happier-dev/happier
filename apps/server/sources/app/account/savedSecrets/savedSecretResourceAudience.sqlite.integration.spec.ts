@@ -151,7 +151,8 @@ describe("Saved Secret resource audience lifecycle (SQLite integration)", () => 
             groupGrants: [],
         }));
 
-        expect(result).toEqual({ ok: false, error: "forbidden" });
+        // The administrator has no access to the owner's private resource, so it learns nothing about it.
+        expect(result).toEqual({ ok: false, error: "resource_not_found" });
         await expect(db.savedSecretTeamGrant.count()).resolves.toBe(0);
     });
 

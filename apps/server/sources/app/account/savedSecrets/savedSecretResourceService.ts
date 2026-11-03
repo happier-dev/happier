@@ -1396,7 +1396,7 @@ export async function setSavedSecretResourceGrantsInTx(
         select: { ownerAccountId: true, revision: true, encryptionMode: true, storedContent: true },
     });
     if (!existing) return { ok: false, error: "resource_not_found" };
-    if (existing.ownerAccountId !== input.accountId) return { ok: false, error: "forbidden" };
+    if (existing.ownerAccountId !== input.accountId) return { ok: false, error: await refuseSavedSecretNonOwnerInTx(tx, input) };
     if (existing.revision !== input.expectedRevision) return { ok: false, error: "resource_changed" };
 
     const accountIds = [...new Set(input.accountGrants)].filter((id) => id !== input.accountId);
@@ -1502,6 +1502,7 @@ export async function repairSavedSecretResourceKeyEnvelopesInTx(
         resourceId: string;
         expectedRevision: number;
         keyEnvelopes: readonly SavedSecretRecipientEnvelopeInput[];
+        authentication?: TeamOperationAuthenticationContext;
     }>,
 ): Promise<SavedSecretResourceServiceResult<{ resourceId: string; revision: number }>> {
     const resource = await tx.savedSecretResource.findUnique({
@@ -1509,7 +1510,7 @@ export async function repairSavedSecretResourceKeyEnvelopesInTx(
         select: { ownerAccountId: true, encryptionMode: true, revision: true },
     });
     if (!resource) return { ok: false, error: "resource_not_found" };
-    if (resource.ownerAccountId !== input.accountId) return { ok: false, error: "forbidden" };
+    if (resource.ownerAccountId !== input.accountId) return { ok: false, error: await refuseSavedSecretNonOwnerInTx(tx, input) };
     if (resource.revision !== input.expectedRevision) return { ok: false, error: "resource_changed" };
     if (resource.encryptionMode !== "e2ee" || input.keyEnvelopes.length === 0) {
         return { ok: false, error: "invalid_resource" };
@@ -1559,6 +1560,7 @@ export async function repairSavedSecretResourceKeyEnvelopesInTx(
 
 export type UpdateSavedSecretResourceInput = Readonly<{
     accountId: string;
+    authentication?: TeamOperationAuthenticationContext;
     resourceId: string;
     expectedRevision: number;
     displayName: string;
@@ -1593,7 +1595,7 @@ export async function updateSavedSecretResourceInTx(
             _count: { select: { accountGrants: true, teamGrants: true, groupGrants: true } } },
     });
     if (!resource) return { ok: false, error: "resource_not_found" };
-    if (resource.ownerAccountId !== input.accountId) return { ok: false, error: "forbidden" };
+    if (resource.ownerAccountId !== input.accountId) return { ok: false, error: await refuseSavedSecretNonOwnerInTx(tx, input) };
     if (resource.revision !== input.expectedRevision) return { ok: false, error: "resource_changed" };
     const nextMode = input.toMode ?? resource.encryptionMode;
     if (input.storedContent.t === 'plain' && !canShareSavedSecretResourceContentV1(input.storedContent.v)
@@ -1962,7 +1964,7 @@ export async function validateSavedSecretHistoryTransferProofsInTx(tx: Tx, input
 
 export async function deleteSavedSecretResourceInTx(
     tx: Tx,
-    input: Readonly<{ accountId: string; resourceId: string; expectedRevision: number;
+    input: Readonly<{ accountId: string; resourceId: string; expectedRevision: number; authentication?: TeamOperationAuthenticationContext;
         expectedSettingsVersion: number; referenceCensus: SavedSecretReferenceCensusV1;
         managedResourceDispositions?: readonly ManagedResourceDispositionV1[] }>,
 ): Promise<SavedSecretResourceDeleteResult> {
@@ -1973,7 +1975,7 @@ export async function deleteSavedSecretResourceInTx(
             groupGrants: { select: { teamGroupId: true } } },
     });
     if (!existing) return { ok: false, error: "resource_not_found" };
-    if (existing.ownerAccountId !== input.accountId) return { ok: false, error: "forbidden" };
+    if (existing.ownerAccountId !== input.accountId) return { ok: false, error: await refuseSavedSecretNonOwnerInTx(tx, input) };
     if (existing.revision !== input.expectedRevision) return { ok: false, error: "resource_changed" };
     // Retain the grant identities so terminal validation can still see Team or
     // group audience growth after the resource and its grant rows are deleted.

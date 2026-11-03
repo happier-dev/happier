@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import {
     AIBackendProfileSchema,
+    ENCRYPTED_DATA_KEY_ENVELOPE_V1_BYTES,
     DEFAULT_PROVIDER_SETTINGS_V1,
     type FeaturesResponse,
     FeaturesResponseSchema,
@@ -241,6 +242,48 @@ describe("Saved Secret material route (SQLite integration)", () => {
             expect((await ask('managed-target')).map(row => row.status)).toEqual([403, 403, 200]);
             as(owner.id, [emailPassword]);
             expect((await ask('managed-target')).map(row => row.status)).toEqual([400, 200, 200]);
+        } finally { await app.close(); }
+    });
+
+    it('answers no-access owner mutations like a missing resource and keeps forbidden for recipients', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const stranger = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const recipient = await db.account.create({ data: { encryptionMode: 'plain' } });
+        await db.userRelationship.create({ data: { fromUserId: owner.id, toUserId: recipient.id, status: 'friend' } });
+        expect(await inTx(tx => createSavedSecretResourceInTx(tx, {
+            accountId: owner.id, resourceId: 'mutation-target', displayName: 'mutation-target', kind: 'password', encryptionMode: 'plain',
+            accountGrants: [recipient.id],
+            storedContent: { t: 'plain', v: { v: 1, name: 'mutation-target', kind: 'password', value: 'mutation-target-sentinel' } },
+        }))).toMatchObject({ ok: true, value: { revision: 1 } });
+        let accountId = stranger.id;
+        const app = createAuthenticatedTestApp();
+        app.addHook('onRequest', async request => { request.headers['x-test-user-id'] = accountId; });
+        registerSavedSecretResourceRoutes(app);
+        const envelope = { recipientAccountId: owner.id, encryptedDataKey: Buffer.alloc(ENCRYPTED_DATA_KEY_ENVELOPE_V1_BYTES, 1).toString('base64'),
+            recipientContentPublicKeyFingerprint: 'probe-fingerprint' };
+        const attempt = async (resourceId: string) => {
+            const responses = await Promise.all([
+                app.inject({ method: 'POST', url: homeDomainActionPathForMethod('secrets.shared.grants.set', 'POST'),
+                    payload: { resourceId, expectedRevision: 1, accountGrants: [], teamGrants: [], groupGrants: [] } }),
+                app.inject({ method: 'POST', url: '/v1/account/saved-secrets/resources/envelopes/repair',
+                    payload: { resourceId, expectedRevision: 1, keyEnvelopes: [envelope] } }),
+                app.inject({ method: 'POST', url: homeDomainActionPathForMethod('secrets.shared.update', 'POST'),
+                    payload: { resourceId, expectedRevision: 1, displayName: 'renamed', kind: 'password',
+                        storedContent: { t: 'plain', v: { v: 1, name: 'renamed', kind: 'password', value: 'probe-value' } } } }),
+                app.inject({ method: 'POST', url: homeDomainActionPathForMethod('secrets.shared.delete', 'POST'),
+                    payload: { resourceId, expectedRevision: 1, expectedSettingsVersion: 0,
+                        referenceCensus: { accountMode: 'plain', profiles: { referenceGuardRevision: 'absent', rows: [] } } } }),
+            ]);
+            return responses.map(response => ({ status: response.statusCode, body: response.body }));
+        };
+        try {
+            const missing = await attempt('mutation-missing');
+            expect(missing.map(row => row.body)).toEqual(Array(4).fill(JSON.stringify({ error: 'resource_not_found' })));
+            expect(await attempt('mutation-target')).toEqual(missing);
+            accountId = recipient.id;
+            expect((await attempt('mutation-target')).map(row => row.status)).toEqual([403, 403, 403, 403]);
+            expect(await db.savedSecretResource.findUnique({ where: { id: 'mutation-target' }, select: { revision: true, displayName: true } }))
+                .toEqual({ revision: 1, displayName: 'mutation-target' });
         } finally { await app.close(); }
     });
 
