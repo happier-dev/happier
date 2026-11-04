@@ -1,7 +1,7 @@
 {
-  "machineFly.presentation.rootFilesystem": "Główny system plików po zatrzymaniu",
-  "machineFly.presentation.volumeStorage": "Trwały wolumin",
-  "machineFly.presentation.snapshotStorage": "Migawki woluminu (ponad wliczony limit)",
+  "machineFly.presentation.rootFilesystem": "Zatrzymany dysk główny",
+  "machineFly.presentation.volumeStorage": "Wolumin",
+  "machineFly.presentation.snapshotStorage": "Migawki ponad limit",
   "machineFly.configure.appOwnership": "Aplikacja",
   "machineFly.configure.createApp": "Utwórz nową aplikację",
   "machineFly.configure.existingApp": "Użyj istniejącej aplikacji",
@@ -23,7 +23,7 @@
   "machineFly.configure.volumeId": "ID woluminu",
   "machineFly.suspend.continuity": "Wznowienie może wymagać zimnego startu. Ważne dane przechowuj na woluminie.",
   "machineFly.stop.rootfs": "Zatrzymanie resetuje główny system plików. Wolumin zostaje zachowany.",
-  "machineFly.presentation.kind": "maszyna",
+  "machineFly.presentation.kind": "VM",
   "machineFly.presentation.description": "Maszyny z trwałym woluminem. Obliczenia i przechowywanie danych są rozliczane oddzielnie.",
   "machineFly.presentation.ready": "Konto połączone",
   "machineFly.presentation.unavailable": "Konto niedostępne"

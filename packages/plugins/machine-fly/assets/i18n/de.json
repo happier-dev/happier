@@ -1,7 +1,7 @@
 {
-  "machineFly.presentation.rootFilesystem": "Gestopptes Root-Dateisystem",
-  "machineFly.presentation.volumeStorage": "Dauerhaftes Volume",
-  "machineFly.presentation.snapshotStorage": "Volume-Snapshots (nach Inklusivspeicher)",
+  "machineFly.presentation.rootFilesystem": "Gestoppte Root-Disk",
+  "machineFly.presentation.volumeStorage": "Volume",
+  "machineFly.presentation.snapshotStorage": "Snapshots über Freimenge",
   "machineFly.configure.appOwnership": "App",
   "machineFly.configure.createApp": "Neue App erstellen",
   "machineFly.configure.existingApp": "Vorhandene App verwenden",
@@ -23,7 +23,7 @@
   "machineFly.configure.volumeId": "Volume-ID",
   "machineFly.suspend.continuity": "Beim Fortsetzen kann ein Kaltstart nötig sein. Bewahre wichtige Daten auf dem Volume auf.",
   "machineFly.stop.rootfs": "Beim Stoppen wird das Root-Dateisystem zurückgesetzt. Das Volume bleibt erhalten.",
-  "machineFly.presentation.kind": "Maschine",
+  "machineFly.presentation.kind": "VM",
   "machineFly.presentation.description": "Maschinen mit dauerhaftem Volume. Rechenleistung und gespeicherte Daten werden getrennt berechnet.",
   "machineFly.presentation.ready": "Konto verbunden",
   "machineFly.presentation.unavailable": "Konto nicht verfügbar"

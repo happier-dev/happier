@@ -195,7 +195,12 @@ describe('public fly machine provisioner', () => {
     const runtime = await activated({ id: 'machine-1', state: 'stopped', region: 'ams', config: { mounts: [{ volume: 'vol-1', path: '/data' }] } });
     const result = await runtime.handlers.get('inspect')!({ resource }, runtime.context);
     expect(result).toMatchObject({ availability: 'present', power: 'stopped',
-      billing: { location: 'cloud', stoppedBilling: 'not-billed' } });
+      billing: { location: 'cloud', stoppedBilling: 'not-billed', storageCharges: [
+        expect.objectContaining({ amount: '0.15', currency: 'USD', unit: 'GB-month' }),
+        expect.objectContaining({ amount: '0.15', currency: 'USD', unit: 'GB-month' }),
+        expect.objectContaining({ amount: '0.08', currency: 'USD', unit: 'GB-month' }),
+      ] } });
+    expect(result).toHaveProperty('billing', exports.MACHINE_PROVISIONER.billing);
     expect(new Headers(runtime.requests[0]?.headers).get('authorization')).toBe('Bearer captured-private');
     expect(runtime.materializations[0]?.kind).toBe('httpHeaders');
     expect(JSON.stringify(result)).not.toContain('captured-private');

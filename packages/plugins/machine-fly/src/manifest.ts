@@ -12,7 +12,7 @@ import { defineMachineProvisionerReconciliationSchemas, prepareMachineProvisione
 import { createFlyNativeClient, isLaunchAvailable } from './machine/nativeClient.js';
 import { FLY_DEFAULT_IMAGE, FLY_GUEST_BOOT, FLY_ROLE_SCHEMAS, FlyLaunchQueryV1Schema, FlyLaunchV1Schema, FlyPendingAcquireV1Schema, FlyResourceV1Schema, resolveFlyLaunchQueryCandidate, type FlyAcquireOperationV1, type FlyLaunchV1 } from './machine/schemas.js';
 import { ACCOUNT_ID, ACCOUNT_PURPOSE, connectedAccountRuntime, nativeFetch } from './account.js';
-import { FLY_CONFIGURATION_LABELS, FLY_TRANSLATION_BUNDLES } from './ui/translations.js';
+import { FLY_CONFIGURATION_LABELS } from './ui/translations.js';
 
 export const PLUGIN_ID = 'happier.machine.fly';
 export const PROVISIONER_ID = 'fly';
@@ -42,7 +42,14 @@ const optionsInputHints: NonNullable<ActionContribution['inputHints']> = { field
   { path: 'volume.volumeId', title: configurationLabel('volumeId'), widget: 'text', required: true,
     visibleWhen: { op: 'eq', path: 'volume.kind', value: 'attach' } },
 ] };
-const billing = { location: 'cloud', stoppedBilling: 'not-billed' } as const;
+const billing = { location: 'cloud', stoppedBilling: 'not-billed', storageCharges: [
+  { label: machinePresentationLabel('rootFilesystem'), amount: '0.15', currency: 'USD', unit: 'GB-month',
+    source: 'https://docs.fly.io/about/pricing', observedAt: Date.UTC(2026, 9, 27) },
+  { label: machinePresentationLabel('volumeStorage'), amount: '0.15', currency: 'USD', unit: 'GB-month',
+    source: 'https://docs.fly.io/about/pricing', observedAt: Date.UTC(2026, 9, 27) },
+  { label: machinePresentationLabel('snapshotStorage'), amount: '0.08', currency: 'USD', unit: 'GB-month',
+    source: 'https://docs.fly.io/about/pricing', observedAt: Date.UTC(2026, 9, 27) },
+] } as const;
 const defaults = { scopes: ['machine'], surfaces: ['cli', 'plugin'], hostAccess: ['native-api', ACCOUNT_PURPOSE] } as const;
 const runtime = (context: PluginInvocationContext) => createFlyNativeClient('host-bound', nativeFetch(context), { signal: context.signal });
 async function organization(context: PluginInvocationContext) {
@@ -66,7 +73,20 @@ export const PLUGIN = definePlugin({
   id: PLUGIN_ID, version: '0.0.0', displayName: 'Fly Machines',
   // The provider's own mark beside its name in Machines: Fly.io's mark from Simple Icons 13.21.0 (CC0-1.0), monochrome so the host draws it in ink.
   brand: { iconResourceId: 'brand-icon', monochrome: true },
-  resources: { 'brand-icon': { kind: 'asset', path: 'assets/brand.png', contentType: 'image/png' } },
+  resources: { 'brand-icon': { kind: 'asset', path: 'assets/brand.png', contentType: 'image/png' },
+    "i18n-en": { kind: 'asset', path: "assets/i18n/en.json", contentType: 'application/json' },
+    "i18n-de": { kind: 'asset', path: "assets/i18n/de.json", contentType: 'application/json' },
+    "i18n-ru": { kind: 'asset', path: "assets/i18n/ru.json", contentType: 'application/json' },
+    "i18n-pl": { kind: 'asset', path: "assets/i18n/pl.json", contentType: 'application/json' },
+    "i18n-es": { kind: 'asset', path: "assets/i18n/es.json", contentType: 'application/json' },
+    "i18n-fr": { kind: 'asset', path: "assets/i18n/fr.json", contentType: 'application/json' },
+    "i18n-it": { kind: 'asset', path: "assets/i18n/it.json", contentType: 'application/json' },
+    "i18n-pt": { kind: 'asset', path: "assets/i18n/pt.json", contentType: 'application/json' },
+    "i18n-ca": { kind: 'asset', path: "assets/i18n/ca.json", contentType: 'application/json' },
+    "i18n-zh-hans": { kind: 'asset', path: "assets/i18n/zh-Hans.json", contentType: 'application/json' },
+    "i18n-zh-hant": { kind: 'asset', path: "assets/i18n/zh-Hant.json", contentType: 'application/json' },
+    "i18n-ja": { kind: 'asset', path: "assets/i18n/ja.json", contentType: 'application/json' },
+  },
   description: 'Native Fly Machine control and private buffered bootstrap IO.',
   engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './.happier-plugin/daemon.js' },
   hostAccess: { required: [
@@ -86,7 +106,20 @@ export const PLUGIN = definePlugin({
     }] } }, runtime: connectedAccountRuntime,
   } },
   machineProvisioners: { [PROVISIONER_ID]: MACHINE_PROVISIONER },
-  ui: { translations: FLY_TRANSLATION_BUNDLES },
+  ui: { translations: [
+    { locale: "en", resourceId: "i18n-en" },
+    { locale: "de", resourceId: "i18n-de" },
+    { locale: "ru", resourceId: "i18n-ru" },
+    { locale: "pl", resourceId: "i18n-pl" },
+    { locale: "es", resourceId: "i18n-es" },
+    { locale: "fr", resourceId: "i18n-fr" },
+    { locale: "it", resourceId: "i18n-it" },
+    { locale: "pt", resourceId: "i18n-pt" },
+    { locale: "ca", resourceId: "i18n-ca" },
+    { locale: "zh-Hans", resourceId: "i18n-zh-hans" },
+    { locale: "zh-Hant", resourceId: "i18n-zh-hant" },
+    { locale: "ja", resourceId: "i18n-ja" },
+  ] },
   actions: {
     check: { ...defaults, title: 'Check Fly API access', dangerLevel: 'safe',
       inputSchema: ROLE_SCHEMAS.checkInput, resultSchema: MachineProvisionerCheckResultV1Schema,

@@ -1,7 +1,7 @@
 {
-  "machineFly.presentation.rootFilesystem": "Sistema de arquivos raiz parado",
-  "machineFly.presentation.volumeStorage": "Volume persistente",
-  "machineFly.presentation.snapshotStorage": "Snapshots do volume (além do armazenamento incluído)",
+  "machineFly.presentation.rootFilesystem": "Disco raiz parado",
+  "machineFly.presentation.volumeStorage": "Volume",
+  "machineFly.presentation.snapshotStorage": "Snapshots acima da franquia",
   "machineFly.configure.appOwnership": "Aplicativo",
   "machineFly.configure.createApp": "Criar um aplicativo",
   "machineFly.configure.existingApp": "Usar um aplicativo existente",
@@ -23,7 +23,7 @@
   "machineFly.configure.volumeId": "ID do volume",
   "machineFly.suspend.continuity": "Ao retomar, pode ser necessária uma inicialização a frio. Guarde dados importantes no volume.",
   "machineFly.stop.rootfs": "A parada redefine o sistema de arquivos raiz. O volume é preservado.",
-  "machineFly.presentation.kind": "máquina",
+  "machineFly.presentation.kind": "VM",
   "machineFly.presentation.description": "Máquinas com volume persistente. Computação e armazenamento mantido são cobrados separadamente.",
   "machineFly.presentation.ready": "Conta conectada",
   "machineFly.presentation.unavailable": "Conta indisponível"

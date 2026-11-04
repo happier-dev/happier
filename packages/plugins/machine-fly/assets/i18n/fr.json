@@ -1,7 +1,7 @@
 {
-  "machineFly.presentation.rootFilesystem": "Système de fichiers racine à l’arrêt",
-  "machineFly.presentation.volumeStorage": "Volume persistant",
-  "machineFly.presentation.snapshotStorage": "Instantanés de volume (au-delà du stockage inclus)",
+  "machineFly.presentation.rootFilesystem": "Disque racine à l’arrêt",
+  "machineFly.presentation.volumeStorage": "Volume",
+  "machineFly.presentation.snapshotStorage": "Instantanés hors quota",
   "machineFly.configure.appOwnership": "Application",
   "machineFly.configure.createApp": "Créer une application",
   "machineFly.configure.existingApp": "Utiliser une application existante",
@@ -23,7 +23,7 @@
   "machineFly.configure.volumeId": "ID du volume",
   "machineFly.suspend.continuity": "La reprise peut nécessiter un démarrage à froid. Garde les données importantes sur le volume.",
   "machineFly.stop.rootfs": "L’arrêt réinitialise le système de fichiers racine. Le volume est conservé.",
-  "machineFly.presentation.kind": "machine",
+  "machineFly.presentation.kind": "VM",
   "machineFly.presentation.description": "Des machines avec un volume persistant. Le calcul et le stockage conservé sont facturés séparément.",
   "machineFly.presentation.ready": "Compte connecté",
   "machineFly.presentation.unavailable": "Compte indisponible"

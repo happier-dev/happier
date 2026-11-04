@@ -1,7 +1,7 @@
 {
-  "machineFly.presentation.rootFilesystem": "Sistema de archivos raíz detenido",
-  "machineFly.presentation.volumeStorage": "Volumen persistente",
-  "machineFly.presentation.snapshotStorage": "Instantáneas del volumen (tras el almacenamiento incluido)",
+  "machineFly.presentation.rootFilesystem": "Disco raíz detenido",
+  "machineFly.presentation.volumeStorage": "Volumen",
+  "machineFly.presentation.snapshotStorage": "Instantáneas sobre la cuota",
   "machineFly.configure.appOwnership": "Aplicación",
   "machineFly.configure.createApp": "Crear una aplicación",
   "machineFly.configure.existingApp": "Usar una aplicación existente",
@@ -23,7 +23,7 @@
   "machineFly.configure.volumeId": "ID del volumen",
   "machineFly.suspend.continuity": "Al reanudar puede ser necesario un arranque en frío. Guarda los datos importantes en el volumen.",
   "machineFly.stop.rootfs": "Al detener se restablece el sistema de archivos raíz. El volumen se conserva.",
-  "machineFly.presentation.kind": "máquina",
+  "machineFly.presentation.kind": "VM",
   "machineFly.presentation.description": "Máquinas con volumen persistente. El cómputo y el almacenamiento retenido se facturan por separado.",
   "machineFly.presentation.ready": "Cuenta conectada",
   "machineFly.presentation.unavailable": "Cuenta no disponible"

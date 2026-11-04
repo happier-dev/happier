@@ -1,7 +1,7 @@
 {
-  "machineFly.presentation.rootFilesystem": "Stopped root filesystem",
-  "machineFly.presentation.volumeStorage": "Persistent volume",
-  "machineFly.presentation.snapshotStorage": "Volume snapshots (after included storage)",
+  "machineFly.presentation.rootFilesystem": "Stopped root disk",
+  "machineFly.presentation.volumeStorage": "Volume",
+  "machineFly.presentation.snapshotStorage": "Snapshots over allowance",
   "machineFly.configure.appOwnership": "App",
   "machineFly.configure.createApp": "Create a new app",
   "machineFly.configure.existingApp": "Use an existing app",
@@ -23,7 +23,7 @@
   "machineFly.configure.volumeId": "Volume ID",
   "machineFly.suspend.continuity": "Resume may cold-start. Keep important data on its volume.",
   "machineFly.stop.rootfs": "Stopping resets the root filesystem. Its volume is kept.",
-  "machineFly.presentation.kind": "machine",
+  "machineFly.presentation.kind": "VM",
   "machineFly.presentation.description": "Machines with a persistent volume. Compute and retained storage are billed separately.",
   "machineFly.presentation.ready": "Account connected",
   "machineFly.presentation.unavailable": "Account unavailable"

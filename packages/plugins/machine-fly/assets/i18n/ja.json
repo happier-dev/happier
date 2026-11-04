@@ -1,7 +1,7 @@
 {
-  "machineFly.presentation.rootFilesystem": "停止中のルートファイルシステム",
-  "machineFly.presentation.volumeStorage": "永続ボリューム",
-  "machineFly.presentation.snapshotStorage": "ボリュームのスナップショット（無料枠超過分）",
+  "machineFly.presentation.rootFilesystem": "停止中のルートディスク",
+  "machineFly.presentation.volumeStorage": "ボリューム",
+  "machineFly.presentation.snapshotStorage": "無料枠超過のスナップショット",
   "machineFly.configure.appOwnership": "アプリ",
   "machineFly.configure.createApp": "アプリを作成",
   "machineFly.configure.existingApp": "既存のアプリを使用",
@@ -23,7 +23,7 @@
   "machineFly.configure.volumeId": "ボリューム ID",
   "machineFly.suspend.continuity": "再開時にコールドスタートが必要な場合があります。重要なデータはボリュームに保存してください。",
   "machineFly.stop.rootfs": "停止するとルートファイルシステムがリセットされます。ボリュームは保持されます。",
-  "machineFly.presentation.kind": "マシン",
+  "machineFly.presentation.kind": "VM",
   "machineFly.presentation.description": "永続ボリュームを持つマシン。コンピューティングと保持するストレージは別々に課金されます。",
   "machineFly.presentation.ready": "アカウント接続済み",
   "machineFly.presentation.unavailable": "アカウント利用不可"

@@ -1,7 +1,7 @@
 {
-  "machineFly.presentation.rootFilesystem": "Sistema de fitxers arrel aturat",
-  "machineFly.presentation.volumeStorage": "Volum persistent",
-  "machineFly.presentation.snapshotStorage": "Instantànies del volum (més enllà de l’espai inclòs)",
+  "machineFly.presentation.rootFilesystem": "Disc arrel aturat",
+  "machineFly.presentation.volumeStorage": "Volum",
+  "machineFly.presentation.snapshotStorage": "Instantànies sobre la quota",
   "machineFly.configure.appOwnership": "Aplicació",
   "machineFly.configure.createApp": "Crea una aplicació",
   "machineFly.configure.existingApp": "Utilitza una aplicació existent",
@@ -23,7 +23,7 @@
   "machineFly.configure.volumeId": "ID del volum",
   "machineFly.suspend.continuity": "En reprendre pot caldre una arrencada en fred. Desa les dades importants al volum.",
   "machineFly.stop.rootfs": "En aturar es restableix el sistema de fitxers arrel. El volum es conserva.",
-  "machineFly.presentation.kind": "màquina",
+  "machineFly.presentation.kind": "VM",
   "machineFly.presentation.description": "Màquines amb volum persistent. El còmput i l’emmagatzematge conservat es facturen per separat.",
   "machineFly.presentation.ready": "Compte connectat",
   "machineFly.presentation.unavailable": "Compte no disponible"

@@ -1,7 +1,7 @@
 {
-  "machineFly.presentation.rootFilesystem": "Корневая файловая система после остановки",
-  "machineFly.presentation.volumeStorage": "Постоянный том",
-  "machineFly.presentation.snapshotStorage": "Снимки тома (сверх включённого объёма)",
+  "machineFly.presentation.rootFilesystem": "Корневой диск при остановке",
+  "machineFly.presentation.volumeStorage": "Том",
+  "machineFly.presentation.snapshotStorage": "Снимки сверх квоты",
   "machineFly.configure.appOwnership": "Приложение",
   "machineFly.configure.createApp": "Создать приложение",
   "machineFly.configure.existingApp": "Использовать существующее приложение",
@@ -23,7 +23,7 @@
   "machineFly.configure.volumeId": "ID тома",
   "machineFly.suspend.continuity": "При возобновлении возможен холодный запуск. Храните важные данные на томе.",
   "machineFly.stop.rootfs": "Остановка сбрасывает корневую файловую систему. Том сохраняется.",
-  "machineFly.presentation.kind": "машина",
+  "machineFly.presentation.kind": "ВМ",
   "machineFly.presentation.description": "Машины с постоянным томом. Вычисления и хранение данных оплачиваются отдельно.",
   "machineFly.presentation.ready": "Аккаунт подключён",
   "machineFly.presentation.unavailable": "Аккаунт недоступен"

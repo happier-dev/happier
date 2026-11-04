@@ -1,7 +1,7 @@
 {
-  "machineFly.presentation.rootFilesystem": "停止后的根文件系统",
-  "machineFly.presentation.volumeStorage": "持久卷",
-  "machineFly.presentation.snapshotStorage": "卷快照（超出包含的存储额度）",
+  "machineFly.presentation.rootFilesystem": "已停止的根磁盘",
+  "machineFly.presentation.volumeStorage": "卷",
+  "machineFly.presentation.snapshotStorage": "超出额度的快照",
   "machineFly.configure.appOwnership": "应用",
   "machineFly.configure.createApp": "创建应用",
   "machineFly.configure.existingApp": "使用现有应用",
@@ -23,7 +23,7 @@
   "machineFly.configure.volumeId": "卷 ID",
   "machineFly.suspend.continuity": "恢复时可能需要冷启动。请将重要数据保存在卷上。",
   "machineFly.stop.rootfs": "停止会重置根文件系统，卷会保留。",
-  "machineFly.presentation.kind": "机器",
+  "machineFly.presentation.kind": "虚拟机",
   "machineFly.presentation.description": "带持久卷的机器。计算和保留存储分别计费。",
   "machineFly.presentation.ready": "账户已连接",
   "machineFly.presentation.unavailable": "账户不可用"

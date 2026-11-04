@@ -1,7 +1,7 @@
 {
-  "machineFly.presentation.rootFilesystem": "Filesystem radice da fermo",
-  "machineFly.presentation.volumeStorage": "Volume persistente",
-  "machineFly.presentation.snapshotStorage": "Snapshot del volume (oltre lo spazio incluso)",
+  "machineFly.presentation.rootFilesystem": "Disco radice fermo",
+  "machineFly.presentation.volumeStorage": "Volume",
+  "machineFly.presentation.snapshotStorage": "Snapshot oltre la quota",
   "machineFly.configure.appOwnership": "App",
   "machineFly.configure.createApp": "Crea una nuova app",
   "machineFly.configure.existingApp": "Usa un’app esistente",
@@ -23,7 +23,7 @@
   "machineFly.configure.volumeId": "ID del volume",
   "machineFly.suspend.continuity": "La ripresa potrebbe richiedere un avvio a freddo. Conserva i dati importanti sul volume.",
   "machineFly.stop.rootfs": "L’arresto reimposta il file system radice. Il volume viene conservato.",
-  "machineFly.presentation.kind": "macchina",
+  "machineFly.presentation.kind": "VM",
   "machineFly.presentation.description": "Macchine con volume persistente. Il calcolo e lo spazio conservato sono fatturati separatamente.",
   "machineFly.presentation.ready": "Account collegato",
   "machineFly.presentation.unavailable": "Account non disponibile"

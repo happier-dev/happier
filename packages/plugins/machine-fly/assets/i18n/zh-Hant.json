@@ -1,7 +1,7 @@
 {
-  "machineFly.presentation.rootFilesystem": "停止後的根檔案系統",
-  "machineFly.presentation.volumeStorage": "持久磁碟區",
-  "machineFly.presentation.snapshotStorage": "磁碟區快照（超出內含儲存額度）",
+  "machineFly.presentation.rootFilesystem": "已停止的根磁碟",
+  "machineFly.presentation.volumeStorage": "磁碟區",
+  "machineFly.presentation.snapshotStorage": "超出額度的快照",
   "machineFly.configure.appOwnership": "應用程式",
   "machineFly.configure.createApp": "建立應用程式",
   "machineFly.configure.existingApp": "使用現有應用程式",
@@ -23,7 +23,7 @@
   "machineFly.configure.volumeId": "磁碟區 ID",
   "machineFly.suspend.continuity": "恢復時可能需要冷啟動。請將重要資料儲存在磁碟區上。",
   "machineFly.stop.rootfs": "停止會重設根檔案系統，磁碟區會保留。",
-  "machineFly.presentation.kind": "機器",
+  "machineFly.presentation.kind": "虛擬機",
   "machineFly.presentation.description": "附持久磁碟區的機器。運算和保留的儲存空間分別計費。",
   "machineFly.presentation.ready": "帳戶已連接",
   "machineFly.presentation.unavailable": "帳戶不可用"
