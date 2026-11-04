@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fromRecord, toRecord } from './pendingTerminalConnect.shared';
+import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 
@@ -50,6 +51,26 @@ describe('pendingTerminalConnect', () => {
             serverIdentityId: 'not a stable identity',
             createdAtMs: Date.now(),
         })).toBeNull();
+    });
+
+    it('refreshes retained pairing expiry at the next render through the pending owner', async () => {
+        await activateServerAccount('https://render-expiry.example.test', 'account-a');
+        const { setPendingTerminalConnect } = await importPendingOwner();
+        const { usePendingTerminalConnect } = await import('@/hooks/session/usePendingTerminalConnect');
+        const now = Date.now();
+        const clock = vi.spyOn(Date, 'now').mockReturnValue(now);
+        setPendingTerminalConnect({ publicKeyB64Url: 'render-expiry-key', serverUrl: 'https://render-expiry.example.test',
+            serverIdentityId: 'srv_render_expiry', pairing: { secretB64Url: 'render-expiry-secret', createdAtMs: now, expiresAtMs: now + 60_000 } });
+        const hook = await renderHook(() => usePendingTerminalConnect());
+        try {
+            const pending = hook.getCurrent();
+            expect(pending).not.toBeNull();
+            await hook.rerender();
+            expect(hook.getCurrent()).toBe(pending);
+            clock.mockReturnValue(now + 60_000);
+            await hook.rerender();
+            expect(hook.getCurrent()).toBeNull();
+        } finally { await hook.unmount(); }
     });
 
     it('rejects a pending record after its pairing deadline', () => {
