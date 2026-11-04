@@ -3,7 +3,6 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushHookEffects, renderHook, renderScreen } from '@/dev/testkit';
-import { SELECTION_LIST_DEFAULT_DYNAMIC_DEBOUNCE_MS } from '@/components/ui/selectionList/_constants';
 import { AccountProfileSchema, ARTIFACT_PLAIN_DATA_KEY_MARKER, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent, PluginProjectionV2Schema, tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
@@ -45,8 +44,8 @@ vi.mock('expo-file-system', async () =>
     (await import('@/dev/testkit/mocks/expoFileSystem')).createExpoFileSystemFileMock().module);
 // The virtualized list is a third-party rendering boundary; the testkit owns it.
 vi.mock('@legendapp/list/react-native', async () => {
-    const { createCapturingLegendListMock } = await import('@/dev/testkit');
-    return { LegendList: createCapturingLegendListMock({ renderItems: true, renderItemLimit: 40 }).module.LegendList };
+    const { createLegendListModuleMock } = await import('@/dev/testkit/mocks/legendList');
+    return createLegendListModuleMock({ renderItems: true, renderItemLimit: 40 });
 });
 vi.mock('@/components/ui/accessibility/announceAccessibilityMessage', () => ({ announceAccessibilityMessage: vi.fn() }));
 const modal = vi.hoisted(() => ({ alert: vi.fn(), confirm: vi.fn(async () => true),
@@ -313,7 +312,7 @@ function renderedTestIds(screen: Awaited<ReturnType<typeof renderScreen>>, prefi
 }
 
 async function settle() {
-    await flushHookEffects({ advanceTimersMs: SELECTION_LIST_DEFAULT_DYNAMIC_DEBOUNCE_MS });
+    await flushHookEffects({ runOnlyPendingTimers: true });
     await flushHookEffects();
 }
 
