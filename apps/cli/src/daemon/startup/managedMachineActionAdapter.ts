@@ -272,27 +272,13 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
                 || machine.custodianAccountId !== readAccountIdFromToken(params.credentials.token)) {
                 throw Object.assign(new Error('Moved controller receipt is not current'), { code: 'controller_unavailable' });
             }
-            const isCurrent = async () => {
-                if (signal?.aborted) return false;
-                const authorization = context.externalActionExecutionAuthorization;
-                if (!authorization) return !context.externalActionCredential;
-                const installation = params.installationIdentity;
-                const target = context.externalActionTarget;
-                if (!installation || !target || authorization.binding.actionId !== actionId
-                    || authorization.binding.requestId !== requestId || authorization.binding.machineId !== params.machineId
-                    || authorization.binding.installationId !== installation.installationId
-                    || authorization.binding.custodianAccountId !== machine.custodianAccountId) return false;
-                return await verifyExternalActionExecutionAuthorizationCurrent({ authorization, effectActionId: actionId, target,
-                    privateKey: installation.privateKey, installationId: installation.installationId,
-                    serverHttpBaseUrl: params.serverBaseUrl, ...(signal ? { signal } : {}) });
-            };
             // The admitted native owner alone uses its private custodian FIN
             // material. A foreign Manage requester gains no generic recipe rewrite.
             const { createCliWorkflowTriggerActions } = await import('@/session/actions/workflowTriggers');
             const triggers = createCliWorkflowTriggerActions({ credentials: params.credentials,
                 serverHttpBaseUrl: params.serverBaseUrl,
                 resolveWorkflow: async () => { throw Object.assign(new Error('Not an inline managed scope binding'), { code: 'source_unavailable' }); } });
-            await triggers.moveManagedMachineScopeBindings({ machine, isCurrent, ...(signal ? { signal } : {}) });
+            await triggers.moveManagedMachineScopeBindings({ machine, ...(signal ? { signal } : {}) });
             return machine;
         } catch (error) {
             const code = readRpcErrorCode(error)

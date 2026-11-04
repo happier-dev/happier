@@ -413,6 +413,17 @@ describe('workflow trigger Automation composition', () => {
     }, { ...context, presentUserConfirmation: { actionId: 'workflow.trigger.remove' } })).toMatchObject({ ok: true });
     expect(f.rows.get(receipt.set.automationId)?.triggers).toEqual([]);
   });
+  it('completes an Account-owned Move with no bindings and no controller without rereading the managed row', async () => {
+    const f = fixture();
+    f.setManagedController(null);
+    const machine = await f.deps.resolveManagedMachine!({ homeId: 'home', managedId: 'managed' });
+    let reads = 0;
+    const actions = createWorkflowTriggerActions({ ...f.deps, resolveManagedMachine: async input => {
+      reads++; return f.deps.resolveManagedMachine!(input);
+    } });
+    await expect(actions.moveManagedMachineScopeBindings({ machine })).resolves.toBeUndefined();
+    expect(reads).toBe(0);
+  });
   it('moves only the exact managed inline scope binding after the resource controller changes', async () => {
     const f = fixture();
     const selections: Parameters<typeof f.deps.automations.list>[0][] = [];
@@ -424,7 +435,9 @@ describe('workflow trigger Automation composition', () => {
         homeId: { kind: 'literal', value: 'home' }, managedId: { kind: 'literal', value: 'managed' },
         when: { kind: 'literal', value: 'after-idle' }, intent: { kind: 'literal', value: 'stop' },
       } }] });
-    const actions = createWorkflowTriggerActions({ ...f.deps, automations, resolveSession: async () => ({ project, nativeGoalOwner: false }) });
+    let reads = 0;
+    const actions = createWorkflowTriggerActions({ ...f.deps, automations, resolveSession: async () => ({ project, nativeGoalOwner: false }),
+      resolveManagedMachine: async input => { reads++; return f.deps.resolveManagedMachine!(input); } });
     const bound = await actions.sessionAdd({ sessionId: 'session-one', project: { machineId: 'controller', directory: '~' },
       target: { kind: 'inline', definition: inline }, executionTarget: { kind: 'detached_run' },
       trigger: { kind: 'sessionLifecycle', sourceSessionId: 'session-one', events: ['sessionArchived'],
@@ -432,7 +445,9 @@ describe('workflow trigger Automation composition', () => {
     const unrelated = await f.actions.add({ project, trigger, target: { kind: 'inline', definition } });
     f.setManagedController('new-controller');
     const machine = await f.deps.resolveManagedMachine!({ homeId: 'home', managedId: 'managed' });
-    await actions.moveManagedMachineScopeBindings({ machine, isCurrent: async () => true });
+    reads = 0;
+    await actions.moveManagedMachineScopeBindings({ machine });
+    expect(reads).toBe(0);
     expect(selections.at(-1)).toEqual({ managedTarget: { homeId: 'home', managedId: 'managed' }, includeUnindexedManagedTargets: true });
     expect(f.rows.get(bound.set.automationId)?.assignments.map(value => value.machineId)).toEqual(['new-controller']);
     expect(f.rows.get(unrelated.set.automationId)?.assignments.map(value => value.machineId)).toEqual(['machine-one']);
