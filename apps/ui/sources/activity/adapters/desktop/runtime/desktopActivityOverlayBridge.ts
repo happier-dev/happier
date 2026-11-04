@@ -1,3 +1,4 @@
+import type { DesktopHostAvailability } from '@/utils/platform/desktopHost';
 import { invokeDesktopHost, listenDesktopHostEvent } from '@/utils/platform/desktopHost';
 
 import type { DesktopActivityOverlayModel } from '@/activity/adapters/desktop/presentation/buildDesktopActivityOverlayModel';
@@ -56,7 +57,18 @@ export type DesktopActivityOverlayPlacementDiagnostics = Readonly<{
     appliedNativeFrame?: DesktopActivityOverlayRect | null;
 }>;
 
+/** Applied window top-left in logical screen coordinates; scaleFactor maps logical to physical pixels. */
+export type DesktopActivityOverlayScreenOrigin = Readonly<{ x: number; y: number; scaleFactor: number }>;
+export type DesktopActivityOverlayFrame = Readonly<{
+    dock: 'top' | 'left' | 'right' | 'floating';
+    growth: Readonly<{ x: 'left' | 'right' | null; y: 'up' | 'down' | null }>;
+    anchorOffset: Readonly<{ x: number; y: number }>;
+    screenOrigin?: DesktopActivityOverlayScreenOrigin;
+}>;
+
 export type DesktopActivityOverlayWindowStatePayload = Readonly<{
+    frame?: DesktopActivityOverlayFrame;
+    availability?: Partial<DesktopHostAvailability>;
     visible: boolean;
     expanded: boolean;
     model: DesktopActivityOverlayModel;
