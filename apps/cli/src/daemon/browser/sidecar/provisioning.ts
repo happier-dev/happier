@@ -1,7 +1,6 @@
-import { getBrowserChromiumArchiveDownloadInstallableAdapter } from '@/packagedRuntime/installables/sourceAdapters/browserChromium';
+import { getBrowserChromiumArchiveDownloadInstallableAdapter, type ArchiveDownloadInstallResult } from '@/packagedRuntime/installables/sourceAdapters/browserChromium';
 import type { BrowserAutomationRuntimeProvisionOutcome, ProvisionBrowserAutomationRuntime } from '../actions/runtimeActionExecutor';
 import { resolveManagedBrowserSidecarCandidate } from './source';
-import type { InstallManagedBrowserChromiumFn } from './productSource';
 
 /**
  * Dispatch-time provisioning for the managed browser runtime (user ruling, 2026-08-23).
@@ -12,7 +11,7 @@ import type { InstallManagedBrowserChromiumFn } from './productSource';
  *
  * - NOT at daemon startup. `browser.sidecar` is default-ALLOW and the startup route refresh runs on
  *   every daemon, so a startup fetch would be a silent cost on machines that never touch a browser.
- *   The startup gate therefore passes `autoInstallWhenMissing: false`.
+ *   The startup factory only resolves already-installed artifacts.
  * - NOT never. That would leave the daemon automation path permanently dark, since
  *   `getArchiveDownloadInstallableAdapter` has no other caller — there is no user-initiated install.
  * - On the first explicit Browser open or daemon automation dispatch. The download
@@ -24,6 +23,11 @@ import type { InstallManagedBrowserChromiumFn } from './productSource';
 export type BrowserAutomationRuntimeProvisioner = Readonly<{
     provision: ProvisionBrowserAutomationRuntime;
 }>;
+
+type InstallManagedBrowserChromiumFn = (params: Readonly<{
+    platform?: NodeJS.Platform | string;
+    arch?: string;
+}>) => Promise<ArchiveDownloadInstallResult>;
 
 export function createBrowserAutomationRuntimeProvisioner(input: Readonly<{
     /** Rebuild the daemon browser route owners once an install lands. */
