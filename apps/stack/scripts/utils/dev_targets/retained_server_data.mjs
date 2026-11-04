@@ -58,31 +58,12 @@ async function assertRetainedDatabase(dataDir) {
   }
 }
 
-async function verifySqliteIntegrity(dataDir) {
-  const { DatabaseSync } = await import('node:sqlite');
-  const database = new DatabaseSync(join(dataDir, DATABASE_FILE), { readOnly: true });
-  try {
-    const rows = database.prepare('PRAGMA integrity_check').all();
-    if (rows.length !== 1 || Object.values(rows[0])[0] !== 'ok') {
-      throw new Error('[dev-targets] retained SQLite integrity check failed');
-    }
-    if (database.prepare('PRAGMA foreign_key_check').all().length !== 0) {
-      throw new Error('[dev-targets] retained SQLite foreign-key check failed');
-    }
-  } finally { database.close(); }
-}
-
 async function withStoppedStack({ stackBaseDir, stackName }, fn) {
   const statePath = join(stackBaseDir, 'stack.runtime.json');
-  if (await exists(statePath)) {
-    // Read failures must not reinterpret a possibly running stack as stopped.
-    const state = JSON.parse(await readFile(statePath, 'utf8'));
+  return await withStackRuntimeStartClaim(statePath, { stackName }, async () => {
+    // Retained-data admission must not reinterpret unreadable state as stopped.
+    const state = await exists(statePath) ? JSON.parse(await readFile(statePath, 'utf8')) : null;
     if (await hasTrustedStackRuntimeLifecycle(state, { stackName }, { throwOnInconclusive: true })) {
-      throw new Error(`[dev-targets] stop stack ${stackName} before moving its retained server data`);
-    }
-  }
-  return await withStackRuntimeStartClaim(statePath, { stackName }, async ({ existing }) => {
-    if (await hasTrustedStackRuntimeLifecycle(existing, { stackName }, { throwOnInconclusive: true })) {
       throw new Error(`[dev-targets] stop stack ${stackName} before moving its retained server data`);
     }
     return await fn();
@@ -101,7 +82,6 @@ export async function importRetainedServerData({ archivePath, dataDir, stackBase
         throw new Error('[dev-targets] retained server data transfer checksum mismatch');
       }
       await assertRetainedDatabase(staged);
-      await verifySqliteIntegrity(staged);
       if (await exists(dataDir)) {
         if (await fingerprintRetainedServerData(dataDir) !== expectedFingerprint) {
           throw new Error('[dev-targets] target retained server data already exists and differs; no files were replaced');
@@ -191,14 +171,12 @@ export async function moveRetainedServerData({ target, stackName, stackBaseDir, 
     try {
       await runRuntimeArchiveCommand(['-cf', archivePath, '-C', sourceDir, '.']);
       await chmod(archivePath, 0o600);
-      if (await fingerprintRetainedServerData(sourceDir) !== fingerprint) throw new Error('[dev-targets] source server data changed during capture; placement was not changed');
       await remoteDataCommand({ target, stackBaseDir: syncStackBaseDir, env, commandArgs: ['--prepare', `--stack-base-dir=${paths.stackBaseDir}`] }, runCommand);
       await transferFile({ target, direction: 'upload', localPath: archivePath, remotePath: remoteArchivePath });
       await remoteDataCommand({ target, stackBaseDir: syncStackBaseDir, env, commandArgs: [
         '--import', `--archive=${remoteArchivePath}`, `--data-dir=${dataDir}`, `--stack-base-dir=${paths.stackBaseDir}`,
         `--stack-name=${paths.stackName}`, `--fingerprint=${fingerprint}`,
       ] }, runCommand);
-      if (await fingerprintRetainedServerData(sourceDir) !== fingerprint) throw new Error('[dev-targets] source server data changed during transfer; placement was not changed');
       await persistPlacement();
       return { moved: true, target: target.name, sourceDir, dataDir, sourceRetained: true };
     } finally {

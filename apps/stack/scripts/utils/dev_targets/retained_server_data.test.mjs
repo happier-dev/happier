@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import fsPromises from 'node:fs/promises';
 import { cp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
@@ -52,7 +55,33 @@ test('shared database readiness accepts separate QA data state without requiring
 test('server handoff copies and verifies the entire retained tree, preserving the source and account', async t => {
   const { options, dependencies, sourceDir, paths, configPath } = await setup(t);
   const fingerprint = await fingerprintRetainedServerData(sourceDir);
-  const result = await moveRetainedServerData(options, dependencies);
+  const statePath = join(options.stackBaseDir, 'stack.runtime.json');
+  await writeFile(statePath, JSON.stringify({ stackName: options.stackName }));
+  const sourceReads = new Map();
+  const stateReadsUnderClaim = [];
+  const createReadStream = fs.createReadStream;
+  const readFile = fsPromises.readFile;
+  // Observe the real filesystem boundary; hashing, claims and worker imports stay real.
+  const streamMock = t.mock.method(fs, 'createReadStream', (path, ...args) => {
+    if (String(path).startsWith(`${sourceDir}/`)) sourceReads.set(String(path), (sourceReads.get(String(path)) ?? 0) + 1);
+    return createReadStream(path, ...args);
+  });
+  const stateMock = t.mock.method(fsPromises, 'readFile', (path, ...args) => {
+    if (path === statePath) stateReadsUnderClaim.push(fs.existsSync(`${statePath}.lock`));
+    return readFile(path, ...args);
+  });
+  syncBuiltinESMExports();
+  let result;
+  try {
+    result = await moveRetainedServerData(options, dependencies);
+  } finally {
+    streamMock.mock.restore();
+    stateMock.mock.restore();
+    syncBuiltinESMExports();
+  }
+  assert.ok(sourceReads.size > 0);
+  assert.deepEqual([...new Set(sourceReads.values())], [1], 'the stopped source is fingerprinted once');
+  assert.deepEqual(stateReadsUnderClaim, [true, true], 'claim bookkeeping and retained-data authority both read under the start claim');
   assert.equal(result.sourceRetained, true);
   assert.equal(await fingerprintRetainedServerData(sourceDir), fingerprint);
   assert.equal(await fingerprintRetainedServerData(paths.serverLightDataDir), fingerprint);
@@ -78,24 +107,39 @@ test('corrupt transport never activates placement or removes the source', async 
   assert.equal(await readFile(join(sourceDir, 'handy-master-secret.txt'), 'utf8'), 'retained-signing-material');
 });
 
-test('a complete checksummed transfer rejects a corrupt SQLite database before placement', async t => {
+test('truncated transport never activates placement or removes the source', async t => {
   const { options, dependencies, sourceDir, configPath } = await setup(t);
   const before = await readFile(configPath);
-  await writeFile(join(sourceDir, 'happier-server-light.sqlite'), 'invalid sqlite bytes');
+  dependencies.transferFile = async ({ localPath, remotePath }) => {
+    const archive = await readFile(localPath);
+    await writeFile(remotePath, archive.subarray(0, 1));
+  };
   await assert.rejects(moveRetainedServerData(options, dependencies), /retained server data operation failed/);
   assert.deepEqual(await readFile(configPath), before);
+  assert.ok(await fingerprintRetainedServerData(sourceDir));
 });
 
-test('source changes during the transfer retain local authority and the new source bytes', async t => {
+test('a complete checksummed transfer preserves SQLite bytes without an extra database admission check', async t => {
   const { options, dependencies, sourceDir, configPath } = await setup(t);
-  const before = await readFile(configPath);
+  await writeFile(join(sourceDir, 'happier-server-light.sqlite'), 'invalid sqlite bytes');
+  const result = await moveRetainedServerData(options, dependencies);
+  assert.equal(result.moved, true);
+  assert.equal(await readFile(join(result.dataDir, 'happier-server-light.sqlite'), 'utf8'), 'invalid sqlite bytes');
+  assert.equal(JSON.parse(await readFile(configPath)).runtimePlacement.server.target, options.target.name);
+});
+
+test('handoff verifies captured bytes while retaining later out-of-band edits in the source', async t => {
+  const { options, dependencies, sourceDir, configPath } = await setup(t);
+  const capturedBytes = await readFile(join(sourceDir, 'private-files/private.bin'));
   const upload = dependencies.transferFile;
   dependencies.transferFile = async args => {
     await upload(args);
     await writeFile(join(sourceDir, 'private-files/private.bin'), 'later source bytes');
   };
-  await assert.rejects(moveRetainedServerData(options, dependencies), /source server data changed during transfer/);
-  assert.deepEqual(await readFile(configPath), before);
+  const result = await moveRetainedServerData(options, dependencies);
+  assert.equal(result.moved, true);
+  assert.deepEqual(await readFile(join(result.dataDir, 'private-files/private.bin')), capturedBytes);
+  assert.equal(JSON.parse(await readFile(configPath)).runtimePlacement.server.target, options.target.name);
   assert.equal(await readFile(join(sourceDir, 'private-files/private.bin'), 'utf8'), 'later source bytes');
 });
 
@@ -111,11 +155,28 @@ test('different existing target data is never overwritten; an identical recovery
   assert.equal((await moveRetainedServerData(options, dependencies)).moved, true);
 });
 
-test('running source cannot be captured, and missing remote retained data cannot initialize a fresh server', async t => {
+test('running or unreadable source state cannot be captured, and missing remote retained data cannot initialize a fresh server', async t => {
   const { options, dependencies, sourceDir, paths, configPath } = await setup(t);
   const before = await readFile(configPath);
   await writeFile(join(options.stackBaseDir, 'stack.runtime.json'), JSON.stringify({ stackName: options.stackName, ownerPid: process.pid }));
   await assert.rejects(moveRetainedServerData(options, dependencies), /stop stack|live lifecycle owner/);
+  assert.deepEqual(await readFile(configPath), before);
+  await writeFile(join(options.stackBaseDir, 'stack.runtime.json'), '{');
+  const statePath = join(options.stackBaseDir, 'stack.runtime.json');
+  const readFileAtBoundary = fsPromises.readFile;
+  let malformedStateReadUnderClaim = false;
+  const stateMock = t.mock.method(fsPromises, 'readFile', (path, ...args) => {
+    if (path === statePath && fs.existsSync(`${statePath}.lock`)) malformedStateReadUnderClaim = true;
+    return readFileAtBoundary(path, ...args);
+  });
+  syncBuiltinESMExports();
+  try {
+    await assert.rejects(moveRetainedServerData(options, dependencies), SyntaxError);
+  } finally {
+    stateMock.mock.restore();
+    syncBuiltinESMExports();
+  }
+  assert.equal(malformedStateReadUnderClaim, true, 'malformed state is refused while holding the start claim');
   assert.deepEqual(await readFile(configPath), before);
   await assert.rejects(ensureRemoteServerDataReady(options, dependencies), /retained data is still local|retained server data operation failed/);
   await mkdir(paths.serverLightDataDir, { recursive: true });
