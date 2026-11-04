@@ -7,6 +7,8 @@ export type HomePlanetGeometry = Readonly<{
   R: number; cx: number; cy: number; rotate: number; fullness: number;
   halo: PlanetSides; tail: number; fall: number; reach: PlanetSides; around?: number;
 }>;
+/** The pane height where Home's hero stops growing; Corner and Side are sized no larger than this. */
+export const HOME_HERO_FULL_PANE_HEIGHT: number;
 export function homePlanetGeometry(
   placement: HomePlanetPlacement,
   pane: HomePane,

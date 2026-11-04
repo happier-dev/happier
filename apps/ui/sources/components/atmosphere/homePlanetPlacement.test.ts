@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  HOME_HERO_FULL_PANE_HEIGHT,
   homeAtmosphereSeam,
   homeHeroTop,
   homeHorizonBand,
@@ -19,6 +20,23 @@ const sides = (top: number, right: number, bottom: number, left: number) => ({
 });
 
 describe('Home planet placement (plan §4.3, lab geom())', () => {
+  it('keeps the default planet clear of the status row at every window height', () => {
+    // Greeting to status row: about 307 px live on first run at 1440 (no suggestions, the shortest hero).
+    const HERO_TO_ROW_PX = 300;
+    for (const height of [640, 852, 1000, 1400, 2357]) {
+      const rowTop = homeHeroTop({ paneHeight: height, phone: false, composer: true }) + HERO_TO_ROW_PX;
+      for (const placement of ['corner', 'side'] as const) {
+        const { cy, R } = homePlanetGeometry(placement, { width: 1100, height });
+        expect(cy + R).toBeLessThan(rowTop);
+      }
+    }
+  });
+
+  it('stands the hero and the planet on one height: the seam stops growing where the planet does', () => {
+    expect(homeAtmosphereSeam(HOME_HERO_FULL_PANE_HEIGHT, false)).toBe(homeAtmosphereSeam(2400, false));
+    expect(homeAtmosphereSeam(HOME_HERO_FULL_PANE_HEIGHT - 100, false)).toBeLessThan(homeAtmosphereSeam(2400, false));
+  });
+
   it('places each desktop placement from the pane', () => {
     const H = desk.height,
       W = desk.width;

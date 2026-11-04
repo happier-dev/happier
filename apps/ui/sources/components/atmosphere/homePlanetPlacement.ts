@@ -1,4 +1,7 @@
+import { HOME_HERO_FULL_PANE_HEIGHT } from '@happier-dev/brand/planet-placement';
+
 export {
+  HOME_HERO_FULL_PANE_HEIGHT,
   homePlanetGeometry,
   homePlanetSceneOptions,
   type HomePlanetPlacement,
@@ -11,7 +14,7 @@ export {
 export function homeAtmosphereSeam(paneHeight: number, phone: boolean): number {
   return phone
     ? Math.round(paneHeight / 3)
-    : Math.round(Math.max(220, Math.min(500, paneHeight * 0.5)));
+    : Math.round(Math.max(220, Math.min(HOME_HERO_FULL_PANE_HEIGHT, paneHeight) * 0.5));
 }
 
 /** The headline starts this far above the seam (desktop), so the composer straddles it. */

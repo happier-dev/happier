@@ -3,12 +3,15 @@ const CORNER_ROTATE = -1.5, SIDE_ROTATE = -1, RISE_ROTATE = -1.5;
 const TAIL = 1.6, FALL = 0.8, START = 0.3, RAMP = 0.6, OVER = 0.62;
 const INK = { light: 1.15, dark: 0.8 };
 const RISE_LIMB_FALLBACK = { phone: 0.34, desktop: 0.49 };
+// Home's hero stops growing at this pane height. Corner and Side stop with it: on a taller window the
+// planet stays an object beside the hero, rather than growing behind the greeting and the rows under it.
+const HOME_HERO_FULL_PANE_HEIGHT = 1000;
 function homePlanetGeometry(placement, pane, options = {}) {
-  const W = pane.width, H = pane.height;
+  const W = pane.width, H = Math.min(pane.height, HOME_HERO_FULL_PANE_HEIGHT);
   if (placement === "rise") {
     // A profile band keeps its planet round (R from its column), where Home's Rise spans its pane.
     const R2 = options.radius ?? (options.phone ? 1.3 : 0.8) * W;
-    const limb = options.limb ?? (options.phone ? RISE_LIMB_FALLBACK.phone : RISE_LIMB_FALLBACK.desktop) * H;
+    const limb = options.limb ?? (options.phone ? RISE_LIMB_FALLBACK.phone : RISE_LIMB_FALLBACK.desktop) * pane.height;
     return {
       R: R2,
       cx: 0.5 * W,
@@ -29,7 +32,7 @@ function homePlanetGeometry(placement, pane, options = {}) {
       return {
         R: R3,
         cx: W + 0.3 * R3,
-        cy: (noWidgets ? 0.6 : 0.13) * H,
+        cy: noWidgets ? 0.6 * pane.height : 0.13 * H,
         rotate: SIDE_ROTATE,
         fullness: 1,
         halo: { top: 1.2, left: 0.7, bottom: noWidgets ? 1.2 : 0.5, right: 1 },
@@ -56,7 +59,7 @@ function homePlanetGeometry(placement, pane, options = {}) {
     return {
       R: R2,
       cx: W + (noWidgets ? 0.5 : 0.4) * R2,
-      cy: (noWidgets ? 0.5 : 0.33) * H,
+      cy: noWidgets ? 0.5 * pane.height : 0.33 * H,
       rotate: SIDE_ROTATE,
       fullness: 1,
       halo: { top: 1.4, left: 0.8, bottom: noWidgets ? 1.4 : 0.8, right: 1 },
@@ -106,6 +109,7 @@ function homePlanetSceneOptions(geometry, pane, look) {
   };
 }
 export {
+  HOME_HERO_FULL_PANE_HEIGHT,
   homePlanetGeometry,
   homePlanetSceneOptions
 };
