@@ -212,7 +212,6 @@ export const McpServerCollection = React.memo(function McpServerCollection(props
             >
                 <CollectionIndexRow
                     testID="settings.mcpServers.rail.all"
-                    title={t('capabilities.mcp.allServers')}
                     selected={pathname === MCP_COLLECTION_ROUTE}
                     onPress={() => navigate(MCP_COLLECTION_ROUTE)}
                 />

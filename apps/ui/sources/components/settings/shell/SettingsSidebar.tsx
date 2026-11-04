@@ -47,6 +47,8 @@ const stylesheet = StyleSheet.create(() => ({
 
 type ParentMap = Readonly<Record<string, string | null>>;
 
+const NO_DISCLOSURE: ReadonlyMap<string, boolean> = new Map();
+
 function readSettingsPageTitle(node: ResolvedSettingsPageNode): string {
     return node.title ?? (node.titleKey ? String(t(node.titleKey)) : node.id);
 }
@@ -84,54 +86,22 @@ export const SettingsSidebar = React.memo(function SettingsSidebar() {
 
     const parents = React.useMemo(() => buildParentMap(resolved.tree), [resolved.tree]);
 
-    const defaultExpanded = React.useMemo(() => {
-        const expanded = new Set<string>();
-        // Expand the top-level and first-level groups by default so the sidebar is immediately useful.
-        // This keeps settings categories visible without forcing the user to click multiple times.
-        const visit = (items: readonly ResolvedSettingsPageNode[], depth: number) => {
-            for (const node of items) {
-                if (depth <= 1) {
-                    expanded.add(node.id);
-                }
-                if (node.children) {
-                    visit(node.children, depth + 1);
-                }
-            }
-        };
-        visit(resolved.tree, 0);
-        if (resolved.activePageId) {
-            for (const ancestor of collectAncestors(resolved.activePageId, parents)) {
-                expanded.add(ancestor);
-            }
-        }
-        return expanded;
-    }, [parents, resolved.activePageId, resolved.tree]);
+    // A subtree stands open only on the way to the open page. What the person opened or closed by hand holds
+    // until they open another page, so a tree never stays expanded over pages it has nothing to do with.
+    const activePath = React.useMemo(() => new Set(resolved.activePageId
+        ? [resolved.activePageId, ...collectAncestors(resolved.activePageId, parents)]
+        : []), [parents, resolved.activePageId]);
+    const [disclosure, setDisclosure] = React.useState<Readonly<{
+        pageId: string | null;
+        byHand: ReadonlyMap<string, boolean>;
+    }>>({ pageId: resolved.activePageId, byHand: NO_DISCLOSURE });
+    if (disclosure.pageId !== resolved.activePageId) {
+        setDisclosure({ pageId: resolved.activePageId, byHand: NO_DISCLOSURE });
+    }
+    const { byHand } = disclosure;
 
-    const [expandedIds, setExpandedIds] = React.useState<Set<string>>(() => new Set(defaultExpanded));
-
-    React.useEffect(() => {
-        if (!resolved.activePageId) return;
-        const ancestors = collectAncestors(resolved.activePageId, parents);
-        if (ancestors.length === 0) return;
-        setExpandedIds((current) => {
-            const next = new Set(current);
-            for (const ancestor of ancestors) {
-                next.add(ancestor);
-            }
-            return next;
-        });
-    }, [parents, resolved.activePageId]);
-
-    const toggleExpanded = React.useCallback((id: string) => {
-        setExpandedIds((current) => {
-            const next = new Set(current);
-            if (next.has(id)) {
-                next.delete(id);
-            } else {
-                next.add(id);
-            }
-            return next;
-        });
+    const toggleExpanded = React.useCallback((id: string, open: boolean) => {
+        setDisclosure((current) => ({ ...current, byHand: new Map(current.byHand).set(id, open) }));
     }, []);
 
     // Rail rows and search results open pages the same guarded way.
@@ -171,7 +141,7 @@ export const SettingsSidebar = React.memo(function SettingsSidebar() {
         }
 
         const hasChildren = options?.expandable ?? childCount > 0;
-        const expanded = expandedIds.has(node.id);
+        const expanded = byHand.get(node.id) ?? activePath.has(node.id);
         const indentPx = RAIL_INDENT_STEP_PX * Math.max(0, level);
         // On a search-only child's page, the page it opens from stays the selected row.
         const selected = resolved.activePageId === node.id
@@ -193,7 +163,7 @@ export const SettingsSidebar = React.memo(function SettingsSidebar() {
                 onPress={(event: any) => {
                     event?.preventDefault?.();
                     event?.stopPropagation?.();
-                    toggleExpanded(node.id);
+                    toggleExpanded(node.id, !expanded);
                 }}
                 accessibilityRole="button"
                 accessibilityLabel={readSettingsPageTitle(node)}
@@ -235,7 +205,7 @@ export const SettingsSidebar = React.memo(function SettingsSidebar() {
                             return;
                         }
                         if (hasChildren) {
-                            toggleExpanded(node.id);
+                            toggleExpanded(node.id, !expanded);
                         }
                     }}
                 />
@@ -244,7 +214,7 @@ export const SettingsSidebar = React.memo(function SettingsSidebar() {
                     : null}
             </React.Fragment>
         );
-    }, [expandedIds, navigateToRoute, resolved.activePageId, theme, toggleExpanded]);
+    }, [activePath, byHand, navigateToRoute, resolved.activePageId, theme, toggleExpanded]);
 
     /**
      * The catalog root is the home row: a plain destination with no disclosure and no label

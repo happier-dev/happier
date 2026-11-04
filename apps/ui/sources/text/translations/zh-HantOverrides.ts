@@ -5065,7 +5065,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             addAcpAgent: '新增 ACP 代理',
             addAcpAgentDescription: '透過命令執行任何支援 ACP 的代理。',
             ready: '就緒',
-            beta: '測試版',
+            machineCountAtLeast: ({ count }: { count: number }) => `${count}+ 台機器`,
             install: '安裝',
             reinstall: '重新安裝',
             customAgents: '自訂代理',

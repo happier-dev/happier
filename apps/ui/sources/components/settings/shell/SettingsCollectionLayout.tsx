@@ -16,8 +16,6 @@ import {
     type SettingsNestedNavigator,
 } from '@/components/settings/navigation/settingsRouteRegistry';
 import { SettingsFloatingControlsHost } from '@/components/settings/shell/SettingsModalFloatingControls';
-import { NavigationBackChromeProvider } from '@/components/ui/layout/NavigationBackChrome';
-import { NavigationTitleChromeProvider } from '@/components/ui/layout/navigationTitleChrome';
 import { getPreferredLanguage, t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { CollectionDraftTitleScope } from '@/components/ui/lists/collection/CollectionDraftTitle';
@@ -42,8 +40,6 @@ export type SettingsCollectionLayoutProps = Readonly<{
     testID: string;
     /** Content above every detail (a banner about the whole collection). */
     detailTop?: React.ReactNode;
-    /** Collection identity above both panes on desktop; phone list pages retain their own header. */
-    collectionHeader?: React.ReactNode;
 }>;
 
 /**
@@ -72,10 +68,6 @@ export const SettingsCollectionLayout = React.memo(function SettingsCollectionLa
         {/* One phone header stays above both panes and follows the active child route. */}
         <Stack.Screen options={routes.find((route) => route.name === currentRoute)?.options} />
         <View style={{ flex: 1, minHeight: 0, backgroundColor: theme.colors.surface.base }}>
-            {/* The collection header names the collection itself; back belongs to the detail pane below it. */}
-            {isModalPresentation && props.collectionHeader
-                ? <NavigationTitleChromeProvider showsTitle={false}><NavigationBackChromeProvider control={null}>{props.collectionHeader}</NavigationBackChromeProvider></NavigationTitleChromeProvider>
-                : null}
             <HappierListDetailLayout
                 testID={`${props.testID}-layout`}
                 listTestID={`${props.testID}-list-pane`}

@@ -104,6 +104,22 @@ describe('legacy Recent Sessions route', () => {
         expect(replace).not.toHaveBeenCalled();
     });
 
+    it('draws no second list where the Sessions column already stands beside the page', async () => {
+        if (!account) throw new Error('Recent route Account fixture is unavailable');
+        const { AppShellColumnContext } = await import('@/components/navigation/shell/appRail/appShellColumnContext');
+        const screen = await renderScreen(<InjectedAuthProvider credentials={account.credentials}>
+            <CommandPaletteProvider>
+                <AppShellColumnContext.Provider value={{ present: true, columnVisible: true }}>
+                    <LegacyRecentSessionsRoute />
+                </AppShellColumnContext.Provider>
+            </CommandPaletteProvider>
+        </InjectedAuthProvider>);
+
+        expect(screen.findByTestId('recent-sessions-screen')).toBeNull();
+        expect(screen.findAll((node) => String(node.type) === 'Redirect').map((node) => node.props.href)).toEqual(['/']);
+        expect(account.settingsWrites).toHaveLength(0);
+    });
+
     it('leaves the stored layout authoritative outside the hosted route', async () => {
         let outsideChoice: string | null = null;
         function OutsideProbe() {

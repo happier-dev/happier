@@ -390,6 +390,36 @@ describe('SettingsSidebar', () => {
         expect(screen.findByTestId('settings-sidebar.searchResult.machinesAdd')).toBeTruthy();
     });
 
+    it('keeps a subtree open only while the open page is inside it, or the person opened it for this page', async () => {
+        const { SettingsSidebar } = await import('./SettingsSidebar');
+        const { WorkspaceNavigationProvider } = await import('@/components/appShell/workspace/WorkspaceNavigationContext');
+        const { resolveCompactAppDestinations } = await import('@/components/appShell/destinations/compactAppDestinationCatalog');
+        const { createWorkspaceState, reduceWorkspaceState } = await import('@/components/appShell/workspace/workspaceState');
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: true, workflows: true, friends: false } });
+        const navigation = { push: () => {}, replace: () => {}, back: () => {} };
+        const page = (pageId: string) => ({ kind: 'settings' as const, params: { pageId } });
+        const initial = createWorkspaceState({ id: 'settings', target: page('account/security'), pinned: false, preview: false });
+        const valueFor = (state: typeof initial) => ({
+            active: true, state, catalog, canGoBack: false, canGoForward: false,
+            openHref: () => true, activateTab: () => {}, closeTab: () => {}, closeTabs: () => {},
+            dispatch: () => {}, navigationForTab: () => navigation, registerBackStep: () => () => {}, back: () => {}, forward: () => {},
+        }) as never;
+        const sidebar = <SettingsSidebar />;
+        const tree = (state: typeof initial) => <WorkspaceNavigationProvider value={valueFor(state)}>{sidebar}</WorkspaceNavigationProvider>;
+        const go = (pageId: string) => reduceWorkspaceState(initial, { type: 'setTarget', tabId: 'settings', target: page(pageId) });
+
+        const screen = await renderScreen(tree(initial));
+        expect(screen.findByTestId('settings-sidebar.item.accountSecurity')).toBeTruthy();
+
+        await act(async () => { screen.update(tree(go('agents'))); });
+        expect(screen.findByTestId('settings-sidebar.item.accountSecurity')).toBeNull();
+
+        await screen.pressByTestIdAsync('settings-sidebar.toggle.account');
+        expect(screen.findByTestId('settings-sidebar.item.accountSecurity')).toBeTruthy();
+
+        await act(async () => { screen.update(tree(go('appearance'))); });
+        expect(screen.findByTestId('settings-sidebar.item.accountSecurity')).toBeNull();
+    });
     it('keeps the page selected while one of its search-only pages is open', async () => {
         pathnameState.value = '/settings/machines/add';
 

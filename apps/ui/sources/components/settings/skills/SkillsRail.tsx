@@ -386,7 +386,6 @@ export const SkillsList = React.memo(function SkillsList(
     <>
       <CollectionIndexRow
           testID="skills.rail.all"
-          title={t('capabilities.skills.allSkills')}
           detail={
             needLook > 0
               ? t('capabilities.skills.needLook', { count: needLook })

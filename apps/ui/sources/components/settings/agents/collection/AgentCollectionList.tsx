@@ -18,7 +18,6 @@ import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { StatusPill } from '@/components/ui/status/StatusPill';
 import { useMachineAgent, useMachineAgents } from '@/agents/machineAgents/useMachineAgents';
 import { useMachineAgentRowActions } from '@/components/machines/agents/useMachineAgentRowActions';
 import { formatMachineAgentAction } from '@/components/machines/agents/machineAgentCopy';
@@ -272,9 +271,6 @@ export const AgentCollectionList = React.memo(function AgentCollectionList(props
                 key={row.key}
                 testID={`settings-agents-collection.row.${row.entry.agentId}`}
                 title={row.entry.title}
-                titleAccessory={row.entry.channel === 'experimental' ? (
-                    <StatusPill variant="neutral" label={t('settingsAgents.collection.beta')} hideDot />
-                ) : undefined}
                 subtitle={statusLabel}
                 subtitleLeading={row.trouble ? (
                     <View testID={`settings-agents-collection.trouble.${row.entry.agentId}`} style={collectionListStyles.troubleDot} />

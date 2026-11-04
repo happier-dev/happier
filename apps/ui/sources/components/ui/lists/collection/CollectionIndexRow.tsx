@@ -4,30 +4,31 @@ import { HappierCollectionListMark } from '@happier-dev/plugin-ui/presentation';
 
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
+import { t } from '@/text';
 
 import { collectionListStyles } from './CollectionList';
 
 /**
- * A rail's first row, "All …": the collection's index page. It is selected at the collection's root
- * route, where the homepage stands beside the list, and opens that root from any item. One drawing
- * for every settings collection, so each index row has the same mark, inset and selection.
+ * A rail's first row: the collection's Overview, one name in every collection. It is selected at the
+ * collection's root route, where the Overview stands beside the list, and opens that root from any item.
+ * One drawing for every settings collection, so each index row has the same mark, inset and selection.
  */
 export const CollectionIndexRow = React.memo(function CollectionIndexRow(props: Readonly<{
     testID: string;
-    /** The index named for what the collection holds ("All machines"). */
-    title: string;
     /** A quiet fact at the row's end (what needs a look). */
     detail?: string;
-    /** A pinned destination beside the index (Skills: Found on your machines) draws its own glyph. */
-    icon?: IconName;
     selected: boolean;
     onPress: () => void;
-}>) {
+} & (
+    | { icon?: undefined; title?: undefined }
+    /** A pinned destination beside the Overview (Skills: Updates) has its own name and glyph. */
+    | { icon: IconName; title: string }
+)>) {
     const { theme } = useUnistyles();
     return (
         <Item
             testID={props.testID}
-            title={props.title}
+            title={props.icon ? props.title : t('settings.overview')}
             detail={props.detail}
             icon={(
                 <HappierCollectionListMark>

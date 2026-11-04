@@ -26,7 +26,6 @@ installSettingsViewCommonModuleMocks({
 
 const { SettingsCollectionLayout } = await import('./SettingsCollectionLayout');
 const { SettingsFloatingControlsHost } = await import('./SettingsModalFloatingControls');
-const { PageHeader } = await import('@/components/ui/layout/PageHeader');
 const { COLLECTION_RAIL_MIN_WIDTH_PX, useHappierCollectionLayout } = await import('@happier-dev/plugin-ui/presentation');
 const { HAPPIER_COLLECTION_RAIL_WIDTH_PX } = await import('@happier-dev/plugin-ui/advanced');
 const { getStorage } = await import('@/sync/domains/state/storageStore');
@@ -262,26 +261,6 @@ describe('SettingsCollectionLayout', () => {
         expect(hostByTestID(screen, 'machines-rail')).not.toBeNull();
     });
 
-    it('keeps the collection header free of a back control: the collection is the page, its list sits beside the detail', async () => {
-        const screen = await renderScreen(
-            <SettingsFloatingControlsHost enabled>
-                <SettingsCollectionLayout
-                    navigator="machines"
-                    rootPathname="/settings/machines"
-                    resolveChildRoute={() => '[id]'}
-                    rail={<View testID="machines-rail" />}
-                    railWidth="standard"
-                    detailMinWidthPx={480}
-                    testID="settings-machines"
-                    collectionHeader={<PageHeader testID="collection-header" title="Machines" />}
-                />
-            </SettingsFloatingControlsHost>,
-        );
-        await layoutAt(screen, 1200);
-        const header = screen.root.findAll((node) => node.props?.testID === 'collection-header')[0];
-        expect(header).toBeDefined();
-        expect(header!.findAll((node) => node.props?.testID === 'settings-modal-back')).toHaveLength(0);
-    });
     it('keeps the shell\'s canvas tail from a pane host inside the detail: the detail is one pane of a split, not the page sheet', async () => {
         const tailsSeen: unknown[] = [];
         function TailProbe() {

@@ -5815,7 +5815,7 @@ export const ru: TranslationStructure = {
       addAcpAgent: 'Добавить ACP-агента',
       addAcpAgentDescription: 'Запускайте любого агента с поддержкой ACP командой.',
       ready: 'Готов',
-      beta: 'Бета',
+      machineCountAtLeast: ({ count }: { count: number }) => `Машин: ${count}+`,
       install: 'Установить',
       reinstall: 'Переустановить',
       customAgents: 'Свои агенты',

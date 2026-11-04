@@ -262,7 +262,7 @@ presentation-host `panelSizing` binding namespaces it with the plugin id and use
 Without that binding the component retains the width only for its mounted lifetime. See
 [App shell panes](app-shell-panes.md) for the shared geometry and visibility owners.
 
-A collection's root route renders its homepage, not a redirect to its first item (the Machines precedent: All machines, beside the rail and on phones). The rail's first row is the index row, [`CollectionIndexRow`](../apps/ui/sources/components/ui/lists/collection/CollectionIndexRow.tsx) ("All …", selected at the root), the one drawing every collection uses for that row.
+A collection with something to say beyond its list has an Overview at its root route, beside the rail and on phones; one with nothing to add lands on its last visited or first item, with no Overview row (Roles). The rail's first row is the index row, [`CollectionIndexRow`](../apps/ui/sources/components/ui/lists/collection/CollectionIndexRow.tsx), named Overview in every collection and selected at the root. An Overview never lists the rail's rows: it keeps what needs the person with its fix, what only the page can draw (the MCP and Skills maps, the Machines comparison), and what could be added. `SettingsCollectionLayout` draws no header above its panes; a collection's identity is the rail's title and the detail's own header.
 
 ### Machines page doors (0.3 development)
 

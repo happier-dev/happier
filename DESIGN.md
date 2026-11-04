@@ -684,6 +684,13 @@ live in the page-presentation owners in code.
     Closing returns to the same view with its scroll, filters and search kept.
   - Offer **Grid | List** only where both genuinely help (a default per surface, remembered on the
     device). Never a switch that swaps the whole page's shape.
+- **An Overview never repeats its rail.** A collection's first row is its Overview, the one name in every
+  collection. The page holds what the rail cannot say: what needs the person, with its fix, then what only
+  the page can draw (a map, a comparison), then what could be added. A collection with none of these has no
+  Overview and lands on an item. Rows in a rail give the name the whole line; what an item reports stands
+  on the line beneath it. A settings tree stands open only on the way to the open page, or until the next
+  page after the person opened it by hand. A status every row would share (Beta) lives on the item's page,
+  not in the list.
 - **Happier has one card.** Every card in a grid, shelf or board — plugins, suggestions, jobs,
   presets, providers, widgets' pickers — uses the Collection card owner (`CollectionCards` in
   `@happier-dev/plugin-ui`), core and plugin alike:
@@ -705,7 +712,8 @@ live in the page-presentation owners in code.
     the state stays silent;
   - hover paints the fill (colour only); selection is the shared ring; an unavailable card is
     dimmed and still opens. The card opens the item; its right-slot control acts independently.
-  A card is a choice to browse and compare a few at a time. Long or scannable sets are rows.
+  A card is a choice to browse and compare a few at a time. Long or scannable sets are rows, and so is a
+  single suggestion.
 - **Phones recompose rather than shrink.** Only a switch, a short value or a chevron may sit to the
   right of a label; anything wider moves beneath it. A setting that can never apply on a platform is
   not shown there.
@@ -847,7 +855,8 @@ per kind leads there (Add, Install on…, Deploy…, Use).
   opening its popover beneath it. Offline software targets are unavailable in the combined review;
   the person runs the operation later, without an automatic queue.
 - **The capability homes keep their maps.** MCP's ring and Skills' moons share the orbit-map owner
-  with Your Home. They retain the present-tense line, legend and pointer/focus previews. True
+  with Your Home. They retain the present-tense line, legend and pointer/focus previews, under what needs
+  the person. True
   title-only map keys stay compact; described Machine/capability entries use catalog rows.
 
 ## Canonical components and ownership

@@ -1,8 +1,6 @@
 import * as React from 'react';
 
 import { SettingsCollectionLayout } from '@/components/settings/shell/SettingsCollectionLayout';
-import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
-import { t } from '@/text';
 
 import { RoleCollectionRail } from './RoleCollectionRail';
 import { ROLES_COLLECTION_ROOT, resolveRolesChildRoute } from './roleCollectionRoutes';
@@ -21,8 +19,6 @@ export const RoleSettingsLayout = React.memo(function RoleSettingsLayout() {
             railWidth="detailed"
             detailMinWidthPx={ROLE_DETAIL_MIN_WIDTH_PX}
             testID="settings-roles"
-            // The list and detail below are full-bleed, so the header spans the pane and shares the rail's edge.
-            collectionHeader={<SettingsPageHeader columnWidth="pane" title={t('roles.rail.label')} description={t('roles.settings.description')} />}
         />
     );
 });

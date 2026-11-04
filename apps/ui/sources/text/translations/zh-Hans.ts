@@ -5804,7 +5804,7 @@ export const zhHans: TranslationStructure = {
       addAcpAgent: '添加 ACP 智能体',
       addAcpAgentDescription: '通过命令运行任何支持 ACP 的智能体。',
       ready: '就绪',
-      beta: '测试版',
+      machineCountAtLeast: ({ count }: { count: number }) => `${count}+ 台机器`,
       install: '安装',
       reinstall: '重新安装',
       customAgents: '自定义智能体',

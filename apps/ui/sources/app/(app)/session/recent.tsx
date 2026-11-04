@@ -2,8 +2,9 @@ import { WorkspaceRouteEntry } from '@/components/appShell/workspace/createWorks
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import { useIsFocused } from '@/components/appShell/workspace/destinationRoute';
+import { Redirect, useIsFocused } from '@/components/appShell/workspace/destinationRoute';
 
+import { useAppShellColumn } from '@/components/navigation/shell/appRail/appShellColumnContext';
 import { SessionsList } from '@/components/sessions/shell/SessionsList';
 import { resolveFocusedSessionListSurfaceOwnership } from '@/components/sessions/shell/surface/sessionListSurfaceOwnership';
 import { SessionListLayoutIntentProvider } from '@/hooks/session/sessionListLayoutIntent';
@@ -27,6 +28,14 @@ const RECENT_SESSIONS_PATHNAME = '/session/recent';
  * Session-list, query or settings request is made by opening the link.
  */
 export function LegacyRecentSessionsRoute() {
+    // Where the Sessions column stands beside the page, a second copy of its list says nothing: the column's own
+    // view switch shows Recent activity. Only a phone or a collapsed column needs this page.
+    const column = useAppShellColumn();
+    if (column.columnVisible) return <Redirect href="/" />;
+    return <RecentSessionsPage />;
+}
+
+function RecentSessionsPage() {
     useDestinationPageTitle(t('settingsSession.sessionList.layoutRecentActivityTitle'));
     const isFocused = useIsFocused();
     const surfaceOwnership = resolveFocusedSessionListSurfaceOwnership(isFocused);

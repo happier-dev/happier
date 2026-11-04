@@ -7203,7 +7203,7 @@ const enSettingsAgents = {
     addAcpAgent: 'Add an ACP agent',
     addAcpAgentDescription: 'Run any agent that speaks ACP with a command.',
     ready: 'Ready',
-    beta: 'Beta',
+    machineCountAtLeast: ({ count }: { count: number }) => count === 1 ? '1+ machine' : `${count}+ machines`,
     install: 'Install',
     reinstall: 'Reinstall',
     customAgents: 'Custom agents',

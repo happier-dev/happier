@@ -6401,7 +6401,7 @@ localTailscale: {
           addAcpAgent: 'ACP エージェントを追加',
           addAcpAgentDescription: 'ACP 対応のエージェントをコマンドで実行します。',
           ready: '準備完了',
-          beta: 'ベータ',
+          machineCountAtLeast: ({ count }: { count: number }) => `マシン ${count} 台以上`,
           install: 'インストール',
           reinstall: '再インストール',
           customAgents: 'カスタムエージェント',

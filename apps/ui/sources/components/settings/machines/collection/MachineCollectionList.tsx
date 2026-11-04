@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { Pressable } from 'react-native';
+import { View, type Pressable } from 'react-native';
 import { useMachineCollection } from './useMachineCollection';
 import { useGlobalSearchParams, usePathname, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -59,6 +59,8 @@ import { useTeamBinding } from '@/hooks/teams/useTeamBinding';
 import { MANAGED_PROVISIONER_MARK_SIZE, ManagedPresetMark } from '@/components/settings/machines/managed/useManagedProvisionerPresentation';
 import { useMachinesDoor } from '@/components/machines/page/machinesDoor';
 import { useMachineResourceFleetAttention } from '@/sync/domains/machines/resources/useMachineResourceFleetAttention';
+import { Text } from '@/components/ui/text/Text';
+import { useMachineSummarySettingValue } from '@/components/machines/summary/useMachineSummarySetting';
 import { MachineListRowSummary } from '@/components/machines/summary/MachineListRowSummary';
 import { useMachineResourceLiveDemand } from '@/sync/domains/machines/resources/useMachineResourceLiveDemand';
 
@@ -261,27 +263,30 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
     const selectedPresent = rail && collection.sections.some(section => section.rows.some(row => isMachineCollectionRowSelected(selectedKey, row)));
     const selectedRowRef = useRevealSelectedRow<React.ComponentRef<typeof Pressable>>(selectedKey, selectedPresent);
 
+    const summaryMetrics = useMachineSummarySettingValue().metrics.length;
     const renderMachineRow = (row: MachineCollectionRow) => rail ? (
-        // Beside a page (lab `R`): one line — the mark, the name, and on the right its summary or one quiet word.
+        // The name has the whole row, on any width. What the machine reports stands on the line beneath it: its
+        // live summary or its one word, then the host when the name is a different one. The glyph says the platform.
         <Item
             key={machineCollectionRowKey(row)}
             testID={row.kind === 'managed' ? `settings.machines.managed.${row.serverId}.${row.managedId}` : `settings.machines.row.${row.serverId}.${row.machineId}`}
-            // One line: a long name shortens; what tells two same-named machines apart stays whole.
             title={row.titleParts.name}
             titleQualifier={row.titleParts.hint}
             titleLines={1}
-            accessibilityLabel={[row.title, statusLine(row, true)].filter(Boolean).join(', ')}
-            // At the rail's narrowest the name wins: the summary steps aside before it shortens the name.
-            rightElementYields
-            rightElement={(
-                <MachineListRowSummary
-                    testID={`settings.machines.row.${row.serverId}.${row.kind === 'managed' ? row.managedId : row.machineId}.summary`}
-                    serverId={row.serverId}
-                    machineId={row.kind === 'machine' ? row.machineId : row.enrolledMachineId ?? null}
-                    online={row.online}
-                    quietWord={row.reason ?? (row.status === 'unknown' ? t('common.unknown') : !row.online && row.kind === 'managed' ? row.presenceWord ?? row.presence : !row.online ? t('machineDetailPage.offline') : row.ownership)}
-                />
+            // With no instruments chosen and nothing to say, the row is its name alone.
+            subtitle={summaryMetrics === 0 && !(row.reason ?? (row.status === 'unknown' ? t('common.unknown') : !row.online && row.kind === 'managed' ? row.presenceWord ?? row.presence : !row.online ? t('machineDetailPage.offline') : row.ownership)) && !row.host ? undefined : (
+                <View style={railRowStyles.line}>
+                    <MachineListRowSummary
+                        testID={`settings.machines.row.${row.serverId}.${row.kind === 'managed' ? row.managedId : row.machineId}.summary`}
+                        serverId={row.serverId}
+                        machineId={row.kind === 'machine' ? row.machineId : row.enrolledMachineId ?? null}
+                        online={row.online}
+                        quietWord={row.reason ?? (row.status === 'unknown' ? t('common.unknown') : !row.online && row.kind === 'managed' ? row.presenceWord ?? row.presence : !row.online ? t('machineDetailPage.offline') : row.ownership)}
+                    />
+                    {row.host ? <Text variant="meta" numberOfLines={1} style={railRowStyles.host}>{row.host}</Text> : null}
+                </View>
             )}
+            accessibilityLabel={[row.title, statusLine(row, true)].filter(Boolean).join(', ')}
             icon={(
                 <HappierCollectionListMark>
                     <Icon name="desktop" size={20} color={theme.colors.text.secondary} />
@@ -505,10 +510,9 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
                 testID: 'settings.machines.rail.search',
             } : null}
         >
-            {/* The fleet first (lab `R`): All machines is the index of both doors. */}
+            {/* The fleet first (lab `R`): the Overview is the index of both doors. */}
             <CollectionIndexRow
                 testID="settings.machines.rail.all"
-                title={t('allMachines.rowTitle')}
                 detail={fleetLookCount > 0 ? t('machineAttention.listNeedLook', { count: fleetLookCount }) : undefined}
                 selected={selectedKey === 'allMachines'}
                 onPress={() => openHref(router, doorRoot, onDetailRoute, 'MachineCollectionList.allMachines')}
@@ -774,6 +778,11 @@ export const MachineCollectionRail = React.memo(function MachineCollectionRail()
     const addOptions = useMachineAddOptions(viewModel.visibleMachineGroups);
     return <MachineCollectionList variant="rail" viewModel={viewModel} addOptions={addOptions} />;
 });
+
+const railRowStyles = StyleSheet.create((theme) => ({
+    line: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8, minWidth: 0 },
+    host: { flexShrink: 1, minWidth: 0, color: theme.colors.text.tertiary },
+}));
 
 const stylesheet = StyleSheet.create(() => ({
 }));
