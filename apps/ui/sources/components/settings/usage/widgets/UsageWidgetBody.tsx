@@ -77,11 +77,6 @@ const USAGE_QUERY_BODIES: Readonly<
   usage_atmosphere: UsageAtmosphereBody,
 };
 
-export function isUsageBuiltinWidgetId(
-  id: string,
-): id is UsageBuiltinWidgetIdV1 {
-  return id === 'usage_sources' || Object.hasOwn(USAGE_QUERY_BODIES, id);
-}
 
 export type UsageWidgetBodyInput = Readonly<{
   id: UsageBuiltinWidgetIdV1;

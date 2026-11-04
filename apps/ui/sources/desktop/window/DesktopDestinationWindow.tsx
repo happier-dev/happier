@@ -16,7 +16,7 @@ import { registerDesktopAppWindowActionResponder, registerDesktopAppWindowReturn
 import { prepareSessionDraftWindowTransfer, resumeSessionDraftWindowPresentation } from '@/sync/ops/sessionDrafts/sessionDraftWindowTransfer';
 import { flushSessionDraftLocally } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import { prepareMountedTabPresentationTransfer, prepareMountedWindowPresentationTransfer } from '@/utils/navigation/runGuardedNavigation';
-import { PaneTabDestination } from '@/components/appShell/panes/PaneTabDestination';
+import { PaneTabDestination } from '@/components/appShell/panes/PaneTabDestinationHost';
 import { serializeWorkspaceLayout, workspaceLayoutScopeKey } from '@/components/appShell/workspace/workspacePersistence';
 import { workspaceLayoutsState } from '@/sync/domains/state/filePaneUiState';
 import { fireAndForget } from '@/utils/system/fireAndForget';

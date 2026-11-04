@@ -1,0 +1,1 @@
+export { PaneTabDestination } from './PaneTabDestination';

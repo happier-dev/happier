@@ -1,12 +1,67 @@
+// @happier-test-preparation source
+// Probes authored graphs with installed tooling; no workspace dist/publication inputs.
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { build } from 'esbuild';
-import { existsSync, readFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { dirname, join, relative, resolve } from 'node:path';
+import { createRequire } from 'node:module';
 import ts from 'typescript';
 
 const repoRoot = fileURLToPath(new URL('../../../..', import.meta.url));
+const require = createRequire(import.meta.url);
+const metro = require('metro-resolver');
+const metroConfig = require('../../metro.config.js');
+
+// Use Metro's real extension/platform ordering and the app's authored config.
+// These filesystem adapters replace Metro's indexed filesystem, not its resolver.
+const packages = new Map();
+function getPackageForModule(file) {
+    const directory = dirname(file);
+    if (!packages.has(directory)) {
+        const packagePath = join(directory, 'package.json');
+        try {
+            packages.set(directory, { rootPath: directory, packageJson: JSON.parse(readFileSync(packagePath, 'utf8')) });
+        } catch (error) {
+            if (error.code !== 'ENOENT') throw error;
+            const parent = dirname(directory);
+            packages.set(directory, parent === directory ? null : getPackageForModule(join(parent, '_')));
+        }
+    }
+    const info = packages.get(directory);
+    return info && { ...info, packageRelativePath: relative(info.rootPath, file) };
+}
+
+function resolveUiSource(originModulePath, modulePath, platform) {
+    const path = modulePath.startsWith('@/')
+        ? join(repoRoot, 'apps/ui/sources', modulePath.slice(2)) : modulePath;
+    try {
+        return metro.resolve({
+            originModulePath,
+            sourceExts: metroConfig.resolver.sourceExts,
+            assetExts: new Set(metroConfig.resolver.assetExts),
+            mainFields: metroConfig.resolver.resolverMainFields,
+            preferNativePlatform: platform !== 'web',
+            getPackageForModule,
+            getPackage: file => JSON.parse(readFileSync(file, 'utf8')),
+            doesFileExist: existsSync,
+            fileSystemLookup(file) {
+                try {
+                    const stat = statSync(file);
+                    return { exists: true, type: stat.isDirectory() ? 'd' : 'f', realPath: realpathSync(file) };
+                } catch (error) {
+                    if (error.code !== 'ENOENT' && error.code !== 'ENOTDIR') throw error;
+                    return { exists: false };
+                }
+            },
+            resolveAsset: () => null,
+        }, path, platform);
+    } catch (error) {
+        if (error instanceof metro.FailedToResolvePathError) return null;
+        throw error;
+    }
+}
 
 test('hosted HTML keeps the guest bootstrap outside its static entry graph', async () => {
     const entry = 'apps/ui/sources/components/plugins/hostedWeb/buildHostedHtmlDocument.ts';
@@ -90,16 +145,7 @@ for (const [feature, entry, dependency] of [
     });
 }
 
-test('session presentation consumers share one demand boundary instead of eagerly importing the transcript', async () => {
-    const entries = [
-        'components/onboarding/tour/stage/StageSessionDetail.tsx',
-        'components/workspaceCockpit/session/SessionCockpitSurfaceScreen.tsx',
-        'components/sessions/panes/SessionInPane.tsx',
-        'components/sessions/shell/SessionDestinationBody.tsx',
-        'components/sessions/shell/embedded/EmbeddedSessionProvider.tsx',
-    ].map(file => `apps/ui/sources/${file}`);
-    // Inspect emitted value imports, not TS type references. The final Metro export
-    // remains the download-size oracle; this focused graph check needs no native SDK.
+function collectUiWebGraph(entries, platform = 'web') {
     const sourceRoot = join(repoRoot, 'apps/ui/sources');
     const graph = new Map();
     const visitSource = file => {
@@ -124,9 +170,9 @@ test('session presentation consumers share one demand boundary instead of eagerl
                 const base = path.startsWith('@/') ? join(sourceRoot, path.slice(2))
                     : path.startsWith('.') ? resolve(dirname(file), path) : null;
                 if (base?.startsWith(sourceRoot)) {
-                    const candidates = [base + '.web.tsx', base + '.web.ts', base + '.web.js', base + '.tsx', base + '.ts', base + '.js',
-                        join(base, 'index.web.tsx'), join(base, 'index.web.ts'), join(base, 'index.tsx'), join(base, 'index.ts'), base];
-                    const dependency = candidates.find(file => existsSync(file) && /\.[cm]?[jt]sx?$/.test(file));
+                    const resolved = resolveUiSource(file, base, platform);
+                    const dependency = resolved?.type === 'sourceFile' && /\.[cm]?[jt]sx?$/.test(resolved.filePath)
+                        ? resolved.filePath : null;
                     if (dependency) { edges.push({ file: dependency, dynamic }); visitSource(dependency); }
                 }
             }
@@ -142,6 +188,20 @@ test('session presentation consumers share one demand boundary instead of eagerl
         for (const edge of graph.get(file)) if (!edge.dynamic) visit(edge.file);
     };
     entries.forEach(file => visit(join(repoRoot, file)));
+    return { graph, required };
+}
+
+test('session presentation consumers share one demand boundary instead of eagerly importing the transcript', async () => {
+    const entries = [
+        'components/onboarding/tour/stage/StageSessionDetail.tsx',
+        'components/workspaceCockpit/session/SessionCockpitSurfaceScreen.tsx',
+        'components/sessions/panes/SessionInPane.tsx',
+        'components/sessions/shell/SessionDestinationBody.tsx',
+        'components/sessions/shell/embedded/EmbeddedSessionProvider.tsx',
+    ].map(file => `apps/ui/sources/${file}`);
+    // Inspect emitted value imports, not TS type references. The final Metro export
+    // remains the download-size oracle; this focused graph check needs no native SDK.
+    const { graph, required } = collectUiWebGraph(entries);
     const isTranscript = file => file.endsWith('/components/sessions/shell/SessionView.tsx');
     assert.ok([...graph.keys()].some(isTranscript), 'demand must retain the real session implementation');
     const eager = [...required].filter(isTranscript);
@@ -149,4 +209,47 @@ test('session presentation consumers share one demand boundary instead of eagerl
     const demandEdges = [...graph.values()].flat().filter(edge => isTranscript(edge.file));
     assert.equal(demandEdges.length, 1, 'all consumers must share one implementation demand edge');
     console.log(JSON.stringify({ feature: 'session', eagerTranscriptModules: eager.length }));
+});
+
+
+test('Home keeps unopened panes, fixtures and builtin widget bodies outside its static UI graph', () => {
+    const { graph, required } = collectUiWebGraph([
+        'apps/ui/index.ts',
+        'apps/ui/sources/app/_layout.tsx',
+        'apps/ui/sources/app/(app)/_layout.tsx',
+        'apps/ui/sources/app/(app)/index.tsx',
+    ]);
+    const closed = [
+        '/components/appShell/panes/PaneTabDestination.tsx',
+        '/components/projects/widgets/ProjectBuiltinWidgetBody.tsx',
+        '/components/settings/usage/widgets/UsageWidgetBody.tsx',
+    ];
+    for (const suffix of closed) {
+        assert.ok([...graph.keys()].some(file => file.endsWith(suffix)), `demand retains ${suffix}`);
+        assert.deepEqual([...required].filter(file => file.endsWith(suffix)), [], `Home must not download unopened ${suffix}`);
+    }
+    console.log(JSON.stringify({ feature: 'Home', requiredUiModules: required.size, closedBodies: closed.length }));
+});
+
+test('native pane, fixture and builtin widget hosts keep their bodies synchronous', () => {
+    const hosts = [
+        'components/appShell/panes/PaneTabDestination',
+        'components/projects/widgets/ProjectBuiltinWidgetBody',
+        'components/settings/usage/widgets/UsageWidgetBody',
+    ].map(host => [host + 'Host', host + '.tsx']);
+    for (const platform of ['ios', 'android']) {
+        for (const [host, implementation] of hosts) {
+            const origin = join(repoRoot, 'apps/ui/index.ts');
+            const body = join(repoRoot, 'apps/ui/sources', implementation);
+            const resolved = resolveUiSource(origin, join(repoRoot, 'apps/ui/sources', host), platform);
+            assert.equal(resolved?.type, 'sourceFile');
+            const { outputText } = ts.transpileModule(readFileSync(resolved.filePath, 'utf8'), {
+                fileName: resolved.filePath, compilerOptions: { module: ts.ModuleKind.ESNext },
+            });
+            const source = ts.createSourceFile('host.js', outputText, ts.ScriptTarget.Latest, true);
+            const targets = source.statements.filter(node => ts.isExportDeclaration(node) && node.moduleSpecifier)
+                .map(node => resolveUiSource(resolved.filePath, node.moduleSpecifier.text, platform)?.filePath);
+            assert.ok(targets.includes(body), `${platform} ${host} must synchronously export its incumbent body`);
+        }
+    }
 });
