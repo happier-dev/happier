@@ -189,7 +189,7 @@ describe('Connected Account service configuration admits its shared Saved Secret
 
   it('refuses a new operation after a revocation whose AccountChange hint was missed', async () => {
     mockHomeGet([sharedRow]);
-    await hydrateSavedSecretCatalog({ token, serverFeatures: teamsEnabled });
+    await hydrateSavedSecretCatalog({ token });
     // The Home revokes the grant; the daemon never receives the hint.
     mockHomeGet([]);
 
@@ -210,7 +210,7 @@ describe('Connected Account service configuration admits its shared Saved Secret
       credentials: { token, encryption: null }, serverBaseUrl: resolveServerHttpBaseUrl(),
       isCurrent: () => true, destinationAuthority: { activeTransferredRoots: [] },
     })).resolves.toEqual({ status: 'complete' });
-    await hydrateSavedSecretCatalog({ token, serverFeatures: teamsEnabled });
+    await hydrateSavedSecretCatalog({ token });
     const publications = vi.fn<ActiveAccountSettingsSnapshotListener>();
     const unsubscribe = subscribeActiveAccountSettingsSnapshot(publications);
     try {

@@ -4,8 +4,6 @@ import {
     AIBackendProfileSchema,
     ENCRYPTED_DATA_KEY_ENVELOPE_V1_BYTES,
     DEFAULT_PROVIDER_SETTINGS_V1,
-    type FeaturesResponse,
-    FeaturesResponseSchema,
     formatSharedSavedSecretRefV1,
     promotePersonalSavedSecretReference,
     sealEncryptedDataKeyEnvelopeV1,
@@ -699,7 +697,6 @@ describe("Saved Secret material route (SQLite integration)", () => {
             const { hydrateSavedSecretCatalog } = await importCliTestModule<{
                 hydrateSavedSecretCatalog(input: Readonly<{
                     token: string;
-                    serverFeatures: FeaturesResponse | null;
                 }>): Promise<void>;
             }>("../../../../../../cli/src/settings/secrets/hydrateSavedSecretCatalog");
             const { refreshActiveConnectedAccountCatalog } = await importCliTestModule<{
@@ -731,12 +728,6 @@ describe("Saved Secret material route (SQLite integration)", () => {
                 });
                 await hydrateSavedSecretCatalog({
                     token,
-                    // The catalog is Teams-gated at its own owner; the harness runs
-                    // with HAPPIER_FEATURE_TEAMS__ENABLED so the Home answers the same bit.
-                    serverFeatures: FeaturesResponseSchema.parse({
-                        features: { teams: { enabled: true } },
-                        capabilities: {},
-                    }),
                 });
             });
             const snapshot = activeSnapshot.getActiveAccountSettingsSnapshot();
@@ -868,10 +859,6 @@ describe("Saved Secret material route (SQLite integration)", () => {
                     await runWithServerHttpBaseUrl(`http://127.0.0.1:${address.port}`, async () => {
                         await hydrateSavedSecretCatalog({
                             token,
-                            serverFeatures: FeaturesResponseSchema.parse({
-                                features: { teams: { enabled: true } },
-                                capabilities: {},
-                            }),
                         });
                     });
                     return activeSnapshot.getActiveAccountSettingsSnapshot();

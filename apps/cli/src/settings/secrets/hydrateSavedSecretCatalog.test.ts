@@ -421,7 +421,7 @@ describe('Saved Secret catalog hydration', () => {
     expect(getActiveAccountSettingsSnapshot()).toBe(ambient);
   });
 
-  it.each([true, false, null])('hydrates Home-authorized material with Teams enabled=%s', async (teamsEnabled) => {
+  it('hydrates material authorized by the Home resource owner', async () => {
     const token = 'account-token';
     const resourceId = 'resource-1';
     const ref = formatSavedSecretCatalogReferenceV1({ kind: 'shared_resource', id: resourceId });
@@ -472,7 +472,7 @@ describe('Saved Secret catalog hydration', () => {
       },
     });
 
-    await hydrateSavedSecretCatalog({ token, serverFeatures: teamsEnabled === null ? null : serverFeatures(teamsEnabled, false) });
+    await hydrateSavedSecretCatalog({ token });
 
     const snapshot = getActiveAccountSettingsSnapshot();
     if (!snapshot) throw new Error('expected active Account snapshot');
@@ -525,7 +525,7 @@ describe('Saved Secret catalog hydration', () => {
       },
     });
 
-    await hydrateSavedSecretCatalog({ token, serverFeatures: serverFeatures(true) });
+    await hydrateSavedSecretCatalog({ token });
 
     const snapshot = getActiveAccountSettingsSnapshot();
     if (!snapshot) throw new Error('expected active Account snapshot');
@@ -601,7 +601,7 @@ describe('Saved Secret catalog hydration', () => {
       },
     });
 
-    const hydrated = await hydrateSavedSecretCatalog({ token, serverFeatures: serverFeatures(true) });
+    const hydrated = await hydrateSavedSecretCatalog({ token });
 
     expect(hydrated.resources.map((resource) => resource.resourceId)).toEqual([resourceId]);
     const snapshot = getActiveAccountSettingsSnapshot();
@@ -699,7 +699,7 @@ describe('Saved Secret catalog hydration', () => {
       },
     });
 
-    await hydrateSavedSecretCatalog({ token, serverFeatures: serverFeatures(true) });
+    await hydrateSavedSecretCatalog({ token });
 
     const snapshot = getActiveAccountSettingsSnapshot();
     if (!snapshot) throw new Error('expected active Account snapshot');
@@ -747,7 +747,7 @@ describe('Saved Secret catalog hydration', () => {
     });
     vi.mocked(axios.get).mockRejectedValue(new Error('network unavailable'));
 
-    await expect(hydrateSavedSecretCatalog({ token, serverFeatures: serverFeatures(true) }))
+    await expect(hydrateSavedSecretCatalog({ token }))
       .rejects.toThrow('network unavailable');
 
     const snapshot = getActiveAccountSettingsSnapshot();
@@ -785,7 +785,7 @@ describe('Saved Secret catalog hydration', () => {
     });
     vi.mocked(axios.get).mockRejectedValue(new Error('observer gap'));
 
-    await expect(hydrateSavedSecretCatalog({ token, serverFeatures: serverFeatures(true) }))
+    await expect(hydrateSavedSecretCatalog({ token }))
       .rejects.toThrow('observer gap');
 
     const snapshot = getActiveAccountSettingsSnapshot();
@@ -838,7 +838,6 @@ describe('Saved Secret catalog hydration', () => {
     vi.mocked(axios.get).mockResolvedValue({ status: 200, data: { resources: [] } });
     const hydrated = await hydrateSavedSecretCatalog({
       token,
-      serverFeatures: serverFeatures(false, true),
     });
 
     expect(hydrated).toEqual({ resources: [], state: 'ready' });
@@ -904,6 +903,8 @@ describe('Saved Secret catalog hydration', () => {
       }
       // One current authorization read per launch; refusal never creates a Session or retries.
       expect(axios.get).toHaveBeenCalledTimes(1);
+      // Material authorization comes from that response, without an unrelated feature request.
+      expect(fetch).not.toHaveBeenCalled();
       expect(axios.post).not.toHaveBeenCalled();
       if (requester) {
         expect(vi.mocked(axios.get).mock.calls[0]?.[0]).toBe('https://requester-profile.example/v1/account/saved-secrets/resources/materials');
@@ -1335,7 +1336,7 @@ describe('Saved Secret catalog hydration', () => {
     };
     try {
       vi.mocked(axios.get).mockResolvedValue({ status: 200, data: { resources: [row] } });
-      await hydrateSavedSecretCatalog({ token, serverFeatures: serverFeatures(true) });
+      await hydrateSavedSecretCatalog({ token });
       expect(publications).toHaveBeenCalledTimes(1);
       expect(resolveActive()).toMatchObject({ status: 'ready', value: 'shared-value' });
 
@@ -1346,7 +1347,7 @@ describe('Saved Secret catalog hydration', () => {
         expect(resolveActive()).toEqual({ status: 'temporarily_unavailable' });
         return { status: 200, data: { resources: [row] } };
       });
-      await hydrateSavedSecretCatalog({ token, serverFeatures: serverFeatures(true) });
+      await hydrateSavedSecretCatalog({ token });
       await refreshSavedSecretCatalogForOperation({
         expectedScopeKey: resolveAccountSettingsScopeKeyForToken(token),
         references: [{ ref }],
@@ -1357,29 +1358,29 @@ describe('Saved Secret catalog hydration', () => {
 
       // A real revocation is published once.
       vi.mocked(axios.get).mockResolvedValue({ status: 200, data: { resources: [] } });
-      await hydrateSavedSecretCatalog({ token, serverFeatures: serverFeatures(true) });
+      await hydrateSavedSecretCatalog({ token });
       expect(publications).toHaveBeenCalledTimes(2);
       expect(resolveActive().status).not.toBe('ready');
 
       // A lost observation withdraws and publishes once; repeating it changes nothing.
       vi.mocked(axios.get).mockResolvedValue({ status: 200, data: { resources: [row] } });
-      await hydrateSavedSecretCatalog({ token, serverFeatures: serverFeatures(true) });
+      await hydrateSavedSecretCatalog({ token });
       expect(publications).toHaveBeenCalledTimes(3);
       vi.mocked(axios.get).mockResolvedValue({ status: 503, data: {} });
-      await expect(hydrateSavedSecretCatalog({ token, serverFeatures: serverFeatures(true) }))
+      await expect(hydrateSavedSecretCatalog({ token }))
         .rejects.toThrow('saved_secret_catalog_http_503');
       expect(publications).toHaveBeenCalledTimes(4);
       expect(resolveActive()).toEqual({ status: 'temporarily_unavailable' });
-      await expect(hydrateSavedSecretCatalog({ token, serverFeatures: serverFeatures(true) }))
+      await expect(hydrateSavedSecretCatalog({ token }))
         .rejects.toThrow('saved_secret_catalog_http_503');
       expect(publications).toHaveBeenCalledTimes(4);
 
       // A malformed Home answer also ends the refresh with the withdrawn state published.
       vi.mocked(axios.get).mockResolvedValue({ status: 200, data: { resources: [row] } });
-      await hydrateSavedSecretCatalog({ token, serverFeatures: serverFeatures(true) });
+      await hydrateSavedSecretCatalog({ token });
       expect(publications).toHaveBeenCalledTimes(5);
       vi.mocked(axios.get).mockResolvedValue({ status: 200, data: { resources: 'malformed' } });
-      await expect(hydrateSavedSecretCatalog({ token, serverFeatures: serverFeatures(true) }))
+      await expect(hydrateSavedSecretCatalog({ token }))
         .rejects.toThrow();
       expect(publications).toHaveBeenCalledTimes(6);
       expect(resolveActive()).toEqual({ status: 'temporarily_unavailable' });

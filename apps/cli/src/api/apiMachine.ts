@@ -5687,7 +5687,6 @@ export class ApiMachineClient {
         signal.throwIfAborted();
         await hydrateSavedSecretCatalog({
             token: this.token,
-            serverFeatures: null,
             signal,
         });
     }

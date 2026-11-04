@@ -413,7 +413,7 @@ describe('runtime provider services', () => {
       },
     }] } });
     const get = vi.spyOn(axios, 'get').mockResolvedValue(materialResponse(1, 'revoked-value'));
-    await hydrateSavedSecretCatalog({ token, serverFeatures: features });
+    await hydrateSavedSecretCatalog({ token });
     expect(getActiveAccountSettingsSnapshot()?.savedSecretResources).toMatchObject([{ resourceId, revision: 1 }]);
     get.mockClear();
     get.mockResolvedValue({ status: 200, data: { resources: [] } });

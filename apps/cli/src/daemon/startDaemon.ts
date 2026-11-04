@@ -823,7 +823,6 @@ export async function startDaemon(
         await apiMachine?.refreshProviderBrokerIngressAdvertisement(features);
         await hydrateSavedSecretCatalog({
           token: credentials.token,
-          serverFeatures: features,
         }).catch((error) => {
           logger.debug('[DAEMON RUN] Saved Secret catalog feature reconciliation failed (non-fatal)', {
             error: serializeAxiosErrorForLog(error),

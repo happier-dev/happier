@@ -2,7 +2,6 @@ import axios from 'axios';
 import { emptyConnectedAccountCatalogRecordV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
 import {
   AccountSettingsSchema,
-  FeaturesResponseSchema,
   formatSavedSecretCatalogReferenceV1,
   sealSavedSecretResourceStoredContentV1,
 } from '@happier-dev/protocol';
@@ -44,10 +43,6 @@ const purpose = {
   purpose: 'realtime_upstream',
 } as const;
 const service = { pluginId: 'happier.voice.openai', localId: 'openai' } as const;
-const teamsEnabled = FeaturesResponseSchema.parse({
-  features: { teams: { enabled: true } },
-  capabilities: {},
-});
 const resourceId = 'resource-configuration-secret';
 const sharedRow = {
   resourceId,
@@ -130,7 +125,7 @@ describe('Account Settings publication consumers', () => {
       if (path === '/v1/account/saved-secrets/resources/materials') return { status: 200, data: { resources } };
       throw new Error(`Unexpected publication consumer request: ${path}`);
     });
-    await hydrateSavedSecretCatalog({ token, serverFeatures: teamsEnabled });
+    await hydrateSavedSecretCatalog({ token });
 
     const runtime = createRuntime();
     const requestSessionRestart = vi.fn();
@@ -146,8 +141,8 @@ describe('Account Settings publication consumers', () => {
       // Every AccountChange wake and every operation admission re-hydrates the
       // catalog. When the Home answers the same authorized material, nothing
       // the watch consumes changed.
-      await hydrateSavedSecretCatalog({ token, serverFeatures: teamsEnabled });
-      await hydrateSavedSecretCatalog({ token, serverFeatures: teamsEnabled });
+      await hydrateSavedSecretCatalog({ token });
+      await hydrateSavedSecretCatalog({ token });
       // The Connected Services projection reaches purpose watches through the
       // runtime's own invalidation, paired with this publication at its one
       // producer; the Account Settings store must not deliver it a second time.
@@ -157,7 +152,7 @@ describe('Account Settings publication consumers', () => {
       expect(requestSessionRestart).not.toHaveBeenCalled();
 
       resources = [];
-      await hydrateSavedSecretCatalog({ token, serverFeatures: teamsEnabled });
+      await hydrateSavedSecretCatalog({ token });
 
       await new Promise<void>(resolve => setImmediate(resolve));
       expect(resync).not.toHaveBeenCalled();
@@ -171,7 +166,7 @@ describe('Account Settings publication consumers', () => {
   // subscription; its connected-service facts arrive through the AccountChange wake.
   it('wakes the direct-material subscription for a real catalog revocation but not for an unchanged refresh or a projection re-publication', async () => {
     vi.mocked(axios.get).mockResolvedValue({ status: 200, data: { resources: [sharedRow] } });
-    await hydrateSavedSecretCatalog({ token, serverFeatures: teamsEnabled });
+    await hydrateSavedSecretCatalog({ token });
     const reconcile = vi.fn();
     const unsubscribe = subscribeTeamCredentialDirectMaterialSourceChanges(() => reconcile());
     try {
@@ -186,13 +181,13 @@ describe('Account Settings publication consumers', () => {
         return { status: 200, data: { resources: [sharedRow] } };
       });
       for (let index = 0; index < 25; index++) {
-        await hydrateSavedSecretCatalog({ token, serverFeatures: teamsEnabled });
+        await hydrateSavedSecretCatalog({ token });
       }
       notifyActiveAccountConnectedServicesProjection(resolveAccountSettingsScopeKeyForToken(token));
       expect(reconcile).not.toHaveBeenCalled();
 
       vi.mocked(axios.get).mockResolvedValue({ status: 200, data: { resources: [] } });
-      await hydrateSavedSecretCatalog({ token, serverFeatures: teamsEnabled });
+      await hydrateSavedSecretCatalog({ token });
       expect(reconcile).toHaveBeenCalledOnce();
     } finally {
       unsubscribe();

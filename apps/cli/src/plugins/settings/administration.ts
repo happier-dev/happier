@@ -13,7 +13,6 @@ import type { ScopedSettingsService, SettingsSnapshot } from '@happier-dev/plugi
 import { resolvePluginInvocationLogTarget } from '@/cli/commands/pluginInvocationLogsMachine';
 import { readStoredCredentials } from '@/persistence';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
-import { fetchServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { createAccountPluginSecretCustodyRouter } from '@/plugins/runtime/context/accountPluginSecretCustody';
 import { collectDeclaredPluginSecrets } from '@/plugins/runtime/context/declaredPluginSecrets';
 import { createAccountPluginSettingsRecordStorage } from '@/plugins/runtime/context/accountPluginSettingsRecordStorage';
@@ -591,15 +590,8 @@ async function accountSecretCustody(params: Readonly<{
   });
   assertCurrent(params.signal);
   try {
-    const featureSnapshot = await fetchServerFeaturesSnapshot({
-      serverUrl: resolveServerHttpBaseUrl(),
-      token: credentials.token,
-      projection: 'authenticated',
-      ...(params.signal ? { signal: params.signal } : {}),
-    });
     await hydrateSavedSecretCatalog({
       token: credentials.token,
-      serverFeatures: featureSnapshot.status === 'ready' ? featureSnapshot.features : null,
       ...(params.signal ? { signal: params.signal } : {}),
     });
   } catch {

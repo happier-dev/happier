@@ -1559,8 +1559,8 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
         // with the real feed reader. Only Fetch/Axios are boundary substitutes.
         const features = createServerUrlServerFeaturesSnapshotStore({
             serverUrl: 'https://api.example.test', token: 'token',
-            onAuthenticatedReady: async serverFeatures => {
-                await hydrateSavedSecretCatalog({ token: 'token', serverFeatures });
+            onAuthenticatedReady: async () => {
+                await hydrateSavedSecretCatalog({ token: 'token' });
             },
         });
         const client = new ApiMachineClient('token', machine, undefined, {

@@ -190,7 +190,7 @@ describe('Provider direct source admits its shared Saved Secret before preparati
       scopeKey,
     });
     vi.mocked(axios.get).mockResolvedValue({ status: 200, data: { resources: [sharedRow] } });
-    await hydrateSavedSecretCatalog({ token, serverFeatures: teamsEnabled });
+    await hydrateSavedSecretCatalog({ token });
   });
 
   afterEach(() => {

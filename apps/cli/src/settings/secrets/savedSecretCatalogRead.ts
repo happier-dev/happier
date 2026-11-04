@@ -12,14 +12,13 @@ import { openEncryptedDataKeyEnvelopeV1 } from "@happier-dev/protocol/crypto/enc
 import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { SavedSecretResourceMaterialsResponseV1Schema } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 
-import type { FeaturesResponse, SavedSecretResourceMaterialV1, SecretReferenceOverlayV1 } from '@happier-dev/protocol';
+import type { SavedSecretResourceMaterialV1, SecretReferenceOverlayV1 } from '@happier-dev/protocol';
 
 import { decodeBase64 } from "@/api/encryption";
 
 import { resolveServerHttpBaseUrl } from "@/api/client/serverHttpBaseUrl";
 
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
-import { fetchServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { readStoredCredentials, type StoredCredentials } from '@/persistence';
 
 import { beginActiveSavedSecretCatalogRefresh, commitActiveSavedSecretCatalog, getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken, resolveActiveSavedSecretCatalogCollisionState, withdrawActiveSavedSecretCatalog, type ActiveAccountSettingsSnapshot } from "@/settings/accountSettings/activeAccountSettingsSnapshot";
@@ -87,7 +86,6 @@ async function accountContentPrivateKey(token: string, suppliedCredentials?: Sto
 /** Hydrates through the admitted Account publication owner, active or invocation-local. */
 export async function hydrateSavedSecretCatalog(input: Readonly<{
   token: string;
-  serverFeatures: FeaturesResponse | null;
   includeReferenceCensus?: boolean;
   signal?: AbortSignal;
   operationContext?: SavedSecretOperationContextV1;
@@ -301,12 +299,6 @@ export async function readSavedSecretCatalogAdmissionForOperation(input: SavedSe
   await hydrateSavedSecretCatalog({
     ...(input.includeReferenceCensus ? { includeReferenceCensus: true } : {}),
     token: credentials.token,
-    serverFeatures: await fetchServerFeaturesSnapshot({
-      serverUrl: context?.serverHttpBaseUrl ?? resolveServerHttpBaseUrl(),
-      token: credentials.token,
-      projection: 'authenticated',
-      ...(input.signal ? { signal: input.signal } : {}),
-    }).then((snapshot) => snapshot.status === 'ready' ? snapshot.features : null),
     ...(input.signal ? { signal: input.signal } : {}),
     ...(context ? { operationContext: context } : {}),
   });
