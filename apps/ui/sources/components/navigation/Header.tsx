@@ -132,14 +132,17 @@ interface ExtendedNavigationOptions extends Partial<NativeStackHeaderProps['opti
 }
 
 // Default back button component; also the explicit back of a route whose stack reports no `back`.
-export const DefaultBackButton: React.FC<{ tintColor?: string; onPress: () => void; testID?: string }> = ({ tintColor = '#000', onPress, testID }) => {
+// The one Back of a phone's navigation bar: every page's glyph and the title after it sit on the same lines.
+export const DefaultBackButton: React.FC<{ tintColor?: string; onPress: () => void; testID?: string; label?: string; accessibilityLabel?: string }> = ({ tintColor = '#000', onPress, testID, label, accessibilityLabel }) => {
+    const styles = stylesheet;
     return (
-        <Pressable onPress={onPress} hitSlop={15} accessibilityRole="button" accessibilityLabel={t('common.back')} testID={testID}>
+        <Pressable onPress={onPress} accessibilityRole="button" accessibilityLabel={accessibilityLabel ?? t('common.back')} testID={testID} style={styles.backButtonTarget}>
             <Icon
                 name={Platform.OS === 'ios' ? 'caret-left' : 'arrow-left'}
                 size={24}
                 color={tintColor}
             />
+            {label ? <Text numberOfLines={1} style={[Typography.variant('reading'), styles.backButtonLabel, { color: tintColor }]}>{label}</Text> : null}
         </Pressable>
     );
 };
@@ -300,7 +303,8 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: Platform.OS === 'ios' ? 'center' : 'flex-start',
-        paddingHorizontal: theme.space.s12,
+        paddingLeft: theme.space.s12,
+        paddingRight: theme.space.s12,
     },
     // With nothing before it (a deep link with no Back), a leading-aligned title starts on the page's own
     // text edge, the line its purpose and sections start on, not a back button's width in.
@@ -339,5 +343,16 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     },
     backButton: {
         color: theme.colors.chrome.header.foreground,
+    },
+    // A finger-sized target whose glyph still starts on the bar's edge: the padding is taken back in margin.
+    backButtonTarget: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        padding: theme.space.s8,
+        margin: -theme.space.s8,
+    },
+    backButtonLabel: {
+        marginLeft: theme.space.s4,
+        flexShrink: 1,
     },
 }));

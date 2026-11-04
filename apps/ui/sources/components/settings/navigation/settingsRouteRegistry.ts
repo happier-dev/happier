@@ -7,6 +7,7 @@ import { useLocalSearchParams, usePathname, useRouter } from '@/components/appSh
 import type { TranslationKeyNoParams } from '@/text';
 import { Typography } from '@/constants/Typography';
 import { Text } from '@/components/ui/text/Text';
+import { DefaultBackButton } from '@/components/navigation/Header';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { LEGACY_PROMPT_STACKS_ROUTE, PROMPTS_CONTEXT_ROUTE } from '@/components/settings/prompts/context/promptsContextNavigation';
@@ -196,6 +197,15 @@ function SettingsParentBackButton({
     }
 
     const parentTitleKey = parentLabel ? resolveSettingsRouteTitleKey(parentPathname) : null;
+    // Android and the web draw the app's own bar, with its one Back. iPhone's native bar keeps the system chevron.
+    if (Platform.OS !== 'ios') {
+        return React.createElement(DefaultBackButton, {
+            accessibilityLabel,
+            ...(tintColor ? { tintColor } : {}),
+            onPress: goToParent,
+            ...(parentLabel && parentTitleKey ? { label: parentLabel(parentTitleKey) } : {}),
+        });
+    }
     return React.createElement(Pressable, {
         accessibilityLabel,
         accessibilityRole: 'button',
@@ -205,13 +215,13 @@ function SettingsParentBackButton({
             alignItems: 'center',
             flexDirection: 'row',
             justifyContent: 'center',
-            marginLeft: Platform.select({ ios: -8, default: 0 }) as number,
+            marginLeft: -8,
             paddingHorizontal: 8,
             paddingVertical: 6,
         },
     }, React.createElement(Ionicons, {
         color: tintColor,
-        name: Platform.OS === 'ios' ? 'chevron-back' : 'arrow-back',
+        name: 'chevron-back',
         size: 28,
     }), parentLabel && parentTitleKey ? React.createElement(Text, {
         numberOfLines: 1,

@@ -10,6 +10,7 @@ import {
     useSettingsParentBack,
 } from '@/components/settings/navigation/settingsRouteRegistry';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
+import { DefaultBackButton } from '@/components/navigation/Header';
 import { NavigationBackChromeProvider } from '@/components/ui/layout/NavigationBackChrome';
 import { useSettingsRailVisible } from './settingsRailVisibility';
 import { useNavigationTitleChromePublisher, useNavigationTitleChromeShowsTitle } from '@/components/ui/layout/navigationTitleChrome';
@@ -63,6 +64,12 @@ const SettingsBackButton = React.memo(function SettingsBackButton(props: Readonl
             />
         </Pressable>
     );
+});
+
+/** Back in a phone's navigation bar is the bar's one Back, so a Settings page's arrow sits where every page's does. */
+const SettingsBarBackButton = React.memo(function SettingsBarBackButton(props: Readonly<{ onPress: () => void }>) {
+    const { theme } = useUnistyles();
+    return <DefaultBackButton testID="settings-modal-back" tintColor={theme.colors.chrome.header.foreground} onPress={props.onPress} />;
 });
 
 /** The floating back control, for a sub-page that has no page header to carry it. */
@@ -176,7 +183,7 @@ export function SettingsFloatingControlsHost(props: Readonly<{
     const setChromeBack = publisher?.setBack;
     const rootPhoneHost = chromeShowsTitle && props.collectionRootPathname === undefined;
     const navigationBack = React.useMemo(() => back.visible
-        ? <SettingsBackButton onPress={back.handleBack} iconSize={ICON_SIZE.md} /> : null, [back.handleBack, back.visible]);
+        ? <SettingsBarBackButton onPress={back.handleBack} /> : null, [back.handleBack, back.visible]);
     React.useEffect(() => {
         if (!rootPhoneHost || !setChromeBack) return;
         setChromeBack(navigationBack);

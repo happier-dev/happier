@@ -158,6 +158,12 @@ describe('a page that heads itself on a phone', () => {
         expect(skills.labels).toEqual(['settings.title']);
     });
 
+    it('lets the Machines index head itself, as its lab does: Back names Settings over the page title', async () => {
+        const machines = await renderBackLabels('/settings/machines', 'machines');
+        expect(machines.title).toBe('');
+        expect(machines.labels).toEqual(['settings.title']);
+    });
+
     it('keeps the bar title and an icon-only Back on a page the chrome titles', async () => {
         const appearance = await renderBackLabels('/settings/appearance', 'appearance');
         expect(appearance.title).toBe('settings.appearance');
