@@ -26,6 +26,7 @@ import { resolveAccountDisplayLabelV1, ACCOUNT_DISPLAY_PROFILE_SELECT } from '@/
 import { acquireAccountChangePublicationLocksInTx, assertAccountChangePublicationAudienceInTx, beforeAccountChangePublication, markAccountsChanged } from '@/app/changes/markAccountChanged';
 import { resolveEffectiveAccountEncryptionModeFromAccountRow } from '@/app/encryption/accountEncryptionMode';
 import { captureMachineAccessImpactsInTx, applyMachineAccessImpactsInTx } from './machineAccessEffects';
+import { classifyMachineAvailabilityState } from './machineStateGuards';
 import { isMachineOperationSupportedForRequester, type MachineOperationRequesterContext } from './machineOperationSupport';
 import { isMachineRecipientWorkPending, projectMachineRecipientWork, readMachineRecipientWorkInTx, readMachineAudienceAccountIdsInTx } from './machineRecipientWork';
 
@@ -302,6 +303,16 @@ export interface MachineAdmissionInput extends MachineActor, Partial<MachineOper
     operationRpcMethod?: string;
     actionId?: string;
 }
+/** Workflow ownership predates installation identity and published Machine content.
+ * Preserve those owned records; shared execution still consumes strict admission.
+ * Occurrence preparation owns whether a reversibly replaced assignment is frozen.
+ */
+export type WorkflowMachineAdmission = Exclude<MachineAdmission, { kind: 'admitted' }>
+    | (Omit<Extract<MachineAdmission, { kind: 'admitted' }>, 'installationId'> & {
+        installationId: string | null;
+        availability: 'available' | 'replaced';
+    });
+type WorkflowMachineAdmissionInput = MachineActor & Readonly<{ purpose: 'workflow' }>;
 export async function resolveMachineAdmissionInTx(tx: Tx, input: MachineAdmissionInput): Promise<MachineAdmission> {
     const rows = await readMachineFactsInTx(tx, input.actorAccountId, [input.machineId]);
     return resolveMachineAdmissionFromFactsInTx(tx, rows.get(input.machineId) ?? null, input);
@@ -382,22 +393,35 @@ export async function readAccessibleMachineOpeningsInTx(tx: Tx, input: Readonly<
     return result;
 }
 
-/** Set-oriented default-use admission; point and batch readers share every policy decision. */
-export async function resolveMachineAdmissionsInTx(tx: Tx, input: Readonly<{
+type MachineAdmissionsInput = Readonly<{
     actorAccountId: string; machineIds: readonly string[];
-}>): Promise<ReadonlyMap<string, MachineAdmission>> {
+}>;
+/** Set-oriented default-use admission; point and batch readers share every policy decision. */
+export function resolveMachineAdmissionsInTx(tx: Tx, input: MachineAdmissionsInput & Readonly<{ purpose: 'workflow' }>): Promise<ReadonlyMap<string, WorkflowMachineAdmission>>;
+export function resolveMachineAdmissionsInTx(tx: Tx, input: MachineAdmissionsInput): Promise<ReadonlyMap<string, MachineAdmission>>;
+export async function resolveMachineAdmissionsInTx(tx: Tx, input: MachineAdmissionsInput & Readonly<{ purpose?: 'workflow' }>): Promise<ReadonlyMap<string, MachineAdmission | WorkflowMachineAdmission>> {
     const machineIds = [...new Set(input.machineIds)];
     if (machineIds.length === 0) return new Map();
     const byId = await readMachineFactsInTx(tx, input.actorAccountId, machineIds);
-    const result = new Map<string, MachineAdmission>();
+    const result = new Map<string, MachineAdmission | WorkflowMachineAdmission>();
     for (const machineId of machineIds) result.set(machineId, await resolveMachineAdmissionFromFactsInTx(tx, byId.get(machineId) ?? null,
-        { actorAccountId: input.actorAccountId, machineId }));
+        { actorAccountId: input.actorAccountId, machineId, ...(input.purpose === 'workflow' ? { purpose: 'workflow' as const } : {}) }));
     return result;
 }
 
-async function resolveMachineAdmissionFromFactsInTx(tx: Tx, row: MachineFacts | null, input: MachineAdmissionInput): Promise<MachineAdmission> {
+export function resolveMachineAdmissionFromFactsInTx(tx: Tx, row: MachineFacts | null, input: WorkflowMachineAdmissionInput): Promise<WorkflowMachineAdmission>;
+export function resolveMachineAdmissionFromFactsInTx(tx: Tx, row: MachineFacts | null, input: MachineAdmissionInput): Promise<MachineAdmission>;
+export async function resolveMachineAdmissionFromFactsInTx(tx: Tx, row: MachineFacts | null, input: MachineAdmissionInput & Readonly<{ purpose?: 'workflow' }>): Promise<MachineAdmission | WorkflowMachineAdmission> {
+
     const access = row && await accessFromFactsInTx(tx, row, input.actorAccountId);
     if (!row || !access) return { kind: 'denied', code: 'access_denied' };
+    if (input.purpose === 'workflow' && access.owned) {
+        const availability = classifyMachineAvailabilityState(row);
+        if (availability !== 'available' && availability !== 'replaced') return { kind: 'denied', code: 'machine_unavailable' };
+        return { kind: 'admitted', actorAccountId: input.actorAccountId, custodianAccountId: row.accountId,
+            machineId: row.id, installationId: row.installationId, role: access.role, encryptionMode: access.encryptionMode,
+            availability };
+    }
     if (!resourceContentMatchesMode(row, access.encryptionMode)) return { kind: 'denied', code: 'encryption_material_unavailable' };
     if (row.revokedAt || row.replacedByMachineId || !row.installationId || (input.requireOnline === true && !row.active)) return { kind: 'denied', code: 'machine_unavailable' };
     // A template creates the same requester-owned Session as ordinary New Session.
@@ -434,7 +458,8 @@ async function resolveMachineAdmissionFromFactsInTx(tx: Tx, row: MachineFacts | 
     if (access.accessState === 'refused') return { kind: 'denied', code: 'recipient_encryption_incompatible' };
     if (access.accessState !== 'ready') return { kind: 'denied', code: 'recipient_key_pending' };
     return { kind: 'admitted', actorAccountId: input.actorAccountId, custodianAccountId: row.accountId,
-        machineId: row.id, installationId: row.installationId, role: access.role, encryptionMode: access.encryptionMode };
+        machineId: row.id, installationId: row.installationId, role: access.role, encryptionMode: access.encryptionMode,
+        ...(input.purpose === 'workflow' ? { availability: 'available' as const } : {}) };
 }
 export async function resolveMachineAdmission(input: MachineAdmissionInput): Promise<MachineAdmission> { return inTx(tx => resolveMachineAdmissionInTx(tx, input)); }
 

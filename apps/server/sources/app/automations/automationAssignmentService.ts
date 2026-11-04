@@ -1,3 +1,4 @@
+import { buildMachineAdmissionFactsSelect, resolveMachineAdmissionFromFactsInTx } from '@/app/machines/machineAccess';
 import { persistentMachineWhere } from "@/app/machines/machineSelection";
 import { TransactionReplayRequiredError, type Tx } from "@/storage/inTx";
 import { beforeAccountChangePublication } from "@/app/changes/markAccountChanged";
@@ -149,14 +150,17 @@ async function assertMachineAssignmentsCanBeWritten(params: {
     tx: Tx;
     accountId: string;
     automationId: string;
+    templateCiphertext: string;
     machineIds: string[];
     requestedEnabledByMachineId: ReadonlyMap<string, boolean>;
 }): Promise<(tx: Tx) => Promise<void>> {
     if (params.machineIds.length === 0) return async () => {};
 
+    const recipe = parseAutomationStoredWorkflowDefinitionRecipeV2(params.templateCiphertext);
     const readMachines = (tx: Tx) => tx.machine.findMany({
-        where: { accountId: params.accountId, id: { in: params.machineIds }, ...persistentMachineWhere },
-        select: { id: true, revokedAt: true, replacedByMachineId: true },
+        where: { ...(recipe.kind !== 'available' ? { accountId: params.accountId } : {}),
+            id: { in: params.machineIds }, ...persistentMachineWhere },
+        select: buildMachineAdmissionFactsSelect(params.accountId),
     });
     const [rows, existingAssignments] = await Promise.all([
         readMachines(params.tx),
@@ -172,14 +176,21 @@ async function assertMachineAssignmentsCanBeWritten(params: {
     const existingByMachineId = new Map(
         existingAssignments.map((assignment) => [assignment.machineId, assignment] as const),
     );
-    const assertAvailable = (machines: typeof rows) => {
+    const assertAvailable = async (machines: typeof rows) => {
         const machinesById = new Map(machines.map((row) => [row.id, row] as const));
         const unknown: string[] = [];
         const unavailable: string[] = [];
         for (const machineId of params.machineIds) {
             const machine = machinesById.get(machineId) ?? null;
             const availability = classifyMachineAvailabilityState(machine);
-            if (availability === "available") continue;
+            if (availability === "available") {
+                if (recipe.kind !== 'available') continue;
+                const admission = await resolveMachineAdmissionFromFactsInTx(params.tx, machine,
+                    { actorAccountId: params.accountId, machineId, purpose: 'workflow' });
+                if (admission.kind === 'admitted') continue;
+                unknown.push(machineId);
+                continue;
+            }
             // Missing/permanently revoked authority keeps the public unknown
             // Machine refusal; reversible replacement remains distinct.
             if (availability !== "replaced") {
@@ -189,15 +200,15 @@ async function assertMachineAssignmentsCanBeWritten(params: {
             // Preserve only a genuinely incumbent assignment. The terminal
             // recheck must not mistake this transaction's new rows for incumbents.
             const existing = existingByMachineId.get(machineId);
-            if (!existing || (!existing.enabled && params.requestedEnabledByMachineId.get(machineId) === true)) {
+            if (machine?.accountId !== params.accountId || !existing || (!existing.enabled && params.requestedEnabledByMachineId.get(machineId) === true)) {
                 unavailable.push(machineId);
             }
         }
         if (unknown.length > 0) throw new AutomationValidationError(`Unknown machine assignments: ${unknown.join(", ")}`);
         if (unavailable.length > 0) throw new AutomationValidationError(`Unavailable machine assignments: ${unavailable.join(", ")}`);
     };
-    assertAvailable(rows);
-    return async tx => { assertAvailable(await readMachines(tx)); };
+    await assertAvailable(rows);
+    return async () => {};
 }
 
 /**
@@ -234,6 +245,7 @@ export async function replaceAutomationAssignmentsTx(params: {
     tx: Tx;
     accountId: string;
     automationId: string;
+    templateCiphertext: string;
     assignments: ReadonlyArray<AutomationAssignmentInput>;
 }): Promise<Array<{ machineId: string; enabled: boolean; priority: number; updatedAt: Date }>> {
     const normalizedAssignments = normalizeAutomationAssignments(params.assignments) ?? [];
@@ -241,6 +253,7 @@ export async function replaceAutomationAssignmentsTx(params: {
         tx: params.tx,
         accountId: params.accountId,
         automationId: params.automationId,
+        templateCiphertext: params.templateCiphertext,
         machineIds: normalizedAssignments.map((item) => item.machineId),
         requestedEnabledByMachineId: new Map(normalizedAssignments.map((item) => [
             item.machineId,

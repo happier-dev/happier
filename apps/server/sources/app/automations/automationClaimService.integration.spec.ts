@@ -1489,7 +1489,7 @@ describe("automationClaimService (integration)", () => {
         const automation = await createAutomationWithAssignments({ accountId, machineIds: [], name: "Assignment eligibility" });
         await db.machine.update({ where: { id: machineId }, data: { kind: "ephemeral_session_runner" } });
         await expect(inTx((tx) => replaceAutomationAssignmentsTx({
-            tx, accountId, automationId: automation.id, assignments: [{ machineId, enabled: true }],
+            tx, accountId, automationId: automation.id, templateCiphertext: TEST_TEMPLATE_ENVELOPE, assignments: [{ machineId, enabled: true }],
         }))).rejects.toBeInstanceOf(AutomationValidationError);
         expect(await db.automationAssignment.count({ where: { automationId: automation.id } })).toBe(0);
     });

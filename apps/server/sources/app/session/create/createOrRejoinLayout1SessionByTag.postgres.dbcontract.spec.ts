@@ -238,7 +238,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("t
         try {
             const write = inTx(async tx => {
                 await acquireAccountChangePublicationLocksInTx(tx, [account.id], { includeSingleAccount: true });
-                await replaceAutomationAssignmentsTx({ tx, accountId: account.id, automationId: automation.id,
+                await replaceAutomationAssignmentsTx({ tx, accountId: account.id, automationId: automation.id, templateCiphertext: automation.templateCiphertext,
                     assignments: [{ machineId: machine.id, enabled: true, priority: 0 }] });
                 await markAccountChanged(tx, { accountId: account.id, kind: "automation", entityId: automation.id });
             }, { isolationLevel: "ReadCommitted" });
@@ -303,7 +303,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("t
         try {
             await inTx(async tx => {
                 await acquireAccountChangePublicationLocksInTx(tx, [account.id], { includeSingleAccount: true });
-                await replaceAutomationAssignmentsTx({ tx, accountId: account.id, automationId: automation.id,
+                await replaceAutomationAssignmentsTx({ tx, accountId: account.id, automationId: automation.id, templateCiphertext: automation.templateCiphertext,
                     assignments: [{ machineId: machine.id, enabled: true, priority: 0 }] });
                 await markAccountChanged(tx, { accountId: account.id, kind: "automation", entityId: automation.id });
             }, { isolationLevel: "ReadCommitted" });

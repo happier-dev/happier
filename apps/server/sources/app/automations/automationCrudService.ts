@@ -4888,6 +4888,7 @@ export async function createAutomationInTx(tx: Tx, params: Readonly<{
         tx,
         accountId: params.accountId,
         automationId: created.id,
+        templateCiphertext: definition.templateCiphertext,
         assignments: params.input.assignments ?? [],
     });
 
@@ -5366,6 +5367,7 @@ export async function updateAutomation(params: {
                 tx,
                 accountId: params.accountId,
                 automationId: existing.id,
+                templateCiphertext: effectiveTemplateCiphertext,
                 assignments: params.input.assignments,
             });
         }
@@ -5579,6 +5581,7 @@ export async function reconcileAutomationDefinition(params: Readonly<{
             tx,
             accountId: params.accountId,
             automationId: existing.id,
+            templateCiphertext: effectiveAutomation.templateCiphertext,
             assignments: params.input.assignments,
         });
 

@@ -64,6 +64,8 @@ import { WorkflowRunWaitResultV1Schema, WorkflowRunSummariesResultV1Schema } fro
 import { createMaterializedEphemeralRunnerFixture } from "@/app/ephemeralRunner/materializedRunner.testkit";
 import { createSignedPluginInstallationPublisherHeader, createTrustedMachineInstallation } from "@/testkit/pluginInstallationPublisherTestkit";
 import { getOrCreateServerIdentityId } from "@/app/serverIdentity/serverIdentity";
+import { setMachineAccessGrantInTx } from '@/app/machines/machineAccess';
+import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
 import * as workflowRunService from "./workflowRunService";
 import { AUTOMATION_TEMPLATE_V02_PLAIN, AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED } from "@happier-dev/protocol/testing/accountScopedCipherFixtures";
 import { projectNativeJsonValueForTransport } from "@happier-dev/protocol/json/strictJsonValue";
@@ -332,10 +334,60 @@ describe("workflowRunService (integration)", () => {
 
     async function seed() {
         const account = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: "plain" }, select: { id: true } });
-        const machine = await db.machine.create({ data: { id: randomUUID(), accountId: account.id, metadata: "{}" }, select: { id: true } });
+        const machine = await db.machine.create({ data: { id: randomUUID(), accountId: account.id,
+            installationId: randomUUID(), metadata: encodePlainMachineStoredContent({ host: "workflow-test", platform: "linux",
+                happyCliVersion: "0.3.0", homeDir: "/home/test", happyHomeDir: "/home/test/.happier" }),
+            dataEncryptionKey: new Uint8Array(privacyKit.decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER)) }, select: { id: true } });
         const session = await db.session.create({ data: { id: randomUUID(), tag: randomUUID(), accountId: account.id, metadata: "{}", encryptionMode: "plain" }, select: { id: true } });
         return { accountId: account.id, machineId: machine.id, sessionId: session.id };
     }
+
+    const legacyMachineShapes = ['plain_uninstalled', 'encrypted_uninstalled', 'encrypted_installed'] as const;
+    async function retainLegacyMachineShape(machineId: string, shape: typeof legacyMachineShapes[number]) {
+        // Predecessor eb8cd957's api/machine/machineStoredContent.ts writes the
+        // base64 nonce + secretbox form. Registration identity is optional, and
+        // encrypted-on-plain records transition only when their daemon registers.
+        const nonce = new Uint8Array(tweetnacl.secretbox.nonceLength).fill(7);
+        const encrypted = tweetnacl.secretbox(new TextEncoder().encode(JSON.stringify({ host: 'retained-machine' })),
+            nonce, new Uint8Array(tweetnacl.secretbox.keyLength).fill(9));
+        const content = new Uint8Array(nonce.length + encrypted.length);
+        content.set(nonce);
+        content.set(encrypted, nonce.length);
+        await db.machine.update({ where: { id: machineId }, data: {
+            ...(shape !== 'encrypted_installed' ? { installationId: null, installationPublicKey: null } : {}),
+            ...(shape !== 'plain_uninstalled' ? { metadata: privacyKit.encodeBase64(content), dataEncryptionKey: null } : {}),
+        } });
+    }
+
+    it.each(legacyMachineShapes)('preserves legacy owned Machine assignment writes (%s)', async shape => {
+        const seeded = await seed();
+        await retainLegacyMachineShape(seeded.machineId, shape);
+        await expect(createAutomation({ accountId: seeded.accountId, recipeFeaturePolicy: { workflowsEnabled: true }, input: {
+            automationId: randomUUID(), name: 'Retained owned Machine', enabled: true, triggers: [],
+            assignments: [{ machineId: seeded.machineId }],
+            executionRecipe: createAutomationWorkflowRecipeFixture({ templateVersion: 1, directory: '/repo', prompt: 'Work' }),
+        } })).resolves.toMatchObject({ assignments: [{ machineId: seeded.machineId }] });
+    });
+
+    it('admits shared Machine assignments only for the Workflow recipe family', async () => {
+        const custodian = await seed();
+        const guest = await seed();
+        await makeShareEligibleForTest(custodian.accountId, guest.accountId);
+        await inTx(tx => setMachineAccessGrantInTx(tx, { actorAccountId: custodian.accountId,
+            machineId: custodian.machineId, principal: { kind: 'account', accountId: guest.accountId }, level: 'view' }));
+        await expect(createAutomation({ accountId: guest.accountId, recipeFeaturePolicy: { workflowsEnabled: true }, input: {
+            automationId: randomUUID(), name: 'Shared Workflow', enabled: true, triggers: [],
+            executionRecipe: createAutomationWorkflowRecipeFixture({ templateVersion: 1, directory: '/repo', prompt: 'Work' }),
+            assignments: [{ machineId: custodian.machineId }],
+        } })).resolves.toMatchObject({ assignments: [{ machineId: custodian.machineId }] });
+        const retained = await db.automation.create({ data: { accountId: guest.accountId,
+            name: 'Retained Session recipe', enabled: false, targetType: 'new_session',
+            templateCiphertext: AUTOMATION_TEMPLATE_V02_PLAIN, templateVersion: 1 } });
+        await expect(updateAutomation({ accountId: guest.accountId, automationId: retained.id,
+            input: { assignments: [{ machineId: custodian.machineId }] } }))
+            .rejects.toMatchObject({ name: 'AutomationValidationError' });
+        expect(await db.automationAssignment.count({ where: { automationId: retained.id } })).toBe(0);
+    });
 
     // Direct-origin CHECKs require null trigger evidence; retaining a parent needs an approved storage amendment.
     it.todo("retains authenticated parent Run ancestry for direct child Workflow admission");
