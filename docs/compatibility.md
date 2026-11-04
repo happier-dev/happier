@@ -16,6 +16,22 @@ order. The daemon and executing Machine's managed CLI must load the matching
 implementation together; older strict internal readers reject the new field.
 Older results without it remain readable and do not fabricate executor evidence.
 
+## Software native failure diagnostics (unreleased 0.3)
+
+The native apt owner classifies failed update/install commands into a closed
+category and retains their phase and exit code in `failure.nativeCommand`.
+The added diagnostic contains no raw command output, package names or lock-holder identity.
+A proven busy package manager uses `package_manager_busy` and asks the person
+to retry after first-boot or other package-manager updates finish; unknown lock
+ownership still requires an administrator check. No automatic retry or lock
+removal is introduced.
+
+The shared Setup result and root-process protocol carry optional `failure`
+using the existing elevation-failure schema; Action completion and composed
+Setup retain it. Load the daemon and the executing Machine's managed CLI
+together: older strict readers reject the added internal/public fields.
+New readers accept older results without diagnostics and do not invent a cause.
+
 
 ## Native administrator refusal diagnostics (unreleased 0.3)
 

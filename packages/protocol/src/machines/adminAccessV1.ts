@@ -91,7 +91,13 @@ export const MachineElevationFailureV1Schema = lazyZodSchema(() => z.strictObjec
   reason: z.optional(MachineSetupObservationReasonV1Schema),
   requiredFact: z.optional(z.string().check(z.minLength(1))),
   remedy: z.optional(z.string().check(z.minLength(1))),
+  nativeCommand: z.optional(z.strictObject({
+    command: z.literal('apt-get'), phase: z.enum(['update', 'install']),
+    exitCode: z.nullable(z.number().check(z.int())),
+    category: z.enum(['package_manager_busy', 'package_unavailable', 'package_configuration_failed', 'command_failed']),
+  })),
 }));
+export type MachineElevationFailureV1 = z.infer<typeof MachineElevationFailureV1Schema>;
 
 export const MachineElevatedNotAppliedResultV1Schema = lazyZodSchema(() =>
   z.strictObject({ outcome: z.literal('not_applied'), reasonCode: z.union([z.enum(['mode_none', 'not_preauthorized',

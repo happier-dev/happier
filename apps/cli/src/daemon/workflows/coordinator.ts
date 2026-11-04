@@ -9,7 +9,7 @@ import { workflowBlockOrdinalV1 } from '@happier-dev/protocol/workflows/workflow
 import { randomUUID } from 'node:crypto';
 import { createHash } from 'node:crypto';
 import { prepareActionCompletionV1, resumeActionCompletionV1 } from '@happier-dev/protocol/actions/actionCompletion';
-import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionApprovalRequestCreatedResultSchema, isActionOutcomeUnknownErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { projectTargetActionApprovalInput } from '@happier-dev/protocol/actions/actionApprovalPresentation';
 import { ActionDefinitionV1Schema } from '@happier-dev/protocol/actions/actionDefinitionV1';
 import type { createActionExecutor, ActionExecuteResult, ActionExecutorContext, ActionCompletionRun, ActionCompletionOperation, ActionCompletionStateV1, ExecutionRunTerminalObservation } from '@happier-dev/protocol/actions';
@@ -1915,6 +1915,11 @@ async function executeActionBlock(
       catch { return undefined; }
     });
     if (!invoked || (!invoked.ok && invoked.errorCode === 'action_failed')) return await fail('outcome_uncertain', 'outcome_uncertain');
+    if (!invoked.ok && isActionOutcomeUnknownErrorCodeV1(invoked.errorCode)) {
+      // Retaining the native diagnosis does not establish whether its effect occurred.
+      const failure = prepareActionCompletionV1(undefined, invoked);
+      return await fail(invoked.errorCode, 'outcome_uncertain', false, failure.kind === 'failed' && 'value' in failure ? failure.value : undefined);
+    }
     const consent = readWorkflowProjectSetupConsentHold(actionId, invoked.ok ? invoked.result : invoked);
     if (consent) {
       row = await context.deps.store.commitFact({ key: row.key, lifecycle: 'needs_attention', reason: consent.code,

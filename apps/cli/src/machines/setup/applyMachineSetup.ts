@@ -266,7 +266,9 @@ async function applyAdmittedMachineSetup(input: AdmittedMachineSetupInput): Prom
       if (result.status === 'applied') input.onSetupApplied?.(input.plans, result);
       if (result.status !== 'applied') {
         if (signal.aborted) return fail('cancelled');
-        return fail(result.status === 'plan_changed' ? 'plan_changed' : result.reason ?? result.status);
+        const code = result.status === 'plan_changed' ? 'plan_changed' : result.reason ?? result.status;
+        return { ok: false, errorCode: code, error: code,
+          ...(result.failure ? { details: { kind: 'machineSetup', failure: result.failure } } : {}) };
       }
     }
     if (signal.aborted) return fail('cancelled');

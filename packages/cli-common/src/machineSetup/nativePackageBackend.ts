@@ -1,6 +1,8 @@
 import { lstat } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
 import { MachineSetupEffectError, readMachineSetupStepExecutionUserV1, type MachineRecipeStepV1, type MachineSetupStepObservationV1 } from './index.js';
+import type { MachineElevationFailureV1 } from '@happier-dev/protocol/machines/adminAccessV1';
+import type { MachineSetupNativeCommandResult } from './nativeBackend.js';
 import type { NativeRun } from './nativeSystemBackend.js';
 
 type PackageStep = Extract<MachineRecipeStepV1, { kind: 'package' }>;
@@ -38,17 +40,35 @@ export async function inspectAptLocks(run: NativeRun): Promise<'busy' | 'clear' 
     }
     return unknown ? 'unknown' : 'clear';
 }
+const aptBusyFacts = { requiredFact: 'packageManagerLocks', remedy: 'Retry after first-boot or other package-manager updates finish.' };
 async function requireAptUnlocked(run: NativeRun) {
     const lock = await inspectAptLocks(run);
-    if (lock !== 'clear') throw new MachineSetupEffectError(lock === 'busy' ? 'package_manager_busy' : 'needs_admin_to_check');
+    if (lock === 'clear') return;
+    const reason = lock === 'busy' ? 'package_manager_busy' : 'needs_admin_to_check';
+    throw new MachineSetupEffectError(reason, { kind: 'native_effect_failed', reason,
+        ...(lock === 'busy' ? aptBusyFacts : { requiredFact: 'packageManagerLocks', remedy: 'check_with_administrator' }) });
+}
+/** Classify only fixed C-locale causes; package names, paths and native output stay private. */
+async function aptCommandFailure(run: NativeRun,
+    phase: NonNullable<MachineElevationFailureV1['nativeCommand']>['phase'], result: MachineSetupNativeCommandResult) {
+    const busy = /Could not get lock[^\n]*(?:held by process|Resource temporarily unavailable)/i.test(result.stderr)
+        || /Unable to acquire (?:the )?(?:dpkg frontend |directory )?lock[^\n]*another process using it/i.test(result.stderr)
+        || await inspectAptLocks(run) === 'busy';
+    const category = busy ? 'package_manager_busy'
+        : /Unable to locate package|has no installation candidate|Version .+ was not found/i.test(result.stderr) ? 'package_unavailable'
+        : /dpkg: error processing package|Sub-process \/usr\/bin\/dpkg returned an error code/i.test(result.stderr) ? 'package_configuration_failed'
+        : 'command_failed';
+    const reason = busy ? 'package_manager_busy' : 'native_effect_failed';
+    return new MachineSetupEffectError(reason, { kind: 'native_effect_failed', reason,
+        ...(busy ? aptBusyFacts : { remedy: category === 'package_unavailable'
+            ? 'Check the selected packages and enabled apt repositories, then retry.'
+            : 'Check apt/dpkg package configuration with the administrator, then retry.' }),
+        nativeCommand: { command: 'apt-get', phase, exitCode: result.code, category } });
 }
 export async function mutateApt(run: NativeRun, args: readonly string[]) {
     await requireAptUnlocked(run);
     const result = await run('apt-get', args, { ...locale, DEBIAN_FRONTEND: 'noninteractive' });
-    if (result.code !== 0) {
-        if (await inspectAptLocks(run) === 'busy') throw new MachineSetupEffectError('package_manager_busy');
-        throw new MachineSetupEffectError('native_effect_failed');
-    }
+    if (result.code !== 0) throw await aptCommandFailure(run, args[0] === 'update' ? 'update' : 'install', result);
 }
 function controlRecords(value: string): Readonly<Record<string, string>>[] {
     return value.trim().split(/\n\s*\n/).filter(Boolean).map(block => Object.fromEntries(block.split('\n').flatMap(line => {
@@ -84,7 +104,7 @@ async function apt(run: NativeRun, step: PackageStep) {
     const changes = pending(step, installed);
     if (!changes.length) return observation(step, 'satisfied', facts);
     const lock = await inspectAptLocks(run);
-    if (lock === 'busy') return observation(step, 'unavailable', facts, 'package_manager_busy');
+    if (lock === 'busy') return observation(step, 'unavailable', { ...facts, ...aptBusyFacts }, 'package_manager_busy');
     if (lock === 'unknown') return observation(step, 'unavailable', {
         ...facts, requiredFact: 'packageManagerLocks', remedy: 'check_with_administrator',
     }, 'needs_admin_to_check');

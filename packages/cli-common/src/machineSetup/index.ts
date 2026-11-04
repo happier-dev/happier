@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
-import { MachineAdministratorUsernameV1Schema } from '@happier-dev/protocol/machines/adminAccessV1';
-import type { MachineFirewallRecoveryV1 as MachineSetupFirewallRecoveryV1,
+import { MachineAdministratorUsernameV1Schema, MachineElevationFailureV1Schema } from '@happier-dev/protocol/machines/adminAccessV1';
+import type { MachineElevationFailureV1, MachineFirewallRecoveryV1 as MachineSetupFirewallRecoveryV1,
     MachineFirewallRestorationV1 as MachineSetupFirewallRestorationV1 } from '@happier-dev/protocol/machines/adminAccessV1';
 export type { MachineFirewallRecoveryV1 as MachineSetupFirewallRecoveryV1,
     MachineFirewallRestorationV1 as MachineSetupFirewallRestorationV1 } from '@happier-dev/protocol/machines/adminAccessV1';
@@ -95,6 +95,7 @@ export type MachineSetupNativeEffectIntentV1 = Readonly<{
 export type MachineSetupApplyResultV1 = Readonly<{
     status: 'applied' | 'plan_changed' | 'unsupported' | 'unavailable' | 'failed' | 'cancelled' | 'outcome_unknown';
     completedStepIds: readonly string[]; daemonRestartRequired: boolean; stepId?: string; reason?: string; requiredFact?: string;
+    failure?: MachineElevationFailureV1;
     restoration?: MachineSetupFirewallRestorationV1;
     /** Executing-process presence, in admitted plan order, before any mutation. */
     initialPresence?: readonly ('present' | 'absent' | 'unknown')[];
@@ -129,7 +130,8 @@ export function readMachineSetupInitialPresenceV1(plan: MachineSetupEffectPlanV1
 }
 
 export class MachineSetupEffectError extends Error {
-    constructor(readonly reasonCode: 'foreign_effect_conflict' | 'validation_failed' | 'native_effect_failed' | 'package_manager_busy' | 'required_fact_unavailable' | 'needs_admin_to_check') {
+    constructor(readonly reasonCode: 'foreign_effect_conflict' | 'validation_failed' | 'native_effect_failed' | 'package_manager_busy' | 'required_fact_unavailable' | 'needs_admin_to_check',
+        readonly failure?: MachineElevationFailureV1) {
         super(reasonCode); this.name = 'MachineSetupEffectError';
     }
 }
@@ -260,10 +262,10 @@ export async function applyMachineSetupEffectPlans(input: Readonly<{
     let daemonRestartRequired = false;
     let restoration: MachineSetupFirewallRestorationV1 | undefined;
     const initialPresence: NonNullable<MachineSetupApplyResultV1['initialPresence']>[number][] = [];
-    const result = (status: MachineSetupApplyResultV1['status'], stepId?: string, reason?: string, requiredFact?: string): MachineSetupApplyResultV1 => ({
+    const result = (status: MachineSetupApplyResultV1['status'], stepId?: string, reason?: string, requiredFact?: string, failure?: MachineElevationFailureV1): MachineSetupApplyResultV1 => ({
         status, completedStepIds: [...completedStepIds], daemonRestartRequired,
         ...(stepId ? { stepId } : {}), ...(reason ? { reason } : {}),
-        ...(requiredFact ? { requiredFact } : {}),
+        ...(requiredFact ? { requiredFact } : {}), ...(failure ? { failure } : {}),
         ...(restoration ? { restoration } : {}),
         ...(status === 'applied' && entries.some(entry => 'plan' in entry && entry.plan.basis.kind === 'setup')
             ? { initialPresence: [...initialPresence] } : {}),
@@ -331,8 +333,16 @@ export async function applyMachineSetupEffectPlans(input: Readonly<{
                 ...('selectedCheckIds' in plan && plan.selectedCheckIds !== undefined ? { selectedCheckIds: plan.selectedCheckIds } : {}) });
             if (reviewed?.basis.kind === 'agentIsolation' && current.planDigest !== reviewed.planDigest) return result('plan_changed', undefined, 'plan_stale');
             const blocked = findMachineSetupBlockingObservationV1(current);
-            if (blocked) return result(blocked.status === 'unsupported' ? 'unsupported' : 'unavailable', blocked.stepId, blocked.reason,
-                typeof blocked.facts.requiredFact === 'string' ? blocked.facts.requiredFact : blocked.stepId);
+            if (blocked) {
+                const requiredFact = typeof blocked.facts.requiredFact === 'string' ? blocked.facts.requiredFact : blocked.stepId;
+                const failure = MachineElevationFailureV1Schema.safeParse({
+                    kind: blocked.status === 'unsupported' ? 'native_check_unsupported' : 'native_check_unavailable',
+                    ...(blocked.reason ? { reason: blocked.reason } : {}), requiredFact,
+                    ...(typeof blocked.facts.remedy === 'string' ? { remedy: blocked.facts.remedy } : {}),
+                });
+                return result(blocked.status === 'unsupported' ? 'unsupported' : 'unavailable', blocked.stepId, blocked.reason,
+                    requiredFact, failure.success ? failure.data : undefined);
+            }
             if (administratorStep) {
                 const account = nativeFacts.find(fact => fact.stepId === administratorStep.id)!;
                 if (account.facts.present !== false && (!Number.isSafeInteger(account.facts.uid) || Number(account.facts.uid) <= 0)) {
@@ -419,7 +429,7 @@ export async function applyMachineSetupEffectPlans(input: Readonly<{
                 } catch (error) {
                     if (input.signal?.aborted) return result('outcome_unknown', step.id, 'cancelled');
                     if (step.kind === 'reboot') return result('outcome_unknown', step.id, 'native_effect_failed');
-                    if (error instanceof MachineSetupEffectError) return result('failed', step.id, error.reasonCode);
+                    if (error instanceof MachineSetupEffectError) return result('failed', step.id, error.reasonCode, error.failure?.requiredFact, error.failure);
                     // A native exception does not prove that its effect did not occur.
                     // Keep completed effects and raw diagnostics inside this boundary.
                     return result('outcome_unknown', step.id, 'native_effect_failed');

@@ -261,14 +261,14 @@ async function runElevatedProcessInternal(input: Pick<RunElevatedEffectInput, 'm
     type Refusal = Extract<MachineElevatedResultV1, { outcome: 'not_applied' }>;
     const refused = (reasonCode: Refusal['reasonCode']): MachineElevatedResultV1 => ({ outcome: 'not_applied', reasonCode });
     let nativeFailure: Refusal['failure'];
-    const rememberNativeFailure = (kind: NonNullable<Refusal['failure']>['kind'], nativeReason?: string, requiredFact?: string) => {
+    const rememberNativeFailure = (kind: NonNullable<Refusal['failure']>['kind'], nativeReason?: string, requiredFact?: string, remedy?: string) => {
         const reason = MachineSetupObservationReasonV1Schema.safeParse(nativeReason);
         const missingFact = requiredFact ?? (nativeReason === 'needs_admin_to_check' ? 'administrator'
             : nativeReason === 'required_fact_unavailable' ? 'nativeSetupObservation' : undefined);
         nativeFailure ??= { kind, ...(reason.success ? { reason: reason.data } : {}), ...(missingFact ? {
             requiredFact: missingFact,
             remedy: `Required native fact ${missingFact} is unavailable. Check this Machine's administrator access and the named prerequisite, then retry the operation.`,
-        } : {}) };
+        } : {}), ...(remedy ? { remedy } : {}) };
         return nativeReason === 'platform_unsupported' ? 'platform_unsupported' : kind;
     };
     const nativeRefused = (reasonCode: Refusal['reasonCode']): MachineElevatedResultV1 => ({
@@ -519,7 +519,8 @@ async function runElevatedProcessInternal(input: Pick<RunElevatedEffectInput, 'm
                         .find(fact => fact.status === 'unavailable' || fact.status === 'unsupported');
                     if (unavailable) { await stop(rememberNativeFailure(unavailable.status === 'unsupported'
                         ? 'native_check_unsupported' : 'native_check_unavailable', unavailable.reason,
-                        typeof unavailable.facts.requiredFact === 'string' ? unavailable.facts.requiredFact : unavailable.stepId)); continue; }
+                        typeof unavailable.facts.requiredFact === 'string' ? unavailable.facts.requiredFact : unavailable.stepId,
+                        typeof unavailable.facts.remedy === 'string' ? unavailable.facts.remedy : undefined)); continue; }
                     dependencies.emit?.({ type: 'machine.setup.checked', data: { plans } });
                     if (input.signal?.aborted || stopReason) { await stop(input.signal?.aborted ? 'cancelled' : stopReason); continue; }
                     checkedFirewallPlans = plans;
@@ -593,6 +594,11 @@ async function runElevatedProcessInternal(input: Pick<RunElevatedEffectInput, 'm
         if (reboot && result.status === 'unsupported' && result.reason === 'platform_unsupported') return refused('platform_unsupported');
         if (result.status === 'checked') return request.kind === 'check' && settled.code === 0 && 'plan' in result
             ? { outcome: 'checked', plan: result.plan } : { outcome: 'outcome_unknown' };
+        if (!nativeFailure && result.failure) {
+            const failure = result.failure;
+            rememberNativeFailure(failure.kind, failure.reason, failure.requiredFact, failure.remedy);
+            nativeFailure = { ...(nativeFailure ?? {}), ...failure };
+        }
         if (result.status === 'applied') {
             if (settled.code !== 0 || settled.signal !== null) return { outcome: 'outcome_unknown' };
             input.onSetupApplied?.(result);

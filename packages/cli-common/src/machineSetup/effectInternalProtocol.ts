@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { MachineAdministratorUsernameV1Schema, MachineFirewallRecoveryV1Schema, MachineFirewallRestorationV1Schema } from '@happier-dev/protocol/machines/adminAccessV1';
+import { MachineAdministratorUsernameV1Schema, MachineElevationFailureV1Schema, MachineFirewallRecoveryV1Schema, MachineFirewallRestorationV1Schema } from '@happier-dev/protocol/machines/adminAccessV1';
 import { MachineSetupEffectPlanV1Schema, MachineSetupElevatedEffectV1Schema, MachineSetupBootstrapBasisV1Schema, isMachineSetupBootstrapBasisV1, MachineFirewallTransitionIntentV1Schema } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 import type * as machineSetup from './index.js';
 import type { MachineFirewallRecoveryV1 } from '@happier-dev/protocol/machines/adminAccessV1';
@@ -108,6 +108,7 @@ const Result = z.object({
     stepId: z.string().optional(),
     reason: z.string().optional(),
     requiredFact: z.string().min(1).optional(),
+    failure: z.optional(MachineElevationFailureV1Schema),
     initialPresence: z.array(z.enum(['present', 'absent', 'unknown'])).optional(),
     restoration: z.optional(MachineFirewallRestorationV1Schema),
 }).strict() satisfies z.ZodType<machineSetup.MachineSetupApplyResultV1>;

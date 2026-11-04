@@ -48,6 +48,35 @@ describe('native package effects through the public recipe interpreter', () => {
         expect(effects).toEqual([]);
     });
 
+    it.each([
+        { stderr: 'E: Could not get lock /var/lib/dpkg/lock-frontend. It is held by process 42 (unattended-upgr)',
+            category: 'package_manager_busy', reason: 'package_manager_busy', remedy: 'Retry after first-boot or other package-manager updates finish.' },
+        { stderr: 'E: Unable to locate package private-package-name',
+            category: 'package_unavailable', reason: 'native_effect_failed', remedy: 'Check the selected packages and enabled apt repositories, then retry.' },
+        { stderr: 'dpkg: error processing package private-package-name (--configure): private diagnostic',
+            category: 'package_configuration_failed', reason: 'native_effect_failed', remedy: 'Check apt/dpkg package configuration with the administrator, then retry.' },
+    ])('retains the classified apt exit through the real interpreter: $category', async ({ stderr, category, reason, remedy }) => {
+        const step = declaration({ id: 'software', kind: 'package', manager: 'apt', packages: [{ name: 'wanted' }] });
+        const result = await apply(step, async input => {
+            if (input.executable === 'dpkg') return ok('amd64\n');
+            if (input.executable === 'apt-get' && input.args[0] === '--version') return ok('apt 3.2\n');
+            if (input.executable === 'dpkg-query') return { code: 1, stdout: '', stderr: '' };
+            // The competing update can finish before a post-failure lock observation.
+            if (input.executable === 'lslocks') return ok('{"locks":[]}');
+            if (input.executable === 'apt-cache' && input.args[0] === 'policy') return ok('Candidate: 1\n  1 500\n');
+            if (input.executable === 'apt-cache') return ok('Package: wanted\nVersion: 1\nArchitecture: amd64\n');
+            expect(input.executable).toBe('apt-get');
+            expect(input.args[0]).toBe('install');
+            return { code: 100, stdout: '', stderr };
+        });
+        expect(result).toMatchObject({ status: 'failed', reason, stepId: 'software', failure: {
+            kind: 'native_effect_failed', reason, remedy,
+            nativeCommand: { command: 'apt-get', phase: 'install', exitCode: 100, category },
+        } });
+        expect(JSON.stringify(result)).not.toContain('private-');
+        expect(JSON.stringify(result)).not.toContain('process 42');
+    });
+
     it('refuses foreign or multiple apt architectures instead of treating an unqualified installed package as absent', async () => {
         const step = declaration({ id: 'remove', kind: 'package', manager: 'apt', state: 'absent', packages: [{ name: 'libfoo' }] });
         for (const output of [
