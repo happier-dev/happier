@@ -2272,6 +2272,9 @@ export function listActionSpecs(): readonly ActionSpec[] {
   return ACTION_SPECS;
 }
 
+export function getActionSpec<TActionId extends ActionId>(id: TActionId): Readonly<{
+  inputSchema: WithClientRoutingSchema<TActionId, CanonicalActionSpecById[TActionId]['inputSchema']>;
+}> & ActionSpec;
 export function getActionSpec(id: ActionId): ActionSpec {
   const spec = ACTION_SPECS_BY_ID.get(id);
   if (!spec) {
