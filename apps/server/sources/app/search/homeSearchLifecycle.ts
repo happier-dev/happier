@@ -40,7 +40,7 @@ type HomeSearchDirtyOp =
 export type HomeSearchLifecycle = Readonly<{
     capability(): HomeSearchCapability;
     search(query: MemorySearchQueryV1, context?: HomeSearchRequestContext): MemorySearchResultV1;
-    start(): void;
+    prepare(sessionIds: readonly string[]): Promise<void>;
     whenReady(): Promise<void>;
     invalidateAndRebuild(reason: HomeSearchInvalidationReason): Promise<void>;
     stop(): Promise<void>;
@@ -63,7 +63,7 @@ async function removeDerivedIndexFiles(dbPath: string): Promise<void> {
     ]);
 }
 
-/** Owns the one derived FTS database, startup projection, live observer, rebuild, and shutdown. */
+/** Owns one derived FTS database, demanded Session scopes, live observer, rebuild, and shutdown. */
 export function startHomeSearchLifecycle(params: Readonly<{
     dbPath: string;
     homeServerIdentityId: string | (() => Promise<string>);
@@ -72,6 +72,9 @@ export function startHomeSearchLifecycle(params: Readonly<{
     openDb?: typeof openHomeSearchDb;
 }>): HomeSearchLifecycle {
     const plainHome = isPlainHomeStoragePolicy(params.storagePolicy);
+    // Visibility is decided by the request's canonical access owner. Retain only the scopes
+    // that have actually been requested, including shared Sessions owned by another Account.
+    const demandedSessionIds = new Set<string>();
     // Bounded coalesced catch-up for mutations committed while the derived projection is not
     // settled (before attach, during rebuild, and until the post-reconcile flush completes).
     // Ordered by each identity's last committed mutation. Applying those final operations in
@@ -131,7 +134,7 @@ export function startHomeSearchLifecycle(params: Readonly<{
                 if (dirtyOverflow) {
                     dirtyOverflow = false;
                     dirty.clear();
-                    await target.reconcile();
+                    await target.reconcile([...demandedSessionIds]);
                     continue;
                 }
                 const pending = [...dirty.values()];
@@ -161,6 +164,9 @@ export function startHomeSearchLifecycle(params: Readonly<{
     const applyMutation = (mutation: SessionTranscriptMutation) => {
         if (stopped || !plainHome) return;
         if (failed && !rebuildPromise) return;
+        if (mutation.kind === 'upsert' && !demandedSessionIds.has(mutation.message.sessionId)) return;
+        if (mutation.kind === 'remove-session' && !demandedSessionIds.has(mutation.sessionId)) return;
+        if (demandedSessionIds.size === 0) return;
         if (!indexer) {
             // Retain catch-up only while startup or a rebuild is actively able to produce a
             // replacement indexer. Once that finite transition fails, canonical reconciliation
@@ -185,6 +191,7 @@ export function startHomeSearchLifecycle(params: Readonly<{
             if (reason !== 'explicit-repair') return rebuildPromise;
             return rebuildPromise.then(assertReadyCurrentIndexer);
         }
+        started = true;
         failed = true;
         // Recovery starts from canonical transcript rows. Dirty events retained before this
         // boundary may belong to the failed projection and must not be replayed over the new
@@ -212,7 +219,8 @@ export function startHomeSearchLifecycle(params: Readonly<{
             if (rebuildPromise === work) rebuildPromise = null;
         });
         rebuildPromise = work;
-        readyPromise = work;
+        // Readiness settles unavailable on failure; the explicit operation keeps its rejection.
+        readyPromise = work.catch(() => undefined);
         return work;
     };
 
@@ -229,7 +237,7 @@ export function startHomeSearchLifecycle(params: Readonly<{
         if (isRebuildableIndexError(error)) handleFailure(error);
     };
 
-    const attach = (nextDb: HomeSearchDb) => {
+    const attach = (nextDb: HomeSearchDb, sessionIds: readonly string[]) => {
         db = nextDb;
         const nextIndexer = createHomeSearchIndexer({
             db: nextDb,
@@ -237,7 +245,7 @@ export function startHomeSearchLifecycle(params: Readonly<{
             onFailure: handleFailure,
         });
         indexer = nextIndexer;
-        nextIndexer.start();
+        nextIndexer.start(sessionIds);
         return nextIndexer;
     };
 
@@ -252,7 +260,7 @@ export function startHomeSearchLifecycle(params: Readonly<{
         }
     }
 
-    async function openAndStart(repairCorruption: boolean, propagateFailure = false): Promise<void> {
+    async function openAndStart(repairCorruption: boolean, propagateFailure = false, sessionIds = [...demandedSessionIds]): Promise<void> {
         try {
             if (typeof params.homeServerIdentityId === 'function') {
                 homeServerIdentityId = await params.homeServerIdentityId();
@@ -263,7 +271,7 @@ export function startHomeSearchLifecycle(params: Readonly<{
                 return;
             }
             failed = false;
-            const nextIndexer = attach(nextDb);
+            const nextIndexer = attach(nextDb, sessionIds);
             await nextIndexer.whenReady();
             // Reconciliation can overlap canonical commits. Catch up everything coalesced
             // while this projection was unsettled; an overflowed projection re-derives its
@@ -291,6 +299,9 @@ export function startHomeSearchLifecycle(params: Readonly<{
             if (stopped || failed || rebuildPromise) {
                 return { enabled: false, reason: 'index_unavailable' };
             }
+            // A cold provider accepts demand. Advertising unavailable until a request starts
+            // indexing would prevent clients that select a provider from ever making it.
+            if (!started) return { enabled: true };
             return resolveHomeSearchCapability({
                 indexReady: db !== null,
                 indexing: indexer === null || indexer !== settledIndexer,
@@ -302,10 +313,26 @@ export function startHomeSearchLifecycle(params: Readonly<{
             }
             return currentService().search(query, context);
         },
-        start() {
-            if (started || stopped || !plainHome) return;
-            started = true;
-            readyPromise = Promise.resolve().then(() => openAndStart(true));
+        prepare(sessionIds) {
+            if (stopped || !plainHome || (failed && !rebuildPromise)) return readyPromise;
+            const missing = [...new Set(sessionIds)].filter(sessionId => !demandedSessionIds.has(sessionId));
+            for (const sessionId of missing) demandedSessionIds.add(sessionId);
+            if (!started) {
+                started = true;
+                const initialScope = [...demandedSessionIds];
+                readyPromise = Promise.resolve().then(() => openAndStart(true, false, initialScope));
+            } else if (missing.length > 0) {
+                const previous = readyPromise;
+                const work = previous.then(async () => {
+                    if (stopped || failed || !indexer) return;
+                    const target = indexer;
+                    settledIndexer = null;
+                    await target.reconcile(missing);
+                    if (indexer === target) await flushCatchUp(target);
+                }).catch(handleFailure);
+                readyPromise = work;
+            }
+            return readyPromise;
         },
         whenReady() { return readyPromise; },
         invalidateAndRebuild(reason) { return beginRebuild(reason); },

@@ -1,6 +1,6 @@
 import { projectTranscriptBodySearchableText } from '@happier-dev/protocol/sessions/messages/transcriptBodySemanticProjection';
 
-import type { HomeSearchDb, HomeSearchMessage } from './homeSearchDb';
+import { HOME_SEARCH_SESSION_CONSTRAINT_BATCH_SIZE, type HomeSearchDb, type HomeSearchMessage } from './homeSearchDb';
 
 export type HomeSearchCanonicalMessage = Readonly<{
     id: string;
@@ -12,7 +12,7 @@ export type HomeSearchCanonicalMessage = Readonly<{
     content: unknown;
 }>;
 
-export type HomeSearchCanonicalPageReader = (input: Readonly<{ afterId?: string; limit: number }>) => Promise<Readonly<{
+export type HomeSearchCanonicalPageReader = (input: Readonly<{ sessionIds: readonly string[]; afterId?: string; limit: number }>) => Promise<Readonly<{
     messages: readonly HomeSearchCanonicalMessage[];
     nextAfterId?: string;
 }>>;
@@ -44,17 +44,17 @@ export type HomeSearchIndexer = Readonly<{
     ready(): boolean;
     whenReady(): Promise<void>;
     whenIdle(): Promise<void>;
-    reconcile(): Promise<{ indexed: number; removed: number }>;
+    reconcile(sessionIds: readonly string[]): Promise<{ indexed: number; removed: number }>;
     notify(message: HomeSearchCanonicalMessage): void;
     removeMessages(messageIds: readonly string[]): void;
     removeSession(sessionId: string): void;
-    start(): void;
+    start(sessionIds: readonly string[]): void;
     stop(): Promise<void>;
 }>;
 
 const RECONCILE_PAGE_SIZE = 250;
 
-/** Serializes the full startup projection and live after-commit mutations over one FTS database.
+/** Serializes demanded Session projections and live after-commit mutations over one FTS database.
  *  Pre-settlement catch-up is owned by the search lifecycle; deliveries before the lifecycle
  *  settles the startup projection are refused instead of buffered. */
 export function createHomeSearchIndexer(params: Readonly<{
@@ -100,39 +100,43 @@ export function createHomeSearchIndexer(params: Readonly<{
         }
         tail = tail.then(() => applyMutation(mutation)).catch(markFailed);
     };
-    const runReconcile = async (): Promise<{ indexed: number; removed: number }> => {
+    const runReconcile = async (sessionIds: readonly string[]): Promise<{ indexed: number; removed: number }> => {
         isReady = false;
         const previousCount = params.db.count();
-        params.db.clear();
+        for (const sessionId of sessionIds) params.db.removeSession(sessionId);
         let indexed = 0;
-        let afterId: string | undefined;
         // The derived projection is rebuildable, so a stopping Home finishes only the page
         // already in flight and abandons the remaining canonical pages. Shutdown therefore
         // joins one page of SQLite work instead of the whole reconciliation.
-        while (!stopped) {
-            const page = await params.readCanonicalMessagesPage({ afterId, limit: RECONCILE_PAGE_SIZE });
-            const indexedMessages: HomeSearchMessage[] = [];
-            for (const row of page.messages) {
-                const message = toIndexedMessage(row);
-                if (message.text.trim()) {
-                    indexedMessages.push(message);
+        // Reuse the FTS owner's portable SQLite binding budget for scope IDs as well.
+        // Page each batch independently, so statements grow with the demanded corpus rather
+        // than querying every scope batch again for every page in a different batch.
+        for (let offset = 0; offset < sessionIds.length && !stopped; offset += HOME_SEARCH_SESSION_CONSTRAINT_BATCH_SIZE) {
+            const scope = sessionIds.slice(offset, offset + HOME_SEARCH_SESSION_CONSTRAINT_BATCH_SIZE);
+            let afterId: string | undefined;
+            while (!stopped) {
+                const page = await params.readCanonicalMessagesPage({ sessionIds: scope, afterId, limit: RECONCILE_PAGE_SIZE });
+                const indexedMessages: HomeSearchMessage[] = [];
+                for (const row of page.messages) {
+                    const message = toIndexedMessage(row);
+                    if (message.text.trim()) indexedMessages.push(message);
                 }
+                params.db.upsertMany(indexedMessages);
+                indexed += indexedMessages.length;
+                if (page.nextAfterId && page.nextAfterId === afterId) throw new Error('Canonical transcript pagination did not advance');
+                afterId = page.nextAfterId;
+                if (!afterId) break;
             }
-            params.db.upsertMany(indexedMessages);
-            indexed += indexedMessages.length;
-            if (page.nextAfterId && page.nextAfterId === afterId) throw new Error('Canonical transcript pagination did not advance');
-            afterId = page.nextAfterId;
-            if (!afterId) break;
         }
-        return { indexed, removed: Math.max(0, previousCount - indexed) };
+        return { indexed, removed: Math.max(0, previousCount - params.db.count()) };
     };
 
     return {
         ready: () => isReady,
         whenReady: () => initialReconcile ?? Promise.resolve(),
         whenIdle: () => tail,
-        async reconcile() {
-            const work = tail.then(runReconcile);
+        async reconcile(sessionIds) {
+            const work = tail.then(() => runReconcile(sessionIds));
             tail = work.then(() => undefined).catch(markFailed);
             const result = await work;
             // A reconciliation abandoned at a page boundary by `stop()` leaves a partial
@@ -145,10 +149,15 @@ export function createHomeSearchIndexer(params: Readonly<{
             if (messageIds.length > 0) enqueue({ kind: 'remove-messages', messageIds: [...messageIds] });
         },
         removeSession(sessionId) { enqueue({ kind: 'remove-session', sessionId }); },
-        start() {
+        start(sessionIds) {
             if (started || stopped) return;
             started = true;
-            const work = tail.then(runReconcile).then(() => {
+            const work = tail.then(() => {
+                // A reopened projection may contain stale rows from a previous process. It
+                // is reconstructed only for this process's actual search demand.
+                params.db.clear();
+                return runReconcile(sessionIds);
+            }).then(() => {
                 if (!stopped) isReady = true;
             });
             // `whenReady()` is the caller-visible settlement boundary and must

@@ -15,6 +15,7 @@ const HomeSearchRebuildResponseSchema = z.strictObject({ ok: z.literal(true) });
 export function registerHomeSearchRoutes(app: Fastify, params: Readonly<{
     service: Readonly<{
         capability(): HomeSearchCapability;
+        prepare(sessionIds: readonly string[]): Promise<void>;
         search(query: MemorySearchQueryV1, context?: HomeSearchRequestContext): MemorySearchResultV1;
         invalidateAndRebuild(reason: 'explicit-repair'): Promise<void>;
     }>;
@@ -30,13 +31,15 @@ export function registerHomeSearchRoutes(app: Fastify, params: Readonly<{
         },
         preHandler: [app.authenticate, requirePresentUser],
         config: { rateLimit: resolveApiHotEndpointRateLimit(process.env, 'session.messages') },
-    }, async (request, reply) => reply.send(params.service.search(request.body, {
-        visibleSessions: await params.resolveVisibleSessions(
+    }, async (request, reply) => {
+        const visibleSessions = await params.resolveVisibleSessions(
             request.userId,
             readSessionAccessAuthenticationFromRequest(request),
             request.body.scope,
-        ),
-    })));
+        );
+        await params.service.prepare(visibleSessions.map(session => session.sessionId));
+        return reply.send(params.service.search(request.body, { visibleSessions }));
+    });
     // This is a local Personal Home maintenance operation. Hosted deployments
     // have no present-user authority to rebuild the shared derived index.
     if (!isPersonalHomeRuntimePurpose(env.HAPPIER_MANAGED_RELAY_PURPOSE)) return;

@@ -175,8 +175,7 @@ describe.skipIf(!ENABLED)('Home search startup measurement (integration)', () =>
         });
 
         const startup = await measureProjection(measuredReader, async () => {
-            lifecycle.start();
-            await lifecycle.whenReady();
+            await lifecycle.prepare(sessions.map(session => session.id));
         });
         expect(startup.canonicalRowsRead).toBe(MESSAGE_COUNT);
         expect(startup.canonicalPageReads).toBeGreaterThan(1);

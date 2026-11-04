@@ -6,6 +6,7 @@ import { perfFixtureId } from '../../../../../packages/tests/src/testkit/stress/
 import { createPresentUserSessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication.testkit';
 import { db, getDbProviderFromEnv, initDbPostgres, shutdownDbClient } from '@/storage/db';
 import { readHomeSearchVisibleSessionConstraints } from './readHomeSearchVisibleSessionConstraints';
+import { readCanonicalSessionMessagesPage } from './homeSearchCanonicalSessionMessages';
 
 describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('Home search scoped visibility query (PostgreSQL)', () => {
     const statements: Prisma.QueryEvent[] = [];
@@ -23,6 +24,39 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('H
         await client.$connect();
     });
     afterAll(async () => { await client?.$disconnect(); await shutdownDbClient(); });
+
+    it('pages canonical transcripts only inside demanded Sessions, including a shared Session', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const other = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const sessions = await Promise.all([owner, other, other].map((account) => db.session.create({ data: {
+            accountId: account.id, tag: randomUUID(), metadata: '{}', encryptionMode: 'plain', currentStorageState: 'hosted',
+        } })));
+        await db.sessionMessage.createMany({ data: sessions.flatMap((session, sessionIndex) => [0, 1].map(seq => ({
+            id: `demand-${owner.id}-${sessionIndex}-${seq}`, sessionId: session.id, seq, localId: `demand-${seq}`,
+            content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'scoped canonical projection' } } },
+        }))) });
+        const selectedIds = sessions.slice(0, 2).map(session => session.id);
+        const originalFindMany = db.sessionMessage.findMany;
+        const traced = client!;
+        db.sessionMessage.findMany = new Proxy(originalFindMany, { apply(_target, _receiver, args) {
+            return Reflect.apply(traced.sessionMessage.findMany, traced.sessionMessage, args);
+        } });
+        try {
+            statements.length = 0;
+            const first = await readCanonicalSessionMessagesPage({ sessionIds: selectedIds, limit: 3 });
+            const second = await readCanonicalSessionMessagesPage({ sessionIds: selectedIds, limit: 3, afterId: first.nextAfterId });
+            expect(first.messages).toHaveLength(3);
+            expect(second.messages).toHaveLength(1);
+            expect(second.nextAfterId).toBeUndefined();
+            expect(new Set([...first.messages, ...second.messages].map(message => message.sessionId))).toEqual(new Set(selectedIds));
+            const reads = statements.filter(event => event.query.includes('FROM "public"."SessionMessage"'));
+            expect(reads).toHaveLength(2);
+            expect(reads.every(event => /"sessionId" IN/.test(event.query))).toBe(true);
+            console.info('HOME_SEARCH_DEMAND_CANONICAL_POSTGRES', JSON.stringify({
+                pages: reads.length, statements: statements.length, rows: first.messages.length + second.messages.length,
+            }));
+        } finally { db.sessionMessage.findMany = originalFindMany; }
+    });
 
     it('reads only the selected Session while retaining global visibility, publication ceilings and revocation', async () => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });

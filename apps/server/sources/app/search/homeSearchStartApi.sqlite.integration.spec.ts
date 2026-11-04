@@ -47,6 +47,16 @@ async function eventually(assertion: () => Promise<void>): Promise<void> {
     throw lastError;
 }
 
+function getNativePrismaRequestBoundary() {
+    const nativeClient: unknown = Reflect.get(db, '_originalClient');
+    if (!nativeClient || typeof nativeClient !== 'object') throw new Error('Native Prisma boundary unavailable');
+    const boundary: unknown = Object.getPrototypeOf(nativeClient);
+    if (!boundary || typeof boundary !== 'object') throw new Error('Native Prisma prototype unavailable');
+    const nativeRequest: unknown = Reflect.get(boundary, '_request');
+    if (typeof nativeRequest !== 'function') throw new Error('Native Prisma request boundary unavailable');
+    return { boundary, nativeRequest };
+}
+
 vi.mock('@/app/api/socket', () => ({ startSocket: vi.fn() }));
 vi.mock('@/utils/process/shutdown', () => ({
     onShutdown: vi.fn((name: string, callback: () => Promise<void>) => {
@@ -102,7 +112,21 @@ describe('startApi Home search production composition', () => {
 
     it('projects canonical plain SessionMessage insert, edit, edit-to-empty, and delete through the authenticated /v1/home/search route', async () => {
         const { startApi } = await import('@/app/api/api');
-        const app = await startApi();
+        const canonicalReads: unknown[] = [];
+        const { boundary, nativeRequest } = getNativePrismaRequestBoundary();
+        // Observe the genuine DB request without replacing Prisma's generated delegate.
+        Reflect.set(boundary, '_request', new Proxy(nativeRequest, { apply(target, receiver, args) {
+            const request: unknown = args[0];
+            if (request && typeof request === 'object' && Reflect.get(request, 'model') === 'SessionMessage'
+                && Reflect.get(request, 'action') === 'findMany') {
+                canonicalReads.push(Reflect.get(request, 'args'));
+            }
+            return Reflect.apply(target, receiver, args);
+        } }));
+        const app = await startApi().catch(error => {
+            Reflect.set(boundary, '_request', nativeRequest);
+            throw error;
+        });
         try {
             await vi.waitFor(async () => {
                 const ready = await app.inject({ method: 'GET', url: '/v1/features' });
@@ -110,6 +134,7 @@ describe('startApi Home search production composition', () => {
                     capabilities: { homeSearch: { enabled: true } },
                 });
             });
+            expect(canonicalReads).toHaveLength(0);
 
             const account = await db.account.create({
                 data: { publicKey: `home-search-api-${randomUUID()}`, encryptionMode: 'plain' },
@@ -164,6 +189,10 @@ describe('startApi Home search production composition', () => {
                     })],
                 });
             });
+            expect(canonicalReads).toHaveLength(1);
+            expect(canonicalReads.at(-1)).toEqual(expect.objectContaining({
+                where: expect.objectContaining({ sessionId: { in: [session.id] } }),
+            }));
 
             // Canonical agent content stored beneath content.data also becomes searchable.
             const blocks = await createSessionMessage({
@@ -267,6 +296,7 @@ describe('startApi Home search production composition', () => {
                 expect((await search('echidna')).json()).toMatchObject({ ok: true, hits: [] });
             });
         } finally {
+            Reflect.set(boundary, '_request', nativeRequest);
             await stopHomeSearch();
             await app.close();
         }
@@ -368,12 +398,7 @@ describe('startApi Home search production composition', () => {
                 encryptionMode: 'plain',
                 currentStorageState: 'hosted',
             })) });
-            const nativeClient: unknown = Reflect.get(db, '_originalClient');
-            if (!nativeClient || typeof nativeClient !== 'object') throw new Error('Native Prisma boundary unavailable');
-            const boundary: unknown = Object.getPrototypeOf(nativeClient);
-            if (!boundary || typeof boundary !== 'object') throw new Error('Native Prisma prototype unavailable');
-            const nativeRequest: unknown = Reflect.get(boundary, '_request');
-            if (typeof nativeRequest !== 'function') throw new Error('Native Prisma request boundary unavailable');
+            const { boundary, nativeRequest } = getNativePrismaRequestBoundary();
             let returnedSessionRows = 0;
             // Pass through the genuine database adapter: the production resolver,
             // Session access rules and publication-ceiling projection remain real.
@@ -454,7 +479,7 @@ describe('startApi Home search production composition', () => {
         }
     }, 120_000);
 
-    it('listens before reconciliation and keeps canonical writes available when initial indexing fails', async () => {
+    it('listens before demanded reconciliation and keeps canonical writes available when initial indexing fails', async () => {
         let releaseCanonicalRead!: () => void;
         let canonicalReadStarted!: () => void;
         const canonicalReadEntered = new Promise<void>((resolve) => { canonicalReadStarted = resolve; });
@@ -469,26 +494,6 @@ describe('startApi Home search production composition', () => {
         const { startApi } = await import('@/app/api/api');
         const app = await startApi();
         try {
-            await canonicalReadEntered;
-            const indexing = await app.inject({ method: 'GET', url: '/v1/features' });
-            expect(indexing.json()).toMatchObject({
-                capabilities: { homeSearch: { enabled: false, reason: 'indexing' } },
-            });
-            const unauthorized = await app.inject({
-                method: 'POST',
-                url: '/v1/home/search',
-                payload: { v: 1, query: 'probe', scope: { type: 'global' }, mode: 'auto' },
-            });
-            expect(unauthorized.statusCode).toBe(401);
-
-            releaseCanonicalRead();
-            await vi.waitFor(async () => {
-                const features = await app.inject({ method: 'GET', url: '/v1/features' });
-                expect(features.json()).toMatchObject({
-                    capabilities: { homeSearch: { enabled: false, reason: 'index_unavailable' } },
-                });
-            });
-
             const account = await db.account.create({
                 data: { publicKey: `home-search-api-failure-${randomUUID()}`, encryptionMode: 'plain' },
                 select: { id: true },
@@ -505,6 +510,25 @@ describe('startApi Home search production composition', () => {
                 select: { id: true },
             });
 
+            // Demand starts reconciliation only after the API is already listening.
+            const preparing = app.inject({
+                method: 'POST',
+                url: '/v1/home/search',
+                headers: { authorization: `Bearer ${token}` },
+                payload: { v: 1, query: 'canonical', scope: { type: 'global' }, mode: 'auto' },
+            }).then(response => response);
+            await canonicalReadEntered;
+            const indexing = await app.inject({ method: 'GET', url: '/v1/features' });
+            expect(indexing.json()).toMatchObject({
+                capabilities: { homeSearch: { enabled: false, reason: 'indexing' } },
+            });
+            const unauthorized = await app.inject({
+                method: 'POST',
+                url: '/v1/home/search',
+                payload: { v: 1, query: 'probe', scope: { type: 'global' }, mode: 'auto' },
+            });
+            expect(unauthorized.statusCode).toBe(401);
+
             await expect(createSessionMessage({
                 actorUserId: account.id,
                 sessionId: session.id,
@@ -513,12 +537,15 @@ describe('startApi Home search production composition', () => {
             })).resolves.toMatchObject({ ok: true, didWrite: true });
             await expect(db.sessionMessage.count({ where: { sessionId: session.id } })).resolves.toBe(1);
 
-            const response = await app.inject({
-                method: 'POST',
-                url: '/v1/home/search',
-                headers: { authorization: `Bearer ${token}` },
-                payload: { v: 1, query: 'canonical', scope: { type: 'global' }, mode: 'auto' },
+            releaseCanonicalRead();
+            await vi.waitFor(async () => {
+                const features = await app.inject({ method: 'GET', url: '/v1/features' });
+                expect(features.json()).toMatchObject({
+                    capabilities: { homeSearch: { enabled: false, reason: 'index_unavailable' } },
+                });
             });
+
+            const response = await preparing;
             expect(response.statusCode).toBe(200);
             expect(response.json()).toMatchObject({
                 v: 1,

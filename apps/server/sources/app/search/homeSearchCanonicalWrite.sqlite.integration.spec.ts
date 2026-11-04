@@ -67,8 +67,7 @@ describe('Home search canonical SQLite composition', () => {
             storagePolicy: 'plaintext_only',
             readCanonicalMessagesPage: readCanonicalSessionMessagesPage,
         });
-        lifecycle.start();
-        await lifecycle.whenReady();
+        await lifecycle.prepare([session.id]);
 
         const first = await createSessionMessage({
             actorUserId: account.id,
@@ -80,7 +79,7 @@ describe('Home search canonical SQLite composition', () => {
         expect(await db.sessionMessage.count({ where: { sessionId: session.id } })).toBe(1);
         await eventually(() => expect(lifecycle.search({ v: 1, query: 'first', scope: { type: 'global' }, mode: 'auto' })).toMatchObject({ ok: true, hits: [expect.objectContaining({ sessionId: session.id })] }));
 
-        const page = await readCanonicalSessionMessagesPage({ limit: 250 });
+        const page = await readCanonicalSessionMessagesPage({ sessionIds: [session.id], limit: 250 });
         expect(page.messages).toEqual(expect.arrayContaining([expect.objectContaining({
             sessionId: session.id,
             content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'first searchable phrase' } } },
@@ -184,7 +183,7 @@ describe('Home search canonical SQLite composition', () => {
             },
         });
 
-        const page = await readCanonicalSessionMessagesPage({ limit: 250 });
+        const page = await readCanonicalSessionMessagesPage({ sessionIds: [session.id], limit: 250 });
         expect(page.messages).not.toEqual(expect.arrayContaining([
             expect.objectContaining({ sessionId: session.id }),
         ]));

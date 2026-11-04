@@ -10,8 +10,8 @@ import { startHomeSearchLifecycle } from './homeSearchLifecycle';
 import type { HomeSearchCanonicalMessage } from './homeSearchIndexer';
 
 function canonicalReader(readRows: () => readonly HomeSearchCanonicalMessage[]) {
-    return async ({ afterId, limit }: { afterId?: string; limit: number }) => {
-        const rows = [...readRows()].sort((left, right) => left.id.localeCompare(right.id));
+    return async ({ afterId, limit, sessionIds }: { afterId?: string; limit: number; sessionIds: readonly string[] }) => {
+        const rows = [...readRows()].filter(row => sessionIds.includes(row.sessionId)).sort((left, right) => left.id.localeCompare(right.id));
         const messages = rows.filter((row) => !afterId || row.id > afterId).slice(0, limit);
         const nextAfterId = messages.length === limit ? messages.at(-1)?.id : undefined;
         return { messages, ...(nextAfterId ? { nextAfterId } : {}) };
@@ -19,6 +19,39 @@ function canonicalReader(readRows: () => readonly HomeSearchCanonicalMessage[]) 
 }
 
 describe('Home search route', () => {
+    it('awaits first-use preparation and excludes another Account until its own search demand', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-home-search-route-demand-'));
+        const pages: string[][] = [];
+        const lifecycle = startHomeSearchLifecycle({
+            dbPath: join(root, 'search.sqlite'), homeServerIdentityId: 'srv-home', storagePolicy: 'plaintext_only',
+            readCanonicalMessagesPage: async input => {
+                pages.push([...input.sessionIds]);
+                return { messages: input.sessionIds.map(sessionId => ({
+                    id: `message-${sessionId}`, sessionId, seq: 1, createdAtMs: 1,
+                    content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'first demand phrase' } } },
+                })) };
+            },
+        });
+        try {
+            await withAuthenticatedTestApp(app => registerHomeSearchRoutes(app, {
+                service: lifecycle,
+                resolveVisibleSessions: async userId => [{ sessionId: `session-${userId}`, maximumSeq: null }],
+                env: { HAPPIER_FEATURE_SEARCH__ENABLED: '1' },
+            }), async app => {
+                expect(pages).toEqual([]);
+                const search = (userId: string) => app.inject({
+                    method: 'POST', url: '/v1/home/search', headers: { 'x-test-user-id': userId },
+                    payload: { v: 1, query: 'demand', scope: { type: 'global' }, mode: 'auto' },
+                });
+                expect((await search('a')).json()).toMatchObject({ ok: true, hits: [expect.objectContaining({ sessionId: 'session-a' })] });
+                expect(pages).toEqual([['session-a']]);
+                expect((await search('b')).json()).toMatchObject({ ok: true, hits: [expect.objectContaining({ sessionId: 'session-b' })] });
+                expect((await search('a')).json()).toMatchObject({ ok: true, hits: [expect.objectContaining({ sessionId: 'session-a' })] });
+                expect(pages).toEqual([['session-a'], ['session-b']]);
+            });
+        } finally { await lifecycle.stop(); }
+    });
+
     it('requires an ordinary present-user credential and passes only that account visibility to search', async () => {
         const search = vi.fn((_query: unknown, context?: Readonly<{ visibleSessions?: readonly Readonly<{ sessionId: string; maximumSeq: number | null }>[] }>) => ({
             v: 1 as const,
@@ -28,7 +61,7 @@ describe('Home search route', () => {
                 : [],
         }));
         await withAuthenticatedTestApp((app) => registerHomeSearchRoutes(app, {
-            service: { capability: () => ({ enabled: true }), search, invalidateAndRebuild: vi.fn() },
+            service: { prepare: async () => {}, capability: () => ({ enabled: true }), search, invalidateAndRebuild: vi.fn() },
             resolveVisibleSessions: async (userId) => userId === 'owner'
                 ? [{ sessionId: 'owned-session', maximumSeq: null }]
                 : [],
@@ -64,7 +97,7 @@ describe('Home search route', () => {
     it('does not expose the route when the canonical search feature is disabled', async () => {
         const search = vi.fn(() => ({ v: 1 as const, ok: true as const, hits: [] }));
         await withAuthenticatedTestApp((app) => registerHomeSearchRoutes(app, {
-            service: { capability: () => ({ enabled: true }), search, invalidateAndRebuild: vi.fn() },
+            service: { prepare: async () => {}, capability: () => ({ enabled: true }), search, invalidateAndRebuild: vi.fn() },
             resolveVisibleSessions: async () => [],
             env: {
                 HAPPIER_FEATURE_SEARCH__ENABLED: '0',
@@ -100,7 +133,7 @@ describe('Home search route', () => {
 
         try {
             await withAuthenticatedTestApp((app) => registerHomeSearchRoutes(app, {
-                service: { ...service, invalidateAndRebuild: vi.fn() },
+                service: { ...service, prepare: async () => {}, invalidateAndRebuild: vi.fn() },
                 resolveVisibleSessions: async () => [{ sessionId: 'shared', maximumSeq: 4 }],
                 env: { HAPPIER_FEATURE_SEARCH__ENABLED: '1' },
             }), async (app) => {
@@ -144,7 +177,7 @@ describe('Home search route', () => {
             storagePolicy: 'plaintext_only',
             readCanonicalMessagesPage: canonicalReader(() => canonicalRows),
         });
-        lifecycle.start();
+        void lifecycle.prepare(['owned-session']);
         await lifecycle.whenReady();
 
         try {
@@ -202,7 +235,7 @@ describe('Home search route', () => {
                 return openHomeSearchDb(params);
             },
         });
-        lifecycle.start();
+        void lifecycle.prepare(['empty-canonical-fixture']);
         await lifecycle.whenReady();
 
         try {
@@ -219,6 +252,12 @@ describe('Home search route', () => {
                 expect(response.statusCode).toBe(500);
                 expect(opens).toBe(2);
                 expect(lifecycle.capability()).toEqual({ enabled: false, reason: 'index_unavailable' });
+                const unavailable = await app.inject({
+                    method: 'POST', url: '/v1/home/search', headers: { 'x-test-user-id': 'owner' },
+                    payload: { v: 1, query: 'after failed repair', scope: { type: 'global' }, mode: 'auto' },
+                });
+                expect(unavailable.statusCode).toBe(200);
+                expect(unavailable.json()).toMatchObject({ ok: false, errorCode: 'memory_index_missing' });
             });
         } finally {
             await lifecycle.stop();
@@ -237,7 +276,7 @@ describe('Home search route', () => {
                 return { messages: [] };
             },
         });
-        lifecycle.start();
+        void lifecycle.prepare(['empty-canonical-fixture']);
         await lifecycle.whenReady();
         failCanonicalRead = true;
 
@@ -264,6 +303,7 @@ describe('Home search route', () => {
         const invalidateAndRebuild = vi.fn(async () => {});
         await withAuthenticatedTestApp((app) => registerHomeSearchRoutes(app, {
             service: {
+                prepare: async () => {},
                 capability: () => ({ enabled: true }),
                 search: () => ({ v: 1, ok: true, hits: [] }),
                 invalidateAndRebuild,

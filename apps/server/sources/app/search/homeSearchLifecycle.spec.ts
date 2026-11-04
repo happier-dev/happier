@@ -16,8 +16,8 @@ import { HOME_SEARCH_CATCHUP_DIRTY_IDENTITY_LIMIT, startHomeSearchLifecycle } fr
 import type { HomeSearchCanonicalMessage } from './homeSearchIndexer';
 
 function reader(readRows: () => readonly HomeSearchCanonicalMessage[]) {
-    return async ({ afterId, limit }: { afterId?: string; limit: number }) => {
-        const rows = [...readRows()].sort((left, right) => left.id.localeCompare(right.id));
+    return async ({ afterId, limit, sessionIds }: { afterId?: string; limit: number; sessionIds: readonly string[] }) => {
+        const rows = [...readRows()].filter(row => sessionIds.includes(row.sessionId)).sort((left, right) => left.id.localeCompare(right.id));
         const messages = rows.filter((row) => !afterId || row.id > afterId).slice(0, limit);
         const nextAfterId = messages.length === limit ? messages.at(-1)?.id : undefined;
         return { messages, ...(nextAfterId ? { nextAfterId } : {}) };
@@ -78,25 +78,102 @@ async function commitMutations(mutations: readonly SessionTranscriptMutation[]):
 }
 
 describe('Home search lifecycle', () => {
-    it('does no index I/O until post-listen start and exposes indexing meanwhile', async () => {
+    it('keeps search readiness nonthrowing after a cold explicit repair fails', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-home-lifecycle-cold-repair-failure-'));
+        const lifecycle = startHomeSearchLifecycle({
+            dbPath: join(root, 'search.sqlite'), homeServerIdentityId: 'srv_test', storagePolicy: 'plaintext_only',
+            readCanonicalMessagesPage: reader(() => []),
+            openDb: async () => { throw new Error('filesystem unavailable'); },
+        });
+        try {
+            await expect(lifecycle.invalidateAndRebuild('explicit-repair')).rejects.toThrow('filesystem unavailable');
+            await expect(lifecycle.prepare(['s-1'])).resolves.toBeUndefined();
+            expect(lifecycle.search({ v: 1, query: 'phrase', scope: { type: 'global' }, mode: 'auto' }))
+                .toMatchObject({ ok: false, errorCode: 'memory_index_missing' });
+        } finally { await lifecycle.stop(); }
+    });
+
+    it('reuses a cold explicit repair when the first visible scope is subsequently demanded', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-home-lifecycle-cold-repair-'));
+        const openDb = vi.fn(openHomeSearchDb);
+        const lifecycle = startHomeSearchLifecycle({
+            dbPath: join(root, 'search.sqlite'), homeServerIdentityId: 'srv_test', storagePolicy: 'plaintext_only',
+            readCanonicalMessagesPage: reader(() => [{
+                id: 'repair-first', sessionId: 's-1', seq: 1, createdAtMs: 1, content: plainTextContent('cold repair phrase'),
+            }]), openDb,
+        });
+        try {
+            await lifecycle.invalidateAndRebuild('explicit-repair');
+            await lifecycle.prepare(['s-1']);
+            expect(openDb).toHaveBeenCalledTimes(1);
+            expect(lifecycle.search({ v: 1, query: 'cold repair', scope: { type: 'global' }, mode: 'auto' }))
+                .toMatchObject({ ok: true, hits: [expect.objectContaining({ sessionId: 's-1' })] });
+        } finally { await lifecycle.stop(); }
+    });
+
+    it('prepares only demanded visible Sessions once and retains earlier Accounts and shared Sessions', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-home-lifecycle-demand-'));
+        const rows: HomeSearchCanonicalMessage[] = ['owned-a', 'shared-b', 'owned-b', 'unused-c'].map((sessionId, index) => ({
+            id: `demand-${index}`, sessionId, seq: 1, createdAtMs: index,
+            content: plainTextContent('demand searchable phrase'),
+        }));
+        const pages: string[][] = [];
+        const lifecycle = startHomeSearchLifecycle({
+            dbPath: join(root, 'search.sqlite'),
+            homeServerIdentityId: 'srv_test',
+            storagePolicy: 'plaintext_only',
+            readCanonicalMessagesPage: async (input) => {
+                pages.push([...input.sessionIds]);
+                return reader(() => rows.filter(row => input.sessionIds.includes(row.sessionId)))(input);
+            },
+        });
+        try {
+            expect(lifecycle.capability()).toEqual({ enabled: true });
+            expect(pages).toEqual([]);
+            await lifecycle.prepare(['owned-a', 'shared-b']);
+            expect(pages).toEqual([['owned-a', 'shared-b']]);
+            expect(lifecycle.search({ v: 1, query: 'demand', scope: { type: 'global' }, mode: 'auto' }))
+                .toMatchObject({ ok: true, hits: expect.arrayContaining([
+                    expect.objectContaining({ sessionId: 'owned-a' }), expect.objectContaining({ sessionId: 'shared-b' }),
+                ]) });
+            await lifecycle.prepare(['shared-b', 'owned-b']);
+            await lifecycle.prepare(['owned-a', 'shared-b']);
+            expect(pages).toEqual([['owned-a', 'shared-b'], ['owned-b']]);
+            const result = lifecycle.search({ v: 1, query: 'demand', scope: { type: 'global' }, mode: 'auto' });
+            expect(result.ok && result.hits.map(hit => 'sessionId' in hit ? hit.sessionId : undefined).sort())
+                .toEqual(['owned-a', 'owned-b', 'shared-b']);
+
+            await commitMutations([{ kind: 'upsert', message: {
+                id: 'unused-live', sessionId: 'unused-c', seq: 2, createdAtMs: 5,
+                content: plainTextContent('unused account live phrase'),
+            } }]);
+            expect(lifecycle.search({ v: 1, query: 'unused account', scope: { type: 'global' }, mode: 'auto' }))
+                .toMatchObject({ ok: true, hits: [] });
+            await lifecycle.invalidateAndRebuild('explicit-repair');
+            expect(pages.at(-1)).toEqual(['owned-a', 'shared-b', 'owned-b']);
+            expect(pages.flat()).not.toContain('unused-c');
+        } finally { await lifecycle.stop(); }
+    });
+
+    it('reads zero canonical pages and opens no index on an unused Home', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-home-lifecycle-deferred-'));
         const path = join(root, 'derived', 'search.sqlite');
         const openDb = vi.fn(openHomeSearchDb);
+        const readCanonicalMessagesPage = vi.fn(reader(() => []));
         const lifecycle = await startHomeSearchLifecycle({
             dbPath: path,
             homeServerIdentityId: 'srv_test',
             storagePolicy: 'plaintext_only',
-            readCanonicalMessagesPage: reader(() => []),
+            readCanonicalMessagesPage,
             openDb,
         });
 
         expect(openDb).not.toHaveBeenCalled();
         await expect(stat(path)).rejects.toMatchObject({ code: 'ENOENT' });
-        expect(lifecycle.capability()).toEqual({ enabled: false, reason: 'indexing' });
 
-        lifecycle.start();
         await lifecycle.whenReady();
-        expect(openDb).toHaveBeenCalledTimes(1);
+        expect(readCanonicalMessagesPage).toHaveBeenCalledTimes(0);
+        expect(openDb).toHaveBeenCalledTimes(0);
         expect(lifecycle.capability()).toEqual({ enabled: true });
         await lifecycle.stop();
     });
@@ -113,12 +190,12 @@ describe('Home search lifecycle', () => {
             readCanonicalMessagesPage: reader(() => rows),
         });
 
-        // Search is not advertised ready before the initial reconciliation completes.
-        expect(lifecycle.capability()).toEqual({ enabled: false, reason: 'indexing' });
+        // A cold provider accepts demand; the first search route prepares its visible scope.
+        expect(lifecycle.capability()).toEqual({ enabled: true });
         expect(lifecycle.search({ v: 1, query: 'lifecycle', scope: { type: 'global' }, mode: 'auto' }))
             .toMatchObject({ ok: false, errorCode: 'memory_index_missing' });
 
-        lifecycle.start();
+        void lifecycle.prepare(['s-1']);
         await lifecycle.whenReady();
         expect(lifecycle.capability()).toEqual({ enabled: true });
         expect(lifecycle.search({ v: 1, query: 'lifecycle', scope: { type: 'global' }, mode: 'auto' }))
@@ -141,7 +218,7 @@ describe('Home search lifecycle', () => {
                 { id: 'm-1', sessionId: 's-1', seq: 1, createdAtMs: 10, content: { type: 'text', text: 'secret words' } },
             ]),
         });
-        lifecycle.start();
+        void lifecycle.prepare(['s-1']);
         await lifecycle.whenReady();
         expect(lifecycle.capability()).toEqual({ enabled: false, reason: 'index_unavailable' });
         expect(lifecycle.search({ v: 1, query: 'secret', scope: { type: 'global' }, mode: 'auto' }))
@@ -157,8 +234,8 @@ describe('Home search lifecycle', () => {
             storagePolicy: 'plaintext_only',
             readCanonicalMessagesPage: reader(() => []),
         });
-        expect(lifecycle.capability()).toEqual({ enabled: false, reason: 'indexing' });
-        lifecycle.start();
+        expect(lifecycle.capability()).toEqual({ enabled: true });
+        void lifecycle.prepare(['empty-canonical-fixture']);
         await lifecycle.whenReady();
         expect(lifecycle.capability()).toEqual({ enabled: false, reason: 'index_unavailable' });
         expect(lifecycle.search({ v: 1, query: 'x', scope: { type: 'global' }, mode: 'auto' }))
@@ -191,7 +268,7 @@ describe('Home search lifecycle', () => {
             },
         });
 
-        lifecycle.start();
+        void lifecycle.prepare(['s-stale']);
         await lifecycle.whenReady();
         expect(lifecycle.capability()).toEqual({ enabled: false, reason: 'index_unavailable' });
 
@@ -238,7 +315,7 @@ describe('Home search lifecycle', () => {
                 { id: 'm-1', sessionId: 's-1', seq: 1, createdAtMs: 1, content: { t: 'plain', v: { content: { type: 'text', text: 'rebuilt projection' } } } },
             ]),
         });
-        lifecycle.start();
+        void lifecycle.prepare(['s-1']);
         await lifecycle.whenReady();
         expect(lifecycle.search({ v: 1, query: 'rebuilt', scope: { type: 'global' }, mode: 'auto' })).toMatchObject({ ok: true });
         await lifecycle.invalidateAndRebuild('restore');
@@ -265,7 +342,7 @@ describe('Home search lifecycle', () => {
                 throw new Error('automatic rebuild reconciliation failed');
             },
         });
-        lifecycle.start();
+        void lifecycle.prepare(['empty-canonical-fixture']);
         await lifecycle.whenReady();
 
         const automatic = lifecycle.invalidateAndRebuild('restore');
@@ -307,7 +384,7 @@ describe('Home search lifecycle', () => {
                 };
             },
         });
-        lifecycle.start();
+        void lifecycle.prepare(['s-catch-up']);
         await lifecycle.whenReady();
 
         const repair = lifecycle.invalidateAndRebuild('explicit-repair');
@@ -351,7 +428,7 @@ describe('Home search lifecycle', () => {
             ]),
         });
 
-        lifecycle.start();
+        void lifecycle.prepare(['s-1']);
         await lifecycle.whenReady();
         expect(lifecycle.capability()).toEqual({ enabled: true });
         expect(lifecycle.search({ v: 1, query: 'schema', scope: { type: 'global' }, mode: 'auto' }))
@@ -377,7 +454,7 @@ describe('Home search lifecycle', () => {
             },
         });
 
-        lifecycle.start();
+        void lifecycle.prepare(['s-1']);
         await vi.waitFor(() => expect(lifecycle.capability()).toEqual({ enabled: true }));
         expect(opens).toBe(2);
         expect(lifecycle.search({ v: 1, query: 'recovered', scope: { type: 'global' }, mode: 'auto' }))
@@ -403,7 +480,7 @@ describe('Home search lifecycle', () => {
             },
         });
 
-        lifecycle.start();
+        void lifecycle.prepare(['s-1']);
         await lifecycle.whenReady();
         expect(lifecycle.search({ v: 1, query: 'query', scope: { type: 'global' }, mode: 'auto' }))
             .toMatchObject({ ok: false, errorCode: 'memory_failed' });
@@ -427,7 +504,7 @@ describe('Home search lifecycle', () => {
             openDb: async (params) => failSearchOnce(await openHomeSearchDb(params)),
         });
 
-        lifecycle.start();
+        void lifecycle.prepare(['s-1']);
         await lifecycle.whenReady();
         expect(lifecycle.search({ v: 1, query: 'query', scope: { type: 'global' }, mode: 'auto' }))
             .toMatchObject({ ok: false, errorCode: 'memory_failed' });
@@ -471,7 +548,7 @@ describe('Home search lifecycle', () => {
             },
         });
 
-        lifecycle.start();
+        void lifecycle.prepare(['s-1']);
         await firstPageSignal;
         // A committed burst of distinct identities larger than the catch-up bound arrives
         // while the startup projection is still reconciling.
@@ -531,7 +608,7 @@ describe('Home search lifecycle', () => {
             },
         });
 
-        lifecycle.start();
+        void lifecycle.prepare(['s-1', 's-doomed']);
         await firstPageSignal;
         const repetitive: SessionTranscriptMutation[] = [];
         for (let version = 1; version <= 300; version += 1) {
@@ -583,7 +660,7 @@ describe('Home search lifecycle', () => {
             },
         });
 
-        lifecycle.start();
+        void lifecycle.prepare(['s-recreated']);
         await firstPageSignal;
 
         const first = { id: 'm-recreated', sessionId: 's-recreated', seq: 1, createdAtMs: 1, content: plainTextContent('obsolete before deletion') } satisfies HomeSearchCanonicalMessage;
@@ -655,7 +732,7 @@ describe('Home search lifecycle', () => {
             },
         });
 
-        lifecycle.start();
+        void lifecycle.prepare(['s-drain']);
         await firstPageSignal;
         const first = {
             id: 'm-first',
@@ -713,7 +790,7 @@ describe('Home search lifecycle', () => {
             },
         });
 
-        lifecycle.start();
+        void lifecycle.prepare(['s-failure']);
         await firstPageSignal;
         await commitMutations([
             { kind: 'upsert', message: { id: 'm-first', sessionId: 's-failure', seq: 1, createdAtMs: 1, content: plainTextContent('first queued write') } },
@@ -770,7 +847,7 @@ describe('Home search lifecycle', () => {
             },
         });
 
-        lifecycle.start();
+        void lifecycle.prepare(['s-1']);
         await lifecycle.whenReady();
         expect(lifecycle.capability()).toEqual({ enabled: true });
 
@@ -833,7 +910,7 @@ describe('Home search lifecycle', () => {
             },
         });
 
-        lifecycle.start();
+        void lifecycle.prepare(['s-1']);
         await firstPageSignal;
         const stopping = lifecycle.stop();
         releaseFirstPage();
@@ -856,7 +933,7 @@ describe('Home search lifecycle', () => {
             storagePolicy: 'plaintext_only',
             readCanonicalMessagesPage: readPage,
         });
-        restarted.start();
+        void restarted.prepare(['s-1']);
         await restarted.whenReady();
         expect(restarted.capability()).toEqual({ enabled: true });
         expect(restarted.search({ v: 1, query: 'startup page searchable', scope: { type: 'global' }, mode: 'auto', maxResults: 1 }))

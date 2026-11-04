@@ -322,7 +322,7 @@ export async function startApi(params: Readonly<{
     // server HTTP routes can open PMS relay tunnels without a test-only seam.
     startSocket(typed);
 
-    // Home search construction is intentionally I/O-free. Opening and reconciliation start only after listen.
+    // Home search is I/O-free until an authenticated search demands its visible Session scopes.
     const homeSearchConfig = resolveHomeSearchRuntimeConfig(process.env);
     const homeSearch = homeSearchConfig
         ? startHomeSearchLifecycle({
@@ -349,8 +349,6 @@ export async function startApi(params: Readonly<{
     // Start HTTP 
     const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3005;
     await app.listen({ port, host: resolveApiListenHost(process.env) });
-    // Home search starts after the API is initialized and stops before the DB shutdown phase.
-    homeSearch?.start();
     const automationReplyHandoffWorker = startAutomationReplyHandoffWorker({
         dispatch: async (request) => await typed.forwardAutomationReplyHandoffToMachine(request),
     });

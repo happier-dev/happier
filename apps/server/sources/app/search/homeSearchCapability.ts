@@ -34,9 +34,9 @@ export function resolveHomeSearchRuntimeConfig(env: NodeJS.ProcessEnv): Readonly
 }
 
 /**
- * Search is advertised only after the plain Home index is open, usable, and its initial
- * reconciliation has completed. While that reconciliation is still running the capability
- * reports `indexing` instead of ready, and daemon remains the provider for non-plain Homes.
+ * The lifecycle advertises a cold plain Home as available on demand. During an active
+ * reconciliation the capability reports `indexing`; the search request awaits preparation
+ * of its visible Session scopes. Daemon remains the provider for non-plain Homes.
  */
 export function resolveHomeSearchCapability(input: Readonly<{
     indexReady: boolean;

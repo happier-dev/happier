@@ -7,9 +7,10 @@ import type { HomeSearchCanonicalPageReader } from './homeSearchIndexer';
  * Canonical SessionMessage reader feeding Home search reconciliation.
  * Transcript rows remain the only source of truth; this reader never mutates them.
  */
-export const readCanonicalSessionMessagesPage: HomeSearchCanonicalPageReader = async ({ afterId, limit }) => {
+export const readCanonicalSessionMessagesPage: HomeSearchCanonicalPageReader = async ({ sessionIds, afterId, limit }) => {
+    if (sessionIds.length === 0) return { messages: [] };
     const rows = await db.sessionMessage.findMany({
-        where: afterId ? { id: { gt: afterId } } : undefined,
+        where: { sessionId: { in: [...sessionIds] }, ...(afterId ? { id: { gt: afterId } } : {}) },
         select: {
             id: true,
             sessionId: true,

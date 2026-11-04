@@ -83,7 +83,7 @@ function buildFtsQuery(value: string): Readonly<{ match: string; snippetTerms: s
 const SNIPPET_WINDOW_CHARS = 160;
 // A constrained Session consumes two bindings in the authorization CTE. Keep the same
 // portable 999-variable boundary while reserving MATCH and LIMIT bindings.
-const HOME_SEARCH_SESSION_CONSTRAINT_BATCH_SIZE = 450;
+export const HOME_SEARCH_SESSION_CONSTRAINT_BATCH_SIZE = 450;
 // SQLite guarantees at least 999 host parameters. The canonical message table
 // consumes seven bindings per row, so 140 rows keep every bulk statement portable.
 const HOME_SEARCH_WRITE_BATCH_SIZE = 140;

@@ -527,7 +527,13 @@ The two transcript providers are distinct privacy implementations:
 - Home search reads plaintext envelopes into a rebuildable `search.sqlite`
   projection on the user's Home. `POST /v1/home/search` authenticates the
   present user, resolves that user's visible session ids, and applies those
-  ids at query time; ACL/share state is not copied into the index. Each hit is
+  ids both to prepare the requested scope and to filter queries; ACL/share
+  state is not copied into the index. Server startup performs no transcript
+  inventory or index rebuild. The first request prepares its visible Sessions
+  through the canonical paged reader, including shared Sessions owned by
+  another Account. Later requests prepare newly demanded Sessions while
+  retaining scopes already prepared in this process. Live upserts maintain
+  only demanded Sessions; repair rebuilds that demanded union. Each hit is
   message-granular, but its shared `summary` field contains a match-centered
   snippet rendered from pristine message text (or the complete text when it
   already fits), not a guarantee that the full message is returned. Storage
