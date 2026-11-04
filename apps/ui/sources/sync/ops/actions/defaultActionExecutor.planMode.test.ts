@@ -12,6 +12,8 @@ import { createSessionFixture, createSessionAccessFixture, createExistingSession
 import { SessionListQueryResponseV1Schema } from '@happier-dev/protocol/sessions/listing/response';
 import { SessionListQueryV1Schema } from '@happier-dev/protocol/sessions/listing/query';
 import { createMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
+import { supportsEditableSessionGoals } from '@/agents/registry/registryUiBehavior';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -772,14 +774,31 @@ describe('default Action executor mode and catalog contracts', () => {
     expect(transitionInput).toEqual(request);
     expect(storage.getState().sessions['switch-session']?.metadata?.flavor).toBe('claude');
   });
-  it.each([false, true])('executes goal get, wake and clear through the selected Session daemon (active: %s, no native controls)', async (active) => {
+  it.each([
+    { active: false, listOnly: false },
+    { active: true, listOnly: false },
+    { active: true, listOnly: true },
+  ])('executes goal get, wake and clear through the selected Session daemon (%j, no native controls)', async ({ active, listOnly }) => {
     installSession('goal-session', { path: '/repo', machineId: 'machine-a', flavor: 'codex', codexSessionId: 'native-thread' });
     const session = storage.getState().sessions['goal-session'];
     storage.setState({ sessions: { ...storage.getState().sessions, 'goal-session': { ...session, active } },
       machines: { ...storage.getState().machines, 'machine-a': createMachineFixture({ id: 'machine-a',
         storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
         metadata: { ...createMachineFixture().metadata!, host: 'goal.test', daemonSessionGoalControlsSupported: true } }) } });
+    if (listOnly) {
+      const retained = { ...storage.getState().sessions['goal-session'], metadata: {
+        ...session.metadata!, flavor: 'opencode',
+      } };
+      expect(supportsEditableSessionGoals({ agentId: 'opencode', session: retained, daemonGoalControlsSupported: true })).toBe(true);
+      storage.setState({ sessions: {},
+        sessionListRowsByServerId: { [serverId]: { 'goal-session': buildSessionListRenderableFromSession(retained) } },
+        ordinarySessionListMembershipByServerId: { [serverId]: ['goal-session'] },
+        sessionListIndexByServerId: { [serverId]: [{ type: 'session', sessionId: 'goal-session', serverId, serverName: 'Mode Home' }] },
+      });
+    }
     daemonAnswer = request => {
+      if (request.method.startsWith('goal-session:')) return { ok: false,
+        errorCode: 'unsupported_session_runtime_method', error: `unsupported_session_runtime_method:${request.method.split(':')[1]}` };
       const schema = request.method.endsWith(RPC_METHODS.DAEMON_SESSION_GOAL_GET) ? DaemonSessionGoalGetRequestV1Schema
         : request.method.endsWith(RPC_METHODS.DAEMON_SESSION_GOAL_CLEAR) ? DaemonSessionGoalClearRequestV1Schema
           : DaemonSessionGoalSetRequestV2Schema;
@@ -787,18 +806,18 @@ describe('default Action executor mode and catalog contracts', () => {
       return { workState: null };
     };
     const executor = createDefaultActionExecutor();
+    const goalSet = await executor.execute('session.goal.set', { sessionId: 'goal-session', objective: 'Finish the task', tokenBudget: null }, context());
+    expect(goalSet, JSON.stringify(goalSet)).toMatchObject({ ok: true, result: { ok: true } });
     const goalGet = await executor.execute('session.goal.get', { sessionId: 'goal-session' }, context());
     expect(goalGet, JSON.stringify(goalGet))
       .toMatchObject({ ok: true, result: { workState: null } });
-    expect(await executor.execute('session.goal.set', { sessionId: 'goal-session', objective: 'Finish the task', tokenBudget: null }, context()))
-      .toMatchObject({ ok: true });
     expect(await executor.execute('session.goal.clear', { sessionId: 'goal-session' }, context()))
       .toMatchObject({ ok: true });
     expect(outgoing.map(request => request.method)).toEqual([
-      `machine-a:${RPC_METHODS.DAEMON_SESSION_GOAL_GET}`, 'machine-a:daemon.sessionGoal.set.v2',
+      'machine-a:daemon.sessionGoal.set.v2', `machine-a:${RPC_METHODS.DAEMON_SESSION_GOAL_GET}`,
       `machine-a:${RPC_METHODS.DAEMON_SESSION_GOAL_CLEAR}`,
     ]);
-    expect(outgoing[1]?.params).toMatchObject({ sessionId: 'goal-session', objective: 'Finish the task',
+    expect(outgoing[0]?.params).toMatchObject({ sessionId: 'goal-session', objective: 'Finish the task',
       tokenBudget: null, resumeInactiveWithInitialGoal: true });
   });
   it('retains admitted Goal operations beyond the generic Machine RPC acknowledgement cutoff', async () => {

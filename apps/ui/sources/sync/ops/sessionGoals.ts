@@ -42,7 +42,7 @@ async function runGoalRpc(sessionId: string, operation: 'get' | 'set' | 'clear',
     opts?.signal?.throwIfAborted();
     const serverId = opts?.serverId ?? resolvePreferredServerIdForSessionId(sessionId);
     const session = storage.getState().sessions?.[sessionId];
-    if (session && !hasRuntimeSessionGoalControls(session)) {
+    if (!hasRuntimeSessionGoalControls(session ?? { active: false })) {
         const target = readMachineControlTargetForSession(sessionId);
         if (!target) return goalError('session_goal_control_machine_unavailable');
         return await machineRpcWithServerScope({ machineId: target.machineId, serverId, operationTimeoutMs: null,
