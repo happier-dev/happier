@@ -18,6 +18,7 @@ import {
 } from './providerFactsV1.js';
 import { resolveMachineRetentionPolicyV1 } from './resolveMachineRetentionPolicyV1.js';
 import { MachineEnvironmentV1Schema, type MachineEnvironmentV1 } from './machineEnvironmentV1.js';
+import { MachineProvisionerContributionV1Schema, type MachineProvisionerContributionV1 } from '../../plugins/contributions/machineProvisioners.js';
 
 export { resolveManagedConfigurationCost, formatProviderAmount, formatPriceUnit, presentManagedCost, presentManagedAcquireStep,
   formatRetentionDuration, describeRetention, formatManagedSizeBytes, managedSizeDimensions, describeManagedSize,
@@ -45,7 +46,8 @@ export type ManagedCreationSelectionV1 = z.infer<typeof ManagedCreationSelection
 /** Presentation facts never become an acquisition or credential authority. */
 export function createManagedConfigurationFactsV1Schema<Choices extends z.core.$ZodType>(choices: Choices) {
   return z.strictObject({
-    launch: createValidatedLaunchSnapshotV1Schema(choices), controller: ManagedControllerV1Schema,
+    launch: createValidatedLaunchSnapshotV1Schema(choices), controller: z.optional(ManagedControllerV1Schema),
+    provisioner: z.optional(z.lazy(() => MachineProvisionerContributionV1Schema)),
     optionStatus: z.enum(['current', 'loading', 'unavailable']),
     prices: mini.optional(mini.array(ProviderPriceV1Schema)),
     billing: BillingCapabilitiesV1Schema,
@@ -67,7 +69,8 @@ export type ManagedConfigurationFactsV1 = z.infer<typeof ManagedConfigurationFac
 export function buildManagedConfigurationFactsV1<Choices extends z.core.$ZodType>(input: Readonly<{
   choicesSchema: Choices;
   launch: z.infer<ReturnType<typeof createValidatedLaunchSnapshotV1Schema<Choices>>>;
-  controller: ManagedControllerV1; optionStatus: ManagedConfigurationFactsV1['optionStatus'];
+  controller?: ManagedControllerV1; optionStatus: ManagedConfigurationFactsV1['optionStatus'];
+  provisioner?: MachineProvisionerContributionV1;
   prerequisites: readonly ManagedPrerequisiteV1[]; billing: BillingCapabilitiesV1;
   retentionCapabilities: RetentionCapabilitiesV1;
   prices?: readonly ProviderPriceFactV1[];
@@ -81,7 +84,9 @@ export function buildManagedConfigurationFactsV1<Choices extends z.core.$ZodType
     nativeCapabilities: input.retentionCapabilities, presetOverride: input.preset,
     machineOverride: input.machineOverride, categoryPreferences: input.categoryPreferences });
   return createManagedConfigurationFactsV1Schema(input.choicesSchema).parse({
-    launch: input.launch, controller: input.controller, optionStatus: input.optionStatus,
+    launch: input.launch, ...(input.controller === undefined ? {} : { controller: input.controller }),
+    optionStatus: input.optionStatus,
+    ...(input.provisioner === undefined ? {} : { provisioner: input.provisioner }),
     prerequisites: input.prerequisites, billing: input.billing, retentionCapabilities: input.retentionCapabilities,
     retention: policy.retention, wakeOnAcceptedMessage: policy.wakeOnAcceptedMessage,
     ...(input.prices !== undefined ? { prices: input.prices } : {}),

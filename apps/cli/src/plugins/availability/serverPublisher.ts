@@ -44,7 +44,7 @@ export async function readServerPluginManagedResources(
   const result = PluginAvailabilityIntentReadActionOutputV1Schema.parse(response.data);
   if (result.managedResources === undefined || result.managedResourcesReviewed === undefined
     || result.managedResources.some(resource => resource.homeId !== binding.homeId
-      || resource.controller.machineId !== binding.controller.machineId
+      || resource.controller?.machineId !== binding.controller.machineId
       || resource.controller.installationId !== binding.controller.installationId)) {
     throw new Error('plugin_managed_resource_preflight_unavailable');
   }

@@ -347,14 +347,15 @@ async function isIssuedIntentNativeFactReportInTx(reader: Tx, binding: ExternalA
     report: ManagedControllerIntentReportV1): Promise<boolean> {
     if (!binding.workflowActionOrigin || !['machines.managed.power.set', 'machines.managed.delete'].includes(binding.actionId)
         || binding.serverIdentityId !== report.homeId || binding.requestId !== report.requestId
-        || binding.machineId !== report.controller.machineId || binding.installationId !== report.controller.installationId) return false;
+        || (report.controller !== undefined && (binding.machineId !== report.controller.machineId
+            || binding.installationId !== report.controller.installationId))) return false;
     try {
         const row = await readManagedMachineInTx(reader, report);
         const pending = readManagedAdmissionState(row.admittedInput).submittedEffect;
-        return row.custodianAccountId === binding.custodianAccountId && Boolean(pending)
-            && pending!.expectedIntentRevision === report.expectedIntentRevision && pending!.requestId === report.requestId
-            && sameManagedInput(pending!.controller, report.controller)
-            && (binding.actionId === 'machines.managed.delete' ? pending!.intent === 'delete' : pending!.intent === 'stop' || pending!.intent === 'suspend' || pending!.intent === 'start' || pending!.intent === 'resume');
+        return row.custodianAccountId === binding.custodianAccountId && pending !== undefined
+            && pending.expectedIntentRevision === report.expectedIntentRevision && pending.requestId === report.requestId
+            && sameManagedInput(pending.controller, report.controller)
+            && (binding.actionId === 'machines.managed.delete' ? pending.intent === 'delete' : pending.intent === 'stop' || pending.intent === 'suspend' || pending.intent === 'start' || pending.intent === 'resume');
     } catch (error) {
         if (!(error instanceof ManagedMachineError)) throw error;
         return false;
@@ -366,8 +367,9 @@ async function isIssuedAcquireNativeFactReportInTx(reader: Tx, binding: External
     report: ManagedControllerReportV1): Promise<boolean> {
     if ((report.result.kind !== 'bound' && report.result.kind !== 'pending')
         || (binding.actionId !== 'machines.managed.acquire' && binding.actionId !== 'machines.managed.bootstrap.retry')
-        || binding.serverIdentityId !== report.homeId || binding.machineId !== report.controller.machineId
-        || binding.installationId !== report.controller.installationId
+        || binding.serverIdentityId !== report.homeId
+        || (report.controller !== undefined && (binding.machineId !== report.controller.machineId
+            || binding.installationId !== report.controller.installationId))
         // Retry keeps its own signed Action correlation; its body addresses
         // the original purchase returned by the existing controller context.
         || (binding.actionId === 'machines.managed.acquire' && binding.requestId !== report.requestId)) return false;

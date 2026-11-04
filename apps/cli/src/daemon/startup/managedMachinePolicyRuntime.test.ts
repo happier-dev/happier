@@ -18,6 +18,26 @@ import { ApiMachineClient } from '@/api/apiMachine';
 
 afterEach(() => vi.restoreAllMocks());
 describe('daemon managed policy census transport', () => {
+    it('accepts an Account-owned row and target without assigning the observing daemon as controller', async () => {
+        const signing = nacl.sign.keyPair();
+        const machine = ManagedMachineV1Schema.parse({ id: 'managed', homeId: 'home', custodianAccountId: 'owner',
+            enrolledMachineId: 'guest',
+            launch: { provider: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
+            allocation: 'bound', resource: { contributionRef: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1, value: {} },
+            creationState: 'active', desired: 'stop', desiredWhen: 'now', intentRevision: 0,
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true });
+        const target = ManagedWakeTargetV1Schema.parse({ homeId: 'home', managedId: machine.id,
+            enrolledMachineId: 'guest', expectedIntentRevision: 0, reason: 'admitted-work',
+            origin: { kind: 'session-input', session: { homeId: 'home', sessionId: 'session' }, pendingRequestId: 'pending', requestedAt: 1 } });
+        vi.spyOn(axios, 'post').mockResolvedValue({ status: 200, data: { machines: [machine], targets: [target] } });
+        const census = await readManagedMachinePolicyCensus({ homeId: 'home',
+            controller: { machineId: 'own-daemon', installationId: 'installation' }, custodianAccountId: 'owner',
+            privateKey: signing.secretKey, token: 'token', serverUrl: 'https://policy.example' });
+        expect(census.machines).toEqual([machine]);
+        expect(census.targets).toEqual([target]);
+        expect(census.machines[0]).not.toHaveProperty('controller');
+    });
+
     it('schedules from classified Machine invalidations rather than raw Account, Pending or Automation traffic', async () => {
         let censuses = 0;
         const signing = nacl.sign.keyPair();
@@ -169,8 +189,9 @@ describe('daemon managed policy census transport', () => {
     });
     it('defers unused retention until guest readiness without deferring a reviewed deadline or canceled creation cleanup', async () => {
         const key = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(8));
+        const controller = { machineId: 'controller', installationId: 'installation' };
         let machine = ManagedMachineV1Schema.parse({ id: 'managed', homeId: 'home', custodianAccountId: 'owner',
-            controller: { machineId: 'controller', installationId: 'installation' },
+            controller,
             launch: { provider: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
             allocation: 'bound', resource: { contributionRef: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1, value: {} },
             creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 0,
@@ -190,7 +211,7 @@ describe('daemon managed policy census transport', () => {
         const runtime = createDaemonManagedMachinePolicyRuntime({
             loadMachine: async id => ({ id, encryptionMode: 'plain', active: true, metadata: null, metadataVersion: 0,
                 daemonState: { status: 'running' }, daemonStateVersion: 1 }),
-            readCensus: signal => readManagedMachinePolicyCensus({ homeId: 'home', controller: machine.controller,
+            readCensus: signal => readManagedMachinePolicyCensus({ homeId: 'home', controller,
                 custodianAccountId: 'owner', privateKey: key.secretKey, token: 'owner-token', serverUrl: 'https://home.example', signal }),
             executePolicy: adapter.executePolicy,
         });
@@ -233,6 +254,40 @@ describe('daemon managed policy census transport', () => {
         } finally {
             await runtime.stop();
         }
+    });
+    it('schedules controller-free retention only on its enrolled guest without a remote private Machine read', async () => {
+        const machine = ManagedMachineV1Schema.parse({ id: 'managed', homeId: 'home', custodianAccountId: 'owner',
+            enrolledMachineId: 'guest',
+            launch: { provider: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
+            allocation: 'bound', resource: { contributionRef: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1, value: {} },
+            creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 0,
+            retention: { kind: 'unused', afterMs: 3_600_000, effect: 'stop' }, wakeOnAcceptedMessage: false });
+        const operations = createHostActionOperationRuntime({ machineId: 'guest', resolveAccountId: async () => 'owner' });
+        const adapter = createDaemonManagedMachineActionAdapter({ credentials: { token: 'owner-token', encryption: null },
+            machineId: 'guest', serverId: 'home', serverBaseUrl: 'https://home.example', installationIdentity: null,
+            acquireRuntimeRegistryLease: async () => { throw new Error('No native runtime is installed'); },
+            observeActionExecution: request => operations.observeExecution(request),
+            executeManagedPolicyAction: (current, context, runApproved) => executeManagedMachinePolicyAction({ machine: current,
+                context, runApproved, serverId: 'home', createExecutor: overrides => createActionExecutor({ ...createUnavailableActionTransportDeps(), ...overrides }) }),
+        });
+        let remoteReads = 0;
+        const runtime = createDaemonManagedMachinePolicyRuntime({ executorMachineId: 'guest',
+            readCensus: async () => ({ machines: [machine], targets: [] }),
+            loadMachine: async () => { remoteReads += 1; return null; }, executePolicy: adapter.executePolicy });
+        try {
+            runtime.notifyChanged();
+            await vi.waitFor(async () => expect(ActionOperationListV1ResponseSchema.parse(await operations.handlers.listV2({})).items)
+                .toMatchObject([{ domainRef: { kind: 'managedMachine', id: machine.id } }]));
+            expect(remoteReads).toBe(0);
+        } finally { await runtime.stop(); }
+        const otherRuntime = createDaemonManagedMachinePolicyRuntime({ executorMachineId: 'another-daemon',
+            readCensus: async () => ({ machines: [machine], targets: [] }),
+            loadMachine: async () => { remoteReads += 1; return null; }, executePolicy: adapter.executePolicy });
+        try {
+            await otherRuntime.notifyChanged();
+            expect(remoteReads).toBe(0);
+            expect(ActionOperationListV1ResponseSchema.parse(await operations.handlers.listV2({})).items).toHaveLength(1);
+        } finally { await otherRuntime.stop(); }
     });
     it('retires an incumbent unused-retention operation when the resource observation satisfies its stop effect', async () => {
         let machine = ManagedMachineV1Schema.parse({

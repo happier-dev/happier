@@ -42,6 +42,7 @@ async function readManagedMachineNativeReview(input: ManagedMachineNativeReadInp
     const controller = input.controller ?? machine.controller;
     const current = () => !signal.aborted && binding.isCurrent();
     if (!current()) return { kind: 'failed', code: 'action_account_scope_changed' };
+    if (!controller) return { kind: 'failed', code: 'managed_parent_unavailable' };
     const options = { signal, onApprovalPending: input.onApprovalPending };
     const client = createManagedProvisionerClient(binding.scope, machine.homeId);
     const catalog = await client.read('machines.provisioners.list', { homeId: machine.homeId, controller,

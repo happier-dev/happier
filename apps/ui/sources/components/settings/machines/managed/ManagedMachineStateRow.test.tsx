@@ -320,10 +320,12 @@ describe('created machine resource rows (UIR5)', () => {
   it('shows a held approval wait as needing the user, with its exact Ask one press away', async () => {
     const { ManagedCreationProgress } = await import('./ManagedCreationProgress');
     const machine = await boundMachine({ observation: { observedAt: 5, availability: 'present', power: 'running', storage: 'retained', daemon: 'connected' } });
+    const nativeController = machine.controller;
+    if (!nativeController) throw new Error('The native fixture requires its installed controller.');
     const reviewApproval = vi.fn();
     const operation = { serverId: machine.homeId, observation: 'available' as const, isUnavailableProjection: false,
       snapshot: { version: 1 as const, operationId: 'policy-stop', revision: 3, actionId: 'machines.managed.power.set', state: 'running' as const,
-        scope: { accountId: 'owner', machineId: machine.controller.machineId }, title: 'Stop', createdAt: 1, startedAt: 2,
+        scope: { accountId: 'owner', machineId: nativeController.machineId }, title: 'Stop', createdAt: 1, startedAt: 2,
         domainRef: { kind: 'managedMachine' as const, id: machine.id, resource: machine.resource, controller: machine.controller },
         cancellation: 'supported' as const, progress: { kind: 'phase' as const, phase: 'waiting_for_approval', label: 'Waiting for approval',
           approval: { kind: 'approval_request_created' as const, artifactId: 'ask-1', actionId: 'machines.managed.power.set' } } } };

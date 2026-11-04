@@ -5302,7 +5302,7 @@ export class ApiMachineClient {
             if ((data.body.t === 'pending-changed' || data.body.t === 'automation-run-updated')
                 && data.body.managedWakeTargetV1 !== undefined) {
                 const target = ManagedWakeTargetV1Schema.safeParse(data.body.managedWakeTargetV1);
-                if (target.success && target.data.controller.machineId === this.machine.id) {
+                if (target.success && (!target.data.controller || target.data.controller.machineId === this.machine.id)) {
                     void this.notifyManagedMachinePolicyInvalidated().catch(() => {
                         logger.warn('[API MACHINE] Managed policy wake listener failed');
                     });

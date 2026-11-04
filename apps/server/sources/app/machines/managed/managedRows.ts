@@ -1,3 +1,4 @@
+import { ManagedConfigurationFactsV1ReadSchema } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 import { encodeBase64 } from 'privacy-kit';
 import { ManagedControllerAccessV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { ManagedControllerV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
@@ -45,6 +46,14 @@ export async function resolveManagedMachineRoleInTx(tx: Tx, row: Pick<StoredMana
 }
 
 
+/** The invoking host admitted this person's descriptor; it is not a server plugin declaration. */
+export function readManagedReviewedDeclaration(facts: unknown): ManagedDeclaration | null {
+    const parsed = ManagedConfigurationFactsV1ReadSchema.safeParse(facts);
+    if (!parsed.success || !parsed.data.provisioner) return null;
+    return { ...parsed.data.provisioner, provisioner: parsed.data.provisioner, accountAcquire: true,
+        retention: parsed.data.retentionCapabilities, acquireCredentialRequests: [] };
+}
+/** Public installation carrier only; its containing preset/resource owns caller admission. */
 export function projectManagedControllerAccess(controller: Readonly<{
     kind: string; accountId: string; installationId: string | null; installationPublicKey: Uint8Array | null;
     revokedAt: Date | null; replacedByMachineId: string | null;
@@ -57,6 +66,8 @@ export function projectManagedControllerAccess(controller: Readonly<{
 }
 export type ManagedDeclaration = Pick<MachineProvisionerContributionV1, "resourceKind" | "actions" | "schemaVersion" | "launchSchema" | "resourceSchema" | "billing" | "retention" | "reconciliation" | "credentialPurposeRequirements" | "nativeCredentialDelivery"> & Readonly<{
     acquireCredentialRequests: readonly PluginActionConnectedAccountUseRequestV2[];
+    provisioner: MachineProvisionerContributionV1;
+    accountAcquire: boolean;
 }>;
 export function createManagedMachineDeclaredSchema(launch: PluginJsonSchemaV2, native: PluginJsonSchemaV2, nativeOperation?: PluginJsonSchemaV2) {
     return createManagedMachineV1Schema(createPluginJsonSchemaZodValueAdapter(launch), createPluginJsonSchemaZodValueAdapter(native),
@@ -128,9 +139,11 @@ export async function requireManagedControllerInTx(tx: Tx, input: Readonly<{
 
 /** Consume the incumbent current declaration/materialization owners, never a provider registry. */
 export async function resolveManagedDeclarationInTx(tx: Tx, input: Readonly<{
-    homeId: string; custodianAccountId: string; controller: { machineId: string; installationId: string };
+    homeId: string; custodianAccountId: string; controller?: { machineId: string; installationId: string };
     provider: ValidatedLaunchSnapshotV1["provider"];
+    reviewedFacts?: unknown;
 }>): Promise<ManagedDeclaration | null> {
+    if (!input.controller) return readManagedReviewedDeclaration(input.reviewedFacts);
     const occurrences = await resolveCurrentClaimablePluginMachineMaterializationsTx({
         tx, accountId: input.custodianAccountId, serverIdentityId: input.homeId,
         machineId: input.controller.machineId, machineInstallationId: input.controller.installationId,
@@ -141,22 +154,33 @@ export async function resolveManagedDeclarationInTx(tx: Tx, input: Readonly<{
         const contribution = declaration?.manifest.contributes?.machineProvisioners?.find((entry) => entry.id === input.provider.localId);
         if (contribution && declaration) {
             const acquireCredentialRequests = resolvePluginActionConnectedAccountUseRequestsV2(declaration.manifest, contribution.actions.acquire);
-            if (acquireCredentialRequests) return { ...contribution, acquireCredentialRequests };
+            if (acquireCredentialRequests) {
+                const acquire = declaration.manifest.contributes?.actions?.find(action => action.id === contribution.actions.acquire);
+                return { ...contribution, acquireCredentialRequests, provisioner: contribution,
+                    accountAcquire: acquire?.execution.target === 'account' };
+            }
         }
     }
     return null;
+}
+
+/** Retained Account facts and installed controller declarations share the row's one owner. */
+export function resolveManagedRowDeclarationInTx(tx: Tx, row: StoredManagedMachine) {
+    return resolveManagedDeclarationInTx(tx, { homeId: row.homeId, custodianAccountId: row.custodianAccountId,
+        controller: readManagedController(row), provider: readManagedLaunchSnapshot(row.launch).provider, reviewedFacts: row.reviewedFacts });
 }
 
 /** The canonical stored projection drops extras using the declared native/launch schemas. */
 export function projectManagedMachine(row: StoredManagedMachine, declaration?: ManagedDeclaration | null): ManagedMachineV1 {
     const submitted = readManagedAdmissionState(row.admittedInput).submittedEffect;
     const resource = row.resource === null ? undefined : createStoredReadSchema(ManagedResourceV1Schema).parse(row.resource);
-    const devcontainerChild = deriveManagedDevcontainerChildProjectionV1({ managedMachineId: row.id,
-        controllerMachineId: row.controllerMachineId, enrolledMachineId: row.enrolledMachineId ?? undefined, resource });
+    const controller = readManagedController(row);
+    const devcontainerChild = controller ? deriveManagedDevcontainerChildProjectionV1({ managedMachineId: row.id,
+        controllerMachineId: controller.machineId, enrolledMachineId: row.enrolledMachineId ?? undefined, resource }) : undefined;
     const value = {
         id: row.id, homeId: row.homeId, custodianAccountId: row.custodianAccountId,
         ...(row.presetId && row.presetRevision !== null ? { preset: { id: row.presetId, revision: row.presetRevision } } : {}),
-        launch: row.launch, controller: { machineId: row.controllerMachineId, installationId: row.controllerInstallationId },
+        launch: row.launch, ...(controller ? { controller } : {}),
         ...(row.reviewedFacts !== null ? { reviewedFacts: row.reviewedFacts } : {}),
         ...(row.environmentSetup !== null ? { environmentSetup: row.environmentSetup } : {}),
         allocation: row.allocation, creationState: row.creationState,
@@ -192,12 +216,18 @@ export async function projectManagedMachinesInTx(tx: Tx, rows: readonly StoredMa
     const machines: ManagedMachineV1[] = [];
     for (const row of rows) {
         const launch = readManagedLaunchSnapshot(row.launch);
+        const controller = readManagedController(row);
+        if (!controller) {
+            const declaration = readManagedReviewedDeclaration(row.reviewedFacts);
+            machines.push(projectManagedMachine(row, declaration?.schemaVersion === launch.schemaVersion ? declaration : null));
+            continue;
+        }
         const key = JSON.stringify([row.homeId, row.custodianAccountId, row.controllerMachineId,
             row.controllerInstallationId, launch.provider.pluginId, launch.provider.localId]);
         if (!declarations.has(key)) {
             declarations.set(key, await resolveManagedDeclarationInTx(tx, {
                 homeId: row.homeId, custodianAccountId: row.custodianAccountId,
-                controller: { machineId: row.controllerMachineId, installationId: row.controllerInstallationId }, provider: launch.provider,
+                controller, provider: launch.provider,
             }));
         }
         const declaration = declarations.get(key);
@@ -329,11 +359,13 @@ export async function readMachineDevcontainerWorkspaceSyncEndpointInTx(tx: Tx, i
     if (child.observation.storage.kind === 'child') {
         return { custodianAccountId: machine.accountId, machineId: machine.id, installationId: machine.installationId };
     }
-    const parent = await tx.machine.findUnique({ where: { id: row.controllerMachineId } });
+    const controller = readManagedController(row);
+    if (!controller) return null;
+    const parent = await tx.machine.findUnique({ where: { id: controller.machineId } });
     if (!parent || parent.accountId !== row.custodianAccountId
         || classifyMachineAvailabilityState(parent) !== 'available'
-        || parent.installationId !== row.controllerInstallationId) return null;
-    return { custodianAccountId: row.custodianAccountId, machineId: parent.id, installationId: row.controllerInstallationId };
+        || parent.installationId !== controller.installationId) return null;
+    return { custodianAccountId: row.custodianAccountId, machineId: parent.id, installationId: controller.installationId };
 }
 
 /** Physical workspace routing consumes the retained enrollment/controller fact, never Machine metadata. */
@@ -364,7 +396,7 @@ export async function readMachineDevcontainerWorkspaceSyncRouteInTx(tx: Tx, inpu
 }
 
 function readStoredManagedDevcontainerChild(row: StoredManagedMachine): DevcontainerChildProjectionV1 | null {
-    if (row.creationState !== 'active' || row.allocation !== 'bound' || row.archivedAt !== null) return null;
+    if (!row.controllerMachineId || row.creationState !== 'active' || row.allocation !== 'bound' || row.archivedAt !== null) return null;
     const resource = createStoredReadSchema(ManagedResourceV1Schema).safeParse(row.resource);
     if (!resource.success) return null;
     return deriveManagedDevcontainerChildProjectionV1({ managedMachineId: row.id, controllerMachineId: row.controllerMachineId,

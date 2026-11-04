@@ -22,6 +22,8 @@ for await (const chunk of process.stdin) inputChunks.push(Buffer.from(chunk));
 const input = JSON.parse(Buffer.concat(inputChunks).toString('utf8'));
 const descriptor = HomeConnectionDescriptorV1Schema.parse(input.descriptor);
 const correlation = ManagedEnrollmentCorrelationV1Schema.parse(input.correlation);
+const controller = correlation.controller;
+if (!controller) throw new Error('The native controller enrollment fixture requires its installed controller.');
 const target = resolveHomeTargetFromDescriptor({ descriptor, authority: 'trusted_enrollment' });
 const root = resolve(process.cwd(), '../..');
 const guestEnv = { ...process.env, HAPPIER_HOME_DIR: String(input.guestHome), HAPPIER_SERVER_URL: undefined,
@@ -80,7 +82,7 @@ const task = createRemoteNativeBootstrapMachineTaskKind({
   },
 });
 const { taskId } = await runner.startAdmitted(task);
-const scope = { accountId: 'disposable-account', machineId: correlation.controller.machineId };
+const scope = { accountId: 'disposable-account', machineId: controller.machineId };
 const operations = createActionOperationRunner({ store: createActionOperationStore(), generateOperationId: () => 'qb73-operation',
   resolveAction: actionId => ({ actionId, title: 'Enroll managed Machine', operation: {
     version: 1, visibility: 'activity', progress: 'reported', presentation: { onStart: 'current' },

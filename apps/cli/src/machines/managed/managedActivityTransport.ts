@@ -11,19 +11,27 @@ import type { ManagedMachineAcquisitionDriverInput, ManagedMachineExecutionOptio
 import type { ManagedGuestActivityTransport } from './managedIntentReconciler';
 
 /** The Account socket invalidates observations; only the exact guest RPC decides activity. */
-export function createManagedGuestActivityTransport(input: Pick<ManagedMachineAcquisitionDriverInput, 'token' | 'serverUrl' | 'credentials' | 'externalActionMachineRequestPrivateKey'>, options: ManagedMachineExecutionOptions, machine: ManagedMachineV1): ManagedGuestActivityTransport {
+export function createManagedGuestActivityTransport(input: Pick<ManagedMachineAcquisitionDriverInput, 'token' | 'serverUrl' | 'credentials' | 'externalActionMachineRequestPrivateKey' | 'subscribeManagedMachineChanges'>, options: ManagedMachineExecutionOptions, machine: ManagedMachineV1): ManagedGuestActivityTransport {
     // Home derives the guest scope from the current admitted retained row;
-    // the controller signs that exact destination with the original root.
+    // the admitted Machine signs that exact destination with the original root.
     const authorization = options.context?.externalActionExecutionAuthorization;
     const target = options.context?.externalActionTarget;
+    const managedAdmission = authorization?.binding.managedAdmission;
     if (options.context?.externalActionCredential && !authorization || authorization && (
         !input.externalActionMachineRequestPrivateKey || !target || target.kind !== 'machine'
-        || target.machineId !== machine.controller.machineId
+        || target.machineId !== authorization.binding.machineId
         || authorization.binding.target.kind !== 'machine' || authorization.binding.target.machineId !== target.machineId
         || authorization.binding.serverIdentityId !== machine.homeId
         || authorization.binding.custodianAccountId !== machine.custodianAccountId
-        || authorization.binding.machineId !== machine.controller.machineId
-        || authorization.binding.installationId !== machine.controller.installationId
+        || machine.controller && (authorization.binding.machineId !== machine.controller.machineId
+            || authorization.binding.installationId !== machine.controller.installationId)
+        || !machine.controller && (authorization.binding.accountId !== machine.custodianAccountId
+            || !machine.enrolledMachineId
+            || authorization.binding.managedAccountExecutor?.enrolledMachineId !== machine.enrolledMachineId
+            || !managedAdmission || managedAdmission.actionId !== 'machines.managed.power.set' && managedAdmission.actionId !== 'machines.managed.delete'
+            || managedAdmission.actionId !== authorization.binding.actionId
+            || managedAdmission.input.homeId !== machine.homeId || managedAdmission.input.managedId !== machine.id
+            || managedAdmission.input.when !== machine.desiredWhen || managedAdmission.input.intent !== machine.desired)
         || authorization.binding.requestId !== options.requestId
         || machine.desiredWhen !== 'after-idle'
         || !(authorization.binding.actionId === 'machines.managed.power.set' && (machine.desired === 'stop' || machine.desired === 'suspend')
@@ -46,6 +54,11 @@ export function createManagedGuestActivityTransport(input: Pick<ManagedMachineAc
     let failure: unknown;
     let rpcSocket: Parameters<typeof callSocketRpc>[0]['socket'] | undefined;
     let wake: (() => void) | undefined;
+    const unsubscribeManagedChanges = input.subscribeManagedMachineChanges?.(change => {
+        if (change?.kind !== 'managed' || !change.managedIds.includes(machine.id)) return;
+        changed = 'activity';
+        wake?.();
+    });
     let ready!: () => void;
     let rejectReady!: (error: unknown) => void;
     const connected = new Promise<void>((resolve, reject) => { ready = resolve; rejectReady = reject; });
@@ -94,7 +107,7 @@ export function createManagedGuestActivityTransport(input: Pick<ManagedMachineAc
         }
     }).catch(error => { failure = error; rejectReady(error); wake?.(); });
     const request = (current: ManagedMachineV1) => ({ homeId: current.homeId, managedId: current.id,
-        expectedRevision: current.intentRevision, controller: current.controller });
+        expectedRevision: current.intentRevision, ...(current.controller ? { controller: current.controller } : {}) });
     const call = async (method: string, params: unknown, signal?: AbortSignal, signed = true) => {
         await waitUntilConnected(signal);
         if (failure) throw failure;
@@ -150,6 +163,7 @@ export function createManagedGuestActivityTransport(input: Pick<ManagedMachineAc
             });
         },
         dispose: async () => {
+            unsubscribeManagedChanges?.();
             close(); lifetime.abort();
             await pump;
         },

@@ -1502,7 +1502,7 @@ export function useSessionComposerController({
     const managedPendingMachine = managedPendingObservation.machine;
     const managedWakeInventoryStatus = useMachineListStatusForServer(sessionAccountScope?.serverId ?? '');
     const managedWakeController = useServerScopedMachine(sessionAccountScope?.serverId ?? '',
-        managedPendingMachine?.controller.machineId ?? managedWakeAuthorization?.managedWakeTargetV1?.controller.machineId ?? '');
+        managedPendingMachine?.controller?.machineId ?? managedWakeAuthorization?.managedWakeTargetV1?.controller?.machineId ?? '');
     const managedWakeProjection = React.useMemo(() => managedWakeAuthorization
         ? deriveManagedWakeProjection({
             managed: managedPendingMachine, activation: managedWakeAuthorization,

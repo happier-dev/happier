@@ -525,7 +525,7 @@ export function useCreateNewSession(params: Readonly<{
     const managedOperationId = params.managedMachineAcquisition?.operation?.operationId;
     const managedOperationServerId = params.targetAccountScope?.serverId ?? params.draftScope?.serverId ?? params.targetServerId ?? null;
     const managedOperationAccountId = (params.targetAccountScope ?? params.draftScope)?.accountId;
-    const managedOperationControllerId = params.managedMachineSelection?.receipt.controller.machineId;
+    const managedOperationControllerId = params.managedMachineSelection?.receipt.controller?.machineId;
     const managedAcquisitionMatchesSelection = Boolean(params.managedMachineSelection && params.managedMachineAcquisition
         && sameStrictJsonValue(params.managedMachineSelection.selection, params.managedMachineAcquisition.selection));
     const readManagedOperation = React.useCallback(() => {

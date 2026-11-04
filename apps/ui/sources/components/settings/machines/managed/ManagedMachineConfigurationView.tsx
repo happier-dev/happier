@@ -360,8 +360,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     // A changed draft never borrows the old choice's facts, and only fresh `facts` can be submitted.
     const captured = reviewed.current;
     const receiptFacts = facts ?? (presetQuery.sameScope && catalog.binding?.isCurrent() && captured && draft?.selected
-        && draft.name === captured.launch.name && draft.controller.machineId === captured.controller.machineId
-        && draft.controller.installationId === captured.controller.installationId
+        && draft.name === captured.launch.name && pluginJsonValuesEqual(draft.controller, captured.controller)
         && pluginJsonValuesEqual(draft.credentials ?? [], captured.launch.credentials ?? [])
         && pluginJsonValuesEqual(draft.selected.launch, captured.launch.choices) ? captured : null);
     const credentialTargets = React.useMemo(() => receiptFacts ? managedCredentialReceiptTargets(receiptFacts.launch) : [], [receiptFacts?.launch]);
@@ -413,21 +412,21 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         } catch { if (!abort.signal.aborted) failed('unavailable'); }
     };
     const save = async () => {
-        if (!facts || !catalog.homeId || !activeBinding?.isCurrent() || !presetClient || !maySave) return;
+        if (!facts || !catalogController || !catalog.homeId || !activeBinding?.isCurrent() || !presetClient || !maySave) return;
         setBusy(true); setError(null);
         const abort = new AbortController(); mutationAbort.current = abort;
         const callbacks = { signal: abort.signal, onApprovalPending, onApprovalSucceeded: completedSave, onApprovalFailed: failed };
         try {
         const result = props.presetOnly && preset ? await presetClient.execute('machines.presets.update', {
             homeId: catalog.homeId, id: preset.id, expectedRevision: preset.revision,
-            patch: { name: facts.launch.name, recipe: facts.launch, controller: facts.controller,
+            patch: { name: facts.launch.name, recipe: facts.launch, controller: catalogController,
                 environment: draft?.environment ?? null,
                 retention: reusablePresetRetention ?? null,
                 wakeOnAcceptedMessage: draft?.override?.wakeOnAcceptedMessage ?? draft?.preset?.wakeOnAcceptedMessage ?? null,
                 simultaneousLimit: limit ? { maximum: limit } : null },
         }, callbacks) : await presetClient.execute('machines.presets.create', {
             homeId: catalog.homeId, id: randomUUID(), name: facts.launch.name, recipe: facts.launch,
-            owner: teamId ? { kind: 'team', teamId } : { kind: 'account', accountId: activeBinding.accountId }, controller: facts.controller,
+            owner: teamId ? { kind: 'team', teamId } : { kind: 'account', accountId: activeBinding.accountId }, controller: catalogController,
             ...(draft?.environment !== undefined ? { environment: draft.environment } : {}),
             ...(reusablePresetRetention ? { retention: reusablePresetRetention } : {}),
             ...((draft?.override?.wakeOnAcceptedMessage ?? draft?.preset?.wakeOnAcceptedMessage) !== undefined

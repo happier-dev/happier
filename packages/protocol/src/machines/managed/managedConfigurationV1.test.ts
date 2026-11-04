@@ -5,9 +5,24 @@ import * as protocol from './managedConfigurationV1.js';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 import { resolveMachineRetentionPolicyV1 } from './resolveMachineRetentionPolicyV1.js';
 import { ManagedAcquireInputV1Schema, ManagedErrorV1Schema, resolveManagedAcquireReviewV1 } from './actionsV1.js';
-import { MachineProvisionerOptionsResultV1Schema } from '../../plugins/contributions/machineProvisioners.js';
+import { MachineProvisionerContributionV1Schema, MachineProvisionerOptionsResultV1Schema } from '../../plugins/contributions/machineProvisioners.js';
 
 describe('managed preset executable selection', () => {
+  it('retains the exact strict provisioner descriptor in a controller-free reviewed receipt', () => {
+    const provisioner = MachineProvisionerContributionV1Schema.parse({ id: 'vm', title: 'VM', icon: 'server', resourceKind: 'VM', schemaVersion: 1,
+      launchSchema: { type: 'object', properties: {}, additionalProperties: false },
+      resourceSchema: { type: 'object', properties: {}, additionalProperties: false }, platforms: ['linux'], prerequisites: [],
+      billing: { location: 'cloud', stoppedBilling: 'billed' }, retention: { supportedIntents: ['start', 'stop', 'delete'] },
+      actions: { check: 'check', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy' } });
+    const launch = { provider: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} };
+    const facts = { launch, provisioner, optionStatus: 'current', prerequisites: [], billing: provisioner.billing,
+      retentionCapabilities: provisioner.retention, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true };
+    expect(protocol.ManagedConfigurationFactsV1Schema.parse(facts)).toEqual(facts);
+    expect(protocol.ManagedConfigurationFactsV1Schema.safeParse({ ...facts, provisioner: { ...provisioner, unknownAuthority: true } }).success).toBe(false);
+    expect(protocol.buildManagedConfigurationFactsV1({ choicesSchema: z.strictObject({}), launch, provisioner,
+      optionStatus: 'current', prerequisites: [], billing: provisioner.billing,
+      retentionCapabilities: { supportedIntents: ['start', 'stop', 'delete'] } }).provisioner).toEqual(provisioner);
+  });
   it('retains typed preset admission refusals at the managed controller transport', () => {
     for (const code of ['preset_not_found', 'preset_archived', 'preset_limit_reached']) {
       expect(ManagedErrorV1Schema.parse({ code })).toEqual({ code });

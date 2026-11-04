@@ -41,12 +41,13 @@ export function useMachineDestinationWorkerStatus(params: Readonly<{
     const wakes = new Map<string, 'asleep' | 'starting'>();
     if (purpose === 'finite' && binding?.isCurrent()) {
         for (const managed of params.managedMachines ?? []) {
-            if (!managed.enrolledMachineId || !managed.wakeOnAcceptedMessage) continue;
+            const controllerPair = managed.controller;
+            if (!controllerPair || !managed.enrolledMachineId || !managed.wakeOnAcceptedMessage) continue;
             const guest = params.groups.find(group => group.serverId === request?.workspace.serverId
                 && !group.loading && !group.signedOut && !group.error)?.machines.find(machine => machine.id === managed.enrolledMachineId);
             if (!guest || resolveMachinePickerPresence(guest, undefined, scope).selectable) continue;
-            const controller = controllers?.find(machine => machine.id === managed.controller.machineId
-                && machine.installationId === managed.controller.installationId && !machine.revokedAt && !machine.replacedByMachineId
+            const controller = controllers?.find(machine => machine.id === controllerPair.machineId
+                && machine.installationId === controllerPair.installationId && !machine.revokedAt && !machine.replacedByMachineId
                 && resolveMachinePickerPresence(machine, undefined, scope).selectable
                 && (machine.isShared !== true || machine.access?.role === 'manage' && machine.access.accessState === 'ready'));
             const state = controller && resolveManagedMachineWakeStateV1(managed, managed.enrolledMachineId);

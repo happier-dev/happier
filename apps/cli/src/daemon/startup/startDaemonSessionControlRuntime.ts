@@ -12112,7 +12112,7 @@ daemonWorkSignal: AbortSignal;
             if (typeof managedId === 'string') {
               const machine = await readManagedMachine({ credentials, serverHttpBaseUrl,
                 homeId: origin.serverIdentityId, managedId, ...(authority.signal ? { signal: authority.signal } : {}) });
-              if (machine.id !== managedId || machine.homeId !== origin.serverIdentityId) return null;
+              if (machine.id !== managedId || machine.homeId !== origin.serverIdentityId || !machine.controller) return null;
               ownerMachineId = machine.controller.machineId;
             }
           }

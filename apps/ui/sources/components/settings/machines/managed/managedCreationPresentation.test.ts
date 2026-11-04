@@ -15,7 +15,7 @@ import {
 import type { ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
 import { ProviderObservationV1Schema, type RetentionCapabilitiesV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 
-const machine: ManagedMachineV1 = {
+const machine = {
   id: 'managed',
   homeId: 'home',
   custodianAccountId: 'owner',
@@ -38,9 +38,28 @@ const machine: ManagedMachineV1 = {
   intentRevision: 1,
   retention: { kind: 'until-delete' },
   wakeOnAcceptedMessage: false,
-};
+} satisfies ManagedMachineV1;
 
 describe('managed creation presentation', () => {
+  it('keeps Account-owned installation recovery separate from earlier controller operations', () => {
+    const accountOwned = { ...machine, controller: undefined };
+    const earlierControllerOperation: ActionOperationProjection = {
+      serverId: machine.homeId, observation: 'available', isUnavailableProjection: false,
+      snapshot: {
+        version: 1, operationId: 'old-install', revision: 1,
+        actionId: 'machines.managed.acquire', state: 'failed',
+        scope: { accountId: machine.custodianAccountId, machineId: 'controller' },
+        title: 'Install', createdAt: 1, settledAt: 2, cancellation: 'supported',
+        domainRef: { kind: 'managedMachine', id: machine.id, resource: machine.resource,
+          controller: machine.controller },
+        error: { errorCode: 'provider_unavailable', error: 'provider_unavailable' },
+      },
+    };
+    expect(currentManagedCreationOperation(accountOwned, earlierControllerOperation)).toBeNull();
+    expect(canRetryManagedInstallation(accountOwned)).toBe(true);
+    expect(canRetryManagedInstallation(accountOwned, earlierControllerOperation)).toBe(false);
+  });
+
   it('offers only the power actions the observed state allows, and none while an unenrolled resource has no observed power', () => {
     const intents: RetentionCapabilitiesV1['supportedIntents'] = ['start', 'suspend', 'resume', 'delete'];
     const observed = (power: 'running' | 'suspended') => ({ ...machine,

@@ -40,7 +40,7 @@ export const ReusableRetentionV1Schema = lazyDefinition(() => z.discriminatedUni
 export const ManagedControllerV1Schema = lazyDefinition(() => z.strictObject({ machineId: id(), installationId: id() }));
 /** A host submission fact, independently displayed from native power observations. */
 export const SubmittedNativeEffectV1Schema = lazyDefinition(() => z.strictObject({
-  intentRevision: z.int().check(z.gte(0)), requestId: id(), intent: SupportedNativeIntentSchema, controller: ManagedControllerV1Schema,
+  intentRevision: z.int().check(z.gte(0)), requestId: id(), intent: SupportedNativeIntentSchema, controller: z.optional(ManagedControllerV1Schema),
   reviewedEffectDigest: z.optional(id()),
 }));
 export const ManagedCredentialSelectionV1Schema = lazyDefinition(() => z.strictObject({ purpose: QualifiedConnectedAccountPurposeV1Schema, account: asProtocolZod(QualifiedConnectedAccountRefSchema) }));
@@ -74,7 +74,7 @@ export function createManagedMachineV1Schema<Launch extends z.core.$ZodType, Nat
     enrollmentAccountId: z.optional(id()),
     enrollmentIdentity: z.optional(ManagedMachineEnrollmentIdentityV1Schema),
     preset: z.optional(z.strictObject({ id: id(), revision: z.int().check(z.gte(0)) })),
-    launch: createRetainedManagedLaunchSnapshotV1Schema(launch), controller: ManagedControllerV1Schema,
+    launch: createRetainedManagedLaunchSnapshotV1Schema(launch), controller: z.optional(ManagedControllerV1Schema),
     controllerAccess: z.optional(ManagedControllerAccessV1Schema),
     reviewedFacts: z.optional(createManagedConfigurationFactsV1Schema(launch)),
     environmentSetup: z.optional(ManagedMachineEnvironmentSetupV1Schema),
@@ -98,8 +98,11 @@ export function createManagedMachineV1Schema<Launch extends z.core.$ZodType, Nat
     if (value.environmentSetup && !value.preset) {
       context.addIssue({ code: 'custom', path: ['environmentSetup'], message: 'Setup requires its admitted preset.' });
     }
+    if ((value.resource?.devcontainerObservation || value.devcontainerChild) && !value.controller) {
+      context.addIssue({ code: 'custom', path: ['controller'], message: 'A local child requires its physical controller.' });
+    }
     if (value.devcontainerChild && !managedDevcontainerChildProjectionsEqualV1(value.devcontainerChild,
-      deriveManagedDevcontainerChildProjectionV1({ managedMachineId: value.id, controllerMachineId: value.controller.machineId,
+      deriveManagedDevcontainerChildProjectionV1({ managedMachineId: value.id, controllerMachineId: value.controller?.machineId,
         enrolledMachineId: value.enrolledMachineId, resource: value.resource }))) {
       context.addIssue({ code: 'custom', path: ['devcontainerChild'], message: 'Child relation must project the current enrolled resource and controller.' });
     }

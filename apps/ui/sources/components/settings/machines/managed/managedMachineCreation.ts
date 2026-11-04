@@ -127,7 +127,7 @@ export async function runManagedMachineCreation(input: Readonly<{
         }
         const machine = ManagedMachineActionOutputSchemasV1['machines.managed.get'].parse(outcome.result);
         if (machine.id !== acquisition.managedId || machine.homeId !== acquisition.selection.homeId
-            || !sameStrictJsonValue(machine.controller, controller)) { fail('managed_response_invalid'); return null; }
+            || controller && !sameStrictJsonValue(machine.controller, controller)) { fail('managed_response_invalid'); return null; }
         return machine;
     };
     const alreadyAdmitted = acquisition.managedId ? await read() : null;
@@ -146,7 +146,7 @@ export async function runManagedMachineCreation(input: Readonly<{
                 input.onProgress({ kind: 'acquiring', ...(acquisition.managedId ? { managedId: acquisition.managedId } : {}) });
                 const outcome = classifyHomeActionOutcome(await execute(actionId, actionInput, {
                     ...context, actionRequestId: input.retryInstallation ? `${acquisition.requestId}:bootstrap:${alreadyAdmitted?.intentRevision}` : acquisition.requestId,
-                    executionRunTargetMachineId: controller.machineId,
+                    ...(controller ? { executionRunTargetMachineId: controller.machineId } : {}),
                 }));
                 if (outcome.kind === 'failed') return { kind: 'failed' as const, code: homeDomainFailureCode(outcome.failure) };
                 if (outcome.kind === 'approval_pending') {
@@ -174,7 +174,7 @@ export async function runManagedMachineCreation(input: Readonly<{
     const awaitingSetupWithoutGuestOperation = alreadyAdmitted?.environmentSetup
         && (alreadyAdmitted.environmentSetup.state === 'pending' || alreadyAdmitted.environmentSetup.state === 'running')
         && !alreadyAdmitted.environmentSetup.operation;
-    if (acquisition.operation && (!alreadyAdmitted?.enrolledMachineId || awaitingSetupWithoutGuestOperation)) {
+    if (controller && acquisition.operation && (!alreadyAdmitted?.enrolledMachineId || awaitingSetupWithoutGuestOperation)) {
         input.onProgress({ kind: 'acquiring', managedId: acquisition.managedId });
         const result = await execute('action.operations.get', { serverId: input.scope.serverId, machineId: controller.machineId,
             ...acquisition.operation, waitForTerminal: true }, context);
@@ -223,7 +223,7 @@ export async function runManagedMachineCreation(input: Readonly<{
         if (!currentMachine) return { kind: 'failed', code: 'managed_read_failed' };
         const deleteInput = buildReviewedManagedMachineDeleteInput(currentMachine, review);
         if (!deleteInput) return fail('intent_changed');
-        const deleted = await executeApproved('machines.managed.delete', deleteInput, currentMachine.controller.machineId);
+        const deleted = await executeApproved('machines.managed.delete', deleteInput, currentMachine.controller?.machineId);
         if (!current()) return fail('continuation_retired');
         if (deleted.kind === 'failed') return fail(deleted.code);
         const result = ManagedMachineActionOutputSchemasV1['machines.managed.delete'].parse(deleted.value);

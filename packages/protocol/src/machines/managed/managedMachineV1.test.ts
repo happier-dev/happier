@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { z } from 'zod/mini';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 import { createManagedMachineV1Schema } from './managedMachineV1.js';
-import { ManagedAdmissionInputV1Schema, ManagedCancelInputV1Schema } from './actionsV1.js';
+import { ManagedAdmissionInputV1Schema, ManagedCancelInputV1Schema, ManagedControllerCurrentnessV1Schema, ManagedControllerContextInputV1Schema, ManagedEnrollmentCorrelationV1Schema, ManagedControllerReportV1Schema, ManagedControllerSubmitInputV1Schema, ManagedControllerUpdateInputV1Schema } from './actionsV1.js';
+import { ManagedPolicyAdmissionInputV1Schema } from './managedPolicyV1.js';
+import { ManagedWakeTargetV1Schema } from './managedIntentV1.js';
+import { ManagedInstallationPurposeV1Schema } from './managedInstallationV1.js';
 import { ManagedResourceV1Schema } from './providerFactsV1.js';
 import { isManagedDevcontainerChildProjectionCurrentV1 } from './devcontainerV1.js';
 
@@ -19,6 +22,37 @@ describe('managed resource persistence and input contracts', () => {
     creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 0,
     retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
   };
+  it('retains Account cloud resources and admitted follow-ups without a controller while rejecting partial pairs', () => {
+    const { controller, ...portable } = row;
+    expect(schema.parse(portable)).toEqual(portable);
+    expect(createStoredReadSchema(schema).parse(portable)).toEqual(portable);
+    const current = { homeId: row.homeId, managedId: row.id, expectedIntentRevision: 0, requestId: 'request' };
+    const carriers = [
+      [ManagedControllerCurrentnessV1Schema, current],
+      [ManagedControllerSubmitInputV1Schema, current],
+      [ManagedControllerContextInputV1Schema, current],
+      [ManagedEnrollmentCorrelationV1Schema, { ...current, resource: row.resource }],
+      [ManagedControllerReportV1Schema, { ...current, result: { kind: 'bound', resource: row.resource } }],
+      [ManagedInstallationPurposeV1Schema, { ...current, resource: row.resource,
+        operationId: 'operation', taskId: 'task', expectedPromptKind: 'ssh.trustHost', phase: 'answer' }],
+    ] as const;
+    for (const [carrier, value] of carriers) {
+      expect(carrier.safeParse(value).success).toBe(true);
+      expect(carrier.safeParse({ ...value, controller }).success).toBe(true);
+      expect(carrier.safeParse({ ...value, controller: { machineId: controller.machineId } }).success).toBe(false);
+      expect(carrier.safeParse({ ...value, controller: { installationId: controller.installationId } }).success).toBe(false);
+    }
+    expect(schema.safeParse({ ...portable, controller: { machineId: controller.machineId } }).success).toBe(false);
+    expect(schema.parse({ ...portable, submittedNativeEffect: { intentRevision: 0, requestId: 'request', intent: 'start' } }))
+      .toMatchObject({ submittedNativeEffect: { intentRevision: 0, requestId: 'request', intent: 'start' } });
+    expect(ManagedControllerUpdateInputV1Schema.parse({ homeId: row.homeId, managedId: row.id,
+      expectedIntentRevision: 0, controller: null, reviewedPendingEffects: true }).controller).toBeNull();
+    expect(ManagedPolicyAdmissionInputV1Schema.safeParse({ ...current, purpose: { kind: 'retention' } }).success).toBe(false);
+    expect(ManagedPolicyAdmissionInputV1Schema.safeParse({ ...current, controller, purpose: { kind: 'retention' } }).success).toBe(true);
+    expect(ManagedWakeTargetV1Schema.parse({ homeId: row.homeId, managedId: row.id, enrolledMachineId: 'guest',
+      expectedIntentRevision: 0, origin: { kind: 'finite-command', actionRequestId: 'request' }, reason: 'admitted-work' }))
+      .not.toHaveProperty('controller');
+  });
   it('retains the exact preset environment and independent setup outcome on the creation row', () => {
     const setup = { ...row, preset: { id: 'preset', revision: 4 }, enrolledMachineId: 'guest',
       environmentSetup: { environment: { setupScript: 'echo prepared' }, state: 'failed', errorCode: 'setup_failed' } };

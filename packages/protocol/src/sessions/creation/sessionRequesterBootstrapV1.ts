@@ -312,7 +312,7 @@ export function sealExternalActionRequesterAccountContextV1(input: Readonly<{
   if (moveRecipient && !isReviewedChildRecipientPurpose(authorization, input.purpose)) throw new Error('requester_account_move_root_mismatch');
   if (preparation && !isWorkspaceSyncPreparationRoot(authorization)) throw new Error('requester_account_prepare_root_mismatch');
   const wake = input.purpose.kind === 'managed_finite_wake' ? authorization.managedFiniteWake : undefined;
-  if (input.purpose.kind === 'managed_finite_wake' && (!wake
+  if (input.purpose.kind === 'managed_finite_wake' && (!wake?.target.controller
     || createCanonicalJsonSigningInput(wake.target) !== createCanonicalJsonSigningInput(input.purpose.target)
     || wake.installationPublicKey !== encodeBase64(input.installationPublicKey, 'base64url'))) {
     throw new Error('requester_account_controller_mismatch');
@@ -328,7 +328,7 @@ export function sealExternalActionRequesterAccountContextV1(input: Readonly<{
   const ciphertext = sealBoxBundle({ plaintext: new TextEncoder().encode(JSON.stringify(plaintext)),
     recipientPublicKey: ed25519.utils.toMontgomery(input.installationPublicKey), randomBytes: input.randomBytes });
   const sealed = { kind: 'installation_sealed_v1' as const,
-    installationId: moveRecipient?.installationId ?? preparation?.controller.installationId ?? wake?.target.controller.installationId ?? authorization.binding.installationId,
+    installationId: moveRecipient?.installationId ?? preparation?.controller.installationId ?? wake?.target.controller?.installationId ?? authorization.binding.installationId,
     ciphertext: encodeBase64(ciphertext, 'base64url') };
   return wake ? { ...authorization, managedFiniteWake: { ...wake, requesterAccountContext: sealed } }
     : { ...authorization, requesterAccountContext: sealed };

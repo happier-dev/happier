@@ -274,9 +274,14 @@ export async function armPendingActivationAuthorizationInTx(params: Readonly<{
     });
     let managedControllerPublication: PendingActivationPublicationTarget['managedControllerPublication'];
     if (managedTarget) {
-        const controller = await params.tx.machine.findUniqueOrThrow({ where: { id: managedTarget.controller.machineId }, select: { accountId: true } });
-        managedControllerPublication = await markAccountChanged(params.tx, {
-            accountId: controller.accountId, kind: 'machine', entityId: managedTarget.controller.machineId,
+        if (managedTarget.controller) {
+            const controller = await params.tx.machine.findUniqueOrThrow({ where: { id: managedTarget.controller.machineId }, select: { accountId: true } });
+            managedControllerPublication = await markAccountChanged(params.tx, {
+                accountId: controller.accountId, kind: 'machine', entityId: managedTarget.controller.machineId,
+            });
+        } else managedControllerPublication = await markAccountChanged(params.tx, {
+            accountId: session.accountId, kind: 'account', entityId: managedTarget.managedId,
+            hint: { managedMachinePolicy: true },
         });
     }
     const targetMachine = admittedTarget ? await params.tx.machine.findUniqueOrThrow({ where: { id: admittedTarget.machineId }, select: { accountId: true } }) : undefined;

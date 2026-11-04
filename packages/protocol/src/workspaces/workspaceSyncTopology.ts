@@ -68,8 +68,8 @@ function readCurrentWorkspaceSyncChild(input: Readonly<{
       machineId: workspace.machineId, managedMachine: row, projection: fact.projection })
     || !actualRoot || !nativeRoot || !(input.context?.rootsEqual
       ? input.context.rootsEqual(actualRoot, nativeRoot) : actualRoot === nativeRoot)) return unavailable;
-  if (observation.storage.kind === 'bind' && (fact.controller.machineId !== row.controller.machineId
-    || fact.controller.installationId !== row.controller.installationId)) return unavailable;
+  if (observation.storage.kind === 'bind' && (fact.controller.machineId !== row.controller?.machineId
+    || fact.controller.installationId !== row.controller?.installationId)) return unavailable;
   return { ok: true, fact };
 }
 
@@ -110,7 +110,7 @@ export function resolveWorkspaceSyncEndpoint(input: WorkspaceSyncEndpointContext
   if (observation.storage.kind === 'child') return unchanged;
   if (input.purpose !== 'admitted_mapping' && !fact.controller.available) return unavailable;
   const parent = resolveWorkspaceRefV1(input.workspaceRefs, { serverId: workspace.serverId,
-    machineId: row.controller.machineId, rootPath: observation.storage.hostPath }, input.context);
+    machineId: fact.controller.machineId, rootPath: observation.storage.hostPath }, input.context);
   if (parent.kind !== 'resolved' || ('workspace' in input && parent.ref.id === input.workspace.id)
     || (parent.ref.projectKey && workspace.projectKey && parent.ref.projectKey !== workspace.projectKey)) return unavailable;
   return { ok: true, ...('workspace' in input ? { workspace: input.workspace } : {}), endpoint: parent.ref };

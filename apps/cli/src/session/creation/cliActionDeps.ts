@@ -1,3 +1,4 @@
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { CliActionDepsParams } from '../actions/cliActionDeps/types';
 import { incompatibleSessionSpawnTarget, projectSessionInitialAccessEnvelopeHostErrorResult } from '../actions/cliActionDeps/sessionSpawnErrors';
 import { SessionSpawnNewIncompatibleTargetV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
@@ -490,8 +491,7 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
               ? { authorization: context.externalActionExecutionAuthorization } : {}),
           });
           if (retained.homeId !== managedCreation.homeId || retained.id !== managedCreation.managedId
-            || retained.controller.machineId !== managedCreation.controller.machineId
-            || retained.controller.installationId !== managedCreation.controller.installationId
+            || !sameStrictJsonValue(retained.controller, managedCreation.controller)
             || retained.creationState !== 'active' || retained.archivedAt !== undefined
             || retained.allocation !== 'bound' || !retained.resource
             || retained.enrolledMachineId !== executionTarget.machineId) {

@@ -214,7 +214,7 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
       };
       if (child?.projection.observation.storage.kind === 'bind') {
         const parent = resolveWorkspaceRefV1(snapshot.workspaceRefs, { serverId: runtime.serverId,
-          machineId: child.managedMachine.controller.machineId, rootPath: child.projection.observation.storage.hostPath });
+          machineId: child.controller.machineId, rootPath: child.projection.observation.storage.hostPath });
         if (parent.kind !== 'resolved') return refused('workspace_sync_child_unavailable');
         parentWorkspace = workspaceAddressFromRefV1(parent.ref);
         facts = { ...facts,

@@ -39,6 +39,7 @@ export async function readUiWorkspaceSyncChildMachineFacts(account: LazyActionAc
                         const managedMachine = await managed.execute('machines.managed.get', {
                             homeId: account.serverId, managedId: child.projection.relation.managedMachineId,
                         }, { signal });
+                        if (!managedMachine.controller) throw new Error('Child controller is unavailable');
                         return { ...child, installationId, managedMachine,
                             controller: { ...managedMachine.controller, available: false } };
                     })();

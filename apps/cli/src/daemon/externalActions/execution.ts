@@ -1010,8 +1010,8 @@ resolveServerFeaturesSnapshot?: () =>
             const authorization = context.externalActionExecutionAuthorization;
             if (authorization) {
               if (!externalActionInstallationIdentity || machine.homeId !== authorization.binding.serverIdentityId
-                || machine.controller.machineId !== authorization.binding.machineId
-                || machine.controller.installationId !== authorization.binding.installationId) return { ok: false, errorCode: 'intent_changed', error: 'intent_changed' };
+                || machine.controller?.machineId !== authorization.binding.machineId
+                || machine.controller?.installationId !== authorization.binding.installationId) return { ok: false, errorCode: 'intent_changed', error: 'intent_changed' };
               const controllerCustody = authorization.binding.accountId !== authorization.binding.custodianAccountId;
               const encryption = authorization.binding.accountEncryptionMode === 'e2ee' && !controllerCustody
                 ? await (requesterAccountContext ? requesterAccountContext.resolveEncryption : externalActionIngressOwner?.resolveEncryption)?.(context.signal, authorization) : undefined;
@@ -1092,9 +1092,9 @@ resolveServerFeaturesSnapshot?: () =>
               if (
                 !externalActionInstallationIdentity ||
                 machine.homeId !== authorization.binding.serverIdentityId ||
-                machine.controller.machineId !==
+                machine.controller?.machineId !==
                   authorization.binding.machineId ||
-                machine.controller.installationId !==
+                machine.controller?.installationId !==
                   authorization.binding.installationId ||
                 machine.enrolledMachineId !== input.executionTarget.machineId
               ) {
@@ -1159,11 +1159,6 @@ resolveServerFeaturesSnapshot?: () =>
             observeRecordedApprovalExecution: args => executor.observeRecordedApprovalExecution(args),
             isRequesterRuntimeCurrent: isManagedApprovalRequesterRuntimeCurrent,
           }),
-          observeEnrollmentPolicyApproval: request => createManagedSessionStartApprovalObserver({
-            actionId: request.actionId, credentials, machineId: params.machineId,
-            observeRecordedApprovalExecution: args => executor.observeRecordedApprovalExecution(args),
-            isRequesterRuntimeCurrent: isManagedApprovalRequesterRuntimeCurrent,
-          })(request),
           observeActionExecution: request => {
             if (!apiMachineForSessions) return Promise.resolve({ ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' });
             const rpcContext = resolveRequesterIngress(executionContext);

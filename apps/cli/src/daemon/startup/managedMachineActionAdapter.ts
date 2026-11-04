@@ -1,3 +1,4 @@
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps, ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ManagedAcquireInputV1Schema, ManagedControllerUpdateInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -51,6 +52,7 @@ type ManagedMachineActionAdapterParams = Readonly<{
     executeManagedPolicyAction?: (machine: ManagedMachineV1, context: ActionExecutorContext,
         runApproved: (context: ActionExecutorContext) => Promise<ManagedMachineV1>) => Promise<ManagedMachineV1>;
     prepareRequesterAccountContext?: PrepareExternalActionRequesterAccountContext;
+    subscribeManagedMachineChanges?: ApiMachineClient['onManagedMachinePolicyInvalidated'];
     acquireRuntimeRegistryLease(): Promise<PluginRuntimeRegistryLease>;
 }>;
 
@@ -95,8 +97,8 @@ export function createManagedSessionStartApprovalObserver(params: Readonly<{
         }
         if (!authorization || !root || root.actionId !== 'machines.managed.acquire'
             || root.requestId !== context.actionRequestId || root.serverIdentityId !== machine.homeId
-            || root.machineId !== params.machineId || root.machineId !== machine.controller.machineId
-            || root.installationId !== machine.controller.installationId || root.custodianAccountId !== machine.custodianAccountId
+            || root.machineId !== params.machineId || root.machineId !== machine.controller?.machineId
+            || root.installationId !== machine.controller?.installationId || root.custodianAccountId !== machine.custodianAccountId
             || (actionId === 'session.spawn_new' && (!root.sessionActionOrigin || !root.sessionActionSource))
             || readAccountIdFromToken(params.credentials.token) !== root.accountId
             || !root.accountEncryptionMode || !requesterHttpProjection
@@ -143,6 +145,7 @@ async function withBoundDriver<T>(params: ManagedMachineActionAdapterParams, sig
                 credentials: controllerCredentials,
                 homeTarget,
                 ...(params.readPolicyCurrent ? { readPolicyCurrent: params.readPolicyCurrent } : {}),
+                ...(params.subscribeManagedMachineChanges ? { subscribeManagedMachineChanges: params.subscribeManagedMachineChanges } : {}),
             }));
         } finally {
             await lease.release();
@@ -246,7 +249,7 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
         try {
             const move = ManagedControllerUpdateInputV1Schema.parse(input);
             if (machine.id !== move.managedId || machine.homeId !== move.homeId
-                || machine.controller.machineId !== move.controller.machineId || machine.controller.installationId !== move.controller.installationId
+                || !sameStrictJsonValue(machine.controller, move.controller ?? undefined)
                 || machine.custodianAccountId !== readAccountIdFromToken(params.credentials.token)) {
                 throw Object.assign(new Error('Moved controller receipt is not current'), { code: 'controller_unavailable' });
             }

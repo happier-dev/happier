@@ -22,6 +22,8 @@ import {
     managedMachineConsentKey,
 } from './machineCollectionModel';
 
+function managed(id: string): ManagedMachineV1 & Readonly<{ controller: NonNullable<ManagedMachineV1['controller']> }>;
+function managed(id: string, overrides: Partial<ManagedMachineV1>): ManagedMachineV1;
 function managed(id: string, overrides: Partial<ManagedMachineV1> = {}): ManagedMachineV1 {
     return { id, homeId: 'home-a', custodianAccountId: 'owner',
         launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Build box', choices: {} },

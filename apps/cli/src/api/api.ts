@@ -1352,7 +1352,7 @@ export class ApiClient {
     const managedEnrollment = opts.managedEnrollment
       ? ManagedEnrollmentCorrelationV1Schema.parse(opts.managedEnrollment) : undefined;
     const devcontainerChild = managedEnrollment ? deriveManagedDevcontainerChildProjectionV1({
-      managedMachineId: managedEnrollment.managedId, controllerMachineId: managedEnrollment.controller.machineId,
+      managedMachineId: managedEnrollment.managedId, controllerMachineId: managedEnrollment.controller?.machineId,
       enrolledMachineId: opts.machineId, resource: managedEnrollment.resource,
     }) : undefined;
     const accountMode = await this.getAccountEncryptionMode({ throwOnTransportError: true });

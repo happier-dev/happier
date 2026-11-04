@@ -151,6 +151,35 @@ function staticRetentionQualification(machine: ManagedMachineV1, url: URL, init?
 }
 
 describe('managed Machine detail', () => {
+    it('renders an Account-owned Machine without inventing a managing computer', async () => {
+        const target = await upsertAndActivateServer({ serverUrl: 'https://managed-account-detail.test', scope: 'tab' });
+        const homeId = 'srv_managed_account_detail';
+        await setServerProfileIdentityForUrl(target.serverUrl, homeId);
+        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: createAccountTokenForTests('owner') });
+        const machine = ManagedMachineV1Schema.parse({ id: 'account-owned', homeId, custodianAccountId: 'owner',
+            launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Account guest', choices: {} },
+            allocation: 'bound', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 0,
+            resource: { contributionRef: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, value: { resourceId: 'account-native' } },
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
+        const serverId = resolveServerProfileScopeIdForIdentifier(target.id) || target.id;
+        storage.setState({ machineListByServerId: { [serverId]: [] } });
+        setRuntimeFetch(async input => {
+            const path = new URL(String(input)).pathname;
+            if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
+            if (path === '/v1/machines/managed/actions/get') return Response.json(machine);
+            if (path === '/v1/machines/managed/actions/list') return Response.json({ machines: [machine] });
+            return Response.json({ error: 'not_found' }, { status: 404 });
+        });
+        const screen = await renderScreen(<ManagedMachineDetail serverId={target.id} managedId={machine.id} />);
+        try {
+            await flushHookEffects({ cycles: 30 });
+            expect(screen.findByTestId('managed-machine.detail')).not.toBeNull();
+            expect(screen.findByTestId('managed-machine.controller')).toBeNull();
+            expect(screen.findByTestId('managed-machine.controller.pending')).toBeNull();
+            expect(screen.findByTestId('managed-machine.controller-unavailable')).toBeNull();
+        } finally { await screen.unmount(); }
+    });
     it('reads a cold managed destination through the real consumed Home URL and retained route producer', async () => {
         const target = await upsertAndActivateServer({ serverUrl: 'https://managed-cold-destination.test', scope: 'tab' });
         const homeId = 'srv_managed_cold_destination';
@@ -276,11 +305,11 @@ describe('managed Machine detail', () => {
         await setServerProfileIdentityForUrl(target.serverUrl, `srv_managed_missing_${removed}`);
         vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: createAccountTokenForTests('owner', { currentAccount: true }) });
         const provider = { pluginId: 'custom.provisioner', localId: 'native' };
-        const machine: ManagedMachineV1 = { id: 'missing-native-owner', homeId: `srv_managed_missing_${removed}`, custodianAccountId: 'owner',
+        const machine = { id: 'missing-native-owner', homeId: `srv_managed_missing_${removed}`, custodianAccountId: 'owner',
             launch: { provider, schemaVersion: 1, name: 'Retained resource', choices: {} },
             controller: { machineId: 'controller', installationId: 'installation' }, allocation: 'bound', creationState: 'active',
             resource: { contributionRef: provider, schemaVersion: 1, value: { resourceId: 'native-id' } },
-            desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false };
+            desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } satisfies ManagedMachineV1;
         const serverId = resolveServerProfileScopeIdForIdentifier(target.id) || target.id;
         storage.setState({ machineListByServerId: { [serverId]: [createMachineFixture({ id: machine.controller.machineId,
             installationId: machine.controller.installationId, updatedAt: Date.now() })] } });
@@ -321,12 +350,12 @@ describe('managed Machine detail', () => {
         await setServerProfileIdentityForUrl(target.serverUrl, `srv_managed_birth_${ownership}`);
         vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: createAccountTokenForTests('owner', { currentAccount: true }) });
         const provider = { pluginId: 'custom.provisioner', localId: 'native' };
-        const machine: ManagedMachineV1 = { id: 'birth-resource', homeId: `srv_managed_birth_${ownership}`,
+        const machine = { id: 'birth-resource', homeId: `srv_managed_birth_${ownership}`,
             custodianAccountId: ownership === 'shared' ? 'foreign-owner' : 'owner',
             launch: { provider, schemaVersion: 1, name: 'Born for Session', choices: {} },
             controller: { machineId: ownership === 'moved' ? 'new-controller' : 'controller', installationId: 'installation' }, allocation: 'bound', creationState: 'active',
             enrolledMachineId: 'guest', resource: { contributionRef: provider, schemaVersion: 1, value: { resourceId: 'native-id' } },
-            desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false };
+            desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } satisfies ManagedMachineV1;
         const source = createSessionFixture({ id: 'original-source', serverId: target.id, metadata: {
             name: 'Original source Session', path: '/repo', host: 'guest', machineId: 'guest', sessionCreationCorrespondenceV1: { v: 1,
                 sessionCreationTag: deriveSessionCreationTagV1({ callerCreationNamespace: 'user', creationKey: 'birth' }),
@@ -510,6 +539,8 @@ describe('managed Machine detail', () => {
             controller: { machineId: 'controller', installationId: 'installation' }, allocation: 'bound', creationState: 'active',
             resource: { contributionRef: provider, schemaVersion: 1, value: { resourceId: 'native-id' } },
             desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false };
+        const nativeController = machine.controller;
+        if (!nativeController) throw new Error('The native fixture requires its installed controller.');
         machine = { ...machine, reviewedFacts: { launch: machine.launch, controller: machine.controller,
             optionStatus: 'current', billing: { location: 'cloud', stoppedBilling: 'billed' }, prerequisites: [],
             retentionCapabilities: { supportedIntents: ['start', 'stop', 'delete'] },
@@ -517,10 +548,10 @@ describe('managed Machine detail', () => {
         const authored = { retention: { kind: 'deadline' as const, at: 1_790_008_200_000, effect: 'stop' as const, interrupts: true as const },
             wakeOnAcceptedMessage: false };
         const serverId = resolveServerProfileScopeIdForIdentifier(target.id) || target.id;
-        storage.setState({ machineListByServerId: { [serverId]: [createMachineFixture({ id: machine.controller.machineId,
-            installationId: machine.controller.installationId, updatedAt: Date.now() })] } });
-        const controllerRow = { ...createPlainMachineRowFixture({ id: machine.controller.machineId, accountId: 'owner' }),
-            installationId: machine.controller.installationId };
+        storage.setState({ machineListByServerId: { [serverId]: [createMachineFixture({ id: nativeController.machineId,
+            installationId: nativeController.installationId, updatedAt: Date.now() })] } });
+        const controllerRow = { ...createPlainMachineRowFixture({ id: nativeController.machineId, accountId: 'owner' }),
+            installationId: nativeController.installationId };
         const requests: unknown[] = [];
         setRuntimeFetch(async (input, init) => {
             const url = new URL(String(input));
@@ -1828,11 +1859,11 @@ describe('managed Machine detail', () => {
         await screen.unmount();
     });
     it('shows only the observed installer stage and offers retry only for an explicit failed installation task', async () => {
-        const machine: ManagedMachineV1 = { id: 'installer-managed', homeId: 'installer-home', custodianAccountId: 'owner',
+        const machine = { id: 'installer-managed', homeId: 'installer-home', custodianAccountId: 'owner',
             launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Installing guest', choices: {} },
             controller: { machineId: 'controller', installationId: 'installation' }, allocation: 'bound', creationState: 'active',
             resource: { contributionRef: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, value: { resourceId: 'existing' } },
-            desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false };
+            desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } satisfies ManagedMachineV1;
         const snapshot: import('@happier-dev/protocol/actions/operations/v1').ActionOperationSnapshotV1 = {
             version: 1, operationId: 'installer-operation', revision: 1, actionId: 'machines.managed.acquire', state: 'running',
             scope: { accountId: 'owner', machineId: 'controller' }, title: 'Create managed machine', createdAt: 1, startedAt: 2,
@@ -2091,11 +2122,11 @@ describe('managed Machine detail', () => {
         const target = await upsertAndActivateServer({ serverUrl: 'https://managed-policy-approval.test', scope: 'tab' });
         await setServerProfileIdentityForUrl(target.serverUrl, 'srv_managed_policy_approval');
         vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: createAccountTokenForTests('owner', { currentAccount: true }) });
-        const machine: ManagedMachineV1 = { id: 'ask-policy', homeId: 'srv_managed_policy_approval', custodianAccountId: 'owner',
+        const machine = { id: 'ask-policy', homeId: 'srv_managed_policy_approval', custodianAccountId: 'owner',
             launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Ask resource', choices: {} },
             controller: { machineId: 'controller', installationId: 'installation' }, allocation: 'bound', creationState: 'active',
             resource: { contributionRef: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, value: { resourceId: 'native-id' } },
-            desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false };
+            desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } satisfies ManagedMachineV1;
         const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'owner', encryptionMode: 'plain' });
         const nativeRequests: unknown[] = [];
         storage.setState({ machineListByServerId: { [resolveServerProfileScopeIdForIdentifier(target.id)]: [
@@ -2145,10 +2176,10 @@ describe('managed Machine detail', () => {
         vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: createAccountTokenForTests('owner', { currentAccount: true }) });
         const launch: ManagedMachineV1['launch'] = { provider: { pluginId: 'custom.provisioner', localId: 'native' },
             schemaVersion: 1, name: 'Timeout resource', choices: {} };
-        const machine: ManagedMachineV1 = { id: 'managed-keep-timeout', homeId: 'srv_managed_keep_timeout', custodianAccountId: 'owner', launch,
+        const machine = { id: 'managed-keep-timeout', homeId: 'srv_managed_keep_timeout', custodianAccountId: 'owner', launch,
             controller: { machineId: 'controller', installationId: 'installation' }, enrolledMachineId: 'ordinary-enrolled',
             resource: { contributionRef: launch.provider, schemaVersion: 1, value: {} }, allocation: 'bound', creationState: 'active',
-            desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false };
+            desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } satisfies ManagedMachineV1;
         storage.getState().applyMachines([createMachineFixture({ id: machine.controller.machineId,
             installationId: machine.controller.installationId, activeAt: Date.now() })], true,
             { sourceServerId: resolveServerProfileScopeIdForIdentifier(target.id) });
@@ -2186,10 +2217,10 @@ describe('managed Machine detail', () => {
         vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: createAccountTokenForTests('owner', { currentAccount: true }) });
         const launch: ManagedMachineV1['launch'] = { provider: { pluginId: 'custom.provisioner', localId: 'native' },
             schemaVersion: 1, name: 'Revalidated resource', choices: {} };
-        const machine: ManagedMachineV1 = { id: 'managed-keep-revalidate', homeId: 'srv_managed_keep_revalidate', custodianAccountId: 'owner', launch,
+        const machine = { id: 'managed-keep-revalidate', homeId: 'srv_managed_keep_revalidate', custodianAccountId: 'owner', launch,
             controller: { machineId: 'controller', installationId: 'installation' }, enrolledMachineId: 'ordinary-enrolled',
             resource: { contributionRef: launch.provider, schemaVersion: 1, value: {} }, allocation: 'bound', creationState: 'active',
-            desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false };
+            desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } satisfies ManagedMachineV1;
         storage.getState().applyMachines([createMachineFixture({ id: machine.controller.machineId,
             installationId: machine.controller.installationId, activeAt: Date.now() })], true,
             { sourceServerId: resolveServerProfileScopeIdForIdentifier(target.id) });
@@ -2231,7 +2262,7 @@ describe('managed Machine detail', () => {
         vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: createAccountTokenForTests('owner') });
         const launch: ManagedMachineV1['launch'] = { provider: { pluginId: 'custom.provisioner', localId: 'native' },
             schemaVersion: 1, name: 'Original recipe', choices: { cpu: 4, image: 'captured-image' } };
-        const machine: ManagedMachineV1 = { id: 'managed-enrolled', homeId: 'srv_enrolled_detail', custodianAccountId: 'owner', launch,
+        const machine = { id: 'managed-enrolled', homeId: 'srv_enrolled_detail', custodianAccountId: 'owner', launch,
             controller: { machineId: 'new-controller', installationId: 'new-installation' }, enrolledMachineId: 'ordinary-enrolled',
             resource: { contributionRef: launch.provider, schemaVersion: 1, value: { resourceId: 'original-native' } },
             allocation: 'bound', creationState: 'active', desired: 'stop', desiredWhen: 'now', intentRevision: 3,
@@ -2243,7 +2274,7 @@ describe('managed Machine detail', () => {
                 nativeFacts: { size: { id: 'captured-size', title: 'Four-core guest', cpuCores: 4 },
                     image: { id: 'captured-image', title: 'Original Linux image', description: 'Long-term support' },
                     location: { id: 'captured-location', title: 'Original region', countryCode: 'DE' } },
-                prices: [{ amount: '0.125', currency: 'USD', unit: 'hour', source: 'captured-price', observedAt: 5 }] } };
+                prices: [{ amount: '0.125', currency: 'USD', unit: 'hour', source: 'captured-price', observedAt: 5 }] } } satisfies ManagedMachineV1;
         const receiptController = createMachineFixture({ id: 'original-controller', installationId: 'original-installation',
             metadata: { ...createMachineFixture().metadata!, displayName: 'Original controller computer' } });
         storage.getState().applyMachines([receiptController], true, { sourceServerId: resolveServerProfileScopeIdForIdentifier(target.id) });

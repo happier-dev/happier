@@ -181,6 +181,8 @@ describe('unused Stop through guest drain and controller operation custody', () 
         'settles a definite pre-handler refusal at %s without a phantom native effect', async boundary => {
         const test = setup(undefined, undefined, 'start');
         const machine = test.readMachine();
+        const nativeController = machine.controller;
+        if (!nativeController) throw new Error('The native fixture requires its installed controller.');
         const home = test.post.getMockImplementation()!;
         let submittedReads = 0;
         test.post.mockImplementation(async (url, body, config) => {
@@ -196,7 +198,7 @@ describe('unused Stop through guest drain and controller operation custody', () 
             return await home(url, body, config);
         });
         const input = { homeId: machine.homeId, managedId: machine.id, intent: 'start', when: 'now', expectedRevision: 1 };
-        const operations = createHostActionOperationRuntime({ machineId: machine.controller.machineId,
+        const operations = createHostActionOperationRuntime({ machineId: nativeController.machineId,
             resolveAccountId: async () => 'owner', generateOperationId: () => 'not-run' });
         let work: ReturnType<typeof test.driver.execute> | undefined;
         await operations.observeExecution({ actionId: 'machines.managed.power.set', input, actionRequestId: 'control',
@@ -221,11 +223,13 @@ describe('unused Stop through guest drain and controller operation custody', () 
     ] as const)('retains native unknown $role receipts without replay and settles definite refusal', async ({ intent, role, action }) => {
         const test = setup(undefined, { kind: 'unknown' }, intent);
         const machine = test.readMachine();
+        const nativeController = machine.controller;
+        if (!nativeController) throw new Error('The native fixture requires its installed controller.');
         const input = intent === 'rebuild'
             ? { homeId: machine.homeId, managedMachineId: machine.id, kind: 'rebuild', expectedRevision: 1, reviewedEffectDigest: 'reviewed-effects' }
             : { homeId: machine.homeId, managedId: machine.id, intent, when: 'now', expectedRevision: 1,
                 ...(intent === 'delete' ? { reviewedDependencies: true } : {}) };
-        const operations = createHostActionOperationRuntime({ machineId: machine.controller.machineId,
+        const operations = createHostActionOperationRuntime({ machineId: nativeController.machineId,
             resolveAccountId: async () => 'owner', generateOperationId: () => `native-${role}` });
         let work: ReturnType<typeof test.driver.execute> | undefined;
         const execute = () => operations.observeExecution({ actionId: action, input, actionRequestId: 'control',
@@ -261,7 +265,7 @@ describe('unused Stop through guest drain and controller operation custody', () 
         const refusedResult = { kind: 'refused' as const, code: 'native_denied', nativeCause };
         const refused = setup(undefined, refusedResult, intent, undefined, undefined,
             intent === 'rebuild' ? refusedResult : undefined);
-        const refusalOperations = createHostActionOperationRuntime({ machineId: machine.controller.machineId,
+        const refusalOperations = createHostActionOperationRuntime({ machineId: nativeController.machineId,
             resolveAccountId: async () => 'owner', generateOperationId: () => `refused-${role}` });
         let refusalWork: ReturnType<typeof refused.driver.execute> | undefined;
         await refusalOperations.observeExecution({ actionId: action, input, actionRequestId: 'control',
@@ -285,12 +289,14 @@ describe('unused Stop through guest drain and controller operation custody', () 
     ] as const)('retains the managed target through $action $boundary $code', async ({ boundary, intent, action, code }) => {
         const test = setup(undefined, undefined, intent);
         const machine = test.readMachine();
+        const nativeController = machine.controller;
+        if (!nativeController) throw new Error('The native fixture requires its installed controller.');
         const home = test.post.getMockImplementation()!;
         test.post.mockImplementation(async (url, body, config) => String(url).endsWith(`/${boundary}`)
             ? { status: 503, data: { error: code } }
             : await home(url, body, config));
         const snapshots: import('@happier-dev/protocol/actions').ActionOperationSnapshotV1[] = [];
-        const operations = createHostActionOperationRuntime({ machineId: machine.controller.machineId,
+        const operations = createHostActionOperationRuntime({ machineId: nativeController.machineId,
             resolveAccountId: async () => 'owner', generateOperationId: () => `unavailable-${boundary}`,
             publishSnapshot: snapshot => { snapshots.push(snapshot); } });
         const input = intent === 'rebuild'
@@ -431,6 +437,8 @@ describe('unused Stop through guest drain and controller operation custody', () 
         const test = setup(undefined, undefined, 'stop');
         test.setMachine({ desired: 'start', retention: { kind: 'unused', afterMs: 3_600_000, effect: 'stop' } });
         const machine = test.readMachine();
+        const nativeController = machine.controller;
+        if (!nativeController) throw new Error('The native fixture requires its installed controller.');
         const home = test.post.getMockImplementation()!;
         test.post.mockImplementation(async (url, body, config) => {
             if (String(url).endsWith('/prepare-policy')) return { status: 200, data: {
@@ -488,7 +496,7 @@ describe('unused Stop through guest drain and controller operation custody', () 
                 });
             } };
         const driver = createManagedMachineAcquisitionDriver({ ...test.driverInput, managedGuestActivity: bridge });
-        const controller = createHostActionOperationRuntime({ machineId: machine.controller.machineId,
+        const controller = createHostActionOperationRuntime({ machineId: nativeController.machineId,
             resolveAccountId: async () => 'owner', generateOperationId: () => 'unused-stop' });
         const approvals = createBlockingApprovalCoordinator();
         let storedApproval: ReturnType<typeof StoredApprovalRequestSchema.parse> | undefined;
@@ -515,15 +523,15 @@ describe('unused Stop through guest drain and controller operation custody', () 
                             runPolicyAction: (preview, runApproved) => executeManagedMachinePolicyAction({
                                 machine: preview, runApproved, serverId: 'home',
                                 context: { ...operation, actionRequestId: 'control', surface: 'cli', runtimeAccountId: 'owner',
-                                    serverIdentityId: machine.homeId, defaultSessionMachineId: machine.controller.machineId,
+                                    serverIdentityId: machine.homeId, defaultSessionMachineId: nativeController.machineId,
                                     actionsSettings: normalizeActionsSettingsV1({ v: 1, actions: {
                                         'machines.managed.power.set': { approvalRequiredSurfaces: ['cli'] },
                                     } }) },
                                 createExecutor: overrides => createActionExecutor({ ...createUnavailableActionTransportDeps(), ...overrides,
                                     isApprovalExecutionOriginCurrent: createDaemonApprovalExecutionOriginCurrentness({
-                                        accountId: 'owner', machineId: machine.controller.machineId, serverId: 'home',
+                                        accountId: 'owner', machineId: nativeController.machineId, serverId: 'home',
                                         resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: machine.homeId,
-                                            machineId: machine.controller.machineId }),
+                                            machineId: nativeController.machineId }),
                                         resolveTarget: createDaemonExternalActionTargetResolver({ credentials: { token: 'token', encryption: null } }),
                                         isAccountCurrent: async () => true, listAccountApiTokens: async () => ({ tokens: [] }),
                                     }),
@@ -603,9 +611,9 @@ describe('unused Stop through guest drain and controller operation custody', () 
                 });
                 for (const surface of ['agent', 'mcp', 'cli'] as const) {
                     expect(await reader.execute('action.operations.get', { serverId: 'home',
-                        machineId: machine.controller.machineId, operationId: 'unused-stop' }, {
+                        machineId: nativeController.machineId, operationId: 'unused-stop' }, {
                         surface, authority: 'account_automation', actionCaller: { kind: 'host' },
-                        serverId: 'home', actionRequestId: `read:${surface}`, defaultSessionMachineId: machine.controller.machineId,
+                        serverId: 'home', actionRequestId: `read:${surface}`, defaultSessionMachineId: nativeController.machineId,
                     })).toEqual({ ok: true, result: current });
                 }
                 const predecessor = PredecessorOperationGetSchema.parse(await controller.handlers.get({ operationId: 'unused-stop' }));
@@ -818,6 +826,8 @@ describe('managed native intent through the accepted Action', () => {
         const test = setup(undefined, undefined, 'start', { observedAt: 1, availability: 'present', power: 'running', storage: 'retained' });
         test.setMachine({ wakeOnAcceptedMessage: true, desired: 'stop' });
         const machine = test.readMachine();
+        const nativeController = machine.controller;
+        if (!nativeController) throw new Error('The native fixture requires its installed controller.');
         const actionOrigin = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-issued-finite-authority', binding: {
             accountId: 'owner', custodianAccountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 }, accountEncryptionMode: 'plain',
             machineId: 'guest', installationId: 'guest-installation', serverIdentityId: machine.homeId, actionId: 'projects.script.run',
@@ -831,16 +841,16 @@ describe('managed native intent through the accepted Action', () => {
         let stored: ReturnType<typeof StoredApprovalRequestSchema.parse> | undefined;
         let waiting!: () => void;
         const held = new Promise<void>(resolve => { waiting = resolve; });
-        const currentness = createDaemonApprovalExecutionOriginCurrentness({ accountId: 'owner', machineId: machine.controller.machineId,
+        const currentness = createDaemonApprovalExecutionOriginCurrentness({ accountId: 'owner', machineId: nativeController.machineId,
             serverId: 'home', resolveCurrentMachineExecutionOriginContext: async () => originCurrent
-                ? { serverIdentityId: machine.homeId, machineId: machine.controller.machineId } : null,
+                ? { serverIdentityId: machine.homeId, machineId: nativeController.machineId } : null,
             resolveTarget: createDaemonExternalActionTargetResolver({ credentials: { token: 'token', encryption: null } }),
             isAccountCurrent: async () => true,
             listAccountApiTokens: async () => ({ tokens: [] }) });
         const work = test.driver.executePolicy(machine, { kind: 'accepted-input-start', target }, { ...test.options, signal: lifetime.signal, actionOrigin,
             runPolicyAction: (policyMachine, runApproved) => executeManagedMachinePolicyAction({ machine: policyMachine,
                 context: { ...test.options.context, signal: lifetime.signal, actionRequestId: 'control', surface: 'cli', runtimeAccountId: 'owner',
-                    serverIdentityId: machine.homeId, defaultSessionMachineId: machine.controller.machineId,
+                    serverIdentityId: machine.homeId, defaultSessionMachineId: nativeController.machineId,
                     actionsSettings: normalizeActionsSettingsV1({ v: 1, actions: { 'machines.managed.power.set': { approvalRequiredSurfaces: ['cli'] } } }) },
                 serverId: 'home', runApproved,
                 createExecutor: overrides => createActionExecutor({ ...createUnavailableActionTransportDeps(), ...overrides,
@@ -1060,8 +1070,10 @@ describe('managed native intent through the accepted Action', () => {
             ? { kind: 'deadline', at: Date.now() + 3_600_000, effect: 'delete', interrupts: true }
             : { kind: 'unused', afterMs: 3_600_000, effect: 'delete' } });
         const machine = test.readMachine();
+        const nativeController = machine.controller;
+        if (!nativeController) throw new Error('The native fixture requires its installed controller.');
         const operationId = `waiting-${kind}`;
-        const operations = createHostActionOperationRuntime({ machineId: machine.controller.machineId,
+        const operations = createHostActionOperationRuntime({ machineId: nativeController.machineId,
             resolveAccountId: async () => 'owner', generateOperationId: () => operationId });
         let work: ReturnType<typeof test.driver.executePolicy> | undefined;
         let settled = false;
@@ -1094,7 +1106,9 @@ describe('managed native intent through the accepted Action', () => {
         const test = setup({ kind, reasons: ['finite'] });
         test.setMachine({ desiredWhen: 'after-idle' });
         const machine = test.readMachine();
-        const operations = createHostActionOperationRuntime({ machineId: machine.controller.machineId,
+        const nativeController = machine.controller;
+        if (!nativeController) throw new Error('The native fixture requires its installed controller.');
+        const operations = createHostActionOperationRuntime({ machineId: nativeController.machineId,
             resolveAccountId: async () => 'owner', generateOperationId: () => `activity-${kind}` });
         let work: ReturnType<typeof test.driver.execute> | undefined;
         let release!: () => void;
@@ -1169,7 +1183,9 @@ describe('managed native intent through the accepted Action', () => {
         const observed: Array<ActionOperationDomainRefV1 | undefined> = [];
         const test = setup(undefined, undefined, 'delete', undefined, () => { observed.push(domainRef); });
         const machine = test.readMachine();
-        const operations = createHostActionOperationRuntime({ machineId: machine.controller.machineId,
+        const nativeController = machine.controller;
+        if (!nativeController) throw new Error('The native fixture requires its installed controller.');
+        const operations = createHostActionOperationRuntime({ machineId: nativeController.machineId,
             resolveAccountId: async () => 'owner', generateOperationId: () => `managed-${source}`,
             publishSnapshot: snapshot => { domainRef = snapshot.domainRef; },
         });
@@ -1374,8 +1390,10 @@ describe('managed native intent through the accepted Action', () => {
         const test = setup();
         test.setMachine({ desiredWhen: 'after-idle', desiredAfterMs: 3_600_000 });
         const machine = test.readMachine();
+        const nativeController = machine.controller;
+        if (!nativeController) throw new Error('The native fixture requires its installed controller.');
         const phases: string[] = [];
-        const operations = createHostActionOperationRuntime({ machineId: machine.controller.machineId,
+        const operations = createHostActionOperationRuntime({ machineId: nativeController.machineId,
             resolveAccountId: async () => 'owner', generateOperationId: () => 'unused-interval',
             publishSnapshot: snapshot => {
                 if (snapshot.progress?.kind === 'phase') phases.push(snapshot.progress.phase);
@@ -1499,9 +1517,11 @@ describe('managed native intent through the accepted Action', () => {
         let waiting!: () => void;
         const held = new Promise<void>(resolve => { waiting = resolve; });
         const initialMachine = test.readMachine();
-        const currentness = createDaemonApprovalExecutionOriginCurrentness({ accountId: 'owner', machineId: initialMachine.controller.machineId,
+        const initialNativeController = initialMachine.controller;
+        if (!initialNativeController) throw new Error('The native fixture requires its installed controller.');
+        const currentness = createDaemonApprovalExecutionOriginCurrentness({ accountId: 'owner', machineId: initialNativeController.machineId,
             serverId: 'home', resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: initialMachine.homeId,
-                machineId: initialMachine.controller.machineId }),
+                machineId: initialNativeController.machineId }),
             resolveTarget: createDaemonExternalActionTargetResolver({ credentials: { token: 'token', encryption: null } }),
             isAccountCurrent: async () => true,
             listAccountApiTokens: async () => ({ tokens: [] }) });
@@ -1526,9 +1546,12 @@ describe('managed native intent through the accepted Action', () => {
             test.confirmIdle.mockImplementation(idle);
         });
         const work = test.driver.executePolicy(test.readMachine(), { kind: 'retention' }, { ...test.options, signal: lifetime.signal,
-            runPolicyAction: (machine, runApproved) => executeManagedMachinePolicyAction({ machine, runApproved, serverId: 'home',
+            runPolicyAction: (machine, runApproved) => {
+                const nativeController = machine.controller;
+                if (!nativeController) throw new Error('The native fixture requires its installed controller.');
+                return executeManagedMachinePolicyAction({ machine, runApproved, serverId: 'home',
                 context: { ...test.options.context, signal: lifetime.signal, actionRequestId: 'control', surface: 'cli',
-                    runtimeAccountId: 'owner', serverIdentityId: machine.homeId, defaultSessionMachineId: machine.controller.machineId,
+                    runtimeAccountId: 'owner', serverIdentityId: machine.homeId, defaultSessionMachineId: nativeController.machineId,
                     actionsSettings: normalizeActionsSettingsV1({ v: 1,
                         actions: { 'machines.managed.delete': { enabled } },
                     }) },
@@ -1547,7 +1570,8 @@ describe('managed native intent through the accepted Action', () => {
                     },
                     approvalsResolveBlockingDecision: args => coordinator.resolveBlockingDecision(args),
                 }),
-            }) });
+            });
+            } });
         const settled = work.then(value => ({ value }), error => ({ error }));
         try {
             const initial = await Promise.race([held.then(() => 'held' as const), settled]);
@@ -1601,7 +1625,9 @@ describe('managed native intent through the accepted Action', () => {
         test.setMachine({ desiredWhen: 'after-idle' });
         let nativePreparation = false;
         let acceptedWork = false;
-        const operations = createHostActionOperationRuntime({ machineId: test.readMachine().controller.machineId,
+        const nativeController = test.readMachine().controller;
+        if (!nativeController) throw new Error('The native fixture requires its installed controller.');
+        const operations = createHostActionOperationRuntime({ machineId: nativeController.machineId,
             resolveAccountId: async () => 'owner', generateOperationId: () => 'late-accepted-work',
             publishSnapshot: snapshot => {
                 nativePreparation = snapshot.progress?.kind === 'phase' && snapshot.progress.phase === 'managed.intent.native-effect';

@@ -26,6 +26,8 @@ export type ManagedConfigurationReceiptInput = Readonly<{
     providerTitle: string;
     /** The managing computer's name; `null` while it is still being read (shown as a pending value, never as words). */
     controllerName?: string | null; caption?: string; mark?: React.ReactNode;
+    /** `account`: no computer manages it (an Account-created machine), so there is no Managed from row (58d U4). */
+    managedBy?: 'computer' | 'account';
     homeName?: string; preset?: ManagedConfigurationFactsV1['preset']; presetPolicy?: MachineRetentionOverrideV1;
     /** Future preset display may use its actual descriptor, without resolving allocation policy. */
     declaredBilling?: BillingCapabilitiesV1;
@@ -83,7 +85,7 @@ export function buildManagedConfigurationReceipt(input: ManagedConfigurationRece
             : `${buildQualifiedPluginContributionKey(credential.purpose.consumer)} · ${credential.purpose.purpose}`,
             value: account.primaryLabel });
     }
-    if (controllerName !== undefined) rows.push({ id: 'controller', label: t('managedMachines.config.managedFrom'), value: controllerName });
+    if (input.managedBy !== 'account' && controllerName !== undefined) rows.push({ id: 'controller', label: t('managedMachines.config.managedFrom'), value: controllerName });
     if (input.homeName) rows.push({ id: 'home', label: t('managedMachines.receipt.joins'), value: input.homeName });
     const preset = facts?.preset ?? input.preset;
     const presetLine = preset ? preset.name

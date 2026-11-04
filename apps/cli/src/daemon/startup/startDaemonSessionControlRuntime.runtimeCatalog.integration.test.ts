@@ -2026,7 +2026,7 @@ describe('startDaemonSessionControlRuntime', () => {
             }
             const policyPurpose = { kind: 'accepted-input-start' as const, target: wakeTarget };
             const policyCorrelation = { homeId, managedId: enrolled.id, expectedIntentRevision: enrolled.intentRevision,
-                requestId: 'private-policy-proof', controller: enrolled.controller };
+                requestId: 'private-policy-proof', controller: selection.controller };
             const policyBody = { ...policyCorrelation, purpose: policyPurpose };
             // Exercise the real installed signer before native preparation too:
             // a sanitized carrier must be strict JSON, not optional undefined.
@@ -2148,9 +2148,10 @@ describe('startDaemonSessionControlRuntime', () => {
                 source: 'network', loadedAtMs: Date.now(), settingsSecretsReadKeys: [], settings, rawSettings: settings });
         };
         publishPolicy(1, policy === 'disabled');
+        const policyController = { machineId: 'controller-policy-gate', installationId: installation.installationId };
         let machine = ManagedMachineV1Schema.parse({ id: 'managed-policy-gate', homeId, custodianAccountId: 'account-policy-gate',
             ...(policy === 'explicit-delete-waiver' ? { enrolledMachineId: 'affected-machine' } : acceptedWake ? { enrolledMachineId: 'guest-policy-gate' } : {}),
-            controller: { machineId: 'controller-policy-gate', installationId: installation.installationId },
+            controller: policyController,
             launch: { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
             allocation: 'bound', creationState: policy === 'creation-cleanup' ? 'canceled' : 'active', resource: { contributionRef: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, value: {} },
             desired: policy === 'wake-approved-replay' ? 'stop' : acceptedWake ? 'start' : 'delete', desiredWhen: 'now', intentRevision: 1,
@@ -2166,7 +2167,7 @@ describe('startDaemonSessionControlRuntime', () => {
             const enrolledMachineId = 'guest-native-original';
             machine = ManagedMachineV1Schema.parse({ ...machine, resource, enrolledMachineId,
                 devcontainerChild: deriveManagedDevcontainerChildProjectionV1({ managedMachineId: machine.id,
-                    controllerMachineId: machine.controller.machineId, enrolledMachineId, resource }) });
+                    controllerMachineId: policyController.machineId, enrolledMachineId, resource }) });
         }
         const cleanupPeers = policy === 'creation-cleanup' ? [
             ManagedMachineV1Schema.parse({ ...machine, id: 'manual-retirement', archivedAt: 1,
@@ -2322,7 +2323,7 @@ describe('startDaemonSessionControlRuntime', () => {
             observedTransport.push({ method: 'POST', path });
             if (policy === 'environment-approved' && path.endsWith('/execution-authorization/verify')) return { status: 200, data: { ok: true } };
             if (policy === 'environment-approved' && path === '/v1/machines/environment/resolve') {
-                expect(body).toEqual({ homeId, machineId: machine.controller.machineId, presetId: 'environment-preset', presetRevision: 0 });
+                expect(body).toEqual({ homeId, machineId: policyController.machineId, presetId: 'environment-preset', presetRevision: 0 });
                 return { status: 200, data: MachineEnvironmentResolveResultV1Schema.parse({ environment: { setupScript: 'printf environment-setup' } }) };
             }
             if (policy === 'environment-approved' && path === '/v1/machines/environment/report') {
@@ -2357,7 +2358,7 @@ describe('startDaemonSessionControlRuntime', () => {
             }
             if (path.endsWith('/policies')) {
                 const census = ManagedPolicyCensusInputV1Schema.parse(body);
-                expect(verifyMachineInstallationProof({ payload: { version: 1, machineId: machine.controller.machineId,
+                expect(verifyMachineInstallationProof({ payload: { version: 1, machineId: policyController.machineId,
                     installationId: installation.installationId, accountId: machine.custodianAccountId, managedPolicyCensus: { homeId } },
                     proof: census.proof, publicKey: installation.publicKey })).toBe(true);
                 policyCensusReads += 1;
@@ -2369,11 +2370,11 @@ describe('startDaemonSessionControlRuntime', () => {
                     const admission = ManagedPolicyAdmissionInputV1Schema.parse(body);
                     cleanupAdmissions.push(admission);
                     expect(admission).toMatchObject({ homeId, managedId: machine.id, expectedIntentRevision: 1,
-                        controller: machine.controller, purpose: { kind: 'creation-cleanup' } });
+                        controller: policyController, purpose: { kind: 'creation-cleanup' } });
                     const proof = decodeManagedPolicyProofV1(String(options?.headers?.[MANAGED_POLICY_PROOF_HEADER]));
                     expect(proof?.purpose).toEqual({ kind: 'creation-cleanup' });
                     expect(proof?.payload.managedPolicy).toMatchObject({ homeId, managedId: machine.id,
-                        expectedIntentRevision: 1, controller: machine.controller, purpose: 'creation-cleanup',
+                        expectedIntentRevision: 1, controller: policyController, purpose: 'creation-cleanup',
                         method: 'POST', path, bodyDigest: managedPolicyDigestV1('body', body),
                         resourceDigest: managedPolicyDigestV1('resource', machine.resource),
                         purposeDigest: managedPolicyDigestV1('purpose', admission.purpose) });
@@ -2388,7 +2389,7 @@ describe('startDaemonSessionControlRuntime', () => {
                 }
                 if (machine.submittedNativeEffect) return { status: 200, data: { machine, submitted: false } };
                 machine = { ...machine, submittedNativeEffect: { intentRevision: machine.intentRevision, requestId: body.requestId,
-                    intent: machine.desired, controller: machine.controller } };
+                    intent: machine.desired, controller: policyController } };
                 return { status: 200, data: { machine, submitted: true } };
             }
             if (path === '/v1/artifacts' && body && typeof body === 'object' && 'body' in body && typeof body.body === 'string' && 'id' in body) {
@@ -2424,9 +2425,9 @@ describe('startDaemonSessionControlRuntime', () => {
             if (policy === 'creation-cleanup' && path === managedMachineActionEndpointPathV1('machines.managed.get')) {
                 return { status: 200, data: machine };
             }
-            if (policy === 'environment-approved' && path === `/v1/machines/${machine.controller.machineId}`) {
+            if (policy === 'environment-approved' && path === `/v1/machines/${policyController.machineId}`) {
                 return { status: 200, data: { machine: { ...ExternalActionMachineBootstrapV1Schema.parse({
-                    id: machine.controller.machineId, active: true, kind: 'persistent', revokedAt: null, replacedByMachineId: null,
+                    id: policyController.machineId, active: true, kind: 'persistent', revokedAt: null, replacedByMachineId: null,
                     installationId: installation.installationId, dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
                 }), storageMode: 'plain', installationPublicKey: encodeBase64(decodeBase64(installation.publicKey, 'base64url'), 'base64') } } };
             }
@@ -2459,11 +2460,11 @@ describe('startDaemonSessionControlRuntime', () => {
                 projectTargetAccounts: unavailable, assertTargetAccountMaterializable: unavailable,
             }), requestAuthRegistry: createConnectedAccountRequestAuthSubjectRegistry(), resolveRequestAuthHttpPort: () => 43123,
             createRedactionLease: () => ({ add() {}, close() {} }) });
-        const apiMachine = new ApiMachineClient(token, { id: machine.controller.machineId, encryptionMode: 'plain',
+        const apiMachine = new ApiMachineClient(token, { id: policyController.machineId, encryptionMode: 'plain',
             metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0 });
         onTestFinished(async () => { await apiMachine.shutdown(); });
         const guardAdmissionDrain = createDaemonAdmissionDrain();
-        const runtime = await startDaemonSessionControlRuntime({ machineId: machine.controller.machineId, credentials, api: {} as never,
+        const runtime = await startDaemonSessionControlRuntime({ machineId: policyController.machineId, credentials, api: {} as never,
             serverBaseUrl: serverUrl, serverId: configuration.activeServerId,
             connectedServicesMaterializationBaseDir: taskDir, getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null, pidToTrackedSession: new Map(), pidToAwaiter: new Map(),
@@ -2472,9 +2473,9 @@ describe('startDaemonSessionControlRuntime', () => {
             spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(), connectedServicesRestartRequestedPids: new Set(),
             externalActionAccountId: machine.custodianAccountId, managedProviderOperationAuthority: authority,
             ...(policy === 'guard-cleanup-ask' ? { admissionDrain: guardAdmissionDrain } : {}),
-            resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: homeId, machineId: machine.controller.machineId }),
+            resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: homeId, machineId: policyController.machineId }),
             readManagedMachinePolicyCurrent: async (managedId, signal) => (await readManagedMachinePolicyCensus({ homeId,
-                controller: machine.controller, custodianAccountId: machine.custodianAccountId, privateKey: installation.privateKey,
+                controller: policyController, custodianAccountId: machine.custodianAccountId, privateKey: installation.privateKey,
                 token, serverUrl, ...(signal ? { signal } : {}) })).machines.find(row => row.id === managedId) ?? null,
             beforeShutdown: vi.fn(), onHappySessionWebhook: vi.fn(), requestShutdown: vi.fn(), processEnv: {},
         });
@@ -2482,7 +2483,7 @@ describe('startDaemonSessionControlRuntime', () => {
             { ...(runtime.externalActionIngressOwner ? { externalActionIngressOwner: runtime.externalActionIngressOwner } : {}) });
         const policyCancellation = new AbortController();
         const wakeTarget = { homeId, managedId: machine.id, enrolledMachineId: 'guest-policy-gate',
-            expectedIntentRevision: machine.intentRevision, controller: machine.controller,
+            expectedIntentRevision: machine.intentRevision, controller: policyController,
             origin: { kind: 'session-input' as const, session: { homeId, sessionId: 'session-policy-gate' },
                 pendingRequestId: 'pending-policy-gate', requestedAt: 1 }, reason: 'admitted-work' as const };
         try {
@@ -2490,17 +2491,17 @@ describe('startDaemonSessionControlRuntime', () => {
                 const ingress = runtime.externalActionIngressOwner;
                 if (!ingress) throw new Error('Expected installed Action ingress');
                 const actionId = 'machines.environment.apply' as const;
-                const input = { homeId, machineId: machine.controller.machineId, presetId: 'environment-preset', presetRevision: 0 };
-                const target = { kind: 'machine' as const, machineId: machine.controller.machineId };
+                const input = { homeId, machineId: policyController.machineId, presetId: 'environment-preset', presetRevision: 0 };
+                const target = { kind: 'machine' as const, machineId: policyController.machineId };
                 const envelope = { v: 1 as const, requestId: 'environment-approved-request', target, input };
                 const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'environment-root', binding: {
                     accountId: machine.custodianAccountId, custodianAccountId: machine.custodianAccountId,
                     authentication: { kind: 'account', tokenEpoch: 0 }, accountEncryptionMode: 'plain',
-                    serverIdentityId: homeId, machineId: machine.controller.machineId, installationId: installation.installationId,
+                    serverIdentityId: homeId, machineId: policyController.machineId, installationId: installation.installationId,
                     actionId, requestId: envelope.requestId, target, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
                 } });
                 const ask = await executeExternalAction({ ...ingress, actionId, envelope, executionAuthorization: authorization,
-                    currentMachineId: machine.controller.machineId, currentAccountId: machine.custodianAccountId,
+                    currentMachineId: policyController.machineId, currentAccountId: machine.custodianAccountId,
                     currentInstallationId: installation.installationId, principal: { accountId: machine.custodianAccountId,
                         authentication: { kind: 'account', tokenEpoch: 0 }, authority: 'account_automation' },
                     verifyExecutionAuthorization: async request => {
@@ -2529,7 +2530,7 @@ describe('startDaemonSessionControlRuntime', () => {
                 const listed = ActionOperationListV1ResponseSchema.parse(await apiMachine.invokeLocalMachineAction(ACTION_OPERATION_RPC_METHODS_V2.list, {}));
                 expect(listed.items).toHaveLength(1);
                 expect(listed.items[0]).toMatchObject({ actionId, requestId: envelope.requestId, operationId: output.operationId, state: 'succeeded',
-                    domainRef: { kind: 'machineEnvironment', machineId: machine.controller.machineId, preset: { id: input.presetId, revision: 0 }, terminalId: output.terminalId } });
+                    domainRef: { kind: 'machineEnvironment', machineId: policyController.machineId, preset: { id: input.presetId, revision: 0 }, terminalId: output.terminalId } });
                 expect(await ingress.executor.execute('approval.request.decide', { artifactId, decision: 'approve' },
                     { surface: 'cli', serverId: configuration.activeServerId, actionRequestId: 'environment-repeated-answer' })).toMatchObject({ ok: true });
                 expect(setupLaunches).toHaveLength(1);
@@ -2542,7 +2543,7 @@ describe('startDaemonSessionControlRuntime', () => {
                 const ingress = runtime.externalActionIngressOwner;
                 if (!ingress) throw new Error('Expected the installed credentialed Action ingress');
                 const request = await ingress.executor.execute('machines.managed.acquire', {
-                    selection: { kind: 'one-off', homeId, controller: machine.controller, launch: machine.launch,
+                    selection: { kind: 'one-off', homeId, controller: policyController, launch: machine.launch,
                         retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false },
                 }, { surface: 'cli', serverId: configuration.activeServerId, actionRequestId: 'deferred-acquire-request' });
                 expect(request).toMatchObject({ ok: true, result: {
@@ -2561,7 +2562,7 @@ describe('startDaemonSessionControlRuntime', () => {
                 expect(guardAsk, JSON.stringify(guardAsk))
                     .toMatchObject({ ok: true, result: { artifactId: expect.any(String) } });
                 expect(approvals).toMatchObject([{ actionId: 'machines.processes.leftBehind.cleanUp',
-                    actionArgs: { serverId: configuration.activeServerId, machineId: machine.controller.machineId, refs: ['confirmed-exact-ref'] },
+                    actionArgs: { serverId: configuration.activeServerId, machineId: policyController.machineId, refs: ['confirmed-exact-ref'] },
                     executionOriginV1: { accountId: machine.custodianAccountId, serverIdentityId: homeId,
                         authority: 'account_automation', caller: { kind: 'host' }, sessionId: 'ended-session' } }]);
                 expect(nativeEffects).toEqual([]);
@@ -2580,7 +2581,7 @@ describe('startDaemonSessionControlRuntime', () => {
                 const unavailable: unknown[] = [];
                 apiMachine.connect();
                 const policyRuntime = createDaemonManagedMachinePolicyRuntime({ apiMachine,
-                    readCensus: signal => readManagedMachinePolicyCensus({ homeId, controller: machine.controller,
+                    readCensus: signal => readManagedMachinePolicyCensus({ homeId, controller: policyController,
                         custodianAccountId: machine.custodianAccountId, privateKey: installation.privateKey, token, serverUrl, signal }),
                     executePolicy: runtime.managedMachinePolicyAdapter.executePolicy,
                     onSettled: () => { settledPolicies += 1; }, onUnavailable: error => { unavailable.push(error); },
@@ -2633,7 +2634,7 @@ describe('startDaemonSessionControlRuntime', () => {
                 const unavailable: unknown[] = [];
                 apiMachine.connect();
                 const policyRuntime = createDaemonManagedMachinePolicyRuntime({ apiMachine,
-                    readCensus: signal => readManagedMachinePolicyCensus({ homeId, controller: machine.controller,
+                    readCensus: signal => readManagedMachinePolicyCensus({ homeId, controller: policyController,
                         custodianAccountId: machine.custodianAccountId, privateKey: installation.privateKey, token, serverUrl, signal }),
                     executePolicy: runtime.managedMachinePolicyAdapter.executePolicy,
                     onSettled: () => { settledPolicies += 1; },
@@ -2689,7 +2690,7 @@ describe('startDaemonSessionControlRuntime', () => {
                 const policyRuntimeParams = {
                     apiMachine,
                     readCensus: (signal: AbortSignal) => readManagedMachinePolicyCensus({ homeId,
-                        controller: machine.controller, custodianAccountId: machine.custodianAccountId,
+                        controller: policyController, custodianAccountId: machine.custodianAccountId,
                         privateKey: installation.privateKey, token, serverUrl, signal }),
                     executePolicy: runtime.managedMachinePolicyAdapter.executePolicy,
                     onSettled: () => { settledPolicies += 1; },
@@ -2823,7 +2824,7 @@ describe('startDaemonSessionControlRuntime', () => {
                     serverId: configuration.activeServerId, serverHttpBaseUrl: serverUrl,
                 }, {
                     isApprovalExecutionOriginCurrent: createDaemonApprovalExecutionOriginCurrentnessFromCredentials({
-                        credentials, machineId: machine.controller.machineId, serverId: configuration.activeServerId, serverApiUrl: serverUrl,
+                        credentials, machineId: policyController.machineId, serverId: configuration.activeServerId, serverApiUrl: serverUrl,
                     }),
                     approvalRequestApprovedReplay: request => replayApprovedRequest({
                         artifactId: request.artifactId, ...(request.signal ? { signal: request.signal } : {}), callerAuthority: 'present_user',

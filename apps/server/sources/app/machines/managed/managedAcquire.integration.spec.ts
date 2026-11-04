@@ -590,6 +590,79 @@ describe("managed acquisition durable authority", () => {
         return { homeId, account, controller, controllerKeys, manifest, declaration, input, request, launch, native };
     }
 
+    it.each(['account', 'daemon'] as const)('clears only a portable %s cloud controller and retains its admitted descriptor', async target => {
+        const selected = await createManagedComputeFixture(`clear-${target}`, { location: 'cloud', stoppedBilling: 'not-billed' });
+        const { homeId, account, controller, input } = selected;
+        const manifest = PluginManifestV2Schema.parse({ ...selected.manifest, contributes: { ...selected.manifest.contributes,
+            actions: selected.manifest.contributes?.actions?.map(action => ({ ...action, execution: target === 'account'
+                ? { target, account: { artifactId: 'account-runtime', exportName: 'activateAccount' } } : { target } })) } });
+        const declaration = createReleaseLessDeclarationV1(manifest);
+        await db.accountPluginIntent.update({ where: { accountId_pluginId: { accountId: account.id, pluginId: manifest.id } },
+            data: { releaseLessDeclaration: declaration } });
+        await db.pluginMachineMaterialization.updateMany({ where: { machineId: controller.machineId, pluginId: manifest.id },
+            data: { archiveDigestSha256: declaration.manifestDigestSha256 } });
+        const row = await db.managedMachine.create({ data: { homeId, custodianAccountId: account.id,
+            controllerMachineId: controller.machineId, controllerInstallationId: controller.installationId,
+            admittedActionRequestId: crypto.randomUUID(), admittedInput: { enrollmentAccountId: account.id },
+            launch: input.selection.launch, allocation: 'bound', resource: { contributionRef: input.selection.launch.provider,
+                schemaVersion: 1, value: { id: 'same-cloud-resource' } }, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true } });
+        const request = { action: 'machines.managed.controller.update' as const, requestId: crypto.randomUUID(),
+            input: { homeId, managedId: row.id, expectedIntentRevision: 0, controller: null, reviewedPendingEffects: true as const } };
+        const clear = () => admitManagedControl({ actorAccountId: account.id, custodianAccountId: account.id, input: request });
+        if (target === 'daemon') {
+            await expect(clear()).rejects.toMatchObject({ code: 'provider_unavailable' });
+            expect(await db.managedMachine.findUniqueOrThrow({ where: { id: row.id } })).toMatchObject({ controllerMachineId: controller.machineId });
+            return;
+        }
+        const changed = await clear();
+        expect(changed.machine.controller).toBeUndefined();
+        expect(changed.machine.reviewedFacts?.provisioner).toEqual(manifest.contributes!.machineProvisioners![0]);
+        await db.machine.update({ where: { id: controller.machineId }, data: { revokedAt: new Date() } });
+        expect(await getManagedMachine({ actorAccountId: account.id, input: { homeId, managedId: row.id } }))
+            .toMatchObject({ id: row.id, resource: { value: { id: 'same-cloud-resource' } }, reviewedFacts: { provisioner: { id: 'compute' } } });
+    });
+
+    it.each(['retained', 'absent'] as const)('preserves the Account Move prerequisite boundary with %s reviewed observations', async observations => {
+        const selected = await createManagedComputeFixture(`clear-prerequisite-${observations}`, { location: 'cloud', stoppedBilling: 'not-billed' });
+        const { homeId, account, controller, input } = selected;
+        const requirement = { kind: 'managedDependency' as const, id: 'fixture-executable' };
+        const manifest = PluginManifestV2Schema.parse({ ...selected.manifest, contributes: { ...selected.manifest.contributes,
+            machineProvisioners: selected.manifest.contributes?.machineProvisioners?.map(provisioner => ({ ...provisioner, prerequisites: [requirement] })),
+            actions: selected.manifest.contributes?.actions?.map(action => ({ ...action,
+                execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activateAccount' } } })) } });
+        const declaration = createReleaseLessDeclarationV1(manifest);
+        await db.accountPluginIntent.update({ where: { accountId_pluginId: { accountId: account.id, pluginId: manifest.id } },
+            data: { releaseLessDeclaration: declaration } });
+        await db.pluginMachineMaterialization.updateMany({ where: { machineId: controller.machineId, pluginId: manifest.id },
+            data: { archiveDigestSha256: declaration.manifestDigestSha256 } });
+        const provisioner = manifest.contributes!.machineProvisioners![0];
+        const prerequisites = [{ requirement, status: 'unavailable' as const, reason: 'The reviewed executable is unavailable' }];
+        const reviewedFacts = buildManagedConfigurationFactsV1({ choicesSchema: createPluginJsonSchemaZodValueAdapter(selected.launch.jsonSchema),
+            launch: input.selection.launch, controller, optionStatus: 'current', provisioner, prerequisites,
+            billing: provisioner.billing, retentionCapabilities: provisioner.retention,
+            machineOverride: { retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true } });
+        const row = await db.managedMachine.create({ data: { homeId, custodianAccountId: account.id,
+            controllerMachineId: controller.machineId, controllerInstallationId: controller.installationId,
+            admittedActionRequestId: crypto.randomUUID(), admittedInput: { enrollmentAccountId: account.id },
+            launch: input.selection.launch, allocation: 'bound', resource: { contributionRef: input.selection.launch.provider,
+                schemaVersion: 1, value: { id: 'same-cloud-resource' } }, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true,
+            ...(observations === 'retained' ? { reviewedFacts } : {}) } });
+        const request = { action: 'machines.managed.controller.update' as const, requestId: crypto.randomUUID(),
+            input: { homeId, managedId: row.id, expectedIntentRevision: 0, controller: null, reviewedPendingEffects: true as const } };
+        const move = () => admitManagedControl({ actorAccountId: account.id, custodianAccountId: account.id, input: request });
+        if (observations === 'absent') {
+            await expect(move()).rejects.toMatchObject({ code: 'provider_unavailable' });
+            expect(await db.managedMachine.findUniqueOrThrow({ where: { id: row.id } })).toEqual(row);
+            return;
+        }
+        const changed = await move();
+        expect(changed.machine.controller).toBeUndefined();
+        expect(changed.machine.reviewedFacts?.prerequisites).toEqual(prerequisites);
+        expect(changed.machine.resource).toEqual(row.resource);
+        expect((await db.managedMachine.findUniqueOrThrow({ where: { id: row.id } })).reviewedFacts)
+            .toMatchObject({ prerequisites, provisioner });
+    });
+
     it('retries approved cleanup of a canceled bound resource through the current controller without reviving creation', async () => {
         const { homeId, account, controller, request } = await createManagedComputeFixture('canceled-cleanup-retry');
         const created = await admitManagedAcquire(request);
@@ -714,12 +787,14 @@ describe("managed acquisition durable authority", () => {
         const app = fastify().withTypeProvider<ZodTypeProvider>();
         app.setValidatorCompiler(validatorCompiler); app.setSerializerCompiler(serializerCompiler);
         let executor = destination.machineId;
+        let reportingSubmittedIntent = false;
         // Installed execution authentication is the boundary; actual route,
         // Account custody, current recipe admission and row mutation stay real.
         app.decorate('authenticate', async (routeRequest: FastifyRequest) => {
             Object.assign(routeRequest, createAuthenticatedRouteRequest({ userId: account.id,
                 externalActionExecutionAuthorized: true, externalActionExecutionMachineId: executor,
-                externalActionEffectActionId: moveRequest.action, externalActionExecutionRequestId: moveRequest.requestId,
+                externalActionEffectActionId: reportingSubmittedIntent ? 'machines.managed.power.set' : moveRequest.action,
+                externalActionExecutionRequestId: reportingSubmittedIntent ? 'offline-move-stop' : moveRequest.requestId,
                 externalActionExecutionCustodianAccountId: account.id,
             }), { headers: routeRequest.headers, params: routeRequest.params, query: routeRequest.query });
         });
@@ -768,6 +843,11 @@ describe("managed acquisition durable authority", () => {
                 submittedEffect: { requestId: 'offline-move-stop', controller } },
         });
         expect(await db.machine.findUniqueOrThrow({ where: { id: controller.machineId } })).toMatchObject({ active: false });
+        reportingSubmittedIntent = true;
+        const lateReport = await app.inject({ method: 'POST', url: '/v1/machines/managed/controller/report-intent',
+            payload: { ...correlation, expectedIntentRevision: 1, requestId: 'offline-move-stop', result: { kind: 'confirmed' } } });
+        expect(lateReport.statusCode, lateReport.body).toBe(200);
+        expect(lateReport.json()).toMatchObject({ machine: { id: created.machine.id, intentRevision: 2, controller: destination, resource } });
     });
 
     it("creates one durable reviewed allocation through the real current provisioner declaration", async () => {

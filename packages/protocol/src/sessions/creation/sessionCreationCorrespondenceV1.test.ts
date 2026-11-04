@@ -129,15 +129,20 @@ describe('SessionCreationCorrespondenceV1', () => {
     ]) expect(SessionCreationCorrespondenceV1ReadSchema.safeParse({ ...retained, recipe }).success).toBe(false);
   });
 
-  it('retains the exact managed birth resource in immutable retry meaning', () => {
-    const managedCreation = { homeId: 'home', managedId: 'managed',
-      controller: { machineId: 'controller', installationId: 'installation' } };
+  it.each([true, false])('retains exact managed birth resource and optional controller in retry meaning (bound=%s)', bound => {
+    const controller = { machineId: 'controller', installationId: 'installation' };
+    const managedCreation = { homeId: 'home', managedId: 'managed', ...(bound ? { controller } : {}) };
     const selected = { ...correspondence, recipe: { ...correspondence.recipe, managedCreation } };
     expect(SessionCreationCorrespondenceV1Schema.parse(selected)).toEqual(selected);
+    expect(SessionCreationCorrespondenceV1ReadSchema.parse(selected)).toEqual(selected);
+    expect(sessionCreationCorrespondenceMatchesV1(selected, selected)).toBe(true);
     expect(sessionCreationCorrespondenceMatchesV1(selected, correspondence)).toBe(false);
     expect(sessionCreationCorrespondenceMatchesV1(selected, { ...selected, recipe: { ...selected.recipe,
-      managedCreation: { ...managedCreation, controller: { ...managedCreation.controller, installationId: 'replacement' } },
+      managedCreation: { ...managedCreation, controller: { ...controller, installationId: 'replacement' } },
     } })).toBe(false);
+    expect(SessionCreationCorrespondenceV1Schema.safeParse({ ...selected, recipe: { ...selected.recipe,
+      managedCreation: { ...managedCreation, controller: { machineId: controller.machineId } },
+    } }).success).toBe(false);
     expect(SessionCreationCorrespondenceV1Schema.safeParse({ ...selected, recipe: { ...selected.recipe,
       managedCreation: { ...managedCreation, sessionId: 'caller-selected-source' },
     } }).success).toBe(false);

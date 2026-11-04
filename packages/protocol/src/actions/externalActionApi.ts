@@ -1264,7 +1264,7 @@ export const ExternalActionExecutionAuthorizationV1Schema = lazyZodSchema(() => 
     || wake.target.origin.kind !== 'finite-command' || wake.target.origin.actionRequestId !== root.requestId
     || wake.target.homeId !== root.serverIdentityId || wake.target.enrolledMachineId !== root.machineId
     || root.target.kind !== 'machine' || root.target.machineId !== root.machineId
-    || wake.requesterAccountContext && wake.requesterAccountContext.installationId !== wake.target.controller.installationId) {
+    || wake.requesterAccountContext && wake.requesterAccountContext.installationId !== wake.target.controller?.installationId) {
     context.addIssue({ code: 'custom', path: ['managedFiniteWake'], message: 'Finite custody requires its exact original guest root and installed controller' });
   }
 })));

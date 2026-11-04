@@ -16,7 +16,7 @@ export function registerManagedFiniteWake(rpc: RpcHandlerRegistrar, input: Reado
         if (!request.success || context.signal.aborted) return refused;
         const { target, actionOrigin } = request.data;
         const machine = await input.readCurrent(target.managedId, context.signal);
-        if (!machine || context.signal.aborted || machine.homeId !== target.homeId
+        if (!machine || !machine.controller || !target.controller || context.signal.aborted || machine.homeId !== target.homeId
             || machine.enrolledMachineId !== target.enrolledMachineId || machine.intentRevision !== target.expectedIntentRevision
             || machine.controller.machineId !== target.controller.machineId
             || machine.controller.installationId !== target.controller.installationId) return refused;

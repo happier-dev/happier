@@ -161,10 +161,12 @@ export async function executeOriginalAccountActionTransport(params: Readonly<{
         const wake = executionAuthorization.managedFiniteWake;
         let controllerPublicKey: Uint8Array | undefined;
         if (wake) {
+            const controllerTarget = wake.target.controller;
+            if (!controllerTarget) return failure('admission_unavailable');
             const readController = async () => {
-                const row = await readOriginalAccountActionMachine(account, wake.target.controller.machineId, params.signal);
+                const row = await readOriginalAccountActionMachine(account, controllerTarget.machineId, params.signal);
                 return row && row.kind === 'persistent' && row.revokedAt === null && row.replacedByMachineId === null
-                    && row.installationId === wake.target.controller.installationId && row.installationPublicKey
+                    && row.installationId === controllerTarget.installationId && row.installationPublicKey
                     && encodeBase64(row.installationPublicKey, 'base64url') === wake.installationPublicKey
                     && row.access?.accessState === 'ready' && row.access.role === 'manage'
                     ? { ...row, access: row.access, installationPublicKey: row.installationPublicKey } : null;

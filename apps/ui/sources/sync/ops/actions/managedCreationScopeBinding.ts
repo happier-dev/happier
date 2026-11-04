@@ -207,13 +207,13 @@ export async function bindNewManagedMachineCreationScope(input: Readonly<{
                 ...(afterMs === undefined ? {} : { afterMs: { kind: 'literal', value: afterMs } }),
                 ...(effect === 'delete' ? { reviewedDependencies: { kind: 'literal', value: true } } : {}) },
         }] });
-        const project = { machineId: machine.controller.machineId, directory: '~' };
+        const project = machine.controller ? { machineId: machine.controller.machineId, directory: '~' } : undefined;
         const common = { project, target: { kind: 'inline' as const, definition }, executionTarget: { kind: 'detached_run' as const } };
         for (const set of sets) {
             const match = matchManagedCreationScopeTrigger(set, machine);
             if (!match || !sameStrictJsonValue(match.source, input.source)) continue;
             const existing = match.trigger;
-            if (sameStrictJsonValue(set.target, common.target) && set.project?.machineId === machine.controller.machineId && set.enabled) {
+            if (sameStrictJsonValue(set.target, common.target) && set.project?.machineId === project?.machineId && set.enabled) {
                 return { kind: 'bound', binding: { automationId: set.automationId, triggerId: existing.id, source: input.source } };
             }
             const actionId = input.source.kind === 'session' ? 'session.trigger.update' as const : 'workflow.trigger.update' as const;
@@ -231,7 +231,7 @@ export async function bindNewManagedMachineCreationScope(input: Readonly<{
         return await mutate(actionId, request, bound);
         function bound(value: unknown): ManagedCreationScopeBindingResult {
             const result = WorkflowTriggerWriteResultV1Schema.parse(value);
-            if (!result.triggerId || result.set.project?.machineId !== machine.controller.machineId) return incomplete('binding_response_invalid');
+            if (!result.triggerId || result.set.project?.machineId !== project?.machineId) return incomplete('binding_response_invalid');
             return { kind: 'bound', binding: { automationId: result.set.automationId, triggerId: result.triggerId, source: input.source } };
         }
     } catch (error) {

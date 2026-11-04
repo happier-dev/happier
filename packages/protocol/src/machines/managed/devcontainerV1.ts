@@ -41,11 +41,11 @@ export type DevcontainerChildProjectionV1 = z.infer<typeof DevcontainerChildProj
 
 /** The retained resource and its physical controller are the sole producers. */
 export function deriveManagedDevcontainerChildProjectionV1(input: Readonly<{
-  managedMachineId: string; controllerMachineId: string; enrolledMachineId?: string;
+  managedMachineId: string; controllerMachineId?: string; enrolledMachineId?: string;
   resource?: Readonly<{ devcontainerObservation?: DevcontainerNativeObservationV1 }>;
 }>): DevcontainerChildProjectionV1 | undefined {
   const observation = input.resource?.devcontainerObservation;
-  if (!input.enrolledMachineId || !observation) return undefined;
+  if (!input.controllerMachineId || !input.enrolledMachineId || !observation) return undefined;
   return DevcontainerChildProjectionV1Schema.parse({ relation: { managedMachineId: input.managedMachineId,
     managedMachineKind: 'devcontainer', parentMachineId: input.controllerMachineId }, observation });
 }
@@ -60,7 +60,7 @@ export function isManagedDevcontainerChildProjectionCurrentV1(input: Readonly<{
   homeId: string; machineId: string; projection: DevcontainerChildProjectionV1 | undefined;
   managedMachine: Readonly<{
     id: string; homeId: string; enrolledMachineId?: string;
-    controller: Readonly<{ machineId: string }>;
+    controller?: Readonly<{ machineId: string }>;
     allocation: string; creationState: string; archivedAt?: number;
     resource?: Readonly<{ devcontainerObservation?: DevcontainerNativeObservationV1 }>;
   }>;
@@ -70,5 +70,5 @@ export function isManagedDevcontainerChildProjectionCurrentV1(input: Readonly<{
     || row.creationState !== 'active' || row.allocation !== 'bound' || row.archivedAt !== undefined) return false;
   return managedDevcontainerChildProjectionsEqualV1(input.projection,
     deriveManagedDevcontainerChildProjectionV1({ managedMachineId: row.id,
-      controllerMachineId: row.controller.machineId, enrolledMachineId: row.enrolledMachineId, resource: row.resource }));
+      controllerMachineId: row.controller?.machineId, enrolledMachineId: row.enrolledMachineId, resource: row.resource }));
 }

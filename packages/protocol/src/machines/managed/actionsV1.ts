@@ -44,7 +44,7 @@ const id = () => mini.string().check(mini.trim(), mini.minLength(1));
 const revision = () => mini.int().check(mini.gte(0));
 export const ManagedMachineActionIdV1Schema = lazyDefinition(() => mini.enum(MANAGED_MACHINE_ACTION_IDS_V1));
 const target = () => ({ homeId: id(), managedId: id() });
-const current = () => ({ ...target(), expectedIntentRevision: revision(), requestId: id(), controller: ManagedControllerV1Schema });
+const current = () => ({ ...target(), expectedIntentRevision: revision(), requestId: id(), controller: z.optional(ManagedControllerV1Schema) });
 export const MachineSetupSourcesApplyInputV1Schema = lazyZodSchema(() => z.strictObject({
   homeId: id(), machineId: id(), sources: MachineSetupSourceV1Schema,
 }));
@@ -125,7 +125,7 @@ export const ManagedDeleteOutputV1Schema = lazyZodSchema(() => z.discriminatedUn
   z.strictObject({ ...ManagedIntentResultSchema.def.options[2].def.shape, machineReferences: MachineReferenceCensusV1Schema }),
 ]));
 export const ManagedRetentionUpdateInputV1Schema = lazyZodSchema(() => z.strictObject({ ...target(), expectedIntentRevision: revision(), retention: RetentionV1Schema, wakeOnAcceptedMessage: mini.boolean() }));
-export const ManagedControllerUpdateInputV1Schema = lazyZodSchema(() => z.strictObject({ ...target(), expectedIntentRevision: revision(), controller: ManagedControllerV1Schema, reviewedPendingEffects: z.literal(true) }));
+export const ManagedControllerUpdateInputV1Schema = lazyZodSchema(() => z.strictObject({ ...target(), expectedIntentRevision: revision(), controller: z.nullable(ManagedControllerV1Schema), reviewedPendingEffects: z.literal(true) }));
 export const ManagedRetireInputV1Schema = lazyZodSchema(() => z.strictObject({ ...target(), expectedIntentRevision: revision(), manualResponsibility: z.literal(true) }));
 export const ManagedCancelInputV1Schema = lazyZodSchema(() => z.strictObject({ ...target(), expectedIntentRevision: revision() }));
 export const ManagedInspectOutputV1Schema = lazyZodSchema(() => z.strictObject({ machine: ManagedMachineV1Schema, operation: z.optional(ActionOperationGetV1RequestSchema) }));

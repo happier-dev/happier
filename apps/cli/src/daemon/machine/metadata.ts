@@ -25,7 +25,7 @@ export async function readCurrentManagedChildMachineMetadata(input: Readonly<{
   const managedMachine = await readManagedMachine({ credentials: input.credentials,
     serverHttpBaseUrl: input.serverHttpBaseUrl, homeId: input.homeId, managedId: prior.relation.managedMachineId });
   const projection = deriveManagedDevcontainerChildProjectionV1({ managedMachineId: managedMachine.id,
-    controllerMachineId: managedMachine.controller.machineId, enrolledMachineId: managedMachine.enrolledMachineId,
+    controllerMachineId: managedMachine.controller?.machineId, enrolledMachineId: managedMachine.enrolledMachineId,
     resource: managedMachine.resource });
   return managedMachine.id === prior.relation.managedMachineId
     && isManagedDevcontainerChildProjectionCurrentV1({ homeId: input.homeId, machineId: input.machineId, projection, managedMachine })

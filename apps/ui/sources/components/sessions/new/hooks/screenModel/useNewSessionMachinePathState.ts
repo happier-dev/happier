@@ -282,11 +282,13 @@ export function useNewSessionMachinePathState(params: Readonly<{
         () => normalizeMachineIdParam(params.machineIdParam) ? null : params.requestedManagedMachineSelection ?? params.persistedManagedMachineSelection ?? null,
     );
     const controllerSnapshot = useServerScopedMachine(params.serverId,
-        liveInventory ? managedMachineSelectionState?.receipt.controller.machineId ?? '' : '');
-    const resolveArchiveChoiceAvailability = React.useCallback((draft: ManagedMachineSelectionDraft) => (
-        resolveManagedMachineArchiveChoiceAvailability({ draft,
-            controller: readMachines().find(machine => machine.id === draft.receipt.controller.machineId) })
-    ), [readMachines]);
+        liveInventory ? managedMachineSelectionState?.receipt.controller?.machineId ?? '' : '');
+    const resolveArchiveChoiceAvailability = React.useCallback((draft: ManagedMachineSelectionDraft) => {
+        const pair = draft.receipt.controller;
+        return resolveManagedMachineArchiveChoiceAvailability({ draft,
+            controller: pair ? readMachines().find(machine => machine.id === pair.machineId
+                && machine.installationId === pair.installationId) : undefined });
+    }, [readMachines]);
     const managedMachineArchiveChoiceAvailability = React.useMemo(() => managedMachineSelectionState
         ? resolveArchiveChoiceAvailability(managedMachineSelectionState) : null,
     [controllerSnapshot, managedMachineSelectionState, resolveArchiveChoiceAvailability]);
@@ -384,7 +386,7 @@ export function useNewSessionMachinePathState(params: Readonly<{
     const hasUserEditedPathRef = React.useRef(Boolean(params.isBot && normalizePathParam(params.persistedPath)
         && formatPathRelativeToHome(normalizePathParam(params.persistedPath),
             readMachines().find(machine => machine.id === (initialPlacement.machineId
-                ?? managedMachineSelection?.receipt.controller.machineId))?.metadata?.homeDir) !== '~'));
+                ?? managedMachineSelection?.receipt.controller?.machineId))?.metadata?.homeDir) !== '~'));
     // A not-yet-resolved default must observe the first history arrival. Once a
     // folder is committed, later history is read only when another is chosen.
     const unresolvedPlacementHistory = useNewSessionPlacementSessions(

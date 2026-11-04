@@ -177,14 +177,14 @@ export async function composeBindChildSourcePhaseTestRuntime(options: Readonly<{
       storage: { kind: 'bind', hostPath: sourcePath, childPath: childRef.rootPath } },
   };
   let nativeProjection = projection;
-  const managedChild: ManagedMachineV1 = {
+  const managedChild = {
     id: projection.relation.managedMachineId, homeId: managedHomeId, custodianAccountId: 'owner',
     controller: { machineId: sourceRef.machineId, installationId: 'parent-installation' },
     launch: { provider: { pluginId: 'happier.devcontainer', localId: 'devcontainer' }, schemaVersion: 1, name: 'Child', choices: {} },
     resource: { contributionRef: { pluginId: 'happier.devcontainer', localId: 'devcontainer' }, schemaVersion: 1, value: {}, devcontainerObservation: projection.observation },
     allocation: 'bound', creationState: 'active', enrolledMachineId: childRef.machineId,
     desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
-  };
+  } satisfies ManagedMachineV1;
   const targetProjection: DevcontainerChildProjectionV1 = {
     relation: { managedMachineId: 'managed-target-child', managedMachineKind: 'devcontainer', parentMachineId: targetRef.machineId },
     observation: { nativeResourceId: 'target-container-current', user: 'coder', workspaceFolder: targetChildRef.rootPath,
@@ -192,7 +192,7 @@ export async function composeBindChildSourcePhaseTestRuntime(options: Readonly<{
   };
   let nativeTargetProjection = targetProjection;
   let targetChildRetired = false;
-  const managedTargetChild: ManagedMachineV1 = { ...managedChild,
+  const managedTargetChild: ManagedMachineV1 & { controller: NonNullable<ManagedMachineV1['controller']> } = { ...managedChild,
     id: targetProjection.relation.managedMachineId,
     custodianAccountId: targetCustodianAccountId,
     controller: { machineId: targetRef.machineId, installationId: targetParentInstallationId },

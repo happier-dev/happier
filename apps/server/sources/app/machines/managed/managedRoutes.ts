@@ -55,12 +55,14 @@ async function requireManagedOperationRequest(request: FastifyRequest, input: Re
     return inReadSnapshot(async tx => {
         const row = await readManagedMachineInTx(tx, input);
         if (request.externalActionExecutionAuthorized === true) {
-            let executionMachineId = options.controllerDestination?.machineId ?? row.controllerMachineId;
+            const submittedController = options.submittedReport
+                && input.controller?.machineId === request.externalActionExecutionMachineId ? input.controller : undefined;
+            let executionMachineId = submittedController?.machineId ?? options.controllerDestination?.machineId ?? row.controllerMachineId;
             // The issuer already qualified this Account executor. Later calls
             // consume that signed fact; sharing the daemon does not re-admit an active job.
             const admittedExecutor = request.externalActionExecutionAuthorizationBinding?.managedAccountExecutor;
             if (admittedExecutor) executionMachineId ??= request.externalActionExecutionMachineId ?? null;
-            else if (row.controllerMachineId === null || executionMachineId !== row.controllerMachineId) {
+            else if (!submittedController && (row.controllerMachineId === null || executionMachineId !== row.controllerMachineId)) {
                 const machine = request.externalActionExecutionMachineId ? await tx.machine.findUnique({
                     where: { id: request.externalActionExecutionMachineId },
                     select: { id: true, accountId: true, kind: true, managedResource: { select: { id: true } } },
@@ -108,13 +110,13 @@ export async function requireManagedPolicyRequest(request: FastifyRequest, path:
         const currentSigner = carrier.payload.machineId === row.controllerMachineId && carrier.payload.installationId === row.controllerInstallationId
             && binding.expectedIntentRevision === row.intentRevision && binding.controller.machineId === row.controllerMachineId
             && binding.controller.installationId === row.controllerInstallationId;
-        const submittedSigner = phase === 'report' && pending && carrier.payload.machineId === pending.controller.machineId
+        const submittedSigner = phase === 'report' && pending?.controller && carrier.payload.machineId === pending.controller.machineId
             && carrier.payload.installationId === pending.controller.installationId && binding.expectedIntentRevision === pending.intentRevision
             && binding.requestId === pending.requestId && sameManagedInput(binding.controller, pending.controller);
         const acceptedSource = carrier.purpose.kind === 'accepted-input-start' ? carrier.purpose.target : undefined;
         const activationFailureSigner = phase === 'activation-failure' && acceptedSource
             && acceptedSource.homeId === row.homeId && acceptedSource.managedId === row.id && acceptedSource.enrolledMachineId === row.enrolledMachineId
-            && carrier.payload.machineId === acceptedSource.controller.machineId && carrier.payload.installationId === acceptedSource.controller.installationId
+            && carrier.payload.machineId === acceptedSource.controller?.machineId && carrier.payload.installationId === acceptedSource.controller?.installationId
             && binding.expectedIntentRevision === acceptedSource.expectedIntentRevision && sameManagedInput(binding.controller, acceptedSource.controller);
         const controller = await tx.machine.findUnique({ where: { id: carrier.payload.machineId } });
         if (request.userId !== row.custodianAccountId || carrier.payload.accountId !== row.custodianAccountId
@@ -263,18 +265,17 @@ export function registerManagedMachineRoutes(app: Fastify): void {
     })));
     app.post("/v1/machines/managed/controller/admit-control", { preHandler: app.authenticate, schema: { body: ManagedControlAdmissionInputV1Schema } }, async (request, reply) => respond(reply, async () => {
         const input = request.body.input;
-        const row = await inTx(tx => readManagedMachineInTx(tx, { homeId: input.homeId,
-            managedId: 'managedMachineId' in input ? input.managedMachineId : input.managedId }));
-        const executionMachineId = request.body.action === 'machines.managed.controller.update'
-            ? request.body.input.controller.machineId : row.controllerMachineId;
-        const proof = requireManagedControllerProof(request, executionMachineId, [request.body.action]);
+        const proof = await requireManagedOperationRequest(request, { homeId: input.homeId,
+            managedId: 'managedMachineId' in input ? input.managedMachineId : input.managedId,
+            requestId: request.body.requestId }, [request.body.action], { admission: true,
+                ...(request.body.action === 'machines.managed.controller.update' ? { controllerDestination: request.body.input.controller } : {}) });
         if (proof.requestId !== request.body.requestId) throw new ManagedMachineError("request_conflict");
         return admitManagedControl({ actorAccountId: request.userId, custodianAccountId: proof.custodianAccountId,
             authentication: readTeamOperationAuthenticationFromRequest(request), input: request.body });
     }));
     app.post("/v1/machines/managed/controller/submit-intent", { preHandler: app.authenticate, schema: { body: ManagedControllerCurrentnessV1Schema } }, async (request, reply) => respond(reply, async () => {
         if (request.headers[MANAGED_POLICY_PROOF_HEADER] !== undefined) await requireManagedPolicyRequest(request, '/v1/machines/managed/controller/submit-intent', request.body, 'submit');
-        else requireManagedControllerProof(request, request.body.controller.machineId, effects);
+        else await requireManagedOperationRequest(request, request.body, effects);
         return submitManagedIntent(request.body);
     }));
     app.post("/v1/machines/managed/controller/report-intent", { preHandler: app.authenticate, schema: { body: ManagedControllerIntentReportV1Schema } }, async (request, reply) => respond(reply, async () => {
@@ -282,11 +283,7 @@ export function registerManagedMachineRoutes(app: Fastify): void {
             await requireManagedPolicyRequest(request, '/v1/machines/managed/controller/report-intent', request.body, 'report');
             return reportManagedIntent(request.body);
         }
-        const row = await inTx(tx => readManagedMachineInTx(tx, request.body));
-        const executor = request.externalActionExecutionMachineId;
-        if (executor !== row.controllerMachineId && executor !== request.body.controller.machineId) throw new ManagedMachineError("permission_denied");
-        const proof = requireManagedControllerProof(request, executor, effects);
-        if (row.custodianAccountId !== proof.custodianAccountId) throw new ManagedMachineError("permission_denied");
+        await requireManagedOperationRequest(request, request.body, effects, { submittedReport: true });
         return reportManagedIntent(request.body);
     }));
     app.post(managedMachineActionEndpointPathV1("machines.managed.list"), { preHandler: app.authenticate, schema: { body: ManagedMachineActionInputSchemasV1["machines.managed.list"], response: { 200: ManagedMachineActionOutputSchemasV1["machines.managed.list"] } } }, async (request, reply) => respond(reply, () => listManagedMachines({ actorAccountId: request.userId, input: request.body })));
@@ -362,7 +359,7 @@ export function registerManagedMachineRoutes(app: Fastify): void {
         });
     }));
     app.post("/v1/machines/managed/controller/submit", { preHandler: app.authenticate, schema: { body: ManagedControllerSubmitInputV1Schema } }, async (request, reply) => respond(reply, async () => {
-        requireManagedControllerProof(request, request.body.controller.machineId, ["machines.managed.acquire", "machines.managed.bootstrap.retry"]);
+        await requireManagedOperationRequest(request, request.body, ['machines.managed.acquire', 'machines.managed.bootstrap.retry']);
         return await submitManagedAcquire(request.body);
     }));
     app.post("/v1/machines/managed/controller/report", { preHandler: app.authenticate, schema: { body: z.union([ManagedControllerReportV1Schema, ManagedControllerCredentialDeliveryReportV1Schema]) } }, async (request, reply) => respond(reply, async () => {
@@ -408,11 +405,11 @@ export function registerManagedMachineRoutes(app: Fastify): void {
         return await reportManagedAcquire(request.body, { requestAuthority: proof.requestAuthority });
     }));
     app.post("/v1/machines/managed/controller/create-bootstrap-credential", { preHandler: app.authenticate, schema: { body: ManagedBootstrapCredentialCreateV1Schema } }, async (request, reply) => respond(reply, async () => {
-        requireManagedControllerProof(request, request.body.controller.machineId, ["machines.managed.acquire", "machines.managed.bootstrap.retry"]);
+        await requireManagedOperationRequest(request, request.body, ['machines.managed.acquire', 'machines.managed.bootstrap.retry']);
         return await createManagedBootstrapCredential(request.body);
     }));
     app.post("/v1/machines/managed/controller/enrollment-context", { preHandler: app.authenticate, schema: { body: ManagedEnrollmentCorrelationV1Schema } }, async (request, reply) => respond(reply, async () => {
-        const { custodianAccountId } = requireManagedControllerProof(request, request.body.controller.machineId, effects);
+        const { custodianAccountId } = await requireManagedOperationRequest(request, request.body, effects);
         return await inTx(async (tx) => ({ machine: await projectManagedMachineInTx(tx, await requireManagedEnrollmentInTx(tx, request.body, custodianAccountId)) }));
     }));
 }

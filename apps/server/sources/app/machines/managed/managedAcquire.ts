@@ -115,7 +115,7 @@ export async function admitManagedAcquire(params: Readonly<{
             const canonical = ManagedMachineV1Schema.parse(createManagedMachineDeclaredSchema(declaration.launchSchema, declaration.resourceSchema).parse(candidate));
             const row = await tx.managedMachine.create({ data: {
                 homeId: canonical.homeId, custodianAccountId: canonical.custodianAccountId,
-                controllerMachineId: canonical.controller.machineId, controllerInstallationId: canonical.controller.installationId,
+                controllerMachineId: canonical.controller?.machineId ?? null, controllerInstallationId: canonical.controller?.installationId ?? null,
                 admittedActionRequestId: request.requestId, admittedInput: { ...admittedInputIdentity,
                     ...(environment ? { environmentSetup: { requestEnvelopeDigest: params.requestEnvelopeDigest } } : {}) },
                 ...(preset ? { presetId: preset.id, presetRevision: preset.revision } : {}),

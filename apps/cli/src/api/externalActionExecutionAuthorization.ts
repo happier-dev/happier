@@ -531,12 +531,14 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
       }
       const wake = authorization.managedFiniteWake;
       if (wake) {
-        const controller = machines?.find(row => row.id === wake.target.controller.machineId);
+        const wakeController = wake.target.controller;
+        if (!wakeController) return fail('admission_unavailable');
+        const controller = machines?.find(row => row.id === wakeController.machineId);
         if (!controller || controller.kind !== 'persistent' || controller.revokedAt !== null
           || controller.replacedByMachineId !== null || controller.access?.accessState !== 'ready') return fail('admission_unavailable');
         const installedController = await readInstalledMachine(controller);
         if (!installedController?.installationPublicKey
-          || installedController.installationId !== wake.target.controller.installationId) return fail('admission_unavailable');
+          || installedController.installationId !== wakeController.installationId) return fail('admission_unavailable');
         const controllerKey = decodeBase64(installedController.installationPublicKey, 'base64');
         if (encodeBase64(controllerKey, 'base64url') !== wake.installationPublicKey) return fail('admission_unavailable');
         if (controller.access.custodian.accountId !== accountId) {

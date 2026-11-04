@@ -160,6 +160,8 @@ export async function emitPendingActivationHint(params: {
         userId: controllerPublication.accountId,
         payload: buildPendingChangedUpdate({ sessionId: params.sessionId, pendingCount: params.pendingCount,
             pendingVersion: params.pendingVersion, managedWakeTargetV1 }, controllerPublication.cursor, randomKeyNaked(12)),
-        recipientFilter: { type: 'machine-only', machineId: managedWakeTargetV1.controller.machineId },
+        recipientFilter: managedWakeTargetV1.controller
+            ? { type: 'machine-only', machineId: managedWakeTargetV1.controller.machineId }
+            : { type: 'user-machine-scoped-only' },
     });
 }

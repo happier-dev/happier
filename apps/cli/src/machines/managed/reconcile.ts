@@ -293,7 +293,7 @@ export function createManagedNativeInvocation(params: ManagedMachineReconciliati
             try {
                 const custody: AdmittedManagedProviderOperationExecutionRequest = {
                     managedId: machine.id, homeId: machine.homeId, intentRevision: machine.intentRevision,
-                    controller: machine.controller,
+                    controller: params.input.controller,
                     contribution: { ...contribution.identity, occurrenceId },
                     role,
                     ...(bootstrapCredentialKind && isMachineProvisionerBootstrapCredentialRoleV1(role)

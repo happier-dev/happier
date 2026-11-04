@@ -135,6 +135,8 @@ describe('managed Machine rebuild origination', () => {
             retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false, enrolledMachineId: 'ordinary-child',
             resource: { contributionRef: { pluginId: 'acme.devcontainer', localId: 'child' }, schemaVersion: 1, value: {} },
         });
+        const nativeController = machine.controller;
+        if (!nativeController) throw new Error('The native fixture requires its installed controller.');
         const approval = { kind: 'approval_request_created' as const, artifactId: 'rebuild-approval', actionId };
         // Only Home HTTP is substituted. Scope, credential storage, token parsing,
         // row validation, target selection and public envelope owners remain real.
@@ -157,7 +159,7 @@ describe('managed Machine rebuild origination', () => {
             if (parsedUrl.pathname === `/v1/actions/${actionId}`) {
                 expect(revoked).toBe(false);
                 const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body);
-                expect(envelope.target).toEqual({ kind: 'machine', machineId: applyingEnvironment ? 'ordinary-child' : machine.controller.machineId });
+                expect(envelope.target).toEqual({ kind: 'machine', machineId: applyingEnvironment ? 'ordinary-child' : nativeController.machineId });
                 expect(envelope.input).toEqual(input);
                 return new Response(JSON.stringify(ExternalActionResponseEnvelopeV1Schema.parse({ v: 1,
                     actionId: approval.actionId, requestId: envelope.requestId, execution: { ok: true, result: approval } })), { status: 200 });

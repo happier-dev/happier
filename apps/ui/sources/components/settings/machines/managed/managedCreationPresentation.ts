@@ -1,6 +1,7 @@
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { RetentionCapabilitiesV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { t } from '@/text';
+import { managedMachineOperationMatchesResource } from '@/sync/domains/actionOperations/managedMachineOperation';
 import { describeManagedLifecycleState, type ManagedLifecycleState } from './managedLifecyclePresentation';
 import type { ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -148,7 +149,7 @@ export function canRetryManagedInstallation(machine: ManagedMachineV1, operation
     if (snapshot.actionId !== 'machines.managed.acquire'
         && snapshot.actionId !== 'machines.managed.bootstrap.retry') return !machine.enrolledMachineId;
     return operation?.observation === 'available' && !operation.isUnavailableProjection
-        && snapshot?.state === 'failed' && snapshot.scope.machineId === machine.controller.machineId
+        && snapshot?.state === 'failed'
         && (snapshot.actionId === 'machines.managed.acquire' || snapshot.actionId === 'machines.managed.bootstrap.retry')
         && snapshot.domainRef?.kind === 'managedMachine' && snapshot.domainRef.id === machine.id;
 }
@@ -175,18 +176,11 @@ export function currentManagedCreationOperation(machine: ManagedMachineV1, opera
         const reference = snapshot.domainRef;
         const scopeMatches = snapshot.actionId === 'machines.environment.apply' && snapshot.scope.machineId === machine.enrolledMachineId
             || (snapshot.actionId === 'machines.managed.acquire' || snapshot.actionId === 'machines.managed.bootstrap.retry')
-                && snapshot.scope.machineId === machine.controller.machineId;
+                && machine.controller !== undefined && snapshot.scope.machineId === machine.controller.machineId;
         return scopeMatches && reference.serverId === machine.homeId && reference.machineId === machine.enrolledMachineId
             && reference.managedId === machine.id && sameStrictJsonValue(reference.preset, machine.preset) ? operation : null;
     }
-    if (snapshot.scope.machineId !== machine.controller.machineId
-        || snapshot.domainRef?.kind !== 'managedMachine' || snapshot.domainRef.id !== machine.id) return null;
-    const reference = snapshot.domainRef;
-    const matches = reference.resource || reference.controller ? reference.resource && reference.controller
-        && sameStrictJsonValue(reference.resource, machine.resource)
-        && sameStrictJsonValue(reference.controller, machine.controller)
-        : machine.allocation === 'unsubmitted' || machine.allocation === 'may-exist';
-    if (!matches) return null;
+    if (!managedMachineOperationMatchesResource(machine, snapshot)) return null;
     const guest = context.enrolledMachine;
     const healthyEnrollment = machine.creationState === 'active' && machine.allocation === 'bound' && !machine.cleanup
         && machine.archivedAt === undefined && machine.desired !== 'delete'

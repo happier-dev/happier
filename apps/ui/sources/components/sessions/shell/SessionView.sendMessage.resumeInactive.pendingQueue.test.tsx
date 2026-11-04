@@ -380,6 +380,7 @@ const runtime = installSessionPaneRuntimeTestHarness({
                     let artifactId: string;
                     try {
                         const controller = managedWakeMachine.controller;
+                        if (!controller) throw new Error('The native managed-inspection fixture requires its installed controller.');
                         const authorization = { v: 1 as const, token: 'native-inspect-authorization', binding: {
                             accountId: 'account-a', authentication: readOriginalAccountActionAuthentication(account.credentials.token),
                             serverIdentityId: managedWakeMachine.homeId, machineId: controller.machineId,

@@ -4255,6 +4255,7 @@ agentIsolation,
             });
             attemptedManagedMachinePolicyRuntime = createDaemonManagedMachinePolicyRuntime({
               apiMachine: attemptedApiMachineForSessions,
+              executorMachineId: machineId,
               isAvailable: () => readCurrentManagedPolicyController() !== null,
               loadMachine: (id, signal) => runWithServerHttpBaseUrl(managedPolicyServerHttpBaseUrl,
                 () => api.getMachine(id, { signal })),

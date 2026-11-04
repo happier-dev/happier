@@ -356,27 +356,31 @@ export async function readWorkspaceSyncChildMachineFacts(input: Readonly<{
         projection, managedMachine })) {
         throw authorityError('workspace_sync_child_unavailable', 'Child enrollment is no longer current');
       }
-      let controller: WorkspaceSyncChildMachineFacts['controller'] = { ...managedMachine.controller, available: false };
+      const nativeController = managedMachine.controller;
+      if (!nativeController) throw authorityError('workspace_sync_child_unavailable', 'The physical child controller is unavailable');
+      let controller: WorkspaceSyncChildMachineFacts['controller'] = { ...nativeController, available: false };
       if (projection.observation.storage.kind === 'bind' && (input.purpose ?? 'physical_sync') === 'physical_sync') {
         try {
-          const current = await readMachine(managedMachine.controller.machineId);
+          const current = await readMachine(nativeController.machineId);
           controller = { machineId: current?.id ?? '', installationId: current?.installationId ?? '',
             available: current?.active === true && current.revokedAt == null && !current.replacedByMachineId };
         } catch {
           input.signal?.throwIfAborted();
           // Native controller failure is a factual unavailable result; child-local execution does not consume it.
         }
-        if (controller.available && controller.installationId === managedMachine.controller.installationId) {
+        if (controller.available && controller.installationId === nativeController.installationId) {
           try {
             if (input.authorization && !input.externalAction) throw authorityError('workspace_sync_child_unavailable', 'Requester transport authority is unavailable');
             if (!input.credentials) throw authorityError('workspace_sync_child_unavailable', 'Requester transport custody is unavailable');
             const inspected = ManagedInspectOutputV1Schema.parse(await callExactMachineRpc({ credentials: input.credentials,
-              serverUrl: input.serverHttpBaseUrl, machineId: managedMachine.controller.machineId,
+              serverUrl: input.serverHttpBaseUrl, machineId: nativeController.machineId,
               method: 'machines.managed.inspect', request: { homeId: input.serverId, managedId: managedMachine.id },
               ...(input.externalAction ? { externalAction: input.externalAction } : {}),
               requireCurrentMachine: true, timeoutMs: null, signal: input.signal }));
             if (inspected.machine.observation?.availability !== 'present'
-              || inspected.machine.controller.installationId !== controller.installationId
+              || inspected.machine.controller?.machineId !== nativeController.machineId
+              || inspected.machine.custodianAccountId !== managedMachine.custodianAccountId
+              || inspected.machine.controller?.installationId !== controller.installationId
               || !isManagedDevcontainerChildProjectionCurrentV1({ homeId: input.serverId, machineId,
                 projection, managedMachine: inspected.machine })) {
               throw authorityError('workspace_sync_child_unavailable', 'Native child storage is no longer current');

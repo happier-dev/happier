@@ -46,6 +46,8 @@ export type ManagedMachineAcquisitionDriverInput = Readonly<{
     observeRecordedApprovalExecution?: (args: RecordedApprovalExecutionObservationArgs) => Promise<ActionExecuteResult>;
     managedGuestActivity?: ManagedGuestActivityTransport;
     readPolicyCurrent?: (managedId: string, signal?: AbortSignal) => Promise<ManagedMachineV1 | null>;
+    /** Classified changes from the controller's existing Account-feed owner. */
+    subscribeManagedMachineChanges?: import('@/api/apiMachine').ApiMachineClient['onManagedMachinePolicyInvalidated'];
 }>;
 export type ManagedMachineExecutionOptions = Readonly<{
     requestId: string;
@@ -72,8 +74,8 @@ export function createManagedMachineControllerClient(input: ManagedMachineAcquis
         validateResource: ReturnType<typeof compilePluginJsonSchema>; validateNativeOperation?: ReturnType<typeof compilePluginJsonSchema> }>;
     let submittedIdentity: CapturedIdentity | undefined;
     function assertConnection(machine: ManagedMachineV1): void {
-        if (machine.homeId !== input.homeId || machine.controller.machineId !== input.controller.machineId
-            || machine.controller.installationId !== input.controller.installationId) throw new ManagedMachineControllerError('controller_unavailable');
+        if (machine.homeId !== input.homeId || machine.controller && (machine.controller.machineId !== input.controller.machineId
+            || machine.controller.installationId !== input.controller.installationId)) throw new ManagedMachineControllerError('controller_unavailable');
     }
     function originProjection() {
         const authorization = options.context?.externalActionExecutionAuthorization;
@@ -174,11 +176,12 @@ export function createManagedMachineControllerClient(input: ManagedMachineAcquis
             throw requestFailure(path, 'currentness', undefined, undefined, readManagedId(body));
         }
     }
-    function correlation(machine: ManagedMachineV1): ManagedControllerCurrentnessV1 {
-        return ManagedControllerCurrentnessV1Schema.parse({
+    function correlation(machine: ManagedMachineV1): ManagedControllerCurrentnessV1 & Readonly<{ controller: ManagedControllerV1 }> {
+        const current = ManagedControllerCurrentnessV1Schema.parse({
             homeId: input.homeId, managedId: machine.id, expectedIntentRevision: machine.intentRevision,
             requestId: options.requestId, controller: input.controller,
         });
+        return { ...current, controller: input.controller };
     }
     async function row(path: string, body: unknown, signal?: AbortSignal | null): Promise<ManagedMachineV1> {
         const machine = (await post(`/v1/machines/managed/controller/${path}`, body, ManagedControllerMachineOutputV1Schema, signal)).machine;
@@ -202,8 +205,8 @@ export function createManagedMachineControllerClient(input: ManagedMachineAcquis
                 && (!machine.resource || isDeepStrictEqual(current.resource, machine.resource))
                 && (machine.resource || !machine.nativeOperationRef || (!current.resource
                     && current.allocation === machine.allocation && pluginJsonValuesEqual(current.nativeOperationRef, machine.nativeOperationRef)))
-                && current.controller.machineId === input.controller.machineId
-                && current.controller.installationId === input.controller.installationId;
+                && (!current.controller || current.controller.machineId === input.controller.machineId
+                    && current.controller.installationId === input.controller.installationId);
             return verified ? current : null;
         } catch (error) {
             if (options.signal?.aborted) return null;

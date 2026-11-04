@@ -40,7 +40,7 @@ export type ManagedMachineDestinationProjection = Readonly<{
 
 /** Live controller admission, never stored with a recipe or paid acquisition. */
 export type ManagedMachineArchiveChoiceAvailability = Readonly<{
-    controllerMachineId: string;
+    controllerMachineId?: string;
     controllerName?: string;
     custodian?: NonNullable<Machine['access']>['custodian'];
     custodianAccountId?: string;
@@ -57,10 +57,12 @@ export function resolveManagedMachineArchiveChoiceAvailability(input: Readonly<{
     controllerOwnership?: 'owned' | 'shared';
     custodianAccountId?: string;
 }>): ManagedMachineArchiveChoiceAvailability {
-    const controllerMachineId = input.draft.receipt.controller.machineId;
-    const controller = input.controller?.id === controllerMachineId ? input.controller : undefined;
+    const pair = input.draft.receipt.controller;
+    const controllerMachineId = pair?.machineId;
+    const controller = pair && input.controller?.id === pair.machineId
+        && input.controller.installationId === pair.installationId ? input.controller : undefined;
     const custodianAccountId = controller?.access?.custodian.accountId ?? input.custodianAccountId;
-    const eligibility = controller || input.controllerOwnership
+    const eligibility = pair && (controller || input.controllerOwnership)
         ? resolveMachineDestinationPurposeEligibility('trigger', input.controllerOwnership ? { ownership: input.controllerOwnership } : undefined, controller, null)
         : { eligible: false as const, reason: 'access_unavailable' as const };
     const nativeEffects = supportedMachineRetentionEffectsV1(input.draft.receipt.retentionCapabilities.supportedIntents);

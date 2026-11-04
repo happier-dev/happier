@@ -78,7 +78,7 @@ export const ManagedWakeTargetV1Schema = lazyDefinition(() => {
   const session = z.strictObject({ homeId: id(), sessionId: id() });
   return z.strictObject({
     homeId: id(), managedId: id(), enrolledMachineId: id(), expectedIntentRevision: revision(),
-    controller: ManagedControllerV1Schema,
+    controller: z.optional(ManagedControllerV1Schema),
     origin: z.discriminatedUnion('kind', [
       z.strictObject({ kind: z.literal('session-input'), session, pendingRequestId: id(),
         requestedAt: z.int().check(z.gte(0)) }),

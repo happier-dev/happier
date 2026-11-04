@@ -33,8 +33,8 @@ export async function readManagedMachinePolicyCensus(input: Readonly<{
     if (response.status < 200 || response.status >= 300) throw new ManagedMachineControllerError('admission_unavailable');
     const census = ManagedPolicyCensusOutputV1Schema.parse(response.data);
     if ([...census.machines, ...census.targets].some(item => item.homeId !== body.homeId
-        || item.controller.machineId !== body.controller.machineId
-        || item.controller.installationId !== body.controller.installationId)) {
+        || item.controller && (item.controller.machineId !== body.controller.machineId
+            || item.controller.installationId !== body.controller.installationId))) {
         throw new ManagedMachineControllerError('controller_unavailable');
     }
     return census;
@@ -43,6 +43,7 @@ export async function readManagedMachinePolicyCensus(input: Readonly<{
 /** Scheduling only: the existing native driver owns policy admission, approval and selected waits. */
 export function createDaemonManagedMachinePolicyRuntime(params: Readonly<{
     apiMachine?: Pick<ApiMachineClient, 'onUpdate' | 'onConnectionStateChange' | 'onManagedMachinePolicyInvalidated'>;
+    executorMachineId?: string;
     /** Local controller prerequisites only; census and native admission still decide authority. */
     isAvailable?: () => boolean;
     /** The incumbent authenticated Machine reader opens published registration readiness. */
@@ -82,6 +83,10 @@ export function createDaemonManagedMachinePolicyRuntime(params: Readonly<{
                 ? { kind: 'accepted-input-start', target }
                 : machine.retention.kind !== 'until-delete' ? { kind: 'retention' } : null;
             if (!purpose) continue;
+            const localGuestPolicy = !machine.controller && machine.enrolledMachineId === params.executorMachineId;
+            // Account daemons may observe a resource for accepted input. Its
+            // unassigned retention still belongs to the enrolled guest.
+            if (purpose.kind === 'retention' && !machine.controller && !localGuestPolicy) continue;
             current.add(machine.id);
             // Intent revisions created by this same driver do not cancel its
             // native completion. A replaced native resource or enrollment does
@@ -127,20 +132,26 @@ export function createDaemonManagedMachinePolicyRuntime(params: Readonly<{
             // New unused retention needs registration and positive guest evidence.
             // Only a policy-owned submitted Stop/Suspend continues without enrollment.
             if (purpose.kind === 'retention' && machine.retention.kind === 'unused' && !continuesRetention) {
-                let guest: Machine | null | undefined;
-                try {
-                    guest = machine.enrolledMachineId ? await params.loadMachine?.(machine.enrolledMachineId, lifetime.signal) : null;
-                } catch (error) {
+                if (!machine.enrolledMachineId) continue;
+                // A requester guest has no custodian-readable private Machine
+                // state. Its exact registered RPC supplies readiness/activity;
+                // registration and activity changes wake the existing row feed.
+                if (!localGuestPolicy && (!machine.enrollmentAccountId || machine.enrollmentAccountId === machine.custodianAccountId)) {
+                    let guest: Machine | null | undefined;
+                    try {
+                        guest = await params.loadMachine?.(machine.enrolledMachineId, lifetime.signal);
+                    } catch (error) {
+                        lifetime.signal.throwIfAborted();
+                        params.onUnavailable?.(error);
+                        continue;
+                    }
                     lifetime.signal.throwIfAborted();
-                    params.onUnavailable?.(error);
-                    continue;
+                    // ApiMachine publishes running only after core RPC registration.
+                    // Presence alone (or retained running state while offline) is insufficient.
+                    if (!guest || guest.id !== machine.enrolledMachineId || guest.active !== true
+                        || guest.revokedAt != null || guest.replacedByMachineId
+                        || guest.daemonState?.status !== 'running') continue;
                 }
-                lifetime.signal.throwIfAborted();
-                // ApiMachine publishes running only after core RPC registration.
-                // Presence alone (or a retained running state while offline) is insufficient.
-                if (!guest || guest.id !== machine.enrolledMachineId || guest.active !== true
-                    || guest.revokedAt != null || guest.replacedByMachineId
-                    || guest.daemonState?.status !== 'running') continue;
             }
             const cancel = new AbortController();
             const onStop = () => abortPolicy(machine.id, cancel, 'policy_runtime_stopped', lifetime.signal.reason);

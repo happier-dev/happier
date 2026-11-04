@@ -114,7 +114,7 @@ export function ManagedMachineSections(props: SectionProps) {
     const router = useRouter();
     const layout = useHappierCollectionLayout();
     const compact = useDeviceType() === 'phone' || layout?.mode === 'stacked';
-    const controller = useServerScopedMachine(props.serverId, machine.controller.machineId);
+    const controller = useServerScopedMachine(props.serverId, machine.controller?.machineId ?? '');
     const enrolledMachine = useServerScopedMachine(props.serverId, machine.enrolledMachineId ?? '');
     const controllerMachines = useMachineListForServer(props.serverId);
     const presenceNowMs = useMachinePresenceNowMs(controllerMachines ?? []);
@@ -132,7 +132,7 @@ export function ManagedMachineSections(props: SectionProps) {
     });
     const reachabilityScope = props.binding?.isCurrent() ? props.binding.scope : null;
     const controllerPresence = controller ? describeMachinePresenceLine(controller, presenceNowMs, undefined, reachabilityScope) : null;
-    const requiredController = controller?.installationId === machine.controller.installationId ? controller : null;
+    const requiredController = machine.controller && controller?.installationId === machine.controller.installationId ? controller : null;
     const provisionerPresentation = useManagedProvisionerPresentation({ serverId: props.serverId, controller: machine.controller,
         provider: machine.launch.provider, schemaVersion: machine.launch.schemaVersion });
     // The controller is a machine of yours: it keeps the device glyph, never the provider's mark.
@@ -263,7 +263,7 @@ export function ManagedMachineSections(props: SectionProps) {
         && canManage && pending === null && !moveLoading && !approval.approvalPending;
     const bound = machine.allocation === 'bound' && Boolean(machine.resource);
     const operation = useManagedMachineActionOperation({ serverId: props.serverId, accountId: props.binding?.accountId ?? null,
-        homeId: machine.homeId, machineId: machine.controller.machineId, managedId: machine.id, enrolledMachineId: machine.enrolledMachineId });
+        homeId: machine.homeId, machineId: machine.controller?.machineId ?? '', managedId: machine.id, enrolledMachineId: machine.enrolledMachineId });
     const [operationReadRevision, refreshOperation] = React.useReducer(value => value + 1, 0);
     const operationRefreshThroughAction = React.useRef(false);
     const currentControllerAvailable = requiredController !== null;
@@ -273,7 +273,7 @@ export function ManagedMachineSections(props: SectionProps) {
         let current = true;
         const retirement = binding.onRetire(() => { current = false; });
         const shouldContinue = () => current && binding.isCurrent();
-        const machineIds = [...new Set([...(currentControllerAvailable ? [machine.controller.machineId] : []),
+        const machineIds = [...new Set([...(requiredController ? [requiredController.id] : []),
             ...(machine.enrolledMachineId ? [machine.enrolledMachineId] : [])])];
         const throughAction = operationRefreshThroughAction.current;
         operationRefreshThroughAction.current = false;
@@ -294,7 +294,7 @@ export function ManagedMachineSections(props: SectionProps) {
         }
         return () => { current = false; retirement.dispose(); };
     }, [props.binding, props.current, props.serverId, currentControllerAvailable, machine.id,
-        machine.controller.machineId, machine.controller.installationId, machine.enrolledMachineId, operationReadRevision]);
+        machine.controller?.machineId, machine.controller?.installationId, machine.enrolledMachineId, operationReadRevision]);
 
     const run = async (actionId: ManagedMachineActionIdV1, input: unknown, onSucceeded?: (result: unknown) => void,
         onFailed?: () => void, reviewedMachineReferences?: ManagedMachineDeleteReview['census']): Promise<boolean> => {
@@ -529,6 +529,7 @@ export function ManagedMachineSections(props: SectionProps) {
             tone: 'text' as const, disabled: !canMutate && !pendingDeleteApprovalId,
             loading: pending === 'machines.managed.references.get' || pending === 'machines.managed.delete', onPress: reviewDependencies }] : []),
     ] : [];
+    const receiptController = machine.reviewedFacts?.controller ?? machine.controller;
     const receipt: ManagedReceiptModel = { ...buildManagedConfigurationReceipt({ launch: machine.launch,
         environment: machine.environmentSetup?.environment, reviewedFacts: machine.reviewedFacts,
         providerTitle: provisionerPresentation.title ?? policyParent?.providerTitle ?? t('common.machine'),
@@ -537,10 +538,12 @@ export function ManagedMachineSections(props: SectionProps) {
         homeName: resolveHomeDisplayLabel(getServerProfileById(props.serverId), props.serverId), preset: machine.preset, created: true,
         nativeLifetimePresented: policyParent?.capabilities.finiteOnly === true,
         // The reviewed controller is usually the current one: then it is the same name, pending or read, as the page's.
-        controllerName: sameStrictJsonValue(machine.reviewedFacts?.controller ?? machine.controller, machine.controller) ? controllerName
+        // An Account-created machine has no controller: no Managed from row (58d U4/U7).
+        ...(!receiptController ? { managedBy: 'account' as const } : {}),
+        controllerName: !receiptController ? undefined : sameStrictJsonValue(receiptController, machine.controller) ? controllerName
             : controllerNameOrPending(controllerMachines?.find(candidate =>
-                candidate.id === (machine.reviewedFacts?.controller ?? machine.controller).machineId
-                && candidate.installationId === (machine.reviewedFacts?.controller ?? machine.controller).installationId), controllerMachines),
+                candidate.id === receiptController.machineId
+                && candidate.installationId === receiptController.installationId), controllerMachines),
         credentialPresentations: credentialPresentation.presentationsByKey }),
         // A resource that no longer exists neither runs nor bills: its receipt is only the record of how it was made.
         ...(resourceConfirmedAbsent ? { cost: null } : {}),
@@ -598,12 +601,12 @@ export function ManagedMachineSections(props: SectionProps) {
     // The installer's open consent is answered on its own task, where the agent answers it too (`tool.systemTasks` respond).
     const promptTaskId = readManagedInstallationPrompt(currentManagedCreationOperation(machine, operation))?.taskId ?? null;
     const answeringRef = React.useRef<string | null>(null);
-    const answerPrompt = canMutate && currentControllerAvailable && promptTaskId ? (approved: boolean) => {
+    const answerPrompt = canMutate && requiredController && promptTaskId ? (approved: boolean) => {
         const binding = props.binding;
         if (!binding?.isCurrent() || answeringRef.current === promptTaskId) return;
         answeringRef.current = promptTaskId;
         setError(null);
-        fireAndForget(machineCapabilitiesInvoke(machine.controller.machineId, { id: 'tool.systemTasks', method: 'respond',
+        fireAndForget(machineCapabilitiesInvoke(requiredController.id, { id: 'tool.systemTasks', method: 'respond',
             params: { taskId: promptTaskId, answer: { approved } } }, { serverId: props.serverId, accountId: binding.accountId })
             .then(result => {
                 if (!binding.isCurrent()) return;
@@ -645,10 +648,9 @@ export function ManagedMachineSections(props: SectionProps) {
             ...(canMutate && currentControllerAvailable && machine.creationState === 'active'
                 && machine.submittedNativeEffect?.intent === 'delete' ? { tryAgain: reviewDependencies } : {}),
             ...(canMutate && props.binding?.accountId === machine.custodianAccountId ? {
-                reconnect: () => router.push({ pathname: SETTINGS_ROUTES.connectedServices, params: { serverId: props.serverId,
-                    machineId: machine.controller.machineId } }),
+                reconnect: () => router.push({ pathname: SETTINGS_ROUTES.connectedServices, params: { serverId: props.serverId, ...(machine.controller ? { machineId: machine.controller.machineId } : {}) } }),
                 ...(creationContext.providerAvailable === false ? { reinstall: () => router.push({ pathname: SETTINGS_ROUTES.plugins,
-                    params: { serverId: props.serverId, machineId: machine.controller.machineId } }) } : {}),
+                    params: { serverId: props.serverId, ...(machine.controller ? { machineId: machine.controller.machineId } : {}) } }) } : {}),
             } : {}),
             ...(canMutate && currentControllerAvailable && canRetryManagedInstallation(machine, operation, creationContext) ? {
                 reinstall: () => fireAndForget(run('machines.managed.bootstrap.retry', { ...target,
@@ -663,7 +665,7 @@ export function ManagedMachineSections(props: SectionProps) {
                     keepSheetRef.current = showManagedKeepSheet(keepChannel, 'managed-machine.policy-sheet');
                 } } : undefined} />}
         {/* A resource that no longer exists has nothing left to manage; the receipt keeps where it was managed from. */}
-        {resourceEnded ? null : requiredController ? <ManagedMachineControllerSection testID="managed-machine.controller"
+        {resourceEnded || !machine.controller ? null : requiredController ? <ManagedMachineControllerSection testID="managed-machine.controller"
             description={controllerRequired(controllerName)}
             controller={{ name: controllerName, icon: machineMark, online: controllerPresence!.online,
                 presence: controllerPresence!.label, move: billing?.location === 'local' ? { kind: 'fixed' }
@@ -681,7 +683,8 @@ export function ManagedMachineSections(props: SectionProps) {
             candidates={moveReview.candidates.map(candidate => {
                 const row = controllerMachines?.find(value => value.id === candidate.id);
                 const presence = row ? describeMachinePresenceLine(row, presenceNowMs, undefined, reachabilityScope) : null;
-                const current = row?.id === machine.controller.machineId && row.installationId === machine.controller.installationId;
+                const current = machine.controller !== undefined && row?.id === machine.controller.machineId
+                    && row.installationId === machine.controller.installationId;
                 const currentInstallation = currentManagedMoveController(row, machine.custodianAccountId, reachabilityScope);
                 const reachable = candidate.reachable && sameStrictJsonValue(currentInstallation, candidate.controller) && currentInstallation !== null;
                 return { id: candidate.id, name: getMachineDisplayName(row) ?? candidate.id, icon: machineMark,

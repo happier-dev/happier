@@ -160,15 +160,16 @@ describe('Automation observation and managed unused retention', () => {
         const cancellation = new AbortController();
         const handlers = new Map<string, RpcHandler<unknown, unknown>>();
         const key = nacl.sign.keyPair();
+        const controller = { machineId: 'controller', installationId: 'controller-installation' };
         const machine = ManagedMachineV1Schema.parse({ id: 'managed', homeId: 'srv_managed_idle', custodianAccountId: 'owner',
-            controller: { machineId: 'controller', installationId: 'controller-installation' },
+            controller,
             launch: { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, name: 'guest', choices: {} },
             allocation: 'bound', creationState: 'active',
             resource: { contributionRef: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, value: {} },
             enrolledMachineId: 'guest', desired: 'start', desiredWhen: 'now', intentRevision: 1,
             retention: { kind: 'unused', afterMs: 3_600_000, effect: 'stop' }, wakeOnAcceptedMessage: true });
         const target = { homeId: machine.homeId, managedId: machine.id, expectedRevision: machine.intentRevision,
-            controller: machine.controller };
+            controller };
         const context: RpcHandlerContext = { signal: cancellation.signal,
             machineAdmission: { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: 'guest',
                 installationId: 'guest-installation', role: 'manage', encryptionMode: 'plain' },
@@ -217,7 +218,7 @@ describe('Automation observation and managed unused retention', () => {
             preparation = prepareManagedRetentionPolicy({ machine, purpose: { kind: 'retention' },
                 options: { requestId: 'unused-stop', signal: cancellation.signal },
                 input: { token: 'disposable-harness', credentials: { token: 'disposable-harness', encryption: null },
-                    serverUrl: owner.origin, homeId: machine.homeId, controller: machine.controller,
+                    serverUrl: owner.origin, homeId: machine.homeId, controller,
                     runtimeRegistry: fixture().runtimeRegistry, managedProviderOperationAuthority: authority,
                     homeTarget: resolveHomeTargetFromDescriptor({ descriptor: { v: 1, homeServerIdentityId: machine.homeId,
                         canonicalServerUrl: owner.origin, revision: 1, endpoints: [{ kind: 'https', url: owner.origin }] }, authority: 'current_connection' }),

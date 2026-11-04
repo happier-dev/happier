@@ -23,7 +23,7 @@ import { SessionDiscussionParticipantV1Schema } from './sessionDiscussionPartici
 export const SessionManagedCreationV1Schema = lazyZodSchema(() => z.strictObject({
   homeId: z.string().check(z.trim(), z.minLength(1)),
   managedId: z.string().check(z.trim(), z.minLength(1)),
-  controller: ManagedControllerV1Schema,
+  controller: z.optional(ManagedControllerV1Schema),
 }));
 export type SessionManagedCreationV1 = z.infer<typeof SessionManagedCreationV1Schema>;
 
