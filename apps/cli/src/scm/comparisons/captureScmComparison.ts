@@ -1,14 +1,11 @@
 import { randomUUID } from 'node:crypto';
-import { lstat, mkdir, mkdtemp, readFile, rename, rm, unlink, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, rename, rm, unlink } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { z } from 'zod/mini';
-import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { ScmComparisonSchema, ScmComparisonSourceSchema, buildScmComparisonIdentity, classifyScmChangePath } from '@happier-dev/protocol/scm/comparison';
-import { ScmDiffSummaryMetadataSchema } from '@happier-dev/protocol/scm/diffSummary';
 import type { ScmComparison, ScmComparisonFile, ScmComparisonSource, ScmDiffSummaryMetadata } from '@happier-dev/protocol';
 import type { ScmDiffSummaryTurnEvidenceMode } from '@happier-dev/protocol/scm';
 import { configuration } from '@/configuration';
-import { writeFileAtomically } from '@/utils/fs/writeJsonAtomic';
+import { logger } from '@/ui/logger';
 import { gitCheckpointAdapter, resolveGitCheckpointBackendContext } from '../checkpoints/gitCheckpointAdapter';
 import { runGitCheckpointCommand } from '../checkpoints/gitCheckpointCommands';
 import { buildRepositoryCheckpointRefs, encodeRepositoryCheckpointScope, parseRepositoryCheckpointRef } from '../checkpoints/refs';
@@ -27,6 +24,10 @@ import { materializeGitRepositoryCheckpoint } from '../checkpoints/materializeGi
 import { createGitTemporaryIndex } from '@happier-dev/cli-common/scm/gitTemporaryIndex';
 import { splitUnifiedDiffByFile } from '@happier-dev/protocol/diff/splitUnifiedDiffByFile';
 import { parseUnifiedDiffHunks } from '@happier-dev/protocol/diff/hunks';
+import { projectCapturedComparisonIndex } from './projectCapturedComparison';
+import { StoredScmComparisonSchema, readStoredScmComparison, writeStoredScmComparison, withStoredScmComparison } from './comparisonStorage';
+import type { StoredScmComparison, StoredScmComparisonReader } from './comparisonStorage';
+import type { ScmComparisonCaptureInput, ScmComparisonCaptureOutput } from '@happier-dev/protocol/scm/diffSummary';
 
 export type CapturedScmComparison = Readonly<{
   metadata: ScmDiffSummaryMetadata;
@@ -53,45 +54,6 @@ export function captureScmComparisonCommitTarget(input: Readonly<{ cwd: string; 
   });
 }
 
-const StoredComparisonSchema = z.strictObject({
-  sessionId: z.optional(z.string()), metadata: ScmDiffSummaryMetadataSchema, comparison: ScmComparisonSchema,
-  retainedRefs: z.array(z.strictObject({ ref: z.string(), oid: z.string() })),
-});
-const StoredComparisonReadSchema = createStoredReadSchema(StoredComparisonSchema);
-
-// Keep each captured file as the serialization unit, rather than allocating a
-// second repository-sized string and write buffer. The schema above supplies
-// plain JSON data; all fields still come from that owner, including future ones.
-function* storedComparisonChunks(value: unknown, files: readonly ScmComparisonFile[]): Generator<string> {
-  if (value === files) {
-    yield '[';
-    for (const [position, file] of files.entries()) {
-      if (position) yield ',';
-      yield JSON.stringify(file);
-    }
-    yield ']';
-  } else if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
-    yield '{';
-    let first = true;
-    for (const [key, child] of Object.entries(value)) {
-      if (child === undefined) continue;
-      if (!first) yield ',';
-      first = false;
-      yield `${JSON.stringify(key)}:`;
-      yield* storedComparisonChunks(child, files);
-    }
-    yield '}';
-  } else {
-    yield JSON.stringify(value) ?? 'null';
-  }
-}
-
-async function writeStoredComparison(path: string, value: z.infer<typeof StoredComparisonSchema>): Promise<void> {
-  await writeFileAtomically({ path, writeTemporaryFile: async temporaryPath => {
-    await writeFile(temporaryPath, storedComparisonChunks(value, value.comparison.inventory.files), { mode: 0o600 });
-  } });
-}
-
 function comparisonNamespace(sessionId?: string): string {
   return sessionId ? encodeRepositoryCheckpointScope(sessionId) : 'repository';
 }
@@ -103,22 +65,32 @@ function comparisonPath(id: string, sessionId?: string): string {
   return join(configuration.activeServerDir, 'runtime', 'scm', 'comparisons', comparisonNamespace(sessionId), `${id}.json`);
 }
 
-async function readStoredComparison(input: Readonly<{ comparisonId: string; sessionId?: string }>) {
-  let content: string;
-  // Decode once: filesystem UTF-8 chunk ropes otherwise coexist with the full
-  // contiguous string JSON.parse needs for repository-sized retained evidence.
-  try { content = (await readFile(comparisonPath(input.comparisonId, input.sessionId))).toString('utf8'); }
+async function withStoredComparison<T>(input: Readonly<{ comparisonId: string; sessionId?: string }>,
+  consume: (reader: StoredScmComparisonReader, sessionId: string | undefined) => Promise<T>): Promise<T> {
+  let opened = false;
+  try { return await withStoredScmComparison(comparisonPath(input.comparisonId, input.sessionId), reader => {
+    opened = true;
+    return consume(reader, input.sessionId);
+  }); }
   catch (error) {
-    // A repository capture belongs to this Machine/Home, rather than one Session.
     // Never search other Session namespaces or hide a corrupt/private capture.
-    if (!input.sessionId || !(error instanceof Error) || !('code' in error) || error.code !== 'ENOENT') throw error;
-    content = (await readFile(comparisonPath(input.comparisonId))).toString('utf8');
-    const stored = StoredComparisonReadSchema.parse(JSON.parse(content));
-    if (stored.sessionId !== undefined || stored.comparison.source.kind === 'session'
-      || stored.comparison.source.kind === 'turnCheckpoint') throw new Error('Repository capture has Session-only scope');
-    return { stored, sessionId: undefined };
+    if (opened || !input.sessionId || !(error instanceof Error) || !('code' in error) || error.code !== 'ENOENT') throw error;
+    return withStoredScmComparison(comparisonPath(input.comparisonId), reader => {
+      const stored = reader.stored;
+      if (stored.sessionId !== undefined || stored.comparison.source.kind === 'session'
+        || stored.comparison.source.kind === 'turnCheckpoint') throw new Error('Repository capture has Session-only scope');
+      return consume(reader, undefined);
+    });
   }
-  return { stored: StoredComparisonReadSchema.parse(JSON.parse(content)), sessionId: input.sessionId };
+}
+
+async function readStoredComparison(input: Readonly<{ comparisonId: string; sessionId?: string }>) {
+  return withStoredComparison(input, async (reader, sessionId) => {
+    const files = [];
+    for (let position = 0; position < reader.totalFiles; position++) files.push(await reader.readFile(position, 'full'));
+    return { stored: { ...reader.stored, comparison: { ...reader.stored.comparison,
+      inventory: { ...reader.stored.comparison.inventory, files } } }, sessionId };
+  });
 }
 
 /** The capture owner supplies both immutable surrounding-file endpoints to an analysis Run. */
@@ -220,18 +192,13 @@ export function resolveCapturedScmComparisonSource(source: ScmComparisonSource, 
     ...(checkpointReceiptId ? { checkpointReceiptId } : {}), evidenceMode: source.evidenceMode ?? context.turnEvidenceMode ?? 'checkpoint' };
 }
 
-export async function readCapturedScmComparison(input: Readonly<{
+type ReadCapturedScmComparisonInput = Readonly<{
   cwd: string; comparisonId: string; sessionId?: string; source?: ScmComparisonSource;
   turnId?: string; checkpointReceiptId?: string; turnEvidenceMode?: ScmDiffSummaryTurnEvidenceMode;
-}>): Promise<CapturedScmComparison> {
-  let stored: z.infer<typeof StoredComparisonSchema>;
-  let storageSessionId: string | undefined;
-  try {
-    const captured = await readStoredComparison(input);
-    stored = captured.stored;
-    storageSessionId = captured.sessionId;
-  }
-  catch (error) { throw Object.assign(new Error('Captured comparison evidence is unavailable', { cause: error }), { code: 'DIFF_UNAVAILABLE' }); }
+}>;
+
+async function qualifyCapturedScmComparison(input: ReadCapturedScmComparisonInput, stored: StoredScmComparison,
+  storageSessionId: string | undefined): Promise<CapturedScmComparison> {
   const projectedSourceIdentity = (source: ScmComparisonSource) => buildScmComparisonIdentity({ source,
     repositoryRootPath: stored.comparison.repository.rootPath, beforeOid: stored.comparison.endpoints.before,
     afterOid: stored.comparison.endpoints.after, sessionId: stored.sessionId, turnId: stored.metadata.turnId,
@@ -258,7 +225,66 @@ export async function readCapturedScmComparison(input: Readonly<{
     turnId: stored.metadata.turnId, checkpointReceiptId: stored.metadata.checkpointReceiptId,
     turnEvidenceMode: stored.metadata.turnEvidenceMode });
   const comparison = { ...stored.comparison, source };
-  return { metadata: { ...stored.metadata, source }, comparison, files: promptFiles(comparison) };
+  return { metadata: { ...stored.metadata, source }, comparison, files: [] };
+}
+
+async function withCapturedScmComparison<T>(input: ReadCapturedScmComparisonInput,
+  consume: (captured: CapturedScmComparison, reader: StoredScmComparisonReader) => Promise<T>): Promise<T> {
+  try {
+    return await withStoredComparison(input, async (reader, sessionId) => {
+      // Validate the retained authority once before disclosing selected records.
+      const captured = await qualifyCapturedScmComparison(input, reader.stored, sessionId);
+      const result = await consume(captured, reader);
+      if (reader.legacy) {
+        try { await writeStoredScmComparison(comparisonPath(input.comparisonId, sessionId), reader.stored); }
+        catch { logger.warn('Retained comparison storage could not be upgraded; captured evidence remains readable.'); }
+      }
+      return result;
+    });
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'DIFF_UNAVAILABLE') throw error;
+    throw Object.assign(new Error('Captured comparison evidence is unavailable', { cause: error }), { code: 'DIFF_UNAVAILABLE' });
+  }
+}
+
+async function readCapturedFiles(input: ReadCapturedScmComparisonInput, kind: 'full' | 'index', path?: string): Promise<CapturedScmComparison> {
+  return withCapturedScmComparison(input, async (captured, reader) => {
+    const files = [];
+    if (path !== undefined) {
+      const position = await reader.findFile(path);
+      if (position !== undefined) files.push(await reader.readFile(position, kind));
+    } else {
+      for (let position = 0; position < reader.totalFiles; position++) files.push(await reader.readFile(position, kind));
+    }
+    const comparison = { ...captured.comparison, inventory: { ...captured.comparison.inventory, files } };
+    return { ...captured, comparison, files: kind === 'full' ? promptFiles(comparison) : [] };
+  });
+}
+
+export async function readCapturedScmComparison(input: ReadCapturedScmComparisonInput): Promise<CapturedScmComparison> {
+  return readCapturedFiles(input, 'full');
+}
+
+export async function readCapturedScmComparisonIndex(input: ReadCapturedScmComparisonInput): Promise<CapturedScmComparison> {
+  return readCapturedFiles(input, 'index');
+}
+
+export async function readCapturedScmComparisonPage(input: ReadCapturedScmComparisonInput & Readonly<{
+  projection: NonNullable<ScmComparisonCaptureInput['projection']>;
+}>): Promise<ScmComparisonCaptureOutput> {
+  return withCapturedScmComparison(input, async (captured, reader) => {
+    const position = input.projection.path ? await reader.findFile(input.projection.path) : undefined;
+    const filtered = Boolean(input.projection.path);
+    return projectCapturedComparisonIndex(captured, {
+      totalFiles: filtered ? (position === undefined ? 0 : 1) : reader.totalFiles,
+      cursor: input.projection.cursor,
+      readFile: index => reader.readFile(filtered ? position! : index, 'index'),
+    });
+  });
+}
+
+export async function readCapturedScmComparisonFile(input: ReadCapturedScmComparisonInput & Readonly<{ path: string }>): Promise<CapturedScmComparison> {
+  return readCapturedFiles(input, 'full', input.path);
 }
 
 /** Explicit captured-comparison deletion disposes only pins recorded by this owner. */
@@ -267,7 +293,7 @@ export async function deleteCapturedScmComparison(input: Readonly<{
 }>): Promise<void> {
   await readCapturedScmComparison(input);
   const path = comparisonPath(input.comparisonId, input.sessionId);
-  const stored = StoredComparisonReadSchema.parse(JSON.parse(await readFile(path, 'utf8')));
+  const stored = await readStoredScmComparison(path);
   const prefix = `refs/happier/comparisons/${comparisonNamespace(input.sessionId)}/${input.comparisonId}/`;
   // Validate every target before deleting any of them; session checkpoint pins are never targets.
   for (const retained of stored.retainedRefs) {
@@ -531,7 +557,7 @@ export async function captureScmComparison(input: CaptureScmComparisonInput): Pr
     }
     retainedRefs.push({ ref, oid });
   }
-  await writeStoredComparison(comparisonPath(id, sessionId), StoredComparisonSchema.parse({
+  await writeStoredScmComparison(comparisonPath(id, sessionId), StoredScmComparisonSchema.parse({
     ...(sessionId ? { sessionId } : {}), comparison, metadata, retainedRefs }));
   let retainedTemporary = false;
   for (const temporary of temporaryRefs) {
@@ -541,7 +567,7 @@ export async function captureScmComparison(input: CaptureScmComparisonInput): Pr
       retainedRefs.push({ ref: temporary.checkpointRef.ref, oid: temporary.expectedOid }); retainedTemporary = true;
     }
   }
-  if (retainedTemporary) await writeStoredComparison(comparisonPath(id, sessionId), StoredComparisonSchema.parse({
+  if (retainedTemporary) await writeStoredScmComparison(comparisonPath(id, sessionId), StoredScmComparisonSchema.parse({
     ...(sessionId ? { sessionId } : {}), comparison, metadata, retainedRefs }));
   } catch (error) {
     const cleanupFailures: unknown[] = [];

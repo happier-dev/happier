@@ -25,7 +25,7 @@ import { authorizeFilesystemPath } from '@/rpc/handlers/fileSystem/accessPolicy/
 import type { ScmBackendRegistry } from '@/scm/registry';
 import { resolveCwd } from '@/scm/runtime';
 import { createNonRepositoryScmSnapshotResponse, notRepositoryResponse, runScmRoute } from '@/scm/rpc/dispatch';
-import { captureScmComparison, readCapturedScmComparison } from '@/scm/comparisons/captureScmComparison';
+import { captureScmComparison, readCapturedScmComparison, readCapturedScmComparisonFile, readCapturedScmComparisonPage } from '@/scm/comparisons/captureScmComparison';
 import { findCapturedComparisonFile, projectCapturedComparison } from '@/scm/comparisons/projectCapturedComparison';
 import type { ReadRepositoryCheckpointTranscriptPage } from '@/scm/checkpoints/readRepositoryCheckpointTranscriptPage';
 import type { ReadPullRequestComparisonPage } from '@/scm/comparisons/readPullRequestComparisonPage';
@@ -314,6 +314,10 @@ async function runLocalScmAction(params: ExecuteScmActionOperationParams & Reado
                 return { success: false, errorCode: 'DIFF_UNAVAILABLE', error: 'Comparison evidence is unavailable for this caller.' };
             }
             try {
+                if (request.comparisonId && request.projection) {
+                    return await readCapturedScmComparisonPage({ ...request, comparisonId: request.comparisonId,
+                        cwd: authorized.cwd, projection: request.projection });
+                }
                 const captured = request.comparisonId
                     ? await readCapturedScmComparison({ ...request, comparisonId: request.comparisonId, cwd: authorized.cwd })
                     : await captureScmComparison({ ...request, cwd: authorized.cwd,
@@ -385,7 +389,7 @@ async function runLocalScmAction(params: ExecuteScmActionOperationParams & Reado
                     ...(request.captured.sessionId ? { sessionId: request.captured.sessionId } : {}),
                     ...(sourceSessionId ? { sourceSessionId } : {}) })) return unavailable;
                 try {
-                    const captured = await readCapturedScmComparison({ cwd: authorized.cwd, ...request.captured });
+                    const captured = await readCapturedScmComparisonFile({ cwd: authorized.cwd, ...request.captured });
                     const file = findCapturedComparisonFile(captured, request.captured.path);
                     if (!file || typeof file.evidence.unifiedDiff !== 'string') return unavailable;
                     if (Buffer.byteLength(file.evidence.unifiedDiff, 'utf8') * 2 > WORKSPACE_FILE_RPC_MAX_RESPONSE_UTF8_BYTES) {

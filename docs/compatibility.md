@@ -5148,6 +5148,17 @@ upgrade rule still applies. No legacy giant-response fallback is introduced.
 Saved generated-result response schemas are unchanged; their embedded full
 comparisons are a separate, still-unbounded response path.
 
+Retained captures are private CLI storage. The current writer keeps complete
+evidence in one atomic record file, with a patch-free index and seekable file
+positions; its existing pathname is unchanged. The capture owner recognizes old
+JSON records, validates their repository, Session and source, serves the read,
+then promotes them through that same writer. A failed promotion preserves readable
+evidence and emits a content-free warning; later reads can still incur the old
+full-record cost until promotion succeeds. No background migration or cache is
+introduced. Earlier intermediate 0.3 CLIs cannot read the new record layout;
+load the matching CLI to retain access. This is part of the coordinated unreleased
+0.3 transition above, not a change to the captured-file wire envelope.
+
 ## Link validation diagnostics (unreleased 0.3)
 
 `deployment_invalid` may also carry a closed, secret-free Link validation

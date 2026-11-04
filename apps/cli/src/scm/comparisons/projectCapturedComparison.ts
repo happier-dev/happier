@@ -11,7 +11,8 @@ export function findCapturedComparisonFile(captured: Pick<CapturedScmComparison,
   return captured.comparison.inventory.files.find(file => resolve(root, file.path) === requested);
 }
 
-function indexFile(file: ScmComparisonFile): ScmComparisonFile {
+export function projectCapturedComparisonFileIndex(file: ScmComparisonFile): ScmComparisonFile {
+  if (file.evidence.state === 'deferred') return file;
   let linesAdded = 0;
   let linesRemoved = 0;
   if (file.evidence.unifiedDiff !== undefined) {
@@ -51,23 +52,47 @@ export function projectCapturedComparison(captured: Pick<CapturedScmComparison, 
   const totalFiles = sourceFiles.length;
   const cursor = projection.cursor ?? 0;
   if (cursor > totalFiles) return unavailable('The file index cursor is outside this captured comparison.');
+  const page = createIndexPage(captured, totalFiles);
+  if (!page.response.success) return page.response;
+  for (let position = cursor; position < totalFiles; position++) {
+    if (!page.append(sourceFiles[position]!, position)) break;
+  }
+  return page.response;
+}
+
+function createIndexPage(captured: Pick<CapturedScmComparison, 'comparison' | 'metadata'>, totalFiles: number) {
   const files: ScmComparisonFile[] = [];
   const response = { success: true as const, comparison: { ...captured.comparison,
     inventory: { ...captured.comparison.inventory, files } }, metadata: captured.metadata,
     page: { totalFiles, nextCursor: null as number | null } };
   // Reserve the longest possible cursor representation once; each entry is serialized once.
   let bytes = Buffer.byteLength(JSON.stringify(response), 'utf8') + Math.max(0, String(totalFiles).length - 4);
-  if (bytes > WORKSPACE_FILE_RPC_MAX_RESPONSE_UTF8_BYTES) return unavailable('Captured metadata exceeds the socket response limit.');
-  for (let position = cursor; position < totalFiles; position++) {
-    const file = indexFile(sourceFiles[position]!);
+  if (bytes > WORKSPACE_FILE_RPC_MAX_RESPONSE_UTF8_BYTES) return { response: unavailable('Captured metadata exceeds the socket response limit.'), append: () => false };
+  const append = (input: ScmComparisonFile, position: number): boolean => {
+    const file = projectCapturedComparisonFileIndex(input);
     const entryBytes = Buffer.byteLength(JSON.stringify(file), 'utf8') + (files.length ? 1 : 0);
     if (bytes + entryBytes > WORKSPACE_FILE_RPC_MAX_RESPONSE_UTF8_BYTES) {
-      if (!files.length) return unavailable('A captured file metadata entry exceeds the socket response limit.');
-      response.page.nextCursor = position;
-      return response;
+      if (!files.length) page.response = unavailable('A captured file metadata entry exceeds the socket response limit.');
+      else response.page.nextCursor = position;
+      return false;
     }
     bytes += entryBytes;
     files.push(file);
+    return true;
+  };
+  const page = { response: response as ScmComparisonCaptureOutput, append };
+  return page;
+}
+
+/** The same transport decision consumes either an in-memory inventory or seekable retained records. */
+export async function projectCapturedComparisonIndex(captured: Pick<CapturedScmComparison, 'comparison' | 'metadata'>,
+  input: Readonly<{ totalFiles: number; cursor?: number; readFile: (position: number) => Promise<ScmComparisonFile> }>): Promise<ScmComparisonCaptureOutput> {
+  const cursor = input.cursor ?? 0;
+  if (cursor > input.totalFiles) return unavailable('The file index cursor is outside this captured comparison.');
+  const page = createIndexPage(captured, input.totalFiles);
+  if (!page.response.success) return page.response;
+  for (let position = cursor; position < input.totalFiles; position++) {
+    if (!page.append(await input.readFile(position), position)) break;
   }
-  return response;
+  return page.response;
 }

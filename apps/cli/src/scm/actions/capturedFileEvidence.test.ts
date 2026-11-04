@@ -11,6 +11,7 @@ import { createLocalScmRepositoryFixture } from '@/testkit/scm/scmBackendContrac
 import { configuration } from '@/configuration';
 import { encodeRepositoryCheckpointScope } from '../checkpoints/refs';
 import { deleteCapturedScmComparison, readCapturedScmComparison } from '../comparisons/captureScmComparison';
+import { readStoredScmComparison } from '../comparisons/comparisonStorage';
 import { executeScmActionOperation } from './executeScmActionOperation';
 
 describe('captured file Action evidence', () => {
@@ -70,7 +71,7 @@ describe('captured file Action evidence', () => {
       // A real retained-record boundary fixture models an existing partial source patch.
       const storedPath = join(configuration.activeServerDir, 'runtime', 'scm', 'comparisons',
         encodeRepositoryCheckpointScope(sessionId), `${comparisonId}.json`);
-      const stored: unknown = JSON.parse(await readFile(storedPath, 'utf8'));
+      const stored: unknown = await readStoredScmComparison(storedPath);
       const record = z.looseObject({ comparison: ScmComparisonSchema }).parse(stored);
       const partial = record.comparison.inventory.files.find(entry => entry.path === fixture.trackedPath)!;
       partial.evidence = { state: 'unavailable', reason: 'source_patch_truncated', unifiedDiff: opened.diff };

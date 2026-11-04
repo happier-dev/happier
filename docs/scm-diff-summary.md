@@ -182,6 +182,13 @@ results still embed the full comparison. A pinned Files route restoring such a
 result can therefore bypass capture paging; that separate response contract
 needs the same bounded projection before all saved-result routes are bounded.
 
+The capture storage owner writes a seekable record file atomically. Index pages
+start at their requested cursor, and a file destination reads only its index and
+evidence records; these reads do not parse unrelated retained patches. Existing
+JSON captures are promoted after their first validated read. If promotion cannot
+write, evidence remains readable with a logged warning, but subsequent reads may
+retain the old parsing cost until promotion succeeds.
+
 Attached Review and generation admission use the existing Execution Run start
 RPC under the caller's cancellation lifetime, without the generic Session RPC
 acknowledgement deadline. The response identifies the admitted Run; existing

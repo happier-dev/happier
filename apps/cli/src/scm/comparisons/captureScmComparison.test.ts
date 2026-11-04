@@ -12,6 +12,7 @@ import { retainRepositoryCheckpointTurnEvidence } from '../checkpoints/sessionEv
 import { createLocalScmRepositoryFixture } from '@/testkit/scm/scmBackendContractFixtures';
 import { encodeRepositoryCheckpointScope } from '../checkpoints/refs';
 import { captureScmComparison, deleteCapturedScmComparison, prepareCapturedScmComparisonInvestigation, readCapturedScmComparison } from './captureScmComparison';
+import { readStoredScmComparison } from './comparisonStorage';
 
 describe('captured SCM comparison storage', () => {
   const directories: string[] = [];
@@ -120,9 +121,9 @@ describe('captured SCM comparison storage', () => {
       expect(scoped.comparison.id).toBe(machine.comparison.id);
       const scopedPath = join(configuration.activeServerDir, 'runtime', 'scm', 'comparisons',
         encodeRepositoryCheckpointScope(sessionId), `${scoped.comparison.id}.json`);
-      const content = await readFile(scopedPath, 'utf8');
+      const content = await readFile(scopedPath);
       try {
-        const stored = JSON.parse(content) as Record<string, unknown>;
+        const stored: Record<string, unknown> = await readStoredScmComparison(scopedPath);
         delete stored.sessionId;
         await writeFile(scopedPath, JSON.stringify(stored));
         await expect(readCapturedScmComparison({ cwd: fixture.rootPath, sessionId, comparisonId: scoped.comparison.id }))
@@ -172,7 +173,7 @@ describe('captured SCM comparison storage', () => {
       // A pre-normalization retained capture stores selectors in metadata/session, not source.
       const path = join(configuration.activeServerDir, 'runtime', 'scm', 'comparisons',
         encodeRepositoryCheckpointScope(first.sessionId), `${first.comparison.id}.json`);
-      const stored = JSON.parse(await readFile(path, 'utf8')) as { comparison: typeof first.comparison; metadata: typeof first.metadata };
+      const stored = await readStoredScmComparison(path);
       stored.comparison.source = { kind: 'turnCheckpoint' };
       stored.metadata.source = { kind: 'turnCheckpoint' };
       await writeFile(path, JSON.stringify(stored));
@@ -298,7 +299,7 @@ describe('captured SCM comparison storage', () => {
     const directory = join(configuration.activeServerDir, 'runtime', 'scm', 'comparisons', encodeRepositoryCheckpointScope(sessionId));
     directories.push(directory);
     const path = join(directory, `${captured.comparison.id}.json`);
-    const stored = JSON.parse(await readFile(path, 'utf8')) as { comparison: typeof captured.comparison };
+    const stored = await readStoredScmComparison(path);
     const legacy = stored.comparison.inventory.files.find(file => file.path === fixture.trackedPath)!;
     legacy.evidence = { state: 'available', unifiedDiff: legacyPatch.slice(legacyPatch.indexOf('diff --git ')) };
     await writeFile(path, JSON.stringify(stored));
@@ -359,7 +360,7 @@ describe('captured SCM comparison storage', () => {
     const directory = join(configuration.activeServerDir, 'runtime', 'scm', 'comparisons', encodeRepositoryCheckpointScope(sessionId));
     directories.push(directory);
     const path = join(directory, `${scope.comparisonId}.json`);
-    const original = JSON.parse(await readFile(path, 'utf8')) as { retainedRefs: { ref: string; oid: string }[] };
+    const original = await readStoredScmComparison(path);
     const stored = { ...original, sessionId, future: true,
       metadata: { ...captured.metadata, future: true, source: { ...captured.metadata.source, future: true } },
       comparison: { ...captured.comparison, future: true, repository: { ...captured.comparison.repository, future: true },
