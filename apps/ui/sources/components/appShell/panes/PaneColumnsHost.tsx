@@ -27,7 +27,6 @@ import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreferenc
 import type { RightPanePlacement } from './rightPanePlacement';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { AppShellTailContext, AppShellTailSlot, useAppShellTail } from '@/components/navigation/shell/appShellTail';
-import { appShellColumnPlaneColor } from '@/components/navigation/shell/appRail/appShellColumnSurface';
 import { useDestinationFocus } from '@/components/appShell/workspace/destinationInstanceContext';
 import { useOptionalWorkspaceNavigation } from '@/components/appShell/workspace/WorkspaceNavigationContext';
 
@@ -118,16 +117,17 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
 
     const arrangement = props.arrangement === 'editor' && multiPaneEnabled && multiPaneDeviceType !== 'phone' ? 'editor' : 'session';
     const mirrored = arrangement === 'editor';
-    // The shell's right panel position (calm-shell R4-2). With `canvas`, this page's docked right column
-    // and its rail stand in the shell's tail, beside the page sheet: only for the one page on screen at
+    // The shell's tail (calm-shell R4-2, R11-1): this page's rail stands there, on the canvas beside the page
+    // sheet, and with the `canvas` placement its docked right column too; only for the one page on screen at
     // the trailing edge (not Editor first, not one pane of a split). The layout keeps budgeting the
-    // width the sheet has when the tail is empty, so both placements resolve the same columns.
+    // width the sheet has when the tail is empty, so every placement resolves the same columns.
     const shellTail = useAppShellTail();
     const workspace = useOptionalWorkspaceNavigation();
     const destinationFocused = useDestinationFocus();
     const soleScope = !workspace?.active || workspace.state.maximizedGroupId !== null || workspace.state.root.kind === 'leaf';
-    const canvasTail = shellTail?.placement === 'canvas' && Platform.OS === 'web' && !mirrored && soleScope ? shellTail : null;
-    const hostWidthPx = canvasTail?.containerWidthPx ?? measuredHostWidthPx;
+    const railTail = shellTail?.railOnCanvas === true && Platform.OS === 'web' && !mirrored && soleScope ? shellTail : null;
+    const canvasTail = railTail?.placement === 'canvas' ? railTail : null;
+    const hostWidthPx = railTail?.containerWidthPx ?? measuredHostWidthPx;
     const rightTail = React.useMemo(() => (canvasTail ? { host: canvasTail.rightHost, hidden: !destinationFocused } : undefined),
         [canvasTail, destinationFocused]);
     // The swap travels (lab FL): read the columns where they are before the new order commits, then
@@ -188,7 +188,10 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
     const bottomOpen = props.bottomOpen ?? bottomPane !== null;
     const requestedMainHidden = props.mainHidden === true && (rightOpen || detailsOpen);
     // Resolve the optional rail's layout first; destination-only content takes the whole host.
-    const panelContainerWidthPx = Math.max(0, hostWidthPx - (props.actionRail != null ? PANE_ACTION_RAIL_WIDTH : 0));
+    const [railReportsVacant, setRailVacant] = React.useState(false);
+    // The column goes only where the rail's More has another home, so its panels and Customize stay reachable.
+    const railVacant = railReportsVacant && railTail?.railMoreHost != null;
+    const panelContainerWidthPx = Math.max(0, hostWidthPx - (props.actionRail != null && !railVacant ? PANE_ACTION_RAIL_WIDTH : 0));
     const mainMinPx = requestedMainHidden ? 0 : (props.mainMinWidthPx ?? PANE_SIZING_DEFAULTS.mainMinPx);
     // With both side panes docked the canonical main column may run a little narrower; a caller's
     // own minimum is the content's real floor and holds in every layout.
@@ -264,7 +267,9 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
         right: rightPresentation,
         details: detailsPresentation,
     }), [detailsPresentation, kind, mainPresentation, rightPresentation]);
-    const showActionRail = props.actionRail != null && !destinationDetailOnly;
+    // The rail stays mounted while vacant, so it can say when it has an action again; only its column goes.
+    const mountActionRail = props.actionRail != null && !destinationDetailOnly;
+    const showActionRail = mountActionRail && !railVacant;
     // A floating companion (the Voice Orb) keeps clear of the rail: its window rectangle is published.
     const railColumnRef = React.useRef<View | null>(null);
     const reportRailRectValue = useReportSessionCockpitActionRailRect(showActionRail);
@@ -512,12 +517,29 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
         : paneLayoutInput.detailsOpenedFrom === 'main' && !rightHiddenWithDetails({ ...paneLayoutInput, detailsOpenedFrom: null })
             ? 'folded'
             : true;
+    const railOnCanvas = railTail !== null;
+    const panelAttached = railOnCanvas && rightOpen && rightPresentation === 'docked';
+    const panelJoinsPage = railOnCanvas && canvasTail === null;
+    const [panelTabAtTop, setPanelTabAtTop] = React.useState(false);
+    // A joined panel's tab at the rail's top continues the page sheet's top edge: the frame squares that corner.
+    const joinTrailingTopCorner = railTail?.joinTrailingTopCorner;
+    const pageJoinsTopTab = panelJoinsPage && panelAttached && panelTabAtTop;
+    React.useLayoutEffect(() => {
+        if (!joinTrailingTopCorner) return;
+        joinTrailingTopCorner(pageJoinsTopTab);
+        return () => joinTrailingTopCorner(false);
+    }, [joinTrailingTopCorner, pageJoinsTopTab]);
     const railContext = React.useMemo(() => ({
         visible: showActionRail,
         mirrored,
+        onCanvas: railOnCanvas,
+        panelAttached,
+        onPanelTabAtTop: setPanelTabAtTop,
+        onVacantChange: setRailVacant,
+        vacantMoreHost: railVacant && destinationFocused ? railTail?.railMoreHost ?? null : null,
         contentWidthPx: containerWidthPx,
         rightPaneHiddenByDetails,
-    }), [showActionRail, mirrored, containerWidthPx, rightPaneHiddenByDetails]);
+    }), [showActionRail, mirrored, railOnCanvas, panelAttached, containerWidthPx, rightPaneHiddenByDetails, railVacant, destinationFocused, railTail?.railMoreHost]);
     const detailsAvailable = resolvePaneLayout({ ...paneLayoutInput, rightOpen: true, detailsOpen: true }).details === 'docked';
     const layoutContext = React.useMemo<AppPaneScopeLayoutState>(() => ({
         arrangement, mainHidden, mainDrawerOpen, effectiveDetailsOpen: detailsOpen,
@@ -608,22 +630,25 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
                 rightTail={rightTail}
                 bottomOverlayFocusReturnRef={props.bottomOverlayFocusReturnRef}
             />
-            {showActionRail ? (
-                <RailTailSlot tail={rightTail} host={canvasTail?.railHost ?? null}>
+            {mountActionRail ? (
+                <RailTailSlot tail={railTail ? { hidden: !destinationFocused } : undefined} host={railTail?.railHost ?? null}>
                 <View
                     ref={railColumnRef}
                     testID="pane-action-rail-column"
                     onLayout={reportRailRect}
-                    style={styles.railColumn}
+                    // With its panel open the rail stands above the page's seam: the page never casts onto the tab.
+                    style={[styles.railColumn, panelAttached ? styles.railColumnAttached : null, railVacant ? styles.railColumnVacant : null]}
                 >
-                    {/* The rail and its side column are one surface (OR-2): it takes the column's material, so a page's
-                        atmosphere (a Project's planet and band) stays on the page and never shows through the rail. On
-                        the canvas both stand on the navigation plane instead. */}
-                    <GlassSurface surfaceGroup={canvasTail ? 'sidebar' : 'content'}
-                        solidColor={canvasTail ? appShellColumnPlaneColor(theme.colors) : theme.colors.surface.base}
-                        finishRole={null} nested style={styles.railSurface}>
+                    {/* On the canvas the rail paints nothing of its own: it coats the canvas around its panel's tab
+                        (R11-1/R11-2). Inside a page (native, Editor first, a split pane) the rail and its side column are
+                        one surface (OR-2): it takes the column's material, so a page's atmosphere (a Project's planet and
+                        band) stays on the page and never shows through the rail. */}
+                    {railTail ? null : <GlassSurface surfaceGroup="content" solidColor={theme.colors.surface.base}
+                        finishRole={null} nested style={StyleSheet.absoluteFillObject} children={null} />}
+                    {/* One parent in every placement, so a placement change never remounts the rail. */}
+                    <View style={styles.railSurface}>
                         <PaneRegionProvider region="main">{props.actionRail}</PaneRegionProvider>
-                    </GlassSurface>
+                    </View>
                 </View>
                 </RailTailSlot>
             ) : null}
@@ -669,8 +694,7 @@ function RailTailSlot(props: Readonly<{
     host: HTMLElement | null;
     children: React.ReactElement;
 }>): React.ReactNode {
-    if (!props.tail) return props.children;
-    return <AppShellTailSlot host={props.host} hidden={props.tail.hidden}>{props.children}</AppShellTailSlot>;
+    return <AppShellTailSlot host={props.host} hidden={props.tail?.hidden}>{props.children}</AppShellTailSlot>;
 }
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -689,5 +713,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexShrink: 0,
         alignSelf: 'stretch',
     },
+    railColumnAttached: { zIndex: 3 },
+    railColumnVacant: { display: 'none' },
     railSurface: { flex: 1, minHeight: 0 },
 }));

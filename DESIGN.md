@@ -716,6 +716,10 @@ live in the page-presentation owners in code.
 - **Every page shares one set of measures.** The content column, the title block, the space between
   sections and the sheet insets have one owner, so the page title, its purpose line, section titles
   and sheets line up on the same edge on every page, inside Settings and out.
+- **The paper runs to the window's edge unless something stands beside it.** A right rail with no
+  action on it, no open panel and nothing to signal takes no column. Its More moves to the title bar's
+  trailing controls, so its panels and Customize stay one click away, and the rail returns when it has
+  something to show.
 - **Back stays out of the title.** The title and purpose, or the leading mark, keep the content's
   left edge; on wide screens the back arrow sits in the gutter beside the column, level with the
   title, and moves onto the title row only when there is no room for it.

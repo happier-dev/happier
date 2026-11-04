@@ -143,6 +143,15 @@ preferences win; choosing Automatic removes that item's override. Preferences ne
 Info permits pinned or overflow, so a saved hidden value resolves to its legal catalog default.
 Reset clears only the edited surface, preserving composer and other placement preferences.
 
+A rail with nothing standing on it takes no column: no pinned action, no open panel and no count or badge its
+More could carry. It reports that through `PaneActionRailContext.onVacantChange`. Only a page whose rail stands
+in the shell's tail, with the title strip's `AppShellTitleMoreSlot` present, gives its column up. `PaneColumnsHost`
+then hides the column but keeps the rail mounted so it can report again, returns the width to the page, and hands
+the focused page's rail that slot as `vacantMoreHost`. The rail's More moves there through `AppShellTailSlot`,
+without remounting, inside the strip's measured trailing reservation. Everywhere else (native, Editor first, a
+split pane) the column stays, because the More has no other home. Vacancy is read from placement, not from fit,
+so a short window keeps its More in the rail.
+
 Automatic built-ins read scalar facts from their existing resource owners. Services and Board reuse
 received exact-scope summaries first; a mounted Session may acquire one missing scalar per resource,
 without opening a pane, fetching bodies or starting a watch. Projects only consume already-held

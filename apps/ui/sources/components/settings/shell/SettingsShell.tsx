@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View, useWindowDimensions } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useContainingHappierMaterialRole, useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
-import { AppShellMaterialPlane } from '@/components/navigation/shell/AppShellMaterialFrame';
+import { AppShellMaterialPlane } from '@/components/navigation/shell/appShellMaterialPlane';
 
 import { useAppShellColumn } from '@/components/navigation/shell/appRail/appShellColumnContext';
 import { appShellColumnPlaneColor, appShellColumnSurface } from '@/components/navigation/shell/appRail/appShellColumnSurface';

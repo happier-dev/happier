@@ -7,6 +7,7 @@ import { resolveSidebarDockMaxWidthPx, SIDEBAR_DEFAULT_WIDTH_PX, SIDEBAR_DOCK_MI
 import { AppRail } from './appRail/AppRail';
 import { AppShellColumn } from './appRail/AppShellColumn';
 import { AppShellTitleStrip } from './appRail/AppShellTitleStrip';
+import { AppShellTitleMoreSlot } from './appShellTail';
 import { AppShellPeekLayer, AppShellPeekProvider } from './appRail/AppShellPeek';
 import { APP_RAIL_WIDTH_PX } from './appRail/appRailMetrics';
 import {
@@ -37,6 +38,8 @@ import { t } from '@/text';
 
 /** The title strip's trailing Voice node (Top bar mode); one element, so the strip's memo holds. */
 const VOICE_TOP_BAR_TRAILING = <VoiceTopBarPresenceMount />;
+const TITLE_STRIP_TRAILING_ROW = { flexDirection: 'row', alignItems: 'center' } as const;
+const TITLE_STRIP_TRAILING = <View style={TITLE_STRIP_TRAILING_ROW}><AppShellTitleMoreSlot />{VOICE_TOP_BAR_TRAILING}</View>;
 
 // Like the docked column, a peeked one keeps its wheel and touch scrolling from document scroll locks.
 const stopPeekScrollPropagation = (event: { stopPropagation?: () => void }) => event.stopPropagation?.();
@@ -210,7 +213,7 @@ export const SidebarNavigator = React.memo(() => {
                     columnToggleAvailable={column.kind !== 'none'} onToggleColumn={handleToggleColumn}
                     navigation={workspace?.active ? workspace : undefined}
                     workspaceCatalog={workspace?.active ? catalog : undefined}
-                    trailing={VOICE_TOP_BAR_TRAILING} />
+                    trailing={TITLE_STRIP_TRAILING} />
             ) : null}
             rail={showSidebar ? <AppRail key="rail" /> : null}
             column={columnShown ? columnContent : null}

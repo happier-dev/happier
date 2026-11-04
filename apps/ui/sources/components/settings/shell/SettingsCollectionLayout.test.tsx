@@ -289,7 +289,7 @@ describe('SettingsCollectionLayout', () => {
             return null;
         }
         await renderScreen(
-            <AppShellTailContext.Provider value={{ placement: 'canvas', rightHost: null, railHost: null, containerWidthPx: 1104 }}>
+            <AppShellTailContext.Provider value={{ placement: 'canvas', divider: 'line', railOnCanvas: true, rightHost: null, railHost: null, railMoreHost: null, containerWidthPx: 1104, joinTrailingTopCorner: () => {} }}>
                 <SettingsCollectionLayout navigator="machines" rootPathname="/settings/machines"
                     resolveChildRoute={() => '[id]'} rail={<View />} railWidth="standard" detailMinWidthPx={480}
                     testID="settings-machines" detailTop={<TailProbe />} />

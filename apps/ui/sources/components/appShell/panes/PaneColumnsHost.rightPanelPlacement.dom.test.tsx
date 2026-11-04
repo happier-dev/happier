@@ -107,3 +107,43 @@ it('keeps a slot in its tail host but shows nothing while its page is off screen
     expect(container.querySelector('[data-testid="probe"]')).toBe(probe);
     expect(mounts).toBe(1);
 });
+
+it('gives a vacant rail no column only where its More has a home in the title strip, and stands again when it has an action', async () => {
+    const { container, root } = mountRoot();
+    const { PaneActionRailContext } = await import('./PaneActionRailContext');
+    const { AppShellTitleMoreSlot } = await import('@/components/navigation/shell/appShellTail');
+    let moreHost: HTMLElement | null | undefined;
+    function Rail({ vacant }: Readonly<{ vacant: boolean }>) {
+        const rail = React.useContext(PaneActionRailContext);
+        const report = rail?.onVacantChange;
+        moreHost = rail?.vacantMoreHost;
+        React.useLayoutEffect(() => { report?.(vacant); }, [report, vacant]);
+        return <div data-testid="rail-body" />;
+    }
+    let railVisibleInPage: boolean | undefined;
+    function Main() {
+        railVisibleInPage = React.useContext(PaneActionRailContext)?.visible;
+        return <div data-testid="main" />;
+    }
+    const render = (vacant: boolean, slot: boolean) => act(async () => root.render(
+        <AppShellMaterialFrame showChrome dragEnabled={false} leftOffsetPx={0} sidebarWidth={0}
+            titleStrip={slot ? <AppShellTitleMoreSlot /> : <div />} rail={null} column={null} peek={null}>
+            <PaneColumnsHost testID="host" main={<Main />} actionRail={<Rail vacant={vacant} />} />
+        </AppShellMaterialFrame>,
+    ));
+    const column = () => document.querySelector<HTMLElement>('[data-testid="pane-action-rail-column"]')!;
+    const slotNode = () => container.querySelector('[data-testid="app-shell-title-more"]');
+    // No home for its More: it keeps its column, so its panels stay reachable.
+    await render(true, false);
+    expect(getComputedStyle(column()).display).not.toBe('none');
+    expect(railVisibleInPage).toBe(true);
+    await render(true, true);
+    expect(getComputedStyle(column()).display).toBe('none');
+    expect(railVisibleInPage).toBe(false);
+    expect(moreHost).toBe(slotNode());
+    expect(document.querySelector('[data-testid="rail-body"]')).not.toBeNull();
+    await render(false, true);
+    expect(getComputedStyle(column()).display).not.toBe('none');
+    expect(railVisibleInPage).toBe(true);
+    expect(moreHost).toBeNull();
+});

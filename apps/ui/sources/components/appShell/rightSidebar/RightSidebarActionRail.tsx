@@ -23,6 +23,8 @@ import { PluginRightSidebarCountState, PluginRightSidebarCountsState, pluginRigh
     type PluginRightSidebarLabelledCount, type PluginRightSidebarCountDescriptor } from './rightSidebarPluginCount';
 import { PluginDestinationBadge } from '@/components/appShell/destinations/CompactAppDestinationBadge';
 import { formatExactCount } from '@/components/ui/navigation/tabBadge/tabBadgeModel';
+import { AppShellTailSlot } from '@/components/navigation/shell/appShellTail';
+import { DESKTOP_SIDEBAR_CHROME_TOP_NAV_ICON_TARGET_SIZE_PX } from '@/components/navigation/shell/desktopChrome/desktopChromeMetrics';
 import { resolveAppRailBadgeTone, resolveStrongestAppRailBadge, type AppRailBadgeSignal, type RailBadgeSignalRenderer } from '@/components/navigation/shell/appRail/AppRailBadge';
 
 export type RightSidebarRailAction = Readonly<{
@@ -79,6 +81,8 @@ const styles = StyleSheet.create((theme) => ({
     },
     actions: { alignItems: 'center', paddingVertical: RAIL_PADDING, gap: ACTION_GAP },
     cell: { alignItems: 'center', justifyContent: 'center' },
+    // In the title strip's trailing controls it keeps their gap; an empty slot takes no width.
+    moreInTitleBar: { marginRight: theme.space.s8 },
     separator: {
         alignSelf: 'stretch',
         marginHorizontal: theme.space.s10,
@@ -250,7 +254,7 @@ function OverflowCustomBadgeSignals(props: Readonly<{ actions: readonly RightSid
 }
 
 function OverflowTrigger(props: Readonly<{ actions: readonly RightSidebarRailAction[]; prefix: string; open: boolean;
-    toggle: () => void; customize: () => void; size: number; tooltipPlacement: 'left' | 'right'; values: ReadonlyMap<string, PluginCountValue> }>): React.ReactElement {
+    toggle: () => void; customize: () => void; size: number; tooltipPlacement: 'left' | 'right' | 'bottom'; values: ReadonlyMap<string, PluginCountValue> }>): React.ReactElement {
     return <OverflowBadgeSignals actions={props.actions} values={props.values}>{(signal, labels) => {
         const baseLabel = signal?.kind === 'count' ? `${t('common.more')} ${formatExactCount(signal.value)}` : t('common.more');
         const label = labels.length > 0 ? `${baseLabel}, ${labels.join(', ')}` : baseLabel;
@@ -535,6 +539,15 @@ export function RightSidebarActionRailView(props: RightSidebarActionRailProps & 
         onPanelTabAtTop?.(panelTabAtTop);
     }, [onPanelTabAtTop, panelTabAtTop]);
     React.useLayoutEffect(() => () => onPanelTabAtTop?.(false), [onPanelTabAtTop]);
+    // Read from placement, not fit: a short window that folds its pinned actions into More keeps its More. A signal
+    // More could carry keeps the rail too, so a count is never lost with the column.
+    const vacant = placements.pinned.length === 0 && presence.ghosts.length === 0
+        && !props.actions.some(action => action.active || action.pluginCount?.tab.countResourceId || action.pluginCount?.tab.counts
+            || action.renderBadgeSignal || staticBadgeSignal(action));
+    const onVacantChange = railContext?.onVacantChange;
+    const moreHost = vacant ? railContext?.vacantMoreHost ?? null : null;
+    React.useLayoutEffect(() => { onVacantChange?.(vacant); }, [onVacantChange, vacant]);
+    React.useLayoutEffect(() => () => onVacantChange?.(false), [onVacantChange]);
     const cells: Array<Readonly<{ action: RightSidebarRailAction; leaving: boolean }>> = visible.shown.map(action => ({ action, leaving: false }));
     for (const ghost of presence.ghosts) {
         if (cells.some(cell => cell.action.id === ghost.action.id)) continue;
@@ -561,7 +574,8 @@ export function RightSidebarActionRailView(props: RightSidebarActionRailProps & 
             accessibilityRole="toolbar"
             accessibilityLabel={t('common.actions')}
             style={styles.rail}
-            onLayout={(event) => setHeight(event.nativeEvent.layout.height)}
+            // A vacant rail's hidden column reports no height; its last one stands until it returns.
+            onLayout={(event) => { const next = event.nativeEvent.layout.height; if (next > 0) setHeight(next); }}
             {...(Platform.OS === 'web' ? { onContextMenu: (event: { preventDefault(): void }) => { event.preventDefault(); customize(); } } : {})}
         >
             <View style={[styles.actions, onCanvas ? styles.actionsOnCanvas : null]}>
@@ -584,7 +598,7 @@ export function RightSidebarActionRailView(props: RightSidebarActionRailProps & 
                 </RailCellPresence>
                 </React.Fragment>
             ))}
-            {visible.overflow.length > 0 || (visible.shown.length === 0 && props.actions.length > 0) ? <PluginOverflowCounts actions={visible.overflow}>
+            {visible.overflow.length > 0 || (visible.shown.length === 0 && props.actions.length > 0) ? <AppShellTailSlot host={moreHost}><View style={moreHost ? styles.moreInTitleBar : null}><PluginOverflowCounts actions={visible.overflow}>
                 {values => <DropdownMenu
                 open={moreOpen}
                 onOpenChange={setMoreOpen}
@@ -592,11 +606,12 @@ export function RightSidebarActionRailView(props: RightSidebarActionRailProps & 
                 separateCategories
                 selectedId={visible.overflow.find((action) => action.active)?.id ?? null}
                 onSelect={(id) => { setMoreOpen(false); if (id === 'customize') customize(); else visible.overflow.find((action) => action.id === id)?.onPress(); }}
-                placement={tooltipPlacement}
+                placement={moreHost ? 'bottom' : tooltipPlacement}
                 matchTriggerWidth={false}
                 trigger={({ toggle, open }) => <OverflowTrigger actions={visible.overflow} prefix={prefix} open={open}
-                    toggle={toggle} customize={customize} size={size} tooltipPlacement={tooltipPlacement} values={values} />}
-            />}</PluginOverflowCounts> : null}
+                    toggle={toggle} customize={customize} size={moreHost ? DESKTOP_SIDEBAR_CHROME_TOP_NAV_ICON_TARGET_SIZE_PX : size}
+                    tooltipPlacement={moreHost ? 'bottom' : tooltipPlacement} values={values} />}
+            />}</PluginOverflowCounts></View></AppShellTailSlot> : null}
             </View>
         </View>
     );

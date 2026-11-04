@@ -53,6 +53,33 @@ vi.mock('@/text', async () => {
 
 const { NavigationPlacementCustomizer } = await import('@/components/ui/navigation/NavigationPlacementCustomizer');
 
+describe('a rail with nothing standing on it', () => {
+    const tab = (overrides: Partial<RightSidebarRailAction> = {}): RightSidebarRailAction => ({
+        id: 'inspector', label: 'Inspector', icon: 'folder', active: false, defaultPlacement: 'overflow', onPress: () => {}, ...overrides,
+    });
+    const preferences: NavigationPlacementPreferences = { orderedIds: [], placements: {} };
+    async function reports(actions: readonly RightSidebarRailAction[]) {
+        const onVacantChange = vi.fn();
+        await renderScreen(
+            <PaneActionRailContext.Provider value={{ visible: true, contentWidthPx: 1000, onVacantChange }}>
+                <RightSidebarActionRailView surfaceId="workspaceRail" testIDPrefix="rail" actions={actions}
+                    preferences={preferences} onCustomize={() => {}} />
+            </PaneActionRailContext.Provider>,
+        );
+        return onVacantChange.mock.lastCall?.[0];
+    }
+
+    it('reports itself vacant when every action rests in More', async () => {
+        expect(await reports([tab()])).toBe(true);
+    });
+
+    it('stands while an action is pinned, while its panel is open, and while More carries a signal', async () => {
+        expect(await reports([tab({ defaultPlacement: 'pinned' })])).toBe(false);
+        expect(await reports([tab({ active: true })])).toBe(false);
+        expect(await reports([tab({ badgeCount: 3 })])).toBe(false);
+    });
+});
+
 describe('Automatic rail content motion', () => {
     const automatic = (hasContent: boolean | null | undefined): RightSidebarRailAction => ({
         id: 'habits', label: 'Habits', icon: 'folder', active: false, defaultPlacement: 'auto', hasContent, onPress: () => {},

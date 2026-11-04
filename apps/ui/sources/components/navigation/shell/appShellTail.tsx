@@ -1,27 +1,50 @@
 import * as React from 'react';
-import { Platform } from 'react-native';
+import { Platform, View } from 'react-native';
 
 import { requireReactDOM } from '@/utils/web/reactDomCjs';
 
+/** Where the docked right panel stands, resolved by the frame for this window: its own sheet on the canvas, or in the page. */
 export type AppShellRightPanelPlacement = 'canvas' | 'sheet';
+/** How a right panel joined to the page is divided from it (R11-3): a hairline, or the header's soft shade. */
+export type AppShellPanelDivider = 'line' | 'shadow';
 
 /**
- * The shell's trailing slot (calm-shell R4-2), resolved once by `AppShellMaterialFrame`. With the
- * `canvas` placement a page's docked right panel and its action rail stand in these hosts, on the
- * navigation canvas beside the page sheet, mirroring the left column; with `sheet` they stay inside
- * the page and the tail is only the window's inset. `containerWidthPx` is the width the page sheet
- * has when the tail is empty, so a pane host budgets the same layout in both placements.
+ * The shell's trailing slot (calm-shell R4-2, R11-1), resolved once by `AppShellMaterialFrame`. A page's
+ * action rail always stands in `railHost`, on the canvas beside the page sheet like the app rail. With the
+ * `canvas` placement the docked right panel stands in `rightHost` too, as its own sheet; with `sheet` it
+ * joins the page inside its sheet, divided from it by `divider`. `containerWidthPx` is the width the page
+ * sheet has when the tail is empty, so a pane host budgets the same layout in every placement.
  */
 export type AppShellTail = Readonly<{
   placement: AppShellRightPanelPlacement;
+  divider: AppShellPanelDivider;
+  /** The web shell's chrome is shown: a page's rail stands on the canvas, in `railHost`. */
+  railOnCanvas: boolean;
   rightHost: HTMLElement | null;
   railHost: HTMLElement | null;
+  /** Where a rail with nothing standing on it keeps its More: the title strip's trailing controls. */
+  railMoreHost: HTMLElement | null;
   containerWidthPx: number | null;
+  /** A joined panel's tab is the rail's first action: the page squares its top trailing corner into it. */
+  joinTrailingTopCorner: (joined: boolean) => void;
 }>;
 
 export const AppShellTailContext = React.createContext<AppShellTail | null>(
   null,
 );
+
+const AppShellTitleMoreHostContext = React.createContext<((node: unknown) => void) | null>(null);
+
+/** The frame hands the title strip its one attach point for `railMoreHost`. */
+export const AppShellTitleMoreHostProvider = AppShellTitleMoreHostContext.Provider;
+
+/** In the title strip's trailing controls: empty and without width until a vacant rail's More stands in it. */
+export function AppShellTitleMoreSlot(): React.ReactNode {
+  const attach = React.useContext(AppShellTitleMoreHostContext);
+  return attach ? <View ref={attach} testID="app-shell-title-more" style={TITLE_MORE_STYLE} /> : null;
+}
+
+const TITLE_MORE_STYLE = { flexDirection: 'row', alignItems: 'center' } as const;
 
 /** The frame's tail, or null outside the app shell and inside a pane host that already took it. */
 export function useAppShellTail(): AppShellTail | null {
