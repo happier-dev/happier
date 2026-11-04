@@ -1,3 +1,7 @@
+import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
+import { prepareManagedRetentionPolicy } from './managedIntentReconciler';
+import { Server } from 'socket.io';
+import { createServer } from 'node:http';
 import axios from 'axios';
 import tweetnacl from 'tweetnacl';
 import { tmpdir } from 'node:os';
@@ -13,7 +17,7 @@ import { createManagedProviderOperationAuthority } from '@/daemon/connectedServi
 import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import { createConnectedAccountRequestAuthSubjectRegistry } from '@/daemon/connectedServices/requestAuth/ConnectedAccountRequestAuthSubjectRegistry';
 import { fixture } from '@/plugins/runtime/invocation/actions/managedCustody.testkit';
-import { createManagedMachineAcquisitionDriver } from './acquire';
+import { createManagedMachineAcquisitionDriver, type ManagedMachineAcquisitionDriverInput } from './acquire';
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import type { ActionOperationDomainRefV1 } from '@happier-dev/protocol/actions';
 import { MachineProvisionerRebuildResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
@@ -146,7 +150,7 @@ function setup(decision: { kind: 'idle'; since: number } | { kind: 'busy' | 'unk
     const confirmIdle = vi.fn(async (): Promise<ManagedActivityBridgeResultV1> => decision.kind === 'idle'
         ? { ...decision, evidence: signedIdle(machine, decision.since, Date.now()) } : decision);
     const reopen = vi.fn(async () => undefined);
-    const waitForChange = vi.fn(async (signal?: AbortSignal): Promise<'activity' | 'currentness' | void> => await new Promise<void>((_resolve, reject) => {
+    const waitForChange = vi.fn(async (signal?: AbortSignal): Promise<'activity' | void> => await new Promise<void>((_resolve, reject) => {
         signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
     }));
     const driverInput = { token: 'token', serverUrl: 'https://home.example', homeId, controller,
@@ -1156,26 +1160,49 @@ describe('managed native intent through the accepted Action', () => {
             await work?.catch(() => undefined);
         }
     });
-    it('does not reread guest activity for unrelated Account currentness wakes during a settled minute', async () => {
+    it('issues zero controller currentness reads for unrelated own-Machine, Team and Account reconnect changes while idle', async () => {
         const test = setup({ kind: 'busy', reasons: ['finite'] });
-        test.setMachine({ desiredWhen: 'after-idle' });
+        test.setMachine({ desired: 'start', retention: { kind: 'unused', afterMs: 60_000, effect: 'delete' } });
+        const machine = test.readMachine();
+        const http = createServer();
+        const server = new Server(http, { path: '/v1/updates/' });
+        await new Promise<void>(resolve => http.listen(0, '127.0.0.1', resolve));
+        const address = http.address();
+        if (!address || typeof address === 'string') throw new Error('Expected loopback socket');
+        let activityReads = 0;
+        server.on('connection', socket => socket.on(SOCKET_RPC_EVENTS.CALL, (_request: unknown, reply: (result: unknown) => void) => {
+            activityReads++;
+            reply({ ok: true, result: { kind: 'busy', reasons: ['finite'] } });
+        }));
+        let publish: Parameters<NonNullable<ManagedMachineAcquisitionDriverInput['subscribeManagedMachineChanges']>>[0] | undefined;
         const lifetime = new AbortController();
-        let wakes = 0;
-        let parked!: () => void;
-        const parking = new Promise<void>(resolve => { parked = resolve; });
-        test.waitForChange.mockImplementation(async () => {
-            if (wakes++ < 60) return 'currentness';
-            await parking;
-            return 'activity';
-        });
-        const work = test.run(lifetime.signal).catch(error => error);
+        let waiting = false;
+        const work = prepareManagedRetentionPolicy({ machine, purpose: { kind: 'retention' },
+            input: { ...test.driverInput, serverUrl: `http://127.0.0.1:${address.port}`, managedGuestActivity: undefined,
+                subscribeManagedMachineChanges: listener => { publish = listener; return () => { publish = undefined; }; } },
+            options: { requestId: 'retention', signal: lifetime.signal,
+                context: { operationOwnerUpdate: { update: () => { waiting = true; } } } },
+        }).catch((error: unknown) => error);
         try {
-            await vi.waitFor(() => expect(test.waitForChange).toHaveBeenCalledTimes(61));
-            expect(test.readActivity).toHaveBeenCalledTimes(1);
+            await vi.waitFor(() => { expect(waiting).toBe(true); expect(activityReads).toBe(1); });
+            const currentReads = () => test.post.mock.calls.filter(([url]) => String(url).endsWith('/controller/current')).length;
+            const before = currentReads();
+            for (let index = 0; index < 60; index++) {
+                publish?.({ kind: 'machines', machineIds: [machine.controller!.machineId] });
+                publish?.({ kind: 'currentness' });
+                publish?.(undefined);
+                await new Promise<void>(resolve => setImmediate(resolve));
+            }
+            expect(currentReads() - before).toBe(0);
+            expect(activityReads).toBe(1);
+            test.setMachine({ intentRevision: machine.intentRevision + 1 });
+            publish?.({ kind: 'managed', managedIds: [machine.id] });
+            expect(await work).toMatchObject({ code: 'intent_changed' });
+            expect(currentReads() - before).toBe(1);
         } finally {
             lifetime.abort();
-            parked();
             await work;
+            await new Promise<void>(resolve => server.close(() => resolve()));
         }
     });
     it.each(['control', 'policy'] as const)('associates the real %s operation with its admitted row before native effects', async (source) => {

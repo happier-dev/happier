@@ -16,7 +16,7 @@ export type ManagedGuestActivityTransport = Readonly<{
     read(machine: ManagedMachineV1, signal?: AbortSignal): Promise<ManagedActivityBridgeResultV1>;
     confirmIdle(machine: ManagedMachineV1, signal?: AbortSignal): Promise<ManagedActivityBridgeResultV1>;
     reopen(machine: ManagedMachineV1): Promise<unknown>;
-    waitForChange(signal?: AbortSignal): Promise<'activity' | 'currentness' | void>;
+    waitForChange(signal?: AbortSignal): Promise<'activity' | void>;
     dispose?(): Promise<void>;
 }>;
 
@@ -35,11 +35,9 @@ async function waitForIdle(params: Readonly<{
     isCurrent(): Promise<boolean>;
     onActivity(kind: 'busy' | 'unknown' | 'idle' | 'waiting'): void;
 }>) {
-    let currentnessAlreadyVerified = false;
     for (;;) {
         assertLive(params.signal);
-        if (!currentnessAlreadyVerified && !await params.isCurrent()) throw new ManagedMachineControllerError('intent_changed');
-        currentnessAlreadyVerified = false;
+        if (!await params.isCurrent()) throw new ManagedMachineControllerError('intent_changed');
         const activity = await params.bridge.read(params.machine, params.signal);
         if (activity.kind === 'refused') throw new ManagedMachineControllerError(activity.code);
         // The guest read commits evidence under a reversible local probe and
@@ -54,21 +52,9 @@ async function waitForIdle(params: Readonly<{
             }
             deadlineAt = Date.now() + remaining;
         }
-        for (;;) {
-            let change: 'activity' | 'currentness' | void | undefined;
-            const outcome = await waitForChangeOrDeadline({ waitForChange: async signal => {
-                change = await params.bridge.waitForChange(signal);
-            }, signal: params.signal, remainingMs: deadlineAt === undefined ? undefined : Math.max(0, deadlineAt - Date.now()) });
-            assertLive(params.signal);
-            if (!await params.isCurrent()) throw new ManagedMachineControllerError('intent_changed');
-            // Account changes can retire the admitted policy row, but they do
-            // not make the guest's activity observation stale. Only this
-            // Machine's update, reconnect, or the idle deadline rereads it.
-            if (outcome === 'deadline' || change !== 'currentness') {
-                currentnessAlreadyVerified = true;
-                break;
-            }
-        }
+        await waitForChangeOrDeadline({ waitForChange: async signal => {
+            await params.bridge.waitForChange(signal);
+        }, signal: params.signal, remainingMs: deadlineAt === undefined ? undefined : Math.max(0, deadlineAt - Date.now()) });
     }
 }
 

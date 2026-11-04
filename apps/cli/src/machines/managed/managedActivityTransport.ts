@@ -32,7 +32,7 @@ export function createManagedGuestActivityTransport(input: Pick<ManagedMachineAc
         privateKey: input.externalActionMachineRequestPrivateKey,
     } : undefined;
     const machineId = machine.enrolledMachineId;
-    let changed: false | 'activity' | 'currentness' = false;
+    let changed: false | 'activity' = false;
     let failure: unknown;
     let rpcSocket: Parameters<typeof callSocketRpc>[0]['socket'] | undefined;
     let wake: (() => void) | undefined;
@@ -59,12 +59,10 @@ export function createManagedGuestActivityTransport(input: Pick<ManagedMachineAc
     }, async (socket, connect, attemptSignal) => {
         const onUpdate = (update: unknown) => {
             const parsed = UpdateContainerSchema.safeParse(update);
-            // Managed mutations already publish the Account catch-up cursor;
-            // it contains no entity payload. Re-read currentness on that edge.
-            if (parsed.success && (parsed.data.body.t === 'account-change'
-                || (parsed.data.body.t === 'update-machine' && parsed.data.body.machineId === machineId))) {
-                changed = parsed.data.body.t === 'account-change' && changed !== 'activity'
-                    ? 'currentness' : 'activity';
+            // ApiMachine classifies Account changes for all held guests;
+            // this socket carries only the exact guest's activity.
+            if (parsed.success && parsed.data.body.t === 'update-machine' && parsed.data.body.machineId === machineId) {
+                changed = 'activity';
                 wake?.();
             }
         };
@@ -127,7 +125,7 @@ export function createManagedGuestActivityTransport(input: Pick<ManagedMachineAc
             signal?.throwIfAborted();
             if (failure) throw failure;
             if (changed) { const result = changed; changed = false; return result; }
-            return await new Promise<'activity' | 'currentness'>((resolve, reject) => {
+            return await new Promise<'activity'>((resolve, reject) => {
                 const onAbort = () => { cleanup(); reject(signal?.reason); };
                 const cleanup = () => { wake = undefined; signal?.removeEventListener('abort', onAbort); };
                 wake = () => {
