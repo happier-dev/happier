@@ -796,6 +796,7 @@ export const english = {
             },
             delivery: {
                 brokered: 'Brokered',
+                vendorNative: 'Delivered by the machine’s cloud provider',
                 direct: 'Direct access',
                 both: 'Broker + direct',
                 mixed: 'Mixed delivery',
@@ -869,6 +870,11 @@ export const english = {
                 directConfirm: 'Share directly',
                 keepBrokered: 'Keep brokered',
                 limitsNote: 'Direct use happens outside Happier and is not recorded.',
+            },
+            nativeDisclosure: {
+                title: 'Share this key with Vercel?',
+                body: 'The selected source’s key is disclosed to Vercel’s control plane, separate from the Vercel provisioning token. Vercel keeps the key outside the guest, but you still trust the source custodian and Vercel. Installed requests bypass the Happier broker, so Happier’s per-request authorization, model/body policy and request, token or cost limits do not apply. Vendor matchers narrow key substitution; they do not inspect model JSON or deny unmatched requests. Set budgets and key restrictions with the Gateway/vendor; their coverage is not verified here. Existing rules may continue while the controller is offline, and changes or removal cannot be guaranteed then. Rotate or revoke the upstream key to stop use independently; disabling delivery cannot recall a key Vercel already received. Attribution is observational metadata, not authenticated member identity or chargeback. Members sharing a sandbox OS user can read and reuse each other’s placeholders; these are not private between members.',
+                confirm: 'Allow vendor delivery',
             },
             directUse: {
                 title: 'Use this shared credential directly?',

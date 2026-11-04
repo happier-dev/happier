@@ -12898,6 +12898,7 @@ const polish: TeamsTranslationRoot = {
             },
             delivery: {
                 brokered: 'Przez brokera',
+                vendorNative: 'Dostarczane przez dostawcę chmury maszyny',
                 direct: 'Dost\u0119p bezpo\u015bredni',
                 both: 'Broker + bezpo\u015bredni',
                 mixed: 'Mieszane dostarczanie',
@@ -12972,6 +12973,7 @@ const polish: TeamsTranslationRoot = {
                 keepBrokered: 'Zostaw przez brokera',
                 limitsNote: 'U\u017cycie bezpo\u015brednie odbywa si\u0119 poza Happier i nie jest rejestrowane.',
             },
+            nativeDisclosure: english.teams.credentials.nativeDisclosure,
             directUse: {
                 title: 'U\u017cy\u0107 bezpo\u015brednio tych udost\u0119pnionych po\u015bwiadcze\u0144?',
                 body: 'Happier mo\u017ce przekaza\u0107 po\u015bwiadczenia lokalnym narz\u0119dziom u\u017cywanym przez t\u0119 sesj\u0119. Kontynuuj tylko wtedy, gdy ufasz tym narz\u0119dziom w zakresie tych po\u015bwiadcze\u0144.',

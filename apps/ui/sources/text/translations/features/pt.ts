@@ -12879,6 +12879,7 @@ const portuguese: TeamsTranslationRoot = {
             },
             delivery: {
                 brokered: 'Via intermedi\u00e1rio',
+                vendorNative: 'Fornecido pelo provedor de nuvem da máquina',
                 direct: 'Acesso direto',
                 both: 'Intermedi\u00e1rio + direto',
                 mixed: 'Entrega mista',
@@ -12953,6 +12954,7 @@ const portuguese: TeamsTranslationRoot = {
                 keepBrokered: 'Manter via intermedi\u00e1rio',
                 limitsNote: 'O uso direto acontece fora do Happier e n\u00e3o \u00e9 registado.',
             },
+            nativeDisclosure: english.teams.credentials.nativeDisclosure,
             directUse: {
                 title: 'Usar diretamente esta credencial partilhada?',
                 body: 'O Happier pode fornecer material da credencial \u00e0s ferramentas locais usadas por esta sess\u00e3o. Continue apenas se confiar nessas ferramentas com esta credencial.',

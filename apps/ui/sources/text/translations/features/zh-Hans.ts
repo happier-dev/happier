@@ -12863,6 +12863,7 @@ const simplifiedChinese: TeamsTranslationRoot = {
             },
             delivery: {
                 brokered: '\u7ecf\u4ee3\u7406',
+                vendorNative: '由机器的云服务商提供',
                 direct: '\u76f4\u63a5\u8bbf\u95ee',
                 both: '\u4ee3\u7406 + \u76f4\u63a5',
                 mixed: '\u6df7\u5408\u4ea4\u4ed8',
@@ -12937,6 +12938,7 @@ const simplifiedChinese: TeamsTranslationRoot = {
                 keepBrokered: '\u4fdd\u6301\u7ecf\u4ee3\u7406',
                 limitsNote: '\u76f4\u63a5\u4f7f\u7528\u53d1\u751f\u5728 Happier \u4e4b\u5916\uff0c\u4e0d\u4f1a\u88ab\u8bb0\u5f55\u3002',
             },
+            nativeDisclosure: english.teams.credentials.nativeDisclosure,
             directUse: {
                 title: '\u76f4\u63a5\u4f7f\u7528\u6b64\u5171\u4eab\u51ed\u636e\uff1f',
                 body: 'Happier \u53ef\u80fd\u4f1a\u5411\u6b64\u4f1a\u8bdd\u4f7f\u7528\u7684\u672c\u5730\u5de5\u5177\u63d0\u4f9b\u51ed\u636e\u6750\u6599\u3002\u4ec5\u5f53\u4f60\u4fe1\u4efb\u8fd9\u4e9b\u5de5\u5177\u5904\u7406\u6b64\u51ed\u636e\u65f6\u624d\u7ee7\u7eed\u3002',

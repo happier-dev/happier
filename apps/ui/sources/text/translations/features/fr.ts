@@ -12926,6 +12926,7 @@ const french: TeamsTranslationRoot = {
             },
             delivery: {
                 brokered: 'Via le courtier',
+                vendorNative: 'Fourni par le fournisseur cloud de la machine',
                 direct: 'Acc\u00e8s direct',
                 both: 'Courtier + direct',
                 mixed: 'Distribution mixte',
@@ -13000,6 +13001,7 @@ const french: TeamsTranslationRoot = {
                 keepBrokered: 'Garder via le courtier',
                 limitsNote: 'L\u2019usage direct a lieu hors de Happier et n\u2019est pas enregistr\u00e9.',
             },
+            nativeDisclosure: english.teams.credentials.nativeDisclosure,
             directUse: {
                 title: 'Utiliser directement cet identifiant partag\u00e9\u00a0?',
                 body: 'Happier peut fournir le mat\u00e9riel d\u2019identification aux outils locaux utilis\u00e9s par cette session. Continue uniquement si tu confies cet identifiant \u00e0 ces outils.',

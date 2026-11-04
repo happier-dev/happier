@@ -12691,6 +12691,7 @@ const german: TeamsTranslationRoot = {
             },
             delivery: {
                 brokered: '\u00dcber Broker',
+                vendorNative: 'Vom Cloud-Anbieter des Computers bereitgestellt',
                 direct: 'Direkter Zugriff',
                 both: 'Broker + direkt',
                 mixed: 'Gemischte Zustellung',
@@ -12765,6 +12766,7 @@ const german: TeamsTranslationRoot = {
                 keepBrokered: 'Beim Broker bleiben',
                 limitsNote: 'Direkte Nutzung geschieht au\u00dferhalb von Happier und wird nicht erfasst.',
             },
+            nativeDisclosure: english.teams.credentials.nativeDisclosure,
             directUse: {
                 title: 'Diese geteilten Zugangsdaten direkt verwenden?',
                 body: 'Happier kann Zugangsmaterial an lokale Werkzeuge dieser Session weitergeben. Fahre nur fort, wenn du diesen Werkzeugen mit den Zugangsdaten vertraust.',

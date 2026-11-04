@@ -12902,6 +12902,7 @@ const catalan: TeamsTranslationRoot = {
             },
             delivery: {
                 brokered: 'Amb intermediari',
+                vendorNative: 'Lliurat pel proveïdor del núvol de la màquina',
                 direct: 'Acc\u00e9s directe',
                 both: 'Intermediari + directe',
                 mixed: 'Lliurament mixt',
@@ -12976,6 +12977,7 @@ const catalan: TeamsTranslationRoot = {
                 keepBrokered: 'Mant\u00e9n amb intermediari',
                 limitsNote: 'L\u2019\u00fas directe passa fora de Happier i no queda registrat.',
             },
+            nativeDisclosure: english.teams.credentials.nativeDisclosure,
             directUse: {
                 title: 'Vols fer servir directament aquesta credencial compartida?',
                 body: 'Happier pot proporcionar material de la credencial a les eines locals que utilitza aquesta sessi\u00f3. Continua nom\u00e9s si confies aquestes credencials a les eines.',

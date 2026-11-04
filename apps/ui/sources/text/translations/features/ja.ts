@@ -12867,6 +12867,7 @@ const japanese: TeamsTranslationRoot = {
             },
             delivery: {
                 brokered: '\u30d6\u30ed\u30fc\u30ab\u30fc\u7d4c\u7531',
+                vendorNative: 'マシンのクラウドプロバイダーが配信',
                 direct: '\u76f4\u63a5\u30a2\u30af\u30bb\u30b9',
                 both: '\u30d6\u30ed\u30fc\u30ab\u30fc\uff0b\u76f4\u63a5',
                 mixed: '\u6df7\u5728\u3057\u305f\u914d\u4fe1',
@@ -12941,6 +12942,7 @@ const japanese: TeamsTranslationRoot = {
                 keepBrokered: '\u30d6\u30ed\u30fc\u30ab\u30fc\u7d4c\u7531\u306e\u307e\u307e',
                 limitsNote: '\u76f4\u63a5\u5229\u7528\u306f Happier \u306e\u5916\u3067\u884c\u308f\u308c\u3001\u8a18\u9332\u3055\u308c\u307e\u305b\u3093\u3002',
             },
+            nativeDisclosure: english.teams.credentials.nativeDisclosure,
             directUse: {
                 title: '\u3053\u306e\u5171\u6709\u8a8d\u8a3c\u60c5\u5831\u3092\u76f4\u63a5\u4f7f\u7528\u3057\u307e\u3059\u304b\uff1f',
                 body: 'Happier \u306f\u3001\u3053\u306e\u30bb\u30c3\u30b7\u30e7\u30f3\u3067\u4f7f\u7528\u3059\u308b\u30ed\u30fc\u30ab\u30eb\u30c4\u30fc\u30eb\u306b\u8a8d\u8a3c\u60c5\u5831\u3092\u63d0\u4f9b\u3059\u308b\u5834\u5408\u304c\u3042\u308a\u307e\u3059\u3002\u305d\u308c\u3089\u306e\u30c4\u30fc\u30eb\u3092\u4fe1\u983c\u3067\u304d\u308b\u5834\u5408\u306e\u307f\u7d9a\u884c\u3057\u3066\u304f\u3060\u3055\u3044\u3002',
