@@ -211,9 +211,9 @@ export async function installRemoteFirstPartyComponentPayload(
       if (localCliPayloadRoot) throw new SystemTaskExecutionError('invalid_payload', 'The local CLI payload could not be prepared for delivery.');
       throw error;
     });
+    const stageParent = `${remoteHomeDir}/bootstrap-staging/${sanitizeRemoteFirstPartyPathSegment(params.componentId)}-${sanitizeRemoteFirstPartyPathSegment(prepared.versionId)}-${resolvedDeps.now()}`;
     try {
       await pruneRemoteVersions();
-      const stageParent = `${remoteHomeDir}/bootstrap-staging/${sanitizeRemoteFirstPartyPathSegment(params.componentId)}-${sanitizeRemoteFirstPartyPathSegment(prepared.versionId)}-${resolvedDeps.now()}`;
       const stageParentForScp = normalizeScpRemotePath(stageParent);
       const stageResult = await resolvedDeps.runRemoteText({
                 remoteCommand: `mkdir -p ${quoteRemotePathWithHomeExpansion(stageParent)}`,
@@ -254,6 +254,13 @@ export async function installRemoteFirstPartyComponentPayload(
       });
       assertRemotePayloadCommandSucceeded(promotionResult, 'promotion');
       await pruneRemoteVersions();
+    } catch (error) {
+      // Promotion's remote trap cannot clean a transfer that never reaches it.
+      // Cleanup must survive cancellation and preserve the original failure.
+      await resolvedDeps.runRemoteText({
+        remoteCommand: `rm -rf ${quoteRemotePathWithHomeExpansion(stageParent)}`,
+      }).catch(() => undefined);
+      throw error;
     } finally {
       await scpReadyPayload.cleanup();
     }

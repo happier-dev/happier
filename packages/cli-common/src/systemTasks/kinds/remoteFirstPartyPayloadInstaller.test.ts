@@ -134,6 +134,12 @@ describe('installRemoteFirstPartyComponent', () => {
         expect(await readFile(join(installRoot, 'previous', 'happier'), 'utf8')).toBe('1.2.0');
       }
       expect(await readFile(join(outside, 'keep'), 'utf8')).toBe('outside');
+      const remoteHome = join(home, '.happier');
+      expect((await readdir(remoteHome)).filter(name => name.startsWith('bootstrap-self-download.'))).toEqual([]);
+      expect(await readdir(join(remoteHome, 'bootstrap-staging')).catch((error: unknown) => {
+        if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return [];
+        throw error;
+      })).toEqual([]);
     } finally {
       await runningPayload?.close();
       runningChild?.kill();
@@ -141,6 +147,67 @@ describe('installRemoteFirstPartyComponent', () => {
       await fixture.cleanup();
       await rm(home, { recursive: true, force: true });
     }
+  });
+
+  it.each(['staging', 'transfer', 'cancellation', 'promotion transport'] as const)(
+    'cleans only its own staging after a %s failure', async phase => {
+      if (process.platform === 'win32') return;
+      const home = await mkdtemp(join(tmpdir(), 'happier failed staging-'));
+      const fixture = await createPayloadRootFixture();
+      const remoteHome = join(home, '.happier');
+      const stageParent = join(remoteHome, 'bootstrap-staging', 'happier-cli-1.2.3-123');
+      const sibling = join(remoteHome, 'bootstrap-staging', 'another-install', 'keep');
+      const controller = new AbortController();
+      const failure = new Error(`fixture ${phase} failure`);
+      try {
+        await mkdir(join(sibling, '..'), { recursive: true });
+        await writeFile(sibling, 'keep');
+        const installation = installRemoteFirstPartyComponentPayload({
+          componentId: 'happier-cli', signal: controller.signal,
+        }, {
+          now: () => 123,
+          resolveRemoteReleaseTarget: async () => ({ os: 'linux', arch: 'x64' }),
+          runRemoteText: async ({ remoteCommand, signal }) => {
+            signal?.throwIfAborted();
+            if (phase === 'promotion transport' && remoteCommand.includes('tar -xf')) throw failure;
+            const result = await execFileAsync('/bin/sh', ['-c', remoteCommand], { env: { ...process.env, HOME: home } });
+            if (phase === 'staging' && remoteCommand.startsWith('mkdir -p ')) {
+              return { status: 1, stdout: '', stderr: 'mkdir: No space left on device' };
+            }
+            return { status: 0, ...result };
+          },
+          copyLocalDirectoryToRemote: async ({ localPath, remotePath, signal }) => {
+            await cp(localPath, join(home, remotePath, basename(localPath)), { recursive: true });
+            if (phase === 'cancellation') { controller.abort(failure); signal?.throwIfAborted(); }
+            if (phase === 'transfer') throw failure;
+          },
+          preparePayload: async () => ({ componentId: 'happier-cli', channel: 'stable', versionId: '1.2.3', payloadRoot: fixture.payloadRoot, source: null, cleanup: async () => {} }),
+        });
+        if (phase === 'staging') await expect(installation).rejects.toMatchObject({ code: 'remote_storage_full' });
+        else await expect(installation).rejects.toBe(failure);
+        await expect(lstat(stageParent)).rejects.toMatchObject({ code: 'ENOENT' });
+        expect(await readFile(sibling, 'utf8')).toBe('keep');
+      } finally {
+        await fixture.cleanup();
+        await rm(home, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it('preserves the transfer failure when remote staging cleanup is unreachable', async () => {
+    const fixture = await createPayloadRootFixture();
+    const failure = new Error('fixture transfer failure');
+    try {
+      await expect(installRemoteFirstPartyComponentPayload({ componentId: 'happier-cli' }, {
+        resolveRemoteReleaseTarget: async () => ({ os: 'linux', arch: 'x64' }),
+        runRemoteText: async ({ remoteCommand }) => {
+          if (remoteCommand.startsWith('rm -rf ')) throw new Error('fixture cleanup transport unavailable');
+          return { status: 0, stdout: '', stderr: '' };
+        },
+        copyLocalDirectoryToRemote: async () => { throw failure; },
+        preparePayload: async () => ({ componentId: 'happier-cli', channel: 'stable', versionId: '1.2.3', payloadRoot: fixture.payloadRoot, source: null, cleanup: async () => {} }),
+      })).rejects.toBe(failure);
+    } finally { await fixture.cleanup(); }
   });
 
   it.each([

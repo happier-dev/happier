@@ -3513,7 +3513,9 @@ hosted by a separate Node payload after its module file closes. Open files, unav
 observations, or inconclusive results retain that version until a later install can
 prove it unused. Local activation and remote pruning share this file-use rule; Windows retains
 its existing locked-file deletion handling. No free-space estimate precedes staging, and native
-ENOSPC still reports `remote_storage_full`.
+ENOSPC still reports `remote_storage_full`. Failed uploads also attempt to remove their own
+staging directory without the cancelled install signal; unreachable cleanup preserves the original
+failure. Promotion and self-download retain their remote shell cleanup traps.
 
 In current development source, admitted post-update service repair runs through the activated
 managed CLI. A successful update ends the invoking guided repair walk, discarding its remaining
