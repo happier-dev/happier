@@ -2,18 +2,17 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
-import type { PluginSettingFieldV2 } from '@happier-dev/protocol';
+import type { PluginSettingFieldV2 } from '@happier-dev/protocol/plugins/contributions/settings';
 import { compilePluginJsonSchema, isValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 
 import { ConnectedServiceSetupFlowActions } from '../setup/ConnectedServiceSetupFlowBody';
+import { ConnectedAccountAdvancedFields } from './ConnectedAccountAdvancedFields';
 import { ConnectedAccountFormSection } from './ConnectedAccountFormSection';
+import { ConnectedAccountGuide, type ConnectedAccountGuideContent } from './ConnectedAccountGuide';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { IconButton } from '@/components/ui/buttons/IconButton';
-import { Icon } from '@/components/ui/icons/Icon';
-import { SetupSteps } from '@/components/ui/setupBlocks/SetupSteps';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
-import { openExternalUrl } from '@/utils/url/openExternalUrl';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { SchemaFieldControl } from '@/components/settings/schemaFields/SchemaFieldControl';
 import { buildActionRowAccessibilityLabel } from '@/components/ui/lists/actionRowAccessibility';
@@ -24,14 +23,21 @@ import { resolveProjectedLocalizedText } from '@/components/plugins/surfaces/res
 import { useConnectedAccountInvalidFieldFocus } from './useConnectedAccountInvalidFieldFocus';
 import { useConnectedAccountDraftNavigationGuard } from './useConnectedAccountDraftNavigationGuard';
 import { createConnectedAccountConfigurationDraft } from './connectedAccountConfigurationDraft';
+import {
+    useConnectedAccountConfigurationFields,
+    type ConnectedAccountConfigurationFieldsProps,
+    type ConnectedAccountConfigurationSubmission,
+} from './ConnectedAccountConfigurationForm';
+
+const EMPTY_CONFIGURATION = { fields: [], values: {}, configuredSecretFieldIds: [] } as const;
 
 const stylesheet = StyleSheet.create((theme) => ({
-    guided: { gap: 14 },
-    field: { width: '100%' },
+    field: { width: '100%', gap: theme.space.s4 },
+    billing: { paddingHorizontal: theme.space.s16, paddingTop: theme.space.s8 },
     accessories: { flexDirection: 'row', alignItems: 'center' },
     note: {  ...Typography.variant('meta'),  color: theme.colors.text.secondary },
     panelActions: {
-        paddingTop: theme.space.s12,
+        paddingTop: theme.space.s16,
     },
     actions: {
         alignItems: 'flex-end',
@@ -57,11 +63,13 @@ type ConnectedAccountManualFormProps = Readonly<{
     embedded?: boolean;
     localize?: (value: Parameters<typeof resolveProjectedLocalizedText>[0]) => string;
     fields: readonly ManualAuthenticationField[];
-    /** Built-in presentation metadata only; the daemon descriptor still owns credential validation. */
-    guided?: Readonly<{
-        consoleUrl: string;
-        createKeyTitle: string;
-        billingNote: string;
+    configuration?: Omit<ConnectedAccountConfigurationFieldsProps, 'saving' | 'embedded' | 'localize'>;
+    /**
+     * The manual mode's `setup` guide to creating the credential, presentation only: the
+     * daemon descriptor still owns validation. `steps` lead the form, the console link closes them.
+     */
+    guided?: ConnectedAccountGuideContent & Readonly<{
+        billingNote?: string;
         shapeHint?: string;
     }>;
     submitting: boolean;
@@ -71,6 +79,7 @@ type ConnectedAccountManualFormProps = Readonly<{
     onSubmit(input: Readonly<{
         fields: Readonly<Record<string, string>>;
         displayName?: string;
+        configuration?: ConnectedAccountConfigurationSubmission;
     }>): Promise<boolean | void> | boolean | void;
 }>;
 
@@ -125,6 +134,12 @@ function ManualChoiceField(props: Readonly<{
 
 function ConnectedAccountManualFormBody(props: ConnectedAccountManualFormProps) {
     const styles = stylesheet;
+    const configuration = useConnectedAccountConfigurationFields({
+        ...(props.configuration ?? EMPTY_CONFIGURATION),
+        embedded: props.embedded,
+        localize: props.localize,
+        saving: props.submitting,
+    });
     const initialDraft = React.useMemo(() => {
         const choiceDefaults = createConnectedAccountConfigurationDraft({
             fields: props.fields.flatMap(field => field.secret !== true && field.presentation?.control === 'select'
@@ -168,16 +183,22 @@ function ConnectedAccountManualFormBody(props: ConnectedAccountManualFormProps) 
             setInvalidFieldIds(invalid);
             return false;
         }
-        const accepted = await props.onSubmit({ fields: values, ...(props.guided && displayName.trim() ? { displayName: displayName.trim() } : {}) });
+        const configurationSubmission = props.configuration ? configuration.validate() : undefined;
+        if (configurationSubmission === null) return false;
+        const accepted = await props.onSubmit({ fields: values,
+            ...(props.guided && displayName.trim() ? { displayName: displayName.trim() } : {}),
+            ...(configurationSubmission ? { configuration: configurationSubmission } : {}),
+        });
         return accepted !== false;
-    }, [displayName, draft, fields, props, validators]);
+    }, [configuration, displayName, draft, fields, props, validators]);
     const discardDraft = React.useCallback(() => {
         setDraft(initialDraft);
         setInvalidFieldIds([]);
         setDisplayName('');
         setRevealed(false);
-    }, [initialDraft]);
-    const isDirty = displayName.length > 0 || props.fields.some((field) => (
+        configuration.discardDraft();
+    }, [configuration, initialDraft]);
+    const isDirty = configuration.isDirty || displayName.length > 0 || props.fields.some((field) => (
         (draft[field.id] ?? '') !== (initialDraft[field.id] ?? '')
     ));
     useConnectedAccountDraftNavigationGuard({
@@ -230,55 +251,83 @@ function ConnectedAccountManualFormBody(props: ConnectedAccountManualFormProps) 
         />;
     };
     const guided = props.guided;
+    // The primary waits for every field that must be filled; a filled value that misses its shape says so on press.
+    const missingRequired = fields.some((field) => !(draft[field.id] ?? '')
+        && !isValidPluginJsonSchemaValue(validators.get(field.id)!, ''));
     const keyShapeOk = fields.some((field) => field.schema.pattern && isValidPluginJsonSchemaValue(validators.get(field.id)!, draft[field.id] ?? ''));
+    const basicFields = fields.filter((field) => field.presentation?.advanced !== true);
+    const advancedFields = fields.filter((field) => field.presentation?.advanced === true);
+    const renderFieldRow = (field: ManualAuthenticationField) => {
+        if (field.presentation?.control === 'select') {
+            return <React.Fragment key={field.id}>{fieldControl(field)}</React.Fragment>;
+        }
+        const title = resolveProjectedLocalizedText(field.title, props.localize);
+        const description = resolveProjectedLocalizedText(field.description, props.localize);
+        const multiline = field.presentation?.control === 'textarea';
+        const guidedKey = guided && field.secret === true;
+        return (
+            <Item
+                key={field.id}
+                title={title}
+                subtitle={description || undefined}
+                subtitleLines={0}
+                mode="info"
+                showChevron={false}
+                accessoryLayout={multiline || guided || props.embedded ? 'stacked' : 'adaptive'}
+                rightElement={guidedKey ? (
+                    <View style={styles.field}>
+                        {fieldControl(field)}
+                        {keyShapeOk && guided.shapeHint ? <Text style={styles.note}>{guided.shapeHint}</Text> : null}
+                    </View>
+                ) : fieldControl(field)}
+            />
+        );
+    };
     return (
         <ConnectedAccountFormSection
             embedded={props.embedded}
             title={props.embedded ? undefined : props.title}
-            description={invalidFieldIds.length > 0 ? t('common.error') : undefined}
         >
-            {guided ? <View style={styles.guided}>
-                <SetupSteps steps={[
-                    { key: 'create', title: guided.createKeyTitle, state: 'current', body: <RoundButton size="small" display="secondary"
-                        title={t('connectedServicesSettings.keyOpenConsole')} trailing={<Icon name="arrow-square-out" size={13} />}
-                        onPress={() => openExternalUrl(guided.consoleUrl)} /> },
-                    { key: 'paste', title: t('connectedServicesSettings.keyPaste'), state: 'current', body: <View style={styles.field}>
-                        {fields.map((field) => <React.Fragment key={field.id}>{fieldControl(field)}</React.Fragment>)}
-                        {keyShapeOk && guided.shapeHint ? <Text style={styles.note}>{guided.shapeHint}</Text> : null}
-                    </View> },
-                    { key: 'name', title: t('connectedServicesSettings.keyName'), detail: t('connectedServicesSettings.keyNameOptional'), body: <FieldTextInput testID="connected-account-manual:name"
+            {/* A guided key opens with how to create it (lab crGuide A): the declared steps, then its console. Then
+                one card of field rows (lab `s2svc:key`), an optional name and the billing fact; no stepper. */}
+            {guided ? <ConnectedAccountGuide guide={guided} /> : null}
+            {/* One order on every key sheet: the secret, the settings it needs, the optional name, then what is folded. */}
+            {basicFields.map(renderFieldRow)}
+            {props.configuration ? configuration.basicContent : null}
+            {guided ? (
+                <Item
+                    title={t('connectedServicesSettings.keyName')}
+                    subtitle={t('connectedServicesSettings.keyNameOptional')}
+                    subtitleLines={0}
+                    mode="info"
+                    showChevron={false}
+                    accessoryLayout="stacked"
+                    showDivider={false}
+                    rightElement={<FieldTextInput testID="connected-account-manual:name"
                         value={displayName} onChangeText={setDisplayName} accessibilityLabel={t('connectedServicesSettings.keyName')}
-                        editable={!props.submitting} style={styles.field} /> },
-                ]} />
-                <Text style={styles.note}>{guided.billingNote}</Text>
-            </View> : fields.map((field) => {
-                if (field.presentation?.control === 'select') {
-                    return <React.Fragment key={field.id}>{fieldControl(field)}</React.Fragment>;
-                }
-                const title = resolveProjectedLocalizedText(field.title, props.localize);
-                const description = resolveProjectedLocalizedText(field.description, props.localize);
-                const multiline = field.presentation?.control === 'textarea';
-                return (
-                    <Item
-                        key={field.id}
-                        title={title}
-                        subtitle={description || undefined}
-                        subtitleLines={0}
-                        mode="info"
-                        showChevron={false}
-                        accessoryLayout={multiline ? 'stacked' : 'adaptive'}
-                        rightElement={fieldControl(field)}
-                    />
-                );
-            })}
+                        editable={!props.submitting} style={styles.field} />}
+                />
+            ) : null}
+            {props.configuration ? configuration.advancedContent : null}
+            {advancedFields.length > 0 ? (
+                <ConnectedAccountAdvancedFields
+                    count={advancedFields.length}
+                    hasValue={advancedFields.some((field) => Boolean(initialDraft[field.id]))}
+                    required={advancedFields.some((field) => !isValidPluginJsonSchemaValue(validators.get(field.id)!, ''))}
+                    invalid={advancedFields.some((field) => invalidFieldIds.includes(field.id))}
+                >
+                    {advancedFields.map(renderFieldRow)}
+                </ConnectedAccountAdvancedFields>
+            ) : null}
+            {guided?.billingNote ? <Text style={[styles.note, styles.billing]}>{guided.billingNote}</Text> : null}
             {props.onCancel ? (
                 <View style={styles.panelActions}>
                     <ConnectedServiceSetupFlowActions
                         onCancel={props.onCancel}
                         primary={{
                             testID: 'connected-account-manual:submit',
-                            label: t(guided ? 'connectedServicesSettings.keyAdd' : 'common.continue'),
-                            disabled: props.submitting,
+                            label: t('connectedServicesSettings.connect'),
+                            disabled: props.submitting || missingRequired,
                             loading: props.submitting,
                             onPress: () => void submit(),
                         }}
@@ -288,9 +337,9 @@ function ConnectedAccountManualFormBody(props: ConnectedAccountManualFormProps) 
                 <View style={styles.actions}>
                     <RoundButton
                         testID="connected-account-manual:submit"
-                        title={t(guided ? 'connectedServicesSettings.keyAdd' : 'common.continue')}
+                        title={t('connectedServicesSettings.connect')}
                         size={guided ? 'small' : undefined}
-                        disabled={props.submitting}
+                        disabled={props.submitting || missingRequired}
                         loading={props.submitting}
                         onPress={submit}
                     />

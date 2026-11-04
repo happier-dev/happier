@@ -317,6 +317,8 @@ export const PluginSettingFieldPresentationV2Schema = lazyZodSchema(() => z.stri
   step: z.optional(z.number().check(z.positive())),
   binding: z.optional(PluginSettingFieldBindingV2Schema),
   hidden: z.optional(z.boolean()),
+  /** Folded under the form's Advanced row until opened; meant for optional fields most people skip. */
+  advanced: z.optional(z.literal(true)),
   order: z.optional(z.number().check(z.int())),
 }));
 

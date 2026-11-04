@@ -4,8 +4,10 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import type {
     PluginConfigurationSettingFieldV2,
+} from '@happier-dev/protocol/plugins/contributions/settings';
+import type {
     PluginJsonValueV2,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/plugins/contributions/jsonSchema';
 import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -13,6 +15,9 @@ import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { Switch } from '@/components/ui/forms/Switch';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Item } from '@/components/ui/lists/Item';
+import { ConnectedServiceSetupFlowActions } from '../setup/ConnectedServiceSetupFlowBody';
+import { ConnectedAccountAdvancedFields } from './ConnectedAccountAdvancedFields';
+import { ConnectedAccountGuide, type ConnectedAccountGuideContent } from './ConnectedAccountGuide';
 import { ConnectedAccountFormSection } from './ConnectedAccountFormSection';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -37,6 +42,9 @@ const stylesheet = StyleSheet.create((theme) => ({
         color: theme.colors.text.secondary,
         ...Typography.variant('body'),
         marginBottom: theme.space.s8,
+    },
+    panelActions: {
+        paddingTop: theme.space.s16,
     },
     actions: {
         alignItems: 'flex-end',
@@ -90,6 +98,7 @@ function ConfigurationSelectField(props: Readonly<{
                     title,
                     subtitle: resolveProjectedLocalizedText(props.field.description, props.localize) || undefined,
                     itemProps: {
+                        subtitleLines: 0,
                         accessibilityLabel: props.invalid
                             ? `${title}: ${t('connectedServices.account.configurationInvalid')}`
                             : title,
@@ -117,7 +126,7 @@ function ConfigurationSelectField(props: Readonly<{
     );
 }
 
-type ConnectedAccountConfigurationFormProps = Readonly<{
+export type ConnectedAccountConfigurationFormProps = Readonly<{
     title: string;
     /** Inside the new-account draft, whose row already names the sign-in method. */
     embedded?: boolean;
@@ -127,15 +136,25 @@ type ConnectedAccountConfigurationFormProps = Readonly<{
     configuredSecretFieldIds: readonly string[];
     saving: boolean;
     navigation?: unknown;
+    /** In a setup panel: Cancel (local) in the flow's footer. */
+    onCancel?: () => void;
+    /** How to get the values of the fields it explains (an own OAuth client); shown just before `guideFieldId`. */
+    guide?: ConnectedAccountGuideContent;
+    guideFieldId?: string;
     onSubmit(input: Readonly<{
         values: Readonly<Record<string, PluginJsonValueV2>>;
         secretValues: Readonly<Record<string, string>>;
     }>): Promise<boolean | void> | boolean | void;
 }>;
 
-/** The controller's target/revision key owns retirement; refreshes keep this draft. */
-export const ConnectedAccountConfigurationForm = React.memo(function ConnectedAccountConfigurationForm(
-    props: ConnectedAccountConfigurationFormProps,
+export type ConnectedAccountConfigurationSubmission = Parameters<ConnectedAccountConfigurationFormProps['onSubmit']>[0];
+export type ConnectedAccountConfigurationFieldsProps = Pick<ConnectedAccountConfigurationFormProps,
+    'embedded' | 'localize' | 'fields' | 'values' | 'configuredSecretFieldIds' | 'saving'
+    | 'guide' | 'guideFieldId'>;
+
+/** Shared controls and parsing for a standalone settings draft or one manual sign-in draft. */
+export function useConnectedAccountConfigurationFields(
+    props: ConnectedAccountConfigurationFieldsProps,
 ) {
     const styles = stylesheet;
     const [initialDraft] = React.useState<ConnectedAccountConfigurationDraft>(() => (
@@ -156,7 +175,7 @@ export const ConnectedAccountConfigurationForm = React.memo(function ConnectedAc
         setDraft((current) => ({ ...current, [fieldId]: value }));
         setInvalidFieldIds((current) => current.filter((id) => id !== fieldId));
     }, []);
-    const submit = React.useCallback(async () => {
+    const validate = React.useCallback((): ConnectedAccountConfigurationSubmission | null => {
         const submission = buildConnectedAccountConfigurationSubmission({
             fields: props.fields,
             draft,
@@ -170,13 +189,12 @@ export const ConnectedAccountConfigurationForm = React.memo(function ConnectedAc
             setInvalidFieldIds(fields
                 .filter((field) => invalidIds.has(field.id))
                 .map((field) => field.id));
-            return false;
+            return null;
         }
-        const saved = await props.onSubmit({
+        return {
             values: submission.values,
             secretValues: submission.secretValues,
-        });
-        return saved !== false;
+        };
     }, [draft, fields, props]);
     const discardDraft = React.useCallback(() => {
         setDraft(initialDraft);
@@ -185,198 +203,250 @@ export const ConnectedAccountConfigurationForm = React.memo(function ConnectedAc
     const isDirty = React.useMemo(() => props.fields.some((field) => (
         JSON.stringify(draft[field.id]) !== JSON.stringify(initialDraft[field.id])
     )), [draft, initialDraft, props.fields]);
-    useConnectedAccountDraftNavigationGuard({
-        navigation: props.navigation,
-        isDirty,
-        onDiscard: discardDraft,
-        onSave: submit,
-        tag: 'ConnectedAccountConfigurationForm',
-    });
     const registerInvalidFieldTarget = useConnectedAccountInvalidFieldFocus({
         invalidFieldIds,
         announcement: t('connectedServices.account.configurationInvalid'),
     });
 
-    return (
-        <ConnectedAccountFormSection
-            embedded={props.embedded}
-            title={props.embedded ? undefined : props.title}
-            description={invalidFieldIds.length > 0
-                ? t('connectedServices.account.configurationInvalid')
-                : undefined}
-        >
-            {fields.map((field) => {
-                const control = resolveConnectedAccountConfigurationControl(field);
-                const title = resolveProjectedLocalizedText(field.title, props.localize);
-                const description = resolveProjectedLocalizedText(field.description, props.localize);
-                const disabled = props.saving;
-                const invalid = invalidFieldIds.includes(field.id);
-                const errorId = connectedAccountFieldErrorId(
-                    'connected-account-configuration',
-                    field.id,
-                );
-                if (control === 'switch') {
-                    const value = draft[field.id] === true;
-                    return (
-                        <View
-                            key={field.id}
-                            ref={registerInvalidFieldTarget(field.id)}
+    const basicFields = fields.filter((field) => field.presentation?.advanced !== true);
+    const advancedFields = fields.filter((field) => field.presentation?.advanced === true);
+    // The guide travels with the field it explains: in the open, or inside Advanced when that field is folded.
+    const renderFieldRow = (field: PluginConfigurationSettingFieldV2) => props.guide && field.id === props.guideFieldId
+        ? <React.Fragment key={field.id}><ConnectedAccountGuide guide={props.guide} />{renderFieldControl(field)}</React.Fragment>
+        : renderFieldControl(field);
+    const renderFieldControl = (field: PluginConfigurationSettingFieldV2) => {
+        const control = resolveConnectedAccountConfigurationControl(field);
+        const title = resolveProjectedLocalizedText(field.title, props.localize);
+        const description = resolveProjectedLocalizedText(field.description, props.localize);
+        const disabled = props.saving;
+        const invalid = invalidFieldIds.includes(field.id);
+        const errorId = connectedAccountFieldErrorId(
+            'connected-account-configuration',
+            field.id,
+        );
+        if (control === 'switch') {
+            const value = draft[field.id] === true;
+            return (
+                <View
+                    key={field.id}
+                    ref={registerInvalidFieldTarget(field.id)}
+                >
+                    <Item
+                        title={title}
+                        subtitle={description || undefined}
+                        rightElement={(
+                            <Switch
+                                testID={`connected-account-configuration:${field.id}`}
+                                nativeID={`connected-account-configuration:${field.id}`}
+                                value={value}
+                                disabled={disabled}
+                                accessibilityLabel={invalid
+                                    ? `${title}: ${t('connectedServices.account.configurationInvalid')}`
+                                    : title}
+                                accessibilityHint={invalid
+                                    ? t('connectedServices.account.configurationInvalid')
+                                    : description || undefined}
+                                onValueChange={(next) => updateDraft(field.id, next)}
+                            />
+                        )}
+                        rightElementOutsidePressable
+                        showChevron={false}
+                        disabled={disabled}
+                        onPress={() => updateDraft(field.id, !value)}
+                    />
+                    {invalid ? (
+                        <Text
+                            testID={errorId}
+                            nativeID={errorId}
+                            accessibilityRole="alert"
+                            accessibilityLiveRegion="assertive"
+                            style={styles.description}
                         >
+                            {t('connectedServices.account.configurationInvalid')}
+                        </Text>
+                    ) : null}
+                </View>
+            );
+        }
+        if (control === 'select') {
+            return (
+                <ConfigurationSelectField
+                    key={field.id}
+                    field={field}
+                    localize={props.localize}
+                    value={draft[field.id]}
+                    disabled={disabled}
+                    invalid={invalid}
+                    errorId={errorId}
+                    registerTarget={registerInvalidFieldTarget}
+                    onChange={(value) => updateDraft(field.id, value)}
+                />
+            );
+        }
+        if (control === 'multiSelect') {
+            const options = listConnectedAccountConfigurationOptions(field);
+            const rawSelectedValues = draft[field.id];
+            const selectedValues: readonly PluginJsonValueV2[] = Array.isArray(rawSelectedValues)
+                ? rawSelectedValues as PluginJsonValueV2[]
+                : [];
+            const selectedIds = new Set(selectedValues.map((value) => JSON.stringify(value)));
+            return (
+                <View
+                    key={field.id}
+                    ref={registerInvalidFieldTarget(field.id)}
+                >
+                    {options.map((option) => {
+                        const optionId = JSON.stringify(option.value);
+                        const selected = selectedIds.has(optionId);
+                        const optionTitle = resolveProjectedLocalizedText(option.title, props.localize);
+                        const toggle = () => updateDraft(
+                            field.id,
+                            selected
+                                ? selectedValues.filter((value) => JSON.stringify(value) !== optionId)
+                                : [...selectedValues, option.value],
+                        );
+                        return (
                             <Item
-                                title={title}
-                                subtitle={description || undefined}
+                                key={`${field.id}:${optionId}`}
+                                title={optionTitle}
+                                subtitle={resolveProjectedLocalizedText(option.description, props.localize) || undefined}
                                 rightElement={(
                                     <Switch
-                                        testID={`connected-account-configuration:${field.id}`}
-                                        nativeID={`connected-account-configuration:${field.id}`}
-                                        value={value}
+                                        testID={`connected-account-configuration:${field.id}:${optionId}`}
+                                        value={selected}
                                         disabled={disabled}
                                         accessibilityLabel={invalid
-                                            ? `${title}: ${t('connectedServices.account.configurationInvalid')}`
-                                            : title}
+                                            ? `${optionTitle}: ${t('connectedServices.account.configurationInvalid')}`
+                                            : optionTitle}
                                         accessibilityHint={invalid
                                             ? t('connectedServices.account.configurationInvalid')
-                                            : description || undefined}
-                                        onValueChange={(next) => updateDraft(field.id, next)}
+                                            : undefined}
+                                        onValueChange={toggle}
                                     />
                                 )}
                                 rightElementOutsidePressable
                                 showChevron={false}
                                 disabled={disabled}
-                                onPress={() => updateDraft(field.id, !value)}
+                                onPress={toggle}
                             />
-                            {invalid ? (
-                                <Text
-                                    testID={errorId}
-                                    nativeID={errorId}
-                                    accessibilityRole="alert"
-                                    accessibilityLiveRegion="assertive"
-                                    style={styles.description}
-                                >
-                                    {t('connectedServices.account.configurationInvalid')}
-                                </Text>
-                            ) : null}
-                        </View>
-                    );
-                }
-                if (control === 'select') {
-                    return (
-                        <ConfigurationSelectField
-                            key={field.id}
-                            field={field}
-                            localize={props.localize}
-                            value={draft[field.id]}
-                            disabled={disabled}
-                            invalid={invalid}
-                            errorId={errorId}
-                            registerTarget={registerInvalidFieldTarget}
-                            onChange={(value) => updateDraft(field.id, value)}
-                        />
-                    );
-                }
-                if (control === 'multiSelect') {
-                    const options = listConnectedAccountConfigurationOptions(field);
-                    const rawSelectedValues = draft[field.id];
-                    const selectedValues: readonly PluginJsonValueV2[] = Array.isArray(rawSelectedValues)
-                        ? rawSelectedValues as PluginJsonValueV2[]
-                        : [];
-                    const selectedIds = new Set(selectedValues.map((value) => JSON.stringify(value)));
-                    return (
-                        <View
-                            key={field.id}
-                            ref={registerInvalidFieldTarget(field.id)}
+                        );
+                    })}
+                    {invalid ? (
+                        <Text
+                            testID={errorId}
+                            nativeID={errorId}
+                            accessibilityRole="alert"
+                            accessibilityLiveRegion="assertive"
+                            style={styles.description}
                         >
-                            {options.map((option) => {
-                                const optionId = JSON.stringify(option.value);
-                                const selected = selectedIds.has(optionId);
-                                const optionTitle = resolveProjectedLocalizedText(option.title, props.localize);
-                                const toggle = () => updateDraft(
-                                    field.id,
-                                    selected
-                                        ? selectedValues.filter((value) => JSON.stringify(value) !== optionId)
-                                        : [...selectedValues, option.value],
-                                );
-                                return (
-                                    <Item
-                                        key={`${field.id}:${optionId}`}
-                                        title={optionTitle}
-                                        subtitle={resolveProjectedLocalizedText(option.description, props.localize) || undefined}
-                                        rightElement={(
-                                            <Switch
-                                                testID={`connected-account-configuration:${field.id}:${optionId}`}
-                                                value={selected}
-                                                disabled={disabled}
-                                                accessibilityLabel={invalid
-                                                    ? `${optionTitle}: ${t('connectedServices.account.configurationInvalid')}`
-                                                    : optionTitle}
-                                                accessibilityHint={invalid
-                                                    ? t('connectedServices.account.configurationInvalid')
-                                                    : undefined}
-                                                onValueChange={toggle}
-                                            />
-                                        )}
-                                        rightElementOutsidePressable
-                                        showChevron={false}
-                                        disabled={disabled}
-                                        onPress={toggle}
-                                    />
-                                );
-                            })}
-                            {invalid ? (
-                                <Text
-                                    testID={errorId}
-                                    nativeID={errorId}
-                                    accessibilityRole="alert"
-                                    accessibilityLiveRegion="assertive"
-                                    style={styles.description}
-                                >
-                                    {t('connectedServices.account.configurationInvalid')}
-                                </Text>
-                            ) : null}
-                        </View>
-                    );
-                }
-                const multiline = control === 'textarea' || control === 'json';
-                const fieldDraft = draft[field.id];
-                return (
-                    <Item
-                        key={field.id}
-                        title={title}
-                        subtitle={description || undefined}
-                        subtitleLines={0}
-                        mode="info"
-                        showChevron={false}
-                        accessoryLayout={multiline ? 'stacked' : 'adaptive'}
-                        rightElement={(
-                            <FieldTextInput
-                                testID={`connected-account-configuration:${field.id}`}
-                                ref={registerInvalidFieldTarget(field.id)}
-                                accessibilityLabel={invalid
-                                    ? `${title}: ${t('connectedServices.account.configurationInvalid')}`
-                                    : title}
-                                error={invalid ? t('connectedServices.account.configurationInvalid') : null}
-                                value={typeof fieldDraft === 'string' ? fieldDraft : ''}
-                                onChangeText={(value) => updateDraft(field.id, value)}
-                                editable={!disabled}
-                                secureTextEntry={field.secret === true}
-                                multiline={multiline}
-                                monospace={control === 'json'}
-                                placeholder={resolveProjectedLocalizedText(field.presentation?.placeholder, props.localize)}
-                            />
-                        )}
+                            {t('connectedServices.account.configurationInvalid')}
+                        </Text>
+                    ) : null}
+                </View>
+            );
+        }
+        const multiline = control === 'textarea' || control === 'json';
+        const fieldDraft = draft[field.id];
+        return (
+            <Item
+                key={field.id}
+                title={title}
+                subtitle={description || undefined}
+                subtitleLines={0}
+                mode="info"
+                showChevron={false}
+                accessoryLayout={multiline || props.embedded ? 'stacked' : 'adaptive'}
+                rightElement={(
+                    <FieldTextInput
+                        testID={`connected-account-configuration:${field.id}`}
+                        ref={registerInvalidFieldTarget(field.id)}
+                        accessibilityLabel={invalid
+                            ? `${title}: ${t('connectedServices.account.configurationInvalid')}`
+                            : title}
+                        error={invalid ? t('connectedServices.account.configurationInvalid') : null}
+                        value={typeof fieldDraft === 'string' ? fieldDraft : ''}
+                        onChangeText={(value) => updateDraft(field.id, value)}
+                        editable={!disabled}
+                        secureTextEntry={field.secret === true}
+                        multiline={multiline}
+                        monospace={control === 'json'}
+                        placeholder={resolveProjectedLocalizedText(field.presentation?.placeholder, props.localize)}
                     />
-                );
-            })}
-            <View style={styles.actions}>
-                <RoundButton
-                    testID="connected-account-configuration:save"
-                    size="normal"
-                    title={t('common.save')}
-                    disabled={props.saving}
-                    loading={props.saving}
-                    onPress={() => void submit()}
-                />
-            </View>
+                )}
+            />
+        );
+    };
+    return {
+        validate,
+        discardDraft,
+        isDirty,
+        hasInvalidFields: invalidFieldIds.length > 0,
+        basicContent: basicFields.map(renderFieldRow),
+        advancedContent: advancedFields.length > 0 ? (
+            <ConnectedAccountAdvancedFields
+                key="advanced"
+                count={advancedFields.length}
+                hasValue={advancedFields.some((field) => initialDraft[field.id] !== undefined && initialDraft[field.id] !== '')}
+                required={advancedFields.some((field) => field.required === true)}
+                invalid={advancedFields.some((field) => invalidFieldIds.includes(field.id))}
+            >
+                {advancedFields.map(renderFieldRow)}
+            </ConnectedAccountAdvancedFields>
+        ) : null,
+    };
+}
+
+/** The controller's target/revision key owns retirement; refreshes keep this draft. */
+export const ConnectedAccountConfigurationForm = React.memo(function ConnectedAccountConfigurationForm(
+    props: ConnectedAccountConfigurationFormProps,
+) {
+    const styles = stylesheet;
+    const configuration = useConnectedAccountConfigurationFields(props);
+    const submit = async () => {
+        const submission = configuration.validate();
+        return submission !== null && await props.onSubmit(submission) !== false;
+    };
+    useConnectedAccountDraftNavigationGuard({
+        navigation: props.navigation,
+        isDirty: configuration.isDirty,
+        onDiscard: configuration.discardDraft,
+        onSave: submit,
+        tag: 'ConnectedAccountConfigurationForm',
+    });
+    return (
+        <ConnectedAccountFormSection
+            embedded={props.embedded}
+            title={props.embedded ? undefined : props.title}
+            description={configuration.hasInvalidFields ? t('connectedServices.account.configurationInvalid') : undefined}
+        >
+            {configuration.basicContent}
+            {configuration.advancedContent}
+            {props.embedded ? (
+                // Inside a sign-in this step leads on to the next one, with the flow's own footer.
+                <View style={styles.panelActions}>
+                    <ConnectedServiceSetupFlowActions
+                        onCancel={props.onCancel}
+                        primary={{
+                            testID: 'connected-account-configuration:save',
+                            label: t('common.continue'),
+                            disabled: props.saving,
+                            loading: props.saving,
+                            onPress: () => void submit(),
+                        }}
+                    />
+                </View>
+            ) : (
+                <View style={styles.actions}>
+                    <RoundButton
+                        testID="connected-account-configuration:save"
+                        size="normal"
+                        title={t('common.save')}
+                        disabled={props.saving}
+                        loading={props.saving}
+                        onPress={() => void submit()}
+                    />
+                </View>
+            )}
         </ConnectedAccountFormSection>
     );
 });

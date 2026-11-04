@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 import { Item } from '@/components/ui/lists/Item';
-import { PluginConfigurationSettingFieldV2Schema } from '@happier-dev/protocol';
+import { PluginConfigurationSettingFieldV2Schema } from '@happier-dev/protocol/plugins/contributions/settings';
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -61,6 +61,81 @@ describe('ConnectedAccountConfigurationForm', () => {
     afterEach(async () => {
         const { clearActiveUnsavedChangesGuard } = await import('@/utils/navigation/runGuardedNavigation');
         clearActiveUnsavedChangesGuard();
+    });
+
+    it('folds optional Advanced fields, reveals required or invalid fields and preserves edits', async () => {
+        const { ConnectedAccountConfigurationForm } = await import('./ConnectedAccountConfigurationForm');
+        const withAdvanced = z.array(PluginConfigurationSettingFieldV2Schema).parse([
+            { id: 'accountId', title: 'Account ID', schema: { type: 'string', minLength: 1 }, required: true },
+            { id: 'clientId', title: 'Client ID', schema: { type: 'string' }, required: false, presentation: { advanced: true } },
+            { id: 'port', title: 'Port', schema: { type: 'integer' }, presentation: { advanced: true } },
+        ]);
+        const onSubmit = vi.fn(async () => {});
+        const render = (values: Record<string, string>) => renderScreen(<ConnectedAccountConfigurationForm embedded title="Sign in" fields={withAdvanced}
+            values={values} configuredSecretFieldIds={[]} saving={false} onSubmit={onSubmit} />);
+        const disclosure = (tree: Awaited<ReturnType<typeof render>>['tree']) => tree.findAll((node) => node.props.testID === 'connected-account-advanced')[0]!;
+
+        const empty = await render({});
+        expect(disclosure(empty.tree).props.expanded).toBe(false);
+
+        const held = await render({ clientId: 'c_mine' });
+        expect(disclosure(held.tree).props.expanded).toBe(true);
+
+        const required = await renderScreen(<ConnectedAccountConfigurationForm title="Sign in"
+            fields={withAdvanced.map(field => field.id === 'clientId' ? { ...field, required: true } : field)}
+            values={{}} configuredSecretFieldIds={[]} saving={false} onSubmit={onSubmit} />);
+        expect(disclosure(required.tree).props.expanded).toBe(true);
+
+        const invalid = await render({ accountId: 'acct', clientId: 'c_mine' });
+        await act(async () => {
+            invalid.tree.find(node => node.type === ('TextInput' as never)
+                && node.props.testID === 'connected-account-configuration:port').props.onChangeText('not-a-number');
+            disclosure(invalid.tree).props.onExpandedChange(false);
+        });
+        expect(disclosure(invalid.tree).props.expanded).toBe(false);
+        await pressTestInstanceAsync(invalid.tree.find((node) => node.props.testID === 'connected-account-configuration:save'));
+        expect(disclosure(invalid.tree).props.expanded).toBe(true);
+        await act(async () => { disclosure(invalid.tree).props.onExpandedChange(false); });
+        await pressTestInstanceAsync(invalid.tree.find((node) => node.props.testID === 'connected-account-configuration:save'));
+        expect(disclosure(invalid.tree).props.expanded).toBe(true);
+        await act(async () => {
+            invalid.tree.find(node => node.type === ('TextInput' as never)
+                && node.props.testID === 'connected-account-configuration:port').props.onChangeText('443');
+        });
+        await act(async () => { disclosure(invalid.tree).props.onExpandedChange(false); });
+        expect(disclosure(invalid.tree).props.expanded).toBe(false);
+        await pressTestInstanceAsync(invalid.tree.find((node) => node.props.testID === 'connected-account-configuration:save'));
+        expect(onSubmit).toHaveBeenCalledWith({ values: { accountId: 'acct', clientId: 'c_mine', port: 443 }, secretValues: {} });
+        await invalid.update(<ConnectedAccountConfigurationForm embedded title="Sign in"
+            fields={withAdvanced.map(field => {
+                const presentation = { ...field.presentation };
+                delete presentation.advanced;
+                return { ...field, required: field.id === 'clientId', presentation };
+            })} values={{}} configuredSecretFieldIds={[]} saving={false} onSubmit={onSubmit} />);
+        expect(invalid.tree.findAll(node => node.props.testID === 'connected-account-advanced')).toHaveLength(0);
+        expect(invalid.findHostByTestId('connected-account-configuration:clientId')?.props.value).toBe('c_mine');
+    });
+
+    it('places a declared guide with the fields it explains, inside Advanced when those are folded', async () => {
+        const { ConnectedAccountConfigurationForm } = await import('./ConnectedAccountConfigurationForm');
+        const guide = { consoleUrl: 'https://provider.example/clients', steps: ['Register a client'] };
+        const ownClient = (advanced: boolean) => z.array(PluginConfigurationSettingFieldV2Schema).parse([
+            { id: 'accountId', title: 'Account ID', schema: { type: 'string' }, required: false },
+            { id: 'clientId', title: 'Client ID', schema: { type: 'string' }, required: !advanced, ...(advanced ? { presentation: { advanced: true } } : {}) },
+        ]);
+        const render = (advanced: boolean) => renderScreen(<ConnectedAccountConfigurationForm embedded title="Sign in" fields={ownClient(advanced)}
+            values={{}} configuredSecretFieldIds={[]} saving={false} onSubmit={vi.fn(async () => {})} guide={guide} guideFieldId="clientId" />);
+        const guideIn = (node: { findAll: (p: (n: { props: { testID?: string } }) => boolean) => unknown[] }) =>
+            node.findAll((n) => n.props.testID === 'connected-account-manual:guide').length > 0;
+
+        const open = await render(false);
+        expect(guideIn(open.tree)).toBe(true);
+        expect(open.tree.findAll((node) => node.props.testID === 'connected-account-advanced')).toHaveLength(0);
+
+        const folded = await render(true);
+        const disclosure = folded.tree.findAll((node) => node.props.testID === 'connected-account-advanced')[0]!;
+        await act(async () => { disclosure.props.onExpandedChange(true); });
+        expect(guideIn(folded.tree.findAll((node) => node.props.testID === 'connected-account-advanced')[0]!)).toBe(true);
     });
 
     it('submits descriptor-derived values and only explicit secret replacements', async () => {
