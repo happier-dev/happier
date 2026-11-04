@@ -380,6 +380,9 @@ const stylesheet = StyleSheet.create((theme) => ({
     tabSurfaceContent: {
         paddingHorizontal: HAPPIER_SEGMENTED_METRICS.segmentPaddingHorizontalPx,
     },
+    tabSurfaceTight: {
+        paddingHorizontal: HAPPIER_SEGMENTED_METRICS.segmentPaddingTightPx,
+    },
     // A content-sized glyph segment hugs its glyph (lab `clviews`' Projects/Recent pair): two thirds of a
     // label's padding, so the pair sits beside a column title without crowding it.
     tabSurfaceIconContent: {
@@ -557,6 +560,7 @@ function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) 
     const valueChoice = props.role === 'radiogroup';
     const inherited = props.valueSource === 'inherited' && !pills && !plain;
     const contentSized = pills || plain || props.segmentSizing === 'content';
+    const equalValueRow = valueChoice && !contentSized;
     // Icons replace labels only when the whole bar is iconic; a half-iconic row reads as broken.
     // Page tabs keep both: the glyph leads its label.
     const iconOnly = !plain && props.iconPlacement !== 'leading' && props.tabs.length > 0 && props.tabs.every((tab) => tab.icon != null);
@@ -576,18 +580,20 @@ function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) 
         const complete = props.tabs.every((tab) => measured[`i:${tab.id}`] !== undefined && measured[`l:${tab.id}`] !== undefined
             && (!tab.count || measured[`b:${tab.id}`] !== undefined))
             && measured.more !== undefined;
+        // An equal-width value row gives every choice the same share, so it fits only while its widest choice does.
+        const segmentWidths = (widths: readonly number[]) => equalValueRow ? widths.map(() => Math.max(...widths)) : widths;
         return resolveSegmentedTabFit({
             // The track's own padding is not room for segments: counting it let a row that "fit" squeeze
             // every label ("Overvi…") instead of dropping the glyphs first.
             available: complete && rowWidth !== null ? rowWidth - (plain ? 0 : SEGMENT_TRACK_PADDING_PX * 2) : null,
-            withIcons: props.tabs.map((tab) => measured[`i:${tab.id}`] ?? 0),
-            labelsOnly: props.tabs.map((tab) => measured[`l:${tab.id}`] ?? 0),
-            labelsWithoutCounts: props.tabs.map((tab) => measured[`b:${tab.id}`] ?? measured[`l:${tab.id}`] ?? 0),
+            withIcons: segmentWidths(props.tabs.map((tab) => measured[`i:${tab.id}`] ?? 0)),
+            labelsOnly: segmentWidths(props.tabs.map((tab) => measured[`l:${tab.id}`] ?? 0)),
+            labelsWithoutCounts: segmentWidths(props.tabs.map((tab) => measured[`b:${tab.id}`] ?? measured[`l:${tab.id}`] ?? 0)),
             gap: plain ? HAPPIER_SEGMENTED_METRICS.plain.gapPx : 0,
             more: measured.more ?? 0,
             reserveMore,
         });
-    }, [hasOverflow, measured, plain, props.tabs, reserveMore, rowWidth]);
+    }, [equalValueRow, hasOverflow, measured, plain, props.tabs, reserveMore, rowWidth]);
     const showIcons = plain && fit.icons;
     const glyphOnly = plain && resolveHappierTabGlyphOnly({ labels: props.labels, tabs: props.tabs });
     const visibleTabs = React.useMemo(() => (hasOverflow ? props.tabs.slice(0, fit.visibleCount) : props.tabs), [fit.visibleCount, hasOverflow, props.tabs]);
@@ -689,14 +695,14 @@ function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) 
                         return (
                             <React.Fragment key={tab.id}>
                                 <View onLayout={(event) => recordMeasure(`i:${tab.id}`, event)}>
-                                    <PlainTabCaption tab={tab} icon active={active} measuring segmented={!plain} />
+                                    <PlainTabCaption tab={tab} icon active={active} measuring segmented={!plain} compact={compact} tight={equalValueRow} />
                                 </View>
                                 <View onLayout={(event) => recordMeasure(`l:${tab.id}`, event)}>
-                                    <PlainTabCaption tab={tab} icon={false} active={active} measuring segmented={!plain} />
+                                    <PlainTabCaption tab={tab} icon={false} active={active} measuring segmented={!plain} compact={compact} tight={equalValueRow} />
                                 </View>
                                 {tab.count ? (
                                     <View onLayout={(event) => recordMeasure(`b:${tab.id}`, event)}>
-                                        <PlainTabCaption tab={tab} icon={false} count={false} active={active} measuring segmented={!plain} />
+                                        <PlainTabCaption tab={tab} icon={false} count={false} active={active} measuring segmented={!plain} compact={compact} tight={equalValueRow} />
                                     </View>
                                 ) : null}
                             </React.Fragment>
@@ -946,6 +952,10 @@ function PlainTabCaption(props: Readonly<{
     measuring?: boolean;
     /** Measure as a content-sized segment on the track (its padding and label), not a plain page tab. */
     segmented?: boolean;
+    /** Measure at the compact label size the row draws: measured larger, a compact row that fits reads as too wide. */
+    compact?: boolean;
+    /** Measure at the tight padding: a track that spreads its segments never needs the roomy one. */
+    tight?: boolean;
     more?: boolean;
 }>) {
     const styles = stylesheet;
@@ -955,7 +965,7 @@ function PlainTabCaption(props: Readonly<{
             {props.icon && props.tab.icon ? <View style={styles.tabIcon}>{props.tab.icon}</View> : null}
             {props.more ? <Icon name="dots-three" size={ICON_SIZE.sm} color={theme.colors.text.secondary} /> : null}
             {props.label === false ? null : (
-                <Text numberOfLines={1} style={[styles.tabLabel, props.segmented ? null : styles.plainLabel, props.active ? styles.tabLabelActive : null]}>
+                <Text numberOfLines={1} style={[styles.tabLabel, props.segmented ? null : styles.plainLabel, props.compact ? styles.tabLabelCompact : null, props.active ? styles.tabLabelActive : null]}>
                     {props.tab.label}
                     {props.tab.count && props.count !== false ? <Text style={styles.tabCount}>{` ${props.tab.count}`}</Text> : null}
                 </Text>
@@ -966,7 +976,7 @@ function PlainTabCaption(props: Readonly<{
         </View>
     );
     return props.measuring
-        ? <View style={[styles.tabSurface, props.segmented ? styles.tabSurfaceContent : styles.plainSurface]}>{caption}</View>
+        ? <View style={[styles.tabSurface, props.tight ? styles.tabSurfaceTight : props.segmented ? styles.tabSurfaceContent : styles.plainSurface]}>{caption}</View>
         : caption;
 }
 

@@ -656,7 +656,9 @@ live in the page-presentation owners in code.
   shadow. Dashboards and heroes do not gain cards either.
 - **One row, one decision, one control.**
   - A switch for on/off.
-  - A segmented control for two to four short choices, all visible.
+  - A segmented control for two to four short choices, all visible. A short ordinal scale (reasoning
+    effort: Low · Medium · High · XHigh · Max) stays one segmented row up to five steps; other choices
+    keep the cap (owner ruling 2026-11-04, `.project/OWNER-RULINGS.md` "UI and design").
   - A bordered field select for longer or larger sets.
   - A compound row only for facets of one decision (model and effort).
   - An inline action button for operations.

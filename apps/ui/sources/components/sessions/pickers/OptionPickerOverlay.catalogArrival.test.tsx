@@ -15,10 +15,13 @@ vi.mock('@/text', async () => {
     return createTextModuleMock({ translate: (key: string) => key });
 });
 
+// Imported once at collection, not inside the test: transforming the picker's import graph is not part
+// of the behavior under test and, cold or under load, it alone outran the 60 s test timeout.
+const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
+
 const readCustomValue = (value: string) => value;
 
 it('settles an asynchronously listed selected value in the catalog-arrival commit', async () => {
-    const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
     let publishCatalog: (() => void) | undefined;
     let commitCount = 0;
 

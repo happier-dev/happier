@@ -4,9 +4,20 @@ import {
   patchHappierActionInputPath,
   readHappierActionInputPath,
   resolveHappierActionFieldPresentation,
+  resolveHappierChoiceControl,
 } from './actionInputFields.js';
 
 describe('shared Action form semantics', () => {
+  it('draws up to five short ordinal steps as one segmented control and keeps the four-choice cap otherwise', () => {
+    const single = { kind: 'select', value: 'medium', multiple: false } as const;
+    const levels = (names: readonly string[]) => names.map((label) => ({ label }));
+    const five = levels(['Low', 'Medium', 'High', 'XHigh', 'Max']);
+    expect.soft(resolveHappierChoiceControl(single, five, { ordinal: true })).toBe('segmented');
+    expect.soft(resolveHappierChoiceControl(single, five)).toBe('list');
+    expect.soft(resolveHappierChoiceControl(single, levels(['Low', 'Medium', 'High', 'XHigh', 'Max', 'Ultra']), { ordinal: true })).toBe('list');
+    expect.soft(resolveHappierChoiceControl(single, levels(['Low', 'Medium', 'High', 'XHigh', 'A much longer step']), { ordinal: true })).toBe('list');
+    expect(resolveHappierChoiceControl({ ...single, multiple: true }, five, { ordinal: true })).toBe('list');
+  });
   it('keeps an array-valued single choice as one admitted selection', () => {
     const choice = ['source', 'machine'];
     expect(resolveHappierActionFieldPresentation({ widget: 'select' }, choice, choice))

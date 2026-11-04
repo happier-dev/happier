@@ -139,6 +139,18 @@ const ICON_TABS: ReadonlyArray<SegmentedTab<'alpha' | 'beta' | 'gamma'>> = TABS.
 const WCAG_MINIMUM_TARGET_PX = 24;
 
 describe('SegmentedTabBar', () => {
+  it('measures a compact value row at the size it draws, so a row that fits is not turned into a select', async () => {
+    const { SegmentedTabBar } = await import('./SegmentedTabBar');
+    const screen = await renderScreen(<SegmentedTabBar role="radiogroup" compact tabs={TABS} activeTabId="alpha"
+      onSelectTab={() => {}} testIDPrefix="seg" overflow={{ label: 'More' }} />);
+    const sizes = screen.root.findAll((node) => node.children?.[0] === TABS[1]!.label && node.props.style !== undefined)
+      .map((node) => flattenStyle(node.props.style).fontSize);
+    // Off-screen measuring copies plus the drawn segment; one size, or the fit decides on a wider row than it paints.
+    expect(sizes.length).toBeGreaterThan(1);
+    expect(new Set(sizes).size).toBe(1);
+    await screen.unmount();
+  });
+
     it.each([false, true])('keeps the selected thumb and its gradient solid inside floating material (dark=%s)', async (dark) => {
         const { SegmentedTabBar } = await import('./SegmentedTabBar');
         const activeTheme = dark ? darkTheme : lightTheme;
@@ -1098,6 +1110,22 @@ describe('SegmentedTabBar value choice that no longer fits', () => {
         for (const tab of STRATEGIES) expect(screen.findHostByTestId(`strategy:${tab.id}`)).toBeTruthy();
         expect(screen.findHostByTestId('strategy:select')).toBeNull();
     });
+
+  it('keeps an equal-width row only while its widest choice fits its share', async () => {
+    const { SegmentedTabBar } = await import('./SegmentedTabBar');
+    const screen = await renderScreen(
+      <SegmentedTabBar role="radiogroup" overflow={{ label: 'More' }} tabs={STRATEGIES} activeTabId="balance"
+        onSelectTab={() => {}} testIDPrefix="strategy" />,
+    );
+    // The widest label needs 102 of each of four equal shares: 408 plus the track's padding.
+    layOut(screen, 420);
+    expect(screen.findHostByTestId('strategy:least')).toBeTruthy();
+    // 380 holds the labels' sum (360), but a quarter of it would wrap "Least used".
+    layOut(screen, 380);
+    expect(screen.findHostByTestId('strategy:least')).toBeNull();
+    expect(screen.findHostByTestId('strategy:select')).toBeTruthy();
+    await screen.unmount();
+  });
 });
 
 describe('SegmentedTabBar measured overflow on the track', () => {
