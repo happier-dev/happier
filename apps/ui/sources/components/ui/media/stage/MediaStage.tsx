@@ -910,14 +910,21 @@ export function MediaStage(props: MediaStageProps & CustomModalInjectedProps) {
             />
           </StageCapsule>
           <View style={stageStyles.title} pointerEvents="none">
-            <Text
-              variant="body"
-              emphasis="semiBold"
-              numberOfLines={1}
-              style={{ color: theme.colors.text.primary, flexShrink: 1 }}
-            >
-              {item.title}
-            </Text>
+              <View style={{ minWidth: 0, flexShrink: 1 }}>
+              <Text
+                variant="body"
+                emphasis="semiBold"
+                numberOfLines={1}
+                style={{ color: theme.colors.text.primary, flexShrink: 1 }}
+              >
+                {item.title}
+              </Text>
+              {item.subtitle ? (
+                <Text variant="meta" style={{ color: theme.colors.text.secondary }} numberOfLines={2}>
+                  {item.subtitle}
+                </Text>
+              ) : null}
+              </View>
             {counter && !phone ? (
               <Text
                 variant="body"

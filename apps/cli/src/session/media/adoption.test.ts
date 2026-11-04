@@ -25,6 +25,7 @@ const durableVideoItem = {
   path: '.happier/uploads/artifacts/session-1/message-1/recording.webm',
   sizeBytes: 2048,
   sha256: 'c'.repeat(64),
+  browserRecording: { outcomeReason: 'policy_revoked' },
   origin: {
     source: 'tool-output',
     toolCallId: 'recording-call-1',

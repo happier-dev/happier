@@ -109,6 +109,11 @@ const stylesheet = StyleSheet.create((theme) => ({
         textAlign: 'center',
         paddingHorizontal: theme.space.s8,
     },
+    recordingStatus: {
+        marginTop: theme.space.s4,
+        maxWidth: 168,
+        color: theme.colors.text.secondary,
+    },
 }));
 
 function isUnavailableInlineImage(
@@ -123,24 +128,37 @@ function isInlineVideo(
     return 'mediaKind' in media && media.mediaKind === 'video';
 }
 
+function recordingStatus(media: SessionMediaInlineImageAvailableSummary | SessionMediaInlineVideoAvailableSummary): string | undefined {
+    return media.browserRecording?.outcomeReason === 'policy_revoked'
+        ? t('browserRecording.status.stoppedForPrivacy')
+        : undefined;
+}
+
+function RecordingStatusLabel({ media }: Readonly<{
+    media: SessionMediaInlineImageAvailableSummary | SessionMediaInlineVideoAvailableSummary;
+}>): React.ReactElement | null {
+    const status = recordingStatus(media);
+    return status ? <Text variant="meta" style={stylesheet.recordingStatus}>{status}</Text> : null;
+}
+
 function resolveInlineImageAccessibilityLabel(media: SessionMediaInlineImageSummary): string {
-    if (media.category === 'attachment') {
-        return t('files.sessionMedia.attachmentImageA11y', { name: media.name });
-    }
-    if (media.category === 'tool-artifact') {
-        return t('files.sessionMedia.toolArtifactImageA11y', { name: media.name });
-    }
-    return t('files.sessionMedia.generatedImageA11y', { name: media.name });
+    const status = media.status !== 'unavailable' ? recordingStatus(media) : undefined;
+    const label = media.category === 'attachment'
+        ? t('files.sessionMedia.attachmentImageA11y', { name: media.name })
+        : media.category === 'tool-artifact'
+            ? t('files.sessionMedia.toolArtifactImageA11y', { name: media.name })
+            : t('files.sessionMedia.generatedImageA11y', { name: media.name });
+    return status ? `${label}. ${status}` : label;
 }
 
 function resolveInlineVideoAccessibilityLabel(media: SessionMediaInlineVideoAvailableSummary): string {
-    if (media.category === 'attachment') {
-        return t('files.sessionMedia.attachmentVideoA11y', { name: media.name });
-    }
-    if (media.category === 'tool-artifact') {
-        return t('files.sessionMedia.toolArtifactVideoA11y', { name: media.name });
-    }
-    return t('files.sessionMedia.generatedVideoA11y', { name: media.name });
+    const status = recordingStatus(media);
+    const label = media.category === 'attachment'
+        ? t('files.sessionMedia.attachmentVideoA11y', { name: media.name })
+        : media.category === 'tool-artifact'
+            ? t('files.sessionMedia.toolArtifactVideoA11y', { name: media.name })
+            : t('files.sessionMedia.generatedVideoA11y', { name: media.name });
+    return status ? `${label}. ${status}` : label;
 }
 
 function SessionMediaInlineVideoTile(props: Readonly<{
@@ -156,6 +174,7 @@ function SessionMediaInlineVideoTile(props: Readonly<{
     const accessibilityLabel = resolveInlineVideoAccessibilityLabel(props.media);
 
     return (
+        <View>
         <Pressable
             ref={props.originRef}
             testID={`${props.testIdPrefix}-inline-video:${props.media.path}`}
@@ -185,6 +204,8 @@ function SessionMediaInlineVideoTile(props: Readonly<{
                 </View>
             )}
         </Pressable>
+        <RecordingStatusLabel media={props.media} />
+        </View>
     );
 }
 
@@ -260,6 +281,7 @@ function SessionMediaInlineImageTile(props: Readonly<{
         />
         {props.number !== undefined ? <ImageNumberBadge number={props.number} /> : null}
         {props.ringed ? <View pointerEvents="none" style={stylesheet.ring} testID={`${props.testIdPrefix}-inline-image-ring:${props.media.path}`} /> : null}
+        <RecordingStatusLabel media={props.media} />
         </View>
     );
 }
@@ -279,6 +301,7 @@ function SessionMediaInlineInertTile(props: Readonly<{
         });
 
     return (
+        <View>
         <View
             testID={`${props.testIdPrefix}-inline-${video ? 'video' : 'image'}:${props.media.path}`}
             accessibilityRole="image"
@@ -299,6 +322,8 @@ function SessionMediaInlineInertTile(props: Readonly<{
                     </Text>
                 ) : null}
             </View>
+        </View>
+        <RecordingStatusLabel media={props.media} />
         </View>
     );
 }
@@ -391,6 +416,7 @@ export const SessionMediaInlineImages = React.memo(function SessionMediaInlineIm
                 stageItem: {
                     kind: isInlineVideo(media) ? 'video' : 'image',
                     title: media.name,
+                    subtitle: recordingStatus(media),
                     source: resolvePreviewInput(media),
                     sizeBytes: media.sizeBytes ?? null,
                     alphaCapable: !isInlineVideo(media) && resolveFileViewerKind({ path: media.path, mimeType: media.mimeType }).alphaCapable,

@@ -4995,6 +4995,16 @@ This is a contained development-source trial, not a released availability claim.
 
 ## Browser recording and diagnostics (unreleased 0.3)
 
+The unreleased recording writer adds optional `browserRecording.outcomeReason`
+to the existing Session media item, using the canonical recording outcome enum.
+The lifecycle chooses the reason when capture stops, before persistence; transcript
+media readers present `policy_revoked` as a privacy stop. Existing media without
+the optional field remains generic and playable; filenames and captions never
+infer a reason. The scoped-clean predecessor media schema at
+`fde87977487081701c4e9471f160f4a4a9982914` has only image media and no browser
+recording producer. This coordinated 0.3 development-source cut adds no migration,
+new enum, wire epoch or compatibility adapter.
+
 The same unreleased recording cut removes the dormant `paused` status from both
 recordings and terminal results, the `view_hidden`, `view_parked`, `view_suspended`,
 `view_closed`, `host_lost` and `adapter_lost` outcomes, and the unused recording

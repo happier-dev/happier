@@ -11586,6 +11586,7 @@ localTailscale: {
     },
     status: {
       noView: 'ブラウザービューが選択されていません。',
+      stoppedForPrivacy: 'プライバシー保護のため停止',
     },
   },
 

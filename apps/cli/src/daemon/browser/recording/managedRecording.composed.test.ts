@@ -11,8 +11,10 @@ import { DaemonBrowserRecordingStopResultV1Schema } from '@happier-dev/protocol/
 import { resolveBrowserRecordingCaptureProfile } from '@happier-dev/protocol/browser/recording/captureProfiles';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as persistence from '@/persistence';
+import { createDeferred } from '@/testkit/async/deferred';
 
 import { createDaemonControlApp } from '../../controlServer';
+import { createSurfaceInputControl } from '../../surfaces/inputControl';
 import { createDaemonRuntimeActionExecutor } from '../../runtimeActionExecutor';
 import { createCliBrowserRuntimeActionExecutor } from '../actions/controlTransport';
 import { createBrowserCdpScreencastProducer } from '../capture/cdpScreencast';
@@ -29,6 +31,9 @@ const fixtureSource = new URL('../../../../../ui/sources/dev/testkit/fixtures/ac
 const { createActionExecutorBoundaryFixture }: {
     createActionExecutorBoundaryFixture(overrides: Partial<ActionExecutorDeps>): ActionExecutorDeps;
 } = await import(fixtureSource);
+const { parseSessionMediaMessageMeta } = await import(new URL(
+    '../../../../../ui/sources/sync/domains/session/media/sessionMediaMessageMeta.ts', import.meta.url,
+).href);
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -36,11 +41,14 @@ afterEach(() => vi.restoreAllMocks());
 // applies backpressure; the real recording owners persist and read the resulting file.
 async function setup(options: { startupFrame?: boolean; missingEncoder?: boolean; encoderFails?: boolean;
     encoderAvailable?: () => Promise<boolean>; realEncoder?: boolean; encodedBytes?: number;
-    nativeViewCapture?: boolean } = {}) {
+    nativeViewCapture?: boolean; beforeCaptureStop?: () => Promise<void>; beforeCommitAttachment?: () => Promise<void> } = {}) {
     const directory = await mkdtemp(join(tmpdir(), 'happier-managed-recording-'));
+    const attachments: Record<string, unknown>[] = [];
     let now = 1_000;
     const listeners = new Set<BrowserSidecarCdpEventSubscriber>();
     const commands: string[] = [];
+    const control = createSurfaceInputControl();
+    const resolveInputControl = () => control;
     const encoded: Buffer[] = [];
     let sequence = 0;
     const frame = (bytes = Buffer.alloc(256 * 1024, 1)) => {
@@ -52,6 +60,7 @@ async function setup(options: { startupFrame?: boolean; missingEncoder?: boolean
         subscribeCdpEvents: (listener: BrowserSidecarCdpEventSubscriber) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
         transport: { dispatchPageCommand: async (command: { method: string }) => {
             commands.push(command.method);
+            if (command.method === 'Page.stopScreencast') await options.beforeCaptureStop?.();
             if (command.method === 'Page.startScreencast' && options.startupFrame) frame();
             if (command.method === 'Page.addScriptToEvaluateOnNewDocument') return { identifier: 'overlay' };
             if (command.method === 'Page.getFrameTree') return { frameTree: { frame: { id: 'main' } } };
@@ -59,9 +68,15 @@ async function setup(options: { startupFrame?: boolean; missingEncoder?: boolean
             return {};
         } },
     };
-    const producer = createBrowserCdpScreencastProducer({ nowMs: () => now, contextCapture });
+    const producer = createBrowserCdpScreencastProducer({ nowMs: () => now, contextCapture, resolveInputControl });
     const recording = createBrowserRecordingDaemonRuntime({ workingDirectory: directory, now: () => now,
-        cdpScreencast: { transport: createBrowserRecordingCdpScreencastTransport({ producer, contextCapture }) },
+        resolveInputControl,
+        commitAttachment: async ({ meta }) => {
+            // The transcript transport serializes metadata before acknowledging custody.
+            attachments.push(JSON.parse(JSON.stringify(meta)));
+            await options.beforeCommitAttachment?.();
+        },
+        cdpScreencast: { transport: createBrowserRecordingCdpScreencastTransport({ producer, contextCapture, resolveInputControl }) },
         ...(options.nativeViewCapture ? { nativeViewCapture: {
             // The desktop reverse-IPC boundary is present in the daemon even on a
             // headless host. This test never invokes its unrelated PNG producer.
@@ -121,7 +136,7 @@ async function setup(options: { startupFrame?: boolean; missingEncoder?: boolean
     const execute = (id: ActionId, input: unknown) => executor.execute(id, input, {
         surface: 'agent', defaultSessionId: 'session', bypassApprovals: true,
     });
-    return { execute, frame, commands, directory, encoded, setNow: (value: number) => { now = value; },
+    return { execute, frame, commands, directory, encoded, control, attachments, setNow: (value: number) => { now = value; },
         dispose: async () => { recording.stop(); await producer.dispose(); await app.close(); await rm(directory, { recursive: true, force: true }); } };
 }
 
@@ -138,6 +153,78 @@ async function startRecording(runtime: Awaited<ReturnType<typeof setup>>) {
 }
 
 describe('managed recording Action → private daemon IPC → capture → Session media', () => {
+    it.each(['captureStop', 'transcriptCommit'] as const)('keeps an admitted Stop prefix when private entry begins during %s', async phase => {
+        const entered = createDeferred<void>();
+        const release = createDeferred<void>();
+        const boundary = async () => { entered.resolve(); await release.promise; };
+        const runtime = await setup(phase === 'captureStop'
+            ? { beforeCaptureStop: boundary }
+            : { beforeCommitAttachment: boundary });
+        try {
+            const recordingId = await startRecording(runtime);
+            runtime.frame(Buffer.alloc(256 * 1024, 1));
+            await new Promise<void>(resolve => setImmediate(resolve));
+            runtime.setNow(2_000);
+            const stopping = runtime.execute('browser.recording.stop', { recordingId, navigationGenerationEnd: 0 });
+            await entered.promise;
+            let drained = false;
+            const hold = runtime.control.beginConfidentialityHold().then(() => { drained = true; });
+            runtime.frame(Buffer.alloc(256 * 1024, 9));
+            await new Promise<void>(resolve => setImmediate(resolve));
+            expect(drained).toBe(false);
+            expect(await runtime.execute('browser.recording.stop', { recordingId, navigationGenerationEnd: 0 }))
+                .toMatchObject({ ok: true, result: { status: 'unavailable', reason: { code: 'browser_recording_policy_denied' } } });
+            release.resolve();
+
+            const stopped = await stopping;
+            await hold;
+            const outcomeReason = phase === 'captureStop' ? 'policy_revoked' : 'user_stopped';
+            expect(stopped).toMatchObject({ ok: true, result: { status: 'finalized', recording: {
+                outcomeReason, frameCount: 1, mediaRef: { mediaKind: 'video' },
+            } } });
+            expect(parseSessionMediaMessageMeta(runtime.attachments[0]?.happier)?.inlineMedia).toEqual([
+                expect.objectContaining({ browserRecording: { outcomeReason } }),
+            ]);
+            const stored = recordingResult(stopped);
+            expect(runtime.encoded[0]?.subarray(4)).toEqual(Buffer.alloc(48, 1));
+            expect(await readFile(join(runtime.directory, '.happier', 'uploads', 'artifacts', 'session', 'recording',
+                `${stored.mediaRef.mediaId.slice(0, 12)}-browser-recording-${recordingId}.webm`))).toEqual(runtime.encoded[0]);
+            expect(await runtime.execute('browser.recording.start', { ...start, recordingId: 'held_recording' }))
+                .toMatchObject({ ok: true, result: { status: 'unavailable', reason: { code: 'browser_recording_policy_denied' } } });
+        } finally { release.resolve(); await runtime.dispose(); }
+    });
+
+    it('keeps the public prefix as a successful privacy-stopped recording before confidential delivery', async () => {
+        const runtime = await setup();
+        try {
+            const recordingId = await startRecording(runtime);
+            runtime.frame(Buffer.alloc(256 * 1024, 1));
+            await new Promise<void>(resolve => setImmediate(resolve));
+            runtime.setNow(2_000);
+            const hold = runtime.control.beginConfidentialityHold();
+            runtime.frame(Buffer.alloc(256 * 1024, 9));
+            await hold;
+            runtime.frame(Buffer.alloc(256 * 1024, 9));
+
+            const stopped = await runtime.execute('browser.recording.stop', { recordingId, navigationGenerationEnd: 0 });
+            expect(stopped).toMatchObject({ ok: true, result: { status: 'finalized', recording: {
+                outcomeReason: 'policy_revoked', frameCount: 1, mediaRef: { mediaKind: 'video' },
+            } } });
+            const stored = recordingResult(stopped);
+            expect(parseSessionMediaMessageMeta(runtime.attachments[0]?.happier)?.inlineMedia).toEqual([
+                expect.objectContaining({ browserRecording: { outcomeReason: 'policy_revoked' } }),
+            ]);
+            expect(runtime.encoded[0]?.subarray(4)).toEqual(Buffer.alloc(48, 1));
+            const mediaId = stored.mediaRef.mediaId;
+            expect(await readFile(join(runtime.directory, '.happier', 'uploads', 'artifacts', 'session', 'recording',
+                `${mediaId.slice(0, 12)}-browser-recording-${recordingId}.webm`))).toEqual(runtime.encoded[0]);
+            expect(await runtime.execute('browser.recording.status', { recordingId })).toMatchObject({ ok: true,
+                result: { status: 'finalized', outcomeReason: 'policy_revoked', mediaRef: stored.mediaRef } });
+            expect(await runtime.execute('browser.recording.start', { ...start, recordingId: 'held_recording' }))
+                .toMatchObject({ ok: true, result: { status: 'unavailable', reason: { code: 'browser_recording_policy_denied' } } });
+        } finally { await runtime.dispose(); }
+    });
+
     it('starts a no-cap managed recording using the profile published for its streamed UI view', async () => {
         const featureSource = new URL('../../../../../server/sources/app/features/browserFeature.ts', import.meta.url).href;
         const { resolveBrowserFeature } = await import(featureSource);

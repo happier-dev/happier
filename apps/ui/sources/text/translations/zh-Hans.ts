@@ -10922,6 +10922,7 @@ export const zhHans: TranslationStructure = {
     },
     status: {
       noView: '未选择浏览器视图。',
+      stoppedForPrivacy: '为保护隐私已停止',
     },
   },
 

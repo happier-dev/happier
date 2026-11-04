@@ -13123,6 +13123,7 @@ const enBrowserRecording = {
   },
   status: {
     noView: 'No browser view selected.',
+    stoppedForPrivacy: 'Stopped for privacy',
   },
 };
 

@@ -78,3 +78,18 @@ Every producer reuses `sessionMediaWriter` + the existing recording caps
 by **reference** (`local-file` / `local-uri`), never inline bytes. No producer accumulates unbounded
 frames in memory. The PMS `streamFrameCapture` producer proves streamed/simulator recording ONLY —
 it is never cited as proof for a desktop WebView recording, and vice-versa.
+
+The existing input
+owner's confidential hold stops an active recording and removes its overlay before
+secret delivery. The already-captured public prefix is finalized successfully with
+the `policy_revoked` privacy-stop reason and its Session media reference retained.
+An already-admitted Stop also retains its safe prefix when the hold begins during
+capture shutdown or persistence; secret delivery waits for that finalization.
+The lifecycle chooses the stop reason once when capture successfully stops, before
+persistence. A hold already active at that boundary produces `policy_revoked`;
+a user Stop whose capture ended before a later hold remains `user_stopped`. The attached
+Session media item's optional `browserRecording.outcomeReason` preserves that
+typed reason, which the transcript media list and player present as “Stopped for
+privacy” for `policy_revoked`. Older media without this metadata stays playable.
+Startup-overlap and capture/encoder failures still discard unsafe or unusable output;
+starting during the hold remains unavailable.

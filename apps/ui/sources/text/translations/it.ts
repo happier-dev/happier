@@ -11510,6 +11510,7 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
     },
     status: {
       noView: 'Nessuna vista browser selezionata.',
+      stoppedForPrivacy: 'Interrotto per proteggere la privacy',
     },
   },
 

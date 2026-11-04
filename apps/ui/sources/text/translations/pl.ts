@@ -11120,6 +11120,7 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
     },
     status: {
       noView: 'Nie wybrano widoku przeglądarki.',
+      stoppedForPrivacy: 'Zatrzymano dla ochrony prywatności',
     },
   },
 

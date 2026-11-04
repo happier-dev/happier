@@ -9109,6 +9109,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         },
         status: {
             noView: '尚未選取瀏覽器檢視。',
+            stoppedForPrivacy: '為保護隱私已停止',
         },
     },
 

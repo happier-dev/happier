@@ -11129,6 +11129,7 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
         },
         status: {
             noView: 'Keine Browser-Ansicht gewählt.',
+            stoppedForPrivacy: 'Zum Schutz der Privatsphäre gestoppt',
         },
     },
 

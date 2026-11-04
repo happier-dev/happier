@@ -94,8 +94,10 @@ export function createBrowserRecordingSessionMediaWriter(
       return authorized.valid ? { path: authorized.resolvedPath, attached: storage.attached } : null;
     },
 
-    async persistRecording({ recording, artifact }) {
-      const control = options.resolveInputControl?.(recording);
+    async persistRecording({ recording, artifact, captureStopped }) {
+      // Only the recording lifecycle can admit this already-stopped, pre-private prefix.
+      // Arbitrary capture writes still obey the live confidential-observation boundary.
+      const control = captureStopped ? undefined : options.resolveInputControl?.(recording);
       const confidential = () => new Error('Browser recording is held for confidential input.');
       if (control?.isObservationHeld()) throw confidential();
       const persist = async (): Promise<BrowserEvidenceSessionMediaReferenceV1> => {
@@ -132,7 +134,10 @@ export function createBrowserRecordingSessionMediaWriter(
           await options.commitAttachment({
             sessionId: target.sessionId,
             localId: target.messageLocalId,
-            meta: attachSessionMediaMeta({}, [persisted.item], []),
+            meta: attachSessionMediaMeta({}, [{
+              ...persisted.item,
+              ...(recording.outcomeReason ? { browserRecording: { outcomeReason: recording.outcomeReason } } : {}),
+            }], []),
           });
           workspacePathByRecordingId.set(recording.recordingId, { path: persisted.item.path, workingDirectory, attached: true });
         }

@@ -15,11 +15,15 @@ import { SessionMediaInlineImages } from './SessionMediaInlineImages';
 import { TranscriptListShell } from '@/components/sessions/transcript/viewport/shell/TranscriptListShell';
 import { resolveMainTranscriptListShellFrame } from '@/components/sessions/transcript/viewport/shell/transcriptListShellCapabilities';
 import { createWebDomScrollObservation } from '@/components/sessions/transcript/viewport/driver/webDomObservation';
+import { parseSessionMediaMessageMeta } from '@/sync/domains/session/media/sessionMediaMessageMeta';
+import { InjectedAuthProvider } from '@/auth/context/AuthContext';
+import { setReducedMotionPreferenceOverride } from '@/hooks/ui/useReducedMotionPreference';
 
 const legendBoundary = vi.hoisted(() => ({ rowHost: {}, scrollToIndex: vi.fn() }));
-vi.mock('@legendapp/list/react-native', async () => {
+vi.mock('@legendapp/list/react-native', async (importOriginal) => {
     const React = await import('react');
     return {
+        ...await importOriginal<typeof import('@legendapp/list/react-native')>(),
         LegendList: React.forwardRef((props: {
             data: readonly { id: string }[];
             renderItem: (info: { item: { id: string }; index: number }) => React.ReactNode;
@@ -109,6 +113,54 @@ afterEach(async () => {
 });
 
 describe('SessionMediaInlineImages', () => {
+    it.each([
+        ['video', 'policy_revoked'], ['video', 'user_stopped'], ['video', undefined], ['image', 'policy_revoked'],
+    ] as const)(
+        'presents the persisted %s recording reason %s in its list and player', async (mediaKind, outcomeReason) => {
+            const name = !outcomeReason ? 'private-policy_revoked.webm'
+                : mediaKind === 'video' ? 'recording.webm' : 'recording.png';
+            const path = `.happier/uploads/artifacts/session-1/message-1/${name}`;
+            const parsed = parseSessionMediaMessageMeta({ kind: 'session_media.v1', payload: { media: [{
+                id: 'recording-privacy', role: 'output', category: 'tool-artifact', mediaKind,
+                mimeType: mediaKind === 'video' ? 'video/webm' : 'image/png', name, path, sizeBytes: 2048,
+                origin: { source: 'tool-output' },
+                ...(outcomeReason ? { browserRecording: { outcomeReason } } : {}),
+            }] } });
+            const { t } = await import('@/text');
+            const privacyLabel = t('browserRecording.status.stoppedForPrivacy');
+            const screen = await renderScreen(<SessionMediaInlineImages sessionId="s1" media={parsed!.inlineMedia}
+                onOpenPath={() => {}} fileOpenEnabled mediaPreviewEnabled />);
+            expect(screen.getTextContent().includes(privacyLabel)).toBe(outcomeReason === 'policy_revoked');
+            const tile = screen.findByTestId(`message-session-media-inline-${mediaKind}:${path}`)!;
+            expect(tile.props.accessibilityLabel.includes(privacyLabel)).toBe(outcomeReason === 'policy_revoked');
+            const { Modal } = await import('@/modal');
+            vi.mocked(Modal.show).mockClear();
+            screen.pressByTestId(`message-session-media-inline-${mediaKind}:${path}`);
+            const [config] = vi.mocked(Modal.show).mock.calls[0]!;
+            await screen.unmount();
+            setReducedMotionPreferenceOverride(true);
+            try {
+                const Stage = config!.component;
+                const player = await renderScreen(<InjectedAuthProvider credentials={null}>
+                    <Stage {...config!.props} onClose={() => {}} />
+                </InjectedAuthProvider>);
+                expect(player.getTextContent().includes(privacyLabel)).toBe(outcomeReason === 'policy_revoked');
+                await player.unmount();
+            } finally { setReducedMotionPreferenceOverride(null); }
+        },
+    );
+
+    it('keeps the privacy annotation visible when media previews are disabled', async () => {
+        const { t } = await import('@/text');
+        const screen = await renderScreen(<SessionMediaInlineImages sessionId="s1" media={[{
+            id: 'private-stop', mediaKind: 'video', name: 'recording.webm', path: '.happier/uploads/artifacts/s/m/recording.webm',
+            mimeType: 'video/webm', sizeBytes: 2048, role: 'output', category: 'tool-artifact',
+            browserRecording: { outcomeReason: 'policy_revoked' },
+        }]} onOpenPath={() => {}} fileOpenEnabled={false} mediaPreviewEnabled={false} />);
+        expect(screen.getTextContent()).toContain(t('browserRecording.status.stoppedForPrivacy'));
+        expect(transfer.prepares).toEqual([]);
+    });
+
     it('reveals a ringed native thumbnail through its measured transcript row', async () => {
         const path = '.happier/uploads/attachments/focus.png';
         const onRevealNativeItem = vi.fn();

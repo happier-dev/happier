@@ -255,7 +255,7 @@ describe('browser recording daemon service', () => {
     expect(start).not.toHaveBeenCalled();
   });
 
-  it.each(['starting', 'stopping', 'stopping_error', 'persisting'] as const)('drains %s capture before confidential materialization and suppresses its output', async (phase) => {
+  it.each(['starting', 'stopping', 'stopping_error', 'persisting'] as const)('drains %s before confidential delivery and keeps only a successfully stopped prefix', async (phase) => {
     const { createBrowserRecordingDaemonService } = await import('./service');
     const control = createSurfaceInputControl();
     const deferred = createDeferred<void>();
@@ -299,16 +299,25 @@ describe('browser recording daemon service', () => {
     const result = await operation;
     await hold;
 
-    expect(discard).toHaveBeenCalled();
-    if (phase === 'persisting') expect(discardRecording).toHaveBeenCalledWith(expect.objectContaining({ recording: expect.objectContaining({ mediaRef }) }));
-    else expect(persistRecording).not.toHaveBeenCalled();
+    const safePrefix = phase === 'stopping' || phase === 'persisting';
+    if (safePrefix) {
+      expect(discard).not.toHaveBeenCalled();
+      expect(persistRecording).toHaveBeenCalled();
+      expect(discardRecording).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ status: 'finalized', recording: {
+        outcomeReason: phase === 'persisting' ? 'user_stopped' : 'policy_revoked', mediaRef,
+      } });
+    } else {
+      expect(discard).toHaveBeenCalled();
+      expect(persistRecording).not.toHaveBeenCalled();
+    }
     if (phase === 'stopping' || phase === 'persisting') expect(cleanup).toHaveBeenCalled();
     expect(JSON.stringify(result)).not.toContain('D26-recording-fixture-secret');
     expect(service.listRecordingsForView({ browserSessionId: 'browser_session_1', viewId: 'view_1' })).not.toContainEqual(expect.objectContaining({ status: 'recording' }));
-    expect(service.listRecordingsForView({ browserSessionId: 'browser_session_1', viewId: 'view_1' })).not.toContainEqual(expect.objectContaining({ mediaRef }));
+    expect(service.listRecordingsForView({ browserSessionId: 'browser_session_1', viewId: 'view_1' })[0].mediaRef).toEqual(safePrefix ? mediaRef : undefined);
   });
 
-  it('discards an active held view while an unrelated view keeps recording', async () => {
+  it('finalizes the pre-private prefix while an unrelated view keeps recording', async () => {
     const { createBrowserRecordingDaemonService } = await import('./service');
     const control = createSurfaceInputControl();
     const safeControl = createSurfaceInputControl();
@@ -318,7 +327,7 @@ describe('browser recording daemon service', () => {
       captureAdapters: [{
         captureKind: 'streamFrameCapture',
         start: async () => ({ status: 'started' }),
-        stop: async () => { throw new Error('unused'); },
+        stop: async () => ({ durationMs: 100, byteSize: 20, frameCount: 1, fps: 1, mimeType: 'video/webm', source: recordingArtifactSource }),
         discard: async ({ recording }) => { discardedViews.push(recording.viewId); },
       }],
       mediaWriter: { persistRecording: async () => mediaRef, discardRecording: async () => {} },
@@ -327,8 +336,8 @@ describe('browser recording daemon service', () => {
     await service.startRecording({ ...confidentialStartInput, viewId: 'safe_view' });
     await control.beginConfidentialityHold();
 
-    expect(discardedViews).toEqual(['view_1']);
-    expect(service.listRecordingsForView({ browserSessionId: 'browser_session_1', viewId: 'view_1' })[0]).toMatchObject({ status: 'failed', outcomeReason: 'policy_revoked' });
+    expect(discardedViews).toEqual([]);
+    expect(service.listRecordingsForView({ browserSessionId: 'browser_session_1', viewId: 'view_1' })[0]).toMatchObject({ status: 'finalized', outcomeReason: 'policy_revoked', mediaRef });
     expect(service.listRecordingsForView({ browserSessionId: 'browser_session_1', viewId: 'safe_view' })[0]).toMatchObject({ status: 'recording' });
   });
 

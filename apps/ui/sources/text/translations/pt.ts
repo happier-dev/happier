@@ -11409,6 +11409,7 @@ encryptedUnavailable: "Detalhes encriptados indisponíveis",
     },
     status: {
       noView: 'Nenhuma visualização do navegador selecionada.',
+      stoppedForPrivacy: 'Interrompido para proteger a privacidade',
     },
   },
 

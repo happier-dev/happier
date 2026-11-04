@@ -62,6 +62,8 @@ export type BrowserRecordingMediaWriter = Readonly<{
   persistRecording(input: Readonly<{
     recording: BrowserRecordingSessionV1;
     artifact: BrowserRecordingCapturedArtifact;
+    /** The lifecycle owner stopped capture before confidential input could be delivered. */
+    captureStopped?: true;
   }>): Promise<BrowserEvidenceSessionMediaReferenceV1>;
   discardRecording(input: Readonly<{
     recording: BrowserRecordingSessionV1;
@@ -333,6 +335,56 @@ export function createBrowserRecordingDaemonService(input: Readonly<{
     return { status: 'discarded', recording: discarded };
   }
 
+  async function finalizeRecording(
+    recording: BrowserRecordingSessionV1,
+    adapter: BrowserRecordingCaptureAdapter,
+    stopInput: Pick<BrowserRecordingRuntimeStopInput, 'stoppedAtMs' | 'expiresAtMs'> &
+      Readonly<{ navigationGenerationEnd?: number }>,
+    control?: SurfaceInputControl,
+  ): Promise<BrowserRecordingRuntimeStopResult> {
+    let artifact: BrowserRecordingCapturedArtifact | null = null;
+    try {
+      artifact = await adapter.stop({ recordingId: recording.recordingId, recording });
+      // Capture has ended. Decide its cause once, before persistence can outlive a later hold.
+      const stopped = { ...recording, outcomeReason: control?.hasConfidentialityHold() ? 'policy_revoked' as const : 'user_stopped' as const };
+      const mediaRef = await input.mediaWriter.persistRecording({ recording: stopped, artifact, captureStopped: true });
+      const stoppedAtMs = stopInput.stoppedAtMs ?? now();
+      const finalized = parseRecordingSession({
+        ...stopped,
+        status: 'finalized',
+        stoppedAtMs,
+        navigationGenerationEnd: stopInput.navigationGenerationEnd,
+        durationMs: artifact.durationMs,
+        byteSize: artifact.byteSize,
+        frameCount: artifact.frameCount,
+        fps: artifact.fps,
+        mimeType: artifact.mimeType,
+        mediaRef,
+        expiresAtMs: stopInput.expiresAtMs,
+      });
+      putRecording(finalized, false);
+      return { status: 'finalized', recording: finalized };
+    } catch {
+      if (control?.isObservationHeld()) {
+        const outcome = await terminalOutcome(recording, 'policy_revoked', now());
+        if (outcome.status === 'unavailable') return outcome;
+        return { status: 'failed', recording: outcome.recording, reason: 'policy_revoked' };
+      }
+      const failed = parseRecordingSession({
+        ...recording,
+        status: 'failed',
+        outcomeReason: 'capture_failed',
+        stoppedAtMs: stopInput.stoppedAtMs ?? now(),
+        durationMs: durationFrom(recording, stopInput.stoppedAtMs ?? now()),
+        mediaRef: undefined,
+      });
+      putRecording(failed, false);
+      return { status: 'failed', recording: failed, reason: 'capture_failed' };
+    } finally {
+      if (artifact?.cleanup) await artifact.cleanup();
+    }
+  }
+
   return {
     nextExpiryAtMs() {
       let earliest: number | null = null;
@@ -417,11 +469,17 @@ export function createBrowserRecordingDaemonService(input: Readonly<{
       });
 
       // Register before capture startup can await; the input owner drains the actual operation
-      // before discarding its capture, so no encoder can appear after confidential delivery.
+      // before stopping its capture, so no encoder can appear after confidential delivery.
       const unregisterConfidentialityDrain = control?.registerConfidentialityDrain(async () => {
         const current = readRecording(recordingId);
         if (current && activeAdapterByRecordingId.has(recordingId)) {
-          await terminalOutcome(current, 'policy_revoked', now());
+          if (current.status === 'recording') {
+            await finalizeRecording(current, adapter, {
+              stoppedAtMs: now(),
+            }, control);
+          } else {
+            await terminalOutcome(current, 'policy_revoked', now());
+          }
         }
       });
       activeAdapterByRecordingId.set(recordingId, { adapter, control, unregisterConfidentialityDrain });
@@ -469,10 +527,10 @@ export function createBrowserRecordingDaemonService(input: Readonly<{
         };
       }
       const control = activeAdapterByRecordingId.get(recording.recordingId)?.control ?? input.resolveInputControl?.(recording);
-      if (control?.isObservationHeld()) return confidentialityUnavailable();
       if (recording.status === 'finalized' || recording.status === 'completed') {
         return { status: 'finalized', recording };
       }
+      if (control?.isObservationHeld()) return confidentialityUnavailable();
       if (recording.status === 'failed' && recording.outcomeReason) {
         return { status: 'failed', recording, reason: recording.outcomeReason };
       }
@@ -488,54 +546,10 @@ export function createBrowserRecordingDaemonService(input: Readonly<{
         };
       }
 
-      const finalize = async (): Promise<BrowserRecordingRuntimeStopResult> => {
-        let artifact: BrowserRecordingCapturedArtifact | null = null;
-        try {
-          artifact = await adapter.stop({ recordingId: recording.recordingId, recording });
-          if (control?.isObservationHeld()) throw new Error('Browser recording is held for confidential input.');
-          const mediaRef = await input.mediaWriter.persistRecording({ recording, artifact });
-          if (control?.isObservationHeld()) {
-            await input.mediaWriter.discardRecording({ recording: { ...recording, mediaRef }, reason: 'user_discarded' });
-            throw new Error('Browser recording is held for confidential input.');
-          }
-          const stoppedAtMs = stopInput.stoppedAtMs ?? now();
-          const finalized = parseRecordingSession({
-            ...recording,
-            status: 'finalized',
-            outcomeReason: 'user_stopped',
-            stoppedAtMs,
-            navigationGenerationEnd: stopInput.navigationGenerationEnd,
-            durationMs: artifact.durationMs,
-            byteSize: artifact.byteSize,
-            frameCount: artifact.frameCount,
-            fps: artifact.fps,
-            mimeType: artifact.mimeType,
-            mediaRef,
-            expiresAtMs: stopInput.expiresAtMs,
-          });
-          putRecording(finalized, false);
-          return { status: 'finalized', recording: finalized };
-        } catch {
-          if (control?.isObservationHeld()) {
-            const outcome = await terminalOutcome(recording, 'policy_revoked', now());
-            if (outcome.status === 'unavailable') return outcome;
-            return { status: 'failed', recording: outcome.recording, reason: 'policy_revoked' };
-          }
-          const failed = parseRecordingSession({
-            ...recording,
-            status: 'failed',
-            outcomeReason: 'capture_failed',
-            stoppedAtMs: stopInput.stoppedAtMs ?? now(),
-            durationMs: durationFrom(recording, stopInput.stoppedAtMs ?? now()),
-            mediaRef: undefined,
-          });
-          putRecording(failed, false);
-          return { status: 'failed', recording: failed, reason: 'capture_failed' };
-        } finally {
-          if (artifact?.cleanup) await artifact.cleanup();
-        }
-      };
-      return (control ? await control.observeWhile(finalize) : await finalize()) ?? confidentialityUnavailable();
+      const finalize = () => finalizeRecording(recording, adapter, stopInput, control);
+      // Finalization owns an admitted capture, not a new page observation. Confidential
+      // delivery waits for this operation; its stopped prefix remains safe to persist.
+      return control ? await control.drainWhile(finalize) : await finalize();
     },
 
     async cancelRecording(cancelInput) {

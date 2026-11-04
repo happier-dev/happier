@@ -11291,6 +11291,7 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
     },
     status: {
       noView: 'No hay ninguna vista del navegador seleccionada.',
+      stoppedForPrivacy: 'Detenido para proteger la privacidad',
     },
   },
 

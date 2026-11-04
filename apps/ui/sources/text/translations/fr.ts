@@ -11129,6 +11129,7 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
     },
     status: {
       noView: 'Aucune vue navigateur sélectionnée.',
+      stoppedForPrivacy: 'Arrêté pour préserver la confidentialité',
     },
   },
 

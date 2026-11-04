@@ -219,6 +219,7 @@ function sanitizeDurableSessionMediaItem(mediaRecord: Record<string, unknown>): 
     ...(mediaRecord.width !== undefined ? { width: mediaRecord.width } : {}),
     ...(mediaRecord.height !== undefined ? { height: mediaRecord.height } : {}),
     ...(mediaRecord.createdAtMs !== undefined ? { createdAtMs: mediaRecord.createdAtMs } : {}),
+    ...(mediaRecord.browserRecording !== undefined ? { browserRecording: mediaRecord.browserRecording } : {}),
     origin: readMediaOrigin(mediaRecord.origin),
   };
   const parsed = SessionMediaItemV1Schema.safeParse(candidate);
@@ -237,6 +238,7 @@ function sanitizeDurableSessionMediaItem(mediaRecord: Record<string, unknown>): 
     ...(item.mediaKind === 'image' && item.width !== undefined ? { width: item.width } : {}),
     ...(item.mediaKind === 'image' && item.height !== undefined ? { height: item.height } : {}),
     ...(item.createdAtMs !== undefined ? { createdAtMs: item.createdAtMs } : {}),
+    ...(item.browserRecording ? { browserRecording: item.browserRecording } : {}),
     origin: readMediaOrigin(item.origin),
   };
 }

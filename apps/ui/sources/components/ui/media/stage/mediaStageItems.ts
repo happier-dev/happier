@@ -5,6 +5,8 @@ import type { UseFilePreviewSourceInput } from '../useFilePreviewSource';
 export type MediaStageItem = Readonly<{
     kind: 'image' | 'svg' | 'video' | 'pdf';
     title: string;
+    /** Caller-owned context, kept visible alongside the media's original name. */
+    subtitle?: string;
     source: UseFilePreviewSourceInput;
     sizeBytes?: number | null;
     /** From the classifier (`alphaCapable`): the picture sits on its well's checkerboard or Background. */

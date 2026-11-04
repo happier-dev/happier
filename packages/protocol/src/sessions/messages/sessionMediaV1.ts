@@ -1,5 +1,6 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
+import { BrowserRecordingOutcomeReasonV1Schema } from '../../browser/recording/v1.js';
 
 import { decodeBase64, encodeBase64 } from '../../crypto/base64.js';
 
@@ -84,6 +85,7 @@ const SESSION_MEDIA_ITEM_ROOT_KEYS = new Set([
   'height',
   'createdAtMs',
   'origin',
+  'browserRecording',
 ]);
 
 const SESSION_MEDIA_PAYLOAD_ROOT_KEYS = new Set([
@@ -331,6 +333,9 @@ export function createSessionMediaItemV1Schema(zod: typeof z) {
       height: zod.optional(zod.number().check(zod.int(), zod.positive())),
       createdAtMs: zod.optional(zod.number().check(zod.int(), zod.nonnegative())),
       origin: createSessionMediaOriginV1Schema(zod),
+      browserRecording: zod.optional(zod.strictObject({
+        outcomeReason: BrowserRecordingOutcomeReasonV1Schema,
+      })),
     }).check(zod.superRefine((value, ctx) => {
       if (value.mediaKind === 'image' && !isInlineSessionMediaImageMimeType(value.mimeType)) {
         ctx.addIssue({

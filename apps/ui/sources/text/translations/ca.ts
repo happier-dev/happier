@@ -10429,6 +10429,7 @@ encryptedUnavailable: "Detalls xifrats no disponibles",
         },
         status: {
             noView: 'No hi ha cap vista del navegador seleccionada.',
+            stoppedForPrivacy: 'Aturat per protegir la privadesa',
         },
     },
 

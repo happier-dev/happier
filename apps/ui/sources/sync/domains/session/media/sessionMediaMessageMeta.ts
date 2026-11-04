@@ -1,6 +1,7 @@
 import { SessionMediaFailureV1Schema, SessionMediaItemV1Schema, isReferenceSessionMediaVideoMimeType, type SESSION_MEDIA_VIDEO_MIME_TYPES_V1 } from '@happier-dev/protocol/sessions/messages/sessionMediaV1';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import type { SessionAttachmentHandleV1 } from '@happier-dev/protocol/transfers/sessions/sessionAttachmentHandleV1';
+import type { SessionMediaItemV1 } from '@happier-dev/protocol/sessions/messages/sessionMediaV1';
 
 export type SessionMediaInlineImageAvailableSummary = Readonly<{
     id: string;
@@ -15,6 +16,7 @@ export type SessionMediaInlineImageAvailableSummary = Readonly<{
     height?: number;
     category: 'attachment' | 'generated' | 'tool-artifact';
     role: 'input' | 'output';
+    browserRecording?: SessionMediaItemV1['browserRecording'];
 }>;
 
 export type SessionMediaInlineImageUnavailableSummary = Readonly<{
@@ -39,6 +41,7 @@ export type SessionMediaInlineVideoAvailableSummary = Readonly<{
     attachmentHandle?: SessionAttachmentHandleV1;
     category: 'attachment' | 'generated' | 'tool-artifact';
     role: 'input' | 'output';
+    browserRecording?: SessionMediaItemV1['browserRecording'];
 }>;
 
 export type SessionMediaInlineMediaSummary =
@@ -108,6 +111,7 @@ export function parseSessionMediaMessageMeta(value: unknown): ParsedSessionMedia
                 ...(item.sha256 ? { sha256: item.sha256 } : {}),
                 category: item.category,
                 role: item.role,
+                ...(item.browserRecording ? { browserRecording: item.browserRecording } : {}),
             });
             continue;
         }
@@ -125,6 +129,7 @@ export function parseSessionMediaMessageMeta(value: unknown): ParsedSessionMedia
                 : {}),
             category: item.category,
             role: item.role,
+            ...(item.browserRecording ? { browserRecording: item.browserRecording } : {}),
         };
         inlineImages.push(imageSummary);
         inlineMedia.push({ ...imageSummary, mediaKind: 'image' });
