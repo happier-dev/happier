@@ -399,34 +399,48 @@ class AuthModule {
             publicKey: Uint8Array.from(generator.publicKey),
         });
 
-        const legacySeedCandidates = Array.from(
-            { length: LEGACY_BUN_SEED_CANDIDATE_COUNT },
-            (_, attempt) => this.deriveLegacyBunSeedCandidate(masterSecret, attempt),
-        );
-        const legacyKey =
-            await privacyKit.resolveLegacyBunStandardBase64PersistentTokenPublicKey({
-                service: "handy",
-                seedCandidates: legacySeedCandidates,
-            });
+        let legacyVerifierPromise: Promise<TokenVerifierLike | null> | null = null;
+        const getLegacyVerifier = (): Promise<TokenVerifierLike | null> => {
+            // Resolve historical keys only after a primary miss; concurrent requests
+            // share the same derivation work for this auth owner's lifetime.
+            legacyVerifierPromise ??= (async () => {
+                const legacySeedCandidates = Array.from(
+                    { length: LEGACY_BUN_SEED_CANDIDATE_COUNT },
+                    (_, attempt) => this.deriveLegacyBunSeedCandidate(masterSecret, attempt),
+                );
+                const legacyKey =
+                    await privacyKit.resolveLegacyBunStandardBase64PersistentTokenPublicKey({
+                        service: "handy",
+                        seedCandidates: legacySeedCandidates,
+                    });
 
-        if (!legacyKey || legacyKey.candidateIndex === 0) {
-            return { generator, verifier: primaryVerifier };
-        }
+                if (!legacyKey || legacyKey.candidateIndex === 0) {
+                    return null;
+                }
 
-        const legacyVerifier = await privacyKit.createPersistentTokenVerifier({
-            service: "handy",
-            publicKey: legacyKey.publicKey,
-        });
-        log(
-            { module: "auth", level: "warn" },
-            `Historical Bun auth-token verification enabled (attempt=${legacyKey.candidateIndex})`,
-        );
+                const legacyVerifier = await privacyKit.createPersistentTokenVerifier({
+                    service: "handy",
+                    publicKey: legacyKey.publicKey,
+                });
+                log(
+                    { module: "auth", level: "warn" },
+                    `Historical Bun auth-token verification enabled (attempt=${legacyKey.candidateIndex})`,
+                );
+
+                return legacyVerifier;
+            })();
+            return legacyVerifierPromise;
+        };
 
         return {
             generator,
             verifier: {
-                verify: async (token: string) =>
-                    (await primaryVerifier.verify(token)) ?? (await legacyVerifier.verify(token)),
+                verify: async (token: string) => {
+                    const verified = await primaryVerifier.verify(token);
+                    if (verified !== null) return verified;
+                    const legacyVerifier = await getLegacyVerifier();
+                    return legacyVerifier ? legacyVerifier.verify(token) : null;
+                },
             },
         };
     }

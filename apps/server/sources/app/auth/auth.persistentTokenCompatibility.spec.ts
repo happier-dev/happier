@@ -1,6 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import * as crypto from "crypto";
+import * as privacyKit from "privacy-kit";
+import { auth } from "./auth";
 
 import { applyEnvValues, restoreEnv, snapshotEnv } from "@/app/api/testkit/env";
+
+vi.mock("crypto", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("crypto")>();
+    // Count OS KDF work while retaining real derivation, signing and verification.
+    return { ...actual, pbkdf2: vi.fn(actual.pbkdf2) };
+});
 
 const dbAccountFindUniqueMock = vi.hoisted(() => vi.fn());
 vi.mock("@/storage/db", async () => {
@@ -34,10 +43,11 @@ describe("auth persistent token compatibility", () => {
     afterEach(() => {
         restoreEnv(envBackup);
         dbAccountFindUniqueMock.mockReset();
+        vi.clearAllMocks();
         vi.resetModules();
     });
 
-    it("keeps attempt-0 as the only signing key while accepting historical Node and Bun tokens", async () => {
+    it("defers legacy derivation until a primary miss and preserves historical signers", async () => {
         applyEnvValues({
             HANDY_MASTER_SECRET: MASTER_SECRET,
             AUTH_TOKEN_CACHE_MAX_ENTRIES: "0",
@@ -46,11 +56,14 @@ describe("auth persistent token compatibility", () => {
         });
         dbAccountFindUniqueMock.mockResolvedValue({ tokenEpoch: 0, status: "active" });
 
-        const [{ auth }, privacyKit] = await Promise.all([
-            import("./auth"),
-            import("privacy-kit"),
-        ]);
+        const derivations = vi.mocked(crypto.pbkdf2);
+        const startedAt = performance.now();
         await auth.init();
+        console.info("auth startup KDF measurement", {
+            derivations: derivations.mock.calls.length,
+            elapsedMs: Math.round(performance.now() - startedAt),
+        });
+        expect(derivations).toHaveBeenCalledTimes(2);
 
         await expect(auth.verifyLegacyHomeToken(LEGACY_NODE_TOKEN)).resolves.toEqual({
             userId: "legacy-node-user",
@@ -61,6 +74,10 @@ describe("auth persistent token compatibility", () => {
             tokenEpoch: 0,
             legacy: true,
         });
+        expect(derivations).toHaveBeenCalledTimes(2);
+
+        const legacyStartedAt = performance.now();
+        const concurrentLegacy = auth.verifyLegacyHomeToken(LEGACY_BUN_RETRY_TOKEN);
         await expect(auth.verifyLegacyHomeToken(LEGACY_BUN_RETRY_TOKEN)).resolves.toEqual({
             userId: "legacy-bun-user",
             extras: { provenance: "privacy-kit-0.0.25-bun-1.3.5" },
@@ -70,6 +87,18 @@ describe("auth persistent token compatibility", () => {
             tokenEpoch: 0,
             legacy: true,
         });
+        await expect(concurrentLegacy).resolves.toMatchObject({ userId: "legacy-bun-user" });
+        console.info("auth first legacy KDF measurement", {
+            derivations: derivations.mock.calls.length - 2,
+            elapsedMs: Math.round(performance.now() - legacyStartedAt),
+        });
+        // The pinned Bun fixture rejected attempts 0-4 and signed with attempt 5.
+        expect(derivations).toHaveBeenCalledTimes(8);
+        await expect(auth.verifyLegacyHomeToken(LEGACY_BUN_RETRY_TOKEN)).resolves.toMatchObject({
+            userId: "legacy-bun-user",
+        });
+        await expect(auth.verifyLegacyHomeToken("malformed")).resolves.toBeNull();
+        expect(derivations).toHaveBeenCalledTimes(8);
 
         const attemptZero = await privacyKit.createPersistentTokenGenerator({
             service: "handy",
