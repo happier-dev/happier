@@ -140,9 +140,19 @@ export const imapSmtpConnectedAccountDescriptor = {
   declaration: { title: 'Email IMAP + SMTP', description: 'Mailbox credentials for secure IMAP receiving and SMTP submission.',
     authentication: { defaultModeId: 'password', modes: [
       { id: 'password', title: 'App password', kind: 'manual' as const, outcomeReconciliation: 'none' as const,
+        setup: {
+          url: 'https://support.mozilla.org/en-US/kb/manual-account-configuration',
+          checklist: ['Check your mail provider instructions for IMAP and SMTP access and the required server settings.', 'If your provider requires an app password, create one in that provider account; otherwise use the mailbox password it supports.', 'Enter that password and the matching mailbox and server settings here.'],
+          createKeyTitle: 'Read manual mailbox setup guidance',
+        },
         directExport: { contractVersion: CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 }, configuration,
         fields: [{ id: 'password', title: 'Password or app password', secret: true, schema: { type: 'string' as const, minLength: 1 } }] },
       { id: 'microsoft-app-only', title: 'Microsoft app-only', kind: 'manual' as const, outcomeReconciliation: 'none' as const,
+        setup: {
+          url: 'https://learn.microsoft.com/en-us/exchange/client-developer/legacy-protocols/how-to-authenticate-an-imap-pop-smtp-application-by-using-oauth/',
+          checklist: ['Register an application in Microsoft Entra and create a client secret.', 'Grant the Exchange Online application permissions IMAP.AccessAsApp and SMTP.SendAsApp, obtain admin consent, and register its service principal in Exchange.', 'Grant access to the mailbox, then enter the tenant ID, application client ID, client secret, and mailbox server settings here.'],
+          createKeyTitle: 'Read Microsoft mailbox application setup',
+        },
         directExport: { contractVersion: CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 }, configuration,
         fields: [{ id: 'tenantId', title: 'Entra tenant ID or domain', secret: false, schema: { type: 'string' as const, minLength: 1 } },
           { id: 'clientId', title: 'Application client ID', secret: false, schema: { type: 'string' as const, minLength: 1 } },
