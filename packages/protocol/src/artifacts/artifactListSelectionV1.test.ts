@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { listArtifactHeadersV1 } from './artifactListSelectionV1.js';
+import { artifactActionListSelectionV1, listArtifactHeadersV1 } from './artifactListSelectionV1.js';
+import { ArtifactListInputV1Schema } from './artifactActionsV1.js';
 import { createRoleSourceReaderV1 } from '../prompts/roles/accountRoleActions.js';
 import { BUILT_IN_ROLES_V1 } from '../prompts/roles/builtInRolesV1.js';
 import { readCompleteSkillLibraryInventoryV1 } from '../prompts/library/skills/readSkillLibraryCatalog.js';
@@ -12,6 +13,21 @@ const encodeCursor = (row: Readonly<{ artifactId: string }>) => row.artifactId;
 const completeKindCoverage = { status: 'complete', unclassifiedCount: 0 } as const;
 
 describe('Artifact coarse selection', () => {
+  it('keeps received template discovery to one structural header page, including sparse searches and partial coverage', async () => {
+    const input = ArtifactListInputV1Schema.parse({ audience: 'received', kinds: ['bot_template.v1'], limit: 2, search: 'chosen' });
+    const options = artifactActionListSelectionV1(input);
+    const requests: unknown[] = [];
+    const partial = { status: 'partial', unclassifiedCount: 1, reason: 'unclassified_legacy_rows' } as const;
+    const result = await listArtifactHeadersV1({ options, encodeCursor,
+      readPage: async request => { requests.push(request); return { items: [
+        { artifactId: 'first', header: { kind: 'bot_template.v1', title: 'Other' }, createdAt: 1, updatedAt: 3 },
+        { artifactId: 'frontier', header: { kind: 'bot_template.v1', title: 'Other too' }, createdAt: 1, updatedAt: 2 },
+      ], nextCursor: 'frontier', kindCoverage: partial }; },
+      readBodies: async () => { throw new Error('Received discovery must not open bodies'); },
+    });
+    expect(result).toEqual({ items: [], nextCursor: 'frontier', coverage: 'partial', kindCoverage: partial });
+    expect(requests).toEqual([{ audience: 'received', kinds: ['bot_template.v1'], limit: 2 }]);
+  });
   it('keeps relevant legacy approvals with unknown state partial without opening settled or unrelated bodies', async () => {
     const rows = [
       { artifactId: 'unknown', header: { kind: 'approval_request.v1', approvalStatus: 'invalid', approvalSubjectKey: 'managed-delete:subject' }, createdAt: 1, updatedAt: 3 },

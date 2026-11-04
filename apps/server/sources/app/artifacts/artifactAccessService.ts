@@ -284,15 +284,10 @@ function artifactReadAdmissionSelect(actorAccountId?: string) {
 function projectArtifactAdmittedHeader(row: Prisma.ArtifactGetPayload<{ select: ReturnType<typeof artifactReadAdmissionSelect> }>, actorAccountId: string,
     recipientReadiness?: AccountRecipientEnvelopeReadiness): ArtifactHeaderReadResult {
     const access = resolveArtifactAccessFromFacts(row, actorAccountId);
-    if (!access) return { ok: false, error: "artifact_not_found" };
-    const envelope = row.keyEnvelopes.find(envelope => envelope.recipientAccountId === actorAccountId);
-    const readiness = envelope ? recipientReadiness ?? deriveAccountRecipientEnvelopeReadinessFromRow(envelope.recipient) : undefined;
-    const key = access.level === "owner" || access.encryptionMode === "plain" ? new Uint8Array(row.dataEncryptionKey)
-        : envelope ? projectRecipientEnvelope(envelope.recipient, envelope, readiness) : null;
-    const privateKey = access.encryptionMode === "plain" ? null : access.level === "owner"
-        ? row.provenanceDataEncryptionKey ? new Uint8Array(row.provenanceDataEncryptionKey) : null
-        : envelope?.encryptedProvenanceDataKey ? projectRecipientEnvelope(envelope.recipient, { ...envelope, encryptedDataKey: envelope.encryptedProvenanceDataKey }, readiness) : null;
-    return projectArtifactHeader(row, access, key, privateKey);
+    if (!access) return { ok: false, error: 'artifact_not_found' };
+    const read = projectArtifactHeaderForRecipient(row, actorAccountId, access, recipientReadiness);
+    return read.ok ? { ok: true, artifact: { ...read.artifact,
+        sharedTeamIds: resolveResourceGrantTeamIdsFromFacts(artifactGrantFacts(row), actorAccountId) } } : read;
 }
 
 function artifactContentAdmissionMatches(current: ArtifactHeaderForCaller, captured: Pick<ArtifactHeaderForCaller,

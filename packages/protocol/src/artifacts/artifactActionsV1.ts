@@ -15,6 +15,7 @@ import { ArtifactWorkspacePublicationSourceV1Schema } from './artifactWorkspaceF
 import { UiSurfaceCapabilityRequestV1Schema } from '../plugins/contributions/ui/hostedHtmlCapabilitiesV1.js';
 import { RoleArtifactV1Schema } from '../prompts/roles/roleArtifactV1.js';
 import { LaunchProfileArtifactV1Schema } from '../launchProfiles/launchProfileArtifactV1.js';
+import { ApprovalArtifactStateV1Schema } from '../approvals/approvalArtifactKindV1.js';
 export { ArtifactRevisionV1Schema, type ArtifactRevisionV1 } from './artifactRevisionV1.js';
 
 export const ArtifactActionIdV1Schema = lazyZodSchema(() => z.enum(ARTIFACT_ACTION_IDS_V1));
@@ -59,7 +60,10 @@ export const ArtifactCreateInputV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ artifactId: z.optional(z.string().check(z.uuid())), header: ArtifactHeaderMetadataV1Schema, ...upload }),
 ]));
 export const ArtifactListInputV1Schema = lazyZodSchema(() => z.strictObject({
+  audience: z.optional(z.literal('received')),
   search: z.optional(z.string()), kind: z.optional(z.string().check(z.minLength(1))),
+  kinds: z.optional(z.array(z.string().check(z.minLength(1)))),
+  approvalStates: z.optional(z.array(ApprovalArtifactStateV1Schema)),
   sort: z.optional(z.enum(['updated_desc', 'created_desc', 'title_asc'])),
   limit: z.optional(z.number().check(z.int(), z.positive())), cursor: z.optional(z.string().check(z.minLength(1))),
 }));

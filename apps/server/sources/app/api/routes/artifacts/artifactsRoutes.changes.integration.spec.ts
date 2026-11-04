@@ -77,7 +77,7 @@ describe("artifactsRoutes (AccountChange integration)", () => {
     }
 
     it.each(['plain', 'e2ee'] as const)('batch reads selected %s details with the canonical recipient census and refuses foreign rows', async mode => {
-        const owner = await db.account.create({ data: { encryptionMode: mode,
+        const owner = await db.account.create({ data: { name: 'Maya Rowan', username: 'different-handle', encryptionMode: mode,
             ...(mode === 'e2ee' ? createSignedAccountContentBinding() : {}) } });
         const outsider = await seedAccount();
         const ids = ['77777777-7777-4777-8777-777777777771', '77777777-7777-4777-8777-777777777772'];
@@ -92,6 +92,7 @@ describe("artifactsRoutes (AccountChange integration)", () => {
             const headers = { 'x-test-user-id': owner.id };
             const exact = await app.inject({ method: 'GET', url: `/v1/artifacts/${ids[0]}`, headers });
             expect(exact.statusCode).toBe(200);
+            expect(exact.json()).toMatchObject({ ownerAccountId: owner.id, ownerDisplayName: 'Maya Rowan' });
             const selected = await app.inject({ method: 'POST', url: '/v1/artifacts/read', headers,
                 payload: { artifactIds: [ids[0], 'missing'] } });
             expect(selected.statusCode).toBe(200);
@@ -103,6 +104,12 @@ describe("artifactsRoutes (AccountChange integration)", () => {
                 const census = await app.inject({ method: 'GET', url: `/v1/artifacts/${ids[0]}/access/recipients`, headers });
                 expect(selected.json().items[0].recipientCensus).toEqual(census.json());
             }
+            await db.account.update({ where: { id: owner.id }, data: { name: null, username: 'owner-handle' } });
+            const unnamed = await app.inject({ method: 'GET', url: `/v1/artifacts/${ids[0]}`, headers });
+            expect(unnamed.json().ownerDisplayName).toBe('owner-handle');
+            await db.account.update({ where: { id: owner.id }, data: { username: null } });
+            const unknown = await app.inject({ method: 'GET', url: `/v1/artifacts/${ids[0]}`, headers });
+            expect(unknown.json().ownerDisplayName).toBeNull();
             const denied = await app.inject({ method: 'POST', url: '/v1/artifacts/read', headers: { 'x-test-user-id': outsider.id },
                 payload: { artifactIds: ids } });
             expect(denied.statusCode).toBe(200);

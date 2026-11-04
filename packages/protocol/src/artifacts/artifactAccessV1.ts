@@ -126,6 +126,7 @@ export type ArtifactAccessErrorCodeV1 = z.infer<typeof ArtifactAccessErrorCodeV1
  * header/body/provenance strings remain opaque content owned by their existing codecs. */
 export const ArtifactHttpReadV1Schema = lazyZodSchema(() => z.strictObject({
   id: z.string().check(z.minLength(1)), ownerAccountId: z.string().check(z.minLength(1)), access: ArtifactCallerAccessV1Schema,
+  ownerDisplayName: z.optional(z.nullable(z.string())),
   encryptionMode: AccountEncryptionModeSchema,
   kind: z.optional(z.nullable(ArtifactCoarseKindV1Schema)),
   kindHint: z.optional(z.nullable(z.string())),

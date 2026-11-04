@@ -54,12 +54,14 @@ const artifactListItemSchema = z.object({
     body: z.optional(z.string()), bodyVersion: z.number(), provenance: z.optional(z.nullable(z.string())),
     provenanceDataEncryptionKey: z.optional(z.nullable(z.string())), dataEncryptionKey: z.string(), seq: z.number(),
     createdAt: z.number(), updatedAt: z.number(), ownerAccountId: z.string(), access: ArtifactCallerAccessV1Schema,
+    ownerDisplayName: ArtifactHttpReadV1Schema.shape.ownerDisplayName,
     publicAudience: z.enum(['retained', 'none']),
     encryptionMode: ArtifactAccessRecipientCensusResponseV1Schema.shape.encryptionMode,
 });
 
 function projectArtifactListItem(artifact: ArtifactListItemForCaller) {
     return {
+        ...(artifact.ownerDisplayName === undefined ? {} : { ownerDisplayName: artifact.ownerDisplayName }),
         id: artifact.id, kind: artifact.kind, ...(artifact.kindHint === undefined ? {} : { kindHint: artifact.kindHint }), ownerAccountId: artifact.ownerAccountId, access: artifact.access,
         publicAudience: artifact.publicAudience,
         encryptionMode: artifact.encryptionMode, header: privacyKit.encodeBase64(artifact.header), headerVersion: artifact.headerVersion,
@@ -74,6 +76,7 @@ function projectArtifactListItem(artifact: ArtifactListItemForCaller) {
 /** Both read transports project the same caller-authorized bytes and exposure facts. */
 function projectArtifactHttpRead(artifact: ArtifactForCaller & { publicAudience: 'retained' | 'none' }) {
     return {
+        ...(artifact.ownerDisplayName === undefined ? {} : { ownerDisplayName: artifact.ownerDisplayName }),
         id: artifact.id, kind: artifact.kind, ...(artifact.kindHint === undefined ? {} : { kindHint: artifact.kindHint }), ownerAccountId: artifact.ownerAccountId, access: artifact.access, encryptionMode: artifact.encryptionMode,
         header: privacyKit.encodeBase64(artifact.header), headerVersion: artifact.headerVersion,
         body: privacyKit.encodeBase64(artifact.body), bodyVersion: artifact.bodyVersion, publicAudience: artifact.publicAudience,

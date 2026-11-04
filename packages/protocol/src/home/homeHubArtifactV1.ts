@@ -20,6 +20,7 @@ export function buildHomeHubArtifactIdV1(accountId: string): string {
 }
 export type HomeHubArtifactV1 = WorkBoardArtifactV1 & Readonly<{
     ownerAccountId: string;
+    ownerDisplayName?: string | null;
     /** Authenticated HTTP admission, never inferred from the stored surface owner. */
     access?: ArtifactCallerAccessV1;
     shared?: boolean;

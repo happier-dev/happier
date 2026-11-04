@@ -3,6 +3,7 @@ import { ArtifactActionInputSchemasV1, projectArtifactHeaderV1, type ArtifactAct
 import { artifactSavedByFromActionContextV1 } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
 import { isArtifactHtmlHeaderV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 import { getArtifactKindPolicyV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
+import { artifactActionListSelectionV1 } from '@happier-dev/protocol/artifacts/artifactListSelectionV1';
 import type { ActionExecutorContext, ArtifactPublicLinkIssuedV1 } from '@happier-dev/protocol';
 import { DocEditAcceptHostInputV1Schema, DocEditDeclineInputV1Schema, type ArtifactHostActionInvocationV1 } from '@happier-dev/protocol/artifacts/artifactCollaborationActionsV1';
 import type { createAccountArtifactStore, ArtifactRequestAuthorizationHeaders } from '@/api/artifacts/accountArtifactStore';
@@ -94,7 +95,7 @@ export function createCliArtifactActions(params: Readonly<{
         }
         case 'artifact.list': {
           const input = ArtifactActionInputSchemasV1[args.actionId].parse(args.input);
-          const page = await params.store.list({ ...input, sort: input.sort ?? 'updated_desc', ...(signal ? { signal } : {}) });
+          const page = await params.store.list(artifactActionListSelectionV1({ ...input, ...(signal ? { signal } : {}) }));
           const items = page.items.map(projectArtifactHeaderV1);
           return { items, ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}) };
         }

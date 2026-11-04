@@ -22,7 +22,7 @@ import { type UsageNoticeArtifactHeaderV1,
 
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent, isPlainArtifactDataKeyMarker } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { createResourceDataKey, openResourceDataKey, ResourceDataKeyUnavailableError } from '@/api/encryption/resourceDataKey';
-import { ArtifactAccessErrorCodeV1Schema, ArtifactAccessGrantsListResponseV1Schema, ArtifactAccessGrantMutationResponseV1Schema, ArtifactAccessRecipientCensusResponseV1Schema, ArtifactRecipientKeyEnvelopeCommitResponseV1Schema, ArtifactReadBatchInputV1Schema, ArtifactReadBatchResponseV1Schema, ArtifactReadHeadersBatchInputV1Schema, ArtifactReadHeadersBatchResponseV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
+import { ArtifactAccessErrorCodeV1Schema, ArtifactAccessGrantsListResponseV1Schema, ArtifactAccessGrantMutationResponseV1Schema, ArtifactAccessRecipientCensusResponseV1Schema, ArtifactRecipientKeyEnvelopeCommitResponseV1Schema, ArtifactReadBatchInputV1Schema, ArtifactReadBatchResponseV1Schema, ArtifactReadHeadersBatchInputV1Schema, ArtifactReadHeadersBatchResponseV1Schema, ArtifactHttpReadV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { completeArtifactAccessMutationPreparationV1, runArtifactRecipientKeyPreparationV1, prepareArtifactRecipientKeyEnvelopesV1 } from '@happier-dev/protocol/artifacts/artifactRecipientKeyPreparationV1';
 import type { ArtifactCallerAccessV1, ArtifactAccessGrantSetInputV1, ArtifactAccessGrantRemoveInputV1, ArtifactPublicLinkActionIdV1, ArtifactPublicLinkIssuedV1, ArtifactSavedByV1, ArtifactWorkspaceSourceV1, ArtifactRevisionProvenanceV1, ArtifactBodyV1, ArtifactBlobWriteV1, ArtifactListSelectionOptionsV1 } from '@happier-dev/protocol';
 import { ArtifactHeaderMetadataV1Schema, ArtifactPublicAudienceV1ReadSchema, type ArtifactPublicAudienceV1, ArtifactQuotaExceededV1Schema, ArtifactRevisionListResponseV1Schema, ArtifactStorageUsageV1Schema } from '@happier-dev/protocol/artifacts/artifactActionsV1';
@@ -93,6 +93,7 @@ const retryArtifactRevisionUpdate = createBackoff({
 export type ArtifactRequestAuthorizationHeaders = (request: Readonly<{ method: 'GET' | 'POST' | 'PUT' | 'DELETE'; path: string; body?: unknown }>) => Promise<RequesterAccountAuthorizationHeaders>;
 export type AccountArtifact = Readonly<{
   ownerAccountId: string;
+  ownerDisplayName?: string | null;
   access: ArtifactCallerAccessV1;
   shared?: boolean;
   publicAudience?: ArtifactPublicAudienceV1;
@@ -107,6 +108,7 @@ export type AccountArtifact = Readonly<{
 }>;
 export type AccountArtifactHeader = Readonly<{
   ownerAccountId: string;
+  ownerDisplayName?: string | null;
   access: ArtifactCallerAccessV1;
   publicAudience?: ArtifactPublicAudienceV1;
   artifactId: string; header: Readonly<Record<string, unknown>>; headerVersion: number;
@@ -120,6 +122,7 @@ export function encodeAccountArtifactListCursor(item: Pick<AccountArtifactHeader
 
 type StoredArtifactHeader = Readonly<{
   ownerAccountId: string;
+  ownerDisplayName?: string | null;
   access: ArtifactCallerAccessV1;
   publicAudience: ArtifactPublicAudienceV1;
   encryptionMode: 'plain' | 'e2ee';
@@ -315,6 +318,7 @@ function parseStoredArtifactHeader(raw: unknown): StoredArtifactHeader | null {
     throw new ArtifactEncryptionMaterialUnavailableError();
   }
   return { id: value.id, header: value.header, headerVersion,
+    ...(value.ownerDisplayName === undefined ? {} : { ownerDisplayName: ArtifactHttpReadV1Schema.shape.ownerDisplayName.parse(value.ownerDisplayName) }),
     publicAudience: ArtifactPublicAudienceV1ReadSchema.parse(value.publicAudience),
     ...(bodyVersion === null ? {} : { bodyVersion }), dataEncryptionKey: value.dataEncryptionKey, seq, createdAt, updatedAt,
     ...(typeof value.provenance === 'string' ? { provenance: value.provenance } : {}),
@@ -633,6 +637,7 @@ export function createAccountArtifactStore(params: Readonly<{
       : await sharedWriteContext(stored, header as Readonly<Record<string, unknown>>, header as Readonly<Record<string, unknown>>, options?.signal);
     return { artifactId: stored.id, header: header as Readonly<Record<string, unknown>>,
       ownerAccountId: stored.ownerAccountId, access: stored.access,
+      ...(stored.ownerDisplayName === undefined ? {} : { ownerDisplayName: stored.ownerDisplayName }),
       publicAudience: stored.publicAudience,
       ...(sharing ? { shared: sharing.shared } : {}),
       body,
@@ -666,10 +671,11 @@ export function createAccountArtifactStore(params: Readonly<{
     const url = new URL('/v1/artifacts', resolveServerHttpBaseUrl());
     if (options?.limit !== undefined) url.searchParams.set('limit', String(options.limit));
     if (options?.cursor) url.searchParams.set('cursor', options.cursor);
+    if (options?.audience) url.searchParams.set('audience', options.audience);
     if (options?.includeBody) url.searchParams.set('includeBody', 'true');
     const coarseKind = options?.coarseKind;
     const indexedKinds = options?.indexedKinds ?? options?.kinds;
-    const filtered = coarseKind !== undefined || indexedKinds !== undefined || Boolean(options?.unclassified);
+    const filtered = coarseKind !== undefined || indexedKinds !== undefined || Boolean(options?.unclassified) || options?.audience !== undefined;
     if (filtered && coarseKind !== undefined) url.searchParams.set('kind', coarseKind);
     if (indexedKinds !== undefined) url.searchParams.set('kinds', JSON.stringify(indexedKinds));
     if (options?.unclassified) url.searchParams.set('unclassified', String(options.unclassified));
@@ -714,6 +720,7 @@ export function createAccountArtifactStore(params: Readonly<{
       await assertOwnerAccountMode(stored, undefined, { signal: options?.signal });
       options?.signal?.throwIfAborted();
       return { artifactId: stored.id, header: header as Readonly<Record<string, unknown>>,
+        ...(stored.ownerDisplayName === undefined ? {} : { ownerDisplayName: stored.ownerDisplayName }),
         ownerAccountId: stored.ownerAccountId, access: stored.access, publicAudience: stored.publicAudience,
         headerVersion: stored.headerVersion, ...(stored.bodyVersion === undefined ? {} : { bodyVersion: stored.bodyVersion }),
         seq: stored.seq, createdAt: stored.createdAt, updatedAt: stored.updatedAt };
@@ -783,6 +790,7 @@ export function createAccountArtifactStore(params: Readonly<{
       }
       items.push({ artifactId: value.id, header: header as Readonly<Record<string, unknown>>,
         ...content,
+        ...(value.ownerDisplayName === undefined ? {} : { ownerDisplayName: ArtifactHttpReadV1Schema.shape.ownerDisplayName.parse(value.ownerDisplayName) }),
         ownerAccountId: access.ownerAccountId, access: access.access,
         publicAudience: ArtifactPublicAudienceV1ReadSchema.parse(value.publicAudience),
         headerVersion, seq, createdAt, updatedAt });
