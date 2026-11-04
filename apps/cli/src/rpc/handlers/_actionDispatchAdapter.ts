@@ -7,6 +7,7 @@ import { WorkspaceSyncSourceContextV1Schema } from '@happier-dev/protocol/socket
 import { readRequesterAccountActionContext } from "@/daemon/sessionEncryption/requesterAccountActionContext";
 import { readProjectServiceMoveChildEffectV1 } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import type { VerifiedExternalActionRequester } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 
 type CliActionExecutorParams = Parameters<typeof createCliActionExecutor>[0];
 
@@ -18,6 +19,7 @@ type HostRequesterContext = Pick<RpcHandlerContext, 'machineAdmission' | 'verify
 
 export type RpcActionExecutorContext = ActionExecutorContext & HostRequesterContext & Readonly<{
     authenticatedLocalRootCustody?: RpcLocalActionContext['authenticatedLocalRootCustody'];
+    verifiedExternalActionRequester?: VerifiedExternalActionRequester;
     signal?: AbortSignal;
     operationProgress?: NonNullable<RpcLocalActionContext['operationProgress']>;
     operationOwnerUpdate?: NonNullable<RpcLocalActionContext['operationOwnerUpdate']>;
