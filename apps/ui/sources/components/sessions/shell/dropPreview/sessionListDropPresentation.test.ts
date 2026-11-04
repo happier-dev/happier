@@ -24,6 +24,13 @@ describe('Session-list verdicts through the one outcome presenter', () => {
         });
     });
 
+    it('words section filing in section terms: into a section it keeps running; back, it leaves its section (lab clsections:drag)', () => {
+        const into = describeSessionListDropPreview({ kind: 'folder', folderName: 'Launch 0.3' });
+        expect([into.verb, into.consequence]).toEqual(['Move to Launch 0.3', 'Keeps running where it is']);
+        const back = describeSessionListDropPreview({ kind: 'project' });
+        expect([back.verb, back.consequence]).toEqual(['Back to project', 'Leaves its section']);
+    });
+
     it('marks a refusal as refused with the owner reason, never as the effect it would have had', () => {
         const outcome = describeEntityDropOutcome({
             phase: 'carrying',

@@ -1,4 +1,5 @@
 import type { EntityDropPreviewV1, EntityDropReasonV1 } from '@happier-dev/protocol/plugins/ui';
+import type { SessionSpaceMembershipSetInputV1 } from '@happier-dev/protocol/actions';
 
 import { t } from '@/text';
 import { ENTITY_DROP_UNCHANGED_CODES } from '@/components/ui/treeDragDrop/entityDropNoChange';
@@ -15,13 +16,25 @@ import { ENTITY_DROP_UNCHANGED_CODES } from '@/components/ui/treeDragDrop/entity
  */
 
 export type SessionListDropTargetPreview =
+    | Readonly<{ kind: 'space-membership'; spaceName: string; operation: SessionSpaceMembershipSetInputV1['operation'] }>
     | Readonly<{ kind: 'put-under'; leadName: string }>
     | Readonly<{ kind: 'reorder'; edge: 'above' | 'below'; siblingName: string }>
     | Readonly<{ kind: 'folder'; folderName: string }>
+    /** A section member dropped back on its own project: it leaves the section, nothing else changes. */
+    | Readonly<{ kind: 'project' }>
     | Readonly<{ kind: 'top-level' }>;
 
 export function describeSessionListDropPreview(target: SessionListDropTargetPreview): EntityDropPreviewV1 {
     switch (target.kind) {
+        case 'space-membership':
+            return {
+                verb: target.operation === 'add' ? t('sessionsList.spacesMembershipAddToNamed', { name: target.spaceName })
+                    : target.operation === 'move' ? t('sessionsList.spacesMembershipMoveToNamed', { name: target.spaceName })
+                        : t('sessionsList.spacesMembershipRemoveFromNamed', { name: target.spaceName }),
+                target: target.spaceName,
+                consequence: target.operation === 'add' ? t('entityDragDrop.preview.folderDetail')
+                    : t('sessionsList.spacesMembershipSmartMayRemain'),
+            };
         case 'put-under':
             return {
                 glyph: 'nest',
@@ -44,6 +57,13 @@ export function describeSessionListDropPreview(target: SessionListDropTargetPrev
                 verb: t('entityDragDrop.preview.moveToFolder', { folder: target.folderName }),
                 target: target.folderName,
                 consequence: t('entityDragDrop.preview.folderDetail'),
+            };
+        case 'project':
+            return {
+                glyph: 'folder',
+                verb: t('sessionsList.moveToWorkspaceRoot'),
+                target: t('sessionsList.moveToWorkspaceRoot'),
+                consequence: t('entityDragDrop.preview.leaveSectionDetail'),
             };
         case 'top-level':
             return {
