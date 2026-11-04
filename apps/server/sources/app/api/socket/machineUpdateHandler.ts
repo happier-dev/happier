@@ -1,3 +1,4 @@
+import { replayWorkflowRunMachineWakes } from '@/app/workflows/workflowRunMachineRouting';
 import { registerMachineDaemonStateHandler } from './machineDaemonStateHandler';
 import {
     acquireMachinePublicationLocksInTx, readMarkedMachineSocketUpgradeRequired,
@@ -132,6 +133,12 @@ export async function observeMachineAliveFromSocket(input: Readonly<{
     // liveness fact. Reconnect/work hints do not turn that fact into content.
     await publishMachineAliveObservation(userId, machineId, timestamp, presence, !input.continuingBeat,
         input.workSummaryChanged === true);
+    if (!input.continuingBeat) {
+        const installationId = readVerifiedMachineSocketInstallationIdFromSocketData(socket.data);
+        if (installationId) await replayWorkflowRunMachineWakes({
+            custodianAccountId: userId, machineId, installationId, socket,
+        });
+    }
 }
 
 async function isMachineAvailableForSocket(accountId: string, machineId: string): Promise<boolean> {

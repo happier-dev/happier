@@ -38,6 +38,12 @@ import { SessionMessageV1Schema } from '../sessions/messages/sessionMessagesPage
 import { SessionMessageObservationFactsV1Schema } from '../sessions/messages/sessionMessageObservationFactsV1.js';
 
 const TimestampMsSchema = lazyZodSchema(() => z.number().check(z.int(), z.minimum(0)));
+/** Routing hint for private requester custody; it grants no Run-reading authority. */
+export const WorkflowRequesterScopeV1Schema = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('workflow_trigger'),
+  id: z.string().check(z.minLength(1)),
+}));
+export type WorkflowRequesterScopeV1 = z.infer<typeof WorkflowRequesterScopeV1Schema>;
 const Base64Schema = lazyZodSchema(() => z.string());
 const SessionMessageRoleMetadataSchema = lazyZodSchema(() => z.optional(z.nullable(SessionMessageRoleSchema)));
 const SessionEncryptionModeSchema = lazyZodSchema(() => z.enum(['e2ee', 'plain']));
@@ -160,6 +166,7 @@ export const UpdateBodySchema = lazyZodSchema(() => z.discriminatedUnion('t', [
     attempt: z.optional(z.number().check(z.int(), z.minimum(0))),
     /** Exact machine wake for persisted Workflow cancellation custody. */
     workflowControl: z.optional(z.enum(['cancel_requested', 'review_resolved'])),
+    requesterScope: z.optional(WorkflowRequesterScopeV1Schema),
     managedWakeTargetV1: z.optional(ManagedWakeTargetV1Schema),
   }),
   z.strictObject({

@@ -1,3 +1,6 @@
+import type { Prisma } from '@prisma/client';
+import type { WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
+import { projectAutomationRunState } from './automationTypes';
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import { readMachineAvailabilityStateInTx } from "@/app/machines/machineStateGuards";
 import { afterTx, type Tx } from "@/storage/inTx";
@@ -17,6 +20,27 @@ const AUTOMATION_TERMINAL_EVENT_BY_STATE = {
     outcome_uncertain: "run_outcome_uncertain",
     skipped: "run_skipped",
 } as const satisfies Record<AutomationTerminalState, string>;
+
+/** One non-content failure writer serves preclaim refusal and missing requester custody. */
+export async function failAutomationRunWithoutContentInTx(params: Readonly<{
+    tx: Tx; accountId: string; runId: string; previousState: WorkflowRunSummaryV1['state'];
+    where: Prisma.AutomationRunWhereInput;
+    errorCode: string; settleWorkflowCustody: boolean; now: Date;
+}>): Promise<Readonly<{ changed: boolean; run: AutomationRunItem | null }>> {
+    const previousState = projectAutomationRunState(params.previousState);
+    if (previousState === null) throw new Error('Automation Run state is unavailable');
+    const changed = await params.tx.automationRun.updateMany({ where: { ...params.where,
+        id: params.runId, accountId: params.accountId, state: params.previousState }, data: {
+        state: 'failed', finishedAt: params.now, errorCode: params.errorCode, errorMessage: null,
+        ...(params.settleWorkflowCustody ? { workflowCustodyState: 'settled' } : {}),
+        revision: { increment: 1 }, updatedAt: params.now,
+    } });
+    if (changed.count !== 1) return { changed: false, run: null };
+    const run = await applyAutomationRunTerminalEffectsTx({ tx: params.tx, accountId: params.accountId,
+        runId: params.runId, previousState, state: 'failed', now: params.now,
+        eventPayload: { errorCode: params.errorCode } });
+    return { changed: true, run };
+}
 
 /**
  * Applies the incumbent Automation-facing consequences after one physical Run

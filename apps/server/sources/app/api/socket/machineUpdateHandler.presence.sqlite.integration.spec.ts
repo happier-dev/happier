@@ -1,4 +1,6 @@
-import { randomUUID } from 'node:crypto';
+import { encodeAutomationRunCause } from '@/app/automations/automationRunCauseCodec';
+import { AutomationRunCauseSchema } from '@happier-dev/protocol';
+import { createHash, randomUUID } from 'node:crypto';
 import { Redis } from 'ioredis';
 import type { Socket } from 'socket.io';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -70,6 +72,74 @@ describe('Machine presence through current C41 recipients (real SQLite)', () => 
             dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER),
         } });
     }
+
+    it('replays missed guest Workflow wakes only to the admitted installation on reconnect, without polling or private content', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const guest = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const machine = await createMachine(owner.id);
+        const other = await createMachine(owner.id);
+        const automation = await db.automation.create({ data: { accountId: guest.id, name: 'Guest schedule',
+            templateCiphertext: 'private definition', triggers: { create: { kind: 'schedule', scheduleKind: 'interval', everyMs: 60_000 } } },
+            select: { id: true, triggers: { select: { id: true } } } });
+        const triggerId = automation.triggers[0]!.id;
+        const now = new Date();
+        const queued = await db.automationRun.create({ data: { accountId: guest.id, automationId: automation.id,
+            ...encodeAutomationRunCause(AutomationRunCauseSchema.parse({ kind: 'trigger', triggerId,
+                triggerKind: 'schedule', triggerRevision: 0, occurredAt: now.getTime(),
+                occurrenceKey: createHash('sha256').update(randomUUID()).digest('base64url'),
+                evidence: { scheduledFor: now.getTime() } })),
+            workflowCustodyState: 'pending', state: 'queued', scheduledAt: now, dueAt: now,
+            executionInputEnvelope: 'private definition must never be replayed',
+            assignments: { create: { machineId: machine.id, admittedMachineInstallationId: machine.installationId } },
+        } });
+        const running = await db.automationRun.create({ data: { accountId: guest.id, originKind: 'direct',
+            causeKind: null, workflowAcceptedSnapshotEnvelope: 'private accepted snapshot',
+            workflowCustodyState: 'pending', state: 'running', scheduledAt: new Date(), dueAt: new Date(),
+            assignments: { create: { machineId: machine.id, admittedMachineInstallationId: machine.installationId } },
+        } });
+        for (const [state, custody, installationId] of [
+            ['succeeded', 'pending', machine.installationId],
+            ['queued', 'settled', machine.installationId],
+            ['queued', 'pending', 'retired-installation'],
+        ] as const) await db.automationRun.create({ data: { accountId: guest.id, originKind: 'direct',
+            causeKind: null, workflowAcceptedSnapshotEnvelope: 'private accepted snapshot',
+            workflowCustodyState: custody, state, scheduledAt: new Date(), dueAt: new Date(),
+            assignments: { create: { machineId: machine.id, admittedMachineInstallationId: installationId } },
+        } });
+        const publisher = createFakeSocket({ data: { clientType: 'machine-scoped', machineId: machine.id,
+            [VERIFIED_MACHINE_INSTALLATION_ID_SOCKET_DATA_KEY]: machine.installationId } });
+        const foreign = createFakeSocket({ data: { clientType: 'machine-scoped', machineId: other.id,
+            [VERIFIED_MACHINE_INSTALLATION_ID_SOCKET_DATA_KEY]: other.installationId } });
+        const wakes = () => publisher.emit.mock.calls.filter(([event, payload]) =>
+            event === 'update' && payload?.body?.t === 'automation-run-updated').map(([, payload]) => payload.body);
+        let assignmentReads = 0;
+        const stopObserving = observeSqliteRequests({ before: request => {
+            if (request.model === 'AutomationRunAssignment' && request.action === 'findMany') assignmentReads += 1;
+        } });
+        try {
+        await observeMachineAliveFromSocket({ userId: owner.id, socket: foreign as unknown as Socket,
+            timestamp: Date.now(), continuingBeat: false });
+        expect(foreign.emit.mock.calls.filter(([event]) => event === 'update')).toEqual([]);
+        assignmentReads = 0;
+        await observeMachineAliveFromSocket({ userId: owner.id, socket: publisher as unknown as Socket,
+            timestamp: Date.now(), continuingBeat: false });
+        expect(wakes().map(body => body.runId).sort()).toEqual([queued.id, running.id].sort());
+        expect(assignmentReads).toBe(1);
+        expect(wakes()).toEqual(expect.arrayContaining([
+            expect.objectContaining({ runId: queued.id, targetMachineId: machine.id,
+                requesterScope: { kind: 'workflow_trigger', id: triggerId } }),
+            expect.objectContaining({ runId: running.id, targetMachineId: machine.id,
+                requesterScope: { kind: 'workflow_trigger', id: running.id } }),
+        ]));
+        expect(JSON.stringify(wakes())).not.toContain('private definition');
+        expect(Object.keys(wakes()[0]).sort()).toEqual(['t', 'runId', 'automationId', 'state', 'scheduledAt',
+            'startedAt', 'finishedAt', 'updatedAt', 'machineId', 'attempt', 'targetMachineId', 'requesterScope'].sort());
+        await observeMachineAliveFromSocket({ userId: owner.id, socket: publisher as unknown as Socket,
+            timestamp: Date.now(), continuingBeat: true });
+        expect(wakes()).toHaveLength(2);
+        expect(assignmentReads).toBe(1);
+        } finally { stopObserving(); }
+    });
 
     it('expires one shared Machine once at its observation fence without editing content clocks', async () => {
         const account = () => db.account.create({ data: { publicKey: `deadline-${randomUUID()}`, encryptionMode: 'plain' } });

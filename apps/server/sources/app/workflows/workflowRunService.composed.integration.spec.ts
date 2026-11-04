@@ -1,3 +1,7 @@
+import type { Socket } from 'socket.io';
+import type { ClientConnection, UpdatePayload } from '@/app/events/eventRouter';
+import { setMachineAccessGrantInTx, removeMachineAccessGrantInTx } from '@/app/machines/machineAccess';
+import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
 import { randomUUID } from "node:crypto";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import tweetnacl from "tweetnacl";
@@ -64,8 +68,6 @@ import { WorkflowRunWaitResultV1Schema, WorkflowRunSummariesResultV1Schema } fro
 import { createMaterializedEphemeralRunnerFixture } from "@/app/ephemeralRunner/materializedRunner.testkit";
 import { createSignedPluginInstallationPublisherHeader, createTrustedMachineInstallation } from "@/testkit/pluginInstallationPublisherTestkit";
 import { getOrCreateServerIdentityId } from "@/app/serverIdentity/serverIdentity";
-import { setMachineAccessGrantInTx } from '@/app/machines/machineAccess';
-import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
 import * as workflowRunService from "./workflowRunService";
 import { AUTOMATION_TEMPLATE_V02_PLAIN, AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED } from "@happier-dev/protocol/testing/accountScopedCipherFixtures";
 import { projectNativeJsonValueForTransport } from "@happier-dev/protocol/json/strictJsonValue";
@@ -225,6 +227,19 @@ async function createReviewStorageApp(accountId: string, authority: "present_use
     return { app, headers: { authorization: `Bearer ${token}` } };
 }
 
+function observeWorkflowMachineWake(accountId: string, machineId?: string) {
+    const updates: UpdatePayload[] = [];
+    // Only the Socket.IO transport is substituted; routing and publication remain real.
+    const socket = { data: {}, emit(event: string, payload: UpdatePayload) {
+        if (event === 'update' && payload.body.t === 'automation-run-updated') updates.push(payload);
+    } } as unknown as Socket;
+    const connection: ClientConnection = machineId
+        ? { connectionType: 'machine-scoped', userId: accountId, machineId, socket }
+        : { connectionType: 'user-scoped', userId: accountId, socket };
+    eventRouter.addConnection(accountId, connection);
+    return { updates, close: () => eventRouter.removeConnection(accountId, connection) };
+}
+
 describe("workflowRunService (integration)", () => {
     let harness: LightSqliteHarness;
     beforeAll(async () => {
@@ -369,6 +384,96 @@ describe("workflowRunService (integration)", () => {
         } })).resolves.toMatchObject({ assignments: [{ machineId: seeded.machineId }] });
     });
 
+    // Direct-origin CHECKs require null trigger evidence; retaining a parent needs an approved storage amendment.
+    it.todo("retains authenticated parent Run ancestry for direct child Workflow admission");
+
+    it('settles missing requester custody compatibility by leaving ordinary successful admission projections unchanged', async () => {
+        const seeded = await seed();
+        const runId = randomUUID();
+        const admitted = await admitWorkflowRun({ ...seeded, runId, origin: { kind: 'direct' },
+            acceptedEnvelope: await acceptedEnvelope({ ...seeded, runId }) });
+        expect(admitted.run).not.toHaveProperty('errorCode');
+        expect((await getWorkflowRun({ accountId: seeded.accountId, runId })).run).not.toHaveProperty('errorCode');
+    });
+
+    it.each(['queued', 'claimed', 'running', 'paused', 'running_child'] as const)("settles missing requester custody only through the admitted installation without returning Run content (%s)", async state => {
+        const seeded = await seed();
+        const guest = await seed();
+        const otherHost = await seed();
+        await db.machine.update({ where: { id: otherHost.machineId }, data: { accountId: seeded.accountId } });
+        const keyPair = tweetnacl.sign.keyPair();
+        const installationId = randomUUID();
+        const otherKeyPair = tweetnacl.sign.keyPair();
+        const otherInstallationId = randomUUID();
+        for (const [host, id, keys] of [[seeded, installationId, keyPair], [otherHost, otherInstallationId, otherKeyPair]] as const) {
+            await db.machine.update({ where: { id: host.machineId }, data: { installationId: id,
+                installationPublicKey: new Uint8Array(keys.publicKey) } });
+        }
+        const runId = randomUUID();
+        await makeShareEligibleForTest(seeded.accountId, guest.accountId);
+        await inTx(tx => setMachineAccessGrantInTx(tx, { actorAccountId: seeded.accountId, machineId: seeded.machineId,
+            principal: { kind: 'account', accountId: guest.accountId }, level: 'view' }));
+        await admitWorkflowRun({ accountId: guest.accountId, machineId: seeded.machineId, runId,
+            origin: { kind: "direct" }, acceptedEnvelope: await acceptedEnvelope({ accountId: guest.accountId, machineId: seeded.machineId, runId }) });
+        if (state !== 'queued') {
+            const claim = await claimAutomationRun({ accountId: guest.accountId, machineId: seeded.machineId,
+                scope: 'workflow', leaseDurationMs: 30_000, recipeFeaturePolicy: { workflowsEnabled: true },
+                claimRequest: { machineInstallationId: installationId, nonce: randomUUID(),
+                    expiresAt: new Date(Date.now() + 60_000) } });
+            expect(claim.run?.id).toBe(runId);
+            await db.automationRun.update({ where: { id: runId }, data: { state: state === 'running_child' ? 'running' : state } });
+            if (state === 'running_child') await db.workflowRunInvocation.create({ data: {
+                id: randomUUID(), runId, sequence: 0n, memberOrdinal: 0n, attempt: 0n,
+                lifecycle: 'running', contentEnvelope: 'private child progress',
+            } });
+        }
+        const path = `/v3/automations/runs/${runId}/requester-custody-unavailable`;
+        const { app, headers } = await createReviewStorageApp(seeded.accountId);
+        try {
+            const wrongBody = { machineId: otherHost.machineId };
+            const wrong = await app.inject({ method: "POST", url: path, payload: wrongBody, headers: { ...headers,
+                [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: createSignedPluginInstallationPublisherHeader({
+                    keyPair: otherKeyPair, machineId: otherHost.machineId, installationId: otherInstallationId, path, body: wrongBody }) } });
+            expect(wrong.statusCode).toBe(401);
+            const body = { machineId: seeded.machineId };
+            await db.automationRunAssignment.update({ where: { runId_machineId: { runId, machineId: seeded.machineId } },
+                data: { admittedMachineInstallationId: null } });
+            const historical = await app.inject({ method: 'POST', url: path, payload: body, headers: { ...headers,
+                [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: createSignedPluginInstallationPublisherHeader({
+                    keyPair, machineId: seeded.machineId, installationId, path, body }) } });
+            expect(historical.statusCode).toBe(401);
+            await db.automationRunAssignment.update({ where: { runId_machineId: { runId, machineId: seeded.machineId } },
+                data: { admittedMachineInstallationId: installationId } });
+            const response = await app.inject({ method: "POST", url: path, payload: body, headers: { ...headers,
+                [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: createSignedPluginInstallationPublisherHeader({
+                    keyPair, machineId: seeded.machineId, installationId, path, body }) } });
+            expect(response.statusCode, response.body).toBe(200);
+            expect(response.json()).toEqual({ recorded: true });
+            expect(await db.automationRun.findUniqueOrThrow({ where: { id: runId }, select: { state: true, errorCode: true, workflowCustodyState: true } }))
+                .toEqual({ state: "failed", errorCode: "requester_custody_unavailable",
+                    workflowCustodyState: state === 'running_child' ? 'pending' : 'settled' });
+            expect(await getWorkflowRun({ accountId: guest.accountId, runId }))
+                .toMatchObject({ run: { errorCode: 'requester_custody_unavailable' } });
+            await expect(getWorkflowRun({ accountId: seeded.accountId, runId })).rejects.toMatchObject({ code: 'run_not_found' });
+            const terminal = await db.automationRun.findUniqueOrThrow({ where: { id: runId }, select: { revision: true } });
+            const repeated = await app.inject({ method: 'POST', url: path, payload: body, headers: { ...headers,
+                [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: createSignedPluginInstallationPublisherHeader({
+                    keyPair, machineId: seeded.machineId, installationId, path, body }) } });
+            expect(repeated.json()).toEqual({ recorded: true });
+            expect(await db.automationRun.findUniqueOrThrow({ where: { id: runId }, select: { revision: true } })).toEqual(terminal);
+            if (state === 'queued') {
+                await db.automationRun.update({ where: { id: runId }, data: { state: 'succeeded', errorCode: null,
+                    workflowCustodyState: 'pending' } });
+                const successful = await db.automationRun.findUniqueOrThrow({ where: { id: runId } });
+                const afterSuccess = await app.inject({ method: 'POST', url: path, payload: body, headers: { ...headers,
+                    [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: createSignedPluginInstallationPublisherHeader({
+                        keyPair, machineId: seeded.machineId, installationId, path, body }) } });
+                expect(afterSuccess.json()).toEqual({ recorded: true });
+                expect(await db.automationRun.findUniqueOrThrow({ where: { id: runId } })).toEqual(successful);
+            }
+        } finally { await app.close(); }
+    });
+
     it('admits shared Machine assignments only for the Workflow recipe family', async () => {
         const custodian = await seed();
         const guest = await seed();
@@ -389,8 +494,160 @@ describe("workflowRunService (integration)", () => {
         expect(await db.automationAssignment.count({ where: { automationId: retained.id } })).toBe(0);
     });
 
-    // Direct-origin CHECKs require null trigger evidence; retaining a parent needs an approved storage amendment.
-    it.todo("retains authenticated parent Run ancestry for direct child Workflow admission");
+    it('claims guest Workflow content through the authenticated signed custodian HTTP entry', async () => {
+        harness.resetEnv({ HAPPIER_FEATURE_WORKFLOWS__ENABLED: '1', HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1' });
+        const custodian = await seed();
+        const guest = await seed();
+        const installationId = randomUUID();
+        const keyPair = tweetnacl.sign.keyPair();
+        await db.machine.update({ where: { id: custodian.machineId }, data: { installationId,
+            installationPublicKey: new Uint8Array(keyPair.publicKey) } });
+        await makeShareEligibleForTest(custodian.accountId, guest.accountId);
+        await inTx(tx => setMachineAccessGrantInTx(tx, { actorAccountId: custodian.accountId,
+            machineId: custodian.machineId, principal: { kind: 'account', accountId: guest.accountId }, level: 'view' }));
+        const runId = randomUUID();
+        await admitWorkflowRunOwner({ accountId: guest.accountId, machineId: custodian.machineId, runId,
+            accountCurrentness: await accountCurrentness(guest.accountId), origin: { kind: 'direct' },
+            acceptedEnvelope: await acceptedEnvelope({ accountId: guest.accountId, machineId: custodian.machineId, runId }) });
+        await inTx(tx => removeMachineAccessGrantInTx(tx, { actorAccountId: custodian.accountId,
+            machineId: custodian.machineId, principal: { kind: 'account', accountId: guest.accountId } }));
+        const requester = await createReviewStorageApp(guest.accountId);
+        const host = await createReviewStorageApp(custodian.accountId);
+        const { registerAutomationV3Routes } = await import('@/app/api/routes/automations/registerAutomationV3Routes');
+        registerAutomationV3Routes(requester.app);
+        registerAutomationV3Routes(host.app);
+        const path = '/v3/automations/runs/claim';
+        const body = { machineId: custodian.machineId, scope: 'workflow', leaseDurationMs: 30_000 };
+        const signed = (keys: typeof keyPair) => createSignedPluginInstallationPublisherHeader({
+            keyPair: keys, machineId: custodian.machineId, installationId, path, body, nonce: randomUUID() });
+        try {
+            const wrong = await requester.app.inject({ method: 'POST', url: path, payload: body,
+                headers: { ...requester.headers, [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: signed(tweetnacl.sign.keyPair()) } });
+            expect(wrong.statusCode).toBe(401);
+            const hostOnly = await host.app.inject({ method: 'POST', url: path, payload: body,
+                headers: { ...host.headers, [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: signed(keyPair) } });
+            expect(hostOnly.statusCode, hostOnly.body).toBe(200);
+            expect(hostOnly.json().run).toBeNull();
+            const claimed = await requester.app.inject({ method: 'POST', url: path, payload: body,
+                headers: { ...requester.headers, [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: signed(keyPair) } });
+            expect(claimed.statusCode, claimed.body).toBe(200);
+            expect(claimed.json().run).toMatchObject({ id: runId });
+        } finally { await requester.app.close(); await host.app.close(); }
+    });
+
+    it("keeps shared Machine Run execution guest-owned and bound to its admitted installation after grant revocation", async () => {
+        const guest = await seed();
+        const custodian = await seed();
+        const otherHost = await seed();
+        const installationId = randomUUID();
+        const keyPair = tweetnacl.sign.keyPair();
+        const otherInstallationId = randomUUID();
+        const otherKeyPair = tweetnacl.sign.keyPair();
+        for (const [host, id, keys] of [[custodian, installationId, keyPair], [otherHost, otherInstallationId, otherKeyPair]] as const) {
+            await db.machine.update({ where: { id: host.machineId }, data: { installationId: id,
+                installationPublicKey: new Uint8Array(keys.publicKey) } });
+            await makeShareEligibleForTest(host.accountId, guest.accountId);
+            await inTx(tx => setMachineAccessGrantInTx(tx, { actorAccountId: host.accountId, machineId: host.machineId,
+                principal: { kind: "account", accountId: guest.accountId }, level: "view" }));
+        }
+        const runId = randomUUID();
+        const input = { accountId: guest.accountId, machineId: custodian.machineId, runId,
+            accountCurrentness: await accountCurrentness(guest.accountId), origin: { kind: "direct" as const },
+            acceptedEnvelope: await acceptedEnvelope({ accountId: guest.accountId, machineId: custodian.machineId, runId }) };
+        const privateRunId = randomUUID();
+        await admitWorkflowRun({ ...custodian, runId: privateRunId, origin: { kind: 'direct' },
+            acceptedEnvelope: await acceptedEnvelope({ ...custodian, runId: privateRunId }) });
+        const probeApp = await createReviewStorageApp(guest.accountId);
+        try {
+            const results = [];
+            for (const probedRunId of [runId, privateRunId]) {
+                const body = { operation: 'get', runId: probedRunId, publisherMachineId: custodian.machineId };
+                const path = '/v3/automations/runs/workflow-storage';
+                const response = await probeApp.app.inject({ method: 'POST', url: path, payload: body,
+                    headers: { ...probeApp.headers, [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]:
+                        createSignedPluginInstallationPublisherHeader({ keyPair, machineId: custodian.machineId,
+                            installationId, path, body }) } });
+                results.push({ status: response.statusCode, body: response.json() });
+            }
+            expect(results).toEqual([{ status: 404, body: { error: 'run_not_found' } },
+                { status: 404, body: { error: 'run_not_found' } }]);
+        } finally { await probeApp.app.close(); }
+        const target = observeWorkflowMachineWake(custodian.accountId, custodian.machineId);
+        const custodianUi = observeWorkflowMachineWake(custodian.accountId);
+        const peer = observeWorkflowMachineWake(otherHost.accountId, otherHost.machineId);
+        try {
+            await expect(admitWorkflowRunOwner(input)).resolves.toMatchObject({ run: { ownerAccountId: guest.accountId } });
+            expect(target.updates.map(update => update.body)).toEqual([expect.objectContaining({
+                t: 'automation-run-updated', runId, targetMachineId: custodian.machineId,
+                requesterScope: { kind: 'workflow_trigger', id: runId },
+            })]);
+            expect(custodianUi.updates).toEqual([]);
+            expect(peer.updates).toEqual([]);
+            expect(target.updates[0].body).not.toHaveProperty('acceptedEnvelope');
+        } finally { target.close(); custodianUi.close(); peer.close(); }
+        const recipe = createAutomationWorkflowRecipeFixture({ templateVersion: 1, directory: '/repo', prompt: 'Work' });
+        const automation = await createAutomation({ accountId: guest.accountId, recipeFeaturePolicy: { workflowsEnabled: true },
+            input: { automationId: randomUUID(), name: "Shared scheduled Workflow", enabled: true, executionRecipe: recipe,
+                assignments: [{ machineId: custodian.machineId, enabled: true, priority: 0 }], triggers: [] } });
+        const occurrence = await inTx(tx => admitAutomationRunTx({ tx, accountId: guest.accountId, automationId: automation.id,
+            now: new Date(), cause: { kind: "manual", invokedAt: Date.now() }, recipeFeaturePolicy: { workflowsEnabled: true } }));
+        expect(occurrence.kind).toBe("admitted");
+        await inTx(tx => removeMachineAccessGrantInTx(tx, { actorAccountId: custodian.accountId, machineId: custodian.machineId,
+            principal: { kind: "account", accountId: guest.accountId } }));
+        const nextRunId = randomUUID();
+        await expect(admitWorkflowRunOwner({ ...input, runId: nextRunId,
+            acceptedEnvelope: await acceptedEnvelope({ accountId: guest.accountId, machineId: custodian.machineId, runId: nextRunId }) }))
+            .rejects.toMatchObject({ code: "target_unavailable" });
+        const nextOccurrence = await inTx(tx => admitAutomationRunTx({ tx, accountId: guest.accountId, automationId: automation.id,
+            now: new Date(), cause: { kind: "manual", invokedAt: Date.now() + 1 }, recipeFeaturePolicy: { workflowsEnabled: true } }));
+        expect(nextOccurrence).toEqual({ kind: "ineligible", reason: "noEnabledAssignment" });
+        const claimed = await claimAutomationRun({ accountId: guest.accountId, machineId: custodian.machineId,
+            leaseDurationMs: 30_000, scope: "workflow", recipeFeaturePolicy: { workflowsEnabled: true },
+            claimRequest: { machineInstallationId: installationId, nonce: randomUUID(), expiresAt: new Date(Date.now() + 60_000) } });
+        expect(claimed.run?.id).toBe(runId);
+        await expect(getWorkflowRun({ accountId: custodian.accountId, runId })).rejects.toMatchObject({ code: "run_not_found" });
+        const custodianReader = await createReviewStorageApp(custodian.accountId);
+        try {
+            const path = '/v3/automations/runs/workflow-storage';
+            const body = { operation: 'get', runId, publisherMachineId: custodian.machineId };
+            const response = await custodianReader.app.inject({ method: 'POST', url: path, payload: body,
+                headers: { ...custodianReader.headers, [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]:
+                    createSignedPluginInstallationPublisherHeader({ keyPair, machineId: custodian.machineId,
+                        installationId, path, body }) } });
+            expect(response.statusCode, response.body).toBe(404);
+            expect(response.json()).toEqual({ error: 'run_not_found' });
+        } finally { await custodianReader.app.close(); }
+        const { app, headers } = await createReviewStorageApp(guest.accountId);
+        const path = "/v3/automations/runs/workflow-storage";
+        const rootId = randomUUID();
+        const request = { operation: "initialize", publisherMachineId: custodian.machineId, runId,
+            parentAttempt: claimed.run!.attempt, expectedRevision: claimed.run!.revision,
+            accountCurrentness: await accountCurrentness(guest.accountId),
+            checkpointEnvelope: checkpointEnvelope(guest.accountId, runId, rootId, 1n),
+            rootInvocation: { id: rootId, contentEnvelope: progressEnvelope({ accountId: guest.accountId, runId,
+                id: rootId, sequence: 0n, parentRecordId: null, memberOrdinal: 0n }) } };
+        try {
+            const wrongHostBody = { ...request, publisherMachineId: otherHost.machineId };
+            const wrongHost = await app.inject({ method: "POST", url: path, payload: wrongHostBody, headers: { ...headers,
+                [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: createSignedPluginInstallationPublisherHeader({
+                    keyPair: otherKeyPair, machineId: otherHost.machineId, installationId: otherInstallationId, path, body: wrongHostBody }) } });
+            expect(wrongHost.statusCode).toBe(401);
+            const response = await app.inject({ method: "POST", url: path, payload: request, headers: { ...headers,
+                [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: createSignedPluginInstallationPublisherHeader({
+                    keyPair, machineId: custodian.machineId, installationId, path, body: request }) } });
+            expect(response.statusCode, response.body).toBe(200);
+            const executor = observeWorkflowMachineWake(custodian.accountId, custodian.machineId);
+            const ownerUi = observeWorkflowMachineWake(custodian.accountId);
+            try {
+                const current = await getWorkflowRun({ accountId: guest.accountId, runId });
+                await cancelWorkflowRun({ accountId: guest.accountId, runId, expectedRevision: current.run.revision });
+                expect(executor.updates.map(update => update.body)).toEqual([expect.objectContaining({
+                    runId, workflowControl: 'cancel_requested', requesterScope: { kind: 'workflow_trigger', id: runId },
+                })]);
+                expect(ownerUi.updates).toEqual([]);
+            } finally { executor.close(); ownerUi.close(); }
+        } finally { await app.close(); }
+    });
 
     it("pulls current origin delivery above a monotonic owner ack without keeping terminal custody", async () => {
         expect("pullWorkflowRunOriginDelivery" in workflowRunService).toBe(true);

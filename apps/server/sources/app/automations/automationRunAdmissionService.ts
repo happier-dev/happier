@@ -1,3 +1,5 @@
+import { resolveMachineAdmissionsInTx } from '@/app/machines/machineAccess';
+import { publishWorkflowRunMachineWakeInTx } from '@/app/workflows/workflowRunMachineRouting';
 import type { Prisma } from "@prisma/client";
 import { randomUUID } from "node:crypto";
 import { MAX_NON_TERMINAL_EVENT_CONVERSATION_RUNS_PER_ACCOUNT } from '@happier-dev/protocol/automations/event';
@@ -197,7 +199,7 @@ const automationAdmissionDefinitionSelect = {
             machineId: true,
             priority: true,
             machine: {
-                select: { accountId: true, revokedAt: true, replacedByMachineId: true },
+                select: { accountId: true, installationId: true, revokedAt: true, replacedByMachineId: true },
             },
         },
         orderBy: [{ priority: "desc" as const }, { machineId: "asc" as const }],
@@ -458,6 +460,8 @@ async function insertPreparedAutomationRunTx(params: Readonly<{
                 create: automation.assignments.map((assignment) => ({
                     machineId: assignment.machineId,
                     priority: assignment.priority,
+                    ...(workflowDefinitionEnvelope !== null
+                        ? { admittedMachineInstallationId: assignment.machine.installationId } : {}),
                 })),
             },
             scheduledAt: request.now,
@@ -506,6 +510,10 @@ async function insertPreparedAutomationRunTx(params: Readonly<{
         entityId: request.automationId,
     });
     await publishManagedRunWakeInTx(params.tx, { accountId: params.accountId, runId: run.id, cursor });
+    if (workflowDefinitionEnvelope !== null) await publishWorkflowRunMachineWakeInTx(params.tx,
+        { accountId: params.accountId, run, cursor, admittedTargets: automation.assignments.map(assignment => ({
+            machineId: assignment.machineId, custodianAccountId: assignment.machine.accountId,
+        })) });
     afterTx(params.tx, () => {
         emitAutomationRunTransition({
             accountId: params.accountId,
@@ -514,6 +522,7 @@ async function insertPreparedAutomationRunTx(params: Readonly<{
             cursor: cursor.resolveCursor(),
         });
         for (const assignment of automation.assignments) {
+            if (workflowDefinitionEnvelope !== null) continue;
             emitAutomationRunUpdatedToMachineOnly({
                 accountId: params.accountId,
                 machineId: assignment.machineId,
@@ -628,14 +637,29 @@ export async function admitAutomationRunsTx(params: Readonly<{
     // available machines, while every non-replayable Session-lifecycle
     // occurrence preserves reversibly replaced machines for natural claim
     // after undo.
+    const newAdmissionAutomationIds = new Set(parsedAdmissions.filter(({ request, cause }) =>
+        !findExistingRun({ rows: existingRuns, ...request, cause })).map(({ request }) => request.automationId));
+    const workflowAutomationIds = new Set(automations.filter(automation => newAdmissionAutomationIds.has(automation.id)
+        && parseAutomationStoredWorkflowDefinitionRecipeV2(automation.templateCiphertext).kind === 'available').map(row => row.id));
+    const machineAdmissions = await resolveMachineAdmissionsInTx(params.tx, { actorAccountId: params.accountId, purpose: 'workflow',
+        machineIds: automations.filter(row => workflowAutomationIds.has(row.id))
+            .flatMap(row => row.assignments.map(assignment => assignment.machineId)) });
     const automationsById = new Map(automations.map((automation) => [
         automation.id,
         {
             ...automation,
             assignments: automation.assignments.filter((assignment) => (
-                assignment.machine.accountId === params.accountId
+                (workflowAutomationIds.has(automation.id)
+                    ? machineAdmissions.get(assignment.machineId)?.kind === 'admitted'
+                    : assignment.machine.accountId === params.accountId)
                 && classifyMachineAvailabilityState(assignment.machine) !== "revoked"
-            )),
+            )).map(assignment => {
+                const admission = workflowAutomationIds.has(automation.id) ? machineAdmissions.get(assignment.machineId) : undefined;
+                return admission?.kind === 'admitted'
+                    ? { ...assignment, machine: { ...assignment.machine, installationId: admission.installationId,
+                        accountId: admission.custodianAccountId } }
+                    : assignment;
+            }),
         },
     ]));
     const triggersById = new Map(triggers.map((trigger) => [trigger.id, trigger]));

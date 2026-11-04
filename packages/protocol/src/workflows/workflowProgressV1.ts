@@ -65,6 +65,11 @@ export const WORKFLOW_INVOCATION_LIFECYCLES_V1 = [
 ] as const;
 export const WorkflowInvocationLifecycleV1Schema = lazyZodSchema(() => z.enum(WORKFLOW_INVOCATION_LIFECYCLES_V1));
 export type WorkflowInvocationLifecycleV1 = z.infer<typeof WorkflowInvocationLifecycleV1Schema>;
+/** Indexed custody that must resolve before a terminal Run may settle. */
+export const WORKFLOW_UNSETTLED_INVOCATION_LIFECYCLES_V1 = [
+  'pending', 'waiting_for_capacity', 'admitting', 'running', 'waiting_for_approval',
+  'needs_attention', 'cancel_requested', 'outcome_uncertain', 'waiting_for_review',
+] as const satisfies readonly WorkflowInvocationLifecycleV1[];
 export const WorkflowInvocationBlockKindV1Schema = lazyZodSchema(() => z.enum(['root', 'step', 'action', 'wait', 'workflow', 'parallel', 'loop', 'if']));
 
 /** Lifecycle eligibility only; the authorized host validates exact initial-input and frozen leaf evidence. */
@@ -216,6 +221,8 @@ export const WorkflowRunSummaryV1Schema = lazyZodSchema(() => z.strictObject({
   /** Retained Automation scope from the Run producer; null is Account scope, omission is unread. */
   automationScopeSessionId: zMini.optional(zMini.nullable(preservedBoundedNfcString(191, 'Session ids'))),
   state: WorkflowRunStateV1Schema,
+  /** Content-free refusal recorded by the existing Run terminal writer. */
+  errorCode: z.optional(z.nullable(z.string().check(z.minLength(1)))),
   revision: z.number().check(z.int(), z.nonnegative(), z.int()),
   machineId: WorkflowMachineIdV1Schema,
   workflowCustodyState: z.nullable(WorkflowRunCustodyStateV1Schema),

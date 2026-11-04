@@ -1,7 +1,9 @@
+import { buildMachineAdmissionFactsSelect, resolveMachineAdmissionFromFactsInTx } from '@/app/machines/machineAccess';
+import { publishWorkflowRunMachineWakeInTx } from './workflowRunMachineRouting';
 import { isDeepStrictEqual } from 'node:util';
 import { decodeKeysetCursorV1, encodeKeysetCursorV1, readKeysetCursorIdV1, readKeysetCursorTextV1 } from '@happier-dev/protocol/pagination/keysetCursorV1';
 import { measureExternalActionResultResponseEnvelopeUtf8BytesV1 } from '@happier-dev/protocol/actions/externalActionLimits';
-import { projectWorkflowBigIntV1, type WorkflowInvocationLifecycleV1, type WorkflowRunOriginV1, type WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
+import { projectWorkflowBigIntV1, WORKFLOW_UNSETTLED_INVOCATION_LIFECYCLES_V1, type WorkflowInvocationLifecycleV1, type WorkflowRunOriginV1, type WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import { toAutomationRunExecutionInputV1Origin } from '@happier-dev/protocol/automations/automationApiV3';
 import { projectAutomationAccountCurrentnessWitnessV1, sameAutomationAccountContentIdentityV1, type AutomationAccountCurrentnessWitnessV1 } from '@happier-dev/protocol/automations/automationAccountCurrentnessV1';
@@ -21,7 +23,6 @@ import { markAccountsChanged, type AccountChangePublication } from "@/app/change
 import { acquireWorkflowPublicationLocksInTx } from "./acquireWorkflowPublicationLocksInTx";
 import { invalidateRunFollowDestinationsInTx } from '@/app/session/follow/sessionFollowEdgeService';
 import { markAccountChangesForSessionAccounts } from "@/app/session/changeTracking/markAccountChangesForSessionAccounts";
-import { emitAutomationRunUpdatedToMachineOnly } from "@/app/automations/automationChangePublisher";
 import { publishManagedRunWakeInTx, publishManagedContextWakeInTx } from '@/app/machines/managed/managedWake';
 import { acquireAccountEncryptionTransitionFenceInTx } from "@/app/encryption/accountEncryptionTransition";
 import { deriveAccountEncryptionCurrentnessFromRow } from "@/app/encryption/accountContentKeyAdmission";
@@ -29,7 +30,7 @@ import { automationRunCustodyTerminalWhere, readAutomationLiveCauseRunIdsTx } fr
 import { AUTOMATION_RUN_TERMINAL_STATES, projectAutomationRunState } from "@/app/automations/automationTypes";
 import { automationRunCauseSelect, automationRunWithoutExecutionWhere } from "@/app/automations/automationPersistenceSelect";
 import { decodeAutomationRunCause } from "@/app/automations/automationRunCauseCodec";
-import { applyAutomationRunTerminalEffectsTx } from "@/app/automations/automationRunSucceeded";
+import { applyAutomationRunTerminalEffectsTx, failAutomationRunWithoutContentInTx } from "@/app/automations/automationRunSucceeded";
 import { readRetainedAutomationRunExecutionInputForWorkflowAdmission, validateAutomationStoredContentEnvelopeOuterForMode } from "@/app/automations/automationStoredContentRead";
 import { db } from "@/storage/db";
 import { afterTx, inReadSnapshot, inTx, type Tx } from "@/storage/inTx";
@@ -95,6 +96,7 @@ const workflowRunProjectionSelect = {
     automationScopeSessionId: true,
     originSessionId: true,
     state: true,
+    errorCode: true,
     revision: true,
     attempt: true,
     claimedByMachineId: true,
@@ -198,6 +200,7 @@ function projectRun(row: WorkflowRunRow, viewerAccountId: string = row.accountId
         ...(origin.kind === "automation" && row.automationScopeCaptured
             ? { automationScopeSessionId: row.automationScopeSessionId } : {}),
         state,
+        ...(row.errorCode !== null ? { errorCode: row.errorCode } : {}),
         revision: row.revision,
         machineId,
         workflowCustodyState: row.workflowCustodyState,
@@ -392,8 +395,11 @@ export async function admitWorkflowRunTx(tx: Tx, params: AdmitWorkflowRunInput):
         }
         const mode = await loadCurrentWorkflowAccountModeTx(tx, params.accountId, params.accountCurrentness, params.runId);
         assertWorkflowStoredEnvelopeOuterForMode({ raw: params.acceptedEnvelope, mode, binding: { v: 1, purpose: "accepted_snapshot", accountId: params.accountId, runId: params.runId } });
-        const machine = await tx.machine.findFirst({ where: { id: params.machineId, accountId: params.accountId, revokedAt: null }, select: { id: true } });
-        if (!machine) throw new WorkflowRunServiceError("target_unavailable");
+        const machine = await tx.machine.findUnique({ where: { id: params.machineId },
+            select: buildMachineAdmissionFactsSelect(params.accountId) });
+        const admission = await resolveMachineAdmissionFromFactsInTx(tx, machine,
+            { actorAccountId: params.accountId, machineId: params.machineId, purpose: 'workflow' });
+        if (admission.kind !== 'admitted' || admission.availability !== 'available') throw new WorkflowRunServiceError("target_unavailable");
         if (params.origin.originSessionId) {
             const session = await tx.session.findFirst({ where: { id: params.origin.originSessionId, accountId: params.accountId }, select: { id: true } });
             if (!session) throw new WorkflowRunServiceError("invalid_input");
@@ -430,7 +436,8 @@ export async function admitWorkflowRunTx(tx: Tx, params: AdmitWorkflowRunInput):
                     workflowCheckpointEnvelope: null,
                     workflowCustodyState: "pending",
                     originDeliveryAckRevision: params.resultDelivery?.kind === 'originating_session' ? 0 : null,
-                    assignments: { create: { machineId: params.machineId, priority: 0 } },
+                    assignments: { create: { machineId: params.machineId, priority: 0,
+                        admittedMachineInstallationId: admission.installationId } },
                 },
                 select: workflowRunSelect,
             });
@@ -440,7 +447,40 @@ export async function admitWorkflowRunTx(tx: Tx, params: AdmitWorkflowRunInput):
         }));
         const cursor = await markWorkflowRunChangedTx(tx, params.accountId, params.runId);
         await publishManagedRunWakeInTx(tx, { accountId: params.accountId, runId: params.runId, cursor });
+        await publishWorkflowRunMachineWakeInTx(tx, { accountId: params.accountId,
+            run: row as WorkflowRunFullRow, cursor, admittedTargets: [admission] });
         return { kind: "created", run: await projectRunInTx(tx, row as WorkflowRunProjectionRow, params.accountId) };
+}
+
+async function findUnsettledWorkflowInvocationInTx(tx: Tx, runId: string, reconciledTerminalInvocationIds: readonly string[] = []) {
+    return await tx.workflowRunInvocation.findFirst({ where: {
+        runId, lifecycle: { in: [...WORKFLOW_UNSETTLED_INVOCATION_LIFECYCLES_V1] },
+        ...(reconciledTerminalInvocationIds.length > 0 ? { id: { notIn: [...reconciledTerminalInvocationIds] } } : {}),
+    }, select: { id: true } });
+}
+
+/** Installation authority can report only this non-content terminal refusal. */
+export async function recordWorkflowRequesterCustodyUnavailable(input: Readonly<{
+    runId: string; machineId: string; installationId: string;
+}>): Promise<void> {
+    await inTx(async tx => {
+        const current = await tx.automationRun.findFirst({ where: { id: input.runId,
+            workflowCustodyState: 'pending', state: { notIn: [...AUTOMATION_RUN_TERMINAL_STATES] },
+            assignments: { some: { machineId: input.machineId,
+                admittedMachineInstallationId: input.installationId } },
+        }, select: { accountId: true, state: true } });
+        if (!current) return;
+        await acquireWorkflowPublicationLocksInTx(tx, { accountId: current.accountId, runIds: [input.runId] });
+        const unsettled = await findUnsettledWorkflowInvocationInTx(tx, input.runId);
+        const now = new Date();
+        const result = await failAutomationRunWithoutContentInTx({ tx, accountId: current.accountId, runId: input.runId,
+            previousState: current.state as WorkflowRunState,
+            where: { state: current.state, workflowCustodyState: 'pending', assignments: { some: {
+                machineId: input.machineId, admittedMachineInstallationId: input.installationId,
+            } } }, errorCode: 'requester_custody_unavailable', settleWorkflowCustody: unsettled === null, now });
+        if (!result.changed) return;
+        await markWorkflowRunChangedTx(tx, current.accountId, input.runId);
+    }, { isolationLevel: 'ReadCommitted', transactionClass: 'workflow-requester-custody-refusal' });
 }
 
 export async function admitWorkflowRun(params: AdmitWorkflowRunInput): Promise<{ kind: "created" | "existing"; run: WorkflowRunSummaryV1 }> {
@@ -1626,10 +1666,10 @@ export async function completeWorkflowInvocationReview(input: WorkflowReviewMuta
         if (wake) await publishManagedRunWakeInTx(tx, { accountId: current.ownerAccountId, runId: input.runId, cursor });
         const live = current.run.state === "claimed" || current.run.state === "running" || current.run.state === "pause_requested";
         const machineId = run.assignments[0]?.machineId;
-        if (machineId && (wake || live)) afterTx(tx, () => emitAutomationRunUpdatedToMachineOnly({
-            accountId: current.ownerAccountId, machineId, run: run as WorkflowRunFullRow, cursor: cursor.resolveCursor(),
+        if (machineId && (wake || live)) await publishWorkflowRunMachineWakeInTx(tx, {
+            accountId: current.ownerAccountId, run: run as WorkflowRunFullRow, cursor,
             ...(live ? { workflowControl: "review_resolved" } : {}),
-        }));
+        });
         return { run: await projectRunInTx(tx, run as WorkflowRunProjectionRow, input.accountId), invocation: { index: projectInvocation(row as InvocationRow), contentEnvelope: row.contentEnvelope },
             disposition: input.mode === "use_result" ? "completed" as const : "generation_requested" as const };
     }, {
@@ -2274,8 +2314,8 @@ async function controlWorkflowRun(params: Readonly<{
         if (row.state === "queued") {
             await publishManagedRunWakeInTx(tx, { accountId: ownerAccountId, runId: params.runId, cursor });
             const machineId = row.assignments[0]?.machineId;
-            if (machineId) afterTx(tx, () => emitAutomationRunUpdatedToMachineOnly({ accountId: ownerAccountId,
-                machineId, run: row as WorkflowRunFullRow, cursor: cursor.resolveCursor() }));
+            if (machineId) await publishWorkflowRunMachineWakeInTx(tx, { accountId: ownerAccountId,
+                run: row as WorkflowRunFullRow, cursor });
         }
         return await projectRunInTx(tx, row as WorkflowRunProjectionRow, params.accountId);
     }, {
@@ -2413,13 +2453,12 @@ export async function cancelWorkflowRunTx(
     const cursor = await markWorkflowRunChangedTx(tx, params.accountId, params.runId, deliveryBefore);
     if (!settlesCustody) {
         const machineId = row.assignments[0]?.machineId;
-        if (machineId) afterTx(tx, () => emitAutomationRunUpdatedToMachineOnly({
+        if (machineId) await publishWorkflowRunMachineWakeInTx(tx, {
             accountId: params.accountId,
-            machineId,
             run: row as WorkflowRunFullRow,
-            cursor: cursor.resolveCursor(),
+            cursor,
             workflowControl: "cancel_requested",
-        }));
+        });
     }
     return {
         run: await projectRunInTx(tx, row as WorkflowRunProjectionRow, params.accountId),
@@ -2648,8 +2687,8 @@ export async function recoverWorkflowInvocations(params: Readonly<{
         }
         const updatedParent = await tx.automationRun.findUniqueOrThrow({ where: { id: params.runId }, select: workflowRunSelect });
         const cursor = await markWorkflowRunChangedTx(tx, params.accountId, params.runId, deliveryBefore);
-        afterTx(tx, () => emitAutomationRunUpdatedToMachineOnly({ accountId: params.accountId, machineId: params.machineId,
-            run: updatedParent as WorkflowRunFullRow, cursor: cursor.resolveCursor() }));
+        await publishWorkflowRunMachineWakeInTx(tx, { accountId: params.accountId,
+            run: updatedParent as WorkflowRunFullRow, cursor });
         return { disposition: "accepted" as const, run: await projectRunInTx(tx, updatedParent as WorkflowRunProjectionRow, params.accountId), invocations: created.map(projectInvocation) };
     }, {
         // Ordered publication locks/replay and mode/control/row predicates fence this mutation.

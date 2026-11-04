@@ -1,3 +1,4 @@
+import { readAutomationRunClaimEligibilityWhereInTx } from './automationRunClaimEligibility';
 import { persistentMachineWhere } from "@/app/machines/machineSelection";
 import { createHash } from "node:crypto";
 import type { Prisma } from "@prisma/client";
@@ -414,55 +415,17 @@ async function findClaimCandidates(params: {
 
     recipeFeaturePolicy: AutomationRecipeFeaturePolicy;
     scope?: "session_scoped" | "workflow";
+    admittedMachineInstallationId?: string | null;
+    allowUnboundMachineAssignment?: boolean;
 }) {
-    if (params.scope === "workflow" && !params.recipeFeaturePolicy.workflowsEnabled) return [];
     if (params.runIds?.length === 0) return [];
-    const activeScoped = await params.tx.automationRun.findMany({
-        where: { accountId: params.accountId, triggerId: { not: null },
-            automation: { is: { scopeSessionId: { not: null } } },
-            state: { notIn: ["queued", ...AUTOMATION_RUN_TERMINAL_STATES] } },
-        select: { triggerId: true }, distinct: ["triggerId"],
-    });
-    const activeTriggerIds = activeScoped.flatMap((run) => run.triggerId ? [run.triggerId] : []);
+    const eligibility = await readAutomationRunClaimEligibilityWhereInTx(params.tx, params);
+    if (eligibility === null) return [];
     return await params.tx.automationRun.findMany({
         where: {
-            accountId: params.accountId,
+            ...eligibility,
             ...(params.runIds ? { id: { in: [...params.runIds] } } : {}),
-            ...(params.scope === "session_scoped" ? { automation: { is: { scopeSessionId: { not: null } } } } : {}),
-            ...(params.scope === "workflow" ? { AND: [{ OR: [
-                { workflowCustodyState: { not: null } },
-                { workflowCustodyState: null, originKind: "automation",
-                    ...automationRunWithoutExecutionWhere,
-                    OR: [{ causeKind: "manual" }, { causeKind: "trigger", causeTriggerKind: "schedule" }] },
-            ] }] } : {}),
-            dueAt: { lte: params.now },
             ...expectedRunTriggerCauseWhere(params.expectedTriggerKind),
-            ...(!params.recipeFeaturePolicy.workflowsEnabled
-                ? { workflowCustodyState: null }
-                : {}),
-            OR: [
-                {
-                    state: "queued",
-                    assignments: runAssignmentClaimWhere(params.machineId),
-                    ...(activeTriggerIds.length ? { OR: [{ triggerId: null }, { triggerId: { notIn: activeTriggerIds } }] } : {}),
-                },
-                {
-                    state: "claimed",
-                    leaseExpiresAt: { lt: params.now },
-                    assignments: runAssignmentClaimWhere(params.machineId),
-                },
-                {
-                    state: "running",
-                    leaseExpiresAt: { lt: params.now },
-                    assignments: runAssignmentClaimWhere(params.machineId),
-                },
-                {
-                    state: "pause_requested",
-                    workflowCustodyState: "pending",
-                    leaseExpiresAt: { lt: params.now },
-                    assignments: runAssignmentClaimWhere(params.machineId),
-                },
-            ],
         },
         orderBy: [{ dueAt: "asc" }, { createdAt: "asc" }, { id: "asc" }],
         take: params.limit,
@@ -852,6 +815,24 @@ export async function claimAutomationRun(params: {
 }): Promise<AutomationClaimResult> {
     const recipeFeaturePolicy = params.recipeFeaturePolicy ?? await resolveAutomationRecipeFeaturePolicy();
     const execute = async (): Promise<AutomationClaimResult> => await inTx(async (tx) => {
+        let machineCustodianAccountId: string | null = null;
+        let machineInstallationId: string | null = null;
+        const readCurrentMachineClaimTime = async () => {
+            const machine = await tx.machine.findFirst({
+                where: { ...(params.scope === 'workflow' && params.claimRequest ? {} : { accountId: params.accountId }), id: params.machineId, ...persistentMachineWhere,
+                    revokedAt: null, replacedByMachineId: null },
+                select: { id: true, accountId: true, installationId: true },
+            });
+            machineCustodianAccountId = machine?.accountId ?? null;
+            machineInstallationId = machine?.installationId ?? null;
+            const now = new Date();
+            return machine && (!params.claimRequest || (
+                machine.installationId === params.claimRequest.machineInstallationId
+                && params.claimRequest.expiresAt.getTime() > now.getTime()
+            )) ? now : null;
+        };
+        const initialClaimTime = await readCurrentMachineClaimTime();
+        if (!initialClaimTime) return { run: null, accountCurrentness: null };
         const candidateSearch = {
             tx,
             accountId: params.accountId,
@@ -860,24 +841,14 @@ export async function claimAutomationRun(params: {
             expectedTriggerKind: params.expectedTriggerKind,
             recipeFeaturePolicy,
             scope: params.scope,
+            admittedMachineInstallationId: machineInstallationId,
+            allowUnboundMachineAssignment: machineCustodianAccountId === params.accountId,
         };
         // Discover one bounded page before locking its composed publication
         // audience, rather than censusing every assigned nonterminal Run
         // before claim eligibility is known.
         const discovered = await findClaimCandidates({ ...candidateSearch, now: new Date() });
         const candidateRunIds = discovered.map(candidate => candidate.id);
-        const readCurrentMachineClaimTime = async () => {
-            const machine = await tx.machine.findFirst({
-                where: { accountId: params.accountId, id: params.machineId, ...persistentMachineWhere,
-                    revokedAt: null, replacedByMachineId: null },
-                select: { id: true, installationId: true },
-            });
-            const now = new Date();
-            return machine && (!params.claimRequest || (
-                machine.installationId === params.claimRequest.machineInstallationId
-                && params.claimRequest.expiresAt.getTime() > now.getTime()
-            )) ? now : null;
-        };
         const claimRequestNonceDigest = params.claimRequest
             ? deriveClaimRequestNonceDigest({
                 machineId: params.machineId,

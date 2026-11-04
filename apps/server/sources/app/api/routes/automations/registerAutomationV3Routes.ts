@@ -73,6 +73,7 @@ import { computeCanonicalDomainSeparatedDigest } from '@happier-dev/protocol/cry
 import {
     DEFAULT_AUTOMATION_WORKER_PUBLISHER_DEPENDENCIES,
     resolveExactAutomationWorkerPublisher,
+    resolveWorkflowAutomationWorkerPublisher,
     type AutomationWorkerPublisherDependencies,
 } from "./automationWorkerPublisher";
 
@@ -672,13 +673,16 @@ export function registerAutomationV3Routes(
         schema: { body: AutomationV3WorkerClaimRequestSchema },
     }, async (request, reply) => {
         const body = AutomationV3WorkerClaimRequestSchema.parse(request.body);
-        const publisher = await resolveExactAutomationWorkerPublisher({
+        const publisherInput = {
             dependencies: workerPublisherDependencies,
             accountId: request.userId,
             request,
             path: "/v3/automations/runs/claim",
             machineId: body.machineId,
-        });
+        };
+        const publisher = await (body.scope === 'workflow'
+            ? resolveWorkflowAutomationWorkerPublisher({ ...publisherInput, purpose: 'claim' })
+            : resolveExactAutomationWorkerPublisher(publisherInput));
         if (!publisher || publisher.kind !== "publisherProof") {
             return reply.code(401).send(null);
         }

@@ -1,5 +1,6 @@
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
-import { eventRouter } from "@/app/events/eventRouter";
+import { eventRouter, type UpdatePayload } from "@/app/events/eventRouter";
+import type { WorkflowRequesterScopeV1 } from '@happier-dev/protocol/updates';
 import type { AutomationRunStateChangedHostEventV1 } from '@happier-dev/protocol/plugins/events/hostReferencesV1';
 import type { ManagedWakeTargetV1 } from '@happier-dev/protocol/machines/managed/managedIntentV1';
 
@@ -170,33 +171,42 @@ export function emitAutomationRunUpdatedToMachineOnly(params: {
     cursor: number;
     workflowControl?: "cancel_requested" | "review_resolved";
     managedWakeTargetV1?: ManagedWakeTargetV1;
+    requesterScope?: WorkflowRequesterScopeV1;
 }): void {
-    const projectedState = projectAutomationRunState(params.run.state);
-    if (projectedState === null) throw new Error("Automation Run state is unavailable");
     eventRouter.emitUpdate({
         userId: params.accountId,
-        payload: {
-            id: randomKeyNaked(12),
-            seq: params.cursor,
-            body: {
-                t: "automation-run-updated",
-                runId: params.run.id,
-                automationId: params.run.automationId,
-                state: projectedState,
-                scheduledAt: params.run.scheduledAt.getTime(),
-                startedAt: params.run.startedAt ? params.run.startedAt.getTime() : null,
-                finishedAt: params.run.finishedAt ? params.run.finishedAt.getTime() : null,
-                updatedAt: params.run.updatedAt.getTime(),
-                machineId: params.run.claimedByMachineId,
-                attempt: params.run.attempt,
-                targetMachineId: params.machineId,
-                ...(params.workflowControl ? { workflowControl: params.workflowControl } : {}),
-                ...(params.managedWakeTargetV1 ? { managedWakeTargetV1: params.managedWakeTargetV1 } : {}),
-            },
-            createdAt: Date.now(),
-        },
+        payload: buildAutomationRunMachineWakeUpdate(params),
         recipientFilter: { type: "machine-only", machineId: params.machineId },
     });
+}
+
+/** Live publication and authenticated reconnect replay share the same non-content carrier. */
+export function buildAutomationRunMachineWakeUpdate(
+    params: Parameters<typeof emitAutomationRunUpdatedToMachineOnly>[0],
+): UpdatePayload {
+    const projectedState = projectAutomationRunState(params.run.state);
+    if (projectedState === null) throw new Error("Automation Run state is unavailable");
+    return {
+        id: randomKeyNaked(12),
+        seq: params.cursor,
+        body: {
+            t: "automation-run-updated",
+            runId: params.run.id,
+            automationId: params.run.automationId,
+            state: projectedState,
+            scheduledAt: params.run.scheduledAt.getTime(),
+            startedAt: params.run.startedAt ? params.run.startedAt.getTime() : null,
+            finishedAt: params.run.finishedAt ? params.run.finishedAt.getTime() : null,
+            updatedAt: params.run.updatedAt.getTime(),
+            machineId: params.run.claimedByMachineId,
+            attempt: params.run.attempt,
+            targetMachineId: params.machineId,
+            ...(params.workflowControl ? { workflowControl: params.workflowControl } : {}),
+            ...(params.managedWakeTargetV1 ? { managedWakeTargetV1: params.managedWakeTargetV1 } : {}),
+            ...(params.requesterScope ? { requesterScope: params.requesterScope } : {}),
+        },
+        createdAt: Date.now(),
+    };
 }
 
 export function emitAutomationAssignmentUpdated(params: {

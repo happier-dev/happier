@@ -37,6 +37,7 @@ import {
     recordWorkflowRunOriginInputWithdrawn,
     transitionWorkflowRun,
     WorkflowRunServiceError,
+    recordWorkflowRequesterCustodyUnavailable,
 } from "@/app/workflows/workflowRunService";
 import { WorkflowStoredContentError } from "@/app/workflows/runs/storedContent";
 import { inTx, isTransactionAcquisitionUnavailableError, isTransactionConflictExhaustedError, isTransactionDeadlineExceededError } from "@/storage/inTx";
@@ -120,6 +121,20 @@ export function registerWorkflowRunStorageRoutes(
     app: Fastify,
     dependencies: AutomationWorkerPublisherDependencies = DEFAULT_AUTOMATION_WORKER_PUBLISHER_DEPENDENCIES,
 ): void {
+    app.post('/v3/automations/runs/:runId/requester-custody-unavailable', {
+        preHandler: app.authenticate,
+        schema: { params: z.strictObject({ runId: z.string().check(z.minLength(1)) }),
+            body: z.strictObject({ machineId: z.string().check(z.minLength(1)) }) },
+    }, async (request, reply) => {
+        const publisher = await resolveWorkflowAutomationWorkerPublisher({ dependencies,
+            accountId: request.userId, request,
+            path: `/v3/automations/runs/${encodeURIComponent(request.params.runId)}/requester-custody-unavailable`,
+            machineId: request.body.machineId, runId: request.params.runId, purpose: 'custody_refusal' });
+        if (!publisher) return reply.code(401).send(null);
+        await recordWorkflowRequesterCustodyUnavailable({ runId: request.params.runId,
+            machineId: publisher.machineId, installationId: publisher.machineInstallationId });
+        return { recorded: true };
+    });
     app.post(PATH, { preHandler: app.authenticate, schema: { body: OperationSchema } }, async (request, reply) => {
         const body = request.body;
         const executorOperation = isWorkflowRunExecutorStorageOperationV1(body.operation);
