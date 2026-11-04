@@ -446,12 +446,16 @@ these policies leaves an expanded root filesystem at its new size.
 ### Connect to a worker interactively
 
 In the 0.3 development checkout, generated SSH configs and the shared mirror
-configuration enable OpenSSH multiplexing. Short commands, probes and execution
-channels reuse the target's control socket, which remains available for ten idle
-minutes. Enrollment and controller-key verification authenticate independently
+configuration enable OpenSSH multiplexing for synchronization. Its control
+socket remains available for ten idle minutes. Native payloads and worker
+commands use dedicated connections, so a shared master's keepalive expiry cannot
+terminate unrelated admitted commands. Enrollment and controller-key verification authenticate independently
 so an existing master cannot hide a missing key or bypass strict host-key checks.
-Native execution uses that same configured socket, including managed
-Lima/WSL targets. Existing explicit SSH policies remain authoritative. Refresh
+Dedicated payload transport also applies to managed Lima/WSL targets. Existing
+host-key and connection setup policies remain authoritative. Admitted payloads
+disable the SSH silence timer; a temporary stall does not expire a build. A real
+connection loss still cancels the owned worker and fails preparation before readiness.
+Synchronization and forwards retain their own keepalive policies. Refresh
 an older enrolled target with its existing `add --host` command, or refresh the
 shared config with the normal synchronization-service setup.
 

@@ -3118,7 +3118,11 @@ test('remote heavyweight admission starts from the configured repository when SS
   assert.equal(payloadOutput(result.stdout), 'remote-tsc\n');
 });
 
-test('native launcher reuses one SSH master across sequential and concurrent commands for the same target', async (t) => {
+test('native payloads stay independent of a configured master across sequential and concurrent commands', async (t) => {
+  if (process.platform === 'win32') {
+    t.skip('native launcher requires a POSIX controller');
+    return;
+  }
   const root = await mkdtemp(join(tmpdir(), 'happier-preferred-launcher-shared-ssh-'));
   const binDir = join(root, 'bin');
   const stackDir = join(root, 'stack');
@@ -3126,8 +3130,7 @@ test('native launcher reuses one SSH master across sequential and concurrent com
   const masterStarts = join(root, 'master-starts');
   const heldCommandStarted = join(root, 'held-command-started');
   const releaseHeldCommand = join(root, 'release-held-command');
-  const masterCreating = join(root, 'master-creating');
-  const releaseMaster = join(root, 'release-master');
+  const explicitMasterStarts = join(root, 'explicit-master-starts');
   const releaseReservation = join(root, 'release-reservation');
   const configuredControlPath = join(root, 'runtime', 'configured-master');
   const provenancePath = join(stackDir, 'dev-target-command-load-native', 'provenance.jsonl');
@@ -3137,6 +3140,10 @@ test('native launcher reuses one SSH master across sequential and concurrent com
   await mkdir(binDir, { recursive: true });
   await mkdir(join(stackDir, 'mutagen', 'data'), { recursive: true });
   await mkdir(runtimeDir, { recursive: true });
+  // A warm master belongs to other sessions. Native payloads must not join it.
+  await writeFile(configuredControlPath, '');
+  await mkdir(`${configuredControlPath}.fixture-master`);
+  await writeFile(masterStarts, 'start\n');
   const sshConfig = join(root, 'ssh.config');
   await writeFile(sshConfig, `Host linux-host\n  ControlMaster auto\n  ControlPath ${configuredControlPath}\n`);
   await mkdir(join(stackDir, 'dev-target-command-load-native'));
@@ -3164,6 +3171,7 @@ test('native launcher reuses one SSH master across sequential and concurrent com
     // Pause only the genuine OS lock boundary after its file is opened. A
     // concurrent selector must not reap a reservation still being published.
     await executable(join(binDir, 'flock'), `#!/bin/sh
+if [ "$#:$1" = 1:7 ]; then printf 'fixture-placement-wait\\n' >&2; fi
 if [ "$#:$1:$2" = 2:-n:8 ]; then
   printf 'fixture-reservation-open:%s\\n' "$(readlink /proc/$$/fd/8)" >&2
   if [ "\${GATE_RESERVATION-}" = 1 ]; then
@@ -3204,10 +3212,21 @@ exec /usr/bin/flock "$@"
     '  *getconf*) printf "8 0.5 0.8 22000000 20 0 18000000 25000000 0 0 0 0 0 0 0 linux\\n" ;;',
     '  *"&& command -v "*) exit 0 ;;',
     '  *-O\\ check*) [ -S "$control_path" ] || [ -f "$control_path" ] ;;',
-    '  *-MNf*) if [ "${DELAY_MASTER_START-}" = 1 ]; then : > "$MASTER_CREATING"; while [ ! -e "$RELEASE_MASTER" ]; do sleep 0.02; done; fi; mkdir -p "${control_path%/*}"; : > "$control_path"; printf "start\\n" >> "$MASTER_STARTS" ;;',
+    '  *-MNf*)',
+    '    printf "unexpected-create\\n" >> "$EXPLICIT_MASTER_STARTS"; exit 91 ;;',
     '  *)',
+    // The SSH process boundary models configured ControlMaster auto: one
+    // socket wins and competing first connections still execute their command.
+    '    case " $* " in *" ControlMaster=no "*) ;; *)',
+    '      if mkdir "$CONFIGURED_CONTROL_PATH.fixture-master" 2>/dev/null; then',
+    '        : > "$CONFIGURED_CONTROL_PATH"; printf "start\\n" >> "$MASTER_STARTS"',
+    '      fi ;;',
+    '    esac',
     '    remote_command=',
     '    for ssh_argument in "$@"; do remote_command=$ssh_argument; done',
+    '    case "$remote_command" in *HAPPIER_REMOTE_EXEC_LIFELINE=1*)',
+    '      case " $* " in *" ControlPath=none "*) ;; *) printf "payload joined shared master\\n" >&2; exit 255 ;; esac ;;',
+    '    esac',
     '    /bin/sh -c "$remote_command"',
     '    ;;',
     'esac',
@@ -3222,30 +3241,29 @@ exec /usr/bin/flock "$@"
     TMPDIR: root,
     XDG_RUNTIME_DIR: runtimeDir,
     MASTER_STARTS: masterStarts,
+    EXPLICIT_MASTER_STARTS: explicitMasterStarts,
     HELD_COMMAND_STARTED: heldCommandStarted,
     RELEASE_HELD_COMMAND: releaseHeldCommand,
-    MASTER_CREATING: masterCreating,
-    RELEASE_MASTER: releaseMaster,
     RELEASE_RESERVATION: releaseReservation,
     CONFIGURED_CONTROL_PATH: configuredControlPath,
   };
 
-  const creating = spawn('/bin/sh', [launcher, '--', 'probe-command', 'first-startup'], {
-    cwd: repoRoot, env: { ...env, DELAY_MASTER_START: '1' }, stdio: ['ignore', 'pipe', 'pipe'],
+  // Construct the interrupted OS boundary: the creator exits after mkdir,
+  // before any owner PID can be published. The next real launcher must run.
+  const abandonedCreator = spawnSync('/bin/sh', ['-c', 'mkdir "$1.lock"; exit $?', 'creator', configuredControlPath], {
+    cwd: repoRoot, env, encoding: 'utf8',
   });
-  let creatingOutput = '', creatingError = '';
-  creating.stdout.on('data', chunk => { creatingOutput += chunk; });
-  creating.stderr.on('data', chunk => { creatingError += chunk; });
-  const creatingCompletion = new Promise(resolve => creating.once('close', resolve));
+  assert.equal(abandonedCreator.status, 0, abandonedCreator.stderr);
+  await assert.rejects(access(`${configuredControlPath}.lock/pid`), { code: 'ENOENT' });
+  const successor = spawnSync('/bin/sh', [launcher, '--', 'probe-command', 'after-abandoned-creator'], {
+    cwd: repoRoot, env, encoding: 'utf8', timeout: 5000,
+  });
+  assert.equal(successor.error?.code, undefined, 'an unpublished creator PID must not strand its successor');
+  assert.equal(successor.status, 0, successor.stderr);
+  assert.equal(successor.stdout, 'remote:after-abandoned-creator\n');
   const startupCompletions = [];
   try {
-    for (let attempt = 0; attempt < 200; attempt++) {
-      try { await readFile(masterCreating); break; }
-      catch { await new Promise(resolveWait => setTimeout(resolveWait, 20)); }
-    }
-    await readFile(masterCreating);
-    // Five simultaneous starts join the in-progress creator rather than
-    // authenticating five dedicated command connections.
+    // Independent payload connections retain admission publication ordering.
     const startFollower = (index, gateReservation = false) => {
       const child = spawn('/bin/sh', [launcher, '--', 'probe-command', `startup-${index}`], {
         cwd: repoRoot, env: { ...env, GATE_RESERVATION: gateReservation ? '1' : '' }, stdio: ['ignore', 'pipe', 'pipe'],
@@ -3254,15 +3272,18 @@ exec /usr/bin/flock "$@"
       let out = '', err = '';
       let opened;
       const reservationOpened = new Promise(resolve => { opened = resolve; });
+      let waiting;
+      const placementWaiting = new Promise(resolve => { waiting = resolve; });
       child.stdout.on('data', value => { out += value; });
       child.stderr.on('data', value => {
         err += value;
         const marker = err.match(/^fixture-reservation-open:(.+)\n/m);
         if (marker) opened(marker[1]);
+        if (err.includes('fixture-placement-wait\n')) waiting();
       });
       const completion = new Promise(resolve => child.once('close', code => resolve({ code, out, err })));
       startupCompletions.push(completion);
-      return { child, completion, reservationOpened };
+      return { child, completion, reservationOpened, placementWaiting };
     };
     const followers = [];
     if (process.platform === 'linux') {
@@ -3272,16 +3293,13 @@ exec /usr/bin/flock "$@"
       await access(openedPath);
       const scanning = startFollower(1);
       followers.push(scanning);
-      await Promise.race([scanning.reservationOpened, scanning.completion.then(result => assert.fail(JSON.stringify(result)))]);
-      await access(openedPath); // The other selector has completed its active-reservation scan.
+      await Promise.race([scanning.placementWaiting, scanning.completion.then(result => assert.fail(JSON.stringify(result)))]);
+      // Placement now serializes publication. Observe the contender before
+      // releasing the publisher, rather than waiting for an impossible scan.
+      await access(openedPath);
       await writeFile(releaseReservation, '');
     }
     while (followers.length < 5) followers.push(startFollower(followers.length));
-    await new Promise(resolve => setTimeout(resolve, 150));
-    const earlyResults = await Promise.all(followers.filter(({ child }) => child.exitCode != null).map(({ completion }) => completion));
-    assert.deepEqual(earlyResults, [], `followers must await the single master: ${JSON.stringify(earlyResults)}`);
-    await assert.rejects(readFile(masterStarts), { code: 'ENOENT' });
-    await writeFile(releaseMaster, '', 'utf8');
     for (const { completion } of followers) {
       const result = await completion;
       assert.equal(result.code, 0, result.err);
@@ -3289,14 +3307,9 @@ exec /usr/bin/flock "$@"
     }
   } finally {
     await writeFile(releaseReservation, '', 'utf8');
-    await writeFile(releaseMaster, '', 'utf8');
-    // Retire the gated processes before fixture teardown removes their release
-    // file. Otherwise a failed assertion can strand the fake SSH creator.
-    await Promise.all([creatingCompletion, ...startupCompletions]);
+    await Promise.all(startupCompletions);
   }
-  const creatingExit = creating.exitCode;
-  assert.equal(creatingExit, 0, creatingError);
-  assert.equal(creatingOutput, 'remote:first-startup\n');
+  await assert.rejects(readFile(explicitMasterStarts), { code: 'ENOENT' });
   assert.ok((await readFile(provenancePath, 'utf8')).split('\n')[0] === historicalProvenance, 'existing provenance remains in the active log');
 
   for (const value of ['one', 'two']) {
@@ -3310,7 +3323,7 @@ exec /usr/bin/flock "$@"
   }
 
   assert.equal((await readFile(masterStarts, 'utf8')).trim().split('\n').length, 1);
-  assert.equal(await readFile(configuredControlPath, 'utf8'), '', 'native and configured clients must use the same socket');
+  assert.equal(await readFile(configuredControlPath, 'utf8'), '', 'native payloads leave the configured master untouched');
 
   const held = spawn('/bin/sh', [launcher, '--', 'probe-command', 'hold'], {
     cwd: repoRoot,
@@ -3347,7 +3360,7 @@ exec /usr/bin/flock "$@"
   assert.equal(heldOutput.stdout, 'remote:hold\n');
 });
 
-test('native launcher uses its private temporary SSH control root when XDG_RUNTIME_DIR is read-only', async (t) => {
+test('native payload requires no SSH control directory when XDG_RUNTIME_DIR is read-only', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'happier-preferred-launcher-readonly-runtime-'));
   const binDir = join(root, 'bin');
   const stackDir = join(root, 'stack');
@@ -3423,7 +3436,8 @@ test('native launcher uses its private temporary SSH control root when XDG_RUNTI
 
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout, 'remote:ok\n');
-  assert.match(await readFile(masterPath, 'utf8'), new RegExp(`^${root}/happier-ssh-${process.getuid()}/`));
+  await assert.rejects(access(join(root, `happier-ssh-${process.getuid()}`)), { code: 'ENOENT' });
+  await assert.rejects(readFile(masterPath), { code: 'ENOENT' });
 });
 
 test('native launcher admits another remote heavyweight command while the worker has healthy pressure', async (t) => {
@@ -4904,7 +4918,7 @@ async function liveSshControlFixture(t) {
   return { controlPath: fixture.root, configPath };
 }
 
-test('native launcher retries the same target without multiplexing when the authoritative mux session is refused before remote execution starts', async t => {
+test('native launcher bypasses a refused configured master for pinned and automatic payloads', async t => {
   const control = await liveSshControlFixture(t);
   const root = await mkdtemp(join(tmpdir(), 'happier-preferred-launcher-authoritative-mux-refused-'));
   const binDir = join(root, 'bin');
@@ -4950,7 +4964,7 @@ test('native launcher retries the same target without multiplexing when the auth
     '  last_argument=$argument',
     'done',
     'case "$*" in',
-    '  *-G*) printf "controlpath %s/%s.sock\\n" "$SSH_CONTROL_PATH" "$last_argument"; exit 0 ;;',
+    '  "-G "*) printf "controlpath %s/%s.sock\\n" "$SSH_CONTROL_PATH" "$last_argument"; exit 0 ;;',
     '  *getconf*) case "$*" in *mac2-host*) printf "8 4 0.5\\n" ;; *) printf "8 1 0.5\\n" ;; esac ;;',
     '  *command\\ -v*|*-O\\ check*|*-MNf*) exit 0 ;;',
     '  *mac-host*)',
@@ -4985,7 +4999,7 @@ test('native launcher retries the same target without multiplexing when the auth
 
   const exact = spawnSync('/bin/sh', [launcher, '--target=mac', '--', 'probe-command', 'exact'], invocation);
   assert.equal(exact.status, 0, exact.stderr);
-  assert.match(exact.stderr, /mac.*dedicated SSH connection/i);
+  assert.doesNotMatch(exact.stderr, /retrying.*SSH connection/i);
   assert.match(exact.stdout, /remote:mac:dedicated:.*ControlPath=none.*probe-command.*exact/);
   assert.doesNotMatch(exact.stdout, /remote:mac2|wrong-local/);
 
@@ -4993,7 +5007,7 @@ test('native launcher retries the same target without multiplexing when the auth
 
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stderr, /selected mac /);
-  assert.match(result.stderr, /mac.*dedicated SSH connection/i);
+  assert.doesNotMatch(result.stderr, /retrying.*SSH connection/i);
   assert.match(result.stdout, /remote:mac:dedicated:.*ControlPath=none.*probe-command.*ok/);
   assert.doesNotMatch(result.stderr, /selected mac2 /);
   assert.doesNotMatch(result.stdout, /wrong-local/);

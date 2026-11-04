@@ -52,6 +52,26 @@ import {
 
 const executionId = '018f0f52-5fe8-7a9f-8ef5-f81f20572791';
 
+test('runtime worker SSH sessions cannot attach to a saturated shared master',
+  { skip: process.platform === 'win32' }, async t => {
+    const { root } = await createTempFixture(t, { prefix: 'hstack-worker-ssh-' });
+    const config = join(root, 'ssh.config');
+    await writeFile(config, `Host worker.fixture\n  HostName 192.0.2.1\n  ControlMaster auto\n  ControlPersist 600\n  ControlPath ${join(root, 'shared-master')}\n`);
+    for (const platform of ['posix', 'windows']) {
+      const args = buildSshWorkerArgs({ ssh: 'worker.fixture', platform }, {
+        sshArgs: ['-F', config], remoteCommand: 'unused',
+      });
+      // OpenSSH's configuration evaluator is the real process boundary. -G
+      // never connects, so an existing fleet master cannot be disturbed.
+      const { stdout } = await promisify(execFile)('ssh', ['-G', ...args]);
+      assert.match(stdout, /^hostname 192\.0\.2\.1$/m);
+      assert.match(stdout, /^controlmaster false$/m);
+      assert.match(stdout, /^serveraliveinterval 0$/m);
+      assert.doesNotMatch(stdout, /^controlpath (?!none$).+$/m);
+      assert.match(stdout, platform === 'windows' ? /^requesttty false$/m : /^requesttty force$/m);
+    }
+  });
+
 test('retained daemon-only connection survives an exited native worker for recovery',
   { skip: process.platform === 'win32', timeout: 60_000 }, async t => {
     const { root } = await createTempFixture(t, { prefix: 'hstack-retained-daemon-connection-' });
@@ -2842,9 +2862,7 @@ test('SSH tunnel owns the reverse forward independently from the monitored worke
       '-o',
       'ExitOnForwardFailure=yes',
       '-o',
-      'ServerAliveInterval=15',
-      '-o',
-      'ServerAliveCountMax=3',
+      'ServerAliveInterval=0',
       '-N',
       '-R',
       '127.0.0.1:43005:127.0.0.1:3005',
@@ -2859,11 +2877,13 @@ test('SSH tunnel owns the reverse forward independently from the monitored worke
     [
       '-tt',
       '-o',
+      'ControlMaster=no',
+      '-o',
+      'ControlPath=none',
+      '-o',
       'BatchMode=yes',
       '-o',
-      'ServerAliveInterval=15',
-      '-o',
-      'ServerAliveCountMax=3',
+      'ServerAliveInterval=0',
       'happier-stack-linux',
       'bash -lc true',
     ],

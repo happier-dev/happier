@@ -2081,99 +2081,6 @@ release_orphan_reservations() {
 }
 
 umask 077
-allocate_ssh_control_root() {
-  mkdir -p -- "$ssh_control_root" 2>/dev/null || return 1
-  ssh_control_probe=$(mktemp "$ssh_control_root/.write-probe.XXXXXX" 2>/dev/null || true)
-  [ -n "$ssh_control_probe" ] || return 1
-  rm -f -- "$ssh_control_probe" 2>/dev/null || true
-  return 0
-}
-
-ssh_control_root="${XDG_RUNTIME_DIR:-/tmp}/happier-ssh-$(id -u)"
-if ! allocate_ssh_control_root; then
-  ssh_control_root="${TMPDIR:-/tmp}/happier-ssh-$(id -u)"
-fi
-allocate_ssh_control_root || {
-  release_reservation
-  printf '[preferred-execution] could not allocate the SSH control connection: %s; check directory permissions and disk space.\n' "$ssh_control_root" >&2
-  exit 1
-}
-chmod 700 "$ssh_control_root" 2>/dev/null || true
-ssh_config_identity=
-if [ -n "$ssh_config" ] && [ -r "$ssh_config" ]; then
-  ssh_config_identity=$(cksum < "$ssh_config" 2>/dev/null | awk '{print $1 "." $2}' || true)
-fi
-control_key=$(printf '%s\n%s\n' "$ssh_target" "$ssh_config_identity" | cksum | awk '{print $1}')
-case "$control_key" in ''|*[!0-9]*) control_key=$$ ;; esac
-control_path="$ssh_control_root/$control_key-0"
-# OpenSSH expands tokens, home paths and Includes. Reuse its configured socket
-# instead of keeping a separate per-Stack master beside the shared transport.
-if [ -n "$ssh_config" ] && [ -r "$ssh_config" ]; then
-  configured_control_path=$(ssh -G -F "$ssh_config" "$ssh_target" 2>/dev/null | sed -n 's/^controlpath //p')
-  case "$configured_control_path" in
-    /*) control_path=$configured_control_path ;;
-  esac
-fi
-
-check_selected_control() {
-  checked_control_path=$1
-  [ -e "$checked_control_path" ] || return 1
-  if [ -n "$ssh_config" ]; then
-    ssh -F "$ssh_config" -S "$checked_control_path" -O check "$ssh_target" >/dev/null 2>&1
-  else
-    ssh -S "$checked_control_path" -O check "$ssh_target" >/dev/null 2>&1
-  fi
-}
-
-open_selected_control() {
-  check_selected_control "$control_path" && return 0
-  control_lock="$control_path.lock"
-  while ! mkdir "$control_lock" 2>/dev/null; do
-    # Only master creation is exclusive: a second -MNf creator can otherwise
-    # become an unowned standalone connection when the socket is already bound.
-    # Join the live creator without opening another connection. This waits on
-    # local creation custody; it does not retry SSH or add a transport deadline.
-    check_selected_control "$control_path" && return 0
-    control_lock_pid=$(sed -n '1p' "$control_lock/pid" 2>/dev/null || true)
-    case "$control_lock_pid" in
-      ''|*[!0-9]*) ;;
-      *)
-        if ! kill -0 "$control_lock_pid" 2>/dev/null; then
-          rm -f -- "$control_lock/pid" 2>/dev/null || true
-          rmdir -- "$control_lock" 2>/dev/null || true
-        fi
-        ;;
-    esac
-    sleep 0.05
-  done
-  printf '%s\n' "$$" > "$control_lock/pid" 2>/dev/null || true
-  if check_selected_control "$control_path"; then
-    control_status=0
-  else
-    rm -f -- "$control_path" 2>/dev/null || true
-    if [ -n "$ssh_config" ]; then
-      ssh -MNf -F "$ssh_config" -S "$control_path" \
-        -o ControlMaster=yes -o ControlPersist=600 -o BatchMode=yes -o ConnectTimeout=5 \
-        "$ssh_target" >/dev/null
-    else
-      ssh -MNf -S "$control_path" \
-        -o ControlMaster=yes -o ControlPersist=600 -o BatchMode=yes -o ConnectTimeout=5 \
-        "$ssh_target" >/dev/null
-    fi
-    control_status=$?
-  fi
-  rm -f -- "$control_lock/pid" 2>/dev/null || true
-  rmdir -- "$control_lock" 2>/dev/null || true
-  return "$control_status"
-}
-
-close_selected_control() {
-  # Masters are shared across independent launcher processes and expire after
-  # ten idle minutes. Per-command teardown recreated the transport storm that
-  # multiplexing is intended to prevent.
-  :
-}
-
 retry_other_target_before_dispatch() {
   [ -z "$explicit_target_number" ] || return 1
   retry_count=${HSTACK_EXEC_PRE_DISPATCH_RETRY_COUNT-0}
@@ -2193,7 +2100,6 @@ retry_other_target_before_dispatch() {
 handle_selected_command_connection_failure() {
   release_reservation
   if [ -n "${custody_pipe-}" ]; then release_custody_pipe; fi
-  [ -n "$control_path" ] && rm -f -- "$control_path" 2>/dev/null || true
   record_selected_unavailable dispatch-ssh ssh
   if [ -n "$explicit_target_number" ]; then
     printf '%s\n' "[preferred-execution] requested target $selected_name did not accept the command connection" >&2
@@ -2222,7 +2128,6 @@ flush_pid=$!
 cancel_selected_flush() {
   kill -TERM "$flush_pid" 2>/dev/null || true
   wait "$flush_pid" 2>/dev/null || true
-  close_selected_control
   release_reservation
   exit 130
 }
@@ -2232,7 +2137,6 @@ flush_status=$?
 trap - HUP INT TERM
 if [ "$flush_status" -ne 0 ]; then
   printf '[preferred-execution] selected target sync flush failed: %s\n' "$selected_name" >&2
-  close_selected_control
   release_reservation
   record_selected_unavailable dispatch-sync sync
   HSTACK_EXEC_PRE_DISPATCH_SYNC_FAILED=1
@@ -2244,18 +2148,10 @@ if [ "$flush_status" -ne 0 ]; then
 fi
 
 authoritative_ssh_error_log=$(create_cache_temporary "$cache_dir/authoritative-ssh" 2>/dev/null || true)
-use_control_connection=1
-if ! open_selected_control; then
-  # A broken master is not target unreachability. The existing
-  # direct transport can still establish the authoritative command channel.
-  if run_remote_ssh_probe ':' >/dev/null 2>&1; then
-    use_control_connection=0
-  else
-    handle_selected_command_connection_failure "$@"
-  fi
-fi
 
 run_selected_ssh() {
+  # Payloads own an independent connection: a shared master dying must not
+  # terminate unrelated admitted work. Match buildSshWorkerArgs.
   # Proxy-hop failures reach stderr directly. VERBOSE also retains the parent
   # SSH's pre-session kex closure in -E, so recovery needs no payload stderr.
   # This descriptor belongs only to the controller. If inherited by SSH, it
@@ -2264,22 +2160,14 @@ run_selected_ssh() {
   [ "$explicit_tty" != 1 ] || exec 4<&-
   ssh_tty=-T
   [ "$explicit_tty" = 1 ] && ssh_tty=-tt
-  if [ "$use_control_connection" -eq 0 ] && [ -n "$authoritative_ssh_error_log" ] && [ -n "$ssh_config" ]; then
-    exec ssh -E "$authoritative_ssh_error_log" -o LogLevel=VERBOSE "$ssh_tty" -F "$ssh_config" -o ControlMaster=no -o ControlPath=none -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 "$ssh_target" "$remote_command"
-  elif [ "$use_control_connection" -eq 0 ] && [ -n "$authoritative_ssh_error_log" ]; then
-    exec ssh -E "$authoritative_ssh_error_log" -o LogLevel=VERBOSE "$ssh_tty" -o ControlMaster=no -o ControlPath=none -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 "$ssh_target" "$remote_command"
-  elif [ "$use_control_connection" -eq 0 ] && [ -n "$ssh_config" ]; then
-    exec ssh "$ssh_tty" -F "$ssh_config" -o ControlMaster=no -o ControlPath=none -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 "$ssh_target" "$remote_command"
-  elif [ "$use_control_connection" -eq 0 ]; then
-    exec ssh "$ssh_tty" -o ControlMaster=no -o ControlPath=none -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 "$ssh_target" "$remote_command"
-  elif [ -n "$authoritative_ssh_error_log" ] && [ -n "$ssh_config" ]; then
-    exec ssh -E "$authoritative_ssh_error_log" -o LogLevel=VERBOSE "$ssh_tty" -F "$ssh_config" -S "$control_path" -o ControlMaster=no -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 "$ssh_target" "$remote_command"
+  if [ -n "$authoritative_ssh_error_log" ] && [ -n "$ssh_config" ]; then
+    exec ssh -E "$authoritative_ssh_error_log" -o LogLevel=VERBOSE "$ssh_tty" -F "$ssh_config" -o ControlMaster=no -o ControlPath=none -o "ServerAliveInterval=$payload_ssh_server_alive_interval" -o BatchMode=yes "$ssh_target" "$remote_command"
   elif [ -n "$authoritative_ssh_error_log" ]; then
-    exec ssh -E "$authoritative_ssh_error_log" -o LogLevel=VERBOSE "$ssh_tty" -S "$control_path" -o ControlMaster=no -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 "$ssh_target" "$remote_command"
+    exec ssh -E "$authoritative_ssh_error_log" -o LogLevel=VERBOSE "$ssh_tty" -o ControlMaster=no -o ControlPath=none -o "ServerAliveInterval=$payload_ssh_server_alive_interval" -o BatchMode=yes "$ssh_target" "$remote_command"
   elif [ -n "$ssh_config" ]; then
-    exec ssh "$ssh_tty" -F "$ssh_config" -S "$control_path" -o ControlMaster=no -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 "$ssh_target" "$remote_command"
+    exec ssh "$ssh_tty" -F "$ssh_config" -o ControlMaster=no -o ControlPath=none -o "ServerAliveInterval=$payload_ssh_server_alive_interval" -o BatchMode=yes "$ssh_target" "$remote_command"
   else
-    exec ssh "$ssh_tty" -S "$control_path" -o ControlMaster=no -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 "$ssh_target" "$remote_command"
+    exec ssh "$ssh_tty" -o ControlMaster=no -o ControlPath=none -o "ServerAliveInterval=$payload_ssh_server_alive_interval" -o BatchMode=yes "$ssh_target" "$remote_command"
   fi
 }
 
@@ -2369,7 +2257,6 @@ cancel_remote() {
   cancel_remote_execution
   kill -TERM "$ssh_pid" 2>/dev/null || true
   [ -n "$authoritative_ssh_error_log" ] && rm -f -- "$authoritative_ssh_error_log" 2>/dev/null || true
-  close_selected_control
   release_reservation
   release_custody_pipe
 }
@@ -2387,26 +2274,10 @@ fi
 wait "$ssh_pid"
 status=$?
 trap - HUP INT TERM
-authoritative_session_refused=0
-[ -n "$authoritative_ssh_error_log" ] && grep -q 'mux_client_request_session: session request failed:' "$authoritative_ssh_error_log" 2>/dev/null && authoritative_session_refused=1
-if [ "$status" -eq 255 ] && [ "$authoritative_session_refused" -eq 1 ]; then
-  printf '[preferred-execution] %s multiplexed session was refused; retrying the command on a dedicated SSH connection\n' "$selected_name" >&2
-  [ -n "$authoritative_ssh_error_log" ] && rm -f -- "$authoritative_ssh_error_log" 2>/dev/null || true
-  authoritative_ssh_error_log=$(create_cache_temporary "$cache_dir/authoritative-ssh" 2>/dev/null || true)
-  use_control_connection=0
-  run_selected_ssh_with_custody &
-  ssh_pid=$!
-  trap 'cancel_remote; exit 130' INT TERM
-  trap 'cancel_remote; exit 129' HUP
-  wait "$ssh_pid"
-  status=$?
-  trap - HUP INT TERM
-fi
 if [ "$status" -eq 255 ] && ssh_refused_before_session "$authoritative_ssh_error_log"; then
   cat "$authoritative_ssh_error_log" >&2
   rm -f -- "$authoritative_ssh_error_log" 2>/dev/null || true
   authoritative_ssh_error_log=
-  close_selected_control
   handle_selected_command_connection_failure "$@"
 fi
 if [ "$status" -eq 255 ]; then
@@ -2430,7 +2301,6 @@ if [ "$status" -eq 75 ] && [ -n "$admission_error_log" ]; then
   admission_result=$(grep -Fx -e "HSTACK_ADMISSION_BUSY:$admission_failure_id" -e "HSTACK_ADMISSION_UNAVAILABLE:$admission_failure_id" -e "HSTACK_ADMISSION_DISK:$admission_failure_id" "$admission_error_log" | head -n 1)
 fi
 if [ "$admission_result" = "HSTACK_ADMISSION_DISK:$admission_failure_id" ]; then
-  close_selected_control
   release_reservation
   release_custody_pipe
   [ -z "$authoritative_ssh_error_log" ] || rm -f -- "$authoritative_ssh_error_log"
@@ -2442,7 +2312,6 @@ if [ "$admission_result" = "HSTACK_ADMISSION_DISK:$admission_failure_id" ]; then
   exit 1
 fi
 if [ "$admission_result" = "HSTACK_ADMISSION_BUSY:$admission_failure_id" ] && [ -z "$explicit_target_number" ]; then
-  close_selected_control
   release_reservation
   release_custody_pipe
   [ -z "$authoritative_ssh_error_log" ] || rm -f -- "$authoritative_ssh_error_log"
@@ -2451,7 +2320,6 @@ if [ "$admission_result" = "HSTACK_ADMISSION_BUSY:$admission_failure_id" ] && [ 
   retry_other_target_before_dispatch "$@"
 fi
 if [ "$admission_result" = "HSTACK_ADMISSION_UNAVAILABLE:$admission_failure_id" ]; then
-  close_selected_control
   release_reservation
   release_custody_pipe
   [ -z "$authoritative_ssh_error_log" ] || rm -f -- "$authoritative_ssh_error_log"
@@ -2464,7 +2332,6 @@ if [ "$admission_result" = "HSTACK_ADMISSION_UNAVAILABLE:$admission_failure_id" 
   exit 1
 fi
 [ -n "$authoritative_ssh_error_log" ] && rm -f -- "$authoritative_ssh_error_log" 2>/dev/null || true
-close_selected_control
 release_reservation
 [ "$status" = 255 ] || release_orphan_reservations
 completed_at_seconds=$(date +%s)
