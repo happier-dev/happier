@@ -51,6 +51,12 @@ describe('daemon control HTTP in the compiled runtime', () => {
       const { stdout } = await promisify(execFile)(process.execPath, ['--input-type=module', '-e', `
         try {
         const { readDaemonControlHttpResponse: read } = await import(process.argv[1]);
+        // Model the guest's native fetch/package-dispatcher ABI mismatch at the
+        // platform boundary. The control transport must use its dispatcher's fetch.
+        const nativeFetch = globalThis.fetch;
+        globalThis.fetch = async () => {
+          throw new TypeError('fetch failed', { cause: Object.assign(new Error('invalid onError method'), { code: 'UND_ERR_INVALID_ARG' }) });
+        };
         const input = { httpPort: Number(process.argv[2]), body: { hello: 'bundle' }, headers: {} };
         const accepted = await read({ ...input, path: '/ping' });
         const refused = await read({ ...input, path: '/refused' });
@@ -59,6 +65,7 @@ describe('daemon control HTTP in the compiled runtime', () => {
         let cancelled;
         try { await read({ ...input, path: '/cancelled', signal: cancellation.signal }); }
         catch (error) { cancelled = error.name; }
+        globalThis.fetch = nativeFetch;
         console.log(JSON.stringify({ accepted, refused, cancelled }));
         } catch (error) {
           console.error(error);

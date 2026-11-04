@@ -28,17 +28,17 @@ export async function readDaemonControlHttpResponse(params: Readonly<{
   signal?: AbortSignal;
 }>): Promise<Readonly<{ ok: boolean; status: number; body: string }>> {
   params.signal?.throwIfAborted();
-  const { Agent } = await loadUndici();
+  const { Agent, fetch: fetchWithDispatcher } = await loadUndici();
   params.signal?.throwIfAborted();
   const dispatcher = new Agent({ connect: { timeout: 0 }, headersTimeout: 0, bodyTimeout: 0 });
   try {
     const options = {
       method: 'POST', headers: params.headers, body: JSON.stringify(params.body),
     };
-    // Node fetch consumes the package-owned dispatcher and the actual caller
-    // signal even when ambient Node/DOM declarations come from different graphs.
+    // Keep fetch and its dispatcher on the same Undici ABI. The guest's native
+    // fetch may use a newer handler contract than the bundled package.
     Object.assign(options, { dispatcher, ...(params.signal ? { signal: params.signal } : {}) });
-    const response = await fetch(`http://127.0.0.1:${params.httpPort}${params.path}`, options);
+    const response = await fetchWithDispatcher(`http://127.0.0.1:${params.httpPort}${params.path}`, options);
     return { ok: response.ok, status: response.status, body: await response.text() };
   } finally {
     await dispatcher.close();
