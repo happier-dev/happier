@@ -13,7 +13,6 @@ import {
   resolveMetroWaitIntervalMsFromEnv,
 } from '../expo/expo.mjs';
 import { selectExpoDevMetroPort } from '../expo/metro_ports.mjs';
-import { EXPO_DEPENDENCY_BARRIER_VERSION } from '../proc/dependency_consumers.mjs';
 import { ensureEnvFileUpdated } from '../env/env_file.mjs';
 import {
   getStackRuntimeProcessInstanceFingerprint,
@@ -666,10 +665,6 @@ export async function ensureDevExpoServer({
         stackName,
         envPath,
         cliHomeDir,
-        // Only this guarded, supervising lifecycle can stop for an install
-        // and restart after the shared admission lock becomes available.
-        dependencyInstallBarrierVersion: restartPolicy.enabled && restartPolicy.maxAttempts > 0
-          ? EXPO_DEPENDENCY_BARRIER_VERSION : null,
       });
     };
 

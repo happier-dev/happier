@@ -17,7 +17,6 @@ import { withJsonOwnerFileLock } from '../proc/jsonOwnerFileLock.mjs';
 import { killProcessTree, run } from '../proc/proc.mjs';
 import { getExpoStatePaths, writePidState } from './expo.mjs';
 import { expoExec, expoSpawn } from './command.mjs';
-import { EXPO_DEPENDENCY_BARRIER_VERSION } from '../proc/dependency_consumers.mjs';
 
 for (const invocation of ['spawn', 'exec']) test(`development Metro automatically refreshes stale installed dependencies (${invocation})`, async t => {
   const fixture = await fixtureFor(t);
@@ -288,7 +287,6 @@ test(`dependency mutation cannot borrow another stack identity to stop its servi
     const paths = getExpoStatePaths({ baseDir, kind: 'expo-dev', projectDir: fixture.uiDir });
     await writePidState(paths.statePath, {
       pid: child.pid, projectDir: fixture.uiDir, uiDir: fixture.uiDir, stackName, envPath,
-      dependencyInstallBarrierVersion: EXPO_DEPENDENCY_BARRIER_VERSION,
     });
     consumers.push(child);
   }

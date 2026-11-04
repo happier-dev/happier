@@ -9,9 +9,6 @@ import { resolveRemoteStackStorageDir } from '../dev_targets/stack_paths.mjs';
 import { readEnvValueFromFile } from '../env/read.mjs';
 import { hasLiveStackRuntimeProcesses } from '../stack/runtime_processes.mjs';
 
-// Retained as passive metadata for the existing Expo lifecycle publisher.
-export const EXPO_DEPENDENCY_BARRIER_VERSION = 1;
-
 async function directories(path) {
   try {
     return (await readdir(path, { withFileTypes: true }))
