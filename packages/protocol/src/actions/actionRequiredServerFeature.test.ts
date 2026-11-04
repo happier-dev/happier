@@ -3,9 +3,28 @@ import { Session } from 'node:inspector/promises';
 import { performance } from 'node:perf_hooks';
 import { z } from 'zod/mini';
 
-import { getActionRequiredServerFeatureId } from './actionRequiredServerFeature.js';
+import { getActionNewWorkFeatureId, getActionRequiredServerFeatureId } from './actionRequiredServerFeature.js';
 
 describe('getActionRequiredServerFeatureId', () => {
+  it('gates new optional work while retaining existing-resource access and cleanup', () => {
+    expect(getActionNewWorkFeatureId('browser.view.open')).toBe('browser');
+    expect(getActionNewWorkFeatureId('devices.simulator.lease.acquire')).toBe('devices');
+    expect(getActionNewWorkFeatureId('discussion.create')).toBe('sessions.conversations');
+    expect(getActionNewWorkFeatureId('discussion.second_opinion.start')).toBe('sessions.conversations');
+    for (const [actionId, featureId] of [
+      ['workflow.run.start', 'workflows'], ['workflow.definition.create', 'workflows'],
+      ['review.start', 'execution.runs'], ['execution.run.start', 'execution.runs'],
+      ['voice_agent.start', 'voice.agent'], ['session.terminals.open', 'terminal.embeddedPty'],
+      ['memory.search', 'memory.search'], ['sessions.external.link.ensure', 'sessions.direct'],
+      ['scm.commit.create', 'scm.writeOperations'],
+    ] as const) expect(getActionNewWorkFeatureId(actionId)).toBe(featureId);
+    for (const actionId of ['discussion.get', 'discussion.read', 'discussion.reply', 'discussion.leave',
+      'browser.view.close', 'devices.simulator.lease.release', 'follow.list', 'follow.remove', 'teams.get', 'teams.members.leave',
+      'workflow.run.get', 'workflow.run.cancel', 'workflow.definition.get', 'execution.run.get', 'execution.run.stop',
+      'session.terminals.close', 'sessions.external.unfollow', 'scm.status.snapshot', 'scm.branch.operation.abort', 'scm.worktree.remove']) {
+      expect(getActionNewWorkFeatureId(actionId), actionId).toBeNull();
+    }
+  });
   it('keeps device-local SSH trust and exact tunnel cleanup available without the Home management service', () => {
     for (const actionId of ['remote_hosts.trusted_keys.list', 'remote_hosts.trusted_keys.remove', 'remote_hosts.trusted_keys.clear', 'remote_hosts.tunnel.stop']) {
       expect(getActionRequiredServerFeatureId(actionId)).toBeNull();
