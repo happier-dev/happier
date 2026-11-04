@@ -5,6 +5,19 @@ import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '
 import { PluginProjectionV2Schema, type PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { MachineAgentInventoryItemSchema, type CapabilitiesDetectResponse } from '@happier-dev/protocol/capabilities';
 import { MachineReadBatchRequestV1Schema, MachineReadBatchResponseV1Schema } from '@happier-dev/protocol/machines/machineReadBatchV1';
+import type { BugReportMachineDiagnosticsSnapshot } from '@happier-dev/protocol/diagnostics/bugReportMachineDiagnostics';
+
+/** Complete daemon RPC wire response; doctor-only tests replace the snapshot they exercise. */
+export function createMachineDiagnosticsFixture(overrides: Partial<BugReportMachineDiagnosticsSnapshot> = {}): BugReportMachineDiagnosticsSnapshot {
+    return {
+        daemonState: null,
+        daemonLogs: [],
+        doctorSnapshot: null,
+        runtime: { cwd: '/project', platform: 'linux', nodeVersion: 'v22' },
+        stackContext: null,
+        ...overrides,
+    };
+}
 
 /** Current HTTP batch wire, backed by the same explicit external rows as exact reads. */
 export function createMachineReadBatchResponseFixture(body: unknown, readMachine: (machineId: string) => unknown | null): Response {

@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { createMachineDiagnosticsFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -88,7 +89,7 @@ beforeEach(async () => {
     getStorage().getState().applyMachines(machines, true, { sourceServerId: serverId });
     getStorage().setState({ profile: { ...getStorage().getState().profile, id: 'account-1' } });
     machineRpc.mockReset();
-    machineRpc.mockImplementation(async ({ machineId }: { machineId: string }) => ({ doctorSnapshot: snapshotFor(machineId) }));
+    machineRpc.mockImplementation(async ({ machineId }: { machineId: string }) => createMachineDiagnosticsFixture({ doctorSnapshot: snapshotFor(machineId) }));
 });
 afterEach(async () => { await standardCleanup(); await home.reset(); });
 
@@ -122,7 +123,7 @@ describe('DiagnosisView', () => {
     it('labels the diagnostics JSON input and announces the bounded running state', async () => {
         let release!: () => void;
         machineRpc.mockImplementationOnce(({ machineId }: { machineId: string }) => new Promise(resolve => {
-            release = () => resolve({ doctorSnapshot: snapshotFor(machineId) });
+            release = () => resolve(createMachineDiagnosticsFixture({ doctorSnapshot: snapshotFor(machineId) }));
         }));
 
         const screen = await renderScreen(<DiagnosisView />);
@@ -177,6 +178,7 @@ describe('DiagnosisView', () => {
     it('announces terminal findings instead of claiming success', async () => {
         machineRpc.mockImplementation(async ({ machineId }: { machineId: string }) => {
             return {
+                ...createMachineDiagnosticsFixture(),
                 doctorSnapshot: snapshotFor(
                     machineId,
                     machineId === 'machine-3' ? 'https://other-home.example' : 'https://home.example',
@@ -198,7 +200,7 @@ describe('DiagnosisView', () => {
             if (machineId === 'machine-2') {
                 return null;
             }
-            return { doctorSnapshot: snapshotFor(machineId) };
+            return createMachineDiagnosticsFixture({ doctorSnapshot: snapshotFor(machineId) });
         });
 
         const screen = await renderScreen(<DiagnosisView />);
@@ -258,7 +260,7 @@ describe('DiagnosisView', () => {
         const releases: Array<() => void> = [];
         machineRpc.mockImplementation(({ machineId }: { machineId: string }) => {
             started.push(machineId);
-            return new Promise(resolve => { releases.push(() => resolve({ doctorSnapshot: snapshotFor(machineId) })); });
+            return new Promise(resolve => { releases.push(() => resolve(createMachineDiagnosticsFixture({ doctorSnapshot: snapshotFor(machineId) }))); });
         });
         const screen = await renderScreen(<DiagnosisView />);
         await act(async () => {

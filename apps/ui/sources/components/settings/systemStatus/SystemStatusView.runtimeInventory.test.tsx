@@ -11,7 +11,7 @@ import {
     renderHook,
     standardCleanup,
 } from '@/dev/testkit';
-import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createMachineDiagnosticsFixture, createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import {
     clearCachedMachineDoctorSnapshot,
     writeCachedMachineDoctorSnapshot,
@@ -191,6 +191,7 @@ describe('SystemStatusView runtime inventory', () => {
         clearCachedMachineDoctorSnapshot({ serverId: 'srv_1', machineId: 'machine-1' });
         clearCachedMachineDoctorSnapshot({ serverId: 'srv_2', machineId: 'machine-1' });
         machineCollectBugReportDiagnosticsMock.mockResolvedValue({
+            ...createMachineDiagnosticsFixture(),
             doctorSnapshot: {
                 capturedAt: '2026-04-07T10:11:12.000Z',
                 server: {
@@ -501,6 +502,7 @@ describe('SystemStatusView runtime inventory', () => {
         await home.addHome({ name: 'Local Home', serverUrl: 'http://localhost:34567',
             serverIdentityId: 'srv_1', accountId: 'acct_1', currentAccount: true });
         machineCollectBugReportDiagnosticsMock.mockResolvedValueOnce({
+            ...createMachineDiagnosticsFixture(),
             doctorSnapshot: {
                 capturedAt: '2026-04-07T10:11:12.000Z',
                 server: {

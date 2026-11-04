@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { createMachineDiagnosticsFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { installBrowserClipboardBoundary } from '@/dev/testkit/harness/browserClipboardBoundary';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
@@ -28,7 +30,10 @@ const { SystemStatusView } = await import('../systemStatus/SystemStatusView');
 
 // The package cleanup retires runtimeFetch after each case; each new fixture
 // reclaims its own HTTP boundary before adding the next Home.
-beforeEach(async () => { await home.reset(); });
+beforeEach(async () => {
+    await home.reset();
+    installBrowserClipboardBoundary(async text => { await clipboard.write(text); });
+});
 
 afterEach(async () => {
     (await import('@/sync/domains/machines/reachability/machineReachability')).clearMachineRequestReachabilityForTest();
@@ -50,7 +55,7 @@ it.each(['diagnostics.daemons.check', 'diagnostics.diagnosis.run'] as const)('ex
         createMachineFixture({ id: 'replaced-daemon', activeAt: Date.now(), replacedByMachineId: 'recovering-daemon' }),
     ], true, { sourceServerId: serverId });
     recordMachineRequestFailed({ serverId, accountId: 'alice', machineId: 'recovering-daemon', observedAtMs: Date.now() });
-    rpc.machine.mockImplementation(async () => ({ doctorSnapshot: {
+    rpc.machine.mockImplementation(async () => ({ ...createMachineDiagnosticsFixture(), doctorSnapshot: {
         capturedAt: new Date().toISOString(), machineId: 'recovering-daemon', accountId: 'alice',
         server: { activeServerId: serverId, serverUrl: 'https://daemon-check-recovery.test', publicServerUrl: 'https://daemon-check-recovery.test', webappUrl: 'https://app.test' },
         settings: { activeServerId: serverId, servers: [], knownAccountIds: ['alice'] },
@@ -104,6 +109,7 @@ it('checks the incumbent System status sample through the doctor owner without e
     getStorage().getState().applyMachines(Array.from({ length: 4 }, (_, index) =>
         createMachineFixture({ id: `diagnostic-machine-${index}`, activeAt: Date.now() })), true, { sourceServerId: serverId });
     rpc.machine.mockImplementation(async ({ machineId }: { machineId: string }) => ({
+        ...createMachineDiagnosticsFixture(),
         doctorSnapshot: { capturedAt: new Date().toISOString(), machineId, accountId: 'alice',
             server: { activeServerId: serverId, serverUrl: 'https://daemon-check-action.test',
                 publicServerUrl: 'https://daemon-check-action.test', webappUrl: 'https://app.test' },
