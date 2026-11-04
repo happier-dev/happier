@@ -223,6 +223,19 @@ export async function readProjectSetupNamespaceRefusal(input: Pick<ProjectSetupP
 /** Current-byte review with registered read-only SCM metadata; no environment evaluation, native effects, installation or grant. */
 export async function reviewProjectSetupEffect(input: ProjectSetupPreparationInput,
     presentation?: Pick<ProjectSetupReviewPresentation, 'provenance'>): Promise<ProjectSetupPreparationRefusal | Readonly<{ kind: 'reviewed'; plan: PreparedProjectSetupPlan }>> {
+    return reviewProjectEffect(input, presentation, true);
+}
+
+/** A terminal admits its native environment, without setup commands, inputs or consent. */
+export async function reviewProjectExecutionEnvironment(input: Omit<ProjectSetupPreparationInput, 'purpose'>): Promise<ProjectSetupPreparationRefusal | Readonly<{ kind: 'reviewed'; plan: PreparedProjectSetupPlan }>> {
+    return reviewProjectEffect({ ...input, purpose: 'setup' }, {
+        provenance: { kind: 'unavailable', file: '.happier/project.json', fileState: 'unknown' },
+    }, false);
+}
+
+async function reviewProjectEffect(input: ProjectSetupPreparationInput,
+    presentation: Pick<ProjectSetupReviewPresentation, 'provenance'> | undefined,
+    includeSetupEffects: boolean): Promise<ProjectSetupPreparationRefusal | Readonly<{ kind: 'reviewed'; plan: PreparedProjectSetupPlan }>> {
     if (!associationMatches(input)) return refuse('project_workspace_association_mismatch');
     if (input.signal?.aborted) return refuse('project_setup_cancelled');
     const root = resolve(input.workspace.rootPath);
@@ -322,7 +335,7 @@ export async function reviewProjectSetupEffect(input: ProjectSetupPreparationInp
             bindings, configEnvironment });
         const commands: PreparedProjectSetupCommand[] = [];
         const reviewedCommands: unknown[] = [];
-        for (const source of manifest?.workspace?.[input.purpose] ?? []) {
+        for (const source of includeSetupEffects ? manifest?.workspace?.[input.purpose] ?? [] : []) {
             if (input.signal?.aborted) return refuse('project_setup_cancelled');
             if (source.kind === 'command') {
                 if (source.platforms && !source.platforms.some(platform => platform === input.platform.os)) continue;
@@ -374,7 +387,7 @@ export async function reviewProjectSetupEffect(input: ProjectSetupPreparationInp
             } else return refuse('native_adapter_result_invalid');
         }
         const setupInputs: Array<Readonly<{ file: string; digest: string }>> = [];
-        for (const file of manifest?.workspace?.setupInputs ?? []) {
+        for (const file of includeSetupEffects ? manifest?.workspace?.setupInputs ?? [] : []) {
             const result = await addFile(file);
             if (result) return result;
             const normalized = relative(root, resolve(root, file.replaceAll('\\', '/'))).replaceAll('\\', '/');

@@ -409,7 +409,7 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
   };
   const observeShellReleaseFailure = () => logger.debug('[terminal] Project shell native resources remain unsettled');
 
-  /** Fresh Project shells consume B9 preparation and B4's final tuple, not a new setup runner. */
+  /** Terminal admission covers the shell and native environment; setup is a separate Action. */
   const prepareProjectShell = async (custody: Extract<TerminalPtyCustody, { kind?: undefined }>,
     launchProcess: TerminalLaunchProcess | undefined, context: RpcHandlerContext | undefined) => {
     const refused = (code: string, details?: unknown) => ({ ...err('terminal_invalid_request'), error: code,
@@ -421,7 +421,7 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
       if (!runtime || runtime.accountId !== custody.requesterAccountId || runtime.machineId !== custody.machineId
         || runtime.serverId !== custody.serverId) return refused('project_requester_credentials_unavailable');
       if (runtime.terminalSessions !== getSessionManager()) return refused('project_terminal_owner_mismatch');
-      const [{ resolveProjectSetupAcceptedWorkspace }, { prepareProjectSetup },
+      const [{ resolveProjectSetupAcceptedWorkspace }, { reviewProjectExecutionEnvironment },
         { createProjectNativeInvocationCustody, createProjectNativeLaunchAdmission }, { authorizeResolvedProjectExecLaunchForHost }] = await Promise.all([
         import('@/workspaces/projectSetup/projectSetupAcceptedWorkspace'), import('@/workspaces/projectSetup/projectSetupPreparation'),
         import('@/workspaces/projectSetup/projectSetupExecution'), import('@/plugins/runtime/invocation/services/exec'),
@@ -459,37 +459,12 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
       };
       const inspect = async () => {
         await assertCurrent();
-        const current = await resolveProjectSetupAcceptedWorkspace({ ...accountAccess,
-          serverId: runtime.serverId, serverHttpBaseUrl: runtime.serverHttpBaseUrl, signal: context.signal,
-          address: workspaceAddressFromRefV1(association.workspace) });
-        if (current.workspace.projectKey !== custody.projectKey) throw Object.assign(new Error('project_workspace_changed'), { code: 'project_workspace_changed' });
-        const outcome = await prepareProjectSetup(preparation);
+        const outcome = await reviewProjectExecutionEnvironment(preparation);
         await assertCurrent();
         if (outcome.kind === 'refused') throw Object.assign(new Error(outcome.code), { code: outcome.code });
-        if (outcome.kind === 'pendingApproval') throw Object.assign(new Error(outcome.code), { code: outcome.code,
-          details: { kind: outcome.kind, code: outcome.code, reviewedEffect: outcome.plan.reviewedEffect, reviewedEffectDigest: outcome.plan.reviewedEffectDigest } });
         return outcome;
       };
-      let prepared = await inspect();
-      if (prepared.kind === 'prepared' && !prepared.previousSuccess) {
-        const result = await dispatchProjectAction(runtime, context, 'projects.prepare', {
-          workspace: workspaceAddressFromRefV1(association.workspace), phase: 'setup', expectedEffectDigest: prepared.plan.reviewedEffectDigest,
-        });
-        if (!result.ok) throw Object.assign(new Error(result.errorCode), { code: result.errorCode, details: result.details });
-        const output = ProjectCommandActionOutputV1Schema.safeParse(result.result);
-        if (!output.success) throw Object.assign(new Error('project_setup_pending'), { code: 'project_setup_pending' });
-        const operation = await runtime.operationRuntime.runner.waitForTerminal(
-          { accountId: runtime.accountId, machineId: runtime.machineId }, output.data.operation.operationId, context.signal);
-        if (!operation || operation.state !== 'succeeded' || operation.observation?.kind === 'outcome_uncertain') {
-          const code = operation?.error?.errorCode ?? operation?.observation?.code ?? (operation?.state === 'cancelled' ? 'cancelled' : 'project_setup_pending');
-          throw Object.assign(new Error(code), { code });
-        }
-        const current = await inspect();
-        if (current.plan.reviewedEffectDigest !== prepared.plan.reviewedEffectDigest
-          || current.kind === 'prepared' && !current.previousSuccess) throw Object.assign(new Error('project_setup_effect_changed'), { code: 'project_setup_effect_changed' });
-        prepared = current;
-      }
-      const plan = prepared.plan;
+      const { plan } = await inspect();
       const base = launchProcess ?? resolveTerminalShell(runtime.hostEnvironment ?? env, platform);
       const hostEnvironment: NodeJS.ProcessEnv = { ...(runtime.hostEnvironment ?? env), ...launchProcess?.env, ...plan.configEnvironment };
       const launchEnv: Record<string, string> = {};
@@ -505,8 +480,9 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
       });
       const validate = async () => {
         const current = await inspect();
-        if (current.plan.reviewedEffectDigest !== plan.reviewedEffectDigest
-          || current.kind === 'prepared' && !current.previousSuccess) throw Object.assign(new Error('project_setup_effect_changed'), { code: 'project_setup_effect_changed' });
+        if (current.plan.executionEnvironmentEffectDigest !== plan.executionEnvironmentEffectDigest) {
+          throw Object.assign(new Error('project_setup_effect_changed'), { code: 'project_setup_effect_changed' });
+        }
       };
       await validate();
       return { ok: true as const, authorizedProjectLaunch: authorized,

@@ -4457,7 +4457,11 @@ ingress, shared requester authorization and the composed app journey must
 consume and verify it before their integration is considered complete.
 
 Standalone Project shells use an exact accepted `WorkspaceAddressV1`, not a fake
-Session. The Machine RPC owner resolves the requester's current Account Project
+Session. Opening or restarting an own-Project Shell uses the existing terminal
+approval and prepares its native execution environment without running setup
+commands or requiring setup consent. Explicit setup and finite commands retain
+their setup-consent flow. The Machine RPC owner resolves the requester's current
+Account Project
 rows and privately stamps Home, requester, Machine installation and accepted
 checkout onto the actual PTY. Logical keys are scoped by that custody; list,
 read, input, resize, ACK, restart and close recheck it before disclosure or effect.

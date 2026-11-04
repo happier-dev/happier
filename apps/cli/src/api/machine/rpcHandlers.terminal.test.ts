@@ -439,15 +439,32 @@ describe('registerMachineTerminalRpcHandlers', () => {
       await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_STREAM_READ)!({ terminalId: terminal.terminalId, cursor: 0 }, { ...h.ingress, verifyMachineAdmissionCurrent: async () => false })).resolves.toMatchObject({ ok: false, errorCode: 'terminal_forbidden' });
     } finally { registration.dispose(); await h.dispose(); }
   });
-  it.each([RPC_METHODS.DAEMON_TERMINAL_ENSURE, RPC_METHODS.DAEMON_TERMINAL_RESTART])('prepares fresh Project shells before %s and refuses without a host fallback', async method => {
-    const h = await finiteHarness({ setup: true });
+  it.each([RPC_METHODS.DAEMON_TERMINAL_ENSURE, RPC_METHODS.DAEMON_TERMINAL_RESTART])('opens an admitted own-Project Shell without setup consent through %s and retains native refusals', async method => {
+    const h = await finiteHarness({ setup: true, observeInteractiveStop: true });
     const handlers = new Map<string, RpcHandler>();
     const registration = registerMachineTerminalRpcHandlers({ rpcHandlerManager: { registerHandler(id, handler) { handlers.set(id, handler); } },
       deps: { env: {}, sessionManager: h.sessionManager, accountReadRuntime: async () => h.runtime, projectFiniteRuntime: async () => h.runtime } });
-    const input = { terminalKey: 'shell', workspace: { serverId: 'home', workspaceId: 'accepted', machineId: 'machine', rootPath: h.root } };
+    const input = { terminalKey: 'shell', cwd: h.root, cols: 80, rows: 24,
+      workspace: { serverId: 'home', workspaceId: 'accepted', machineId: 'machine', rootPath: h.root } };
     try {
-      await expect(handlers.get(method)!(input, h.ingress)).resolves.toMatchObject({ ok: false, error: 'project_setup_consent_required',
-        details: { kind: 'pendingApproval', reviewedEffectDigest: expect.any(String) } });
+      // The terminal Action has already admitted this owner. Shell is not setup
+      // (owner ruling 2026-11-04): neither a second consent nor setup effects.
+      const opened = await handlers.get(method)!(input, h.ingress);
+      expect(opened).toMatchObject({ ok: true, reused: false });
+      expect(h.provider.spawned).toHaveLength(1);
+      expect(h.provider.spawned[0]!.params.args).not.toContain('echo setup');
+      expect(h.operationRuntime.store.list({ accountId: 'owner', machineId: 'machine' }).items).toEqual([]);
+      expect(h.post.mock.calls.filter(([url]) => String(url).includes('/project-trust/'))).toEqual([]);
+      if (!opened || typeof opened !== 'object' || !('terminalId' in opened) || typeof opened.terminalId !== 'string') throw new Error('Missing Shell');
+      await handlers.get(RPC_METHODS.DAEMON_TERMINAL_CLOSE)!({ terminalId: opened.terminalId }, h.ingress);
+      // Setup-only inputs may be absent until setup is deliberately run.
+      await writeFile(join(h.root, '.happier/project.json'), JSON.stringify({ version: 1,
+        workspace: { setup: [{ kind: 'command', command: 'echo setup' }], setupInputs: ['not-created-yet'] } }));
+      const withoutSetupInputs = await handlers.get(method)!(input, h.ingress);
+      expect(withoutSetupInputs).toMatchObject({ ok: true, reused: false });
+      if (!withoutSetupInputs || typeof withoutSetupInputs !== 'object' || !('terminalId' in withoutSetupInputs)
+        || typeof withoutSetupInputs.terminalId !== 'string') throw new Error('Missing Shell without setup inputs');
+      await handlers.get(RPC_METHODS.DAEMON_TERMINAL_CLOSE)!({ terminalId: withoutSetupInputs.terminalId }, h.ingress);
       await writeFile(join(h.root, '.happier/project.json'), JSON.stringify({ version: 1, environment: { kind: 'toolchain', tool: 'mise', configPath: 'mise.toml' } }));
       await writeFile(join(h.root, 'mise.toml'), '[env]\nVALUE = "native"\n');
       const unavailable = { ...h.runtime, nativeIo: { resolveTool: async () => null } };
@@ -461,7 +478,7 @@ describe('registerMachineTerminalRpcHandlers', () => {
         ? { status: 200, data: { machine: { id: 'machine', metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0, storageMode: 'plain' } } }
         : { status: 200, data: { mode: 'plain', updatedAt: 1 } });
       await expect(handlers.get(method)!(input, h.ingress)).resolves.toMatchObject({ ok: false, error: 'child_required' });
-      expect(h.provider.spawned).toHaveLength(0);
+      expect(h.provider.spawned).toHaveLength(2);
       missingRegistration.dispose();
     } finally { registration.dispose(); await h.dispose(); }
   });
@@ -500,13 +517,13 @@ describe('registerMachineTerminalRpcHandlers', () => {
       await writeFile(join(h.root, '.happier/project.json'), JSON.stringify({ version: 1, workspace: { setup: [{ kind: 'command', command: 'echo changed' }] } }));
       await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_ENSURE)!(input, h.ingress)).resolves.toMatchObject({ ok: true, terminalId: opened.terminalId, reused: true });
       expect(nativeRun).toHaveBeenCalledTimes(1);
-      await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_RESTART)!(input, h.ingress)).resolves.toMatchObject({ ok: false, error: 'project_setup_consent_required' });
-      expect(h.provider.spawned).toHaveLength(1);
-      expect(h.provider.spawned[0]!.pty.exited).toBe(false);
+      await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_RESTART)!(input, h.ingress)).resolves.toMatchObject({ ok: true, reused: false });
+      expect(h.provider.spawned).toHaveLength(2);
+      expect(h.provider.spawned[0]!.pty.exited).toBe(true);
     } finally { registration.dispose(); await h.dispose(); }
   });
 
-  it('prepares fresh Project shells by waiting for trusted setup to settle before opening the dependent shell', async () => {
+  it('opens a fresh Project Shell through Machine composition without running even trusted setup', async () => {
     const h = await finiteHarness({ setup: true, waived: true, machineComposition: true, setupWaived: true });
     const workspace = { id: 'accepted', serverId: 'home', machineId: 'machine', rootPath: h.root, projectKey: 'project', createdAtMs: 1 };
     const reviewed = await reviewProjectSetupEffect({ workspace, projectAssociation: { workspace, project: { serverId: 'home', projectId: 'project' } },
@@ -516,41 +533,28 @@ describe('registerMachineTerminalRpcHandlers', () => {
     h.post.mockImplementation(async (url, body) => String(url).endsWith('/project-trust/read')
       ? { status: 200, data: { status: 'present', revision: 1, content: { t: 'plain', v: { project: reviewed.plan.project, reviewedEffectDigest: reviewed.plan.reviewedEffectDigest, approvedAtMs: 1 } } } }
       : projectAccountRowsReadHttpResponse(rows.data.rows, String(url), body));
-    const started = new Promise<void>(resolve => { h.provider.onSpawn = () => resolve(); });
     try {
-      const opened = h.handlers.get(RPC_METHODS.DAEMON_TERMINAL_ENSURE)!({ terminalKey: 'after-setup',
+      const result = await h.handlers.get(RPC_METHODS.DAEMON_TERMINAL_ENSURE)!({ terminalKey: 'without-setup',
         workspace: { serverId: 'home', workspaceId: 'accepted', machineId: 'machine', rootPath: h.root } }, h.ingress);
-      await expect(Promise.race([
-        started.then(() => ({ kind: 'setup_started' })),
-        Promise.resolve(opened).then(result => ({ kind: 'completed', result })),
-      ])).resolves.toEqual({ kind: 'setup_started' });
-      expect(h.provider.spawned).toHaveLength(1);
-      expect(h.provider.spawned[0]!.params.args).toContain('echo setup');
-      h.provider.spawned[0]!.pty.exit(0);
-      const result = await opened;
       expect(result).toMatchObject({ ok: true, reused: false });
-      expect(h.provider.spawned).toHaveLength(2);
-      expect(h.provider.spawned[1]!.params.args).not.toContain('echo setup');
-      if (!result || typeof result !== 'object' || !('terminalId' in result) || typeof result.terminalId !== 'string') throw new Error('Missing dependent shell');
+      expect(h.provider.spawned).toHaveLength(1);
+      expect(h.provider.spawned[0]!.params.args).not.toContain('echo setup');
+      if (!result || typeof result !== 'object' || !('terminalId' in result) || typeof result.terminalId !== 'string') throw new Error('Missing Shell');
       expect(h.sessionManager.isFiniteHeld(result.terminalId)).toBe(false);
-      expect(h.operationRuntime.store.get({ accountId: 'owner', machineId: 'machine' }, 'operation')).toMatchObject({ state: 'succeeded' });
+      expect(h.operationRuntime.store.list({ accountId: 'owner', machineId: 'machine' }).items).toEqual([]);
     } finally { await h.dispose(); }
   });
 
-  it('honours the raw API setup waiver before opening a fresh Project shell without remembered trust', async () => {
+  it('does not run setup implicitly when the Account waives its approval', async () => {
     const h = await finiteHarness({ setup: true, waived: true, setupWaived: true });
     Object.assign(h.runtime, { secretEnvironment: { settingsSecretsReadKeys: [], accountSettings: {
       actionsSettingsV1: { v: 1, actions: {}, approvalWaivedSurfaces: { 'projects.prepare': ['api'] } },
     } } });
-    let refusal: unknown;
     try {
-      const opened = Promise.resolve(h.handlers.get(RPC_METHODS.DAEMON_TERMINAL_ENSURE)!({ terminalKey: 'waived-shell',
-        workspace: { serverId: 'home', workspaceId: 'accepted', machineId: 'machine', rootPath: h.root } }, h.ingress))
-        .then(result => { if (result && typeof result === 'object' && 'ok' in result && result.ok === false) refusal = result; return result; });
-      await expect.poll(() => h.provider.spawned.length > 0 ? 'setup_started' : refusal).toBe('setup_started');
-      h.provider.spawned[0]!.pty.exit(0);
-      await expect(opened).resolves.toMatchObject({ ok: true });
-      expect(h.provider.spawned).toHaveLength(2);
+      await expect(h.handlers.get(RPC_METHODS.DAEMON_TERMINAL_ENSURE)!({ terminalKey: 'waived-shell',
+        workspace: { serverId: 'home', workspaceId: 'accepted', machineId: 'machine', rootPath: h.root } }, h.ingress)).resolves.toMatchObject({ ok: true });
+      expect(h.provider.spawned).toHaveLength(1);
+      expect(h.provider.spawned[0]!.params.args).not.toContain('echo setup');
       expect(h.post.mock.calls.filter(([url]) => String(url).endsWith('/project-trust/mutate'))).toEqual([]);
     } finally { await h.dispose(); }
   });
