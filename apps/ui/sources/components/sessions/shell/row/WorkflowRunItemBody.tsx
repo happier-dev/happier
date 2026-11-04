@@ -24,9 +24,9 @@ import { getStorage, useWorkflowRun, useUser } from '@/sync/domains/state/storag
 import { resolveEditedByLabel } from '@/components/workflows/run/workflowEditedBy';
 import { useMachinePresenceSummary } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
-import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
+import { serverAccountScopeKeySuffix, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
-import { workflowRunDetailActions } from '@/sync/domains/workflows/workflowRunDetailActions';
+import { createWorkflowRunDetailActions } from '@/sync/domains/workflows/workflowRunDetailActions';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { publishOpenedWorkflowRunDetail } from '@/sync/engine/workflows/refreshWorkflowRun';
 import type { WorkflowRunRow } from '@/sync/store/domains/workflowRuns';
@@ -44,6 +44,8 @@ export type WorkflowRunItemProps = Readonly<{
     kind: 'workflow_run';
     runId: string;
     serverId: string;
+    /** Addressed History retains its editor's Home rather than reading the focused Home. */
+    accountLifetime?: ServerAccountScopeLifetime | null;
     dataActive?: boolean;
     density?: SessionListRowDensity;
     selected?: boolean;
@@ -51,7 +53,7 @@ export type WorkflowRunItemProps = Readonly<{
     reportsDepth?: number;
     /** Opened habit History only; collection/trigger summary rows never request result bodies. */
     includeResult?: boolean;
-    /** The expanded History page resolves people once, never from an individual row. */
+    /** History supplies captured-Home people for its admitted rows. */
     sourceProfile?: Parameters<typeof resolveEditedByLabel>[0]['profile'];
     /** A row of Workflow History: the only place the viewer's own save reads "Edited by you". */
     inTriggerHistory?: boolean;
@@ -89,6 +91,7 @@ function WorkflowRunRowAge(props: Readonly<{
 /** Read status is local; the selected result and its producer remain in the Account's sole Run body. */
 function useOpenedWorkflowRunResult(input: Readonly<{
     runId: string; scopeKey: string | null; enabled: boolean; row: WorkflowRunRow | null;
+    accountLifetime?: ServerAccountScopeLifetime | null;
 }>) {
     const identity = `${input.scopeKey ?? ''}\u0000${input.runId}`;
     const [attempt, setAttempt] = React.useState(0);
@@ -96,21 +99,21 @@ function useOpenedWorkflowRunResult(input: Readonly<{
     const revision = input.row?.summary?.revision;
     React.useEffect(() => {
         if (!input.enabled) return;
-        const lifetime = captureActiveServerAccountScopeLifetime();
+        const lifetime = input.accountLifetime === undefined ? captureActiveServerAccountScopeLifetime() : input.accountLifetime;
         if (!lifetime || serverAccountScopeKeySuffix(lifetime.scope) !== input.scopeKey) return;
         let cancelled = false;
         const controller = new AbortController();
         const retirement = lifetime.onRetire(() => controller.abort());
         setRead({ identity, status: 'pending' });
-        void workflowRunDetailActions.getRun(input.runId, controller.signal).then(detail => {
+        void createWorkflowRunDetailActions({ accountLifetime: lifetime }).getRun(input.runId, controller.signal).then(detail => {
             if (cancelled || !lifetime.isCurrent()) return;
-            publishOpenedWorkflowRunDetail(detail);
+            publishOpenedWorkflowRunDetail(detail, lifetime.scope);
             setRead({ identity, status: 'loaded' });
         }).catch(() => {
             if (!cancelled && lifetime.isCurrent()) setRead({ identity, status: 'failed' });
         });
         return () => { cancelled = true; controller.abort(); retirement.dispose(); };
-    }, [attempt, identity, input.enabled, input.runId, input.scopeKey, revision]);
+    }, [attempt, identity, input.accountLifetime, input.enabled, input.runId, input.scopeKey, revision]);
     const retry = React.useCallback(() => setAttempt(value => value + 1), []);
     const status = read?.identity === identity ? read.status : 'pending';
     const detail = input.row?.detail;
@@ -126,21 +129,22 @@ export function WorkflowRunItemBody(props: WorkflowRunItemProps): React.ReactEle
     const router = useRouter();
     const { theme } = useUnistyles();
     const { fontScale } = useWindowDimensions();
-    const scope = getStorage()((state) => state.profileScope);
+    const activeScope = getStorage()((state) => props.accountLifetime === undefined ? state.profileScope : null);
+    const scope = props.accountLifetime === undefined ? activeScope : props.accountLifetime?.scope ?? null;
     const scopeKey = scope ? serverAccountScopeKeySuffix(scope) : null;
     const inScope = scope !== null && areServerProfileIdentifiersEquivalent(scope.serverId, props.serverId);
     const dataActive = props.dataActive !== false && inScope;
-    const live = useWorkflowRun(props.runId, { enabled: dataActive });
+    const live = useWorkflowRun(props.runId, { enabled: dataActive, scope });
     const retained = React.useRef<Readonly<{ scopeKey: string | null; serverId: string; runId: string; row: WorkflowRunRow | null }> | null>(null);
     if (dataActive || retained.current === null || retained.current.scopeKey !== scopeKey
         || retained.current.serverId !== props.serverId || retained.current.runId !== props.runId) {
         retained.current = { scopeKey, serverId: props.serverId, runId: props.runId,
-            row: inScope ? live ?? getStorage().getState().workflowRunsById[workflowRunStoreKey(props.runId)] ?? null : null };
+            row: inScope ? live ?? getStorage().getState().workflowRunsById[workflowRunStoreKey(props.runId, scope)] ?? null : null };
     }
     // A hidden surface retains its body, never another Account's body.
     const row = inScope && retained.current.scopeKey === scopeKey ? retained.current.row : null;
     const summary = row?.summary;
-    const cachedSourceProfile = useUser(summary?.sourceSavedBy?.kind === 'person' ? summary.sourceSavedBy.accountId : '');
+    const cachedSourceProfile = useUser(props.sourceProfile === undefined && summary?.sourceSavedBy?.kind === 'person' ? summary.sourceSavedBy.accountId : '');
     const editedBy = resolveEditedByLabel({ savedBy: summary?.sourceSavedBy, viewerAccountId: scope?.accountId,
         viewerOwnSave: props.inTriggerHistory === true ? 'you' : 'omit',
         profile: props.sourceProfile === undefined ? cachedSourceProfile : props.sourceProfile });
@@ -149,12 +153,12 @@ export function WorkflowRunItemBody(props: WorkflowRunItemProps): React.ReactEle
         kind: 'workflow_hold', serverId: props.serverId, runId: props.runId, invocationRecordId: heldInvocationId,
     } : null, [heldInvocationId, props.runId, props.serverId]);
     // The row reads the Machine's name and reachability only: a heartbeat that keeps presence re-renders nothing.
-    const machinePresence = useMachinePresenceSummary(props.serverId, dataActive ? summary?.machineId ?? '' : '');
+    const machinePresence = useMachinePresenceSummary(props.serverId, dataActive ? summary?.machineId ?? '' : '', props.accountLifetime);
     const machineReachable = machinePresence.reachability === 'unknown' ? undefined : machinePresence.reachability === 'reachable';
     const machineName = machinePresence.name;
     const resultEnabled = props.includeResult === true && dataActive && summary != null
         && isTerminalWorkflowRunState(summary.state);
-    const result = useOpenedWorkflowRunResult({ runId: props.runId, scopeKey, enabled: resultEnabled, row });
+    const result = useOpenedWorkflowRunResult({ runId: props.runId, scopeKey, enabled: resultEnabled, row, accountLifetime: props.accountLifetime });
     const readablePhone = useTouchCompactRow(props.density === 'minimal');
     const [hovered, setHovered] = React.useState(false);
     if (!summary) return null;

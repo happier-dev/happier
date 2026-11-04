@@ -20,7 +20,7 @@ const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRu
 const { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
 const { buildWorkflowRunListFilter, listWorkflowRuns } = await import('./workflowRunListActions');
 const { WorkflowActionError } = await import('./workflowActionError');
-const { workflowRunStoreKey } = await import('@/sync/store/domains/workflowRuns');
+const { workflowRunStoreKey, workflowRunListWindowStoreKey } = await import('@/sync/store/domains/workflowRuns');
 const route = '/v3/automations/runs/workflow-storage';
 const accountId = 'run-list-owner';
 const run = createWorkflowRunSummaryFixture({ id: 'run-1', ownerAccountId: accountId });
@@ -76,6 +76,7 @@ describe('workflow Run list Action client through the Account storage transport'
             const viewport = vi.spyOn(Dimensions, 'get').mockReturnValue({ width: 1200, height: 2 * HAPPIER_COLLECTION_ROW_METRICS.height.compact, scale: 1, fontScale: 1 });
             storage.setState({ workflowRunsById: {}, workflowRunListWindows: {} });
             const windowId = scenario === 'active removal' ? 'active' : 'all';
+            const storeId = workflowRunListWindowStoreKey(windowId, { serverId, accountId });
             try {
                 const original = Array.from({ length: scenario === 'non-exhausted burst' ? 9 : 5 }, (_, index) => createWorkflowRunSummaryFixture({
                     id: `frontier-${index}`, ownerAccountId: accountId, origin: { kind: 'direct' }, state: 'running',
@@ -105,17 +106,17 @@ describe('workflow Run list Action client through the Account storage transport'
                 await refreshRunWindow(windowId);
                 await loadMoreRunWindow(windowId);
                 if (scenario !== 'non-exhausted burst') {
-                    while (storage.getState().workflowRunListWindows[windowId]?.nextCursor) await loadMoreRunWindow(windowId);
+                    while (storage.getState().workflowRunListWindows[storeId]?.nextCursor) await loadMoreRunWindow(windowId);
                 }
-                expect(storage.getState().workflowRunListWindows[windowId]?.runIds).toEqual(
+                expect(storage.getState().workflowRunListWindows[storeId]?.runIds).toEqual(
                     (scenario === 'non-exhausted burst' ? original.slice(0, 4) : original).map(row => row.id));
                 current = scenario === 'active removal' ? original.filter(row => row.id !== 'frontier-3') : [...additions, ...original];
                 await refreshRunWindow(windowId, true);
-                const refreshed = storage.getState().workflowRunListWindows[windowId]!;
+                const refreshed = storage.getState().workflowRunListWindows[storeId]!;
                 expect(refreshed.runIds).toEqual((scenario === 'non-exhausted burst' ? current.slice(0, 8) : current).map(row => row.id));
                 expect(refreshed.nextCursor !== null).toBe(scenario === 'non-exhausted burst');
-                while (storage.getState().workflowRunListWindows[windowId]?.nextCursor) await loadMoreRunWindow(windowId);
-                expect(storage.getState().workflowRunListWindows[windowId]?.runIds).toEqual(current.map(row => row.id));
+                while (storage.getState().workflowRunListWindows[storeId]?.nextCursor) await loadMoreRunWindow(windowId);
+                expect(storage.getState().workflowRunListWindows[storeId]?.runIds).toEqual(current.map(row => row.id));
                 for (const row of current) {
                     expect(storage.getState().workflowRunsById[workflowRunStoreKey(row.id)]).toMatchObject({
                         metadata: { kind: 'available', value: { title: 'Private frontier title' } },

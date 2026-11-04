@@ -216,7 +216,7 @@ describe('opened habit History result', () => {
         } };
         const mount = (scoped: boolean) => {
             const lists = <>
-                <WorkflowTriggerRunHistory automationId="auto-1" />
+                <WorkflowTriggerRunHistory automationId="auto-1" triggerId="timer" />
                 <SessionWritesHereSection sessionId="first-session" serverId={home.id} />
             </>;
             return renderScreen(<WorkViewportContext.Provider value={viewport}>

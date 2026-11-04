@@ -17,6 +17,7 @@ import { materializeWorkflowAcceptedSnapshotV1 } from '@happier-dev/protocol/wor
 import { sealWorkflowAcceptedSnapshotStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowStoredContentV1';
 import { WorkflowRunRecipientCensusResponseV1Schema } from '@happier-dev/protocol/workflows/workflowRunKeyV1';
 import { storage } from '@/sync/domains/state/storageStore';
+import { workflowRunListWindowStoreKey } from '@/sync/store/domains/workflowRuns';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
@@ -243,7 +244,9 @@ describe('useInboxSummary workflow source', () => {
         expect(Buffer.byteLength(JSON.stringify(request))).toBe(106);
         expect(request.request.projection).toBe('membership');
         expect(latest).toEqual({ count: 2, hasContent: true });
-        expect(storage.getState().workflowRunListWindows.attention?.runIds).toEqual(['run-held', 'run-interrupted']);
+        const scope = storage.getState().profileScope;
+        if (!scope) throw new Error('Expected a bound Home');
+        expect(storage.getState().workflowRunListWindows[workflowRunListWindowStoreKey('attention', scope)]?.runIds).toEqual(['run-held', 'run-interrupted']);
     });
 
     it('joins one-shot Workflow receipts to the native attention lifetime and demanded Run row', async () => {

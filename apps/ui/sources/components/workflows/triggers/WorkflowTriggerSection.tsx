@@ -7,6 +7,8 @@ import type { WorkflowInputDefinition } from '@happier-dev/protocol/workflows/wo
 import { Icon } from '@/components/ui/icons/Icon';
 import { FieldValueItem } from '@/components/ui/forms/FieldValueItem';
 import { Item } from '@/components/ui/lists/Item';
+import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
+import { WorkflowTriggerRunHistory } from './WorkflowTriggerRunHistory';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
@@ -94,9 +96,11 @@ function LegacyWorkflowTriggerSummary(props: Readonly<{ legacy: NonNullable<Retu
  */
 export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): React.ReactElement {
     const activeMachines = useAllMachines();
-    const addressedMachines = useMachineListForServer(props.accountLifetime?.scope.serverId ?? '');
+    const addressedMachines = useMachineListForServer(props.accountLifetime?.scope.serverId ?? '', props.accountLifetime !== undefined);
     const machines = props.accountLifetime === undefined ? activeMachines : addressedMachines ?? [];
     const rows = React.useMemo(() => projectWorkflowTriggerRows(props.set, props.draft), [props.draft, props.set]);
+    const [historyKey, setHistoryKey] = React.useState<string | null>(null);
+    const toggleHistory = (key: string) => setHistoryKey(current => current === key ? null : key);
     const [open, setOpen] = React.useState<Readonly<{ row: WorkflowTriggerRowModel | null; anchor: React.RefObject<View | null> }> | null>(null);
     const addAnchorRef = React.useRef<View>(null);
     const description = [
@@ -170,6 +174,10 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
                     key={item.key}
                     testID={`${props.testIDPrefix}-trigger:${item.key}`}
                     row={item}
+                    history={item.kind === 'saved' && props.set && historyKey === item.key
+                        ? <WorkflowTriggerRunHistory automationId={props.set.automationId} triggerId={item.triggerId}
+                            accountLifetime={props.accountLifetime} triggerName={formatTriggerSummary(item.trigger)} /> : undefined}
+                    onHistory={item.kind === 'saved' ? () => toggleHistory(item.key) : undefined}
                     onOpen={(anchor) => setOpen({ row: item, anchor })}
                     onToggle={(enabled) => {
                         if (item.kind === 'saved') {
@@ -200,6 +208,7 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
                     testID={`${props.testIDPrefix}-trigger-popover`}
                     anchorRef={open.anchor}
                     onRequestClose={() => setOpen(null)}
+                    {...(row?.kind === 'saved' ? { onHistory: () => { setHistoryKey(row.key); setOpen(null); } } : {})}
                     nextRunAt={readNextRunAt(props.set, row)}
                     whenKinds={['schedule', 'pluginEvent']}
                     sessionId={null}
@@ -286,6 +295,8 @@ const WorkflowTriggerRowView = React.memo(function WorkflowTriggerRowView(props:
     row: WorkflowTriggerRowModel;
     onOpen: (anchor: React.RefObject<View | null>) => void;
     onToggle: (enabled: boolean) => void;
+    onHistory?: () => void;
+    history?: React.ReactNode;
 }>) {
     const anchorRef = React.useRef<View>(null);
     const { row } = props;
@@ -300,8 +311,12 @@ const WorkflowTriggerRowView = React.memo(function WorkflowTriggerRowView(props:
                 glyph={row.trigger.kind === 'schedule' ? 'clock' : 'lightning'}
                 enabled={row.enabled}
                 onToggle={props.onToggle}
+                actions={props.onHistory ? <ToolbarButton testID={`${props.testID}-history`}
+                    label={t('workflows.destination.history.title')} active={props.history !== undefined}
+                    onPress={props.onHistory} /> : undefined}
                 {...(editable ? { onPress: () => props.onOpen(anchorRef) } : {})}
             />
+            {props.history}
         </View>
     );
 });

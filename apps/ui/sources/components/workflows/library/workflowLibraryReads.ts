@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { Dimensions } from 'react-native';
-import { workflowRunStoreKey } from '@/sync/store/domains/workflowRuns';
+import { workflowRunStoreKey, workflowRunListWindowStoreKey, type WorkflowRunListWindowStoreId } from '@/sync/store/domains/workflowRuns';
 import { HAPPIER_COLLECTION_ROW_METRICS } from '@happier-dev/plugin-ui/presentation';
 
 import { workflowDefinitionListCursorPhaseV1, type WorkflowDefinitionListResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
@@ -446,20 +446,21 @@ export function useWorkflowPluginSource(workflow: string | null, enabled = true,
 
 type RunReadStatus = ReadStatus & Readonly<{ knownAt: number | null }>;
 const INITIAL_RUN_STATUS: RunReadStatus = Object.freeze({ ...INITIAL_STATUS, knownAt: null });
-type RunWindowStatuses = Readonly<Partial<Record<WorkflowRunListWindowId, RunReadStatus>>>;
+type RunWindowStatuses = Readonly<Partial<Record<WorkflowRunListWindowStoreId, RunReadStatus>>>;
 const EMPTY_RUN_STATUSES: RunWindowStatuses = Object.freeze({});
 const runWindowStatusCell = createCell<RunWindowStatuses>(EMPTY_RUN_STATUSES);
 type RunProjection = 'membership' | undefined;
 type RunWindowRead = { promise: Promise<void>; refreshRequested: boolean; projection: RunProjection };
 type RunWindowReader = { lifetime: ActiveServerAccountScopeLifetime; fullReaders: number; membershipReaders: number;
     read?: RunWindowRead; unsubscribe?: () => void };
-const runWindowReaders = new Map<WorkflowRunListWindowId, RunWindowReader>();
+const runWindowReaders = new Map<WorkflowRunListWindowStoreId, RunWindowReader>();
 
 function runWindowReader(windowId: WorkflowRunListWindowId, lifetime: ActiveServerAccountScopeLifetime): RunWindowReader {
-    const existing = runWindowReaders.get(windowId);
+    const storeId = workflowRunListWindowStoreKey(windowId, lifetime.scope);
+    const existing = runWindowReaders.get(storeId);
     if (existing?.lifetime === lifetime) return existing;
     const reader = { lifetime, fullReaders: 0, membershipReaders: 0 };
-    runWindowReaders.set(windowId, reader);
+    runWindowReaders.set(storeId, reader);
     return reader;
 }
 
@@ -467,8 +468,9 @@ function demandedRunProjection(windowId: WorkflowRunListWindowId, reader: RunWin
     return windowId === 'attention' && reader.fullReaders === 0 && reader.membershipReaders > 0 ? 'membership' : undefined;
 }
 
-function finishRunWindowRead(windowId: WorkflowRunListWindowId, promise: Promise<void>, isCurrent: () => boolean): void {
-    const reader = runWindowReaders.get(windowId);
+function finishRunWindowRead(windowId: WorkflowRunListWindowId, lifetime: ServerAccountScopeLifetime, promise: Promise<void>, isCurrent: () => boolean): void {
+    const storeId = workflowRunListWindowStoreKey(windowId, lifetime.scope);
+    const reader = runWindowReaders.get(storeId);
     const read = reader?.read;
     if (!reader || read?.promise !== promise) return;
     delete reader.read;
@@ -476,15 +478,15 @@ function finishRunWindowRead(windowId: WorkflowRunListWindowId, promise: Promise
     // Restate it once after either the leading read or its continuation settles.
     if ((read.refreshRequested || (read.projection === 'membership' && reader.fullReaders > 0))
         && isCurrent() && reader.lifetime.isCurrent()
-        && reader.fullReaders + reader.membershipReaders > 0) void refreshRunWindow(windowId);
-    else if (reader.fullReaders + reader.membershipReaders === 0) runWindowReaders.delete(windowId);
+        && reader.fullReaders + reader.membershipReaders > 0) void refreshRunWindow(windowId, false, lifetime);
+    else if (reader.fullReaders + reader.membershipReaders === 0) runWindowReaders.delete(storeId);
 }
 
-function setRunWindowStatus(windowId: WorkflowRunListWindowId, next: RunReadStatus): void {
+function setRunWindowStatus(windowId: WorkflowRunListWindowStoreId, next: RunReadStatus): void {
     runWindowStatusCell.set({ ...runWindowStatusCell.get(), [windowId]: next });
 }
 
-function readRunWindowStatus(windowId: WorkflowRunListWindowId): RunReadStatus {
+function readRunWindowStatus(windowId: WorkflowRunListWindowStoreId): RunReadStatus {
     return runWindowStatusCell.get()[windowId] ?? INITIAL_RUN_STATUS;
 }
 
@@ -494,7 +496,7 @@ type RunWindowPage = Omit<WorkflowRunListPage, 'nextCursor'> & Readonly<{
 }>;
 
 /** One page at the window owner, shared by initial reads and demand-driven continuation. */
-export async function readRunWindowPage(windowId: WorkflowRunListWindowId, cursor?: string, projection?: 'membership'): Promise<RunWindowPage> {
+export async function readRunWindowPage(windowId: WorkflowRunListWindowId, cursor?: string, projection?: 'membership', accountLifetime?: ServerAccountScopeLifetime): Promise<RunWindowPage> {
     if (windowId === 'automationAttention') {
         const page = await listAutomationDefinitionRuns({ attention: 'required', cursor });
         return { runs: [], automationRuns: page.runs, metadataByRunId: {}, nextCursor: page.nextCursor };
@@ -505,14 +507,15 @@ export async function readRunWindowPage(windowId: WorkflowRunListWindowId, curso
     // Membership-only badges keep their existing public projection/frontier.
     const limit = projection === undefined
         ? Math.max(1, Math.ceil(Dimensions.get('window').height / HAPPIER_COLLECTION_ROW_METRICS.height.compact)) : undefined;
-    const page = await listWorkflowRuns({ filter: buildWorkflowRunListFilter(windowId), cursor, projection, limit });
+    const page = await listWorkflowRuns({ filter: buildWorkflowRunListFilter(windowId), cursor, projection, limit, accountLifetime });
     return { ...page, automationRuns: [], nextCursor: page.nextCursor ?? null };
 }
 
 /** Restate a window through its loaded ordering frontier, retaining rows until the read succeeds. */
-export function refreshRunWindow(windowId: WorkflowRunListWindowId, invalidate = false): Promise<void> {
-    const lifetime = captureActiveServerAccountScopeLifetime();
+export function refreshRunWindow(windowId: WorkflowRunListWindowId, invalidate = false, accountLifetime?: ServerAccountScopeLifetime | null): Promise<void> {
+    const lifetime = accountLifetime === undefined ? captureActiveServerAccountScopeLifetime() : accountLifetime;
     if (lifetime === null) return Promise.resolve();
+    const storeId = workflowRunListWindowStoreKey(windowId, lifetime.scope);
     const scopeKey = serverAccountScopeKeySuffix(lifetime.scope);
     const reader = runWindowReader(windowId, lifetime);
     const projection = demandedRunProjection(windowId, reader);
@@ -521,20 +524,20 @@ export function refreshRunWindow(windowId: WorkflowRunListWindowId, invalidate =
         if (invalidate) inFlight.refreshRequested = true;
         return inFlight.promise;
     }
-    const previous = readRunWindowStatus(windowId);
+    const previous = readRunWindowStatus(storeId);
     const ownedBefore = previous.scopeKey === scopeKey && previous.status !== 'loading';
     const previousStore = getStorage().getState();
-    const previousWindow = ownedBefore ? previousStore.workflowRunListWindows[windowId] : undefined;
+    const previousWindow = ownedBefore ? previousStore.workflowRunListWindows[storeId] : undefined;
     const promoting = previousWindow?.projection === 'membership' && projection === undefined;
     const previousTailId = previousWindow?.runIds.at(-1);
-    const previousTail = previousTailId === undefined ? undefined : previousStore.workflowRunsById[workflowRunStoreKey(previousTailId)];
+    const previousTail = previousTailId === undefined ? undefined : previousStore.workflowRunsById[workflowRunStoreKey(previousTailId, lifetime.scope)];
     const loadedBoundary = previousWindow?.frontier ?? (previousTail ? workflowRunListFrontier(previousTail) : undefined);
-    if (!ownedBefore || promoting || previous.knownAt === null) setRunWindowStatus(windowId, { ...INITIAL_RUN_STATUS, scopeKey,
+    if (!ownedBefore || promoting || previous.knownAt === null) setRunWindowStatus(storeId, { ...INITIAL_RUN_STATUS, scopeKey,
         knownAt: ownedBefore ? previous.knownAt : null });
-    else if (previous.loadingMore || previous.loadMoreFailed) setRunWindowStatus(windowId, { ...previous, loadingMore: false, loadMoreFailed: false });
+    else if (previous.loadingMore || previous.loadMoreFailed) setRunWindowStatus(storeId, { ...previous, loadingMore: false, loadMoreFailed: false });
     const readRunWindow = async (): Promise<void> => {
         try {
-            let page = await readRunWindowPage(windowId, undefined, projection);
+            let page = await readRunWindowPage(windowId, undefined, projection, lifetime);
             if (!lifetime.isCurrent()) return;
             // Restate everything the person already paged to: a page-one-only
             // refresh can skip a burst of new rows or retain an older filtered-out row.
@@ -551,7 +554,7 @@ export function refreshRunWindow(windowId: WorkflowRunListWindowId, invalidate =
                     const last = lastSummary ? workflowRunRowFromSummary(lastSummary)
                         : lastAutomation ? workflowRunRowFromAutomationRun(lastAutomation) : undefined;
                     if (last && (last.id === loadedBoundary.id || isBeyondWorkflowRunListSpan(last, loadedBoundary))) break;
-                    page = await readRunWindowPage(windowId, page.nextCursor, projection);
+                    page = await readRunWindowPage(windowId, page.nextCursor, projection, lifetime);
                     if (!lifetime.isCurrent()) return;
                     runs.push(...page.runs);
                     automationRuns.push(...page.automationRuns);
@@ -564,7 +567,8 @@ export function refreshRunWindow(windowId: WorkflowRunListWindowId, invalidate =
             }
             const store = getStorage().getState();
             store.applyWorkflowRunListPage({
-                windowId,
+                windowId: storeId,
+                scope: lifetime.scope,
                 runs: page.runs,
                 projection: page.projection,
                 automationRuns: page.automationRuns,
@@ -574,17 +578,17 @@ export function refreshRunWindow(windowId: WorkflowRunListWindowId, invalidate =
                 nextCursor: page.nextCursor ?? null,
                 mode: 'replace',
             });
-            setRunWindowStatus(windowId, { scopeKey, status: 'loaded', failure: null, loadingMore: false, loadMoreFailed: false, knownAt: Date.now() });
+            setRunWindowStatus(storeId, { scopeKey, status: 'loaded', failure: null, loadingMore: false, loadMoreFailed: false, knownAt: Date.now() });
         } catch (error) {
             if (!lifetime.isCurrent()) return;
-            setRunWindowStatus(windowId, {
-                ...readRunWindowStatus(windowId),
+            setRunWindowStatus(storeId, {
+                ...readRunWindowStatus(storeId),
                 scopeKey,
                 status: 'failed',
                 failure: resolveWorkflowProblemPresentation(error),
             });
         } finally {
-            finishRunWindowRead(windowId, promise, () => lifetime.isCurrent());
+            finishRunWindowRead(windowId, lifetime, promise, () => lifetime.isCurrent());
         }
     };
     const promise = readRunWindow();
@@ -592,25 +596,27 @@ export function refreshRunWindow(windowId: WorkflowRunListWindowId, invalidate =
     return promise;
 }
 
-export async function loadMoreRunWindow(windowId: WorkflowRunListWindowId): Promise<void> {
-    const lifetime = captureActiveServerAccountScopeLifetime();
+export async function loadMoreRunWindow(windowId: WorkflowRunListWindowId, accountLifetime?: ServerAccountScopeLifetime | null): Promise<void> {
+    const lifetime = accountLifetime === undefined ? captureActiveServerAccountScopeLifetime() : accountLifetime;
     if (lifetime === null) return;
+    const storeId = workflowRunListWindowStoreKey(windowId, lifetime.scope);
     const scopeKey = serverAccountScopeKeySuffix(lifetime.scope);
     const reader = runWindowReader(windowId, lifetime);
     if (reader.read) return;
     const projection = demandedRunProjection(windowId, reader);
-    const status = readRunWindowStatus(windowId);
-    const window = getStorage().getState().workflowRunListWindows[windowId];
-    if (window?.projection !== projection) { await refreshRunWindow(windowId); return; }
+    const status = readRunWindowStatus(storeId);
+    const window = getStorage().getState().workflowRunListWindows[storeId];
+    if (window?.projection !== projection) { await refreshRunWindow(windowId, false, lifetime); return; }
     const cursor = window?.nextCursor ?? null;
     if (status.scopeKey !== scopeKey || status.status !== 'loaded' || cursor === null || status.loadingMore) return;
-    setRunWindowStatus(windowId, { ...status, loadingMore: true, loadMoreFailed: false });
+    setRunWindowStatus(storeId, { ...status, loadingMore: true, loadMoreFailed: false });
     const readMore = async (): Promise<void> => {
         try {
-            const page = await readRunWindowPage(windowId, cursor, projection);
+            const page = await readRunWindowPage(windowId, cursor, projection, lifetime);
             if (!lifetime.isCurrent()) return;
             getStorage().getState().applyWorkflowRunListPage({
-                windowId,
+                windowId: storeId,
+                scope: lifetime.scope,
                 runs: page.runs,
                 projection: page.projection,
                 automationRuns: page.automationRuns,
@@ -620,11 +626,11 @@ export async function loadMoreRunWindow(windowId: WorkflowRunListWindowId): Prom
                 nextCursor: page.nextCursor ?? null,
                 mode: 'append',
             });
-            setRunWindowStatus(windowId, { ...readRunWindowStatus(windowId), loadingMore: false });
+            setRunWindowStatus(storeId, { ...readRunWindowStatus(storeId), loadingMore: false });
         } catch {
-            if (lifetime.isCurrent()) setRunWindowStatus(windowId, { ...readRunWindowStatus(windowId), loadingMore: false, loadMoreFailed: true });
+            if (lifetime.isCurrent()) setRunWindowStatus(storeId, { ...readRunWindowStatus(storeId), loadingMore: false, loadMoreFailed: true });
         } finally {
-            finishRunWindowRead(windowId, promise, () => lifetime.isCurrent());
+            finishRunWindowRead(windowId, lifetime, promise, () => lifetime.isCurrent());
         }
     };
     const promise = readMore();
@@ -635,6 +641,8 @@ export async function loadMoreRunWindow(windowId: WorkflowRunListWindowId): Prom
 const EMPTY_RUN_IDS: readonly string[] = Object.freeze([]);
 
 export type WorkflowRunWindow = Readonly<{
+    /** Captured by this window; row/result consumers keep its addressed Home. */
+    accountLifetime: ServerAccountScopeLifetime | null;
     /** The exact Home serving this Account window; null until its first answer or after retirement. */
     serverId: string | null;
     status: WorkflowLibraryReadStatus;
@@ -655,24 +663,27 @@ export type WorkflowRunWindow = Readonly<{
  * page on mount and on the Account's Run-change wake, and its rows from the shared Run store.
  * `enabled: false` holds no subscription and issues no read.
  */
-export function useWorkflowRunWindow(windowId: WorkflowRunListWindowId, options: Readonly<{ enabled?: boolean; projection?: 'membership' }> = {}): WorkflowRunWindow {
+export function useWorkflowRunWindow(windowId: WorkflowRunListWindowId, options: Readonly<{ accountLifetime?: ServerAccountScopeLifetime | null; enabled?: boolean; projection?: 'membership' }> = {}): WorkflowRunWindow {
     const enabled = options.enabled !== false;
     const membershipOnly = windowId === 'attention' && options.projection === 'membership';
-    const lifetime = useActiveServerAccountScopeLifetime();
+    const active = useActiveServerAccountScopeLifetime();
+    const addressed = useWorkflowAccountLifetime(options.accountLifetime);
+    const lifetime = addressed === undefined ? active : addressed;
     const scope = lifetime?.scope ?? null;
     const scopeKey = scope === null ? null : serverAccountScopeKeySuffix(scope);
-    const readStatus = React.useCallback(() => enabled ? readRunWindowStatus(windowId) : INITIAL_RUN_STATUS, [enabled, windowId]);
+    const storeId = scope === null ? windowId : workflowRunListWindowStoreKey(windowId, scope);
+    const readStatus = React.useCallback(() => enabled ? readRunWindowStatus(storeId) : INITIAL_RUN_STATUS, [enabled, storeId]);
     const status = React.useSyncExternalStore(
         enabled ? runWindowStatusCell.subscribe : subscribeInactiveDefinitions,
         readStatus,
         readStatus,
     );
     const owned = status.scopeKey === scopeKey && scopeKey !== null;
-    const storedIds = getStorage()((state) => enabled ? state.workflowRunListWindows[windowId]?.runIds : undefined);
-    const storedProjection = getStorage()((state) => enabled ? state.workflowRunListWindows[windowId]?.projection : undefined);
-    const hasNextCursor = getStorage()((state) => enabled && (state.workflowRunListWindows[windowId]?.nextCursor ?? null) !== null);
+    const storedIds = getStorage()((state) => enabled ? state.workflowRunListWindows[storeId]?.runIds : undefined);
+    const storedProjection = getStorage()((state) => enabled ? state.workflowRunListWindows[storeId]?.projection : undefined);
+    const hasNextCursor = getStorage()((state) => enabled && (state.workflowRunListWindows[storeId]?.nextCursor ?? null) !== null);
     const runIds = enabled && owned && status.knownAt !== null ? storedIds ?? EMPTY_RUN_IDS : EMPTY_RUN_IDS;
-    const rows = useWorkflowRunRows(membershipOnly ? EMPTY_RUN_IDS : runIds);
+    const rows = useWorkflowRunRows(membershipOnly ? EMPTY_RUN_IDS : runIds, scope);
     const needsPromotion = !membershipOnly && storedProjection === 'membership';
     const knownAt = owned && !needsPromotion ? status.knownAt : null;
 
@@ -681,14 +692,14 @@ export function useWorkflowRunWindow(windowId: WorkflowRunListWindowId, options:
         const reader = runWindowReader(windowId, lifetime);
         if (membershipOnly) reader.membershipReaders += 1;
         else reader.fullReaders += 1;
-        void refreshRunWindow(windowId);
+        void refreshRunWindow(windowId, false, lifetime);
         reader.unsubscribe ??= subscribeVisibleWorkflowRunListInvalidation({
             lifetime,
             source: windowId === 'automationAttention' ? 'automation' : 'workflow',
-            isVisibleWindowLoaded: () => getStorage().getState().workflowRunListWindows[windowId]?.loaded === true
-                || readRunWindowStatus(windowId).status === 'failed'
-                || (runWindowReaders.get(windowId)?.lifetime === lifetime && runWindowReaders.get(windowId)?.read !== undefined),
-            invalidate: () => { void refreshRunWindow(windowId, true); },
+            isVisibleWindowLoaded: () => getStorage().getState().workflowRunListWindows[storeId]?.loaded === true
+                || readRunWindowStatus(storeId).status === 'failed'
+                || (runWindowReaders.get(storeId)?.lifetime === lifetime && runWindowReaders.get(storeId)?.read !== undefined),
+            invalidate: () => { void refreshRunWindow(windowId, true, lifetime); },
         });
         return () => {
             if (membershipOnly) reader.membershipReaders -= 1;
@@ -696,14 +707,15 @@ export function useWorkflowRunWindow(windowId: WorkflowRunListWindowId, options:
             if (reader.fullReaders + reader.membershipReaders === 0) {
                 reader.unsubscribe?.();
                 delete reader.unsubscribe;
-                if (!reader.read && runWindowReaders.get(windowId) === reader) runWindowReaders.delete(windowId);
+                if (!reader.read && runWindowReaders.get(storeId) === reader) runWindowReaders.delete(storeId);
             }
         };
-    }, [enabled, lifetime, membershipOnly, windowId]);
+    }, [enabled, lifetime, membershipOnly, storeId, windowId]);
 
-    const retry = React.useCallback(() => { void refreshRunWindow(windowId, true); }, [windowId]);
-    const loadMore = React.useCallback(() => { void loadMoreRunWindow(windowId); }, [windowId]);
+    const retry = React.useCallback(() => { void refreshRunWindow(windowId, true, lifetime); }, [lifetime, windowId]);
+    const loadMore = React.useCallback(() => { void loadMoreRunWindow(windowId, lifetime); }, [lifetime, windowId]);
     return React.useMemo(() => ({
+        accountLifetime: lifetime,
         serverId: enabled && owned && status.knownAt !== null ? scope?.serverId ?? null : null,
         status: !enabled ? 'loaded' : scopeKey === null ? 'failed' : owned
             ? needsPromotion && status.status === 'loaded' ? 'loading' : status.status : 'loading',
@@ -716,7 +728,7 @@ export function useWorkflowRunWindow(windowId: WorkflowRunListWindowId, options:
         loadMoreFailed: owned && status.loadMoreFailed,
         retry,
         loadMore,
-    }), [enabled, hasNextCursor, knownAt, loadMore, needsPromotion, owned, retry, rows, runIds, scope?.serverId, scopeKey, status]);
+    }), [enabled, hasNextCursor, knownAt, lifetime, loadMore, needsPromotion, owned, retry, rows, runIds, scope?.serverId, scopeKey, status]);
 }
 
 /** Test seam: forget module read state between cases (the Run store is reset by its own owner). */

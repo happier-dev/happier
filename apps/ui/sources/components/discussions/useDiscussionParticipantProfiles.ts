@@ -19,7 +19,8 @@ export function useDiscussionParticipantProfiles(input: Readonly<{
     accountIds?: readonly string[];
     enabled: boolean;
     accountLifetime: ServerAccountScopeLifetime | null;
-}>): Readonly<{ owner: TranscriptAccountActor | null; accounts: ReadonlyMap<string, TranscriptAccountActor> }> {
+}>): Readonly<{ owner: TranscriptAccountActor | null; accounts: ReadonlyMap<string, TranscriptAccountActor>;
+    status: 'loading' | 'ready' | 'unavailable' }> {
     const { scope, roster, enabled, accountLifetime } = input;
     const subscribe = React.useCallback((notify: () => void) => {
         const retirement = accountLifetime?.onRetire(notify);
@@ -36,7 +37,7 @@ export function useDiscussionParticipantProfiles(input: Readonly<{
     const missingIdsKey = JSON.stringify(accountIds.filter(id => !admittedAccounts.has(id)));
     const key = serverAccountScopedResourceKey(scope, roster?.discussionId ?? '', accountIdsKey);
     const [resolved, setResolved] = React.useState<Readonly<{
-        key: string; lifetime: ServerAccountScopeLifetime; profiles: ReadonlyMap<string, AccountDisplayProfileV1 | null>;
+        key: string; missingIdsKey: string; status: 'ready' | 'unavailable'; lifetime: ServerAccountScopeLifetime; profiles: ReadonlyMap<string, AccountDisplayProfileV1 | null>;
     }> | null>(null);
 
     React.useEffect(() => {
@@ -55,18 +56,21 @@ export function useDiscussionParticipantProfiles(input: Readonly<{
             });
             if (abort.signal.aborted || !accountLifetime.isCurrent()) return;
             const usersById = new Map(users.map(user => [user.id, user]));
-            setResolved({ key, lifetime: accountLifetime, profiles: new Map(ids.map(id => {
+            setResolved({ key, missingIdsKey, status: 'ready', lifetime: accountLifetime, profiles: new Map(ids.map(id => {
                 const user = usersById.get(id);
                 return [id, user ? { name: user.name ?? null, firstName: user.firstName,
                     lastName: user.lastName, username: user.username, avatarUrl: user.avatar?.url ?? null } : null];
             })) });
-        }).catch(() => { /* Unavailable profiles do not erase acknowledged roster names or imply a former member. */ });
+        }).catch(() => {
+            // Failure settles presentation without inventing former members or erasing admitted names.
+            if (!abort.signal.aborted && accountLifetime.isCurrent()) setResolved({ key, missingIdsKey, lifetime: accountLifetime, profiles: new Map(), status: 'unavailable' });
+        });
         return () => { retirement.dispose(); abort.abort(); };
     }, [missingIdsKey, enabled, key, scope.serverId, scope.accountId, accountLifetime, isCurrent]);
 
     return React.useMemo(() => {
         const accounts = new Map<string, TranscriptAccountActor>();
-        if (!isCurrent) return { owner: null, accounts };
+        if (!isCurrent) return { owner: null, accounts, status: 'unavailable' as const };
         for (const grant of roster?.grants ?? []) {
             if (grant.principal.kind !== 'account') continue;
             accounts.set(grant.principal.accountId, { v: 1, serverId: scope.serverId, accountId: grant.principal.accountId,
@@ -84,6 +88,8 @@ export function useDiscussionParticipantProfiles(input: Readonly<{
             && (roster.ownerAccountId === scope.accountId || accounts.has(scope.accountId))) {
             accounts.set(scope.accountId, { v: 1, serverId: scope.serverId, accountId: scope.accountId, profile: viewerProfile });
         }
-        return { owner: roster ? accounts.get(roster.ownerAccountId) ?? null : null, accounts };
-    }, [admittedAccounts, key, resolved, roster, scope.serverId, scope.accountId, viewerProfile, accountLifetime, isCurrent]);
+        const status = missingIdsKey === '[]' ? 'ready'
+            : resolved?.key === key && resolved.missingIdsKey === missingIdsKey && resolved.lifetime === accountLifetime ? resolved.status : 'loading';
+        return { owner: roster ? accounts.get(roster.ownerAccountId) ?? null : null, accounts, status };
+    }, [admittedAccounts, key, resolved, roster, scope.serverId, scope.accountId, viewerProfile, accountLifetime, isCurrent, missingIdsKey]);
 }

@@ -10,6 +10,10 @@ import type { PluginUiOpenAutomationEventRequestV1 } from '@happier-dev/protocol
 
 import { CollectionListGroupLabel } from '@/components/ui/lists/collection/CollectionList';
 import { Item } from '@/components/ui/lists/Item';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
+import { WorkflowTriggerRunHistory } from './WorkflowTriggerRunHistory';
+import { formatTriggerSummary } from './formatTriggerSummary';
 import { Modal } from '@/modal';
 import { useActiveServerAccountScope, useAllMachines, useMachineListForServer } from '@/sync/domains/state/storage';
 import { areServerAccountScopesEqual, serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
@@ -86,6 +90,7 @@ export function useAccountWorkflowEditor(props: Readonly<{ accountLifetime?: Ser
         ? captureActiveServerAccountScopeLifetime() : props.accountLifetime;
     const actionOptions = props.accountLifetime === undefined ? {} : { accountLifetime: props.accountLifetime };
     const [open, setOpen] = React.useState<Readonly<{ set: WorkflowTriggerSetV1; triggerId: AccountTriggerRow['triggerId']; anchor: React.RefObject<View | null> }> | null>(null);
+    const [history, setHistory] = React.useState<Readonly<{ automationId: string; triggerId: string; title: string }> | null>(null);
     const thenOptions = useTriggerThenOptions({ ...actionOptions, libraryEnabled: open !== null, sets });
     const openTriggerAsWorkflow = useOpenTriggerAsWorkflow(props.accountLifetime);
     const [pending, setPending] = React.useState<ReadonlySet<string>>(() => new Set());
@@ -108,6 +113,7 @@ export function useAccountWorkflowEditor(props: Readonly<{ accountLifetime?: Ser
     const openRow = useEventCallback(async (row: Pick<AccountTriggerRow, 'automationId' | 'triggerId'> & Partial<Pick<AccountTriggerRow, 'legacy'>>, anchor: React.RefObject<View | null>) => {
         const set = sets.find((candidate) => candidate.automationId === row.automationId);
         if (!set) return;
+        setHistory(null);
         if (set.legacy?.lockedReason === 'review_required') {
             if (pending.has(set.automationId)) return;
             const lifetime = captureLifetime();
@@ -154,7 +160,12 @@ export function useAccountWorkflowEditor(props: Readonly<{ accountLifetime?: Ser
     });
     const openTrigger = open?.triggerId == null ? undefined : open.set.triggers.find((trigger) => trigger.id === open.triggerId);
     const openEnabled = open !== null && open.set.enabled && openTrigger?.enabled !== false;
-    const popover = open === null ? null : (
+    const popover = open === null ? history === null ? null : (
+        <ItemGroup title={t('workflows.destination.history.title')}
+            action={<ToolbarButton label={t('common.close')} onPress={() => setHistory(null)} />}>
+            <WorkflowTriggerRunHistory automationId={history.automationId} triggerId={history.triggerId} triggerName={history.title} />
+        </ItemGroup>
+    ) : (
         <AccountTriggerPopover
             key={`${open.set.automationId}:${open.triggerId ?? 'manual'}`}
             set={open.set}
@@ -163,6 +174,10 @@ export function useAccountWorkflowEditor(props: Readonly<{ accountLifetime?: Ser
             workflowOptions={thenOptions.workflowOptions}
             {...actionOptions}
             onRequestClose={() => setOpen(null)}
+            {...(openTrigger ? { onHistory: () => {
+                setHistory({ automationId: open.set.automationId, triggerId: openTrigger.id, title: formatTriggerSummary(openTrigger) });
+                setOpen(null);
+            } } : {})}
             onWritten={refresh}
             {...(open.set.legacy?.lockedReason === 'review_required' ? {} : { onToggleEnabled: { enabled: openEnabled, onPress: () => {
                 setOpen(null);
@@ -286,6 +301,7 @@ function AccountTriggerPopover(props: Readonly<{
     onRequestClose: () => void;
     onWritten: () => void;
     onToggleEnabled?: React.ComponentProps<typeof TriggerPopover>['onToggleEnabled'];
+    onHistory?: () => void;
     onSaveAsWorkflow?: (target: TriggerTargetV1) => void;
     initialEventSeed?: PluginUiOpenAutomationEventRequestV1;
     initialEventEditSeed?: PluginEventAutomationEditSeed;
@@ -304,6 +320,7 @@ function AccountTriggerPopover(props: Readonly<{
     return (
         <TriggerPopover
             testID="workflows-column-trigger-popover"
+            onHistory={props.onHistory}
             anchorRef={props.anchorRef}
             onRequestClose={props.onRequestClose}
             whenKinds={set.observationOnly ? ['pluginEvent'] : ['schedule', 'pluginEvent']}

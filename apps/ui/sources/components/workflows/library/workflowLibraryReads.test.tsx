@@ -1,3 +1,6 @@
+import { createNearViewportTracker, isSpanNearViewport } from '@/components/widgets/nearViewport';
+import { PluginUiScrollActivityProvider, type PluginUiScrollActivityTracker } from '@happier-dev/plugin-ui/advanced';
+import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDeferred, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
@@ -13,7 +16,7 @@ import { WorkflowRunRecipientCensusResponseV1Schema } from '@happier-dev/protoco
 import { PluginProjectionV2Schema, WorkflowTriggerSetV1Schema } from '@happier-dev/protocol';
 import { encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES } from '@happier-dev/protocol/actions/externalActionLimits';
-import { WORKFLOW_DEFINITION_PLUGIN_CURSOR_PREFIX_V1 } from '@happier-dev/protocol/workflows/actionsV1';
+import { WORKFLOW_DEFINITION_PLUGIN_CURSOR_PREFIX_V1, WorkflowRunListRequestV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 
 // Only Home HTTP/credentials and the native Machine RPC leave the real path.
 const machineRpc = vi.hoisted(() => vi.fn());
@@ -30,7 +33,7 @@ const { disconnectActiveServerConnection } = await import('@/sync/runtime/orches
 const { apiSocket } = await import('@/sync/api/session/apiSocket');
 const { TokenStorage } = await import('@/auth/storage/tokenStorage');
 const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
-const { workflowRunRowFromSummary } = await import('@/sync/store/domains/workflowRuns');
+const { workflowRunRowFromSummary, workflowRunListWindowStoreKey, workflowRunStoreKey } = await import('@/sync/store/domains/workflowRuns');
 const { createWorkflowDefinition, getWorkflowDefinition, listWorkflowDefinitions } = await import('@/sync/domains/workflows/workflowDefinitionActions');
 const { ScheduledWorkflowRows } = await import('../triggers/ScheduledWorkflowSection');
 const { projectScheduledWorkflowRows } = await import('../triggers/scheduledWorkflowRows');
@@ -39,6 +42,10 @@ const { useWorkflowDefinitionLibrary, useWorkflowRunWindow, resetWorkflowLibrary
 const { useWorkflowLibraryView } = await import('./useWorkflowLibraryView');
 const { useAccountWorkflowEditor } = await import('../triggers/AccountTriggersSection');
 const { clearDaemonMergedProjectionCacheForTests } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
+const { WorkflowTriggerSection } = await import('../triggers/WorkflowTriggerSection');
+const { WorkflowTriggerRunHistory } = await import('../triggers/WorkflowTriggerRunHistory');
+const { WorkflowRunItemBody } = await import('@/components/sessions/shell/row/WorkflowRunItemBody');
+const { EMPTY_WORKFLOW_TRIGGER_DRAFT } = await import('../triggers/workflowTriggerDraft');
 const route = '/v3/automations/runs/workflow-storage';
 const definitionId = '00000000-0000-4000-8000-000000000001';
 const secondId = '00000000-0000-4000-8000-000000000002';
@@ -122,6 +129,117 @@ async function artifactHeaderPage(selectedIds?: readonly string[]): Promise<unkn
     return { ...page, items: page.items.filter((row: unknown) => row && typeof row === 'object'
         && 'id' in row && typeof row.id === 'string' && selectedIds.includes(row.id)) };
 }
+
+const runWindowKey = (id: Parameters<typeof workflowRunListWindowStoreKey>[0]) => {
+    const scope = storage.getState().profileScope;
+    if (!scope) throw new Error('Expected a bound Home');
+    return workflowRunListWindowStoreKey(id, scope);
+};
+
+it('expands and pages addressed B trigger History while A stays focused, and keeps explicit-null unavailable', async () => {
+    const serverB = await home.addHome({ name: 'B history', serverUrl: 'https://workflow-history-b.test',
+        accountId: 'account-b', active: false, currentAccount: true });
+    home.answer(serverB, '/v1/account/encryption/currentness', { body: createPlainAccountEncryptionCurrentnessFixture() });
+    home.answer(serverId, route, { body: { runs: [], acceptedEnvelopesByRunId: {}, keyCensusByRunId: {} } });
+    const bRows = ['history-b-first', 'history-b-next'].map(id => createWorkflowRunSummaryFixture({ id, ownerAccountId: 'account-b' }));
+    const pages = [await runPage([bRows[0]!], 'b-next', undefined, 'B first Run'),
+        await runPage([bRows[1]!], undefined, undefined, 'B next Run')];
+    home.answer(serverB, route, { select: input => ({ body: pages[
+        WorkflowRunListRequestV1Schema.parse((input as { request: unknown }).request).cursor === 'b-next' ? 1 : 0] }) });
+    const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+    const { WorkflowAccountLifetimeProvider } = await import('../workflowAccountScope');
+    const account = await captureLazyActionAccountContext(serverB);
+    try {
+        const set = WorkflowTriggerSetV1Schema.parse({ automationId: 'b-history-automation', revision: 1,
+            enabled: true, health: 'available', target: { kind: 'workflow', ref: definitionId }, triggers: [{
+                id: 'b-trigger', kind: 'schedule', enabled: true, revision: 1,
+                createdAt: 1, updatedAt: 1, nextRunAt: null, triggerDefinitionEnvelope: null,
+                schedule: { kind: 'cron', scheduleExpr: '0 9 * * *', everyMs: null, timezone: 'UTC' },
+            }] });
+        const screen = await renderScreen(<WorkflowAccountLifetimeProvider value={account.accountLifetime}>
+            <WorkflowTriggerSection accountLifetime={account.accountLifetime}
+                testIDPrefix="addressed-history" set={set} draft={EMPTY_WORKFLOW_TRIGGER_DRAFT} onChangeDraft={() => {}}
+                status="ready" onRetry={() => {}} runsOn={null} stepsUnsaved={false} whereTarget={null} whereSummary={null} inputs={[]} />
+        </WorkflowAccountLifetimeProvider>);
+        await screen.pressByTestIdAsync('addressed-history-trigger:saved:b-trigger-history');
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('B first Run'));
+        await screen.pressByTestIdAsync('session-work-trigger-history:b-history-automation-loadMore');
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('B next Run'));
+        expect(screen.getTextContent()).toContain('B first Run');
+        expect(storage.getState().profileScope).toEqual({ serverId, accountId: 'account-a' });
+        expect(home.requestsFor(route).filter(request => request.serverId === serverId)).toHaveLength(0);
+        const addressedScope = account.accountLifetime.scope;
+        expect(storage.getState().workflowRunListWindows[workflowRunListWindowStoreKey('trigger:b-trigger', addressedScope)]?.runIds)
+            .toEqual(bRows.map(row => row.id));
+        for (const row of bRows) {
+            expect(storage.getState().workflowRunsById[workflowRunStoreKey(row.id, addressedScope)]?.summary?.id).toBe(row.id);
+            expect(storage.getState().workflowRunsById[workflowRunStoreKey(row.id, { serverId, accountId })]).toBeUndefined();
+        }
+        const before = home.requestsFor(route).length;
+        const unavailable = await renderHook(() => useWorkflowRunWindow('trigger:b-trigger'), {
+            wrapper: ({ children }) => <WorkflowAccountLifetimeProvider value={null}>{children}</WorkflowAccountLifetimeProvider>,
+        });
+        expect(unavailable.getCurrent()).toMatchObject({ status: 'failed', serverId: null, rows: [], runIds: [], hasMore: false });
+        await act(async () => { unavailable.getCurrent().retry(); unavailable.getCurrent().loadMore(); });
+        expect(home.requestsFor(route)).toHaveLength(before);
+    } finally { account.dispose(); }
+});
+
+it('windows expensive trigger History rows across appended pages without moving the physical page', async () => {
+    const summaries = Array.from({ length: 72 }, (_, index) => createWorkflowRunSummaryFixture({
+        id: `history-${index}`, ownerAccountId: accountId, sourceSavedBy: { kind: 'person', accountId },
+    }));
+    const pages = await Promise.all([0, 24, 48].map(start => runPage(summaries.slice(start, start + 24),
+        start === 48 ? undefined : `page-${start + 24}`)));
+    home.answer(serverId, route, { select: input => {
+        const request = WorkflowRunListRequestV1Schema.parse((input as { request: unknown }).request);
+        return { body: pages[request.cursor === 'page-48' ? 2 : request.cursor === 'page-24' ? 1 : 0] };
+    } });
+    // The platform geometry boundary supplies content positions; the real viewport owner decides admission.
+    const rowHeight = 80;
+    const physical = createNearViewportTracker({ quantum: rowHeight, initialViewportHeight: rowHeight * 3 });
+    const scrollToOffset = vi.fn();
+    const tracker: PluginUiScrollActivityTracker = { ...physical, scrollToOffset,
+        measureSpan: async node => {
+            if (!node || typeof node !== 'object' || !('testID' in node) || typeof node.testID !== 'string') return null;
+            const index = Number(node.testID.split(':').at(-1)?.replace('history-', ''));
+            return Number.isFinite(index) ? { top: index * rowHeight, height: rowHeight } : null;
+        } };
+    const screen = await renderScreen(<PluginUiScrollActivityProvider tracker={tracker}>
+        <WorkflowTriggerRunHistory automationId="history" triggerId="trigger-history" />
+    </PluginUiScrollActivityProvider>, { createNodeMock: element => ({ testID: element.props.testID }) });
+    const mounted = () => screen.findAll(node => node.type === WorkflowRunItemBody).map(node => String(node.props.runId));
+    const expected = (loaded: number) => summaries.slice(0, loaded).filter((_, index) =>
+        isSpanNearViewport(physical.getWindow(), { top: index * rowHeight, height: rowHeight })).map(row => row.id);
+    await waitForHomeGovernance(() => expect(mounted()).toEqual(expected(24)));
+    expect(mounted().length).toBeLessThan(24);
+    // Keep measured shells at their actual height while offscreen, including after pagination.
+    for (const shell of screen.findAll(node => typeof node.props.testID === 'string'
+        && node.props.testID.startsWith('session-work-trigger-history-row:') && typeof node.props.onLayout === 'function')) {
+        await act(async () => shell.props.onLayout({ nativeEvent: { layout: { height: rowHeight } } }));
+    }
+    await act(async () => physical.onScroll({ nativeEvent: { contentOffset: { y: rowHeight * 12 } } } as never));
+    await waitForHomeGovernance(() => expect(mounted()).toEqual(expected(24)));
+    const windowBeforeAppend = physical.getWindow();
+    for (const loaded of [48, 72]) {
+        await screen.pressByTestIdAsync('session-work-trigger-history:history-loadMore');
+        await waitForHomeGovernance(() => expect(storage.getState().workflowRunListWindows[runWindowKey('trigger:trigger-history')]?.runIds).toHaveLength(loaded));
+        await waitForHomeGovernance(() => expect(mounted()).toEqual(expected(loaded)));
+        expect(physical.getWindow()).toBe(windowBeforeAppend);
+        expect(scrollToOffset).not.toHaveBeenCalled();
+    }
+    expect(screen.findByTestId('session-work-trigger-history:history-loadMore')).toBeNull();
+    await act(async () => physical.onScroll({ nativeEvent: { contentOffset: { y: rowHeight * 68 } } } as never));
+    await waitForHomeGovernance(() => expect(mounted()).toEqual(expected(72)));
+    expect(mounted()).toContain('history-71');
+    await act(async () => physical.onScroll({ nativeEvent: { contentOffset: { y: 0 } } } as never));
+    await waitForHomeGovernance(() => expect(mounted()).toEqual(expected(72)));
+    expect(mounted()).toContain('history-0');
+    home.answer(serverId, route, { body: await runPage(summaries.slice(0, 1)) });
+    const onePage = await renderScreen(<WorkflowTriggerRunHistory automationId="one-page" triggerId="one-page" />);
+    await waitForHomeGovernance(() => expect(onePage.findAll(node => node.type === WorkflowRunItemBody)).toHaveLength(1));
+    expect(onePage.findByTestId('session-work-trigger-history:one-page-loadMore')).toBeNull();
+});
 
 describe('Workflow library reads through real Account Actions and HTTP', () => {
     it('does not reload definition inventory for typed Session-only changes, but refreshes Artifact and unknown wakes', async () => {
@@ -616,11 +734,11 @@ describe('Workflow Run windows through real Account storage', () => {
         await act(async () => publishHomeAccountChange(serverId, ['workflow-run:member-20']));
         await waitForHomeGovernance(() => expect(member.getCurrent().runIds).toEqual(ordered.filter(row => row.id !== 'member-20').map(row => row.id)));
         expect(storage.getState().workflowRunsById).toEqual({});
-        expect(storage.getState().workflowRunListWindows.attention?.frontier).toEqual({ id: 'member-10', createdAt: 10_000 });
+        expect(storage.getState().workflowRunListWindows[runWindowKey('attention')]?.frontier).toEqual({ id: 'member-10', createdAt: 10_000 });
         home.answer(serverId, route, { body: membershipPage([]) });
         await act(async () => publishHomeAccountChange(serverId, ['workflow-run:member-10']));
         await waitForHomeGovernance(() => expect(member.getCurrent().runIds).toEqual([]));
-        expect(storage.getState().workflowRunListWindows.attention?.frontier).toBeUndefined();
+        expect(storage.getState().workflowRunListWindows[runWindowKey('attention')]?.frontier).toBeUndefined();
         expect(member.getCurrent().hasMore).toBe(false);
     });
 
@@ -655,7 +773,7 @@ describe('Workflow Run windows through real Account storage', () => {
             expect.objectContaining({ request: expect.objectContaining({ attention: 'required', limit: expect.any(Number) }) }),
             expect.objectContaining({ request: expect.objectContaining({ attention: 'required', cursor: 'full-second', limit: expect.any(Number) }) }),
         ]);
-        expect(storage.getState().workflowRunListWindows.attention?.nextCursor).toBe('full-tail');
+        expect(storage.getState().workflowRunListWindows[runWindowKey('attention')]?.nextCursor).toBe('full-tail');
     });
 
     it('shares destination demand, keeps destinations distinct from origins, and avoids unrelated renders', async () => {

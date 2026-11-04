@@ -13,6 +13,12 @@ export function workflowRunStoreKey(id: string, scope: ServerAccountScope | null
     return scope ? serverAccountScopedResourceKey(scope, id) : id;
 }
 
+/** A query's membership and opaque cursor belong to the same Home/Account as its Run bodies. */
+export function workflowRunListWindowStoreKey(id: WorkflowRunListWindowId, scope: ServerAccountScope): `account:${string}` {
+    return `account:${serverAccountScopedResourceKey(scope, id)}`;
+}
+export type WorkflowRunListWindowStoreId = WorkflowRunListWindowId | `account:${string}` | `session:${string}` | `discussion:${string}`;
+
 /** Session relation membership is query evidence, independent of the retained Run bodies. */
 export function sessionWorkflowRunWindowId(scope: ServerAccountScope, sessionId: string, relation: 'origin' | 'destination'): `session:${string}` {
     return `session:${serverAccountScopedResourceKey(scope, sessionId, relation)}`;
@@ -69,7 +75,7 @@ export type WorkflowRunsById = Record<string, WorkflowRunRow>;
  */
 export type WorkflowRunsDomain = {
     workflowRunsById: WorkflowRunsById;
-    workflowRunListWindows: Partial<Record<WorkflowRunListWindowId | `session:${string}` | `discussion:${string}`, WorkflowRunListWindow>>;
+    workflowRunListWindows: Partial<Record<WorkflowRunListWindowStoreId, WorkflowRunListWindow>>;
     /** Per Run: the one invocation fact map plus the windows and evidence that reference it. */
     workflowRunInvocationsByRunId: Record<string, WorkflowRunInvocations>;
     /**
@@ -81,7 +87,7 @@ export type WorkflowRunsDomain = {
     removeWorkflowRun: (runId: string, scope?: ServerAccountScope | null) => void;
     applyWorkflowRunListPage: (input: Readonly<{
         scope?: ServerAccountScope | null;
-        windowId: WorkflowRunListWindowId | `session:${string}` | `discussion:${string}`;
+        windowId: WorkflowRunListWindowStoreId;
         runs: readonly WorkflowRunSummaryV1[];
         projection?: 'membership';
         automationRuns?: readonly AutomationDefinitionRun[];
@@ -143,7 +149,7 @@ export type WorkflowRunsDomain = {
  */
 export type WorkflowLoadedSpanMode = 'replace' | 'append' | 'refresh';
 
-export type WorkflowRunListWindowId = 'all' | 'active' | 'attention' | 'automationAttention' | `automation:${string}` | `destination:${string}` | `under:${string}`;
+export type WorkflowRunListWindowId = import('@/sync/domains/workflows/workflowRunListActions').WorkflowRunListFilterId | 'automationAttention';
 export type WorkflowRunListWindow = Readonly<{
     /** Also binds nextCursor; promotion must restart with a full first page. */
     projection?: 'membership';
@@ -852,7 +858,7 @@ export function createWorkflowRunsDomain<S extends WorkflowRunsDomain>({
                     runIds: previous && sameStrictJsonValue(previous.runIds, membership.runIds) ? previous.runIds : membership.runIds,
                     ...(projection === undefined ? {} : { projection }),
                     ...(frontier === undefined ? {} : { frontier: previous?.frontier && sameStrictJsonValue(previous.frontier, frontier) ? previous.frontier : frontier }),
-                    ...((windowId.startsWith('session:') || windowId.startsWith('discussion:')) && scope ? { scope } : {}),
+                    ...((windowId.startsWith('account:') || windowId.startsWith('session:') || windowId.startsWith('discussion:')) && scope ? { scope } : {}),
                     ...(attentionRunIds === undefined ? {} : { attentionRunIds: previous?.attentionRunIds && sameStrictJsonValue(previous.attentionRunIds, attentionRunIds) ? previous.attentionRunIds : attentionRunIds }),
                     ...(lastSuccessfulReadAt === undefined ? {} : { lastSuccessfulReadAt }),
                 };

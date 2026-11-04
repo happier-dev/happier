@@ -43,19 +43,20 @@ export type MachinePresenceSummary = Readonly<{
 export function useMachinePresenceSummary(
     serverId: string | null | undefined,
     machineId: string | null | undefined,
+    suppliedLifetime?: ServerAccountScopeLifetime | null,
 ): MachinePresenceSummary {
-    return useMachinePresenceSummaries(serverId, [machineId ?? ''])[0]!;
+    return useMachinePresenceSummaries(serverId, [machineId ?? ''], suppliedLifetime)[0]!;
 }
 
 /** All-machines daemon reads share the same presence lifecycle and earliest clock wake. */
 export function useMachinePresenceSummaries(
     serverId: string | null | undefined,
     machineIds: readonly string[],
+    suppliedLifetime?: ServerAccountScopeLifetime | null,
 ): readonly MachinePresenceSummary[] {
     const store = getStorage();
     const targetServerId = serverId?.trim() || getActiveServerSnapshot().serverId;
-    const { binding } = useServerCredentialAccountScopeBinding(targetServerId);
-    const scope = binding?.isCurrent() ? binding.scope : null;
+    const scope = useMachinePresenceScope(targetServerId, suppliedLifetime);
     const cached = React.useRef<readonly MachinePresenceSummary[]>([]);
     const idsKey = JSON.stringify(machineIds);
     const ids = React.useMemo(() => (JSON.parse(idsKey) as string[]).map(id => id.trim()), [idsKey]);
@@ -101,13 +102,10 @@ export type MachinePresenceMembership = Readonly<{
     counts: MachinePresenceCounts;
 }>;
 
-/** App-wide consumers need membership, not heartbeat timestamps or machine presentation. */
-export function useMachinePresenceMembership(
-    serverId: string | null,
+function useMachinePresenceScope(
+    targetServerId: string | null,
     suppliedLifetime?: ServerAccountScopeLifetime | null,
-): MachinePresenceMembership {
-    const store = getStorage();
-    const targetServerId = serverId?.trim() || getActiveServerSnapshot().serverId;
+) {
     const { binding } = useServerCredentialAccountScopeBinding(suppliedLifetime === undefined ? targetServerId : null);
     const subscribeSuppliedLifetime = React.useCallback((notify: () => void) => {
         const retirement = suppliedLifetime?.onRetire(notify);
@@ -117,11 +115,21 @@ export function useMachinePresenceMembership(
     const suppliedCurrent = React.useSyncExternalStore(subscribeSuppliedLifetime, readSuppliedCurrentness, readSuppliedCurrentness);
     // A composition owner can supply its already admitted exact Account. An
     // explicit absent, retired or different-Home owner never borrows another one.
-    const scope = suppliedLifetime === undefined
+    return suppliedLifetime === undefined
         ? binding?.isCurrent() ? binding.scope : null
         : suppliedCurrent && suppliedLifetime
             && areServerProfileIdentifiersEquivalent(suppliedLifetime.scope.serverId, targetServerId)
             ? suppliedLifetime.scope : null;
+}
+
+/** App-wide consumers need membership, not heartbeat timestamps or machine presentation. */
+export function useMachinePresenceMembership(
+    serverId: string | null,
+    suppliedLifetime?: ServerAccountScopeLifetime | null,
+): MachinePresenceMembership {
+    const store = getStorage();
+    const targetServerId = serverId?.trim() || getActiveServerSnapshot().serverId;
+    const scope = useMachinePresenceScope(targetServerId, suppliedLifetime);
     const cached = React.useRef<MachinePresenceMembership>({ onlineMachineIds: [], selectableMachineIds: [], counts: { online: 0, offline: 0, unknown: 0 } });
     const readMachines = React.useCallback((resolveScopeId: ProfileScopeResolver = captureServerProfileScopeResolver()) => {
         const state = store.getState();
