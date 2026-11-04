@@ -26,6 +26,8 @@ import { terminateProcessCustodyByJob, waitForProcessCustodyHandshake } from '@/
 import { authorizeResolvedProjectExecLaunchForHost } from '@/plugins/runtime/invocation/services/exec';
 import type { Disposable, PtyExitEvent, PtyProcess, PtyProvider, PtySpawnParams } from './provider';
 import { executeHostFiniteTerminalProcess } from './finiteProcess';
+import { encodeAgentLaunchFrame } from '@/daemon/agentIsolation/agentLaunchFrame';
+import { deriveAgentIsolationMemberIdentity } from '@/daemon/agentIsolation/provisioning';
 import { createPythonPtyRelayProvider, resolvePythonPtyRelayExecutable } from './pythonRelay';
 
 // Supplemental OS evidence; ordinary owner regressions below need neither Bash nor Python.
@@ -43,7 +45,7 @@ describe.skipIf(process.platform === 'win32' || !existsSync('/bin/bash')
       return pty;
     } } });
     try {
-      const accepted = manager.ensure({ terminalKey: 'stop-zero-native', cwd: process.cwd(), holdUntilExit: true,
+      const accepted = await manager.ensure({ terminalKey: 'stop-zero-native', cwd: process.cwd(), holdUntilExit: true,
         launchProcess: { file: '/bin/bash', args: ['-c', `printf "QA_HOLD_READY\\n"; sleep ${process.platform === 'darwin' ? '86400' : 'infinity'} & wait`], env: process.env } });
       if (!accepted.ok) throw new Error(accepted.errorCode);
       await ready;
@@ -60,13 +62,13 @@ describe.skipIf(process.platform === 'win32' || !existsSync('/bin/bash')
 });
 
 describe('PTY spawn failures', () => {
-  it('keeps the terminal error code and conveys the actual resource reason to the caller', () => {
+  it('keeps the terminal error code and conveys the actual resource reason to the caller', async () => {
     const manager = createRealTerminalPtySessionManager({
       ptyProvider: { spawn: () => { throw Object.assign(new Error('private command'), { code: 'EAGAIN', syscall: 'forkpty' }); } },
       env: {}, platform: 'linux', config: defaultConfig(),
     });
     try {
-      expect(manager.ensure({ terminalKey: 'failure', cwd: '/fixture' })).toMatchObject({
+      expect(await manager.ensure({ terminalKey: 'failure', cwd: '/fixture' })).toMatchObject({
         ok: false, errorCode: 'terminal_spawn_failed', spawnFailure: { reason: 'no_ptys', errno: 'EAGAIN' },
       });
     } finally { manager.dispose(); }
@@ -203,13 +205,13 @@ function defaultConfig(overrides?: Partial<TerminalPtySessionManagerConfig>): Te
 const BASH_ENV: NodeJS.ProcessEnv = { SHELL: '/bin/bash' };
 
 describe('finite natural tree settlement', () => {
-  it('replays tiny output after a long idle hold and its later exit, through the strict stream consumer', () => {
+  it('replays tiny output after a long idle hold and its later exit, through the strict stream consumer', async () => {
     let clock = 0;
     const provider = new FakePtyProvider();
     const manager = createTerminalPtySessionManager({ ptyProvider: provider, platform: 'linux', env: BASH_ENV,
       config: defaultConfig({ bufferRetentionMs: 1000 }), now: () => clock });
     try {
-      const accepted = manager.ensure({ terminalKey: 'finished-replay', cwd: '/fixture', holdUntilExit: true,
+      const accepted = await manager.ensure({ terminalKey: 'finished-replay', cwd: '/fixture', holdUntilExit: true,
         launchProcess: { file: '/installed/echo', args: [] } });
       if (!accepted.ok) throw new Error(accepted.errorCode);
       const text = 'QA_HOLD_READY 世界🚀\u0000\n';
@@ -246,7 +248,7 @@ describe('finite natural tree settlement', () => {
         helperExecutablePath: custody.executablePath, execFile: async () => { throw new Error('native census unavailable'); } } },
       config: defaultConfig(), env: BASH_ENV });
     try {
-      const accepted = manager.ensure({ terminalKey: 'windows-census-unavailable', cwd: 'C:\\project', holdUntilExit: true,
+      const accepted = await manager.ensure({ terminalKey: 'windows-census-unavailable', cwd: 'C:\\project', holdUntilExit: true,
         launchProcess: { file: 'C:\\fake.exe', args: [] } });
       if (!accepted.ok) throw new Error(accepted.errorCode);
       let settled = false;
@@ -258,7 +260,7 @@ describe('finite natural tree settlement', () => {
       expect(await manager.requestStop({ terminalId: accepted.terminalId })).toEqual({ kind: 'unconfirmed' });
       expect(manager.isFiniteHeld(accepted.terminalId)).toBe(true);
       expect(settled).toBe(false);
-      expect(manager.ensure({ terminalKey: 'replacement', cwd: 'C:\\project' }))
+      expect(await manager.ensure({ terminalKey: 'replacement', cwd: 'C:\\project' }))
         .toMatchObject({ ok: true });
       manager.dispose();
       expect(await observation).toEqual({ kind: 'unavailable' });
@@ -280,7 +282,7 @@ describe('finite natural tree settlement', () => {
       config: defaultConfig(), env: BASH_ENV };
     const manager = createTerminalPtySessionManager(options);
     try {
-      const accepted = manager.ensure({ terminalKey: 'windows-natural', cwd: 'C:\\project', holdUntilExit: true,
+      const accepted = await manager.ensure({ terminalKey: 'windows-natural', cwd: 'C:\\project', holdUntilExit: true,
         launchProcess: { file: 'C:\\fake.exe', args: [] } });
       if (!accepted.ok) throw new Error(accepted.errorCode);
       const observation = manager.waitForExit({ terminalId: accepted.terminalId });
@@ -330,7 +332,7 @@ describe('finite natural tree settlement', () => {
     const manager = createTerminalPtySessionManager(options);
     const uncertain = vi.fn();
     try {
-      const accepted = manager.ensure({ terminalKey: 'windows-recovery', cwd: 'C:\\project', holdUntilExit: true,
+      const accepted = await manager.ensure({ terminalKey: 'windows-recovery', cwd: 'C:\\project', holdUntilExit: true,
         launchProcess: { file: 'C:\\fake.exe', args: [] } });
       if (!accepted.ok) throw new Error(accepted.errorCode);
       let settled = false;
@@ -341,7 +343,7 @@ describe('finite natural tree settlement', () => {
       expect(uncertain).toHaveBeenCalled();
       expect(manager.isFiniteHeld(accepted.terminalId)).toBe(true);
       expect(settled).toBe(false);
-      expect(manager.ensure({ terminalKey: 'another-windows-process', cwd: 'C:\\project' }))
+      expect(await manager.ensure({ terminalKey: 'another-windows-process', cwd: 'C:\\project' }))
         .toMatchObject({ ok: true });
       expect(await manager.requestStop({ terminalId: accepted.terminalId })).toEqual({ kind: 'unconfirmed' });
       expect(settled).toBe(false);
@@ -373,7 +375,7 @@ describe('finite natural tree settlement', () => {
       config: defaultConfig(), env: BASH_ENV };
     const manager = createTerminalPtySessionManager(options);
     try {
-      const accepted = manager.ensure({ terminalKey: 'windows-unknown', cwd: 'C:\\project', holdUntilExit: true,
+      const accepted = await manager.ensure({ terminalKey: 'windows-unknown', cwd: 'C:\\project', holdUntilExit: true,
         launchProcess: { file: 'C:\\fake.exe', args: [] } });
       if (!accepted.ok) throw new Error(accepted.errorCode);
       const uncertain = vi.fn();
@@ -396,7 +398,7 @@ describe('finite natural tree settlement', () => {
     const manager = createTerminalPtySessionManager(params);
     const uncertain: string[] = [];
     try {
-      const accepted = manager.ensure({ terminalKey: 'natural-tree', cwd: '/project', holdUntilExit: true,
+      const accepted = await manager.ensure({ terminalKey: 'natural-tree', cwd: '/project', holdUntilExit: true,
         launchProcess: { file: '/fake/process', args: [] } });
       if (!accepted.ok) throw new Error(accepted.errorCode);
       let settled = false;
@@ -408,7 +410,7 @@ describe('finite natural tree settlement', () => {
       expect(settled).toBe(false);
       expect(manager.isFiniteHeld(accepted.terminalId)).toBe(true);
       expect(manager.getLiveWorkProducer().read()).toMatchObject({ items: [{ state: 'unknown' }] });
-      expect(manager.ensure({ terminalKey: 'another-process', cwd: '/project' }))
+      expect(await manager.ensure({ terminalKey: 'another-process', cwd: '/project' }))
         .toMatchObject({ ok: true });
       expect(await manager.requestStop({ terminalId: accepted.terminalId })).toEqual({ kind: 'unconfirmed' });
       expect(settled).toBe(false);
@@ -427,7 +429,7 @@ describe('finite natural tree settlement', () => {
     const manager = createTerminalPtySessionManager({ ptyProvider: { spawn: () => pty },
       config: defaultConfig(), stopProcessTree: stop, env: BASH_ENV });
     try {
-      const accepted = manager.ensure({ terminalKey: 'unknown-tree', cwd: '/project', holdUntilExit: true,
+      const accepted = await manager.ensure({ terminalKey: 'unknown-tree', cwd: '/project', holdUntilExit: true,
         launchProcess: { file: '/fake/process', args: [] } });
       if (!accepted.ok) throw new Error(accepted.errorCode);
       pty.emitExit({ exitCode: 0 });
@@ -464,12 +466,12 @@ type ByteCapableSessionManager = ReturnType<typeof createTerminalPtySessionManag
 };
 
 describe('TerminalPtySessionManager', () => {
-  it.each(['linux', 'win32'] as const)('projects the retained latest line across chunk boundaries and releases its observer (%s)', platform => {
+  it.each(['linux', 'win32'] as const)('projects the retained latest line across chunk boundaries and releases its observer (%s)', async platform => {
     const provider = new FakeByteHookProvider();
     const manager = createTerminalPtySessionManager({ ptyProvider: provider, config: defaultConfig(), env: BASH_ENV, platform });
     const lines: string[] = [];
     try {
-      const terminal = manager.ensure({ terminalKey: 'output', cwd: '/project' });
+      const terminal = await manager.ensure({ terminalKey: 'output', cwd: '/project' });
       if (!terminal.ok) throw new Error(terminal.errorCode);
       const pty = provider.spawned[0]!.pty;
       const emit = (text: string) => platform === 'win32' ? pty.emitData(text) : pty.emitByteHookData(Buffer.from(text));
@@ -490,19 +492,19 @@ describe('TerminalPtySessionManager', () => {
         'old\nchecking \u001b[32m世界🚀\u001b[0m\r\nfirst\rreplacement\r\n\r\nafter unsubscribe');
     } finally { manager.dispose(); }
   });
-  it('refuses fresh terminal starts and restarts during drain without disturbing attached terminal custody', () => {
+  it('refuses fresh terminal starts and restarts during drain without disturbing attached terminal custody', async () => {
     const provider = new FakePtyProvider();
     const admissionDrain = createDaemonAdmissionDrain();
     const manager = createTerminalPtySessionManager({ ptyProvider: provider, config: defaultConfig(), env: BASH_ENV });
     const input = { terminalKey: 'attached', cwd: '/project', admissionDrain };
     try {
-      const opened = manager.ensure(input);
+      const opened = await manager.ensure(input);
       if (!opened.ok) throw new Error('Initial terminal must open');
       const retainedPty = provider.spawned[0]!.pty;
       admissionDrain.beginUnusedStopDrain();
-      expect(manager.ensure(input)).toEqual({ ok: true, terminalId: opened.terminalId, reused: true });
-      expect(manager.ensure({ ...input, terminalKey: 'fresh' })).toMatchObject({ ok: false, errorCode: 'terminal_busy' });
-      expect(manager.restart(input)).toMatchObject({ ok: false, errorCode: 'terminal_busy' });
+      expect(await manager.ensure(input)).toEqual({ ok: true, terminalId: opened.terminalId, reused: true });
+      expect(await manager.ensure({ ...input, terminalKey: 'fresh' })).toMatchObject({ ok: false, errorCode: 'terminal_busy' });
+      expect(await manager.restart(input)).toMatchObject({ ok: false, errorCode: 'terminal_busy' });
       expect(provider.spawned).toHaveLength(1);
       expect(retainedPty.killCount).toBe(0);
       expect(manager.input({ terminalId: opened.terminalId, data: 'existing-control' })).toEqual({ ok: true });
@@ -510,19 +512,19 @@ describe('TerminalPtySessionManager', () => {
       expect(manager.read({ terminalId: opened.terminalId, cursor: 0, maxBytes: 1000, maxEvents: 10 })).toMatchObject({ ok: true,
         events: [{ t: 'data', data: 'attached-output' }] });
       admissionDrain.resumeUnusedStop();
-      expect(manager.restart(input)).toMatchObject({ ok: true, reused: false });
+      expect(await manager.restart(input)).toMatchObject({ ok: true, reused: false });
       expect(provider.spawned).toHaveLength(2);
     } finally { manager.dispose(); }
   });
-  it('does not reuse a sibling Session terminal with the same logical key', () => {
+  it('does not reuse a sibling Session terminal with the same logical key', async () => {
     const manager = createTerminalPtySessionManager({ ptyProvider: new FakePtyProvider(), config: defaultConfig(), env: BASH_ENV });
     try {
-      const first = manager.ensure({ terminalKey: 'shell', cwd: '/project', sessionId: 'session-one' });
-      const second = manager.ensure({ terminalKey: 'shell', cwd: '/project', sessionId: 'session-two' });
+      const first = await manager.ensure({ terminalKey: 'shell', cwd: '/project', sessionId: 'session-one' });
+      const second = await manager.ensure({ terminalKey: 'shell', cwd: '/project', sessionId: 'session-two' });
       expect(first).toMatchObject({ ok: true, reused: false });
       expect(second).toMatchObject({ ok: true, reused: false });
       expect(first.ok && second.ok && first.terminalId !== second.terminalId).toBe(true);
-      expect(manager.restart({ terminalKey: 'shell', cwd: '/project' })).toMatchObject({ ok: false, errorCode: 'terminal_not_found' });
+      expect(await manager.restart({ terminalKey: 'shell', cwd: '/project' })).toMatchObject({ ok: false, errorCode: 'terminal_not_found' });
     } finally { manager.dispose(); }
   });
 
@@ -603,7 +605,7 @@ describe('TerminalPtySessionManager', () => {
       stopProcessTree: async () => { throw new Error('Process tree could not be confirmed stopped'); },
     });
     try {
-      const opened = manager.ensure({ terminalKey: 'shell', cwd: '/project' });
+      const opened = await manager.ensure({ terminalKey: 'shell', cwd: '/project' });
       if (!opened.ok) throw new Error('Terminal must open');
       expect(await manager.requestStop({ terminalId: opened.terminalId })).toEqual({ kind: 'unconfirmed' });
       provider.spawned[0]!.pty.emitExit({ exitCode: 0 });
@@ -611,37 +613,37 @@ describe('TerminalPtySessionManager', () => {
     } finally { manager.dispose(); }
   });
 
-  it('namespaces the same terminal key by authenticated requester and accepted checkout custody', () => {
+  it('namespaces the same terminal key by authenticated requester and accepted checkout custody', async () => {
     const provider = new FakePtyProvider();
     const manager = createTerminalPtySessionManager({ ptyProvider: provider, config: defaultConfig(), env: BASH_ENV });
     const custody = { serverId: 'home', machineId: 'machine', installationId: 'installation', workspaceRefId: 'accepted', projectKey: 'project', rootPath: '/project', requesterAccountId: 'bob' };
     try {
-      const bob = manager.ensure({ terminalKey: 'shell', cwd: '/project', custody });
-      const cara = manager.ensure({ terminalKey: 'shell', cwd: '/project', custody: { ...custody, requesterAccountId: 'cara' } });
+      const bob = await manager.ensure({ terminalKey: 'shell', cwd: '/project', custody });
+      const cara = await manager.ensure({ terminalKey: 'shell', cwd: '/project', custody: { ...custody, requesterAccountId: 'cara' } });
       expect(bob).toMatchObject({ ok: true, reused: false });
       expect(cara).toMatchObject({ ok: true, reused: false });
       if (!bob.ok || !cara.ok) throw new Error('Both attributed terminals must open');
       expect(bob.terminalId).not.toBe(cara.terminalId);
-      expect(manager.ensure({ terminalKey: 'shell', cwd: '/project', custody })).toEqual({ ok: true, terminalId: bob.terminalId, reused: true });
+      expect(await manager.ensure({ terminalKey: 'shell', cwd: '/project', custody })).toEqual({ ok: true, terminalId: bob.terminalId, reused: true });
       expect(manager.getCustody(bob.terminalId)).toEqual(custody);
       expect(manager.list().map(terminal => terminal.terminalKey)).toEqual(['shell', 'shell']);
-      expect(manager.ensure({ terminalKey: 'shell', cwd: '/project', custody: { ...custody, serverId: 'another-home' } })).toMatchObject({ ok: true, reused: false });
+      expect(await manager.ensure({ terminalKey: 'shell', cwd: '/project', custody: { ...custody, serverId: 'another-home' } })).toMatchObject({ ok: true, reused: false });
     } finally { manager.dispose(); }
   });
 
-  it('preserves accepted root custody while a finite admitted invocation runs in its reviewed subdirectory', () => {
+  it('preserves accepted root custody while a finite admitted invocation runs in its reviewed subdirectory', async () => {
     const provider = new FakePtyProvider();
     const manager = createTerminalPtySessionManager({ ptyProvider: provider, config: defaultConfig(), env: BASH_ENV });
     const custody = { serverId: 'home', machineId: 'machine', installationId: 'installation', workspaceRefId: 'accepted', projectKey: 'project', rootPath: '/project', requesterAccountId: 'bob' };
     try {
       // Ordinary root shells cannot reinterpret their accepted checkout cwd.
-      expect(manager.ensure({ terminalKey: 'shell', cwd: '/project/packages/tool', custody }))
+      expect(await manager.ensure({ terminalKey: 'shell', cwd: '/project/packages/tool', custody }))
         .toMatchObject({ ok: false, errorCode: 'terminal_forbidden' });
       const invocation = { terminalKey: 'finite', cwd: '/project/packages/tool', custody,
         requesterAccountId: 'bob', launchProcess: { file: '/managed/tool', args: ['run'] }, holdUntilExit: true } as const;
-      expect(manager.ensure({ ...invocation, requesterAccountId: 'cara' }))
+      expect(await manager.ensure({ ...invocation, requesterAccountId: 'cara' }))
         .toMatchObject({ ok: false, errorCode: 'terminal_forbidden' });
-      const admitted = manager.ensure(invocation);
+      const admitted = await manager.ensure(invocation);
       expect(admitted).toMatchObject({ ok: true, reused: false });
       if (!admitted.ok) throw new Error('Reviewed finite invocation must launch');
       expect(manager.getCustody(admitted.terminalId)).toEqual(custody);
@@ -680,21 +682,21 @@ describe('TerminalPtySessionManager', () => {
     } finally { manager.dispose(); await authorizedProjectLaunch.release(); }
   });
 
-  it('admits another shell without evicting foreign custody or a finite hold', () => {
+  it('admits another shell without evicting foreign custody or a finite hold', async () => {
     const provider = new FakePtyProvider();
     const manager = createTerminalPtySessionManager({ ptyProvider: provider, config: defaultConfig(), env: BASH_ENV });
     const custody = { serverId: 'home', machineId: 'machine', installationId: 'installation', workspaceRefId: 'accepted', projectKey: 'project', rootPath: '/project', requesterAccountId: 'bob' };
     try {
-      const alice = manager.ensure({ terminalKey: 'alice', cwd: '/project', custody: { ...custody, requesterAccountId: 'alice' } });
-      const held = manager.ensure({ terminalKey: 'finite', cwd: '/project', requesterAccountId: 'bob', launchProcess: { file: '/managed/tool', args: [] }, holdUntilExit: true });
-      expect(manager.ensure({ terminalKey: 'shell', cwd: '/project', custody }).ok).toBe(true);
+      const alice = await manager.ensure({ terminalKey: 'alice', cwd: '/project', custody: { ...custody, requesterAccountId: 'alice' } });
+      const held = await manager.ensure({ terminalKey: 'finite', cwd: '/project', requesterAccountId: 'bob', launchProcess: { file: '/managed/tool', args: [] }, holdUntilExit: true });
+      expect((await manager.ensure({ terminalKey: 'shell', cwd: '/project', custody })).ok).toBe(true);
       expect(alice.ok && manager.list().some(terminal => terminal.terminalId === alice.terminalId)).toBe(true);
       expect(held.ok && manager.list().some(terminal => terminal.terminalId === held.terminalId)).toBe(true);
       expect(provider.spawned.map(entry => entry.pty.killCount)).toEqual([0, 0, 0]);
     } finally { manager.dispose(); }
   });
 
-  it('does not reap or evict any requester cohort when another shell is admitted', () => {
+  it('does not reap or evict any requester cohort when another shell is admitted', async () => {
     const provider = new FakePtyProvider();
     let clock = 0;
     const manager = createTerminalPtySessionManager({ ptyProvider: provider, config: defaultConfig(), now: () => clock, env: BASH_ENV });
@@ -702,14 +704,14 @@ describe('TerminalPtySessionManager', () => {
     try {
       // The Account id can have the same spelling on a different Home. It is
       // still a different requester and never an eligible candidate.
-      const alice = manager.ensure({ terminalKey: 'oldest', cwd: '/project', custody: { ...custody, serverId: 'alice-home' } });
+      const alice = await manager.ensure({ terminalKey: 'oldest', cwd: '/project', custody: { ...custody, serverId: 'alice-home' } });
       clock = 900;
-      const bob = manager.ensure({ terminalKey: 'shell', cwd: '/project', custody });
+      const bob = await manager.ensure({ terminalKey: 'shell', cwd: '/project', custody });
       if (!alice.ok || !bob.ok) throw new Error('Both actors must open');
       clock = 1100;
       expect(manager.readByteStream({ terminalId: bob.terminalId, byteOffset: 0 }).ok).toBe(true);
       expect(manager.list().some(terminal => terminal.terminalId === alice.terminalId)).toBe(true);
-      const replacement = manager.ensure({ terminalKey: 'second', cwd: '/project', custody });
+      const replacement = await manager.ensure({ terminalKey: 'second', cwd: '/project', custody });
       expect(replacement.ok).toBe(true);
       expect(manager.list().some(terminal => terminal.terminalId === alice.terminalId)).toBe(true);
       expect(manager.list().some(terminal => terminal.terminalId === bob.terminalId)).toBe(true);
@@ -717,7 +719,7 @@ describe('TerminalPtySessionManager', () => {
     } finally { manager.dispose(); }
   });
 
-  it('preserves final verbatim Windows argv at the actual ConPTY command-line boundary without escaping it twice', () => {
+  it('preserves final verbatim Windows argv at the actual ConPTY command-line boundary without escaping it twice', async () => {
     // Untyped third-party boundary fixture: execute node-pty 1.1.0's real codec,
     // but keep native ConPTY process creation behind the existing PtyProvider.
     const codec: { argsToCommandLine(file: string, args: string | string[]): string } =
@@ -739,9 +741,9 @@ describe('TerminalPtySessionManager', () => {
     const manager = createTerminalPtySessionManager({ ptyProvider: provider, config: defaultConfig(),
       platform: 'win32', env: { ComSpec: 'C:\\Windows\\System32\\cmd.exe' } });
     try {
-      expect(manager.ensure({ terminalKey: 'native-windows', cwd: 'C:\\native project root', holdUntilExit: true,
+      expect((await manager.ensure({ terminalKey: 'native-windows', cwd: 'C:\\native project root', holdUntilExit: true,
         launchProcess: { file: invocation.command, args: invocation.args, env: {}, windowsVerbatimArguments: true },
-      }).ok).toBe(true);
+      })).ok).toBe(true);
       const actual = provider.spawned[0]!.params;
       expect(codec.argsToCommandLine(actual.file, actual.args)).toBe(
         `${codec.argsToCommandLine(invocation.command, [])} ${invocation.args.join(' ')}`,
@@ -755,7 +757,7 @@ describe('TerminalPtySessionManager', () => {
       stopProcessTree: async () => { provider.spawned[0]!.pty.emitExit({ exitCode: 0, signal: 0 }); },
     });
     try {
-      const command = manager.ensure({ terminalKey: 'stopped-zero', cwd: '/project', holdUntilExit: true,
+      const command = await manager.ensure({ terminalKey: 'stopped-zero', cwd: '/project', holdUntilExit: true,
         launchProcess: { file: '/bin/bash', args: ['-c', 'printf ready; sleep infinity & wait'], env: {} } });
       if (!command.ok) throw new Error(command.errorCode);
       const observed = manager.waitForExit({ terminalId: command.terminalId });
@@ -796,7 +798,7 @@ describe('TerminalPtySessionManager', () => {
       now: () => clock, env: { ...BASH_ENV, OMITTED_BY_NATIVE_ENV: 'ambient' },
     });
     try {
-      const command = manager.ensure({
+      const command = await manager.ensure({
         terminalKey: 'finite', cwd: '/project', requesterAccountId: 'alice', holdUntilExit: true,
         launchProcess: { file: '/tool', args: ['run', '--literal=$HOME'], env: { FINAL_NATIVE_ENV: 'selected' } },
       });
@@ -809,7 +811,7 @@ describe('TerminalPtySessionManager', () => {
       let settled = false;
       void observed.then(() => { settled = true; });
       clock = 2000;
-      expect(manager.ensure({ terminalKey: 'other', cwd: '/project', requesterAccountId: 'alice' }).ok).toBe(true);
+      expect((await manager.ensure({ terminalKey: 'other', cwd: '/project', requesterAccountId: 'alice' })).ok).toBe(true);
       expect(provider.spawned).toHaveLength(2);
       expect(provider.spawned[0]!.pty.killCount).toBe(0);
       await Promise.resolve();
@@ -819,11 +821,11 @@ describe('TerminalPtySessionManager', () => {
       expect(await observed).toEqual({ kind: 'exited', exit: { exitCode: 7, signal: null } });
       expect(manager.read({ terminalId: command.terminalId, cursor: 0, maxBytes: 1000, maxEvents: 10 }))
         .toMatchObject({ ok: true, done: true, events: [{ t: 'data', data: 'failure output' }, { t: 'exit', exitCode: 7 }] });
-      expect(manager.ensure({ terminalKey: 'other', cwd: '/project', requesterAccountId: 'alice' }).ok).toBe(true);
+      expect((await manager.ensure({ terminalKey: 'other', cwd: '/project', requesterAccountId: 'alice' })).ok).toBe(true);
     } finally { manager.dispose(); }
   });
 
-  it('retains the existing terminals when a requester opens another shell', () => {
+  it('retains the existing terminals when a requester opens another shell', async () => {
     const provider = new FakePtyProvider();
     let clock = 0;
     const manager = createTerminalPtySessionManager({
@@ -831,17 +833,17 @@ describe('TerminalPtySessionManager', () => {
       now: () => clock, env: BASH_ENV,
     });
     try {
-      manager.ensure({ terminalKey: 'foreign', cwd: '/foreign', requesterAccountId: 'bob' });
+      await manager.ensure({ terminalKey: 'foreign', cwd: '/foreign', requesterAccountId: 'bob' });
       clock = 1;
-      manager.ensure({ terminalKey: 'held', cwd: '/project', requesterAccountId: 'alice', holdUntilExit: true,
+      await manager.ensure({ terminalKey: 'held', cwd: '/project', requesterAccountId: 'alice', holdUntilExit: true,
         launchProcess: { file: '/tool', args: [] } });
       clock = 2;
-      manager.ensure({ terminalKey: 'eligible', cwd: '/project', requesterAccountId: 'alice' });
+      await manager.ensure({ terminalKey: 'eligible', cwd: '/project', requesterAccountId: 'alice' });
       clock = 3;
-      expect(manager.ensure({ terminalKey: 'replacement', cwd: '/project', requesterAccountId: 'alice' }).ok).toBe(true);
+      expect((await manager.ensure({ terminalKey: 'replacement', cwd: '/project', requesterAccountId: 'alice' })).ok).toBe(true);
       expect(provider.spawned.slice(0, 3).map(({ pty }) => pty.killCount)).toEqual([0, 0, 0]);
       expect(manager.list().map((terminal) => terminal.terminalKey)).toEqual(['foreign', 'held', 'eligible', 'replacement']);
-      expect(manager.ensure({ terminalKey: 'foreign', cwd: '/foreign', requesterAccountId: 'alice' }))
+      expect(await manager.ensure({ terminalKey: 'foreign', cwd: '/foreign', requesterAccountId: 'alice' }))
         .toMatchObject({ ok: false, errorCode: 'terminal_not_found' });
     } finally { manager.dispose(); }
   });
@@ -853,7 +855,7 @@ describe('TerminalPtySessionManager', () => {
       ptyProvider: provider, config: defaultConfig(), env: BASH_ENV, stopProcessTree,
     });
     try {
-      const command = manager.ensure({ terminalKey: 'finite', cwd: '/project', holdUntilExit: true,
+      const command = await manager.ensure({ terminalKey: 'finite', cwd: '/project', holdUntilExit: true,
         launchProcess: { file: '/tool', args: [] } });
       if (!command.ok) throw new Error('expected finite terminal');
       const controller = new AbortController();
@@ -864,29 +866,29 @@ describe('TerminalPtySessionManager', () => {
       expect(await manager.requestStop({ terminalId: command.terminalId })).toEqual({ kind: 'unconfirmed' });
       expect(stopProcessTree).toHaveBeenCalledWith({ pid: provider.spawned[0]!.pty.pid }, { ownedProcessGroup: true });
       expect(manager.list()).toMatchObject([{ terminalId: command.terminalId, ended: false }]);
-      expect(manager.ensure({ terminalKey: 'next', cwd: '/project' }).ok).toBe(true);
+      expect((await manager.ensure({ terminalKey: 'next', cwd: '/project' })).ok).toBe(true);
       const exited = manager.waitForExit({ terminalId: command.terminalId });
       let settled = false;
       void exited.then(() => { settled = true; });
       provider.spawned[0]!.pty.emitExit({ exitCode: 143, signal: 15 });
       await Promise.resolve();
       expect(settled).toBe(false);
-      expect(manager.ensure({ terminalKey: 'finite', cwd: '/project', holdUntilExit: true,
+      expect(await manager.ensure({ terminalKey: 'finite', cwd: '/project', holdUntilExit: true,
         launchProcess: { file: '/tool', args: [] } })).toMatchObject({ ok: false, errorCode: 'terminal_busy' });
-      expect(manager.ensure({ terminalKey: 'next', cwd: '/project' }).ok).toBe(true);
+      expect((await manager.ensure({ terminalKey: 'next', cwd: '/project' })).ok).toBe(true);
       manager.dispose();
       expect(await exited).toEqual({ kind: 'unavailable' });
     } finally { manager.dispose(); }
   });
 
-  it('lists the existing sessions and retained exits without spawning, reaping, or refreshing activity', () => {
+  it('lists the existing sessions and retained exits without spawning, reaping, or refreshing activity', async () => {
     const provider = new FakePtyProvider();
     let clock = 0;
     const manager = createTerminalPtySessionManager({ ptyProvider: provider, config: defaultConfig(), now: () => clock, env: BASH_ENV });
     try {
       expect(manager.list()).toEqual([]);
-      const first = manager.ensure({ terminalKey: 'first', cwd: '/one', sessionId: 'session-one' });
-      const second = manager.ensure({ terminalKey: 'second', cwd: '/two', sessionId: 'session-two' });
+      const first = await manager.ensure({ terminalKey: 'first', cwd: '/one', sessionId: 'session-one' });
+      const second = await manager.ensure({ terminalKey: 'second', cwd: '/two', sessionId: 'session-two' });
       if (!first.ok || !second.ok) throw new Error('expected terminals');
       provider.spawned[1]!.pty.emitExit({ exitCode: 2, signal: 9 });
       clock = 59_000;
@@ -902,22 +904,22 @@ describe('TerminalPtySessionManager', () => {
       clock = 61_000;
       expect(manager.list()).toHaveLength(1);
       expect(provider.spawned[0]!.pty.killCount).toBe(0);
-      manager.ensure({ terminalKey: 'third', cwd: '/three' });
+      await manager.ensure({ terminalKey: 'third', cwd: '/three' });
       expect(manager.list().map((terminal) => terminal.terminalKey)).toEqual(['first', 'third']);
     } finally {
       manager.dispose();
     }
   });
-  it('applies daemon-resolved login input once, including when another presenter reuses the terminal', () => {
+  it('applies daemon-resolved login input once, including when another presenter reuses the terminal', async () => {
     const provider = new FakePtyProvider();
     const manager = createTerminalPtySessionManager({ ptyProvider: provider, config: defaultConfig(), env: BASH_ENV });
     const request = { terminalKey: 'login', cwd: '/tmp', launchProcess: { file: '/fake/claude', args: [], initialInput: '/login\n' } };
-    expect(manager.ensure(request).ok).toBe(true);
-    expect(manager.ensure(request)).toMatchObject({ ok: true, reused: true });
+    expect((await manager.ensure(request)).ok).toBe(true);
+    expect(await manager.ensure(request)).toMatchObject({ ok: true, reused: true });
     expect(provider.spawned[0]?.pty.writes).toEqual(['/login\n']);
     manager.dispose();
   });
-  it('reuses sessions by terminalKey', () => {
+  it('reuses sessions by terminalKey', async () => {
     const provider = new FakePtyProvider();
     const manager = createTerminalPtySessionManager({
       ptyProvider: provider,
@@ -927,15 +929,15 @@ describe('TerminalPtySessionManager', () => {
       platform: 'linux',
     });
 
-    const first = manager.ensure({ terminalKey: 'k1', cwd: '/tmp', cols: 80, rows: 24 });
+    const first = await manager.ensure({ terminalKey: 'k1', cwd: '/tmp', cols: 80, rows: 24 });
     expect(first.ok).toBe(true);
     if (!first.ok) throw new Error('expected ok');
 
-    const second = manager.ensure({ terminalKey: 'k1', cwd: '/tmp', cols: 81, rows: 25 });
+    const second = await manager.ensure({ terminalKey: 'k1', cwd: '/tmp', cols: 81, rows: 25 });
     expect(second).toEqual({ ok: true, terminalId: first.terminalId, reused: true });
   });
 
-  it('keeps terminal bytes and decoded content out of durable sinks and content-free metrics', () => {
+  it('keeps terminal bytes and decoded content out of durable sinks and content-free metrics', async () => {
     const provider = new FakeByteHookProvider();
     const manager = createTerminalPtySessionManager({
       ptyProvider: provider,
@@ -947,8 +949,8 @@ describe('TerminalPtySessionManager', () => {
 
     expect(manager.metrics()).toMatchObject({ activeTerminals: 0 });
 
-    const first = manager.ensure({ terminalKey: 'metrics-a', cwd: '/tmp' });
-    const second = manager.ensure({ terminalKey: 'metrics-b', cwd: '/tmp' });
+    const first = await manager.ensure({ terminalKey: 'metrics-a', cwd: '/tmp' });
+    const second = await manager.ensure({ terminalKey: 'metrics-b', cwd: '/tmp' });
     expect(first.ok).toBe(true);
     expect(second.ok).toBe(true);
     if (!first.ok || !second.ok) throw new Error('expected terminal sessions');
@@ -977,7 +979,7 @@ describe('TerminalPtySessionManager', () => {
     expect(manager.metrics()).toMatchObject({ activeTerminals: 0 });
   });
 
-  it('releases every live PTY when the daemon-owned manager is disposed', () => {
+  it('releases every live PTY when the daemon-owned manager is disposed', async () => {
     const provider = new FakePtyProvider();
     const manager = createTerminalPtySessionManager({
       ptyProvider: provider,
@@ -987,8 +989,8 @@ describe('TerminalPtySessionManager', () => {
       platform: 'linux',
     });
 
-    const first = manager.ensure({ terminalKey: 'dispose-a', cwd: '/tmp' });
-    const second = manager.ensure({ terminalKey: 'dispose-b', cwd: '/tmp' });
+    const first = await manager.ensure({ terminalKey: 'dispose-a', cwd: '/tmp' });
+    const second = await manager.ensure({ terminalKey: 'dispose-b', cwd: '/tmp' });
     expect(first.ok).toBe(true);
     expect(second.ok).toBe(true);
 
@@ -1003,7 +1005,7 @@ describe('TerminalPtySessionManager', () => {
     });
   });
 
-  it('reports resize-unavailable when a reused terminal cannot apply requested dimensions', () => {
+  it('reports resize-unavailable when a reused terminal cannot apply requested dimensions', async () => {
     const provider = new FakeResizeUnavailableProvider();
     const manager = createTerminalPtySessionManager({
       ptyProvider: provider,
@@ -1013,11 +1015,11 @@ describe('TerminalPtySessionManager', () => {
       platform: 'linux',
     });
 
-    const first = manager.ensure({ terminalKey: 'k-resize-reuse', cwd: '/tmp', cols: 80, rows: 24 });
+    const first = await manager.ensure({ terminalKey: 'k-resize-reuse', cwd: '/tmp', cols: 80, rows: 24 });
     expect(first.ok).toBe(true);
     if (!first.ok) throw new Error('expected ok');
 
-    expect(manager.ensure({ terminalKey: 'k-resize-reuse', cwd: '/tmp', cols: 100, rows: 40 })).toEqual({
+    expect(await manager.ensure({ terminalKey: 'k-resize-reuse', cwd: '/tmp', cols: 100, rows: 40 })).toEqual({
       ok: false,
       errorCode: 'terminal_resize_unavailable',
       error: 'terminal_resize_unavailable',
@@ -1025,7 +1027,7 @@ describe('TerminalPtySessionManager', () => {
     expect(provider.spawned).toHaveLength(1);
   });
 
-  it('streams PTY output via cursor reads', () => {
+  it('streams PTY output via cursor reads', async () => {
     const provider = new FakePtyProvider();
     const manager = createTerminalPtySessionManager({
       ptyProvider: provider,
@@ -1035,7 +1037,7 @@ describe('TerminalPtySessionManager', () => {
       platform: 'linux',
     });
 
-    const ensured = manager.ensure({ terminalKey: 'k1', cwd: '/tmp', cols: 80, rows: 24 });
+    const ensured = await manager.ensure({ terminalKey: 'k1', cwd: '/tmp', cols: 80, rows: 24 });
     expect(ensured.ok).toBe(true);
     if (!ensured.ok) throw new Error('expected ok');
     const pty = provider.spawned[0]?.pty;
@@ -1056,7 +1058,7 @@ describe('TerminalPtySessionManager', () => {
     expect(read2.nextCursor).toBe(1);
   });
 
-  it('requests raw byte output on byte-capable platforms', () => {
+  it('requests raw byte output on byte-capable platforms', async () => {
     const provider = new FakePtyProvider();
     const manager = createTerminalPtySessionManager({
       ptyProvider: provider,
@@ -1066,12 +1068,12 @@ describe('TerminalPtySessionManager', () => {
       platform: 'linux',
     });
 
-    const ensured = manager.ensure({ terminalKey: 'k1', cwd: '/tmp', cols: 80, rows: 24 });
+    const ensured = await manager.ensure({ terminalKey: 'k1', cwd: '/tmp', cols: 80, rows: 24 });
     expect(ensured.ok).toBe(true);
     expect(provider.spawned[0]?.params.options.encoding).toBeNull();
   });
 
-  it('preserves invalid UTF-8 bytes in byte replay', () => {
+  it('preserves invalid UTF-8 bytes in byte replay', async () => {
     const provider = new FakePtyProvider();
     const manager: ByteCapableSessionManager = createTerminalPtySessionManager({
       ptyProvider: provider,
@@ -1081,7 +1083,7 @@ describe('TerminalPtySessionManager', () => {
       platform: 'linux',
     });
 
-    const ensured = manager.ensure({ terminalKey: 'k1', cwd: '/tmp', cols: 80, rows: 24 });
+    const ensured = await manager.ensure({ terminalKey: 'k1', cwd: '/tmp', cols: 80, rows: 24 });
     expect(ensured.ok).toBe(true);
     if (!ensured.ok) throw new Error('expected ok');
     const pty = provider.spawned[0]?.pty;
@@ -1113,7 +1115,7 @@ describe('TerminalPtySessionManager', () => {
     });
   });
 
-  it('flushes incomplete UTF-8 carry into the legacy projection before process exit', () => {
+  it('flushes incomplete UTF-8 carry into the legacy projection before process exit', async () => {
     const provider = new FakePtyProvider();
     const manager = createTerminalPtySessionManager({
       ptyProvider: provider,
@@ -1123,7 +1125,7 @@ describe('TerminalPtySessionManager', () => {
       platform: 'linux',
     });
 
-    const ensured = manager.ensure({ terminalKey: 'exit-carry', cwd: '/tmp' });
+    const ensured = await manager.ensure({ terminalKey: 'exit-carry', cwd: '/tmp' });
     expect(ensured.ok).toBe(true);
     if (!ensured.ok) throw new Error('expected terminal');
     const pty = provider.spawned[0]?.pty;
@@ -1149,7 +1151,7 @@ describe('TerminalPtySessionManager', () => {
     });
   });
 
-  it('includes detected URL control frames in byte-stream reads', () => {
+  it('includes detected URL control frames in byte-stream reads', async () => {
     const provider = new FakePtyProvider();
     const manager = createTerminalPtySessionManager({
       ptyProvider: provider,
@@ -1159,7 +1161,7 @@ describe('TerminalPtySessionManager', () => {
       platform: 'linux',
     });
 
-    const ensured = manager.ensure({ terminalKey: 'k-url', cwd: '/tmp', cols: 80, rows: 24 });
+    const ensured = await manager.ensure({ terminalKey: 'k-url', cwd: '/tmp', cols: 80, rows: 24 });
     expect(ensured.ok).toBe(true);
     if (!ensured.ok) throw new Error('expected ok');
     const pty = provider.spawned[0]?.pty;
@@ -1180,7 +1182,7 @@ describe('TerminalPtySessionManager', () => {
     ]));
   });
 
-  it('keeps URL control frames available to independent byte and control readers', () => {
+  it('keeps URL control frames available to independent byte and control readers', async () => {
     const provider = new FakePtyProvider();
     const manager = createTerminalPtySessionManager({
       ptyProvider: provider,
@@ -1190,7 +1192,7 @@ describe('TerminalPtySessionManager', () => {
       platform: 'linux',
     });
 
-    const ensured = manager.ensure({ terminalKey: 'k-url-readers', cwd: '/tmp', cols: 80, rows: 24 });
+    const ensured = await manager.ensure({ terminalKey: 'k-url-readers', cwd: '/tmp', cols: 80, rows: 24 });
     expect(ensured.ok).toBe(true);
     if (!ensured.ok) throw new Error('expected ok');
     const pty = provider.spawned[0]?.pty;
@@ -1243,7 +1245,7 @@ describe('TerminalPtySessionManager', () => {
     ]));
   });
 
-  it('flushes an unterminated URL control frame at the final byte offset on PTY exit', () => {
+  it('flushes an unterminated URL control frame at the final byte offset on PTY exit', async () => {
     const provider = new FakePtyProvider();
     const manager = createTerminalPtySessionManager({
       ptyProvider: provider,
@@ -1253,7 +1255,7 @@ describe('TerminalPtySessionManager', () => {
       platform: 'linux',
     });
 
-    const ensured = manager.ensure({ terminalKey: 'k-url-exit', cwd: '/tmp', cols: 80, rows: 24 });
+    const ensured = await manager.ensure({ terminalKey: 'k-url-exit', cwd: '/tmp', cols: 80, rows: 24 });
     expect(ensured.ok).toBe(true);
     if (!ensured.ok) throw new Error('expected ok');
     const pty = provider.spawned[0]?.pty;
@@ -1277,7 +1279,7 @@ describe('TerminalPtySessionManager', () => {
     ]));
   });
 
-  it('does not lose URL control frames when the first byte-stream read exhausts its frame budget', () => {
+  it('does not lose URL control frames when the first byte-stream read exhausts its frame budget', async () => {
     const provider = new FakePtyProvider();
     const manager = createTerminalPtySessionManager({
       ptyProvider: provider,
@@ -1287,7 +1289,7 @@ describe('TerminalPtySessionManager', () => {
       platform: 'linux',
     });
 
-    const ensured = manager.ensure({ terminalKey: 'k-url-budget', cwd: '/tmp', cols: 80, rows: 24 });
+    const ensured = await manager.ensure({ terminalKey: 'k-url-budget', cwd: '/tmp', cols: 80, rows: 24 });
     expect(ensured.ok).toBe(true);
     if (!ensured.ok) throw new Error('expected ok');
     const pty = provider.spawned[0]?.pty;
@@ -1339,7 +1341,7 @@ describe('TerminalPtySessionManager', () => {
     });
   });
 
-  it('splits protocol-facing byte-stream frames at the decoded frame cap', () => {
+  it('splits protocol-facing byte-stream frames at the decoded frame cap', async () => {
     const provider = new FakePtyProvider();
     const manager = createTerminalPtySessionManager({
       ptyProvider: provider,
@@ -1349,7 +1351,7 @@ describe('TerminalPtySessionManager', () => {
       platform: 'linux',
     });
 
-    const ensured = manager.ensure({ terminalKey: 'k-large-frame', cwd: '/tmp', cols: 80, rows: 24 });
+    const ensured = await manager.ensure({ terminalKey: 'k-large-frame', cwd: '/tmp', cols: 80, rows: 24 });
     expect(ensured.ok).toBe(true);
     if (!ensured.ok) throw new Error('expected ok');
     const pty = provider.spawned[0]?.pty;
@@ -1377,7 +1379,7 @@ describe('TerminalPtySessionManager', () => {
       .toEqual(payload);
   });
 
-  it('limits byte-stream reads by renderer credit', () => {
+  it('limits byte-stream reads by renderer credit', async () => {
     const provider = new FakePtyProvider();
     const manager = createTerminalPtySessionManager({
       ptyProvider: provider,
@@ -1387,7 +1389,7 @@ describe('TerminalPtySessionManager', () => {
       platform: 'linux',
     });
 
-    const ensured = manager.ensure({ terminalKey: 'k-credit', cwd: '/tmp', cols: 80, rows: 24 });
+    const ensured = await manager.ensure({ terminalKey: 'k-credit', cwd: '/tmp', cols: 80, rows: 24 });
     expect(ensured.ok).toBe(true);
     if (!ensured.ok) throw new Error('expected ok');
     const pty = provider.spawned[0]?.pty;
@@ -1439,7 +1441,7 @@ describe('TerminalPtySessionManager', () => {
       platform: 'linux',
     });
 
-    const ensured = manager.ensure({ terminalKey: 'k-zero-credit-liveness', cwd: '/tmp', cols: 80, rows: 24 });
+    const ensured = await manager.ensure({ terminalKey: 'k-zero-credit-liveness', cwd: '/tmp', cols: 80, rows: 24 });
     expect(ensured.ok).toBe(true);
     if (!ensured.ok) throw new Error('expected ok');
     const pty = provider.spawned[0]?.pty;
@@ -1468,7 +1470,7 @@ describe('TerminalPtySessionManager', () => {
     manager.dispose();
   });
 
-  it('retains more than twenty silent terminals without a default reaper or capacity eviction', () => {
+  it('retains more than twenty silent terminals without a default reaper or capacity eviction', async () => {
     vi.useFakeTimers();
     try {
       let now = 0;
@@ -1482,7 +1484,7 @@ describe('TerminalPtySessionManager', () => {
       });
 
       for (let index = 0; index < 25; index += 1) {
-        expect(manager.ensure({ terminalKey: `idle-silent-${index}`, cwd: '/tmp' }).ok).toBe(true);
+        expect((await manager.ensure({ terminalKey: `idle-silent-${index}`, cwd: '/tmp' })).ok).toBe(true);
       }
       expect(manager.list()).toHaveLength(25);
       now = 24 * 60 * 60_000;
@@ -1497,7 +1499,7 @@ describe('TerminalPtySessionManager', () => {
     }
   });
 
-  it('delivers byte-stream URL control frames even when byte credit is exhausted', () => {
+  it('delivers byte-stream URL control frames even when byte credit is exhausted', async () => {
     const provider = new FakePtyProvider();
     const manager = createTerminalPtySessionManager({
       ptyProvider: provider,
@@ -1507,7 +1509,7 @@ describe('TerminalPtySessionManager', () => {
       platform: 'linux',
     });
 
-    const ensured = manager.ensure({ terminalKey: 'k-url-no-credit', cwd: '/tmp', cols: 80, rows: 24 });
+    const ensured = await manager.ensure({ terminalKey: 'k-url-no-credit', cwd: '/tmp', cols: 80, rows: 24 });
     expect(ensured.ok).toBe(true);
     if (!ensured.ok) throw new Error('expected ok');
     const pty = provider.spawned[0]?.pty;
@@ -1539,7 +1541,7 @@ describe('TerminalPtySessionManager', () => {
     ]);
   });
 
-  it('delivers byte-stream exit frames when caught up with no byte credit', () => {
+  it('delivers byte-stream exit frames when caught up with no byte credit', async () => {
     const provider = new FakePtyProvider();
     const manager = createTerminalPtySessionManager({
       ptyProvider: provider,
@@ -1549,7 +1551,7 @@ describe('TerminalPtySessionManager', () => {
       platform: 'linux',
     });
 
-    const ensured = manager.ensure({ terminalKey: 'k-exit-no-credit', cwd: '/tmp', cols: 80, rows: 24 });
+    const ensured = await manager.ensure({ terminalKey: 'k-exit-no-credit', cwd: '/tmp', cols: 80, rows: 24 });
     expect(ensured.ok).toBe(true);
     if (!ensured.ok) throw new Error('expected ok');
     const pty = provider.spawned[0]?.pty;
@@ -1581,7 +1583,7 @@ describe('TerminalPtySessionManager', () => {
     }]);
   });
 
-  it('keeps byte-stream reads open when the exit frame is deferred by the frame budget', () => {
+  it('keeps byte-stream reads open when the exit frame is deferred by the frame budget', async () => {
     const provider = new FakePtyProvider();
     const manager = createTerminalPtySessionManager({
       ptyProvider: provider,
@@ -1591,7 +1593,7 @@ describe('TerminalPtySessionManager', () => {
       platform: 'linux',
     });
 
-    const ensured = manager.ensure({ terminalKey: 'k-exit-budget', cwd: '/tmp', cols: 80, rows: 24 });
+    const ensured = await manager.ensure({ terminalKey: 'k-exit-budget', cwd: '/tmp', cols: 80, rows: 24 });
     expect(ensured.ok).toBe(true);
     if (!ensured.ok) throw new Error('expected ok');
     const pty = provider.spawned[0]?.pty;
@@ -1639,7 +1641,7 @@ describe('TerminalPtySessionManager', () => {
     }]);
   });
 
-  it('records renderer ACK lag metrics without moving ACK state backwards', () => {
+  it('records renderer ACK lag metrics without moving ACK state backwards', async () => {
     const provider = new FakePtyProvider();
     const manager = createTerminalPtySessionManager({
       ptyProvider: provider,
@@ -1649,7 +1651,7 @@ describe('TerminalPtySessionManager', () => {
       platform: 'linux',
     });
 
-    const ensured = manager.ensure({ terminalKey: 'k-ack', cwd: '/tmp', cols: 80, rows: 24 });
+    const ensured = await manager.ensure({ terminalKey: 'k-ack', cwd: '/tmp', cols: 80, rows: 24 });
     expect(ensured.ok).toBe(true);
     if (!ensured.ok) throw new Error('expected ok');
     const pty = provider.spawned[0]?.pty;
@@ -1680,7 +1682,7 @@ describe('TerminalPtySessionManager', () => {
     });
   });
 
-  it('bounds renderer ACK identity retention while keeping the most recently active identity', () => {
+  it('bounds renderer ACK identity retention while keeping the most recently active identity', async () => {
     const provider = new FakePtyProvider();
     const manager = createTerminalPtySessionManager({
       ptyProvider: provider,
@@ -1690,7 +1692,7 @@ describe('TerminalPtySessionManager', () => {
       platform: 'linux',
     });
 
-    const ensured = manager.ensure({ terminalKey: 'k-ack-retention', cwd: '/tmp', cols: 80, rows: 24 });
+    const ensured = await manager.ensure({ terminalKey: 'k-ack-retention', cwd: '/tmp', cols: 80, rows: 24 });
     expect(ensured.ok).toBe(true);
     if (!ensured.ok) throw new Error('expected ok');
     const pty = provider.spawned[0]?.pty;
@@ -1710,7 +1712,7 @@ describe('TerminalPtySessionManager', () => {
     });
   });
 
-  it('reports byte gaps when the byte ring overflows', () => {
+  it('reports byte gaps when the byte ring overflows', async () => {
     const provider = new FakePtyProvider();
     const manager: ByteCapableSessionManager = createTerminalPtySessionManager({
       ptyProvider: provider,
@@ -1720,7 +1722,7 @@ describe('TerminalPtySessionManager', () => {
       platform: 'linux',
     });
 
-    const ensured = manager.ensure({ terminalKey: 'k1', cwd: '/tmp' });
+    const ensured = await manager.ensure({ terminalKey: 'k1', cwd: '/tmp' });
     expect(ensured.ok).toBe(true);
     if (!ensured.ok) throw new Error('expected ok');
     const pty = provider.spawned[0]?.pty;
@@ -1741,7 +1743,7 @@ describe('TerminalPtySessionManager', () => {
     expect(Buffer.concat(read.chunks.map((chunk) => chunk.bytes))).toEqual(Buffer.from([0x04, 0x05, 0x06]));
   });
 
-  it('exposes structured legacy-only byte status on Windows', () => {
+  it('exposes structured legacy-only byte status on Windows', async () => {
     const provider = new FakePtyProvider();
     const manager: ByteCapableSessionManager = createTerminalPtySessionManager({
       ptyProvider: provider,
@@ -1751,7 +1753,7 @@ describe('TerminalPtySessionManager', () => {
       platform: 'win32',
     });
 
-    const ensured = manager.ensure({ terminalKey: 'k1', cwd: 'C:\\Users\\tester' });
+    const ensured = await manager.ensure({ terminalKey: 'k1', cwd: 'C:\\Users\\tester' });
     expect(ensured.ok).toBe(true);
     if (!ensured.ok) throw new Error('expected ok');
 
@@ -1766,7 +1768,7 @@ describe('TerminalPtySessionManager', () => {
     });
   });
 
-  it('preserves legacy-only byte-stream status even when the renderer has no byte credit', () => {
+  it('preserves legacy-only byte-stream status even when the renderer has no byte credit', async () => {
     const provider = new FakePtyProvider();
     const manager = createTerminalPtySessionManager({
       ptyProvider: provider,
@@ -1776,7 +1778,7 @@ describe('TerminalPtySessionManager', () => {
       platform: 'win32',
     });
 
-    const ensured = manager.ensure({ terminalKey: 'k-legacy-stream', cwd: 'C:\\Users\\tester' });
+    const ensured = await manager.ensure({ terminalKey: 'k-legacy-stream', cwd: 'C:\\Users\\tester' });
     expect(ensured.ok).toBe(true);
     if (!ensured.ok) throw new Error('expected ok');
 
@@ -1800,7 +1802,7 @@ describe('TerminalPtySessionManager', () => {
     });
   });
 
-  it('fails closed when the PTY provider cannot resize the backing terminal', () => {
+  it('fails closed when the PTY provider cannot resize the backing terminal', async () => {
     const provider = new FakeResizeUnavailableProvider();
     const manager = createTerminalPtySessionManager({
       ptyProvider: provider,
@@ -1810,7 +1812,7 @@ describe('TerminalPtySessionManager', () => {
       platform: 'linux',
     });
 
-    const ensured = manager.ensure({ terminalKey: 'k-resize', cwd: '/tmp', cols: 80, rows: 24 });
+    const ensured = await manager.ensure({ terminalKey: 'k-resize', cwd: '/tmp', cols: 80, rows: 24 });
     expect(ensured.ok).toBe(true);
     if (!ensured.ok) throw new Error('expected ok');
 
@@ -1821,7 +1823,7 @@ describe('TerminalPtySessionManager', () => {
     });
   });
 
-  it('applies renderer-neutral input events at the PTY boundary', () => {
+  it('applies renderer-neutral input events at the PTY boundary', async () => {
     const provider = new FakePtyProvider();
     const manager = createTerminalPtySessionManager({
       ptyProvider: provider,
@@ -1831,7 +1833,7 @@ describe('TerminalPtySessionManager', () => {
       platform: 'linux',
     });
 
-    const ensured = manager.ensure({ terminalKey: 'k-input-event', cwd: '/tmp', cols: 80, rows: 24 });
+    const ensured = await manager.ensure({ terminalKey: 'k-input-event', cwd: '/tmp', cols: 80, rows: 24 });
     expect(ensured.ok).toBe(true);
     if (!ensured.ok) throw new Error('expected ok');
     const pty = provider.spawned[0]?.pty;
@@ -1872,7 +1874,7 @@ describe('TerminalPtySessionManager', () => {
     expect(pty.resizes).toEqual([{ cols: 120, rows: 40 }]);
   });
 
-  it('rejects semantic mouse input instead of writing unsafe escape sequences without renderer mode state', () => {
+  it('rejects semantic mouse input instead of writing unsafe escape sequences without renderer mode state', async () => {
     const provider = new FakePtyProvider();
     const manager = createTerminalPtySessionManager({
       ptyProvider: provider,
@@ -1882,7 +1884,7 @@ describe('TerminalPtySessionManager', () => {
       platform: 'linux',
     });
 
-    const ensured = manager.ensure({ terminalKey: 'k-mouse-event', cwd: '/tmp', cols: 80, rows: 24 });
+    const ensured = await manager.ensure({ terminalKey: 'k-mouse-event', cwd: '/tmp', cols: 80, rows: 24 });
     expect(ensured.ok).toBe(true);
     if (!ensured.ok) throw new Error('expected ok');
     const pty = provider.spawned[0]?.pty;
@@ -1899,7 +1901,7 @@ describe('TerminalPtySessionManager', () => {
     expect(pty.writes).toEqual([]);
   });
 
-  it('diagnoses decoded byte-hook output as legacy-only instead of treating it as byte-faithful', () => {
+  it('diagnoses decoded byte-hook output as legacy-only instead of treating it as byte-faithful', async () => {
     const provider = new FakeByteHookProvider();
     const manager: ByteCapableSessionManager = createTerminalPtySessionManager({
       ptyProvider: provider,
@@ -1909,7 +1911,7 @@ describe('TerminalPtySessionManager', () => {
       platform: 'linux',
     });
 
-    const ensured = manager.ensure({ terminalKey: 'k1', cwd: '/tmp' });
+    const ensured = await manager.ensure({ terminalKey: 'k1', cwd: '/tmp' });
     expect(ensured.ok).toBe(true);
     if (!ensured.ok) throw new Error('expected ok');
     const pty = provider.spawned[0]?.pty;
@@ -1926,7 +1928,7 @@ describe('TerminalPtySessionManager', () => {
     });
   });
 
-  it('suppresses zsh prompt EOL markers in embedded terminal sessions by default', () => {
+  it('suppresses zsh prompt EOL markers in embedded terminal sessions by default', async () => {
     const provider = new FakePtyProvider();
     const env: NodeJS.ProcessEnv = { SHELL: '/bin/zsh' };
     const manager = createTerminalPtySessionManager({
@@ -1937,7 +1939,7 @@ describe('TerminalPtySessionManager', () => {
       platform: 'darwin',
     });
 
-    const ensured = manager.ensure({ terminalKey: 'k1', cwd: '/tmp' });
+    const ensured = await manager.ensure({ terminalKey: 'k1', cwd: '/tmp' });
     expect(ensured.ok).toBe(true);
 
     const spawnedEnv = provider.spawned[0]?.params.options.env;
@@ -1949,7 +1951,7 @@ describe('TerminalPtySessionManager', () => {
     expect(env.PROMPT_EOL_MARK).toBeUndefined();
   });
 
-  it('uses the configured zsh prompt EOL marker override when provided', () => {
+  it('uses the configured zsh prompt EOL marker override when provided', async () => {
     const provider = new FakePtyProvider();
     const env: NodeJS.ProcessEnv = {
       SHELL: '/bin/zsh',
@@ -1963,7 +1965,7 @@ describe('TerminalPtySessionManager', () => {
       platform: 'darwin',
     });
 
-    const ensured = manager.ensure({ terminalKey: 'k1', cwd: '/tmp' });
+    const ensured = await manager.ensure({ terminalKey: 'k1', cwd: '/tmp' });
     expect(ensured.ok).toBe(true);
 
     expect(provider.spawned[0]?.params.args).toEqual(['-l']);
@@ -1974,7 +1976,7 @@ describe('TerminalPtySessionManager', () => {
     });
   });
 
-  it('keeps API Tokens and CLI continuation handoffs out of PTY shells', () => {
+  it('keeps API Tokens and CLI continuation handoffs out of PTY shells', async () => {
     const provider = new FakePtyProvider();
     const manager = createTerminalPtySessionManager({
       ptyProvider: provider,
@@ -1988,13 +1990,13 @@ describe('TerminalPtySessionManager', () => {
       platform: 'linux',
     });
 
-    const ensured = manager.ensure({ terminalKey: 'token-safe-shell', cwd: '/tmp' });
+    const ensured = await manager.ensure({ terminalKey: 'token-safe-shell', cwd: '/tmp' });
     expect(ensured.ok).toBe(true);
     expect(provider.spawned[0]?.params.options.env).not.toHaveProperty('HAPPIER_TOKEN');
     expect(provider.spawned[0]?.params.options.env).not.toHaveProperty('HAPPIER_CLI_API_TOKEN_HANDOFF_V1');
   });
 
-  it('emits a gap event when the cursor is too old', () => {
+  it('emits a gap event when the cursor is too old', async () => {
     const provider = new FakePtyProvider();
     const manager = createTerminalPtySessionManager({
       ptyProvider: provider,
@@ -2004,7 +2006,7 @@ describe('TerminalPtySessionManager', () => {
       platform: 'linux',
     });
 
-    const ensured = manager.ensure({ terminalKey: 'k1', cwd: '/tmp' });
+    const ensured = await manager.ensure({ terminalKey: 'k1', cwd: '/tmp' });
     expect(ensured.ok).toBe(true);
     if (!ensured.ok) throw new Error('expected ok');
     const pty = provider.spawned[0]?.pty;
@@ -2025,7 +2027,7 @@ describe('TerminalPtySessionManager', () => {
     expect(read.nextCursor).toBe(3);
   });
 
-  it('appends an exit event and marks done when caught up', () => {
+  it('appends an exit event and marks done when caught up', async () => {
     const provider = new FakePtyProvider();
     const manager = createTerminalPtySessionManager({
       ptyProvider: provider,
@@ -2035,7 +2037,7 @@ describe('TerminalPtySessionManager', () => {
       platform: 'linux',
     });
 
-    const ensured = manager.ensure({ terminalKey: 'k1', cwd: '/tmp' });
+    const ensured = await manager.ensure({ terminalKey: 'k1', cwd: '/tmp' });
     expect(ensured.ok).toBe(true);
     if (!ensured.ok) throw new Error('expected ok');
     const pty = provider.spawned[0]?.pty;
@@ -2106,7 +2108,7 @@ describe('TerminalPtySessionManager terminal->port registration', () => {
         return pty;
       } } });
     try {
-      const ensured = manager.ensure({ terminalKey: 'left-behind', cwd: '/fixture' });
+      const ensured = await manager.ensure({ terminalKey: 'left-behind', cwd: '/fixture' });
       if (!ensured.ok) throw new Error(ensured.errorCode);
       if (ending === 'close') {
         expect(manager.close({ terminalId: ensured.terminalId })).toEqual({ ok: true });
@@ -2141,7 +2143,7 @@ describe('TerminalPtySessionManager terminal->port registration', () => {
     }
   });
 
-  it('registers spawned pids with workspace + session + terminal attribution', () => {
+  it('registers spawned pids with workspace + session + terminal attribution', async () => {
     const provider = new FakePtyProvider();
     const registry = createTerminalProcessRegistry();
     const manager = createTerminalPtySessionManager({
@@ -2153,7 +2155,7 @@ describe('TerminalPtySessionManager terminal->port registration', () => {
       terminalRegistry: registry,
     });
 
-    const ensured = manager.ensure({ terminalKey: 'k1', cwd: '/repo/web', sessionId: 'session-a' });
+    const ensured = await manager.ensure({ terminalKey: 'k1', cwd: '/repo/web', sessionId: 'session-a' });
     expect(ensured.ok).toBe(true);
     if (!ensured.ok) throw new Error('expected ok');
 
@@ -2164,7 +2166,7 @@ describe('TerminalPtySessionManager terminal->port registration', () => {
     });
   });
 
-  it('omits sessionId from the registration when none is supplied', () => {
+  it('omits sessionId from the registration when none is supplied', async () => {
     const provider = new FakePtyProvider();
     const registry = createTerminalProcessRegistry();
     const manager = createTerminalPtySessionManager({
@@ -2176,13 +2178,13 @@ describe('TerminalPtySessionManager terminal->port registration', () => {
       terminalRegistry: registry,
     });
 
-    manager.ensure({ terminalKey: 'k1', cwd: '/repo/web' });
+    await manager.ensure({ terminalKey: 'k1', cwd: '/repo/web' });
 
     expect(registry.lookupByPid(provider.spawned[0]!.pty.pid)).toMatchObject({ workspacePath: '/repo/web' });
     expect(registry.lookupByPid(provider.spawned[0]!.pty.pid)?.sessionId).toBeUndefined();
   });
 
-  it('unregisters identity-checked on close', () => {
+  it('unregisters identity-checked on close', async () => {
     const provider = new FakePtyProvider();
     const registry = createTerminalProcessRegistry();
     const manager = createTerminalPtySessionManager({
@@ -2194,14 +2196,14 @@ describe('TerminalPtySessionManager terminal->port registration', () => {
       terminalRegistry: registry,
     });
 
-    const ensured = manager.ensure({ terminalKey: 'k1', cwd: '/repo/web', sessionId: 'session-a' });
+    const ensured = await manager.ensure({ terminalKey: 'k1', cwd: '/repo/web', sessionId: 'session-a' });
     if (!ensured.ok) throw new Error('expected ok');
     manager.close({ terminalId: ensured.terminalId });
 
     expect(registry.lookupByPid(provider.spawned[0]!.pty.pid)).toBeNull();
   });
 
-  it('unregisters identity-checked on self-exit', () => {
+  it('unregisters identity-checked on self-exit', async () => {
     const provider = new FakePtyProvider();
     const registry = createTerminalProcessRegistry();
     const manager = createTerminalPtySessionManager({
@@ -2213,7 +2215,7 @@ describe('TerminalPtySessionManager terminal->port registration', () => {
       terminalRegistry: registry,
     });
 
-    const ensured = manager.ensure({ terminalKey: 'k1', cwd: '/repo/web', sessionId: 'session-a' });
+    const ensured = await manager.ensure({ terminalKey: 'k1', cwd: '/repo/web', sessionId: 'session-a' });
     if (!ensured.ok) throw new Error('expected ok');
     const pty = provider.spawned[0]?.pty;
     if (!pty) throw new Error('missing fake pty');
@@ -2223,7 +2225,7 @@ describe('TerminalPtySessionManager terminal->port registration', () => {
     expect(registry.lookupByPid(pty.pid)).toBeNull();
   });
 
-  it('re-registers with a new terminalId on restart (replace-by-key) and unregisters the old run', () => {
+  it('re-registers with a new terminalId on restart (replace-by-key) and unregisters the old run', async () => {
     const provider = new FakePtyProvider();
     const registry = createTerminalProcessRegistry();
     const manager = createTerminalPtySessionManager({
@@ -2235,9 +2237,9 @@ describe('TerminalPtySessionManager terminal->port registration', () => {
       terminalRegistry: registry,
     });
 
-    const first = manager.ensure({ terminalKey: 'k1', cwd: '/repo/web', sessionId: 'session-a' });
+    const first = await manager.ensure({ terminalKey: 'k1', cwd: '/repo/web', sessionId: 'session-a' });
     if (!first.ok) throw new Error('expected ok');
-    const restarted = manager.restart({ terminalKey: 'k1', cwd: '/repo/web' });
+    const restarted = await manager.restart({ terminalKey: 'k1', cwd: '/repo/web' });
     if (!restarted.ok) throw new Error('expected ok');
 
     expect(restarted.terminalId).not.toBe(first.terminalId);
@@ -2248,7 +2250,7 @@ describe('TerminalPtySessionManager terminal->port registration', () => {
     expect(manager.list()).toMatchObject([{ terminalId: restarted.terminalId, sessionId: 'session-a' }]);
   });
 
-  it('skips registration when the backend cannot supply a pid', () => {
+  it('skips registration when the backend cannot supply a pid', async () => {
     class PidlessPty extends FakePty {
       constructor() {
         super(0);
@@ -2272,8 +2274,124 @@ describe('TerminalPtySessionManager terminal->port registration', () => {
       terminalRegistry: registry,
     });
 
-    manager.ensure({ terminalKey: 'k1', cwd: '/repo/web', sessionId: 'session-a' });
+    await manager.ensure({ terminalKey: 'k1', cwd: '/repo/web', sessionId: 'session-a' });
 
     expect(registry.lookupByPid(0)).toBeNull();
   });
+});
+
+describe('native requester PTY transport', () => {
+  const AGENT_LAUNCH_TERMINAL_READY = '\x1b]777;happier-agent-launch-ready\x07';
+  const AGENT_LAUNCH_TERMINAL_ACCEPTED = '\x1b]777;happier-agent-launch-accepted\x07';
+  const member = { ...deriveAgentIsolationMemberIdentity({ homeServerIdentityId: 'stable-home', requester: { serverId: 'home', machineId: 'machine',
+    installationId: 'installation', accountId: 'member' } }), agentUid: 41001, agentGid: 41001 };
+  const custody = { kind: 'session' as const, serverId: 'home', requesterAccountId: 'member', machineId: 'machine',
+    installationId: 'installation', sessionId: 'member-session', rootPath: '/fixture' };
+  function nativeLaunch() {
+    return { command: 'sudo', args: ['-n', '-u', member.username, '--', '/installed/happier', 'agent-launch'], env: {}, cwd: '/fixture',
+      stdinPreamble: encodeAgentLaunchFrame({ v: 1, executable: '/bin/sh', args: [], cwd: '/fixture',
+        runtimeHome: member.home + '/runtime/person', environment: {}, selectedMaterials: [],
+        nativeIdentity: { username: member.username, agentUid: member.agentUid, agentGid: member.agentGid, home: member.home } }), release() {} };
+  }
+  it('waits for raw readiness and frame acceptance before input, keeps binary output/resize/exit, and never reuses another OS identity', async () => {
+    const provider = new FakeByteHookProvider();
+    const manager = createTerminalPtySessionManager({ ptyProvider: provider, platform: 'linux',
+      env: { SHELL: '/bin/sh', PRIVATE_DAEMON_VALUE: 'must-not-forward', HAPPIER_HOME_DIR: '/private-daemon' }, config: defaultConfig() });
+    const authorizedNativeLaunch = nativeLaunch();
+    const input = { terminalKey: 'isolated', cwd: '/fixture', sessionId: 'member-session', custody,
+      nativeExecutionIdentity: member, authorizedNativeLaunch, launchProcess: { file: '/bin/sh', args: [], initialInput: 'hello\n' } };
+    try {
+      let settled = false;
+      const pending = manager.ensure(input).then(result => { settled = true; return result; });
+      await Promise.resolve();
+      const { pty, params } = provider.spawned[0]!;
+      expect(pty.writes).toEqual([]);
+      expect(params.options.env).not.toHaveProperty('PRIVATE_DAEMON_VALUE');
+      for (const char of AGENT_LAUNCH_TERMINAL_READY) pty.emitByteHookData(Buffer.from(char));
+      expect(pty.writes).toEqual([Buffer.from(authorizedNativeLaunch.stdinPreamble).toString('base64') + '\n']);
+      await Promise.resolve(); expect(settled).toBe(false);
+      pty.emitByteHookData(Buffer.from(AGENT_LAUNCH_TERMINAL_ACCEPTED));
+      const opened = await pending;
+      if (!opened.ok) throw new Error(opened.errorCode);
+      expect(pty.writes.at(-1)).toBe('hello\n');
+      const bytes = Buffer.from([0, 255, 240, 159, 154, 128, 10]);
+      pty.emitByteHookData(bytes);
+      const output = manager.readBytes({ terminalId: opened.terminalId, byteOffset: 0, maxBytes: 1000, maxChunks: 10 });
+      if (!output.ok || output.mode !== 'bytes') throw new Error('Expected native bytes');
+      expect(Buffer.concat(output.chunks.map(chunk => chunk.bytes))).toEqual(bytes);
+      expect(manager.resize({ terminalId: opened.terminalId, cols: 101, rows: 37 })).toEqual({ ok: true });
+      expect(pty.resizes.at(-1)).toEqual({ cols: 101, rows: 37 });
+      expect(await manager.ensure(input)).toMatchObject({ ok: true, reused: true, terminalId: opened.terminalId });
+      expect(pty.writes).toHaveLength(2);
+      expect(await manager.ensure({ ...input, nativeExecutionIdentity: { ...member, agentUid: member.agentUid + 1 } }))
+        .toMatchObject({ ok: false, errorCode: 'terminal_forbidden' });
+      expect(await manager.ensure({ ...input, nativeExecutionIdentity: undefined, authorizedNativeLaunch: undefined }))
+        .toMatchObject({ ok: false, errorCode: 'terminal_forbidden' });
+      const observed = manager.waitForExit({ terminalId: opened.terminalId });
+      pty.emitExit({ exitCode: 17 });
+      expect(await observed).toMatchObject({ kind: 'exited', exit: { exitCode: 17 } });
+      expect(provider.spawned).toHaveLength(1);
+    } finally { manager.dispose(); }
+  });
+  it('refuses a legacy own-Session adoption for a private member and preserves the owner terminal', async () => {
+    const provider = new FakePtyProvider();
+    const manager = createTerminalPtySessionManager({ ptyProvider: provider, platform: 'linux', env: BASH_ENV, config: defaultConfig() });
+    try {
+      const owner = await manager.ensure({ terminalKey: 'legacy', cwd: '/fixture', sessionId: 'member-session' });
+      expect(owner).toMatchObject({ ok: true, reused: false });
+      const launch = manager.ensure({ terminalKey: 'legacy', cwd: '/fixture', sessionId: 'member-session', custody,
+        nativeExecutionIdentity: member, authorizedNativeLaunch: nativeLaunch() });
+      await Promise.resolve();
+      expect(provider.spawned).toHaveLength(2);
+      provider.spawned[1]!.pty.emitData(AGENT_LAUNCH_TERMINAL_READY + AGENT_LAUNCH_TERMINAL_ACCEPTED);
+      const memberTerminal = await launch;
+      expect(memberTerminal).toMatchObject({ ok: true, reused: false });
+      if (owner.ok && memberTerminal.ok) expect(memberTerminal.terminalId).not.toBe(owner.terminalId);
+      expect(manager.list()).toHaveLength(2);
+    } finally { manager.dispose(); }
+  });
+  it('cancels before raw readiness without sending selected bytes and stops through the exact shim carrier', async () => {
+    const provider = new FakeByteHookProvider();
+    const controller = new AbortController();
+    const manager = createTerminalPtySessionManager({ ptyProvider: provider, platform: 'linux', env: BASH_ENV, config: defaultConfig() });
+    try {
+      const pending = manager.ensure({ terminalKey: 'cancel-native', cwd: '/fixture', sessionId: 'member-session', custody,
+        nativeExecutionIdentity: member, authorizedNativeLaunch: nativeLaunch(), signal: controller.signal });
+      await Promise.resolve();
+      const pty = provider.spawned[0]!.pty;
+      const signals: Array<string | undefined> = [];
+      const terminalProcess: PtyProcess = pty;
+      vi.spyOn(terminalProcess, 'kill').mockImplementation(signal => { signals.push(signal); pty.emitExit({ exitCode: 143 }); });
+      controller.abort();
+      expect(await pending).toMatchObject({ ok: false, errorCode: 'terminal_forbidden' });
+      expect(pty.writes).toEqual([]);
+      expect(signals[0]).toBe('SIGTERM');
+      expect(manager.list()).toHaveLength(0);
+    } finally { manager.dispose(); }
+  });
+  it('cancels a finite native launch before raw readiness without sending selected bytes', async () => {
+    const provider = new FakeByteHookProvider();
+    const controller = new AbortController();
+    const manager = createTerminalPtySessionManager({ ptyProvider: provider, platform: 'linux', env: BASH_ENV, config: defaultConfig() });
+    try {
+      const launch = nativeLaunch();
+      const pending = executeHostFiniteTerminalProcess({ operation: { signal: controller.signal }, terminalSessions: manager,
+        requesterAccountId: 'member', terminalCustody: { serverId: 'home', requesterAccountId: 'member', machineId: 'machine',
+          installationId: 'installation', rootPath: '/fixture', workspaceRefId: 'workspace', projectKey: 'workspace' }, terminalKey: 'cancel-finite-native',
+        launch: { ...launch, cwd: '/fixture' }, authorizedNativeLaunch: launch, nativeExecutionIdentity: member,
+        progress: { phase: 'command', label: 'Running command' }, failureCode: 'command_failed',
+        attachment: ({ terminalId }) => ({ kind: 'projectCommand', purpose: 'script', serverId: 'home',
+          machineId: 'machine', workspaceRefId: 'workspace', cwd: '/fixture', terminalId }),
+      });
+      await vi.waitFor(() => expect(provider.spawned).toHaveLength(1));
+      const pty = provider.spawned[0]!.pty;
+      const terminalProcess: PtyProcess = pty;
+      vi.spyOn(terminalProcess, 'kill').mockImplementation(() => { pty.emitExit({ exitCode: 143 }); });
+      controller.abort();
+      expect(await pending).toMatchObject({ kind: 'no_launch', result: { ok: false, errorCode: 'terminal_forbidden' } });
+      expect(pty.writes).toEqual([]);
+      expect(manager.list()).toHaveLength(0);
+    } finally { manager.dispose(); }
+  });
+
 });

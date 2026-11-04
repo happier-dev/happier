@@ -222,7 +222,9 @@ export type PluginInvocationServicesFactoryParams = Readonly<{
     ) => PluginFileSystemRoots | null;
     now?: () => number;
     exec?: Readonly<{
+        agentLaunchKind?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').HostAgentIsolationLaunchKind;
         executionKind?: HostPluginExecExecutionKind;
+        requesterIdentity?: Parameters<typeof createStablePluginExecService>[0]['requesterIdentity'];
         readSpawnFailureLimits?: import('@/processes/spawnFailure/classifySpawnFailure').SpawnFailureLimitsReader;
         posixProcessGroup?: Parameters<typeof createStablePluginExecService>[0]['posixProcessGroup'];
         resolveExecutable: (
@@ -1043,7 +1045,9 @@ export function createPluginInvocationServicesFromDescriptors(
         ? createStablePluginExecService({
 ...(params.exec?.agentIsolation ? { agentIsolation: params.exec.agentIsolation } : {}),
 
+            ...(params.exec?.agentLaunchKind ? { agentLaunchKind: params.exec.agentLaunchKind } : {}),
             ...(params.exec?.executionKind ? { executionKind: params.exec.executionKind } : {}),
+            ...(params.exec?.requesterIdentity ? { requesterIdentity: params.exec.requesterIdentity } : {}),
             readSpawnFailureLimits: params.exec?.readSpawnFailureLimits,
             ...(params.exec?.posixProcessGroup ? { posixProcessGroup: params.exec.posixProcessGroup } : {}),
             ...(seed.processOwner ? { processOwner: seed.processOwner }

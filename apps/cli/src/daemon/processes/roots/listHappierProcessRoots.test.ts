@@ -88,7 +88,7 @@ describe('listHappierProcessRoots', () => {
         expect(listHappierProcessRoots({ ...input, trackedSessions: [], snapshot: snapshot([row(10, 1)]),
             endedRoots: [{ ...stopping, live: false }] }).find(root => root.owner.kind === 'session')).not.toHaveProperty('state');
     });
-    it('projects guest terminal attribution from the real PTY custody owner without an associated session', () => {
+    it('projects guest terminal attribution from the real PTY custody owner without an associated session', async () => {
         const terminalRegistry = createTerminalProcessRegistry();
         // Only the genuine OS PTY and process-group probe are replaced.
         const manager = createTerminalPtySessionManager({ terminalRegistry, platform: 'darwin', env: { ...process.env, SHELL: '/bin/bash' },
@@ -97,7 +97,7 @@ describe('listHappierProcessRoots', () => {
             config: { bufferMaxBytes: 1000000, bufferMaxEvents: 1000,
                 bufferRetentionMs: 600000, urlParseBufferLimit: 32768, maxWriteChunkBytes: 16384, defaultCols: 80, defaultRows: 24 } });
         try {
-            const opened = manager.ensure({ terminalKey: 'guest-shell', cwd: '/project', custody: {
+            const opened = await manager.ensure({ terminalKey: 'guest-shell', cwd: '/project', custody: {
                 serverId: 'server', machineId: 'machine', installationId: 'install', requesterAccountId: 'guest',
                 workspaceRefId: 'accepted', projectKey: 'project', rootPath: '/project' } });
             if (!opened.ok) throw new Error('Guest terminal did not open');

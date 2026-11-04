@@ -445,7 +445,7 @@ describe('daemon Guard composition at the real minute, Activity and summary owne
         const native = await createIdleTerminalPolicyFixture(cleanup);
         vi.setSystemTime(native.nowMs());
         native.foreground(102); native.enable();
-        const terminal = native.terminals.ensure({ terminalKey: 'silent-command', cwd: '/project', custody: {
+        const terminal = await native.terminals.ensure({ terminalKey: 'silent-command', cwd: '/project', custody: {
             ...target, requesterAccountId: requester.accountId, kind: 'machine', rootPath: '/project',
         } });
         expect(terminal.ok).toBe(true);

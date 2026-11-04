@@ -35,10 +35,18 @@ export type ProjectNativeAdapterProductionInputV1 = Readonly<{
     machine?: never;
     environment?: Readonly<Record<string, string>>;
     signal?: AbortSignal;
+    /** Host-issued only after person/requester/root admission; never an SDK operand. */
+    executionKind?: 'person_break_glass';
+    requesterIdentity?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').HostRequesterExecutionIdentity;
+    /** Reuses the containing operation's admission at the actual helper effect. */
+    assertLaunchCurrent?: (signal: AbortSignal) => Promise<void>;
 }>;
 export type ProjectNativeServiceLifecycleInputV1 = ProjectNativeAdapterProductionInputV1 | Readonly<{
     machine: Readonly<{ serverId: string; machineId: string }>;
     root?: never; environment?: Readonly<Record<string, string>>; signal?: AbortSignal;
+    executionKind?: never;
+    requesterIdentity?: never;
+    assertLaunchCurrent?: (signal: AbortSignal) => Promise<void>;
 }>;
 export type ProjectNativeAdapterProductionV1 = Readonly<{
     /** Selected installed plugin provenance, not an installed native-tool version. */

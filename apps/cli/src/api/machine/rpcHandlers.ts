@@ -797,6 +797,9 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
     deps: {
       readSpawnFailureLimits: params.deps?.readSpawnFailureLimits,
       ownerRemainder: params.deps?.ownerRemainder,
+      agentIsolation: params.deps?.agentIsolation,
+      nativeOperationRuntime: params.deps?.nativeOperationRuntime,
+      resolveHostHomeServerIdentityId: params.deps?.resolveHostHomeServerIdentityId,
       serverId: params.deps?.currentServerId,
       ...(operationRuntime ? { operationRuntime } : {}),
       workingDirectory: params.deps?.workingDirectory,

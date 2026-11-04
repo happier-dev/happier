@@ -122,6 +122,8 @@ export type HostPluginExecLaunchOptions = Readonly<{
     /** The selected native adapter's invocation, not the original Agent's. */
     nativeExecutableOwner?: ExecService;
     prepareAgentNativeLaunch?: HostAgentNativeLaunchPreparation;
+    /** The Project host already holds this admission context; public Exec options do not. */
+    agentIsolation?: HostAgentIsolationLaunchContext;
 }>;
 
 export type HostAgentNativeLaunchPreparation = (
@@ -516,7 +518,7 @@ export async function authorizePluginExecLaunchForHost(
         }
         // Only this host entry point supplies the third argument. Extra properties
         // on public run/spawn options cannot opt a plugin into Project effects.
-        return await authorize(request, options, options?.projectLaunch, options?.nativeExecutableOwner, options?.prepareAgentNativeLaunch);
+        return await authorize(request, options, options?.projectLaunch, options?.nativeExecutableOwner, options?.prepareAgentNativeLaunch, options?.agentIsolation);
     } catch (error) { throw withExecLaunchNotStarted(error); }
 }
 
@@ -1019,6 +1021,10 @@ export type ProjectNativeEnvironmentIoForHost = ProjectNativeEnvironmentIo & Rea
     createInvocation(input: Readonly<{
         signal: AbortSignal;
         retainCapture(capture: ProjectNativeEffectCaptureForHost): void;
+        agentIsolation?: HostAgentIsolationLaunchContext;
+        executionKind?: 'person_break_glass';
+        requesterIdentity?: HostRequesterExecutionIdentity;
+        assertLaunchCurrent?: () => Promise<void>;
     }>): ProjectNativeEnvironmentIo;
 }>;
 
@@ -1068,6 +1074,7 @@ function createNativeProcessCustodyForHost() {
 
 export function createProjectNativeEnvironmentIoForHost(input: Readonly<{
     ownerRemainder?: OwnerRemainderPort;
+    agentIsolation?: HostAgentIsolationLaunchContext;
     resolveTool(tool: string, signal: AbortSignal | undefined, scopedIo: ProjectNativeEnvironmentIo): ReturnType<ProjectNativeEnvironmentIo['resolveTool']>;
 }>): ProjectNativeEnvironmentIoForHost {
     const create = (invocation?: Parameters<ProjectNativeEnvironmentIoForHost['createInvocation']>[0]): ProjectNativeEnvironmentIoForHost => {
@@ -1089,16 +1096,33 @@ export function createProjectNativeEnvironmentIoForHost(input: Readonly<{
                 const signal = invocation ? request.signal ? AbortSignal.any([invocation.signal, request.signal]) : invocation.signal : request.signal;
                 assertOpen();
                 if (signal?.aborted) fail('plugin_exec_aborted', 'Process operation was aborted');
-                const supervised = spawnSupervisedPluginProcess({
-                    ...request,
-                    env: withProcessOwnerEnvironment(request.env, { kind: 'happier' }),
-                    ...(input.ownerRemainder ? { rootExitObservation: {
-                        ownerRemainder: input.ownerRemainder, owner: { kind: 'happier' as const },
-                    } } : {}),
-                    signals: signal ? [signal] : [],
-                    // Abort/timeout cleans this spawner's live tree. After root
-                    // exit, exact observed descendants belong to Happier remainder.
-                    spawnOptions: { detached: process.platform !== 'win32' },
+                // Native environment evaluation can execute workspace code before
+                // the final script exists. Its actual command uses the same tuple
+                // authority, not a preflight that is discarded before spawning.
+                const launch = await authorizeResolvedProjectExecLaunchForHost({
+                    launch: request, signal: signal ?? new AbortController().signal,
+                    agentIsolation: invocation?.agentIsolation ?? input.agentIsolation,
+                    executionKind: invocation?.executionKind,
+                    requesterIdentity: invocation?.requesterIdentity,
+                    agentLaunchKind: 'workspaceExec',
+                    assertCurrent() {
+                        assertOpen();
+                        if (signal?.aborted) fail('plugin_exec_aborted', 'Process operation was aborted');
+                    },
+                });
+                try {
+                    await invocation?.assertLaunchCurrent?.();
+                    assertOpen();
+                    if (signal?.aborted) fail('plugin_exec_aborted', 'Process operation was aborted');
+                } catch (error) {
+                    await launch.release();
+                    throw withExecLaunchNotStarted(error);
+                }
+                const supervised = spawnAuthorizedHostExecLaunchForHost({ ...launch,
+                    processOwnerTag: formatProcessOwnerTag({ happierHomeDir: configuration.happyHomeDir, owner: { kind: 'happier' } }),
+                }, {
+                    ...(signal ? { signal } : {}),
+                    ...(input.ownerRemainder ? { ownerRemainder: input.ownerRemainder } : {}),
                 });
                 retain(supervised);
                 const settle = async () => {

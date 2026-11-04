@@ -357,7 +357,7 @@ describe('Machine guard current admission and original Action restoration', () =
     const terminal = await createIdleTerminalPolicyFixture(cleanup);
     terminal.enable(); terminal.foreground(102);
     const target = { ...identity, installationId: 'installation' };
-    terminal.terminals.ensure({ terminalKey: 'command', cwd: '/project',
+    await terminal.terminals.ensure({ terminalKey: 'command', cwd: '/project',
       custody: { ...target, requesterAccountId: 'owner', kind: 'machine', rootPath: '/project' } });
     terminal.now(90_000); await (await terminal.readPlan()).run?.();
     expect(terminal.terminals.list()[0]).toHaveProperty('terminalGuardStateV1');
@@ -426,8 +426,8 @@ describe('Machine guard current admission and original Action restoration', () =
     const terminalEpoch = terminal.nowMs();
     terminal.now(now - terminalEpoch - 120_000);
     terminal.enable();
-    expect(terminal.terminals.ensure({ terminalKey: 'portable-prompt', cwd: '/project',
-      custody: { ...terminalTarget, requesterAccountId: 'owner', kind: 'machine', rootPath: '/project' } }).ok).toBe(true);
+    expect((await terminal.terminals.ensure({ terminalKey: 'portable-prompt', cwd: '/project',
+      custody: { ...terminalTarget, requesterAccountId: 'owner', kind: 'machine', rootPath: '/project' } })).ok).toBe(true);
     terminal.now(now - terminalEpoch); await (await terminal.readPlan()).run?.();
     expect(terminal.terminals.list()).toEqual([]);
     const receipt = (await terminal.activityLog.list({ range: 'today' })).entries.find(row => row.kind === 'closed_terminal');

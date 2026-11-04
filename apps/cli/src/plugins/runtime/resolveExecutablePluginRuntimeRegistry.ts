@@ -7732,6 +7732,10 @@ agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').Ho
                         if (!hostAccessRequests) throw new Error('Native adapter HostAccess is unavailable');
                         const services = invocationServiceOwners.createOperationServices(seed, {
                             filesystemRoots: { pluginData: join(pluginStorePaths.storageDir, reference.pluginId, 'fs'), ...(input.machine ? {} : { workspace: input.root }), projects: new Map() },
+                            ...(input.machine ? { executionKind: 'machine_native' as const }
+                                : { agentLaunchKind: 'workspaceExec' as const, executionKind: input.executionKind,
+                                    requesterIdentity: input.requesterIdentity }),
+                            assertLaunchCurrent: input.assertLaunchCurrent,
                             hostAccessRequests, environment: input.environment,
                         });
                         return { context: { plugin: seed.plugin, contribution: seed.contribution, surface: seed.surface,

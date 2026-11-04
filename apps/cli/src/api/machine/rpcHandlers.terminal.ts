@@ -8,6 +8,7 @@ import { normalizeWorkspaceRootPathV1, projectWorkspaceRefV1, resolveWorkspaceRe
 import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import type { StoredCredentials } from '@/persistence';
 import type { ApiMachineClient } from '@/api/apiMachine';
+import { requireAgentIsolationMaterialNativeIdentity, type AgentLaunchOperationMaterialization } from '@/daemon/agentIsolation/agentLaunchMaterials';
 import { hostname } from 'node:os';
 import { logger } from '@/ui/logger';
 import { readOwnSessionMachineWorkspace } from '@/session/machineControlLocality';
@@ -30,7 +31,7 @@ import {
 } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import { readDaemonTerminalPtyConfig } from '@/terminal/pty/config';
 import { openServiceShellTerminal } from './serviceShellTerminal';
-import { selectHostRequesterExecutionIdentity, type HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+import { selectHostRequesterExecutionIdentity, resolveHostRequesterAgentPlacementForHost, type HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { createTerminalPtySessionManager, type TerminalPtySessionManager, type TerminalPtyCustody } from '@/terminal/pty/sessions';
 import { createNodePtyProvider } from '@/terminal/pty/provider';
 import { resolveTerminalShell } from '@/terminal/pty/shells';
@@ -341,10 +342,24 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
 
   const authorizeTerminal = async (terminalId: string, context?: RpcHandlerContext, purpose: 'control' | 'census' = 'control',
     admittedCensusCustody?: TerminalPtyCustody): Promise<boolean> => {
+    // Person provenance belongs to the canonical selector. Matching the
+    // requester key/root alone never isolates a legacy daemon-user payload.
+    const requesterIdentity = purpose === 'control' ? (await resolveRequesterIdentity(context)).identity : undefined;
+    if (requesterIdentity && requesterIdentity.kind !== 'owner_person'
+      && (requesterIdentity.kind !== 'isolated' || !requesterIdentity.presentPerson)) return false;
     const manager = getSessionManager();
     const custody = manager.getCustody(terminalId);
     const terminal = manager.list().find(candidate => candidate.terminalId === terminalId);
     if (!terminal) return !context?.machineAdmission && !params.deps?.requiredSessionId;
+    if (requesterIdentity?.kind === 'isolated'
+      && resolveHostRequesterAgentPlacementForHost({ identity: requesterIdentity, snapshot: params.deps?.agentIsolation?.read() }) === 'member') {
+      const nativeIdentity = manager.getNativeExecutionIdentity?.(terminalId);
+      if (!nativeIdentity) return false;
+      try {
+        requireAgentIsolationMaterialNativeIdentity(nativeIdentity, { ...requesterIdentity,
+          homeServerIdentityId: requesterIdentity.requester.serverId });
+      } catch { return false; }
+    }
     if (params.deps?.requiredSessionId && terminal.sessionId !== params.deps.requiredSessionId) return false;
     if (hasRequiredSessionAuthority(context)) return !context?.machineAdmission || await admissionCurrent(context);
     if (!context?.machineAdmission) {
@@ -411,7 +426,9 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
 
   /** Terminal admission covers the shell and native environment; setup is a separate Action. */
   const prepareProjectShell = async (custody: Extract<TerminalPtyCustody, { kind?: undefined }>,
-    launchProcess: TerminalLaunchProcess | undefined, context: RpcHandlerContext | undefined) => {
+    launchProcess: TerminalLaunchProcess | undefined, context: RpcHandlerContext | undefined,
+    requesterIdentity: HostRequesterExecutionIdentity,
+    nativeOperation?: Awaited<ReturnType<ApiMachineClient['prepareNativeOperation']>>) => {
     const refused = (code: string, details?: unknown) => ({ ...err('terminal_invalid_request'), error: code,
       ...(details === undefined ? {} : { details }) });
     if (!context?.machineAdmission) return refused('machine_admission_required');
@@ -447,7 +464,7 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
         }
       };
       const platform = runtime.platform ?? params.deps?.platform ?? process.platform;
-      const preparation = { workspace: association.workspace, projectAssociation: association,
+      const preparation = { workspace: association.workspace, projectAssociation: association, requesterIdentity,
         approvalContext: projectActionContext(context),
         requester: { ...accountAccess, serverHttpBaseUrl: runtime.serverHttpBaseUrl }, purpose: 'setup' as const,
         platform: { os: platform === 'win32' ? 'windows' : platform, arch: runtime.arch ?? process.arch },
@@ -469,10 +486,15 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
       const hostEnvironment: NodeJS.ProcessEnv = { ...(runtime.hostEnvironment ?? env), ...launchProcess?.env, ...plan.configEnvironment };
       const launchEnv: Record<string, string> = {};
       for (const [key, value] of Object.entries(hostEnvironment)) if (value !== undefined) launchEnv[key] = value;
+      const agentIsolation = nativeOperation?.agentIsolation ?? params.deps?.agentIsolation;
+      const execution = requesterIdentity.kind === 'owner_person' ? { executionKind: 'person_break_glass' as const } : {};
       const projectLaunch = createProjectNativeLaunchAdmission({ preparation, hostEnvironment, platform,
+        agentIsolation, ...execution, requesterIdentity,
+        beforeNativeEffect: assertCurrent,
         environmentIo: runtime.environmentIo, operation: { signal: context.signal } }, plan);
       authorized = await authorizeResolvedProjectExecLaunchForHost({
         launch: { command: base.file, args: base.args, cwd: association.workspace.rootPath, env: launchEnv }, projectLaunch, signal: context.signal,
+        agentIsolation, ...execution, requesterIdentity, agentLaunchKind: 'terminal',
         assertCurrent() {
           if (context.signal.aborted) throw Object.assign(new Error('cancelled'), { code: 'cancelled' });
           if (plan.environmentAdapterLease && !plan.environmentAdapterLease.isCurrent()) throw Object.assign(new Error('native_adapter_retired'), { code: 'native_adapter_retired' });
@@ -497,8 +519,41 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
     }
   };
 
+  const prepareNativeShell = async (cwd: string, launchProcess: TerminalLaunchProcess | undefined,
+    context: RpcHandlerContext, requesterIdentity: HostRequesterExecutionIdentity,
+    nativeOperation: Awaited<ReturnType<ApiMachineClient['prepareNativeOperation']>>) => {
+    const { authorizeResolvedProjectExecLaunchForHost } = await import('@/plugins/runtime/invocation/services/exec');
+    const base = launchProcess ?? resolveTerminalShell(env, params.deps?.platform ?? process.platform);
+    const authorizedProjectLaunch = await authorizeResolvedProjectExecLaunchForHost({
+      launch: { command: base.file, args: base.args, cwd,
+        env: Object.fromEntries(Object.entries({ ...env, ...launchProcess?.env }).filter((entry): entry is [string, string] => typeof entry[1] === 'string')) },
+      agentIsolation: nativeOperation.agentIsolation, requesterIdentity, agentLaunchKind: 'terminal', signal: context.signal,
+      assertCurrent: () => context.signal.throwIfAborted(),
+    });
+    return { ok: true as const, authorizedProjectLaunch, validate: async () => { context.signal.throwIfAborted(); },
+      release: async () => { await authorizedProjectLaunch.release(); } };
+  };
+
+  const prepareTerminalNativeOperation = async (context: RpcHandlerContext, requesterIdentity: HostRequesterExecutionIdentity,
+    terminalKey: string, sessionId: string | undefined) => {
+    if (!params.deps?.nativeOperationRuntime) return undefined;
+    let live = true;
+    // The terminal's existing retained identity owns this empty person-shell
+    // projection. It grants no Session MCP or selected Provider authority.
+    const material: AgentLaunchOperationMaterialization = Object.freeze({
+      materializationKey: JSON.stringify(['terminal', sessionId ?? null, terminalKey]),
+      environment: Object.freeze({}), selectedMaterials: Object.freeze([]),
+    });
+    try {
+      const input = { requesterIdentity, resolveRequesterIdentity: async () => requesterIdentity,
+        ingress: context, signal: context.signal, readMaterial: () => live ? material : undefined };
+      const prepared = await params.deps.nativeOperationRuntime.prepareNativeOperation(input);
+      return { ...prepared, async dispose() { live = false; await prepared.dispose(); } };
+    } catch (error) { live = false; throw error; }
+  };
+
   const retainShellLaunch = (prepared: Extract<Awaited<ReturnType<typeof prepareProjectShell>>, { ok: true }>,
-    result: ReturnType<TerminalPtySessionManager['ensure']>) => {
+    result: Awaited<ReturnType<TerminalPtySessionManager['ensure']>>) => {
     if (result.ok && !result.reused) {
       void getSessionManager().waitForExit({ terminalId: result.terminalId }).then(async observation => {
         if (observation.kind === 'exited') await prepared.release();
@@ -597,39 +652,71 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
       )
     ) return err('terminal_invalid_request');
 
+    if (parsed.data.launch?.kind === 'package_script') {
+      const cwd = resolveCwd(parsed.data.cwd);
+      return cwd.ok ? await runPackageScript(cwd.cwd, parsed.data.launch.runTargetId, context) : cwd;
+    }
+    const { identity: requesterIdentity, homeServerIdentityId } = await resolveRequesterIdentity(context);
+    const placement = requesterIdentity.kind === 'isolated'
+      ? resolveHostRequesterAgentPlacementForHost({ identity: requesterIdentity, snapshot: params.deps?.agentIsolation?.read() }) : undefined;
+    if (requesterIdentity.kind === 'unknown' || requesterIdentity.kind !== 'owner_person'
+      && (placement !== 'daemon' && !params.deps?.nativeOperationRuntime || parsed.data.launch?.kind === 'session_attach')) return unavailableIdentityTransport();
     if (parsed.data.launch?.kind === 'service_shell') {
-      const { identity, homeServerIdentityId } = await resolveRequesterIdentity(context);
-      if (identity.kind !== 'owner_person') return unavailableIdentityTransport();
+      if (requesterIdentity.kind !== 'owner_person') return unavailableIdentityTransport();
       return await runServiceShell({ ...parsed.data, launch: parsed.data.launch }, context, 'machines.terminal.open', homeServerIdentityId);
     }
 
-    const cwd = parsed.data.launch?.kind === 'package_script' ? resolveCwd(parsed.data.cwd)
-      : await resolveTerminalCustody(parsed.data, context);
+    const cwd = await resolveTerminalCustody(parsed.data, context);
     if (!cwd.ok) return cwd;
-    if (parsed.data.launch?.kind === 'package_script') return await runPackageScript(cwd.cwd, parsed.data.launch.runTargetId, context);
     const launch = resolveRequestedLaunch(parsed.data.launch);
     if (!launch.ok) return launch;
     const sessionId = params.deps?.requiredSessionId ?? parsed.data.sessionId
       ?? ('custody' in cwd && cwd.custody?.kind === 'session' ? cwd.custody.sessionId : undefined);
     const projectCustody = 'custody' in cwd && cwd.custody?.kind === undefined ? cwd.custody : undefined;
-    const warm = projectCustody && getSessionManager().list().some(terminal => !terminal.ended
+    const warm = requesterIdentity.kind === 'owner_person' && projectCustody && getSessionManager().list().some(terminal => !terminal.ended
       && terminal.terminalKey === parsed.data.terminalKey && terminal.sessionId === sessionId
       && sameTerminalCustody(getSessionManager().getCustody(terminal.terminalId), projectCustody));
     if (projectCustody && !warm && params.deps?.admissionDrain?.isQuiescing()) return err('terminal_busy');
     await getSessionManager().prepare?.();
-    const prepared = projectCustody && !warm ? await prepareProjectShell(projectCustody, launch.launchProcess, context) : undefined;
-    if (prepared && !prepared.ok) return prepared;
-    const result = getSessionManager().ensure({
+    let nativeOperation: Awaited<ReturnType<ApiMachineClient['prepareNativeOperation']>> | undefined;
+    let prepared: Extract<Awaited<ReturnType<typeof prepareProjectShell>>, { ok: true }> | undefined;
+    try {
+      if (requesterIdentity.kind !== 'owner_person' && placement !== 'daemon') {
+        if (!context) return unavailableIdentityTransport();
+        nativeOperation = await prepareTerminalNativeOperation(context, requesterIdentity, parsed.data.terminalKey, sessionId);
+        if (!nativeOperation || placement === 'member' && !nativeOperation.memberIdentity) {
+          await nativeOperation?.dispose(); return unavailableIdentityTransport();
+        }
+      }
+      const preparation = projectCustody && !warm
+        ? await prepareProjectShell(projectCustody, launch.launchProcess, context, requesterIdentity, nativeOperation)
+        : nativeOperation && context ? await prepareNativeShell(cwd.cwd, launch.launchProcess, context, requesterIdentity, nativeOperation) : undefined;
+      if (preparation && !preparation.ok) { await nativeOperation?.dispose(); return preparation; }
+      if (preparation) prepared = { ...preparation, release: async () => {
+        try { await preparation.release(); } finally { await nativeOperation?.dispose(); }
+      } };
+    } catch {
+      await nativeOperation?.dispose();
+      return unavailableIdentityTransport();
+    }
+    if (!context || context.signal.aborted) {
+      if (prepared) void prepared.release().catch(observeShellReleaseFailure);
+      return err('terminal_forbidden');
+    }
+    const result = await getSessionManager().ensure({
       ...(params.deps?.admissionDrain ? { admissionDrain: params.deps.admissionDrain } : {}),
       terminalKey: parsed.data.terminalKey,
       cwd: cwd.cwd,
-      ...('custody' in cwd && cwd.custody ? { custody: cwd.custody } : {}),
+      ...('custody' in cwd && cwd.custody ? { custody: { ...cwd.custody,
+        ...(homeServerIdentityId ? { homeServerIdentityId } : {}) } } : {}),
       cols: parsed.data.cols,
       rows: parsed.data.rows,
       initialCommand: parsed.data.initialCommand,
       ...(launch.launchProcess ? { launchProcess: launch.launchProcess } : {}),
       ...(prepared ? { authorizedProjectLaunch: prepared.authorizedProjectLaunch } : {}),
+      ...(nativeOperation?.memberIdentity ? { nativeExecutionIdentity: nativeOperation.memberIdentity } : {}),
       ...(sessionId ? { sessionId } : {}),
+      signal: context.signal,
     });
     return prepared ? retainShellLaunch(prepared, result) : result;
   });
@@ -729,16 +816,22 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
       )
     ) return err('terminal_invalid_request');
 
+    if (parsed.data.launch?.kind === 'package_script') {
+      const cwd = resolveCwd(parsed.data.cwd);
+      return cwd.ok ? await runPackageScript(cwd.cwd, parsed.data.launch.runTargetId, context) : cwd;
+    }
+    const { identity: requesterIdentity, homeServerIdentityId } = await resolveRequesterIdentity(context);
+    const placement = requesterIdentity.kind === 'isolated'
+      ? resolveHostRequesterAgentPlacementForHost({ identity: requesterIdentity, snapshot: params.deps?.agentIsolation?.read() }) : undefined;
+    if (requesterIdentity.kind === 'unknown' || requesterIdentity.kind !== 'owner_person'
+      && (placement !== 'daemon' && !params.deps?.nativeOperationRuntime || parsed.data.launch?.kind === 'session_attach')) return unavailableIdentityTransport();
     if (parsed.data.launch?.kind === 'service_shell') {
-      const { identity, homeServerIdentityId } = await resolveRequesterIdentity(context);
-      if (identity.kind !== 'owner_person') return unavailableIdentityTransport();
+      if (requesterIdentity.kind !== 'owner_person') return unavailableIdentityTransport();
       return await runServiceShell({ ...parsed.data, launch: parsed.data.launch }, context, 'machines.terminal.restart', homeServerIdentityId);
     }
 
-    const cwd = parsed.data.launch?.kind === 'package_script' ? resolveCwd(parsed.data.cwd)
-      : await resolveTerminalCustody(parsed.data, context);
+    const cwd = await resolveTerminalCustody(parsed.data, context);
     if (!cwd.ok) return cwd;
-    if (parsed.data.launch?.kind === 'package_script') return await runPackageScript(cwd.cwd, parsed.data.launch.runTargetId, context);
     if (params.deps?.admissionDrain?.isQuiescing()) return err('terminal_busy');
     const launch = resolveRequestedLaunch(parsed.data.launch);
     if (!launch.ok) return launch;
@@ -747,8 +840,24 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
 
     const projectCustody = 'custody' in cwd && cwd.custody?.kind === undefined ? cwd.custody : undefined;
     await getSessionManager().prepare?.();
-    const prepared = projectCustody ? await prepareProjectShell(projectCustody, launch.launchProcess, context) : undefined;
-    if (prepared && !prepared.ok) return prepared;
+    let nativeOperation: Awaited<ReturnType<ApiMachineClient['prepareNativeOperation']>> | undefined;
+    let prepared: Extract<Awaited<ReturnType<typeof prepareProjectShell>>, { ok: true }> | undefined;
+    try {
+      if (requesterIdentity.kind !== 'owner_person' && placement !== 'daemon') {
+        if (!context) return unavailableIdentityTransport();
+        nativeOperation = await prepareTerminalNativeOperation(context, requesterIdentity, parsed.data.terminalKey, sessionId);
+        if (!nativeOperation || placement === 'member' && !nativeOperation.memberIdentity) {
+          await nativeOperation?.dispose(); return unavailableIdentityTransport();
+        }
+      }
+      const preparation = projectCustody
+        ? await prepareProjectShell(projectCustody, launch.launchProcess, context, requesterIdentity, nativeOperation)
+        : nativeOperation && context ? await prepareNativeShell(cwd.cwd, launch.launchProcess, context, requesterIdentity, nativeOperation) : undefined;
+      if (preparation && !preparation.ok) { await nativeOperation?.dispose(); return preparation; }
+      if (preparation) prepared = { ...preparation, release: async () => {
+        try { await preparation.release(); } finally { await nativeOperation?.dispose(); }
+      } };
+    } catch { await nativeOperation?.dispose(); return unavailableIdentityTransport(); }
     let handedOff = false;
     try {
       let restartCwd = cwd;
@@ -791,16 +900,20 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
       // Observed Stop may have taken arbitrarily long. Revalidate the accepted
       // checkout and reviewed setup effect before consuming the finalized tuple.
       await prepared?.validate();
-      const result = getSessionManager().restart({
+      if (!context || context.signal.aborted) return err('terminal_forbidden');
+      const result = await getSessionManager().restart({
+        signal: context.signal,
         ...(params.deps?.admissionDrain ? { admissionDrain: params.deps.admissionDrain } : {}),
         terminalKey: parsed.data.terminalKey,
         cwd: restartCwd.cwd,
-        ...('custody' in restartCwd && restartCwd.custody ? { custody: restartCwd.custody } : {}),
+        ...('custody' in restartCwd && restartCwd.custody ? { custody: { ...restartCwd.custody,
+          ...(homeServerIdentityId ? { homeServerIdentityId } : {}) } } : {}),
         cols: parsed.data.cols,
         rows: parsed.data.rows,
         initialCommand: parsed.data.initialCommand,
         ...(launch.launchProcess ? { launchProcess: launch.launchProcess } : {}),
         ...(prepared ? { authorizedProjectLaunch: prepared.authorizedProjectLaunch } : {}),
+        ...(nativeOperation?.memberIdentity ? { nativeExecutionIdentity: nativeOperation.memberIdentity } : {}),
         ...(sessionId ? { sessionId } : {}),
       });
       handedOff = true;

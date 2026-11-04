@@ -105,7 +105,7 @@ describe.skipIf(process.platform === 'win32')('finite PTY process custody', () =
       IFS= read -r command
       exit 0`;
     try {
-      const accepted = manager.ensure({ terminalKey: 'natural-parent-exit', cwd: process.cwd(), holdUntilExit: true,
+      const accepted = await manager.ensure({ terminalKey: 'natural-parent-exit', cwd: process.cwd(), holdUntilExit: true,
         launchProcess: jobControl
           ? { file: '/bin/bash', args: ['-c', jobControlSource], env: process.env }
           : { file: process.execPath, args: ['-e', parentSource], env: process.env },
@@ -161,7 +161,7 @@ describe.skipIf(process.platform === 'win32')('finite PTY process custody', () =
       if (isPidAlive(descendantPid!)) {
         expect(manager.isFiniteHeld(accepted.terminalId)).toBe(true);
         expect(settlementReported).toBe(false);
-        expect(manager.ensure({ terminalKey: 'capacity-after-parent-exit', cwd: process.cwd() }))
+        expect(await manager.ensure({ terminalKey: 'capacity-after-parent-exit', cwd: process.cwd() }))
           .toMatchObject({ ok: true });
         expect(carrierPids).toHaveLength(2);
         expect(manager.isFiniteHeld(accepted.terminalId)).toBe(true);
@@ -200,7 +200,7 @@ describe.skipIf(process.platform === 'win32')('finite PTY process custody', () =
     if (!provider) throw new Error('POSIX PTY relay is unavailable');
     const manager = createTerminalPtySessionManager({ ptyProvider: provider, config });
     try {
-      const accepted = manager.ensure({
+      const accepted = await manager.ensure({
         terminalKey: 'actual-nonzero', cwd: process.cwd(), holdUntilExit: true,
         launchProcess: { file: process.execPath, args: ['-e', 'process.stdout.write("finite output\\n"); process.exitCode=7;'], env: process.env },
       });
@@ -234,7 +234,7 @@ describe.skipIf(process.platform === 'win32')('finite PTY process custody', () =
     };
     const manager = createTerminalPtySessionManager({ ptyProvider: provider, config });
     try {
-      const accepted = manager.ensure({
+      const accepted = await manager.ensure({
         terminalKey: 'actual-stop', cwd: process.cwd(), holdUntilExit: true,
         launchProcess: {
           file: process.execPath,
@@ -246,7 +246,7 @@ describe.skipIf(process.platform === 'win32')('finite PTY process custody', () =
       await descendantReady;
       expect(descendantPid).not.toBeNull();
       expect(isPidAlive(descendantPid!)).toBe(true);
-      expect(manager.ensure({ terminalKey: 'capacity-probe', cwd: process.cwd() }))
+      expect(await manager.ensure({ terminalKey: 'capacity-probe', cwd: process.cwd() }))
         .toMatchObject({ ok: true });
       expect(manager.isFiniteHeld(accepted.terminalId)).toBe(true);
       const exited = manager.waitForExit({ terminalId: accepted.terminalId });

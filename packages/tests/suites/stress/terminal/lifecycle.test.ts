@@ -97,7 +97,7 @@ function readCanonicalByteFrames(response: unknown): readonly TerminalStreamByte
 }
 
 describe('stress: terminal bounded byte-stream lifecycle', () => {
-  it('composes daemon-owned credit, gap, and per-terminal cursor behavior', () => {
+  it('composes daemon-owned credit, gap, and per-terminal cursor behavior', async () => {
     const provider = new FakePtyProvider();
     const manager = createTerminalPtySessionManager({
       ptyProvider: provider,
@@ -108,8 +108,8 @@ describe('stress: terminal bounded byte-stream lifecycle', () => {
     });
 
     try {
-      const first = manager.ensure({ terminalKey: 'terminal-a', cwd: '/tmp' });
-      const second = manager.ensure({ terminalKey: 'terminal-b', cwd: '/tmp' });
+      const first = await manager.ensure({ terminalKey: 'terminal-a', cwd: '/tmp' });
+      const second = await manager.ensure({ terminalKey: 'terminal-b', cwd: '/tmp' });
       expect(first.ok).toBe(true);
       expect(second.ok).toBe(true);
       if (!first.ok || !second.ok) throw new Error('expected terminal sessions');
@@ -214,7 +214,7 @@ describe('stress: terminal bounded byte-stream lifecycle', () => {
     }
   });
 
-  it('releases session buffers and PTYs through close and disposal', () => {
+  it('releases session buffers and PTYs through close and disposal', async () => {
     const provider = new FakePtyProvider();
     const manager = createTerminalPtySessionManager({
       ptyProvider: provider,
@@ -224,7 +224,7 @@ describe('stress: terminal bounded byte-stream lifecycle', () => {
       platform: 'linux',
     });
 
-    const active = manager.ensure({ terminalKey: 'active-terminal', cwd: '/tmp' });
+    const active = await manager.ensure({ terminalKey: 'active-terminal', cwd: '/tmp' });
     expect(active.ok).toBe(true);
     if (!active.ok) throw new Error('expected active terminal');
 
@@ -233,7 +233,7 @@ describe('stress: terminal bounded byte-stream lifecycle', () => {
     expect(manager.close({ terminalId: active.terminalId })).toEqual({ ok: true });
     expect(activePty.killCount).toBe(1);
 
-    const final = manager.ensure({ terminalKey: 'dispose-terminal', cwd: '/tmp' });
+    const final = await manager.ensure({ terminalKey: 'dispose-terminal', cwd: '/tmp' });
     expect(final.ok).toBe(true);
     if (!final.ok) throw new Error('expected final terminal');
     const finalPty = provider.spawned[1]?.pty;

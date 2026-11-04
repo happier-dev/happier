@@ -173,7 +173,7 @@ describe('Guard requester view and parked watch', () => {
     if (terminalFixture) for (const [terminalKey, requesterAccountId, installationId] of [
       ['own-private-terminal', 'alice', 'installation'], ['other-private-terminal', 'bob', 'installation'],
       ['old-private-terminal', 'alice', 'old-installation'],
-    ]) terminalFixture.terminals.ensure({ terminalKey: terminalKey!, cwd: '/project',
+    ]) await terminalFixture.terminals.ensure({ terminalKey: terminalKey!, cwd: '/project',
       custody: { ...target, requesterAccountId: requesterAccountId!, installationId: installationId!, kind: 'machine', rootPath: '/project' } });
     const view = createGuardWatch({ policy, sampler, ownership, readFacts, readState: publication.read, readTarget: () => target,
       ...(terminalFixture ? { terminalState: terminalFixture.owner.terminalState } : {}),

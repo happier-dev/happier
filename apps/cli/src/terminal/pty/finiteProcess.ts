@@ -1,7 +1,7 @@
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext, ActionOperationDomainRefV1 } from '@happier-dev/protocol';
 import { ACTION_OPERATION_PROGRESS_LABEL_MAX_LENGTH_V1 } from '@happier-dev/protocol/actions/operations/v1';
-import type { TerminalPtyCustody, TerminalPtySessionManager } from './sessions';
+import type { TerminalPtyCustody, TerminalPtyEnsureInput, TerminalPtySessionManager } from './sessions';
 
 export type HostFiniteTerminalOperation = Pick<ActionExecutorContext,
   'actionRequestId' | 'operationAcceptance' | 'operationCancellation' | 'operationProgress' | 'operationOwnerUpdate'> & Readonly<{ signal: AbortSignal }>;
@@ -20,6 +20,8 @@ export async function executeHostFiniteTerminalProcess(input: Readonly<{
   terminalCustody?: TerminalPtyCustody;
   terminalKey: string;
   launch: Readonly<{ command: string; args: readonly string[]; cwd: string; env: Readonly<Record<string, string>>; windowsVerbatimArguments?: boolean }>;
+  authorizedNativeLaunch?: TerminalPtyEnsureInput['authorizedNativeLaunch'];
+  nativeExecutionIdentity?: TerminalPtyEnsureInput['nativeExecutionIdentity'];
   signal?: AbortSignal;
   progress: Readonly<{ phase: string; label: string; current?: number; total?: number }>;
   failureCode: string;
@@ -31,13 +33,15 @@ export async function executeHostFiniteTerminalProcess(input: Readonly<{
     kind, result: { ok: false, errorCode: code, error: code, ...(details === undefined ? {} : { details }) }, ...(terminalId ? { terminalId } : {}),
   });
   if (signal.aborted) return failure('no_launch', 'cancelled');
-  let terminal: ReturnType<TerminalPtySessionManager['ensure']>;
+  let terminal: Awaited<ReturnType<TerminalPtySessionManager['ensure']>>;
   try {
     await input.terminalSessions.prepare?.();
     if (signal.aborted) return failure('no_launch', 'cancelled');
-    terminal = input.terminalSessions.ensure({ terminalKey: input.terminalKey, cwd: input.launch.cwd,
-      requesterAccountId: input.requesterAccountId, holdUntilExit: true,
+    terminal = await input.terminalSessions.ensure({ terminalKey: input.terminalKey, cwd: input.launch.cwd,
+      requesterAccountId: input.requesterAccountId, holdUntilExit: true, signal,
       ...(input.terminalCustody ? { custody: input.terminalCustody } : {}),
+      ...(input.authorizedNativeLaunch ? { authorizedNativeLaunch: input.authorizedNativeLaunch } : {}),
+      ...(input.nativeExecutionIdentity ? { nativeExecutionIdentity: input.nativeExecutionIdentity } : {}),
       launchProcess: { file: input.launch.command, args: input.launch.args, env: input.launch.env,
         ...(input.launch.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}) },
     });

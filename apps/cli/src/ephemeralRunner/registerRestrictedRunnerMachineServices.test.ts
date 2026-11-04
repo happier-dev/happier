@@ -259,7 +259,7 @@ describe('restricted Runner ordinary Machine services', () => {
       sessionId: 'runner-session',
       cwd: join(workingDirectory, 'nested'),
     });
-    const sibling = terminal.ensure({ terminalKey: 'sibling', cwd: workingDirectory, sessionId: 'sibling-session' });
+    const sibling = await terminal.ensure({ terminalKey: 'sibling', cwd: workingDirectory, sessionId: 'sibling-session' });
     if (!sibling.ok) throw new Error('Sibling fixture did not open');
     await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_INPUT)?.({ terminalId: sibling.terminalId, data: 'forged' })).resolves.toMatchObject({ ok: false, errorCode: 'terminal_forbidden' });
     await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_STREAM_ACK)?.({ terminalId: sibling.terminalId, ackedByteOffset: 0 })).resolves.toMatchObject({ ok: false, code: 'terminal_forbidden' });

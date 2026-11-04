@@ -5,7 +5,7 @@ import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceR
 import { createHash } from 'node:crypto';
 import { relative, resolve } from 'node:path';
 import type { HostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
-import type { TerminalPtySessionManager, TerminalPtyCustody } from '@/terminal/pty/sessions';
+import type { TerminalPtySessionManager, TerminalPtyCustody, TerminalPtyEnsureInput } from '@/terminal/pty/sessions';
 import { ProjectNativeEnvironmentUncertainError, type ProjectNativeEnvironmentIo } from '@/workspaces/environment/produceProjectNativeEnvironment';
 import { configuration } from '@/configuration';
 import { resolveFiniteTerminalShell } from '@/terminal/pty/shells';
@@ -35,6 +35,11 @@ export type ProjectSetupExecutionInput = Readonly<{
     terminalSessions: Pick<TerminalPtySessionManager, 'prepare' | 'ensure' | 'waitForExit' | 'requestStop' | 'observeOutput'>;
     environmentIo: ProjectNativeEnvironmentIoForHost;
     hostEnvironment?: ProcessEnvInput;
+    agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').HostAgentIsolationLaunchContext;
+    nativeExecutionIdentity?: TerminalPtyEnsureInput['nativeExecutionIdentity'];
+    /** Issued only by the admitted person terminal owner, never an Action operand. */
+    executionKind?: 'person_break_glass';
+    requesterIdentity?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').HostRequesterExecutionIdentity;
     platform?: NodeJS.Platform;
     originRun?: ProjectCommandAttachmentV1['originRun'];
     sourceWorkspace?: ProjectCommandAttachmentV1['sourceWorkspace'];
@@ -145,6 +150,7 @@ export function publishProjectFiniteAdmission(input: ProjectFiniteAdmissionInput
 export type ProjectFiniteProcessInput = ProjectFiniteAdmissionInput & Readonly<{
     terminalSessions: ProjectSetupExecutionInput['terminalSessions'];
     launch: HostAuthorizedPluginExecLaunch;
+    nativeExecutionIdentity?: TerminalPtyEnsureInput['nativeExecutionIdentity'];
     signal?: AbortSignal;
     step?: number;
     totalSteps?: number;
@@ -162,6 +168,8 @@ export async function executeProjectFiniteProcess(input: ProjectFiniteProcessInp
         requesterAccountId: input.requesterAccountId, terminalCustody: input.terminalCustody,
         terminalKey: `${operationId}:${input.purpose}:${input.step ?? 0}`, signal,
         launch: { ...input.launch, cwd: input.launch.cwd ?? input.workspace.rootPath },
+        authorizedNativeLaunch: input.launch,
+        ...(input.nativeExecutionIdentity ? { nativeExecutionIdentity: input.nativeExecutionIdentity } : {}),
         progress: { phase: input.purpose, label: 'Running project command',
             ...(input.totalSteps ? { current: input.step ?? 0, total: input.totalSteps } : {}) },
         failureCode: 'project_command_step_failed', failureDetails: { step: input.step ?? 0 },
@@ -169,7 +177,7 @@ export async function executeProjectFiniteProcess(input: ProjectFiniteProcessInp
     });
 }
 
-export function createProjectNativeLaunchAdmission(input: Pick<ProjectSetupExecutionInput, 'preparation' | 'environmentIo' | 'hostEnvironment' | 'platform'> &
+export function createProjectNativeLaunchAdmission(input: Pick<ProjectSetupExecutionInput, 'preparation' | 'environmentIo' | 'hostEnvironment' | 'platform' | 'agentIsolation' | 'executionKind' | 'requesterIdentity' | 'beforeNativeEffect'> &
     Readonly<{ operation: Pick<ProjectSetupOperationContext, 'signal'> }>, plan: PreparedProjectSetupPlan, command?: PreparedProjectSetupCommand,
     signal = input.preparation.signal ?? input.operation.signal) {
     const nativeCommandEnvironment = command?.kind === 'native' ? command.resolution.nativeCommandEnvironment
@@ -178,7 +186,9 @@ export function createProjectNativeLaunchAdmission(input: Pick<ProjectSetupExecu
     if (plan.environmentAdapterLease) {
         if (!input.preparation.retainNativeInvocation) throw Object.assign(new Error('native_adapter_invocation_unavailable'), { code: 'native_adapter_invocation_unavailable' });
         const acquired = plan.environmentAdapterLease.acquireProduction({ root: plan.workspace.rootPath,
-            environment: projectBaseEnvironment(input, plan), signal });
+            environment: projectBaseEnvironment(input, plan), signal, executionKind: input.executionKind,
+            requesterIdentity: input.requesterIdentity,
+            assertLaunchCurrent: input.beforeNativeEffect });
         if (acquired.kind !== 'ready') throw Object.assign(new Error(acquired.code), { code: acquired.code });
         environmentProduction = acquired.production;
         input.preparation.retainNativeInvocation(environmentProduction);
@@ -186,7 +196,10 @@ export function createProjectNativeLaunchAdmission(input: Pick<ProjectSetupExecu
     let environmentIo: ProjectNativeEnvironmentIo = input.environmentIo;
     if (plan.environment.kind === 'toolchain') {
         if (!input.preparation.retainNativeInvocation) throw Object.assign(new Error('native_adapter_invocation_unavailable'), { code: 'native_adapter_invocation_unavailable' });
-        environmentIo = input.environmentIo.createInvocation({ signal, retainCapture: input.preparation.retainNativeInvocation });
+        environmentIo = input.environmentIo.createInvocation({ signal, retainCapture: input.preparation.retainNativeInvocation,
+            agentIsolation: input.agentIsolation, executionKind: input.executionKind,
+            requesterIdentity: input.requesterIdentity,
+            assertLaunchCurrent: input.beforeNativeEffect });
     }
     return {
         status: 'ready' as const, reviewedEffectDigest: plan.reviewedEffectDigest,
@@ -221,7 +234,9 @@ export async function authorizePreparedProjectCommand(input: ProjectSetupExecuti
     if (command.kind === 'pluginNativeReference') {
         if (!input.preparation.retainNativeInvocation) throw Object.assign(new Error('native_adapter_invocation_unavailable'), { code: 'native_adapter_invocation_unavailable' });
         const acquired = command.lease.acquireProduction({ root: plan.workspace.rootPath,
-            environment: plan.configEnvironment, signal });
+            environment: plan.configEnvironment, signal, executionKind: input.executionKind,
+            requesterIdentity: input.requesterIdentity,
+            assertLaunchCurrent: input.beforeNativeEffect });
         if (acquired.kind !== 'ready') throw Object.assign(new Error(acquired.code), { code: acquired.code });
         const lease = acquired.production;
         input.preparation.retainNativeInvocation(lease);
@@ -255,7 +270,7 @@ export async function authorizePreparedProjectCommand(input: ProjectSetupExecuti
         const launch = await authorizePluginExecLaunchForHost(command.lease.exec, {
             executable: command.resolution.executable, args: command.resolution.args,
             cwd: { root: 'workspace', relativePath: relative(plan.workspace.rootPath, command.resolution.cwd).replaceAll('\\', '/') }, env,
-        }, { signal, projectLaunch, ...(projectLaunch.nativeAdapter ? { nativeExecutableOwner: projectLaunch.nativeAdapter.lease.exec } : {}) });
+        }, { signal, projectLaunch, agentIsolation: input.agentIsolation, ...(projectLaunch.nativeAdapter ? { nativeExecutableOwner: projectLaunch.nativeAdapter.lease.exec } : {}) });
         try { assertCurrent(); return launch; }
         catch (error) { launch.release(); throw error; }
     }
@@ -264,6 +279,8 @@ export async function authorizePreparedProjectCommand(input: ProjectSetupExecuti
         : { file: command.resolution.command, args: command.resolution.args, cwd: command.resolution.cwd };
     return await authorizeResolvedProjectExecLaunchForHost({
         launch: { command: tuple.file, args: tuple.args, cwd: tuple.cwd, env }, projectLaunch, signal, assertCurrent,
+        agentIsolation: input.agentIsolation,
+        executionKind: input.executionKind, requesterIdentity: input.requesterIdentity,
         ...(projectLaunch.nativeAdapter ? { nativeExecutableOwner: projectLaunch.nativeAdapter.lease.exec } : {}),
     });
 }
@@ -376,7 +393,8 @@ async function executePreparedProjectSetup(input: ProjectSetupExecutionInput): P
                 || (command.kind === 'pluginNative' || command.kind === 'pluginNativeReference') && !command.lease.isCurrent()) return failure('native_adapter_retired');
             await input.beforeNativeEffect?.();
             const executed = await executeProjectFiniteProcess({ ...admitted, terminalSessions: input.terminalSessions,
-                launch, signal, step, totalSteps: plan.commands.length });
+                launch, ...(input.nativeExecutionIdentity ? { nativeExecutionIdentity: input.nativeExecutionIdentity } : {}),
+                signal, step, totalSteps: plan.commands.length });
             if (executed.kind !== 'no_launch') kind = executed.kind;
             if (!executed.result.ok) return executed.result.errorCode === 'project_command_step_failed'
                 ? failure('project_setup_step_failed', executed.result.details) : finish(executed.result);

@@ -120,7 +120,7 @@ describe('Process Actions through retained lifecycle owners', () => {
                 bufferMaxEvents: 100, bufferRetentionMs: 1000, urlParseBufferLimit: 1000, maxWriteChunkBytes: 1000,
                 defaultCols: 80, defaultRows: 24 } });
         try {
-            const opened = manager.ensure({ terminalKey: 'fixture', cwd: '/fixture' });
+            const opened = await manager.ensure({ terminalKey: 'fixture', cwd: '/fixture' });
             if (!opened.ok) throw new Error(opened.error);
             const actions = createProcessActionOwnerAdapters({ terminal: manager });
             await expect(actions.closeTerminal({ kind: 'terminal', terminalId: opened.terminalId }, {})).resolves.toEqual({ ok: true });

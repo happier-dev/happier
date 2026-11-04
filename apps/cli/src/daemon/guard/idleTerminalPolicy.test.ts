@@ -12,14 +12,14 @@ const fixture = () => createIdleTerminalPolicyFixture(releases);
 describe('Idle terminal policy at the actual PTY owner', () => {
   it('reads the actual shell foreground fact behind a native PTY relay, not its carrier', async () => {
     const f = await createIdleTerminalPolicyFixture(releases, { relay: true }); f.enable();
-    f.terminals.ensure({ terminalKey: 'relay-shell', cwd: '/project', custody }); f.now(120_000);
+    await f.terminals.ensure({ terminalKey: 'relay-shell', cwd: '/project', custody }); f.now(120_000);
     await (await f.readPlan()).run?.();
     expect(f.terminals.list()).toEqual([]);
     expect(f.processes[0]?.kills).toBe(1);
   });
   it('publishes a running-command warning before closing even when its configured lead is zero', async () => {
     const f = await fixture(); f.enable(0); f.foreground(102);
-    f.terminals.ensure({ terminalKey: 'zero-lead', cwd: '/project', custody }); f.now(120_000);
+    await f.terminals.ensure({ terminalKey: 'zero-lead', cwd: '/project', custody }); f.now(120_000);
     const reader = new AbortController();
     const warning = await f.readPlan(new AbortController().signal, reader.signal);
     reader.abort();
@@ -32,7 +32,7 @@ describe('Idle terminal policy at the actual PTY owner', () => {
   });
   it('releases a cancelled native reader without cancelling its producer or closing its captured terminal', async () => {
     const f = await fixture(); f.enable();
-    f.terminals.ensure({ terminalKey: 'cancelled', cwd: '/project', custody });
+    await f.terminals.ensure({ terminalKey: 'cancelled', cwd: '/project', custody });
     await f.ownership.readOwners({ freshness: 'fresh' });
     const native = f.holdNativeRead(); const controller = new AbortController(); const actuator = new AbortController();
     let returned = false;
@@ -51,7 +51,7 @@ describe('Idle terminal policy at the actual PTY owner', () => {
 
   it('clears an unavailable notification warning and suppresses its due retry until an existing external edge', async () => {
     const f = await fixture(); f.enable(); f.foreground(102); f.notificationCatalogReady(false);
-    f.terminals.ensure({ terminalKey: 'notification-unavailable', cwd: '/project', custody }); f.now(90_000);
+    await f.terminals.ensure({ terminalKey: 'notification-unavailable', cwd: '/project', custody }); f.now(90_000);
     await expect((await f.readPlan()).run?.()).rejects.toMatchObject({ name: 'NotificationChannelCatalogUnavailableError' });
     expect(f.terminals.list()[0]).not.toHaveProperty('terminalGuardStateV1');
     expect(await f.readPlan()).toEqual({});
@@ -62,7 +62,7 @@ describe('Idle terminal policy at the actual PTY owner', () => {
 
   it('warns for a silent foreground command, honors exact Keep running and reanchors on real I/O', async () => {
     const f = await fixture(); f.foreground(102); f.enable();
-    const terminal = f.terminals.ensure({ terminalKey: 'command', cwd: '/project', custody });
+    const terminal = await f.terminals.ensure({ terminalKey: 'command', cwd: '/project', custody });
     if (!terminal.ok) throw new Error('Expected captured PTY');
     expect((await f.readPlan()).nextAt).toBe(epoch + 90_000);
     f.now(90_000); await (await f.readPlan()).run?.();
@@ -85,8 +85,8 @@ describe('Idle terminal policy at the actual PTY owner', () => {
 
   it('freshly rejects a stale close after command evidence becomes unknown, and excludes finite work', async () => {
     const f = await fixture(); f.enable();
-    const terminal = f.terminals.ensure({ terminalKey: 'prompt', cwd: '/project', custody });
-    f.terminals.ensure({ terminalKey: 'finite', cwd: '/project', custody, holdUntilExit: true, launchProcess: { file: '/tool', args: [] } });
+    const terminal = await f.terminals.ensure({ terminalKey: 'prompt', cwd: '/project', custody });
+    await f.terminals.ensure({ terminalKey: 'finite', cwd: '/project', custody, holdUntilExit: true, launchProcess: { file: '/tool', args: [] } });
     f.now(120_000);
     const stale = await f.readPlan();
     f.foreground(undefined);
@@ -104,7 +104,7 @@ describe('Idle terminal policy at the actual PTY owner', () => {
     { name: 'Project', capturedCustody: { ...target, requesterAccountId: 'alice', rootPath: '/project', workspaceRefId: 'accepted-workspace', projectKey: 'project' } },
   ])('closes a due $name prompt through the PTY owner and Activity without an automatic-action dot', async ({ capturedCustody }) => {
     const f = await fixture();
-    const terminal = f.terminals.ensure({ terminalKey: 'original-key', cwd: '/project', custody: capturedCustody });
+    const terminal = await f.terminals.ensure({ terminalKey: 'original-key', cwd: '/project', custody: capturedCustody });
     expect(terminal.ok).toBe(true);
     f.now(120_000);
     expect(await f.readPlan()).toEqual({});

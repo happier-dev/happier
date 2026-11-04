@@ -28,7 +28,7 @@ function createWindowsPtyProvider(): PtyProvider {
 }
 
 describe('stress: terminal Windows/ConPTY fallback diagnostics', () => {
-  it('keeps the canonical daemon stream legacy-only when Windows raw byte fidelity is unavailable', () => {
+  it('keeps the canonical daemon stream legacy-only when Windows raw byte fidelity is unavailable', async () => {
     const manager = createTerminalPtySessionManager({
       ptyProvider: createWindowsPtyProvider(),
       config: {
@@ -45,7 +45,7 @@ describe('stress: terminal Windows/ConPTY fallback diagnostics', () => {
     });
 
     try {
-      const ensured = manager.ensure({ terminalKey: 'windows-terminal', cwd: 'C:\\workspace' });
+      const ensured = await manager.ensure({ terminalKey: 'windows-terminal', cwd: 'C:\\workspace' });
       expect(ensured.ok).toBe(true);
       if (!ensured.ok) throw new Error('expected Windows terminal');
 

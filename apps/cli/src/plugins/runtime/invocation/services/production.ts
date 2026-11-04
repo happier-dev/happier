@@ -132,7 +132,9 @@ export type { PluginSecretDeclaration } from '../../context/declaredPluginSecret
 
 type PluginOperationServicesInput = Readonly<{
     prepareAgentNativeLaunch?: import('./exec').HostAgentNativeLaunchPreparation;
+    agentLaunchKind?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').HostAgentIsolationLaunchKind;
     executionKind?: HostPluginExecExecutionKind;
+    requesterIdentity?: Parameters<typeof createStablePluginExecService>[0]['requesterIdentity'];
     filesystemRoots: PluginFileSystemRoots;
     environment?: Readonly<Record<string, string>>;
     systemTools?: ExecSystemToolServiceV1;
@@ -537,7 +539,9 @@ healthChecks?: import('./unavailable').PluginInvocationServicesFactoryParams['he
             connectedAccountsOwner?: StablePluginConnectedAccountsOwner;
             resolveExecutable?: ResolvePluginExecutable;
             prepareAgentNativeLaunch?: import('./exec').HostAgentNativeLaunchPreparation;
+            agentLaunchKind?: PluginOperationServicesInput['agentLaunchKind'];
             executionKind?: PluginOperationServicesInput['executionKind'];
+            requesterIdentity?: PluginOperationServicesInput['requesterIdentity'];
             assertLaunchCurrent?: (signal: AbortSignal) => Promise<void>;
         }>,
     ) => {
@@ -659,7 +663,9 @@ healthChecks?: import('./unavailable').PluginInvocationServicesFactoryParams['he
                 exec: {
 ...(params.exec.agentIsolation ? { agentIsolation: params.exec.agentIsolation } : {}),
 
+                    ...(overrides?.agentLaunchKind ? { agentLaunchKind: overrides.agentLaunchKind } : {}),
                     ...(overrides?.executionKind ? { executionKind: overrides.executionKind } : {}),
+                    ...(overrides?.requesterIdentity ? { requesterIdentity: overrides.requesterIdentity } : {}),
                     readSpawnFailureLimits: params.exec.readSpawnFailureLimits,
                     ...(params.exec.agentCli ? { agentCli: params.exec.agentCli } : {}),
                     ...(systemTools
@@ -964,7 +970,9 @@ healthChecks?: import('./unavailable').PluginInvocationServicesFactoryParams['he
                 {
                     ...(operation.connectedAccountsOwner ? { connectedAccountsOwner: operation.connectedAccountsOwner } : {}),
                     ...(operation.prepareAgentNativeLaunch ? { prepareAgentNativeLaunch: operation.prepareAgentNativeLaunch } : {}),
+                    ...(operation.agentLaunchKind ? { agentLaunchKind: operation.agentLaunchKind } : {}),
                     ...(operation.executionKind ? { executionKind: operation.executionKind } : {}),
+                    ...(operation.requesterIdentity ? { requesterIdentity: operation.requesterIdentity } : {}),
                     ...(operation.assertLaunchCurrent ? { assertLaunchCurrent: operation.assertLaunchCurrent } : {}),
                     ...(operation.settingsDeclarations
                         ? { settingsDeclarations: operation.settingsDeclarations }

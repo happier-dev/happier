@@ -39,6 +39,8 @@ import type { Disposable, PtyProvider, PtyProcess } from './provider';
 import type { TerminalLaunchProcess } from './launch';
 import type { HostAuthorizedPluginExecLaunch } from '@/plugins/runtime/invocation/services/exec';
 import { resolveTerminalShell } from './shells';
+import { createTerminalNativeLaunch } from './nativeLaunch';
+import type { AgentIsolationMemberNativeIdentity } from '@/daemon/agentIsolation/agentIsolationNativeIdentity';
 import { createTerminalUrlDetector, type DetectedTerminalUrl } from './urlDetection';
 import { classifySpawnFailure, spawnFailureMessage, type SpawnFailure, type SpawnFailureLimitsReader } from '@/processes/spawnFailure/classifySpawnFailure';
 
@@ -96,6 +98,10 @@ export type TerminalPtyEnsureInput = Readonly<{
   launchProcess?: TerminalLaunchProcess;
   /** Actual B4 final tuple, supplied only by the host Project preparation owner. */
   authorizedProjectLaunch?: HostAuthorizedPluginExecLaunch;
+  /** Canonical finalizer output for an admitted non-Project person shell. */
+  authorizedNativeLaunch?: HostAuthorizedPluginExecLaunch;
+  /** Observed OS tuple from the same prepared native-operation owner. */
+  nativeExecutionIdentity?: AgentIsolationMemberNativeIdentity;
   sessionId?: string;
   /** Authenticated custody; supplied by the admitting owner, never a terminal request body. */
   requesterAccountId?: string;
@@ -104,6 +110,7 @@ export type TerminalPtyEnsureInput = Readonly<{
   holdUntilExit?: true;
   /** Raw Machine starts supply the canonical drain; accepted finite work has its own admission owner. */
   admissionDrain?: DaemonAdmissionDrain;
+  signal?: AbortSignal;
 }>;
 
 function terminalStorageKey(input: TerminalPtyEnsureInput): string {
@@ -178,8 +185,9 @@ export type TerminalPtySessionManager = Readonly<{
   keepGuardRunning(input: Readonly<{ terminalId: string; expectedLastActivityAtMs: number }>): boolean;
   closeGuardIdle(input: Readonly<{ terminalId: string; expectedLastActivityAtMs: number; signal: AbortSignal; verifyCurrent(): Promise<boolean> }>): Promise<SimpleOk | ErrorResult>;
   getCustody: (terminalId: string) => TerminalPtyCustody | null;
+  getNativeExecutionIdentity?: (terminalId: string) => AgentIsolationMemberNativeIdentity | null;
   isFiniteHeld: (terminalId: string) => boolean;
-  ensure: (input: TerminalPtyEnsureInput) => EnsureOk | ErrorResult;
+  ensure: (input: TerminalPtyEnsureInput) => Promise<EnsureOk | ErrorResult>;
   waitForExit: (input: Readonly<{ terminalId: string; signal?: AbortSignal; onOutcomeUncertain?: () => void }>) => Promise<TerminalProcessExitObservation>;
   requestStop: (input: Readonly<{ terminalId: string }>) => Promise<TerminalProcessStopObservation>;
   /** Observe a bounded presentation of the existing retained output, never another log. */
@@ -193,7 +201,7 @@ export type TerminalPtySessionManager = Readonly<{
   resize: (input: Readonly<{ terminalId: string; cols: number; rows: number }>) => SimpleOk | ErrorResult;
   close: (input: Readonly<{ terminalId: string }>) => SimpleOk | ErrorResult;
   dispose: () => void;
-  restart: (input: TerminalPtyEnsureInput) => EnsureOk | ErrorResult;
+  restart: (input: TerminalPtyEnsureInput) => Promise<EnsureOk | ErrorResult>;
   metrics: () => ReturnType<TerminalPtyMetrics['snapshot']>;
 }>;
 
@@ -330,6 +338,8 @@ type PtySession = {
   rendererAcks: Map<string, number>;
   ownerCapture?: Promise<OwnerRemainderCapture | undefined>;
   ownerRetirement?: Promise<void>;
+  nativeLaunch?: ReturnType<typeof createTerminalNativeLaunch>;
+  nativeExecutionIdentity?: AgentIsolationMemberNativeIdentity;
 };
 
 function splitByApproxBytesUtf8(input: string, maxBytes: number): string[] {
@@ -538,6 +548,7 @@ export function createTerminalPtySessionManager(params: Readonly<{
   };
 
   const removeSession = (session: PtySession): void => {
+    session.nativeLaunch?.finish();
     for (const observer of session.exitObservers) observer({ kind: 'unavailable' });
     session.exitObservers.clear();
     session.outputObservers.clear();
@@ -570,7 +581,7 @@ export function createTerminalPtySessionManager(params: Readonly<{
     return { ok: true };
   };
 
-  const ensure = (input: TerminalPtyEnsureInput): EnsureOk | ErrorResult => {
+  const ensure = async (input: TerminalPtyEnsureInput): Promise<EnsureOk | ErrorResult> => {
     const requesterAccountId = input.custody?.requesterAccountId ?? input.requesterAccountId;
     // Interactive Project terminals start at the accepted root. Finite host
     // admission supplies the already-reviewed final cwd, which may be a script
@@ -582,7 +593,8 @@ export function createTerminalPtySessionManager(params: Readonly<{
     if (input.holdUntilExit && (!input.launchProcess || input.initialCommand || input.launchProcess.initialInput)) {
       return okDisabled('terminal_invalid_request');
     }
-    if (input.custody?.kind === 'session' && !terminalIdByKey.has(storageKey)) {
+    if (input.nativeExecutionIdentity && !(input.authorizedNativeLaunch ?? input.authorizedProjectLaunch)?.stdinPreamble) return okDisabled('terminal_forbidden');
+    if (!input.nativeExecutionIdentity && input.custody?.kind === 'session' && !terminalIdByKey.has(storageKey)) {
       // Fresh exact Session authority can adopt its retained association.
       // Standalone legacy records have no resource witness and are never inferred.
       const legacyId = terminalIdByKey.get(terminalStorageKey({ ...input, custody: undefined, requesterAccountId: undefined }));
@@ -606,6 +618,12 @@ export function createTerminalPtySessionManager(params: Readonly<{
     if (existingId) {
       const existing = sessionsById.get(existingId);
       if (existing && existing.requesterAccountId !== requesterAccountId) return okDisabled('terminal_not_found');
+      if (existing) {
+        const prior = existing.nativeExecutionIdentity, next = input.nativeExecutionIdentity;
+        if (!!prior !== !!next || prior && next && (prior.digest !== next.digest || prior.username !== next.username
+          || prior.agentUid !== next.agentUid || prior.agentGid !== next.agentGid || prior.home !== next.home)) return okDisabled('terminal_forbidden');
+      }
+
       if (existing?.ended && (existing.finiteHold || existing.stopPending || existing.stopUnconfirmed)) return okDisabled('terminal_busy');
       if (existing && !existing.ended) {
         const cols = typeof input.cols === 'number' && Number.isFinite(input.cols) ? Math.max(2, Math.trunc(input.cols)) : existing.cols;
@@ -631,7 +649,7 @@ export function createTerminalPtySessionManager(params: Readonly<{
     const byteCapablePlatform = isByteCapablePlatform(platform);
 
     const shell = resolveTerminalShell(env, platform);
-    const authorizedProjectLaunch = input.authorizedProjectLaunch;
+    const authorizedProjectLaunch = input.authorizedNativeLaunch ?? input.authorizedProjectLaunch;
     const process: TerminalLaunchProcess = authorizedProjectLaunch
       ? { ...input.launchProcess, file: authorizedProjectLaunch.command, args: authorizedProjectLaunch.args,
         env: authorizedProjectLaunch.env, windowsVerbatimArguments: authorizedProjectLaunch.windowsVerbatimArguments }
@@ -652,7 +670,7 @@ export function createTerminalPtySessionManager(params: Readonly<{
           name: 'xterm-256color',
           cols,
           rows,
-          cwd,
+          cwd: authorizedProjectLaunch?.launcherCwd ?? cwd,
           // Finalized Project launches preserve native unsets without acquiring a
           // finite hold. Ordinary shell/login launch overlays remain unchanged.
           env: withProcessOwnerEnvironment(input.holdUntilExit
@@ -679,7 +697,11 @@ export function createTerminalPtySessionManager(params: Readonly<{
       bufferLimit: config.urlParseBufferLimit,
       seenLimit: config.urlDedupeLimit,
     });
+    const nativeLaunch = authorizedProjectLaunch?.stdinPreamble
+      ? createTerminalNativeLaunch(authorizedProjectLaunch.stdinPreamble, data => pty.write(data)) : undefined;
     const session: PtySession = {
+      ...(nativeLaunch ? { nativeLaunch } : {}),
+      ...(input.nativeExecutionIdentity ? { nativeExecutionIdentity: input.nativeExecutionIdentity } : {}),
       terminalId,
       terminalKey: input.terminalKey,
       storageKey,
@@ -715,7 +737,7 @@ export function createTerminalPtySessionManager(params: Readonly<{
       metrics.recordLegacyOnlyProvider();
     }
 
-    const consumeBytes = (bytes: Buffer) => {
+    const consumePayloadBytes = (bytes: Buffer) => {
       if (!bytes.length) return;
       recordIo(session);
       const before = session.byteRing.bounds().chunkCount;
@@ -736,7 +758,11 @@ export function createTerminalPtySessionManager(params: Readonly<{
       );
     };
 
+    const consumeBytes = (bytes: Buffer) => nativeLaunch
+      ? nativeLaunch.consume(bytes, consumePayloadBytes) : consumePayloadBytes(bytes);
+
     const consumeLegacyString = (text: string) => {
+      if (nativeLaunch) { consumeBytes(Buffer.from(text, 'utf8')); return; }
       if (text) recordIo(session);
       if (session.byteMode.kind === 'bytes') {
         session.byteMode = { kind: 'legacyOnly', provider: 'unknown', reason: 'PTY provider emitted decoded strings instead of raw bytes' };
@@ -767,6 +793,7 @@ export function createTerminalPtySessionManager(params: Readonly<{
 
     session.disposables.push(
       pty.onExit((e) => {
+        nativeLaunch?.finish();
         session.lastActivityAtMs = now();
         const finalByteOffset = session.byteRing.bounds().totalBytesWritten;
         pushDecodedText(session, session.decoder.flush(), config, finalByteOffset);
@@ -844,6 +871,19 @@ export function createTerminalPtySessionManager(params: Readonly<{
       }
     }
 
+    if (nativeLaunch) {
+      const abort = () => { nativeLaunch.finish(); try { pty.kill('SIGTERM'); } catch { /* Exit remains unconfirmed. */ } };
+      input.signal?.addEventListener('abort', abort, { once: true });
+      if (input.signal?.aborted) abort();
+      const accepted = await nativeLaunch.ready;
+      input.signal?.removeEventListener('abort', abort);
+      if (!accepted || input.signal?.aborted) {
+        const stopped = await requestStop({ terminalId });
+        if (stopped.kind === 'requested') await waitForExit({ terminalId });
+        if (stopped.kind !== 'unconfirmed') closeById(terminalId);
+        return okDisabled(input.signal?.aborted ? 'terminal_forbidden' : 'terminal_spawn_failed');
+      }
+    }
     if (input.launchProcess?.initialInput) {
       try {
         pty.write(input.launchProcess.initialInput);
@@ -864,7 +904,7 @@ export function createTerminalPtySessionManager(params: Readonly<{
     return { ok: true, terminalId, reused: false };
   };
 
-  const restart = (input: TerminalPtyEnsureInput): EnsureOk | ErrorResult => {
+  const restart = async (input: TerminalPtyEnsureInput): Promise<EnsureOk | ErrorResult> => {
     if (input.admissionDrain?.isQuiescing()) return okDisabled('terminal_busy');
     // Retain the predecessor's own unqualified restart only for one unambiguous
     // legacy record. It cannot select a Project/requester-attributed terminal.
@@ -1235,6 +1275,14 @@ export function createTerminalPtySessionManager(params: Readonly<{
     if (!session) return { kind: 'unavailable' };
     if (session.exit && !session.stopPending && !session.stopUnconfirmed) return { kind: 'exited' };
     if (session.stopPending) return { kind: 'requested' };
+    if (session.nativeLaunch && !session.exit) {
+      // sudo forwards this to the exact shim; that identity owns payload-tree
+      // termination. The daemon must not infer cross-UID cleanup from a carrier.
+      session.stopRequested = true;
+      try { session.pty.kill('SIGTERM'); return { kind: 'requested' }; }
+      catch { session.stopUnconfirmed = true; notifyLiveWorkChanged(); return { kind: 'unconfirmed' }; }
+    }
+
     const windowsCustody = session.pty.windowsJobCustody;
     if (windowsCustody) {
       session.stopRequested = true;
@@ -1395,6 +1443,7 @@ export function createTerminalPtySessionManager(params: Readonly<{
     })),
     ensure,
     getCustody: (terminalId) => sessionsById.get(terminalId)?.custody ?? null,
+    getNativeExecutionIdentity: terminalId => sessionsById.get(terminalId)?.nativeExecutionIdentity ?? null,
     isFiniteHeld: (terminalId) => sessionsById.get(terminalId)?.finiteHold === true,
     waitForExit,
     requestStop,
