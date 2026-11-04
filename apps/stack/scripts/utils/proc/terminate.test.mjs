@@ -6,6 +6,39 @@ import { isPidAlive } from './pids.mjs';
 import { terminateProcessGroup, terminateProcessPid } from './terminate.mjs';
 import { spawnDetachedTestProcess } from '../../testkit/core/spawn_test_process.mjs';
 
+for (const code of ['EACCES', 'EIO']) {
+  test(`PID termination does not mistake an inconclusive ${code} probe for exit`, async t => {
+    const kill = process.kill.bind(process);
+    const signals = [];
+    t.mock.method(process, 'kill', (pid, signal) => {
+      if (Math.abs(pid) !== process.pid) return kill(pid, signal);
+      if (signal !== 0) signals.push(signal);
+      throw Object.assign(new Error('process observation unavailable'), { code });
+    });
+    const result = await terminateProcessPid(process.pid, { graceMs: 50 });
+    assert.equal(result.ok, false, 'unknown liveness cannot acknowledge termination');
+    assert.deepEqual(signals, [], 'inconclusive initial liveness must refuse before signalling');
+  });
+  test(`process-group termination does not mistake an inconclusive ${code} probe for exit`, async () => {
+    const signals = [];
+    const result = await terminateProcessGroup(4242, {
+      graceMs: 50,
+      processInstanceFingerprint: 'linux-proc:original',
+      boundary: {
+        platform: 'linux',
+        isPidAlive: () => true,
+        readProcessInstanceFingerprint: () => 'linux-proc:original',
+        kill: (_pid, signal) => {
+          if (signal === 0) throw Object.assign(new Error('group observation unavailable'), { code });
+          signals.push(signal);
+        },
+      },
+    });
+    assert.equal(result.ok, false, 'a missing signal acknowledgement is not proof the recorded group exited');
+    assert.deepEqual(signals, [], 'inconclusive initial group liveness must refuse before signalling');
+  });
+}
+
 async function waitForPidExit(pid, timeoutMs) {
   const end = Date.now() + Math.max(0, Number(timeoutMs) || 0);
   while (Date.now() < end) {

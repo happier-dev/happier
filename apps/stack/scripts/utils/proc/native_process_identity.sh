@@ -53,3 +53,27 @@ heavyweight_process_is_current() {
   [ "$heavyweight_process_token_value" != - ] || return 1
   [ "$heavyweight_process_token_value" = "$heavyweight_current_token" ]
 }
+
+# Retirement is weaker than authenticated custody: an unreadable birth witness
+# cannot authorize reuse, but also cannot prove that a reservation is gone.
+# Keep parity with ownership.mjs#isRecordedStackProcessRetired: definite absence,
+# birth mismatch retires; inconclusive observations retain custody. Native
+# records carry boot-relative ticks, not a wall-clock birth/boot witness, so a
+# reboot alone cannot prove retirement of a legacy record with matching ticks.
+# Callers observe only their host's kernel PID space and host-local records.
+heavyweight_process_is_provably_retired() {
+  heavyweight_retired_pid=$1
+  heavyweight_retired_token=$2
+  heavyweight_process_state=-
+  case "$heavyweight_retired_pid" in ''|*[!0-9]*|0) return 0 ;; esac
+  [ "${#heavyweight_retired_pid}" -le 10 ] && [ "$heavyweight_retired_pid" -le 2147483647 ] || return 0
+  heavyweight_read_process_token "$heavyweight_retired_pid"
+  case "$heavyweight_process_state" in Z|X|x) return 0 ;; esac
+  if [ "$heavyweight_retired_token" != - ] && [ "$heavyweight_process_token_value" != - ] \
+    && [ "$heavyweight_retired_token" != "$heavyweight_process_token_value" ]; then return 0; fi
+  kill -0 "$heavyweight_retired_pid" 2>/dev/null && return 1
+  # POSIX shell kill has no errno API. Its C-locale ESRCH diagnostic is the
+  # native boundary adapter; permission and every unknown error remain present.
+  heavyweight_absence_error=$(LC_ALL=C kill -0 "$heavyweight_retired_pid" 2>&1) && return 1
+  case "$heavyweight_absence_error" in *'No such process'*) return 0 ;; *) return 1 ;; esac
+}

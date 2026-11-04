@@ -1,14 +1,20 @@
-import { isPidAlive } from './pids.mjs';
+import { observePidLiveness } from './pids.mjs';
 import { spawn } from 'node:child_process';
 // Admission must load this OS boundary before installed-tree custody exists.
 // Use the same dependency-free public source leaf as the PID/lock owners.
 import { readProcessInstanceFingerprintSync } from '../../../../../packages/cli-common/processInstance.mjs';
 
 function resolveProcessBoundary(boundary = {}) {
+  const platform = boundary.platform ?? process.platform;
+  const kill = boundary.kill ?? ((pid, signal) => process.kill(pid, signal));
+  const observePid = boundary.isPidAlive
+    ? pid => ({ status: boundary.isPidAlive(pid) ? 'alive' : 'dead' })
+    : pid => observePidLiveness(pid, { platform, killImpl: kill });
   return {
-    platform: boundary.platform ?? process.platform,
-    isPidAlive: boundary.isPidAlive ?? isPidAlive,
-    kill: boundary.kill ?? ((pid, signal) => process.kill(pid, signal)),
+    platform,
+    observePidLiveness: observePid,
+    isPidAlive: pid => observePid(pid).status !== 'dead',
+    kill,
     spawn: boundary.spawn ?? spawn,
     readProcessInstanceFingerprint: boundary.readProcessInstanceFingerprint
       ?? ((pid, expectedFingerprint = null) => readProcessInstanceFingerprintSync(pid, {
@@ -41,7 +47,9 @@ function observeProcessInstance(identityPid, expectedFingerprint, boundary) {
 async function waitForExit(pid, timeoutMs, boundary, identity) {
   let end = nowMs() + Math.max(0, Number(timeoutMs) || 0);
   for (;;) {
-    const targetAlive = identity.isTargetAlive(pid, boundary);
+    const liveness = identity.observeTargetLiveness(pid, boundary);
+    if (liveness.status === 'inconclusive') return { status: 'unavailable' };
+    const targetAlive = liveness.status === 'alive';
     const processInstance = observeProcessInstance(
       identity.identityPid,
       identity.processInstanceFingerprint,
@@ -107,21 +115,18 @@ async function forceKillWindowsProcessTree(pid, timeoutMs, boundary) {
   });
 }
 
-function isTargetAlive(pid, boundary) {
-  if (!pid || pid <= 1) return false;
+function observeTargetLiveness(pid, boundary) {
+  if (!pid || pid <= 1) return { status: 'dead', reason: 'invalid_pid' };
   if (boundary.platform === 'win32') {
-    return boundary.isPidAlive(pid);
+    return boundary.observePidLiveness(pid);
   }
-  try {
-    boundary.kill(-pid, 0);
-    return true;
-  } catch (e) {
-    return e?.code === 'EPERM';
-  }
-}
-
-function isPidTargetAlive(pid, boundary) {
-  return Boolean(pid && pid > 1 && boundary.isPidAlive(pid));
+  return observePidLiveness(pid, {
+    platform: boundary.platform,
+    killImpl: (groupId, signal) => boundary.kill(-groupId, signal),
+    // A group can outlive its leader. It has no /proc/<pgid>/stat zombie fact;
+    // use only the group signal probe and the canonical errno classification.
+    readFileSyncImpl: () => '',
+  });
 }
 
 function normalizeStartSignal(signal) {
@@ -149,7 +154,9 @@ export async function terminateProcessPid(pid, {
   const n = Number(pid);
   if (!Number.isFinite(n) || n <= 1) return { ok: false, reason: 'bad_pid' };
   const boundary = resolveProcessBoundary(boundaryOverrides);
-  if (!isPidTargetAlive(n, boundary)) return { ok: true, alreadyExited: true };
+  const liveness = boundary.observePidLiveness(n);
+  if (liveness.status === 'inconclusive') return { ok: false, reason: 'process_liveness_inconclusive' };
+  if (liveness.status === 'dead') return { ok: true, alreadyExited: true };
   const expectedFingerprint = resolveExpectedProcessInstance(n, processInstanceFingerprint, boundary);
   if (!expectedFingerprint) return { ok: false, reason: 'process_instance_unavailable' };
   const initialIdentity = observeProcessInstance(n, expectedFingerprint, boundary);
@@ -191,7 +198,7 @@ export async function terminateProcessPid(pid, {
     const exit = await waitForExit(n, sig === 'SIGKILL' ? Math.min(400, perSignalMs) : perSignalMs, boundary, {
       identityPid: n,
       processInstanceFingerprint: expectedFingerprint,
-      isTargetAlive: isPidTargetAlive,
+      observeTargetLiveness: (pid, processBoundary) => processBoundary.observePidLiveness(pid),
     });
     if (exit.status === 'exited') return { ok: true, signal: sig };
     if (exit.status === 'changed' || exit.status === 'identity_exited') {
@@ -216,7 +223,9 @@ export async function terminateProcessGroup(pid, {
     return { ok: false, reason: 'bad_identity_pid' };
   }
   const boundary = resolveProcessBoundary(boundaryOverrides);
-  if (!isTargetAlive(n, boundary)) {
+  const liveness = observeTargetLiveness(n, boundary);
+  if (liveness.status === 'inconclusive') return { ok: false, reason: 'process_liveness_inconclusive' };
+  if (liveness.status === 'dead') {
     return boundary.platform === 'win32'
       ? { ok: false, reason: 'leader_absent_without_tree_proof' }
       : { ok: true, alreadyExited: true };
@@ -256,7 +265,7 @@ export async function terminateProcessGroup(pid, {
     const exited = await waitForExit(n, Math.min(400, perSignalMs), boundary, {
       identityPid: identityPidNum,
       processInstanceFingerprint: expectedFingerprint,
-      isTargetAlive,
+      observeTargetLiveness,
     });
     return {
       ok: treeKilled && ['exited', 'changed', 'identity_exited'].includes(exited.status),
@@ -293,7 +302,7 @@ export async function terminateProcessGroup(pid, {
     const exited = await waitForExit(n, signalGraceMs(sig), boundary, {
       identityPid: identityPidNum,
       processInstanceFingerprint: expectedFingerprint,
-      isTargetAlive,
+      observeTargetLiveness,
       groupExitDeadline,
     });
     if (exited.status === 'exited') return { ok: true, signal: sig };
@@ -318,5 +327,5 @@ export async function terminateProcessGroup(pid, {
         : 'process_instance_unavailable',
     };
   }
-  return { ok: !isTargetAlive(n, boundary), signal: 'SIGKILL', reason: 'kill_timeout' };
+  return { ok: observeTargetLiveness(n, boundary).status === 'dead', signal: 'SIGKILL', reason: 'kill_timeout' };
 }

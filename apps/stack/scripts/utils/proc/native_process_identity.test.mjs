@@ -2,8 +2,44 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { copyFile, readFile, writeFile } from 'node:fs/promises';
 import { spawn, spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { readProcessInstanceFingerprintSync } from '@happier-dev/cli-common/processInstance';
 import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
+import { isRecordedStackProcessRetired } from './ownership.mjs';
+
+test('native admission retirement agrees with shared recorded-process retirement on the same host evidence', { skip: process.platform !== 'linux' }, async t => {
+  const fixture = await createTempFixture(t, { prefix: 'native-retirement-parity-' });
+  const source = new URL('./native_process_identity.sh', import.meta.url).pathname;
+  const fingerprint = readProcessInstanceFingerprintSync(process.pid);
+  const token = fingerprint.slice('linux-proc:'.length);
+  const native = (pid, birth, path = source, signalBoundary = '') => {
+    const result = spawnSync('/bin/sh', ['-c', `. "$1"; ${signalBoundary}
+      if heavyweight_process_is_provably_retired "$2" "$3"; then printf retired; else printf retained; fi`,
+    'retirement-parity', path, String(pid), birth], { encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout === 'retired';
+  };
+  for (const [pid, birth] of [[process.pid, token], [process.pid, String(BigInt(token) + 1n)], [2147483647, '1']]) {
+    const shared = isRecordedStackProcessRetired(pid, { processInstanceFingerprint: `linux-proc:${birth}` });
+    assert.equal(native(pid, birth), shared, `same-host pid=${pid} birth=${birth}`);
+  }
+  const unavailable = fixture.path('unavailable.sh');
+  await writeFile(unavailable, (await readFile(source, 'utf8')).replaceAll('/proc/$heavyweight_token_pid/stat', fixture.path('missing-stat')));
+  const read = fs.readFileSync;
+  t.mock.method(fs, 'readFileSync', (path, ...args) => {
+    if (path === `/proc/${process.pid}/stat`) throw Object.assign(new Error('denied'), { code: 'EACCES' });
+    return read(path, ...args);
+  });
+  syncBuiltinESMExports();
+  t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
+  for (const [code, message] of [['EPERM', 'Operation not permitted'], ['EACCES', 'Permission denied'], ['EIO', 'Input/output error']]) {
+    t.mock.method(process, 'kill', () => { throw Object.assign(new Error(message), { code }); });
+    const shared = isRecordedStackProcessRetired(process.pid, { processInstanceFingerprint: fingerprint });
+    assert.equal(shared, false);
+    assert.equal(native(process.pid, token, unavailable, `kill() { printf '%s' '${message}' >&2; return 1; }`), shared, code);
+  }
+});
 
 test('native process identity recognizes the same live process with spaces and parentheses in its name', { skip: process.platform !== 'linux' }, async t => {
   const fixture = await createTempFixture(t, { prefix: 'native-process-identity-' });
