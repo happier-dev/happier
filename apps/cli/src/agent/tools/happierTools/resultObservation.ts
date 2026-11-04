@@ -18,7 +18,8 @@ function readNativeToolResult(value: unknown): unknown {
     if (typeof value === 'string') return JSON.parse(value);
     const record = asRecord(value);
     if (!record) return value;
-    if (record.structuredContent !== undefined) return record.structuredContent;
+    // Native Codex represents absent MCP structured content as null.
+    if (record.structuredContent != null) return record.structuredContent;
     if (Array.isArray(record.content)) {
         return readNativeToolResult(record.content.map(block => asRecord(block)?.text ?? '').join('\n'));
     }
