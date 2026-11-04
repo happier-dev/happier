@@ -4,6 +4,8 @@ import { createVoiceConversationRuntimeMachine } from './VoiceConversationRuntim
 import { createVoiceMachineError } from './voiceMachineError';
 import { ensureInterruptionWordSegmentationAvailable } from '../input/segmentInterruptionWords';
 import { deriveLocalVoiceSessionSnapshot } from './deriveLocalVoiceSessionSnapshot';
+import { resolveVoiceSurfaceState } from '@/components/voice/surface/resolveVoiceSurfaceState';
+import { resolveVoiceSurfaceStatusPresentation } from '@/components/voice/surface/resolveVoiceSurfaceStatusPresentation';
 
 function createDeferred<T>() {
     let resolve!: (value: T | PromiseLike<T>) => void;
@@ -68,9 +70,16 @@ describe('VoiceConversationRuntimeMachine', () => {
         }
     });
 
-    it('waits for listening start confirmation before entering listening', async () => {
+    it('presents initial connected capture as Listening only after listening start confirmation', async () => {
         const deferred = createDeferred<void>();
         const machine = createVoiceConversationRuntimeMachine();
+        const readPresentation = () => resolveVoiceSurfaceStatusPresentation(resolveVoiceSurfaceState(
+            deriveLocalVoiceSessionSnapshot('local_conversation', 'local', machine.getSnapshot()),
+        ));
+
+        machine.transitionToConnecting({ controlSessionId: 's1' });
+        machine.transitionToConnected({ controlSessionId: 's1' });
+        expect(readPresentation().labelKey).toBe('voiceAssistant.label');
 
         const rearmPromise = machine.rearmListening({
             controlSessionId: 's1',
@@ -81,6 +90,7 @@ describe('VoiceConversationRuntimeMachine', () => {
             controlSessionId: 's1',
             state: 'acquiring_mic',
         });
+        expect(readPresentation().labelKey).toBe('voiceAssistant.connecting');
 
         deferred.resolve();
         await rearmPromise;
@@ -90,6 +100,10 @@ describe('VoiceConversationRuntimeMachine', () => {
             state: 'listening',
             error: null,
         });
+        expect(readPresentation().labelKey).toBe('voiceAssistant.listening');
+        machine.transitionToEnding({ controlSessionId: 's1' });
+        machine.transitionToDisconnected({ controlSessionId: 's1' });
+        expect(readPresentation().labelKey).toBe('voiceAssistant.label');
     });
 
     it('keeps a bounded provider-owned start acquiring beyond the former blanket timeout, then listens', async () => {
