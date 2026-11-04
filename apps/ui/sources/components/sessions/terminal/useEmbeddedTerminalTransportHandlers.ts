@@ -31,45 +31,76 @@ export function useEmbeddedTerminalTransportHandlers(params: Readonly<{
     const [initialTerminalSize, setInitialTerminalSize] = React.useState<TerminalSize | null>(null);
     const latestTerminalSizeRef = React.useRef<TerminalSize | null>(null);
 
-    const pendingInputRef = React.useRef('');
     type QueuedInput = Readonly<{
         event: Extract<TerminalInputEvent, { t: 'text' | 'paste' }>;
         terminalId: string | null;
         machineId: string | null;
     }>;
-    const pendingInputTargetRef = React.useRef<Pick<QueuedInput, 'terminalId' | 'machineId'> | null>(null);
     const queuedInputRef = React.useRef<QueuedInput[]>([]);
     const inputInFlightRef = React.useRef<QueuedInput | null>(null);
     const failedCarrierRef = React.useRef<TerminalStreamCarrier | null>(null);
     const inputRecoveryRef = React.useRef(false);
+    const discardInputCountRef = React.useRef<number | null>(null);
     const [inputRecoveryAvailable, setInputRecoveryAvailable] = React.useState(false);
     const inputFlushTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
     const drainInputRef = React.useRef<() => void>(() => {});
+    const finishInputDiscard = React.useCallback((count: number) => {
+        queuedInputRef.current.splice(0, count);
+        discardInputCountRef.current = null;
+        inputRecoveryRef.current = false;
+        failedCarrierRef.current = null;
+        setInputRecoveryAvailable(false);
+    }, []);
     const drainInput = React.useCallback(() => {
-        if (readOnlyRef.current || !params.machineId || inputInFlightRef.current || inputRecoveryRef.current) return;
+        if (readOnlyRef.current) {
+            // Admitted input waits for a writable attachment. A read-only interval also
+            // withdraws an earlier clear request; writable recovery stays explicit.
+            discardInputCountRef.current = null;
+            return;
+        }
+        const discardCount = discardInputCountRef.current;
+        if (!params.machineId || inputInFlightRef.current
+            || (inputRecoveryRef.current && discardCount === null)) return;
         const terminalId = params.terminalIdRef.current;
         const carrier = params.terminalStreamCarrierRef.current;
         let queued = queuedInputRef.current[0];
-        if (!terminalId || !carrier || !queued || carrier === failedCarrierRef.current) return;
+        if (!terminalId || !queued) return;
         // Retained input belongs to this process. A restart must never type it into its replacement.
         if ((queued.machineId && queued.machineId !== params.machineId) || (queued.terminalId && queued.terminalId !== terminalId)) {
+            if (discardCount !== null) {
+                // The replaced process cannot leave a partial line in this new process.
+                finishInputDiscard(discardCount);
+                drainInputRef.current();
+                return;
+            }
             inputRecoveryRef.current = true;
             setInputRecoveryAvailable(true);
             return;
         }
+        if (!carrier || carrier === failedCarrierRef.current) return;
         // Input typed before attachment acquires its process identity at the first send.
         if (!queued.terminalId || !queued.machineId) {
             queued = { ...queued, terminalId, machineId: params.machineId };
             queuedInputRef.current[0] = queued;
         }
         inputInFlightRef.current = queued;
-        void carrier.sendInput(terminalId, queued.event).then(() => {
-            if (queuedInputRef.current[0] === queued) queuedInputRef.current.shift();
+        // Explicit recovery clears the complete default readline line, including text after a moved
+        // cursor. Never replay the ambiguous command: its Enter may already have executed.
+        const event = discardCount === null ? queued.event : { t: 'text', text: '\u0001\u000b' } as const;
+        void carrier.sendInput(terminalId, event).then(() => {
+            if (queuedInputRef.current[0] === queued) {
+                if (discardCount === null) queuedInputRef.current.shift();
+                else if (!readOnlyRef.current && discardInputCountRef.current === discardCount) {
+                    finishInputDiscard(discardCount);
+                }
+            }
             inputInFlightRef.current = null;
             drainInputRef.current();
         }, (error: unknown) => {
             inputInFlightRef.current = null;
             failedCarrierRef.current = carrier;
+            // A failed clear leaves the original recovery text held for another explicit action.
+            discardInputCountRef.current = null;
             if (queuedInputRef.current[0] === queued && readRpcRequestDisposition(error) !== 'notSent') {
                 // An acknowledgement may have been lost after the PTY wrote. Keep the entire tail for
                 // explicit recovery; neither replaying it nor sending its Enter is safe automatically.
@@ -81,7 +112,7 @@ export function useEmbeddedTerminalTransportHandlers(params: Readonly<{
             }
             drainInputRef.current();
         });
-    }, [params.machineId, params.onInputError, params.terminalIdRef, params.terminalStreamCarrierRef]);
+    }, [finishInputDiscard, params.machineId, params.onInputError, params.terminalIdRef, params.terminalStreamCarrierRef]);
     drainInputRef.current = drainInput;
 
     const sendInputEvent = React.useCallback((event: QueuedInput['event']) => {
@@ -90,32 +121,7 @@ export function useEmbeddedTerminalTransportHandlers(params: Readonly<{
         drainInput();
     }, [drainInput, params.machineId, params.terminalIdRef]);
 
-    const flushPendingInput = React.useCallback(() => {
-        if (readOnlyRef.current) {
-            pendingInputRef.current = '';
-            queuedInputRef.current = [];
-            inputRecoveryRef.current = false;
-            setInputRecoveryAvailable(false);
-            return;
-        }
-        const data = pendingInputRef.current;
-        pendingInputRef.current = '';
-        if (data) {
-            const target = pendingInputTargetRef.current ?? { terminalId: null, machineId: params.machineId };
-            const tail = queuedInputRef.current.at(-1);
-            if (tail && tail !== inputInFlightRef.current && tail.event.t === 'text'
-                && (!tail.machineId || tail.machineId === target.machineId)
-                && (!tail.terminalId || tail.terminalId === target.terminalId)) {
-                queuedInputRef.current[queuedInputRef.current.length - 1] = {
-                    ...target, event: { t: 'text', text: tail.event.text + data },
-                };
-            } else {
-                queuedInputRef.current.push({ event: { t: 'text', text: data }, ...target });
-            }
-            pendingInputTargetRef.current = null;
-        }
-        drainInput();
-    }, [drainInput, params.machineId]);
+    const flushPendingInput = drainInput;
     const flushPendingInputRef = React.useRef(flushPendingInput);
 
     React.useEffect(() => {
@@ -124,12 +130,29 @@ export function useEmbeddedTerminalTransportHandlers(params: Readonly<{
 
     const onInput = React.useCallback((data: string) => {
         if (readOnlyRef.current || !data) return;
-        if (!pendingInputRef.current) pendingInputTargetRef.current = {
-            terminalId: params.terminalIdRef.current, machineId: params.machineId,
+        const input: QueuedInput = {
+            event: { t: 'text', text: data },
+            terminalId: params.terminalIdRef.current,
+            machineId: params.machineId,
         };
-        pendingInputRef.current += data;
+        const tailIndex = queuedInputRef.current.length - 1;
+        const tail = queuedInputRef.current[tailIndex];
+        // Batch unsent ordinary typing, without changing a dispatched write,
+        // a recovery-selected prefix, another process's input, or paste/control chunk boundaries.
+        const mergedEvent = !inputRecoveryRef.current
+            && tail && tail !== inputInFlightRef.current && tail.event.t === 'text'
+            && tail.machineId === input.machineId && tail.terminalId === input.terminalId
+            && !/[\u0000-\u001f\u007f-\u009f]/.test(tail.event.text)
+            && !/[\u0000-\u001f\u007f-\u009f]/.test(data)
+            ? { t: 'text', text: tail.event.text + data } as const : null;
+        if (tail && mergedEvent && TerminalInputEventSchema.safeParse(mergedEvent).success) {
+            queuedInputRef.current[tailIndex] = { ...tail, event: mergedEvent };
+        } else {
+            queuedInputRef.current.push(input);
+        }
 
-        if (inputFlushTimeoutRef.current !== null) {
+        // The existing acknowledgement wakes queued work; it needs no per-key timer.
+        if (inputInFlightRef.current || inputFlushTimeoutRef.current !== null) {
             return;
         }
 
@@ -168,23 +191,19 @@ export function useEmbeddedTerminalTransportHandlers(params: Readonly<{
         return action;
     }, [flushPendingInput, sendInputEvent]);
 
-    const readInputRecovery = React.useCallback(() => queuedInputRef.current.map(input => input.event.text).join('')
-        + pendingInputRef.current, []);
+    const readInputRecovery = React.useCallback(() => queuedInputRef.current.map(input => input.event.text).join(''), []);
     const discardInputRecovery = React.useCallback(() => {
-        queuedInputRef.current = [];
-        pendingInputRef.current = '';
-        pendingInputTargetRef.current = null;
-        inputRecoveryRef.current = false;
-        failedCarrierRef.current = null;
-        setInputRecoveryAvailable(false);
-    }, []);
+        if (readOnlyRef.current || !inputRecoveryRef.current || discardInputCountRef.current !== null) return;
+        discardInputCountRef.current = queuedInputRef.current.length;
+        drainInput();
+    }, [drainInput]);
 
     React.useEffect(() => {
         if (!params.machineId) return;
         if (!params.terminalIdRef.current) return;
-        if (!pendingInputRef.current) return;
+        if (!queuedInputRef.current.length) return;
         flushPendingInput();
-    }, [flushPendingInput, params.machineId, params.terminalIdRef]);
+    }, [flushPendingInput, params.machineId, params.readOnly, params.terminalIdRef]);
 
     const resizeDebounceTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
     const pendingResizeRef = React.useRef<TerminalSize | null>(null);
@@ -233,7 +252,7 @@ export function useEmbeddedTerminalTransportHandlers(params: Readonly<{
 
     React.useEffect(() => {
         return () => {
-            if (pendingInputRef.current) {
+            if (queuedInputRef.current.length) {
                 flushPendingInputRef.current();
             }
             safeTimeoutClear(inputFlushTimeoutRef.current);
