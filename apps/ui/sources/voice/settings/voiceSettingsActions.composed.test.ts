@@ -106,6 +106,39 @@ describe('Voice declarations through the default Settings Action and Account per
         expect(account.writes).toHaveLength(0);
     });
 
+    it('VI-LIFE lifetime is one Account preference through agent Settings Actions', async () => {
+        const released = { actionsSettingsV1: {
+            v: 1, actions: {}, approvalWaivedSurfaces: { 'settings.set': ['agent'] },
+        }, voice: { providerId: 'local_conversation', privacy: { shareToolNames: false },
+            providers: { local_conversation: { schemaVersion: 1, config: {
+                agent: { rootSessionPolicy: 'keep_warm', maxWarmRoots: 5, idleTtlSeconds: 900 },
+            } } },
+        } };
+        const account = await createVoiceSettingsAccountTestHarness(settingsParse(released), { rawSettings: released });
+        onTestFinished(account.dispose);
+        const executor = createDefaultActionExecutor();
+        const context = { surface: 'agent' as const, authority: 'account_automation' as const,
+            serverId: account.scope.serverId, expectedAccountId: account.scope.accountId };
+        const anchor = 'voiceConversations.rootSessionPolicy';
+        expect(await executor.execute('settings.get', { anchor }, context)).toMatchObject({
+            ok: true, result: { value: 'continue' },
+        });
+        expect(await executor.execute('settings.set', { anchor, value: 'new' }, context)).toMatchObject({ ok: true });
+        expect(await executor.execute('settings.get', { anchor }, context)).toMatchObject({
+            ok: true, result: { value: 'new' },
+        });
+        const { readLocalConversationVoiceSettings } = await import('@/sync/domains/settings/voiceSettings');
+        expect(readLocalConversationVoiceSettings(account.persistedSettings.voice).agent).toMatchObject({
+            rootSessionPolicy: 'new', idleTtlSeconds: 900,
+        });
+        expect(account.persistedSettings.voice.privacy.shareToolNames).toBe(false);
+        // Released shapes are accepted on read, never offered as current writes.
+        expect(await executor.execute('settings.set', { anchor, value: 'keep_warm' }, context)).toMatchObject({ ok: false });
+        // The retired pool is not another person/agent-editable lifetime control.
+        expect(await executor.execute('settings.set', {
+            anchor: 'voiceConversations.maxWarmRoots', value: 6,
+        }, context)).toMatchObject({ ok: false });
+    });
     it('persists the person-controlled Voice approval preference without replacing unrelated values', async () => {
         const account = await createVoiceSettingsAccountTestHarness(settingsParse({ actionsSettingsV1: {
             v: 1, actions: {}, approvalWaivedSurfaces: { 'settings.set': ['voice'] },
