@@ -23,6 +23,7 @@ import { listArtifactHeadersV1 } from '../../../artifacts/artifactListSelectionV
 import { buildApprovalExecutionOriginV1, createActionExecutor, type ActionExecutorContext, type ActionExecutorDeps } from '../../../actions/actionExecutor.js';
 import { ApprovalRequestV2Schema, type ApprovalRequest } from '../../../approvals/approvalRequestV1.js';
 import { createBlockingApprovalCoordinator } from '../../../actions/blockingApprovalCoordinator.js';
+import { prepareArtifactHeaderForBodyV1, prepareArtifactHeaderForRevisionV1 } from '../../../artifacts/artifactHeaderRestorationV1.js';
 
 const markdown = '---\nname: sample\ndescription: A useful skill\n---\nInstructions';
 const included = { ok: true, state: 'on', previous: 'inherit', applyTiming: { t: 'next_turn' } } as const;
@@ -88,6 +89,74 @@ function harness(registry?: RegistryPorts, foundReader?: (machineId: string, pat
     failRules: (value: boolean) => { failRules = value; }, failSession: (value: boolean) => { failSession = value; } };
 }
 describe('skill library Actions', () => {
+  it('lists selected summarized skills without reading bundle bodies or unrelated headers', async () => {
+    const h = harness();
+    const header = { v: 1, kind: 'prompt_bundle.v2', title: 'sample', bundleSchemaId: 'skills.skill_md_v1' };
+    const body = JSON.stringify({ v: 1, entries: files, createdAtMs: 1, updatedAtMs: 1 });
+    const provenance = { savedBy: { kind: 'person', accountId: 'owner' }, skillCreator: { kind: 'agent', accountId: 'owner', sessionId: 'bot' } } as const;
+    const stored = { id: 'selected', header: prepareArtifactHeaderForBodyV1(header, body), revision: { headerVersion: 3, bodyVersion: 2 }, body: null, provenance, owned: true };
+    const headerReads: string[][] = [];
+    let bodyReads = 0, inventoryReads = 0;
+    const execute = createSkillActionExecuteV1({ store: { ...h.store,
+      list: async () => { inventoryReads++; return { items: [], coverage: 'complete' }; },
+      readHeadersByIds: async (ids: readonly string[]) => { headerReads.push([...ids]); return ids.map(id => ({ status: 'fulfilled' as const, value: id === stored.id ? stored : null })); },
+      read: async () => { bodyReads++; throw new Error('body must remain unopened'); },
+    }, skillRules: h.skillRules, randomId: () => 'rule', includeInSession: async () => included });
+    const result = await execute('skills.list', { skillIds: ['selected', 'selected'] }, { surface: 'ui' });
+    expect(result).toMatchObject({ items: [{ skillId: 'selected', name: 'sample', revision: '3:2', creator: provenance.skillCreator, cost: { descriptionTokens: 4, bodyTokens: 3 } }] });
+    expect(headerReads).toEqual([['selected']]);
+    expect({ bodyReads, inventoryReads }).toEqual({ bodyReads: 0, inventoryReads: 0 });
+  });
+  it.each([250, 500, 1000])('opens only legacy bodies while listing %i skills and keeps selected demand fixed', async size => {
+    const h = harness();
+    const inventory = Array.from({ length: size }, (_, index): PromptLibraryStoredArtifact => {
+      const name = `sample-${index}`;
+      const skillFiles = [{ ...files[0]!, contentBase64: encodeBase64(new TextEncoder().encode(markdown.replace('name: sample', `name: ${name}`)), 'base64') },
+        { path: 'assets/icon.bin', contentBase64: 'AAECAwQFBgcICQ==', contentKind: 'binary' as const }];
+      const body = JSON.stringify({ v: 1, entries: skillFiles, createdAtMs: 1, updatedAtMs: 1 });
+      const header = { v: 1, kind: 'prompt_bundle.v2', title: name, bundleSchemaId: 'skills.skill_md_v1' };
+      return { id: `skill-${index}`, header: index === 0 ? header : prepareArtifactHeaderForBodyV1(header, body), body,
+        revision: { headerVersion: 1, bodyVersion: 1 }, owned: true,
+        provenance: { savedBy: { kind: 'person', accountId: 'owner' }, skillCreator: { kind: 'agent', accountId: 'owner', sessionId: `bot-${index % 2}` } } };
+    });
+    const byId = new Map(inventory.map(item => [item.id, item]));
+    let pages = 0;
+    const bodyReads: string[][] = [], selectedHeaders: string[][] = [];
+    const execute = createSkillActionExecuteV1({ store: { ...h.store,
+      list: async options => {
+        pages++;
+        const offset = Number(options?.cursor ?? 0), limit = options?.limit ?? 500;
+        const items = inventory.slice(offset, offset + limit).map(({ body: _body, ...item }) => ({ ...item, updatedAtMs: 1 }));
+        return { items, coverage: 'complete', ...(offset + items.length < size ? { nextCursor: String(offset + items.length) } : {}) };
+      },
+      read: async () => { throw new Error('The batched content owner must serve legacy rows'); },
+      readMany: async ids => { bodyReads.push([...ids]); return ids.map(id => ({ status: 'fulfilled' as const, value: byId.get(id) ?? null })); },
+      readHeadersByIds: async ids => {
+        selectedHeaders.push([...ids]);
+        return ids.map(id => { const item = byId.get(id); return { status: 'fulfilled' as const, value: item ? { ...item, body: null } : null }; });
+      },
+    }, skillRules: h.skillRules, randomId: () => 'rule', includeInSession: async () => included });
+    const full = SKILL_ACTION_OUTPUT_SCHEMAS_V1['skills.list'].parse(await execute('skills.list', {}, { surface: 'ui' }));
+    expect(full.items.filter(item => byId.has(item.skillId))).toHaveLength(size);
+    expect(pages).toBe(Math.ceil(size / 500));
+    expect(bodyReads).toEqual([['skill-0']]);
+    pages = 0; bodyReads.length = 0;
+    const selection = ['skill-0', 'skill-1', 'skill-2'];
+    const selected = SKILL_ACTION_OUTPUT_SCHEMAS_V1['skills.list'].parse(await execute('skills.list', { skillIds: selection }, { surface: 'ui' }));
+    expect(selected.items.map(item => item.skillId).sort()).toEqual(selection);
+    expect(selected.items.every(item => item.creator?.kind === 'agent')).toBe(true);
+    expect({ pages, bodyReads, selectedHeaders }).toEqual({ pages: 0, bodyReads: [['skill-0']], selectedHeaders: [selection] });
+  });
+  it('rebuilds the skill summary on generic writes and restores without carrying private creator into content', () => {
+    const header = { v: 1, kind: 'prompt_bundle.v2', title: 'sample', bundleSchemaId: 'skills.skill_md_v1', skillListSummary: { stale: true } };
+    const body = JSON.stringify({ v: 1, entries: [...files, { path: 'assets/icon.bin', contentBase64: 'AAEC', contentKind: 'binary' }], createdAtMs: 7, updatedAtMs: 9 });
+    const written = prepareArtifactHeaderForBodyV1(header, body);
+    expect(written.skillListSummary).toMatchObject({ v: 1, name: 'sample', description: 'A useful skill', createdAt: 7, trust: 'has_files', userInvocable: true });
+    const restored = prepareArtifactHeaderForRevisionV1({ artifactId: 'selected', header, body,
+      expectedRevision: { headerVersion: 3, bodyVersion: 2 }, nextRevision: { headerVersion: 4, bodyVersion: 3 } });
+    expect(restored.skillListSummary).toEqual(written.skillListSummary);
+    expect(JSON.stringify(written)).not.toContain('skillCreator');
+  });
   it.each(['default', 'explicit', 'partial', 'include_failure'] as const)('keeps private registry install intent across the source transport: %s', async mode => {
     const upstream = gitRegistryHarness(), h = harness(upstream.registry);
     const input = { source: { kind: 'registry' as const, sourceId: upstream.source.id, itemId: '', version: upstream.initial },
@@ -436,6 +505,7 @@ describe('skill library Actions', () => {
       includeInSession: async () => ({ ok: true }) });
     const output = await execute('skills.duplicate', { skillId: FIRST_PARTY_SKILLS_V1[0]!.skillId }, { surface: 'ui' });
     expect(output).toEqual({ ok: true, skillId: 'skill-1', revision: '3:7', includedInSessionId: null,
+      summary: { name: 'happier', description: 'Use Happier from this session' },
       ...(failRules ? { incomplete: 'rules' } : {}) });
     const result = SKILL_ACTION_OUTPUT_SCHEMAS_V1['skills.duplicate'].parse(output);
     expect(h.order).toEqual(failRules ? ['content'] : ['content', 'rules']);

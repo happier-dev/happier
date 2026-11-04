@@ -7,6 +7,7 @@ import { RegistrySkillContentRefV1Schema, RegistryItemPointerV1Schema } from '..
 import { SkillCostV1Schema } from './skillCostV1.js';
 import { SkillTrustV1Schema } from './skillTrustV1.js';
 import { SkillListItemV1Schema, SkillUnavailableItemV1Schema, SkillProvenanceV1Schema, SkillRevisionV1Schema } from './skillLibraryItemV1.js';
+import { ArtifactSavedByV1Schema } from '../../../artifacts/artifactBinaryV1.js';
 
 export const SkillFileInputV1Schema = lazyZodSchema(() => z.strictObject({ path: z.string().check(z.minLength(1)), contentBase64: z.string(),
   contentKind: z.enum(['utf8', 'binary']), unixMode: z.optional(z.nullable(z.number().check(z.int(), z.minimum(0), z.maximum(0o7777)))) }));
@@ -24,7 +25,9 @@ export const SkillFileChangeV1Schema = lazyZodSchema(() => z.union([
 const skillId = lazyZodSchema(() => z.string().check(z.minLength(1)));
 const identity = lazyZodSchema(() => z.strictObject({ skillId }));
 const createResult = lazyZodSchema(() => z.strictObject({ ok: z.literal(true), skillId, revision: SkillRevisionV1Schema,
-  includedInSessionId: z.nullable(z.string()), incomplete: z.optional(z.enum(['rules', 'session_include'])) }));
+  summary: z.optional(z.strictObject({ name: z.string().check(z.minLength(1)), description: z.nullable(z.string()), creator: z.optional(ArtifactSavedByV1Schema) })),
+  // Older observation projections persisted only identity; absence makes no inclusion claim.
+  includedInSessionId: z.optional(z.nullable(z.string())), incomplete: z.optional(z.enum(['rules', 'session_include'])) }));
 const batchCreateResult = lazyZodSchema(() => z.strictObject({ skillIds: z.array(skillId), includedInSessionId: z.nullable(z.string()),
   incomplete: z.optional(z.array(z.strictObject({ skillId, step: z.enum(['rules', 'session_include']) }))) }));
 export const SkillInstallPreviewV1Schema = lazyZodSchema(() => z.strictObject({ path: z.string(), name: z.string(), description: z.nullable(z.string()),
@@ -48,7 +51,7 @@ export const SkillUpdateFileV1Schema = lazyZodSchema(() => z.strictObject({ path
   theirs: z.nullable(SkillFileInputV1Schema), changed: z.boolean(), base: z.optional(z.nullable(SkillFileInputV1Schema)), comparison: z.optional(ThreeWayTextComparisonV1Schema) }));
 export type SkillUpdateFileV1 = z.infer<typeof SkillUpdateFileV1Schema>;
 export const SKILL_ACTION_INPUT_SCHEMAS_V1 = {
-  'skills.list': lazyZodSchema(() => z.strictObject({ query: z.optional(z.string()), state: z.optional(z.enum(['in_use', 'off', 'updates', 'needs_attention'])) })),
+  'skills.list': lazyZodSchema(() => z.strictObject({ skillIds: z.optional(z.array(skillId)), query: z.optional(z.string()), state: z.optional(z.enum(['in_use', 'off', 'updates', 'needs_attention'])) })),
   'skills.create': lazyZodSchema(() => z.strictObject({ name: z.string().check(z.minLength(1)), description: z.optional(z.string()), files: z.array(SkillFileInputV1Schema), where: z.optional(ReachRulesChangeV1Schema) })),
   'skills.update': lazyZodSchema(() => z.strictObject({ skillId, expectedRevision: SkillRevisionV1Schema, name: z.optional(z.string()), description: z.optional(z.string()), files: z.optional(z.array(SkillFileChangeV1Schema)), updatePolicy: z.optional(z.enum(['manual', 'auto', 'pinned'])) })),
   'skills.duplicate': identity,

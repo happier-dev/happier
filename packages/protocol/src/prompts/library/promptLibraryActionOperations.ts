@@ -57,13 +57,16 @@ export type PromptLibraryArtifactStore = Readonly<{
   organization?: ArtifactFolderActionPortV1;
   /** Header inventory only. Unreadable ranges must not be reported as complete. */
   list?(options?: Readonly<{ limit?: number; cursor?: string; coarseKind?: ArtifactCoarseKindV1; kinds?: readonly string[]; signal?: AbortSignal }>): Promise<Readonly<{
-    items: readonly Readonly<{ id: string; header: Readonly<Record<string, unknown>> | null; updatedAtMs: number; owned?: boolean }>[];
+    items: readonly Readonly<{ id: string; header: Readonly<Record<string, unknown>> | null; updatedAtMs: number; owned?: boolean;
+      revision?: PromptLibraryStoredArtifact['revision']; provenance?: ArtifactRevisionProvenanceV1 }>[];
     coverage: 'complete' | 'partial' | 'unavailable';
     nextCursor?: string;
   }>>;
   read(artifactId: string, options?: Readonly<{ signal?: AbortSignal }>): Promise<PromptLibraryStoredArtifact | null>;
   /** A transport batch keeps per-identity refusal and not-found semantics in input order. */
   readMany?(artifactIds: readonly string[], options?: Readonly<{ signal?: AbortSignal }>): Promise<readonly PromiseSettledResult<PromptLibraryStoredArtifact | null>[]>;
+  /** Same admitted selected transport, without opening bundle bodies. */
+  readHeadersByIds?(artifactIds: readonly string[], options?: Readonly<{ signal?: AbortSignal }>): Promise<readonly PromiseSettledResult<PromptLibraryStoredArtifact | null>[]>;
   update(input: Readonly<{
     artifactId: string;
     /** The revision returned by the read used to derive this mutation. */
@@ -78,6 +81,7 @@ export type PromptLibraryArtifactStore = Readonly<{
   create?(input: Readonly<{
     header: Readonly<Record<string, unknown>>;
     body: string;
+    savedBy?: ArtifactSavedByV1;
     memoryDecisionSource?: CoordinationMessageRefV1;
     signal?: AbortSignal;
   }>): Promise<string | Readonly<{ artifactId: string; revision: PromptLibraryStoredArtifact['revision'] }>>;
@@ -136,6 +140,7 @@ export async function readSkillInLibrary(params: Readonly<{
   const lock: SkillLockV1 = bundled ? { provenance: bundled.provenance, updatePolicy: 'manual' } : readSkillLockV1(artifact?.header);
   const result: SkillReadResultV1 = {
     skillId, name, skillMd,
+    ...(artifact?.provenance?.skillCreator ? { creator: artifact.provenance.skillCreator } : {}),
     revision: bundled ? bundled.digest : encodeSkillRevisionV1(artifact!.revision), provenance: lock.provenance, modified: isSkillModifiedV1(lock, content.digest),
     ...(lock.upstream ? { upstream: lock.upstream } : {}), trust: deriveSkillTrustV1(body.entries), cost: estimateSkillCostV1(skillMd), rules: [...(params.rules ?? [])],
     ...(request.includeFileContents ? { fileContents: projectPromptBundleActionEntriesV1(body.entries) } : {}),

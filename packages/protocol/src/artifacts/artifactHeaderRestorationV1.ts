@@ -11,6 +11,8 @@ import { buildWidgetDefinitionArtifactHeaderV1, readWidgetDefinitionArtifactV1 }
 import { WidgetDefinitionV1Schema } from '../widgets/widgetDefinitionV1.js';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import { ACCOUNT_NOTICE_ARTIFACT_KIND_V1, readAccountNoticeArtifactV1 } from '../activity/usageNoticeArtifactV1.js';
+import { readSkillBundleContentV1 } from '../prompts/library/promptBundleSchemas.js';
+import { buildSkillListSummaryV1 } from '../prompts/library/skills/skillListSummaryV1.js';
 
 type ArtifactSharedWriteContextV1 = Readonly<{ current: ArtifactSharingResourceV1; shared: boolean }>;
 
@@ -43,6 +45,11 @@ export function prepareArtifactHeaderForBodyV1(header: Readonly<Record<string, u
   // Workspace identity is supplied separately by the host to private revision metadata.
   const { source: _source, ...publicHeader } = header;
   header = publicHeader;
+  if (header.kind === 'prompt_bundle.v2' && header.bundleSchemaId === 'skills.skill_md_v1') {
+    const content = readSkillBundleContentV1({ header, body });
+    if (!content) throw Object.assign(new Error('artifact_content_unavailable'), { code: 'content_unavailable' });
+    header = { ...header, skillListSummary: buildSkillListSummaryV1(content) };
+  }
   if (header.kind === 'workflow-definition.v1' || header.kind === 'work-board.v1' || header.kind === 'widget-definition.v1') {
     try {
       if (typeof body !== 'string') throw new Error('artifact_body_unavailable');
@@ -80,6 +87,11 @@ export function prepareArtifactHeaderForRevisionV1(input: Readonly<{
   const { source: _source, ...publicHeader } = input.header;
   input = { ...input, header: publicHeader };
   const kind = input.header.kind;
+  if (kind === 'prompt_bundle.v2' && input.header.bundleSchemaId === 'skills.skill_md_v1') {
+    return prepareArtifactHeaderForBodyV1(input.header, input.body, {
+      current: { artifactId: input.artifactId, header: input.header }, shared: input.shared === true,
+    });
+  }
   requireSharedContent(input.header, input.body, { current: { artifactId: input.artifactId, header: input.header }, shared: input.shared === true });
   if (artifactKindRequiresTextBodyV1(kind) && typeof input.body !== 'string') {
     throw Object.assign(new Error('artifact_content_unavailable'), { code: 'content_unavailable' });

@@ -88,7 +88,10 @@ function skillSpec<TId extends SkillLibraryActionIdV1>(id: TId, title: string, r
     safety: read ? 'safe' : 'danger', sideEffectClass: read ? 'read' : 'write', requiredAuthority: 'account_automation', executionPlacement: 'account', placements: [],
     surfaces: { ui: true, cli: true, agent: true, mcp: true, rpc: true, voice: false },
     bindings: { rpcMethod: id, mcpToolName: id.replaceAll('.', '_') }, inputSchema: inputs[id], outputSchema: outputs[id], inputHints: { fields: skillReviewFields(id) },
-    projectObservationInput: project, projectObservationOutput: project,
+    projectObservationInput: project,
+    // Create returns a content-free acknowledgment (or its deferred approval receipt).
+    // Preserve it for both the tool transcript and the settled approval's saved-skill card.
+    ...(id === 'skills.create' ? {} : { projectObservationOutput: project }),
     approvalPresentation: { summary: () => null, projectInput: raw => projectSkillApprovalInput(id, raw),
       inputSchema: id === 'skills.create' ? reviewedFileInputs['skills.create']
         : id === 'skills.update' ? reviewedFileInputs['skills.update']
