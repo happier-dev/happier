@@ -1577,6 +1577,42 @@ the surface environment. The words stay yours: a row says the owner's own state
 ("Waiting for approval"), never the bucket label. A row carries no answer
 controls; open the place where the request is answered once.
 
+## Needs-you row highlight (0.3 development)
+
+Set `needsYou` on a `Collection` anatomy to give a row that waits on the person
+the highlight they chose under Appearance: nothing extra (Dot, the default), a
+static bar (Accent), or a sweep across the row (Glint, Shimmer). Return
+`{ unopened }` for that row and `null` for the rest; motion runs only until the
+person opens it, and never while the row is hidden or under reduced motion. Leave
+it off rows in a Needs you shelf, which already say so. Outside `Collection`, draw
+`CollectionRowNeedsYouHighlight` under your row's content, or read
+`useCollectionRowNeedsYouHighlight` for the leading mark and pulse. A hosted-web
+surface has no such preference and stays on Dot.
+
+The shared picker does not prescribe persistence: Triage keeps saved views in
+Account storage and its selected lens in the device page location. Host spaces
+also keep their selection on the device. Host Resource-backed row fields are
+deferred; a plugin-owned page can supply its own held custom facts through the pure adapter without importing
+host or protocol internals. These are development-source contracts; check the
+installed Plugin UI inventory before targeting a published package.
+
+## Page headers (0.3 development)
+
+`PageHeader` is the header Happier's own pages draw. `actionsLayout` chooses how the
+controls meet the title: `wrap` (the default) keeps them on the title row and wraps
+them beneath when the title needs its width, `inline` keeps them on it, and `hang`
+hangs the mark and controls from the title's line with the description and facts
+beneath at full width. Use `hang` for an entity page with a long description.
+
+A `meta` fact with `mono: true` is an address, path or id: one mono line that gives
+up its middle rather than wrapping, names the whole value to assistive technology,
+and copies it on tap through the host clipboard, saying "Copied" in its place.
+
+```tsx
+<PageHeader title={machine.name} leading={<BrandMark />} actionsLayout="hang"
+  meta={[{ key: 'path', text: machine.home, mono: true }]} actions={<Menu />} />
+```
+
 ## Shared story components (0.3 development)
 
 Use `Timeline` for an ordered activity rail. Supply `items`, `keyForItem`,
@@ -1614,6 +1650,11 @@ requests, with `title`, `subtitle`, body children and decision controls in
 or grant permission. Pass `tone="attention"` when the request is waiting on the
 person: the card takes the same amber ring and tint as any work that needs them.
 Leave it neutral for requests the person started.
+
+Pass `chrome="compact"` where the request has little room (a notch, a popover row):
+a small card with no ring, your small mark in `icon`, and everything on one edge.
+`surfaceStyle` replaces its fill. `eyebrow` adds the source line above the title
+("Bash"). Facts stay in the body and the decision stays in `footer`.
 
 `<MotionFeedback trigger={confirmedSequence} decorative>` acknowledges a
 confirmed result. Change the trigger only after success, and expose that result

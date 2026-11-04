@@ -3,6 +3,7 @@ import { View } from 'react-native';
 
 import { useOptionalHappierUiTheme, useOptionalHappierUiTypography } from '../../environment/context.js';
 import type { HappierFocusable, HappierLayoutChangeEvent, HappierStyleProp } from '../portableTypes.js';
+import { HappierMiddleEllipsisText, HappierPageHeaderMetaId, HappierPageHeaderMetaIdAnchor, type HappierPageHeaderMetaIdCopy } from './PageHeaderMetaId.js';
 import { HappierText, useHappierTextPresentation } from '../text/Text.js';
 import { useHappierCollectionDetailWidth, useHappierCollectionLayout } from '../collection/collectionLayout.js';
 import { HAPPIER_PAGE_METRICS, resolveHappierPageBackMeasuringLine, resolveHappierPageBackPlacement } from './pageMetrics.js';
@@ -78,6 +79,8 @@ export type HappierPageHeaderProps = Readonly<{
    * whose sentence is long).
    */
   actionsLayout?: 'wrap' | 'inline' | 'hang';
+  /** How the default text owner copies a mono meta fact; without it the fact is plain mono text. */
+  metaIdCopy?: HappierPageHeaderMetaIdCopy;
   /**
    * A status line under the actions ("Unsaved changes · Save · Ready"). It is the actions' own row:
    * as wide as the actions above it, wrapping within them and ending on their edge, so its changing
@@ -121,7 +124,7 @@ export type HappierPageHeaderTextRender = (input: Readonly<{
 /** Package-private binding from the public PageHeader adapter; not an author physical-ref prop. */
 export const HappierPageHeadingBindingContext = createContext<((target: HappierFocusable | null) => void) | undefined>(undefined);
 
-function useDefaultPageTextRender(): HappierPageHeaderTextRender {
+function useDefaultPageTextRender(metaIdCopy: HappierPageHeaderMetaIdCopy | undefined): HappierPageHeaderTextRender {
   const headingRef = useContext(HappierPageHeadingBindingContext);
   const theme = useOptionalHappierUiTheme();
   const typography = useOptionalHappierUiTypography();
@@ -129,6 +132,15 @@ function useDefaultPageTextRender(): HappierPageHeaderTextRender {
     const color = theme === null
       ? undefined
       : input.header ? theme.colors.text : theme.colors.secondaryText;
+    if (input.mono && metaIdCopy) {
+      const words = [resolveHappierPageTextStyle('meta', typography), color === undefined ? null : { color }];
+      const mono = theme?.typography.code.fontFamily ? { fontFamily: theme.typography.code.fontFamily } : null;
+      return <HappierPageHeaderMetaId value={input.text} {...metaIdCopy} host={{
+        renderValue: (value) => <HappierMiddleEllipsisText value={value} style={[...words, mono]} />,
+        renderCopied: (label) => <HappierText style={words}>{label}</HappierText>,
+        renderAnchor: (anchor) => <HappierPageHeaderMetaIdAnchor {...anchor} />,
+      }} />;
+    }
     return (
       <HappierText
         ref={input.header ? headingRef : undefined}
@@ -143,7 +155,7 @@ function useDefaultPageTextRender(): HappierPageHeaderTextRender {
         {input.text}
       </HappierText>
     );
-  }, [headingRef, theme, typography]);
+  }, [headingRef, metaIdCopy, theme, typography]);
 }
 
 function renderPageText(
@@ -167,7 +179,7 @@ function renderPageText(
  * width beside the actions, the actions wrap beneath it.
  */
 export function HappierPageHeader(props: HappierPageHeaderProps) {
-  const defaultRenderText = useDefaultPageTextRender();
+  const defaultRenderText = useDefaultPageTextRender(props.metaIdCopy);
   const { metricScale } = useHappierTextPresentation({});
   const renderText = props.renderText ?? defaultRenderText;
   const showTitle = props.showTitle !== false;

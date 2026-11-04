@@ -1,3 +1,4 @@
+import { useCollectionRowNeedsYouHostFacts } from '@/components/ui/lists/collection/CollectionRowNeedsYouHighlight';
 import * as React from 'react';
 import { PluginVoicePresence, PluginVoiceMark, PluginVoiceStatusLine, PluginVoiceTransport, usePluginVoiceAttempt } from './PluginVoicePresence';
 import type { VoicePresenceProps, VoiceMarkProps, VoiceStatusLineProps, VoiceTransportProps } from '@happier-dev/plugin-ui';
@@ -179,6 +180,9 @@ export type PluginDestinationRowInput = NavigationListDestination & Readonly<{
         onSecondaryAction: NonNullable<ItemProps['onSecondaryAction']>;
     }>): React.ReactNode;
 }>;
+
+/** A plugin row that needs the person reads the same highlight facts as a core row. */
+const PLUGIN_UI_COLLECTION_ROW_NEEDS_YOU = { useFacts: useCollectionRowNeedsYouHostFacts };
 
 export type PluginUiPrivatePresentationHostOptions = Readonly<{
     /** Canonical mounted plugin identity, supplied by the physical host. */
@@ -696,6 +700,7 @@ export function createPluginUiPrivatePresentationHost(
         } }),
         createScrollActivityTracker: createScrollViewNearViewportTracker,
         paneHeaderScroll: PLUGIN_UI_PANE_HEADER_SCROLL,
+        collectionRowNeedsYou: PLUGIN_UI_COLLECTION_ROW_NEEDS_YOU,
         ...(options?.renderDragSource === undefined ? {} : { renderDragSource: options.renderDragSource }),
         ...(options?.renderDropTarget === undefined ? {} : { renderDropTarget: options.renderDropTarget }),
         ...(options?.renderLiveStream ? { renderLiveStream: options.renderLiveStream } : {}),

@@ -81,6 +81,8 @@ const APPROVED_CATALOG_VOCABULARY = [
   'ListDetailLayout', 'Columns', 'Column',
   // r0.41 (Triage plan): the generic Collection (table, list, board, grid and their detail containers).
   'Collection', 'CollectionLoadingRows', 'CollectionToolbar',
+  // OB-FIX-PLUGINUI: the needs-you highlight Happier's own lists draw.
+  'CollectionRowNeedsYouHighlight',
   // Embeddable Happier plan 05: a host-mediated live Session (one controller, composable parts).
   'SessionProvider', 'SessionTranscript', 'SessionComposer', 'SessionChat',
   // Pane states and shell columns: existing public adapters over shared presentation owners.
@@ -1805,6 +1807,25 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
     declarative: { kind: 'not-applicable', reason: 'Collection loading is composed by its mounted owner.' },
   },
   {
+    publicName: 'CollectionRowNeedsYouHighlight',
+    propTypeName: 'CollectionRowNeedsYouHighlightProps',
+    family: 'Collection row needs-you highlight',
+    disposition: 'required',
+    proofTier: 'behavior-owning',
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'presentation/collection/CollectionRowNeedsYouLayer.tsx',
+    sharedSymbol: 'HappierCollectionRowNeedsYouLayer',
+    pluginOwner: { module: 'components/CollectionRowNeedsYouHighlight.tsx', symbol: 'CollectionRowNeedsYouHighlight' },
+    coreConsumers: ['components/ui/lists/collection/CollectionRowNeedsYouHighlight.tsx'],
+    positiveConsumer: {
+      kind: 'external-author-reference',
+      pathFromRepoRoot: 'packages/plugin-ui/fixtures/external-authoring/src/builtInParitySurface.tsx',
+    },
+    devMountSymbols: [],
+    declarative: { kind: 'not-applicable', reason: 'V2 has no row highlight node; the preference and motion facts stay with the host.' },
+  },
+  {
     publicName: 'CollectionToolbar',
     propTypeName: 'CollectionToolbarProps',
     family: 'Collection toolbar',
@@ -3132,6 +3153,7 @@ describe('graduated shared presentation families (§8.2)', () => {
       'Columns',
       'Column',
       'CollectionLoadingRows',
+      'CollectionRowNeedsYouHighlight',
       'CollectionToolbar',
       'FollowPolicyEditor',
       'SheetMenu',

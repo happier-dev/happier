@@ -22,6 +22,32 @@ function mount(maxHeight?: number) {
 }
 
 describe('HappierApprovalPromptChrome', () => {
+  it('compact: a small tinted card with no ring, its source line above the title and everything on one edge', () => {
+    const view = mountThroughReactNativeWeb(<HappierApprovalPromptChrome {...base} testID="card" chrome="compact" tone="attention"
+      eyebrow="Bash" surfaceStyle={{ backgroundColor: 'rgb(1, 2, 3)' }} icon={<View testID="dot" />}
+      headerAccessory={<View testID="badge" />} footer={<View testID="decision" />}>
+      <View testID="facts" />
+    </HappierApprovalPromptChrome>);
+    try {
+      const card = view.container.querySelector<HTMLElement>('[data-testid="card"]')!;
+      const style = getComputedStyle(card);
+      expect(style.backgroundColor).toBe('rgb(1, 2, 3)');
+      expect(style.borderTopWidth).toBe('0px');
+      // Source line, then title: the head reads from who asks to what it asks.
+      expect(card.textContent).toBe('BashOpen machine terminal');
+      const edge = (testID: string) => {
+        let node = view.container.querySelector(`[data-testid="${testID}"]`)!.parentElement!;
+        while (getComputedStyle(node).paddingLeft === '0px' && node !== card) node = node.parentElement!;
+        return getComputedStyle(node).paddingLeft;
+      };
+      // The facts and the decision keep the card's inset instead of hanging under the title's column.
+      expect(edge('facts')).toBe('12px');
+      expect(edge('decision')).toBe('12px');
+      // The mark sizes itself: a dot is not given the card variant's shield slot.
+      expect(getComputedStyle(view.container.querySelector('[data-testid="dot"]')!.parentElement!).width).not.toBe('18px');
+    } finally { view.unmount(); }
+  });
+
   it('keeps the decision outside the scrolling facts when the card is bounded', () => {
     const mounted = mount(240);
     try {

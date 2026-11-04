@@ -1,4 +1,4 @@
-import { NEEDS_YOU_HIGHLIGHTS } from '@/components/ui/lists/collection/collectionRowNeedsYouHighlight';
+import { HAPPIER_NEEDS_YOU_HIGHLIGHTS } from '@happier-dev/plugin-ui/presentation';
 import { z } from 'zod/mini';
 
 import { SessionCompanionPreferencesV1Schema } from '@/components/sessions/companion/state/sessionCompanionPreference';
@@ -47,7 +47,7 @@ export const LAYOUT_LOCAL_SETTING_DEFINITIONS = {
     // How a session that needs you stands out in the list (owner ruling 2026-11-01): Dot (the amber dot alone),
     // Accent, Glint, Shimmer or Pulse. A device preference, like the pane geometry around it.
     sessionListNeedsYouHighlight: {
-        schema: z.catch(z.enum(NEEDS_YOU_HIGHLIGHTS), 'dot'), default: 'dot',
+        schema: z.catch(z.enum(HAPPIER_NEEDS_YOU_HIGHLIGHTS), 'dot'), default: 'dot',
         description: 'How sessions that need you stand out in the session list on this device', storageScope: 'local',
     },
     sessionColumnWidthPx: {

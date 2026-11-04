@@ -219,6 +219,8 @@ export type PluginUiPresentationHost = Readonly<{
   renderSetupBlockTile?(input: Omit<SetupBlockTileProps, 'fallback'>): ReactNode;
   renderSetupBlockGrid?(input: Omit<SetupBlockGridProps, 'fallback'>): ReactNode;
   renderDictationButton?(input: Omit<DictationButtonProps, 'fallback'> & Readonly<{ presented: boolean }>): ReactNode;
+  /** The person's needs-you highlight facts for `CollectionRowNeedsYouHighlight`; read only by a row that needs them. */
+  collectionRowNeedsYou?: Readonly<{ useFacts(): Readonly<{ preference: import('../presentation/collection/needsYouHighlight.js').HappierNeedsYouHighlightPreference; reducedMotion: boolean; presented: boolean }> }>;
   /** Thin presentation requests; the existing mounted host owns identity, gestures and Actions. */
   renderDragSource?(input: DragSourceProps): ReactNode;
   renderDropTarget?(input: DropTargetProps): ReactNode;

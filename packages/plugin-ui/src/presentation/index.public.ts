@@ -433,6 +433,21 @@ export {
   type HappierPageHeaderProps,
   type HappierPageHeaderTextRender,
 } from './layout/PageHeader.js';
+export { HappierCollectionRowNeedsYouLayer } from './collection/CollectionRowNeedsYouLayer.js';
+export {
+  HAPPIER_NEEDS_YOU_HIGHLIGHTS,
+  resolveHappierCollectionRowNeedsYouHighlight,
+  type HappierCollectionRowNeedsYouFacts,
+  type HappierCollectionRowNeedsYouHighlight,
+  type HappierNeedsYouHighlightPreference,
+} from './collection/needsYouHighlight.js';
+export {
+  HappierMiddleEllipsisText,
+  HappierPageHeaderMetaId,
+  HappierPageHeaderMetaIdAnchor,
+  type HappierPageHeaderMetaIdCopy,
+  type HappierPageHeaderMetaIdHost,
+} from './layout/PageHeaderMetaId.js';
 export {
   HAPPIER_MODAL_HEADER_METRICS,
   HappierModalHeader,

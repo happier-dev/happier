@@ -1,8 +1,9 @@
-import { useEffect, type ReactElement, type ReactNode } from 'react';
+import { useEffect, useMemo, type ReactElement, type ReactNode } from 'react';
 
 import { HappierPageHeader, HappierPageHeadingBindingContext } from '../presentation/layout/PageHeader.js';
 import { useHappierPageChromeInternal } from '../presentation/layout/pageChrome.js';
 import { normalizeHappierPageOperations } from '../presentation/layout/pageOperations.js';
+import { usePluginHostApi } from '../hostApi/context.js';
 import { Icon, type IconName } from './Icon.js';
 import { usePluginTranslation } from './PluginUiProvider.js';
 import { resolveAuthorText } from './resolveAuthorText.js';
@@ -18,6 +19,8 @@ export type PageHeaderMetaFact = Readonly<{
   textKey?: string;
   /** A small glyph before the text. */
   icon?: IconName;
+  /** The fact is an address, path or id: mono, one line giving up its middle, whole value named, copied on tap. */
+  mono?: boolean;
   testID?: string;
 }>;
 
@@ -41,6 +44,12 @@ export type PageHeaderProps = Readonly<{
   meta?: readonly PageHeaderMetaFact[];
   /** At most one primary page action plus context controls. */
   actions?: ReactNode;
+  /**
+   * `wrap` (default): controls on the title row, wrapping beneath when the title needs its readable width.
+   * `inline`: controls stay on the title row. `hang`: the mark and controls hang from the title's line, with
+   * the description and facts beneath at full width.
+   */
+  actionsLayout?: 'wrap' | 'inline' | 'hang';
   /**
    * Moves focus to the title when focused: a page state that replaces the content (an editor opened
    * in place) announces itself by its title. A phone whose navigation shows the title keeps focus there.
@@ -77,9 +86,15 @@ export function PageHeader(props: PageHeaderProps): ReactElement {
     return () => publishTitle(undefined);
   }, [publishTitle, title]);
   const description = resolveAuthorText(translate, props.description, props.descriptionKey);
+  const hostApi = usePluginHostApi();
+  const metaIdCopy = useMemo(() => ({
+    write: (value: string) => hostApi.writeClipboard(value),
+    copiedLabel: translate('happier.plugin-ui.pageHeader.copied', 'Copied'),
+  }), [hostApi, translate]);
   const meta = props.meta?.map((fact) => ({
     key: fact.key,
     text: resolveAuthorText(translate, fact.text, fact.textKey) ?? fact.text,
+    ...(fact.mono ? { mono: true } : {}),
     ...(fact.testID === undefined ? {} : { testID: fact.testID }),
     ...(fact.icon === undefined ? {} : { icon: <Icon name={fact.icon} size="small" tone="secondary" /> }),
   }));
@@ -97,6 +112,8 @@ export function PageHeader(props: PageHeaderProps): ReactElement {
       compactPresentation={props.compactPresentation}
       meta={meta}
       actions={hostActions && chrome.showsTitle ? null : actions}
+      actionsLayout={props.actionsLayout}
+      metaIdCopy={metaIdCopy}
       renderBack={chrome?.renderBack ?? null}
       {...(chrome?.columnMaxWidthPx === undefined ? {} : { columnMaxWidthPx: chrome.columnMaxWidthPx })}
       {...(props.testID === undefined ? {} : { testID: props.testID })}

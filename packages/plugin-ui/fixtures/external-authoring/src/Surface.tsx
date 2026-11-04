@@ -276,3 +276,6 @@ export const renderSurface = defineUiSurface(Summary);
 
 /** The custom-arrangement Session consumer (plan 05 §4.8). */
 export const renderLeadSessionSurface = defineUiSurface(LeadSession);
+
+/** The built-in page pieces one surface composes: header, needs-you highlight, compact approval. */
+export { BuiltInParityExample } from './builtInParitySurface.js';

@@ -7,8 +7,42 @@ import { PluginUiProvider } from './PluginUiProvider.js';
 import { PageHeader } from './PageHeader.js';
 import type { HappierLayoutChangeEvent } from '../presentation/portableTypes.js';
 import { HAPPIER_PAGE_METRICS } from '../presentation/layout/pageMetrics.js';
+import { HAPPIER_PAGE_TEXT } from '../presentation/layout/pageText.js';
 
 describe('public PageHeader composition', () => {
+  it.each([[undefined, false], ['hang', true]] as const)('with actionsLayout %s the mark hangs from the title line: %s', (actionsLayout, hanging) => {
+    const context = createSurfaceContext();
+    const view = mountThroughReactNativeWeb(<PluginUiProvider hostApi={createHostApiStub(context)} context={context}>
+      <PageHeader testID="header" title="Machine" actionsLayout={actionsLayout} description="One purpose line."
+        leading={<View testID="mark" />} actions={<Text>Act</Text>} />
+    </PluginUiProvider>);
+    try {
+      const header = view.container.querySelector('[data-testid="header"]')!;
+      const heights: string[] = [];
+      for (let node = view.container.querySelector('[data-testid="mark"]')!.parentElement!; node !== header; node = node.parentElement!) {
+        heights.push(getComputedStyle(node).height);
+      }
+      expect(heights.includes(`${HAPPIER_PAGE_TEXT.pageTitle.lineHeight}px`)).toBe(hanging);
+    } finally { view.unmount(); }
+  });
+
+  it('copies a mono fact whole on tap, says Copied in its place, and keeps the full value named', async () => {
+    const context = createSurfaceContext();
+    const written: string[] = [];
+    const value = '/home/person/projects/happier/apps/ui/sources/components/ui/layout';
+    const view = mountThroughReactNativeWeb(<PluginUiProvider
+      hostApi={createHostApiStub(context, { writeClipboard: async (text: string) => { written.push(text); } })} context={context}>
+      <PageHeader title="Machine" leading={<View />} meta={[{ key: 'path', text: value, mono: true }]} />
+    </PluginUiProvider>);
+    try {
+      const fact = view.container.querySelector<HTMLElement>(`[aria-label="${value}"]`)!;
+      expect(fact).not.toBeNull();
+      await act(async () => { fact.click(); });
+      expect(written).toEqual([value]);
+      expect(view.container.textContent).toContain('Copied');
+    } finally { view.unmount(); }
+  });
+
   it.each([undefined, 'centered'] as const)('retains an open, focused action across measured wrapping (%s compact presentation)', compactPresentation => {
     function Menu() {
       const [open, setOpen] = useState(false);

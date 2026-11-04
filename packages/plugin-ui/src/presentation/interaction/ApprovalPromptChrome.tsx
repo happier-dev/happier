@@ -10,7 +10,7 @@ import { resolveHappierWorkStatusSurfaceStyle, type HappierWorkStatusColors, typ
 import { resolveHappierWorkTextStep } from '../work/workTheme.js';
 
 export type HappierApprovalPromptTextRender = (input: Readonly<{
-  role: 'title' | 'subtitle';
+  role: 'eyebrow' | 'title' | 'subtitle';
   text: string;
   style: HappierStyleProp;
   numberOfLines?: number;
@@ -23,7 +23,16 @@ export type HappierApprovalPromptChromeProps = Readonly<{
   subtitleNumberOfLines?: number;
   icon?: ReactNode;
   headerAccessory?: ReactNode;
-  chrome?: 'card' | 'inline';
+  /**
+   * `card` (default): the anatomy Session chat draws. `inline`: a settled prompt with no card. `compact`: where the
+   * request has little room (the notch's island, a popover row): a small card with no ring, filled by `surfaceStyle`,
+   * with a mark sized by itself and the facts and decision on the head's own edge.
+   */
+  chrome?: 'card' | 'inline' | 'compact';
+  /** The source line above the title ("Bash"): who asks, when the title doesn't already say. */
+  eyebrow?: string | null;
+  /** `compact`: the host's own fill for the small card (the notch's whisper tint), over the elevated surface default. */
+  surfaceStyle?: HappierStyleProp;
   /**
    * `attention` is a request that needs the person: the card wears the shared needs-you ring and tint
    * (`resolveHappierWorkStatusSurfaceStyle`), the same as a Work card that needs you. `danger` is an approved
@@ -66,6 +75,9 @@ export type HappierApprovalPromptChromeProps = Readonly<{
 // decision start on, so everything under the title lines up with it.
 const ICON_SIZE = 18;
 const ICON_TEXT_GAP = 6;
+// A compact card's own rhythm: its head, facts and decision stand this far apart, and its mark this far from the words.
+const COMPACT_PART_GAP = 6;
+const COMPACT_MARK_GAP = 8;
 
 const renderDefaultText: HappierApprovalPromptTextRender = (input) => (
   <HappierText style={input.style} numberOfLines={input.numberOfLines}>{input.text}</HappierText>
@@ -75,12 +87,14 @@ const renderDefaultText: HappierApprovalPromptTextRender = (input) => (
 export function HappierApprovalPromptChrome(props: HappierApprovalPromptChromeProps) {
   const renderText = props.renderText ?? renderDefaultText;
   const inline = props.chrome === 'inline';
+  const compact = props.chrome === 'compact';
   const hasBody = Children.toArray(props.children).length > 0;
   const environmentTypography = useOptionalHappierUiTypography();
   const typography = props.typography === undefined ? environmentTypography : props.typography;
   const inset = props.spacing.medium;
   const step = props.spacing.small;
-  const textColumnStart = inset + ICON_SIZE + ICON_TEXT_GAP;
+  const textColumnStart = compact ? inset : inset + ICON_SIZE + ICON_TEXT_GAP;
+  const hasFooter = Boolean(props.footer);
   const bounded = typeof props.maxHeight === 'number';
   // Only a card with a decision to keep in view scrolls its facts under a bound. A failed or settled card
   // closes from its head, so cutting its facts would only slice a line in half: it keeps its whole height and
@@ -105,7 +119,7 @@ export function HappierApprovalPromptChrome(props: HappierApprovalPromptChromePr
   useEffect(() => {
     if (naturalHeight > 0) onMeasure?.({ natural: naturalHeight, minimum: pinned ? boundedMinHeight : naturalHeight });
   }, [boundedMinHeight, naturalHeight, onMeasure, pinned]);
-  const surface: HappierPortableStyle = {
+  const surface: HappierPortableStyle = compact ? { overflow: 'hidden', borderRadius: props.cardRadius, backgroundColor: props.colors.surface } : {
     borderRadius: inline ? 0 : props.cardRadius,
     borderWidth: inline ? 0 : 1,
     borderColor: inline ? 'transparent' : props.colors.border,
@@ -113,18 +127,22 @@ export function HappierApprovalPromptChrome(props: HappierApprovalPromptChromePr
     overflow: 'hidden',
   };
   // A settled (inline) prompt has no card to tint; only a card asks.
-  const bodyStyle: HappierPortableStyle = { paddingLeft: textColumnStart, paddingRight: inset,
-    paddingBottom: props.bodyBottomInset ?? step, gap: step };
-  const toneSurface = !inline && props.tone ? resolveHappierWorkStatusSurfaceStyle(props.tone, props.colors.status) : null;
+  const bodyStyle: HappierPortableStyle = compact
+    ? { paddingHorizontal: inset, paddingBottom: hasFooter ? COMPACT_PART_GAP : step, gap: COMPACT_PART_GAP }
+    : { paddingLeft: textColumnStart, paddingRight: inset, paddingBottom: props.bodyBottomInset ?? step, gap: step };
+  // A compact card's fill is the host's; its mark already says it waits on the person.
+  const toneSurface = !inline && !compact && props.tone ? resolveHappierWorkStatusSurfaceStyle(props.tone, props.colors.status) : null;
   return (
     <View testID={props.testID} accessibilityRole={props.accessibilityRole}
-      style={[surface, toneSurface, pinned ? { maxHeight: props.maxHeight,
+      style={[surface, toneSurface, compact ? props.surfaceStyle : null, pinned ? { maxHeight: props.maxHeight,
         ...(boundedMinHeight > 0 ? { minHeight: boundedMinHeight } : null) } : null]}>
       <View onLayout={bounded ? (event) => setHeadHeight(event.nativeEvent.layout.height) : undefined}
-        style={{ flexShrink: 0, flexDirection: 'row', alignItems: 'center', gap: ICON_TEXT_GAP,
-        paddingHorizontal: inset, paddingTop: inset, paddingBottom: step }}>
-        <View style={{ width: ICON_SIZE, height: ICON_SIZE, alignItems: 'center', justifyContent: 'center' }}>{props.icon}</View>
+        style={{ flexShrink: 0, flexDirection: 'row', alignItems: 'center', gap: compact ? COMPACT_MARK_GAP : ICON_TEXT_GAP,
+        paddingHorizontal: inset, paddingTop: compact ? step : inset, paddingBottom: compact ? (hasBody || hasFooter ? COMPACT_PART_GAP : step) : step }}>
+        {compact ? props.icon : <View style={{ width: ICON_SIZE, height: ICON_SIZE, alignItems: 'center', justifyContent: 'center' }}>{props.icon}</View>}
         <View style={{ flex: 1, minWidth: 0 }}>
+          {props.eyebrow ? renderText({ role: 'eyebrow', text: props.eyebrow, numberOfLines: 1,
+            style: { ...resolveHappierTextStepStyle(resolveHappierWorkTextStep('cardWord'), typography), color: props.colors.subtitle } }) : null}
           {/* The Work card's head steps: an approval card and a Work card that needs you read as one family. */}
           {renderText({ role: 'title', text: props.title, numberOfLines: props.titleNumberOfLines,
             style: { ...resolveHappierTextStepStyle(resolveHappierWorkTextStep('cardTitle'), typography), color: props.colors.title } })}
@@ -141,7 +159,7 @@ export function HappierApprovalPromptChrome(props: HappierApprovalPromptChromePr
           {props.children}
         </ScrollView>
       ) : <View style={bodyStyle} onLayout={bounded ? (event) => setFactsContent(event.nativeEvent.layout.height) : undefined}>{props.children}</View>}
-      {props.footer ? <View style={{ flexShrink: 0, paddingLeft: textColumnStart, paddingRight: inset, paddingBottom: inset,
+      {props.footer ? <View style={{ flexShrink: 0, paddingLeft: textColumnStart, paddingRight: inset, paddingBottom: compact ? step : inset,
         ...(factsClipped ? { borderTopWidth: 1, borderTopColor: props.colors.border, paddingTop: step } : null) }}>
         <View onLayout={bounded ? (event) => setDecisionContent(event.nativeEvent.layout.height) : undefined}>{props.footer}</View>
       </View> : null}

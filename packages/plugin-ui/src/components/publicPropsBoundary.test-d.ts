@@ -58,7 +58,7 @@ type _AuthorCollectionKeysAreCurated = Assert<IsEqual<keyof CollectionProps<unkn
   | 'listWidthPx' | 'onListWidthChange' | 'onListWidthCommit' | 'onListWidthReset' | 'resizeKey'
 >>;
 type _AuthorCollectionAnatomyKeysAreCurated = Assert<IsEqual<keyof CollectionAnatomy<unknown>,
-  | 'boardContent' | 'cardContent' | 'destination' | 'wrapItem' | 'glyph' | 'glyphBadge' | 'title' | 'titleSuffix' | 'titleControls' | 'leadingControl' | 'where' | 'byline'
+  | 'boardContent' | 'cardContent' | 'destination' | 'wrapItem' | 'glyph' | 'glyphBadge' | 'title' | 'titleSuffix' | 'titleControls' | 'leadingControl' | 'needsYou' | 'where' | 'byline'
   | 'reason' | 'signal'
   | 'agent' | 'age' | 'titleMeta'
   | 'fields' | 'peek' | 'preview' | 'description' | 'action' | 'accessibilityLabel' | 'accessibilityHint'
@@ -263,6 +263,7 @@ type _AuthorItemGroupPropKeysAreCurated = Assert<IsEqual<keyof ItemGroupProps,
 // suppression, the content column) stays host-supplied.
 type _AuthorPageHeaderPropKeysAreCurated = Assert<IsEqual<keyof PageHeaderProps,
   | 'title'
+  | 'actionsLayout'
   | 'titleKey'
   | 'description'
   | 'descriptionKey'

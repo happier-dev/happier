@@ -84,6 +84,7 @@ import { CollectionKeyCap, ListCollectionHeader, useListCollectionSearch, useLis
 import { ListMultiSelectionProvider, useListMultiSelectionStoreSnapshot } from './ListMultiSelection.js';
 import { renderCollectionItemDestination } from './collectionItemDestination.js';
 import { DetailsPane, DetailsPaneBody, PushedDetailHeader, useDetailsPanePlacement, useDetailsPaneHostInstalled } from './DetailsPane.js';
+import { CollectionRowNeedsYouHighlight } from './CollectionRowNeedsYouHighlight.js';
 import { usePluginTranslation } from './PluginUiProvider.js';
 import type { NavigationListDestination } from './NavigationList.js';
 import { CollectionDetailHeadingFocusContext, useCollectionDetailHeadingFocusInternal } from './Focus.js';
@@ -181,6 +182,11 @@ export type CollectionAnatomy<Item> = Readonly<{
    * the row still opens the item. It takes the glyph's column; the item's `glyph` is not drawn beside it.
    */
   leadingControl?: (item: Item) => ReactNode;
+  /**
+   * The row needs the person: the person's opt-in needs-you highlight (a bar or a sweep) under its content, only
+   * while `unopened` for the moving forms. Omit it for rows in a Needs you shelf; the row already says so there.
+   */
+  needsYou?: (item: Item) => Readonly<{ unopened: boolean }> | null;
   /** Where the item lives ("payments-api"): the table's Where column. */
   where?: (item: Item) => ReactNode;
   /**
@@ -1374,6 +1380,8 @@ function CollectionRow<Item>(props: Readonly<{ item: Item; itemKey: string }>): 
       {rowContents}
     </List.Item>
   );
+  // A mounted row of a virtualized list is on screen; the highlight adds the host's own presentation fact.
+  const needsYou = anatomy.needsYou?.(item) ?? null;
   const destinationRow = (
     <HappierCollectionTableRowContext.Provider value={stage.wrapTitles && stage.ruledInsetPx === null ? RESTING_LIST_ROW : RULED_ROW}>
       <HappierCollectionTreeRowContext.Provider value={treeFacts}>
@@ -1387,6 +1395,8 @@ function CollectionRow<Item>(props: Readonly<{ item: Item; itemKey: string }>): 
       tracks={travel === null ? NO_TRACKS : happierCollectionTravelTrack(offset)}
       {...(anatomy.testID === undefined ? {} : { testID: `${anatomy.testID(item)}:cell` })}
     >
+      {needsYou === null ? null : <CollectionRowNeedsYouHighlight unopened={needsYou.unopened} visible
+        {...(anatomy.testID === undefined ? {} : { testID: `${anatomy.testID(item)}:needs-you` })} />}
       {destinationRow}
     </AnimatedView>
   );
