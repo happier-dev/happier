@@ -17,6 +17,8 @@ vi.mock('@/components/ui/popover', async (importOriginal) =>
   (await import('@/dev/testkit/mocks/popover')).createInlinePopoverModuleMock(importOriginal));
 afterEach(() => standardCleanup());
 
+const { buildRequesterDisclosureStatusBadge } = await import('./managedComposerBadges');
+
 const stages = [
   { id: 'create', label: 'Create VM', state: 'done' as const },
   { id: 'install', label: 'Install Happier', state: 'running' as const },
@@ -203,8 +205,6 @@ describe('managed composer badges', () => {
   });
 
   it('says whose machine a requester session runs on and how the sign-in lands', async () => {
-    const { buildRequesterDisclosureStatusBadge } =
-      await import('./managedComposerBadges');
     const badge = buildRequesterDisclosureStatusBadge({
       owner: 'Ben',
       machine: 'build-01',
@@ -214,7 +214,6 @@ describe('managed composer badges', () => {
   });
 
   it('shows actual full sign-in and machine-user visibility, never scoped access, for the ordinary requester route', async () => {
-    const { buildRequesterDisclosureStatusBadge } = await import('./managedComposerBadges');
     const badge = buildRequesterDisclosureStatusBadge({ owner: 'Alice', machine: 'devbox', signIn: 'full' });
     const screen = await renderScreen(<>{badge.renderPopover?.({ open: true,
       anchorRef: React.createRef<unknown>(), onRequestClose: () => undefined })}</>);
@@ -225,7 +224,6 @@ describe('managed composer badges', () => {
   });
 
   it.each(['scoped', 'full'] as const)('names selected sign-in purposes without revealing their account references (%s)', async signIn => {
-    const { buildRequesterDisclosureStatusBadge } = await import('./managedComposerBadges');
     const badge = buildRequesterDisclosureStatusBadge({ owner: 'Alice', machine: 'devbox', signIn,
       signInPurposes: ['OpenAI', 'Anthropic (native sign-in)'] });
     const screen = await renderScreen(<>{badge.renderPopover?.({ open: true,

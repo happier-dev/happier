@@ -19,6 +19,7 @@ import {
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
+import { RequesterDisclosureContent, type RequesterDisclosureModel } from './RequesterDisclosure';
 import type { ManagedMachineArchiveChoiceAvailability } from '@/components/sessions/new/components/machineSelection/managedMachineSelection';
 
 /**
@@ -266,16 +267,6 @@ function archiveUnavailableReason(
   });
 }
 
-export type RequesterDisclosureModel = Readonly<{
-  owner: string;
-  machine: string;
-  /** `scoped` only when the scoped sign-in route was proven; `full` is the documented fallback. */
-  signIn: 'scoped' | 'full';
-  /** Safe names from the resolved launch purpose projection; never account ids or credential material. */
-  signInPurposes?: readonly string[];
-  onLearnMore?: () => void;
-}>;
-
 /** "Runs on Ben's build-01": whose machine it is, how the sign-in lands, who can see the files. */
 export function buildRequesterDisclosureStatusBadge(
   model: RequesterDisclosureModel,
@@ -303,51 +294,6 @@ export function buildRequesterDisclosureStatusBadge(
       />
     ),
   };
-}
-
-function RequesterDisclosureContent(
-  props: Readonly<{ model: RequesterDisclosureModel }>,
-) {
-  const { theme } = useUnistyles();
-  const { model } = props;
-  return (
-    <View style={styles.popover}>
-      <View style={styles.head}>
-        <Icon
-          name="hard-drives"
-          size={16}
-          color={theme.colors.text.secondary}
-        />
-        <Text style={styles.title}>
-          {t('machineRequester.runsOn', {
-            owner: model.owner,
-            machine: model.machine,
-          })}
-        </Text>
-      </View>
-      <Text style={styles.body}>
-        {model.signIn === 'scoped'
-          ? t('machineRequester.scopedSignIn', { machine: model.machine })
-          : t('machineRequester.fullSignIn', { machine: model.machine })}{' '}
-        {t('machineRequester.osVisibility', {
-          owner: model.owner,
-          machine: model.machine,
-        })}
-        {model.signInPurposes?.length ? ` ${t('machineRequester.signInPurposes', {
-          purposes: model.signInPurposes.join(', '),
-        })}` : null}
-      </Text>
-      {model.onLearnMore ? (
-        <Text
-          accessibilityRole="link"
-          style={styles.link}
-          onPress={model.onLearnMore}
-        >
-          {t('machineRequester.howShared')}
-        </Text>
-      ) : null}
-    </View>
-  );
 }
 
 const rowDescription = happierPageTextMetrics('rowDescription');
@@ -392,11 +338,6 @@ const styles = StyleSheet.create((theme) => ({
     ...Typography.default(),
     ...rowDescription,
     color: theme.colors.text.secondary,
-  },
-  link: {
-    ...Typography.default('medium'),
-    ...rowDescription,
-    color: theme.colors.text.link,
   },
   // Three one-word segments: as wide as their words, at the popover's leading edge (lab m-pick Aprogd).
   archiveChoice: {

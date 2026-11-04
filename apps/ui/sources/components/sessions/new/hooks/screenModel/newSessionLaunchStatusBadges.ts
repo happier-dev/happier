@@ -1,5 +1,6 @@
 import type { AgentInputStatusBadge } from '@/components/sessions/agentInput/agentInputContracts';
-import { buildRequesterDisclosureStatusBadge, type RequesterDisclosureModel } from '@/components/machines/managed/managedComposerBadges';
+import { buildRequesterDisclosureStatusBadge } from '@/components/machines/managed/managedComposerBadges';
+import type { RequesterDisclosureModel } from '@/components/machines/managed/RequesterDisclosure';
 import type { AgentSessionStartBlockLine } from '@/components/machines/agents/agentSessionStartBlockLine';
 import type { NewSessionLaunchPresentation } from '../../modules/newSessionLaunchPresentation';
 
