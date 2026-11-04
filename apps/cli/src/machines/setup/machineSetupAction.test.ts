@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { MachineSetupPlanInputV1Schema, MachineSetupPlanResultV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { machineSetupItemKeyV1 } from '@happier-dev/protocol';
-import { createNativeSoftwareInstallFixture } from '@/testkit/machines/nativeSoftwareInstall';
+import { createNativeSoftwareInstallFixture, osStore } from '@/testkit/machines/nativeSoftwareInstall';
+import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { nativeTerminal } from '@/testkit/machines/nativeSoftwareOs';
 import { createMachineSetupPlanAction } from './machineSetupAction';
 import { readFile } from 'node:fs/promises';
@@ -12,6 +13,32 @@ describe('admitted Machine setup snapshot lifetime', () => {
     nativeTerminal.exit = undefined;
     nativeTerminal.onLaunch = undefined;
     nativeTerminal.autoExit = false;
+  });
+  it.each(['admission', 'installation', 'credentials'] as const)('retains the installed runtime %s refusal in a managed Plan', async reason => {
+    const fixture = await createNativeSoftwareInstallFixture({ scenario: 'apt' });
+    const admittedContext = fixture.context('machines.setup.plan');
+    const { machineAdmission: _machineAdmission, ...unadmittedContext } = admittedContext;
+    const context = { ...(reason === 'admission' ? unadmittedContext : admittedContext),
+      externalActionExecutionAuthorization: ExternalActionExecutionAuthorizationV1Schema.parse({
+      ...admittedContext.externalActionExecutionAuthorization,
+      binding: { ...admittedContext.externalActionExecutionAuthorization!.binding, managedContinuation: {
+        managedId: 'managed', creationRequestId: 'creation', expectedIntentRevision: 0,
+        controller: { machineId: 'controller', installationId: 'controller-installation' },
+        acquireRequestEnvelopeDigest: 'b'.repeat(43),
+      } },
+    }) };
+    if (reason === 'installation') osStore.identity = null;
+    else if (reason === 'credentials') osStore.credentials = null;
+    const executor = fixture.createExecutor(fixture.credentials, {
+      machineSetupPlan: createMachineSetupPlanAction({ apiMachine: fixture.client,
+        machineId: fixture.machine.id, homeId: 'srv_home', installation: fixture.installation }),
+    });
+    expect(await executor.execute('machines.setup.plan', { homeId: 'srv_home', machineId: fixture.machine.id,
+      sources: fixture.sources, mode: 'effects' }, context)).toMatchObject({ ok: false, errorCode: 'target_unavailable',
+      details: { kind: 'machineSetup', failure: { kind: 'target_unavailable', phase: 'machine_setup_target',
+        branch: 'installed_runtime', reason } } });
+    expect(fixture.rootLaunches).toEqual([]);
+    expect(fixture.metadataWrites).toEqual([]);
   });
   it.each([
     { unavailable: 'locks', present: false, mode: 'plain' },

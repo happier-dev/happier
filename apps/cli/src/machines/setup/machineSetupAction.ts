@@ -86,15 +86,18 @@ export function createMachineSetupPlanAction(params: Readonly<{
       if (input.mode !== 'effects' || !params.installation || !params.apiMachine.resolveMachineSetupRuntime) return fail('admission_unavailable');
       try {
         const lifetime = signal ?? context.signal;
+        let runtimeRefusal: Parameters<typeof machineSetupTargetUnavailable>[1];
         const runtime = await params.apiMachine.resolveMachineSetupRuntime({ ...(lifetime ? { signal: lifetime } : {}),
+          onUnavailable: reason => { runtimeRefusal = reason; },
           ...(context.machineAdmission ? { machineAdmission: context.machineAdmission } : {}),
           ...(context.verifyMachineAdmissionCurrent ? { verifyMachineAdmissionCurrent: context.verifyMachineAdmissionCurrent } : {}) });
-        if (!runtime || !runtime.isCurrent || !await runtime.isCurrent()) return fail('target_unavailable');
+        if (!runtime || !runtime.isCurrent || !await runtime.isCurrent())
+          return machineSetupTargetUnavailable('installed_runtime', runtimeRefusal ?? 'runtime_closed');
         const admitted = MachineSetupResolveResultV1Schema.parse(await requestMachineSetupHome({ runtime, context,
           installation: params.installation, homeId: params.homeId, actionId: 'machines.setup.plan', path: '/v1/machines/setup/resolve',
           body: { homeId: input.homeId, machineId: input.machineId, sources: input.sources }, ...(lifetime ? { signal: lifetime } : {}) }));
         if (!('sources' in admitted) || !sameStrictJsonValue(admitted.sources, input.sources)) return fail('machine_setup_response_invalid');
-        if (!await runtime.isCurrent()) return fail('target_unavailable');
+        if (!await runtime.isCurrent()) return machineSetupTargetUnavailable('installed_runtime', 'runtime_closed');
       } catch (error) {
         const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
           ? error.code : (signal ?? context.signal)?.aborted ? 'cancelled' : 'machine_setup_request_failed';
