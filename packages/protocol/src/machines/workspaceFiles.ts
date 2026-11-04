@@ -1,12 +1,33 @@
 import { maxCodeUnits } from '../strings/maxCodeUnits.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
-import { DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_RAW_PAYLOAD_BYTES } from '../features/payload/capabilities/machineTunnelCapabilities.js';
+import { EXTERNAL_ACTION_RELAY_RESPONSE_SOCKET_MIN_BUFFER_BYTES } from '../actions/externalActionLimits.js';
+import { ACCOUNT_SCOPED_SECRETBOX_NONCE_BYTES, ACCOUNT_SCOPED_SECRETBOX_OVERHEAD_BYTES } from '../crypto/accountScopedCipherEnvelope.js';
+import { stringifySerializedJsonValue } from '../crypto/serializedJsonValue.js';
+import { SESSION_DATA_KEY_NONCE_BYTES, SESSION_DATA_KEY_TAG_BYTES } from '../crypto/sessionDataKeyBundleV0.js';
 
 /** Matches the existing workspace corpus ceiling used by repository-tree/file-search consumers. */
 export const WORKSPACE_FILE_LIST_MAX_RESULTS = 5_000;
-/** Keeps one typed response inside the canonical server-routed Machine RPC raw-payload ceiling. */
-export const WORKSPACE_FILE_LIST_MAX_RESPONSE_UTF8_BYTES = DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_RAW_PAYLOAD_BYTES;
+
+// Native root-namespace ACK: Engine.IO message (4), Socket.IO ACK (3), its
+// incrementing numeric id, and the JSON argument array. Socket.IO's Number
+// counter stops increasing at 2^53; the optional v1 RPC response carrier adds
+// {v:1,result:...}. Base64 contains no JSON-escaped characters.
+const workspaceReplySocketFramingBytes = `43${Number.MAX_SAFE_INTEGER + 1}${JSON.stringify([{ v: 1, result: '' }])}`.length;
+// The cipher serializes this authenticated v2 response through the canonical
+// serialized-value envelope; subtract only the placeholder response itself.
+const workspaceReplyEncryptedFramingBytes = new TextEncoder().encode(stringifySerializedJsonValue({
+  v: 2, k: 'res', c: '0'.repeat(32), r: null,
+})).byteLength - 'null'.length;
+const workspaceReplyCipherOverheadBytes = Math.max(
+  ACCOUNT_SCOPED_SECRETBOX_NONCE_BYTES + ACCOUNT_SCOPED_SECRETBOX_OVERHEAD_BYTES,
+  1 + SESSION_DATA_KEY_NONCE_BYTES + SESSION_DATA_KEY_TAG_BYTES,
+);
+/** JSON UTF-8 budget fitting the real socket floor after RPC, E2EE and base64 framing. */
+export const WORKSPACE_FILE_RPC_MAX_RESPONSE_UTF8_BYTES = Math.floor(
+  (EXTERNAL_ACTION_RELAY_RESPONSE_SOCKET_MIN_BUFFER_BYTES - workspaceReplySocketFramingBytes) / 4,
+) * 3 - workspaceReplyCipherOverheadBytes - workspaceReplyEncryptedFramingBytes;
+export const WORKSPACE_FILE_LIST_MAX_RESPONSE_UTF8_BYTES = WORKSPACE_FILE_RPC_MAX_RESPONSE_UTF8_BYTES;
 export const WORKSPACE_FILE_LIST_MAX_QUERY_CODE_UNITS = 1_024;
 
 export const DaemonWorkspaceFileListRequestSchema = lazyZodSchema(() => z.strictObject({
@@ -54,7 +75,7 @@ export const DaemonWorkspaceFileListResponseSchema = lazyZodSchema(() => z.discr
 ]));
 export type DaemonWorkspaceFileListResponse = z.infer<typeof DaemonWorkspaceFileListResponseSchema>;
 
-export const WORKSPACE_FILE_SEARCH_MAX_RESPONSE_UTF8_BYTES = DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_RAW_PAYLOAD_BYTES;
+export const WORKSPACE_FILE_SEARCH_MAX_RESPONSE_UTF8_BYTES = WORKSPACE_FILE_RPC_MAX_RESPONSE_UTF8_BYTES;
 
 export const DaemonWorkspaceFileSearchRequestSchema = lazyZodSchema(() => z.strictObject({
   rootPath: z.string().check(z.trim(), z.minLength(1), z.maxLength(10_000)),
@@ -191,9 +212,13 @@ export const DaemonWorkspaceFileReplaceApplyResponseSchema = lazyZodSchema(() =>
     path: z.string(), status: z.enum(['replaced', 'restored', 'changed', 'skipped', 'failed']),
     hash: z.optional(z.string()), matchCount: z.optional(z.number().check(z.int(), z.nonnegative())),
     edits: z.optional(z.array(WorkspaceFileReplaceInverseEditSchema)), reason: z.optional(z.string()), renameTo: z.optional(z.string()),
-  })), cancelled: z.optional(z.array(z.string())) }),
+  })), cancelled: z.optional(z.array(z.string())), truncated: z.optional(z.boolean()) }),
   z.strictObject({ ok: z.literal(false), code: z.enum(['invalid_request', 'invalid_pattern', 'root_not_allowed']) }),
-]));
+]).check(z.superRefine((value, context) => {
+  if (value.ok && new TextEncoder().encode(JSON.stringify(value)).byteLength > WORKSPACE_FILE_RPC_MAX_RESPONSE_UTF8_BYTES) {
+    context.addIssue({ code: 'custom', message: 'Replace receipt exceeds the machine transport ceiling' });
+  }
+})));
 export type DaemonWorkspaceFileReplacePreviewRequest = z.infer<typeof DaemonWorkspaceFileReplacePreviewRequestSchema>;
 export type DaemonWorkspaceFileReplacePreviewResponse = z.infer<typeof DaemonWorkspaceFileReplacePreviewResponseSchema>;
 export type DaemonWorkspaceFileReplaceApplyRequest = z.infer<typeof DaemonWorkspaceFileReplaceApplyRequestSchema>;

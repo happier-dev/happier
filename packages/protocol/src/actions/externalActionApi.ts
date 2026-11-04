@@ -80,6 +80,8 @@ import {
   EXTERNAL_ACTION_REQUEST_ID_MAX_LENGTH_V1,
   EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES,
   EXTERNAL_ACTION_HTTP_BODY_LIMIT_BYTES,
+  EXTERNAL_ACTION_RELAY_REQUEST_SOCKET_MIN_BUFFER_BYTES,
+  EXTERNAL_ACTION_RELAY_RESPONSE_SOCKET_MIN_BUFFER_BYTES,
   isExternalActionResultWithinResponseEnvelopeLimitV1,
   measureExternalActionResultResponseEnvelopeUtf8BytesV1,
 } from './externalActionLimits.js';
@@ -89,18 +91,12 @@ export {
   EXTERNAL_ACTION_REQUEST_ID_MAX_LENGTH_V1,
   EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES,
   EXTERNAL_ACTION_HTTP_BODY_LIMIT_BYTES,
+  EXTERNAL_ACTION_RELAY_REQUEST_SOCKET_MIN_BUFFER_BYTES,
+  EXTERNAL_ACTION_RELAY_RESPONSE_SOCKET_MIN_BUFFER_BYTES,
   isExternalActionResultWithinResponseEnvelopeLimitV1,
   measureExternalActionResultResponseEnvelopeUtf8BytesV1,
 };
 
-/**
- * Minimum Socket.IO capacity for a server-to-daemon Action request. This
- * leaves a 1 MiB carrier reserve above the admitted HTTP request body.
- */
-export const EXTERNAL_ACTION_RELAY_REQUEST_SOCKET_MIN_BUFFER_BYTES = 33 * 1024 * 1024;
-
-/** Minimum Socket.IO capacity for a daemon-to-server Action response. */
-export const EXTERNAL_ACTION_RELAY_RESPONSE_SOCKET_MIN_BUFFER_BYTES = 25_000_000;
 
 /** Relative path prefix; the Action id is the final path segment. */
 export const EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1 = '/v1/actions/' as const;

@@ -6,6 +6,15 @@ export const EXTERNAL_ACTION_HTTP_BODY_LIMIT_BYTES = 32 * 1024 * 1024;
 /** Maximum serialized UTF-8 bytes for one complete public Action response envelope. */
 export const EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES = 24_000_000;
 
+/**
+ * Minimum Socket.IO capacity for a server-to-daemon Action request. This
+ * leaves a 1 MiB carrier reserve above the admitted HTTP request body.
+ */
+export const EXTERNAL_ACTION_RELAY_REQUEST_SOCKET_MIN_BUFFER_BYTES = 33 * 1024 * 1024;
+
+/** Minimum Socket.IO capacity for a daemon-to-server Action response. */
+export const EXTERNAL_ACTION_RELAY_RESPONSE_SOCKET_MIN_BUFFER_BYTES = 25_000_000;
+
 /** Maximum code units in the opaque public Action path identity. */
 export const EXTERNAL_ACTION_ACTION_ID_MAX_LENGTH = 256;
 

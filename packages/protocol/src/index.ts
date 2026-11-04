@@ -3560,6 +3560,7 @@ export {
   WORKSPACE_FILE_LIST_MAX_QUERY_CODE_UNITS,
   WORKSPACE_FILE_LIST_MAX_RESPONSE_UTF8_BYTES,
   WORKSPACE_FILE_LIST_MAX_RESULTS,
+  WORKSPACE_FILE_RPC_MAX_RESPONSE_UTF8_BYTES,
   type DaemonWorkspaceFileListErrorCode,
   type DaemonWorkspaceFileListRequest,
   type DaemonWorkspaceFileListResponse,
