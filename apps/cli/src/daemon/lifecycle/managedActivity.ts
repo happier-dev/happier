@@ -14,6 +14,8 @@ export type LiveWorkItemV1 = Readonly<{
     // supplies the actual canonical process/operation and terminal references.
     ownerRef: unknown;
     attribution: RequesterWorkAttributionV1 | Readonly<{ kind: 'unknown' }>;
+    /** Admitted deployment residency has Environment authority, not requester custody. */
+    serviceIdentity?: MachineServiceIdentityV1;
     lifecyclePurpose?: 'development' | 'deployment' | 'infrastructure';
     /** Residency still counts as active retention use; only native transitions block maintenance. */
     serviceActivity?: 'residency' | 'transition';
@@ -48,7 +50,7 @@ export type ManagedActivityInventory = Readonly<{
     readDecision(): Promise<ActivityDecisionV1>;
     subscribe(listener: (decision: ActivityDecisionV1) => void): () => void;
     /** Per-item facts, excluding the aggregate Machine retention anchor. */
-    subscribeFacts(listener: () => void): () => void;
+    subscribeFacts(listener: (facts: LiveWorkInventoryV1) => void): () => void;
     dispose(): void;
 }>;
 
@@ -178,7 +180,7 @@ export function createManagedActivityInventory(params: Readonly<{
 }>): ManagedActivityInventory {
     const now = params.now ?? Date.now;
     const listeners = new Set<(decision: ActivityDecisionV1) => void>();
-    const factListeners = new Set<() => void>();
+    const factListeners = new Set<(facts: LiveWorkInventoryV1) => void>();
     let publishedFacts: Omit<LiveWorkInventoryV1, 'idleSince'> | undefined;
     let idleSince: number | undefined;
     let priorDecision: ActivityDecisionV1 | undefined;
@@ -252,6 +254,7 @@ export function createManagedActivityInventory(params: Readonly<{
                         || previous.state !== item.state || previous.settledAt !== item.settledAt
                         || previous.activeCount !== item.activeCount || previous.associatedTerminal !== item.associatedTerminal
                         || previous.workspacePath !== item.workspacePath || previous.workspaceId !== item.workspaceId
+                        || previous.serviceIdentity !== item.serviceIdentity
                         || previous.lifecyclePurpose !== item.lifecyclePurpose || previous.serviceActivity !== item.serviceActivity
                         || previous.actionOperationId !== item.actionOperationId
                         || JSON.stringify(previous.attribution) !== JSON.stringify(item.attribution);
@@ -259,7 +262,7 @@ export function createManagedActivityInventory(params: Readonly<{
             if (factsChanged) {
                 publishedFacts = { items, coverage };
                 if (!disposed) for (const listener of factListeners) {
-                    try { listener(); } catch { /* Observation cannot change work custody. */ }
+                    try { listener(inventory); } catch { /* Observation cannot change work custody. */ }
                 }
             }
             if (observedEdge !== publishedOwnerEdge || JSON.stringify(decision) !== JSON.stringify(priorDecision)) {

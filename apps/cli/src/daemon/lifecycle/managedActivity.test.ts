@@ -25,6 +25,24 @@ function producer() {
 }
 
 describe('managed activity inventory', () => {
+    it('delivers the assembled material facts to natural-boundary consumers without a second read', async () => {
+        const operations = createActionOperationStore();
+        operations.create({ operationId: 'finite', actionId: 'projects.compute.exec', title: 'Work',
+            scope: { accountId: 'member', machineId: 'machine' }, cancellation: 'supported', inputIdentity: '{}' });
+        const inventory = createManagedActivityInventory({ producers: [{ read: operations.readLiveWork, subscribe: operations.subscribe }] });
+        const facts: unknown[] = [];
+        // Rest args preserve valid RED against the prior zero-argument listener
+        // signature: missing facts are the defect, not a TypeScript setup error.
+        const detach = inventory.subscribeFacts((...args: unknown[]) => { facts.push(args[0]); });
+        try {
+            const initial = await inventory.read();
+            expect(facts).toEqual([initial]);
+            operations.succeed('finite', {});
+            await nextTurn();
+            expect(facts).toHaveLength(2);
+            expect(facts[1]).toMatchObject({ coverage: 'complete', items: [expect.objectContaining({ state: 'settled', actionOperationId: 'finite' })] });
+        } finally { detach(); inventory.dispose(); }
+    });
     it('keeps resident services busy for retention while maintenance reads fresh facts and excludes only its Action', async () => {
         const service: LiveWorkItemV1 = { category: 'service', ownerRef: 'deployed-db', attribution: { kind: 'unknown' },
             state: 'active', lifecyclePurpose: 'deployment', serviceActivity: 'residency' };
