@@ -170,7 +170,7 @@ test('stopLocalDaemon retires retained bundle PIDs only for its CLI home without
     pids.push(await spawnDaemonLikeProcess({ cliHomeDir, internalServerUrl, stackName, processKind: '' }));
     pids.push(await spawnDaemonLikeProcess({ cliHomeDir, internalServerUrl, stackName, processKind: '' }));
     pids.push(await spawnDaemonLikeProcess({ cliHomeDir: join(tmp, 'cli-identities', 'account-b'),
-      internalServerUrl, stackName, processKind: '' }));
+      stackCliHomeDir: cliHomeDir, internalServerUrl, stackName, processKind: '' }));
     const runtimeStatePath = join(tmp, 'stack.runtime.json');
     await recordStackRuntimeStart(runtimeStatePath, { stackName, ownerPid: process.pid,
       processes: { daemonPid: pids[2], daemonPids: pids } });
@@ -209,7 +209,7 @@ process.exit(0);
   return join(cliBinDir, 'happier.mjs');
 }
 
-async function spawnDaemonLikeProcess({ cliHomeDir, internalServerUrl, stackName = '', processKind = 'daemon' }) {
+async function spawnDaemonLikeProcess({ cliHomeDir, stackCliHomeDir = cliHomeDir, internalServerUrl, stackName = '', processKind = 'daemon' }) {
   const logDir = join(cliHomeDir, 'logs');
   await mkdir(logDir, { recursive: true });
   const ownedLogPath = join(logDir, 'daemon-owned.log');
@@ -227,7 +227,7 @@ async function spawnDaemonLikeProcess({ cliHomeDir, internalServerUrl, stackName
         ...process.env,
         DAEMON_OWNED_LOG_PATH: ownedLogPath,
         HAPPIER_HOME_DIR: cliHomeDir,
-        HAPPIER_STACK_CLI_HOME_DIR: cliHomeDir,
+        HAPPIER_STACK_CLI_HOME_DIR: stackCliHomeDir,
         ...(stackName ? { HAPPIER_STACK_STACK: stackName } : {}),
         HAPPIER_STACK_PROCESS_KIND: processKind,
         HAPPIER_SERVER_URL: internalServerUrl,

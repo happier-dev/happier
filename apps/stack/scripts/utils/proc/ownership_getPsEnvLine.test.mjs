@@ -3,6 +3,21 @@ import assert from 'node:assert/strict';
 
 import { getPsEnvLine, observePsEnvLine, resolvePidStackOwnership } from './ownership.mjs';
 
+test('CLI home ownership prefers the process home over the stack default home', async () => {
+  const stackName = 'identity-scope';
+  const cliHomeDir = '/stack/cli';
+  for (const [bindings, owned] of [
+    ['HAPPIER_HOME_DIR=/stack/cli-identities/account-b HAPPIER_STACK_CLI_HOME_DIR=/stack/cli', false],
+    ['HAPPIER_HOME_DIR=/stack/cli HAPPIER_STACK_CLI_HOME_DIR=/stack/base', true],
+    ['HAPPIER_STACK_CLI_HOME_DIR=/stack/cli', true],
+  ]) {
+    const result = await resolvePidStackOwnership(424242, { stackName, cliHomeDir }, {
+      observePsEnvLineImpl: async () => ({ status: 'ok', line: `424242 HAPPIER_STACK_STACK=${stackName} ${bindings}` }),
+    });
+    assert.equal(result.owned, owned, bindings);
+  }
+});
+
 test('real process identity adapter preserves Windows unsupported evidence as inconclusive', async () => {
   const observation = await observePsEnvLine(424242, { platform: 'win32' });
   assert.deepEqual(observation, {

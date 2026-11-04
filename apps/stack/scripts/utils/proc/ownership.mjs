@@ -442,7 +442,11 @@ export async function resolvePidStackOwnership(
 
   // Fallback: CLI home dir binding (useful for daemon-related processes).
   if (ch) {
-    if (textContainsNeedle(line, `HAPPIER_HOME_DIR=${ch}`) || textContainsNeedle(line, `HAPPIER_STACK_CLI_HOME_DIR=${ch}`)) {
+    // A named daemon retains the stack's default CLI home as configuration.
+    // Its effective process home owns the identity whenever it is present.
+    const homeBinding = textContainsEnvBindingName(line, 'HAPPIER_HOME_DIR')
+      ? 'HAPPIER_HOME_DIR' : 'HAPPIER_STACK_CLI_HOME_DIR';
+    if (textContainsNeedle(line, `${homeBinding}=${ch}`)) {
       return { status: 'owned', owned: true, reason: 'cli_home' };
     }
   }
