@@ -1645,6 +1645,300 @@ describe('MultiTextInput', () => {
         expect(mockTextarea.scrollTop).toBe(0);
     });
 
+    it('keeps the committed height during IME composition ticks instead of collapse-measuring', async () => {
+        // Collapse-to-measure on every composition tick costs three forced layout flushes and
+        // destroys the textarea's own scroll offset mid-composition. A composition tick must not
+        // shrink the box below the height committed before the composition started.
+        const { MultiTextInput } = await import('./MultiTextInput.web');
+        const onContentHeightChange = vi.fn();
+        const mockTextarea = {
+            value: 'hello',
+            selectionStart: 5,
+            selectionEnd: 5,
+            scrollTop: 0,
+            scrollHeight: 200,
+            style: {} as Record<string, string>,
+            setSelectionRange: vi.fn(),
+            dispatchEvent: vi.fn(),
+        };
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(
+                <MultiTextInput
+                    testID="composer-input"
+                    value="hello"
+                    maxHeight={400}
+                    onChangeText={() => {}}
+                    onContentHeightChange={onContentHeightChange}
+                />,
+                {
+                    createNodeMock: (element) => {
+                        if (element.type === 'textarea') return mockTextarea;
+                        return null;
+                    },
+                },
+            );
+        });
+        expect(mockTextarea.style.height).toBe('200px');
+
+        const input = tree!.root.findByType('textarea' as any);
+        await act(async () => {
+            input.props.onCompositionStart();
+        });
+
+        // A shorter composed update (precomposition text deleted inside the IME session).
+        mockTextarea.value = 'hi';
+        mockTextarea.scrollHeight = 120;
+        await act(async () => {
+            input.props.onChange({
+                target: mockTextarea,
+                currentTarget: mockTextarea,
+                nativeEvent: { isComposing: true },
+            });
+        });
+
+        expect(mockTextarea.style.height).toBe('200px');
+    });
+
+    it('still grows the textarea during IME composition without collapsing', async () => {
+        const { MultiTextInput } = await import('./MultiTextInput.web');
+        const onContentHeightChange = vi.fn();
+        const mockTextarea = {
+            value: 'hello',
+            selectionStart: 5,
+            selectionEnd: 5,
+            scrollTop: 0,
+            scrollHeight: 200,
+            style: {} as Record<string, string>,
+            setSelectionRange: vi.fn(),
+            dispatchEvent: vi.fn(),
+        };
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(
+                <MultiTextInput
+                    testID="composer-input"
+                    value="hello"
+                    maxHeight={400}
+                    onChangeText={() => {}}
+                    onContentHeightChange={onContentHeightChange}
+                />,
+                {
+                    createNodeMock: (element) => {
+                        if (element.type === 'textarea') return mockTextarea;
+                        return null;
+                    },
+                },
+            );
+        });
+        expect(mockTextarea.style.height).toBe('200px');
+
+        const input = tree!.root.findByType('textarea' as any);
+        await act(async () => {
+            input.props.onCompositionStart();
+        });
+
+        mockTextarea.value = 'hello composed much longer text';
+        mockTextarea.scrollHeight = 300;
+        await act(async () => {
+            input.props.onChange({
+                target: mockTextarea,
+                currentTarget: mockTextarea,
+                nativeEvent: { isComposing: true },
+            });
+        });
+
+        expect(mockTextarea.style.height).toBe('300px');
+        expect(onContentHeightChange).toHaveBeenLastCalledWith(300);
+    });
+
+    it('re-measures directly when composition ends', async () => {
+        const { MultiTextInput } = await import('./MultiTextInput.web');
+        const mockTextarea = {
+            value: 'hello',
+            selectionStart: 5,
+            selectionEnd: 5,
+            scrollTop: 0,
+            scrollHeight: 200,
+            style: {} as Record<string, string>,
+            setSelectionRange: vi.fn(),
+            dispatchEvent: vi.fn(),
+        };
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(
+                <MultiTextInput
+                    testID="composer-input"
+                    value="hello"
+                    maxHeight={400}
+                    onChangeText={() => {}}
+                />,
+                {
+                    createNodeMock: (element) => {
+                        if (element.type === 'textarea') return mockTextarea;
+                        return null;
+                    },
+                },
+            );
+        });
+
+        const input = tree!.root.findByType('textarea' as any);
+        await act(async () => {
+            input.props.onCompositionStart();
+        });
+        mockTextarea.value = 'hi';
+        mockTextarea.scrollHeight = 120;
+        await act(async () => {
+            input.props.onChange({
+                target: mockTextarea,
+                currentTarget: mockTextarea,
+                nativeEvent: { isComposing: true },
+            });
+        });
+
+        await act(async () => {
+            input.props.onCompositionEnd({
+                target: mockTextarea,
+                currentTarget: mockTextarea,
+            });
+        });
+
+        expect(mockTextarea.style.height).toBe('120px');
+    });
+
+    it('clears the composing flag on blur so a missed compositionend cannot freeze autosize', async () => {
+        const { MultiTextInput } = await import('./MultiTextInput.web');
+        const onBlur = vi.fn();
+        const mockTextarea = {
+            value: 'hello',
+            selectionStart: 5,
+            selectionEnd: 5,
+            scrollTop: 0,
+            scrollHeight: 200,
+            style: {} as Record<string, string>,
+            setSelectionRange: vi.fn(),
+            dispatchEvent: vi.fn(),
+        };
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(
+                <MultiTextInput
+                    testID="composer-input"
+                    value="hello"
+                    maxHeight={400}
+                    onChangeText={() => {}}
+                    onBlur={onBlur}
+                />,
+                {
+                    createNodeMock: (element) => {
+                        if (element.type === 'textarea') return mockTextarea;
+                        return null;
+                    },
+                },
+            );
+        });
+
+        const input = tree!.root.findByType('textarea' as any);
+        await act(async () => {
+            input.props.onCompositionStart();
+        });
+        await act(async () => {
+            input.props.onBlur();
+        });
+        expect(onBlur).toHaveBeenCalledTimes(1);
+
+        // The input event carries no isComposing flag (a browser that omitted it), so the blur
+        // above is the only proof composition is over; the full measure must run.
+        mockTextarea.value = 'hi';
+        mockTextarea.scrollHeight = 120;
+        await act(async () => {
+            input.props.onChange({
+                target: mockTextarea,
+                currentTarget: mockTextarea,
+                nativeEvent: {},
+            });
+        });
+
+        expect(mockTextarea.style.height).toBe('120px');
+    });
+
+    it('keeps a grow-only composition tick from consuming the confirm-render measurement dedup', async () => {
+        // If grow-only ever records the confirm-render dedup key, a mid-composition confirm render
+        // (the emptiness-edge emit) would SKIP its full re-measure and leave the box stale until
+        // compositionend. The dedup key stays owned by the full path: the confirm render here must
+        // still collapse-measure (a height:'auto' write), while the composition tick itself must not.
+        const { MultiTextInput } = await import('./MultiTextInput.web');
+        const heightWrites: string[] = [];
+        const mockTextarea = {
+            value: '',
+            selectionStart: 0,
+            selectionEnd: 0,
+            scrollTop: 0,
+            scrollHeight: 30,
+            style: new Proxy({} as Record<string, string>, {
+                set(target, key, next) {
+                    if (key === 'height') heightWrites.push(String(next));
+                    target[key as string] = next;
+                    return true;
+                },
+            }),
+            setSelectionRange: vi.fn(),
+            dispatchEvent: vi.fn(),
+        };
+
+        const renderComposer = (tree: renderer.ReactTestRenderer | null, nextValue: string) => {
+            const props = {
+                testID: 'composer-input',
+                value: nextValue,
+                maxHeight: 400,
+                onChangeText: () => {},
+            };
+            return tree
+                ? tree.update(React.createElement(MultiTextInput as unknown as React.ComponentType<Record<string, unknown>>, props))
+                : renderer.create(
+                    React.createElement(MultiTextInput as unknown as React.ComponentType<Record<string, unknown>>, props),
+                    {
+                        createNodeMock: (element) => {
+                            if (element.type === 'textarea') return mockTextarea;
+                            return null;
+                        },
+                    },
+                );
+        };
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderComposer(null, '');
+        });
+        heightWrites.length = 0;
+
+        const input = tree!.root.findByType('textarea' as any);
+        await act(async () => {
+            input.props.onCompositionStart();
+        });
+
+        // Crosses the emptiness edge mid-composition: the tick emits and the parent confirms.
+        mockTextarea.value = 'hello';
+        mockTextarea.scrollHeight = 200;
+        await act(async () => {
+            input.props.onChange({
+                target: mockTextarea,
+                currentTarget: mockTextarea,
+                nativeEvent: { isComposing: true },
+            });
+        });
+        expect(heightWrites).toEqual(['200px']);
+
+        await act(async () => {
+            renderComposer(tree, 'hello');
+        });
+        expect(heightWrites).toContain('auto');
+    });
+
     // "does not reapply web scroll restore on controlled value changes without
     // a new restore token" was consolidated into "re-applies a consumed web
     // scroll restore after adopting an external value, but never after

@@ -172,6 +172,7 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
     const uiFontScale = useLocalSetting('uiFontScale');
     const textareaRef = React.useRef<HTMLTextAreaElement>(null);
     const isComposingRef = React.useRef(false);
+    const lastAppliedHeightRef = React.useRef<number | null>(null);
     const liveValueRef = React.useRef(value);
     const lastEmittedValueRef = React.useRef(value);
     const hasUnconfirmedEmissionRef = React.useRef(false);
@@ -282,6 +283,7 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
                 : normalizedMaxHeight;
             notifyContentHeightChange(Math.max(measuredContentHeight, normalizedMaxHeight));
             node.style.height = `${normalizedMaxHeight}px`;
+            lastAppliedHeightRef.current = normalizedMaxHeight;
             setTextareaHeight((current) => (current === normalizedMaxHeight ? current : normalizedMaxHeight));
             lastMeasuredKeyRef.current = { text: liveValueRef.current, textareaStyle, maxHeight: normalizedMaxHeight };
             return;
@@ -313,6 +315,7 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
             notifyContentHeightChange(measuredHeight);
             const nextHeight = Math.min(normalizedMaxHeight, Math.max(0, measuredHeight));
             node.style.height = `${nextHeight}px`;
+            lastAppliedHeightRef.current = nextHeight;
             setTextareaHeight((current) => (current === nextHeight ? current : nextHeight));
         } finally {
             if (wrapper) {
@@ -326,6 +329,31 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
         }
         lastMeasuredKeyRef.current = { text: liveValueRef.current, textareaStyle, maxHeight: normalizedMaxHeight };
     }, [normalizedMaxHeight, notifyContentHeightChange, textareaStyle]);
+
+    // Composition ticks must not collapse-measure: that path forces three synchronous layout
+    // flushes per tick (the scrollTop read on an already-dirty layout, the scrollHeight read after
+    // the auto-collapse write, and the scrollTop restore) and destroys the textarea's own scroll
+    // offset mid-composition. Growing alone needs one scrollHeight read, can never shrink the box
+    // below the pre-composition height, and cannot create internal scroll; compositionend's direct
+    // full re-measure settles the exact height. Deliberately does not touch the confirm-render
+    // dedup key: every full-path run stays the authoritative measurement for its text.
+    const applyTextareaHeightGrowOnly = React.useCallback((node: HTMLTextAreaElement) => {
+        const lastAppliedHeight = lastAppliedHeightRef.current;
+        if (lastAppliedHeight === null) {
+            applyTextareaHeight(node);
+            return;
+        }
+        const measuredHeight = Number.isFinite(node.scrollHeight) && node.scrollHeight > 0
+            ? Math.ceil(node.scrollHeight)
+            : 0;
+        if (measuredHeight <= lastAppliedHeight) return;
+        const nextHeight = Math.min(normalizedMaxHeight, measuredHeight);
+        if (nextHeight <= lastAppliedHeight) return;
+        node.style.height = `${nextHeight}px`;
+        lastAppliedHeightRef.current = nextHeight;
+        notifyContentHeightChange(measuredHeight);
+        setTextareaHeight((current) => (current === nextHeight ? current : nextHeight));
+    }, [applyTextareaHeight, normalizedMaxHeight, notifyContentHeightChange]);
 
     React.useLayoutEffect(() => {
         const node = textareaRef.current;
@@ -503,7 +531,11 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
     const handleChange = React.useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
         const text = e.target.value;
         liveValueRef.current = text;
-        applyTextareaHeight(e.currentTarget, text.length);
+        if (isComposingRef.current) {
+            applyTextareaHeightGrowOnly(e.currentTarget);
+        } else {
+            applyTextareaHeight(e.currentTarget, text.length);
+        }
         // An input the browser reports as non-composing proves no composition is active, even
         // if its compositionend never reached us (e.g. a script value write cancelled it).
         if (readEventIsComposing(e.nativeEvent) === false) {
@@ -520,7 +552,7 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
             if (containsLikelyNonWhitespace(text) === containsLikelyNonWhitespace(parentText)) return;
         }
         emitInputState(e.target);
-    }, [applyTextareaHeight, emitInputState]);
+    }, [applyTextareaHeight, applyTextareaHeightGrowOnly, emitInputState]);
 
     const handleSelect = React.useCallback((e: React.SyntheticEvent<HTMLTextAreaElement>) => {
         if (isComposingRef.current) return;
@@ -556,7 +588,18 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
         const node = textareaRef.current ?? e.currentTarget;
         liveValueRef.current = node.value;
         emitInputState(node);
-    }, [emitInputState]);
+        // Settle the height directly: composition ticks only ever grow the box, and riding the
+        // parent confirm-render dedup left the exact re-measure dependent on a debounce that
+        // large drafts delay.
+        applyTextareaHeight(node);
+    }, [applyTextareaHeight, emitInputState]);
+
+    // Blur proves composition is over even when a compositionend never arrived (view transitions,
+    // refocus races); without this, a missed end would leave autosize frozen in grow-only mode.
+    const handleBlur = React.useCallback(() => {
+        isComposingRef.current = false;
+        props.onBlur?.();
+    }, [props.onBlur]);
 
     const handlePaste = React.useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>) => {
         const cb = props.onFilesPasted;
@@ -689,7 +732,7 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
         onDragOver: handleDragOver,
         onDrop: handleDrop,
         onFocus: props.onFocus,
-        onBlur: props.onBlur,
+        onBlur: handleBlur,
         readOnly: props.editable === false,
         autoCapitalize: 'sentences',
         autoCorrect: 'on',
