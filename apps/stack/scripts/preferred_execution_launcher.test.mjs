@@ -2606,14 +2606,29 @@ test('queue policy native: unavailable SSH master uses the reachable direct comm
 
 for (const dispatcher of ['native', 'javascript', 'pinned']) {
   test(`queue policy ${dispatcher}: routed work recovers from real target admission pressure`, { timeout: 30_000 }, async (t) => {
-    const { invocation, samplePath } = await memoryRoutingFixture(t, { roomyAvailableKiB: 5242880, fallback: 'local' });
-    const { launcher: fixtureLauncher } = await installNativeAdmissionFixture({ root: invocation.env.HOME, prepareDependencies: true });
+    const belowFloorKiB = resolveHeavyweightMemoryFloorKiB('validation') - 1;
+    const { invocation, samplePath } = await memoryRoutingFixture(t, { availableKiB: belowFloorKiB, roomyAvailableKiB: belowFloorKiB, fallback: 'local' });
+    const native = await installNativeAdmissionFixture({ root: invocation.env.HOME, prepareDependencies: true });
+    const { launcher: fixtureLauncher } = native;
+    const pressure = await holdNativeAdmissionFixtureMemory(t, native, { totalKiB: 28311552, availableKiB: belowFloorKiB });
     const checkout = resolve(fixtureLauncher, '../../../..');
     const config = JSON.parse(await readFile(invocation.env.HAPPIER_EXEC_CONFIG_PATH, 'utf8'));
+    // This queue owns one physical worker; distinct-worker pool recovery has its own case.
+    config.targets = config.targets.filter(target => target.name === 'starved');
+    config.commandExecution.targets = config.targets.map(target => target.name);
     for (const target of config.targets) target.repoDir = checkout;
     await writeFile(invocation.env.HAPPIER_EXEC_CONFIG_PATH, JSON.stringify(config));
-    await writeNativeProjectionFixture(join(invocation.env.HAPPIER_STACK_STORAGE_DIR, 'repo-memory', 'dev-target-exec-v1.sh'), renderNativeExecutionProjection(config, { repoRoot: dispatcher !== 'javascript' ? checkout : repoRoot }));
-    if (dispatcher !== 'javascript') invocation.cwd = checkout;
+    await writeNativeProjectionFixture(join(invocation.env.HAPPIER_STACK_STORAGE_DIR, 'repo-memory', 'dev-target-exec-v1.sh'), renderNativeExecutionProjection(config, { repoRoot: checkout }));
+    invocation.cwd = checkout;
+    if (dispatcher === 'javascript') {
+      // The public JS adapter delegates through foreground process custody.
+      // Keep that real path while directing its launcher to the owned worker.
+      const preload = join(invocation.env.HOME, 'javascript-queue-process.mjs');
+      await writeFile(preload, `import { installWorkspaceAdmissionProcessAdapter } from ${JSON.stringify(new URL('./testkit/core/native_admission_fixture.mjs', import.meta.url).href)};
+installWorkspaceAdmissionProcessAdapter({ launcher: ${JSON.stringify(fixtureLauncher)} });
+`);
+      invocation.env.NODE_OPTIONS = `${invocation.env.NODE_OPTIONS ?? ''} --import=${pathToFileURL(preload).href}`.trim();
+    }
     const binDir = invocation.env.PATH.split(':')[0];
     await executable(join(binDir, 'uname'), '#!/bin/sh\nprintf "Linux\\n"\n');
     await executable(join(binDir, 'getconf'), '#!/bin/sh\nprintf "8\\n"\n');
@@ -2641,23 +2656,19 @@ for (const dispatcher of ['native', 'javascript', 'pinned']) {
     await executable(join(binDir, 'vitest'), '#!/bin/sh\nprintf "queued-remote-result\\n"\n');
     const args = dispatcher !== 'javascript'
       ? [fixtureLauncher, ...(dispatcher === 'pinned' ? ['--target=starved'] : []), '--', 'vitest', 'run', 'fixture.test.ts']
-      : [join(import.meta.dirname, 'dev_targets.mjs'), 'exec', 'auto', '--stack=repo-memory', '--', 'vitest', 'run', 'fixture.test.ts'];
+      : [join(import.meta.dirname, 'dev_targets.mjs'), 'exec', 'auto', `--cwd=${checkout}`, '--', 'vitest', 'run', 'fixture.test.ts'];
     const child = spawn(dispatcher !== 'javascript' ? '/bin/sh' : process.execPath, args, { ...invocation, stdio: ['ignore', 'pipe', 'pipe'] });
     t.after(() => { if (child.exitCode == null && child.signalCode == null) child.kill('SIGTERM'); });
-    let stdout = '', stderr = '', recovery;
+    let stdout = '', stderr = '';
     child.stdout.on('data', (chunk) => { stdout += chunk; });
-    child.stderr.on('data', (chunk) => {
-      stderr += chunk;
-      if (!recovery && /memory-available=5242880\/28311552|admission busy before dispatch/.test(stderr)) {
-        assert.equal(payloadOutput(stdout), '');
-        recovery = writeFile(samplePath, '8 0.1 0.9 22000000 20 0 25480397 28311552 0 0 0 0 0 0 0 linux\n');
-      }
-    });
-    const code = await new Promise((resolveExit, reject) => { child.once('error', reject); child.once('exit', resolveExit); });
-    await recovery;
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    const exited = new Promise((resolveExit, reject) => { child.once('error', reject); child.once('exit', resolveExit); });
+    await waitForRuntime(async () => (await native.brokerStatus()).waitingCount === 1, () => stderr);
+    assert.equal(payloadOutput(stdout), '');
+    await pressure.release(() => writeFile(samplePath, '8 0.1 0.9 22000000 20 0 25480397 28311552 0 0 0 0 0 0 0 linux\n'));
+    const code = await exited;
     assert.equal(code, 0, stderr);
-    assert.ok(recovery, stderr);
-    assert.match(stderr, dispatcher === 'pinned' ? /waiting for heavyweight admission on .*memory-available/ : /admission busy before dispatch.*re-evaluating/);
+    assert.equal((await native.brokerStatus()).waitingCount, 0);
     assert.equal(payloadOutput(stdout), 'queued-remote-result\n');
     assert.doesNotMatch(stderr, /running locally/);
     assert.match(await readFile(invocation.env.FIXTURE_TRACE, 'utf8'), /remote_dependency_bootstrap\.mjs/);
