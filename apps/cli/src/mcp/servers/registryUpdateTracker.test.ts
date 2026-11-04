@@ -128,7 +128,10 @@ describe('MCP registry update tracker', () => {
         kind: 'mcpServer', key: 'registered', upstream: { state: 'update_available', latest: { kind: 'version', version: 'v2' } },
       }] });
       expect(fixture.catalog().servers[0]!.origin).toMatchObject({ upstream: result.results[0]!.upstream });
+      const origin = fixture.catalog().servers[0]!.origin;
+      expect(origin).toMatchObject({ upstreamObservedAt: expect.any(Number) });
       await fixture.checker.checkNow({ kind: 'mcpServer', keys: ['registered'] });
+      expect(fixture.catalog().servers[0]!.origin).toEqual(origin);
       expect(fixture.writes()).toBe(1);
     });
   });
@@ -144,7 +147,7 @@ describe('MCP registry update tracker', () => {
       await tracker.record([{ key: 'registered', upstream }, { key: 'custom', upstream }]);
       expect(fixture.revision()).toBe(2);
       const entry = fixture.catalog().servers[0]!;
-      expect(entry).toEqual({ ...original.servers[0], updatedAt: expect.any(Number), origin: { ...original.servers[0]!.origin, upstream } });
+      expect(entry).toEqual({ ...original.servers[0], updatedAt: expect.any(Number), origin: { ...original.servers[0]!.origin, upstream, upstreamObservedAt: expect.any(Number) } });
       expect(entry.updatedAt).toBeGreaterThan(original.servers[0]!.updatedAt);
       expect(fixture.catalog().bindings).toEqual(original.bindings);
       expect(RegistryUpstreamV1Schema.parse(entry.origin?.kind === 'registry' ? entry.origin.upstream : undefined)).toEqual(upstream);
@@ -153,8 +156,25 @@ describe('MCP registry update tracker', () => {
       expect(fixture.writes()).toBe(1);
       await tracker.record([{ key: 'registered', upstream: { ...upstream, latest: { kind: 'version', version: 'v3' } } }]);
       await tracker.record([{ key: 'registered', upstream: { state: 'removed_from_source' } }]);
-      expect(fixture.catalog().servers[0]!.origin).toEqual({ ...original.servers[0]!.origin, upstream: { state: 'removed_from_source' } });
+      expect(fixture.catalog().servers[0]!.origin).toEqual({ ...original.servers[0]!.origin, upstream: { state: 'removed_from_source' }, upstreamObservedAt: expect.any(Number) });
       expect(fixture.writes()).toBe(3);
+    });
+  });
+
+  it('retains distinct observation identities when upstream changes twice in one clock tick', async () => {
+    await withAccount(async fixture => {
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(50);
+      try {
+        const upstream = RegistryUpstreamV1Schema.parse({ state: 'update_available', latest: { kind: 'version', version: 'v2' } });
+        await fixture.tracker.record([{ key: 'registered', upstream }]);
+        const first = fixture.catalog().servers[0]!.origin;
+        await fixture.tracker.record([{ key: 'registered', upstream: { state: 'current', latest: { kind: 'version', version: 'v1' } } }]);
+        await fixture.tracker.record([{ key: 'registered', upstream }]);
+        const next = fixture.catalog().servers[0]!.origin;
+        expect(first?.kind).toBe('registry'); expect(next?.kind).toBe('registry');
+        if (first?.kind !== 'registry' || next?.kind !== 'registry') throw new Error('Expected registry origin');
+        expect(next.upstreamObservedAt).toBeGreaterThan(first.upstreamObservedAt!);
+      } finally { clock.mockRestore(); }
     });
   });
 

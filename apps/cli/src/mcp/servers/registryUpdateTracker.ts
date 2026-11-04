@@ -34,7 +34,10 @@ export function createMcpRegistryUpdateTracker(input: Readonly<{
           || change.provenance && !isDeepStrictEqual(entry.origin.provenance, change.provenance)
           || registryUpstreamEqualV1(entry.origin.upstream, change.upstream)) continue;
         const receipt = await input.store.mutate({ kind: 'server-update', entry: {
-          ...entry, origin: { ...entry.origin, upstream: change.upstream },
+          ...entry, origin: { ...entry.origin, upstream: change.upstream,
+            // Distinct committed transitions need distinct replay identities,
+            // including two observations in one clock tick or a clock rollback.
+            upstreamObservedAt: Math.max(Date.now(), (entry.origin.upstreamObservedAt ?? -1) + 1) },
         } }, snapshot.revision, snapshot);
         if (receipt.status === 'updated') continue;
         if (receipt.status === 'conflict') {

@@ -656,6 +656,7 @@ export type SavedSecretSharingActionInputById = {
                                         kind: 'packageContent';
                                     } | undefined;
                                 } | undefined;
+                                upstreamObservedAt?: number | undefined;
                             } | {
                                 kind: 'machine';
                                 machineId: string;

@@ -3889,6 +3889,9 @@ and `RPC_OUTCOME_UNKNOWN` values remain accepted.
 ## Plugin Platform direct-cut frontier
 ### Operations trigger Events (0.3 development source)
 
+MCP registry origins retain optional `upstreamObservedAt` on changed upstream
+observations. Duplicate reports/checks retain those values.
+
 Machine presence Events `machine-offline` / `machine-online` retain the existing
 timeout and recovery decisions in nullable `Machine.presenceTransitions`.
 The owner-approved append-only `20261102101034_add_machine_presence_transitions`
