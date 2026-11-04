@@ -1387,6 +1387,9 @@ probe_target() {
       case " ${HSTACK_EXEC_PRE_DISPATCH_DISK_TARGETS-} " in
         *" $name "*) printf '%s %s 0 - 1 disk\n' "$number" "$name"; return ;;
       esac
+      case " ${HSTACK_EXEC_PRE_DISPATCH_CAPACITY_TARGETS-} " in
+        *" $name "*) printf '%s %s 0 - 1 memory-capacity\n' "$number" "$name"; return ;;
+      esac
       case " ${HSTACK_EXEC_PRE_DISPATCH_BUSY_TARGETS-} " in
         *" $name "*)
           if [ "${HSTACK_EXEC_RUNTIME_CONTROL_CHILD-}" = try ]; then
@@ -2288,7 +2291,19 @@ if [ "$status" -eq 137 ]; then
 fi
 admission_result=
 if [ "$status" -eq 75 ] && [ -n "$admission_error_log" ]; then
-  admission_result=$(grep -Fx -e "HSTACK_ADMISSION_BUSY:$admission_failure_id" -e "HSTACK_ADMISSION_UNAVAILABLE:$admission_failure_id" -e "HSTACK_ADMISSION_DISK:$admission_failure_id" "$admission_error_log" | head -n 1)
+  admission_result=$(grep -Fx -e "HSTACK_ADMISSION_BUSY:$admission_failure_id" -e "HSTACK_ADMISSION_UNAVAILABLE:$admission_failure_id" -e "HSTACK_ADMISSION_DISK:$admission_failure_id" -e "HSTACK_ADMISSION_CAPACITY:$admission_failure_id" "$admission_error_log" | head -n 1)
+fi
+if [ "$admission_result" = "HSTACK_ADMISSION_CAPACITY:$admission_failure_id" ]; then
+  release_reservation
+  release_custody_pipe
+  [ -z "$authoritative_ssh_error_log" ] || rm -f -- "$authoritative_ssh_error_log"
+  [ -z "$explicit_target_number" ] || exit 75
+  HSTACK_EXEC_PRE_DISPATCH_CAPACITY_TARGETS="${HSTACK_EXEC_PRE_DISPATCH_CAPACITY_TARGETS-} $selected_name"
+  export HSTACK_EXEC_PRE_DISPATCH_CAPACITY_TARGETS
+  printf '[preferred-execution] %s physical memory capacity cannot fit %s before dispatch; re-evaluating automatic placement\n' "$selected_name" "$heavyweight_remote_class" >&2
+  retry_other_target_before_dispatch "$@"
+  printf '%s\n' '[preferred-execution] no configured worker has enough physical RAM for this command class' >&2
+  exit 1
 fi
 if [ "$admission_result" = "HSTACK_ADMISSION_DISK:$admission_failure_id" ]; then
   release_reservation
