@@ -1,3 +1,5 @@
+import { DeploymentInvalidV1Schema } from '../deployments/deploymentInvalidV1.js';
+import { isDeploymentActionIdV1 } from '../deployments/deploymentActionIdsV1.js';
 import type { ActionExecuteFailure } from '../actions/actionExecutionResult.js';
 import { AccountActionHttpFailureDetailsV1Schema, ClientActionFailureDetailsV1Schema, ClientActionRpcFailureCodeV1Schema } from '../actions/actionExecutionResult.js';
 import * as z from 'zod/mini';
@@ -47,6 +49,11 @@ function parseStrictApprovalFailure(input: Readonly<{
   request: ApprovalRequestV2;
   failure: ActionExecuteFailure;
 }>, storedRead = false): ActionExecuteFailure | null {
+  if (isDeploymentActionIdV1(input.request.actionId) && input.failure.errorCode === 'deployment_invalid') {
+    const details = (storedRead ? createStoredReadSchema(DeploymentInvalidV1Schema) : DeploymentInvalidV1Schema)
+      .safeParse(input.failure.details);
+    if (details.success && details.data.diagnostic) return { ...input.failure, details: details.data };
+  }
   const clientDetails = (storedRead ? createStoredReadSchema(ClientActionFailureDetailsV1Schema)
     : ClientActionFailureDetailsV1Schema).safeParse(input.failure.details);
   if (clientDetails.success) {

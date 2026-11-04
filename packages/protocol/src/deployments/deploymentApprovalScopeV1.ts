@@ -1,7 +1,8 @@
 import type { ActionExecutorContext, ActionExecutorDeps, ActionExecuteFailure } from '../actions/executor/types.js';
 import { artifactSavedByFromActionContextV1 } from '../artifacts/artifactBinaryV1.js';
 import { readRecord } from '../inputs/inputRecords.js';
-import { DeploymentEnvironmentGetResultV1Schema, DeploymentReceiptGetResultV1Schema } from './deploymentActionsV1.js';
+import { DeploymentEnvironmentGetResultV1Schema, DeploymentReceiptGetResultV1Schema,
+  type DeploymentActionFailureV1 } from './deploymentActionsV1.js';
 
 type EnvironmentApprovalRead = Readonly<{
   serverId: string; environmentId: string; context: ActionExecutorContext;
@@ -13,7 +14,7 @@ async function readApprovalEnvironment(input: EnvironmentApprovalRead) {
   if ('errorCode' in loaded) return loaded;
   const current = DeploymentEnvironmentGetResultV1Schema.safeParse(loaded);
   if (!current.success) return failure('invalid_action_output');
-  if (!current.data.ok) return failure(current.data.error);
+  if (!current.data.ok) return failure(current.data.error, current.data);
   if (input.context.signal?.aborted) return failure('cancelled');
   if (current.data.environment.id !== input.environmentId) return failure('deployment_unavailable');
   return { ok: true as const, environment: current.data.environment };
@@ -56,7 +57,7 @@ export function createDeploymentApprovalScopeResolverV1(
       if ('errorCode' in loaded) return loaded;
       const receipt = DeploymentReceiptGetResultV1Schema.safeParse(loaded);
       if (!receipt.success) return failure('invalid_action_output');
-      if (!receipt.data.ok) return failure(receipt.data.error);
+      if (!receipt.data.ok) return failure(receipt.data.error, receipt.data);
       if (receipt.data.deployment.id !== target.deploymentId
         || environmentId && receipt.data.deployment.environmentId !== environmentId) return failure('deployment_unavailable');
       environmentId = receipt.data.deployment.environmentId;
@@ -77,6 +78,7 @@ export function createDeploymentApprovalScopeResolverV1(
   };
 }
 
-function failure(errorCode: string): ActionExecuteFailure {
-  return { ok: false, errorCode, error: errorCode };
+function failure(errorCode: string, refusal?: DeploymentActionFailureV1): ActionExecuteFailure {
+  return { ok: false, errorCode, error: errorCode,
+    ...(refusal?.error === 'deployment_invalid' && refusal.diagnostic ? { details: refusal } : {}) };
 }

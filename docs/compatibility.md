@@ -5129,3 +5129,10 @@ artifact deployment certification; the existing 0.3 encrypted-RPC coordinated
 upgrade rule still applies. No legacy giant-response fallback is introduced.
 Saved generated-result response schemas are unchanged; their embedded full
 comparisons are a separate, still-unbounded response path.
+
+## Link validation diagnostics (unreleased 0.3)
+
+`deployment_invalid` may also carry a closed, secret-free Link validation
+`diagnostic`. Older strict error readers cannot retain this optional field;
+the updated Home and clients load together. Plain refusals remain accepted.
+This unreleased development correction adds no persistence format or epoch.

@@ -6,6 +6,9 @@ import { DeploymentBackupRestoreInputV1Schema } from './deploymentBackupRestoreV
 import { DeploymentHealthCurrentInputV1Schema } from './deploymentReadsV1.js';
 import { DeploymentRestartInputV1Schema } from './deploymentRestartV1.js';
 import { z } from 'zod/mini';
+export { buildDeploymentTargetLinkInputV1 } from './targetLinkInput.js';
+import { DeploymentInvalidV1Schema } from './deploymentInvalidV1.js';
+export { DeploymentInvalidV1Schema, type DeploymentInvalidV1 } from './deploymentInvalidV1.js';
 import { WorkflowRunIdV1Schema, WorkflowInvocationRecordIdSchema } from '../workflows/workflowIdsV1.js';
 import { lazyDefinition, lazyZodSchema } from '../lazyZodSchema.js';
 import { DeploymentReceiptAcceptedResultV1Schema } from './deploymentReceiptResultV1.js';
@@ -387,7 +390,8 @@ export type DeploymentDeployAdmissionInputV1 = z.infer<typeof DeploymentDeployAd
 export type DeploymentRollbackAdmissionInputV1 = z.infer<typeof DeploymentRollbackAdmissionInputV1Schema>;
 export const DeploymentActionFailureV1Schema = lazyZodSchema(() => z.union([
   z.extend(ArtifactQuotaExceededV1Schema, { ok: z.literal(false) }),
-  z.strictObject({ ok: z.literal(false), error: z.enum(['deployment_invalid', 'deployment_unavailable',
+  DeploymentInvalidV1Schema,
+  z.strictObject({ ok: z.literal(false), error: z.enum(['deployment_unavailable',
     'deployment_access_denied', 'deployment_conflict', 'deployment_content_unavailable', 'deployment_teardown_required', 'unsupported_action', 'client_required']) }),
   z.strictObject({ ok: z.literal(false), error: z.literal('deployment_in_progress'),
     deploymentId: DeploymentIdentifierV1Schema, href: DeploymentIdentifierV1Schema }),
@@ -395,6 +399,7 @@ export const DeploymentActionFailureV1Schema = lazyZodSchema(() => z.union([
     role: z.enum(['controller', 'build', 'target']), machineIds: z.array(DeploymentIdentifierV1Schema).check(z.minLength(1)),
     nextActions: z.array(z.enum(['start', 'chooseAnother', 'removeFromEnvironment'])).check(z.minLength(1)) }),
 ]));
+export type DeploymentActionFailureV1 = z.infer<typeof DeploymentActionFailureV1Schema>;
 const result = { ok: z.literal(true), environmentId: DeploymentIdentifierV1Schema, revision: DeploymentRevisionV1Schema };
 export const DeploymentDomainMutationResultV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ ...result, domain: DeploymentDomainHeaderV1Schema }), DeploymentActionFailureV1Schema,

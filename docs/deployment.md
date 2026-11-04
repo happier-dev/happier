@@ -633,3 +633,13 @@ Event source before Configure, retaining its checks and selected monitoring
 Machine. An unavailable or ambiguous saved source stays unavailable instead of
 opening an empty replacement draft; a subject with no saved source starts a new
 draft through the same writer.
+
+## Shared Link preparation and validation
+
+UI, CLI and agent Link preparation use Protocol's
+`buildDeploymentTargetLinkInputV1` to replace private provider operands with the
+published Artifact reference. Link inventory, Environment-read and association
+validation refusals carry an optional `diagnostic` with the failed step, a known
+top-level field (or `$input`) and a closed rule code. The Home projects these
+facts from its validator; hosts retain them without exposing submitted values,
+unknown property names or validator messages.

@@ -1,5 +1,5 @@
 import axios from '@/api/client/credentialAxios';
-import { DeploymentTargetLinkInputV1Schema, DeploymentTargetLinksListResultV1Schema,
+import { buildDeploymentTargetLinkInputV1, DeploymentTargetLinksListResultV1Schema,
     type DeploymentTargetLinkInputV1, type DeploymentTargetLinkAlreadyLinkedResultV1,
     type DeploymentTargetLinkIntentInputV1, type DeploymentTargetLinkProviderIntentInputV1,
     type DeploymentEnvironmentGetResultV1Schema, type ActionExecutorContext } from '@happier-dev/protocol';
@@ -24,7 +24,7 @@ export async function prepareTargetLinkForHost(request: Readonly<{ input: LinkIn
     const { input, context } = request;
     await host.assertCurrent(context);
     const current = await host.readMetadata({ environmentId: input.environmentId, context });
-    const { provider, ...intent } = 'provider' in input ? input : { ...input, provider: undefined };
+    const provider = 'provider' in input ? input.provider : undefined;
     if ('provider' in input) {
         const existing = await findExistingDeploymentTargetLinkV1(input, {
             async list(cursor) {
@@ -47,6 +47,5 @@ export async function prepareTargetLinkForHost(request: Readonly<{ input: LinkIn
             body: JSON.stringify(provider ?? {}), signal: context.signal,
             beforeWrite: () => host.assertCurrent(context), authorizationHeaders: host.artifactAuthorization(context) },
     }));
-    return DeploymentTargetLinkInputV1Schema.parse({ ...intent, contentArtifactId: created.artifactId,
-        contentHeaderVersion: created.revision.headerVersion, contentBodyVersion: created.revision.bodyVersion });
+    return buildDeploymentTargetLinkInputV1(input, created);
 }

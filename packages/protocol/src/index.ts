@@ -1,3 +1,5 @@
+export { buildDeploymentTargetLinkInputV1 } from './deployments/targetLinkInput.js';
+export { DeploymentInvalidV1Schema, type DeploymentInvalidV1 } from './deployments/deploymentInvalidV1.js';
 export type { ConnectedAccountInvocationPurposeBinding } from './connect/connectedAccountInvocationPurposeBinding.js';
 export { projectPluginStoreKindDeclarationV1, PluginStoreKindContributionV1Schema, PluginStoreItemReferenceV1Schema, PluginStoreItemReferenceV1ProtocolSchema,
   PluginStoreItemV1Schema, PluginStoreItemV1ProtocolSchema, type PluginStoreKindContributionV1,
