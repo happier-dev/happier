@@ -277,6 +277,13 @@ function parseNativeFindings(text: string): {
   return { findings, textOutsideFindings: outsideLines.join('\n'), overviewEnd };
 }
 
+/**
+ * Parses native Codex prose or one validated native JSON review envelope.
+ * Explicitly introduced examples remain prose evidence. An unintroduced JSON
+ * review candidate cannot safely be distinguished from the actual result, even
+ * inside a fence: malformed candidates or competing prose/JSON reviews return
+ * null so callers report invalid output instead of claiming a clean review.
+ */
 export function parseCodexNativeReviewText(rawText: string): ParsedCodexNativeReview | null {
   const overviewMarkdown = rawText.trim();
   if (overviewMarkdown.length === 0) return null;

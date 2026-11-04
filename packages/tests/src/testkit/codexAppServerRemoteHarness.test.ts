@@ -165,6 +165,7 @@ describe('startCodexAppServerRemoteHarness', () => {
 
   it('writes structured native review payloads for review/start', async () => {
     const { writeFakeCodexAppServerScript } = await import('./codexAppServerRemoteHarness');
+    const { parseCodexNativeReviewText } = await import('@/agent/reviews/normalize/codex/parseCodexNativeReviewText');
     const testDir = await mkdtemp(join(tmpdir(), 'happier-codex-app-server-review-'));
     const requestLogPath = join(testDir, 'requests.jsonl');
     const scriptPath = await writeFakeCodexAppServerScript({
@@ -254,23 +255,31 @@ describe('startCodexAppServerRemoteHarness', () => {
       const agentPayload = JSON.parse(String((agentMessage as { params?: { item?: { text?: unknown } } } | undefined)?.params?.item?.text ?? ''));
 
       expect(exitedPayload).toEqual({
-        summary: 'Native Codex review completed.',
-        overviewMarkdown: expect.stringContaining('Full review comments:'),
+        overall_explanation: 'Native Codex review completed.',
         findings: [
           expect.objectContaining({
-            id: 'fake-native-review-finding',
             title: 'Duplicate assistant text is persisted once',
-            severity: 'medium',
-            category: 'correctness',
-            filePath: '/fake/workspace/src/nativeReview.ts',
-            startLine: 12,
-            endLine: 14,
+            body: 'The review bridge should not store both exitedReviewMode text and the matching final assistant message as duplicate output.',
+            priority: 2,
+            code_location: {
+              absolute_file_path: '/fake/workspace/src/nativeReview.ts',
+              line_range: { start: 12, end: 14 },
+            },
           }),
         ],
-        questions: [],
-        assumptions: [],
       });
       expect(agentPayload).toEqual(exitedPayload);
+      expect(parseCodexNativeReviewText(JSON.stringify(exitedPayload))).toMatchObject({
+        summary: 'Native Codex review completed.',
+        findings: [{
+          title: 'Duplicate assistant text is persisted once',
+          severity: 'medium',
+          summary: exitedPayload.findings[0].body,
+          filePath: '/fake/workspace/src/nativeReview.ts',
+          startLine: 12,
+          endLine: 14,
+        }],
+      });
     } finally {
       if (!childExited) child.kill();
       lines.close();

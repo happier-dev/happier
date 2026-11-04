@@ -5607,7 +5607,20 @@ describe('createCodexAppServerRuntime', () => {
         });
     });
 
-    it.each(['{"findings":[', ''])('reports invalid inline review output and recovers on the next review: %j', async (rawReview) => {
+    it.each([
+        '{"findings":[',
+        '',
+        [
+            'One correctness issue is present.',
+            '```json',
+            '{"findings":[],"overall_explanation":"No issues found."}',
+            '```',
+            '',
+            'Review comment:',
+            '- Preserve authorization -- /repo/auth.ts:10-12',
+            '  The write skips authorization.',
+        ].join('\n'),
+    ])('reports invalid inline review output and recovers on the next review: %j', async (rawReview) => {
         const { root } = await createRuntimeFixture('happier-codex-app-server-runtime-inline-review-invalid-', {
             inlineReviewTexts: [rawReview],
         });

@@ -226,6 +226,28 @@ describe('normalizeReviewOutput codex reviews', () => {
   });
 
   it.each([
+    '{"findings":[]}',
+    '{"findings":[',
+    JSON.stringify({ findings: [], overall_explanation: 'No issues found.' }),
+  ])('rejects unintroduced fenced review JSON competing with prose findings: %s', (json) => {
+    const result = normalizeCodex([
+      'One correctness issue is present.',
+      '```json',
+      json,
+      '```',
+      '',
+      'Review comment:',
+      '- Preserve authorization -- /repo/auth.ts:10-12',
+      '  The write skips authorization.',
+    ].join('\n'));
+
+    expect(result.status).toBe('failed');
+    expect(result.toolResultOutput).toMatchObject({ error: { code: 'invalid_output' } });
+    expect(result.structuredMeta).toBeUndefined();
+    expect(result.toolResultOutput).not.toHaveProperty('findingsDigest');
+  });
+
+  it.each([
     'Review result: `{"findings" []}`',
     'The review result is `{"findings" []}`',
     'The final review looks like: {"findings" []}',
