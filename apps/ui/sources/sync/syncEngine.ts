@@ -3574,6 +3574,7 @@ class Sync {
             sessionListRowsByServerId: withoutActiveServerEntry(
                 state.sessionListRowsByServerId ?? {},
             ),
+            sessionListBotRowsByServerId: withoutActiveServerEntry(state.sessionListBotRowsByServerId ?? {}),
             ordinarySessionListMembershipByServerId: withoutActiveServerEntry(
                 state.ordinarySessionListMembershipByServerId ?? {},
             ),

@@ -3,7 +3,6 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 
-import { Avatar } from '@/components/ui/avatar/Avatar';
 import { AvatarStack } from '@/components/ui/avatar/AvatarStack';
 import { StatusDot } from '@/components/ui/status/StatusDot';
 import { Text } from '@/components/ui/text/Text';
@@ -11,6 +10,7 @@ import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 
 import { useBotsSummary } from './botsSummary';
+import { SessionBotFace } from './face/SessionBotFace';
 
 const FACE_SIZE_PX = 20;
 
@@ -30,7 +30,7 @@ export const BotsEntrySummary = React.memo(function BotsEntrySummary() {
           size={FACE_SIZE_PX}
           entries={summary.faces.map((face) => ({
             key: face.key,
-            content: <Avatar id={face.avatarId} size={FACE_SIZE_PX} />,
+            content: <SessionBotFace facts={face.face} size={FACE_SIZE_PX} mood={face.activity} motion />,
           }))}
         />
       ) : null}

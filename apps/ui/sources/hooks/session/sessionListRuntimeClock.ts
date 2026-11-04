@@ -187,6 +187,7 @@ export function useSessionListRuntimeDeadlineNowMs(
     readNextRefreshAtMs: (nowMs: number) => number | null,
     enabled = true,
     clock: SessionListRuntimeClock = sessionListRuntimeClock,
+    subscribeDeadlineChanges?: (listener: () => void) => () => void,
 ): number {
     const token = useWakeToken();
     const snapshot = React.useMemo(() => {
@@ -199,10 +200,20 @@ export function useSessionListRuntimeDeadlineNowMs(
                 nextRefreshAtMs = readNextRefreshAtMs(nowMs);
             },
             nextRefresh: () => nextRefreshAtMs,
+            reconcile: () => { nextRefreshAtMs = readNextRefreshAtMs(Date.now()); },
         };
     }, [clock, enabled, readNextRefreshAtMs]);
-    const subscribe = React.useCallback((listener: () => void) => enabled
-        ? clock.subscribeWake(token, () => { snapshot.advance(); listener(); }) : noopSubscribe(), [clock, enabled, snapshot, token]);
+    const subscribe = React.useCallback((listener: () => void) => {
+        if (!enabled) return noopSubscribe();
+        const stopClock = clock.subscribeWake(token, () => { snapshot.advance(); listener(); });
+        const stopChanges = subscribeDeadlineChanges?.(() => {
+            snapshot.reconcile();
+            const deadline = snapshot.nextRefresh();
+            if (deadline === null) clock.clearWake(token);
+            else clock.requestWake(token, deadline);
+        });
+        return () => { stopClock(); stopChanges?.(); };
+    }, [clock, enabled, snapshot, token, subscribeDeadlineChanges]);
     const nowMs = React.useSyncExternalStore(subscribe, snapshot.get, snapshot.get);
     useClockWake(snapshot.nextRefresh(), enabled, clock, token);
     return nowMs;

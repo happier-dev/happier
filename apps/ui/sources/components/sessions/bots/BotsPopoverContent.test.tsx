@@ -363,10 +363,10 @@ describe('Bots roster', () => {
     const { createBotsSummaryReader } = await import('./botsSummary');
     const readSummary = createBotsSummaryReader([homeKey]);
     const closedRows = { ...storage.getState().sessionListRowsByServerId, [homeKey]: countedRows };
-    const summary = readSummary(closedRows);
+    const summary = readSummary(closedRows, now);
     rowMapEnumerations = 0;
     metadataReads = 0;
-    for (let index = 0; index < 10; index += 1) expect(readSummary({ ...closedRows })).toBe(summary);
+    for (let index = 0; index < 10; index += 1) expect(readSummary({ ...closedRows }, now)).toBe(summary);
     const closed = { rowMapEnumerations, metadataReads };
     console.info('PERF_D4_BOTS_COUNTS', JSON.stringify({ candidates: population.length, mountedRows, unrelated, ownBotCommits, closed }));
     expect(unrelated.notifications).toBe(10);
@@ -526,10 +526,10 @@ describe('Bots roster', () => {
     const { createBotsSummaryReader } = await import('./botsSummary');
     const readSummary = createBotsSummaryReader([homeKey]);
     const closedRows = { ...storage.getState().sessionListRowsByServerId, [homeKey]: countedRows };
-    const summary = readSummary(closedRows);
+    const summary = readSummary(closedRows, now);
     rowMapEnumerations = 0;
     metadataReads = 0;
-    for (let index = 0; index < 10; index += 1) expect(readSummary({ ...closedRows })).toBe(summary);
+    for (let index = 0; index < 10; index += 1) expect(readSummary({ ...closedRows }, now)).toBe(summary);
     const closed = { rowMapEnumerations, metadataReads };
     console.info('PERF_D4_BOTS_COUNTS', JSON.stringify({ candidates: population.length, mountedRows, unrelated, ownBotCommits, closed }));
     expect(unrelated.notifications).toBeGreaterThanOrEqual(20);

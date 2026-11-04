@@ -39,7 +39,6 @@ import {
 } from '@/hooks/session/sessionListRuntimeClock';
 import { useSessionListSelectionState } from '@/hooks/session/useSessionListSelectionState';
 import { useVisibleSessionListPaneState } from '@/hooks/session/useVisibleSessionListPaneState';
-import { resolveSessionListRenderableMeaningfulActivityAt } from '@/sync/domains/session/listing/sessionListRenderableSorting';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { getServerProfileById, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { useHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
@@ -60,7 +59,8 @@ import {
   useAskHappierOfferVisible,
   useAskHappierOpener,
 } from './useAskHappierOffer';
-import { classifyBotActivity, compareBotRosterOrder } from './botActivity';
+import { readBotActivity, type BotActivity } from './botActivity';
+import { useOrderedBots } from './botsSummary';
 import { BOTS_GLYPH } from './botsGlyph';
 import { BotRosterReadiness } from './BotRosterReadiness';
 import { openNewBotDraft } from './newBotDraft';
@@ -68,6 +68,7 @@ import { useMountedActionExecution } from '@/components/approvals/useMountedActi
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 
 type SessionIndexItem = Extract<SessionListIndexItem, { type: 'session' }>;
+type BotRosterRow = SessionListRowViewModel & Readonly<{ botActivity: BotActivity }>;
 
 const NO_REACHABLE_DISPLAY = new Map();
 const NO_PINNED_KEYS: ReadonlySet<string> = new Set();
@@ -109,14 +110,12 @@ function useBotsRosterQueryHomes() {
 }
 
 function readRosterCounts(
-  rows: readonly SessionListRowViewModel[],
+  rows: readonly BotRosterRow[],
 ): Readonly<{ needsYou: number; working: number }> {
   let needsYou = 0;
   let working = 0;
   for (const row of rows) {
-    const activity = classifyBotActivity(
-      row.sessionStatus?.awareness,
-    );
+    const activity = row.botActivity;
     if (activity === 'needsYou') needsYou += 1;
     else if (activity === 'working') working += 1;
   }
@@ -129,14 +128,18 @@ function useRosterRows(items: readonly SessionIndexItem[]) {
   const runtimeNowMs = useSessionListRuntimeNowMs(true);
   // The rows draw the identity the person chose for the Sessions list, not a roster-only mark.
   const identityDisplay = useSessionListIdentityDisplay();
-  return React.useMemo(() => items.map((item, index) => buildSessionListRowViewModel({
+  const rows = React.useMemo(() => items.map((item) => {
+    const row = buildSessionListRowViewModel({
     item,
     unscopedSelectionIsUnique: false, reachableSessionDisplayById: NO_REACHABLE_DISPLAY,
     rowRenderableByKey: renderables, relativeNowMs, runtimeNowMs,
     identityDisplay,
     pinnedSessionKeys: NO_PINNED_KEYS, sessionTags: NO_TAGS, selectedSessionId: null,
     showServerBadge: false, showPinnedServerBadge: false,
-  })), [identityDisplay, items, relativeNowMs, renderables, runtimeNowMs]);
+    });
+    return row;
+  }), [identityDisplay, items, relativeNowMs, renderables, runtimeNowMs]);
+  return { rows, runtimeNowMs };
 }
 
 /** Only an expanded lead mounts its exact-Home subtree query. Shared rows and manager own membership. */
@@ -192,27 +195,16 @@ export function BotsPopoverContent(
     queryHomes,
     sessionListSurfaceDataActive: true,
   });
-  const listedBotItems = React.useMemo(
-    () =>
-      (pane.visibleSessionListIndex ?? []).filter(
-        (item): item is SessionIndexItem => item.type === 'session',
-      ),
-    [pane.visibleSessionListIndex],
-  );
-  const listedBotRows = useRosterRows(listedBotItems);
-  const { botItems, botRows } = React.useMemo(() => {
-    const order = listedBotRows
-      .map((row, index) => ({
-        index,
-        activity: classifyBotActivity(row.sessionStatus?.awareness),
-        activityAtMs: row.session ? resolveSessionListRenderableMeaningfulActivityAt(row.session) : 0,
-      }))
-      .sort(compareBotRosterOrder);
-    return {
-      botItems: order.map(({ index }) => listedBotItems[index]!),
-      botRows: order.map(({ index }) => listedBotRows[index]!),
-    };
-  }, [listedBotItems, listedBotRows]);
+  // Queries discover/open rows and report freshness. The same loaded-Bot owner
+  // used by Home decides membership; personal list filters cannot remove a Bot here.
+  const orderedBots = useOrderedBots();
+  const botItems = React.useMemo(() => orderedBots.map((bot): SessionIndexItem => ({
+    type: 'session', serverId: bot.serverId, sessionId: bot.sessionId,
+  })), [orderedBots]);
+  const { rows: loadedBotRows } = useRosterRows(botItems);
+  const botRows = React.useMemo(() => loadedBotRows.map((row, index): BotRosterRow => ({
+    ...row, botActivity: orderedBots[index]!.activity,
+  })), [loadedBotRows, orderedBots]);
   const botDisclosureKeys = React.useMemo(() => botItems.map(buildSessionListIndexNodeId), [botItems]);
   const rootCollapsed = useCollapsedGroupKeys(botDisclosureKeys);
   // Activity and titles may reorder/repaint Bots without changing expanded topology demand.
@@ -281,7 +273,10 @@ export function BotsPopoverContent(
       buildSessionListIndexNodeId({ type: 'session', serverId: serverId ?? undefined, sessionId }),
     ) ?? null), collapsed).filter((item): item is SessionIndexItem => item.type === 'session');
   }, [botItems, botRows, collapsed, descendants]);
-  const rows = useRosterRows(items);
+  const presentedRows = useRosterRows(items);
+  const rows = React.useMemo(() => presentedRows.rows.map((row): BotRosterRow => ({ ...row,
+    botActivity: row.session ? readBotActivity(row.session, presentedRows.runtimeNowMs, row.sessionStatus ?? undefined) : 'quiet',
+  })), [presentedRows.rows, presentedRows.runtimeNowMs]);
   const counts = React.useMemo(() => readRosterCounts(botRows), [botRows]);
 
   // Page to the end of every Home's Bot candidates and attention frontier, one page at a time.
@@ -491,7 +486,7 @@ export function BotsPopoverContent(
           const isLast = index === rows.length - 1;
           // A quiet top-level Bot carries its readiness under its row (lab K3-R); busy ones say what they do.
           const readinessServerId = !items[index]!.reportsDepth
-            && classifyBotActivity(row.sessionStatus?.awareness) === 'quiet'
+            && row.botActivity === 'quiet'
             ? items[index]!.serverId ?? null : null;
           return row.session ? (
             <React.Fragment key={row.sessionKey ?? items[index]!.sessionId}>

@@ -13,12 +13,14 @@ import { getActiveServerSnapshot } from '../../domains/server/serverRuntime';
 import { syncPerformanceTelemetry } from '../../runtime/syncPerformanceTelemetry';
 import { buildActiveServerSessionListIndex } from '../sessionListIndex/buildSessionListIndexWithServerScope';
 import { isUserFacingSession } from '@/sync/domains/session/listing/isUserFacingSession';
+import { publishSessionListBotSelection, type SessionListBotRowsByServerId } from './sessionListBotSelection';
 import { publishSessionRelations, type SessionRelationsByServerId } from './sessionRelations';
 
 export type SessionListIndexFinalizationState = Readonly<{
     sessions: Record<string, Session>;
     sessionListRenderableDelta?: SessionListRenderableDelta;
     sessionListRowsByServerId: Readonly<Record<string, Readonly<Record<string, SessionListRenderableSession>>>>;
+    sessionListBotRowsByServerId?: SessionListBotRowsByServerId;
     sessionRelationsByServerId?: SessionRelationsByServerId;
     ordinarySessionListMembershipByServerId?: Readonly<Record<string, readonly string[] | undefined>>;
     sessionListIndexByServerId: Readonly<Record<string, SessionListIndexItem[] | null | undefined>>;
@@ -228,6 +230,12 @@ export function finalizeSessionListRenderablePublication<S extends SessionListIn
         sessionRelationsByServerId: publishSessionRelations(state, nextStateBase, renderableDelta
             ? [...renderableDelta.changedSessionIds, ...renderableDelta.removedSessionIds, ...(renderableDelta.hydratedSessionIds ?? [])]
             : undefined),
+        sessionListBotRowsByServerId: publishSessionListBotSelection(
+            state.sessionListRowsByServerId,
+            nextStateBase.sessionListRowsByServerId,
+            state.sessionListBotRowsByServerId,
+            renderableDelta ? [...renderableDelta.changedSessionIds, ...renderableDelta.removedSessionIds] : undefined,
+        ),
         ...(renderableDelta ? {
             sessionListRenderableDelta: buildNextSessionListRenderableDelta({
                 previous: state.sessionListRenderableDelta,

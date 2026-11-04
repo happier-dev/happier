@@ -45,6 +45,7 @@ import {
 } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
+import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
 
 import type { SidebarFooterPopoverContentProps } from '../sidebarFooter/SidebarFooterPopoverButton';
 import { SidebarFooterPopoverButton } from '../sidebarFooter/SidebarFooterPopoverButton';
@@ -74,6 +75,7 @@ const PIN_RING_SIZE_PX = 32;
  */
 export function useAppRailBotHomes(): readonly AppRailBotHome[] {
   const serverIds = useBotsHomeServerIds();
+  const isSessionVisible = useSessionRecordingVisibility();
   const projections = useSessionOrganizationProjections(serverIds);
   const pinned = React.useMemo(
     () =>
@@ -81,8 +83,8 @@ export function useAppRailBotHomes(): readonly AppRailBotHome[] {
         (projections[serverId]?.railPinnedSessionIds ?? []).map(
           (sessionId) => ({ serverId, sessionId }),
         ),
-      ),
-    [projections, serverIds],
+      ).filter(isSessionVisible),
+    [projections, serverIds, isSessionVisible],
   );
   const rows = storage(
     useShallow((state) => {
@@ -107,8 +109,10 @@ export function useAppRailBotHomes(): readonly AppRailBotHome[] {
           string,
           SessionListRenderableSession | undefined
         > = {};
-        for (const sessionId of organization.railPinnedSessionIds)
-          rowsBySessionId[sessionId] = rows[`${serverId}\u0000${sessionId}`];
+        for (const sessionId of organization.railPinnedSessionIds) {
+          const key = `${serverId}\u0000${sessionId}`;
+          if (key in rows) rowsBySessionId[sessionId] = rows[key];
+        }
         return [{ serverId, rowsBySessionId, organization }];
       }),
     [projections, rows, serverIds],

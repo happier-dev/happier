@@ -101,6 +101,7 @@ import {
     saveWarmSessionCacheForState,
 } from './sessionListIndexFinalization';
 import { resolveSessionListRenderableChangeImpact } from './sessionListRenderableChange';
+import { publishSessionListBotSelection, type SessionListBotRowsByServerId } from './sessionListBotSelection';
 import { EMPTY_SESSION_RELATIONS, type SessionRelationsByServerId } from './sessionRelations';
 import { persistSessionModelData } from './sessionModelPersistence';
 import { persistSessionPermissionData } from './sessionPermissionPersistence';
@@ -355,6 +356,7 @@ export type SessionsDomain = {
     sessionListRenderableDelta: import('./sessionListIndexFinalization').SessionListRenderableDelta;
     /** Canonical qualified rows. Presence here does not imply ordinary-list membership. */
     sessionListRowsByServerId: Readonly<Record<string, Readonly<Record<string, SessionListRenderableSession>>>>;
+    sessionListBotRowsByServerId: SessionListBotRowsByServerId;
     sessionRelationsByServerId: SessionRelationsByServerId;
     ordinarySessionListMembershipByServerId: Readonly<Record<string, readonly string[] | undefined>>;
     archivedSessionListMembershipByServerId: Readonly<Record<string, readonly string[] | undefined>>;
@@ -863,6 +865,9 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 ...state,
                 sessions: { ...state.sessions, [sessionId]: nextSession },
                 sessionListRowsByServerId: nextRowsByServerId,
+                sessionListBotRowsByServerId: publishSessionListBotSelection(
+                    state.sessionListRowsByServerId, nextRowsByServerId, state.sessionListBotRowsByServerId, [sessionId],
+                ),
             };
         });
     };
@@ -983,6 +988,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             rebuiltSessionListIndex: false,
         },
         sessionListRowsByServerId: {},
+        sessionListBotRowsByServerId: {},
         sessionRelationsByServerId: EMPTY_SESSION_RELATIONS,
         ordinarySessionListMembershipByServerId: {},
         archivedSessionListMembershipByServerId: {},
@@ -2905,6 +2911,9 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 ...state,
                 sessions: sessionChanged ? { ...state.sessions, [sessionId]: { ...session, responsibleAccountId, ...applySummary } } : state.sessions,
                 sessionListRowsByServerId: nextRows,
+                sessionListBotRowsByServerId: publishSessionListBotSelection(
+                    state.sessionListRowsByServerId, nextRows, state.sessionListBotRowsByServerId, [sessionId],
+                ),
             };
         }),
         markSessionViewed: (sessionId: string) => {
