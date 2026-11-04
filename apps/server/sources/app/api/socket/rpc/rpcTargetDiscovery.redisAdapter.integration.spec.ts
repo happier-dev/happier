@@ -7,7 +7,7 @@ import { classifyMachineDaemonPresence, getMachineDaemonPresenceInventory } from
 import { startRedisAdapterRecoveryCluster } from '@/testkit/redisAdapterRecoveryCluster';
 
 import { buildRpcMethodRoom } from './rpcMethodRoom';
-import { discoverRpcTargets } from './rpcTargetDiscovery';
+import { discoverRpcTargets, readRegisteredRpcTargetPresence } from './rpcTargetDiscovery';
 
 const accountId = 'discovery-account';
 const machineId = 'discovery-machine';
@@ -59,6 +59,13 @@ describe('target discovery with an unrelated slow Redis peer', () => {
     }
 
     for (const targetNode of [0, 1]) {
+        it(`keeps a ${targetNode === 0 ? 'local' : 'remote'} registration present despite an unrelated silent peer`, async () => {
+            const { io } = await setup(targetNode, 2);
+            const fetch = vi.spyOn(io.sockets.adapter, 'fetchSockets');
+            expect(await readRegisteredRpcTargetPresence({ io, userId: accountId, method })).toBe('present');
+            expect(fetch).toHaveBeenCalledTimes(targetNode === 0 ? 0 : 1);
+        });
+
         it(`routes to a ${targetNode === 0 ? 'local' : 'remote'} target despite the unrelated slow peer`, async () => {
             const { io, socketId } = await setup(targetNode, 2);
             const result = await discoverRpcTargets({ io, userId: accountId, method, fetchTimeoutMs: 100 });
@@ -83,6 +90,7 @@ describe('target discovery with an unrelated slow Redis peer', () => {
 
     it('proves absence only when all peers answer', async () => {
         const { io } = await setup(null, null);
+        expect(await readRegisteredRpcTargetPresence({ io, userId: accountId, method })).toBe('absent');
         expect(await discoverRpcTargets({ io, userId: accountId, method, fetchTimeoutMs: 100 }))
             .toEqual({ targets: [], methodRoomEmpty: true });
         expect(await getMachineDaemonPresenceInventory({ accountId, io }))
@@ -91,6 +99,7 @@ describe('target discovery with an unrelated slow Redis peer', () => {
 
     it('keeps an unanswered target unknown', async () => {
         const { io } = await setup(1, 1);
+        expect(await readRegisteredRpcTargetPresence({ io, userId: accountId, method })).toBe('unknown');
         expect(await discoverRpcTargets({ io, userId: accountId, method, fetchTimeoutMs: 100 })).toBeNull();
         expect(await getMachineDaemonPresenceInventory({ accountId, io })).toEqual({ state: 'unavailable' });
         expect(classifyMachineDaemonPresence(await getMachineDaemonPresenceInventory({ accountId, io,

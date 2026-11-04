@@ -21,6 +21,28 @@ function classifySocketClusterFetchFailureReason(error: unknown): "timeout" | "t
     return message.includes("timeout") ? "timeout" : "unknown";
 }
 
+/** A registered target proves presence; only a complete census proves absence. */
+export async function readRegisteredRpcTargetPresence(params: Readonly<{
+    userId: string;
+    io: Server;
+    method: string;
+}>): Promise<"present" | "absent" | "unknown"> {
+    try {
+        const snapshot = await readSocketRoomSnapshot({
+            io: params.io,
+            room: buildRpcMethodRoom({ userId: params.userId, method: params.method }),
+            acceptPartial: async sockets => sockets.length > 0,
+        });
+        if (snapshot.sockets.length > 0) return "present";
+        if (snapshot.complete) return "absent";
+        if (snapshot.error) throw snapshot.error;
+        return "unknown";
+    } catch (error) {
+        log({ module: "websocket-rpc", level: "error" }, `Error checking rpc handler availability: ${error}`);
+        return "unknown";
+    }
+}
+
 /** Only a successful authenticated Machine-room census proves presence or absence. */
 export async function readMachineRpcTargetPresence(params: Readonly<{
     io: Server;

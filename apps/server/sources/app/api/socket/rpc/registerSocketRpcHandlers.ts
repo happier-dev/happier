@@ -95,6 +95,7 @@ import { getMachineSocketRoom } from "../../socketRooms";
 import { isWorkflowDraftClientRpcMethod } from '@happier-dev/protocol/actions/workflowAuthoringAction';
 import { isMountedWorkReadClientRpcMethod } from '@happier-dev/protocol/actions/clientDispatchV1';
 import { readSocketRoomSnapshot } from '../socketRoomDiscovery';
+import { readRegisteredRpcTargetPresence } from './rpcTargetDiscovery';
 
 const MAX_RPC_METHOD_NAME_LENGTH = 512;
 const MACHINE_VISIBLE_CLIENT_RPC_METHODS = new Set<string>([
@@ -795,22 +796,6 @@ function emitMachineScopedRpcAvailability(params: Readonly<{
     params.io.to(getMachineSocketRoom(params.userId, parsed.machineId)).emit(params.event, { method: params.method });
 }
 
-/** `unknown` when the census failed: like `rpcTargetDiscovery`, an unsuccessful census proves neither presence nor absence. */
-async function readRegisteredRpcTargetPresence(params: Readonly<{
-    userId: string;
-    io: Server;
-    method: string;
-}>): Promise<"present" | "absent" | "unknown"> {
-    try {
-        const targets = await params.io
-            .in(buildRpcMethodRoom({ userId: params.userId, method: params.method }))
-            .fetchSockets();
-        return targets.length > 0 ? "present" : "absent";
-    } catch (error) {
-        log({ module: "websocket-rpc", level: "error" }, `Error checking rpc handler availability: ${error}`);
-        return "unknown";
-    }
-}
 
 async function emitMachineScopedRpcUnregisteredWhenUnavailable(params: Readonly<{
     userId: string;
