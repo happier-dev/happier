@@ -415,65 +415,71 @@ function normalizeDaemonState(
   };
 }
 
-export async function readSettings(): Promise<Settings> {
-  if (!existsSync(configuration.settingsFile)) {
-    return { ...defaultSettings }
+async function readSettingsFromDisk(): Promise<Settings> {
+  let content: string;
+  try {
+    content = await readFile(configuration.settingsFile, 'utf8');
+  } catch (error) {
+    // Only a confirmed missing file is safe to initialize with defaults.
+    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return { ...defaultSettings };
+    throw error;
   }
 
+  const raw = JSON.parse(content)
+
+  // Check schema version (default to 1 if missing)
+  const schemaVersion = raw.schemaVersion ?? 1;
+
+  // Warn if schema version is newer than supported
+  if (schemaVersion > SUPPORTED_SCHEMA_VERSION) {
+    logger.warn(
+      `Settings file uses schema v${schemaVersion}, newer than the supported v${SUPPORTED_SCHEMA_VERSION}. ` +
+      'Update Happier CLI for full functionality.'
+    );
+  }
+
+  // Migrate if needed
+  const migrated = migrateSettings(raw, schemaVersion);
+
+  // Merge with defaults to ensure all required fields exist
+  const merged: Settings = { ...defaultSettings, ...migrated };
+
+  // Derive backwards-compat fields for the *effective* active server (schema v5+).
+  // The configuration layer resolves env overrides (HAPPIER_SERVER_URL/HAPPIER_WEBAPP_URL) into
+  // a deterministic server id; use that id so per-server machine ids/cursors work in hermetic
+  // test homes even if settings.json.activeServerId is left at "cloud".
+  const activeServerId = sanitizeServerIdForFilesystem(
+    configuration.activeServerId ?? merged.activeServerId ?? 'cloud',
+    'cloud',
+  );
+  const lastTokenSub =
+    merged.lastTokenSubByServerId && typeof merged.lastTokenSubByServerId === 'object'
+      ? merged.lastTokenSubByServerId[activeServerId]
+      : undefined;
+  const resolvedMachineId = resolveMachineIdForServerFromSettings(
+    merged,
+    activeServerId,
+    typeof lastTokenSub === 'string' && lastTokenSub.trim() ? lastTokenSub.trim() : null,
+  );
+  if (resolvedMachineId) merged.machineId = resolvedMachineId;
+  if (merged.machineIdConfirmedByServerByServerId && typeof merged.machineIdConfirmedByServerByServerId === 'object') {
+    const v = merged.machineIdConfirmedByServerByServerId[activeServerId];
+    if (typeof v === 'boolean') merged.machineIdConfirmedByServer = v;
+  }
+  if (merged.lastChangesCursorByServerIdByAccountId && typeof merged.lastChangesCursorByServerIdByAccountId === 'object') {
+    const cursorMap = merged.lastChangesCursorByServerIdByAccountId[activeServerId];
+    if (cursorMap && typeof cursorMap === 'object') merged.lastChangesCursorByAccountId = cursorMap;
+  }
+
+  return merged;
+}
+
+export async function readSettings(): Promise<Settings> {
   try {
-    // Read raw settings
-    const content = await readFile(configuration.settingsFile, 'utf8')
-    const raw = JSON.parse(content)
-
-    // Check schema version (default to 1 if missing)
-    const schemaVersion = raw.schemaVersion ?? 1;
-
-    // Warn if schema version is newer than supported
-    if (schemaVersion > SUPPORTED_SCHEMA_VERSION) {
-      logger.warn(
-        `Settings file uses schema v${schemaVersion}, newer than the supported v${SUPPORTED_SCHEMA_VERSION}. ` +
-        'Update Happier CLI for full functionality.'
-      );
-    }
-
-    // Migrate if needed
-    const migrated = migrateSettings(raw, schemaVersion);
-
-    // Merge with defaults to ensure all required fields exist
-    const merged: Settings = { ...defaultSettings, ...migrated };
-
-    // Derive backwards-compat fields for the *effective* active server (schema v5+).
-    // The configuration layer resolves env overrides (HAPPIER_SERVER_URL/HAPPIER_WEBAPP_URL) into
-    // a deterministic server id; use that id so per-server machine ids/cursors work in hermetic
-    // test homes even if settings.json.activeServerId is left at "cloud".
-    const activeServerId = sanitizeServerIdForFilesystem(
-      configuration.activeServerId ?? merged.activeServerId ?? 'cloud',
-      'cloud',
-    );
-    const lastTokenSub =
-      merged.lastTokenSubByServerId && typeof merged.lastTokenSubByServerId === 'object'
-        ? merged.lastTokenSubByServerId[activeServerId]
-        : undefined;
-    const resolvedMachineId = resolveMachineIdForServerFromSettings(
-      merged,
-      activeServerId,
-      typeof lastTokenSub === 'string' && lastTokenSub.trim() ? lastTokenSub.trim() : null,
-    );
-    if (resolvedMachineId) merged.machineId = resolvedMachineId;
-    if (merged.machineIdConfirmedByServerByServerId && typeof merged.machineIdConfirmedByServerByServerId === 'object') {
-      const v = merged.machineIdConfirmedByServerByServerId[activeServerId];
-      if (typeof v === 'boolean') merged.machineIdConfirmedByServer = v;
-    }
-    if (merged.lastChangesCursorByServerIdByAccountId && typeof merged.lastChangesCursorByServerIdByAccountId === 'object') {
-      const cursorMap = merged.lastChangesCursorByServerIdByAccountId[activeServerId];
-      if (cursorMap && typeof cursorMap === 'object') merged.lastChangesCursorByAccountId = cursorMap;
-    }
-
-    return merged;
-  } catch (error: any) {
-    logger.warn(`Failed to read settings: ${error.message}`);
-    // Return defaults on any error
-    return { ...defaultSettings }
+    return await readSettingsFromDisk();
+  } catch (error) {
+    logger.warn(`Failed to read settings: ${error instanceof Error ? error.message : String(error)}`);
+    return { ...defaultSettings };
   }
 }
 
@@ -630,8 +636,8 @@ export async function updateSettings(
   }
 
   try {
-    // Read current settings with defaults
-    const current = await readSettings() || { ...defaultSettings };
+    // Never turn a failed read or migration into a destructive defaults write.
+    const current = await readSettingsFromDisk();
 
     // Apply update
     const updated = await updater(current);

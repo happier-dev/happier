@@ -58,6 +58,77 @@ describe('updateSettings', () => {
     expect(persisted.onboardingCompleted).toBe(true);
   });
 
+  it.each([
+    ['invalid JSON', '{"activeServerId":"selfhost",}'],
+    ['invalid root', 'null'],
+    ['failed migration', JSON.stringify({ schemaVersion: 5, servers: { selfhost: { serverUrl: { toString: null, valueOf: null } } } })],
+  ])('preserves settings and releases the lock after %s', async (_reason, content) => {
+    const { configuration } = await import('@/configuration');
+    const { readSettings, updateSettings } = await import('@/persistence');
+    await writeFile(configuration.settingsFile, content);
+
+    // Read-only callers retain their existing best-effort defaults.
+    expect((await readSettings()).onboardingCompleted).toBe(false);
+    let updaterRan = false;
+    await expect(updateSettings((current) => {
+      updaterRan = true;
+      return { ...current, daemonAutoStartWhenRunningHappy: true };
+    })).rejects.toThrow();
+
+    expect(updaterRan).toBe(false);
+    expect(await readFile(configuration.settingsFile, 'utf8')).toBe(content);
+    expect(existsSync(`${configuration.settingsFile}.lock`)).toBe(false);
+    expect(existsSync(`${configuration.settingsFile}.tmp`)).toBe(false);
+
+    // Once the user repairs the file, a fresh update can proceed.
+    await writeFile(configuration.settingsFile, JSON.stringify({ schemaVersion: 6, onboardingCompleted: true }));
+    await updateSettings((current) => ({ ...current, daemonAutoStartWhenRunningHappy: true }));
+    expect(await readSettings()).toMatchObject({ onboardingCompleted: true, daemonAutoStartWhenRunningHappy: true });
+  });
+
+  it.each(['EBUSY', 'EPERM', 'EACCES'])('preserves settings when reading fails with %s', async (code) => {
+    let failRead = true;
+    vi.doMock('node:fs/promises', async () => {
+      const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+      return {
+        ...actual,
+        // Filesystem failures are the OS boundary; parsing, migration and locking stay real.
+        readFile: async (...args: Parameters<typeof actual.readFile>) => {
+          if (failRead && String(args[0]).endsWith('settings.json')) {
+            throw Object.assign(new Error('Settings file is unavailable'), { code });
+          }
+          return actual.readFile(...args);
+        },
+      };
+    });
+    const { configuration } = await import('@/configuration');
+    const { readSettings, updateSettings } = await import('@/persistence');
+    const saved = {
+      schemaVersion: 6,
+      onboardingCompleted: true,
+      activeServerId: 'selfhost',
+      servers: { selfhost: { id: 'selfhost', name: 'Self-hosted', serverUrl: 'https://example.test', webappUrl: 'https://example.test', createdAt: 1, updatedAt: 1, lastUsedAt: 1 } },
+      machineIdByServerId: { selfhost: 'machine-selfhost' },
+      lastChangesCursorByServerIdByAccountId: { selfhost: { account: 4242 } },
+    };
+    const content = JSON.stringify(saved);
+    await writeFile(configuration.settingsFile, content);
+    let updaterRan = false;
+
+    await expect(updateSettings((current) => {
+      updaterRan = true;
+      return { ...current, daemonAutoStartWhenRunningHappy: true };
+    })).rejects.toMatchObject({ code });
+
+    expect(updaterRan).toBe(false);
+    expect(await readFile(configuration.settingsFile, 'utf8')).toBe(content);
+    expect(existsSync(`${configuration.settingsFile}.lock`)).toBe(false);
+    expect(existsSync(`${configuration.settingsFile}.tmp`)).toBe(false);
+    failRead = false;
+    await updateSettings((current) => ({ ...current, daemonAutoStartWhenRunningHappy: true }));
+    expect(await readSettings()).toMatchObject({ ...saved, daemonAutoStartWhenRunningHappy: true });
+  });
+
   it('recovers when lock acquisition sees a transient missing-home ENOENT', async () => {
     vi.doMock('node:fs/promises', async () => {
       const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');

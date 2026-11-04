@@ -1200,6 +1200,16 @@ Local state lives under `~/.happier` (or `HAPPIER_HOME_DIR`):
 - `daemon.state.json`: daemon PID + control port + version.
 - `logs/`: CLI/daemon logs.
 
+In development source, settings reads and updates share the parser, migrations,
+and derived-field normalization in `persistence.ts`. Read-only `readSettings()`
+callers retain a warning and defaults when loading fails. Under the settings
+lock, `updateSettings()` uses that same loader without the fallback: only an
+`ENOENT` from reading the file permits initialization from defaults. Other read,
+parse, and migration errors reject before the updater or temporary write runs,
+preserving the existing file and releasing the lock. Repair invalid JSON or retry
+after a file lock clears before updating again. The persisted schema and existing
+atomic-write/rename retry policy are unchanged; this is not a released guarantee.
+
 In current development source, protected local files and MCP runtime
 configuration use the shared Windows ACL boundary in
 `packages/cli-common/src/fs/windowsProtectedAcl.ts`. It grants only the current
