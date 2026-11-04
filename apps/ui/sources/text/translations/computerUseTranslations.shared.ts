@@ -65,6 +65,11 @@ export type ComputerUseTranslations = Readonly<{
         description: (params: Readonly<{ agent: string }>) => string;
         windows: string;
         screens: string;
+        /** A shared Use person's own personal display, and why it cannot open yet. */
+        ownDesktop: string;
+        ownDesktopUnavailableTitle: (params: Readonly<{ machine: string }>) => string;
+        ownDesktopUnavailableBody: (params: Readonly<{ machine: string }>) => string;
+        ownDesktopIdentityBody: (params: Readonly<{ machine: string }>) => string;
         untitledWindow: string;
         screenLabel: (params: Readonly<{ index: string }>) => string;
         share: string;
@@ -287,6 +292,10 @@ export const computerUseTranslationsEnglish = { en: {
             description: ({ agent }) => `You choose what to share with ${agent}.`,
             windows: 'Windows',
             screens: 'Whole display',
+            ownDesktop: "Your bot desktop",
+            ownDesktopUnavailableTitle: ({ machine }) => `Your bot desktop isn't available on ${machine}`,
+            ownDesktopUnavailableBody: ({ machine }) => `People who share a Machine get their own bot desktop on Linux, once its owner has installed the virtual display there. Ask the owner of ${machine}.`,
+            ownDesktopIdentityBody: ({ machine }) => `Happier couldn't confirm who you are on ${machine} yet, so it won't open a desktop. Try again in a moment.`,
             untitledWindow: 'Untitled window',
             screenLabel: ({ index }) => `Screen ${index}`,
             share: 'Share window',

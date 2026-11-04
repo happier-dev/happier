@@ -18,6 +18,7 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Eyebrow } from '@/components/ui/text/Eyebrow';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
+import { keepHyphenatedNameTogether } from '@/utils/sessions/machineDisplayNames';
 import { t } from '@/text';
 import { groupComputerTargets, resolveComputerRecovery, type ComputerTargetEntry } from '@/sync/domains/computer/targets';
 export { resolveSuggestedTargetKey, type ComputerTargetEntry, type ComputerTargetPickerState } from '@/sync/domains/computer/targets';
@@ -361,6 +362,11 @@ export function ComputerTargetPicker(props: Readonly<{
     density?: 'form' | 'switcher';
     /** What is shared with the agent right now (the switcher marks it). */
     currentKey?: string | null;
+    /**
+     * Someone the Machine is shared with for use: the list holds only their own bot desktop and its
+     * windows, so the display reads as theirs and its prerequisites say who can provide them.
+     */
+    ownDesktop?: boolean;
     testID?: string;
 }>): React.ReactElement {
     const { theme } = useUnistyles();
@@ -375,6 +381,25 @@ export function ComputerTargetPicker(props: Readonly<{
         return (
             <View style={stylesheet.state} testID={`${testID}-loading`}>
                 <SurfaceStateCard kind="loading" title={t('computerUse.picker.loadingTitle', { machine: machineName })} />
+            </View>
+        );
+    }
+    if (state.kind === 'failed' && props.ownDesktop
+        && (recovery?.cause === 'headless' || state.code === 'agent_isolation_unavailable')) {
+        // A guest's desktop is the Machine's to provide (Linux and its virtual display), or their
+        // identity there could not be confirmed yet; never the owner's screen as a fallback.
+        const identity = state.code === 'agent_isolation_unavailable';
+        return (
+            <View style={stylesheet.state} testID={`${testID}-own-desktop-unavailable`}>
+                <SurfaceStateCard
+                    kind="unavailable"
+                    iconName="desktop"
+                    title={t('computerUse.picker.ownDesktopUnavailableTitle', { machine: machineName })}
+                    reason={t(identity ? 'computerUse.picker.ownDesktopIdentityBody' : 'computerUse.picker.ownDesktopUnavailableBody',
+                        { machine: keepHyphenatedNameTogether(machineName) })}
+                    diagnosticCode={state.code}
+                    action={identity ? { label: t('computerUse.picker.tryAgain'), onPress: props.onRetry } : undefined}
+                />
             </View>
         );
     }
@@ -478,7 +503,8 @@ export function ComputerTargetPicker(props: Readonly<{
     const windows = groups.windows
         .map((entry) => ({ entry, label: entry.title?.trim() || t('computerUse.picker.untitledWindow') }));
     const screens = groups.displays
-        .map((entry, index) => ({ entry, label: entry.label?.trim() || entry.title?.trim() || t('computerUse.picker.screenLabel', { index: String(index + 1) }) }));
+        .map((entry, index) => ({ entry, label: props.ownDesktop ? t('computerUse.picker.ownDesktop')
+            : entry.label?.trim() || entry.title?.trim() || t('computerUse.picker.screenLabel', { index: String(index + 1) }) }));
     const chosen = state.targets.find((entry) => computerTargetKey(entry.target) === props.selectedKey) ?? null;
     const noticeKey = props.noticeCode ? NOTICE_KEY[props.noticeCode] ?? 'computerUse.picker.selectFailed' : null;
     // A whole display shares every app and notification on it: say so before it is shared (64 §2).

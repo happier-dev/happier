@@ -49,14 +49,25 @@ const TARGETS: readonly ComputerTargetEntry[] = [
     { target: { kind: 'window', displayId: ':0', pid: 104, windowId: 4 }, title: 'lumen — zsh' },
     { target: { kind: 'display', displayId: ':0' }, title: 'Built-in display' },
 ];
+/** A shared Use person's list: only their own bot desktop (a virtual display) and the windows on it. */
+const GUEST_TARGETS: readonly ComputerTargetEntry[] = [
+    { target: { kind: 'window', displayId: ':101', pid: 201, windowId: 11 }, title: TITLE },
+    { target: { kind: 'window', displayId: ':101', pid: 202, windowId: 12 }, title: 'lumen — bash' },
+    { target: { kind: 'display', displayId: ':101' }, title: ':101', width: 1920, height: 1080 },
+];
 const GRANTED: ComputerGrantStatusV1 = { capture: 'granted', input: 'granted' };
 const DENIED: ComputerGrantStatusV1 = { capture: 'denied', input: 'granted' };
 
-function SpecimenPicker(props: CustomModalInjectedProps & Readonly<{ grants: ComputerGrantStatusV1; chosen: boolean; phone: boolean; suggested?: boolean }>) {
+type GuestScene = 'ready' | 'headless' | 'identity';
+
+function SpecimenPicker(props: CustomModalInjectedProps & Readonly<{ grants: ComputerGrantStatusV1; chosen: boolean; phone: boolean; suggested?: boolean; guest?: GuestScene }>) {
     return (
         <ComputerTargetPicker
-            machineName={MACHINE}
-            state={{ kind: 'ready', targets: TARGETS, grants: props.grants }}
+            machineName={props.guest ? 'build-box' : MACHINE}
+            ownDesktop={props.guest !== undefined}
+            state={props.guest === 'headless' ? { kind: 'failed', code: 'computer_display_unavailable' }
+                : props.guest === 'identity' ? { kind: 'failed', code: 'agent_isolation_unavailable' }
+                : { kind: 'ready', targets: props.guest ? GUEST_TARGETS : TARGETS, grants: props.grants }}
             // TP opens as the person sees it (nothing chosen, Share disabled); TPc after they tap a window.
             selectedKey={props.chosen || props.suggested ? computerTargetKey(TARGETS[0]!.target) : null}
             onSelect={NOOP}
@@ -81,7 +92,7 @@ function SpecimenPicker(props: CustomModalInjectedProps & Readonly<{ grants: Com
 }
 
 /** The picker in its real card chrome (the modal host), opened on mount like the person's press. */
-function PickerFrame(props: Readonly<{ grants: ComputerGrantStatusV1; chosen?: boolean; suggested?: boolean; phone: boolean }>) {
+function PickerFrame(props: Readonly<{ grants: ComputerGrantStatusV1; chosen?: boolean; suggested?: boolean; phone: boolean; guest?: GuestScene }>) {
     React.useEffect(() => {
         // The modal host registers after the first route effect; open on the next frame it is ready.
         let id = '';
@@ -89,8 +100,9 @@ function PickerFrame(props: Readonly<{ grants: ComputerGrantStatusV1; chosen?: b
         const open = () => {
             id = Modal.show({
                 component: SpecimenPicker,
-                props: { grants: props.grants, chosen: props.chosen === true, suggested: props.suggested === true, phone: props.phone },
-                chrome: computerTargetPickerChrome({ agentName: AGENT.name, machineName: MACHINE, purpose: t('computerUse.picker.purposeIn', { session: 'Check the sign-in flow', project: 'happier' }) }),
+                props: { grants: props.grants, chosen: props.chosen === true, suggested: props.suggested === true, phone: props.phone,
+                    ...(props.guest ? { guest: props.guest } : {}) },
+                chrome: computerTargetPickerChrome({ agentName: AGENT.name, machineName: props.guest ? 'build-box' : MACHINE, purpose: t('computerUse.picker.purposeIn', { session: 'Check the sign-in flow', project: 'happier' }) }),
             });
             if (!id) timer = setTimeout(open, 250);
         };
@@ -99,7 +111,7 @@ function PickerFrame(props: Readonly<{ grants: ComputerGrantStatusV1; chosen?: b
             if (timer) clearTimeout(timer);
             if (id) Modal.hide(id);
         };
-    }, [props.chosen, props.grants, props.phone, props.suggested]);
+    }, [props.chosen, props.grants, props.guest, props.phone, props.suggested]);
     return null;
 }
 
@@ -374,6 +386,10 @@ const FRAMES: readonly Frame[] = [
     { id: 'TP', render: (phone) => <PickerFrame grants={GRANTED} phone={phone} /> },
     { id: 'TPc', render: (phone) => <PickerFrame grants={GRANTED} chosen phone={phone} /> },
     { id: 'TPs', render: (phone) => <PickerFrame grants={GRANTED} suggested phone={phone} /> },
+    // Someone the Machine is shared with for use: their own bot desktop, or why it cannot open yet.
+    { id: 'TPg', render: (phone) => <PickerFrame grants={GRANTED} phone={phone} guest="ready" /> },
+    { id: 'TPgh', render: (phone) => <PickerFrame grants={GRANTED} phone={phone} guest="headless" /> },
+    { id: 'TPgi', render: (phone) => <PickerFrame grants={GRANTED} phone={phone} guest="identity" /> },
     { id: 'TX', render: () => <TranscriptFrame /> },
     { id: 'HC', render: (phone) => <SessionLineFrame phone={phone} presence="agent" /> },
     { id: 'HCh', render: (phone) => <SessionLineFrame phone={phone} presence="human" /> },

@@ -28,6 +28,7 @@ import {
 } from './ComputerTargetPicker';
 import { useComputerTargetPicker } from './useComputerTargetPicker';
 import { useComputerDriverRepair } from './useComputerDriverRepair';
+import { resolveComputerOwnDesktopOnly } from '@/sync/domains/computer/actions/machineRpc';
 
 const stylesheet = StyleSheet.create((theme) => ({
     machine: {
@@ -104,6 +105,9 @@ export function ComputerTargetPickerModal(props: PickerModalProps): React.ReactE
         ? borrowedLifetime ?? (props.execute ? undefined : null) : props.accountLifetime;
     const execute = props.execute ?? (frontDoorExecute ??= createFrontDoorActionExecute());
     const picker = useComputerTargetPicker({ ...props, execute, accountLifetime });
+    // The same fact that routes a shared Use person to their personal desktop words the list as theirs.
+    const ownDesktop = React.useMemo(() => resolveComputerOwnDesktopOnly({ machineId: props.scope.machineId, serverId: props.scope.serverId }),
+        [props.scope.machineId, props.scope.serverId]);
     const driverRepair = useComputerDriverRepair(props.scope, accountLifetime, picker.retry);
     // The person's own Ask-first preferences for the agent (the existing Actions approval owner).
     const asksBeforeScreenshots = getStorage()((current) => isActionApprovalRequiredInState(current, 'computer.capture', { surface: 'agent' }));
@@ -141,6 +145,7 @@ export function ComputerTargetPickerModal(props: PickerModalProps): React.ReactE
             suggestedKey={picker.suggestedKey}
             density={props.density}
             currentKey={props.currentTargetKey}
+            ownDesktop={ownDesktop}
         />
     );
 }
