@@ -30,6 +30,10 @@ export type AgentProviderCredentialTransport = Readonly<{
             name: string;
             format: 'raw' | 'bearer' | Readonly<{ template: string }>;
         }>;
+    additionalCredentials?: readonly Readonly<{
+        slotId: string;
+        destination: AgentProviderCredentialTransport['destination'];
+    }>[];
 }>;
 
 export type AgentProviderBindingEnvironmentEntry = Readonly<{
