@@ -19,6 +19,7 @@ import { getRandomBytes } from '@/platform/cryptoRandom';
 import { createPrivateContinuationTransportError } from '@/sync/domains/machines/peer/mediation/rpc/client';
 import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
 import { Encryption } from '@/sync/encryption/encryption';
+import { createRpcCallError } from '@/sync/runtime/rpcErrors';
 import { observeServerTimestamp } from '@/sync/runtime/time';
 import { MACHINE_LIVE_STREAM_SOCKET_EVENT, type MachineLiveStreamRelayEnvelopeV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
 import { TRANSFER_RELAY_V2_SOCKET_EVENT } from '@happier-dev/protocol/transfers/relay/v2/socketEvents';
@@ -741,9 +742,9 @@ class ApiSocket {
                     ? readMachineStorageModeFromLocalState(machineId) === 'plain'
                     : capturedEncryption?.getMachineEncryption(machineId) === machineEncryption);
             };
-            if (!isMachineCurrent()) throw new Error(`Machine encryption not found for ${machineId}`);
+            if (!isMachineCurrent()) throw createRpcCallError({ error: `Machine encryption not found for ${machineId}`, errorCode: 'MACHINE_ENCRYPTION_UNAVAILABLE' });
             if (!usePlaintextParams && !machineEncryption) {
-                throw new Error(`Machine encryption not found for ${machineId}`);
+                throw createRpcCallError({ error: `Machine encryption not found for ${machineId}`, errorCode: 'MACHINE_ENCRYPTION_UNAVAILABLE' });
             }
             const socket = this.requireRpcSocket();
             const config = this.config;
@@ -940,7 +941,7 @@ class ApiSocket {
         }
         const socket = this.socket;
         if (!socket || socket.connected === false) {
-            throw new Error('Socket not connected');
+            throw createRpcCallError({ error: 'Socket not connected', errorCode: RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE });
         }
         return socket;
     }

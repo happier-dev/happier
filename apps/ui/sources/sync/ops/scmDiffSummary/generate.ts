@@ -347,7 +347,7 @@ export function createScmDiffSummaryOperations(deps: ScmDiffSummaryOperationsDep
 
     const readCapturedFile = async (params: CaptureScmComparisonParams<Readonly<{
         cwd: string; comparisonId: string; source: ScmComparisonSource; path: string;
-    }>>): Promise<ScmDiffFileResponse> => {
+    }>>): Promise<ScmDiffFileResponse | Readonly<{ success: false; error: string; errorCode: string }>> => {
         const current = () => !params.signal?.aborted && params.shouldContinue?.() !== false;
         const result = await invokeUiScmAction({ actionId: 'scm.diff.file',
             input: { cwd: params.input.cwd, captured: { comparisonId: params.input.comparisonId,
@@ -357,7 +357,9 @@ export function createScmDiffSummaryOperations(deps: ScmDiffSummaryOperationsDep
             shouldContinue: current });
         const parsed = ScmDiffFileResponseSchema.safeParse(result);
         if (parsed.success) return parsed.data;
-        return { success: false, error: readOperationError(result)?.error ?? 'Captured file evidence is unavailable' };
+        const failure = readOperationError(result);
+        return { success: false, error: failure?.error ?? 'Captured file evidence is unavailable',
+            errorCode: failure?.errorCode ?? 'invalid_action_output' };
     };
 
     const generateFromUserAction = async (params: GenerateScmDiffSummaryParams): Promise<ScmDiffSummaryOperationResult> => {

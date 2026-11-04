@@ -51,6 +51,20 @@ async function createViewerRequest() {
 }
 
 describe('apiSocket transports and roles', () => {
+    it('classifies unavailable Machine content before sending a read', async () => {
+        const { apiSocket } = await boot();
+        await expect(apiSocket.machineRPC('missing-machine', 'scm.diff.file', {})).rejects.toMatchObject({
+            rpcErrorCode: 'MACHINE_ENCRYPTION_UNAVAILABLE',
+        });
+    });
+    it('classifies a disconnected socket before sending a Machine read', async () => {
+        storage.setState({ machines: { machine: createMachineFixture({ id: 'machine', storageMode: 'plain' }) } });
+        const { apiSocket, trigger } = await boot();
+        trigger('disconnect', 'transport close');
+        await expect(apiSocket.machineRPC('machine', 'scm.diff.file', {})).rejects.toMatchObject({
+            rpcErrorCode: 'RPC_TRANSPORT_UNAVAILABLE',
+        });
+    });
     const initialState = storage.getState();
     const previousForceWebsocket = process.env.EXPO_PUBLIC_HAPPIER_SOCKET_FORCE_WEBSOCKET;
     afterEach(async () => {

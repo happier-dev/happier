@@ -62,11 +62,11 @@ describe('SCM diff summary operations', () => {
         const ops = createScmDiffSummaryOperations({ actionExecutor });
         expect(await ops.captureComparison({ sessionId: 'unresolved-session', input: { cwd: '/repo',
             source: { kind: 'turnCheckpoint', sessionId: 'unresolved-session', turnId: 'turn-2', evidenceMode: 'reconciled' },
-        } })).toMatchObject({ success: false, errorCode: 'BACKEND_UNAVAILABLE' });
+        } })).toMatchObject({ success: false, errorCode: RPC_ERROR_CODES.SESSION_MACHINE_CONTROL_UNAVAILABLE });
         const { createScmDiffSummaryResultOperations } = await import('./results');
         const results = createScmDiffSummaryResultOperations({ sessionId: 'unresolved-session', shouldContinue: () => true, actionExecutor });
         expect(await results.read({ cwd: '/repo', resultId: 'saved-result' }))
-            .toMatchObject({ success: false, errorCode: 'BACKEND_UNAVAILABLE' });
+            .toMatchObject({ success: false, errorCode: RPC_ERROR_CODES.SESSION_MACHINE_CONTROL_UNAVAILABLE });
         const { runSessionScmRpc } = await import('@/sync/ops/sessionScm');
         const git = await runSessionScmRpc('unresolved-session', RPC_METHODS.SCM_STATUS_SNAPSHOT, { cwd: '/repo' });
         expect(git).toMatchObject({ success: false, errorCode: 'BACKEND_UNAVAILABLE' });
@@ -76,7 +76,7 @@ describe('SCM diff summary operations', () => {
         { error: new Error('Machine connection closed'), errorCode: 'REPOSITORY_REFRESH_FAILED' },
         { error: Object.assign(new Error(RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE), {
             rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
-        }), errorCode: 'BACKEND_UNAVAILABLE' },
+        }), errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE },
     ])('preserves a named-Turn capture transport refusal as $errorCode instead of invalid Action output', async ({ error, errorCode }) => {
         machineRpc.mockRejectedValueOnce(error);
         const actionExecutor = createActionExecutor(createActionExecutorBoundaryFixture({

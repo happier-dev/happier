@@ -1,3 +1,4 @@
+import { getScmRpcSideEffectClass } from '@happier-dev/protocol/actions/scmGitActionSpecs';
 import { getActionSpec, requiresExplicitScmMachineTarget, isScmDiffSummaryRunAction } from '@happier-dev/protocol/actions/actionSpecs';
 import { ScmDiffSummaryResultClearInputSchema, ScmDiffSummaryResultResponseSchema } from '@happier-dev/protocol/scm/diffSummaryResult';
 import { executeScmDiffSummaryClear } from '@happier-dev/protocol/scm';
@@ -50,6 +51,18 @@ export function createUiScmAction(
         const serverId = account?.serverId ?? context.serverId;
         const accountId = account?.accountId ?? context.runtimeAccountId;
         const target = context.externalActionTarget;
+        const finish = (result: unknown) => {
+            const effectClass = getActionSpec(actionId).sideEffectClass;
+            account?.assertResultCurrent(effectClass);
+            // Transport/admission failures are Action failures, not members of Git's
+            // closed result vocabulary. Keep their code outside domain output parsing.
+            if (getScmRpcSideEffectClass(method) === 'read' && result && typeof result === 'object' && 'actionErrorCode' in result
+                && typeof result.actionErrorCode === 'string') {
+                return { ok: false, errorCode: result.actionErrorCode,
+                    error: 'error' in result && typeof result.error === 'string' ? result.error : result.actionErrorCode };
+            }
+            return result;
+        };
         if (actionId === 'scm.diffSummary.reviewed.mark' || actionId === 'scm.diffSummary.reviewed.unmark') {
             if (!account) return { success: false, errorCode: 'reviewed_marks_unavailable', error: 'Captured Account credentials are required for personal reviewed marks.' };
             const selection = (actionId === 'scm.diffSummary.reviewed.mark' ? ScmReviewedMarkInputSchema : ScmReviewedUnmarkInputSchema).parse(input);
@@ -156,8 +169,7 @@ export function createUiScmAction(
                 ...(context.defaultSessionId && resolveSocketRpcSessionAuthorization(method)?.optionalSessionScope
                     ? { authorization: { kind: 'session.write', sessionId: context.defaultSessionId } } : {}),
             });
-            account?.assertResultCurrent(getActionSpec(actionId).sideEffectClass);
-            return result;
+            return finish(result);
         }
         const sessionId = target?.kind === 'session' ? target.sessionId : context.defaultSessionId;
         if (!sessionId) return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
@@ -167,7 +179,6 @@ export function createUiScmAction(
         options?.onDispatched?.();
         const result = await runSessionScmRpc(sessionId, method, sessionRequest, serverId, context.signal, accountId,
             actionId === 'scm.pullRequest.prepareWorktree' ? (resolved) => ({ ...resolved, sourcePath: resolved.cwd }) : undefined);
-        account?.assertResultCurrent(getActionSpec(actionId).sideEffectClass);
-        return result;
+        return finish(result);
     };
 }

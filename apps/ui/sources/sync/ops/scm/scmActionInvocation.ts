@@ -6,6 +6,7 @@ import { randomUUID } from '@/platform/randomUUID';
 import { safeParse, type core } from 'zod/mini';
 import { SCM_OPERATION_ERROR_CODES, ScmOperationErrorCodeSchema } from '@happier-dev/protocol/scm';
 import type { ScmRpcFailure } from './scmRpcFailure';
+import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 
 export type UiScmActionExecutor = Readonly<{
     execute: (actionId: ActionId, input: unknown, context?: UiActionExecutorContext) => Promise<ActionExecuteResult>;
@@ -86,7 +87,8 @@ export async function invokeUiScmAction<T>(params: Readonly<{
     onDispatched?: () => void;
 }>): Promise<T | UiScmActionFailure> {
     const current = () => !params.context.signal?.aborted && params.shouldContinue?.() !== false;
-    const retired = (): UiScmActionFailure => ({ success: false, errorCode: 'result_unavailable',
+    const retired = (): UiScmActionFailure => ({ success: false, errorCode: params.context.signal?.aborted
+        ? SCM_OPERATION_ERROR_CODES.COMMAND_CANCELLED : 'result_unavailable',
         error: 'The captured Account or SCM host retired.' });
     const effectClass = getActionSpec(params.actionId).sideEffectClass;
     const effectReceipt = effectClass === 'write' || effectClass === 'external' || effectClass === 'danger';
@@ -112,7 +114,8 @@ export async function invokeUiScmAction<T>(params: Readonly<{
         return parsed.success ? parsed.data : { success: false, errorCode: 'invalid_action_output',
             error: 'The SCM Action response could not be validated.' };
     } catch (error) {
-        return { success: false, errorCode: 'result_unavailable',
+        if (!effectReceipt && !current()) return retired();
+        return { success: false, errorCode: readRpcErrorCode(error) ?? 'result_unavailable',
             error: error instanceof Error ? error.message : 'The owning machine is unavailable.' };
     }
 }

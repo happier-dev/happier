@@ -8,6 +8,14 @@ const settled = (result: unknown): UiScmActionExecutor => ({
 
 // The Protocol owns Zod Mini response schemas; the UI Action invoker must accept them as-is.
 describe('invokeUiScmAction with a Protocol (Zod Mini) response schema', () => {
+    it('settles an aborted read as cancelled without invoking the machine', async () => {
+        const abort = new AbortController();
+        abort.abort();
+        const result = await invokeUiScmAction({ actionId: 'scm.diff.file', input: {},
+            schema: ScmDiffSummaryGenerateOutputSchema, context: { signal: abort.signal },
+            executor: settled({}) });
+        expect(result).toMatchObject({ success: false, errorCode: 'COMMAND_CANCELLED' });
+    });
     it('parses a valid response and keeps the schema output type', async () => {
         const failure = { success: false, error: 'No model selected.', errorCode: 'MODEL_UNAVAILABLE' };
         const result = await invokeUiScmAction({ actionId: 'scm.diffSummary.generate', input: {},

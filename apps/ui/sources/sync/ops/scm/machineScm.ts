@@ -208,7 +208,7 @@ async function callMachineScmTransport<
         // Analysis/result Actions have their own closed domain responses. A failed
         // transport is an Action refusal, not a Git response for those schemas.
         return method.startsWith('scm.diffSummary.')
-            ? { ok: false, errorCode: failure.errorCode, error: failure.error }
+            ? { ok: false, errorCode: failure.actionErrorCode ?? failure.errorCode, error: failure.error }
             : failure;
     }
 }

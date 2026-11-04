@@ -1,6 +1,6 @@
 import { createScmOperationUnknownOutcome, SCM_OPERATION_ERROR_CODES, ScmOperationErrorCodeSchema, ScmOperationOutcomeSchema, ScmCommitPublicationSchema, ScmCommitHookContentChangesSchema, type ScmOperationErrorCode, type ScmOperationOutcome, type ScmOperationReconciliation } from '@happier-dev/protocol/scm';
 import { getScmRpcSideEffectClass } from '@happier-dev/protocol/actions/scmGitActionSpecs';
-import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError, isRpcSessionMachineControlUnavailableError, type RpcErrorCarrier } from '@happier-dev/protocol/rpcErrors';
+import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError, isRpcSessionMachineControlUnavailableError, readRpcErrorCode, type RpcErrorCarrier } from '@happier-dev/protocol/rpcErrors';
 import { RPC_ERROR_MESSAGES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { isTransientConnectivityError } from '@/sync/runtime/connectivity/transientConnectivityErrors';
 import { isMachineRpcTimeoutError } from '@/sync/runtime/orchestration/serverScopedRpc/machineRpcTimeoutError';
@@ -70,6 +70,10 @@ function reconciliationFor({ method, request }: ScmRpcFailureContext): ScmOperat
 
 export function scmFallbackError(error: unknown, context: ScmRpcFailureContext): ScmRpcFailure {
     const isRead = getScmRpcSideEffectClass(context.method) === 'read';
+    const rpcErrorCode = readRpcErrorCode(error);
+    if (isRead && rpcErrorCode === 'SOCKET_RPC_ABORTED') return {
+        success: false, errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_CANCELLED, error: 'The read was cancelled.',
+    };
     const carrier = error && typeof error === 'object' ? error as {
         scmErrorCode?: unknown; diagnosticDetail?: unknown; name?: unknown; message?: unknown;
     } : undefined;
@@ -83,7 +87,7 @@ export function scmFallbackError(error: unknown, context: ScmRpcFailureContext):
         // A repository refresh may rethrow an already normalized read. Its diagnostic was
         // logged at the originating failure; carry it forward without logging it twice.
         if (retainedDetail === undefined) log.log(`[scm] ${context.method} ${failure.errorCode}: ${diagnosticDetail}`);
-        return { ...failure, diagnosticDetail };
+        return { ...failure, ...(rpcErrorCode ? { actionErrorCode: rpcErrorCode } : {}), diagnosticDetail };
     };
     if (isRead && carrier) {
         const nativeCode = ScmOperationErrorCodeSchema.safeParse(carrier.scmErrorCode);
@@ -93,8 +97,9 @@ export function scmFallbackError(error: unknown, context: ScmRpcFailureContext):
         });
     }
     if (error && typeof error === 'object') {
+        const code = readRpcErrorCode(error);
         const rpcError: RpcErrorCarrier = {
-            rpcErrorCode: typeof (error as { rpcErrorCode?: unknown }).rpcErrorCode === 'string' ? (error as { rpcErrorCode: string }).rpcErrorCode : undefined,
+            rpcErrorCode: code,
             message: typeof (error as { message?: unknown }).message === 'string' ? (error as { message: string }).message : undefined,
         };
         if (isRpcMethodNotAvailableError(rpcError)) {

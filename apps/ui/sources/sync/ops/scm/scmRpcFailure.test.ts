@@ -3,7 +3,19 @@ import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { assertScmResponse, scmFallbackError } from './scmRpcFailure';
 import { RetryableServerResponseError } from '@/sync/runtime/connectivity/transientConnectivityErrors';
 
+import { RpcError } from '@happier-dev/protocol/rpcErrors';
+
 describe('SCM RPC failure normalization', () => {
+    it('keeps read transport codes and classifies caller cancellation without failure diagnostics', () => {
+        expect(scmFallbackError(new RpcError('Connection closed.', RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE), {
+            method: RPC_METHODS.SCM_DIFF_FILE, request: {},
+        })).toMatchObject({ success: false, actionErrorCode: RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE });
+        const cancelled = scmFallbackError(Object.assign(new RpcError('Read retired.', 'SOCKET_RPC_ABORTED'), { name: 'AbortError' }), {
+            method: RPC_METHODS.SCM_DIFF_FILE, request: {},
+        });
+        expect(cancelled).toMatchObject({ success: false, errorCode: 'COMMAND_CANCELLED' });
+        expect(cancelled.diagnosticDetail).toBeUndefined();
+    });
     it('preserves known read transport failures without treating refusals as retryable native reads', () => {
         for (const [error, errorCode] of [
             [new RetryableServerResponseError(503, 'unavailable'), 'REMOTE_NETWORK_FAILED'],

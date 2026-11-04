@@ -119,7 +119,7 @@ async function callScmPreferMachineTransport<
     if (!target.ok) {
         const { failure } = target;
         return method.startsWith('scm.diffSummary.')
-            ? { ok: false, errorCode: failure.errorCode, error: failure.error }
+            ? { ok: false, errorCode: failure.actionErrorCode ?? failure.errorCode, error: failure.error }
             : failure;
     }
 
