@@ -12184,7 +12184,10 @@ settingsSession: {
 	          workspaceMachineSubtitlesEnabledSubtitle: 'Affiche le nom de la machine sous les noms de workspace quand c’est utile',
 	          workspaceMachineSubtitlesDisabledSubtitle: 'Masque les noms de machine dans les en-têtes de workspace',
 
-	          folderTreeView: "Vue en arborescence de dossiers",},
+	          folderTreeView: "Vue en arborescence de dossiers",
+    layoutProjectsSubtitle: 'Groupées par projet, dans votre ordre',
+    layoutRecentActivitySubtitle: 'Une chronologie, les plus récentes d’abord',
+},
 	      mobileWorkspaceExperience: {
 	          groupTitle: 'Workspace mobile',
 	          groupFooter: 'Contrôle l’organisation des écrans de session au format téléphone.',

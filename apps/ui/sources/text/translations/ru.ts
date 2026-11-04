@@ -12197,7 +12197,10 @@ settingsSession: {
 	        workspaceMachineSubtitlesEnabledSubtitle: 'Показывать имя машины под именами рабочих пространств, когда это нужно',
 	        workspaceMachineSubtitlesDisabledSubtitle: 'Скрывать имена машин в заголовках рабочих пространств',
 
-	        folderTreeView: "Представление в виде дерева папок",},
+	        folderTreeView: "Представление в виде дерева папок",
+    layoutProjectsSubtitle: 'По проектам, в вашем порядке',
+    layoutRecentActivitySubtitle: 'Одна лента, сначала новые',
+},
 	    mobileWorkspaceExperience: {
 	        groupTitle: 'Мобильное рабочее пространство',
 	        groupFooter: 'Управляет тем, как экраны сессии организованы на телефонах.',

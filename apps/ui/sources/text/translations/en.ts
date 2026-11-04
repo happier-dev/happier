@@ -14595,7 +14595,10 @@ const enSettingsSession = {
       'Hide machine names from workspace headers',
 
     folderTreeView: 'Folder tree view',
-  },
+
+    layoutProjectsSubtitle: 'Grouped by project, your order',
+    layoutRecentActivitySubtitle: 'One timeline, newest first',
+},
   mobileWorkspaceExperience: {
     groupTitle: 'Mobile workspace',
     groupFooter: 'Controls how phone-sized session screens are organized.',

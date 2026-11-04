@@ -12241,7 +12241,10 @@ settingsSession: {
 	              workspaceMachineSubtitlesEnabledSubtitle: 'Bei Bedarf den Rechnernamen unter dem Workspace-Namen zeigen',
 	              workspaceMachineSubtitlesDisabledSubtitle: 'Rechnernamen in Workspace-Kopfzeilen ausblenden',
 
-	              folderTreeView: "Ordner als Baum",},
+	              folderTreeView: "Ordner als Baum",
+    layoutProjectsSubtitle: 'Nach Projekt gruppiert, in deiner Reihenfolge',
+    layoutRecentActivitySubtitle: 'Eine Zeitleiste, neueste zuerst',
+},
 	          mobileWorkspaceExperience: {
 	              groupTitle: 'Mobiler Workspace',
 	              groupFooter: 'Steuert, wie Session-Bildschirme in Telefongröße aufgebaut sind.',

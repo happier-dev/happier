@@ -12565,7 +12565,10 @@ settingsSession: {
 	          workspaceMachineSubtitlesEnabledSubtitle: 'Mostra il nome della macchina sotto i nomi degli spazi di lavoro quando serve',
 	          workspaceMachineSubtitlesDisabledSubtitle: 'Nascondi i nomi macchina dalle intestazioni degli spazi di lavoro',
 
-	          folderTreeView: "Visualizzazione ad albero delle cartelle",},
+	          folderTreeView: "Visualizzazione ad albero delle cartelle",
+    layoutProjectsSubtitle: 'Raggruppate per progetto, nel tuo ordine',
+    layoutRecentActivitySubtitle: 'Un’unica cronologia, prima le più recenti',
+},
 	      mobileWorkspaceExperience: {
 	          groupTitle: 'Area di lavoro mobile',
 	          groupFooter: 'Controlla come sono organizzate le schermate di sessione sui telefoni.',

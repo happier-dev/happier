@@ -11537,7 +11537,10 @@ settingsSession: {
 	                workspaceMachineSubtitlesEnabledSubtitle: 'Mostra el nom de la màquina sota els noms dels espais de treball quan calgui',
 	                workspaceMachineSubtitlesDisabledSubtitle: 'Amaga els noms de màquina de les capçaleres dels espais de treball',
 
-	                folderTreeView: "Vista d'arbre de carpetes",},
+	                folderTreeView: "Vista d'arbre de carpetes",
+    layoutProjectsSubtitle: 'Agrupades per projecte, en el teu ordre',
+    layoutRecentActivitySubtitle: 'Una cronologia, les més recents primer',
+},
 	            mobileWorkspaceExperience: {
 	                groupTitle: 'Espai de treball mòbil',
 	                groupFooter: 'Controla com s’organitzen les pantalles de sessió en telèfons.',

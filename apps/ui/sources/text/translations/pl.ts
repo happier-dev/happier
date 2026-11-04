@@ -12175,7 +12175,10 @@ settingsSession: {
 	          workspaceMachineSubtitlesEnabledSubtitle: 'Pokazuj nazwę maszyny pod nazwami obszarów roboczych, gdy jest potrzebna',
 	          workspaceMachineSubtitlesDisabledSubtitle: 'Ukryj nazwy maszyn w nagłówkach obszarów roboczych',
 
-	          folderTreeView: "Widok drzewa folderów",},
+	          folderTreeView: "Widok drzewa folderów",
+    layoutProjectsSubtitle: 'Pogrupowane według projektu, w Twojej kolejności',
+    layoutRecentActivitySubtitle: 'Jedna oś czasu, najnowsze na górze',
+},
 	      mobileWorkspaceExperience: {
 	          groupTitle: 'Mobilny obszar roboczy',
 	          groupFooter: 'Określa sposób organizacji ekranów sesji na telefonach.',

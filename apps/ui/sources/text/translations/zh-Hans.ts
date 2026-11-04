@@ -11974,7 +11974,10 @@ settingsSession: {
 	        workspaceMachineSubtitlesEnabledSubtitle: '需要时在工作区名称下方显示机器名称',
 	        workspaceMachineSubtitlesDisabledSubtitle: '在工作区标题中隐藏机器名称',
 
-	        folderTreeView: "文件夹树视图",},
+	        folderTreeView: "文件夹树视图",
+    layoutProjectsSubtitle: '按项目分组，按你的顺序',
+    layoutRecentActivitySubtitle: '一条时间线，最新的在前',
+},
 	    mobileWorkspaceExperience: {
 	        groupTitle: '移动端工作区',
 	        groupFooter: '控制手机尺寸的会话屏幕如何组织。',

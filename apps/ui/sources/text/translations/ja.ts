@@ -12641,7 +12641,10 @@ settingsSession: {
 	        workspaceMachineSubtitlesEnabledSubtitle: '必要な場合にワークスペース名の下にマシン名を表示',
 	        workspaceMachineSubtitlesDisabledSubtitle: 'ワークスペース見出しでマシン名を非表示',
 
-	        folderTreeView: "フォルダーツリービュー",},
+	        folderTreeView: "フォルダーツリービュー",
+    layoutProjectsSubtitle: 'プロジェクトごと、あなたの順番',
+    layoutRecentActivitySubtitle: '1つのタイムライン、新しい順',
+},
 	    mobileWorkspaceExperience: {
 	        groupTitle: 'モバイルワークスペース',
 	        groupFooter: 'スマートフォンサイズのセッション画面の構成を設定します。',

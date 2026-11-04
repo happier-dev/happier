@@ -10152,7 +10152,10 @@ settingsSession: {
 	              workspaceMachineSubtitlesTitle: '機器名稱',
 	              workspaceMachineSubtitlesEnabledSubtitle: '需要時在工作區名稱下方顯示機器名稱',
 	              workspaceMachineSubtitlesDisabledSubtitle: '在工作區標題中隱藏機器名稱',
-	          },
+
+    layoutProjectsSubtitle: '依專案分組，按你的順序',
+    layoutRecentActivitySubtitle: '一條時間軸，最新的在前',
+},
 	        mobileWorkspaceExperience: {
 	            groupTitle: '行動工作區',
 	            groupFooter: '控制手機尺寸的工作階段畫面如何組織。',
