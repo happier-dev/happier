@@ -16,6 +16,13 @@ absence of Compose; own-server Publish, first-target creation and native
 receipts retain their required Compose selectors. These are unreleased 0.3
 contracts and require matching development components.
 
+Development Environment content owns its name. Writers project `content.name`
+into the private Artifact `header.title` in the same content write, including
+template application and edits after a rename. Lists and Services read that
+header without opening bodies; the detail page reads the canonical content.
+Retained placeholder titles are corrected at the next content write, with no
+startup scan or backfill and no reader fallback.
+
 ## Runtime overview
 - **App server:** Fastify + Socket.IO. Published `relay-server` images run the packaged server binary and embed the web UI; source-based `server` images use the repository start script.
 - **Database:** selected independently by `HAPPIER_DB_PROVIDER`; prebuilt images include SQLite and Postgres.
