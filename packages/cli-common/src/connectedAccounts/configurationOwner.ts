@@ -29,6 +29,7 @@ type ConnectedAccountModeConfiguration =
     >['configuration'];
 type ConnectedAccountConfigurationField =
     NonNullable<ConnectedAccountModeConfiguration>['fields'][number];
+type PublicOAuthClient = Awaited<ReturnType<NonNullable<PluginConnectedAccountRuntimeConfiguration['getPublicOAuthClient']>>>;
 
 export type ConnectedAccountConfigurationTarget =
     PluginConnectedAccountRuntimeConfiguration['target'];
@@ -225,6 +226,7 @@ export function createConnectedAccountAttemptConfigurationStore(params: Readonly
 }
 
 type ConfigurationControlView = Readonly<{
+    mode: PluginConnectedAccountAuthenticationModeV2;
     status: 'ready' | 'configurationRequired';
     revision: string | null;
     values: Readonly<Record<string, JsonValue>>;
@@ -234,8 +236,10 @@ type ConfigurationControlView = Readonly<{
 
 function configurationControlView(
     normalized: Awaited<ReturnType<typeof normalizeConnectedAccountConfigurationV1>>,
+    mode: PluginConnectedAccountAuthenticationModeV2,
 ): ConfigurationControlView {
     return Object.freeze({
+        mode,
         status: normalized.revision !== null && normalized.missingFieldIds.length === 0
             ? 'ready' as const
             : 'configurationRequired' as const,
@@ -647,6 +651,49 @@ export function createConnectedAccountConfigurationOwner(params: Readonly<{
         return target.kind === 'account' ? target.account.service : target.service;
     }
 
+    async function resolveEffectiveMode(
+        declaredMode: PluginConnectedAccountAuthenticationModeV2,
+        target: ConnectedAccountConfigurationTarget,
+    ) {
+        let mode = declaredMode;
+        let publicOAuthClient: PublicOAuthClient | undefined;
+        if (mode.kind !== 'manual' && mode.clientConfiguration && mode.configuration) {
+            const selected = await params.readPublicOAuthClient?.({
+                service: serviceForTarget(target), modeId: target.modeId,
+            }) ?? null;
+            publicOAuthClient = selected === null ? null : Object.freeze({
+                clientId: selected.clientId, scopes: Object.freeze([...selected.scopes]),
+            });
+            const { clientIdFieldId, scopesFieldId } = mode.clientConfiguration;
+            mode = {
+                ...mode,
+                configuration: {
+                    ...mode.configuration,
+                    fields: mode.configuration.fields.map(field => {
+                        if ((field.id !== clientIdFieldId && field.id !== scopesFieldId) || field.semantic !== undefined) return field;
+                        const presentation: NonNullable<ConnectedAccountConfigurationField['presentation']> = { ...field.presentation };
+                        if (selected === null) delete presentation.advanced;
+                        else presentation.advanced = true;
+                        return { ...field, required: selected === null, presentation };
+                    }),
+                },
+            };
+        }
+        const deferredFields = mode.kind === 'oauthAuthorizationCode' ? mode.postAuthenticationFieldIds : undefined;
+        const displayMode = mode.kind === 'oauthAuthorizationCode' && target.kind === 'attempt'
+            && deferredFields?.length && mode.configuration
+            ? {
+                ...mode,
+                postAuthenticationFieldIds: [],
+                configuration: {
+                    ...mode.configuration,
+                    fields: mode.configuration.fields.filter(field => !deferredFields.includes(field.id)),
+                },
+            }
+            : mode;
+        return { mode, displayMode, publicOAuthClient };
+    }
+
     function createSnapshot(input: Readonly<{
         target: ConnectedAccountConfigurationTarget;
         mode: PluginConnectedAccountAuthenticationModeV2;
@@ -657,6 +704,7 @@ export function createConnectedAccountConfigurationOwner(params: Readonly<{
         secretValues?: Readonly<Record<string, string>>;
         unconfigured?: boolean;
         secretReader?: ConnectedAccountCredentialOperationSecretReader;
+        publicOAuthClient?: PublicOAuthClient;
     }>): PluginConnectedAccountRuntimeConfiguration {
         const currentnessSignal = currentnessSignalFor(input.target, input.revision);
         const secretFields = new Set(
@@ -675,7 +723,7 @@ export function createConnectedAccountConfigurationOwner(params: Readonly<{
                     throw new ConnectedAccountConfigurationError('connected_account_configuration_stale',
                         'Connected-account configuration is no longer current');
                 }
-                const selected = await params.readPublicOAuthClient?.({
+                const selected = input.publicOAuthClient !== undefined ? input.publicOAuthClient : await params.readPublicOAuthClient?.({
                     service: serviceForTarget(input.target), modeId: input.target.modeId,
                 }, options) ?? null;
                 options?.signal?.throwIfAborted();
@@ -796,9 +844,10 @@ export function createConnectedAccountConfigurationOwner(params: Readonly<{
                 sourceCustody: input.sourceCustody,
             });
             await assertRuntimeCurrent(service, runtimeIdentity);
+            const effective = await resolveEffectiveMode(input.mode, target);
             const record = await params.read(target);
             await assertRuntimeCurrent(service, runtimeIdentity);
-            const normalized = await normalize({ target, mode: input.mode, record });
+            const normalized = await normalize({ target, mode: effective.mode, record });
             if (!await isTargetRevisionCurrent(
                 service,
                 runtimeIdentity,
@@ -810,7 +859,7 @@ export function createConnectedAccountConfigurationOwner(params: Readonly<{
                     'Connected-account configuration changed during inspection',
                 );
             }
-            return configurationControlView(normalized);
+            return configurationControlView(normalized, effective.displayMode);
         },
 
         async replaceForControl(input: Readonly<{
@@ -833,6 +882,7 @@ export function createConnectedAccountConfigurationOwner(params: Readonly<{
                 sourceCustody: input.sourceCustody,
             });
             await assertRuntimeCurrent(service, runtimeIdentity);
+            const effective = await resolveEffectiveMode(input.mode, target);
             const current = await params.read(target);
             await assertRuntimeCurrent(service, runtimeIdentity);
             if ((current?.revision ?? null) !== input.expectedRevision) {
@@ -843,7 +893,7 @@ export function createConnectedAccountConfigurationOwner(params: Readonly<{
             }
             const preview = await normalize({
                 target,
-                mode: input.mode,
+                mode: effective.mode,
                 record: current,
                 replacement: {
                     values: input.values,
@@ -863,7 +913,7 @@ export function createConnectedAccountConfigurationOwner(params: Readonly<{
                 });
             }
             const secretFields = new Set(
-                descriptorFields(input.mode)
+                descriptorFields(effective.mode)
                     .filter((field) => field.secret === true)
                     .map((field) => field.id),
             );
@@ -935,7 +985,7 @@ export function createConnectedAccountConfigurationOwner(params: Readonly<{
             await assertRuntimeCurrent(service, runtimeIdentity);
             const committed = await normalize({
                 target,
-                mode: input.mode,
+                mode: effective.mode,
                 record: result.record,
             });
             if (committed.revision === null || committed.missingFieldIds.length > 0) {
@@ -957,17 +1007,18 @@ export function createConnectedAccountConfigurationOwner(params: Readonly<{
             }
             const snapshot = createSnapshot({
                 target,
-                mode: input.mode,
+                mode: effective.mode,
                 runtimeIdentity,
                 revision: committed.revision,
                 values: committed.values,
                 secretRefs: committed.secretRefs,
                 secretValues: committed.secretValues,
+                publicOAuthClient: effective.publicOAuthClient,
             });
             return Object.freeze({
                 status: 'committed' as const,
                 snapshot,
-                configuration: configurationControlView(committed),
+                configuration: configurationControlView(committed, effective.displayMode),
             });
         },
 
@@ -1000,6 +1051,7 @@ export function createConnectedAccountConfigurationOwner(params: Readonly<{
                 });
                 return Object.freeze({ status: 'ready', snapshot });
             }
+            const effective = await resolveEffectiveMode(input.mode, target);
             const record = await params.read(target);
             await assertRuntimeCurrent(input.service, runtimeIdentity);
             // An AccountChange hint is only a wake; a new operation must not use
@@ -1014,7 +1066,7 @@ export function createConnectedAccountConfigurationOwner(params: Readonly<{
                 );
             }
             await assertRuntimeCurrent(input.service, runtimeIdentity);
-            const normalized = await normalize({ target, mode: input.mode, record });
+            const normalized = await normalize({ target, mode: effective.mode, record });
             if (!await isTargetRevisionCurrent(
                 input.service,
                 runtimeIdentity,
@@ -1051,12 +1103,13 @@ export function createConnectedAccountConfigurationOwner(params: Readonly<{
             }
             const snapshot = createSnapshot({
                 target,
-                mode: input.mode,
+                mode: effective.mode,
                 runtimeIdentity,
                 revision: normalized.revision,
                 values: normalized.values,
                 secretRefs: normalized.secretRefs,
                 secretValues: normalized.secretValues,
+                publicOAuthClient: effective.publicOAuthClient,
                 secretReader,
             });
             return Object.freeze({
@@ -1095,9 +1148,10 @@ export function createConnectedAccountConfigurationOwner(params: Readonly<{
                 sourceCustody: input.sourceCustody,
             });
             await assertRuntimeCurrent(service, runtimeIdentity);
+            const effective = await resolveEffectiveMode(input.mode, target);
             const normalized = await normalize({
                 target,
-                mode: input.mode,
+                mode: effective.mode,
                 record: null,
                 replacement: input.replacement,
             });
@@ -1138,7 +1192,7 @@ export function createConnectedAccountConfigurationOwner(params: Readonly<{
                 });
             }
             revokeCurrentnessFence(target);
-            const committed = await normalize({ target, mode: input.mode, record: result.record });
+            const committed = await normalize({ target, mode: effective.mode, record: result.record });
             if (committed.revision === null || committed.missingFieldIds.length > 0) {
                 throw new ConnectedAccountConfigurationError(
                     'connected_account_configuration_unavailable',
@@ -1158,12 +1212,13 @@ export function createConnectedAccountConfigurationOwner(params: Readonly<{
             }
             const snapshot = createSnapshot({
                 target,
-                mode: input.mode,
+                mode: effective.mode,
                 runtimeIdentity,
                 revision: committed.revision,
                 values: committed.values,
                 secretRefs: committed.secretRefs,
                 secretValues: committed.secretValues,
+                publicOAuthClient: effective.publicOAuthClient,
             });
             return Object.freeze({ status: 'committed' as const, snapshot });
         },

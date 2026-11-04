@@ -165,6 +165,78 @@ function createHarness(records: readonly Readonly<{
 }
 
 describe('ConnectedAccountConfigurationOwner', () => {
+    it('hides deferred fields only from initial display while preserving their validated values', async () => {
+        const mode = PluginConnectedAccountAuthenticationModeV2Schema.parse({
+            id: 'browser', kind: 'oauthAuthorizationCode', callbackUrl: 'https://provider.example/callback',
+            pkce: 'required', outcomeReconciliation: 'none', postAuthenticationFieldIds: ['accountId'],
+            configuration: { scope: 'account', changeBehavior: 'reconnect', fields: [
+                { id: 'accountId', title: 'Account', schema: { type: 'string', minLength: 1 } },
+                { id: 'clientId', title: 'Client', schema: { type: 'string' } },
+            ] },
+        });
+        if (mode.kind !== 'oauthAuthorizationCode') throw new Error('Expected browser mode');
+        const target = { kind: 'attempt' as const, attemptId: 'deferred-attempt', service, modeId: mode.id };
+        const record = { revision: 'revision-1', values: { accountId: 'established', clientId: 'own-client' }, secretRefs: {} };
+        const accountTarget = { kind: 'account' as const, account, modeId: mode.id };
+        const { owner } = createHarness([{ target, record }, { target: accountTarget, record }]);
+        const initial = await owner.inspect({ target, mode, ...generation });
+        expect(initial.mode.configuration?.fields.map(field => field.id)).toEqual(['clientId']);
+        expect(PluginConnectedAccountAuthenticationModeV2Schema.safeParse(initial.mode).success).toBe(true);
+        expect(initial.values).toEqual(record.values);
+        const established = await owner.inspect({ target: accountTarget, mode, ...generation });
+        expect(established.mode.configuration?.fields.map(field => field.id)).toEqual(['accountId', 'clientId']);
+        const resumed = await owner.inspect({ target, mode: { ...mode, postAuthenticationFieldIds: [] }, ...generation });
+        expect(resumed.mode.configuration?.fields.map(field => field.id)).toEqual(['accountId', 'clientId']);
+    });
+
+    it.each([false, true])('resolves Home client configuration once per owner operation (configured=%s)', async (configured) => {
+        const mode = PluginConnectedAccountAuthenticationModeV2Schema.parse({
+            id: 'browser', kind: 'oauthAuthorizationCode', callbackUrl: 'https://provider.example/callback',
+            pkce: 'required', outcomeReconciliation: 'none',
+            clientConfiguration: { clientIdFieldId: 'clientId', scopesFieldId: 'registeredScopes' },
+            configuration: { scope: 'account', changeBehavior: 'reconnect', fields: [
+                { id: 'accountId', title: 'Account ID', schema: { type: 'string', minLength: 1 }, required: true },
+                { id: 'clientId', title: 'Client ID', schema: { type: 'string', minLength: 1 },
+                    presentation: { advanced: true, control: 'text', placeholder: 'Own client' } },
+                { id: 'registeredScopes', title: 'Scopes', schema: { type: 'string', minLength: 1 } },
+            ] },
+        });
+        const target = { kind: 'attempt' as const, attemptId: 'attempt-client', service, modeId: mode.id };
+        let selected = configured ? { clientId: 'home-client', scopes: ['read'] } : null;
+        const readPublicOAuthClient = vi.fn(async () => selected);
+        let record: ConnectedAccountConfigurationRecord = { revision: 'revision-1', values: { accountId: 'acct' }, secretRefs: {} };
+        // Home metadata and persisted configuration are genuine external boundaries.
+        const owner = createConnectedAccountConfigurationOwner({
+            read: async () => record, readPublicOAuthClient,
+            replace: async input => ({ status: 'committed', record: record = { ...input.replacement, revision: 'revision-2' } }),
+            destroyAttempt: async () => {}, isRuntimeCurrent: () => true,
+            secrets: { has: async () => false, read: async () => null, admit: async () => undefined },
+        });
+        const view = await owner.inspect({ target, mode, ...generation });
+        expect(readPublicOAuthClient).toHaveBeenCalledTimes(1);
+        expect(view.missingFieldIds).toEqual(configured ? [] : ['clientId', 'registeredScopes']);
+        expect(PluginConnectedAccountAuthenticationModeV2Schema.safeParse(view.mode).success).toBe(true);
+        expect(view.mode.configuration?.fields.filter(field => field.id !== 'accountId').map(field => ({
+            required: field.required, advanced: field.presentation?.advanced,
+        }))).toEqual([{ required: !configured, advanced: configured ? true : undefined }, { required: !configured, advanced: configured ? true : undefined }]);
+        expect(view.mode.configuration?.fields.find(field => field.id === 'clientId')?.presentation).toEqual({
+            control: 'text', placeholder: 'Own client', ...(configured ? { advanced: true } : {}),
+        });
+        const admission = await owner.admit({ intent: 'connect', service, mode, attemptId: target.attemptId, ...generation });
+        expect(readPublicOAuthClient).toHaveBeenCalledTimes(2);
+        expect(admission.status).toBe(configured ? 'ready' : 'configurationRequired');
+        const values = { accountId: 'acct', clientId: 'own-client', registeredScopes: 'write' };
+        const replaced = await owner.replaceForControl({ target, mode, expectedRevision: 'revision-1', values, secretValues: {}, ...generation });
+        expect(readPublicOAuthClient).toHaveBeenCalledTimes(3);
+        expect(replaced.status).toBe('committed');
+        if (replaced.status !== 'committed') throw new Error('Expected configuration commit');
+        expect(replaced.configuration.values).toEqual(values);
+        expect(replaced.configuration.mode).toEqual(view.mode);
+        selected = { clientId: 'changed-home-client', scopes: ['other'] };
+        await expect(replaced.snapshot.getPublicOAuthClient?.()).resolves.toEqual(configured ? { clientId: 'home-client', scopes: ['read'] } : null);
+        expect(readPublicOAuthClient).toHaveBeenCalledTimes(3);
+    });
+
     it('stages validated host account configuration under the admitted revision without writing it early', async () => {
         const mode = configuredMode('account');
         const hostService = { pluginId: 'happier', localId: 'mcp-sign-in' };
@@ -262,6 +334,7 @@ describe('ConnectedAccountConfigurationOwner', () => {
             mode,
             ...generation,
         })).resolves.toEqual({
+            mode,
             status: 'ready',
             revision: 'revision-current',
             values: {
@@ -290,6 +363,16 @@ describe('ConnectedAccountConfigurationOwner', () => {
                     endpoint: 'https://new.example.test',
                     audience: 'custom-audience',
                 },
+            },
+            configuration: {
+                status: 'ready',
+                revision: expect.any(String),
+                values: {
+                    endpoint: 'https://new.example.test',
+                    audience: 'custom-audience',
+                },
+                configuredSecretFieldIds: ['clientSecret'],
+                missingFieldIds: [],
             },
         });
         expect(harness.replaceForControl).toHaveBeenCalledWith(expect.objectContaining({
