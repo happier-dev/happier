@@ -122,7 +122,7 @@ describe('resolveCurrentAccountMachineTarget', () => {
     const access = { custodian: { accountId: 'alice', displayName: 'Alice' }, role: 'use', resourceMode: 'e2ee', accessState: 'key_pending' };
     boundaries.axiosGet.mockResolvedValue({ data: [{ ...currentMachine('shared'), access }] });
     expect(await listCurrentAccountMachines({ token: 'token' })).toEqual([
-      { id: 'shared', label: 'shared', kind: 'persistent', active: true, revokedAt: null, replacedByMachineId: null, access },
+      { id: 'shared', label: 'shared', kind: 'persistent', installationId: null, active: true, revokedAt: null, replacedByMachineId: null, access },
     ]);
     expect(await resolveCurrentAccountMachineTarget({ token: 'token' })).toMatchObject({ kind: 'unavailable', code: 'no_current_machine' });
     boundaries.axiosGet.mockResolvedValue({ data: [{ ...currentMachine('shared'), access: { ...access, accessState: 'ready' } }] });
@@ -135,8 +135,8 @@ describe('resolveCurrentAccountMachineTarget', () => {
       { ...currentMachine('machine-old', 'old-desk'), active: false, revokedAt: 7, replacedByMachineId: 'machine-current' },
     ] });
     await expect(listCurrentAccountMachines({ token: 'token-1' })).resolves.toEqual([
-      { id: 'machine-current', label: 'desk', kind: 'persistent', active: true, revokedAt: null, replacedByMachineId: null },
-      { id: 'machine-old', label: 'old-desk', kind: 'persistent', active: false, revokedAt: 7, replacedByMachineId: 'machine-current' },
+      { id: 'machine-current', label: 'desk', kind: 'persistent', installationId: null, active: true, revokedAt: null, replacedByMachineId: null },
+      { id: 'machine-old', label: 'old-desk', kind: 'persistent', installationId: null, active: false, revokedAt: 7, replacedByMachineId: 'machine-current' },
     ]);
   });
 

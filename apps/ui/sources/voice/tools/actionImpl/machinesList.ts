@@ -37,6 +37,7 @@ export async function listMachinesForVoiceTool(params: Readonly<{ serverId?: str
     .map((m) => ({
       serverId,
       machineId: normalizeNonEmptyString(m?.id),
+      installationId: normalizeNonEmptyString(m.installationId),
       label: names?.get(m.id) ?? resolveVoiceMachineLabel(m),
       ...(params.purpose === 'input' ? { named: isMachineVisibleForSelection(m) && !isMachineDisplayHydrating(m),
         presence: (() => {

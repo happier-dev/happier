@@ -18,6 +18,18 @@ beforeEach(async () => {
 
 afterEach(clearMachineRequestReachabilityForTest);
 
+it('retains a shared Use target installation in the Action inventory without stored content', async () => {
+    const machine = createMachineFixture({ id: 'shared', installationId: 'other-installation',
+        access: { custodian: { accountId: 'other-owner', displayName: 'Owner' }, role: 'use',
+            resourceMode: 'e2ee', accessState: 'key_pending' } });
+    const { serverId } = account.scope;
+    storage.setState({ machineListByServerId: { [serverId]: [machine] }, machineListStatusByServerId: { [serverId]: 'idle' } });
+    const result = await listMachinesForVoiceTool({ purpose: 'input', serverId });
+    expect(result).toMatchObject({ items: [{ machineId: 'shared', installationId: 'other-installation' }] });
+    expect(result).not.toHaveProperty('items.0.metadata');
+    expect(result).not.toHaveProperty('items.0.dataEncryptionKey');
+});
+
 it('keeps retained input presence unknown until the exact Account observes the Machine, including a fresh offline row', async () => {
     const machine = createMachineFixture({ id: 'voice-machine', activeAt: Date.now() });
     const { serverId } = account.scope;

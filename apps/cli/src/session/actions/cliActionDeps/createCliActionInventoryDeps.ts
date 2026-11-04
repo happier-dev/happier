@@ -578,6 +578,7 @@ export function createCliActionInventoryDeps(params: Readonly<{
       const items = (await listCurrentAccountMachines({ token: params.token, credentials: params.credentials,
         serverHttpBaseUrl: params.serverHttpBaseUrl })).map((machine) => ({
         serverId, id: machine.id, value: machine.id, label: machine.label, machineId: machine.id,
+        installationId: machine.installationId,
         kind: machine.kind, active: machine.active,
         ...(machine.activeAt === undefined ? {} : { activeAt: machine.activeAt }),
         revokedAt: machine.revokedAt, replacedByMachineId: machine.replacedByMachineId,

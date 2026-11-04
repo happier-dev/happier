@@ -31,6 +31,7 @@ export type CurrentAccountMachineTarget = Readonly<{
 }>;
 export type CurrentAccountMachineInventoryItem = Readonly<{
   id: string; label: string; kind: 'persistent' | 'ephemeral_session_runner';
+  installationId: string | null;
   active: boolean; revokedAt: number | null; replacedByMachineId: string | null;
   activeAt?: number | null;
   platform?: string;
@@ -140,6 +141,7 @@ export async function listCurrentAccountMachines(params: Readonly<{
         host: nameMetadata?.host,
         machine: {
           id: row.id, label: readMachineName(nameMetadata) ?? row.id, kind: row.kind, active: row.active,
+          installationId: row.installationId,
           revokedAt: row.revokedAt, replacedByMachineId: row.replacedByMachineId,
           ...(row.activeAt === undefined ? {} : { activeAt: row.activeAt }),
           ...(metadata ? { platform: metadata.platform, ...(metadata.arch === undefined ? {} : { arch: metadata.arch }) } : {}),

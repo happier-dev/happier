@@ -23,6 +23,12 @@ header without opening bodies; the detail page reads the canonical content.
 Retained placeholder titles are corrected at the next content write, with no
 startup scan or backfill and no reader fallback.
 
+In development, `deployments.templates.instantiate` requires `target.installationId`
+from the selected row of the existing `machines.list` Action. This nullable public
+identity is also visible to Machine Use recipients; it grants no authority. A
+missing identity cannot select an installed target. Template creation still
+requires Machine Manage and the existing Project and Environment permissions.
+
 ## Runtime overview
 - **App server:** Fastify + Socket.IO. Published `relay-server` images run the packaged server binary and embed the web UI; source-based `server` images use the repository start script.
 - **Database:** selected independently by `HAPPIER_DB_PROVIDER`; prebuilt images include SQLite and Postgres.
