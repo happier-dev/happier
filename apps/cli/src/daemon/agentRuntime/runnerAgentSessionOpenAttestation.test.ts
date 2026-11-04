@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { ChildProcess } from 'node:child_process';
 import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
+import { PluginError } from '@happier-dev/plugin-sdk';
 import { SessionTeamCredentialLaunchUnavailableError } from '@/session/services/sessionTeamCredentialLaunch';
 
 import { createAgentSessionRunnerFactoryBinding } from '@/plugins/runtime/runner/agentSessionRunnerFactoryBinding';
@@ -51,6 +52,22 @@ function createFixture() {
 }
 
 describe('runner-owned Agent session-open attestation', () => {
+  it.each(['current', 'predecessor', 'malformed'] as const)('retains only the %s runner startup cause', async kind => {
+    const { tracked, runner } = createFixture();
+    tracked.childProcess = new ChildProcess();
+    Object.defineProperty(tracked.childProcess, 'exitCode', { value: 1 });
+    const failureCause = { code: 'agent_startup_failed', phase: 'client_start', failureReason: 'unclassified_provider_error' } as const;
+    const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error',
+      error: new PluginError({ code: 'agent_startup_failed', message: 'PRIVATE_NATIVE_BODY', details: {
+        failureCause: kind === 'malformed' ? { ...failureCause, path: '/PRIVATE_NATIVE_HOME' } : failureCause,
+      } }), occurredAt: runner.processStartTimeMs + (kind === 'predecessor' ? -1 : 1) });
+    const result = await awaitTrackedRunnerAgentSessionOpen({ sessionId: 'session-child',
+      getTrackedSessions: () => [tracked], readStartupFailure: async () => issue, timeoutMs: null,
+    });
+    expect(result).toEqual(kind === 'predecessor' ? { status: 'runner_exited' }
+      : { status: 'runner_exited', code: 'agent_startup_failed', ...(kind === 'current' ? { failureCause } : {}) });
+    expect(JSON.stringify(result)).not.toMatch(/PRIVATE_/);
+  });
   it.each(['current', 'predecessor'] as const)('attributes a broker startup cause only to its %s runner birth', async age => {
     const { tracked, runner } = createFixture();
     tracked.pid = runner.pid - 1;

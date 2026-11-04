@@ -1,6 +1,8 @@
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
+import { Console } from 'node:console';
+import { PassThrough } from 'node:stream';
 import axios from 'axios';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -35,8 +37,14 @@ import { buildCommittedLaunchMetadata } from '@/agent/runtime/createSessionMetad
 import { resetServerFeaturesClientForTests } from '@/features/serverFeaturesClient';
 import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
 import { resolveAgentDisplayTitle } from '@/agent/catalog/agentDisplayTitle';
-import { readSessionStartupFailurePreview, SESSION_PREPARATION_FAILURE_PREVIEWS } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { readSessionStartupFailurePreview } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { SessionTeamCredentialLaunchUnavailableError } from './sessionTeamCredentialLaunch';
+import { PluginError } from '@happier-dev/plugin-sdk';
+import { createSessionTurnLifecycle } from '@/agent/runtime/session/turn/lifecycle';
+import { SessionTurnMutationV1Schema } from '@happier-dev/protocol/sessions/turns/sessionTurnMutationV1';
+import { reportSessionRunnerFailure } from '@/cli/resolveSessionRunnerFailureExitCode';
+import { readSessionRunnerFailureCause } from '@/session/shared/spawnSessionContract';
+import { logger } from '@/ui/logger';
 
 afterEach(() => { vi.unstubAllEnvs(); reloadConfiguration(); });
 
@@ -46,11 +54,16 @@ describe('durable creation after daemon startup refusal', () => {
         ['agent_cli_not_runnable', 'returned'], ['agent_cli_not_runnable', 'nonce'],
         ['plugin_mcp_preparation_unavailable', 'returned'], ['plugin_mcp_preparation_unavailable', 'nonce'],
         ['broker_unavailable', 'returned'], ['broker_unavailable', 'nonce'],
+        ['agent_startup_failed', 'returned'], ['agent_startup_failed', 'nonce'],
     ] as const)('preserves the same creation refusal (%s, %s) after its runner exits before native startup despite published Activity and hostPid', async (preparationCode, settlementKind) => {
         const home = await mkdtemp(join(tmpdir(), 'happier-native-startup-failure-'));
         const sessionId = 'c1234567890123456789012345';
         const machineId = 'machine-native-startup-failure';
         const credentials = { token: 'fixture-token', encryption: null } as const;
+        const failureCause = preparationCode === 'agent_startup_failed'
+            ? { code: 'agent_startup_failed', phase: 'client_start', failureReason: 'unclassified_provider_error' } as const
+            : preparationCode === 'agent_cli_not_runnable'
+                ? { code: 'EACCES', phase: 'client_start', failureReason: 'permission_denied' } as const : undefined;
         let operationSequence = 0;
         const operations = createHostActionOperationRuntime({ machineId, resolveAccountId: async () => 'fixture-account',
             generateOperationId: () => `native-startup-${++operationSequence}` });
@@ -102,11 +115,44 @@ describe('durable creation after daemon startup refusal', () => {
                     metadataLayoutVersion: fields.metadataLayoutVersion, metadata: fields.sharedMetadata.ciphertext,
                     ownerMetadata: fields.ownerMetadata, dataEncryptionKey: null });
                 SessionLookupByTagsResponseV2Schema.parse({ sessions: [row] });
+                if (failureCause) {
+                    const error = new PluginError({ code: preparationCode!, message: 'PRIVATE_NATIVE_STARTUP_BODY',
+                        details: { failureCause, path: '/PRIVATE_NATIVE_HOME', token: 'PRIVATE_NATIVE_TOKEN' } });
+                    // The real construction catch publishes through this same lifecycle.
+                    const lifecycle = createSessionTurnLifecycle({ session: { sessionId,
+                        enqueueSessionTurnMutation: async value => {
+                            const mutation = SessionTurnMutationV1Schema.parse(value);
+                            if (mutation.action === 'fail') {
+                                expect(mutation.issue.failureCause).toEqual(failureCause);
+                                if (!row) throw new Error('Startup failure preceded Session custody');
+                                row = { ...row, latestTurnStatus: 'failed', lastRuntimeIssue: mutation.issue };
+                                SessionLookupByTagsResponseV2Schema.parse({ sessions: [row] });
+                            }
+                        },
+                    } });
+                    try {
+                        await lifecycle.failTurn({ issue: classifyPrimarySessionRuntimeIssue({
+                            cause: 'session_error', error, provider: 'codex',
+                        }), allocateWhenIdle: true });
+                    } finally { lifecycle.dispose(); }
+                    // Capture bytes from the actual console formatter, including newlines.
+                    const stderr = new PassThrough();
+                    let output = '';
+                    stderr.on('data', chunk => { output += String(chunk); });
+                    const writer = new Console({ stdout: stderr, stderr });
+                    const consoleError = vi.spyOn(console, 'error').mockImplementation(writer.error.bind(writer));
+                    const file = vi.spyOn(logger, 'infoFile').mockImplementation(() => {});
+                    const fatal = vi.spyOn(logger, 'fatal').mockImplementation(() => {});
+                    try { expect(reportSessionRunnerFailure(error)).toBe(1); }
+                    finally { consoleError.mockRestore(); file.mockRestore(); fatal.mockRestore(); stderr.end(); }
+                    expect(readSessionRunnerFailureCause(output)).toEqual(failureCause);
+                    expect(output).not.toMatch(/PRIVATE_/);
+                }
                 return { type: 'success', sessionId };
             },
             stopSession: async () => ({ status: 'not_found' }),
         }, awaitAgentSessionOpen: input => awaitTrackedRunnerAgentSessionOpen({ ...input, getTrackedSessions: () => [...tracked.values()],
-            readStartupFailure: async () => preparationCode ? classifyPrimarySessionRuntimeIssue({
+            readStartupFailure: async () => failureCause ? row?.lastRuntimeIssue ?? null : preparationCode ? classifyPrimarySessionRuntimeIssue({
                 cause: 'session_error', ...(preparationCode === 'agent_cli_not_runnable' ? { provider: 'codex' } : {}), error: preparationCode === 'broker_unavailable'
                     ? new SessionTeamCredentialLaunchUnavailableError(preparationCode) : { code: preparationCode }, occurredAt: Date.now(),
             }) : null,
@@ -151,11 +197,15 @@ describe('durable creation after daemon startup refusal', () => {
             await invoke();
             const first = await operations.handlers.getV2({ operationId: 'native-startup-1', waitForTerminal: true });
             const nonRetryable = preparationCode === 'agent_cli_not_runnable';
-            const launchError = { code: preparationCode ?? 'SPAWN_FAILED', message: nonRetryable
-                ? readSessionStartupFailurePreview(preparationCode, resolveAgentDisplayTitle('codex'))!
-                : preparationCode ? SESSION_PREPARATION_FAILURE_PREVIEWS[preparationCode] : 'Agent runner exited before native Session startup completed' };
+            const launchError = { code: preparationCode ?? 'SPAWN_FAILED', message: readSessionStartupFailurePreview(preparationCode,
+                nonRetryable ? resolveAgentDisplayTitle('codex') : null) ?? 'Agent runner exited before native Session startup completed',
+                ...(failureCause ? { failureCause } : {}) };
             expect(first).toMatchObject({ kind: 'found', operation: { result: { type: 'error', code: 'spawn_failed',
                 launchError } } });
+            if (first.kind !== 'found') throw new Error('Missing startup operation');
+            expect(SessionSpawnNewResultV1Schema.parse(first.operation.result)).toMatchObject({ type: 'error',
+                code: 'spawn_failed', launchError });
+            expect(JSON.stringify(first.operation.result)).not.toMatch(/PRIVATE_/);
             expect(launches).toBe(1);
             const settledNonceReads = nonceReads;
             const repeated = await invoke();

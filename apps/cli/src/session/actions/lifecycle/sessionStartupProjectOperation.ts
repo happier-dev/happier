@@ -5,7 +5,6 @@ import { SessionStartupInputRefusalError } from '@/agent/runtime/session/input/s
 import { resolveSessionStartupTimeoutMs } from '@/daemon/spawn/waitForSessionWebhook';
 import type { ProjectSetupOperationContext } from '@/workspaces/projectSetup/projectSetupExecution';
 import { logger } from '@/ui/logger';
-import { readSessionPreparationFailureCode } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 
 import type { SessionLifecycleActionHandler, SessionLifecycleMachineDeps, SessionLifecycleMachineHandlers } from './sessionLifecycleTypes';
 
@@ -74,14 +73,15 @@ export function createSessionStartupProjectSpawn(input: Readonly<{
                 errorDetail: { kind: 'launch_error', code: SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT, message } };
         }
         if (opened.status !== 'opened') {
-            const code = opened.status === 'runner_exited' ? readSessionPreparationFailureCode(opened.code) : null;
+            const code = opened.status === 'runner_exited' ? opened.code : undefined;
             const agentId = code === 'agent_cli_not_runnable' && options.backendTarget?.kind === 'backend'
                 ? options.backendTarget.backendId : undefined;
             const message = readSessionStartupFailurePreview(code, agentId ? resolveAgentDisplayTitle(agentId) : null)
                 ?? 'Agent runner exited before native Session startup completed';
             return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED, errorMessage: message,
                 ...(agentId ? { agentId } : {}),
-                errorDetail: { kind: 'launch_error', code: code ?? SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED, message } };
+                errorDetail: { kind: 'launch_error', code: code ?? SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED, message,
+                    ...(opened.status === 'runner_exited' && opened.failureCause ? { failureCause: opened.failureCause } : {}) } };
         }
         return result;
     };

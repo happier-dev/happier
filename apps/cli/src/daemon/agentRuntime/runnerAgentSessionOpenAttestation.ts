@@ -3,7 +3,7 @@ import { processIdentityMatches } from '@happier-dev/cli-common/processInstance'
 
 import type { AgentSessionOpenRequest } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
-import { readSessionPreparationFailureCode, type SessionPreparationFailureCode } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { readSessionPreparationFailureCode, readAgentStartupFailureCode, type SessionPreparationFailureCode, type AgentStartupFailureCode } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { ProviderBrokerAdmissionFailureCodeV1Schema } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 
 import {
@@ -148,7 +148,8 @@ export async function awaitTrackedRunnerAgentSessionOpen(
       request: AgentSessionOpenRequest;
     }>
   /** A runner that had registered this child exited before committing its open. */
-  | Readonly<{ status: 'runner_exited'; code?: SessionPreparationFailureCode }>
+  | Readonly<{ status: 'runner_exited'; code?: SessionPreparationFailureCode | AgentStartupFailureCode;
+      failureCause?: SessionRuntimeIssueV1['failureCause'] }>
   | Readonly<{
       status: 'refused';
       code: 'native_agent_session_mode_unavailable';
@@ -168,12 +169,13 @@ export async function awaitTrackedRunnerAgentSessionOpen(
       : DEFAULT_OPEN_ATTESTATION_TIMEOUT_MS;
   const deadlineMs = timeoutMs === null ? null : Date.now() + timeoutMs;
   let observedTrackedSession: TrackedSession | null = null;
-  const exited = async (): Promise<Readonly<{ status: 'runner_exited'; code?: SessionPreparationFailureCode }>> => {
+  const exited = async (): Promise<Readonly<{ status: 'runner_exited'; code?: SessionPreparationFailureCode | AgentStartupFailureCode;
+      failureCause?: SessionRuntimeIssueV1['failureCause'] }>> => {
     const tracked = observedTrackedSession;
     try {
       const issue = tracked ? await input.readStartupFailure?.(tracked) : null;
       input.signal?.throwIfAborted();
-      const code = readSessionPreparationFailureCode(issue?.code);
+      const code = readSessionPreparationFailureCode(issue?.code) ?? readAgentStartupFailureCode(issue?.code);
       const runnerStartTimeMs = tracked ? resolveTrackedSessionRunnerIdentity(tracked)?.processStartTimeMs : undefined;
       // A retained failure from an older runner cannot explain this launch.
       if (code && tracked?.happySessionId === sessionId && issue?.scope === 'primary_session'
@@ -182,7 +184,8 @@ export async function awaitTrackedRunnerAgentSessionOpen(
             || issue.source === 'dependency_failure' && code === 'agent_cli_not_runnable')
         && typeof runnerStartTimeMs === 'number' && Number.isFinite(runnerStartTimeMs)
         && issue.occurredAt >= runnerStartTimeMs) {
-        return Object.freeze({ status: 'runner_exited' as const, code });
+        return Object.freeze({ status: 'runner_exited' as const, code,
+          ...(issue.failureCause ? { failureCause: issue.failureCause } : {}) });
       }
     } catch {
       input.signal?.throwIfAborted();

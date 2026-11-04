@@ -42,7 +42,8 @@ export function projectSessionSpawnFailure(input: Readonly<{
   if (code === 'agent_cli_not_runnable') {
     const title = typeof input.agentId === 'string' ? resolveAgentDisplayTitle(input.agentId) : null;
     return { type: 'error', code: 'spawn_failed', retryable: false,
-      launchError: { kind: 'launch_error', code, message: readSessionStartupFailurePreview(code, title)! } };
+      launchError: { kind: 'launch_error', code, message: readSessionStartupFailurePreview(code, title)!,
+        ...(detail.success && detail.data.failureCause ? { failureCause: detail.data.failureCause } : {}) } };
   }
   const fallback = SessionSpawnLaunchErrorV1Schema.safeParse({ kind: 'launch_error',
     code: input.errorCode || SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
