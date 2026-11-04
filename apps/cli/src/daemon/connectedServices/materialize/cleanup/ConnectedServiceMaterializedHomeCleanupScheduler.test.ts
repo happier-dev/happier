@@ -135,6 +135,54 @@ describe('ConnectedServiceMaterializedHomeCleanupScheduler', () => {
     }
   });
 
+  it('reads the account Session listing only when a stale home needs a retention decision', async () => {
+    // Issue #832: the retention listing pages every active and archived Session with full
+    // metadata. A tick with no stale home candidate has no decision to make and reads nothing.
+    const baseDir = await createTempDir('happier-connected-service-materialized-retention-demand-');
+    const nowMs = 100_000;
+    try {
+      const recentHome = join(baseDir, 'csm_recent', 'claude');
+      const staleAttempt = join(baseDir, '.attempts', 'csm_orphan-codex-00000000-0000-4000-8000-000000000002');
+      await mkdir(recentHome, { recursive: true });
+      await mkdir(staleAttempt, { recursive: true });
+      await touchOld(recentHome, nowMs, 1_000);
+      await touchOld(staleAttempt, nowMs, 60_000);
+
+      let listings = 0;
+      const scheduler = new ConnectedServiceMaterializedHomeCleanupScheduler({
+        baseDir,
+        nowMs: () => nowMs,
+        rootTtlMs: 10_000,
+        attemptsTtlMs: 10_000,
+        hasLiveTarget: () => false,
+        listRetainedIdentityIds: async () => {
+          listings += 1;
+          return new Set(['csm_stale_retained']);
+        },
+      });
+
+      await scheduler.cleanupPendingMaterializedHomes();
+      await expect(scheduler.reconcileMaterializedHomes()).resolves.toEqual([
+        expect.objectContaining({ cleaned: true, path: staleAttempt }),
+      ]);
+      expect(listings).toBe(0);
+
+      const staleRetainedHome = join(baseDir, 'csm_stale_retained', 'claude');
+      const staleOrphanHome = join(baseDir, 'csm_stale_orphan', 'claude');
+      await mkdir(staleRetainedHome, { recursive: true });
+      await mkdir(staleOrphanHome, { recursive: true });
+      await touchOld(staleRetainedHome, nowMs, 60_000);
+      await touchOld(staleOrphanHome, nowMs, 60_000);
+      await expect(scheduler.reconcileMaterializedHomes()).resolves.toEqual([
+        expect.objectContaining({ cleaned: true, path: staleOrphanHome }),
+      ]);
+      expect(listings).toBe(1);
+      await expect(stat(staleRetainedHome)).resolves.toBeTruthy();
+    } finally {
+      await removeTempDir(baseDir);
+    }
+  });
+
   it('keeps a queued pending home when its identity becomes retained before child-exit cleanup', async () => {
     const baseDir = await createTempDir('happier-connected-service-materialized-retained-pending-');
     const nowMs = 100_000;

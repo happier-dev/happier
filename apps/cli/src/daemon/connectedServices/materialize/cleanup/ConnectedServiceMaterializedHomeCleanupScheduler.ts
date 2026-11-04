@@ -142,14 +142,27 @@ export class ConnectedServiceMaterializedHomeCleanupScheduler {
     };
   }
 
+  /**
+   * The retention listing pages every active and archived Session with full metadata (#832), so it
+   * is read only when a home actually needs a retention decision, at most once per pass. A listing
+   * failure still throws before that home (or any later one) can be removed.
+   */
+  private createRetainedIdentityIdsReader(): () => Promise<ReadonlySet<string>> {
+    let retained: Promise<ReadonlySet<string>> | null = null;
+    return () => {
+      retained ??= Promise.resolve(this.deps.listRetainedIdentityIds?.()).then(normalizeRetainedIdentityIds);
+      return retained;
+    };
+  }
+
   async reconcileMaterializedHomes(): Promise<ReadonlyArray<ConnectedServiceMaterializedHomeCleanupResult>> {
     const nowMs = this.deps.nowMs();
-    const retainedIdentityIds = normalizeRetainedIdentityIds(await this.deps.listRetainedIdentityIds?.());
+    const readRetainedIdentityIds = this.createRetainedIdentityIdsReader();
     const results: ConnectedServiceMaterializedHomeCleanupResult[] = [];
 
     for (const target of await listMaterializedHomeTargets(this.deps.baseDir)) {
       if (!isStale({ nowMs, mtimeMs: target.mtimeMs, ttlMs: this.rootTtlMs })) continue;
-      if (retainedIdentityIds.has(target.materializationIdentityId)) continue;
+      if ((await readRetainedIdentityIds()).has(target.materializationIdentityId)) continue;
       const result = await this.scheduleCleanup(target);
       if (result.cleaned) results.push(result);
     }
@@ -168,9 +181,10 @@ export class ConnectedServiceMaterializedHomeCleanupScheduler {
     kind: 'home' | 'attempt';
     path: string;
   }>>> {
-    const retainedIdentityIds = normalizeRetainedIdentityIds(await this.deps.listRetainedIdentityIds?.());
+    const readRetainedIdentityIds = this.createRetainedIdentityIdsReader();
     return await this.cleanupQueue.drainPending({
-      shouldDropPending: (target) => target.kind === 'home' && retainedIdentityIds.has(target.materializationIdentityId),
+      shouldDropPending: async (target) => target.kind === 'home'
+        && (await readRetainedIdentityIds()).has(target.materializationIdentityId),
       shouldKeepPending: (target) => this.hasLiveTarget(target),
       toCleanedResult: (target) => ({
         cleaned: true,
