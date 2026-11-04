@@ -10,7 +10,8 @@ current 0.3 development architecture. Published behavior lives at
 
 Status: implemented through production callers on the 0.3 development branch;
 not part of a released stable version. The app-shell provider now opens the
-universal modal or native route, `/search` renders the same controller, and the
+universal modal or native route, a web link to `/search` hands its query and scope
+to that one modal and leaves the route, native `/search` renders the same controller, and the
 session-list destination and escalation use that route. Source integration is
 not a substitute for the plan's still-required loaded browser, iOS, Android,
 accessibility, and Lane 09 evidence.
@@ -25,7 +26,7 @@ accessibility, and Lane 09 evidence.
 | Universal section construction | `apps/ui/sources/components/appShell/search/buildUniversalSearchSections.tsx` — a thin adapter over domain owners, deliberately not a registry |
 | Normalized result/target identity | `universalSearchResult.ts` (`UniversalSearchResult`, source-namespaced option ids, exact target facts) |
 | Activation | `activateUniversalSearchResult.ts`, dispatching to the canonical session/project/file/SCM/settings/command/plugin owners after the host is dismissed |
-| Route and presentation | `/search` (`UNIVERSAL_SEARCH_ROUTE`); `transparentModal` on iOS/Android, ordinary router presentation on web/desktop |
+| Route and presentation | `/search` (`UNIVERSAL_SEARCH_ROUTE`); `transparentModal` on iOS/Android; on web/desktop the route draws nothing and opens the modal over the shell |
 | Native keyboard geometry | `UniversalSearchNativeHost` + `universalSearchNativeGeometry` over the existing keyboard-aware screen, scrim, and safe-area owners |
 | Session-list search | stable `SessionListSearchChrome` plus `sessionListSearchGroups` and `useSessionListMemorySearchAugmentation`; session rows only, with a `Search everything for …` escalation into universal Search |
 | Home transcript execution | Lane 07 Home search route/service (explicit target, feature admission, capability readiness) |

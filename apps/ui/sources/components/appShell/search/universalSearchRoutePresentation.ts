@@ -9,8 +9,8 @@
  * variant, it is top-level, so popover anchoring inside the overlay keeps window coordinates
  * authoritative.
  *
- * Web/desktop keep the ordinary router presentation: the shortcut and sidebar open the modal in
- * place, and `/search` remains a direct deep-linkable screen rendering the same controller.
+ * Web/desktop have one Search surface, the modal over the shell: the shortcut and rail open it in place,
+ * and a direct link to `/search` hands its query and scope to that modal and leaves the route.
  */
 /** The one canonical universal Search route: deep link, native entry and web direct access. */
 export const UNIVERSAL_SEARCH_ROUTE = '/search';

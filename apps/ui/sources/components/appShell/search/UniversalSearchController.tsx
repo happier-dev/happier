@@ -89,7 +89,7 @@ import { isSessionContentUnsettled } from '@/sync/domains/session/encryptedConte
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { useSessionContentDemand } from '@/sync/domains/session/useSessionContentDemand';
 import { Icon } from '@/components/ui/icons/Icon';
-import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
+import { isMachineDisplayHydrating, resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
 import { t } from '@/text';
 import { transcriptSearchUnavailableHint } from './transcriptSearchUnavailableHint';
 import { presentCommitSearchFailure, presentContentSearchError, workspaceFolderMissingFailure } from './universalSearchMachineFailures';
@@ -422,12 +422,11 @@ export function UniversalSearchController(props: UniversalSearchControllerProps)
     }, [hasSessionDiscoveryQuery, scope.accountId, scope.serverId, selectedCredentialBinding, selectedCredentialIsCurrent]);
 
     const machines = useAllMachines();
-    const machineNameById = React.useMemo(() => new Map(
-        machines.flatMap((machine) => {
-            const name = getMachineDisplayName(machine);
-            return name ? [[machine.id, name] as const] : [];
-        }),
-    ), [machines]);
+    // The names machines shown together go by: same-named machines read apart, as the session list header says them.
+    const machineNameById = React.useMemo(() => resolveMachineDisplayNames(machines), [machines]);
+    // A row's line of facts never prints the "Loading…" placeholder as if it were the Machine's name.
+    const settledMachineNameById = React.useMemo(() => new Map([...machineNameById]
+        .filter(([machineId]) => !machines.some(machine => machine.id === machineId && isMachineDisplayHydrating(machine)))), [machineNameById, machines]);
     const machineHomeById = React.useMemo(() => new Map(
         machines.flatMap((machine) => machine.metadata?.homeDir ? [[machine.id, machine.metadata.homeDir] as const] : []),
     ), [machines]);
@@ -448,7 +447,7 @@ export function UniversalSearchController(props: UniversalSearchControllerProps)
             const projectLabel = withoutFolder
                 ? t('session.folderless.chats')
                 : workspace?.label?.trim() || path.split(/[\\/]/).filter(Boolean).pop() || '';
-            const subtitle = [projectLabel, machineNameById.get(machineId) ?? ''].filter(Boolean).join(' · ');
+            const subtitle = [projectLabel, settledMachineNameById.get(machineId) ?? ''].filter(Boolean).join(' · ');
             return {
                 sessionId: session.id,
                 serverId: canonicalServerId,
@@ -470,7 +469,7 @@ export function UniversalSearchController(props: UniversalSearchControllerProps)
                 updatedAt: session.updatedAt,
             };
         }).sort((a, b) => b.updatedAt - a.updatedAt);
-    }, [canonicalScopeServerId, machineNameById, scope.accountId, scope.serverId, selectedCredentialIsCurrent, sessionListRowsByServerId, sessionOrganizationListViewState.sessionTagsV1, workspaceRefs]);
+    }, [canonicalScopeServerId, settledMachineNameById, scope.accountId, scope.serverId, selectedCredentialIsCurrent, sessionListRowsByServerId, sessionOrganizationListViewState.sessionTagsV1, workspaceRefs]);
     const sessionNameByTarget = React.useMemo(
         () => new Map(sessionEntities.map((session) => [
             buildUniversalSearchSessionTitleKey(session.accountId, session.serverId, session.sessionId),
@@ -492,9 +491,9 @@ export function UniversalSearchController(props: UniversalSearchControllerProps)
             title: workspace.label?.trim() || workspace.rootPath.split(/[\\/]/).filter(Boolean).pop() || workspace.rootPath,
             // Where it lives, as session rows say it: the path from the machine's home, then the machine.
             subtitle: [formatPathRelativeToHome(workspace.rootPath, machineHomeById.get(workspace.machineId)),
-                machineNameById.get(workspace.machineId)].filter(Boolean).join(' · '),
+                settledMachineNameById.get(workspace.machineId)].filter(Boolean).join(' · '),
             lastOpenedAtMs: workspace.lastOpenedAtMs ?? workspace.createdAtMs,
-        })), [machineHomeById, machineNameById, scope.accountId, scope.serverId, selectedCredentialIsCurrent, workspaceRefs]);
+        })), [machineHomeById, settledMachineNameById, scope.accountId, scope.serverId, selectedCredentialIsCurrent, workspaceRefs]);
 
     const settingsPages = React.useMemo(() => indexSettingsSearchPages(settingsCatalog.tree), [settingsCatalog.tree]);
     const settingsById = React.useMemo(() => settingsPageNodesById(settingsCatalog.tree), [settingsCatalog.tree]);

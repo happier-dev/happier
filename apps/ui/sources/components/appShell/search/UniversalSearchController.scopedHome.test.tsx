@@ -1443,6 +1443,45 @@ describe('UniversalSearchController exact Home scope', () => {
         expect(ids).not.toContain('commits');
     });
 
+    // Same-named projects on same-named Machines read apart, with the suffix the session list header uses.
+    it('tells same-named projects apart by the Machine name that the session list header uses', async () => {
+        fixture.singleHome = true;
+        fixture.memoryMachine = { serverId: HOME_B, machine: { id: 'machine-b' } };
+        fixture.workspaceRefs = [
+            { id: 'ws-one', serverId: HOME_B, machineId: 'machine-aaaa1111', rootPath: '/srv/happier', label: 'happier', createdAtMs: 1 },
+            { id: 'ws-two', serverId: HOME_B, machineId: 'machine-bbbb2222', rootPath: '/srv/happier', label: 'happier', createdAtMs: 1 },
+        ];
+        const { UniversalSearchController } = await import('./UniversalSearchController');
+        await renderScreen(<UniversalSearchController commands={[]}
+            initialScope={{ accountId: 'account-1', serverId: HOME_B, sessionId: null, machineId: null, rootPath: null }}
+            activeSessionId={null} presentation="modal" onRequestClose={vi.fn()} />);
+        const named = (id: string) => createMachineFixture({ id, active: true, activeAt: Date.now(),
+            metadata: { ...createMachineFixture().metadata!, displayName: 'Build box', host: 'build-box' } });
+        await act(async () => { storage.setState({
+            machines: { 'machine-aaaa1111': named('machine-aaaa1111'), 'machine-bbbb2222': named('machine-bbbb2222') },
+            machineListByServerId: { [HOME_B]: [named('machine-aaaa1111'), named('machine-bbbb2222')] },
+        }); });
+        await vi.waitFor(() => {
+            const section = selectionListProps()?.rootStep.sections.find((item) => item.id === 'projects');
+            if (!section || section.kind !== 'static') throw new Error('Projects section missing');
+            const subtitles = section.options.map((option) => String(option.subtitle ?? ''));
+            expect(subtitles).toHaveLength(2);
+            expect(subtitles.every((subtitle) => subtitle.includes('Build box · '))).toBe(true);
+            expect(new Set(subtitles).size).toBe(2);
+        });
+        // A Machine still hydrating is left out of the line; the placeholder never reads as its name.
+        const hydrating = createMachineFixture({ id: 'machine-aaaa1111', metadata: null, availability: undefined });
+        await act(async () => { storage.setState({
+            machines: { 'machine-aaaa1111': hydrating, 'machine-bbbb2222': named('machine-bbbb2222') },
+            machineListByServerId: { [HOME_B]: [hydrating, named('machine-bbbb2222')] },
+        }); });
+        await vi.waitFor(() => {
+            const section = selectionListProps()?.rootStep.sections.find((item) => item.id === 'projects');
+            if (!section || section.kind !== 'static') throw new Error('Projects section missing');
+            expect(section.options.map((option) => String(option.subtitle ?? '')).some((subtitle) => subtitle.includes(t('common.loading')))).toBe(false);
+        });
+    });
+
     it('keeps the result query when the scope filter changes the Home', async () => {
         const { UniversalSearchController } = await import('./UniversalSearchController');
 
