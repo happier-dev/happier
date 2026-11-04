@@ -2,6 +2,7 @@ import { readSkillBundleContentV1, readReadOnlySkillContentV1 } from '../promptB
 import { FIRST_PARTY_SKILLS_V1, type ReadOnlySkillV1 } from './firstPartySkillsV1.js';
 import { isPluginSkillIdV1 } from './skillLibraryItemV1.js';
 import type { ArtifactCoarseKindV1 } from '../../../artifacts/artifactKindV1.js';
+import type { ArtifactRevisionProvenanceV1, ArtifactSavedByV1 } from '../../../artifacts/artifactBinaryV1.js';
 
 /** Plugin source outages may omit list rows, but never authorize retirement or GC. */
 export async function readAvailablePluginSkillItemsV1<T>(
@@ -22,7 +23,9 @@ export async function readAvailablePluginSkillItemsV1<T>(
 
 export type SkillLibraryInventoryArtifactV1 = Readonly<{
   artifactId: string; header: Readonly<Record<string, unknown>>; body?: unknown;
+  provenance?: ArtifactRevisionProvenanceV1;
 }>;
+export type SkillLibraryCatalogItemV1 = Readonly<{ id: string; name: string; creator?: ArtifactSavedByV1 }>;
 export type SkillLibraryInventoryPortV1<T extends SkillLibraryInventoryArtifactV1 = SkillLibraryInventoryArtifactV1> = Readonly<{
   readPluginSkills?(signal?: AbortSignal, skillIds?: readonly string[]): Promise<readonly ReadOnlySkillV1[]>;
   list(options: Readonly<{ includeBody: boolean; limit?: number; cursor?: string; coarseKind?: ArtifactCoarseKindV1; signal?: AbortSignal }>): Promise<Readonly<{
@@ -56,13 +59,13 @@ export async function readCompleteSkillLibraryInventoryV1<T extends SkillLibrary
 
 /** Artifact inventory owns paging and decryption; the bundle owner supplies skill names. */
 export async function readSkillLibraryCatalog(store: SkillLibraryInventoryPortV1,
-  signal?: AbortSignal): Promise<readonly Readonly<{ id: string; name: string }>[]>;
+  signal?: AbortSignal): Promise<readonly SkillLibraryCatalogItemV1[]>;
 export async function readSkillLibraryCatalog(store: SkillLibraryInventoryPortV1 & Readonly<{
   read(id: string, options?: Readonly<{ signal?: AbortSignal }>): Promise<SkillLibraryInventoryArtifactV1 | null>;
-}>, signal: AbortSignal | undefined, skillIds: readonly string[] | undefined): Promise<readonly Readonly<{ id: string; name: string }>[]>;
+}>, signal: AbortSignal | undefined, skillIds: readonly string[] | undefined): Promise<readonly SkillLibraryCatalogItemV1[]>;
 export async function readSkillLibraryCatalog(store: SkillLibraryInventoryPortV1 & Partial<Readonly<{
   read(id: string, options?: Readonly<{ signal?: AbortSignal }>): Promise<SkillLibraryInventoryArtifactV1 | null>;
-}>>, signal?: AbortSignal, skillIds?: readonly string[]): Promise<readonly Readonly<{ id: string; name: string }>[]> {
+}>>, signal?: AbortSignal, skillIds?: readonly string[]): Promise<readonly SkillLibraryCatalogItemV1[]> {
   signal?.throwIfAborted();
   const readPlugins = () => store.readPluginSkills?.(signal, skillIds) ?? [];
   const pluginSkills = skillIds ? await readPlugins() : await readAvailablePluginSkillItemsV1(readPlugins, signal);
@@ -77,13 +80,14 @@ export async function readSkillLibraryCatalog(store: SkillLibraryInventoryPortV1
     signal?.throwIfAborted();
     inventory = opened.filter((artifact): artifact is SkillLibraryInventoryArtifactV1 => artifact !== null);
   } else inventory = await readCompleteSkillLibraryInventoryV1(store, { includeBody: true, ...(signal ? { signal } : {}) });
-  const items: Array<{ id: string; name: string }> = [];
+  const items: SkillLibraryCatalogItemV1[] = [];
   for (const artifact of inventory) {
     const content = readSkillBundleContentV1(artifact);
     // One malformed stored skill is unavailable, not the whole name catalog.
     // Session delivery independently reads selected content and exposes its refusal.
     if (!content) continue;
-    items.push({ id: artifact.artifactId, name: content.frontmatter.name });
+    const creator = artifact.provenance?.skillCreator;
+    items.push({ id: artifact.artifactId, name: content.frontmatter.name, ...(creator ? { creator } : {}) });
   }
   return [...items, ...bundled.map(skill => ({ id: skill.skillId, name: readReadOnlySkillContentV1(skill.skillId, pluginSkills)!.frontmatter.name }))];
 }

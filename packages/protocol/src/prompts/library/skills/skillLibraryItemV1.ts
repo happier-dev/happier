@@ -6,6 +6,7 @@ import { RegistryContentRefV1Schema, RegistryProvenanceV1Schema, WellKnownSkillR
 import { RegistryUpstreamV1Schema } from '../../../registries/registryUpstreamV1.js';
 import { SkillRuleV1Schema } from '../../../reach/reachRuleV1.js';
 import { ArtifactRevisionV1Schema } from '../../../artifacts/artifactRevisionV1.js';
+import { ArtifactSavedByV1Schema } from '../../../artifacts/artifactBinaryV1.js';
 import { SkillTrustV1Schema } from './skillTrustV1.js';
 import { SkillCostV1Schema } from './skillCostV1.js';
 import { buildQualifiedPluginContributionKey, type PluginContributionIdentityV1 } from '../../../plugins/contributionIdentity.js';
@@ -98,6 +99,7 @@ export function decodeSkillRevisionV1(revision: string): Readonly<{ headerVersio
   return ArtifactRevisionV1Schema.parse({ headerVersion, bodyVersion });
 }
 export const SkillListItemV1Schema = lazyZodSchema(() => z.strictObject({
+  creator: z.optional(ArtifactSavedByV1Schema),
   skillId: z.string().check(z.minLength(1)), name: z.string().check(z.minLength(1)), description: z.nullable(z.string()), revision: SkillRevisionV1Schema,
   rules: z.array(SkillRuleV1Schema), trust: SkillTrustV1Schema, cost: SkillCostV1Schema,
   provenance: SkillProvenanceV1Schema, modified: z.boolean(), updatePolicy: z.enum(['manual', 'auto', 'pinned']), upstream: z.optional(RegistryUpstreamV1Schema),

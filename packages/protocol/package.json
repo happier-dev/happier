@@ -8935,6 +8935,11 @@
       "types": "./dist/prompts/library/skills/skillCostV1.d.ts",
       "default": "./dist/prompts/library/skills/skillCostV1.js"
     },
+    "./prompts/library/skills/skillCreatorV1": {
+      "happier-source": "./src/prompts/library/skills/skillCreatorV1.ts",
+      "types": "./dist/prompts/library/skills/skillCreatorV1.d.ts",
+      "default": "./dist/prompts/library/skills/skillCreatorV1.js"
+    },
     "./prompts/library/skills/skillIndexV1": {
       "happier-source": "./src/prompts/library/skills/skillIndexV1.ts",
       "types": "./dist/prompts/library/skills/skillIndexV1.d.ts",
@@ -8944,6 +8949,11 @@
       "happier-source": "./src/prompts/library/skills/skillLibraryItemV1.ts",
       "types": "./dist/prompts/library/skills/skillLibraryItemV1.d.ts",
       "default": "./dist/prompts/library/skills/skillLibraryItemV1.js"
+    },
+    "./prompts/library/skills/skillListSummaryV1": {
+      "happier-source": "./src/prompts/library/skills/skillListSummaryV1.ts",
+      "types": "./dist/prompts/library/skills/skillListSummaryV1.d.ts",
+      "default": "./dist/prompts/library/skills/skillListSummaryV1.js"
     },
     "./prompts/library/skills/skillReadV1": {
       "happier-source": "./src/prompts/library/skills/skillReadV1.ts",

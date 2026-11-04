@@ -6,6 +6,7 @@ import { SkillTrustV1Schema } from './skillTrustV1.js';
 import { RegistryUpstreamV1Schema } from '../../../registries/registryUpstreamV1.js';
 import { SkillRuleV1Schema } from '../../../reach/reachRuleV1.js';
 import { SkillFileInputV1Schema } from './skillActionSchemasV1.js';
+import { ArtifactSavedByV1Schema } from '../../../artifacts/artifactBinaryV1.js';
 
 /** Current packaged sources, carried by the existing authenticated host transports. */
 export const PluginSkillLibraryContentV1Schema = lazyZodSchema(() => z.array(z.strictObject({
@@ -22,6 +23,7 @@ export const SkillReadInputV1Schema = lazyZodSchema(() => z.union([
 export type SkillReadInputV1 = z.infer<typeof SkillReadInputV1Schema>;
 
 export const SkillReadResultV1Schema = lazyZodSchema(() => z.strictObject({
+  creator: z.optional(ArtifactSavedByV1Schema),
   skillId: z.string().check(z.minLength(1)), name: z.string().check(z.minLength(1)), skillMd: z.string(),
   revision: SkillRevisionV1Schema, provenance: SkillProvenanceV1Schema, upstream: z.optional(RegistryUpstreamV1Schema),
   modified: z.boolean(), trust: SkillTrustV1Schema, cost: SkillCostV1Schema, rules: z.array(SkillRuleV1Schema),

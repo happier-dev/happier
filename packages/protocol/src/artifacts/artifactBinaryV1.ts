@@ -35,6 +35,7 @@ export const ArtifactWorkspaceSourceV1Schema = lazyZodSchema(() => z.union([
 export type ArtifactWorkspaceSourceV1 = z.infer<typeof ArtifactWorkspaceSourceV1Schema>;
 export const ArtifactRevisionProvenanceV1Schema = lazyZodSchema(() => z.strictObject({
   savedBy: ArtifactSavedByV1Schema,
+  skillCreator: z.optional(ArtifactSavedByV1Schema),
   source: z.optional(ArtifactWorkspaceSourceV1Schema),
   restoredFromBodyVersion: z.optional(z.number().check(z.int(), z.positive(), z.int())),
 }));
