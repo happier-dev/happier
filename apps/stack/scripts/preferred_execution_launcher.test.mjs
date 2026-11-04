@@ -3,7 +3,7 @@ import { terminateProcessPid } from './utils/proc/terminate.mjs';
 import { isPidAlive } from './utils/proc/pids.mjs';
 import { brokerAddress, createAdmissionBroker } from './utils/proc/admission_broker.mjs';
 import assert from 'node:assert/strict';
-import { access, chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, utimes, writeFile } from 'node:fs/promises';
+import { access, chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
@@ -685,6 +685,65 @@ esac
   });
 }
 
+
+for (const legacyWithoutFlock of [false, true]) {
+test(`another dispatch never reaps a live controller waiting in worker admission${legacyWithoutFlock ? ' with a legacy unlocked reservation' : ''}`, { skip: process.platform !== 'linux', timeout: 60_000 }, async t => {
+  const fixture = await runtimeAdmissionTransportFixture(t);
+  delete fixture.invocation.env.NODE_TEST_CONTEXT;
+  const belowFloorKiB = resolveHeavyweightMemoryFloorKiB('validation') - 1;
+  for (const worker of Object.values(fixture.workers)) {
+    await writeFile(worker.sample, `8 0.1 0.3 22000000 20 0 ${belowFloorKiB} 28311552 0 0 0 0 0 0 0 linux\n`);
+  }
+  const target = fixture.config.targets[0];
+  await writeFile(join(target.repoDir, 'focused.test.mjs'), 'import test from "node:test"; test("surviving queued payload", () => {});\n');
+  // OS availability can differ between a retained controller and a new one.
+  // Exercise the real no-flock publication path, then a reader with flock;
+  // do not replace reservation parsing, identity or cancellation logic.
+  let controllerOptions = fixture.invocation;
+  if (legacyWithoutFlock) {
+    const controllerBin = join(fixture.root, 'legacy-controller-bin');
+    await mkdir(controllerBin);
+    const commands = new Set([...await readdir(fixture.binDir),
+      'awk', 'bash', 'cat', 'chmod', 'cksum', 'cut', 'date', 'df', 'dirname', 'du', 'env',
+      'getconf', 'grep', 'head', 'id', 'ls', 'mkdir', 'mkfifo', 'mktemp', 'mv', 'nice',
+      'ps', 'pwd', 'readlink', 'rm', 'rmdir', 'sed', 'setsid', 'sh', 'sleep', 'sort',
+      'stat', 'tail', 'tee', 'test', 'tr', 'uname', 'wc', 'xargs']);
+    for (const command of commands) {
+      if (command === 'flock') continue;
+      const fixtureCommand = join(fixture.binDir, command);
+      const target = await access(fixtureCommand).then(() => fixtureCommand, () => `/usr/bin/${command}`);
+      if (await access(target).then(() => true, () => false)) await symlink(target, join(controllerBin, command));
+    }
+    // A retained legacy dispatch is already beyond controller attachment.
+    // Its missing flock exercises reservation compatibility, not cold bootstrap.
+    controllerOptions = { ...fixture.invocation, env: { ...fixture.invocation.env,
+      PATH: controllerBin, HAPPIER_CONTROLLER_COALESCED: '1' } };
+  }
+  const child = spawn('/bin/sh', [launcher, '--target=starved', '--', 'node', '--test', 'focused.test.mjs'], controllerOptions);
+  let stdout = '', stderr = '';
+  child.stdout.on('data', chunk => { stdout += chunk; });
+  child.stderr.on('data', chunk => { stderr += chunk; });
+  const exited = new Promise(resolve => child.once('close', (code, signal) => resolve({ code, signal })));
+  t.after(async () => { if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM'); await exited; });
+  await waitForRuntime(async () => (await fixture.workers.starved.brokerStatus()).waitingCount === 1, () => stderr);
+  const cache = join(fixture.stackDir, 'dev-target-command-load-native');
+  const recordPath = join(cache, (await readdir(cache)).find(name => name.startsWith('starved.active.')));
+  const record = (await readFile(recordPath, 'utf8')).split('\n');
+  assert.doesNotThrow(() => process.kill(child.pid, 0));
+  assert.doesNotThrow(() => process.kill(Number(record[0]), 0), 'the recorded controller must itself still be alive');
+  const lock = spawnSync('flock', ['-n', recordPath, '-c', ':'], fixture.invocation);
+  assert.equal(lock.status, legacyWithoutFlock ? 0 : 1,
+    'the producer must publish the intended locked or legacy unlocked reservation before the second dispatch');
+  const second = spawnSync('/bin/sh', [launcher, '--target=starved', '--', '/bin/true'], fixture.invocation);
+  assert.equal(second.status, 0, second.stderr);
+  assert.doesNotMatch(second.stderr, new RegExp(`reaping remote execution ${record[2]}`));
+  assert.doesNotThrow(() => process.kill(child.pid, 0), 'a second dispatch reaped a live queued controller');
+  await access(recordPath);
+  await fixture.workers.starved.pressure.release(() => writeFile(fixture.workers.starved.sample, '8 0.1 0.9 22000000 20 0 28000000 28311552 0 0 0 0 0 0 0 linux\n'));
+  assert.deepEqual(await exited, { code: 0, signal: null }, stderr);
+  assert.match(stdout, /surviving queued payload/);
+});
+}
 
 function startRuntimeController(t, fixture, extra = {}, { target = 'darwin-arm64', components = 'server', nodeOptions = [] } = {}) {
   const child = spawn('/bin/sh', [launcher, `--runtime-build-target=${target}`, `--runtime-build-components=${components}`, '--control-stdin', '--', 'node', ...nodeOptions, 'apps/stack/scripts/build/remote_runtime_build.mjs', '--worker-request=stdin'], { ...fixture.invocation, env: { ...fixture.invocation.env, ...extra }, stdio: ['pipe', 'pipe', 'pipe'] });
@@ -2088,6 +2147,54 @@ test('in-flight typecheck demand stays on its leader worker and every follower f
   }
   const trace = await readFile(fixture.invocation.env.FIXTURE_TRACE, 'utf8');
   assert.equal((trace.match(/mutagen:sync flush/g) ?? []).length, 3, 'each caller needs its own causal barrier');
+});
+
+test('dispatch reservation scans fork only for lifetime locks at the observed queue scale', {
+  skip: process.platform !== 'linux',
+}, async t => {
+  const traceTool = spawnSync('strace', ['--version'], { encoding: 'utf8' });
+  assert.equal(traceTool.status, 0, 'Linux fork contract requires strace');
+  const fixture = await createTempFixture(t, { prefix: 'hstack-dispatch-metadata-' });
+  const source = await readFile(launcher, 'utf8');
+  // Load the production shell owners without executing a fleet dispatch.
+  // No test-only production export or replacement of internal logic is needed.
+  const metadataStart = source.indexOf('\nread_dispatch_reservation() {');
+  const scanStart = metadataStart < 0 ? source.indexOf('\ndispatch_reservation_is_active() {') : metadataStart;
+  const scanEnd = source.indexOf('\ncandidates=', scanStart);
+  const classStart = source.indexOf('\nis_heavyweight_dispatch_class() {');
+  const classEnd = source.indexOf('\n}', classStart) + 2;
+  assert.ok(scanStart >= 0 && scanEnd > scanStart && classStart >= 0 && classEnd > classStart);
+  const scan = fixture.path('scan.sh');
+  await writeFile(scan, `${source.slice(classStart, classEnd)}\n${source.slice(scanStart, scanEnd)}
+cache_dir=$1
+command_class=targeted-validation
+count_active_dispatches worker
+`);
+  // Actual controller census on 2026-10-28: nl3 had 382 dispatch records.
+  const reservations = 382;
+  const held = fixture.path('held.sh');
+  await writeFile(held, `set -eu
+for ((i=0; i<${reservations}; i++)); do
+  record="$1/worker.active.$i"
+  if ((i % 2)); then class=targeted-validation; else class=compilation; fi
+  printf '%s\\n' "$$" "$class" "native-$i" 0 affinity > "$record"
+  exec {held_fd}>>"$record"
+  flock -n "$held_fd"
+done
+printf '%s\\n' "$EPOCHREALTIME" > "$1/started"
+exec strace -f -qq -e trace=clone,clone3,fork,vfork -o "$1/forks.trace" /bin/sh "$1/scan.sh" "$1"
+`);
+  const result = spawnSync('/bin/bash', [held, fixture.root], { encoding: 'utf8' });
+  const ended = Date.now() / 1000;
+  assert.equal(result.status, 0, result.stderr);
+  const elapsedSeconds = ended - Number(await readFile(fixture.path('started'), 'utf8'));
+  assert.equal(result.stdout.trim(), `${reservations} ${reservations / 2} ${reservations / 2}`);
+  const trace = await readFile(join(fixture.root, 'forks.trace'), 'utf8');
+  const forks = trace.split('\n').filter(line => /(?:\b(?:clone3?|fork|vfork)\(|<\.\.\. (?:clone3?|fork|vfork) resumed>).*=[ ]+[1-9][0-9]*$/.test(line)).length;
+  t.diagnostic(JSON.stringify({ reservations, forks, metadataForks: forks - reservations,
+    elapsedSeconds, forksPerSecond: forks / elapsedSeconds,
+    metadataForksPerSecond: (forks - reservations) / elapsedSeconds }));
+  assert.equal(forks, reservations, 'one lock probe per live record; metadata reads must add zero forks');
 });
 
 test('memory-aware exit 137 carries target memory evidence without replaying an authoritative command', async (t) => {
