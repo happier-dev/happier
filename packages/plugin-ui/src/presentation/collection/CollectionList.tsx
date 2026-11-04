@@ -402,6 +402,10 @@ const groupLabelLeadStyle: HappierPortableStyle = { flexDirection: 'row', alignI
 const groupLabelMarkStyle: ViewStyle = { width: 16, height: 16, alignItems: 'center', justifyContent: 'center' };
 // The disclosure's lead: glyph, title, count and chevron are one press target that hugs its content.
 const groupLabelDisclosureStyle: HappierPortableStyle = { ...groupLabelLeadStyle, gap: 4, alignSelf: 'stretch' };
+// The detail gives up its whole width before the title loses any: shrink is shared by weight × width, and an
+// ellipsis appears on any sub-pixel overflow, so a weight of 100 still cut "Chats" to "Ch…" beside a host name.
+const groupLabelDetailStyle: ViewStyle = { flexShrink: 100000, minWidth: 0 };
+const groupLabelDetailEndStyle: ViewStyle = { flexShrink: 0 };
 const groupLabelDisclosureMarkStyle: ViewStyle = { ...groupLabelMarkStyle, marginRight: 4 };
 const groupLabelSpacerStyle: ViewStyle = { flex: 1, minWidth: 8 };
 const groupLabelEndCountStyle: ViewStyle = { marginRight: M.contentInset - M.rowInset };
@@ -567,6 +571,11 @@ export function HappierCollectionListGroupLabel(props: Readonly<{
   /** A quiet fact after the title on the label's line (the machine a group's rows run on). */
   detail?: string;
   /**
+   * The end of that fact that tells same-named groups apart (a Machine's short id, "Offline"): it stays whole
+   * while a narrow label shortens `detail` first, and follows it after a separator.
+   */
+  detailEnd?: string;
+  /**
    * Where the count sits without a trailing state: `end` (the default) is a settings column's end column;
    * `title` keeps it beside the title ("Drafts 3"), as a navigation column's groups and every disclosure do.
    */
@@ -592,6 +601,11 @@ export function HappierCollectionListGroupLabel(props: Readonly<{
       ? groupLabelMenuStyle
       : [groupLabelStyle, props.first ? groupLabelFirstStyle : null,
           props.indentPx ? { paddingLeft: M.contentInset + props.indentPx } : null];
+  // The title is the group's name: a long detail (a Machine, "offline") yields its width first.
+  const detail = <>
+    {props.detail ? <View style={groupLabelDetailStyle}><Text role="groupCount" numberOfLines={1}>{props.detail}</Text></View> : null}
+    {props.detailEnd ? <View style={groupLabelDetailEndStyle}><Text role="groupCount" numberOfLines={1}>{props.detail ? `· ${props.detailEnd}` : props.detailEnd}</Text></View> : null}
+  </>;
   const disclosure = pageSection || props.presentation === 'menu' ? undefined : props.disclosure;
   if (disclosure) {
     const chevron = glyphColor === undefined ? null : (
@@ -623,7 +637,7 @@ export function HappierCollectionListGroupLabel(props: Readonly<{
         >
           {props.mark !== undefined ? <View style={groupLabelDisclosureMarkStyle}>{props.mark}</View> : null}
           <Text role="groupTitle" numberOfLines={1}>{props.title}</Text>
-          {props.detail ? <Text role="groupCount" numberOfLines={1}>{props.detail}</Text> : null}
+          {detail}
           {props.count !== undefined ? <Text role="groupCount" {...(props.countTestID === undefined ? {} : { testID: props.countTestID })}>{props.count}</Text> : null}
           {opens ? null : chevron}
         </HappierPressable>
@@ -658,6 +672,7 @@ export function HappierCollectionListGroupLabel(props: Readonly<{
       <View style={groupLabelLeadStyle}>
         {props.mark !== undefined ? <View style={groupLabelMarkStyle}>{props.mark}</View> : null}
         <Text role={pageSection ? 'groupHeading' : 'groupTitle'} numberOfLines={1}>{props.title}</Text>
+        {detail}
         {/* With a trailing state the count stays with its title ("Skills 6 … Loaded when used"); alone it is the end column. */}
         {props.count !== undefined && (props.trailing != null || props.countPlacement === 'title') ? <Text role="groupCount" {...(props.countTestID === undefined ? {} : { testID: props.countTestID })}>{props.count}</Text> : null}
       </View>

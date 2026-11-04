@@ -135,6 +135,25 @@ describe('HappierCollectionList (list presentation)', () => {
     mount.unmount();
   });
 
+  // A colliding group names its Machine: a narrow column shortens the shared host name, never the end that
+  // tells two same-named groups apart (its short id, Offline).
+  it('shortens a long detail before the end that tells same-named groups apart', () => {
+    const glyphHost: HappierCollectionListHost = { ...host, useGroupGlyphColor: () => '#000' };
+    const mount = mountThroughReactNativeWeb(
+      <HappierCollectionListGroupLabel host={glyphHost} testID="group" title="Chats" detail="NLDW3-5-36-33"
+        detailEnd="e3b5 · Offline" disclosure={{ expanded: true, onToggle: () => {} }} />,
+    );
+    const texts = [...mount.container.querySelectorAll('[data-testid="text-groupCount"]')] as HTMLElement[];
+    const name = texts.find(element => element.textContent === 'NLDW3-5-36-33');
+    const end = texts.find(element => element.textContent?.includes('e3b5 · Offline'));
+    expect(name).toBeTruthy();
+    expect(end).toBeTruthy();
+    const slotShrink = (element: HTMLElement) => Number(getComputedStyle(element.parentElement!).flexShrink);
+    expect(slotShrink(name!)).toBeGreaterThan(0);
+    expect(slotShrink(end!)).toBe(0);
+    mount.unmount();
+  });
+
   it('folds its rows from the label, or opens what it stands for while a separate control folds', async () => {
     const calls: string[] = [];
     const glyphHost: HappierCollectionListHost = { ...host, useGroupGlyphColor: () => '#000' };

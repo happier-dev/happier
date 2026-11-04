@@ -70,6 +70,16 @@ function textWeight(row: HTMLElement, text: string): string {
 }
 
 describe('NavigationList (public plugin column anatomy)', () => {
+  it('tells same-named groups apart by the detail end, which stays whole beside the shortened detail', () => {
+    const view = mount(<NavigationList title="Sessions">
+      <NavigationList.Group title="Payments" detail="Studio Mac" detailEnd="e3b5 · Offline" />
+    </NavigationList>);
+    try {
+      expect(view.container.textContent).toContain('Studio Mac');
+      expect(view.container.textContent).toContain('· e3b5 · Offline');
+    } finally { view.unmount(); }
+  });
+
   it('fits a mark, readable title and trailing glyph below the standard rail default', () => {
     const titleWidth = 16 * HAPPIER_COLLECTION_LIST_TEXT.rowTitle.fontSize * 0.5;
     const rowDemand = 2 * HAPPIER_COLLECTION_LIST_METRICS.contentInset

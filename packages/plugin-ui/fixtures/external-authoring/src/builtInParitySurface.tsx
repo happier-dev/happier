@@ -1,5 +1,5 @@
 import type { ReactElement } from 'react';
-import { ApprovalPrompt, Button, Collection, PageHeader, Row, Stack, useHappierCollection } from '@happier-dev/plugin-ui/components';
+import { ApprovalPrompt, Button, Collection, NavigationList, PageHeader, Row, Stack, useHappierCollection } from '@happier-dev/plugin-ui/components';
 
 type Review = Readonly<{ id: string; title: string; needsYou: boolean; unopened: boolean }>;
 
@@ -41,6 +41,9 @@ export function BuiltInParityExample(props: Readonly<{ text: (words: string) => 
           columnTitles: { title: text('Review') },
         }}
       />
+      <NavigationList title={text('Machines')}>
+        <NavigationList.Group title="Studio" detail="Mac mini" detailEnd="e3b5 · Offline" />
+      </NavigationList>
       <ApprovalPrompt
         chrome="compact"
         tone="attention"

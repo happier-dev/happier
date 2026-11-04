@@ -1596,7 +1596,7 @@ deferred; a plugin-owned page can supply its own held custom facts through the p
 host or protocol internals. These are development-source contracts; check the
 installed Plugin UI inventory before targeting a published package.
 
-## Page headers (0.3 development)
+## Page headers and group labels (0.3 development)
 
 `PageHeader` is the header Happier's own pages draw. `actionsLayout` chooses how the
 controls meet the title: `wrap` (the default) keeps them on the title row and wraps
@@ -1608,9 +1608,14 @@ A `meta` fact with `mono: true` is an address, path or id: one mono line that gi
 up its middle rather than wrapping, names the whole value to assistive technology,
 and copies it on tap through the host clipboard, saying "Copied" in its place.
 
+`NavigationList.Group` takes `detail` and `detailEnd` for a quiet fact after the
+title. `detailEnd` is the part that tells same-named groups apart (a machine's short
+id, "Offline"): it stays whole while a narrow label shortens `detail` first.
+
 ```tsx
 <PageHeader title={machine.name} leading={<BrandMark />} actionsLayout="hang"
   meta={[{ key: 'path', text: machine.home, mono: true }]} actions={<Menu />} />
+<NavigationList.Group title={repo.name} detail={machine.name} detailEnd={`${machine.shortId} · ${t('Offline')}`} />
 ```
 
 ## Shared story components (0.3 development)

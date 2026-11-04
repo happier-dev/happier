@@ -77,6 +77,13 @@ export type NavigationListGroupProps = Readonly<{
   mark?: ReactNode;
   /** A state that concerns every row of the group, said once here instead of on each row. */
   status?: NavigationListStatus;
+  /** A quiet fact after the title on the label's line (the machine a group's rows run on). */
+  detail?: string;
+  /**
+   * The end of that fact that tells same-named groups apart (a machine's short id, "Offline"): it stays whole while a
+   * narrow label shortens `detail` first, and follows it after a separator.
+   */
+  detailEnd?: string;
   children?: ReactNode;
 }>;
 
@@ -261,6 +268,8 @@ function NavigationListGroup(props: NavigationListGroupProps): ReactElement {
           {...(props.count === undefined ? {} : { count: props.count })}
           {...(props.first === undefined ? {} : { first: props.first })}
           {...(props.mark === undefined ? {} : { mark: props.mark })}
+          {...(props.detail === undefined ? {} : { detail: props.detail })}
+          {...(props.detailEnd === undefined ? {} : { detailEnd: props.detailEnd })}
           {...(props.status === undefined ? {} : { trailing: <NavigationListGroupStatus status={props.status} /> })}
         />
       ) : null}
