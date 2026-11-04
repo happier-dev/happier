@@ -17,6 +17,15 @@ import { BUILT_IN_SETTINGS_METADATA_V1 } from '../../actions/settings/builtInSet
 describe('shared Voice settings owner', () => {
   const owner = createVoiceSettingsOwner({ bundledContributions: [] });
 
+  it('uses normal approval policy for a new Voice Agent and retains deliberate saved permission choices', () => {
+    const fresh = owner.readLocalConversationVoiceSettings(owner.voiceSettingsParse({}));
+    expect(fresh.agent.permissionIntent).toBe('default');
+    const retained = owner.voiceSettingsParse({ providers: { local_conversation: { schemaVersion: 1,
+      config: { agent: { permissionIntent: 'read-only' } } } } });
+    expect(owner.readLocalConversationVoiceSettings(retained).agent.permissionIntent).toBe('read-only');
+  });
+
+
   it('uses one conversation lifetime preference and migrates both retained warm policies to continuity', () => {
     // ui-web-v0.2.19 (63829e3cd6a8f1f48b10891af0c8b2313e51ac7e),
     // apps/ui/sources/sync/domains/settings/voiceSettings.ts:177-178.

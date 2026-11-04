@@ -88,7 +88,7 @@ export const VoiceLocalConversationSchema = z.object({
       teleportEnabled: z._default(z.boolean(), true),
       rootSessionPolicy: z._default(z.enum(['continue', 'new']), 'continue'),
       voiceHomeSubdirName: z._default(z.string(), 'voice-agent'),
-      permissionIntent: z._default(z.enum(PERMISSION_INTENTS), 'read-only'),
+      permissionIntent: z._default(z.enum(PERMISSION_INTENTS), 'default'),
       idleTtlSeconds: z._default(z.number().check(z.int(), z.positive()), 1800),
       bootstrapTimeoutMs: z._default(z.number().check(z.int(), z.positive()), 60000),
       prewarmOnConnect: z._default(z.boolean(), true),
