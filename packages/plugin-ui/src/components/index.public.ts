@@ -1,5 +1,7 @@
 export { projectWidgetGroupCellContent, resolveWidgetGroupCells, resolveWidgetGroupColumns, packWidgetGroupBands } from '../data/widgetGroupLayout.js';
 export * from './Action.js';
+export { HappierRequesterDisclosureContent, type HappierRequesterDisclosureModel,
+  type HappierRequesterDisclosureHost, type HappierRequesterDisclosureContentProps } from './RequesterDisclosureContent.js';
 export * from './UsageCharts.js';
 export type { PublicUsageOriginalLabels, PublicUsageMetricId } from '../presentation/account/PublicProfileUsage.js';
 export { HappierPublicProfile, HappierPublicProfileWidget, type HappierPublicProfileLabels, type HappierPublicProfileProps,

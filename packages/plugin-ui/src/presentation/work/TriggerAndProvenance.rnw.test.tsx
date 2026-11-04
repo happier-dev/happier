@@ -16,6 +16,25 @@ function surface(children: ReactNode) {
   );
 }
 
+it('presents caller-supplied requester facts and an optional accessible help link through the public API', async () => {
+  expect(publicUi.HappierRequesterDisclosureContent).toBeTypeOf('function');
+  const onPress = vi.fn();
+  const mounted = mountThroughReactNativeWeb(surface(<publicUi.HappierRequesterDisclosureContent
+    model={{ title: 'Runs on Ben’s build-01', description: 'Full sign-in. Ben can read the files. OpenAI.',
+      learnMore: { label: 'How sharing works', onPress } }} />));
+  try {
+    expect(mounted.container.textContent).toContain('Full sign-in. Ben can read the files. OpenAI.');
+    const link = mounted.container.querySelector<HTMLElement>('[role="link"]')!;
+    expect(link.textContent).toBe('How sharing works');
+    act(() => link.click());
+    expect(onPress).toHaveBeenCalledOnce();
+    await mounted.render(surface(<publicUi.HappierRequesterDisclosureContent
+      model={{ title: 'Runs on Ben’s build-01', description: 'Scoped sign-in.' }} />));
+    expect(mounted.container.querySelector('[role="link"]')).toBeNull();
+    expect(mounted.container.textContent).toContain('Scoped sign-in.');
+  } finally { mounted.unmount(); }
+});
+
 function ControlledTrigger(props: Readonly<{ disabled?: boolean; onOpen: () => void; onToggle: (enabled: boolean) => void }>) {
   const [enabled, setEnabled] = useState(true);
   return <publicUi.HappierTriggerRow testID="trigger" title="Daily digest" qualifier="Every morning"
