@@ -615,6 +615,9 @@ const DECLARATION_MAP_KEYS = ['translationsByPluginId', 'sessionHeaderActionsByI
     'composerControlsById', 'composerRegionsById', 'composerReferencesById'] as const;
 const UNION_MAP_KEYS = [...DECLARATION_MAP_KEYS, 'resourcesById', 'connectedAccountDescriptorsById', 'installedPackagesById'] as const;
 type UnionMapKey = typeof UNION_MAP_KEYS[number];
+/** Typed fallback for the optional connected-account family; EMPTY_PLUGIN_UI_PROJECTION's frozen families win at runtime. */
+const EMPTY_UNION_FAMILY: Readonly<Record<string, never>> = Object.freeze({});
+
 
 type PublishedPluginSlice = Readonly<{ model: PluginUiProjectionModel; entries: readonly unknown[] }>;
 type PublishedProjectionPluginIndex = Readonly<{ slices: Readonly<Record<string, PublishedPluginSlice>> }>;
@@ -648,7 +651,7 @@ function prepareProjectionPluginIndex(model: PluginUiProjectionModel, previous?:
     const slices = Object.fromEntries([...groups].map(([id, group]) => {
         const old = previous?.slices[id];
         const maps = Object.fromEntries(UNION_MAP_KEYS.map(key => {
-            const map = group[key] ?? {};
+            const map = group[key] ?? EMPTY_PLUGIN_UI_PROJECTION[key] ?? EMPTY_UNION_FAMILY;
             const keys = Object.keys(map);
             const previousMap = old?.model[key];
             const oldKeys = previousMap ? Object.keys(previousMap) : [];
@@ -674,7 +677,12 @@ function prepareProjectionPluginIndex(model: PluginUiProjectionModel, previous?:
 }
 
 function pluginSliceKeys(models: readonly (PluginUiProjectionModel | undefined | null)[]): ReadonlyMap<UnionMapKey, ReadonlySet<string>> {
-    return new Map(UNION_MAP_KEYS.map(key => [key, new Set(models.flatMap(model => Object.keys(model?.[key] ?? {})))]));
+    const keys = new Map<UnionMapKey, ReadonlySet<string>>();
+    for (const key of UNION_MAP_KEYS) {
+        const ids = models.flatMap(model => Object.keys(model?.[key] ?? EMPTY_PLUGIN_UI_PROJECTION[key] ?? EMPTY_UNION_FAMILY));
+        if (ids.length > 0) keys.set(key, new Set(ids));
+    }
+    return keys;
 }
 
 function replacePublishedPluginSlices(previous: PublishedProjectionPluginIndex,
