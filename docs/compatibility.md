@@ -4769,6 +4769,15 @@ projection, preserving the existing required-write failure outcome before settle
 Native turns without a dispatched checkpoint binding and standalone Runs
 use the same publisher with provider evidence alone. Original tool rows remain separate
 evidence, unavailable checkpoints retain provider evidence, and empty turns emit no recap.
+The host tracker also carries tool activity privately to this join. A turn with no
+tool calls or native file edits keeps its rewind baseline and emits no checkpoint
+recap, even when another writer changed the repository. Any tool activity retains
+the full checkpoint diff, including changes made by opaque shell commands.
+Interceptable runtimes (currently Claude) dispatch while the baseline is captured;
+their first write-like tool proposal awaits that capture at `toolExecution.before`.
+Codex and generic ACP retain capture-before-dispatch because their tool events do
+not provide that unconditional pre-effect boundary. Terminal publication joins
+baseline capture and the turn-start alias even when the reply finishes first.
 At that join, the CLI checkpoint projection expands home-relative forms with its canonical
 path helper and uses the shared Protocol repository-path normalizer against the resolved
 Git root for both current and rename-source paths. Absolute Agent paths and relative Git

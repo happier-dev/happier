@@ -15,6 +15,7 @@ import type { ACPProvider } from '@/api/session/sessionMessageTypes';
 import type { PermissionMode } from '@/api/types';
 import { parseSpecialCommand } from '@/cli/parsers/specialCommands';
 import type { ProviderEnforcedPermissionHandler } from '@/agent/permissions/providerEnforced/handler';
+import { isDefaultWriteLikeToolName } from '@/agent/permissions/writeLikeToolNameHeuristics';
 import type { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import { resolveAppendSystemPromptBaseOverride } from '@/agent/runtime/permissions/appendSystemPrompt';
 import {
@@ -764,9 +765,12 @@ export async function runPermissionModePromptLoop(opts: {
         const turnId = readCheckpointTurnId(message);
         if (message.type === 'task_started' && turnId) {
           activeCheckpointTurnId = turnId;
-          void enqueueCheckpointHook(() => opts.checkpointLifecycle?.onTurnStarted?.({
+          // Register the native turn immediately so terminal publication can join
+          // the checkpoint owner's preparation even while capture is still running.
+          const started = runCheckpointHook(() => opts.checkpointLifecycle?.onTurnStarted?.({
             messageId, turnId, ...(message.sequence === undefined ? {} : { sequence: message.sequence }),
           }));
+          checkpointLifecycleTail = checkpointLifecycleTail.then(() => started);
           return;
         }
         if (
@@ -1526,17 +1530,22 @@ export async function runPermissionModePromptLoop(opts: {
         recordPreparationPhase('input_preparation');
         const requiredDispatchPrompt = preparedDispatch.requiredPrompt;
         const requiredProviderContextForBudget = preparedDispatch.requiredProviderContextForBudget;
-        // The checkpoint hook captures the repository, which is arbitrary-duration
-        // filesystem and Git work. Running it before Follow preparation keeps the
-        // final Follow authorization the last decision before dispatch, instead of
-        // leaving already-hydrated source plaintext waiting behind a long await.
-        // The one production hook reads only `messageId`; the real user input it
-        // describes is `requiredDispatchPrompt`, which optional host context never
-        // changes.
-        await enqueueCheckpointHook(() => opts.checkpointLifecycle?.onBeforePromptDispatch?.({
+        // Interceptable runtimes dispatch during capture; their first write-like
+        // tool joins this baseline. Observable runtimes must capture before send.
+        // Follow authorization remains the final admission before native dispatch.
+        const checkpointBaseline = enqueueCheckpointHook(() => opts.checkpointLifecycle?.onBeforePromptDispatch?.({
           messageId: currentCheckpointMessageId!,
           prompt: requiredDispatchPrompt,
         }));
+        if (opts.runtime.setBeforeToolExecution) {
+          opts.runtime.setBeforeToolExecution(async toolName => {
+            if (!isDefaultWriteLikeToolName(toolName)) return;
+            await checkpointBaseline;
+            opts.runtime.setBeforeToolExecution?.(null);
+          });
+        } else {
+          await checkpointBaseline;
+        }
         recordPreparationPhase('checkpoint');
 
         const hostContextOnly = message.message.hostContextOnly;
@@ -1966,6 +1975,7 @@ export async function runPermissionModePromptLoop(opts: {
   } finally {
     resetAssistantTextSnapshotTurnScope(opts.session, 'session_end');
     unsubscribeCheckpointRuntimeMessages();
+    opts.runtime.setBeforeToolExecution?.(null);
     await enqueueCheckpointHook(() => opts.checkpointLifecycle?.onSessionEnd?.());
   }
 }

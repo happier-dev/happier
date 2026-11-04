@@ -464,6 +464,8 @@ function readNormalizedToolChangeResult(value: unknown): NormalizedToolChangeRes
 export type RuntimeTurnChangeSetPublication = Readonly<{
   turnChangeSet: TurnChangeSet;
   eventKind: string;
+  /** Host-private evidence: opaque tools count even when they report no file paths. */
+  hasToolActivity?: boolean;
   admission?: CommittedTranscriptAdmission;
 }>;
 
@@ -477,6 +479,7 @@ export async function publishRuntimeTurnChangeSet(params: RuntimeTurnChangeSetPu
     await params.publishTurnChangeSet({
       turnChangeSet: params.turnChangeSet,
       eventKind: params.eventKind,
+      ...(params.hasToolActivity === undefined ? {} : { hasToolActivity: params.hasToolActivity }),
       ...(params.admission === undefined ? {} : { admission: params.admission }),
     });
     return;
@@ -944,6 +947,7 @@ async function projectRuntimeTranscriptEventNow(
         provider: params.provider,
         protocol: params.toolNormalizationProtocol,
         turnChangeSet: normalizedTurnChangeSet,
+        hasToolActivity: params.normalizedToolTurnChangeTracker!.hasToolActivity,
         eventKind: event.kind,
         ...(params.admission === undefined ? {} : { admission: params.admission }),
       });
@@ -1004,6 +1008,7 @@ async function projectRuntimeTranscriptEventNow(
         provider: params.provider,
         protocol: params.toolNormalizationProtocol,
         turnChangeSet: normalizedTurnChangeSet,
+        hasToolActivity: params.normalizedToolTurnChangeTracker!.hasToolActivity,
         eventKind: event.kind,
         ...(params.admission === undefined ? {} : { admission: params.admission }),
       });
@@ -1044,6 +1049,7 @@ async function projectRuntimeTranscriptEventNow(
         provider: params.provider,
         protocol: params.toolNormalizationProtocol,
         turnChangeSet: normalizedTurnChangeSet,
+        hasToolActivity: params.normalizedToolTurnChangeTracker!.hasToolActivity,
         eventKind: event.kind,
         ...(params.admission === undefined ? {} : { admission: params.admission }),
       });

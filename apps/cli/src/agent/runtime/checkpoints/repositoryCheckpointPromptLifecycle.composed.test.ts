@@ -5,7 +5,7 @@ import { promisify } from 'node:util';
 import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { compareTurnChangeSetChronology, mergeTurnChangeSets } from '@happier-dev/protocol';
+import { AgentSessionRuntimeEventSchema, compareTurnChangeSetChronology, mergeTurnChangeSets } from '@happier-dev/protocol';
 
 import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
@@ -110,6 +110,76 @@ function readCheckpointMeta(messages: readonly ACPMessageData[]): Record<string,
 }
 
 describe('createRepositoryCheckpointPromptLifecycle', () => {
+    it('joins a zero-tool terminal that arrives before baseline resolution', async () => {
+        const repoRoot = await createGitRepo();
+        const { session, messages } = createMessageCapturingSession('fast-zero-tool');
+        const entered = createDeferred<void>();
+        const release = createDeferred<void>();
+        session.fetchEarliestCommittedUserMessageLocalId = async () => {
+            entered.resolve(); await release.promise; return 'message';
+        };
+        const lifecycle = createRepositoryCheckpointPromptLifecycle({ session, runtimeDirectory: repoRoot,
+            provider: 'claude', protocol: 'claude' });
+        const capturing = Promise.resolve(lifecycle.onBeforePromptDispatch?.({ messageId: 'message', prompt: 'reply' }));
+        let starting: Promise<void> | undefined;
+        let terminal: Promise<void> | undefined;
+        try {
+            await entered.promise;
+            starting = Promise.resolve(lifecycle.onTurnStarted?.({ messageId: 'message', turnId: 'turn', sequence: 1 }));
+            let settled = false;
+            terminal = lifecycle.publishTurnChangeSet({ eventKind: 'turn-complete', hasToolActivity: false,
+                turnChangeSet: { sessionId: session.sessionId, turnId: 'turn', seqRange: { startSeqInclusive: 1, endSeqInclusive: 2 },
+                    status: 'completed', provider: 'claude', derivedAt: 1, files: [] } }).then(() => { settled = true; });
+            await new Promise<void>(resolve => setImmediate(resolve));
+            expect(settled).toBe(false);
+            release.resolve();
+            await Promise.all([capturing, starting, terminal]);
+            expect(messages.filter(message => message.type === 'tool-call' && message.name === 'Diff')).toHaveLength(0);
+        } finally {
+            release.resolve();
+            await Promise.allSettled([capturing, starting, terminal]);
+            await lifecycle.onSessionEnd?.();
+            await rm(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it.each(['none', 'shell'] as const)('reports peer-only edits only when the turn ran tools (%s)', async tools => {
+        const repoRoot = await createGitRepo();
+        const { session, messages } = createMessageCapturingSession(`peer-edits-${tools}`);
+        const lifecycle = createRepositoryCheckpointPromptLifecycle({ session, runtimeDirectory: repoRoot, provider: 'codex', protocol: 'codex' });
+        const bridge = createKeyedStreamedTranscriptBridge({ provider: 'codex', createSessionForStream: () => session });
+        const project = createRuntimeTranscriptProjector();
+        const tracker = new NormalizedToolTurnChangeTracker({ provider: 'codex' });
+        let sequence = 0;
+        const projectEvent = (event: Record<string, unknown>) => project({
+            session, provider: 'codex', runtimeMessageDeltaBridge: bridge, normalizedToolTurnChangeTracker: tracker,
+            toolNormalizationProtocol: 'codex', publishTurnChangeSet: lifecycle.publishTurnChangeSet,
+            event: AgentSessionRuntimeEventSchema.parse({ sessionId: session.sessionId, turnId: 'turn', emittedAtMs: ++sequence, sequence, ...event }),
+        });
+        try {
+            await lifecycle.onBeforePromptDispatch?.({ messageId: 'message', prompt: 'reply' });
+            await lifecycle.onTurnStarted?.({ messageId: 'message', turnId: 'turn', sequence: 1 });
+            await projectEvent({ kind: 'turn-start', startedBy: 'host' });
+            if (tools === 'shell') {
+                await projectEvent({ kind: 'tool-call', toolCallId: 'shell', toolName: 'Bash', input: { command: 'opaque command' } });
+                await projectEvent({ kind: 'tool-result', toolCallId: 'shell', output: { status: 'completed' } });
+            }
+            await writeFile(join(repoRoot, 'tracked.txt'), 'concurrent edit\n');
+            await projectEvent({ kind: 'turn-complete', agentTurnId: 'native-turn' });
+            await lifecycle.onTurnFinal?.({ messageId: 'message', turnId: 'turn', status: 'completed', sequence });
+            const cards = messages.filter(message => message.type === 'tool-call' && message.name === 'Diff');
+            expect(cards).toHaveLength(tools === 'none' ? 0 : 1);
+            if (tools === 'shell') {
+                const card = cards[0];
+                if (!card || card.type !== 'tool-call') throw new Error('Missing shell checkpoint recap');
+                expect(extractCanonicalDiffFiles(card.input, readTurnChangeToolMetadata(card.input)!))
+                    .toContainEqual(expect.objectContaining({ filePath: 'tracked.txt', source: 'scm_checkpoint' }));
+            }
+        } finally {
+            bridge.clear(); await lifecycle.onSessionEnd?.(); await rm(repoRoot, { recursive: true, force: true });
+        }
+    });
+
     it.each([
         { status: 'completed', checkpoint: 'git', evidence: 'tool' },
         { status: 'interrupted', checkpoint: 'git', evidence: 'tool' },

@@ -337,7 +337,8 @@ existing queue, metadata or connection wake; input is never enqueued again to
 recover a lost settlement receipt. This is 0.3 development-source behavior.
 
 Protected Session inputs re-enter that same Pending admission owner after host
-prompt and checkpoint preparation, immediately before a new turn or in-flight
+prompt preparation and checkpoint scheduling (or capture for runtimes without
+pre-effect tool interception), immediately before a new turn or in-flight
 steer reaches the native Agent. A local queue copy or committed user transcript
 row does not authorize dispatch after the Pending input is discarded. The host
 refuses native delivery when admission is rejected, held or unavailable.

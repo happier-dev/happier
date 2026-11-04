@@ -189,6 +189,7 @@ function bindReplaceableNativeAgentSessionOperations(params: Readonly<{
     let runtimeEventUnsubscribe: (() => void) | null = null;
     let promptDeliveryOutcomeHandler: ((outcome: PluginRuntimePromptDeliveryOutcome) => void) | null = null;
     let promptTerminallyRejectedHandler: PluginRuntimePromptAcceptedHandler | null = null;
+    let beforeToolExecutionHandler: ((toolName: string) => Promise<void>) | null = null;
     // Both native catalogs follow the existing runtime replacement lifetime.
     // Keep their sources stable for host publishers and fence retired callbacks.
     const bindCatalog = <Snapshot,>(readSource: () => Readonly<{
@@ -271,6 +272,7 @@ function bindReplaceableNativeAgentSessionOperations(params: Readonly<{
 
     const bindProviderInputHandlersToCurrentRuntime = (): void => {
         const bindingEpoch = runtimeBindingEpoch;
+        currentOperations.setBeforeToolExecution?.(beforeToolExecutionHandler);
         currentOperations.setOnPromptDeliveryOutcome(promptDeliveryOutcomeHandler
             ? (outcome) => {
                 // Retirement itself publishes exact unresolved custody. Keep
@@ -393,6 +395,12 @@ function bindReplaceableNativeAgentSessionOperations(params: Readonly<{
             promptDeliveryOutcomeHandler = handler;
             bindProviderInputHandlersToCurrentRuntime();
         },
+        ...(currentOperations.setBeforeToolExecution ? {
+            setBeforeToolExecution(handler: ((toolName: string) => Promise<void>) | null) {
+                beforeToolExecutionHandler = handler;
+                bindProviderInputHandlersToCurrentRuntime();
+            },
+        } : {}),
         setOnPromptTerminallyRejectedBeforeProvider(handler: PluginRuntimePromptAcceptedHandler | null) {
             promptTerminallyRejectedHandler = handler;
             bindProviderInputHandlersToCurrentRuntime();

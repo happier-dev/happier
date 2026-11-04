@@ -975,6 +975,7 @@ export function createNativeAgentSessionHostServices(params: Readonly<{
     }>;
     publications: NativeAgentSessionPublications['services'];
     readToolExecutionCapability: () => NonNullable<AgentRuntime['toolExecution']>['capability'] | null;
+    beforeToolExecution?: (toolName: string) => void | Promise<void>;
     accountSettings?: Readonly<Record<string, unknown>>;
     profileId?: string | null;
     promptPlan?: SessionPromptPlanResolver;
@@ -1222,6 +1223,7 @@ export function createNativeAgentSessionHostServices(params: Readonly<{
                     code: 'agent_tool_interception_unavailable',
                 };
             }
+            await params.beforeToolExecution?.(request.name);
             return await params.owners.toolExecution.before(request, {
                 signal: combineSessionOperationSignal(params.signal, options?.signal),
             });
@@ -5688,6 +5690,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
             });
             const nativeLaunch = issueAgentNativeLaunchQualifierForHost(services.exec,
                 () => hostRuntimeParams.sessionMcpContext, () => hostRuntimeParams.mcpLaunchMaterial);
+            let beforeToolExecution: ((toolName: string) => Promise<void>) | null = null;
             const context = composeNativeAgentSessionRuntimeContext({
                 identity,
                 contributionId,
@@ -5746,6 +5749,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                     ...(nativeHome ? { nativeHome } : {}),
                     publications: publications.services,
                     readToolExecutionCapability: () => runtime?.toolExecution?.capability ?? null,
+                    beforeToolExecution: toolName => beforeToolExecution?.(toolName),
                     toolsDelivery: resolveAgentToolsDelivery(identity.agentId),
                     subagents: readAgentSessionSubagentObservationPublisher(services),
                 }), nativeLaunch }),
@@ -6436,6 +6440,9 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
             return {
                 operations: {
                     ...operations,
+                    ...(toolExecutionCapability === 'interceptable' ? {
+                        setBeforeToolExecution: (handler: ((toolName: string) => Promise<void>) | null) => { beforeToolExecution = handler; },
+                    } : {}),
                     readActiveTurnAdmissionWitness: () => readActiveTurnAdmissionWitness(),
                     getRuntimeLifetimeSignal: () => signal,
                     readSessionStartupInstructions: () => startupInstructions,

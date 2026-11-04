@@ -210,7 +210,7 @@ export class TurnChangeSetCollector {
         seqRange: { startSeqInclusive: number; endSeqInclusive: number };
         status: TurnChangeSet['status'];
         agentTurnId?: string | null;
-    }>): TurnChangeSet | null {
+    }>): TurnChangeSet {
         const output = this.emitter.flushTurn();
         const files: FileChangeEvidence[] = [];
 
@@ -248,8 +248,6 @@ export class TurnChangeSetCollector {
         this.snapshotMetadata = null;
         const turnMetadata = this.turnMetadata;
         this.turnMetadata = null;
-
-        if (files.length === 0 && !turnMetadata?.repositoryCheckpoint) return null;
 
         return {
             sessionId: turnMetadata?.sessionId ?? params.sessionId,

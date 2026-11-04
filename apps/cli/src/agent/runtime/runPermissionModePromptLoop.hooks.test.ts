@@ -89,6 +89,44 @@ function createSelectedToolBindings() {
   }] as const;
 }
 
+it('sends an interceptable turn before checkpoint completion and holds only write-like tools', async () => {
+  const checkpointEntered = createDeferred<void>();
+  const releaseCheckpoint = createDeferred<void>();
+  let beforeTool: ((name: string) => Promise<void>) | null = null;
+  let reads = 0;
+  let writes = 0;
+  const runtime = {
+    ...createRuntime(),
+    setBeforeToolExecution(handler: typeof beforeTool) { beforeTool = handler; },
+  };
+  runtime.sendTurnPrompt.mockImplementation(async () => {
+    if (!beforeTool) throw new Error('Missing pre-effect checkpoint binding');
+    await beforeTool('Read');
+    reads += 1;
+    await beforeTool('Edit');
+    writes += 1;
+  });
+  const loop = runSingleSpecialCommand({
+    text: 'edit after reading', localId: 'checkpoint-interception', runtime,
+    checkpointLifecycle: { onBeforePromptDispatch: async () => {
+      checkpointEntered.resolve();
+      await releaseCheckpoint.promise;
+    } },
+  });
+  try {
+    await checkpointEntered.promise;
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(runtime.sendTurnPrompt).toHaveBeenCalledTimes(1);
+    expect(reads).toBe(1);
+    expect(writes).toBe(0);
+  } finally {
+    releaseCheckpoint.resolve();
+    await loop;
+  }
+  expect(writes).toBe(1);
+  expect(beforeTool).toBeNull();
+});
+
 async function runSingleSpecialCommand(params: Readonly<{
   text: string;
   localId: string;

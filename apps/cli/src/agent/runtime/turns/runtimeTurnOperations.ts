@@ -159,6 +159,8 @@ export type RuntimeTurnDisposeReason = NonNullable<
 >;
 
 export type RuntimeTurnOperations = Readonly<{
+  /** Present only when the opened runtime supplies a real pre-effect tool boundary. */
+  setBeforeToolExecution?: (handler: ((toolName: string) => Promise<void>) | null) => void;
   /** Full plan supplied by the host on this native open, not provider-input acceptance. */
   readSessionStartupInstructions?: () => AgentSessionStartupInstructionsV1 | null;
   /** Concrete open result; an explicit native refusal withdraws manifest support for this incarnation. */

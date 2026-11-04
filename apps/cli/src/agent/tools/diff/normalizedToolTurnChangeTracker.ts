@@ -39,6 +39,11 @@ export class NormalizedToolTurnChangeTracker {
     private activeTurnId: string | null = null;
     private activeAgentTurnId: string | null = null;
     private activeStartSequence: number | null = null;
+    private toolActivityObserved = false;
+
+    get hasToolActivity(): boolean {
+        return this.toolActivityObserved;
+    }
 
     constructor(params: Readonly<{
         provider: string;
@@ -59,6 +64,7 @@ export class NormalizedToolTurnChangeTracker {
         sequence?: number;
     }> = {}): void {
         this.activeTurnOrdinal += 1;
+        this.toolActivityObserved = false;
         this.pendingByCallId.clear();
         this.collector.beginTurn();
         this.hasActiveTurn = true;
@@ -72,6 +78,7 @@ export class NormalizedToolTurnChangeTracker {
     }
 
     resetTurn(): void {
+        this.toolActivityObserved = false;
         this.pendingByCallId.clear();
         this.collector.beginTurn();
         this.hasActiveTurn = false;
@@ -90,6 +97,7 @@ export class NormalizedToolTurnChangeTracker {
             return;
         }
         this.ensureTurnStarted();
+        this.toolActivityObserved = true;
         const pending = derivePendingNormalizedToolChange(params.toolName, params.args);
         if (!pending) return;
         this.pendingByCallId.set(params.callId, pending);
@@ -175,6 +183,7 @@ export class NormalizedToolTurnChangeTracker {
             return;
         }
         this.ensureTurnStarted();
+        this.toolActivityObserved = true;
         if (typeof params.oldContent === 'string' && typeof params.newContent === 'string') {
             this.collector.observeTextDiff({
                 filePath: params.filePath,

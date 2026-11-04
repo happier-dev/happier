@@ -35,7 +35,6 @@ type ActiveCheckpointBinding = Readonly<{
     finalSequence?: number;
     turnId?: string;
     publication?: RuntimeTurnChangeSetPublication;
-    startAlias?: Promise<void>;
 }>;
 
 type RepositoryCheckpointPromptLifecycle = PromptLoopCheckpointLifecycle & Readonly<{
@@ -163,6 +162,9 @@ export function createRepositoryCheckpointPromptLifecycle(params: Readonly<{
     const initialSessionId = params.session.sessionId;
     const bindingsByMessageId = new Map<string, ActiveCheckpointBinding>();
     const attributionRegistry = params.attributionRegistry ?? defaultWorktreeAttributionRegistry;
+    // One foreground turn is admitted at a time. Terminal publication joins its
+    // capture and turn-start alias, including a reply that finishes before capture.
+    let checkpointPreparation: Promise<void> = Promise.resolve();
 
     function endAttributionInterval(binding: ActiveCheckpointBinding): void {
         if (binding.attributionInterval) {
@@ -224,12 +226,12 @@ export function createRepositoryCheckpointPromptLifecycle(params: Readonly<{
 
     const lifecycle: RepositoryCheckpointPromptLifecycle = {
         async publishTurnChangeSet(publication) {
+            await checkpointPreparation;
             for (const [messageId, binding] of bindingsByMessageId) {
                 if (binding.turnId !== publication.turnChangeSet.turnId) continue;
                 bindingsByMessageId.set(messageId, { ...binding, publication });
                 // Keep the combined durable write inside the original native terminal
                 // projection: a refused transcript write must still fail that turn.
-                await binding.startAlias;
                 await lifecycle.onTurnFinal?.({ messageId, turnId: publication.turnChangeSet.turnId,
                     status: publication.turnChangeSet.status, sequence: publication.turnChangeSet.seqRange.endSeqInclusive });
                 return;
@@ -237,78 +239,81 @@ export function createRepositoryCheckpointPromptLifecycle(params: Readonly<{
             // Native turns without a dispatched prompt have no checkpoint binding to join.
             await publishRuntimeTurnChangeSet({ ...publication, session: params.session, provider: params.provider, protocol: params.protocol });
         },
-        async onBeforePromptDispatch({ messageId }) {
-            const context = await resolveGitCheckpointContext({
-                runtimeDirectory: params.runtimeDirectory,
-                sessionId: params.session.sessionId,
-            });
-            const refs = buildRepositoryCheckpointRefs({
-                scopeId: context.scopeId,
-                messageId,
-            });
-            let binding: ActiveCheckpointBinding = { ...context, refs };
-            if (context.repoRoot) {
-                binding = {
-                    ...binding,
-                    attributionInterval: attributionRegistry.begin({
-                        repoRoot: context.repoRoot,
-                        intervalId: `${params.session.sessionId}:${messageId}`,
-                    }),
-                };
-            }
-            bindingsByMessageId.set(messageId, binding);
-            const messageStart = refs.messageStart;
-            if (!messageStart || !binding.context) return;
-            const captured = await gitCheckpointAdapter.capture({
-                context: binding.context,
-                checkpointRef: messageStart,
-            });
-            try {
-                await retainRepositoryCheckpointInitialEvidence({ cwd: binding.repoRoot ?? params.runtimeDirectory,
-                    scopeId: binding.scopeId, checkpointRef: messageStart, captured,
-                    sessionIsNew: params.sessionIsNew === true && params.session.sessionId === initialSessionId,
-                    readEarliestPromptLocalId: () => params.session.fetchEarliestCommittedUserMessageLocalId() });
-            } catch (error) {
-                logger.debug('Repository initial checkpoint retention unavailable (non-fatal)', error);
-            }
-            if (!captured.success) {
+        onBeforePromptDispatch({ messageId }) {
+            const capture = (async () => {
+                const context = await resolveGitCheckpointContext({
+                    runtimeDirectory: params.runtimeDirectory,
+                    sessionId: params.session.sessionId,
+                });
+                const refs = buildRepositoryCheckpointRefs({
+                    scopeId: context.scopeId,
+                    messageId,
+                });
+                let binding: ActiveCheckpointBinding = { ...context, refs };
+                if (context.repoRoot) {
+                    binding = {
+                        ...binding,
+                        attributionInterval: attributionRegistry.begin({
+                            repoRoot: context.repoRoot,
+                            intervalId: `${params.session.sessionId}:${messageId}`,
+                        }),
+                    };
+                }
+                bindingsByMessageId.set(messageId, binding);
+                const messageStart = refs.messageStart;
+                if (!messageStart || !binding.context) return;
+                const captured = await gitCheckpointAdapter.capture({
+                    context: binding.context,
+                    checkpointRef: messageStart,
+                });
+                try {
+                    await retainRepositoryCheckpointInitialEvidence({ cwd: binding.repoRoot ?? params.runtimeDirectory,
+                        scopeId: binding.scopeId, checkpointRef: messageStart, captured,
+                        sessionIsNew: params.sessionIsNew === true && params.session.sessionId === initialSessionId,
+                        readEarliestPromptLocalId: () => params.session.fetchEarliestCommittedUserMessageLocalId() });
+                } catch (error) {
+                    logger.debug('Repository initial checkpoint retention unavailable (non-fatal)', error);
+                }
+                if (!captured.success) {
+                    bindingsByMessageId.set(messageId, {
+                        ...binding,
+                        receipts: appendReceipts(binding.receipts, captured.receipts),
+                        unavailableReason: captured.reason,
+                        unavailableError: captured.error,
+                    });
+                    logger.debug('Repository message-start checkpoint unavailable (non-fatal)', captured);
+                    return;
+                }
                 bindingsByMessageId.set(messageId, {
                     ...binding,
                     receipts: appendReceipts(binding.receipts, captured.receipts),
-                    unavailableReason: captured.reason,
-                    unavailableError: captured.error,
                 });
-                logger.debug('Repository message-start checkpoint unavailable (non-fatal)', captured);
-                return;
-            }
-            bindingsByMessageId.set(messageId, {
-                ...binding,
-                receipts: appendReceipts(binding.receipts, captured.receipts),
-            });
+            })();
+            checkpointPreparation = capture.catch(() => undefined);
+            return capture;
         },
-        async onTurnStarted({ messageId, turnId, sequence }) {
-            const binding = bindingsByMessageId.get(messageId);
-            if (!binding) return;
-            const refs = buildRepositoryCheckpointRefs({
-                scopeId: binding.scopeId,
-                messageId,
-                turnId,
-            });
-            let nextBinding: ActiveCheckpointBinding = { ...binding, refs, turnId, startSequence: sequence };
-            bindingsByMessageId.set(messageId, nextBinding);
-            if (binding.unavailableReason || !binding.context) return;
-            if (!refs.messageStart || !refs.turnStart) {
-                bindingsByMessageId.set(messageId, {
-                    ...nextBinding,
-                    unavailableReason: 'missing_source',
-                    unavailableError: 'Checkpoint alias source ref is unavailable.',
+        onTurnStarted({ messageId, turnId, sequence }) {
+            const started = checkpointPreparation.then(async () => {
+                const binding = bindingsByMessageId.get(messageId);
+                if (!binding) return;
+                const refs = buildRepositoryCheckpointRefs({
+                    scopeId: binding.scopeId,
+                    messageId,
+                    turnId,
                 });
-                return;
-            }
-            const alias = gitCheckpointAdapter.alias({ context: binding.context, sourceRef: refs.messageStart, targetRef: refs.turnStart });
-            const startAlias = (async () => {
+                const nextBinding: ActiveCheckpointBinding = { ...binding, refs, turnId, startSequence: sequence };
+                bindingsByMessageId.set(messageId, nextBinding);
+                if (binding.unavailableReason || !binding.context) return;
+                if (!refs.messageStart || !refs.turnStart) {
+                    bindingsByMessageId.set(messageId, {
+                        ...nextBinding,
+                        unavailableReason: 'missing_source',
+                        unavailableError: 'Checkpoint alias source ref is unavailable.',
+                    });
+                    return;
+                }
                 try {
-                    const aliased = await alias;
+                    const aliased = await gitCheckpointAdapter.alias({ context: binding.context, sourceRef: refs.messageStart, targetRef: refs.turnStart });
                     const current = bindingsByMessageId.get(messageId);
                     if (!current) return;
                     bindingsByMessageId.set(messageId, { ...current,
@@ -322,10 +327,9 @@ export function createRepositoryCheckpointPromptLifecycle(params: Readonly<{
                         unavailableError: 'Repository turn-start checkpoint alias failed.' });
                     logger.debug('Repository turn-start checkpoint alias failed (non-fatal)', error);
                 }
-            })();
-            nextBinding = { ...nextBinding, startAlias };
-            bindingsByMessageId.set(messageId, nextBinding);
-            await startAlias;
+            });
+            checkpointPreparation = started.catch(() => undefined);
+            return started;
         },
         async onTurnFinal({ messageId, turnId, status, sequence }) {
             const activeBinding = bindingsByMessageId.get(messageId);
@@ -360,6 +364,9 @@ export function createRepositoryCheckpointPromptLifecycle(params: Readonly<{
                         ? 'message_start'
                         : 'unavailable';
             try {
+                // With no tool activity the repository diff can only describe other
+                // writers. Keep the captured baseline for rewind, without a recap.
+                if (binding.publication?.hasToolActivity === false) return;
                 if (binding.unavailableReason || !binding.context) {
                     await emitProjectedDiff({
                         binding,
