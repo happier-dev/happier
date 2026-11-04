@@ -51,6 +51,16 @@ function request(
 }
 
 describe('browser automation daemon service', () => {
+  it('leaves input admission to the input owner without a service preflight', async () => {
+    const service = createBrowserAutomationDaemonService({ adapter: readOnlyAdapter() });
+    try {
+      expect(await service.execute(request())).toMatchObject({ status: 'succeeded' });
+      const preflight = vi.spyOn(service.getInputControl(view), 'getAdmissionFailure');
+      expect(await service.execute(request({ actionKind: 'click', payload: { locator: { kind: 'css', value: '#submit' } } })))
+        .toMatchObject({ status: 'succeeded' });
+      expect(preflight).not.toHaveBeenCalled();
+    } finally { service.dispose(); }
+  });
   it.each(['disconnect', 'handBack', 'close', 'dispose'] as const)('releases the held physical pointer on viewer %s', async boundary => {
     let pointerHeld = true;
     const service = createBrowserAutomationDaemonService({ adapter: {

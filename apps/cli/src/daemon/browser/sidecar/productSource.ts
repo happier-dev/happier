@@ -27,6 +27,7 @@ import {
     type BrowserSidecarLaunchOwnerControlAdapterFactoryInput,
 } from './launchOwner';
 import { resolveManagedBrowserSidecarCandidate } from './source';
+import type { BrowserSidecarInteractions } from './interactions';
 
 type CreateLaunchOwnerFactory = (
     input: BrowserSidecarLaunchOwnerControlAdapterFactoryInput,
@@ -83,6 +84,7 @@ export function createProductBrowserSidecarControlAdapterFactory(params: Readonl
         const eventListeners = new Set<BrowserSidecarCdpEventSubscriber>();
         const viewListeners = new Set<BrowserSidecarViewLifecycleSubscriber>();
         const browserEventListeners = new Set<(event: BrowserEventV1) => void>();
+        const interactionListeners = new Set<Parameters<BrowserSidecarInteractions['subscribe']>[0]>();
         let disposal: Promise<void> | null = null;
 
         const profileIdForSession = (sessionId: string): string =>
@@ -112,6 +114,26 @@ export function createProductBrowserSidecarControlAdapterFactory(params: Readonl
             const handle = !session?.closing ? session?.result?.contextCapture?.resolvePageHandle(view) : null;
             return handle ? handleForSession(view.browserSessionId, handle) : null;
         }
+        function resolveInteractions(view: Readonly<{ browserSessionId: string }>) {
+            const session = sessions.get(view.browserSessionId);
+            return !session?.closing ? session?.result?.contextCapture?.interactions : undefined;
+        }
+        // Interactions retain their real per-process CDP transport, view bindings and staging.
+        // The product surface only selects the Session owner, just like control and capture.
+        const interactions: BrowserSidecarInteractions = {
+            getState: view => resolveInteractions(view)?.getState(view) ?? null,
+            subscribe(listener) { interactionListeners.add(listener); return () => { interactionListeners.delete(listener); }; },
+            execute: async request => resolveInteractions(request)?.execute(request) ?? { ok: false, errorCode: 'view_closed' },
+            stageUpload: async (view, files) => {
+                const owner = resolveInteractions(view);
+                if (!owner) throw new Error('Browser view is closed');
+                return owner.stageUpload(view, files);
+            },
+            dispose: async () => {
+                await Promise.all([...sessions.values()].map(session => session.result?.contextCapture?.interactions?.dispose()));
+                interactionListeners.clear();
+            },
+        };
         async function launchSession(sessionId: string, scope?: BrowserSidecarCdpCommandScope, requestedProfileId?: string): Promise<BrowserSidecarControlAdapterFactoryResult> {
             const existing = sessions.get(sessionId);
             // Decide profile custody once on open, including reusing a running engine.
@@ -199,6 +221,7 @@ export function createProductBrowserSidecarControlAdapterFactory(params: Readonl
                     }));
                     result.contextCapture?.subscribeViewLifecycle?.((event) => emit(viewListeners, event));
                     result.contextCapture?.subscribeBrowserEvents?.((event) => emit(browserEventListeners, event));
+                    result.contextCapture?.interactions?.subscribe((view) => emit(interactionListeners, view));
                 }
                 return result;
             }).finally(() => scope?.signal?.removeEventListener('abort', cancelLaunch));
@@ -342,6 +365,7 @@ export function createProductBrowserSidecarControlAdapterFactory(params: Readonl
             },
             contextCapture: {
                 resolveViewportOwner: view => sessions.get(view.browserSessionId)?.result?.contextCapture?.resolveViewportOwner?.(view),
+                interactions,
                 resolvePageHandle,
                 resolveNativeObservation: (view) => resolvePageHandle(view)
                     ? sessions.get(view.browserSessionId)?.result?.contextCapture?.resolveNativeObservation?.(view) : undefined,
@@ -380,6 +404,7 @@ export function createProductBrowserSidecarControlAdapterFactory(params: Readonl
                     eventListeners.clear();
                     viewListeners.clear();
                     browserEventListeners.clear();
+                    interactionListeners.clear();
                 })();
                 return disposal;
             },

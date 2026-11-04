@@ -1,6 +1,4 @@
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { basename, join } from 'node:path';
+import { basename } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { BrowserActiveTargetV1Schema, normalizeBrowserActiveTargetRect, readBrowserActiveTargetLabel } from '@happier-dev/protocol/browser/events/activeTarget';
 import { browserViewContextId } from '@happier-dev/protocol/browser/view/key';
@@ -31,6 +29,23 @@ import type {
   BrowserAutomationCdpPageQueryResult,
   BrowserAutomationCdpTransport,
 } from './cdp';
+
+const CDP_NAMED_KEY_CODES: Readonly<Record<string, number>> = { Backspace: 8, Tab: 9, Enter: 13, Shift: 16,
+  Control: 17, Alt: 18, Escape: 27, ' ': 32, PageUp: 33, PageDown: 34, End: 35, Home: 36,
+  ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40, Insert: 45, Delete: 46, Meta: 91 };
+
+function cdpModifiers(value: unknown): number | null {
+  if (!Array.isArray(value)) return 0;
+  let mask = 0;
+  for (const modifier of value) {
+    if (modifier === 'alt') mask |= 1;
+    else if (modifier === 'control') mask |= 2;
+    else if (modifier === 'meta') mask |= 4;
+    else if (modifier === 'shift') mask |= 8;
+    else return null; // CDP has no Fn modifier bit.
+  }
+  return mask;
+}
 
 /**
  * Bridges the chromiumSidecar control adapter into the automation CDP transport seam (MCH-3).
@@ -542,6 +557,9 @@ export function createControlAdapterAutomationTransport(input: Readonly<{
   async function dispatchPageQuery(
     query: BrowserAutomationCdpPageQueryInput,
   ): Promise<BrowserAutomationCdpPageQueryResult> {
+    if (query.actionKind === 'clipboardRead' || query.actionKind === 'download' || query.actionKind === 'getInteractionState') {
+      return contextCapture?.interactions?.execute(query) ?? { ok: false, errorCode: 'runtime_unavailable' };
+    }
     if (query.actionKind === 'snapshot') {
       const richSnapshot = await dispatchRichSnapshot(query);
       if (richSnapshot) return richSnapshot;
@@ -680,6 +698,10 @@ export function createControlAdapterAutomationTransport(input: Readonly<{
   async function dispatchInputCommand(
     command: BrowserAutomationCdpInputInput,
   ): Promise<BrowserAutomationCdpInputResult> {
+    if (command.actionKind === 'clipboardWrite' || command.actionKind === 'clipboardCut' || command.actionKind === 'answerDialog'
+      || (command.actionKind === 'upload' && typeof command.payload.chooserId === 'string')) {
+      return contextCapture?.interactions?.execute(command) ?? { ok: false, errorCode: 'runtime_unavailable' };
+    }
     if (!contextCapture) {
       return { ok: false, errorCode: 'runtime_unavailable' };
     }
@@ -691,7 +713,7 @@ export function createControlAdapterAutomationTransport(input: Readonly<{
       return { ok: false, errorCode: 'view_closed' };
     }
     const selector = normalizeBrowserAutomationLocator(command.payload) ?? '';
-    const heldInput: { mouse: Record<string, unknown> | null; key: string | null } = { mouse: null, key: null };
+    const heldInput: { mouse: Record<string, unknown> | null; key: Record<string, unknown> | null } = { mouse: null, key: null };
     let uncertainEffect = false;
     let cleanupFailed = false;
     const send = async (method: string, params?: Record<string, unknown>) => {
@@ -700,7 +722,9 @@ export function createControlAdapterAutomationTransport(input: Readonly<{
       const previousKey = heldInput.key;
       if (method === 'Input.dispatchMouseEvent' && params?.type === 'mousePressed') heldInput.mouse = { ...params };
       if (method === 'Input.dispatchMouseEvent' && params?.type === 'mouseMoved' && heldInput.mouse) heldInput.mouse = { ...heldInput.mouse, x: params.x, y: params.y };
-      if (method === 'Input.dispatchKeyEvent' && params?.type === 'keyDown' && typeof params.key === 'string') heldInput.key = params.key;
+      if (method === 'Input.dispatchKeyEvent' && params?.type === 'keyDown' && typeof params.key === 'string') {
+        heldInput.key = { ...params };
+      }
       try {
         // Once sent, an abort cannot retract CDP input. Await its acknowledgement, then stop at
         // the next checkpoint. Dropping this promise on abort would free admission too early.
@@ -803,6 +827,7 @@ export function createControlAdapterAutomationTransport(input: Readonly<{
         }
         case 'upload': {
           if (!selector || !Array.isArray(command.payload.files)) return { ok: false, errorCode: 'unsupported_action' };
+          if (!contextCapture.interactions) return { ok: false, errorCode: 'runtime_unavailable' };
           await targetPoint(selector, false);
           const files = command.payload.files.map(record);
           if (files.some(file => {
@@ -814,28 +839,16 @@ export function createControlAdapterAutomationTransport(input: Readonly<{
           const remote = await send('Runtime.evaluate', { expression, returnByValue: false, awaitPromise: false });
           const objectId = stringField(record(remote)?.result, 'objectId');
           if (!objectId) return { ok: false, errorCode: 'selector_not_found' };
-          let directory: string | undefined;
           try {
-            directory = await mkdtemp(join(tmpdir(), 'happier-browser-upload-'));
-            const paths: string[] = [];
-            for (const [index, file] of files.entries()) {
-              // Separate directories preserve duplicate browser filenames without collisions.
-              const fileDirectory = join(directory, String(index));
-              await mkdir(fileDirectory);
-              const name = basename(String(file?.name).replaceAll('\\', '/'));
-              if (!name || name === '.' || name === '..') return { ok: false, errorCode: 'unsupported_action' };
-              const path = join(fileDirectory, name);
-              await writeFile(path, Buffer.from(String(file?.text), file?.base64 === true ? 'base64' : 'utf8'));
-              paths.push(path);
-            }
+            const paths = await contextCapture.interactions.stageUpload(command, files.map(file => ({
+              name: String(file?.name), bytes: Buffer.from(String(file?.text), file?.base64 === true ? 'base64' : 'utf8'),
+            })));
             await send('DOM.setFileInputFiles', { objectId, files: paths });
             return { ok: true, data: { fileCount: paths.length } };
           } finally {
-            try { if (directory) await rm(directory, { recursive: true, force: true }); }
-            finally {
-              // Releasing an owned remote object is cleanup, not another mutating action.
-              await contextCapture.transport.dispatchPageCommand({ targetId: handle.targetId, ...(handle.sessionId ? { sessionId: handle.sessionId } : {}), method: 'Runtime.releaseObject', params: { objectId } });
-            }
+            // Chrome reads native File paths later when a form submits. The live interaction
+            // owner retains their bytes until this view closes; only the remote object is done.
+            await contextCapture.transport.dispatchPageCommand({ targetId: handle.targetId, ...(handle.sessionId ? { sessionId: handle.sessionId } : {}), method: 'Runtime.releaseObject', params: { objectId } });
           }
         }
         case 'drag': {
@@ -855,8 +868,15 @@ export function createControlAdapterAutomationTransport(input: Readonly<{
           if (selector && !await targetPoint(selector, true, true)) return { ok: false, errorCode: 'selector_not_found' };
           const key = typeof command.payload.key === 'string' ? command.payload.key : '';
           if (!key) return { ok: false, errorCode: 'unsupported_action' };
-          await send('Input.dispatchKeyEvent', { type: 'keyDown', key });
-          await send('Input.dispatchKeyEvent', { type: 'keyUp', key });
+          const mask = cdpModifiers(command.payload.modifiers);
+          if (mask === null) return { ok: false, errorCode: 'unsupported_action' };
+          const modifiers = Array.isArray(command.payload.modifiers) ? { modifiers: mask } : {};
+          // Chromium's editor/accelerator path uses the virtual code, not only DOM `key`.
+          const virtualCode = /^[a-z0-9]$/i.test(key) ? key.toUpperCase().charCodeAt(0)
+            : /^F(?:[1-9]|1[0-9]|2[0-4])$/.test(key) ? 111 + Number(key.slice(1)) : CDP_NAMED_KEY_CODES[key];
+          const keyParams = { key, ...modifiers, ...(virtualCode === undefined ? {} : { windowsVirtualKeyCode: virtualCode }) };
+          await send('Input.dispatchKeyEvent', { type: 'keyDown', ...keyParams });
+          await send('Input.dispatchKeyEvent', { type: 'keyUp', ...keyParams });
           return { ok: true };
         }
         case 'scroll': {
@@ -892,7 +912,7 @@ export function createControlAdapterAutomationTransport(input: Readonly<{
         catch { cleanupFailed = true; }
       }
       if (heldInput.key) {
-        try { await dispatchPageCommand(handle, 'Input.dispatchKeyEvent', { type: 'keyUp', key: heldInput.key }); }
+        try { await dispatchPageCommand(handle, 'Input.dispatchKeyEvent', { ...heldInput.key, type: 'keyUp' }); }
         catch { cleanupFailed = true; }
       }
     }
@@ -913,13 +933,16 @@ export function createControlAdapterAutomationTransport(input: Readonly<{
     readFocusedCredentialTarget,
     ...(contextCapture ? {
       dispatchInputCommand,
-      executePageOperation: (context: BrowserAutomationViewRef & BrowserAutomationAdapterExecutionContext & Pick<BrowserAutomationActionRequestV1, 'dialogResponse'>,
+      executePageOperation: (context: BrowserAutomationViewRef & BrowserAutomationAdapterExecutionContext & Pick<BrowserAutomationActionRequestV1, 'dialogResponse' | 'requestedBy'>,
         execute: () => Promise<BrowserAutomationAdapterExecuteResult>) => {
         const handle = contextCapture.resolvePageHandle(context);
         if (context.dialogResponse && !contextCapture.subscribeCdpEvents) {
           return Promise.resolve({ status: 'unsupported', fidelity: 'cdp', trustedInput: false, errorCode: 'unsupported_action' });
         }
-        return handle ? withHandledDialogs(handle, context, execute, context.dialogResponse) : execute();
+        // Human input leaves the page's dialog pending for the streamed answer UI. Agent Actions
+        // retain bounded automatic handling, including an explicitly approved response.
+        return handle && (context.requestedBy !== 'user' || context.dialogResponse)
+          ? withHandledDialogs(handle, context, execute, context.dialogResponse) : execute();
       },
     } : {}),
   };

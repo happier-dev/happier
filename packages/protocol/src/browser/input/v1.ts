@@ -30,6 +30,30 @@ export const BrowserTextInputEventV1Schema = z.strictObject({
     sequence: z.number().check(z.int(), z.nonnegative()),
   });
 
+/** Uploads carry bytes, never a caller-selected path on the browser's Machine. */
+export const BrowserUploadFileV1Schema = z.strictObject({
+  name: z.string().check(z.minLength(1), z.refine(name => !/[\\/\x00]/u.test(name) && name !== '.' && name !== '..')),
+  dataBase64: z.string().check(z.refine(value => /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(value))),
+});
+export type BrowserUploadFileV1 = z.infer<typeof BrowserUploadFileV1Schema>;
+export const BrowserFileChooserInputEventV1Schema = z.strictObject({
+  kind: z.literal('fileChooser'), target: BrowserInputTargetV1Schema,
+  chooserId: z.string().check(z.minLength(1)), files: z.array(BrowserUploadFileV1Schema),
+  sequence: z.number().check(z.int(), z.nonnegative()),
+});
+export const BrowserDialogInputEventV1Schema = z.strictObject({
+  kind: z.literal('dialog'), target: BrowserInputTargetV1Schema,
+  dialogId: z.string().check(z.minLength(1)), accept: z.boolean(), promptText: z.optional(z.string()),
+  sequence: z.number().check(z.int(), z.nonnegative()),
+});
+export const BrowserDownloadInputEventV1Schema = z.strictObject({
+  kind: z.literal('download'), target: BrowserInputTargetV1Schema, downloadId: z.string().check(z.minLength(1)),
+  // The viewer sizes each requested range for its negotiated transport budget.
+  offset: z.number().check(z.int(), z.nonnegative(), z.maximum(Number.MAX_SAFE_INTEGER)),
+  byteLength: z.number().check(z.int(), z.positive(), z.maximum(Number.MAX_SAFE_INTEGER)),
+  sequence: z.number().check(z.int(), z.nonnegative()),
+});
+
 export const BrowserViewportPresetIdV1Schema = z.enum(['phone', 'smallPhone', 'tablet', 'laptop', 'desktop']);
 export type BrowserViewportPresetIdV1 = z.infer<typeof BrowserViewportPresetIdV1Schema>;
 
@@ -81,6 +105,21 @@ export const BrowserInputEventV1Schema = z.discriminatedUnion('kind', [
   }),
 ]);
 export type BrowserInputEventV1 = z.infer<typeof BrowserInputEventV1Schema>;
+
+/** Human-only state uses sealed live-view metadata, never telemetry or the agent timeline. */
+export const BrowserInteractionStateV1Schema = z.strictObject({
+  unavailable: z.optional(z.strictObject({
+    download: z.optional(z.literal('runtime_unavailable')),
+    fileChooser: z.optional(z.literal('runtime_unavailable')),
+  })),
+  dialog: z.nullable(z.strictObject({ dialogId: z.string(), type: z.enum(['alert', 'confirm', 'prompt', 'beforeunload']),
+    message: z.string(), defaultPrompt: z.optional(z.string()) })),
+  fileChooser: z.nullable(z.strictObject({ chooserId: z.string(), multiple: z.boolean() })),
+  downloads: z.array(z.strictObject({ downloadId: z.string(), name: z.string(),
+    state: z.enum(['inProgress', 'completed', 'canceled']), receivedBytes: z.number().check(z.nonnegative()),
+    totalBytes: z.number().check(z.nonnegative()) })),
+});
+export type BrowserInteractionStateV1 = z.infer<typeof BrowserInteractionStateV1Schema>;
 
 /** Keyboard hints only. Field values, names and labels never cross this boundary. */
 export const BrowserEditableTargetV1Schema = z.discriminatedUnion('editable', [

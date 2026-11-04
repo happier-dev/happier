@@ -5,6 +5,7 @@ import {
 } from './controlAdapter';
 import type { BrowserSidecarCdpPipe } from './cdpTransport';
 import { connectBrowserSidecarCdpTransport } from './cdpTransport';
+import { createBrowserSidecarInteractions } from './interactions';
 
 type ConnectedBrowserSidecarCdpTransport = Readonly<{
     transport: BrowserSidecarCdpEventCapableTransport;
@@ -60,6 +61,11 @@ export function createBrowserSidecarCdpControlAdapterFactory(input: Readonly<{
             ...(factoryInput.resolveInputControl ? { resolveInputControl: factoryInput.resolveInputControl } : {}),
         });
 
+        const interactions = createBrowserSidecarInteractions({
+            transport: connected.transport,
+            resolvePageHandle: (view) => adapter.resolvePageHandle(view),
+            subscribeViewLifecycle: (listener) => adapter.subscribeViewLifecycle(listener),
+        });
         const subscribeCdpEvents = connected.transport.subscribeCdpEvents;
         return {
             ok: true as const,
@@ -69,6 +75,7 @@ export function createBrowserSidecarCdpControlAdapterFactory(input: Readonly<{
             // diagnostics lane; no second transport is opened and the binding map is never duplicated.
             contextCapture: {
                 resolveViewportOwner: view => adapter.ownsView(view) ? adapter.viewportOwner : undefined,
+                interactions,
                 transport: connected.transport,
                 resolvePageHandle: (view) => adapter.resolvePageHandle(view),
                 // The diagnostics ring is fed from the SAME live CDP connection (event stream) +
@@ -83,6 +90,7 @@ export function createBrowserSidecarCdpControlAdapterFactory(input: Readonly<{
             },
             dispose: async () => {
                 adapter.dispose();
+                await interactions.dispose();
                 await connected.dispose?.();
             },
         };

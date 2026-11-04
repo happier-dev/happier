@@ -23,7 +23,15 @@ function redactDetails(
     : {};
 }
 
+function hasPrivateInteractionContent(request: BrowserAutomationActionRequestV1): boolean {
+  return request.actionKind === 'clipboardRead' || request.actionKind === 'clipboardCut' || request.actionKind === 'clipboardWrite'
+    || request.actionKind === 'answerDialog' || request.actionKind === 'download'
+    || request.actionKind === 'getInteractionState'
+    || (request.actionKind === 'upload' && typeof request.payload.chooserId === 'string');
+}
+
 function targetSummaryFor(request: BrowserAutomationActionRequestV1): Record<string, unknown> {
+  if (hasPrivateInteractionContent(request)) return { actionKind: request.actionKind };
   return redactDetails({
     actionKind: request.actionKind,
     ...(request.payload && typeof request.payload === 'object' ? request.payload : {}),
@@ -58,7 +66,7 @@ export async function executeBrowserAutomationAction(input: Readonly<{
 
   const status: BrowserAutomationActionStatusV1 = adapterResult.status;
   const resultSummary = redactDetails(adapterResult.resultSummary, { preserveLocatorValues: true });
-  const timelineResultSummary = redactDetails(adapterResult.resultSummary);
+  const timelineResultSummary = hasPrivateInteractionContent(input.request) ? {} : redactDetails(adapterResult.resultSummary);
   const diagnostics = redactDetails(adapterResult.diagnostics);
 
   const result = BrowserAutomationActionResultV1Schema.parse({
@@ -76,6 +84,7 @@ export async function executeBrowserAutomationAction(input: Readonly<{
     ...(adapterResult.errorCode ? { errorCode: adapterResult.errorCode } : {}),
     diagnostics,
     resultSummary,
+    ...(adapterResult.interactionResult ? { interactionResult: adapterResult.interactionResult } : {}),
   });
 
   const timelineEntry = BrowserAutomationTimelineEntryV1Schema.parse({

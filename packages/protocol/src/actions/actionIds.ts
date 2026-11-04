@@ -634,6 +634,11 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'browser.automation.setValue',
     'browser.automation.secret.fill',
     'browser.automation.upload',
+    'browser.automation.clipboardRead',
+    'browser.automation.clipboardWrite',
+    'browser.automation.answerDialog',
+    'browser.automation.download',
+    'browser.automation.getInteractionState',
     'browser.automation.drag',
   ],
   computer: [

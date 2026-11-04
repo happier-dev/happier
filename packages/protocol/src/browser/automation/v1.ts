@@ -2,6 +2,12 @@ import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 import { BrowserActiveTargetV1Schema } from '../events/activeTarget.js';
 import { SecretFillScopeV1Schema } from '../../computer/v1.js';
+import {
+  BrowserDialogInputEventV1Schema,
+  BrowserDownloadInputEventV1Schema,
+  BrowserFileChooserInputEventV1Schema,
+  BrowserUploadFileV1Schema,
+} from '../input/v1.js';
 
 import { BrowserSemanticAdapterKindV1Schema } from '../adapters/kinds.js';
 import { BrowserDiagnosticsEvalRequestV1Schema } from '../diagnostics/v1.js';
@@ -58,6 +64,9 @@ export const BrowserAutomationReadOnlyActionKindV1Schema = lazyZodSchema(() => z
   'getDiagnosticsSummary',
   'getActionTimeline',
   'waitFor',
+  'clipboardRead',
+  'download',
+  'getInteractionState',
 ]));
 export type BrowserAutomationReadOnlyActionKindV1 = z.infer<
   typeof BrowserAutomationReadOnlyActionKindV1Schema
@@ -78,6 +87,9 @@ export const BrowserAutomationMutatingActionKindV1Schema = lazyZodSchema(() => z
   'select',
   'setValue',
   'upload',
+  'clipboardWrite',
+  'clipboardCut',
+  'answerDialog',
   'drag',
   'evaluate',
   'startElementPicker',
@@ -167,6 +179,24 @@ export const BrowserAutomationJavaScriptDialogResponseV1Schema = lazyZodSchema((
   { message: 'Prompt text is only valid when accepting a prompt' })));
 export type BrowserAutomationJavaScriptDialogResponseV1 = z.infer<typeof BrowserAutomationJavaScriptDialogResponseV1Schema>;
 
+// These new payloads share the human-input operands; legacy automation payloads keep their
+// established shapes. Executable operands remain closed at the request admission boundary.
+const interactionPayloadSchemas: Readonly<Partial<Record<BrowserAutomationActionKindV1, z.ZodMiniType>>> = {
+  clipboardRead: z.strictObject({}),
+  clipboardCut: z.strictObject({}),
+  clipboardWrite: z.strictObject({ text: z.string() }),
+  answerDialog: z.omit(BrowserDialogInputEventV1Schema, { kind: true, target: true, sequence: true }),
+  download: z.omit(BrowserDownloadInputEventV1Schema, { kind: true, target: true, sequence: true }),
+  getInteractionState: z.strictObject({}),
+};
+const chooserUploadPayloadSchema = z.omit(BrowserFileChooserInputEventV1Schema, {
+  kind: true, target: true, sequence: true,
+});
+
+export function browserAutomationInteractionPayloadSchema(actionKind: BrowserAutomationActionKindV1, payload: Readonly<Record<string, unknown>>) {
+  return actionKind === 'upload' && 'chooserId' in payload ? chooserUploadPayloadSchema : interactionPayloadSchemas[actionKind];
+}
+
 export const BrowserAutomationActionRequestV1Schema = lazyZodSchema(() => z.strictObject({
     v: z.literal(1),
     automationRequestId: IdSchema,
@@ -180,6 +210,15 @@ export const BrowserAutomationActionRequestV1Schema = lazyZodSchema(() => z.stri
     dialogResponse: z.optional(BrowserAutomationJavaScriptDialogResponseV1Schema),
     timeoutMs: PositiveTimeoutMsSchema,
   }).check(z.superRefine((request, context) => {
+    const payloadSchema = browserAutomationInteractionPayloadSchema(request.actionKind, request.payload);
+    if (payloadSchema) {
+      const parsed = payloadSchema.safeParse(request.payload);
+      if (!parsed.success) {
+        for (const issue of parsed.error.issues) {
+          context.addIssue({ code: 'custom', path: ['payload', ...issue.path], message: issue.message });
+        }
+      }
+    }
     if (request.dialogResponse && !isBrowserAutomationMutatingActionKind(request.actionKind)) {
       context.addIssue({ code: 'custom', path: ['dialogResponse'], message: 'Dialog responses require a mutating Browser Action' });
     }
@@ -249,6 +288,20 @@ export type BrowserAutomationJavaScriptDialogSummaryV1 = z.infer<
   typeof BrowserAutomationJavaScriptDialogSummaryV1Schema
 >;
 
+/** Explicitly approved content reads; never copied into timeline/diagnostic summaries. */
+export const BrowserInteractionResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('clipboard'), text: z.string() }),
+  z.strictObject({
+    kind: z.literal('download'),
+    downloadId: BrowserDownloadInputEventV1Schema.shape.downloadId,
+    name: z.string(),
+    offset: BrowserDownloadInputEventV1Schema.shape.offset,
+    dataBase64: BrowserUploadFileV1Schema.shape.dataBase64,
+    eof: z.boolean(),
+  }),
+]));
+export type BrowserInteractionResultV1 = z.infer<typeof BrowserInteractionResultV1Schema>;
+
 export const BrowserAutomationActionResultV1Schema = lazyZodSchema(() => z.strictObject({
     v: z.literal(1),
     automationRequestId: IdSchema,
@@ -264,6 +317,7 @@ export const BrowserAutomationActionResultV1Schema = lazyZodSchema(() => z.stric
     errorCode: z.optional(BrowserAutomationErrorCodeV1Schema),
     diagnostics: z._default(z.optional(TimelineDetailsSchema), {}),
     resultSummary: z._default(z.optional(TimelineDetailsSchema), {}),
+    interactionResult: z.optional(BrowserInteractionResultV1Schema),
   }));
 export type BrowserAutomationActionResultV1 = z.infer<typeof BrowserAutomationActionResultV1Schema>;
 

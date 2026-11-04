@@ -1,5 +1,5 @@
 import { isBrowserAutomationMutatingActionKind } from '@happier-dev/protocol/browser/automation/v1';
-import type { BrowserAutomationActionKindV1, BrowserAutomationActionRequestV1, BrowserAutomationErrorCodeV1, BrowserCommandDispatchResultV1, BrowserCommandV1 } from '@happier-dev/protocol';
+import type { BrowserAutomationActionKindV1, BrowserAutomationActionRequestV1, BrowserAutomationErrorCodeV1, BrowserCommandDispatchResultV1, BrowserCommandV1, BrowserInteractionResultV1 } from '@happier-dev/protocol';
 
 import type { BrowserAutomationViewRef } from '../owners';
 import { classifyBrowserCommandCompletion } from '../../control/types';
@@ -19,7 +19,7 @@ export type BrowserAutomationCdpPageQueryInput = BrowserAutomationViewRef & Brow
 }>;
 
 export type BrowserAutomationCdpPageQueryResult =
-  | Readonly<{ ok: true; data?: Readonly<Record<string, unknown>> }>
+  | Readonly<{ ok: true; data?: Readonly<Record<string, unknown>>; interactionResult?: BrowserInteractionResultV1 }>
   | Readonly<{ ok: false; errorCode?: BrowserAutomationErrorCodeV1 }>;
 
 export type BrowserAutomationCdpInputInput = BrowserAutomationViewRef & BrowserAutomationAdapterExecutionContext & Readonly<{
@@ -29,7 +29,7 @@ export type BrowserAutomationCdpInputInput = BrowserAutomationViewRef & BrowserA
 }>;
 
 export type BrowserAutomationCdpInputResult =
-  | Readonly<{ ok: true; data?: Readonly<Record<string, unknown>> }>
+  | Readonly<{ ok: true; data?: Readonly<Record<string, unknown>>; interactionResult?: BrowserInteractionResultV1 }>
   | Readonly<{ ok: false; errorCode?: BrowserAutomationErrorCodeV1; interruptionCompletion?: 'stopped' | 'uncertain' }>;
 
 /**
@@ -43,9 +43,9 @@ export type BrowserAutomationCdpTransport = Readonly<{
   getNavigationGeneration?(view: BrowserAutomationViewRef): number | null;
   prepareConfidentialFill?(request: BrowserAutomationSecretFillRequestV1): Promise<BrowserConfidentialFillPreparation>;
   readFocusedCredentialTarget?(view: BrowserAutomationViewRef): Promise<BrowserFocusedCredentialTargetV1 | undefined>;
-  /** Observe and handle page dialogs for the entire action, including navigation and queries. */
+  /** Apply actor-aware page-dialog handling for the entire action, including navigation and queries. */
   executePageOperation?(
-    input: BrowserAutomationViewRef & BrowserAutomationAdapterExecutionContext & Pick<BrowserAutomationActionRequestV1, 'dialogResponse'>,
+    input: BrowserAutomationViewRef & BrowserAutomationAdapterExecutionContext & Pick<BrowserAutomationActionRequestV1, 'dialogResponse' | 'requestedBy'>,
     execute: () => Promise<BrowserAutomationAdapterExecuteResult>,
   ): Promise<BrowserAutomationAdapterExecuteResult>;
   dispatchControlCommand(command: BrowserCommandV1, context?: BrowserAutomationAdapterExecutionContext): Promise<BrowserCommandDispatchResultV1>;
@@ -69,6 +69,9 @@ const READ_ONLY_QUERY_ACTIONS = new Set<BrowserAutomationActionKindV1>([
   'queryElements',
   'getDiagnosticsSummary',
   'waitFor',
+  'clipboardRead',
+  'download',
+  'getInteractionState',
 ]);
 
 const NAVIGATION_ACTIONS: readonly BrowserAutomationActionKindV1[] = [
@@ -94,6 +97,9 @@ const CDP_INPUT_ACTIONS: readonly BrowserAutomationActionKindV1[] = [
   'setValue',
   'upload',
   'drag',
+  'clipboardWrite',
+  'clipboardCut',
+  'answerDialog',
 ];
 
 function resolveCdpSupportedOperations(
@@ -195,6 +201,7 @@ export function createBrowserAutomationCdpAdapter(input: Readonly<{
         fidelity: 'cdp',
         trustedInput,
         ...(query.data ? { resultSummary: query.data } : {}),
+        ...(query.interactionResult ? { interactionResult: query.interactionResult } : {}),
       };
     }
 
@@ -224,6 +231,7 @@ export function createBrowserAutomationCdpAdapter(input: Readonly<{
           fidelity: 'cdp',
           trustedInput,
           ...(inputResult.data ? { resultSummary: inputResult.data } : {}),
+          ...(inputResult.interactionResult ? { interactionResult: inputResult.interactionResult } : {}),
         };
       }
       return {
@@ -261,8 +269,11 @@ export function createBrowserAutomationCdpAdapter(input: Readonly<{
     ...(input.transport.prepareConfidentialFill ? { prepareConfidentialFill: input.transport.prepareConfidentialFill } : {}),
     execute: (request, context = {}) => {
       const executionContext = { ...context, deadlineMs: context.deadlineMs ?? Date.now() + request.timeoutMs };
-      return input.transport.executePageOperation
+      // Manual answers use the pending-dialog owner. Automatic handling remains scoped to
+      // other running actions, so answering cannot also dismiss a dialog it immediately opens.
+      return input.transport.executePageOperation && request.actionKind !== 'answerDialog'
         ? input.transport.executePageOperation({ browserSessionId: request.browserSessionId, viewId: request.viewId,
+          requestedBy: request.requestedBy,
           ...(request.dialogResponse ? { dialogResponse: request.dialogResponse } : {}), ...executionContext }, () => execute(request, executionContext))
         : execute(request, executionContext);
     },

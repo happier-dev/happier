@@ -269,13 +269,14 @@ export function createBrowserAutomationDaemonService(input: Readonly<{
     }
 
     const mutating = isBrowserAutomationMutatingActionKind(request.actionKind);
+    // A page dialog suspends the CDP operation which opened it. Its exact-ID human reply
+    // continues that operation; acquiring input again would deadlock behind the pending click.
+    // The sidecar interaction owner validates the pending dialog before any reply is sent.
+    const humanDialogAnswer = request.requestedBy === 'user' && request.actionKind === 'answerDialog';
+    const ownsInput = mutating && !humanDialogAnswer;
 
     const requestedBy = request.requestedBy === 'user' ? 'human' : 'agent';
-    const admissionFailure = mutating ? runtime.inputControl.getAdmissionFailure(requestedBy) : undefined;
-    if (admissionFailure) {
-      return failureResult(request, controlEpoch, runtime.navigationGeneration, browserAdmissionError(admissionFailure));
-    }
-    if (runtime.inputControl.isClosed()) return failureResult(request, controlEpoch, runtime.navigationGeneration, 'view_closed');
+    if (!ownsInput && runtime.inputControl.isClosed()) return failureResult(request, controlEpoch, runtime.navigationGeneration, 'view_closed');
     if (mutating && request.navigationGeneration !== runtime.navigationGeneration) {
       return failureResult(request, controlEpoch, runtime.navigationGeneration, 'stale_navigation');
     }
@@ -285,12 +286,14 @@ export function createBrowserAutomationDaemonService(input: Readonly<{
 
     const abortController = new AbortController();
     const cancelFromCaller = () => { abortController.abort('user_canceled'); };
-    if (!mutating) {
+    if (!ownsInput) {
       if (context?.signal?.aborted) cancelFromCaller();
       else context?.signal?.addEventListener('abort', cancelFromCaller, { once: true });
     }
+    let inputAdmitted = false;
     const effect = async (signal: AbortSignal) => {
-      if (mutating) {
+      if (ownsInput) {
+        inputAdmitted = true;
         runtime.activeAutomationRequestId = request.automationRequestId;
         runtime.activeRequesterRef = request.requesterRef;
         runtime.activeController = projectAutomationRequesterToController(request.requestedBy);
@@ -317,7 +320,7 @@ export function createBrowserAutomationDaemonService(input: Readonly<{
             } },
         });
       } finally {
-        if (mutating) {
+        if (ownsInput) {
           runtime.activeAutomationRequestId = null;
           runtime.activeRequesterRef = null;
           runtime.activeController = null;
@@ -329,10 +332,16 @@ export function createBrowserAutomationDaemonService(input: Readonly<{
 
     const wasUncertainBeforeRead = runtime.inputControl.getStatus().uncertain;
     try {
-      const readOutcome = !mutating ? await runtime.inputControl.observeWhile(() => effect(abortController.signal),
-        outcome => outcome.interruptionCompletion === 'uncertain' ? 'unknown' : 'known') : undefined;
-      if (!mutating && !readOutcome) return failureResult(request, controlEpoch, runtime.navigationGeneration, 'policy_denied');
-      const execution = mutating ? await runtime.inputControl.execute({
+      // These explicit human reads return to the requesting viewer even during its confidential
+      // hold. Keep them in the existing drain; agent observation still uses observeWhile.
+      const humanInteractionRead = request.requestedBy === 'user'
+        && (request.actionKind === 'clipboardRead' || request.actionKind === 'download' || request.actionKind === 'getInteractionState');
+      const readOutcome = ownsInput ? undefined : humanInteractionRead || humanDialogAnswer
+        ? await runtime.inputControl.drainWhile(() => effect(abortController.signal))
+        : await runtime.inputControl.observeWhile(() => effect(abortController.signal),
+          outcome => outcome.interruptionCompletion === 'uncertain' ? 'unknown' : 'known');
+      if (!ownsInput && !readOutcome) return failureResult(request, controlEpoch, runtime.navigationGeneration, 'policy_denied');
+      const execution = ownsInput ? await runtime.inputControl.execute({
         requestedBy,
         signal: context?.signal,
         effect,
@@ -369,9 +378,9 @@ export function createBrowserAutomationDaemonService(input: Readonly<{
       return outcome.result;
     } finally {
       context?.signal?.removeEventListener('abort', cancelFromCaller);
-      if (mutating) {
+      if (ownsInput) {
         if (runtime.inputControl.isClosed()) runtimes.delete(browserViewKey(request));
-        else emitController(request);
+        else if (inputAdmitted) emitController(request);
       } else if (!wasUncertainBeforeRead && runtime.inputControl.getStatus().uncertain) emitController(request);
     }
   }

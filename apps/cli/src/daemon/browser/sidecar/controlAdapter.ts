@@ -8,6 +8,7 @@ import { isBrowserSidecarCdpCommandNotDispatched } from './cdpTransport';
 import type { HappierProcessRoot } from '@/daemon/processes/ownership/types';
 import type { HappierProcessRootSource } from '@/daemon/processes/roots/listHappierProcessRoots';
 import type { MachineGuardActivityEntryV1 } from '@happier-dev/protocol/machines/guard/activityV1';
+import type { BrowserSidecarInteractions } from './interactions';
 import type { BrowserExtensionRecordV1 } from '@happier-dev/protocol/browser/profile/v1';
 import { createBrowserViewportOwner, type BrowserViewportOwner } from './viewport';
 
@@ -99,6 +100,7 @@ export type BrowserSidecarResourceTarget = Readonly<{
  */
 export type BrowserSidecarContextCaptureSurface = Readonly<{
     resolveViewportOwner?(view: Readonly<{ browserSessionId: string; viewId: string }>): BrowserViewportOwner | undefined;
+    interactions?: BrowserSidecarInteractions;
     /** Private actual-launch fact for the exact live owned view, never caller metadata. */
     resolveNativeObservation?(view: Readonly<{ browserSessionId: string; viewId: string }>): 'not_observable' | undefined;
     transport: Pick<BrowserSidecarCdpControlTransport, 'dispatchPageCommand'>;

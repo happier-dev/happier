@@ -6,6 +6,7 @@ import type {
   BrowserAutomationFidelityV1,
   BrowserSemanticAdapterKindV1,
   BrowserActiveTargetV1,
+  BrowserInteractionResultV1,
 } from '@happier-dev/protocol';
 import type { BrowserAutomationSecretFillRequestV1 } from '@happier-dev/protocol/browser/automation/v1';
 import type { ConfidentialSecretFillTarget } from '../../../surfaces/confidentialSecretFill';
@@ -26,6 +27,7 @@ export type BrowserAutomationAdapterExecuteResult = Readonly<{
   trustedInput: boolean;
   errorCode?: BrowserAutomationErrorCodeV1;
   resultSummary?: Readonly<Record<string, unknown>>;
+  interactionResult?: BrowserInteractionResultV1;
   diagnostics?: Readonly<Record<string, unknown>>;
   /** Acknowledged input drain/cleanup, not a promise to undo already-dispatched effects. */
   interruptionCompletion?: 'stopped' | 'uncertain';

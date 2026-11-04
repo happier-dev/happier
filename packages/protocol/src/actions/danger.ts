@@ -64,5 +64,9 @@ export const RUNTIME_DANGER_ACTION_IDS: ReadonlySet<RuntimeActionIdV1> = new Set
   'browser.automation.setValue',
   'browser.automation.secret.fill',
   'browser.automation.upload',
+  'browser.automation.clipboardRead',
+  'browser.automation.clipboardWrite',
+  'browser.automation.answerDialog',
+  'browser.automation.download',
   'browser.automation.drag',
 ]);
