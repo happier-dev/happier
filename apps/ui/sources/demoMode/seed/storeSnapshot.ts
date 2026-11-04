@@ -43,6 +43,15 @@ function cloneData<T>(value: T): T {
     return structuredClone(value);
 }
 
+function cloneSessionMessages(sessionMessages: StorageState['sessionMessages']): StorageState['sessionMessages'] {
+    return cloneData(Object.fromEntries(Object.entries(sessionMessages).map(([sessionId, transcript]) => {
+        // The transcript owner's immutable Record is proxy-backed. Materialize its
+        // enumerable rows at this snapshot boundary before cloning mutable state.
+        const messagesById = { ...transcript.messagesById };
+        return [sessionId, { ...transcript, messagesById, messagesMap: messagesById }];
+    })));
+}
+
 export function takeStoreSnapshot(state: StorageState): StoreSnapshot {
     return {
         artifacts: cloneData(state.artifacts),
@@ -56,7 +65,7 @@ export function takeStoreSnapshot(state: StorageState): StoreSnapshot {
         machines: cloneData(state.machines),
         machineDisplayById: cloneData(state.machineDisplayById),
         machineListByServerId: cloneData(state.machineListByServerId),
-        sessionMessages: cloneData(state.sessionMessages),
+        sessionMessages: cloneSessionMessages(state.sessionMessages),
         sessionPending: cloneData(state.sessionPending),
         reviewCommentsDraftsBySessionId: cloneData(state.reviewCommentsDraftsBySessionId),
         settings: {

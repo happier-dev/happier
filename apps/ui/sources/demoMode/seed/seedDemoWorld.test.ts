@@ -60,6 +60,16 @@ describe('seedDemoWorld and clearDemoWorld', () => {
         }
     });
 
+    it('snapshots seeded transcript records and keeps their messages after the live transcript is cleared', async () => {
+        await seedDemoWorld();
+        const snapshot = takeStoreSnapshot(storage.getState());
+        const messages = snapshot.sessionMessages[DEMO_RICH_SESSION_ID]!;
+        expect(messages.messageIdsOldestFirst.length).toBeGreaterThan(0);
+        expect(messages.messagesMap).toBe(messages.messagesById);
+        storage.getState().resetSessionMessages(DEMO_RICH_SESSION_ID);
+        expect(new Set(Object.keys(messages.messagesById))).toEqual(new Set(messages.messageIdsOldestFirst));
+    });
+
     it('exposes seeded demo draft surfaces without remote hydration and restores their prior readiness on exit', async () => {
         storage.setState({ isSessionDraftsReady: false });
         await seedDemoWorld();
