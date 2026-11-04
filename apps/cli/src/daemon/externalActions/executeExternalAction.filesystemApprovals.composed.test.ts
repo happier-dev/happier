@@ -45,6 +45,33 @@ const repository = { provider: { id: 'github', kind: 'github' as const, displayN
   repository: { nameWithOwner: 'happier-dev/happier', cloneUrl: 'https://github.com/happier-dev/happier.git' }, protocol: 'https' as const };
 
 describe('Machine filesystem approval continuity from UI and paired terminal', () => {
+  it.each(['daemon.filesystem.listDirectory', 'daemon.filesystem.readFile', 'daemon.filesystem.getDirectoryTree'] as const)
+  ('preserves immediate owner CLI %s through authenticated root custody', async actionId => {
+    const h = await createHarness(actionId, 'allowed');
+    try {
+      const input = { rootPath: h.rootPath, path: actionId === 'daemon.filesystem.readFile' ? 'original' : '.',
+        ...(actionId === 'daemon.filesystem.getDirectoryTree' ? { maxDepth: 1 } : {}) };
+      const result = await h.runOriginalCli(input, actionId);
+      const refusalDetails = result.ok ? null : FilesystemEffectFailureDetailsV1Schema.safeParse(result.details);
+      expect(result, JSON.stringify({ errorCode: result.ok ? undefined : result.errorCode,
+        ...(refusalDetails?.success ? { reason: refusalDetails.data.reason } : {}) })).toMatchObject({ ok: true });
+      if (!result.ok) return;
+      if (actionId === 'daemon.filesystem.readFile') {
+        expect(result.result).toEqual({ success: true, content: bytes.toString('base64') });
+      } else if (actionId === 'daemon.filesystem.listDirectory') {
+        expect(result.result).toMatchObject({ success: true,
+          entries: [expect.objectContaining({ name: 'original', type: 'file' })] });
+      } else {
+        expect(result.result).toMatchObject({ success: true,
+          tree: { children: [expect.objectContaining({ name: 'original', type: 'file' })] } });
+      }
+      expect(h.hasApproval()).toBe(false);
+      expect(h.networkPaths).not.toContain(`POST /v1/actions/${actionId}`);
+      expect(await readdir(h.rootPath)).toEqual(['original']);
+      expect(await readFile(join(h.rootPath, 'original'))).toEqual(bytes);
+      expect(await readFile(join(h.directory, 'outside'), 'utf8')).toBe('outside unchanged');
+    } finally { await h.close(); }
+  });
   it('allows a Manage grantee filesystem effect after approval without isolation', async () => {
     const actionId = 'daemon.filesystem.createDirectory';
     const h = await createHarness(actionId, 'ask', false, 'srv_n2', undefined, false, false,

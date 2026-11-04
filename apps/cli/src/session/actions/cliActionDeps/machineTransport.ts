@@ -196,6 +196,8 @@ export function createCliMachineActionTransport(
     if (!requiresScmSessionIngress && direct?.machineId === input.machineId && (!externalRequest || admittedLocalRequester || admittedLocalManaged)
       && (!authenticatedMachineIngressMethods.has(input.method) || admittedProcessRead)) {
       const localActionContext: RpcLocalActionContext = {
+        ...(input.context?.authenticatedLocalRootCustody
+          ? { authenticatedLocalRootCustody: input.context.authenticatedLocalRootCustody } : {}),
         ...(admittedProcessRead ? { processEnvironmentRead: input.processEnvironmentRead } : {}),
         ...(admittedLocalRequester && input.effectActionId === 'session.open'
           && input.context?.actionCaller?.kind === 'session' && input.request

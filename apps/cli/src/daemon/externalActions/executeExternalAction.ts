@@ -1,3 +1,5 @@
+import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
+import { projectRpcRequesterWorkAttribution } from '@/daemon/lifecycle/requesterWorkAttribution';
 import { openManagedCreationActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import type { HostReviewedParentV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { invokeManagedReviewedChild } from './managedReviewedChild';
@@ -154,6 +156,9 @@ export async function executeExternalAction(input: Readonly<{
   currentServerId?: string;
   /** Account admitted by the private receiving host; never an envelope field. */
   currentAccountId?: string;
+  machineAdmission?: RpcActionExecutorContext['machineAdmission'];
+  /** Produced only by the authenticated installed private-root route. */
+  authenticatedLocalRootCustody?: RpcActionExecutorContext['authenticatedLocalRootCustody'];
   /** Exact Home URL captured by the receiving host, never supplied by the envelope. */
   currentServerHttpBaseUrl?: string;
   /** Exact receiving installation, supplied by the host rather than the envelope. */
@@ -692,7 +697,17 @@ export async function executeExternalAction(input: Readonly<{
         baseActionStartDiagnosticRecorder(event);
       }
     : undefined;
-  const context: ActionExecutorContext = {
+  const context: RpcActionExecutorContext = {
+    ...(!admittedAuthorization && !input.machineAdmission && !accountPrincipal && !apiTokenPrincipal
+      && !pluginCaller
+      && target.kind === 'machine' && target.machineId === input.currentMachineId
+      && input.authenticatedLocalRootCustody?.machineId === target.machineId
+      && input.authenticatedLocalRootCustody.accountId === input.currentAccountId
+      ? { authenticatedLocalRootCustody: input.authenticatedLocalRootCustody,
+        requesterWorkAttributionV1: projectRpcRequesterWorkAttribution({
+          authenticatedLocalRootCustody: input.authenticatedLocalRootCustody,
+        }, input.currentServerId) } : {}),
+    ...(input.machineAdmission ? { machineAdmission: input.machineAdmission } : {}),
     ...(recordActionStartDiagnostic ? { recordActionStartDiagnostic } : {}),
     surface: pluginCaller ? 'plugin' : sessionActionOrigin ? 'agent' : apiTokenPrincipal
       ? 'api'

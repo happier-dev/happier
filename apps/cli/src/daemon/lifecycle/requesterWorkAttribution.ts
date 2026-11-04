@@ -1,4 +1,4 @@
-import type { RpcHandlerContext } from '@/api/rpc/types';
+import type { RpcHandlerContext, RpcLocalActionContext } from '@/api/rpc/types';
 import { isPluginError } from '@happier-dev/plugin-sdk';
 import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
 import type { SpawnSessionOptions, SpawnSessionResult } from '@/session/shared/spawnSessionContract';
@@ -11,11 +11,15 @@ export { RequesterWorkAttributionV1Schema, RequesterWorkAttributionStoredReadV1S
 export function projectRpcRequesterWorkAttribution(context: Readonly<Partial<Pick<RpcHandlerContext,
   'signal' | 'machineAdmission' | 'localActionContext' | 'requesterSessionBootstrap'>> & {
     requesterWorkAttributionV1?: RequesterWorkAttributionV1;
+    authenticatedLocalRootCustody?: RpcLocalActionContext['authenticatedLocalRootCustody'];
   }> | undefined, serverId?: string): RequesterWorkAttributionV1 | undefined {
   const admission = context?.machineAdmission;
+  const localRoot = context?.authenticatedLocalRootCustody ?? context?.localActionContext?.authenticatedLocalRootCustody;
   // The authenticated Machine stamp wins over any in-process inherited context.
   const candidate = admission ? { serverId, accountId: admission.actorAccountId,
     machineId: admission.machineId, installationId: admission.installationId }
+    : localRoot ? { serverId: serverId ?? localRoot.serverIdentityId, accountId: localRoot.accountId,
+      machineId: localRoot.machineId, installationId: localRoot.installationId }
     : context?.requesterWorkAttributionV1 ?? context?.localActionContext?.requesterWorkAttributionV1
       ?? context?.requesterSessionBootstrap?.attribution;
   const parsed = RequesterWorkAttributionV1Schema.safeParse(candidate);

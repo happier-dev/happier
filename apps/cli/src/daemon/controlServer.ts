@@ -1252,6 +1252,15 @@ export function createDaemonControlApp({
               surface, authority, signal: lifetime.signal,
             });
           }
+          let origin: Awaited<ReturnType<NonNullable<DaemonExternalActionApi['resolvePluginExecutionOriginContext']>>> = null;
+          try { origin = await externalActionApi.resolvePluginExecutionOriginContext?.() ?? null; }
+          catch { lifetime.signal.throwIfAborted(); }
+          const installationId = externalActionApi.resolveInstallationId?.();
+          const authenticatedLocalRootCustody = origin?.machineId === machineId && installationId
+            && externalActionApi.currentAccountId ? Object.freeze({
+              serverIdentityId: origin.serverIdentityId, accountId: externalActionApi.currentAccountId,
+              machineId, installationId,
+            }) : undefined;
           const execution = await executeExternalAction({
             actionId: parsed.data.actionId,
             envelope: {
@@ -1267,6 +1276,7 @@ export function createDaemonControlApp({
             currentMachineId: machineId,
             currentServerId: externalActionApi.currentServerId,
             currentAccountId: externalActionApi.currentAccountId,
+            ...(authenticatedLocalRootCustody ? { authenticatedLocalRootCustody } : {}),
             resolveTarget: externalActionApi.resolveTarget,
             executor: externalActionApi.executor,
             acquirePluginRuntimeRegistryLease: externalActionApi.acquirePluginRuntimeRegistryLease,

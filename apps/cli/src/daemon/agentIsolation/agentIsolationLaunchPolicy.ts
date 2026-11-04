@@ -165,11 +165,20 @@ function readHostRequesterInvocationSource(input: Pick<HostRequesterExecutionIde
         || caller?.kind === 'workflowRun' && caller.authorization.principal.kind === 'session';
     const bindings = [binding, input.actionContext?.externalActionExecutionAuthorization?.binding,
         ...localContexts.map(local => local?.externalActionExecutionAuthorization?.binding)];
+    // Attribution also describes ordinary host work. Only an unsigned private
+    // root can explain it without an agent origin; identity qualification still
+    // belongs to selectHostRequesterExecutionIdentity below.
+    const localRoot = !binding && !input.actionContext?.externalActionExecutionAuthorization
+        && !localContexts.some(local => local?.externalActionExecutionAuthorization)
+        && (input.actionContext?.authenticatedLocalRootCustody
+            ?? localContexts.find(local => local?.authenticatedLocalRootCustody)?.authenticatedLocalRootCustody);
     return {
         sessionOrigin,
         agentSource: !!input.sessionRequester || !!sessionOrigin || !!context?.requesterSessionBootstrap
-            || localContexts.some(local => isSessionCaller(local?.actionCaller) || !!local?.requesterWorkAttributionV1)
-            || isSessionCaller(input.actionContext?.actionCaller) || !!input.actionContext?.requesterWorkAttributionV1
+            || localContexts.some(local => isSessionCaller(local?.actionCaller))
+            || isSessionCaller(input.actionContext?.actionCaller)
+            || !localRoot && (localContexts.some(local => !!local?.requesterWorkAttributionV1)
+                || !!input.actionContext?.requesterWorkAttributionV1)
             || bindings.some(candidate => candidate?.workflowActionOrigin?.sessionAuthority?.authorization.principal.kind === 'session'),
         inheritedAutomation: localContexts.some(local => local?.authority === 'account_automation'),
     };

@@ -17,6 +17,7 @@ type HostRequesterContext = Pick<RpcHandlerContext, 'machineAdmission' | 'verify
     | 'originalActionEnvelope' | 'workspaceSyncSourceExecution' | 'deadlineAtMs' | 'requestStartedAtMs'>;
 
 export type RpcActionExecutorContext = ActionExecutorContext & HostRequesterContext & Readonly<{
+    authenticatedLocalRootCustody?: RpcLocalActionContext['authenticatedLocalRootCustody'];
     signal?: AbortSignal;
     operationProgress?: NonNullable<RpcLocalActionContext['operationProgress']>;
     operationOwnerUpdate?: NonNullable<RpcLocalActionContext['operationOwnerUpdate']>;
@@ -149,6 +150,8 @@ export function buildActionExecutorContextForRpc(
         ...(params.externalActionExecutionAuthorization
             ? { externalActionExecutionAuthorization: params.externalActionExecutionAuthorization } : {}),
         ...(params.signal ? { signal: params.signal } : {}),
+        ...(localActionContext?.authenticatedLocalRootCustody
+            ? { authenticatedLocalRootCustody: localActionContext.authenticatedLocalRootCustody } : {}),
         ...(localActionContext?.agentStartContext ? { agentStartContext: localActionContext.agentStartContext } : {}),
         ...(localActionContext?.agentStartWorkDepth !== undefined ? { agentStartWorkDepth: localActionContext.agentStartWorkDepth } : {}),
         ...(localActionContext?.agentStartWorkspaceWrites !== undefined ? { agentStartWorkspaceWrites: localActionContext.agentStartWorkspaceWrites } : {}),

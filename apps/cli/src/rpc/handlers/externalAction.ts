@@ -176,6 +176,7 @@ export function registerExternalActionRpcHandler(
       executionAuthorization: request.executionAuthorization,
       externalActionMachineRequestPrivateKey: options.externalActionMachineRequestPrivateKey,
       transportRequestId: context?.transportRequestId,
+      ...(context?.machineAdmission ? { machineAdmission: context.machineAdmission } : {}),
       ...(signal ? { signal } : {}),
     });
     trace('rpc.completed');
