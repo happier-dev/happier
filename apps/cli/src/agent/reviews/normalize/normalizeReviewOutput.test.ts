@@ -345,6 +345,8 @@ describe('normalizeReviewOutput codex reviews', () => {
     JSON.stringify([nativeReview]),
     JSON.stringify([nativeReview, { ...nativeReview, findings: [], overall_explanation: 'No issues found.' }]),
     JSON.stringify([[nativeReview]]),
+    JSON.stringify(['prefix', nativeReview]),
+    `["unterminated string\n${JSON.stringify(nativeReview)}`,
     JSON.stringify({ result: nativeReview }),
     JSON.stringify([{ result: nativeReview }]),
     `Review comment:\n- Preface observation -- /preface.ts:3\n  Preliminary text.\n\n${JSON.stringify(nativeReview)}`,
@@ -375,6 +377,9 @@ describe('normalizeReviewOutput codex reviews', () => {
   it.each([
     'The function starts with `{`.',
     'The token "{" opens an object.',
+    'The token "[" opens an array.',
+    'The function starts with `[`.',
+    "The token '[' opens an array.",
     '[Reviewer "Codex]',
   ])('finds the native JSON review after literal prose punctuation: %s', (prefix) => {
     const payload = parseFindingsPayload(normalizeCodex(`${prefix}\n\n${JSON.stringify(nativeReview)}`));

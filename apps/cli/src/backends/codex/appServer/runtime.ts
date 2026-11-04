@@ -4761,14 +4761,17 @@ export function createCodexAppServerRuntime(params: Readonly<{
             return { ok: false, errorCode: 'invalid_parameters', error: resolved.error ?? resolved.reason };
         }
 
-        if (!threadId) {
-            await startOrLoad({});
+        if (activeInlineReview) {
+            throw new Error('Codex app-server already has a turn in flight');
         }
 
         const inlineReviewState: { outputError: string | null } = { outputError: 'Codex review did not return usable output.' };
         activeInlineReview = inlineReviewState;
         let reviewTurnResult: string | void | UnsupportedSessionRuntimeMethodResult;
         try {
+            if (!threadId) {
+                await startOrLoad({});
+            }
             reviewTurnResult = await startReviewTurn(resolved.request);
         } finally {
             if (activeInlineReview === inlineReviewState) activeInlineReview = null;

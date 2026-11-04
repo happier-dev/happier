@@ -80,6 +80,8 @@ function hasReviewFieldText(text: string): boolean {
 }
 
 function canStartJsonValue(text: string, start: number): boolean {
+  // A quoted single delimiter in prose is not the start of a JSON container.
+  if (text[start - 1] === '"' && text[start + 1] === '"') return false;
   const tail = text.slice(start + 1).trimStart();
   if (text[start] === '[') return /^(?:[\[\]{}"]|-?\d|true\b|false\b|null\b)/.test(tail);
   if (tail.startsWith('}')) return true;

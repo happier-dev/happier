@@ -5670,6 +5670,45 @@ describe('createCodexAppServerRuntime', () => {
         expect(recoveredMessage?.[2]?.meta?.happier).toMatchObject({ kind: 'review_findings.v2' });
     });
 
+    it.each(['thread startup', 'pending turn'] as const)('preserves the admitted inline review when another starts during %s', async (phase) => {
+        const { root, requestLogPath } = await createRuntimeFixture('happier-codex-app-server-runtime-inline-overlap-');
+        const input = {
+            engineIds: ['codex'],
+            instructions: 'Review current changes',
+            runLocation: 'current_session',
+            changeType: 'uncommitted',
+            base: { kind: 'none' },
+        };
+        let rejectedStart: Promise<void> | undefined;
+        const rejectConcurrentStart = () => {
+            rejectedStart = expect(runtime.startInlineReview(input)).rejects.toThrow(/turn in flight/);
+        };
+        const runtime = createCodexAppServerRuntime({
+            directory: root,
+            onThinkingChange: vi.fn((thinking: boolean) => {
+                if (thinking && phase === 'pending turn' && !rejectedStart) rejectConcurrentStart();
+            }),
+            session: {
+                sessionId: 'sess-inline-overlap',
+                updateMetadata: vi.fn(),
+                sendAgentMessageCommitted: vi.fn(async () => {}),
+                sendCodexMessage: vi.fn(),
+            } as unknown as ApiSessionClient,
+        });
+
+        // The callback above runs after admission but before sending review/start,
+        // so this exercises overlap without racing a provider-output timer.
+        const firstReview = runtime.startInlineReview(input);
+        if (phase === 'thread startup') rejectConcurrentStart();
+        await expect(firstReview).resolves.toMatchObject({ ok: true, reviewTurnId: 'turn-review-native' });
+        expect(rejectedStart).toBeDefined();
+        await rejectedStart;
+        await expect(runtime.startInlineReview(input)).resolves.toMatchObject({ ok: true, reviewTurnId: 'turn-review-native-2' });
+        const requests = await readRequestLog(requestLogPath);
+        expect(requests.filter(({ method }) => method === 'thread/start')).toHaveLength(1);
+        expect(requests.filter(({ method }) => method === 'review/start')).toHaveLength(2);
+    });
+
     it('starts an app-server thread before inline native review when none is active', async () => {
         const { root, requestLogPath } = await createRuntimeFixture('happier-codex-app-server-runtime-inline-review-start-');
 
