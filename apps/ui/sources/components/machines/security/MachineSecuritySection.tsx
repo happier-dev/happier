@@ -178,12 +178,14 @@ export function MachineSecurityView(
             ) : undefined
           }
         />
-        <RestartRow
-          updates={updates}
-          machineName={machine}
-          online={props.online}
-          controls={controls}
-        />
+        {/* Decided here, not inside the row: the group's child walk counts a row that renders nothing and draws its divider. */}
+        {controls.reboot.kind !== 'idle' || updates.rebootNeeded === true ? (
+          <RestartRow
+            machineName={machine}
+            online={props.online}
+            controls={controls}
+          />
+        ) : null}
       </ItemGroup>
       <UpdatesReviewCard machineName={machine} controls={controls} />
     </View>
@@ -364,7 +366,6 @@ function UpdatesFreshness(
 /** The restart is its own row and its own decision: shown when the Machine says it needs one, or while one runs. */
 function RestartRow(
   props: Readonly<{
-    updates: MachineUpdatesModel;
     machineName: string;
     online: boolean | null;
     controls: MachineSecurityControls;
@@ -373,8 +374,6 @@ function RestartRow(
   const { reboot } = props.controls;
   const machine = props.machineName;
   const s = 'machineDetailPage.security' as const;
-  if (reboot.kind === 'idle' && props.updates.rebootNeeded !== true)
-    return null;
   const restartButton = (
     <RoundButton
       testID="machine-security-restart-start"

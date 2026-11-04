@@ -409,35 +409,47 @@ function IngressGroup(
         accessProviderRefsEqualV1(c.provider, savedProvider.provider),
       )
     : true;
+  // With nothing else this Machine can publish through, Nothing public is a statement, not a one-option radio.
+  const alone = !savedProvider && capabilities.length === 0;
   return (
     <ItemGroup
       title={t('machineDetailPage.network.ingressTitle')}
       description={t('machineDetailPage.network.ingressDescription', {
         machine: props.machineName,
       })}
-      accessibilityRole="radiogroup"
-      accessibilityLabel={t('machineDetailPage.network.ingressTitle')}
-      // The choices live inside IngressChoice, which the group's own child walk cannot see.
-      selectableItemCountOverride={
-        1 + (savedProvider ? 1 : 0)
-      }
+      {...(alone ? {} : {
+        accessibilityRole: 'radiogroup' as const,
+        accessibilityLabel: t('machineDetailPage.network.ingressTitle'),
+        // The choices live inside IngressChoice, which the group's own child walk cannot see.
+        selectableItemCountOverride: 1 + (savedProvider ? 1 : 0),
+      })}
     >
-      <Item
-        testID="machine-network-ingress-none"
-        icon={<Icon name="lock" />}
-        title={t('machineDetailPage.network.nothingPublic')}
-        subtitle={t('machineDetailPage.network.nothingPublicSubtitle')}
-        selected={chosen?.kind === 'none'}
-        accessibilityRole="radio"
-        webRole="radio"
-        accessibilityChecked={chosen?.kind === 'none'}
-        disabled={!canChoose}
-        onPress={canChoose ? () => choose({ kind: 'none' }) : undefined}
-        rightElement={
-          <RadioMark selected={chosen?.kind === 'none'} disabled={!canChoose} />
-        }
-        showChevron={false}
-      />
+      {alone ? (
+        <Item
+          testID="machine-network-ingress-none"
+          icon={<Icon name="lock" />}
+          title={t('machineDetailPage.network.nothingPublic')}
+          subtitle={t('machineDetailPage.network.nothingPublicSubtitle')}
+          showChevron={false}
+        />
+      ) : (
+        <Item
+          testID="machine-network-ingress-none"
+          icon={<Icon name="lock" />}
+          title={t('machineDetailPage.network.nothingPublic')}
+          subtitle={t('machineDetailPage.network.nothingPublicSubtitle')}
+          selected={chosen?.kind === 'none'}
+          accessibilityRole="radio"
+          webRole="radio"
+          accessibilityChecked={chosen?.kind === 'none'}
+          disabled={!canChoose}
+          onPress={canChoose ? () => choose({ kind: 'none' }) : undefined}
+          rightElement={
+            <RadioMark selected={chosen?.kind === 'none'} disabled={!canChoose} />
+          }
+          showChevron={false}
+        />
+      )}
       {savedProvider && !savedHasCapability ? (
         <IngressChoice
           providerTitle={props.providerTitle}

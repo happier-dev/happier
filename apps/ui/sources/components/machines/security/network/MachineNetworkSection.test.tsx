@@ -224,6 +224,15 @@ describe('Machine → Network page', () => {
     expect(findTestInstanceByTypeWithProps(screen, Item, { testID: 'machine-network-ingress-tailscaleServe' })?.props.titleQualifier).toBe('Tailscale Serve');
   });
 
+  it('states Nothing public without a radio when the Machine offers no other way to publish services', async () => {
+    const screen = await render(model({ kind: 'settled' }, true), true);
+    const none = findTestInstanceByTypeWithProps(screen, Item, { testID: 'machine-network-ingress-none' });
+    expect(none).toBeTruthy();
+    expect(none?.props.accessibilityRole).toBeUndefined();
+    expect(screen.root.findAllByType(HappierRadioMark)).toHaveLength(0);
+    expect(findTestInstanceByTypeWithProps(screen, ItemGroup, { accessibilityRole: 'radiogroup' })).toBeFalsy();
+  });
+
   it('uses generic text when the catalog cannot name a provider, including unnamed private networks', async () => {
     const unknownProvider = { kind: 'builtin', id: 'missing-internal-provider' };
     const unknown = MachineReachabilityObservationV1Schema.parse({ ...observation,
