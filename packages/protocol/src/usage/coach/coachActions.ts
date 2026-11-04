@@ -5,6 +5,65 @@ import { SettingsDeclarationMutationReversalV1Schema, SettingsDeclarationValueV1
 import { SessionModelMutationReversalV1Schema } from '../../sessions/control/modelTransitionV1.js';
 import { McpRulesSetItemResultV1Schema } from '../../actions/specs/capabilityRules.js';
 import { UsageCoachRemedySchema } from './coachRemedy.js';
+import { UsageCoachSuppressionV1Schema } from '../../account/settings/usageCoachPreferencesV1.js';
+
+export const USAGE_COACH_SUPPRESSIONS_KV_KEY = 'workspace:usage-coach:suppressions';
+export const UsageCoachSuppressionStateV1Schema = lazyZodSchema(() => z.strictObject({
+    v: z.literal(1), suppressions: z.array(UsageCoachSuppressionV1Schema),
+}));
+export type UsageCoachSuppressionStateV1 = z.infer<typeof UsageCoachSuppressionStateV1Schema>;
+/** Extract retained dismissal data independently of obsolete preference fields. */
+export function readLegacyUsageCoachSuppressions(value: unknown): UsageCoachSuppressionStateV1['suppressions'] {
+    const suppressions = value !== null && typeof value === 'object' && 'suppressions' in value ? value.suppressions : undefined;
+    return suppressions === undefined ? [] : UsageCoachSuppressionStateV1Schema.parse({ v: 1, suppressions }).suppressions;
+}
+export type UsageCoachSuppressionEdit = Readonly<{ evidenceKey: string } & ({ dismissed: boolean } | { untilMs: number | null })>;
+export type UsageCoachSuppressionPort = Readonly<{
+    read(): Promise<UsageCoachSuppressionStateV1>;
+    convertLegacy(): Promise<void>;
+    edit(request: UsageCoachSuppressionEdit): Promise<void>;
+}>;
+
+/** Reuse Account JSON KV's mode-aware CAS transport; the Coach owns conversion and edits. */
+export function createUsageCoachSuppressionPort(input: Readonly<{
+    transport: {
+        read(): Promise<Readonly<{ value: unknown | null; version: number }>>;
+        compareAndSet(value: unknown, version: number): Promise<Readonly<{ success: true; version: number }>
+            | Readonly<{ success: false; value: unknown | null; version: number }>>;
+    };
+    readLegacy(): Promise<readonly z.infer<typeof UsageCoachSuppressionV1Schema>[]>;
+}>): UsageCoachSuppressionPort {
+    const read = async () => {
+        const row = await input.transport.read();
+        // An explicit empty current record is authoritative after Restore.
+        return { version: row.version, state: row.value === null
+            ? { v: 1 as const, suppressions: [...await input.readLegacy()] }
+            : UsageCoachSuppressionStateV1Schema.parse(row.value), legacy: row.value === null };
+    };
+    const write = async (state: UsageCoachSuppressionStateV1, version: number) => {
+        const result = await input.transport.compareAndSet(state, version);
+        if (!result.success) throw Object.assign(new Error('Coach suppressions changed; retry the edit'), { code: 'version_mismatch' });
+    };
+    return {
+        async read() {
+            const row = await read();
+            return row.state;
+        },
+        async convertLegacy() {
+            const row = await read();
+            // A deliberate preference edit may replace the legacy container.
+            if (row.legacy && row.state.suppressions.length) await write(row.state, row.version);
+        },
+        async edit(request) {
+            const row = await read();
+            const suppressions = row.state.suppressions.filter(item => item.evidenceKey !== request.evidenceKey);
+            if ('dismissed' in request && request.dismissed) suppressions.push({ kind: 'dismissed', evidenceKey: request.evidenceKey });
+            if ('untilMs' in request && request.untilMs !== null)
+                suppressions.push({ kind: 'snoozed', evidenceKey: request.evidenceKey, untilMs: request.untilMs });
+            await write({ v: 1, suppressions }, row.version);
+        },
+    };
+}
 
 const identity = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1)));
 const reference = lazyZodSchema(() => z.strictObject({ query: UsageQuerySchema, evidenceKey: identity }));
