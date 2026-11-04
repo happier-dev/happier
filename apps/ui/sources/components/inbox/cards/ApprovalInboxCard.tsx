@@ -75,7 +75,7 @@ function ApprovalInboxDecision(
     );
   };
   return (
-    <ApprovalDecisionBar size="small" disabled={deciding !== null} irreversible={irreversible} hideIrreversibleNote
+    <ApprovalDecisionBar size="small" quiet disabled={deciding !== null} irreversible={irreversible} hideIrreversibleNote
       approve={{ testID: `inbox.approval.${props.artifact.id}.allow_once`,
         label: approveVerb ?? t('inbox.work.quickDecision.allowOnce'), busy: deciding === 'approve',
         onPress: () => run('approve') }}

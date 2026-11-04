@@ -95,9 +95,10 @@ function resolveRoundButtonTextRole(role: HappierTypeRole, compactInline: boolea
 /**
  * `default` is the filled primary action. `secondary` is the bordered inline action a configuration
  * row or page header carries (it matches the page field trigger). `destructive` is the same inline
- * action for an irreversible operation. `inverted` is a bare text button.
+ * action for an irreversible operation. `inverted` is a bare text button. `quietDestructive` is the bare
+ * text button in the danger ink: a leave or remove action beside the view's primary one (Turn off · Done).
  */
-export type RoundButtonDisplay = 'default' | 'secondary' | 'destructive' | 'inverted';
+export type RoundButtonDisplay = 'default' | 'secondary' | 'destructive' | 'inverted' | 'quietDestructive';
 
 const stylesheet = StyleSheet.create((theme) => ({
     pill: {
@@ -150,6 +151,11 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     contentContainerInCapsule: {
         paddingVertical: 0,
+    },
+    // Quiet danger text has no pill to fill, so its words stand on the content edge like the links beside it;
+    // the hit area still reaches the touch target around them.
+    contentContainerQuietText: {
+        paddingHorizontal: 0,
     },
     // Applied only when a mark is present, so a title-only button keeps the exact
     // single-child layout it has always had.
@@ -304,7 +310,12 @@ export const RoundButton = React.memo((props: {
             backgroundColor: 'transparent',
             borderColor: 'transparent',
             textColor: theme.colors.text.primary,
-        }
+        },
+        quietDestructive: {
+            backgroundColor: 'transparent',
+            borderColor: 'transparent',
+            textColor: theme.colors.state.danger.foreground,
+        },
     }
 
     const pressFeedback = usePressFeedback();
@@ -385,7 +396,7 @@ export const RoundButton = React.memo((props: {
                             : { minHeight: DRAWN_HEIGHT_PX[resolvedSize] },
                         focusRingStyle({ focused: state.focused, color: theme.colors.border.focus }),
                         happierRaisedEdgeStyle(resolveRoundButtonEdge(theme, props.display ?? 'default', { pressed: state.pressed, focused: state.focused, disabled: state.disabled })),
-                        Platform.OS === 'web' && !display.gradient ? happierSurfaceGradientWebStyle(resolveThemeSurfaceFinish(theme, (props.display ?? 'default') === 'default' ? 'primaryButton' : 'secondaryButton', { pressed: state.pressed, focused: state.focused, disabled: state.disabled || props.display === 'inverted' }), !theme.dark) : null,
+                        Platform.OS === 'web' && !display.gradient ? happierSurfaceGradientWebStyle(resolveThemeSurfaceFinish(theme, (props.display ?? 'default') === 'default' ? 'primaryButton' : 'secondaryButton', { pressed: state.pressed, focused: state.focused, disabled: state.disabled || props.display === 'inverted' || props.display === 'quietDestructive' }), !theme.dark) : null,
                         ownFillOnPicture && Platform.OS === 'web' ? glassThemeInkWebStyle(theme.colors.text) as ViewStyle : null,
                         pressFeedback.animatedStyle,
                     ]}
@@ -404,7 +415,7 @@ export const RoundButton = React.memo((props: {
                             style={StyleSheet.absoluteFillObject}
                         />
                     ) : null}
-                    {!display.gradient ? <HappierSurfaceGradientLayer gradient={resolveThemeSurfaceFinish(theme, (props.display ?? 'default') === 'default' ? 'primaryButton' : 'secondaryButton', { pressed: state.pressed, focused: state.focused, disabled: state.disabled || props.display === 'inverted' })} borderRadius={props.capsuleHeight !== undefined ? props.capsuleHeight / 2 : theme.borderRadius.md} /> : null}
+                    {!display.gradient ? <HappierSurfaceGradientLayer gradient={resolveThemeSurfaceFinish(theme, (props.display ?? 'default') === 'default' ? 'primaryButton' : 'secondaryButton', { pressed: state.pressed, focused: state.focused, disabled: state.disabled || props.display === 'inverted' || props.display === 'quietDestructive' })} borderRadius={props.capsuleHeight !== undefined ? props.capsuleHeight / 2 : theme.borderRadius.md} /> : null}
                     <View
                         style={[
                             styles.contentContainer,
@@ -415,6 +426,7 @@ export const RoundButton = React.memo((props: {
                             resolvedSize === 'small' ? styles.contentContainerSmall : null,
                             props.size === 'mini' ? styles.contentContainerMini : null,
                             props.capsuleHeight !== undefined ? styles.contentContainerInCapsule : null,
+                            props.display === 'quietDestructive' ? styles.contentContainerQuietText : null,
                         ]}
                     >
                         {state.busy && !busyTradesMark && (
