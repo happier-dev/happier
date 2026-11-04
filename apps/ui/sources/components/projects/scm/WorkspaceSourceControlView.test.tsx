@@ -122,8 +122,8 @@ vi.mock('react-native', async () => {
 });
 
 vi.mock('@legendapp/list/react-native', async () => {
-    const { createCapturingLegendListMock } = await import('@/dev/testkit/mocks/legendList');
-    return createCapturingLegendListMock({ refHandle: { scrollToIndex: scrollToIndexSpy } }).module;
+    const { createLegendListModuleMock } = await import('@/dev/testkit/mocks/legendList');
+    return createLegendListModuleMock({ refHandle: { scrollToIndex: scrollToIndexSpy } });
 });
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({

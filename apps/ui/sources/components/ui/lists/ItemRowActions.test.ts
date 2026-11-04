@@ -21,6 +21,8 @@ const documentInput = vi.hoisted(() => {
     (globalThis as { document?: unknown }).document = document;
     // The pointer owner reads hardware identity once, including during imports of shared chrome.
     (globalThis as { window?: unknown }).window = {
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
         matchMedia: (query: string) => ({ matches: query === '(pointer: coarse)' || query === '(hover: none)', media: query }),
     };
     return { listeners, document, previousWindow };

@@ -90,9 +90,10 @@ export function installAgentInputCommonModuleMocks(
         return createModalModuleMock().module;
     });
 
-    vi.mock('react-native-keyboard-controller', () => ({
-        useFocusedInputHandler: () => {},
-    }));
+    vi.mock('react-native-keyboard-controller', async () => {
+        const { createKeyboardControllerModuleMock } = await import('@/dev/testkit/mocks/keyboardController');
+        return createKeyboardControllerModuleMock();
+    });
 
     vi.mock('react-native-reanimated', async () => {
         // Use the canonical testkit reanimated mock (same one the global vitest setup

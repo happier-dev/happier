@@ -13,15 +13,6 @@ vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock();
 });
-// Preferences are the storage boundary; the disclosure and row logic remain real.
-vi.mock('@/sync/store/hooks', async () => {
-    const { createUseLocalSettingMock } = await import('@/dev/testkit/mocks/storage');
-    return { useLocalSetting: createUseLocalSettingMock({ values: { uiItemDensity: 'cozy', uiFontScale: 1 } }) };
-});
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub, createUseLocalSettingMock } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({ useLocalSetting: createUseLocalSettingMock({ values: {} }) });
-});
 
 afterEach(() => {
     standardCleanup();

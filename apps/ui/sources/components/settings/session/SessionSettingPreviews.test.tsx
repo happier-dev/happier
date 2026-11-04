@@ -36,6 +36,9 @@ vi.mock('socket.io-client', async (importOriginal) => (await import('@/dev/testk
 // Keep the existing full preview graph's import order before list-only cases;
 // its real storage graph contains reciprocal facade imports.
 await import('./SessionSettingPreviews');
+// The browser loads locale chunks before publishing the ready language. Keep
+// that external chunk ready so these cases isolate mounted locale consumers.
+await (await import('@/text')).preloadTranslationsForSettings('fr');
 const hooks = await import('@/sync/store/hooks');
 // Display-setting reads live in the leaf module that Text and the previews import directly;
 // only the mutable variants are still owned by the facade.
