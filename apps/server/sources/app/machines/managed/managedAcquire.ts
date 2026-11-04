@@ -57,8 +57,7 @@ export async function admitManagedAcquire(params: Readonly<{
             if (existing.custodianAccountId !== params.custodianAccountId || !sameManagedInput(readManagedAcquisitionIdentity(existing.admittedInput), admittedInputIdentity)) throw new ManagedMachineError("request_conflict");
             const setupAdmission = readManagedAdmissionState(existing.admittedInput).environmentSetup;
             if (setupAdmission && setupAdmission.requestEnvelopeDigest !== params.requestEnvelopeDigest) throw new ManagedMachineError("request_conflict");
-            const declaration = await resolveManagedDeclarationInTx(tx, { homeId: existing.homeId, custodianAccountId: existing.custodianAccountId, controller: review.controller, provider: readManagedLaunchSnapshot(existing.launch).provider });
-            return { machine: projectManagedMachine(existing, declaration), replayed: true };
+            return { machine: projectManagedMachine(existing), replayed: true };
         };
         // Home may already have retained custody before dispatching to the controller.
         // Re-admission is a read, so unrelated publication must not prevent the
@@ -124,7 +123,7 @@ export async function admitManagedAcquire(params: Readonly<{
                 ...(canonical.environmentSetup ? { environmentSetup: canonical.environmentSetup } : {}),
             } });
             await invalidateManagedMachineInTx(tx, row);
-            return { machine: projectManagedMachine(row, declaration), replayed: false };
+            return { machine: projectManagedMachine(row), replayed: false };
         }, { intent: 'exclusive', additionalAccountIds: [params.requesterAccountId, params.custodianAccountId],
             transactionClass: 'managed-machine-acquire' });
         // Entering this owner can submit a write even if Prisma later rejects its

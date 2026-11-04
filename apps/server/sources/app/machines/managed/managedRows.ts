@@ -107,13 +107,14 @@ const StoredManagedAdmissionSchema = z.strictObject({
     replacementEnrollment: z.optional(z.strictObject({ machineId: z.string().check(z.minLength(1)) })),
 });
 const StoredManagedAdmissionReadSchema = createStoredReadSchema(StoredManagedAdmissionSchema);
-export function readManagedAdmissionState(value: unknown) {
-    const parsed = StoredManagedAdmissionReadSchema.safeParse(value);
-    if (!parsed.success) throw new ManagedMachineError("request_conflict");
-    return parsed.data;
+/** Server-owned JSON was admitted by the acquire/control/policy/native-result boundary. */
+export function readManagedAdmissionState(value: unknown): z.infer<typeof StoredManagedAdmissionSchema> {
+    return value as z.infer<typeof StoredManagedAdmissionSchema>;
 }
 export function readManagedAcquisitionIdentity(value: unknown) {
-    const { computeInput, continuation } = readManagedAdmissionState(value);
+    const parsed = StoredManagedAdmissionReadSchema.safeParse(value);
+    if (!parsed.success) throw new ManagedMachineError("request_conflict");
+    const { computeInput, continuation } = parsed.data;
     return { computeInput, continuation };
 }
 /** New admission binds the authenticated requester; only historical absence retains custody. */
@@ -170,10 +171,10 @@ export function resolveManagedRowDeclarationInTx(tx: Tx, row: StoredManagedMachi
         controller: readManagedController(row), provider: readManagedLaunchSnapshot(row.launch).provider, reviewedFacts: row.reviewedFacts });
 }
 
-/** The canonical stored projection drops extras using the declared native/launch schemas. */
-export function projectManagedMachine(row: StoredManagedMachine, declaration?: ManagedDeclaration | null): ManagedMachineV1 {
+/** Stored rows already passed declared admission; normalize only the retained wire envelope. */
+export function projectManagedMachine(row: StoredManagedMachine): ManagedMachineV1 {
     const submitted = readManagedAdmissionState(row.admittedInput).submittedEffect;
-    const resource = row.resource === null ? undefined : createStoredReadSchema(ManagedResourceV1Schema).parse(row.resource);
+    const resource = row.resource === null ? undefined : row.resource as ManagedMachineV1['resource'];
     const controller = readManagedController(row);
     const devcontainerChild = controller ? deriveManagedDevcontainerChildProjectionV1({ managedMachineId: row.id,
         controllerMachineId: controller.machineId, enrolledMachineId: row.enrolledMachineId ?? undefined, resource }) : undefined;
@@ -201,39 +202,15 @@ export function projectManagedMachine(row: StoredManagedMachine, declaration?: M
         ...(row.observation !== null ? { observation: row.observation } : {}),
         ...(row.cleanup !== null ? { cleanup: row.cleanup } : {}),
     };
-    const schema = declaration
-        ? createManagedMachineDeclaredSchema(declaration.launchSchema, declaration.resourceSchema, declaration.reconciliation?.nativeOperationSchema)
-        : ManagedMachineV1Schema;
-    return ManagedMachineV1Schema.parse(createStoredReadSchema(schema).parse(value));
+    return createStoredReadSchema(ManagedMachineV1Schema).parse(value);
 }
 export async function projectManagedMachineInTx(tx: Tx, row: StoredManagedMachine): Promise<ManagedMachineV1> {
     return (await projectManagedMachinesInTx(tx, [row]))[0];
 }
 
-/** Resolve each controller/provider once within this projection's coherent read view. */
-export async function projectManagedMachinesInTx(tx: Tx, rows: readonly StoredManagedMachine[]): Promise<ManagedMachineV1[]> {
-    const declarations = new Map<string, ManagedDeclaration | null>();
-    const machines: ManagedMachineV1[] = [];
-    for (const row of rows) {
-        const launch = readManagedLaunchSnapshot(row.launch);
-        const controller = readManagedController(row);
-        if (!controller) {
-            const declaration = readManagedReviewedDeclaration(row.reviewedFacts);
-            machines.push(projectManagedMachine(row, declaration?.schemaVersion === launch.schemaVersion ? declaration : null));
-            continue;
-        }
-        const key = JSON.stringify([row.homeId, row.custodianAccountId, row.controllerMachineId,
-            row.controllerInstallationId, launch.provider.pluginId, launch.provider.localId]);
-        if (!declarations.has(key)) {
-            declarations.set(key, await resolveManagedDeclarationInTx(tx, {
-                homeId: row.homeId, custodianAccountId: row.custodianAccountId,
-                controller, provider: launch.provider,
-            }));
-        }
-        const declaration = declarations.get(key);
-        machines.push(projectManagedMachine(row, declaration?.schemaVersion === launch.schemaVersion ? declaration : null));
-    }
-    return machines;
+/** Projection consumes admitted rows without resolving a new declaration on every read. */
+export async function projectManagedMachinesInTx(_tx: Tx, rows: readonly StoredManagedMachine[]): Promise<ManagedMachineV1[]> {
+    return rows.map(row => projectManagedMachine(row));
 }
 
 export async function readManagedMachineInTx(tx: Tx, input: Readonly<{ homeId: string; managedId: string }>): Promise<StoredManagedMachine> {

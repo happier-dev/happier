@@ -45,7 +45,7 @@ async function hasPendingManagedCleanupTargetInTx(tx: Tx, row: StoredManagedMach
     const launch = readManagedLaunchSnapshot(row.launch);
     const declaration = await resolveManagedRowDeclarationInTx(tx, row);
     if (!declaration?.reconciliation || declaration.schemaVersion !== launch.schemaVersion) return false;
-    return row.nativeOperationRef === null ? allowCorrelation : projectManagedMachine(row, declaration).nativeOperationRef !== undefined;
+    return row.nativeOperationRef === null ? allowCorrelation : projectManagedMachine(row).nativeOperationRef !== undefined;
 }
 
 /** Policy execution consumes committed row intent, guest drain or an accepted origin, never caller ids alone. */
@@ -220,12 +220,12 @@ export async function admitManagedControl(params: Readonly<{
                 if (request.input.controller) {
                     await requireManagedControllerInTx(tx, { homeId: row.homeId, custodianAccountId: row.custodianAccountId, controller: request.input.controller });
                     await validateManagedRecipeInTx(tx, { accountId: params.actorAccountId, authentication: params.authentication }, {
-                        homeId: row.homeId, controller: request.input.controller, recipe: projectManagedMachine(row, declaration).launch,
+                        homeId: row.homeId, controller: request.input.controller, recipe: projectManagedMachine(row).launch,
                     });
                 } else {
                     if (params.actorAccountId !== row.custodianAccountId) throw new ManagedMachineError('permission_denied');
                     if (!declaration.accountAcquire) throw new ManagedMachineError('provider_unavailable');
-                    const current = projectManagedMachine(row, declaration);
+                    const current = projectManagedMachine(row);
                     const reviewedPrerequisites = current.reviewedFacts?.prerequisites;
                     if (reviewedPrerequisites === undefined && declaration.provisioner.prerequisites.length > 0) {
                         throw new ManagedMachineError('provider_unavailable');
@@ -315,7 +315,7 @@ export async function reportManagedIntent(input: ManagedControllerIntentReportV1
             if (!declaration?.reconciliation || declaration.schemaVersion !== launch.schemaVersion) {
                 throw new ManagedMachineError('provider_unavailable');
             }
-            const previous = projectManagedMachine(row, declaration);
+            const previous = projectManagedMachine(row);
             const parsed = createManagedMachineDeclaredSchema(declaration.launchSchema, declaration.resourceSchema,
                 declaration.reconciliation.nativeOperationSchema).safeParse({ ...previous,
                 nativeOperationRef: canonical.result.nativeOperationRef });
@@ -327,7 +327,7 @@ export async function reportManagedIntent(input: ManagedControllerIntentReportV1
             const launch = readManagedLaunchSnapshot(row.launch);
             const declaration = await resolveManagedRowDeclarationInTx(tx, row);
             if (!declaration || declaration.schemaVersion !== launch.schemaVersion || !declaration.actions.rebuild) throw new ManagedMachineError('provider_unavailable');
-            const previous = projectManagedMachine(row, declaration);
+            const previous = projectManagedMachine(row);
             const previousNativeId = previous.resource?.devcontainerObservation?.nativeResourceId;
             // Devcontainer rebuild removes the retained native child before
             // realizing its replacement. Namespace changes on that old child
@@ -432,7 +432,7 @@ export async function reportManagedAcquire(input: ManagedControllerReportV1, opt
         if (!declaration || declaration.schemaVersion !== launch.schemaVersion) throw new ManagedMachineError("provider_unavailable");
         if (canonical.result.kind === "bound") {
             if (row.allocation !== "may-exist" && row.allocation !== "bound") throw new ManagedMachineError("intent_changed");
-            const current = projectManagedMachine(row, declaration);
+            const current = projectManagedMachine(row);
             const parsed = createManagedMachineDeclaredSchema(declaration.launchSchema, declaration.resourceSchema, declaration.reconciliation?.nativeOperationSchema).safeParse({ ...current, allocation: "bound", resource: canonical.result.resource });
             if (!parsed.success) throw new ManagedMachineError("resource_mismatch");
             const projected = ManagedMachineV1Schema.parse(parsed.data);
@@ -445,14 +445,14 @@ export async function reportManagedAcquire(input: ManagedControllerReportV1, opt
             if (changed.count !== 1) throw new ManagedMachineError("intent_changed");
             const updated = await tx.managedMachine.findUniqueOrThrow({ where: { id: row.id } });
             await invalidateManagedMachineInTx(tx, updated);
-            return { machine: projectManagedMachine(updated, declaration) };
+            return { machine: projectManagedMachine(updated) };
         }
         if (row.allocation !== "may-exist") throw new ManagedMachineError("intent_changed");
         const result = canonical.result;
         if (result.kind === "pending") {
             if (!declaration.reconciliation) throw new ManagedMachineError("provider_unavailable");
             const parsed = createManagedMachineDeclaredSchema(declaration.launchSchema, declaration.resourceSchema, declaration.reconciliation.nativeOperationSchema)
-                .safeParse({ ...projectManagedMachine(row, declaration), nativeOperationRef: result.nativeOperationRef });
+                .safeParse({ ...projectManagedMachine(row), nativeOperationRef: result.nativeOperationRef });
             if (!parsed.success) throw new ManagedMachineError("resource_mismatch");
         }
         const changed = await tx.managedMachine.updateMany({ where: { id: row.id, intentRevision: row.intentRevision, creationState: row.creationState, allocation: "may-exist" }, data: {
@@ -464,7 +464,7 @@ export async function reportManagedAcquire(input: ManagedControllerReportV1, opt
         if (changed.count !== 1) throw new ManagedMachineError("intent_changed");
         const updated = await tx.managedMachine.findUniqueOrThrow({ where: { id: row.id } });
         await invalidateManagedMachineInTx(tx, updated);
-        return { machine: projectManagedMachine(updated, declaration) };
+        return { machine: projectManagedMachine(updated) };
     });
 }
 
@@ -533,7 +533,7 @@ export async function requireManagedEnrollmentInTx(tx: Tx, input: ManagedEnrollm
     if (row.custodianAccountId !== custodianAccountId || row.allocation !== "bound") throw new ManagedMachineError("resource_mismatch");
     const declaration = await resolveManagedRowDeclarationInTx(tx, row);
     if (!declaration || declaration.schemaVersion !== readManagedLaunchSnapshot(row.launch).schemaVersion) throw new ManagedMachineError("provider_unavailable");
-    const stored = projectManagedMachine(row, declaration);
+    const stored = projectManagedMachine(row);
     const incoming = createManagedMachineDeclaredSchema(declaration.launchSchema, declaration.resourceSchema, declaration.reconciliation?.nativeOperationSchema).safeParse({ ...stored, resource: canonical.resource });
     if (!incoming.success || !sameManagedInput(stored.resource, incoming.data.resource)) throw new ManagedMachineError("resource_mismatch");
     return row;
