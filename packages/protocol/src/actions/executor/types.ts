@@ -1,4 +1,5 @@
 import type { ScreenCaptureActionId } from '../screenCaptureActionIds.js';
+import type { SessionRunnerRuntimeRefreshActionInputV1 } from '../../sessions/control/sessionRunnerRestartV2.js';
 import type { SessionStopIntent } from '../../sessions/metadata/sessionExplicitStopV1.js';
 import type { DeploymentPublishResultV1, DeploymentPrepareInputV1, DeploymentPrepareResultV1 } from '../../deployments/deploymentActionsV1.js';
 import type { DeploymentTemplateInstantiateResultV1 } from '../../deployments/deploymentActionsV1.js';
@@ -2132,7 +2133,7 @@ export type ActionExecutorDeps = Readonly<{
   }>) => Promise<unknown>;
   sessionStateFieldSet?: (args: SessionStateFieldActionWrite) => Promise<unknown>;
   sessionStop?: (args: Readonly<{ sessionId: string; stopIntent: SessionStopIntent; serverId?: string | null; context?: ActionExecutorContext; signal?: AbortSignal }>) => Promise<unknown>;
-  sessionRuntimeRefresh?: (args: Readonly<{ sessionId: string; machineId: string; serverId?: string; context: ActionExecutorContext; signal?: AbortSignal }>) => Promise<unknown>;
+  sessionRuntimeRefresh?: (args: SessionRunnerRuntimeRefreshActionInputV1 & Readonly<{ context: ActionExecutorContext; signal?: AbortSignal }>) => Promise<unknown>;
   sessionTurnCancel?: (args: Readonly<{ sessionId: string; serverId?: string | null; context: ActionExecutorContext; signal?: AbortSignal }>) => Promise<unknown>;
   sessionCompact?: (args: Readonly<{ sessionId: string; instructions?: string; serverId?: string | null; context: ActionExecutorContext; signal?: AbortSignal }>) => Promise<unknown>;
   sessionTerminalComposerClear?: (args: Readonly<{

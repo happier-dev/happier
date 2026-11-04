@@ -718,6 +718,14 @@ export type SessionControlActionInputById = {
         sessionId: string;
         machineId: string;
         serverId?: string | undefined;
+        mode?: 'force_current_cli' | 'if_stale' | undefined;
+        providerBindingSecurityChangeConfirmationV1?: undefined | {
+            v: 1;
+            sessionId: string;
+            connectionId: string;
+            previousBindingSecurityFingerprint: string;
+            nextBindingSecurityFingerprint: string;
+        };
     };
     readonly "session.stop": {
         sessionId: SessionTargetV1<true>;

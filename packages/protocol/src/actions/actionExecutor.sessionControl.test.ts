@@ -158,6 +158,11 @@ describe('createActionExecutor (session control)', () => {
     expect(await executor.execute(id, input, { surface: 'cli', serverId: 'home' }))
       .toEqual({ ok: true, result: { ok: false, status: 'busy', sessionId: 's1' } });
     expect(await executor.execute(id, { ...input, mode: 'force_current_cli' }, { surface: 'cli' }))
+      .toMatchObject({ ok: true, result: { status: 'already_current' } });
+    expect(await executor.execute(id, { ...input, mode: 'if_stale', providerBindingSecurityChangeConfirmationV1: {
+      v: 1, sessionId: 's1', connectionId: 'pc_gateway', previousBindingSecurityFingerprint: 'old',
+      nextBindingSecurityFingerprint: 'new',
+    } }, { surface: 'cli' }))
       .toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
   });
   it('refuses automation tool visibility even when Action approval is waived', async () => {

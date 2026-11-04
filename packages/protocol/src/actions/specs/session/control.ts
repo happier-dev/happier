@@ -1,6 +1,7 @@
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { SessionTargetV1Schema } from '../../sessionTargetV1.js';
 import { RestartSessionRunnerResultV1Schema } from '../../../sessions/control/sessionRunnerRestartV1.js';
+import { SessionRunnerRuntimeRefreshActionInputV1Schema } from '../../../sessions/control/sessionRunnerRestartV2.js';
 import { SessionPendingWithdrawInputV1Schema, SessionPendingWithdrawResultV1Schema } from '../../../sessions/control/pendingWithdrawV1.js';
 import { SessionPendingMarkHandledInputV1Schema, SessionPendingDeliveryRecoveryInputV1Schema, SessionPendingDeliveryRecoveryResultV1Schema, SessionPendingSendAsNewResultV1Schema } from '../../../sessions/control/pendingDeliveryRecoveryV1.js';
 import { z } from 'zod/mini';
@@ -70,22 +71,21 @@ export const SESSION_LIFETIME_CONTROL_ACTION_SPECS = Object.freeze([
   {
     id: 'session.runtime.refresh', executionPlacement: 'session', approval: { result: 'none' },
     title: 'Refresh Session runtime',
-    description: 'Refresh a stale Session runner on its hosting machine through the same planned restart used by the Session banner. Active child work defers replacement.',
+    description: 'Refresh a stale Session runner, or explicitly restart on the current CLI for a model or reviewed Provider binding change. Binding changes require the exact previous and next security fingerprints; native background work requires human confirmation in the app. Active child work defers replacement.',
     safety: 'safe',
     sideEffectClass: 'write',
     placements: [],
     bindings: { mcpToolName: 'session_runtime_refresh' },
     surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
-    inputSchema: lazyZodSchema(() => z.strictObject({
-      sessionId: z.string().check(z.trim(), z.minLength(1)),
-      machineId: z.string().check(z.trim(), z.minLength(1)),
-      serverId: z.optional(z.string().check(z.trim(), z.minLength(1))),
-    })),
+    inputSchema: SessionRunnerRuntimeRefreshActionInputV1Schema,
     outputSchema: RestartSessionRunnerResultV1Schema,
     inputHints: { fields: [
       { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
       { path: 'machineId', title: 'Hosting machine id', widget: 'text', required: true },
       { path: 'serverId', title: 'Home id', widget: 'text' },
+      { path: 'mode', title: 'Restart mode', widget: 'select', options: [
+        { value: 'if_stale', label: 'Only when stale' }, { value: 'force_current_cli', label: 'Restart on current CLI' },
+      ] },
     ] },
     examples: { mcp: { argsExample: '{"sessionId":"{{sessionId}}","machineId":"{{machineId}}"}' } },
   } satisfies PreNormalizedActionSpec,

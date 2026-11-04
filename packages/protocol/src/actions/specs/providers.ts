@@ -100,6 +100,13 @@ const templateFields = (prefix: string) => [
 ] satisfies readonly ActionInputFieldHint[];
 
 function providerFields(id: ProviderActionIdV1): readonly ActionInputFieldHint[] {
+  if (id === 'providers.binding.status') return [
+    { path: 'machineId', title: 'Computer', widget: 'text', required: true },
+    { path: 'sessionId', title: 'Owned Session', widget: 'text' },
+    { path: 'agentTargetKey', title: 'Agent for an explicit pairing', widget: 'text' },
+    { path: 'selection', title: 'Explicit model selection', widget: 'json' },
+    { path: 'launchBinding', title: 'Explicit launch binding', widget: 'json' },
+  ];
   if (id === 'providers.gateways.choose') return [
     { path: 'contributionKey', title: 'Qualified gateway contribution', widget: 'text' },
     { path: 'service', title: 'Qualified connected service', widget: 'json' },
@@ -228,7 +235,7 @@ export const PROVIDER_ACTION_SPECS_V1 = [
   providerSpec('providers.usage.refresh', 'Refresh Provider usage',
     'Read current spend and credits from the declared usage sources of a saved Provider connection.', { danger: true, external: true }),
   providerSpec('providers.binding.status', 'Check agent and Provider pairing',
-    'See whether an agent can use a Provider, and what is missing if it cannot.', { read: true }),
+    'Check the Provider pairing. Supply machineId and sessionId to read the owned Session pairing and, when changed, receive the exact providerBindingSecurityChangeConfirmationV1 for session.runtime.refresh.', { read: true }),
   providerSpec('providers.legacy.prepare', 'Prepare credentials from an earlier version',
     'Get the credentials of a profile from an earlier version of Happier ready to become a Provider connection.', { danger: true }),
   providerSpec('providers.defaults.set', 'Set default Provider model',

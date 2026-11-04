@@ -1566,6 +1566,9 @@ export type ProvidersActionInputById = {
                 };
             } | undefined;
         };
+    } | {
+        machineId: string;
+        sessionId: string;
     };
     readonly "providers.legacy.prepare": {
         machineId: string;
@@ -5977,6 +5980,16 @@ export type ProvidersActionResultById = {
     };
     readonly "providers.binding.status": {
         status: 'current';
+    } | {
+        status: 'changed';
+        nextBindingSecurityFingerprint: string;
+        providerBindingSecurityChangeConfirmationV1: {
+            v: 1;
+            sessionId: string;
+            connectionId: string;
+            previousBindingSecurityFingerprint: string;
+            nextBindingSecurityFingerprint: string;
+        };
     } | {
         status: 'changed';
         nextBindingSecurityFingerprint: string;

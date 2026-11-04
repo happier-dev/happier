@@ -8,6 +8,9 @@ import { PROVIDER_ACTION_OUTPUT_SCHEMAS_V1, resolveProviderActionOwnerV1, type P
 import type { ProviderActionIdV1 } from './providerActionIdsV1.js';
 import type { ProviderDefaultModelSelectionMutationV1 } from './selection/v1.js';
 import type { AccountSettingsMutationResult } from '../account/settings/accountSettingMutationV1.js';
+import { DaemonProviderBindingStatusRequestV1Schema, DaemonProviderBindingStatusResponseV1Schema } from '../rpc/providers.js';
+import { readSessionProviderBindingMetadataStateV1, type SessionProviderBindingSecurityChangeConfirmationV1 } from './sessions/bindingMetadataV1.js';
+import { readSessionModelSelectionIntentSourceV1 } from './selection/v1.js';
 
 type AccountActionId = 'providers.defaults.set' | 'providers.models.source_visibility.set' | 'providers.gateways.choose';
 type RpcActionId = Exclude<ProviderActionIdV1, AccountActionId>;
@@ -17,7 +20,7 @@ function rpcErrorContext(request: RpcRequest) {
   let connectionId: string | undefined;
   switch (request.actionId) {
     case 'providers.binding.status':
-      connectionId = request.input.launchBinding.connectionId;
+      connectionId = 'launchBinding' in request.input ? request.input.launchBinding.connectionId : undefined;
       break;
     case 'providers.models.projection':
     case 'providers.models.refresh':
@@ -84,6 +87,8 @@ export function resolveProviderActionRpcRouteV1(actionId: ProviderActionIdV1): P
 /** One dispatch owner: Account catalog semantics and exact-machine runtime effects. */
 export function createProviderActionExecuteV1(host: Readonly<{
   assertCurrent(context: ActionExecutorContext): void;
+  /** Authenticated owner-only snapshot; no Provider decision is made by the host. */
+  readSessionMetadata?(input: Readonly<{ machineId: string; sessionId: string }>, context: ActionExecutorContext): Promise<Readonly<Record<string, unknown>> | null>;
   rpc(input: Readonly<{ machineId: string; method: string; request: ProviderActionRequestV1; context: ActionExecutorContext;
     operationTimeoutMs?: null }>): Promise<unknown>;
   setDefault(input: ProviderDefaultModelSelectionMutationV1, context: ActionExecutorContext): Promise<Pick<AccountSettingsMutationResult, 'status'>>;
@@ -110,8 +115,31 @@ export function createProviderActionExecuteV1(host: Readonly<{
     if (resolveProviderActionOwnerV1(request) !== 'machine') {
       return { ok: false, errorCode: 'provider_account_action_unavailable', error: 'provider_account_action_unavailable' };
     }
+    let bindingConfirmation: Omit<SessionProviderBindingSecurityChangeConfirmationV1, 'nextBindingSecurityFingerprint'> | undefined;
+    if (request.actionId === 'providers.binding.status' && 'sessionId' in request.input) {
+      const { sessionId, machineId } = request.input;
+      const metadata = await host.readSessionMetadata?.({ sessionId, machineId }, context);
+      if (!metadata || metadata.machineId !== machineId) {
+        return { ok: false, errorCode: 'session_target_unavailable', error: 'session_target_unavailable' };
+      }
+      const binding = readSessionProviderBindingMetadataStateV1(metadata);
+      const intent = readSessionModelSelectionIntentSourceV1({ canonical: metadata.modelSelectionIntentV1, legacy: undefined });
+      const selection = intent.status === 'canonical' ? intent.intent.selection : null;
+      const prepared = DaemonProviderBindingStatusRequestV1Schema.safeParse({ machineId,
+        agentTargetKey: selection?.agentTargetKey,
+        selection: intent.status === 'canonical' ? { v: 1, updatedAt: intent.intent.updatedAt, ref: selection } : null,
+        launchBinding: binding.kind === 'valid' ? binding.binding : null });
+      if (!prepared.success) {
+        const error = createProviderErrorV1('provider_binding_changed', { machineId });
+        return { ok: false, errorCode: error.code, error: error.code, details: error };
+      }
+      bindingConfirmation = { v: 1, sessionId, connectionId: prepared.data.launchBinding.connectionId,
+        previousBindingSecurityFingerprint: prepared.data.launchBinding.bindingSecurityFingerprint };
+      request = { actionId: request.actionId, input: prepared.data };
+    }
     const { method, mutation } = resolveProviderActionRpcRouteV1(request.actionId);
-    const schema = PROVIDER_ACTION_OUTPUT_SCHEMAS_V1[request.actionId];
+    const schema = request.actionId === 'providers.binding.status'
+      ? DaemonProviderBindingStatusResponseV1Schema : PROVIDER_ACTION_OUTPUT_SCHEMAS_V1[request.actionId];
     const input = readRecord(request.input);
     const errorContext = rpcErrorContext(request);
     let result: unknown;
@@ -147,6 +175,11 @@ export function createProviderActionExecuteV1(host: Readonly<{
     }
     // Mutation ACKs survive post-commit Account retirement; reads never disclose stale content.
     if (!mutation) host.assertCurrent(context);
+    if (bindingConfirmation && parsed.data.status === 'changed' && 'nextBindingSecurityFingerprint' in parsed.data) {
+      return { ok: true, result: { ...parsed.data, providerBindingSecurityChangeConfirmationV1: {
+        ...bindingConfirmation, nextBindingSecurityFingerprint: parsed.data.nextBindingSecurityFingerprint,
+      } } };
+    }
     return { ok: true, result: parsed.data };
   };
 }

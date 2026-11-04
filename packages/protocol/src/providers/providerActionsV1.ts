@@ -8,13 +8,14 @@ import {
   DaemonProviderModelSettingsMutationRequestV1Schema, DaemonProviderModelSettingsMutationResponseV1Schema,
   DaemonProviderModelLoadRequestV1Schema, DaemonProviderModelLoadResponseV1Schema,
   DaemonProviderProbeRequestV1Schema, DaemonProviderProbeResponseV1Schema,
-  DaemonProviderBindingStatusRequestV1Schema, DaemonProviderBindingStatusResponseV1Schema,
+  DaemonProviderBindingStatusRequestV1Schema, DaemonProviderBindingStatusResponseV1Schema, DaemonProviderBindingStatusChangedResponseV1Schema,
   DaemonProviderProfileMigrationPrepareSourceRequestV1Schema, DaemonProviderProfileMigrationPrepareSourceResponseV1Schema,
 } from '../rpc/providers.js';
 import { ProviderDefaultModelSelectionMutationV1Schema } from './selection/v1.js';
 import { ProviderConnectionIdSchema, ProviderMachineIdSchema } from './ids.js';
 import type { ProviderActionIdV1 } from './providerActionIdsV1.js';
 import { ProviderGatewayChoiceInputV1Schema, ProviderGatewayChoiceResultV1Schema } from './gatewayContributionsV1.js';
+import { SessionProviderBindingSecurityChangeConfirmationV1Schema } from './sessions/bindingMetadataV1.js';
 export { PROVIDER_ACTION_IDS_V1, isProviderActionIdV1, type ProviderActionIdV1 } from './providerActionIdsV1.js';
 
 type ConnectionAction = z.output<typeof DaemonProviderConnectionMutationRequestV1Schema>['action'];
@@ -113,7 +114,10 @@ export const PROVIDER_ACTION_INPUT_SCHEMAS_V1 = {
   'providers.models.load': modelLoadInput('load'),
   'providers.models.cancel_load': modelLoadInput('cancel'),
   'providers.probe': DaemonProviderProbeRequestV1Schema,
-  'providers.binding.status': DaemonProviderBindingStatusRequestV1Schema,
+  'providers.binding.status': lazyZodSchema(() => z.union([
+    DaemonProviderBindingStatusRequestV1Schema,
+    z.strictObject({ machineId: ProviderMachineIdSchema, sessionId: SessionProviderBindingSecurityChangeConfirmationV1Schema.shape.sessionId }),
+  ])),
   'providers.legacy.prepare': DaemonProviderProfileMigrationPrepareSourceRequestV1Schema,
   'providers.defaults.set': ProviderDefaultModelSelectionMutationV1Schema,
 } as const satisfies Record<ProviderActionIdV1, z.ZodMiniType>;
@@ -144,7 +148,12 @@ export const PROVIDER_ACTION_OUTPUT_SCHEMAS_V1 = {
   'providers.models.load': DaemonProviderModelLoadResponseV1Schema,
   'providers.models.cancel_load': DaemonProviderModelLoadResponseV1Schema,
   'providers.probe': DaemonProviderProbeResponseV1Schema,
-  'providers.binding.status': DaemonProviderBindingStatusResponseV1Schema,
+  'providers.binding.status': lazyZodSchema(() => z.union([
+    DaemonProviderBindingStatusResponseV1Schema,
+    z.safeExtend(DaemonProviderBindingStatusChangedResponseV1Schema, {
+      providerBindingSecurityChangeConfirmationV1: SessionProviderBindingSecurityChangeConfirmationV1Schema,
+    }),
+  ])),
   'providers.legacy.prepare': DaemonProviderProfileMigrationPrepareSourceResponseV1Schema,
   'providers.defaults.set': lazyZodSchema(() => z.strictObject({ status: z.literal('updated') })),
 } as const satisfies Record<ProviderActionIdV1, z.ZodMiniType>;

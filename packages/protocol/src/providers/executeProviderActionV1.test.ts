@@ -1,11 +1,62 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createProviderActionExecuteV1 } from './executeProviderActionV1.js';
-import { parseProviderActionRequestV1 } from './providerActionsV1.js';
+import { parseProviderActionRequestV1, PROVIDER_ACTION_OUTPUT_SCHEMAS_V1 } from './providerActionsV1.js';
+import { SessionRunnerRuntimeRefreshActionInputV1Schema } from '../sessions/control/sessionRunnerRestartV2.js';
 import { DaemonProviderModelProjectionResponseV1Schema } from '../rpc/providers.js';
 
 afterEach(() => vi.restoreAllMocks());
 
 const agentTargetKey = 'agent:happier.agent.codex/codex';
+
+describe('Session-addressed Provider binding status', () => {
+  const launchBinding = {
+    v: 1, connectionId: 'pc_work', contributionKey: null, connectionRevision: 3,
+    protocol: 'openai-responses', materialization: 'engineConfig',
+    compatibilityFingerprint: 'compatible', bindingSecurityFingerprint: 'previous-binding',
+    displaySnapshot: { providerName: 'Provider', connectionName: 'Work', connectionRole: 'named', connectionDisplayNameMode: 'custom' },
+  } as const;
+  const metadata = { machineId: 'machine-a', providerBindingV1: launchBinding,
+    modelSelectionIntentV1: { v: 1, updatedAt: 7, selection: { agentTargetKey, providerConnectionId: 'pc_work', modelId: 'model-a' } } };
+
+  it.each(['changed', 'current'] as const)('derives the exact Session pairing and returns a confirmation only when %s', async status => {
+    const requests: unknown[] = [];
+    const execute = createProviderActionExecuteV1({ assertCurrent() {},
+      readSessionMetadata: async () => metadata,
+      rpc: async input => { requests.push(input.request.input); return status === 'changed'
+        ? { status, nextBindingSecurityFingerprint: 'next-binding' } : { status }; },
+      setDefault: async () => ({ status: 'unchanged' }),
+    });
+    const outcome = await execute(parseProviderActionRequestV1('providers.binding.status', {
+      machineId: 'machine-a', sessionId: 'session-a',
+    }), { surface: 'agent' });
+    expect(requests).toEqual([{ machineId: 'machine-a', agentTargetKey,
+      launchBinding, selection: { v: 1, updatedAt: 7, ref: metadata.modelSelectionIntentV1.selection } }]);
+    expect(outcome).toEqual({ ok: true, result: status === 'changed' ? {
+      status, nextBindingSecurityFingerprint: 'next-binding', providerBindingSecurityChangeConfirmationV1: {
+        v: 1, sessionId: 'session-a', connectionId: 'pc_work',
+        previousBindingSecurityFingerprint: 'previous-binding', nextBindingSecurityFingerprint: 'next-binding',
+      },
+    } : { status } });
+    if (status === 'changed' && outcome.ok) {
+      const proposal = PROVIDER_ACTION_OUTPUT_SCHEMAS_V1['providers.binding.status'].parse(outcome.result);
+      if (!('providerBindingSecurityChangeConfirmationV1' in proposal)) throw new Error('Expected actionable confirmation');
+      expect(SessionRunnerRuntimeRefreshActionInputV1Schema.safeParse({ sessionId: 'session-a', machineId: 'machine-a',
+        mode: 'force_current_cli', providerBindingSecurityChangeConfirmationV1: proposal.providerBindingSecurityChangeConfirmationV1 }).success).toBe(true);
+    }
+  });
+
+  it('refuses a different Session Machine before pairing instead of inventing another target', async () => {
+    let paired = false;
+    const execute = createProviderActionExecuteV1({ assertCurrent() {}, readSessionMetadata: async () => metadata,
+      rpc: async () => { paired = true; return { status: 'current' }; },
+      setDefault: async () => ({ status: 'unchanged' }),
+    });
+    expect(await execute(parseProviderActionRequestV1('providers.binding.status', {
+      machineId: 'another-machine', sessionId: 'session-a',
+    }), {})).toMatchObject({ ok: false, errorCode: 'session_target_unavailable' });
+    expect(paired).toBe(false);
+  });
+});
 describe('shared Provider Action recipient catalog admission', () => {
   it('admits each Team presentation batch once', async () => {
     // Observe both real entry points; neither validator implementation is replaced.

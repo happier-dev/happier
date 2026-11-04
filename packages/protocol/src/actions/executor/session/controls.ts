@@ -3,7 +3,7 @@ import { resolveSessionIdFromInput, resolveServerIdForSession } from '../session
 import { completeActionResult } from '../resultProjection.js';
 import { normalizeId, readNullableString } from '../inputReading.js';
 import { readNonBlankOpaqueIdentifier } from '../../../strings/opaqueIdentifier.js';
-import type { PublicActionInputById } from '../../actionSpecs.js';
+import type { PublicActionInputById, AdmittedActionInputById } from '../../actionSpecs.js';
 import { createPermissionPolicyResult, assertAgentPermission } from '../callerContext.js';
 import { SESSION_PERMISSION_MODES } from '../../../sessions/metadata/sessionPermissionModes.js';
 import { isPermissionModeGrantedV1 } from '../../../auth/apiTokenGrant.js';
@@ -73,7 +73,7 @@ export async function dispatchSessionControls1(inv: Pick<CoreInvocation, 'action
           if (!deps.sessionRuntimeRefresh) {
             return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
           }
-          const input = parsed.data as PublicActionInputById['session.runtime.refresh'];
+          const input = parsed.data as AdmittedActionInputById['session.runtime.refresh'];
           const serverId = input.serverId ?? resolveServerIdForSession(deps, ctx, input.sessionId);
           return completeActionResult(await deps.sessionRuntimeRefresh({ ...input, context: ctx,
             ...(serverId ? { serverId } : {}), ...(ctx.signal ? { signal: ctx.signal } : {}) }));

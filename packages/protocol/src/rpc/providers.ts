@@ -1216,12 +1216,14 @@ export const DaemonProviderBindingStatusRequestV1Schema = lazyZodSchema(() => z.
 })));
 export type DaemonProviderBindingStatusRequestV1 = z.infer<typeof DaemonProviderBindingStatusRequestV1Schema>;
 
+export const DaemonProviderBindingStatusChangedResponseV1Schema = lazyZodSchema(() => z.strictObject({
+  status: z.literal('changed'),
+  nextBindingSecurityFingerprint: z.string().check(z.trim(), z.minLength(1), z.maxLength(256)),
+}));
+
 export const DaemonProviderBindingStatusResponseV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.strictObject({ status: z.literal('current') }),
-  z.strictObject({
-    status: z.literal('changed'),
-    nextBindingSecurityFingerprint: z.string().check(z.trim(), z.minLength(1), z.maxLength(256)),
-  }),
+  DaemonProviderBindingStatusChangedResponseV1Schema,
   ...(['connection_missing', 'contribution_unavailable', 'disabled', 'grant_stale', 'incompatible'] as const)
     .map((status) => z.strictObject({ status: z.literal(status), error: ProviderErrorV1Schema })),
 ]));
