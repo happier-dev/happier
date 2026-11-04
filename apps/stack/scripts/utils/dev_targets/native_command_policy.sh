@@ -615,7 +615,12 @@ resolve_native_command_policy() {
   [ "$native_test_policy_resolved" = 0 ] || return 0
   if [ "$policy_workerTool" = vitest ] && [ "$policy_generatorCheck" = 0 ] && [ "$policy_admissionWrapper" = 0 ]; then
     native_policy_request_cwd=$invoked_cwd
-    [ "${explicit_relative_cwd_set-0}" != 1 ] || native_policy_request_cwd=$repo_root/$explicit_relative_cwd
+    if [ "${explicit_relative_cwd_set-0}" = 1 ]; then
+      case "$explicit_relative_cwd" in
+        /*) native_policy_request_cwd=$explicit_relative_cwd ;;
+        *) native_policy_request_cwd=$repo_root/$explicit_relative_cwd ;;
+      esac
+    fi
     native_vitest_policy=$(node "${projection_command_policy:-$repo_root/apps/stack/scripts/utils/dev_targets/remote_commands.mjs}" --vitest-policy "$repo_root" "$native_policy_request_cwd" "$@") || return $?
     eval "$native_vitest_policy"
     native_test_policy_resolved=1
