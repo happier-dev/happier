@@ -227,7 +227,7 @@ describe("inTx", () => {
         expect(transaction.mock.calls[0]![1]).toEqual(expect.objectContaining({ isolationLevel: "ReadCommitted" }));
     });
 
-    it.each([0, 60])("changes the SQL budget only when the remaining budget crosses the existing timeout (callback work: %s ms)", async callbackWorkMs => {
+    it.each([0, 60])("preserves the initial stricter SQL budget through callback work (callback work: %s ms)", async callbackWorkMs => {
         applyEnvValues({ HAPPIER_DB_PROVIDER: "postgres" });
         let clock = 1_000;
         vi.spyOn(Date, "now").mockImplementation(() => clock);
@@ -251,14 +251,13 @@ describe("inTx", () => {
             },
         }));
         await expect(inTx(async tx => {
-            // Before callback SQL, no eager timeout-setting round trip is needed.
+            // The existing stricter SQL limit needs no SET at transaction start.
             expect(budgets).toEqual([]);
             clock += callbackWorkMs;
             return await tx.$queryRawUnsafe("SELECT 1 AS value");
         }, { timeoutMs: 100, readOnly: true })).resolves.toEqual([{ value: 1 }]);
-        const expectedBudget = Math.min(50, 98 - callbackWorkMs);
-        expect(budgets).toEqual(expectedBudget === 50 ? [] : [expectedBudget]);
-        expect(queryBudget).toBe(expectedBudget);
+        expect(budgets).toEqual([]);
+        expect(queryBudget).toBe(50);
     });
 
     it("refuses an attempt that expires during budget discovery before invoking its callback", async () => {
@@ -370,84 +369,28 @@ describe("inTx", () => {
         expect(delayMock).not.toHaveBeenCalled();
     });
 
-    it.each([undefined, 10_000])("settles its expired PostgreSQL attempt without replaying queued SQL (deadline: %s)", async deadlineAtMs => {
+    it.each([undefined, 10_000])("settles native PostgreSQL transaction expiry without replay (deadline: %s)", async deadlineAtMs => {
         applyEnvValues({ HAPPIER_DB_PROVIDER: "postgres", HAPPIER_DB_TX_MAX_RETRIES: "1" });
-        const now = vi.spyOn(Date, "now").mockReturnValue(1_000);
+        vi.spyOn(Date, "now").mockReturnValue(1_000);
         let attempts = 0;
-        const writes: number[] = [], published: number[] = [];
+        const published: number[] = [];
+        const expired = new PrismaClientKnownRequestError("A query cannot be executed on an expired transaction.", {
+            code: "P2028", clientVersion: "6.19.2",
+        });
         transaction.mockImplementation(async fn => fn({
             ...transactionBoundary(),
-            $queryRawUnsafe(query: string) {
-                // Prisma queries are lazy: time elapses when the SQL boundary
-                // is awaited, after the owner's pre-statement budget refresh.
-                return { then(resolve: (rows: unknown[]) => unknown, reject?: (reason: unknown) => unknown) {
-                    return Promise.resolve().then(() => {
-                        if (query === "slow admission read" && attempts === 1) now.mockReturnValue(2_001);
-                        if (query === "admission write") writes.push(attempts);
-                        return [];
-                    }).then(resolve, reject);
-                } };
-            },
+            async $queryRawUnsafe() { throw expired; },
         }));
         await expect(inTx(async tx => {
             const attempt = ++attempts;
             afterTx(tx, () => published.push(attempt));
-            await Promise.all([
-                tx.$queryRawUnsafe("slow admission read"),
-                tx.$queryRawUnsafe("admission write"),
-            ]);
+            await tx.$queryRawUnsafe("expired read");
             return "committed";
         }, { timeoutMs: 1_000, ...(deadlineAtMs === undefined ? {} : { deadlineAtMs }) }))
-            .rejects.toBeInstanceOf(inTxModule.TransactionDeadlineExceededError);
+            .rejects.toMatchObject({ name: "TransactionDeadlineExceededError", cause: expired });
         expect(attempts).toBe(1);
-        expect(writes).toEqual([]);
         expect(published).toEqual([]);
         expect(delayMock).not.toHaveBeenCalled();
-    });
-
-    it("does not replay its expired PostgreSQL attempt beyond the original request deadline", async () => {
-        applyEnvValues({ HAPPIER_DB_PROVIDER: "postgres", HAPPIER_DB_TX_MAX_RETRIES: "1" });
-        const now = vi.spyOn(Date, "now").mockReturnValue(1_000);
-        const published = vi.fn();
-        transaction.mockImplementation(async fn => fn({
-            ...transactionBoundary(), $queryRawUnsafe() {
-                return { then(resolve: (rows: unknown[]) => unknown, reject?: (reason: unknown) => unknown) {
-                    return Promise.resolve().then(() => { now.mockReturnValue(2_001); return []; }).then(resolve, reject);
-                } };
-            },
-        }));
-        await expect(inTx(async tx => {
-            afterTx(tx, published);
-            await tx.$queryRawUnsafe("slow admission read");
-            await tx.$queryRawUnsafe("never execute");
-        }, { timeoutMs: 1_000, deadlineAtMs: 2_000 })).rejects.toBeInstanceOf(inTxModule.TransactionDeadlineExceededError);
-        expect(transaction).toHaveBeenCalledTimes(1);
-        expect(published).not.toHaveBeenCalled();
-        expect(delayMock).not.toHaveBeenCalled();
-    });
-
-    it.each([false, true])("preserves rollback certainty when its PostgreSQL attempt recovery exhausts (earlier unknown: %s)", async earlierUnknown => {
-        applyEnvValues({ HAPPIER_DB_PROVIDER: "postgres", HAPPIER_DB_TX_MAX_RETRIES: earlierUnknown ? "1" : "0" });
-        const now = vi.spyOn(Date, "now").mockReturnValue(1_000);
-        const uncertainCompletion = new Error("Connection lost while handling serialization failure");
-        const published = vi.fn();
-        if (earlierUnknown) transaction.mockRejectedValueOnce(uncertainCompletion);
-        transaction.mockImplementation(async fn => fn({
-            ...transactionBoundary(), $queryRawUnsafe() {
-                return { then(resolve: (rows: unknown[]) => unknown, reject?: (reason: unknown) => unknown) {
-                    return Promise.resolve().then(() => { now.mockReturnValue(2_001); return []; }).then(resolve, reject);
-                } };
-            },
-        }));
-        const result = inTx(async tx => {
-            afterTx(tx, published);
-            await tx.$queryRawUnsafe("slow admission read");
-            await tx.$queryRawUnsafe("never execute");
-        }, { timeoutMs: 1_000 });
-        if (earlierUnknown) await expect(result).rejects.toBe(uncertainCompletion);
-        else await expect(result).rejects.toBeInstanceOf(inTxModule.TransactionDeadlineExceededError);
-        expect(published).not.toHaveBeenCalled();
-        expect(transaction).toHaveBeenCalledTimes(1);
     });
 
     it.each(["postgres", "sqlite"])("does not begin preparation after an expired deadline on %s", async provider => {

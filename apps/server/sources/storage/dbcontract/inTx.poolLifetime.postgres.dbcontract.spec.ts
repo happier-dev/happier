@@ -70,7 +70,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("P
     it.each([
         { queries: 1, configuredMs: 0 }, { queries: 16, configuredMs: 0 },
         { queries: 1, configuredMs: 1_000 }, { queries: 16, configuredMs: 1_000 },
-    ])("refreshes only a changed SQL constraint for Q=$queries reads (existing timeout: $configuredMs ms)", async ({ queries, configuredMs }) => {
+    ])("sets at most one SQL budget for Q=$queries reads (existing timeout: $configuredMs ms)", async ({ queries, configuredMs }) => {
         const [{ setting: original }] = await db.$queryRaw<Array<{ setting: string }>>`SELECT current_setting('statement_timeout') AS setting`;
         try {
             // This suite owns one disposable backend. An existing SQL limit
@@ -89,7 +89,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("P
                 }
             }, { readOnly: true, timeoutMs: 10_000, transactionClass: "test-unchanged-sql-budget-cost" }));
             console.info("TRANSACTION_BUDGET_COST", { queries, configuredMs, ...measured });
-            const expectedRefreshes = configuredMs === 0 ? queries : 0;
+            const expectedRefreshes = configuredMs === 0 ? 1 : 0;
             expect(measured.refreshes).toBe(expectedRefreshes);
             expect(measured.operations).toBe(queries + 2 + expectedRefreshes);
         } finally {
@@ -97,7 +97,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("P
         }
     });
 
-    it("charges completed SQL time to the next raw statement", async () => {
+    it("keeps the initial SQL budget across later raw statements", async () => {
         const readBudget = (tx: Tx) => tx.$queryRaw<Array<{ milliseconds: number }>>`
             SELECT (EXTRACT(EPOCH FROM current_setting('statement_timeout')::interval) * 1000)::int AS milliseconds
         `;
@@ -108,118 +108,50 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("P
             return { before: before.milliseconds, after: after.milliseconds };
         });
         expect(budgets.after).toBeGreaterThan(0);
-        expect(budgets.after).toBeLessThan(budgets.before);
+        expect(budgets.after).toBe(budgets.before);
     });
 
-    it.each([
-        { concurrent: false, refresh: "remaining" }, { concurrent: true, refresh: "remaining" },
-        { concurrent: false, refresh: "once" }, { concurrent: true, refresh: "once" },
-    ])("charges earlier SQL before a later lock wait (Promise.all: $concurrent, refresh: $refresh)", async ({ concurrent, refresh }) => {
+    it.each([false, true])("settles a later lock wait under the initial budget and releases its connection (Promise.all: %s)", async concurrent => {
         const account = await db.account.create({ data: { publicKey: randomUUID() } });
         const budget = readDatabaseTransactionConfigFromEnv(process.env, "postgres");
         let release!: () => void;
         const released = new Promise<void>(resolve => { release = resolve; });
-        let ready!: (pid: number) => void;
-        const holderReady = new Promise<number>(resolve => { ready = resolve; });
+        let ready!: () => void;
+        const holderReady = new Promise<void>(resolve => { ready = resolve; });
         const holder = observer.$transaction(async tx => {
-            const [{ pid }] = await tx.$queryRaw<Array<{ pid: number }>>`
-                SELECT pg_backend_pid() AS pid FROM "Account" WHERE id = ${account.id} FOR UPDATE
-            `;
-            ready(pid);
+            await tx.$queryRaw`SELECT 1 FROM "Account" WHERE id = ${account.id} FOR UPDATE`;
+            ready();
             await released;
         }, { timeout: budget.timeoutMs + budget.timeoutMs + budget.maxWaitMs });
         const holderOutcome = Promise.allSettled([holder]);
-        let transactionSettled = false;
-        let settledAfterMs: number | undefined;
         let committedCallback = false;
-        let waiterPid: number | undefined;
-        let readyWaiter!: () => void;
-        const waiterReady = new Promise<void>(resolve => { readyWaiter = resolve; });
-        let waitingOutcome: Promise<PromiseSettledResult<unknown>[]> | undefined;
-        let snapshot: { settled: boolean; activeTransaction: boolean } | undefined;
-        const workMs = Math.floor(budget.timeoutMs * 2 / 3);
-        let startedAtMs = 0;
-        const transaction = db.$transaction;
-        let appliedRefreshes = 0;
-        if (refresh === "once") {
-            // Negative control at the actual SQL transport: simulate setting
-            // the budget once without altering inTx, Prisma or the lock owner.
-            db.$transaction = new Proxy(transaction, { apply(target, receiver, args: unknown[]) {
-                const callback = args[0];
-                if (typeof callback !== "function") return Reflect.apply(target, receiver, args);
-                return Reflect.apply(target, receiver, [(tx: Tx) => callback(new Proxy(tx, {
-                    get(owner, property) {
-                        if (property !== "$executeRawUnsafe") return Reflect.get(owner, property, owner);
-                        return (sql: string, ...values: unknown[]) => {
-                            if (sql.startsWith("SET LOCAL statement_timeout = ") && ++appliedRefreshes > 1) return Promise.resolve(0);
-                            return owner.$executeRawUnsafe(sql, ...values);
-                        };
-                    },
-                })), ...args.slice(1)]);
-            } });
-        }
+        let waiterPid!: number;
         try {
-            const holderPid = await Promise.race([holderReady, holder.then(() => { throw new Error("Holder exited before rendezvous"); })]);
-            startedAtMs = Date.now();
-            const waiting = inTx(async tx => {
+            await Promise.race([holderReady, holder.then(() => { throw new Error("Holder exited before rendezvous"); })]);
+            await expect(inTx(async tx => {
                 [{ pid: waiterPid }] = await tx.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid() AS pid`;
                 afterTx(tx, () => { committedCallback = true; });
-                const earlier = tx.$queryRaw`SELECT 1::int AS value FROM pg_sleep(${workMs / 1_000}::double precision)`;
+                const earlier = tx.$queryRaw`SELECT 1::int AS value FROM pg_sleep(${budget.timeoutMs * 2 / 3_000}::double precision)`;
                 const update = tx.account.update({ where: { id: account.id }, data: { seq: { increment: 1 } } });
-                if (concurrent) await Promise.all([earlier.then(() => { readyWaiter(); }), update]);
-                else {
-                    await earlier;
-                    readyWaiter();
-                    await update;
-                }
-            }, { transactionClass: "test-expired-pool-waiter" });
-            waitingOutcome = Promise.allSettled([waiting]).finally(() => {
-                transactionSettled = true;
-                settledAfterMs = Date.now() - startedAtMs;
-            });
-            await Promise.race([waiterReady, waiting]);
-            while (!transactionSettled) {
-                const [{ blocked }] = await observer.$queryRaw<Array<{ blocked: boolean }>>`
-                    SELECT ${holderPid}::int = ANY(pg_blocking_pids(${waiterPid!}::int)) AS blocked
-                `;
-                if (blocked) break;
-            }
-            // The first statement and observation each use two thirds of the
-            // existing budget. A fresh full-budget timeout on the later UPDATE
-            // still holds the slot here; a remaining-budget timeout has settled.
-            await new Promise(resolve => setTimeout(resolve, workMs));
-            const [{ active }] = await observer.$queryRaw<Array<{ active: boolean }>>`
-                SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE pid = ${waiterPid!} AND xact_start IS NOT NULL) AS active
-            `;
-            snapshot = { settled: transactionSettled, activeTransaction: active };
-            console.info("transaction-budget-observation", {
-                concurrent, refresh, timeoutMs: budget.timeoutMs, earlierSqlMs: workMs,
-                observedAfterMs: Date.now() - startedAtMs, settledAfterMs, ...snapshot,
-            });
-            if (snapshot.settled && !snapshot.activeTransaction) {
-                // The only application pool slot is usable while the independent
-                // holder is still live, not merely after its lock is released.
-                expect(await db.$queryRaw<Array<{ value: number }>>`SELECT 1::int AS value`).toEqual([{ value: 1 }]);
-            }
+                if (concurrent) await Promise.all([earlier, update]);
+                else { await earlier; await update; }
+            }, { transactionClass: "test-fixed-budget-late-waiter" })).rejects.toBeInstanceOf(TransactionDeadlineExceededError);
+            // The fixed statement budget can outlive Prisma's attempt deadline.
+            // It still cancels the wait, rolls back, and releases the only slot
+            // without waiting for the independent lock holder to finish.
+            expect(committedCallback).toBe(false);
+            expect(await observer.$queryRaw<Array<{ active: boolean }>>`
+                SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE pid = ${waiterPid} AND xact_start IS NOT NULL) AS active
+            `).toEqual([{ active: false }]);
+            expect(await db.$queryRaw<Array<{ value: number }>>`SELECT 1::int AS value`).toEqual([{ value: 1 }]);
         } finally {
-            db.$transaction = transaction;
             release();
             await holderOutcome;
-            if (waitingOutcome) await waitingOutcome;
-        }
-        try {
-            expect(snapshot).toEqual(refresh === "once"
-                ? { settled: false, activeTransaction: true }
-                : { settled: true, activeTransaction: false });
-            expect((await waitingOutcome!)[0].status).toBe("rejected");
-            expect(committedCallback).toBe(false);
-            expect(await db.account.findUniqueOrThrow({ where: { id: account.id }, select: { seq: true } })).toEqual({ seq: 0 });
-        } finally {
             await db.account.delete({ where: { id: account.id } });
         }
     });
 
-    describe("an expired transaction never keeps waiting for or holding a lock", () => {
+    describe("native transaction and fixed statement timeouts release locks", () => {
         const originalTimeout = process.env.HAPPIER_DB_TX_TIMEOUT_MS;
         beforeAll(() => { process.env.HAPPIER_DB_TX_TIMEOUT_MS = "1500"; });
         afterAll(() => {
@@ -325,7 +257,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("P
         });
     });
 
-    it("preserves lazy and fluent Prisma queries, delegate identity, raw methods and after-commit effects", async () => {
+    it("preserves lazy and fluent Prisma queries, raw methods and after-commit effects", async () => {
         const account = await db.account.create({ data: { publicKey: randomUUID() } });
         const session = await db.session.create({ data: {
             accountId: account.id, tag: randomUUID(), metadata: "{}", encryptionMode: "plain",
@@ -333,9 +265,6 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("P
         let published = false;
         try {
             await inTx(async tx => {
-                expect(tx.account).toBe(tx.account);
-                expect(tx.account.update).toBe(tx.account.update);
-                expect(tx.$queryRaw).toBe(tx.$queryRaw);
                 expect(tx.account.fields.seq.name).toBe("seq");
                 const lazy = tx.account.update({ where: { id: account.id }, data: { seq: { increment: 1 } }, select: { seq: true } });
                 expect(typeof lazy.then).toBe("function");
@@ -353,7 +282,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("P
                 expect(executed).toBe(1);
                 expect(published).toBe(false);
                 afterTx(tx, () => { published = true; });
-            }, { transactionClass: "test-remaining-budget-prisma-contract" });
+            }, { transactionClass: "test-fixed-budget-prisma-contract" });
             expect(published).toBe(true);
             expect(await db.account.findUniqueOrThrow({ where: { id: account.id }, select: { seq: true } })).toEqual({ seq: 2 });
         } finally {

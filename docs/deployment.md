@@ -89,18 +89,18 @@ a single-connection pool and other database providers keep their existing paths.
 Direct queries can still contend with one another; this reservation prevents
 interactive transactions alone from occupying the entire configured pool.
 
-`inTx` charges SQL operations to the existing transaction-attempt budget. Each
-PostgreSQL statement runs under the budget that remains (never above a stricter
-configured `statement_timeout`). An already-enforced stricter timeout is reused;
-`SET LOCAL statement_timeout` runs only when that effective bound changes. A
-single fixed timeout cannot replace shrinking the remaining budget for later
-statements: it would let a late lock wait outlive the attempt. The database itself
-ends a lock wait when the budget expires and an expired transaction never keeps
-waiting for or holding a lock. A statement the budget cancels (SQLSTATE `57014`)
+In 0.3 development, `inTx` sets the PostgreSQL statement budget once at transaction
+start, using the existing transaction-attempt budget after setup. An already-enforced
+stricter `statement_timeout` is reused; otherwise one `SET LOCAL statement_timeout`
+applies that budget. Later statements keep the same SQL limit. Prisma still owns
+the interactive transaction deadline, but an in-flight SQL statement or lock wait
+may continue past it until that statement's fixed SQL budget expires. It then
+settles as a timeout and releases the connection; no per-statement refresh or
+query queue is added by `inTx`. A statement the budget cancels (SQLSTATE `57014`)
 and a transaction Prisma expired (found by a query, batch query or commit) are
-known rollbacks. When the guard expires inside the callback, that attempt rolls back
-and may replay under the existing retry/backoff policy. This is distinct from
-the containing request's deadline: retries never extend that deadline. Exhausted
+known rollbacks. PostgreSQL execution timeouts settle without replay; genuine
+serialization conflicts retain the existing retry/backoff policy. This is distinct
+from the containing request's deadline: retries never extend that deadline. Exhausted
 known rollbacks remain retryable storage refusals; an earlier indeterminate
 commit remains an unknown outcome. After-commit effects run only for the
 successful attempt. Domain consumers such as Pending reuse this owner rather

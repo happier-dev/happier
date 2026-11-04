@@ -241,7 +241,7 @@ async function prepareTransactionAttempt(
     return prepare();
 }
 
-async function withPostgresStatementBudget(tx: Tx, timeoutMs: number, startedAtMs: number): Promise<Tx> {
+async function applyPostgresStatementBudget(tx: Tx, timeoutMs: number, startedAtMs: number): Promise<void> {
     // Utility commands leave the caller's first Serializable snapshot/fence
     // ordering intact. A SELECT set_config here would establish it too early.
     const [setting] = await tx.$queryRaw<Array<{ statement_timeout: string }>>`SHOW statement_timeout`;
@@ -250,79 +250,15 @@ async function withPostgresStatementBudget(tx: Tx, timeoutMs: number, startedAtM
     const multiplier = match[2] === "d" ? 86_400_000 : match[2] === "h" ? 3_600_000
         : match[2] === "min" ? 60_000 : match[2] === "s" ? 1_000 : 1;
     const configuredMs = Number(match[1]) * multiplier;
-    // SHOW observed the already-enforced limit. Reapply only when the remaining
-    // attempt budget becomes stricter; zero still needs a finite first setting.
-    let appliedTimeoutMs = configuredMs;
-    const readStatementTimeoutMs = () => {
-        const remainingMs = Math.floor(timeoutMs - (Date.now() - startedAtMs));
-        if (remainingMs < 1) throw new TransactionAttemptDeadlineExceededError();
-        return configuredMs === 0 ? remainingMs : Math.min(configuredMs, remainingMs);
-    };
-    const refresh = async () => {
-        const statementTimeoutMs = readStatementTimeoutMs();
-        if (statementTimeoutMs === appliedTimeoutMs) return;
-        // PostgreSQL SET accepts no bound parameter. This integer comes only
-        // from the validated existing SQL and transaction budgets.
-        await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = ${statementTimeoutMs}`);
-        appliedTimeoutMs = statementTimeoutMs;
-    };
-    // Still refuse expiry before entering domain work. Apply the LOCAL setting
-    // only at the first awaited SQL below: an eager SET can be superseded by
-    // that query's remaining-budget refresh without protecting any statement.
-    readStatementTimeoutMs();
-
-    // A transaction has one SQL connection, including inside Promise.all.
-    // Keep each SET adjacent to its operation: queued operations must measure
-    // their remaining budget after earlier SQL has finished, not before it.
-    let pending = Promise.resolve();
-    const schedule = (operation: () => PromiseLike<unknown>) => {
-        const result = pending.then(async () => { await refresh(); return await operation(); });
-        pending = result.then(() => {}, () => {});
-        return result;
-    };
-    const wrapQuery = (query: unknown): unknown => {
-        if (!query || typeof query !== "object" || !("then" in query) || typeof query.then !== "function") return query;
-        let running: Promise<unknown> | undefined;
-        const run = () => running ??= schedule(() => query as PromiseLike<unknown>);
-        return new Proxy(query, {
-            get(target, property) {
-                if (property === "then" || property === "catch" || property === "finally") {
-                    return (...args: unknown[]) => {
-                        const promise = run();
-                        return Reflect.apply(Reflect.get(promise, property, promise), promise, args);
-                    };
-                }
-                const value = Reflect.get(target, property, target);
-                // Prisma's fluent relation methods create another lazy query.
-                return typeof value === "function"
-                    ? (...args: unknown[]) => wrapQuery(Reflect.apply(value, target, args)) : value;
-            },
-        });
-    };
-    const wrapMethods = <T extends object>(target: T): T => {
-        const methods = new Map<PropertyKey, unknown>();
-        return new Proxy(target, {
-            get(owner, property) {
-                const value = Reflect.get(owner, property, owner);
-                if (typeof value !== "function") return value;
-                if (!methods.has(property)) methods.set(property,
-                    (...args: unknown[]) => wrapQuery(Reflect.apply(value, owner, args)));
-                return methods.get(property);
-            },
-        });
-    };
-    const raw = wrapMethods(tx);
-    const delegates = new Map<PropertyKey, object>();
-    return new Proxy(tx, {
-        get(target, property) {
-            const value = Reflect.get(target, property, target);
-            if (typeof property !== "string") return value;
-            if (property.startsWith("$")) return Reflect.get(raw, property, raw);
-            if (!value || typeof value !== "object") return value;
-            if (!delegates.has(property)) delegates.set(property, wrapMethods(value));
-            return delegates.get(property);
-        },
-    });
+    const remainingMs = Math.floor(timeoutMs - (Date.now() - startedAtMs));
+    if (remainingMs < 1) throw new TransactionAttemptDeadlineExceededError();
+    // Reuse a stricter operator limit; otherwise set the attempt's SQL budget
+    // once, before the prepared fence and domain callback. Prisma continues to
+    // own the interactive transaction deadline, including between statements.
+    if (configuredMs !== 0 && configuredMs <= remainingMs) return;
+    // PostgreSQL SET accepts no bound parameter. This integer comes only from
+    // the existing transaction budget, after charging transaction setup.
+    await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = ${remainingMs}`);
 }
 
 export async function inTx<T>(fn: (tx: Tx) => Promise<T>, options?: InTxOptions): Promise<ResolvedTransactionResult<T>> {
@@ -372,9 +308,9 @@ export async function inTx<T>(fn: (tx: Tx) => Promise<T>, options?: InTxOptions)
             }
             if (provider === "postgres") {
                 // Prisma's interactive deadline does not interrupt an in-flight SQL
-                // lock wait. Charge earlier operations to the same execution budget so
-                // an expired callback cannot retain a pooled connection indefinitely.
-                tx = await withPostgresStatementBudget(tx, timeoutMs, attemptStartedAtMs);
+                // lock wait. Bound each SQL statement using the initial attempt budget;
+                // a late statement may finish after the interactive deadline.
+                await applyPostgresStatementBudget(tx, timeoutMs, attemptStartedAtMs);
             }
             // Keep all per-attempt state on this closure-owned object, rather than
             // assigning through Prisma's proxy onto a potentially shared client.
