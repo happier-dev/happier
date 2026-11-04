@@ -6,6 +6,7 @@ import {
   type ApiSessionSocketStub,
   createApiSessionSocketStub,
   flushApiSessionClientMessageCommitQueue,
+  resolveApiSessionSocketDefaultAck,
 } from '@/testkit/backends/apiSessionSocketHarness';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
@@ -176,15 +177,23 @@ describe('ApiSessionClient (HAPPIER_TRANSCRIPT_STORAGE=direct)', () => {
     }, { generation: 1 });
   });
 
-  it('does not reject the reconnect hook when queued replay fails', async () => {
+  it.each(['direct', 'persisted'])('replays later offline messages after a %s message is rejected', async (storage) => {
     vi.resetModules();
+    const replayedLocalIds: string[] = [];
     sessionSocketStub = createApiSessionSocketStub({
       connected: true,
-      emitWithAck: async () => ({ ok: false, error: 'replay_denied' }),
+      emitWithAck: async (event, payload) => {
+        if (event !== 'message') return resolveApiSessionSocketDefaultAck(event, payload);
+        const { localId } = payload as { localId: string };
+        replayedLocalIds.push(localId);
+        return replayedLocalIds.length === 1
+          ? { ok: false, error: 'internal' }
+          : { ok: true, id: `m-${localId}`, seq: replayedLocalIds.length, localId };
+      },
     });
     userSocketStub = createApiSessionSocketStub({ connected: true });
 
-    vi.stubEnv('HAPPIER_TRANSCRIPT_STORAGE', 'direct');
+    vi.stubEnv('HAPPIER_TRANSCRIPT_STORAGE', storage);
 
     const { ApiSessionClient } = await import('./sessionClient');
 
@@ -192,21 +201,35 @@ describe('ApiSessionClient (HAPPIER_TRANSCRIPT_STORAGE=direct)', () => {
     createdClients.push(client);
 
     sessionSocketStub.connected = false;
-    client.sendUserTextMessage('hello', { localId: 'reconnect-replay-1' });
-    await Promise.resolve();
-
-    expect((client as any).queuedDisconnectedSessionMessages.has('reconnect-replay-1')).toBe(true);
+    const localIds = ['reconnect-replay-1', 'reconnect-replay-2', 'reconnect-replay-3'];
+    for (const localId of localIds) client.sendUserTextMessage(localId, { localId });
+    await flushApiSessionClientMessageCommitQueue(client as unknown as Parameters<typeof flushApiSessionClientMessageCommitQueue>[0]);
+    expect(replayedLocalIds).toEqual([]);
 
     sessionSocketStub.connected = true;
     expect(supervisorOnConnected).not.toBeNull();
     await expect(supervisorOnConnected?.()).resolves.toBeUndefined();
-    expect(sessionSocketStub.emitWithAck).toHaveBeenLastCalledWith(
-      'message',
-      expect.objectContaining({
-        localId: 'reconnect-replay-1',
-        messageRole: 'user',
-      }),
-    );
+    expect(replayedLocalIds).toEqual(localIds);
+    await supervisorOnConnected?.();
+    expect(replayedLocalIds).toEqual(localIds);
+  });
+
+  it.each(['direct', 'persisted'])('rejects a required %s commit when the server refuses it', async (storage) => {
+    vi.resetModules();
+    sessionSocketStub = createApiSessionSocketStub({
+      connected: true,
+      emitWithAck: async (event, payload) => event === 'message'
+        ? { ok: false, error: 'forbidden' }
+        : resolveApiSessionSocketDefaultAck(event, payload),
+    });
+    userSocketStub = createApiSessionSocketStub({ connected: true });
+    vi.stubEnv('HAPPIER_TRANSCRIPT_STORAGE', storage);
+
+    const { ApiSessionClient } = await import('./sessionClient');
+    const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1' }));
+    createdClients.push(client);
+
+    await expect(client.sendUserTextMessageCommitted('hello', { localId: 'required-rejected' })).rejects.toThrow('forbidden');
   });
 
   it('awaits an ack for committed direct user messages', async () => {

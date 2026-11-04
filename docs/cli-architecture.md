@@ -87,6 +87,15 @@ input or waiting for a reconnect. Other errors retain their original meaning;
 no timeout budget, wire format, or acceptance authority changes. This correction
 is development source, not a statement of stable release availability.
 
+In development source, `ApiSessionClient.commitSessionMessage` shares socket
+acknowledgement handling across direct and persisted transcript storage. An
+explicit rejection settles only that message's retry intent and is recorded in
+the normal file log. Required commits reject their caller; best-effort commits
+return without interrupting replay of later offline messages. Missing
+acknowledgements retain each storage mode's existing confirmation and retry
+behavior. This does not add retry or process-restart durability for an explicitly
+rejected best-effort message.
+
 ## Direct-session JSONL read progress (development)
 
 The shared readers in `api/directSessions/filePaging` own byte paging for native
