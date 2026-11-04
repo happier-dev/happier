@@ -177,6 +177,9 @@ export const QualifiedAccountDetailView = React.memo(function QualifiedAccountDe
         onDisconnect,
     } = props;
     const testID = props.testID ?? DEFAULT_TEST_ID;
+    const planLabel = props.planLabel?.trim();
+    const planIncludesService = planLabel === serviceLabel || planLabel?.startsWith(`${serviceLabel} `);
+    const servicePlanLabel = planIncludesService ? planLabel : [serviceLabel, planLabel].filter(Boolean).join(' ');
 
     const [disconnectPending, setDisconnectPending] = React.useState(false);
     const [renameOpen, setRenameOpen] = React.useState(false);
@@ -266,7 +269,7 @@ export const QualifiedAccountDetailView = React.memo(function QualifiedAccountDe
                             </View>
                         ) : null}
                         <Text testID={`${testID}:meta:plan`} style={stylesheet.factText} numberOfLines={1}>
-                            {[serviceLabel, props.planLabel].filter(Boolean).join(' ')}
+                            {servicePlanLabel}
                         </Text>
                         {providerAccount && !compact ? (
                             <ConnectedAccountIdentityText

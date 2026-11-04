@@ -226,6 +226,18 @@ describe('QualifiedAccountDetailView', () => {
         expect(screen.findByTestId('qualified-account-detail:configuration')).toBeNull();
     });
 
+    it.each([
+        ['ChatGPT', 'ChatGPT Pro', 'ChatGPT Pro'],
+        ['ChatGPT', 'ChatGPT Pro (Max)', 'ChatGPT Pro (Max)'],
+        ['ChatGPT', 'ChatGPT', 'ChatGPT'],
+        ['ChatGPT', 'ChatGPTish Pro', 'ChatGPT ChatGPTish Pro'],
+        ['Codex', 'Pro', 'Codex Pro'],
+        ['ChatGPT', null, 'ChatGPT'],
+    ] as const)('composes the %s service and %s plan without repeating its service identity', async (serviceLabel, planLabel, expected) => {
+        const screen = await renderDetail({ serviceLabel, planLabel });
+        expect(metaTextOf(screen.root, 'qualified-account-detail:meta:plan')).toBe(expected);
+    });
+
     it('says who the account is in its header: the email, the service and plan, and the provider account id (lab csvc D1)', async () => {
         const screen = await renderDetail({
             providerEmail: 'work@example.com',
