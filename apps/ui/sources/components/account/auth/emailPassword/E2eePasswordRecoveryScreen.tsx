@@ -13,7 +13,11 @@ import { presentFirstKeyCredentialLifecycle } from '@/components/account/present
 import { SecretKeyEntryForm, type SecretKeyEntrySubmitResult } from '@/components/account/restore/SecretKeyEntryForm';
 import { usePortableHomeLinkTarget } from '@/components/teams/join/teamJoinTarget';
 import { Text } from '@/components/ui/text/Text';
-import { WizardModalShell } from '@/components/onboarding';
+import { AuthRouteStepFrame } from '@/components/onboarding/ui/AuthRouteStepFrame';
+import { HomeContextLine } from '@/components/onboarding/ui/ActiveRelaySummary';
+import { useHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
+import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
+import { toServerUrlDisplay } from '@/sync/domains/server/url/serverUrlDisplay';
 import { encodeBase64 } from '@/encryption/base64';
 import {
     fetchAccountSecurity,
@@ -82,6 +86,19 @@ export const E2eePasswordRecoveryScreen = React.memo(function E2eePasswordRecove
         const target = resolveHomeAuthenticationTarget(portableTarget.target);
         return target ? { kind: 'ready', target } : RECOVERY_TARGET_UNAVAILABLE;
     }, [portableTarget]);
+    // The Home is named by the Home label owner: its name, "This Home", or its address only when
+    // an unnamed Home has nothing else to tell it apart.
+    const targetProfile = React.useMemo(
+        () => (targetState.kind === 'ready' ? getServerProfileById(targetState.target.serverId) : null),
+        [targetState],
+    );
+    const targetHomeLabel = useHomeDisplayLabel(targetProfile);
+    const homeContext = targetState.kind === 'ready' ? (
+        <HomeContextLine
+            testID="e2ee-password-recovery-home"
+            label={targetProfile ? targetHomeLabel : toServerUrlDisplay(targetState.target.canonicalServerUrl)}
+        />
+    ) : undefined;
     const destination = useExactHomeDestination({
         refreshAuth: auth.refreshFromActiveServer,
         onFocused: React.useCallback(() => router.replace('/'), [router]),
@@ -244,16 +261,14 @@ export const E2eePasswordRecoveryScreen = React.memo(function E2eePasswordRecove
     // visible retry rather than being dropped back onto the previous Home.
     if (destination.state.kind !== 'idle') {
         const destinationState = destination.state;
-        return <WizardModalShell
+        return <AuthRouteStepFrame
             testID="e2ee-password-recovery"
-            stepIndex={1}
-            stepCount={2}
-            showSkip={false}
+            progress={{ index: 1, count: 2 }}
             title={t('settingsAccount.nativePassword.resetTitle')}
             onBack={() => router.back()}
-            {...(destinationState.kind === 'blocked'
-                ? { onPrimary: destinationState.retry, primaryLabel: t('common.retry') }
-                : {})}
+            primary={destinationState.kind === 'blocked'
+                ? { label: t('common.retry'), onPress: destinationState.retry }
+                : undefined}
         >
             <Text
                 testID="e2ee-password-recovery-destination-home"
@@ -264,62 +279,59 @@ export const E2eePasswordRecoveryScreen = React.memo(function E2eePasswordRecove
                     ? t('settingsAccount.nativePassword.working')
                     : t('settingsAccount.nativePassword.serverUnavailable')}
             </Text>
-        </WizardModalShell>;
+        </AuthRouteStepFrame>;
     }
 
     if (targetState.kind !== 'ready') {
         const retryTarget = targetState.kind === 'unavailable' ? targetState.retry : undefined;
-        return <WizardModalShell
+        return <AuthRouteStepFrame
             testID="e2ee-password-recovery"
-            stepIndex={0}
-            stepCount={2}
-            showSkip={false}
+            progress={{ index: 0, count: 2 }}
             onBack={() => router.back()}
             title={t('settingsAccount.nativePassword.forgotTitle')}
-            {...(retryTarget ? { onPrimary: retryTarget, primaryLabel: t('common.retry') } : {})}
+            primary={retryTarget ? { label: t('common.retry'), onPress: retryTarget } : undefined}
         >
             <Text testID="e2ee-password-recovery-target-state" accessibilityRole={targetState.kind === 'unavailable' ? 'alert' : undefined}>
                 {targetState.kind === 'loading'
                     ? t('settingsAccount.nativePassword.working')
                     : t('settingsAccount.nativePassword.serverUnavailable')}
             </Text>
-        </WizardModalShell>;
+        </AuthRouteStepFrame>;
     }
 
     if (phase === 'key') {
-        return <WizardModalShell
+        return <AuthRouteStepFrame
             testID="e2ee-password-recovery"
-            stepIndex={0}
-            stepCount={2}
-            showSkip={false}
+            progress={{ index: 0, count: 2 }}
             onBack={() => router.back()}
             title={t('settingsAccount.nativePassword.useRecoveryKey')}
-            subtitle={targetState.target.canonicalServerUrl}
+            context={homeContext}
         >
             <SecretKeyEntryForm
                 description={t('connect.restoreWithSecretKeyDescription')}
                 submitTitle={t('settingsAccount.nativePassword.continue')}
                 onSubmit={handleKey}
             />
-        </WizardModalShell>;
+        </AuthRouteStepFrame>;
     }
 
-    return <WizardModalShell
+    return <AuthRouteStepFrame
         testID="e2ee-password-recovery"
-        stepIndex={1}
-        stepCount={2}
-        showSkip={false}
+        progress={{ index: 1, count: 2 }}
         title={t('settingsAccount.nativePassword.resetTitle')}
         subtitle={t('settingsAccount.nativePassword.resetChooseNew')}
+        context={homeContext}
         onBack={() => {
             clearRecoveryContext(contextRef);
             setDraft(createEmailPasswordDraft());
             setProblem(null);
             setPhase('key');
         }}
-        onPrimary={() => { void submitPassword(); }}
-        primaryLabel={t('settingsAccount.nativePassword.setNewPassword')}
-        primaryDisabled={busy}
+        primary={{
+            label: t('settingsAccount.nativePassword.setNewPassword'),
+            onPress: () => { void submitPassword(); },
+            disabled: busy,
+        }}
     >
         <View style={styles.fields}>
             <PasswordField
@@ -354,7 +366,7 @@ export const E2eePasswordRecoveryScreen = React.memo(function E2eePasswordRecove
             ) : null}
             {busy ? <Text accessibilityLiveRegion="polite">{t('settingsAccount.nativePassword.working')}</Text> : null}
         </View>
-    </WizardModalShell>;
+    </AuthRouteStepFrame>;
 });
 
 const styles = StyleSheet.create((theme) => ({

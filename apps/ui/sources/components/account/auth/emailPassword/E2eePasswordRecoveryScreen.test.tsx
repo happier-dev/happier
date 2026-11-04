@@ -26,12 +26,13 @@ const boundary = vi.hoisted(() => ({
 vi.mock('expo-router', () => ({ useRouter: () => ({ replace: boundary.replace, back: boundary.back }) }));
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
-vi.mock('@/components/onboarding', async () => {
+vi.mock('@/components/onboarding/ui/AuthRouteStepFrame', async () => {
     const ReactModule = await import('react');
     return {
-        WizardModalShell: (props: React.PropsWithChildren<Record<string, unknown>>) => ReactModule.createElement(
-            'WizardModalShell',
+        AuthRouteStepFrame: (props: React.PropsWithChildren<Record<string, unknown>>) => ReactModule.createElement(
+            'AuthRouteStepFrame',
             props,
+            (props.context as React.ReactNode) ?? null,
             props.children,
             typeof props.onBack === 'function'
                 ? ReactModule.createElement('button', {
@@ -39,10 +40,10 @@ vi.mock('@/components/onboarding', async () => {
                     onPress: props.onBack,
                 })
                 : null,
-            typeof props.onPrimary === 'function'
+            props.primary && typeof (props.primary as { onPress?: unknown }).onPress === 'function'
                 ? ReactModule.createElement('button', {
                     testID: `${String(props.testID)}-primary`,
-                    onPress: props.onPrimary,
+                    onPress: (props.primary as { onPress: () => void }).onPress,
                 })
                 : null,
         ),
@@ -114,6 +115,14 @@ it('can leave recovery before proving a key without authenticating or mutating a
     expect(boundary.authGetTokenAtEndpoint).not.toHaveBeenCalled();
     expect(boundary.prepare).not.toHaveBeenCalled();
     expect(boundary.submit).not.toHaveBeenCalled();
+});
+
+it('names the Home being recovered by its label, not its raw address', async () => {
+    screen = await renderScreen(<E2eePasswordRecoveryScreen homeTarget="srv_home_a" />);
+    await act(async () => {});
+
+    expect(screen.findHostByTestId('e2ee-password-recovery-home')?.props.accessibilityLabel).toBe('Home A');
+    expect(screen.findAll((node) => node.props.children === HOME_A_URL)).toHaveLength(0);
 });
 
 it('replaces the E2EE password through one existing-Account key proof before persisting exact-Home credentials', async () => {

@@ -4,7 +4,7 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import type { TeamAuthEntrySelection } from './TeamAuthEntrySurface';
 import { TeamEntryIdentity } from './TeamEntryIdentity';
-import { TeamEntryShell } from './TeamEntryShell';
+import { UnauthenticatedRouteShell } from '@/components/onboarding/unauthShell';
 
 /**
  * The sign-in step a person reaches by choosing a method on a Team entry page.
@@ -18,7 +18,7 @@ export function TeamAuthenticationStep(props: Readonly<{
 }>) {
     const { selection } = props;
     return (
-        <TeamEntryShell
+        <UnauthenticatedRouteShell
             testID="team-auth-step-shell"
             stepId={`team-auth-step:${selection.action.methodId}:${selection.action.action}`}
             onBack={props.onBack}
@@ -32,7 +32,7 @@ export function TeamAuthenticationStep(props: Readonly<{
                 />
                 {props.children}
             </View>
-        </TeamEntryShell>
+        </UnauthenticatedRouteShell>
     );
 }
 

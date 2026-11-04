@@ -11,6 +11,8 @@ export {
     UnauthenticatedSplitShell,
     type UnauthenticatedSplitShellProps,
 } from './UnauthenticatedSplitShell';
+export { UnauthenticatedRouteShell } from './UnauthenticatedRouteShell';
+export { UnauthenticatedStep, type UnauthenticatedStepProps } from './UnauthenticatedStep';
 export {
     StagePane,
     type StagePanePlanetRecedeProps,

@@ -211,15 +211,21 @@ vi.mock('expo-router', async () => {
     return expoRouterMock.module;
 });
 
-vi.mock('@/auth/context/AuthContext', () => ({
-    useAuth: () => ({
+function harnessAuth() {
+    return {
         isAuthenticated: authState.isAuthenticated,
         credentials: authState.credentials,
         login: loginSpy,
         loginWithCredentials: loginWithCredentialsSpy,
         refreshFromActiveServer: refreshFromActiveServerSpy,
         logout: vi.fn(async () => {}),
-    }),
+    };
+}
+
+// The route's step frame reads the optional projection to choose the welcome pane or the card.
+vi.mock('@/auth/context/AuthContext', () => ({
+    useAuth: harnessAuth,
+    useOptionalAuth: harnessAuth,
 }));
 
 vi.mock(

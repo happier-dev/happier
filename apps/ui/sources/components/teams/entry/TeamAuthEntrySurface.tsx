@@ -46,7 +46,7 @@ import { TeamJoinedCard } from '@/components/teams/join/TeamJoinedCard';
 import { useTeamInvitationPreview, type TeamInvitationPreviewState } from '@/hooks/teams/useTeamInvitationPreview';
 import { useFeatureDecision } from '@/hooks/server/useFeatureDecision';
 import { resolveFeatureAvailabilityArm } from '@/hooks/server/resolveFeatureAvailabilityArm';
-import { TeamEntryShell } from '@/components/teams/entry/TeamEntryShell';
+import { UnauthenticatedRouteShell } from '@/components/onboarding/unauthShell';
 import { TEAM_ENTRY_LOGO_SIZE, TeamEntryIdentity, type TeamEntryLogo } from '@/components/teams/entry/TeamEntryIdentity';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
@@ -1050,13 +1050,13 @@ export const TeamAuthEntrySurface = React.memo(function TeamAuthEntrySurface(pro
     }
 
     return (
-        <TeamEntryShell
+        <UnauthenticatedRouteShell
             testID="team-auth-entry-shell"
             stepId={`team-auth-entry:${loadState.kind}`}
             onBack={props.onBack}
         >
             {content}
-        </TeamEntryShell>
+        </UnauthenticatedRouteShell>
     );
 });
 

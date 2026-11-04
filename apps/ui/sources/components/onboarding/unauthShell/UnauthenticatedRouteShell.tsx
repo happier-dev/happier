@@ -2,17 +2,18 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
-import { UnauthenticatedSplitShell } from '@/components/onboarding/unauthShell';
+import { UnauthenticatedSplitShell } from './UnauthenticatedSplitShell';
 
 const NOOP = () => {};
 
 /**
- * The one shell of every public Team entry step: the invitation and Team sign-in pages, the method form
- * a person picks there, their loading, failure and "you've joined" states. Each starts at the top of the
- * workflow pane under the same mark, so moving between them changes what sits there and never where it
- * starts; a state card does not drift to the middle of the pane.
+ * The shell of every signed-out route that is one step rather than the welcome wizard itself: Team
+ * invitation and sign-in, standalone recovery (key, lost access, restore, show QR) and terminal
+ * sign-in. Each sits in the welcome split's workflow pane at the top, under the compact mark on a
+ * phone, so moving between them changes what sits there and never where it starts; a state card
+ * does not drift to the middle of the pane.
  */
-export function TeamEntryShell(props: Readonly<{
+export function UnauthenticatedRouteShell(props: Readonly<{
     testID: string;
     /** Identifies the step; a change fades one step into the next. */
     stepId: string;

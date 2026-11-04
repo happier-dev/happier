@@ -16,7 +16,7 @@ import { t } from '@/text';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import type { TeamInvitationPostAuthContinuationV1 } from '@happier-dev/protocol/teams';
 import { TeamJoinScreen } from '@/components/teams/join/TeamJoinScreen';
-import { TeamEntryShell } from '@/components/teams/entry/TeamEntryShell';
+import { UnauthenticatedRouteShell } from '@/components/onboarding/unauthShell';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 
 function TeamSignInStateShell(props: Readonly<{
@@ -24,7 +24,7 @@ function TeamSignInStateShell(props: Readonly<{
     stepId: string;
     onBack: () => void;
 }>) {
-    return <TeamEntryShell testID="team-sign-in-shell" stepId={props.stepId} onBack={props.onBack}>{props.children}</TeamEntryShell>;
+    return <UnauthenticatedRouteShell testID="team-sign-in-shell" stepId={props.stepId} onBack={props.onBack}>{props.children}</UnauthenticatedRouteShell>;
 }
 
 /**

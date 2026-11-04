@@ -165,7 +165,8 @@ describe('oauth/[provider] return (provisioning choice)', () => {
       }));
       await press;
 
-      expect(loginWithCredentialsSpy).toHaveBeenCalledWith(
+      // The choice is the shared button, whose press settles before the finalize it started.
+      await vi.waitFor(() => expect(loginWithCredentialsSpy).toHaveBeenCalledWith(
         { token: 'token-home-a' },
         {
           target: {
@@ -173,7 +174,8 @@ describe('oauth/[provider] return (provisioning choice)', () => {
             serverId: 'srv_oauth_home_a',
           },
         },
-      );
+      ));
+      await vi.waitFor(() => expect(setActiveServerAndSwitchSpy).toHaveBeenCalled());
       expect(setActiveServerAndSwitchSpy).toHaveBeenCalledWith({
         serverId: 'srv_oauth_home_a',
         scope: 'device',

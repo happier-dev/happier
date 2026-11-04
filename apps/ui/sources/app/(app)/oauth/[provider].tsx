@@ -1,8 +1,9 @@
 import React from 'react';
-import { Linking, Platform, Pressable, View } from 'react-native';
+import { Linking, Platform, View } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { useUnistyles } from 'react-native-unistyles';
 
 import {
@@ -40,11 +41,11 @@ import { createServerUrlComparableKey } from '@/sync/domains/server/url/serverUr
 import { setActiveServerAndSwitch } from '@/sync/domains/server/activeServerSwitch';
 import { resolveRoutineServerSelectionScope } from '@/sync/domains/server/selection/serverSelectionScope';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
-import { Text, TextInput } from '@/components/ui/text/Text';
+import { Text } from '@/components/ui/text/Text';
 import { getRandomBytes } from '@/platform/cryptoRandom';
 import { trackAccountCreated, trackAccountRestored } from '@/track';
 
-import { WizardModalShell } from '@/components/onboarding/ui/WizardModalShell';
+import { AuthRouteStepFrame } from '@/components/onboarding/ui/AuthRouteStepFrame';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { admitInternalRouteHref, normalizeInternalReturnPath } from '@/utils/path/routeUtils';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
@@ -1712,101 +1713,59 @@ function OAuthProviderReturnBody() {
                 ? usernameHint
                 : t('setupOnboarding.resumeIntentBody');
 
+    // The return lands in the step frame (the welcome pane signed out): its choices and field are
+    // the shared button and field owners on the frame's column, not a centred island of their own.
     const body = provisioningChoiceOpen ? (
-        <View style={{ width: '100%', maxWidth: 420, alignSelf: 'center', gap: theme.space.s12 }}>
-            <Pressable
+        <View style={{ width: '100%', gap: theme.space.s12 }}>
+            <RoundButton
                 testID="oauth-provisioning-choice-e2ee"
-                onPress={() => chooseProvisioningMode('e2ee')}
-                style={{
-                    paddingVertical: theme.space.s10,
-                    borderRadius: 8,
-                    backgroundColor: theme.colors.button.primary.background,
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                }}
-            >
-                <Text style={{ color: theme.colors.button.primary.tint }}>
-                    {t('welcome.chooseEncryptionEncrypted')}
-                </Text>
-            </Pressable>
-
-            <Pressable
+                size="normal"
+                title={t('welcome.chooseEncryptionEncrypted')}
+                action={async () => { await chooseProvisioningMode('e2ee'); }}
+                disabled={busy}
+            />
+            <RoundButton
                 testID="oauth-provisioning-choice-plain"
-                onPress={() => chooseProvisioningMode('plain')}
-                style={{
-                    paddingVertical: theme.space.s10,
-                    borderRadius: 8,
-                    borderWidth: 1,
-                    borderColor: theme.colors.border.default,
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                }}
-            >
-                <Text style={{ color: theme.colors.text.primary }}>
-                    {t('welcome.chooseEncryptionPlain')}
-                </Text>
-            </Pressable>
-
+                size="normal"
+                display="secondary"
+                title={t('welcome.chooseEncryptionPlain')}
+                action={async () => { await chooseProvisioningMode('plain'); }}
+                disabled={busy}
+            />
             {busy ? <ActivitySpinner size="small" /> : null}
         </View>
     ) : usernameHint != null ? (
-        <View style={{ width: '100%', maxWidth: 420, alignSelf: 'center', gap: theme.space.s12 }}>
-            <TextInput
+        <View style={{ width: '100%', gap: theme.space.s16 }}>
+            <FieldTextInput
                 testID="oauth-username-input"
                 value={usernameValue}
                 onChangeText={setUsernameValue}
                 autoCapitalize="none"
-                autoCorrect={false}
+                accessibilityLabel={t('profile.username')}
                 placeholder={t('profile.username')}
-                placeholderTextColor={theme.colors.input.placeholder}
-                style={{
-                    borderWidth: 1,
-                    borderColor: theme.colors.border.default,
-                    borderRadius: 8,
-                    paddingHorizontal: theme.space.s12,
-                    paddingVertical: theme.space.s10,
-                    backgroundColor: theme.colors.input.background,
-                    color: theme.colors.input.text,
-                }}
+                returnKeyType="done"
+                onSubmitEditing={submitUsername}
             />
-            <View style={{ flexDirection: 'row', gap: theme.space.s12 }}>
-                <Pressable
-                    testID="oauth-username-cancel"
-                    onPress={cancelUsername}
-                    style={{
-                        flex: 1,
-                        paddingVertical: theme.space.s10,
-                        borderRadius: 8,
-                        borderWidth: 1,
-                        borderColor: theme.colors.border.default,
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                    }}
-                >
-                    <Text style={{ color: theme.colors.text.primary }}>{t('common.cancel')}</Text>
-                </Pressable>
-                <Pressable
-                    testID="oauth-username-save"
-                    onPress={submitUsername}
-                    style={{
-                        flex: 1,
-                        paddingVertical: theme.space.s10,
-                        borderRadius: 8,
-                        backgroundColor: theme.colors.button.primary.background,
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                    }}
-                >
-                    <Text style={{ color: theme.colors.button.primary.tint }}>{t('common.save')}</Text>
-                </Pressable>
-            </View>
-            {busy ? <ActivitySpinner size="small" /> : null}
+            <RoundButton
+                testID="oauth-username-save"
+                size="normal"
+                title={t('common.save')}
+                onPress={submitUsername}
+                loading={busy}
+            />
+            <RoundButton
+                testID="oauth-username-cancel"
+                size="normal"
+                display="inverted"
+                title={t('common.cancel')}
+                onPress={cancelUsername}
+            />
         </View>
-    ) : (
-        <View style={{ alignItems: 'center', justifyContent: 'center' }}>
-            {busy ? <ActivitySpinner size="small" /> : null}
+    ) : busy ? (
+        <View style={{ alignItems: 'flex-start' }}>
+            <ActivitySpinner size="small" />
         </View>
-    );
+    ) : null;
 
     const visibleAccountDirectoryJourney = (resolvedDirectoryReturn || persistedAccountDirectoryReturn)
         ? accountDirectoryJourney ?? {
@@ -1822,25 +1781,26 @@ function OAuthProviderReturnBody() {
 
     if (teamFailure) {
         const presentation = presentTeamAuthenticationFailure(teamFailure.code);
+        // A terminal answer of the sign-in step: it reads in the step frame like every other
+        // terminal step (heading, the cause, the way forward), never as a card floating outside it.
         return (
-            <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-                <SurfaceStateCard
-                    testID="oauth-team-failure"
-                    kind={presentation.kind}
-                    title={presentation.title}
-                    reason={presentation.body}
-                    diagnosticCode={teamFailure.code}
-                    action={{
-                        label: t('teams.entry.returnToTeamSignIn'),
-                        onPress: () => router.replace(admitInternalRouteHref(teamFailure.returnTo)),
-                    }}
-                    secondaryAction={{
-                        label: t('teams.entry.returnToHappier'),
-                        onPress: () => router.replace('/'),
-                    }}
-                    accessibilitySemantics="alert"
-                />
-            </View>
+            <AuthRouteStepFrame
+                testID="oauth-team-failure"
+                title={presentation.title}
+                subtitle={presentation.body}
+                primary={{
+                    testID: 'oauth-team-failure-action',
+                    label: t('teams.entry.returnToTeamSignIn'),
+                    onPress: () => router.replace(admitInternalRouteHref(teamFailure.returnTo)),
+                }}
+                secondary={{
+                    testID: 'oauth-team-failure-secondary-action',
+                    label: t('teams.entry.returnToHappier'),
+                    onPress: () => router.replace('/'),
+                }}
+            >
+                {null}
+            </AuthRouteStepFrame>
         );
     }
 
@@ -1852,15 +1812,12 @@ function OAuthProviderReturnBody() {
             ? describeAccountServiceFailure(visibleAccountDirectoryJourney.failure)
             : null;
         return (
-            <WizardModalShell
+            <AuthRouteStepFrame
                 testID="oauth-return-wizard"
-                stepIndex={0}
-                stepCount={1}
                 title={t('settingsAccount.accountServiceOAuth.stages.signingIn')}
-                showBack={false}
-                showSkip={false}
-                onSecondary={canCancel ? cancelAccountDirectoryJourney : undefined}
-                secondaryLabel={t('common.cancel')}
+                secondary={canCancel
+                    ? { label: t('common.cancel'), onPress: () => { void cancelAccountDirectoryJourney(); } }
+                    : undefined}
                 footerHint={canCancel ? (
                     <Text testID="oauth-account-directory-cancel-note">
                         {t('settingsAccount.accountServiceOAuth.cancelNote')}
@@ -1877,24 +1834,24 @@ function OAuthProviderReturnBody() {
                         action={{ label: t('common.back'), onPress: recoverAccountDirectoryJourney }}
                     />
                 ) : (
-                    <ActivitySpinner size="small" />
+                    <View style={{ alignItems: 'flex-start' }}>
+                        <ActivitySpinner size="small" />
+                    </View>
                 )}
-            </WizardModalShell>
+            </AuthRouteStepFrame>
         );
     }
 
     return (
-        <WizardModalShell
+        <AuthRouteStepFrame
             testID="oauth-return-wizard"
-            stepIndex={1}
-            stepCount={3}
+            progress={{ index: 1, count: 3 }}
             title={wizardTitle}
             subtitle={wizardSubtitle}
             onBack={handleBack}
-            showSkip={false}
         >
             {body}
-        </WizardModalShell>
+        </AuthRouteStepFrame>
     );
 }
 
