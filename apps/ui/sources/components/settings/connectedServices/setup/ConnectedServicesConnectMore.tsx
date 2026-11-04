@@ -159,7 +159,7 @@ export function ConnectedServicesConnectMore(props: ConnectedServicesConnectMore
             return (
                 <SetupBlockTile
                     testID={`connected-services-connect-more:${entry.serviceKey}`}
-                    layout={phone ? 'row' : 'card'}
+                    layout={phone ? 'row' : 'wide'}
                     glyph={<ConnectedServiceMark legacyServiceId={entry.legacyServiceId} size="inline" />}
                     title={entry.label}
                     subtitle={signsInWithAnAccount(entry)
@@ -222,7 +222,7 @@ export function ConnectedServicesConnectMore(props: ConnectedServicesConnectMore
             renderTile: ({ open }) => (
                 <SetupBlockTile
                     testID="connected-services-connect-more:browse"
-                    layout={phone ? 'row' : 'card'}
+                    layout={phone ? 'row' : 'wide'}
                     glyph={(
                         <View style={styles.marks}>
                             {marked.map((entry) => (
@@ -248,7 +248,9 @@ export function ConnectedServicesConnectMore(props: ConnectedServicesConnectMore
     const grid = items.length > 0 ? (
         <SetupBlockGrid
             testID={`${props.testID ?? 'connected-services-connect-more'}.grid`}
-            columns={phone ? 1 : 3}
+            // Beside the other sections, Connect more is one list of rows like theirs (lab crHome-a); only the
+            // first run, which owns the page, lays its blocks out as cards.
+            columns={phone || props.layout === 'section' ? 1 : 3}
             items={items}
             openId={openId}
             onOpenChange={setOpenId}

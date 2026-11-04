@@ -16,12 +16,12 @@ export type SetupBlockAction = Readonly<{ label: string; testID: string; onPress
 /**
  * The standard set-up block body on its paper: a glyph (an icon, or a mark such as a service's brand),
  * the title, one sentence, and its button — at the foot of a desktop `card`, beneath the text of a phone
- * `row`. Only the buttons and the ✕ act, so no control is nested in another. A block whose body is
+ * `row`, at the end of the line of a `wide` row (a list of blocks beside other sections' rows). Only the buttons and the ✕ act, so no control is nested in another. A block whose body is
  * different (several actions, a footer line) puts its own body on `SetupBlockPaper` instead.
  */
 export const SetupBlockTile = React.memo(function SetupBlockTile(props: Readonly<{
     testID: string;
-    layout: 'card' | 'row';
+    layout: 'card' | 'row' | 'wide';
     icon?: IconName;
     /** A mark in place of the icon (brand marks, a monogram). */
     glyph?: React.ReactNode;
@@ -75,9 +75,10 @@ export const SetupBlockTile = React.memo(function SetupBlockTile(props: Readonly
                     />
                 ) : null}
                 <Text style={[styles.subtitle, card ? styles.subtitleCard : null]}>{props.subtitle}</Text>
-                {!card ? <View style={styles.rowActions}>{buttons}</View> : null}
+                {props.layout === 'row' ? <View style={styles.rowActions}>{buttons}</View> : null}
             </View>
             {card ? <View style={styles.footer}>{buttons}</View> : null}
+            {props.layout === 'wide' ? buttons : null}
         </SetupBlockPaper>
     );
 });
