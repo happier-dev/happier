@@ -118,6 +118,10 @@ describe('ProviderConnectionV1Schema endpoint overrides', () => {
       .toEqual([{ endpointTemplateId: 'chat', baseUrl: 'https://example.test/v1' }]);
     expect(ProviderConnectionV1Schema.safeParse({ ...base, endpointOverrides: [{ endpointTemplateId: 'chat', baseUrl: 'https://example.test/v1?token=secret' }] }).success).toBe(false);
     expect(ProviderConnectionV1Schema.safeParse({ ...base, endpointOverrides: [{ endpointTemplateId: 'chat', baseUrl: 'http://169.254.169.254/' }] }).success).toBe(false);
+    expect(ProviderConnectionV1Schema.parse({ ...base, endpointOverrides: [{ endpointTemplateId: 'chat', publicHeaders: { 'X-Policy': 'on' } }] }).endpointOverrides)
+      .toEqual([{ endpointTemplateId: 'chat', publicHeaders: { 'x-policy': 'on' } }]);
+    expect(ProviderConnectionV1Schema.safeParse({ ...base, endpointOverrides: [{ endpointTemplateId: 'chat' }] }).success).toBe(false);
+    expect(ProviderConnectionV1Schema.safeParse({ ...base, endpointOverrides: [{ endpointTemplateId: 'chat', publicHeaders: { Authorization: 'secret' } }] }).success).toBe(false);
   });
 
   it('rejects non-canonical machine map keys instead of collapsing them', () => {

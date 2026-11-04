@@ -9,6 +9,7 @@ import { areServerAccountScopesEqual, serverAccountScopeKeySuffix, type ServerAc
 import { getServerProfileById, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { resolveMachineRpcTargetServerId } from '@/sync/runtime/orchestration/serverScopedRpc/resolveMachineRpcTargetServerId';
 import * as client from './client';
+import type { UiActionOperation } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 
 const onExecuted = () => {};
@@ -68,7 +69,7 @@ export function useProviderActionClient(serverId: string | null | readonly (stri
     const methods = React.useMemo(() => {
         function bind<Input extends Readonly<{ serverId: string | null }>, Output>(
             method: (input: Input, approval?: client.ProviderActionApprovalOptions) => Promise<Output>,
-        ): (input: Input, options?: Readonly<{ signal?: AbortSignal; retainInvocationSignal?: AbortSignal }>) => Promise<Output> {
+        ): (input: Input, options?: Pick<UiActionOperation, 'confirmed'> & Readonly<{ signal?: AbortSignal; retainInvocationSignal?: AbortSignal }>) => Promise<Output> {
             return async (input, options) => {
                 const targetServerId = input.serverId ?? (requestedServerIds.length === 1 ? requestedServerIds[0] : null);
                 const lifetime = targetServerId ? lifetimes.get(resolveServerProfileScopeIdForIdentifier(targetServerId)) : undefined;
@@ -84,6 +85,7 @@ export function useProviderActionClient(serverId: string | null | readonly (stri
                 let pendingArtifactId: string | null = null;
                 try {
                     return await method(input, {
+                        ...(options?.confirmed ? { confirmed: options.confirmed } : {}),
                         scope: binding.scope,
                         signal,
                         ...(options?.retainInvocationSignal ? { retainInvocationSignal: options.retainInvocationSignal } : {}),

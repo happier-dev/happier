@@ -20,6 +20,7 @@ const account = createProviderSettingsAccountHarness();
 let serverId = '';
 let otherServerId = '';
 const { useProviderConnectionMutation } = await import('./useProviderConnectionMutation');
+const { useProviderEndpointConfiguration } = await import('./useProviderEndpointConfiguration');
 const { useProviderActionClient } = await import('@/providers/actions/useProviderActionClient');
 const resolveTarget = () => ({ machineId: 'machine-a', serverId });
 function deferred() {
@@ -107,6 +108,60 @@ describe('useProviderConnectionMutation', () => {
         expect(account.readCatalogRow()?.revision).toBe(2);
         expect(events).toEqual(['commit', 'refresh']);
         expect(account.catalogMutations).toHaveLength(1);
+        expect(providerHarness.state.requests).toEqual([]);
+    });
+
+    it('presents the authoritative policy change before person confirmation and cancels without writing', async () => {
+        const catalog = persistedCatalog();
+        await account.reset();
+        serverId = (await account.restore({ accountId: 'account-policy-confirmation', catalog, waivedActions: [] })).serverId;
+        const endpointTemplateId = customTemplate().endpointTemplates[0]!.id;
+        let confirmation: unknown;
+        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+        const executor = createDefaultActionExecutor({ presentUserActionConfirmation: async request => {
+            confirmation = request;
+            return false;
+        } });
+        const result = await executor.execute('providers.connections.endpoint.set', {
+            action: 'setEndpointOverride', connectionId: 'pc_a', expectedRevision: 1, scope: 'account', endpointTemplateId,
+            publicHeaders: { 'x-request-policy': 'deliberate' },
+        }, { surface: 'ui', serverId, authority: 'present_user', actionCaller: { kind: 'host' } });
+        expect(result).toMatchObject({ ok: false, errorCode: 'approval_canceled' });
+        expect(confirmation).toMatchObject({ preview: { providerEndpointPolicyReview: {
+            scope: 'account', before: { publicHeaders: {} }, after: { publicHeaders: { 'x-request-policy': 'deliberate' } },
+        } } });
+        expect(account.catalogMutations).toHaveLength(0);
+    });
+
+    it('edits and resets policy independently through the same Account Action without pinning an inherited address', async () => {
+        const endpointTemplateId = customTemplate().endpointTemplates[0]!.id;
+        const connection = createProviderConnectionViewFixture({ connectionId: 'pc_a' });
+        const refresh = async () => {};
+        const hook = await renderHook((props: { revision: number }) => {
+            const mutation = useProviderConnectionMutation({ resolveTarget, serverId, refresh });
+            const actions = useProviderActionClient(serverId);
+            return { ...useProviderEndpointConfiguration({ connection: { ...connection, revision: props.revision },
+                machineId: null, mutation, onChange: () => {} }), ready: actions.ready,
+                describe: actions.describeProviderConnections };
+        }, { initialProps: { revision: 1 } });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().ready).toBe(true));
+        expect(account.catalogMutations).toHaveLength(0);
+        expect(hook.getCurrent().endpoints).toBe(connection.endpoints);
+
+        await act(async () => { expect(await hook.getCurrent().patch({ endpointTemplateId, scope: 'account',
+            publicHeaders: { 'x-request-policy': 'deliberate' } })).toBe(true); });
+        expect(persistedCatalog().connections.find(row => row.id === 'pc_a')?.endpointOverrides).toEqual([
+            { endpointTemplateId, publicHeaders: { 'x-request-policy': 'deliberate' } },
+        ]);
+        const view = await hook.getCurrent().describe({ serverId, connectionId: 'pc_a' });
+        expect(view).toMatchObject({ status: 'success', connections: [{ endpoints: [{
+            baseUrl: 'https://models.example.test/v1', publicHeaders: { 'x-request-policy': 'deliberate' },
+            publicHeaderSources: { 'x-request-policy': 'accountOverride' },
+        }] }] });
+
+        await hook.rerender({ revision: 2 });
+        await act(async () => { expect(await hook.getCurrent().patch({ endpointTemplateId, scope: 'account', publicHeaders: null })).toBe(true); });
+        expect(persistedCatalog().connections.find(row => row.id === 'pc_a')?.endpointOverrides ?? []).toEqual([]);
         expect(providerHarness.state.requests).toEqual([]);
     });
 

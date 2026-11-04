@@ -2,7 +2,8 @@ import { PROVIDER_SETTINGS_LIMITS_V1 } from '@happier-dev/protocol/providers/set
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { readOwnRecordValue } from '@happier-dev/protocol/providers/ownRecordValue';
 import { resolveProviderGrantV1 } from '@happier-dev/protocol/providers/settings/operationsV1';
-import { resolveProviderManagedRuntimeDeclarationV1 } from '@happier-dev/protocol/providers/contributions';
+import { resolveProviderManagedRuntimeDeclarationV1, providerEndpointPolicySecurityFactsV1 } from '@happier-dev/protocol/providers/contributions';
+import { resolveEffectiveProviderEndpointV1 } from '@happier-dev/protocol/providers/connections/v1';
 import { projectAvailableProviderContributionsV1 } from '@happier-dev/protocol/providers/connections/sourceFactsV1';
 import { describeAccountProviderConnectionV1 } from '@happier-dev/protocol/providers/connections/accountProviderActionV1';
 import type { ResolvedProviderManagedConnectedAccountPurposeDeclarationV1 } from '@happier-dev/protocol';
@@ -157,21 +158,10 @@ export async function describeProviderConnections(
       const endpointTemplates = connection.source.kind === 'custom'
         ? connection.source.template.endpointTemplates
         : contribution?.definition.endpointTemplates ?? [];
-      const accountOverrides = new Map((connection.endpointOverrides ?? [])
-        .map((override) => [override.endpointTemplateId, override.baseUrl]));
-      const machineOverrides = new Map((readOwnRecordValue(
-        connection.endpointOverridesByMachineId,
-        input.machineId,
-      ) ?? []).map((override) => [override.endpointTemplateId, override.baseUrl]));
       const endpointHierarchy = (template: (typeof endpointTemplates)[number]) => {
-        const defaultBaseUrl = template.baseUrl
-          ?? ('localUrlCandidates' in template && template.localUrlCandidates?.length === 1
-            ? template.localUrlCandidates[0]
-            : null)
-          ?? null;
-        const accountOverrideBaseUrl = accountOverrides.get(template.id) ?? null;
-        const machineOverrideBaseUrl = machineOverrides.get(template.id) ?? null;
-        return { defaultBaseUrl, accountOverrideBaseUrl, machineOverrideBaseUrl };
+        const { ready: _ready, reason: _reason, ...effective } = resolveEffectiveProviderEndpointV1({ connection, template, machineId: input.machineId });
+        return { ...effective, ...providerEndpointPolicySecurityFactsV1(template),
+          ...(template.publicHeaderHints ? { publicHeaderHints: template.publicHeaderHints } : {}) };
       };
       const dnsEvidence = await deps.collectDnsEvidence({
         providerSettings: snapshot.providerSettings,
@@ -214,7 +204,7 @@ export async function describeProviderConnections(
       const accountState = accountView.grants.accountState;
       const machineState = machineGrantResolution?.state ?? (machineGrant ? 'stale' as const : 'absent' as const);
       const effectiveState = effectiveGrantResolution?.state
-        ?? (resolution.status === 'endpoint_unresolved' && machineOverrides.size === 0
+        ?? (resolution.status === 'endpoint_unresolved' && (readOwnRecordValue(connection.endpointOverridesByMachineId, input.machineId)?.length ?? 0) === 0
           ? accountState : 'absent' as const);
       const runtimeProjection = resolved && resolved.record.authorization.authorized
         ? await deps.runtimeSummary({
@@ -288,45 +278,12 @@ export async function describeProviderConnections(
           }
         : { kind: 'external' };
       const endpoints: ProviderConnectionView['endpoints'] =
-        resolved?.record.deployment.kind === 'external'
-          ? resolved.record.endpoints.map((endpoint) => {
-              const template = endpointTemplates.find((candidate) =>
-                candidate.id === endpoint.endpointTemplateId);
-              const hierarchy = template
-                ? endpointHierarchy(template)
-                : { defaultBaseUrl: null, accountOverrideBaseUrl: null, machineOverrideBaseUrl: null };
-              return {
-                endpointTemplateId: endpoint.endpointTemplateId,
-                protocol: endpoint.protocol,
-                baseUrl: endpoint.normalizedUrl,
-                effectiveSource: endpoint.source === 'machine_override'
-                  ? 'machineOverride' as const
-                  : endpoint.source === 'account_override'
-                    ? 'accountOverride' as const
-                    : 'template' as const,
-                ...hierarchy,
-              };
-            })
-          : connection.deployment.kind === 'external'
-            ? endpointTemplates.flatMap((template) => {
-                const hierarchy = endpointHierarchy(template);
-                const baseUrl = hierarchy.machineOverrideBaseUrl
-                  ?? hierarchy.accountOverrideBaseUrl
-                  ?? hierarchy.defaultBaseUrl;
-                if (!baseUrl) return [];
-                return [{
-                  endpointTemplateId: template.id,
-                  protocol: template.protocol,
-                  baseUrl,
-                  effectiveSource: hierarchy.machineOverrideBaseUrl
-                    ? 'machineOverride' as const
-                    : hierarchy.accountOverrideBaseUrl
-                      ? 'accountOverride' as const
-                      : 'template' as const,
-                  ...hierarchy,
-                }];
-              })
-            : [];
+        connection.deployment.kind === 'external' ? endpointTemplates.map(template => {
+          const hierarchy = endpointHierarchy(template);
+          const endpoint = resolved?.record.endpoints.find(value => value.endpointTemplateId === template.id);
+          return { endpointTemplateId: template.id, protocol: template.protocol, ...hierarchy,
+            baseUrl: endpoint?.normalizedUrl ?? hierarchy.baseUrl };
+        }) : [];
       return {
         connectionId: connection.id,
         contributionKey: connection.source.kind === 'contribution' ? connection.source.contributionKey : null,

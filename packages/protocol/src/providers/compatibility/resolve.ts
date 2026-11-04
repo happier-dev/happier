@@ -154,7 +154,7 @@ export type ResolveProviderBindingCompatibilityInputV1 = Readonly<{
 }>;
 
 type ProviderBindingSourceCompatibilityInputV1 = Omit<ResolveProviderBindingCompatibilityInputV1, 'endpoints'> & Readonly<{
-  endpoints: readonly Pick<ProviderEndpointTemplateV1, 'id' | 'protocol' | 'capabilities'>[];
+  endpoints: readonly Pick<ProviderEndpointTemplateV1, 'id' | 'protocol' | 'capabilities' | 'modelIdPattern'>[];
 }>;
 
 function findCompatibilityOverride(
@@ -182,6 +182,7 @@ function resolveProviderBindingCompatibilityV1(
   params.agent.acceptsProtocols.forEach((protocol, rank) => {
     const endpoint = params.endpoints.find((candidate) => candidate.protocol === protocol);
     if (!endpoint) return;
+    if (params.model && endpoint.modelIdPattern !== undefined && !new RegExp(endpoint.modelIdPattern, 'u').test(params.model.id)) return;
     const compatibilityOverride = findCompatibilityOverride(
       compatibilityOverrides,
       agentTargetKey,
@@ -343,8 +344,9 @@ function resolveCompatibilityWithFingerprint(
 ): Readonly<{ result: ProviderBindingCompatibilityV1; compatibilityFingerprint: string }> {
   if ('result' in params) throw new TypeError('Compatibility result is derived by the canonical resolver');
   const agentTargetKey = ProviderAgentTargetKeySchema.parse(params.agentTargetKey);
-  const endpoints = params.endpoints.map(({ id, protocol, capabilities }) =>
-    ProviderModelBindingSourceV1Schema.shape.endpoint.parse({ id, protocol, capabilities }));
+  const endpoints = params.endpoints.map(({ id, protocol, capabilities, modelIdPattern }) =>
+    ProviderModelBindingSourceV1Schema.shape.endpoint.parse({ id, protocol, capabilities,
+      ...(modelIdPattern !== undefined ? { modelIdPattern } : {}) }));
   if (new Set(endpoints.map((endpoint) => endpoint.protocol)).size !== endpoints.length) {
     throw new TypeError('Compatibility inputs require at most one endpoint per protocol');
   }
@@ -378,6 +380,7 @@ function resolveCompatibilityWithFingerprint(
     const compatibilityOverride = findCompatibilityOverride(compatibilityOverrides, agentTargetKey, protocol);
     return [{
       protocol,
+      ...(endpoint.modelIdPattern !== undefined ? { modelIdPattern: endpoint.modelIdPattern } : {}),
       capabilities: Object.fromEntries(requiredCapabilities.map((capability) => [
         capability,
         endpoint.capabilities[capability],
@@ -393,7 +396,7 @@ function resolveCompatibilityWithFingerprint(
     adapterVersion,
     requiredCapabilities,
     candidates: candidateFacts,
-    model: modelSensitiveCapabilities.length === 0 ? null : {
+    model: modelSensitiveCapabilities.length === 0 && !endpoints.some(endpoint => endpoint.modelIdPattern !== undefined) ? null : {
       id: model?.id ?? null,
       capabilities: Object.fromEntries(modelSensitiveCapabilities.map((capability) => [
         capability,

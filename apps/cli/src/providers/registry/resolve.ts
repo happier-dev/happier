@@ -8,6 +8,7 @@ import type { ProviderConnectionSecurityFingerprintV1 } from '@happier-dev/proto
 import { ProviderConnectionSecurityFingerprintV1Schema } from '@happier-dev/protocol/providers/fingerprints';
 import { readProviderConnectionSourceFactsV1, type ProviderConnectionSourceFactsV1 } from '@happier-dev/protocol/providers/connections/sourceFactsV1';
 import { resolveEffectiveProviderEndpointV1 } from '@happier-dev/protocol/providers/connections/v1';
+import { providerEndpointPolicySecurityFactsV1 } from '@happier-dev/protocol/providers/contributions';
 
 import type { ProviderSettingsReadResultV1 } from '@happier-dev/protocol';
 import { getProviderContribution } from './lookup';
@@ -344,12 +345,12 @@ function resolveProviderConnectionFromSettings(
   const connectionSecurityFingerprint = ProviderConnectionSecurityFingerprintV1Schema.parse(
     createProviderConnectionSecurityFingerprintV1({
     securityContractVersion: PROVIDER_CONNECTION_SECURITY_CONTRACT_VERSION_V1,
-    endpoints: endpoints.map((endpoint) => ({
-      endpointTemplateId: endpoint.endpointTemplateId,
-      protocol: endpoint.protocol,
-      url: endpoint.normalizedUrl,
-      publicHeaders: endpoint.publicHeaders,
-    })),
+    endpoints: facts.endpointTemplates.map(template => {
+      const effective = resolveEffectiveProviderEndpointV1({ connection, template, machineId,
+        selectedLocalCandidateUrl: input.localCandidateUrlsByConnectionId?.get(connectionId)?.get(template.id) });
+      return { endpointTemplateId: template.id, protocol: template.protocol, url: effective.baseUrl,
+        publicHeaders: effective.publicHeaders, ...providerEndpointPolicySecurityFactsV1(template) };
+    }),
     catalogProbes: facts.catalogProbes,
     ...(facts.availabilityProbe ? { availabilityProbe: facts.availabilityProbe } : {}),
     ...(facts.catalogFallback ? { catalogFallback: facts.catalogFallback } : {}),
@@ -365,9 +366,9 @@ function resolveProviderConnectionFromSettings(
     }),
   ]));
   const endpointSetFingerprint = createProviderEndpointSetFingerprintV1({
-    endpoints: facts.endpointTemplates.map((template) => ({
-      endpointTemplateId: template.id,
-      endpoint: assessedByTemplateId.get(template.id)!,
+    endpoints: endpoints.map((endpoint) => ({
+      endpointTemplateId: endpoint.endpointTemplateId,
+      endpoint: assessedByTemplateId.get(endpoint.endpointTemplateId)!,
     })),
   });
   const recordWithoutAuthorization = {

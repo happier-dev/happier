@@ -7,6 +7,7 @@ import type { ProviderConnectionV1 } from './v1.js';
 import type { AccountProviderDeclarationV1 } from '../catalog/accountModelProjectionV1.js';
 import type { DaemonProviderConnectionsDescribeResponseV1 } from '../../rpc/providers.js';
 import { normalizeProviderContributionKeyV1 } from '../contributionIdentityV1.js';
+import { providerEndpointPolicySecurityFactsV1 } from '../endpointPolicyV1.js';
 
 /** The unconfigured declaration list is the same Account and machine authoring projection. */
 export function projectAvailableProviderContributionsV1(input: Readonly<{
@@ -20,7 +21,10 @@ export function projectAvailableProviderContributionsV1(input: Readonly<{
       contributionKey, name: definition.name, kind: definition.kind, provenance,
       icon: definition.icon ?? null,
       ...(definition.websiteUrl ? { websiteUrl: definition.websiteUrl } : {}),
-      endpointTemplates: definition.endpointTemplates.map(({ id, protocol }) => ({ id, protocol })),
+      endpointTemplates: definition.endpointTemplates.map(endpoint => ({ id: endpoint.id, protocol: endpoint.protocol,
+        ...providerEndpointPolicySecurityFactsV1(endpoint),
+        ...(endpoint.publicHeaders ? { publicHeaders: endpoint.publicHeaders } : {}),
+        ...(endpoint.publicHeaderHints ? { publicHeaderHints: endpoint.publicHeaderHints } : {}) })),
       credential: definition.credential ? {
         required: definition.credential.required,
         ...(definition.credential.keyUrl ? { keyUrl: definition.credential.keyUrl } : {}),

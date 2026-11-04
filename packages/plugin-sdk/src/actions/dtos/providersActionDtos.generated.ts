@@ -57,14 +57,26 @@ export type ProvidersActionInputById = {
             endpointTemplates: {
                 id: string;
                 protocol: string;
-                baseUrl: string;
                 capabilities: {
-                    streaming: 'unknown' | 'supported' | 'unsupported';
-                    toolRoundTrips: 'unknown' | 'supported' | 'unsupported';
-                    statefulResponses: 'unknown' | 'supported' | 'unsupported';
-                    reasoningControls: 'unknown' | 'supported' | 'unsupported';
+                    streaming: 'supported' | 'unknown' | 'unsupported';
+                    toolRoundTrips: 'supported' | 'unknown' | 'unsupported';
+                    statefulResponses: 'supported' | 'unknown' | 'unsupported';
+                    reasoningControls: 'supported' | 'unknown' | 'unsupported';
                 };
+                baseUrl?: string | undefined;
+                requiresEndpointOverride?: true | undefined;
                 publicHeaders?: Record<string, string> | undefined;
+                addressConstraint?: undefined | {
+                    origin: string;
+                    pathSegments: (null | string)[];
+                };
+                modelIdPattern?: string | undefined;
+                requiredPublicHeaders?: string[] | undefined;
+                publicHeaderHints?: Record<string, string | {
+                    key: string;
+                    fallback: string;
+                    params?: Record<string, number | string> | undefined;
+                }> | undefined;
             }[];
             catalog: {
                 source: 'manual';
@@ -152,14 +164,26 @@ export type ProvidersActionInputById = {
             endpointTemplates: {
                 id: string;
                 protocol: string;
-                baseUrl: string;
                 capabilities: {
-                    streaming: 'unknown' | 'supported' | 'unsupported';
-                    toolRoundTrips: 'unknown' | 'supported' | 'unsupported';
-                    statefulResponses: 'unknown' | 'supported' | 'unsupported';
-                    reasoningControls: 'unknown' | 'supported' | 'unsupported';
+                    streaming: 'supported' | 'unknown' | 'unsupported';
+                    toolRoundTrips: 'supported' | 'unknown' | 'unsupported';
+                    statefulResponses: 'supported' | 'unknown' | 'unsupported';
+                    reasoningControls: 'supported' | 'unknown' | 'unsupported';
                 };
+                baseUrl?: string | undefined;
+                requiresEndpointOverride?: true | undefined;
                 publicHeaders?: Record<string, string> | undefined;
+                addressConstraint?: undefined | {
+                    origin: string;
+                    pathSegments: (null | string)[];
+                };
+                modelIdPattern?: string | undefined;
+                requiredPublicHeaders?: string[] | undefined;
+                publicHeaderHints?: Record<string, string | {
+                    key: string;
+                    fallback: string;
+                    params?: Record<string, number | string> | undefined;
+                }> | undefined;
             }[];
             catalog: {
                 source: 'manual';
@@ -256,7 +280,8 @@ export type ProvidersActionInputById = {
         expectedRevision: number;
         scope: 'account' | 'machine';
         endpointTemplateId: string;
-        baseUrl?: string | null | undefined;
+        baseUrl?: null | string | undefined;
+        publicHeaders?: Record<string, string> | null | undefined;
     }, true>;
     readonly "providers.connections.duplicate": AccountOperand<{
         machineId: string;
@@ -1107,14 +1132,26 @@ export type ProvidersActionInputById = {
             endpointTemplates: {
                 id: string;
                 protocol: string;
-                baseUrl: string;
                 capabilities: {
-                    streaming: 'unknown' | 'supported' | 'unsupported';
-                    toolRoundTrips: 'unknown' | 'supported' | 'unsupported';
-                    statefulResponses: 'unknown' | 'supported' | 'unsupported';
-                    reasoningControls: 'unknown' | 'supported' | 'unsupported';
+                    streaming: 'supported' | 'unknown' | 'unsupported';
+                    toolRoundTrips: 'supported' | 'unknown' | 'unsupported';
+                    statefulResponses: 'supported' | 'unknown' | 'unsupported';
+                    reasoningControls: 'supported' | 'unknown' | 'unsupported';
                 };
+                baseUrl?: string | undefined;
+                requiresEndpointOverride?: true | undefined;
                 publicHeaders?: Record<string, string> | undefined;
+                addressConstraint?: undefined | {
+                    origin: string;
+                    pathSegments: (null | string)[];
+                };
+                modelIdPattern?: string | undefined;
+                requiredPublicHeaders?: string[] | undefined;
+                publicHeaderHints?: Record<string, string | {
+                    key: string;
+                    fallback: string;
+                    params?: Record<string, number | string> | undefined;
+                }> | undefined;
             }[];
             catalog: {
                 source: 'manual';
@@ -1798,6 +1835,19 @@ export type ProvidersActionResultById = {
             endpointTemplates: {
                 id: string;
                 protocol: string;
+                requiresEndpointOverride?: true | undefined;
+                addressConstraint?: undefined | {
+                    origin: string;
+                    pathSegments: (null | string)[];
+                };
+                modelIdPattern?: string | undefined;
+                requiredPublicHeaders?: string[] | undefined;
+                publicHeaderHints?: Record<string, string | {
+                    key: string;
+                    fallback: string;
+                    params?: Record<string, number | string> | undefined;
+                }> | undefined;
+                publicHeaders?: Readonly<Record<string, string>> | undefined;
             }[];
             websiteUrl?: string | undefined;
         }[];

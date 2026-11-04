@@ -1743,7 +1743,8 @@ describe('runtime provider model-management composition', () => {
     });
     const dnsEvidenceByEndpointUrl = new Map<string, readonly string[]>(
       base.connections.flatMap((connection) => connection.source.kind === 'custom'
-        ? connection.source.template.endpointTemplates.map((endpoint) => [endpoint.baseUrl, ['1.1.1.1']] as const)
+        ? connection.source.template.endpointTemplates.flatMap((endpoint) => endpoint.baseUrl === undefined
+          ? [] : [[endpoint.baseUrl, ['1.1.1.1']] as const])
         : []),
     );
     const settings = ProviderSettingsV1Schema.parse({

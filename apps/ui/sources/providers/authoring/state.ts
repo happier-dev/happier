@@ -251,7 +251,7 @@ export function createCustomProviderDraftFromTemplate(template: CustomProviderTe
         const parser = ownProbes[0]?.parser ?? defaultCustomProviderCatalogParserV1(protocol);
         if (!isBundledProviderCatalogParserV1(parser)) return null;
         endpointDrafts.push({
-            ...endpointDraft(protocol, true, endpoint.baseUrl),
+            ...endpointDraft(protocol, true, endpoint.baseUrl ?? ''),
             requiresApiKey: transport !== undefined,
             ...(transport ? credentialStyleFromDestination(transport.destination) : {}),
             publicHeadersText: Object.entries(endpoint.publicHeaders ?? {}).map(([name, value]) => `${name}: ${value}`).join('\n'),

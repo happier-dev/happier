@@ -10,8 +10,15 @@ import { createAccountProviderActionExecuteV1, type AccountProviderDeclarationV1
 import { DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, type ProviderConnectionsCatalogV1 } from './connectionRowsV1.js';
 import { serializeModelVisibilityRefV1 } from '../selection/v1.js';
 import { getProviderExperimentalConfirmationCatalogSourceKeyV1, parseProviderSettingsV1Narrow } from '../settings/v1.js';
-import { createActionExecutor } from '../../actions/actionExecutor.js';
+import { createActionExecutor, type ActionExecutorDeps } from '../../actions/actionExecutor.js';
 import { createProviderActionExecuteV1 } from '../executeProviderActionV1.js';
+
+import { prepareApprovalRequest } from '../../actions/executor/approvalPreparation.js';
+
+const fixtureSource = new URL('../../../../tests/src/testkit/actionExecutorBoundary.ts', import.meta.url).href;
+const { createActionExecutorBoundaryFixture }: {
+  createActionExecutorBoundaryFixture(overrides: Partial<ActionExecutorDeps>): ActionExecutorDeps;
+} = await import(fixtureSource);
 
 // An in-memory Account-row transport boundary; all domain operations and output admission are real.
 function accountRow(catalog: ProviderConnectionsCatalogV1 = DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1) {
@@ -564,5 +571,134 @@ describe('shared Provider Account Action producer', () => {
     }
     expect(row.catalog.connections[0]?.endpointOverrides?.map(endpoint => endpoint.endpointTemplateId))
       .toEqual(['ollama-native', 'ollama-openai-responses']);
+  });
+});
+
+describe('Provider endpoint policy Action', () => {
+  it('custom-copy preserves effective overrides when the source is already custom', async () => {
+    const endpointTemplateId = customTemplate.endpointTemplates[0]!.id;
+    const connection = ProviderConnectionV1Schema.parse({ v: 1, id: 'pc_copy_policy', source: { kind: 'custom', template: customTemplate },
+      role: 'named', displayName: 'Custom', displayNameMode: 'custom', revision: 0, createdAt: 1, updatedAt: 1,
+      endpointOverrides: [{ endpointTemplateId, baseUrl: 'https://selected.example/v1', publicHeaders: { 'x-policy': 'account' } }] });
+    const row = accountRow({ ...DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, connections: [connection] });
+    expect(await row.execute(parseProviderActionRequestV1('providers.connections.duplicate', {
+      action: 'duplicate', connectionId: connection.id, newConnectionId: 'pc_copy_result', displayName: 'Copy', mode: 'asCustom',
+    }), {})).toMatchObject({ ok: true });
+    const copied = row.catalog.connections.find(value => value.id === 'pc_copy_result');
+    expect(copied?.source).toMatchObject({ kind: 'custom', template: { endpointTemplates: [expect.objectContaining({
+      baseUrl: 'https://selected.example/v1', publicHeaders: { 'x-policy': 'account' },
+    })] } });
+  });
+
+  it('a normalized unchanged policy patch writes no catalog revision while a real change still publishes', async () => {
+    const endpointTemplateId = customTemplate.endpointTemplates[0]!.id;
+    const connection = ProviderConnectionV1Schema.parse({ v: 1, id: 'pc_noop_policy', source: { kind: 'custom', template: customTemplate },
+      role: 'named', displayName: 'Custom', displayNameMode: 'custom', revision: 0, createdAt: 1, updatedAt: 1,
+      endpointOverrides: [{ endpointTemplateId, publicHeaders: { 'x-policy': 'account' } }] });
+    const row = accountRow({ ...DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, connections: [connection] });
+    const change = (value: string) => row.execute(parseProviderActionRequestV1('providers.connections.endpoint.set', {
+      action: 'setEndpointOverride', connectionId: connection.id, expectedRevision: 0, endpointTemplateId, scope: 'account',
+      publicHeaders: { 'X-Policy': value },
+    }), {});
+    expect(await change('account')).toMatchObject({ ok: true });
+    expect(row.writes).toBe(0);
+    expect(row.catalog.connections[0]?.revision).toBe(0);
+    expect(await change('changed')).toMatchObject({ ok: true });
+    expect(row.writes).toBe(1);
+  });
+
+  it('person confirmation receives authoritative policy and a denied or cancelled review writes nothing', async () => {
+    const endpointTemplateId = customTemplate.endpointTemplates[0]!.id;
+    const connection = ProviderConnectionV1Schema.parse({ v: 1, id: 'pc_ui_review', source: { kind: 'custom', template: customTemplate },
+      role: 'named', displayName: 'Custom', displayNameMode: 'custom', revision: 0, createdAt: 1, updatedAt: 1,
+      endpointOverrides: [{ endpointTemplateId, publicHeaders: { 'x-policy': 'account' } }] });
+    const row = accountRow({ ...DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, connections: [connection] });
+    for (const cancel of [false, true]) {
+      const abort = new AbortController();
+      const executor = createActionExecutor(createActionExecutorBoundaryFixture({ providerActionExecute: row.execute,
+        presentUserActionConfirmation: async args => {
+          expect(args).toMatchObject({ preview: { providerEndpointPolicyReview: {
+            before: { publicHeaders: { 'x-policy': 'account' } }, after: { publicHeaders: { 'x-policy': 'changed' } },
+          } } });
+          if (cancel) abort.abort();
+          return cancel;
+        } }));
+      const result = await executor.execute('providers.connections.endpoint.set', { action: 'setEndpointOverride', connectionId: connection.id,
+        expectedRevision: 0, endpointTemplateId, scope: 'account', publicHeaders: { 'x-policy': 'changed' } },
+        { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: 'home', signal: abort.signal });
+      expect(result).toMatchObject({ ok: false, errorCode: cancel ? 'cancelled' : 'approval_canceled' });
+      expect(row.writes).toBe(0);
+    }
+    const executor = createActionExecutor(createActionExecutorBoundaryFixture({ providerActionExecute: row.execute, presentUserActionConfirmation: async () => true }));
+    expect(await executor.execute('providers.connections.endpoint.set', { action: 'setEndpointOverride', connectionId: connection.id,
+      expectedRevision: 0, endpointTemplateId, scope: 'account', publicHeaders: { 'x-policy': 'changed' } },
+      { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: 'home' })).toMatchObject({ ok: true });
+    expect(row.writes).toBe(1);
+    expect(await executor.execute('providers.connections.describe', { connectionId: connection.id },
+      { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: 'home' }))
+      .toMatchObject({ ok: true, result: { connections: [{ endpoints: [{ publicHeaders: { 'x-policy': 'changed' } }] }] } });
+  });
+  it.each(['headers', 'hints'] as const)('keeps readable policy approval across changed template %s and refuses a stale connection revision', async changed => {
+    const row = accountRow();
+    await row.execute(parseProviderActionRequestV1('providers.connections.create_contribution', {
+      action: 'createContribution', connectionId: 'pc_review', contributionKey: 'happier.provider.deepseek/deepseek',
+      displayName: null, savedSecretId: null, enable: false,
+    }), {});
+    const request = parseProviderActionRequestV1('providers.connections.endpoint.set', {
+      action: 'setEndpointOverride', connectionId: 'pc_review', scope: 'account', expectedRevision: 0,
+      endpointTemplateId: DEEPSEEK_PROVIDER_CONTRIBUTION.endpointTemplates[0]!.id, publicHeaders: { 'x-billing': 'byok' },
+    });
+    if (request.actionId !== 'providers.connections.endpoint.set') throw new Error('Expected endpoint policy request');
+    const input = request.input;
+    const writes = row.writes;
+    const prepared = await prepareApprovalRequest({ deps: createActionExecutorBoundaryFixture({ providerActionExecute: row.execute }),
+      actionId: 'providers.connections.endpoint.set', input, actionArgs: input, context: {} });
+    expect(prepared).toMatchObject({ preview: { providerEndpointPolicyReview: { before: { publicHeaders: {} },
+        after: { publicHeaders: { 'x-billing': 'byok' } }, scope: 'account' } } });
+    expect(row.writes).toBe(writes);
+    expect(row.catalog.connections[0]?.endpointOverrides).toBeUndefined();
+    if (!prepared || 'ok' in prepared) throw new Error('Expected authoritative policy review');
+    row.setDefinitions([{ contributionKey: 'happier.provider.deepseek/deepseek', provenance: 'first_party',
+      definition: ProviderContributionV1Schema.parse({ ...DEEPSEEK_PROVIDER_CONTRIBUTION,
+        endpointTemplates: DEEPSEEK_PROVIDER_CONTRIBUTION.endpointTemplates.map(endpoint => ({ ...endpoint,
+          ...(changed === 'headers' ? { publicHeaders: { 'x-new-default': 'new' } }
+            : { publicHeaderHints: { 'x-billing': 'This policy changes billing authority.' } }) })) }) }]);
+    expect(await row.execute(parseProviderActionRequestV1('providers.connections.endpoint.set', prepared.actionArgs), {}))
+      .toMatchObject({ ok: true });
+    expect(row.writes).toBe(writes + 1);
+    expect(row.catalog.connections[0]?.endpointOverrides).toEqual([{ endpointTemplateId: input.endpointTemplateId,
+      publicHeaders: { 'x-billing': 'byok' } }]);
+    expect(await row.execute(parseProviderActionRequestV1('providers.connections.endpoint.set', prepared.actionArgs), {}))
+      .toMatchObject({ ok: false, errorCode: 'provider_connection_changed' });
+    expect(row.writes).toBe(writes + 1);
+  });
+  it('keeps addresses independent of policy patches and restores template policy on reset after reload', async () => {
+    const row = accountRow();
+    const key = 'happier.provider.deepseek/deepseek';
+    await row.execute(parseProviderActionRequestV1('providers.connections.create_contribution', {
+      action: 'createContribution', connectionId: 'pc_policy', contributionKey: key,
+      displayName: null, savedSecretId: null, enable: false,
+    }), {});
+    const endpointTemplateId = DEEPSEEK_PROVIDER_CONTRIBUTION.endpointTemplates[0]!.id;
+    const change = (patch: Record<string, unknown>) => row.execute(parseProviderActionRequestV1('providers.connections.endpoint.set', {
+      action: 'setEndpointOverride', connectionId: 'pc_policy', expectedRevision: row.catalog.connections[0]!.revision,
+      endpointTemplateId, scope: 'account', ...patch,
+    }), {});
+    expect(await change({ baseUrl: 'https://custom.example/v1' })).toMatchObject({ ok: true });
+    expect(await change({ publicHeaders: { 'X-Billing': 'byok' } })).toMatchObject({ ok: true });
+    expect(row.catalog.connections[0]?.endpointOverrides).toEqual([{ endpointTemplateId, baseUrl: 'https://custom.example/v1', publicHeaders: { 'x-billing': 'byok' } }]);
+    const read = await row.execute(parseProviderActionRequestV1('providers.connections.describe', { connectionId: 'pc_policy' }), {});
+    expect(read).toMatchObject({ ok: true, result: { connections: [{ endpoints: expect.arrayContaining([expect.objectContaining({ baseUrl: 'https://custom.example/v1',
+      publicHeaders: { 'x-billing': 'byok' }, accountOverridePublicHeaders: { 'x-billing': 'byok' }, publicHeaderSources: { 'x-billing': 'accountOverride' } })]) }] } });
+    expect(await change({ baseUrl: null })).toMatchObject({ ok: true });
+    expect(row.catalog.connections[0]?.endpointOverrides).toEqual([{ endpointTemplateId, publicHeaders: { 'x-billing': 'byok' } }]);
+    expect(await change({ publicHeaders: null })).toMatchObject({ ok: true });
+    expect(row.catalog.connections[0]?.endpointOverrides).toEqual([]);
+    const writes = row.writes;
+    for (const publicHeaders of [{ Authorization: 'secret' }, { 'x-policy': 'bad\nvalue' }, { 'cf-aig-metadata-payload': 'value' }]) {
+      expect(() => parseProviderActionRequestV1('providers.connections.endpoint.set', { action: 'setEndpointOverride', connectionId: 'pc_policy',
+        expectedRevision: row.catalog.connections[0]!.revision, endpointTemplateId, scope: 'account', publicHeaders })).toThrow();
+    }
+    expect(row.writes).toBe(writes);
   });
 });

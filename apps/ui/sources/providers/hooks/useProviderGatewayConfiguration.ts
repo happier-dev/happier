@@ -11,10 +11,10 @@ export function useProviderGatewayConfiguration(input: Readonly<{
     mutation: ReturnType<typeof useProviderConnectionMutation>;
 }>) {
     const run = input.mutation.run;
-    const save = React.useCallback(async (patch: ProviderGatewayConfigurationPatch): Promise<boolean> => {
+    const save = React.useCallback(async (patch: ProviderGatewayConfigurationPatch, options?: Parameters<typeof run>[2]): Promise<boolean> => {
         if (!input.connection) throw createProviderErrorV1('provider_authorization_changed');
         const request = buildProviderGatewayConfigurationMutation({ connection: input.connection, machineId: input.machineId, patch });
-        const result = await run(request, 'gateway:configuration');
+        const result = await run(request, 'gateway:configuration', options);
         return result?.status === 'success';
     }, [input.connection, input.machineId, run]);
     return { save };

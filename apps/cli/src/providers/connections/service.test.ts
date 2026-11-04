@@ -3166,6 +3166,66 @@ describe('provider connection service', () => {
       });
   });
 
+  it('patches and resets addresses and headers independently through Account and Machine writers', async () => {
+    const h = harness();
+    const declared = contribution();
+    h.providersByContributionKey.set(contributionKey, {
+      ...declared,
+      definition: ProviderContributionV1Schema.parse({
+        ...declared.definition,
+        endpointTemplates: declared.definition.endpointTemplates.map(endpoint => ({
+          ...endpoint, publicHeaders: { 'x-policy': 'template', 'x-routing': 'default' },
+        })),
+      }),
+    });
+    await h.service.create({
+      action: 'createContribution', machineId: 'machine-a', connectionId: 'pc_gateway',
+      contributionKey, displayName: null, savedSecretId: null, enable: false,
+    });
+    const patch = async (scope: 'account' | 'machine', change: Readonly<{
+      baseUrl?: string | null; publicHeaders?: Record<string, string> | null;
+    }>) => {
+      const expectedRevision = h.getProviderSettings().connections[0]!.revision;
+      expect(await h.service.setEndpointOverride({
+        action: 'setEndpointOverride', machineId: 'machine-a', connectionId: 'pc_gateway',
+        expectedRevision, scope, endpointTemplateId: 'responses', ...change,
+      })).toMatchObject({ status: 'success' });
+    };
+    const read = async () => {
+      const described = await h.service.describe({ machineId: 'machine-a', connectionId: ProviderConnectionIdSchema.parse('pc_gateway') });
+      expect(described.status).toBe('success');
+      if (described.status !== 'success') throw new Error('Expected the reloaded endpoint');
+      return described.connections[0]!.endpoints[0]!;
+    };
+
+    await patch('account', { publicHeaders: { 'X-Policy': 'account' } });
+    expect(await read()).toMatchObject({ baseUrl: 'https://gateway.example/v1', effectiveSource: 'template',
+      accountOverrideBaseUrl: null, publicHeaders: { 'x-policy': 'account', 'x-routing': 'default' } });
+    await patch('account', { baseUrl: 'https://account.example/v1' });
+    await patch('machine', { publicHeaders: { 'x-policy': 'machine' } });
+    expect(await read()).toMatchObject({ baseUrl: 'https://account.example/v1', machineOverrideBaseUrl: null,
+      publicHeaders: { 'x-policy': 'machine', 'x-routing': 'default' }, publicHeaderSources: { 'x-policy': 'machineOverride' } });
+    await patch('machine', { baseUrl: 'http://127.0.0.1:8080/v1' });
+    expect(await read()).toMatchObject({ baseUrl: 'http://127.0.0.1:8080/v1', publicHeaders: { 'x-policy': 'machine' } });
+    await patch('machine', { baseUrl: null });
+    expect(h.getProviderSettings().connections[0]!.endpointOverridesByMachineId?.['machine-a'])
+      .toEqual([{ endpointTemplateId: 'responses', publicHeaders: { 'x-policy': 'machine' } }]);
+    await patch('machine', { publicHeaders: {} });
+    expect(h.getProviderSettings().connections[0]!.endpointOverridesByMachineId).toBeUndefined();
+    expect(await read()).toMatchObject({ baseUrl: 'https://account.example/v1',
+      publicHeaders: { 'x-policy': 'account' }, publicHeaderSources: { 'x-policy': 'accountOverride' } });
+    await patch('account', { baseUrl: null });
+    expect(await read()).toMatchObject({ baseUrl: 'https://gateway.example/v1', effectiveSource: 'template',
+      publicHeaders: { 'x-policy': 'account' } });
+    await patch('account', { publicHeaders: null });
+    expect(h.getProviderSettings().connections[0]!.endpointOverrides).toEqual([]);
+    expect(await read()).toMatchObject({ baseUrl: 'https://gateway.example/v1',
+      publicHeaders: { 'x-policy': 'template', 'x-routing': 'default' } });
+    const revision = h.getProviderSettings().connections[0]!.revision;
+    await patch('machine', {});
+    expect(h.getProviderSettings().connections[0]!.revision).toBe(revision);
+  });
+
   it.each(['contribution', 'custom'] as const)('preserves a valid %s Account grant through DNS failure without authorizing the unresolved endpoint', async (source) => {
     const dnsEvidence = new Map<string, readonly string[]>([['https://gateway.example/v1', ['1.1.1.1']]]);
     const h = harness({ dnsEvidence });

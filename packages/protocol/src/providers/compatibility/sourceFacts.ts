@@ -5,6 +5,7 @@ import { ProviderWireProtocolSchema, ProviderCompatibilityCapabilitiesV1Schema, 
 import { ProviderApiKeyCredentialRequirementV1Schema } from '../credentials/v1.js';
 import { createProviderFingerprintV1 } from '../fingerprints.js';
 import type { ProviderModelDescriptorV1 } from '../../models/descriptor.js';
+import { ProviderModelIdPatternV1Schema } from '../endpointPolicyV1.js';
 
 /** Source declarations, never a transported Agent compatibility decision.
  * Endpoint addresses, headers, account/pool ids and credentials stay private. */
@@ -13,6 +14,7 @@ export const ProviderModelBindingSourceV1Schema = lazyZodSchema(() => z.strictOb
     id: ProviderLocalIdSchema,
     protocol: ProviderWireProtocolSchema,
     capabilities: ProviderCompatibilityCapabilitiesV1Schema,
+    modelIdPattern: z.optional(ProviderModelIdPatternV1Schema),
   }),
   credential: z.optional(ProviderApiKeyCredentialRequirementV1Schema),
   compatibilityOverrides: z.optional(ProviderCompatibilityOverridesV1Schema),

@@ -63,6 +63,7 @@ import {
     useRetireProviderStateOnAccountChange,
 } from '@/providers/hooks/accountLifetimeRetirement';
 import { useProviderConnectionMutation } from '@/providers/hooks/useProviderConnectionMutation';
+import { useProviderEndpointConfiguration } from '@/providers/hooks/useProviderEndpointConfiguration';
 import { useProviderConnectionMachineViews } from '@/providers/hooks/useProviderConnectionMachineViews';
 import { buildProviderConnectionEnableMutation } from '@/providers/connection/enableMutation';
 import { useProviderConnections, type ProviderConnectionRefreshScope } from '@/providers/hooks/useProviderConnections';
@@ -494,22 +495,22 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
         }
     }, [connection, machineId, mutation, props.connectionId, router]);
 
+    const endpointConfiguration = useProviderEndpointConfiguration({
+        connection, machineId, mutation, onChange: invalidateProbe,
+    });
     const setEndpointOverride = React.useCallback(async (input: Readonly<{
         endpointTemplateId: string;
         currentUrl: string;
         scope: 'account' | 'machine';
         reset?: boolean;
     }>) => {
-        if (!connection || input.scope === 'machine' && !machineId) return;
         const baseUrl = input.reset ? null : input.currentUrl.trim();
         if (baseUrl === '') return;
-        invalidateProbe();
-        await mutation.run({
-            action: 'setEndpointOverride', ...(machineId ? { machineId } : {}), connectionId: props.connectionId,
-            expectedRevision: connection.revision, scope: input.scope,
+        await endpointConfiguration.patch({
+            scope: input.scope,
             endpointTemplateId: input.endpointTemplateId, baseUrl,
-        }, `endpoint:${input.scope}:${input.endpointTemplateId}`);
-    }, [connection, invalidateProbe, machineId, mutation, props.connectionId]);
+        });
+    }, [endpointConfiguration.patch]);
 
     const startLocal = React.useCallback(async () => {
         if (!machineId || !connection?.contributionKey || !localInstallation?.managedStartAvailable) return;
@@ -1642,7 +1643,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                     ) : null}
 
                     <ProviderEndpointOverridesSection
-                        endpoints={connection.endpoints}
+                        endpoints={endpointConfiguration.endpoints}
                         machineSelected={machineId !== null}
                         onSetOverride={(input) => { void setEndpointOverride(input); }}
                     />

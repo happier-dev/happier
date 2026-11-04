@@ -12,6 +12,7 @@ import { normalizeProviderCredentialHeaderName } from '../safety/headers.js';
 import { ProviderEndpointUrlSyntaxSchema } from '../endpointUrlSchema.js';
 import { ProviderHttpsUrlSchema } from '../httpsUrlSchema.js';
 import { ProviderPublicHeadersV1Schema } from '../publicHeadersSchema.js';
+import { ProviderEndpointPolicyV1Shape } from '../endpointPolicyV1.js';
 
 const UnknownCapabilitiesSchema = lazyZodSchema(() => ProviderCompatibilityCapabilitiesV1Schema.check(z.superRefine((value, ctx) => {
   for (const [key, support] of Object.entries(value)) {
@@ -22,10 +23,15 @@ const UnknownCapabilitiesSchema = lazyZodSchema(() => ProviderCompatibilityCapab
 export const CustomProviderEndpointTemplateV1Schema = lazyZodSchema(() => z.strictObject({
   id: ProviderLocalIdSchema,
   protocol: ProviderWireProtocolSchema,
-  baseUrl: ProviderEndpointUrlSyntaxSchema,
+  baseUrl: z.optional(ProviderEndpointUrlSyntaxSchema),
+  requiresEndpointOverride: ProviderEndpointPolicyV1Shape.requiresEndpointOverride,
   publicHeaders: z.optional(ProviderPublicHeadersV1Schema),
+  addressConstraint: ProviderEndpointPolicyV1Shape.addressConstraint,
+  modelIdPattern: ProviderEndpointPolicyV1Shape.modelIdPattern,
+  requiredPublicHeaders: ProviderEndpointPolicyV1Shape.requiredPublicHeaders,
+  publicHeaderHints: ProviderEndpointPolicyV1Shape.publicHeaderHints,
   capabilities: UnknownCapabilitiesSchema,
-}));
+}).check(z.refine(value => Boolean(value.baseUrl) !== Boolean(value.requiresEndpointOverride), 'Exactly one endpoint location is required')));
 export type CustomProviderEndpointTemplateV1 = z.infer<typeof CustomProviderEndpointTemplateV1Schema>;
 
 export const CustomProviderCredentialTransportV1Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.safeExtend(ProviderCredentialTransportV1Schema, {

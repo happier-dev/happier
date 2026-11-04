@@ -779,3 +779,23 @@ describe('ProviderContributionV1Schema', () => {
     expect(ProviderContributionV1Schema.safeParse(local).success).toBe(false);
   });
 });
+
+describe('Provider endpoint declarations', () => {
+  it('admits required endpoint coordinates and declaration-owned family and public policy constraints', () => {
+    const { baseUrl: _base, ...endpoint } = validContribution().endpointTemplates[0];
+    const constrained = { ...endpoint, requiresEndpointOverride: true,
+      addressConstraint: { origin: 'https://gateway.example', pathSegments: ['v1', null, 'responses'] },
+      modelIdPattern: '^[^/\\s]+$', requiredPublicHeaders: ['X-Gateway'],
+      publicHeaderHints: { 'X-Gateway': 'Select the gateway' } };
+    const declaration = { ...validContribution(), endpointTemplates: [constrained] };
+    expect(ProviderContributionV1Schema.parse(declaration).endpointTemplates[0]).toMatchObject({
+      requiresEndpointOverride: true, requiredPublicHeaders: ['x-gateway'], publicHeaderHints: { 'x-gateway': 'Select the gateway' },
+      addressConstraint: constrained.addressConstraint, modelIdPattern: constrained.modelIdPattern,
+    });
+    for (const invalid of [
+      { ...constrained, baseUrl: 'https://gateway.example/v1' },
+      { ...constrained, addressConstraint: { ...constrained.addressConstraint, origin: 'http://gateway.example' } },
+      { ...constrained, modelIdPattern: '[' }, { ...constrained, requiredPublicHeaders: ['Authorization'] },
+    ]) expect(ProviderContributionV1Schema.safeParse({ ...declaration, endpointTemplates: [invalid] }).success).toBe(false);
+  });
+});

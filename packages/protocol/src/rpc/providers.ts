@@ -595,7 +595,8 @@ export const DaemonProviderConnectionMutationRequestV1Schema = lazyZodSchema(() 
     expectedRevision: z.number().check(z.int(), z.nonnegative()),
     scope: z.enum(['account', 'machine']),
     endpointTemplateId: ProviderEndpointOverrideV1Schema.shape.endpointTemplateId,
-    baseUrl: z.nullable(ProviderEndpointOverrideV1Schema.shape.baseUrl),
+    baseUrl: z.optional(z.nullable(ProviderEndpointUrlSyntaxSchema)),
+    publicHeaders: z.optional(z.nullable(ProviderPublicHeadersV1Schema)),
   })),
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(ProviderConnectionMutationBaseV1Schema, {
     action: z.literal('duplicate'),
@@ -642,6 +643,8 @@ export const DaemonProviderConnectionsDescribeResponseV1Schema = lazyZodSchema((
       endpointTemplates: z._default(z.array(z.strictObject({
         id: ProviderEndpointOverrideV1Schema.shape.endpointTemplateId,
         protocol: ProviderWireProtocolSchema,
+        publicHeaders: z.optional(ProviderPublicHeadersV1Schema),
+        ...ProviderEndpointPolicyV1Shape,
       })).check(z.maxLength(PROVIDER_WIRE_PROTOCOL_LIMITS_V1.maxProtocolsPerDeclaration)), []),
     })),
     discoveryCandidates: z.array(ProviderDiscoveryCandidateV1Schema),

@@ -3,9 +3,9 @@ import { describe, expect, it } from 'vitest';
 import {
   projectProviderBindingCompatibilityForConnectionV1,
   resolveProviderBindingCompatibilityWithFingerprintV1,
-  selectProviderRuntimeCredentialTransportV1,
+  selectProviderRuntimeCredentialTransportV1, resolveProviderBindingCompatibilityFromSourceFactsV1, ProviderModelBindingSourceV1Schema,
 } from './resolve.js';
-
+import { AgentProviderRequirementsV1Schema } from './v1.js';
 const baseEndpoint = {
   id: 'responses',
   protocol: 'openai-responses',
@@ -651,5 +651,22 @@ describe('resolveProviderBindingCompatibilityWithFingerprintV1', () => {
     });
     expect(destinationChanged.result.status).toBe('verified');
     expect(destinationChanged.compatibilityFingerprint).not.toBe(baseline.compatibilityFingerprint);
+  });
+});
+
+describe('declaration-owned wire model spelling', () => {
+  it('filters model families before protocol preference and preserves spelling in recipient matching', () => {
+    const native = { ...baseEndpoint, modelIdPattern: '^(?!claude-)[^/\\s]+$' };
+    const chat = { ...baseEndpoint, id: 'chat', protocol: 'openai-chat' as const, modelIdPattern: '^[^/\\s]+/[^\\s]+$' };
+    const agent = AgentProviderRequirementsV1Schema.parse({ ...baseRequirements, acceptsProtocols: ['openai-responses', 'openai-chat'], required: {} });
+    const input = { agentTargetKey: 'agent', endpoints: [native, chat], credential: undefined, agent, adapterVersion: 1,
+      model: { id: 'openai/gpt-5', name: 'Hosted model' } };
+    expect(resolve(input)).toMatchObject({ selectedProtocol: 'openai-chat' });
+    const sourceFacts = input.endpoints.map(({ id, protocol, capabilities, modelIdPattern }) =>
+      ProviderModelBindingSourceV1Schema.parse({ endpoint: { id, protocol, capabilities, modelIdPattern } }));
+    expect(resolveProviderBindingCompatibilityFromSourceFactsV1({ ...input, endpoints: sourceFacts.map(source => source.endpoint) }).result)
+      .toMatchObject({ selectedProtocol: 'openai-chat' });
+    expect(resolve({ ...input, model: { id: 'gpt-5', name: 'Native' } })).toMatchObject({ selectedProtocol: 'openai-responses' });
+    expect(resolve({ ...input, model: { id: 'claude-native', name: 'Wrong family' } })).toMatchObject({ status: 'incompatible' });
   });
 });

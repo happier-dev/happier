@@ -77,13 +77,14 @@ import {
 import { ProviderAdapterBindingKeyV1Schema } from './sessions/adapterBindingKeyV1.js';
 import { ProviderOriginRelativePathSchema } from './originRelativePathSchema.js';
 import { ProviderGatewayPlacementV1Schema, type ProviderGatewayPlacementV1 } from './connections/v1.js';
+import { providerEndpointPolicySecurityFactsV1 } from './endpointPolicyV1.js';
 
 type ProviderSecurityEndpointV1 = Readonly<{
   endpointTemplateId: string;
   protocol: ProviderWireProtocol;
-  url: string;
+  url: string | null;
   publicHeaders?: Readonly<Record<string, string>>;
-}>;
+}> & Parameters<typeof providerEndpointPolicySecurityFactsV1>[0];
 
 /**
  * A managed connection has no durable realized URL, but its declared endpoint
@@ -206,8 +207,9 @@ function normalizeEndpoint(endpoint: ProviderSecurityEndpointV1) {
   return {
     endpointTemplateId: ProviderLocalIdSchema.parse(endpoint.endpointTemplateId),
     protocol: ProviderWireProtocolSchema.parse(endpoint.protocol),
-    url: ProviderEndpointUrlSyntaxSchema.parse(endpoint.url),
+    url: endpoint.url === null ? null : ProviderEndpointUrlSyntaxSchema.parse(endpoint.url),
     publicHeaders: normalizeProviderPublicHeaders(endpoint.publicHeaders ?? {}),
+    ...providerEndpointPolicySecurityFactsV1(endpoint),
   };
 }
 

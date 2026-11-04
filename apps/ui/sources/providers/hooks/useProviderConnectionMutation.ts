@@ -13,6 +13,7 @@ import type { CustomProviderTemplateV1 } from '@happier-dev/protocol/providers/c
 import type { ProviderConnectionRefreshScope } from './useProviderConnections';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { UiActionOperation } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 
 type ProviderConnectionMutationResult = Awaited<ReturnType<typeof MutateProviderConnection>> | null;
 type ProviderConnectionExecutionTarget = Readonly<{ machineId: string; serverId: string }>;
@@ -144,6 +145,7 @@ export function useProviderConnectionMutation(input: Readonly<{
     const run = React.useCallback((
         request: Parameters<typeof MutateProviderConnection>[0]['request'],
         key = `${request.action}:${request.connectionId}`,
+        options?: Pick<UiActionOperation, 'confirmed'>,
     ): Promise<ProviderConnectionMutationResult> => {
         const scope = boundScope;
         let parsedRequest: typeof request;
@@ -165,14 +167,14 @@ export function useProviderConnectionMutation(input: Readonly<{
                     key,
                     error: nextError,
                     ...providerRetryRecoveryForError(nextError, async () => {
-                        await run(request, key);
+                        await run(request, key, options);
                     }),
                 });
             }
             return Promise.resolve(null);
         }
         const pendingKey = requiresMachine ? stableJsonStringify([boundMachineRevision, key]) : key;
-        const requestKey = stableJsonStringify([scope.revision, pendingKey, parsedRequest]);
+        const requestKey = stableJsonStringify([scope.revision, pendingKey, parsedRequest, options?.confirmed === true]);
         const existing = inFlightByRequestKey.current.get(requestKey);
         if (existing?.promise) return existing.promise;
         const isCurrentScope = () => activeScope.current === scope && (scope.accountLifetime?.isCurrent() ?? true)
@@ -210,7 +212,7 @@ export function useProviderConnectionMutation(input: Readonly<{
                 let result: Awaited<ReturnType<typeof mutateProviderConnection>>;
                 try {
                     result = await scope.mutate({ serverId: target?.serverId ?? scope.serverId, request: parsedRequest },
-                        operation.controller ? { signal: operation.controller.signal } : undefined);
+                        { ...options, ...(operation.controller ? { signal: operation.controller.signal } : {}) });
                 } catch (caught) {
                     if (!isCurrentScope()) return null;
                     // A rejected or canceled approval is the person's own decision: nothing ran, nothing failed.
@@ -230,7 +232,7 @@ export function useProviderConnectionMutation(input: Readonly<{
                         key,
                         error: nextError,
                         ...providerRetryRecoveryForError(nextError, async () => {
-                            await run(parsedRequest, key);
+                            await run(parsedRequest, key, options);
                         }),
                     });
                     return null;
@@ -242,7 +244,7 @@ export function useProviderConnectionMutation(input: Readonly<{
                         key,
                         error: result.error,
                         ...providerRetryRecoveryForError(result.error, async () => {
-                            await run(parsedRequest, key);
+                            await run(parsedRequest, key, options);
                         }),
                     });
                     return result;

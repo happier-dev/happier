@@ -20,10 +20,10 @@ import { composeProviderSettingsV1, splitProviderSettingsV1, type ProviderConnec
   type ProviderConnectionsCatalogSnapshotV1 } from './connectionRowsV1.js';
 import { DaemonProviderConnectionViewV1Schema, type DaemonProviderConnectionViewV1, type DaemonProviderConnectionsDescribeResponseV1 } from '../../rpc/providers.js';
 import { readProviderConnectionSourceFactsV1, projectAvailableProviderContributionsV1 } from './sourceFactsV1.js';
-import { normalizeProviderEndpointUrlSyntax } from '../safety/url.js';
 import { createProviderCustomCopyTemplateV1 } from './customCopyV1.js';
-import { compareProviderCanonicalStringsV1 } from '../canonicalOrderV1.js';
 import { chooseProviderGatewayContributionV1 } from '../gatewayContributionsV1.js';
+import { resolveEffectiveProviderEndpointV1, patchProviderEndpointOverrideV1 } from './effectiveEndpointV1.js';
+import { providerEndpointPolicySecurityFactsV1 } from '../endpointPolicyV1.js';
 
 function refuse(code: ProviderErrorCodeV1, connectionId?: string): never {
   throw createProviderErrorV1(code, connectionId ? { connectionId } : {});
@@ -39,17 +39,11 @@ function sourceFor(connection: ProviderConnectionV1, definitions: readonly Accou
 function accountEndpoints(connection: ProviderConnectionV1, source: NonNullable<ReturnType<typeof sourceFor>>, machineId?: string) {
   if (connection.deployment.kind === 'managedLocal') return [];
   return source.definition.endpointTemplates.flatMap(endpoint => {
-    const override = (machineId ? connection.endpointOverridesByMachineId?.[machineId]?.find(value => value.endpointTemplateId === endpoint.id)?.baseUrl : undefined)
-      ?? connection.endpointOverrides?.find(value => value.endpointTemplateId === endpoint.id)?.baseUrl;
-    const base = endpoint.baseUrl ?? ('localUrlCandidates' in endpoint && endpoint.localUrlCandidates?.length === 1
-      ? endpoint.localUrlCandidates[0] : undefined);
-    const value = override ?? base;
-    if (!value) return [];
-    return [{ endpointTemplateId: endpoint.id, protocol: endpoint.protocol, baseUrl: normalizeProviderEndpointUrlSyntax(value).normalizedUrl,
-      effectiveSource: override ? 'accountOverride' as const : 'template' as const,
-      defaultBaseUrl: base ? normalizeProviderEndpointUrlSyntax(base).normalizedUrl : null,
-      accountOverrideBaseUrl: override ? normalizeProviderEndpointUrlSyntax(override).normalizedUrl : null,
-      machineOverrideBaseUrl: null, publicHeaders: endpoint.publicHeaders }];
+    const effective = resolveEffectiveProviderEndpointV1({ connection, template: endpoint, machineId });
+    if (!effective.baseUrl && !('requiresEndpointOverride' in endpoint && endpoint.requiresEndpointOverride)) return [];
+    return [{ endpointTemplateId: endpoint.id, protocol: endpoint.protocol, ...effective,
+      ...providerEndpointPolicySecurityFactsV1(endpoint),
+      ...(endpoint.publicHeaderHints ? { publicHeaderHints: endpoint.publicHeaderHints } : {}) }];
   });
 }
 
@@ -62,7 +56,8 @@ function securityFingerprint(connection: ProviderConnectionV1, source: NonNullab
   return createProviderConnectionSecurityFingerprintV1({
     securityContractVersion: PROVIDER_CONNECTION_SECURITY_CONTRACT_VERSION_V1,
     endpoints: accountEndpoints(connection, source, machineId).map(endpoint => ({ endpointTemplateId: endpoint.endpointTemplateId,
-      protocol: endpoint.protocol, url: endpoint.baseUrl, publicHeaders: endpoint.publicHeaders })),
+      protocol: endpoint.protocol, url: endpoint.baseUrl, publicHeaders: endpoint.publicHeaders,
+      ...providerEndpointPolicySecurityFactsV1(endpoint) })),
     catalogProbes: facts.catalogProbes, credentialTransports: facts.credentialTransports,
     ...(facts.availabilityProbe ? { availabilityProbe: facts.availabilityProbe } : {}),
     ...(facts.catalogFallback ? { catalogFallback: facts.catalogFallback } : {}),
@@ -76,6 +71,13 @@ function securityFingerprint(connection: ProviderConnectionV1, source: NonNullab
   });
 }
 
+function accountEndpointsAreReady(connection: ProviderConnectionV1, source: NonNullable<ReturnType<typeof sourceFor>>) {
+  const endpoints = accountEndpoints(connection, source);
+  return endpoints.some(endpoint => endpoint.ready) && source.definition.endpointTemplates.every(template =>
+    'requiresEndpointOverride' in template && template.requiresEndpointOverride
+    || endpoints.some(endpoint => endpoint.endpointTemplateId === template.id && endpoint.ready));
+}
+
 export function describeAccountProviderConnectionV1(settings: ProviderSettingsV1, connection: ProviderConnectionV1,
   definitions: readonly AccountProviderDeclarationV1[]): DaemonProviderConnectionViewV1 {
   const source = sourceFor(connection, definitions);
@@ -83,7 +85,7 @@ export function describeAccountProviderConnectionV1(settings: ProviderSettingsV1
   const credential = source?.definition.credential;
   const bindings = settings.secretBindingsByConnectionId[connection.id];
   const accountGrant = settings.accountGrants.find(grant => grant.connectionId === connection.id);
-  const completeEndpoints = source && (connection.deployment.kind === 'managedLocal' || accountEndpoints(connection, source).length === source.definition.endpointTemplates.length);
+  const completeEndpoints = source && (connection.deployment.kind === 'managedLocal' || accountEndpointsAreReady(connection, source));
   const accountState = !accountGrant ? 'absent' : source && completeEndpoints && accountGrant.connectionSecurityFingerprint === securityFingerprint(connection, source) ? 'valid' : 'stale';
   const identity = connection.source.kind === 'contribution' ? parseProviderContributionIdentityV1(connection.source.contributionKey)?.identity : null;
   const managed = contribution?.managedRuntime && identity ? resolveProviderManagedRuntimeDeclarationV1({
@@ -111,7 +113,7 @@ export function describeAccountProviderConnectionV1(settings: ProviderSettingsV1
     ...(connection.claudeHelperModels ? { claudeHelperModels: connection.claudeHelperModels } : {}),
     managedLocalOption: managed ? { targetMachineId: null, connectedAccountPurposes: managed.connectedAccounts.map(({ endpointTemplateIds: _endpoints, staticModels: _models, ...declaration }) => declaration),
       ...(managed.connectedAccountPurposeBindingPolicy ? { connectedAccountPurposeBindingPolicy: managed.connectedAccountPurposeBindingPolicy } : {}) } : null,
-    endpoints: source ? accountEndpoints(connection, source).map(({ publicHeaders: _headers, ...endpoint }) => endpoint) : [],
+    endpoints: source ? accountEndpoints(connection, source).map(({ ready: _ready, reason: _reason, ...endpoint }) => endpoint) : [],
     scope: null, authorized: false, authorizationError: source ? null : createProviderErrorV1('provider_contribution_unavailable', { connectionId: connection.id }),
     revision: connection.revision, runtime: { health: 'not_checked', modelCount: null, checkedAt: null, endpoints: [],
       ...(connection.deployment.kind === 'managedLocal' && managed && managed.connectedAccounts.length > 0
@@ -170,7 +172,7 @@ export function createAccountProviderActionExecuteV1(host: Readonly<{
     const enable = (connection: ProviderConnectionV1, enabled: boolean) => {
       if (enabled && connection.deployment.kind === 'external') {
         const source = requireSource(connection);
-        if (accountEndpoints(connection, source).length !== source.definition.endpointTemplates.length) refuse('provider_connection_invalid', connection.id);
+        if (!accountEndpointsAreReady(connection, source)) refuse('provider_connection_invalid', connection.id);
       }
       const remaining = settings.accountGrants.filter(grant => grant.connectionId !== connection.id);
       settings = { ...settings, accountGrants: enabled ? [...remaining, { v: 1, connectionId: connection.id,
@@ -236,7 +238,7 @@ export function createAccountProviderActionExecuteV1(host: Readonly<{
               displayNameMode: preview.displayName === null ? 'automatic' : 'custom', revision: 0, createdAt: now, updatedAt: now,
               ...(preview.endpointOverrides ? { endpointOverrides: preview.endpointOverrides } : {}) });
             if (preview.selectedCandidateId) refuse('provider_machine_unavailable');
-            const endpoints = accountEndpoints(connection, source).map(endpoint => ({ endpointTemplateId: endpoint.endpointTemplateId,
+            const endpoints = accountEndpoints(connection, source).filter(endpoint => endpoint.ready && endpoint.baseUrl !== null).map(endpoint => ({ endpointTemplateId: endpoint.endpointTemplateId,
               protocol: endpoint.protocol, normalizedUrl: endpoint.baseUrl, locality: 'unknown', scope: 'account' }));
             const fingerprint = createProviderFingerprintV1('authoring-review', { connectionId: connection.id,
               contributionKey: preview.contributionKey, revision: connection.revision, security: securityFingerprint(connection, source) });
@@ -329,11 +331,17 @@ export function createAccountProviderActionExecuteV1(host: Readonly<{
         }
         case 'providers.connections.endpoint.set': {
           const input = request.input; const previous = find(input.connectionId); requireRevision(previous, input.expectedRevision);
-          if (!requireSource(previous).definition.endpointTemplates.some(endpoint => endpoint.id === input.endpointTemplateId)) refuse('provider_connection_invalid', previous.id);
-          const overrides = (previous.endpointOverrides ?? []).filter(override => override.endpointTemplateId !== input.endpointTemplateId);
-          if (input.baseUrl !== null) overrides.push({ endpointTemplateId: input.endpointTemplateId, baseUrl: input.baseUrl });
-          overrides.sort((left, right) => compareProviderCanonicalStringsV1(left.endpointTemplateId, right.endpointTemplateId));
+          const source = requireSource(previous);
+          const template = source.definition.endpointTemplates.find(endpoint => endpoint.id === input.endpointTemplateId);
+          if (!template) refuse('provider_connection_invalid', previous.id);
+          const overrides = patchProviderEndpointOverrideV1(previous.endpointOverrides, input);
+          if (JSON.stringify(overrides) === JSON.stringify(previous.endpointOverrides ?? [])) {
+            mutation = false;
+            output = { status: 'success', action: input.action, connection: describeAccountProviderConnectionV1(settings, previous, definitions) };
+            break;
+          }
           const connection = ProviderConnectionV1Schema.parse({ ...previous, endpointOverrides: overrides, revision: previous.revision + 1, updatedAt: now });
+          resolveEffectiveProviderEndpointV1({ connection, template });
           replace(connection); output = { status: 'success', action: input.action, connection: describeAccountProviderConnectionV1(settings, connection, definitions) }; break;
         }
         case 'providers.connections.duplicate': {

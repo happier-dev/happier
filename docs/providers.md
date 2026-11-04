@@ -519,6 +519,29 @@ Codex integrations use the OpenAI Responses protocol unless a separately tested 
 
 ## Credentials and endpoint safety
 
+In 0.3 development, `providers/connections/effectiveEndpointV1.ts` is the
+canonical owner for endpoint address and public-policy inheritance. Template,
+Account and Machine headers merge in that order. A required endpoint override
+has no placeholder address; the read projection retains the endpoint with a
+nullable address and a setup reason. `addressConstraint` fixes HTTPS origin and
+ordered literal/coordinate path segments, `requiredPublicHeaders` makes missing
+routing facts unready, and `modelIdPattern` filters wire ids in the existing
+compatibility matcher before protocol ranking. The model constraint also travels
+in Team recipient source facts. None of these selects credentials or rewrites
+model ids.
+
+The `providers.connections.endpoint.set` Action independently patches address and
+header facts. Omitted retains; `baseUrl:null` resets only the address;
+`publicHeaders:null` or an empty replacement resets only that layer's headers.
+A map replaces the selected layer, so removing an entry inherits the lower
+layer. Empty override rows are removed. Description carries effective/default
+headers, Account/Machine maps and per-header sources for authoritative review
+and inherited reset. Endpoint edits retain the ordinary connection revision
+check; template defaults and presentation hints do not create an additional
+approval digest or stale-edit condition. Duplicate/custom-copy preserves effective policy and its
+constraints. Routing, model and effective-policy facts enter the existing
+security fingerprints; localized `publicHeaderHints` are presentation only.
+
 GitHub forge credentials are Connected Service credentials, not model Provider
 connections. In 0.3 development, GitHub consumers may use the executing machine's
 GitHub CLI login through the existing native materialization path; an explicit

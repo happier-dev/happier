@@ -18,6 +18,7 @@ import { serializeModelVisibilityRefV1 } from '../selection/v1.js';
 import { DaemonProviderModelProjectionGroupV1Schema } from '../../rpc/providers.js';
 import { hasProviderExperimentalConfirmation } from '../settings/v1.js';
 import { projectProviderModelReasoningForAgent } from './reasoningEffort.js';
+import { resolveEffectiveProviderEndpointV1 } from '../connections/effectiveEndpointV1.js';
 
 /** Worker facts stay authoritative; experimental consent belongs to the reading Account. */
 export function projectAccountProviderModelConfirmationsV1(input: Readonly<{
@@ -114,8 +115,9 @@ export function projectAccountProviderModelsV1(input: AccountProviderModelProjec
     if (!source) continue;
     const merged = mergeAccountConnectionCatalog({ catalog: input.catalog, connection, source });
     const endpoints = source.endpointTemplates.map(endpoint => {
-      const override = connection.endpointOverrides?.find(candidate => candidate.endpointTemplateId === endpoint.id);
-      return override ? { ...endpoint, baseUrl: override.baseUrl, localUrlCandidates: undefined } : endpoint;
+      const effective = resolveEffectiveProviderEndpointV1({ connection, template: endpoint });
+      return effective.baseUrl ? { ...endpoint, baseUrl: effective.baseUrl, requiresEndpointOverride: undefined,
+        localUrlCandidates: undefined, publicHeaders: effective.publicHeaders } : endpoint;
     });
     const current = request.currentSelection;
     const freeformCurrent = current?.providerConnectionId === connection.id && current.agentTargetKey === request.agentTargetKey

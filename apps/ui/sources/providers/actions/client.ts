@@ -8,6 +8,7 @@ import { createProviderErrorV1, ProviderErrorV1Schema, providerErrorFromRpcFailu
 import { DaemonProviderProfileMigrationPreviewResponseV1Schema, DaemonProviderProfileMigrationConfirmResponseV1Schema,
     DaemonProviderProfileMigrationConflictConfirmResponseV1Schema } from '@happier-dev/protocol/rpc/providers';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
+import type { UiActionOperation } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { resumeActionExecutionResult, type ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
@@ -16,7 +17,7 @@ export { providerErrorFromRpcFailure } from '@/providers/rpc/client';
 
 type IncumbentClient = typeof import('@/providers/rpc/client');
 type InvocationScope = Readonly<{ serverId: string | null; accountId?: string; signal?: AbortSignal; onDispatched?: () => void }>;
-export type ProviderActionApprovalOptions = Readonly<{
+export type ProviderActionApprovalOptions = Pick<UiActionOperation, 'confirmed'> & Readonly<{
     scope: ServerAccountScope;
     signal: AbortSignal;
     onApprovalPending: (registration: ActionApprovalRegistration) => void;
@@ -46,7 +47,7 @@ async function invoke<TSchema extends z.core.$ZodType>(actionId: ActionId, input
     try {
         // The dispatch owner preserves acknowledged mutations after Account retirement.
         // Only the deferred Artifact follower may race the caller's local interest.
-        const result = await createDefaultActionExecutor({ onProviderRpcDispatched: scope.onDispatched,
+        const executor = createDefaultActionExecutor({ onProviderRpcDispatched: scope.onDispatched,
             ...(approvalOptions?.retainInvocationSignal && signal ? {
                 hostActionApprovalLifetime: { actionId, signal, surface: 'ui' as const },
                 // The blocking executor owns the result; this registration only
@@ -56,7 +57,8 @@ async function invoke<TSchema extends z.core.$ZodType>(actionId: ActionId, input
                     onExecuted: async () => 'consumed',
                 }),
             } : {}),
-        }).execute(actionId, input, {
+        });
+        const result = await (approvalOptions?.confirmed ? executor.executeConfirmed : executor.execute)(actionId, input, {
             surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
             ...(scope.serverId || approvalOptions?.scope.serverId ? { serverId: scope.serverId ?? approvalOptions?.scope.serverId } : {}),
             ...(scope.accountId || approvalOptions?.scope.accountId ? { expectedAccountId: scope.accountId ?? approvalOptions?.scope.accountId } : {}),

@@ -26,6 +26,8 @@ providerHarness.intercept(RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE, () 
 // Socket transport is the boundary; scoped routing, Action admission and Inbox execution stay real.
 await loadSyncSingletonForTests();
 const { useProviderConnectionMutation } = await import('./useProviderConnectionMutation');
+const { useProviderEndpointConfiguration } = await import('./useProviderEndpointConfiguration');
+const { useProviderGatewayConfiguration } = await import('./useProviderGatewayConfiguration');
 const { mutateProviderConnection } = await import('@/providers/actions/client');
 const { useProviderActionClient } = await import('@/providers/actions/useProviderActionClient');
 const { useActionApprovalContinuation } = await import('@/components/approvals/useActionApprovalContinuation');
@@ -49,8 +51,8 @@ function connectionCatalog() {
 }
 
 /** Stateful Home row transport; Account mutation, publication and receipt custody remain real. */
-function installWritableCatalog(serverId: string, respondAfter?: PromiseLike<void>) {
-    return installProviderConnectionsCatalogHttpBoundary({ home: harness, serverId, catalog: connectionCatalog(),
+function installWritableCatalog(serverId: string, respondAfter?: PromiseLike<void>, catalog = connectionCatalog()) {
+    return installProviderConnectionsCatalogHttpBoundary({ home: harness, serverId, catalog,
         reply: mutation => ({ respondAfter, body: { status: 'updated', revision: Number(mutation.expectedRevision) + 1, cursor: Number(mutation.expectedRevision) + 1 } }),
     });
 }
@@ -69,6 +71,47 @@ function observeApprovalHrefMaps() {
 }
 
 describe('Provider mutation deferred approval', () => {
+    it.each(['connection', 'endpoint', 'gateway'] as const)('settles a designed %s Confirm without asking again', async kind => {
+        const initialCatalog = connectionCatalog();
+        if (kind === 'gateway') initialCatalog.connections[0] = ProviderConnectionsCatalogV1Schema.parse({
+            ...initialCatalog, connections: [{ ...initialCatalog.connections[0],
+                source: { kind: 'contribution', contributionKey: 'happier.provider.cliproxyapi/cliproxyapi' },
+                deployment: { kind: 'managedLocal' },
+            }],
+        }).connections[0]!;
+        const { serverId } = await scopedAccount.restore({ accountId: 'account-confirm', catalog: initialCatalog, machines: [], waivedActions: [] });
+        const catalog = installWritableCatalog(serverId, undefined, initialCatalog);
+        const source = initialCatalog.connections[0]!.source;
+        const endpointTemplateId = source.kind === 'custom' ? source.template.endpointTemplates[0]!.id : '';
+        const resolveTarget = () => null;
+        const refresh = async () => {};
+        const connection = createProviderConnectionViewFixture({ connectionId: 'pc_a' });
+        const hook = await renderHook(() => {
+            const mutation = useProviderConnectionMutation({ serverId, resolveTarget, refresh });
+            return { mutation,
+                endpoint: useProviderEndpointConfiguration({ connection, machineId: null, mutation, onChange: refresh }),
+                gateway: useProviderGatewayConfiguration({ connection: catalog.catalog.connections[0]!, machineId: null, mutation }),
+                ready: useProviderActionClient(serverId).ready };
+        });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().ready).toBe(true));
+        const { Modal } = await import('@/modal');
+        const confirm = vi.spyOn(Modal, 'confirm').mockResolvedValue(false);
+        let result: unknown;
+        await act(async () => {
+            const current = hook.getCurrent();
+            result = kind === 'connection'
+                ? await current.mutation.run({ action: 'delete', connectionId: 'pc_a' }, 'delete', { confirmed: true })
+                : kind === 'endpoint'
+                    ? await current.endpoint.patch({ scope: 'account', endpointTemplateId, publicHeaders: { 'x-policy': 'confirmed' } }, { confirmed: true })
+                    : await current.gateway.save({ claudeHelperModels: null }, { confirmed: true });
+        });
+        expect(result).toEqual(kind === 'connection' ? expect.objectContaining({ status: 'success' }) : true);
+        expect(catalog.writes).toBe(1);
+        expect(confirm).not.toHaveBeenCalled();
+        expect(harness.artifacts(serverId).list()).toEqual([]);
+        expect(navigation.spies.push).not.toHaveBeenCalled();
+    });
+
     it.each(['settlement', 'Account retirement', 'unmount'] as const)(
         'releases approval href custody at %s', async ending => {
             const { serverId } = await scopedAccount.restore({ accountId: 'account-href', catalog: connectionCatalog() });
