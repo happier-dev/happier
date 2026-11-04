@@ -1808,14 +1808,14 @@ describe('VoiceAgentManager', () => {
     });
   });
 
-  it('surfaces the runtime refusal when the host declines the prompt instead of treating it as delivered', async () => {
+  it.each(['provider_busy', 'context_length_exceeded'])('surfaces the typed runtime refusal %s instead of treating it as delivered', async code => {
     // `deliverInput` reports a refusal as a value rather than a throw. If Voice
     // ignored the status it would fall through to an empty chat buffer and report
     // the generic 'Bootstrap failed', hiding the reason the Agent gave.
     const runtime: AgentRuntime = { sessions: { async open() { return {
       async send() { return {
         status: 'rejected' as const,
-        diagnostic: { code: 'provider_busy', severity: 'error' as const, message: 'Agent refused the prompt' },
+        diagnostic: { code, severity: 'error' as const, message: 'Agent refused the prompt' },
         retryable: false,
       }; },
       watch() { return { dispose() {} }; },
@@ -1839,8 +1839,17 @@ describe('VoiceAgentManager', () => {
     try {
       // The real native delivery owner throws the provider refusal; Voice must
       // preserve it rather than report a successful, empty response.
-      await expect(manager.sendTurn({ voiceAgentId: started.voiceAgentId, userText: 'hi' }))
-        .rejects.toThrow('Agent refused the prompt');
+      const { streamId } = await manager.startTurnStream({ voiceAgentId: started.voiceAgentId, userText: 'hi' });
+      const events: VoiceAgentTurnStreamEvent[] = [];
+      let cursor = 0;
+      for (;;) {
+        const reply = await manager.readTurnStream({ voiceAgentId: started.voiceAgentId, streamId, cursor, waitForEvents: true });
+        events.push(...reply.events);
+        if (reply.done) break;
+        cursor = reply.nextCursor;
+      }
+      expect(events).toContainEqual({ t: 'error', error: 'Agent refused the prompt', errorCode: code });
+      expect(events.some(event => event.t === 'done' || event.t === 'voice_output' && event.output.kind === 'turn_final')).toBe(false);
     } finally {
       await manager.dispose();
     }

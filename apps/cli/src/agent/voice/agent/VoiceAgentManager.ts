@@ -9,6 +9,7 @@ import {
   resolveExecutionRunRuntimeBackendId,
 } from '@/agent/runtime/bridges/executionRun/backendTargets';
 import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
+import { readExecutionRunErrorCode } from '@/agent/runtime/bridges/executionRun/errors';
 import type { AgentInvocationTurnAdmissionWitness } from '@/plugins/runtime/invocation/services/types';
 import { extractVoiceActionsFromAssistantText } from '@happier-dev/protocol/voice/actions';
 import { listVoiceActionBlockSpecs } from '@happier-dev/protocol/actions/actionSpecs';
@@ -1334,10 +1335,7 @@ export class VoiceAgentManager {
         stream.preparedInstructionsFor = undefined;
         if (settleCancelled()) return;
         const message = error instanceof Error ? error.message : 'stream_failed';
-        const code =
-          error && typeof error === 'object' && typeof (error as { code?: unknown }).code === 'string'
-            ? ((error as { code: string }).code)
-            : undefined;
+        const code = readExecutionRunErrorCode(error);
         stream.events.push({ t: 'error', error: message, ...(code ? { errorCode: code } : {}) });
       } finally {
         stream.done = true;
