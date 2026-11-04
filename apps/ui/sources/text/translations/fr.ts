@@ -6336,7 +6336,7 @@ export const fr: TranslationStructure = {
             customColorTitle: 'Couleur personnalisée',
             customColorMessage: 'Choisissez une teinte ou saisissez une valeur hexadécimale.',
             invalidColor: 'Utilisez une valeur hexadécimale comme #3A7BD5.',
-            removeColor: 'Retirer la couleur',
+            resetColor: 'Réinitialiser la couleur',
             inheritedFromProject: 'Du projet',
             customColorLabel: ({ hex }: { hex: string }) => `Couleur personnalisée ${hex}`,
             colors: { blue: 'Bleu', green: 'Vert', orange: 'Orange', yellow: 'Jaune', red: 'Rouge', indigo: 'Indigo', purple: 'Violet' },

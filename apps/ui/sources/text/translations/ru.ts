@@ -5652,7 +5652,7 @@ export const ru: TranslationStructure = {
       customColorTitle: 'Свой цвет',
       customColorMessage: 'Выберите оттенок или введите шестнадцатеричное значение.',
       invalidColor: 'Используйте шестнадцатеричное значение, например #3A7BD5.',
-      removeColor: 'Убрать цвет',
+      resetColor: 'Сбросить цвет',
       inheritedFromProject: 'Из проекта',
       customColorLabel: ({ hex }: { hex: string }) => `Свой цвет ${hex}`,
       colors: { blue: 'Синий', green: 'Зелёный', orange: 'Оранжевый', yellow: 'Жёлтый', red: 'Красный', indigo: 'Индиго', purple: 'Фиолетовый' },

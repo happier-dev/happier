@@ -6350,7 +6350,7 @@ deps: {
             customColorTitle: 'Color personalitzat',
             customColorMessage: 'Tria un to o introdueix un valor hexadecimal.',
             invalidColor: 'Fes servir un valor hexadecimal com #3A7BD5.',
-            removeColor: 'Treu el color',
+            resetColor: 'Restableix el color',
             inheritedFromProject: 'Del projecte',
             customColorLabel: ({ hex }: { hex: string }) => `Color personalitzat ${hex}`,
             colors: { blue: 'Blau', green: 'Verd', orange: 'Taronja', yellow: 'Groc', red: 'Vermell', indigo: 'Indi', purple: 'Porpra' },

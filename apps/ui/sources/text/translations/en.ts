@@ -6381,7 +6381,7 @@ export const en = {
             customColorTitle: 'Custom color',
             customColorMessage: 'Pick a shade or enter a hex value.',
             invalidColor: 'Use a hex value like #3A7BD5.',
-            removeColor: 'Remove color',
+            resetColor: 'Reset color',
             inheritedFromProject: 'From the project',
             customColorLabel: ({ hex }: { hex: string }) => `Custom color ${hex}`,
             colors: { blue: 'Blue', green: 'Green', orange: 'Orange', yellow: 'Yellow', red: 'Red', indigo: 'Indigo', purple: 'Purple' },

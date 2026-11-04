@@ -6349,7 +6349,7 @@ export const de: TranslationStructure = {
             customColorTitle: 'Eigene Farbe',
             customColorMessage: 'Wähle einen Farbton oder gib einen Hex-Wert ein.',
             invalidColor: 'Verwende einen Hex-Wert wie #3A7BD5.',
-            removeColor: 'Farbe entfernen',
+            resetColor: 'Farbe zurücksetzen',
             inheritedFromProject: 'Vom Projekt',
             customColorLabel: ({ hex }: { hex: string }) => `Eigene Farbe ${hex}`,
             colors: { blue: 'Blau', green: 'Grün', orange: 'Orange', yellow: 'Gelb', red: 'Rot', indigo: 'Indigo', purple: 'Lila' },

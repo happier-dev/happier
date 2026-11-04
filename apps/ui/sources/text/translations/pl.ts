@@ -6729,7 +6729,7 @@ export const pl: TranslationStructure = {
       customColorTitle: 'Własny kolor',
       customColorMessage: 'Wybierz odcień lub wpisz wartość szesnastkową.',
       invalidColor: 'Użyj wartości szesnastkowej, np. #3A7BD5.',
-      removeColor: 'Usuń kolor',
+      resetColor: 'Resetuj kolor',
       inheritedFromProject: 'Z projektu',
       customColorLabel: ({ hex }: { hex: string }) => `Własny kolor ${hex}`,
       colors: { blue: 'Niebieski', green: 'Zielony', orange: 'Pomarańczowy', yellow: 'Żółty', red: 'Czerwony', indigo: 'Indygo', purple: 'Fioletowy' },
