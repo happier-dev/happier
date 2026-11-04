@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { createJsonRpcApplicationError } from '@happier-dev/plugin-sdk/exec/protocol-clients';
+import { sanitizeSessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { SessionSpawnLaunchErrorV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnLaunchErrorV1';
 
 import {
     createCodexAppServerTurnFailure,
@@ -6,9 +9,46 @@ import {
     isCodexAppServerContextWindowExhaustedError,
     isCodexAppServerTemporaryRecoverableTurnFailureError,
     readCodexAppServerTurnFailureDiagnostic,
+    readCodexAppServerFailureCause,
 } from './failure.js';
 
 describe('createCodexAppServerTurnFailure', () => {
+  it('retains redacted correlated provider messages through public runtime and launch failures', () => {
+    const rejection = createJsonRpcApplicationError({
+      method: 'thread/start',
+      code: -32603,
+      message: 'Thread creation failed: Bearer private-provider-token; api_key=private-api-key',
+      data: { message: 'PRIVATE_RESPONSE_DATA', path: '/PRIVATE_NATIVE_PATH' },
+    });
+    const failure = createCodexAppServerTurnFailure({
+      phase: 'thread_open',
+      providerStartRejected: true,
+      value: rejection,
+    });
+    const failureCause = readCodexAppServerFailureCause(failure);
+    expect(failureCause).toMatchObject({
+      phase: 'thread_open',
+      providerErrorCode: -32603,
+      providerErrorMessage: expect.stringContaining('Thread creation failed:'),
+    });
+    expect(failureCause).toHaveProperty('providerErrorMessage', expect.stringContaining('[REDACTED]'));
+    expect(readCodexAppServerFailureCause(rejection)).toHaveProperty('providerErrorMessage', failureCause.providerErrorMessage);
+    const issue = sanitizeSessionRuntimeIssueV1({
+      v: 1, scope: 'primary_session', status: 'failed', occurredAt: 1,
+      code: 'agent_startup_rpc_rejected', source: 'agent_session_error', agentId: 'codex', failureCause,
+    });
+    const launch = SessionSpawnLaunchErrorV1Schema.parse({
+      kind: 'launch_error', code: 'agent_startup_rpc_rejected', message: 'Codex startup failed', failureCause,
+    });
+    expect(issue).toMatchObject({ failureCause });
+    expect(launch).toMatchObject({ failureCause });
+    const serialized = JSON.stringify({ failure, issue, launch });
+    for (const privateValue of ['private-provider-token', 'private-api-key', 'PRIVATE_RESPONSE_DATA', 'PRIVATE_NATIVE_PATH']) {
+      expect(serialized).not.toContain(privateValue);
+    }
+    expect(readCodexAppServerFailureCause(new Error('PRIVATE_NATIVE_MESSAGE'))).not.toHaveProperty('providerErrorMessage');
+  });
+
     it.each(['PRIVATE_UPSTREAM_DETAIL', "The 'gpt-5.4-mini' model is not supported when using Codex with a ChatGPT account."])(
         'retains a native flattened model_not_found code without classifying upstream prose: %s', message => {
         const failure = createCodexAppServerTurnFailure({ value: { turn: { error: {

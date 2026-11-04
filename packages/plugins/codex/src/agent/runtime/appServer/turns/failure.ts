@@ -153,6 +153,12 @@ function readRetainedFailureCause(error: unknown): CodexFailureCause | null {
   return retained.success ? retained.data : null;
 }
 
+function readRedactedProviderErrorMessage(error: unknown): string | undefined {
+  // Only a correlated provider response admits prose; native/transport errors do not.
+  if (!(error instanceof Error) || !readJsonRpcApplicationRejection(error)) return undefined;
+  return redactBugReportSensitiveText(error.message).trim() || undefined;
+}
+
 export function readCodexAppServerFailureCause(
   error: unknown,
 ): CodexFailureCause {
@@ -164,6 +170,7 @@ export function readCodexAppServerFailureCause(
   const rejection =
     readJsonRpcApplicationRejection(error);
   const nativeStartup = readCodexAppServerStartupFailure(error);
+  const providerErrorMessage = readRedactedProviderErrorMessage(error);
   const code =
     // This reader already admits only closed OS identities. Keep the cause
     // beneath the public startup category, never native prose or paths.
@@ -176,6 +183,7 @@ export function readCodexAppServerFailureCause(
     ...diagnostic,
     ...readAgentStartupFailureDetails(error),
     ...(rejection ? { providerErrorCode: rejection.providerErrorCode } : {}),
+    ...(providerErrorMessage ? { providerErrorMessage } : {}),
   });
 }
 
@@ -417,6 +425,7 @@ export function createCodexAppServerTurnFailure(params: Readonly<{
     if (primary !== params.value) return createCodexAppServerTurnFailure({ ...params, value: primary });
     if (params.value instanceof CodexAppServerTurnFailure) return params.value;
     const retainedCause = readRetainedFailureCause(params.value);
+    const providerErrorMessage = readRedactedProviderErrorMessage(params.value);
     const phase = retainedCause?.phase ?? params.phase;
     const startupFailure = readCodexAppServerStartupFailure(params.value);
     const rawCode = readRecord(params.value)?.code;
@@ -485,6 +494,7 @@ export function createCodexAppServerTurnFailure(params: Readonly<{
     Object.assign(failure, { details: {
         v: 1, agentId: 'codex', source: readCodexAppServerRuntimeIssueSource(failure), ...startupDetails,
         failureCause: { ...readCodexAppServerFailureCause(failure), ...retainedCause,
+            ...(providerErrorMessage ? { providerErrorMessage } : {}),
             ...(preparationCause ? { preparationCause } : {}) },
     } });
     if (readRecord(params.value)?.happierNativeResumeIdentityMismatch === true) {

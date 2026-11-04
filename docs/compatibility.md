@@ -72,6 +72,13 @@ an upgraded host; they do not need a dual writer or a stored-data migration.
 
 ## Runtime failure transcript metadata (0.3 development)
 
+Correlated Codex JSON-RPC application rejections may add optional
+`failureCause.providerErrorMessage`, using the existing bug-report secret
+redactor. Response data and generic native error messages stay excluded; the
+redactor preserves filesystem paths. Strict 0.3 cause readers need the matching
+schema before receiving it; causes without it remain valid. This diagnostic
+changes no authority, retry decision or released-client update floor.
+
 The unreleased 0.3 `SessionSpawnLaunchErrorV1` also admits this same optional
 `failureCause` leaf for runner failures before native Session startup completes.
 The runner producer, daemon child-exit projection and strict launch-result readers

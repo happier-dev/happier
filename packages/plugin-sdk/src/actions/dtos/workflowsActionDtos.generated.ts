@@ -11762,6 +11762,7 @@ export type WorkflowsActionResultById = {
                             reason?: 'refresh_bridge_unavailable' | 'provider_account_identity_unavailable' | 'experimental_api_unavailable' | 'workspace_incompatible' | 'credential_family_mismatch' | 'live_hot_auth_failed' | undefined;
                             providerErrorCode?: number | 'ContextWindowExceeded' | 'UsageLimitExceeded' | 'Unauthorized' | 'Other' | 'HttpConnectionFailed' | 'model_not_found' | undefined;
                             httpStatus?: number | undefined;
+                            providerErrorMessage?: string | undefined;
                         } | undefined;
                         agentProcessExitAfterSwitch?: {
                             exitCode: number | null;
@@ -12544,6 +12545,7 @@ export type WorkflowsActionResultById = {
                             reason?: 'refresh_bridge_unavailable' | 'provider_account_identity_unavailable' | 'experimental_api_unavailable' | 'workspace_incompatible' | 'credential_family_mismatch' | 'live_hot_auth_failed' | undefined;
                             providerErrorCode?: number | 'ContextWindowExceeded' | 'UsageLimitExceeded' | 'Unauthorized' | 'Other' | 'HttpConnectionFailed' | 'model_not_found' | undefined;
                             httpStatus?: number | undefined;
+                            providerErrorMessage?: string | undefined;
                         } | undefined;
                         agentProcessExitAfterSwitch?: {
                             exitCode: number | null;
@@ -13571,6 +13573,7 @@ export type WorkflowsActionResultById = {
                             reason?: 'refresh_bridge_unavailable' | 'provider_account_identity_unavailable' | 'experimental_api_unavailable' | 'workspace_incompatible' | 'credential_family_mismatch' | 'live_hot_auth_failed' | undefined;
                             providerErrorCode?: number | 'ContextWindowExceeded' | 'UsageLimitExceeded' | 'Unauthorized' | 'Other' | 'HttpConnectionFailed' | 'model_not_found' | undefined;
                             httpStatus?: number | undefined;
+                            providerErrorMessage?: string | undefined;
                         } | undefined;
                         agentProcessExitAfterSwitch?: {
                             exitCode: number | null;

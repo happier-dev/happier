@@ -292,7 +292,7 @@ export const RunnerDaemonPluginServicesPreparationCauseV1Schema = lazyZodSchema(
 export type RunnerDaemonPluginServicesPreparationCauseV1 =
   z.infer<typeof RunnerDaemonPluginServicesPreparationCauseV1Schema>;
 
-/** Content-free evidence, never provider prose or an authority/retry decision. */
+/** Failure diagnostics, never an authority/retry decision. Provider messages are redacted by their producer. */
 export const SessionRuntimeFailureCauseV1Schema = lazyZodSchema(() => z.strictObject({
   code: z.optional(SessionRuntimeFailureCauseCodeV1Schema),
   phase: z.enum(['authentication', 'client_start', 'thread_open', 'turn_start', 'turn']),
@@ -309,6 +309,7 @@ export const SessionRuntimeFailureCauseV1Schema = lazyZodSchema(() => z.strictOb
     z.number().check(z.int()),
   ])),
   httpStatus: z.optional(z.number().check(z.int(), z.minimum(100), z.maximum(599))),
+  providerErrorMessage: z.optional(z.string().check(z.trim(), z.minLength(1))),
 }));
 
 export const SessionRuntimeIssueV1Schema = lazyZodSchema(() => (<I extends z.core.$ZodType, O extends z.core.$ZodType>(input: I, output: O) => new z.ZodMiniPipe({ type: 'pipe', in: input, out: output }) as z.ZodMiniPipe<I, O>)(z.transform(normalizeLegacyRuntimeIssueV1), z.readonly(z.object({

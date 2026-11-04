@@ -19,10 +19,12 @@ const result = (stdout = ''): PluginProcessResult => ({
 
 // Exec is the native process/filesystem boundary. All socket publication,
 // readiness, cancellation, protocol initialization and cleanup owners are real.
-it.skipIf(process.platform !== 'linux').each([994, 996])('uses the admitted UID %s proxy for an alias whose physical socket the host cannot stat', async uid => {
+it.skipIf(process.platform !== 'linux').each([994, 996])('uses the admitted UID %s native home and proxy without the custodian SQLite path', async uid => {
   const root = await mkdtemp('/tmp/h-cx-');
   osBoundary.home = root;
   const directory = join(root, 'transport');
+  const custodianSqliteHome = join(root, 'custodian-sqlite');
+  const processEnv = { CODEX_HOME: join(root, 'custodian-auth'), CODEX_SQLITE_HOME: custodianSqliteHome };
   await mkdir(directory, { mode: 0o700 });
   const original = Object.freeze({}) as NativeLaunch;
   const prepared = Object.freeze({}) as NativeLaunch;
@@ -41,6 +43,9 @@ it.skipIf(process.platform !== 'linux').each([994, 996])('uses the admitted UID 
     spawn: async (request: Parameters<ExecService['spawn']>[0], options: Parameters<ExecService['spawn']>[1]) => {
       expect(options?.nativeLaunch).toBe(prepared);
       expect(request.args[request.args.indexOf('--listen') + 1]).toBe(`unix://${socketPath}`);
+      // The shim supplies this UID's materialized CODEX_HOME. An explicit
+      // custodian sqlite_home defeats that projection before native startup.
+      expect(request.args.some(arg => arg.startsWith('sqlite_home='))).toBe(false);
       await mkdir(dirname(socketPath), { mode: 0o700 });
       // Mirrors native's alias into /tmp/codex-daemon-UID (0700) and socket0600.
       // A missing target deterministically proves the host never follows it.
@@ -58,12 +63,13 @@ it.skipIf(process.platform !== 'linux').each([994, 996])('uses the admitted UID 
       },
     },
   } as unknown as ExecService; // Native daemon transport/process adapter fixture.
-  const server = await createCodexSharedAppServer({ exec, nativeLaunch: original, processEnv: { CODEX_SQLITE_HOME: root }, platform: 'linux' });
+  const server = await createCodexSharedAppServer({ exec, nativeLaunch: original, processEnv, platform: 'linux' });
   try {
     expect(server).not.toBeNull();
-    const client = await server!.createClient({ cwd: root, processEnv: { CODEX_SQLITE_HOME: root }, configOverrides: [], disableUserMcpServers: false });
+    const client = await server!.createClient({ cwd: root, processEnv, configOverrides: [], disableUserMcpServers: false });
     expect(await client.request('thread/list', {})).toEqual({});
     expect(proxyConnections).toBe(1);
+    await expect(stat(custodianSqliteHome)).rejects.toMatchObject({ code: 'ENOENT' });
     await client.dispose();
   } finally {
     await server?.dispose();

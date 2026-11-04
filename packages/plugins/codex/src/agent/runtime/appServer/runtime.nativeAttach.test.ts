@@ -20,6 +20,36 @@ vi.mock('node:os', async importOriginal => {
 });
 
 describe('native Codex attachment preparation', () => {
+  it('retains redacted provider rejection details through public native startup and issue publication', async () => {
+    await withFixture(async ({ openConfiguredSession, requests }) => {
+      const failure = await openConfiguredSession().then(
+        () => { throw new Error('Expected native startup refusal'); },
+        (error: unknown) => error,
+      );
+      const retained = sanitizeNativeAgentSessionBoundaryError(failure, true);
+      const issue = SessionRuntimeIssueV1Schema.parse(classifyPrimarySessionRuntimeIssue({
+        cause: 'session_error', error: retained, provider: 'codex', occurredAt: 100,
+      }));
+      expect(retained).toMatchObject({ code: 'agent_startup_rpc_rejected', details: { failureCause: {
+        phase: 'thread_open', providerErrorCode: -32603,
+        providerErrorMessage: expect.stringContaining('Thread creation failed:'),
+      } } });
+      expect(issue).toMatchObject({ failureCause: {
+        phase: 'thread_open', providerErrorCode: -32603,
+        providerErrorMessage: expect.stringContaining('[REDACTED]'),
+      } });
+      for (const value of [failure, retained, issue]) {
+        expect(JSON.stringify(value)).not.toContain('private-provider-token');
+        expect(JSON.stringify(value)).not.toContain('private-api-key');
+      }
+      expect(requests.filter(request => request.method === 'thread/start')).toHaveLength(1);
+      expect(requests.some(request => request.method === 'turn/start')).toBe(false);
+    }, { threadStartFailure: {
+      code: -32603,
+      message: 'Thread creation failed: Bearer private-provider-token; api_key=private-api-key',
+    } });
+  });
+
   it.skipIf(process.platform === 'win32').each(['session', 'run'] as const)(
     'retains the native permission cause through sanitized %s startup and public issue projection',
     async (scope) => {

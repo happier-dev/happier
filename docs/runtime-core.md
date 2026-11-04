@@ -2067,6 +2067,11 @@ Codex Session and execution-run startup use one sanitizer for closed failure
 codes and static messages, retaining bounded authentication and missing-state
 facts without copying native error prose, payloads or causes. The host's primary
 Session issue projector retains those Protocol-owned codes through publication.
+Correlated Codex JSON-RPC application rejections retain optional
+`failureCause.providerErrorMessage`, redacted by the existing bug-report secret
+redactor. Response data and generic native error messages stay excluded. The
+redactor preserves filesystem paths in provider prose. This diagnostic has no
+authority or retry meaning and requires matching development cause readers.
 Shared Codex control obtains its per-Session socket directory from the host
 Exec owner using the held native launch identity. Cross-UID Linux placement
 reuses the Session MCP directory/verified exact-UID ACL owner under `/tmp`;
@@ -2074,6 +2079,10 @@ daemon-private ancestors stay private. The existing first-party native-launch
 shim creates the native-owned alias child and grants the daemon UID traversal
 only. Readiness observes alias publication without following the private socket.
 Codex 0.162.1 keeps its physical socket under its own UID-only daemon directory.
+For a separated executing UID, SQLite defaults to the shim-selected native
+`CODEX_HOME`; startup argument construction omits the custodian's
+`CODEX_SQLITE_HOME` override. The existing OS-user startup lock covers this
+unresolved native root without opening the member's home from the custodian.
 Happier connects through Codex's existing
 `app-server proxy --sock <Session alias>` under that same executing UID,
 so it preserves Codex's native directory/socket permissions and targets the exact

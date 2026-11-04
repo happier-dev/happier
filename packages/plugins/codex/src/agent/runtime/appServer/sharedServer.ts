@@ -400,7 +400,16 @@ export async function createCodexSharedAppServer(params: Readonly<{
         }
         throw error;
       }
-    }, params.signal, params.logger, { processEnv: request.processEnv, configOverrides: request.configOverrides, cwd: request.cwd, versionOutput }, params.onStartupWaiting);
+    }, params.signal, params.logger, {
+      // The separated UID's shim publishes its selected CODEX_HOME. Native
+      // SQLite must default to that home: a host-side sqlite_home argument
+      // would override the shim with the custodian's private credential path.
+      // Unresolved native roots retain the existing OS-user startup lock.
+      processEnv: nativeDirectory?.nativeProxy
+        ? { ...request.processEnv, CODEX_SQLITE_HOME: undefined }
+        : request.processEnv,
+      configOverrides: request.configOverrides, cwd: request.cwd, versionOutput,
+    }, params.onStartupWaiting);
     try {
       await startPromise;
     } catch (error) {
