@@ -16,17 +16,23 @@ export function isTeamEntryRoute(segments: readonly string[]): boolean {
   );
 }
 
+/** The signed-out welcome (`/`): the one place a person arrives without a task in hand. */
+export function isWelcomeRoute(segments: readonly string[]): boolean {
+  const normalized = segments.filter(
+    (s) => !(s.startsWith('(') && s.endsWith(')')),
+  );
+  return normalized.length === 0 || normalized[0] === 'index';
+}
+
 export function isPublicRouteForUnauthenticated(segments: string[]): boolean {
+  // Home (welcome / login / create account)
+  if (isWelcomeRoute(segments)) return true;
+
   // expo-router includes route groups like "(app)" in segments.
   const normalized = segments.filter(
     (s) => !(s.startsWith('(') && s.endsWith(')')),
   );
-
-  if (normalized.length === 0) return true;
   const first = normalized[0];
-
-  // Home (welcome / login / create account)
-  if (first === 'index') return true;
 
   // Issued account-service callbacks still land at the exact legacy wizard leaf.
   // The former setup index is also public so its root redirect can settle.

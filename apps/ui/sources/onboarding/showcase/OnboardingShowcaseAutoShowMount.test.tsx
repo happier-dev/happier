@@ -158,7 +158,10 @@ describe('OnboardingShowcaseAutoShowMount', () => {
     it.each([
         ['an invitation', ['(app)', 'join', '[token]']],
         ['a Team sign-in', ['(app)', 'teams', '[teamId]', 'sign-in']],
-    ])('waits while %s is open, then shows once the person leaves it', async (_name, segments) => {
+        ['sign-in with a key', ['(app)', 'restore', 'manual']],
+        ['the sign-in choice', ['(app)', 'restore']],
+        ['a terminal connect link', ['(app)', 'terminal', 'connect']],
+    ])('waits while %s is open, then shows once the person reaches the welcome', async (_name, segments) => {
         routeState.segments = segments;
         const { OnboardingShowcaseAutoShowMount } = await import('./OnboardingShowcaseAutoShowMount');
         const screen = await renderScreen(<OnboardingShowcaseAutoShowMount />);

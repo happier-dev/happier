@@ -2,7 +2,7 @@ import { useSegments } from 'expo-router';
 import * as React from 'react';
 
 import { useAuth } from '@/auth/context/AuthContext';
-import { isTeamEntryRoute } from '@/auth/routing/authRouting';
+import { isWelcomeRoute } from '@/auth/routing/authRouting';
 import { getCurrentReleaseId } from '@/changelog/releaseNotes/manifestRuntime';
 import { setLastSeenReleaseId } from '@/changelog/releaseNotes/storage';
 import { OnboardingShowcaseStorySurface } from '@/components/onboarding/showcase';
@@ -16,15 +16,17 @@ function markCurrentReleaseNotesSeen(): void {
     if (releaseId) setLastSeenReleaseId(releaseId);
 }
 
-/** Shows the evergreen tour once, before auth. Existing users are silently seeded as seen. */
+/**
+ * Shows the evergreen tour once, before auth, on the welcome. Existing users are silently seeded as seen.
+ * Every other signed-out route is a task the person came to do (sign in with a key, open a Team
+ * invitation, finish a terminal connect link): the tour waits for the welcome rather than covering it.
+ */
 export function OnboardingShowcaseAutoShowMount(): null {
     const auth = useAuth();
     const showcase = useOnboardingShowcaseState();
     const modal = useModal();
     const modalStackActive = modal.state.modals.length > 0;
-    // Somebody who opened a Team invitation or Team sign-in came to join that Team: the tour waits
-    // for them to leave it rather than covering it.
-    const teamEntryActive = isTeamEntryRoute(useSegments());
+    const welcomeActive = isWelcomeRoute(useSegments());
     const ranRef = React.useRef(false);
 
     React.useEffect(() => {
@@ -34,7 +36,7 @@ export function OnboardingShowcaseAutoShowMount(): null {
             showcase.markSeen();
             return;
         }
-        if (modalStackActive || teamEntryActive) return;
+        if (modalStackActive || !welcomeActive) return;
 
         const timer = setTimeout(() => {
             if (ranRef.current) return;
@@ -70,7 +72,7 @@ export function OnboardingShowcaseAutoShowMount(): null {
         }, 250);
 
         return () => clearTimeout(timer);
-    }, [auth.isAuthenticated, modalStackActive, showcase, teamEntryActive]);
+    }, [auth.isAuthenticated, modalStackActive, showcase, welcomeActive]);
 
     return null;
 }
