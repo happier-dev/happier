@@ -1,4 +1,5 @@
 import { BotTemplateActionIdV1Schema, BotTemplateActionOutputSchemasV1 } from '../bots/templates/botTemplateActionsV1.js';
+import { isScreenCaptureActionId } from './screenCaptureActionIds.js';
 import { executeSessionDelete } from './executor/session/delete.js';
 import type { AdmittedActionInputById } from './actionSpecs.js';
 import { createHostReviewedChildPortV1 } from './executor/deploymentRoleChild.js';
@@ -4768,6 +4769,12 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       if (actionId === 'desktop.displays.list') {
         if (!deps.desktopDisplaysList) return clientActionUnavailable(actionId);
         return completeActionResult(await deps.desktopDisplaysList({ context: ctx }));
+      }
+
+      if (isScreenCaptureActionId(actionId)) {
+        if (!deps.screenCaptureAction) return clientActionUnavailable(actionId);
+        const result = await deps.screenCaptureAction({ actionId, input: parsed.data, context: ctx });
+        return readActionFailureEnvelope(result) ?? { ok: true, result };
       }
 
       if (isNotificationConfigurationActionId(actionId)) {

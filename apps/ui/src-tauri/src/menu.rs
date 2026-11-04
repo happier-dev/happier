@@ -7,14 +7,12 @@
 //! call `app.exit(0)` twice for one Quit, and the second exit finds the shutdown handoff already
 //! used and quits without waiting for it.
 //!
-//! macOS needs its own app menu because tauri's default one ends in muda's *predefined* Quit, whose
-//! native action is `terminate:`. That bypasses `RunEvent::ExitRequested` entirely — it emits no
-//! menu event and offers no `prevent_exit` — so the quit handoff in [`crate::desktop_lifecycle`] could never
-//! run. Everything below mirrors `tauri::menu::Menu::default` item for item, except that Quit is our
-//! own item routed through [`handle_menu_event`] to `app.exit(0)`.
+//! The macOS app menu mirrors Tauri's default menu, with its own Quit item routed through
+//! [`handle_menu_event`] to `app.exit(0)`. Dock Quit reaches that same
+//! [`crate::desktop_lifecycle`] owner through the AppKit termination delegate adapter.
 //!
-//! Dock → Quit, OS logout, OS shutdown and force quit still terminate the app without reaching
-//! `ExitRequested`; `crate::desktop_lifecycle` documents that as leaving the daemon exactly where it was.
+//! Explicit system-ending Apple events, force quit and power loss keep their native termination
+//! path. Ordinary person Quit awaits the writer and existing shutdown handoff before AppKit replies.
 
 #[cfg(desktop)]
 use tauri::{menu::MenuEvent, AppHandle};
@@ -65,6 +63,10 @@ pub fn handle_menu_event(app: &AppHandle, event: MenuEvent) {
         DesktopMenuAction::QuitApp => crate::menu_bar::quit(app),
         DesktopMenuAction::StopServicesAndQuit => crate::menu_bar::stop_services_and_quit(app),
         DesktopMenuAction::ToggleStartAtLogin => crate::menu_bar::toggle_start_at_login(app),
+        DesktopMenuAction::CaptureScreen => crate::capture::triggers::dispatch(app, crate::capture::triggers::CaptureIntent::Still),
+        DesktopMenuAction::RecordScreen => crate::capture::triggers::dispatch(app, crate::capture::triggers::CaptureIntent::Recording),
+        action @ (DesktopMenuAction::PauseRecording | DesktopMenuAction::ResumeRecording | DesktopMenuAction::StopRecording) =>
+            crate::tray::recording_control(app, action),
         DesktopMenuAction::Service { action, relay_url } => {
             crate::menu_bar::run_service_action(app, action, relay_url)
         }

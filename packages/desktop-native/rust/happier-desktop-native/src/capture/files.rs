@@ -373,6 +373,18 @@ impl CaptureFiles {
         fs::read(path).map_err(|_| CaptureError::FileIo)
     }
 
+    /// A delivered draft owns its flattened pixels independently of the editor.
+    pub fn retain_prepared_png(&mut self, capture_ref: &str) -> Result<CaptureResult, CaptureError> {
+        let bytes = self.read_prepared_png(capture_ref)?;
+        let size = png_size(&bytes)?;
+        let root = self.ready(capture_ref)?.result.path.parent().ok_or(CaptureError::FileIo)?;
+        let result = write_png_file(root, &bytes, size, true)?;
+        let path = result.path.clone();
+        // Unlike recording working files, this output belongs to the draft and
+        // must survive discard of the capture that produced it.
+        Ok(self.adopt_result(result, Some(path)))
+    }
+
     pub fn discard(&mut self, capture_ref: &str) -> Result<(), CaptureError> {
         let children = match self.files.get(capture_ref).ok_or(CaptureError::UnknownCapture)? {
             CaptureFile::Ready(owned) => owned.derivatives.clone(),

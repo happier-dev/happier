@@ -13,7 +13,9 @@ import { resolveWorkspaceTargetForSession } from '@/sync/domains/session/resolve
 import { createSessionAttachmentPreviewSource, createSessionFilePreviewSource } from '@/sync/domains/sessionFilePreviews/createSessionFilePreviewSource';
 import { copyAnnotatedPicture } from '@/components/sessions/composer/copyAnnotatedPicture';
 import type { ImageAnnotationSource } from '@/components/ui/media/annotation/types';
+import { executeRecordingFrameAnnotation } from './recordingActionRuntime';
 import { readRegisteredBrowserContextAnnotationAdapter } from '@/sync/domains/browser/context/runtimeAnnotationRegistry';
+import { requestCaptureAnnotationAction } from '@/desktop/capture/captureAnnotationActions';
 
 function annotationFailure(reason: string): MediaAnnotationApplyResultV1 | ActionExecuteFailure {
     if (reason === 'canvasUnavailable' || reason === 'decodeFailed') return { status: 'unavailable', reason: `flatten.${reason}` };
@@ -61,6 +63,14 @@ export async function executeMediaAnnotationAction(request: MediaAnnotationActio
         return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
     }
     if (!areServerAccountScopesEqual(scope, input.scope) || request.signal?.aborted) return unavailable;
+    if (input.target.kind === 'capture') {
+        return requestCaptureAnnotationAction(input.target.captureRef, request);
+    }
+    if (input.target.kind === 'recordingFrame') {
+        return executeRecordingFrameAnnotation(input.target,
+            request.actionId === 'media.annotation.read' ? null : request.input.reset ? [{ kind: 'reset' }] : request.input.operations!,
+            request.actionId === 'media.annotation.apply' ? request.input.cause : undefined);
+    }
     if (input.target.kind === 'browserView') {
         const adapter = readRegisteredBrowserContextAnnotationAdapter({ ...input.target, scope: input.scope });
         const draft = adapter?.readFrozenDraft?.();

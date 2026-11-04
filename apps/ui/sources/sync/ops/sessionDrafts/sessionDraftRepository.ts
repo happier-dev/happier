@@ -1208,7 +1208,7 @@ export class SessionDraftRepository {
         const pending = Promise.resolve().then(async () => {
             await cleanup?.({ scope, address: removed.address, document: removed.document });
             if (removed.address.kind === 'newSession') {
-                clearNewSessionAttachmentDrafts(resolveNewSessionDraftAttachmentFlowId(removed.address.draftId));
+                clearNewSessionAttachmentDrafts(resolveNewSessionDraftAttachmentFlowId(removed.address.draftId), scope);
             }
         }).catch((error) => {
             // The remote tombstone is already authoritative. Restore only the

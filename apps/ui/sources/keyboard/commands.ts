@@ -65,6 +65,27 @@ export const defaultKeyboardCommands: readonly KeyboardCommand[] = [
             .map(binding => ({ binding, conflictScope: 'mediaStage', nativeConsumable: true })),
         when: context => !context.isEditableTarget,
     })),
+    {
+        id: 'screenCapture.chooseSession',
+        singleKeyScope: 'focused',
+        settingsTitleKey: 'screenCapture.window.chooseSession',
+        // The Capture window lives only in the desktop app, where no browser owns ⌘K (MIS §2), so the default is the desktop host's.
+        defaultBinding: { binding: 'Mod+K', webHost: 'desktop', allowInEditable: true, conflictScope: 'captureWindow', nativeConsumable: true },
+    },
+    {
+        id: 'screenCapture.recording.playPause',
+        singleKeyScope: 'focused',
+        settingsTitleKey: 'settingsKeyboard.commands.mediaPlayPause',
+        defaultBinding: { binding: 'Space', nativeConsumable: true },
+        when: context => !context.isEditableTarget,
+    },
+    {
+        id: 'screenCapture.copy',
+        singleKeyScope: 'focused',
+        settingsTitleKey: 'screenCapture.window.copy',
+        defaultBinding: { binding: 'Mod+C', nativeConsumable: true },
+        when: context => !context.isEditableTarget,
+    },
     ...([
         ['annotation.select', 'annotationSelect', 'v'],
         ['annotation.arrow', 'annotationArrow', 'a'],

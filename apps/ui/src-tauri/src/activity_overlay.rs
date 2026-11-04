@@ -5,12 +5,14 @@ use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(desktop)]
 use std::sync::{Arc, Mutex};
-#[cfg(target_os = "macos")]
+#[cfg(desktop)]
 use std::time::Duration;
 #[cfg(desktop)]
 use std::time::{SystemTime, UNIX_EPOCH};
 #[cfg(target_os = "macos")]
-use std::{ffi::c_void, sync::mpsc};
+use std::ffi::c_void;
+#[cfg(desktop)]
+use std::sync::mpsc;
 
 #[cfg(target_os = "macos")]
 use objc2_app_kit::NSEvent;
@@ -28,6 +30,8 @@ use tauri::{
 mod diagnostics;
 #[cfg(desktop)]
 mod display_change;
+#[cfg(desktop)]
+mod native_display;
 #[cfg(desktop)]
 mod display_identity;
 #[cfg(desktop)]
@@ -169,6 +173,7 @@ struct ActivityOverlayRuntimeState {
     drag_offsets_storage_key: Option<String>,
     last_display_context: Option<DesktopActivityOverlayDisplayContext>,
     runtime_host_fallback: Option<ActivityOverlayRuntimeHostFallback>,
+    display_change_sender: Option<std::sync::mpsc::Sender<()>>,
     display_change_debounce: DesktopActivityOverlayDisplayChangeDebounce,
     native_mouse_state: DesktopActivityOverlayNativeMouseState,
     input_locked: bool,
@@ -575,17 +580,27 @@ pub fn register<R: Runtime + 'static>(app: &mut App<R>) -> tauri::Result<()> {
         }
     }
     start_native_notch_mouse_poll_loop(app.handle().clone(), state.inner().clone());
-    #[cfg(target_os = "macos")]
     start_native_display_change_listener(app.handle().clone(), state.inner().clone());
+    #[cfg(target_os="windows")]
+    if let Some(main) = app.get_webview_window(MAIN_WINDOW_LABEL) {
+        native_display::watch_window(&main).map_err(std::io::Error::other)?;
+    }
+    #[cfg(target_os="linux")]
+    if let Err(error)=native_display::watch_linux(app.handle()) {
+        log::warn!("Display change subscription unavailable: {error}");
+    }
     Ok(())
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(desktop)]
 fn start_native_display_change_listener<R: Runtime + 'static>(
     app: AppHandle<R>,
     state: ActivityOverlayState,
 ) {
     let (tx, rx) = mpsc::channel();
+    state.0.lock().expect("display state").display_change_sender=Some(tx.clone());
+    #[cfg(target_os="macos")]
+    {
     let user_info = Box::into_raw(Box::new(tx)) as *mut c_void;
     let registration_error = unsafe {
         CGDisplayRegisterReconfigurationCallback(
@@ -600,6 +615,7 @@ fn start_native_display_change_listener<R: Runtime + 'static>(
         return;
     }
 
+    }
     std::thread::spawn(move || run_native_display_change_listener(app, state, rx));
 }
 
@@ -636,7 +652,7 @@ fn native_display_change_flags_should_refresh(flags: CGDisplayChangeSummaryFlags
         )
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(desktop)]
 fn run_native_display_change_listener<R: Runtime + 'static>(
     app: AppHandle<R>,
     state: ActivityOverlayState,
@@ -666,11 +682,14 @@ fn run_native_display_change_listener<R: Runtime + 'static>(
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(desktop)]
 fn record_native_display_change<R: Runtime>(
     app: &AppHandle<R>,
     state: &ActivityOverlayState,
 ) -> Result<(), String> {
+    if let Some(capture) = app.try_state::<crate::capture::CaptureState>() {
+        capture.invalidate_selection(None);
+    }
     let should_collapse_expanded = {
         let mut guard = state
             .0
@@ -700,7 +719,7 @@ fn record_native_display_change<R: Runtime>(
     Ok(())
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(desktop)]
 fn resolve_native_display_change_action(
     state: &ActivityOverlayState,
 ) -> Result<Option<DesktopActivityOverlayDisplayChangeAction>, String> {
@@ -713,7 +732,7 @@ fn resolve_native_display_change_action(
         .resolve_ready_action(current_epoch_millis(), NATIVE_DISPLAY_CHANGE_DEBOUNCE_MS))
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(desktop)]
 fn apply_native_display_change_action<R: Runtime>(
     app: &AppHandle<R>,
     state: &ActivityOverlayState,
@@ -3638,5 +3657,34 @@ mod tests {
                 height: 864.0,
             },
         );
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+pub(crate) fn watch_capture_display_changes(app: &AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    { native_display::watch_linux(app) }
+    #[cfg(target_os = "windows")]
+    {
+        for window in app.webview_windows().values() {
+            if window.label() == crate::desktop_window::MAIN_WINDOW_LABEL || crate::desktop_window::is_capture_window(window.label()) {
+                watch_native_display_window(window)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn watch_native_display_window(window: &WebviewWindow) -> Result<(), String> {
+    native_display::watch_window(window)
+}
+
+#[cfg(desktop)]
+pub(super) fn request_display_refresh<R:Runtime>(app:&AppHandle<R>) {
+    if let Some(state)=app.try_state::<ActivityOverlayState>() {
+        if let Ok(guard)=state.0.lock() {
+            if let Some(sender)=&guard.display_change_sender { let _=sender.send(()); }
+        };
     }
 }

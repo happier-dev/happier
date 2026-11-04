@@ -12,6 +12,7 @@ export type { AccountHomeContinuationInputV1, AccountHomeContinuationOperationV1
 export { isSessionStateFieldActionId } from './sessionStateFieldActions.js';
 export * from './anchoredListOrderV1.js';
 export * from './internalTaskActions.js';
+export * from './mediaAnnotationAction.js';
 export { ComposerTransactionApplyInputV1Schema, ComposerAttachmentsPickInputV1Schema, ComposerAttachmentsPickResultV1Schema,
   RepositoryUploadPickInputV1Schema, RepositoryUploadPickResultV1Schema,
   type ComposerTransactionApplyInputV1, type ComposerAttachmentsPickInputV1,

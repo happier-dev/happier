@@ -1,5 +1,6 @@
 import { botTemplateRecipientTranslations } from './botTemplateRecipientTranslations';
 import { botTemplateTranslations } from './botTemplateTranslations';
+import { screenCaptureCopy } from './screenCaptureTranslations.shared';
 import { fileEditingTranslations } from './fileEditingTranslations.shared';
 import { usageChartInputTranslations } from './usageChartInputTranslations.shared';
 import { usageChartPlanetFamilyTranslations } from './usageChartPlanetFamilyTranslations.shared';
@@ -1269,6 +1270,7 @@ export const fr: TranslationStructure = {
   },
     fileReviewNote: fileReviewNoteTranslations['fr'],
     composerReferences: composerReferenceTranslations['fr'],
+    screenCapture: screenCaptureCopy.fr,
     hunkReview: hunkReviewTranslations['fr'],
   panes: { mainColumn: paneMainColumnTranslations['fr'], emptyEditor: paneEmptyEditorTranslations['fr'], shortcutsSheet: paneShortcutsSheetTranslations['fr'] },
   sessionCoordinator: {

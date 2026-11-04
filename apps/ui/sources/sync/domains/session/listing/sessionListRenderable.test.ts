@@ -48,6 +48,24 @@ beforeEach(() => {
     storageState.sessionMessages = {};
 });
 
+describe('Session image input availability projection', () => {
+    it('retains a remote row dispatcher refusal and updates it when negotiated support changes', () => {
+        const session = createSessionFixture({ id: 'remote-image-session', serverId: 'other-home', metadata: {
+            path: '/workspace', host: 'remote',
+            agentRuntimeCapabilitiesV1: { backend: { session: { media: { acceptsImageInput: { supported: false } } } } },
+        } });
+        const row = buildSessionListRenderableFromSession(session);
+        expect(row.imageInputAvailability).toEqual({ available: false, reason: 'image_input_unsupported' });
+        expect(buildSessionListRenderableFromSession(session, row)).toBe(row);
+        const changed = buildSessionListRenderableFromSession({ ...session, metadataVersion: session.metadataVersion + 1,
+            metadata: { ...session.metadata!, agentRuntimeCapabilitiesV1: {
+                backend: { session: { media: { acceptsImageInput: { supported: true } } } },
+            } },
+        }, row);
+        expect(changed.imageInputAvailability).toEqual({ available: true });
+    });
+});
+
 beforeEach(async () => {
     const { registerStorageStateReader } = await import('@/sync/domains/state/storageStateReaderBridge');
     registerStorageStateReader(readStorageState);

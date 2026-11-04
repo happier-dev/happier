@@ -101,6 +101,11 @@ import { NOTIFICATION_CONFIGURATION_ACTION_IDS, NOTIFICATION_CONFIGURATION_ACTIO
 import { APP_UPDATE_ACTION_IDS, APP_UPDATE_ACTION_SPECS, AppUpdateActionInputSchemas, AppUpdateActionOutputSchemas, type AppUpdateActionId } from './appUpdateActionFamily.js';
 import { UPDATES_ACTION_IDS, UPDATES_ACTION_SPECS, UpdatesActionInputSchemas, UpdatesActionOutputSchemas, type UpdatesActionId } from './updatesActionFamily.js';
 import { CLIPBOARD_ACTION_SPECS } from './clipboardActionFamily.js';
+import { SCREEN_CAPTURE_DELIVERY_ACTION_SPECS, SCREEN_CAPTURE_NATIVE_ACTION_SPECS } from './specs/screenCapture.js';
+export { ScreenCaptureOpenInputSchema, ScreenCaptureOpenResultSchema, ScreenCaptureDeliveryInputSchema, ScreenCaptureDiscardInputSchema, ScreenCaptureCopyInputSchema } from './specs/screenCapture.js';
+export { ScreenCaptureStartInputSchema, ScreenCapturePermissionRequestInputSchema, ScreenCaptureWindowTextInputSchema,
+  ScreenCaptureRecordingInputSchema, ScreenCaptureRecordingEditInputSchema,
+  ScreenCaptureRecordingReadInputSchema } from './specs/screenCapture.js';
 import { EXTERNAL_LINK_ACTION_SPECS } from './externalLinkActionFamily.js';
 import { WORKFLOW_EFFECT_ACTION_SPECS_V1, WorkflowEffectActionInputSchemasV1, WorkflowEffectActionOutputSchemasV1, type WorkflowEffectActionIdV1 } from '../workflows/stepActionsV1.js';
 import { ROLE_ACTION_IDS_V1, type RoleActionIdV1 } from '../prompts/roles/roleActionIdsV1.js';
@@ -600,6 +605,8 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX_LEAD_OPENING = Object.freeze(defineAc
   ...(APP_UPDATE_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
   ...(UPDATES_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
   ...(CLIPBOARD_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
+  ...(SCREEN_CAPTURE_DELIVERY_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
+  ...(SCREEN_CAPTURE_NATIVE_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
   ...(DESKTOP_WINDOWS_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
   ...(DESKTOP_SHELL_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
   ...(EXTERNAL_LINK_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
@@ -1308,6 +1315,8 @@ type DirectActionSpecDefinition =
   | LiteralActionSpecTupleDefinition<typeof CLIPBOARD_ACTION_SPECS>
   | LiteralActionSpecTupleDefinition<typeof DESKTOP_WINDOWS_ACTION_SPECS>
   | LiteralActionSpecTupleDefinition<typeof DESKTOP_SHELL_ACTION_SPECS>
+  | LiteralActionSpecTupleDefinition<typeof SCREEN_CAPTURE_DELIVERY_ACTION_SPECS>
+  | LiteralActionSpecTupleDefinition<typeof SCREEN_CAPTURE_NATIVE_ACTION_SPECS>
   | LiteralActionSpecTupleDefinition<typeof EXTERNAL_LINK_ACTION_SPECS>
   | LiteralActionSpecTupleDefinition<typeof SESSION_ORGANIZATION_MOVE_ACTION_SPECS>
   | LiteralActionSpecTupleDefinition<typeof LIST_REORDER_ACTION_SPECS>

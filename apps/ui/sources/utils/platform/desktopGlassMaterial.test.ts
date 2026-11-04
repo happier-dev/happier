@@ -67,6 +67,29 @@ describe('desktop glass material', () => {
         expect(unlisten).toHaveBeenCalledOnce();
     });
 
+    it('follows the main window from a glass panel: its own event, the projected settings, and its card shape', async () => {
+        host.isDesktop.mockReturnValue(true);
+        const settings = { glassBlurEnabled: true, glassBlurIntensity: 'strong', glassTintIntensity: 30, glassSurfaceMaterials: null };
+        host.invoke.mockResolvedValue({ ...live, settings });
+        let deliver: ((value: unknown) => void) | undefined;
+        host.listen.mockImplementation(async (_name: string, listener: (value: unknown) => void) => {
+            deliver = listener;
+            return () => {};
+        });
+        const { subscribeDesktopGlassState, setDesktopGlassPanelShape } = await import('./desktopGlassMaterial');
+        const listener = vi.fn();
+        await subscribeDesktopGlassState(listener, 'capture');
+        expect(host.listen).toHaveBeenCalledWith('desktopGlass://state/capture', expect.any(Function));
+        expect(listener).toHaveBeenLastCalledWith({ ...live, settings });
+        deliver?.({ ...live, materialLive: false, settings: { ...settings, glassBlurEnabled: false } });
+        expect(listener).toHaveBeenLastCalledWith({ ...live, materialLive: false, settings: { ...settings, glassBlurEnabled: false } });
+        // A malformed projection is ignored rather than guessed at; the panel keeps its own store.
+        deliver?.({ ...live, settings: { glassBlurEnabled: 'yes' } });
+        expect(listener).toHaveBeenLastCalledWith({ ...live, settings: null });
+        await setDesktopGlassPanelShape(null);
+        expect(host.invoke).toHaveBeenLastCalledWith('desktop_set_glass_panel_shape', { radius: null });
+    });
+
     it('reports whether the host opened the OS transparency settings, including failure and browser fallback', async () => {
         const { openDesktopReduceTransparencySettings } = await import('./desktopGlassMaterial');
         host.isDesktop.mockReturnValue(true);

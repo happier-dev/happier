@@ -42,6 +42,18 @@ mod window_chrome;
 mod activity_overlay;
 
 #[cfg(desktop)]
+mod desktop_panel;
+
+#[cfg(desktop)]
+mod desktop_window;
+
+#[cfg(desktop)]
+mod capture_window;
+
+#[cfg(desktop)]
+mod capture;
+
+#[cfg(desktop)]
 mod web_runtime_config;
 
 #[cfg(desktop)]
@@ -62,7 +74,7 @@ mod browser;
 #[cfg(any(desktop, test))]
 mod hosted_artifact_desktop;
 
-#[cfg(debug_assertions)]
+#[cfg(all(debug_assertions, not(target_os = "windows")))]
 mod mcp_bridge;
 
 #[cfg(target_os = "linux")]
@@ -73,6 +85,8 @@ pub fn run() {
     #[cfg(target_os = "linux")]
     linux_webkit_env::apply_before_gtk_init();
 
+    #[cfg(target_os = "macos")]
+    happier_desktop_native::capture::macos::initialize_frontmost_tracking();
     let builder = tauri::Builder::default();
     #[cfg(desktop)]
     let builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
@@ -107,6 +121,10 @@ pub fn run() {
                 include_str!("desktop_boot_observer.js").to_string(),
             );
         }
+    }
+
+    #[cfg(all(debug_assertions, not(target_os = "windows")))]
+    {
         builder = builder.plugin(mcp_bridge::build_debug_mcp_bridge_plugin());
     }
 
@@ -124,6 +142,7 @@ pub fn run() {
             .manage(app_updates::PendingUpdate::default())
             .manage(system_tasks::SystemTasksState::default())
             .manage(desktop_downloads::DesktopDownloadsState::default())
+            .manage(capture::CaptureState::default())
             .manage(window_sizing::WindowSizingState::default())
             .manage(activity_overlay::ActivityOverlayState::default())
             .manage(pet_overlay::DesktopPetOverlayState::default())
@@ -138,23 +157,18 @@ pub fn run() {
     }
     builder
         .setup(|app| {
+            #[cfg(target_os = "macos")]
+            desktop_lifecycle::install_native_quit(app.handle());
             #[cfg(desktop)]
             {
-                // Windows/Linux already present the window through the single-instance callback.
-                #[cfg(target_os = "macos")]
-                {
-                    use tauri_plugin_deep_link::DeepLinkExt;
-                    let handle = app.handle().clone();
-                    app.deep_link().on_open_url(move |_event| {
-                        window_chrome::request_show_main_window(&handle);
-                    });
-                }
                 system_tasks::set_desktop_bundle_id(&app.config().identifier);
                 autostart::register(app)?;
                 tray::register(app)?;
                 menu_bar::prepare_launch(app.handle());
                 menu_bar::register(app.handle());
                 window_chrome::register(app)?;
+                capture::shortcuts::install(app.handle());
+                capture::triggers::install_deep_links(app.handle());
                 if !menu_bar::is_active(app.handle()) {
                     dock_icon::apply();
                 }
@@ -181,10 +195,12 @@ pub fn run() {
             #[cfg(desktop)]
             match event {
                 tauri::RunEvent::Ready => {
-                    window_chrome::present_main_window_for_lifecycle_event(
-                        app_handle,
-                        window_chrome::DesktopMainWindowLifecycleEvent::AppReady,
-                    );
+                    if !capture::triggers::cold_launch_is_capture_only(app_handle) {
+                        window_chrome::present_main_window_for_lifecycle_event(
+                            app_handle,
+                            window_chrome::DesktopMainWindowLifecycleEvent::AppReady,
+                        );
+                    }
                 }
                 #[cfg(target_os = "macos")]
                 tauri::RunEvent::Reopen {
@@ -203,10 +219,18 @@ pub fn run() {
                         api.prevent_exit();
                     }
                 }
+                tauri::RunEvent::WindowEvent { event: tauri::WindowEvent::Focused(true), .. } => {
+                    capture::refresh_consumed_permissions(app_handle);
+                }
+                tauri::RunEvent::WindowEvent { label, event: tauri::WindowEvent::Destroyed, .. } => {
+                    capture::remove_permission_window(app_handle, &label);
+                    capture::close_recents_for_window(&tauri::Manager::state::<capture::CaptureState>(app_handle), &label);
+                }
                 // Best-effort teardown of the shared Iroh process endpoint on
                 // final application shutdown; the persistent identity key is
                 // retained so restarts reuse the same endpoint identity.
                 tauri::RunEvent::Exit => {
+                    capture::shortcuts::shutdown(app_handle);
                     iroh::shutdown_process_endpoint(app_handle);
                 }
                 _ => {}
@@ -215,60 +239,7 @@ pub fn run() {
 }
 
 #[cfg(desktop)]
-mod desktop_dialog {
-    use tauri::AppHandle;
-    use tauri_plugin_dialog::DialogExt;
-    use tokio::sync::oneshot;
-
-    #[tauri::command]
-    pub async fn desktop_pick_ssh_identity_file(app: AppHandle) -> Result<Option<String>, String> {
-        let (tx, rx) = oneshot::channel::<Option<String>>();
-
-        app.dialog().file().pick_file(move |path| {
-            let _ = tx.send(path.map(|p| p.to_string()));
-        });
-
-        rx.await
-            .map_err(|_| "Failed to receive dialog selection".to_string())
-    }
-
-    #[tauri::command]
-    pub async fn desktop_pick_personal_home_backup_archive(
-        app: AppHandle,
-    ) -> Result<Option<String>, String> {
-        let (tx, rx) = oneshot::channel::<Option<String>>();
-
-        app.dialog()
-            .file()
-            .set_title("Choose a Personal Home backup")
-            .add_filter("Happier Personal Home backup", &["tar"])
-            .pick_file(move |path| {
-                let _ = tx.send(path.map(|p| p.to_string()));
-            });
-
-        rx.await
-            .map_err(|_| "Failed to receive backup archive selection".to_string())
-    }
-
-    #[tauri::command]
-    pub async fn desktop_save_personal_home_backup_archive(
-        app: AppHandle,
-    ) -> Result<Option<String>, String> {
-        let (tx, rx) = oneshot::channel::<Option<String>>();
-
-        app.dialog()
-            .file()
-            .set_title("Export Personal Home backup")
-            .set_file_name("personal-home-backup.tar")
-            .add_filter("Happier Personal Home backup", &["tar"])
-            .save_file(move |path| {
-                let _ = tx.send(path.map(|p| p.to_string()));
-            });
-
-        rx.await
-            .map_err(|_| "Failed to receive backup destination selection".to_string())
-    }
-}
+mod desktop_dialog;
 
 #[cfg(desktop)]
 mod app_updates {
@@ -469,125 +440,4 @@ mod app_updates {
 }
 
 #[cfg(desktop)]
-mod desktop_lifecycle {
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::Mutex;
-
-    use serde::Serialize;
-    use tauri::{AppHandle, Emitter, Manager, State};
-
-    use crate::desktop_exit_policy as policy;
-
-    pub use crate::desktop_exit_policy::QuitIntent;
-    use policy::{
-        parse_shutdown_outcome, resolve_desktop_exit_action, DesktopExitAction, DesktopExitRequest,
-        ShutdownOutcome,
-    };
-
-    /// Emitted to the webview when the app is quitting and the handoff is still available.
-    pub const APP_EXIT_REQUESTED_EVENT: &str = "desktop_app_exit_requested";
-
-    /// The handoff's payload: which Quit the person chose.
-    #[derive(Clone, Serialize)]
-    #[serde(rename_all = "camelCase")]
-    struct AppExitRequestedPayload {
-        /// "Stop background services and quit" — stop them whatever the login-start setting says.
-        stop_services: bool,
-        /// Last proven mode survives a fresh webview's pending first status read.
-        #[serde(skip_serializing_if = "Option::is_none")]
-        service_autostart: Option<crate::tray::model::AutostartMode>,
-    }
-
-    #[derive(Default)]
-    pub struct DesktopShutdownState {
-        handoff_used: AtomicBool,
-        intent: Mutex<QuitIntent>,
-    }
-
-    /// Asks the app to quit the way the person chose; the exit handler hands the choice to the
-    /// webview with the one handoff.
-    pub fn request_quit(app: &AppHandle, intent: QuitIntent) {
-        let state: State<'_, DesktopShutdownState> = app.state();
-        if let Ok(mut current) = state.intent.lock() {
-            *current = intent;
-        }
-        app.exit(0);
-    }
-
-    /// Called by the webview once it has done whatever the user's answer asked for. `menuBar` keeps a
-    /// tray-only process with the services running (R16 a); anything else exits, re-entering the
-    /// handler, which now finds the handoff used and lets the app go.
-    #[tauri::command]
-    pub fn desktop_finish_shutdown(app: AppHandle, outcome: Option<String>) -> Result<(), String> {
-        match parse_shutdown_outcome(outcome.as_deref()) {
-            ShutdownOutcome::MenuBar => {
-                let state: State<'_, DesktopShutdownState> = app.state();
-                // The quit is over; the next one (from the tray, or after reopening) starts afresh.
-                state.handoff_used.store(false, Ordering::SeqCst);
-                crate::menu_bar::enter(&app);
-            }
-            ShutdownOutcome::Exit => app.exit(0),
-        }
-        Ok(())
-    }
-
-    /// Handles `RunEvent::ExitRequested`. Returns `true` when the caller must hold the exit.
-    pub fn handle_exit_requested(app: &AppHandle, code: Option<i32>) -> bool {
-        let state: State<'_, DesktopShutdownState> = app.state();
-        let request = DesktopExitRequest {
-            webview_present: app.get_webview_window("main").is_some(),
-            handoff_used: state.handoff_used.load(Ordering::SeqCst),
-            is_restart: code == Some(tauri::RESTART_EXIT_CODE),
-            menu_bar_mode: crate::menu_bar::is_active(app),
-            explicit: code.is_some(),
-        };
-
-        match resolve_desktop_exit_action(request) {
-            DesktopExitAction::Exit => false,
-            DesktopExitAction::StayInMenuBar => true,
-            DesktopExitAction::HandOffToWebview => {
-                state.handoff_used.store(true, Ordering::SeqCst);
-                let intent = state
-                    .intent
-                    .lock()
-                    .map(|mut intent| std::mem::take(&mut *intent))
-                    .unwrap_or_default();
-                let payload = AppExitRequestedPayload {
-                    stop_services: intent == QuitIntent::StopServices,
-                    service_autostart: crate::tray::persisted_service_autostart(app),
-                };
-                // `emit` reports success with zero listeners, so this only fires when the event could
-                // not be published at all — never as "nobody is listening". A quit that beats the
-                // webview's listener is still held, and is finished by pressing Quit again.
-                if app.emit(APP_EXIT_REQUESTED_EVENT, payload).is_err() {
-                    return false;
-                }
-                true
-            }
-        }
-    }
-
-    #[cfg(test)]
-    mod tests {
-        use super::*;
-
-        #[test]
-        fn quit_handoff_carries_the_last_proven_login_mode_but_omits_unknown_mode() {
-            let known = serde_json::to_value(AppExitRequestedPayload {
-                stop_services: false,
-                service_autostart: Some(crate::tray::model::AutostartMode::AtLogin),
-            })
-            .unwrap();
-            assert_eq!(
-                known,
-                serde_json::json!({"stopServices": false, "serviceAutostart": "at-login"})
-            );
-            let unknown = serde_json::to_value(AppExitRequestedPayload {
-                stop_services: true,
-                service_autostart: None,
-            })
-            .unwrap();
-            assert_eq!(unknown, serde_json::json!({"stopServices": true}));
-        }
-    }
-}
+mod desktop_lifecycle;

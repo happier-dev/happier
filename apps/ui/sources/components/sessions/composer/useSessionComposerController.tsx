@@ -51,6 +51,7 @@ import { buildPluginDetailRoute, storeMachineRouteParams } from "@/components/se
 import { resolvePortableServerIdentityForRoutingId } from "@/sync/domains/server/resolvePortableServerIdentityForRoutingId";
 import { alertActionFailure } from "@/utils/errors/alertActionFailure";
 import { readRpcErrorCode } from "@happier-dev/protocol/rpcErrors";
+import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { deriveSessionIntentionalRestartSignals, resolveSessionIntentionalRestartRecoveryEvidenceAtMs, type SessionIntentionalRestartSignal } from "@/components/sessions/agentInput/hooks/sessionIntentionalRestartSignal";
 import { useSessionIntentionalRestartSourceEvents } from "@/components/sessions/transcript/source/appSessionTranscriptSource";
 import { SESSION_COMPOSER_SUGGESTION_KINDS, type ComposerReferenceSearchHost } from "@/components/autocomplete/composerSuggestionKinds";
@@ -4795,6 +4796,8 @@ export function useSessionComposerController({
         return true;
     };
     const activeComposerPresentationTarget = useStableComposerPresentationTarget(activeComposerRef, {
+        submitDraft: options => activeComposerRefRef.current.kind === 'session' ? agentInputSendRef.current(options)
+            : Promise.resolve({ ok: false, errorCode: 'session_input_target_unavailable', error: 'session_input_target_unavailable' }),
         readPickedAttachments: () => attachmentDraftManager,
         readScope: () => composerPresentationAccountLifetime?.scope ?? null,
         readReferenceWorkspace: () => companionAddress ? resolveWorkspaceTargetForSession(companionAddress) : null,
@@ -4861,6 +4864,8 @@ export function useSessionComposerController({
         hasActionChip: (chipKey) => composerActionChipKeysRef.current.has(chipKey),
     });
     const sessionComposerPresentationTarget = useStableComposerPresentationTarget(sessionComposerRef, {
+        submitDraft: options => activeComposerRefRef.current.kind === 'session' ? agentInputSendRef.current(options)
+            : Promise.resolve({ ok: false, errorCode: 'session_input_target_unavailable', error: 'session_input_target_unavailable' }),
         readPickedAttachments: () => attachmentDraftManager,
         readScope: () => composerPresentationAccountLifetime?.scope ?? null,
         readReferenceWorkspace: () => companionAddress ? resolveWorkspaceTargetForSession(companionAddress) : null,
@@ -5981,7 +5986,9 @@ export function useSessionComposerController({
         && !recipientState.recipient && !recipientState.scmDiffSummaryDiscussion
         && !armedContinuationTarget && !armedRouteContinuation
         && resolveVoiceSessionComposerRouting({ conversationSessionId: sessionId, sessionMetadata: ownerMetadata })?.kind !== 'adapter_text';
-    const agentInputSendRef = React.useRef<(options?: AgentInputSendOptions) => void>(() => {});
+    const agentInputSendRef = React.useRef<(options?: AgentInputSendOptions) => Promise<ActionExecuteResult>>(async () => ({
+        ok: false, errorCode: 'session_input_target_unavailable', error: 'session_input_target_unavailable',
+    }));
     const handleAgentInputSend = React.useCallback(
         (options?: AgentInputSendOptions) => { agentInputSendRef.current(options); },
         [],
@@ -6298,17 +6305,20 @@ export function useSessionComposerController({
                 // Stable wrapper (handleAgentInputSend) so AgentInput's memo holds;
                 // the assignment refreshes the latest-send ref with this render's
                 // closure, then the expression evaluates to the stable wrapper (R1).
-                onSend={(agentInputSendRef.current = (sendOptions) => {
+                onSend={(agentInputSendRef.current = async (sendOptions) => {
+                    let submissionResult: ActionExecuteResult = {
+                        ok: false, errorCode: 'session_input_target_unavailable', error: 'session_input_target_unavailable',
+                    };
                     if (!hasWriteAccess) {
                         Modal.alert(t('common.error'), t('session.sharing.noEditPermission'));
-                        return;
+                        return submissionResult;
                     }
                     const outboundAccountLifetime = sessionAccountLifetime;
-                    if (!outboundAccountLifetime?.isCurrent()) return;
-                    if (externalSessionOperationShell.blocksNewOperation) return;
-                    if (composerInputEffects.readComposerInputLock() !== null) return;
+                    if (!outboundAccountLifetime?.isCurrent()) return submissionResult;
+                    if (externalSessionOperationShell.blocksNewOperation) return submissionResult;
+                    if (composerInputEffects.readComposerInputLock() !== null) return submissionResult;
 
-                    fireAndForget(runWithSessionComposerAdmissionReservation(async () => {
+                    await runWithSessionComposerAdmissionReservation(async () => {
                     const activePendingEdit = pendingMessageEditRef.current;
                     if (sendOptions?.resetStart && activePendingEdit) return;
                     const composerMessage = activePendingEdit?.document.text
@@ -6801,6 +6811,7 @@ export function useSessionComposerController({
                                                 }, { surface: 'ui', defaultSessionId: sessionId, serverId: sessionRouteServerId,
                                                     expectedAccountId: outboundAccountLifetime.scope.accountId, signal: composerPluginActionScopeSignal });
                                             if (!outboundAccountLifetime.isCurrent() || composerPluginActionScopeSignal.aborted) return { status: 'rejected' };
+                                            submissionResult = result;
                                             const outcome = sessionMessaging.kind === 'post_update' ? null : readSessionComposerMessagingOutcome(result);
                                             const admitted = outcome === null
                                                 ? result.ok && SessionUpdatePostOutputV1Schema.safeParse(result.result).success
@@ -6996,7 +7007,8 @@ export function useSessionComposerController({
                         let didClearTextAtOutboundHandoff = false;
                         let outboundHandoffLocalId: string | null = null;
                         let didRecordOutboundAccepted = false;
-                        const recordOutboundAccepted = () => {
+                        const recordOutboundAccepted = (localId = outboundHandoffLocalId) => {
+                            if (localId) submissionResult = { ok: true, result: { status: 'accepted', localId } };
                             if (didRecordOutboundAccepted) return;
                             didRecordOutboundAccepted = true;
                             trackMessageSent();
@@ -7117,6 +7129,10 @@ export function useSessionComposerController({
                         const presentBlockedSessionComposerSubmission = (
                             result: ComposerSubmissionAdmissionOutcome | ComposerSubmissionResult,
                         ): void => {
+                            if (result.status === 'rejected' && result.reason?.errorCode) {
+                                submissionResult = { ok: false, errorCode: result.reason.errorCode,
+                                    error: result.reason.errorMessage ?? result.reason.errorCode };
+                            }
                             if (
                                 result.status === 'blocked'
                                 && (result.reason === 'attachmentUnavailable' || result.reason === 'mediaContentUnavailable')
@@ -7587,13 +7603,15 @@ export function useSessionComposerController({
                                     if (!didClearForAttachmentHandoff) {
                                         clearAttachmentsAfterProjectionHandoff();
                                     }
-                                    recordOutboundAccepted();
+                                    recordOutboundAccepted(result.localId ?? undefined);
                                     return { status: 'accepted' };
                                 } catch (e) {
                                     if (canRestoreFailedAttachmentHandoffSnapshot()) {
                                         restoreAfterFailedOutboundHandoff(attachmentDraftsForRestore);
                                     }
                                     presentSessionActionOutcome(e, outboundAccountLifetime);
+                                    const code = readRpcErrorCode(e);
+                                    if (code) submissionResult = { ok: false, errorCode: code, error: code };
                                     return { status: 'rejected' };
                                 } finally {
                                     setIsUploadingAttachments(false);
@@ -7849,7 +7867,7 @@ export function useSessionComposerController({
                                     };
                                 }
 
-                                recordOutboundAccepted();
+                                recordOutboundAccepted(result.localId ?? undefined);
 
                                 return { status: 'accepted' };
                             } finally {
@@ -7963,7 +7981,8 @@ export function useSessionComposerController({
 
                     if (resolved.kind !== 'send') return;
                     await sendComposerText(resolved.text, composerMessage, sendOptions);
-                    }).catch((error: unknown) => presentSessionActionOutcome(error, outboundAccountLifetime)), { tag: 'SessionView.composer.dispatch' });
+                    }).catch((error: unknown) => presentSessionActionOutcome(error, outboundAccountLifetime));
+                    return submissionResult;
                 }, handleAgentInputSend)}
                 isSendDisabled={
                     !shouldShowInput

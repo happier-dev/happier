@@ -78,6 +78,7 @@ import {
     resolveSessionRuntimePresenceFields,
 } from '../attention/runtimePresentation';
 import { readSessionOwnerMetadataView, SESSION_OWNER_METADATA_PROJECTION } from '../readSessionOwnerMetadataView';
+import { decideSessionImageInputAvailability, type SessionImageInputAvailability } from '../media/sessionImageInputAvailability';
 import { readSessionDisplayTitleField } from '@/sync/state/selectors';
 import { SESSION_LIST_DOCUMENT_ADMISSION, areSessionListDocumentAdmissionsEqual,
     type SessionListDocumentAdmission } from '../sessionDocumentAdmission';
@@ -151,6 +152,8 @@ export interface SessionListRenderableSession {
     forkV1?: NonNullable<SessionSemanticDisplayV1['owner']>['forkV1'];
     /** Admitted canonical Agent target; memory only, never a wire or warm-cache field. */
     agentTargetKey?: BackendTargetKeyV2 | null;
+    /** Owner-projected image admission for demand-only choosers across Homes. */
+    imageInputAvailability?: SessionImageInputAvailability;
     /**
      * Owner-readable compact Agent roster. This is deliberately a parsed
      * projection rather than raw owner metadata so the concurrently cached,
@@ -700,6 +703,11 @@ export function buildSessionListRenderableFromSession(
             ? { [SESSION_LIST_DOCUMENT_ADMISSION]: session[SESSION_LIST_DOCUMENT_ADMISSION] } : {}),
         forkV1: display ? display.owner?.forkV1 : renderableSourceMetadata?.forkV1,
         agentTargetKey,
+        imageInputAvailability: display
+            ? decideSessionImageInputAvailability(display.owner)
+            : metadataUndecided || preserveMetadata
+                ? previous?.imageInputAvailability
+                : decideSessionImageInputAvailability(readSessionOwnerMetadataView(session)),
         agentActivityHeadline: JSON.stringify(previous?.agentActivityHeadline ?? null) === JSON.stringify(agentActivityHeadline)
             ? previous?.agentActivityHeadline ?? null
             : agentActivityHeadline,
@@ -998,6 +1006,7 @@ export function preserveSessionListRenderableStaleFields(
 
     return {
         ...next,
+        imageInputAvailability: preserveMetadata ? previous.imageInputAvailability : next.imageInputAvailability,
         agentTargetKey: preserveMetadata && previous.metadataVersion >= next.metadataVersion
             && areSessionListDocumentAdmissionsEqual(previous[SESSION_LIST_DOCUMENT_ADMISSION], next[SESSION_LIST_DOCUMENT_ADMISSION])
             && (next[SESSION_LIST_DOCUMENT_ADMISSION]?.observedMetadataVersion ?? next.metadataVersion) <= previous.metadataVersion
@@ -1048,6 +1057,7 @@ export function areSessionListRenderablesEqual(
     if (previous.encryptedContentAvailability !== next.encryptedContentAvailability) return false;
     if ((previous.lockedDisplayTitle ?? null) !== (next.lockedDisplayTitle ?? null)) return false;
     if (previous.agentTargetKey !== next.agentTargetKey) return false;
+    if (previous.imageInputAvailability !== next.imageInputAvailability) return false;
     if (JSON.stringify(previous.forkV1 ?? null) !== JSON.stringify(next.forkV1 ?? null)) return false;
     if (previous.workDisplay !== next.workDisplay && JSON.stringify(previous.workDisplay ?? null) !== JSON.stringify(next.workDisplay ?? null)) return false;
     if (previous.workflowHeadline !== next.workflowHeadline && JSON.stringify(previous.workflowHeadline ?? null) !== JSON.stringify(next.workflowHeadline ?? null)) return false;

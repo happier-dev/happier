@@ -7,6 +7,10 @@
 
 #[cfg(desktop)]
 pub(crate) mod model;
+#[cfg(desktop)]
+mod recording;
+#[cfg(desktop)]
+pub(crate) use recording::{recording_changed, recording_control};
 
 #[cfg(desktop)]
 use std::path::PathBuf;
@@ -39,7 +43,7 @@ use model::{
 #[cfg(desktop)]
 const TRAY_ICON_ID: &str = "main";
 /// The tray shows only the Happier mark; status lives in the menu it opens, so the icon never
-/// grows a title. macOS gets a template image the menu bar tints for light and dark bars
+/// grows a title except for the active recording timer. macOS gets a template image the menu bar tints for light and dark bars
 /// (tray-icon draws it 18pt tall; 36px is its @2x). Windows and Linux get 32px images picked by the
 /// tray's own theme: the full-colour mark on a light tray, a white silhouette on a dark one, where
 /// the dark bag would vanish. All are rendered from `icons/AppIcon.icon/Assets/*.svg` by
@@ -75,6 +79,8 @@ struct TrayStateInner {
     model: TrayMenuModel,
     persisted: PersistedTrayState,
     persisted_path: Option<PathBuf>,
+    recording_clock: Option<recording::RecordingClock>,
+    recording_elapsed: Option<tauri::menu::MenuItem<tauri::Wry>>,
 }
 
 #[cfg(desktop)]
@@ -99,6 +105,8 @@ impl TrayState {
             model,
             persisted,
             persisted_path,
+            recording_clock: None,
+            recording_elapsed: None,
         }))
     }
 }
@@ -176,6 +184,17 @@ pub(crate) fn relay_display_name(app: &AppHandle, relay_url: &str) -> String {
 
 /// Updates the one model and re-renders the menu.
 #[cfg(desktop)]
+pub(crate) fn set_capture_shortcuts(app: &AppHandle, capture: Option<String>, recording: Option<String>) {
+    let Some(state) = app.try_state::<TrayState>() else { return; };
+    let model = {
+        let Ok(mut inner) = state.0.lock() else { return; };
+        if !inner.model.set_capture_shortcuts(capture, recording) { return; }
+        inner.model.clone()
+    };
+    if let Err(error) = rebuild_menu(app, &model) { log::warn!("failed to rebuild capture tray entries: {error}"); }
+}
+
+#[cfg(desktop)]
 pub(crate) fn update_model(app: &AppHandle, change: impl FnOnce(&mut TrayMenuModel)) {
     let Some(state) = app.try_state::<TrayState>() else {
         return;
@@ -238,6 +257,18 @@ pub fn register(app: &mut App) -> tauri::Result<()> {
         .menu(&build_native_menu(app.handle(), &initial_model)?)
         .show_menu_on_left_click(true)
         .on_tray_icon_event(|tray, event| {
+            if matches!(event, TrayIconEvent::Click {
+                button: tauri::tray::MouseButton::Left, button_state: MouseButtonState::Up, ..
+            }) {
+                let recording = tray.app_handle().try_state::<TrayState>()
+                    .and_then(|state| state.0.lock().ok().and_then(|inner| inner.model.recording));
+                if recording.is_some_and(|recording| recording.can_stop()) {
+                    if let Some(action) = crate::menu::ids::resolve_desktop_menu_action(crate::menu::ids::RECORDING_ELAPSED_MENU_ID) {
+                        recording::recording_control(tray.app_handle(), action);
+                    }
+                    return;
+                }
+            }
             let pointer = matches!(event, TrayIconEvent::Enter { .. })
                 || matches!(
                     event,
@@ -545,6 +576,17 @@ fn rebuild_menu(app: &AppHandle, model: &TrayMenuModel) -> tauri::Result<()> {
         .tray_by_id(TRAY_ICON_ID)
         .ok_or_else(|| tauri::Error::AssetNotFound("tray icon".into()))?;
     tray.set_menu(Some(build_native_menu(app, model)?))?;
+    tray.set_show_menu_on_left_click(!model.recording.is_some_and(|recording| recording.can_stop()))?;
+    update_recording_title(app, model.recording, &model.labels)?;
+    Ok(())
+}
+
+/// Menu and title consume the same native timing anchor and the existing recording clock.
+#[cfg(desktop)]
+fn update_recording_title(app: &AppHandle, recording: Option<model::RecordingMenu>, labels: &TrayLabels) -> tauri::Result<()> {
+    let Some(tray) = app.tray_by_id(TRAY_ICON_ID) else { return Ok(()); };
+    let title = recording.map(|recording| recording.label(labels, model::epoch_ms()));
+    tray.set_title(title.as_deref())?;
     Ok(())
 }
 
@@ -564,6 +606,14 @@ fn build_native_menu(app: &AppHandle, model: &TrayMenuModel) -> tauri::Result<Me
     for entry in build_menu_entries(model) {
         let item = build_native_item(app, &entry)?;
         menu.append(&item)?;
+    }
+    if let Some(state) = app.try_state::<TrayState>() {
+        if let Ok(mut inner) = state.0.lock() {
+            inner.recording_elapsed = match menu.get(crate::menu::ids::RECORDING_ELAPSED_MENU_ID) {
+                Some(MenuItemKind::MenuItem(item)) => Some(item),
+                _ => None,
+            };
+        }
     }
     Ok(menu)
 }

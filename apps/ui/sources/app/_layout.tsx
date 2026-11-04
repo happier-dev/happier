@@ -83,8 +83,7 @@ import { desktopHostKind, isDesktopHost } from '@/utils/platform/desktopHost';
 import { installTauriExternalLinkClicks } from '@/utils/url/installTauriExternalLinkClicks';
 import { useIsTablet } from '@/utils/platform/responsive';
 import { resolveAppShellChromeHost } from '@/components/appShell/resolveAppShellChromeHost';
-import { isDesktopActivityOverlayWindowContext } from '@/activity/adapters/desktop/runtime/isDesktopActivityOverlayWindowContext';
-import { isDesktopOverlayWindowContext } from '@/desktop/window/isDesktopOverlayWindowContext';
+import { resolveDesktopWindowContext } from '@/desktop/window/isDesktopAuxiliaryWindowContext';
 import { ThemePreferenceTransitionHost } from '@/components/settings/appearance/ThemePreferenceTransitionHost';
 import { DesktopMainContentDragSurface } from '@/components/navigation/desktopWindowChrome/DesktopMainContentDragSurface';
 import { loadExpoNotifications, type ExpoNotificationsModule } from '@/utils/platform/loadExpoNotifications';
@@ -97,6 +96,7 @@ import { EmbedSessionRuntimeProvider } from '@/embed/runtime/EmbedSessionRuntime
 import { EmbedBridgeRuntime } from '@/embed/bridge/EmbedBridgeRuntime';
 
 const embedWindowContext = isEmbedWindowContext();
+const desktopWindowContext = resolveDesktopWindowContext();
 
 // Expo evaluates this root before rendering any workspace route. Publishing
 // its exact context here keeps optional workspace graphs free of the app tree
@@ -441,7 +441,7 @@ function configureAndroidNotificationChannels(Notifications: ExpoNotificationsMo
 }
 
 void (async () => {
-    if (embedWindowContext) return;
+    if (embedWindowContext || desktopWindowContext.role !== 'primary') return;
     try {
         const Notifications = await loadExpoNotifications();
         configureForegroundNotificationHandler(Notifications);
@@ -723,7 +723,7 @@ function FullAppRootLayout() {
 /** Inside the glass runtime, so the stack background clears only while the atmosphere paints behind the active route. */
 function useNavigationTheme() {
     const { theme } = useUnistyles();
-    const isDesktopOverlayWindow = isDesktopOverlayWindowContext();
+    const isDesktopOverlayWindow = desktopWindowContext.role === 'presenter';
     const environment = useGlassRuntimeEnvironment();
     const background = glassNavigationBackgroundColor(theme.colors.background.canvas, environment, isDesktopOverlayWindow);
     return React.useMemo(() => {
@@ -739,8 +739,8 @@ function AppBoot() {
     //
     const router = useRouter();
     const pathname = usePathname();
-    const isDesktopOverlayWindow = isDesktopOverlayWindowContext();
-    const isDesktopActivityOverlayWindow = isDesktopActivityOverlayWindowContext();
+    const isDesktopOverlayWindow = desktopWindowContext.role === 'presenter';
+    const primaryRealm = desktopWindowContext.role === 'primary';
     const [initState, setInitState] = React.useState<AppBootReadyState | null>(null);
     const [bootError, setBootError] = React.useState<Error | null>(null);
     const restartBugReportCheckedRef = React.useRef(false);
@@ -753,6 +753,7 @@ function AppBoot() {
     React.useEffect(() => {
         let cancelled = false;
         void runAppBootSequence({
+            context: isDesktopOverlayWindow ? 'presenter' : 'app',
             onPhase: reportDesktopAppBootPhase,
             loadFonts,
             sodiumReady: sodium.ready,
@@ -760,7 +761,7 @@ function AppBoot() {
             prepareWarmCache: prepareWarmCacheStorage,
             prepareSessionDrafts: prepareSessionDraftPersistenceStorage,
             prepareTranslations: () => preloadTranslations(),
-            restoreSync: isDesktopActivityOverlayWindow ? null : restoreConnectionToActiveServer,
+            restoreSync: isDesktopOverlayWindow ? null : restoreConnectionToActiveServer,
             onReady: (state) => {
                 if (cancelled) return;
                 setInitState(state);
@@ -773,7 +774,7 @@ function AppBoot() {
         return () => {
             cancelled = true;
         };
-    }, [isDesktopActivityOverlayWindow]);
+    }, [isDesktopOverlayWindow]);
 
     React.useEffect(() => {
         if (!initState) return;
@@ -836,9 +837,7 @@ function AppBoot() {
             isDesktopOverlayWindow={isDesktopOverlayWindow}
             isTerminalConnectRoute={isTerminalConnectRoute}
         >
-            <PersonalHomeBootstrapRuntimeMount>
-                {routeContent}
-            </PersonalHomeBootstrapRuntimeMount>
+            {primaryRealm ? <PersonalHomeBootstrapRuntimeMount>{routeContent}</PersonalHomeBootstrapRuntimeMount> : routeContent}
         </RootShellChromeFrame>
     );
 

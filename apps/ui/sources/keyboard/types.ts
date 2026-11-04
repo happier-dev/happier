@@ -20,6 +20,9 @@ export type KeyboardCommandId =
     | 'media.actualSize'
     | 'media.playPause'
     | 'media.annotate'
+    | 'screenCapture.chooseSession'
+    | 'screenCapture.copy'
+    | 'screenCapture.recording.playPause'
     | 'annotation.select' | 'annotation.arrow' | 'annotation.rectangle' | 'annotation.text' | 'annotation.blur'
     | 'annotation.undo' | 'annotation.redo'
     | 'annotation.ellipse' | 'annotation.freehand' | 'annotation.highlighter' | 'annotation.step' | 'annotation.element' | 'annotation.crop'
@@ -135,6 +138,8 @@ export type KeyboardCommandSettingsTitleKey = Extract<
     | 'settingsKeyboard.commands.codeProblemNext'
     | 'settingsKeyboard.commands.codeProblemPrevious'
     | `settingsKeyboard.commands.media${'Previous' | 'Next' | 'ZoomIn' | 'ZoomOut' | 'Fit' | 'ActualSize' | 'PlayPause' | 'Annotate'}`
+    | 'screenCapture.window.copy'
+    | 'screenCapture.window.chooseSession'
     | `settingsKeyboard.commands.annotation${'Select' | 'Arrow' | 'Rectangle' | 'Text' | 'Blur' | 'Undo' | 'Redo' | 'Ellipse' | 'Freehand' | 'Highlighter' | 'Step' | 'Element' | 'Crop' | 'Delete' | 'Duplicate' | 'NextMark' | 'PreviousMark' | 'Nudge'}`
     | 'settingsKeyboard.commands.shellColumnToggle'
     | 'settingsKeyboard.commands.panesMainToggle'

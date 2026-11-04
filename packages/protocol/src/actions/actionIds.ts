@@ -81,6 +81,7 @@ import { APP_UPDATE_ACTION_IDS } from './appUpdateActionFamily.js';
 import { BUG_REPORT_SUBMISSION_ACTION_IDS } from './specs/bugReportActionIdsV1.js';
 import { UPDATES_ACTION_IDS } from './updatesActionFamily.js';
 import { CLIPBOARD_ACTION_IDS } from './clipboardActionFamily.js';
+import { SCREEN_CAPTURE_ACTION_IDS } from './screenCaptureActionIds.js';
 import { WIDGET_INSTANCE_ACTION_IDS_V1 } from '../widgets/actionIdsV1.js';
 import { WIDGET_DEFINITION_ACTION_IDS_V1 } from '../widgets/definitionActionIdsV1.js';
 import { WIDGET_LAYOUT_FRAGMENT_ACTION_IDS_V1 } from '../widgets/fragmentActionIdsV1.js';
@@ -232,6 +233,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
   app_updates: APP_UPDATE_ACTION_IDS,
   updates: UPDATES_ACTION_IDS,
   clipboard: CLIPBOARD_ACTION_IDS,
+  screen_capture_delivery: SCREEN_CAPTURE_ACTION_IDS,
   external_links: EXTERNAL_LINK_ACTION_IDS,
   home_hub_layout: ['home.hub.layout.get', 'home.hub.layout.update', 'home.reachNudge.dismiss'],
   machine_agent_install: [

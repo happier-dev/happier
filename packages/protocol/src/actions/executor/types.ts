@@ -1,3 +1,4 @@
+import type { ScreenCaptureActionId } from '../screenCaptureActionIds.js';
 import type { SessionStopIntent } from '../../sessions/metadata/sessionExplicitStopV1.js';
 import type { DeploymentPublishResultV1, DeploymentPrepareInputV1, DeploymentPrepareResultV1 } from '../../deployments/deploymentActionsV1.js';
 import type { DeploymentTemplateInstantiateResultV1 } from '../../deployments/deploymentActionsV1.js';
@@ -2903,6 +2904,13 @@ export type ActionExecutorDeps = Readonly<{
   clipboardWrite?: (args: Readonly<{ text: string; signal?: AbortSignal }>) => Promise<
     z.infer<typeof ClipboardWriteResultSchema> | ActionExecuteFailure
   >;
+
+  /** The desktop main renderer owns capture-file disclosure and Session draft delivery. */
+  screenCaptureAction?: (args: Readonly<{
+    actionId: ScreenCaptureActionId;
+    input: unknown;
+    context: ActionExecutorContext;
+  }>) => Promise<unknown>;
 
   /** The desktop app-window lifecycle owns qualified destination presentation. */
   desktopWindowsOpen?: (args: Readonly<{

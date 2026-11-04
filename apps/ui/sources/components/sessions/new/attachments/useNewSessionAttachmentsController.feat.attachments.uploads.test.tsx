@@ -226,6 +226,7 @@ function createComposerDocument(input: Readonly<{
     return {
         composerDocument: {
             ref: { kind: 'newSession', instanceId: 'new-session-composer-scope' },
+            readScope: () => null,
             isCurrent: () => true,
             isReferenceSearchCurrent: () => true,
             revision: 7,

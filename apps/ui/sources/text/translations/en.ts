@@ -1,5 +1,6 @@
 import { botTemplateRecipientTranslations } from './botTemplateRecipientTranslations';
 import { botTemplateTranslations } from './botTemplateTranslations';
+import { screenCaptureCopy } from './screenCaptureTranslations.shared';
 import { fileEditingTranslations } from './fileEditingTranslations.shared';
 import { usageChartInputTranslations } from './usageChartInputTranslations.shared';
 import { usageChartPlanetFamilyTranslations } from './usageChartPlanetFamilyTranslations.shared';
@@ -22601,6 +22602,7 @@ export const en: TranslationStructure = {
   },
     fileReviewNote: fileReviewNoteTranslations.en,
     composerReferences: composerReferenceTranslations.en,
+    screenCapture: screenCaptureCopy.en,
     hunkReview: hunkReviewTranslations['en'],
   panes: { mainColumn: paneMainColumnTranslations['en'], emptyEditor: paneEmptyEditorTranslations['en'], shortcutsSheet: paneShortcutsSheetTranslations['en'] },
     sessionCoordinator: {
@@ -23729,7 +23731,7 @@ type EnglishNamespaces30 = TranslationOverlay<
   typeof publicIdentity
 >;
 
-export type TranslationsEn = EnglishNamespaces30 & Readonly<{ botTemplates: typeof botTemplateTranslations.en; botTemplateRecipient: typeof botTemplateRecipientTranslations.en; fileReviewNote: typeof fileReviewNoteTranslations.en; hunkReview: typeof hunkReviewTranslations.en; composerReferences: typeof composerReferenceTranslations.en }>;
+export type TranslationsEn = EnglishNamespaces30 & Readonly<{ botTemplates: typeof botTemplateTranslations.en; botTemplateRecipient: typeof botTemplateRecipientTranslations.en; fileReviewNote: typeof fileReviewNoteTranslations.en; hunkReview: typeof hunkReviewTranslations.en; composerReferences: typeof composerReferenceTranslations.en; screenCapture: typeof screenCaptureCopy.en }>;
 
 // Shape contract for all locales: enforce identical key structure without requiring English literal
 // string values. Functions are preserved so parameter lists remain typechecked.

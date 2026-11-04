@@ -96,6 +96,8 @@ function isUnadmittedPendingAttachmentView(
 
 export type NewSessionComposerDocument = Readonly<{
     ref: Extract<ComposerRefV1, Readonly<{ kind: 'newSession' }>>;
+    /** Account/Home owning this draft, independent of its execution target. */
+    readScope: () => ServerAccountScope | null;
     /** Exact live-scope/account currentness for host adapters; no global focus registry. */
     isCurrent: () => boolean;
     /** Lifetime of this exact mounted composer and its execution target. */
@@ -586,6 +588,8 @@ export function useNewSessionComposerDocument(params: Readonly<{
         }
     }, [documentOwner, params.promptStore, pendingAttachmentSeeds, ref]);
 
+    const readScope = React.useCallback(() => draftScope ?? composerAccountLifetime?.scope ?? null,
+        [draftScope, composerAccountLifetime]);
     const target = useStableComposerPresentationTarget(ref, {
         readPickedAttachments: () => pickedAttachmentsRef.current,
         readRevision: () => documentOwner.read().revision,
@@ -599,14 +603,14 @@ export function useNewSessionComposerDocument(params: Readonly<{
             });
         },
         readSnapshot,
-        readScope: () => draftScope ?? composerAccountLifetime?.scope ?? null,
+        readScope,
         readReferenceWorkspace: () => params.referenceWorkspace ?? null,
         readAttachmentComposition: () => !composerPluginPresentation.scopeSignal.aborted && composerPluginPresentation.attachmentEntriesById
             ? { composerAttachmentsById: composerPluginPresentation.attachmentEntriesById, localize: composerPluginPresentation.localizePluginText } : null,
         isPresented: () => layoutPresented && params.isPresented !== false,
         applyNewSessionDirectoryIntent: (intent, expectedScope) => {
             if (!params.setDirectoryIntent || !readSnapshot().state.editable) return false;
-            const ownerScope = draftScope ?? composerAccountLifetime?.scope;
+            const ownerScope = readScope();
             if (expectedScope?.serverId && (!ownerScope || !areServerProfileIdentifiersEquivalent(ownerScope.serverId, expectedScope.serverId))) return false;
             if (expectedScope?.accountId && ownerScope?.accountId !== expectedScope.accountId) return false;
             params.setDirectoryIntent(intent);
@@ -917,6 +921,7 @@ export function useNewSessionComposerDocument(params: Readonly<{
 
     return React.useMemo(() => ({
         ref,
+        readScope,
         isCurrent: isNewSessionComposerCurrent,
         scopeSignal: composerPluginPresentation.scopeSignal,
         isReferenceSearchCurrent: isNewSessionReferenceSearchCurrent,
@@ -972,6 +977,7 @@ export function useNewSessionComposerDocument(params: Readonly<{
         isNewSessionReferenceSearchCurrent,
         readCurrentExecutionTarget,
         ref,
+        readScope,
         documentOwner,
     ]);
 }

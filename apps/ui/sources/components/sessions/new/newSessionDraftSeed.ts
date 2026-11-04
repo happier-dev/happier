@@ -8,6 +8,9 @@ import type {
 
 import { DEFAULT_AGENT_ID } from '@/agents/catalog/catalog';
 import { writeNewSessionDraftToRepository } from '@/components/sessions/composer/newSessionDraftRepositoryAdapter';
+import { planComposerAttachmentAppend, type ComposerAttachmentInsertionItem } from '@/components/sessions/composer/composerAttachmentAppend';
+import { createNewSessionComposerDocumentOwner } from '@/components/sessions/composer/newSessionComposerDocumentOwner';
+import { composerReferencesFromStructuredMentions, composerStructuredMentionsFromReferences } from '@/components/sessions/composer/composerScopeAdapters';
 import { randomUUID } from '@/platform/randomUUID';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type {
@@ -202,10 +205,13 @@ export function seedNewSessionDraftV1(input: Readonly<{
     configurationDraft?: NewSessionDraft;
     /** Device-local pending Composer requests, retained with the draft across restart. */
     attachmentSeeds?: readonly NewSessionComposerAttachmentSeedV1[];
+    /** Host-admitted media references and text, never plugin-authored seed data. */
+    composerItems?: readonly ComposerAttachmentInsertionItem[];
 }>): string | null {
     // Credited pending attachments are a complete intent even when the public
     // seed has no prompt or placement. Their mounted admission stays separate.
-    if ((!newSessionDraftSeedDeclaresChangeV1(input.seed) && (input.attachmentSeeds?.length ?? 0) === 0) || !input.scope) return null;
+    const hasComposerContent = input.composerItems?.some(item => 'draft' in item || item.text.trim().length > 0) === true;
+    if ((!newSessionDraftSeedDeclaresChangeV1(input.seed) && (input.attachmentSeeds?.length ?? 0) === 0 && !hasComposerContent) || !input.scope) return null;
     const scope = input.scope;
     const draftId = (input.createDraftId ?? randomUUID)();
     const draft = applyNewSessionDraftSeedV1({
@@ -221,5 +227,16 @@ export function seedNewSessionDraftV1(input: Readonly<{
             ? draft
             : { ...draft, composerAttachmentSeeds: input.attachmentSeeds },
     });
+    if (hasComposerContent) {
+        const owner = createNewSessionComposerDocumentOwner({ scope, ref: { kind: 'newSession', instanceId: draftId } });
+        const document = owner.read().document;
+        const next = planComposerAttachmentAppend({ snapshot: { text: document.text,
+            references: composerReferencesFromStructuredMentions({ text: document.text, mentions: document.structuredInputMentions }) },
+            items: input.composerItems ?? [] });
+        owner.replaceDocument({ ...document, text: next.text,
+            structuredInputMentions: composerStructuredMentionsFromReferences({
+                references: next.references, existing: document.structuredInputMentions,
+            }) });
+    }
     return draftId;
 }

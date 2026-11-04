@@ -1068,7 +1068,7 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
         maxHeight: props.maxHeight,
         bodyExtraHeight: bodySlotsHeight,
         headerExpected: showSearchHeader,
-        footerExpected: keyboardHintsEnabled || props.footerAction != null,
+        footerExpected: keyboardHintsEnabled || props.footerAction != null || props.pinnedRow != null,
         shrinkDelayMs: STABILIZED_HEIGHT_SHRINK_DELAY_MS,
     });
     /**
@@ -1379,12 +1379,13 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
             </View>
     );
 
-    const footerZone = keyboardHintsEnabled || props.footerAction != null ? (
+    const footerZone = keyboardHintsEnabled || props.footerAction != null || props.pinnedRow != null ? (
         <View
             testID={selectionListTestId(resolvedTestId, 'footerFrame')}
             collapsable={false}
             onLayout={measureNativeHeight ? measuredPopoverHeight.onFooterLayout : undefined}
         >
+            {props.pinnedRow}
             <SelectionListFooter
                 testID={selectionListTestId(resolvedTestId, 'footer')}
                 hints={footerHints}

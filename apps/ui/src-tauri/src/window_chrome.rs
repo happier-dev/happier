@@ -33,8 +33,22 @@ struct DesktopGlassMaterialRequest {
     blur: DesktopGlassBlur,
 }
 
+/// Floating panels show the main window's material behind their one rounded card.
 #[cfg(desktop)]
-#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+fn is_glass_panel_window(label: &str) -> bool {
+    crate::desktop_window::is_capture_window(label)
+}
+
+/// The native material a window currently carries; a panel's is clipped to its card's corners.
+#[cfg(desktop)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct DesktopGlassApplied {
+    blur: DesktopGlassBlur,
+    radius: Option<f64>,
+}
+
+#[cfg(desktop)]
+#[derive(Clone, Copy, Debug, Default, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct DesktopGlassStatePayload {
     pub supported: bool,
@@ -45,13 +59,35 @@ pub struct DesktopGlassStatePayload {
     pub window_active: bool,
 }
 
+/// What a webview reads: the native outcome and, for panels, the main window's glass settings,
+/// which panels cannot read from the Account themselves.
+#[cfg(desktop)]
+#[derive(Clone, Debug, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct DesktopGlassStateView {
+    #[serde(flatten)]
+    pub state: DesktopGlassStatePayload,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub settings: Option<serde_json::Value>,
+}
+
 #[cfg(desktop)]
 struct DesktopGlassRuntime(Mutex<DesktopGlassRuntimeInner>);
 
 #[cfg(desktop)]
 struct DesktopGlassRuntimeInner {
+    /// The main window's request; every glass window follows it.
     request: DesktopGlassMaterialRequest,
-    applied_blur: Option<DesktopGlassBlur>,
+    settings: Option<serde_json::Value>,
+    windows: std::collections::HashMap<String, DesktopGlassWindow>,
+}
+
+#[cfg(desktop)]
+#[derive(Default)]
+struct DesktopGlassWindow {
+    /// A panel's resting card radius while the card fills the window; None while it moves.
+    panel_radius: Option<f64>,
+    applied: Option<DesktopGlassApplied>,
     payload: DesktopGlassStatePayload,
 }
 
@@ -111,19 +147,20 @@ fn read_windows_backdrop(window: &WebviewWindow) -> Result<i32, String> {
 }
 
 #[cfg(desktop)]
-fn glass_platform_supported(window: &WebviewWindow) -> bool {
+fn glass_platform_supported(window: &WebviewWindow, panel: bool) -> bool {
     #[cfg(target_os = "macos")]
     {
-        let _ = window;
+        let _ = (window, panel);
         true
     }
+    // DWM's backdrop fills the whole window rectangle and cannot follow a panel card's corners.
     #[cfg(target_os = "windows")]
     {
-        read_windows_backdrop(window).is_ok()
+        !panel && read_windows_backdrop(window).is_ok()
     }
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
-        let _ = window;
+        let _ = (window, panel);
         false
     }
 }
@@ -131,9 +168,11 @@ fn glass_platform_supported(window: &WebviewWindow) -> bool {
 #[cfg(target_os = "macos")]
 fn apply_native_glass(
     window: &WebviewWindow,
-    blur: Option<DesktopGlassBlur>,
+    applied: Option<DesktopGlassApplied>,
+    panel: bool,
 ) -> Result<(), String> {
     use window_vibrancy::{NSVisualEffectMaterial as Material, NSVisualEffectState};
+    let blur = applied.map(|applied| applied.blur);
     let material = match blur {
         None | Some(DesktopGlassBlur::Off) => {
             return window_vibrancy::clear_vibrancy(window)
@@ -147,11 +186,12 @@ fn apply_native_glass(
     // Tauri's public effect path uses this same crate but drops its Result.
     // Replacing a step removes the old native view instead of stacking blur planes.
     window_vibrancy::clear_vibrancy(window).map_err(|error| error.to_string())?;
+    // A floating panel never becomes the key window, so its material stays active.
     window_vibrancy::apply_vibrancy(
         window,
         material,
-        Some(NSVisualEffectState::FollowsWindowActiveState),
-        None,
+        Some(if panel { NSVisualEffectState::Active } else { NSVisualEffectState::FollowsWindowActiveState }),
+        applied.and_then(|applied| applied.radius),
     )
     .map_err(|error| error.to_string())
 }
@@ -159,8 +199,10 @@ fn apply_native_glass(
 #[cfg(target_os = "windows")]
 fn apply_native_glass(
     window: &WebviewWindow,
-    blur: Option<DesktopGlassBlur>,
+    applied: Option<DesktopGlassApplied>,
+    _panel: bool,
 ) -> Result<(), String> {
+    let blur = applied.map(|applied| applied.blur);
     use windows::Win32::Graphics::Dwm::{
         DwmSetWindowAttribute, DWMSBT_NONE, DWMSBT_TRANSIENTWINDOW, DWMWA_SYSTEMBACKDROP_TYPE,
     };
@@ -189,43 +231,64 @@ fn apply_native_glass(
 #[cfg(all(desktop, not(any(target_os = "macos", target_os = "windows"))))]
 fn apply_native_glass(
     _window: &WebviewWindow,
-    _blur: Option<DesktopGlassBlur>,
+    _applied: Option<DesktopGlassApplied>,
+    _panel: bool,
 ) -> Result<(), String> {
     Ok(())
 }
 
+/// The event a window's renderer subscribes to; panels get their own so the main window's
+/// broadcast never reaches them.
 #[cfg(desktop)]
-fn refresh_desktop_glass(window: &WebviewWindow) -> Result<DesktopGlassStatePayload, String> {
+fn desktop_glass_state_event(label: &str) -> String {
+    if is_glass_panel_window(label) {
+        format!("{DESKTOP_GLASS_STATE_EVENT}/{label}")
+    } else {
+        DESKTOP_GLASS_STATE_EVENT.to_string()
+    }
+}
+
+#[cfg(desktop)]
+fn refresh_desktop_glass(window: &WebviewWindow, announce: bool) -> Result<DesktopGlassStateView, String> {
+    let label = window.label().to_string();
+    let panel = is_glass_panel_window(&label);
     let state = window.app_handle().state::<DesktopGlassRuntime>();
-    let mut inner = state.0.lock().map_err(|error| error.to_string())?;
-    let previous = inner.payload;
+    let mut guard = state.0.lock().map_err(|error| error.to_string())?;
+    let inner = &mut *guard;
+    let entry = inner.windows.entry(label.clone()).or_default();
+    let previous = entry.payload;
     let accessibility = read_glass_accessibility();
-    let supported = accessibility.is_ok() && glass_platform_supported(window);
+    let supported = accessibility.is_ok() && glass_platform_supported(window, panel);
     let (reduce_transparency, high_contrast) = accessibility.unwrap_or_else(|error| {
         log::warn!("failed to read desktop glass accessibility: {error}");
         (previous.reduce_transparency, previous.high_contrast)
     });
-    let window_active = window.is_focused().unwrap_or(false);
-    let wants_material = desktop_glass_material_requested(
+    // A floating panel has no inactive appearance; it shows material only while its card fills it.
+    let window_active = panel || window.is_focused().unwrap_or(false);
+    let shaped = !panel || entry.panel_radius.is_some();
+    let wants_material = shaped && desktop_glass_material_requested(
         inner.request,
         supported,
         reduce_transparency,
         window_active,
     );
-    let desired = if wants_material {
-        Some(inner.request.blur)
-    } else {
-        None
-    };
-    let mut material_live = inner.applied_blur.is_some();
-    if desired != inner.applied_blur {
+    let desired = wants_material.then_some(DesktopGlassApplied {
+        blur: inner.request.blur,
+        radius: entry.panel_radius,
+    });
+    let mut material_live = entry.applied.is_some();
+    if desired != entry.applied {
+        // A panel's window stays transparent (`configure_floating_surface`); only the main window
+        // swaps its backing colour with its material.
         let result = if desired.is_some() {
-            window
-                .set_background_color(Some(tauri::window::Color(0, 0, 0, 0)))
-                .map_err(|error| error.to_string())
-                .and_then(|_| apply_native_glass(window, desired))
+            (if panel { Ok(()) } else {
+                window
+                    .set_background_color(Some(tauri::window::Color(0, 0, 0, 0)))
+                    .map_err(|error| error.to_string())
+            })
+            .and_then(|_| apply_native_glass(window, desired, panel))
         } else {
-            apply_native_glass(window, None).and_then(|_| {
+            apply_native_glass(window, None, panel).and_then(|_| if panel { Ok(()) } else {
                 window
                     .set_background_color(None)
                     .map_err(|error| error.to_string())
@@ -233,14 +296,16 @@ fn refresh_desktop_glass(window: &WebviewWindow) -> Result<DesktopGlassStatePayl
         };
         match result {
             Ok(()) => {
-                inner.applied_blur = desired;
+                entry.applied = desired;
                 material_live = desired.is_some();
             }
             Err(error) => {
                 log::warn!("failed to apply desktop glass material: {error}");
-                let _ = apply_native_glass(window, None);
-                let _ = window.set_background_color(None);
-                inner.applied_blur = None;
+                let _ = apply_native_glass(window, None, panel);
+                if !panel {
+                    let _ = window.set_background_color(None);
+                }
+                entry.applied = None;
                 material_live = false;
             }
         }
@@ -252,24 +317,56 @@ fn refresh_desktop_glass(window: &WebviewWindow) -> Result<DesktopGlassStatePayl
         high_contrast,
         window_active,
     };
-    inner.payload = payload;
-    drop(inner);
-    if payload != previous {
-        let _ = window.emit(DESKTOP_GLASS_STATE_EVENT, payload);
+    entry.payload = payload;
+    let view = DesktopGlassStateView {
+        state: payload,
+        settings: if panel { inner.settings.clone() } else { None },
+    };
+    drop(guard);
+    if payload != previous || announce {
+        let _ = window.emit(&desktop_glass_state_event(&label), view.clone());
     }
-    Ok(payload)
+    Ok(view)
+}
+
+/// Re-applies every glass window: the main window and the panels that follow it.
+#[cfg(desktop)]
+fn refresh_all_desktop_glass(app: &tauri::AppHandle, announce_panels: bool) {
+    for (label, window) in app.webview_windows() {
+        if label == MAIN_WINDOW_LABEL || crate::desktop_window::is_app_window(&label)
+            || (is_glass_panel_window(&label) && window.is_visible().unwrap_or(false)) {
+            let announce = announce_panels && is_glass_panel_window(&label);
+            if let Err(error) = refresh_desktop_glass(&window, announce) {
+                log::warn!("failed to refresh desktop glass: {error}");
+            }
+        }
+    }
 }
 
 #[cfg(desktop)]
 fn request_refresh_desktop_glass(app: &tauri::AppHandle) {
     let handle = app.clone();
-    let _ = app.run_on_main_thread(move || {
-        if let Some(window) = handle.get_webview_window(MAIN_WINDOW_LABEL) {
-            if let Err(error) = refresh_desktop_glass(&window) {
-                log::warn!("failed to refresh desktop glass: {error}");
-            }
-        }
-    });
+    let _ = app.run_on_main_thread(move || refresh_all_desktop_glass(&handle, false));
+}
+
+/// A panel reports its card's radius once the card fills the window, and None when it starts to move.
+/// Must run on the native main thread (synchronous commands do).
+#[cfg(desktop)]
+pub(crate) fn set_desktop_glass_panel_shape(window: &WebviewWindow, radius: Option<f64>) -> Result<(), String> {
+    if !is_glass_panel_window(window.label()) {
+        return Err("window is not a glass panel".into());
+    }
+    window
+        .app_handle()
+        .state::<DesktopGlassRuntime>()
+        .0
+        .lock()
+        .map_err(|error| error.to_string())?
+        .windows
+        .entry(window.label().to_string())
+        .or_default()
+        .panel_radius = radius.filter(|radius| radius.is_finite() && *radius >= 0.0);
+    refresh_desktop_glass(window, false).map(|_| ())
 }
 
 #[cfg(target_os = "macos")]
@@ -377,9 +474,10 @@ fn register_glass_accessibility(_app: &mut App) {}
 #[cfg(desktop)]
 async fn update_desktop_glass(
     window: WebviewWindow,
-    request: Option<DesktopGlassMaterialRequest>,
-) -> Result<DesktopGlassStatePayload, String> {
-    if window.label() != MAIN_WINDOW_LABEL {
+    request: Option<(DesktopGlassMaterialRequest, Option<serde_json::Value>)>,
+) -> Result<DesktopGlassStateView, String> {
+    let panel = is_glass_panel_window(window.label());
+    if window.label() != MAIN_WINDOW_LABEL && !crate::desktop_window::is_app_window(window.label()) && !(panel && request.is_none()) {
         return Err("window material belongs to the main window".into());
     }
     let (sender, receiver) = tokio::sync::oneshot::channel();
@@ -387,16 +485,26 @@ async fn update_desktop_glass(
     window
         .run_on_main_thread(move || {
             let result = (|| {
-                if let Some(request) = request {
-                    handle
-                        .app_handle()
-                        .state::<DesktopGlassRuntime>()
-                        .0
-                        .lock()
-                        .map_err(|error| error.to_string())?
-                        .request = request;
+                let Some((request, settings)) = request else {
+                    return refresh_desktop_glass(&handle, false);
+                };
+                {
+                    let state = handle.app_handle().state::<DesktopGlassRuntime>();
+                    let mut inner = state.0.lock().map_err(|error| error.to_string())?;
+                    inner.request = request;
+                    inner.settings = settings;
                 }
-                refresh_desktop_glass(&handle)
+                let view = refresh_desktop_glass(&handle, false);
+                // Open panels follow the new settings live.
+                for (label, panel) in handle.app_handle().webview_windows() {
+                    if label != handle.label() && (label == MAIN_WINDOW_LABEL || crate::desktop_window::is_app_window(&label)
+                        || (is_glass_panel_window(&label) && panel.is_visible().unwrap_or(false))) {
+                        if let Err(error) = refresh_desktop_glass(&panel, true) {
+                            log::warn!("failed to refresh panel glass: {error}");
+                        }
+                    }
+                }
+                view
             })();
             let _ = sender.send(result);
         })
@@ -408,7 +516,7 @@ async fn update_desktop_glass(
 #[tauri::command]
 pub async fn desktop_get_glass_state(
     window: WebviewWindow,
-) -> Result<DesktopGlassStatePayload, String> {
+) -> Result<DesktopGlassStateView, String> {
     update_desktop_glass(window, None).await
 }
 
@@ -418,8 +526,16 @@ pub async fn desktop_apply_glass_material(
     window: WebviewWindow,
     enabled: bool,
     blur: DesktopGlassBlur,
-) -> Result<DesktopGlassStatePayload, String> {
-    update_desktop_glass(window, Some(DesktopGlassMaterialRequest { enabled, blur })).await
+    settings: Option<serde_json::Value>,
+) -> Result<DesktopGlassStateView, String> {
+    update_desktop_glass(window, Some((DesktopGlassMaterialRequest { enabled, blur }, settings))).await
+}
+
+/// Clears a panel's material while its card moves; resting shapes arrive with the frame that fits them.
+#[cfg(desktop)]
+#[tauri::command]
+pub fn desktop_set_glass_panel_shape(window: WebviewWindow, radius: Option<f64>) -> Result<(), String> {
+    set_desktop_glass_panel_shape(&window, radius)
 }
 
 #[cfg(desktop)]
@@ -536,6 +652,23 @@ fn resolve_desktop_window_chrome_runtime_policy(
     window_label: &str,
     platform: DesktopWindowPlatform,
 ) -> DesktopWindowChromeRuntimePolicy {
+    if window_label != MAIN_WINDOW_LABEL {
+        return DesktopWindowChromeRuntimePolicy {
+            strategy: DesktopWindowChromeStrategy::None,
+            use_window_decorations: true,
+            title_bar_style: None,
+            hide_native_title: false,
+        };
+    }
+
+    if crate::desktop_window::is_capture_window(window_label) || crate::desktop_window::is_app_window(window_label) {
+        return DesktopWindowChromeRuntimePolicy {
+            strategy: DesktopWindowChromeStrategy::CustomControls,
+            use_window_decorations: false,
+            title_bar_style: None,
+            hide_native_title: false,
+        };
+    }
     if window_label != MAIN_WINDOW_LABEL {
         return DesktopWindowChromeRuntimePolicy {
             strategy: DesktopWindowChromeStrategy::None,
@@ -704,7 +837,10 @@ pub(crate) fn show_main_window(app: &tauri::AppHandle) -> tauri::Result<()> {
     let window = match app.get_webview_window(MAIN_WINDOW_LABEL) {
         Some(window) => window,
         None => {
-            let window = create_main_window(app)?;
+            let window = create_main_window(
+                app,
+                crate::window_sizing::InitialWindowVisibility::Visible,
+            )?;
             crate::menu_bar::leave(app);
             window
         }
@@ -757,7 +893,10 @@ pub(crate) fn present_main_window_for_lifecycle_event(
 /// The main window, built from its `tauri.conf.json` entry (`"create": false`: the app creates it
 /// here, so a login start in menu-bar mode never loads a web UI).
 #[cfg(desktop)]
-pub(crate) fn create_main_window(app: &tauri::AppHandle) -> tauri::Result<WebviewWindow> {
+pub(crate) fn create_main_window(
+    app: &tauri::AppHandle,
+    initial_visibility: crate::window_sizing::InitialWindowVisibility,
+) -> tauri::Result<WebviewWindow> {
     let mut config = app
         .config()
         .app
@@ -768,9 +907,11 @@ pub(crate) fn create_main_window(app: &tauri::AppHandle) -> tauri::Result<Webvie
         .ok_or_else(|| tauri::Error::WindowNotFound)?;
     // The renderer starts solid and clears selected paint roles only after native success.
     config.transparent = cfg!(any(target_os = "macos", target_os = "windows"));
-    let window = tauri::WebviewWindowBuilder::from_config(app, &config)?.build()?;
+    let window = tauri::WebviewWindowBuilder::from_config(app, &config)?
+        .visible(false)
+        .build()?;
     configure_main_window(app, &window);
-    crate::window_sizing::configure_main_window(app, &window)?;
+    crate::window_sizing::configure_main_window(app, &window, initial_visibility)?;
     Ok(window)
 }
 
@@ -878,19 +1019,20 @@ pub async fn desktop_show_main_window(app: tauri::AppHandle) -> Result<bool, Str
 #[cfg(desktop)]
 #[tauri::command]
 pub async fn desktop_start_window_dragging(window: Window) -> Result<bool, String> {
-    let policy = resolve_desktop_window_chrome_runtime_policy(
-        window.label(),
-        resolve_current_desktop_window_platform(),
-    );
-    if !desktop_window_chrome_policy_supports_controls(policy) {
+    if !crate::desktop_window::window_allows_dragging(window.label()) {
         return Ok(false);
     }
     if window.is_fullscreen().map_err(|error| error.to_string())? {
         return Ok(false);
     }
 
-    window.start_dragging().map_err(|error| error.to_string())?;
-    Ok(true)
+    #[cfg(target_os = "macos")]
+    { crate::desktop_panel::start_window_dragging(&window) }
+    #[cfg(not(target_os = "macos"))]
+    {
+        window.start_dragging().map_err(|error| error.to_string())?;
+        Ok(true)
+    }
 }
 
 /// Creates the main window at app start — unless the app was started at login in menu-bar mode,
@@ -902,20 +1044,18 @@ pub fn register(app: &mut App) -> tauri::Result<()> {
             enabled: false,
             blur: DesktopGlassBlur::Off,
         },
-        applied_blur: None,
-        payload: DesktopGlassStatePayload {
-            supported: false,
-            material_live: false,
-            reduce_transparency: false,
-            high_contrast: false,
-            window_active: false,
-        },
+        settings: None,
+        windows: std::collections::HashMap::new(),
     })));
     register_glass_accessibility(app);
-    if crate::menu_bar::launched_in_menu_bar_mode(app.handle()) {
+    if crate::menu_bar::launched_in_menu_bar_mode(app.handle())
+        || crate::capture::triggers::cold_launch_is_capture_only(app.handle()) {
         return Ok(());
     }
-    create_main_window(app.handle())?;
+    create_main_window(
+        app.handle(),
+        crate::window_sizing::InitialWindowVisibility::Visible,
+    )?;
     Ok(())
 }
 
@@ -923,8 +1063,7 @@ pub fn register(app: &mut App) -> tauri::Result<()> {
 fn configure_main_window(app: &tauri::AppHandle, window: &WebviewWindow) {
     // New native windows have no effect yet; retain the last request across recreation.
     if let Ok(mut inner) = app.state::<DesktopGlassRuntime>().0.lock() {
-        inner.applied_blur = None;
-        inner.payload.material_live = false;
+        inner.windows.remove(MAIN_WINDOW_LABEL);
     }
     request_refresh_desktop_glass(app);
     let glass_handle = app.clone();
@@ -1015,6 +1154,26 @@ mod tests {
             false,
             true
         ));
+    }
+
+    #[test]
+    fn capture_panel_follows_main_glass_on_its_own_event_with_projected_settings() {
+        assert!(is_glass_panel_window(crate::desktop_window::CAPTURE_WINDOW_LABEL));
+        assert!(is_glass_panel_window("capture_42"));
+        assert!(!is_glass_panel_window(MAIN_WINDOW_LABEL));
+        assert!(!is_glass_panel_window("capture_selection_1"));
+        assert_eq!(desktop_glass_state_event(MAIN_WINDOW_LABEL), "desktopGlass://state");
+        assert_eq!(desktop_glass_state_event("capture"), "desktopGlass://state/capture");
+        let view = DesktopGlassStateView {
+            state: DesktopGlassStatePayload { supported: true, material_live: true, window_active: true, ..Default::default() },
+            settings: Some(serde_json::json!({ "glassBlurEnabled": true })),
+        };
+        assert_eq!(serde_json::to_value(&view).unwrap(), serde_json::json!({
+            "supported": true, "materialLive": true, "reduceTransparency": false, "highContrast": false,
+            "windowActive": true, "settings": { "glassBlurEnabled": true },
+        }));
+        let main = DesktopGlassStateView { settings: None, ..view };
+        assert!(serde_json::to_value(&main).unwrap().get("settings").is_none());
     }
 
     #[test]

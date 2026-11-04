@@ -33,6 +33,20 @@ const MIN_WINDOW_HEIGHT_PX: f64 = 520.0;
 #[cfg(desktop)]
 const WRITE_DEBOUNCE: Duration = Duration::from_millis(400);
 
+
+#[cfg(desktop)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum InitialWindowVisibility {
+    Visible,
+    Hidden,
+}
+
+#[cfg(desktop)]
+fn present_initial_main_window(visibility: InitialWindowVisibility, show: impl FnOnce()) {
+    if matches!(visibility, InitialWindowVisibility::Visible) {
+        show();
+    }
+}
 #[cfg(desktop)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Rect {
@@ -56,6 +70,46 @@ struct PersistedWindowState {
     units: PersistedWindowUnits,
 }
 
+
+/// Logical outer geometry shared by Capture and app-window placement.
+#[cfg(desktop)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct WindowFrame {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+#[cfg(desktop)]
+pub(crate) fn window_frame(window: &tauri::WebviewWindow) -> Result<WindowFrame, String> {
+    let scale = window.scale_factor().map_err(|error| error.to_string())?;
+    let position = window.outer_position().map_err(|error| error.to_string())?.to_logical::<f64>(scale);
+    let size = window.outer_size().map_err(|error| error.to_string())?.to_logical::<f64>(scale);
+    Ok(WindowFrame { x: position.x, y: position.y, width: size.width, height: size.height })
+}
+
+#[cfg(desktop)]
+pub(crate) fn previous_visible_window_frame(app: &AppHandle, excluded: &str, preferred: Option<&str>) -> Option<WindowFrame> {
+    let windows = app.webview_windows();
+    let previous = app.state::<WindowSizingState>().previous_work_window.lock().ok().and_then(|previous| previous.clone());
+    let eligible = |window: &&tauri::WebviewWindow| window.label() != excluded
+        && (window.label() == "main" || crate::desktop_window::is_app_window(window.label())
+            || crate::desktop_window::is_capture_window(window.label()))
+        && window.is_visible().unwrap_or(false);
+    preferred.and_then(|label| windows.get(label)).filter(eligible)
+        .or_else(|| previous.as_ref().and_then(|label| windows.get(label)).filter(eligible))
+        .or_else(|| windows.values().filter(eligible).find(|window| window.is_focused().unwrap_or(false)))
+        .or_else(|| windows.values().find(eligible)).and_then(|window| window_frame(window).ok())
+}
+
+#[cfg(desktop)]
+pub(crate) fn note_presented_work_window(window: &tauri::WebviewWindow) {
+    if let Ok(mut previous) = window.app_handle().state::<WindowSizingState>().previous_work_window.lock() {
+        *previous = Some(window.label().into());
+    }
+}
 #[cfg(desktop)]
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -83,6 +137,7 @@ struct PersistedWindowMode {
 #[derive(Clone, Default)]
 pub struct WindowSizingState {
     mode: Arc<Mutex<WindowMode>>,
+    previous_work_window: Arc<Mutex<Option<String>>>,
 }
 
 #[cfg(desktop)]
@@ -332,7 +387,11 @@ fn apply_main_window_rect<R: Runtime>(
     }
 }
 
-pub fn configure_main_window(app: &AppHandle, window: &tauri::WebviewWindow) -> tauri::Result<()> {
+pub(crate) fn configure_main_window(
+    app: &AppHandle,
+    window: &tauri::WebviewWindow,
+    initial_visibility: InitialWindowVisibility,
+) -> tauri::Result<()> {
     let state_path = resolve_state_path_handle(app)?;
     let mode_path = resolve_mode_path_handle(app)?;
     let persisted = read_json(&state_path);
@@ -426,7 +485,9 @@ pub fn configure_main_window(app: &AppHandle, window: &tauri::WebviewWindow) -> 
     // Persist the last known mode so the next launch can start at the right size with no visible jumps.
     write_mode(&mode_path, initial_mode);
 
-    let _ = window.show();
+    present_initial_main_window(initial_visibility, || {
+        let _ = window.show();
+    });
     Ok(())
 }
 
@@ -480,6 +541,16 @@ pub async fn desktop_set_window_mode(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+        fn hidden_main_window_configuration_never_presents_the_native_window() {
+        let mut presentations = 0;
+        // Only the native show operation is substituted at the OS boundary.
+        present_initial_main_window(InitialWindowVisibility::Hidden, || presentations += 1);
+        assert_eq!(presentations, 0);
+        present_initial_main_window(InitialWindowVisibility::Visible, || presentations += 1);
+        assert_eq!(presentations, 1);
+    }
 
     #[test]
     fn resolve_initial_window_mode_ignores_legacy_preauth_persisted_value() {

@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "capture-selection",
+  "description": "Selection operation facts and local input only",
+  "windows": ["capture_selection_*"],
+  "permissions": ["core:default", "allow-desktop-capture-selection"]
+}

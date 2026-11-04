@@ -33,10 +33,9 @@ tauri = { version = "2.12.1", features = ["tray-icon", "macos-private-api"] }
 tauri-plugin-log = "2"
 tauri-plugin-http = "=2.5.2"
 tauri-plugin-notification = "2"
-tauri-plugin-mcp-bridge = "0.10"
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
-tokio = { version = "1", features = ["sync"] }
+tokio = { version = "1", features = ["sync", "macros"] }
 wry = "0.55.1"
 base64 = "0.22"
 percent-encoding = "2.3"
@@ -44,13 +43,18 @@ sha2 = "0.10"
 png = "0.17.16"
 tempfile = "3.20"
 
+[target."cfg(not(target_os = \"windows\"))".dependencies]
+tauri-plugin-mcp-bridge = "0.10"
+
 [target."cfg(not(any(target_os = \"android\", target_os = \"ios\")))".dependencies]
 keyring = "4.2.0"
+happier-desktop-native = { path = "../../../packages/desktop-native/rust/happier-desktop-native", default-features = false, features = ["capture"] }
 happier-iroh-native = { path = "../../../packages/iroh-native/rust/happier-iroh-native" }
 tauri-plugin-autostart = "2"
 tauri-plugin-single-instance = { version = "=2.4.0", features = ["deep-link"] }
 tauri-plugin-deep-link = "=2.4.9"
 tauri-plugin-updater = "2.9"
+tauri-plugin-global-shortcut = "=2.4.1"
 
 [target."cfg(target_os = \"macos\")".dependencies]
 block2 = "0.6.1"
@@ -67,13 +71,15 @@ webview2-com = "0.38"
 windows-core-061 = { package = "windows-core", version = "=0.61.2" }
 # The tray reads the taskbar theme from the registry; already in the tree via hyper-util.
 windows-registry = "0.6"
-windows = { version = "0.62.2", features = ["Foundation", "UI_ViewManagement", "Win32_Graphics_Dwm"] }
+windows = { version = "0.62.2", features = ["Foundation", "UI_ViewManagement", "Win32_Graphics_Dwm", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 
 [target."cfg(target_os = \"linux\")".dependencies]
 gtk = "0.18"
+libloading = "0.7.4"
 webkit2gtk = "=2.0.2"
 soup3 = "=0.5.0"
+ashpd = { version = "=0.13.13", default-features = false, features = ["tokio", "global_shortcuts"] }
+futures-util = "0.3"
 
 [patch.crates-io]
-tauri-plugin-mcp-bridge = { path = "vendor/tauri-plugin-mcp-bridge" }
 wry = { path = "vendor/wry" }

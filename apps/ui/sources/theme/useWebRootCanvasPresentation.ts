@@ -2,7 +2,7 @@ import * as React from 'react';
 import { Platform } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
-import { isDesktopOverlayWindowContext } from '@/desktop/window/isDesktopOverlayWindowContext';
+import { resolveDesktopWindowContext } from '@/desktop/window/isDesktopAuxiliaryWindowContext';
 
 /** One mounted owner paints the web canvas and restores its pre-mount inline presentation. */
 export function applyWebRootCanvasPresentation(document: Document, background: string): () => void {
@@ -24,7 +24,7 @@ export function applyWebRootCanvasPresentation(document: Document, background: s
 export function useWebRootCanvasPresentation(transparent: boolean): void {
     const { theme } = useUnistyles();
     const background = transparent ? 'transparent' : theme.colors.background.canvas;
-    const overlay = isDesktopOverlayWindowContext();
+    const overlay = resolveDesktopWindowContext().role === 'presenter';
     React.useLayoutEffect(() => {
         if (Platform.OS !== 'web' || overlay || typeof document === 'undefined') return;
         return applyWebRootCanvasPresentation(document, background);

@@ -2,7 +2,7 @@ import { MENTION_KIND_V1, parseMentionRefV1 } from '@happier-dev/protocol/runtim
 import { SessionIdSchema } from '@happier-dev/protocol/sessions/idsV1';
 import type { SessionDraftSessionMessagingValueV1 } from '@happier-dev/protocol/drafts/sessionDrafts';
 import { ActionSessionFanoutResultV1Schema } from '@happier-dev/protocol/actions/sessionTargetV1';
-import { SessionMessageSendResultV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { SessionMessageSendResultV1Schema, type SessionMessageSendResultV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { ActionApprovalRequestCreatedResultSchema, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ComposerRefV1 } from '@happier-dev/protocol/plugins/ui/composerRef';
 import type { ComposerAttachmentDraftV1 } from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
@@ -93,6 +93,20 @@ function hasAdmittedInput(value: unknown): boolean {
     const parsed = SessionMessageSendResultV1Schema.safeParse(value);
     return parsed.success && parsed.data.status !== 'rejected' && parsed.data.status !== 'outcomeUnknown';
 }
+
+export type AdmittedSessionComposerMessageResult = Exclude<SessionMessageSendResultV1, { status: 'rejected' | 'outcomeUnknown' }>;
+
+/** One admission interpretation for mounted messaging and detached draft submission. */
+export function readSessionComposerMessageAdmission(value: unknown):
+    | Readonly<{ kind: 'accepted'; receipt: AdmittedSessionComposerMessageResult }>
+    | Readonly<{ kind: 'unaccepted'; code: string }> {
+    const parsed = SessionMessageSendResultV1Schema.safeParse(value);
+    if (!parsed.success) return { kind: 'unaccepted', code: 'session_input_target_unavailable' };
+    return parsed.data.status === 'rejected' || parsed.data.status === 'outcomeUnknown'
+        ? { kind: 'unaccepted', code: parsed.data.code }
+        : { kind: 'accepted', receipt: parsed.data };
+}
+
 
 export type SessionComposerMessagingOutcome =
     | Readonly<{ kind: 'accepted' }>

@@ -114,6 +114,23 @@ const input = () => ({ scope, target: { kind: 'composerAttachment' as const, ref
 const context = () => ({ surface: 'agent' as const, serverId: scope.serverId, runtimeAccountId: scope.accountId });
 
 describe('annotation Actions through the real composer occurrence', () => {
+    it('routes an Account-scoped still-capture read to its referenced window', async () => {
+        const result = { document: { v: 1, image: { width: 40, height: 30, scale: 2 }, marks: [] },
+            image: { width: 40, height: 30, scale: 2 }, hasBlur: false };
+        const invoke = vi.fn(async () => result);
+        vi.stubGlobal('__TAURI_INTERNALS__', { invoke });
+        const request = { scope, target: { kind: 'capture' as const, captureRef: 'still-a' } };
+        expect(await executeMediaAnnotationAction({ actionId: 'media.annotation.read', input: request, context: context() }))
+            .toEqual(result);
+        expect(invoke).toHaveBeenCalledWith('desktop_capture_annotation_request', {
+            captureRef: 'still-a', request: { actionId: 'media.annotation.read', input: request },
+        });
+        const before = invoke.mock.calls.length;
+        expect(await executeMediaAnnotationAction({ actionId: 'media.annotation.read',
+            input: { ...request, scope: { ...scope, accountId: 'foreign' } }, context: context() }))
+            .toEqual({ status: 'unavailable', reason: 'annotation.targetUnavailable' });
+        expect(invoke.mock.calls).toHaveLength(before);
+    });
     it('reads the registered browser draft document without capture, flatten, upload or server work', async () => {
         const capabilities = buildBrowserAdapterCapabilities({ adapterKind: 'localPreview',
             supportedTargetKinds: ['localServicePreview'], supportedRenderEngines: ['webIframe'] });

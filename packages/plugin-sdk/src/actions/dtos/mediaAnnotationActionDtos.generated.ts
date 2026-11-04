@@ -10,10 +10,18 @@ export type MediaAnnotationActionInputById = {
             accountId: string;
         };
         target: {
+            kind: 'browserView';
+            browserSessionId: string;
+            viewId: string;
+        } | {
+            kind: 'capture';
+            captureRef: string;
+        } | {
             kind: 'composerAttachment';
             ref: {
-                kind: 'session';
+                kind: 'automationAuthoring';
                 sessionId: string;
+                instanceId: string;
             } | {
                 kind: 'discussion';
                 discussionId: string;
@@ -21,17 +29,16 @@ export type MediaAnnotationActionInputById = {
                 kind: 'newSession';
                 instanceId: string;
             } | {
-                kind: 'pendingMessage';
-                sessionId: string;
-                localId: string;
-            } | {
                 kind: 'participantMessage';
                 sessionId: string;
                 instanceId: string;
             } | {
-                kind: 'automationAuthoring';
+                kind: 'pendingMessage';
                 sessionId: string;
-                instanceId: string;
+                localId: string;
+            } | {
+                kind: 'session';
+                sessionId: string;
             } | {
                 kind: 'workflowAuthoring';
                 draftId: string;
@@ -40,21 +47,16 @@ export type MediaAnnotationActionInputById = {
             };
             attachmentId: string;
         } | {
-            kind: 'sessionImage';
-            sessionId: string;
-            mediaId: string;
-        } | {
-            kind: 'browserView';
-            browserSessionId: string;
-            viewId: string;
-        } | {
-            kind: 'capture';
-            captureRef: string;
-        } | {
             kind: 'recordingFrame';
             captureRef: string;
             sourceTimeMs: number;
+        } | {
+            kind: 'sessionImage';
+            sessionId: string;
+            mediaId: string;
         };
+    } & {
+        clientId?: string | undefined;
     };
     readonly "media.annotation.apply": {
         scope: {
@@ -62,10 +64,18 @@ export type MediaAnnotationActionInputById = {
             accountId: string;
         };
         target: {
+            kind: 'browserView';
+            browserSessionId: string;
+            viewId: string;
+        } | {
+            kind: 'capture';
+            captureRef: string;
+        } | {
             kind: 'composerAttachment';
             ref: {
-                kind: 'session';
+                kind: 'automationAuthoring';
                 sessionId: string;
+                instanceId: string;
             } | {
                 kind: 'discussion';
                 discussionId: string;
@@ -73,17 +83,16 @@ export type MediaAnnotationActionInputById = {
                 kind: 'newSession';
                 instanceId: string;
             } | {
-                kind: 'pendingMessage';
-                sessionId: string;
-                localId: string;
-            } | {
                 kind: 'participantMessage';
                 sessionId: string;
                 instanceId: string;
             } | {
-                kind: 'automationAuthoring';
+                kind: 'pendingMessage';
                 sessionId: string;
-                instanceId: string;
+                localId: string;
+            } | {
+                kind: 'session';
+                sessionId: string;
             } | {
                 kind: 'workflowAuthoring';
                 draftId: string;
@@ -92,22 +101,25 @@ export type MediaAnnotationActionInputById = {
             };
             attachmentId: string;
         } | {
-            kind: 'sessionImage';
-            sessionId: string;
-            mediaId: string;
-        } | {
-            kind: 'browserView';
-            browserSessionId: string;
-            viewId: string;
-        } | {
-            kind: 'capture';
-            captureRef: string;
-        } | {
             kind: 'recordingFrame';
             captureRef: string;
             sourceTimeMs: number;
+        } | {
+            kind: 'sessionImage';
+            sessionId: string;
+            mediaId: string;
         };
         operations?: ({
+            kind: 'crop.clear';
+        } | {
+            kind: 'crop.set';
+            rect: {
+                x: number;
+                y: number;
+                width: number;
+                height: number;
+            };
+        } | {
             kind: 'mark.add';
             mark: {
                 kind: 'arrow';
@@ -119,67 +131,8 @@ export type MediaAnnotationActionInputById = {
                     x: number;
                     y: number;
                 };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'rectangle';
-                rect: {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'ellipse';
-                rect: {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'freehand';
-                points: {
-                    x: number;
-                    y: number;
-                }[];
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'highlighter';
-                points: {
-                    x: number;
-                    y: number;
-                }[];
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'text';
-                at: {
-                    x: number;
-                    y: number;
-                };
-                text: string;
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'step';
-                at: {
-                    x: number;
-                    y: number;
-                };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
                 id: string;
             } | {
                 kind: 'blur';
@@ -189,7 +142,7 @@ export type MediaAnnotationActionInputById = {
                     width: number;
                     height: number;
                 };
-                size: 's' | 'm' | 'l';
+                size: 'l' | 'm' | 's';
                 id: string;
             } | {
                 kind: 'element';
@@ -200,9 +153,75 @@ export type MediaAnnotationActionInputById = {
                     height: number;
                 };
                 label: string;
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                id: string;
+            } | {
+                kind: 'ellipse';
+                rect: {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'freehand';
+                points: {
+                    x: number;
+                    y: number;
+                }[];
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'highlighter';
+                points: {
+                    x: number;
+                    y: number;
+                }[];
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'rectangle';
+                rect: {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'step';
+                at: {
+                    x: number;
+                    y: number;
+                };
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'text';
+                at: {
+                    x: number;
+                    y: number;
+                };
+                text: string;
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
                 id: string;
             };
+        } | {
+            kind: 'mark.remove';
+            id: string;
+        } | {
+            kind: 'mark.reorder';
+            id: string;
+            index: number;
         } | {
             kind: 'mark.update';
             mark: {
@@ -215,67 +234,8 @@ export type MediaAnnotationActionInputById = {
                     x: number;
                     y: number;
                 };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'rectangle';
-                rect: {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'ellipse';
-                rect: {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'freehand';
-                points: {
-                    x: number;
-                    y: number;
-                }[];
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'highlighter';
-                points: {
-                    x: number;
-                    y: number;
-                }[];
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'text';
-                at: {
-                    x: number;
-                    y: number;
-                };
-                text: string;
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'step';
-                at: {
-                    x: number;
-                    y: number;
-                };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
                 id: string;
             } | {
                 kind: 'blur';
@@ -285,7 +245,7 @@ export type MediaAnnotationActionInputById = {
                     width: number;
                     height: number;
                 };
-                size: 's' | 'm' | 'l';
+                size: 'l' | 'm' | 's';
                 id: string;
             } | {
                 kind: 'element';
@@ -296,34 +256,78 @@ export type MediaAnnotationActionInputById = {
                     height: number;
                 };
                 label: string;
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                id: string;
+            } | {
+                kind: 'ellipse';
+                rect: {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'freehand';
+                points: {
+                    x: number;
+                    y: number;
+                }[];
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'highlighter';
+                points: {
+                    x: number;
+                    y: number;
+                }[];
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'rectangle';
+                rect: {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'step';
+                at: {
+                    x: number;
+                    y: number;
+                };
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'text';
+                at: {
+                    x: number;
+                    y: number;
+                };
+                text: string;
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
                 id: string;
             };
         } | {
-            kind: 'mark.remove';
-            id: string;
-        } | {
-            kind: 'mark.reorder';
-            id: string;
-            index: number;
-        } | {
-            kind: 'crop.set';
-            rect: {
-                x: number;
-                y: number;
-                width: number;
-                height: number;
-            };
-        } | {
-            kind: 'crop.clear';
-        } | {
             kind: 'reset';
         })[] | undefined;
-        cause?: 'edit' | 'undo' | 'redo' | undefined;
+        cause?: 'edit' | 'redo' | 'undo' | undefined;
         reset?: true | undefined;
-        into?: {
+        into?: undefined | {
             sessionId: string;
-        } | undefined;
+        };
+    } & {
+        clientId?: string | undefined;
     };
 };
 export type MediaAnnotationActionResultById = {
@@ -334,7 +338,7 @@ export type MediaAnnotationActionResultById = {
             scale: number;
         };
         hasBlur: boolean;
-        document?: {
+        document?: undefined | {
             v: 1;
             image: {
                 width: number;
@@ -351,67 +355,8 @@ export type MediaAnnotationActionResultById = {
                     x: number;
                     y: number;
                 };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'rectangle';
-                rect: {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'ellipse';
-                rect: {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'freehand';
-                points: {
-                    x: number;
-                    y: number;
-                }[];
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'highlighter';
-                points: {
-                    x: number;
-                    y: number;
-                }[];
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'text';
-                at: {
-                    x: number;
-                    y: number;
-                };
-                text: string;
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'step';
-                at: {
-                    x: number;
-                    y: number;
-                };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
                 id: string;
             } | {
                 kind: 'blur';
@@ -421,7 +366,7 @@ export type MediaAnnotationActionResultById = {
                     width: number;
                     height: number;
                 };
-                size: 's' | 'm' | 'l';
+                size: 'l' | 'm' | 's';
                 id: string;
             } | {
                 kind: 'element';
@@ -432,25 +377,84 @@ export type MediaAnnotationActionResultById = {
                     height: number;
                 };
                 label: string;
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                id: string;
+            } | {
+                kind: 'ellipse';
+                rect: {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'freehand';
+                points: {
+                    x: number;
+                    y: number;
+                }[];
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'highlighter';
+                points: {
+                    x: number;
+                    y: number;
+                }[];
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'rectangle';
+                rect: {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'step';
+                at: {
+                    x: number;
+                    y: number;
+                };
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'text';
+                at: {
+                    x: number;
+                    y: number;
+                };
+                text: string;
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
                 id: string;
             })[];
-            crop?: {
+            crop?: undefined | {
                 x: number;
                 y: number;
                 width: number;
                 height: number;
-            } | undefined;
-        } | undefined;
+            };
+        };
     } | {
         status: 'unavailable';
         reason: 'annotation.targetUnavailable' | 'flatten.canvasUnavailable' | 'flatten.decodeFailed';
     };
     readonly "media.annotation.apply": {
+        status: 'appended' | 'replaced' | 'reverted';
+        imageNumber?: number | undefined;
+    } | {
         status: 'unavailable';
         reason: 'annotation.targetUnavailable' | 'flatten.canvasUnavailable' | 'flatten.decodeFailed';
-    } | {
-        status: 'replaced' | 'appended' | 'reverted';
-        imageNumber?: number | undefined;
     };
 };

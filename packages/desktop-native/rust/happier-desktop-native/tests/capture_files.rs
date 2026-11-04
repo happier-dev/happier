@@ -292,6 +292,21 @@ fn png(marker: u8) -> Vec<u8> {
 }
 
 #[test]
+fn retained_prepared_pixels_survive_new_exports_and_parent_discard() {
+    let root = tempfile::tempdir().unwrap();
+    let mut files = CaptureFiles::default();
+    let source = files.write_png(root.path(), &png(1)).unwrap();
+    files.write_prepared_png(&source.capture_ref, &png(11), TEXT_OFF).unwrap();
+    let retained = files.retain_prepared_png(&source.capture_ref).unwrap();
+    files.write_prepared_png(&source.capture_ref, &png(22), TEXT_OFF).unwrap();
+    assert_eq!(std::fs::read(&retained.path).unwrap(), png(11), "draft pixels must not follow later edits");
+    assert_eq!(files.read_source_png(&retained.capture_ref).unwrap(), png(11));
+    files.discard(&source.capture_ref).unwrap();
+    assert_eq!(std::fs::read(&retained.path).unwrap(), png(11), "discarding the editor must keep draft pixels");
+    assert_eq!(files.read_source_png(&retained.capture_ref).unwrap(), png(11));
+}
+
+#[test]
 fn prepared_pixels_are_kept_beside_source_and_discard_only_removes_owned_files() {
     let root = tempfile::tempdir().unwrap();
     let other = tempfile::tempdir().unwrap();

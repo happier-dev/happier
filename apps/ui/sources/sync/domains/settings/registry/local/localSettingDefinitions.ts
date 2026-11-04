@@ -22,6 +22,18 @@ import { SessionListFocusedFolderV1Schema } from '@/sync/domains/session/folders
 import { MachineStorageViewMapSchema } from './machineStorageViewSetting';
 
 const localSettingInputs = {
+    screenCaptureSound: {
+        schema: z.catch(z.boolean(), true),
+        default: true,
+        description: 'Play a confirmation sound when capturing on this device',
+        storageScope: 'local',
+    },
+    screenCaptureIncludeWindowText: {
+        schema: z.catch(z.boolean(), false),
+        default: false,
+        description: 'Include whole-window text with captures by default on this device',
+        storageScope: 'local',
+    },
     filesTrackAgentEdits: {
         schema: z.catch(z.boolean(), false),
         default: false,

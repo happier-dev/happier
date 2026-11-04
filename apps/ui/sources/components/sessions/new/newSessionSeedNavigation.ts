@@ -2,11 +2,14 @@ import type { SessionNewSessionSeedOutcome } from '@happier-dev/protocol/plugins
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { admitProjectAuthoringOrigin } from '@/components/projects/detail/projectRouteState';
 import type { NewSessionDraft } from '@/sync/domains/state/persistence';
+import type { ComposerDraftAppendContent } from '@/components/sessions/composer/admitComposerDraftItems';
 
 /** Page-host navigation adapter shared by semantic Host API and authoring Actions. */
 export async function openOrdinaryNewSessionSeed(params: Readonly<{
     seed: unknown;
     configurationDraft?: NewSessionDraft;
+    /** Host-owned prepared media; never part of the public seed. */
+    media?: ComposerDraftAppendContent;
     pluginId?: string;
     scope: ServerAccountScope;
     signal?: AbortSignal;
@@ -17,9 +20,10 @@ export async function openOrdinaryNewSessionSeed(params: Readonly<{
             import('./newSessionSeedComposer'),
             import('expo-router'),
         ]);
-        return seedAndOpenNewSession({
+        const outcome = seedAndOpenNewSession({
             seed: params.seed,
             ...(params.configurationDraft ? { configurationDraft: params.configurationDraft } : {}),
+            ...(params.media ? { media: params.media } : {}),
             ...(params.pluginId ? { pluginId: params.pluginId } : {}),
             scope: params.scope,
             ...(params.signal ? { signal: params.signal } : {}),
@@ -43,6 +47,15 @@ export async function openOrdinaryNewSessionSeed(params: Readonly<{
                 });
             },
         });
+        if (outcome.kind === 'opened' && params.media) {
+            const [{ flushAttachmentDraftsForKey }, { newSessionAttachmentDraftKey }, { resolveNewSessionDraftAttachmentFlowId }] = await Promise.all([
+                import('@/components/sessions/attachments/attachmentDraftMemoryStore'),
+                import('./attachments/newSessionAttachmentDraftStore'),
+                import('./attachments/newSessionDraftAttachmentFlowId'),
+            ]);
+            await flushAttachmentDraftsForKey(newSessionAttachmentDraftKey(resolveNewSessionDraftAttachmentFlowId(outcome.draftId), params.scope));
+        }
+        return outcome;
     } catch {
         return { kind: 'unavailable', reason: 'navigation_unavailable' };
     }

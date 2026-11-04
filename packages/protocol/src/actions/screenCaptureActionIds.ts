@@ -1,6 +1,6 @@
 export const SCREEN_CAPTURE_DELIVERY_ACTION_IDS = [
   'screenCapture.open', 'screenCapture.addToDraft', 'screenCapture.send', 'screenCapture.discard',
-  'screenCapture.copy', 'screenCapture.showInFolder',
+  'screenCapture.copy', 'screenCapture.showInFolder', 'screenCapture.privacy.set',
 ] as const;
 
 export type ScreenCaptureDeliveryActionId = typeof SCREEN_CAPTURE_DELIVERY_ACTION_IDS[number];

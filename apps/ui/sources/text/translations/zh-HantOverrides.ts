@@ -1,3 +1,4 @@
+import { screenCaptureCopy } from './screenCaptureTranslations.shared';
 import { fileEditingTranslations } from './fileEditingTranslations.shared';
 import { usageChartInputTranslations } from './usageChartInputTranslations.shared';
 import { usageChartPlanetFamilyTranslations } from './usageChartPlanetFamilyTranslations.shared';
@@ -14622,5 +14623,5 @@ settingsSession: {
 
 
 export function createZhHant(base: TranslationStructure): TranslationStructure {
-    return deepMerge(base, { ...zhHantOverrides, fileReviewNote: fileReviewNoteTranslations['zh-Hant'], hunkReview: hunkReviewTranslations['zh-Hant'], composerReferences: composerReferenceTranslations['zh-Hant'] });
+    return deepMerge(base, { ...zhHantOverrides, fileReviewNote: fileReviewNoteTranslations['zh-Hant'], hunkReview: hunkReviewTranslations['zh-Hant'], composerReferences: composerReferenceTranslations['zh-Hant'], screenCapture: screenCaptureCopy['zh-Hant'] });
 }

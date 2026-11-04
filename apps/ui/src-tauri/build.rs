@@ -35,6 +35,10 @@ fn is_truthy_env(name: &str) -> bool {
 }
 
 fn main() {
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
+        // The capture bindings use the OS-provided Swift concurrency runtime.
+        println!("cargo:rustc-link-arg=-Wl,-rpath,/usr/lib/swift");
+    }
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=desktop_commands.rs");
     println!("cargo:rerun-if-env-changed=TARGET");

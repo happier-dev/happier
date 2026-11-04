@@ -11,7 +11,7 @@ import { createAppStackScreenOptions, useAppStackUsesCustomHeader } from '@/comp
 import { useAuth } from '@/auth/context/AuthContext';
 import { isTerminalConnectWebPathname } from '@/utils/path/terminalConnectUrl';
 import { useRootStackRouteOptions } from '@/components/navigation/root/useRootStackRouteOptions';
-import { isDesktopOverlayWindowContext } from '@/desktop/window/isDesktopOverlayWindowContext';
+import { resolveDesktopWindowContext } from '@/desktop/window/isDesktopAuxiliaryWindowContext';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { AppHeaderCloseButton } from '@/components/navigation/AppHeaderCloseButton';
 import { DefaultBackButton } from '@/components/navigation/Header';
@@ -69,11 +69,11 @@ const sessionRouteScreenOptions = ({ route }: { route: RouteProp<ParamListBase, 
  * the Stack subtree.
  */
 function AuthenticatedAppRuntimeMountsGate({
-    isDesktopOverlayWindow,
+    primaryRealm,
     isAuthenticated,
     isDesktopShell,
 }: Readonly<{
-    isDesktopOverlayWindow: boolean;
+    primaryRealm: boolean;
     isAuthenticated: boolean;
     isDesktopShell: boolean;
 }>): React.ReactElement | null {
@@ -81,7 +81,7 @@ function AuthenticatedAppRuntimeMountsGate({
     const onboardingJourneyActive = useOnboardingJourneySessionActive();
     if (onboardingJourneyActive) return null;
 
-    if (isDesktopOverlayWindow || isTerminalConnectWebPathname(pathname)) {
+    if (!primaryRealm || isTerminalConnectWebPathname(pathname)) {
         return null;
     }
 
@@ -115,7 +115,8 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
     const isAuthenticated = auth.isAuthenticated;
     const { theme } = useUnistyles();
     const preferredLanguage = getPreferredLanguage();
-    const isDesktopOverlayWindow = isDesktopOverlayWindowContext();
+    const windowContext = resolveDesktopWindowContext();
+    const isDesktopOverlayWindow = windowContext.role === 'presenter';
     const isDesktopShell = isDesktopHost();
     const newSessionPresentationMode = useSetting('newSessionPresentationModeV1');
     // `/new` renders either the bare composer (simple) or the profile wizard, and the two want
@@ -242,11 +243,11 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
               * platform. Horizon, the orb and the composer planet expose labels and states
               * only; two live regions do not coalesce.
               */}
-            <VoiceAnnouncer />
+            {windowContext.role === 'primary' ? <VoiceAnnouncer /> : null}
             {/* The main window's tray and Quit handoff, outside the onboarding gate (R13C-F3). */}
-            {isDesktopShell && !isDesktopOverlayWindow ? <DesktopMainWindowRuntimes /> : null}
+            {isDesktopShell && windowContext.role === 'primary' ? <DesktopMainWindowRuntimes /> : null}
             <AuthenticatedAppRuntimeMountsGate
-                isDesktopOverlayWindow={isDesktopOverlayWindow}
+                primaryRealm={windowContext.role === 'primary'}
                 isAuthenticated={isAuthenticated}
                 isDesktopShell={isDesktopShell}
             />
@@ -321,6 +322,14 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
                 />
                 <Stack.Screen
                     name="desktop/activity-overlay"
+                    options={rootStackRouteOptions['desktop/activity-overlay']}
+                />
+                <Stack.Screen
+                    name="desktop/capture"
+                    options={rootStackRouteOptions['desktop/activity-overlay']}
+                />
+                <Stack.Screen
+                    name="desktop/capture-selection"
                     options={rootStackRouteOptions['desktop/activity-overlay']}
                 />
                 <Stack.Screen

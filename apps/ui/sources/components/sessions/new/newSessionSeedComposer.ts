@@ -12,6 +12,9 @@ import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/ser
 import { seedNewSessionDraftV1 } from './newSessionDraftSeed';
 import type { NewSessionComposerAttachmentSeedV1, NewSessionDraft } from '@/sync/domains/state/persistence';
 import { storeTempData, type NewSessionData } from '@/utils/sessions/tempDataStore';
+import { admitComposerDraftItems, type ComposerDraftAppendContent } from '@/components/sessions/composer/admitComposerDraftItems';
+import { writeNewSessionAttachmentDrafts } from './attachments/newSessionAttachmentDraftStore';
+import { resolveNewSessionDraftAttachmentFlowId } from './attachments/newSessionDraftAttachmentFlowId';
 
 /**
  * The Session-owned settlement behind the semantic `openNewSession` method.
@@ -93,6 +96,8 @@ export function seedAndOpenNewSession(params: Readonly<{
     pluginId?: string;
     /** Internal same-setup projection, never part of plugin-authored wire input. */
     configurationDraft?: NewSessionDraft;
+    /** Host-owned prepared media, never plugin-authored seed data or a window event payload. */
+    media?: ComposerDraftAppendContent;
     /** Replay remains a one-shot continuation intent, not remembered configuration. */
     sourceContextHandoff?: Pick<NewSessionData, 'sourceContext' | 'sourceContextServerId'>;
     admitOrigin?: (origin: NonNullable<PluginUiNewSessionSeedV1['origin']>) => boolean;
@@ -112,21 +117,6 @@ export function seedAndOpenNewSession(params: Readonly<{
 }>): SessionNewSessionSeedOutcome {
     const seed = readPluginNewSessionSeedV1(params.seed);
     if (!seed) return { kind: 'invalid', reason: 'seed_invalid' };
-    // A seed that declares nothing must not navigate: it would drop the reader
-    // onto the New Session screen having asked for nothing at all.
-    if (
-        seed.prompt === undefined
-        && seed.sessionName === undefined
-        && seed.initialSessionFacts === undefined
-        && seed.promptStack === undefined
-        && seed.currentUiContext === undefined
-        && seed.profileId === undefined
-        && seed.agentTarget === undefined
-        && seed.checkoutIntent === undefined
-        && seed.placement === undefined
-        && seed.candidates === undefined
-        && seed.attachments === undefined
-    ) return { kind: 'invalid', reason: 'seed_empty' };
     // A seed that asks for attachments and names no caller cannot place any of
     // them, and opening the screen anyway would show the reader a New Session
     // that quietly lost every entry they chose. It is refused before anything
@@ -144,6 +134,8 @@ export function seedAndOpenNewSession(params: Readonly<{
     }
     const checkoutSettlement = settleNewSessionCheckoutIntent(seed.checkoutIntent);
     if (checkoutSettlement.kind === 'unavailable') return checkoutSettlement;
+    const media = params.media ? admitComposerDraftItems(params.media) : null;
+    if (media?.status === 'invalidOperation') return { kind: 'invalid', reason: 'seed_invalid' };
 
     const draftId = (params.createDraftId ?? randomUUID)();
 
@@ -191,9 +183,13 @@ export function seedAndOpenNewSession(params: Readonly<{
         ...(params.configurationDraft ? { configurationDraft: params.configurationDraft } : {}),
         createDraftId: () => draftId,
         attachmentSeeds,
+        ...(media ? { composerItems: media.items } : {}),
     });
     if (seededDraftId === null) {
         return { kind: 'invalid', reason: 'seed_empty' };
+    }
+    if (media) {
+        writeNewSessionAttachmentDrafts(resolveNewSessionDraftAttachmentFlowId(draftId), media.drafts, params.scope);
     }
     const dataId = params.sourceContextHandoff ? storeTempData(params.sourceContextHandoff) : null;
     try {

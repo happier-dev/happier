@@ -1,0 +1,16 @@
+[[permission]]
+identifier = "allow-desktop-capture"
+description = "Capture operation and reference-scoped files for the main and Capture windows."
+commands.allow = ["desktop_recording_status", "desktop_recording_pause", "desktop_recording_resume", "desktop_recording_stop", "desktop_recording_trim", "desktop_recording_trim_cancel", "desktop_recording_prepare", "desktop_recording_timing", "desktop_recording_document_read", "desktop_recording_document_write", "desktop_capture_start", "desktop_capture_read_state", "desktop_capture_open", "desktop_capture_settle", "desktop_capture_read_delivery_state", "desktop_capture_commit", "desktop_capture_cancel", "desktop_capture_hit_test", "desktop_capture_targets", "desktop_capture_display_facts", "desktop_capture_import_png", "desktop_capture_open_library_png", "desktop_capture_read_result", "desktop_capture_read_source_png", "desktop_capture_write_prepared_png", "desktop_capture_retain_prepared_png", "desktop_capture_read_prepared_png", "desktop_capture_discard", "desktop_capture_show_in_folder", "desktop_capture_library_folder", "desktop_capture_set_library_folder", "desktop_capture_screen_permission", "desktop_capture_request_screen_permission", "desktop_capture_permissions", "desktop_capture_permissions_watch", "desktop_capture_request_permission", "desktop_capture_open_permission_settings", "desktop_capture_window_text", "desktop_capture_preference", "desktop_capture_shortcuts", "desktop_capture_set_shortcut", "desktop_capture_shortcut_editing", "desktop_capture_configure_shortcuts",
+    "desktop_capture_window_placement", "desktop_capture_annotation_ready", "desktop_capture_annotation_request", "desktop_capture_annotation_result", "desktop_capture_retry", "desktop_capture_relaunch", "desktop_capture_show_library_folder", "desktop_capture_window_shadow",
+    "desktop_capture_selection_facts", "desktop_capture_set_mode",
+    "desktop_capture_recent_list", "desktop_capture_recent_open", "desktop_capture_recent_refresh",
+    "desktop_capture_recent_close", "desktop_capture_recent_open_media", "desktop_capture_recent_read",
+    "desktop_capture_recent_choose_file",
+    "desktop_capture_permission_bundle_info", "desktop_capture_place_permission_helper",
+    "desktop_capture_set_permission_bundle_drag_bounds", "desktop_capture_start_app_bundle_drag"]
+
+[[permission]]
+identifier = "allow-desktop-capture-selection"
+description = "Local selection input and operation facts, without image or filesystem access."
+commands.allow = ["desktop_capture_read_state", "desktop_capture_commit", "desktop_capture_cancel", "desktop_capture_hit_test", "desktop_capture_selection_facts", "desktop_capture_set_mode", "desktop_capture_shortcuts", "desktop_capture_window_ready"]

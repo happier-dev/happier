@@ -15,7 +15,7 @@ export function reportDesktopAppBootPhase(phase: AppBootPhase): void {
 }
 
 export type AppBootSequence = Readonly<{
-    context?: 'app' | 'embed';
+    context?: 'app' | 'embed' | 'presenter';
     loadFonts: () => Promise<unknown>;
     sodiumReady: PromiseLike<unknown>;
     resolveCredentials: () => Promise<AuthCredentials | null>;
@@ -96,21 +96,28 @@ export async function runAppBootSequence(sequence: AppBootSequence): Promise<voi
         sequence.onReady({ credentials: null });
         return;
     }
-    const credentialsResolved: Promise<CredentialOutcome> = start(sequence.resolveCredentials).then(
-        (credentials) => ({ credentials }),
-        (error: unknown) => {
-            console.error('Failed to resolve credentials during init, continuing startup:', error);
-            // A rejected read is a definitive answer for this boot.
-            return { credentials: null };
-        },
-    );
-    void start(sequence.prepareWarmCache).then(
-        () => {},
-        (error: unknown) => {
-            // No key means a cold boot, which the cache is designed to survive.
-            console.error('Failed to prepare the warm cache key during init, continuing startup:', error);
-        },
-    );
+    // Thin desktop presenters dispatch Account work to the main realm. Reading its
+    // credential here enters the Home mutation lock and can prevent the presenter
+    // from mounting while another realm holds that lock.
+    const credentialsResolved: Promise<CredentialOutcome> = sequence.context === 'presenter'
+        ? Promise.resolve({ credentials: null })
+        : start(sequence.resolveCredentials).then(
+            (credentials) => ({ credentials }),
+            (error: unknown) => {
+                console.error('Failed to resolve credentials during init, continuing startup:', error);
+                // A rejected read is a definitive answer for this boot.
+                return { credentials: null };
+            },
+        );
+    if (sequence.context !== 'presenter') {
+        void start(sequence.prepareWarmCache).then(
+            () => {},
+            (error: unknown) => {
+                // No key means a cold boot, which the cache is designed to survive.
+                console.error('Failed to prepare the warm cache key during init, continuing startup:', error);
+            },
+        );
+    }
     const sodiumReady = Promise.resolve(sequence.sodiumReady).catch((error: unknown) => {
         sequence.onPhase?.('crypto');
         throw error;

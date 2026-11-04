@@ -32,6 +32,8 @@ import type { ActionId } from '@happier-dev/protocol';
 import { useLocalSettings } from '@/sync/domains/state/storage';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { isCaptureWindowLabel, listenDesktopWindowAction } from '@/utils/platform/desktopWindowActionBridge';
+import { dispatchDesktopCaptureWindowAction } from '@/utils/platform/desktopWindowActionDispatch';
 
 import {
     emitDesktopActivityOverlayInteractionResult,
@@ -506,6 +508,46 @@ export function DesktopActivityOverlayRuntimeShared(): React.ReactElement | null
         model,
         surfaceEngaged,
     ]);
+
+    React.useEffect(() => {
+        if (!isDesktop || isOverlayWindow) {
+            return () => {};
+        }
+
+        let disposed = false;
+        let unlisten: (() => void) | null = null;
+        void listenDesktopWindowAction((payload) => {
+            if (disposed) {
+                return;
+            }
+
+            if (isCaptureWindowLabel(payload.windowLabel)) {
+                const executor = createDefaultActionExecutor({
+                    screenCaptureWindowPress: true,
+                    // The Capture UI sends this only after its existing Undo outcome.
+                    screenCaptureDiscard: async captureRef => {
+                        await (await import('@/desktop/capture/nativeCapture')).discardCapture(captureRef);
+                    },
+                    ...(payload.intent === 'retry' ? { screenCaptureSendDraftOnly: true } : {}),
+                });
+                fireAndForget(dispatchDesktopCaptureWindowAction(payload, executor), {
+                    tag: 'DesktopWindowAction.capture',
+                });
+                return;
+            }
+        }).then((dispose) => {
+            if (disposed) {
+                dispose();
+                return;
+            }
+            unlisten = dispose;
+        }).catch(() => {});
+
+        return () => {
+            disposed = true;
+            unlisten?.();
+        };
+    }, [actionExecutor, isDesktop, isOverlayWindow]);
 
     React.useEffect(() => {
         if (!isDesktop || isOverlayWindow) {

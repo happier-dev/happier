@@ -93,6 +93,80 @@ mod theme_tests {
     }
 }
 
+#[cfg(test)]
+mod capture_tests {
+    use super::*;
+    #[test]
+    fn tray_only_capture_entries_are_available_and_show_only_registered_bindings() {
+        let mut model = TrayMenuModel::new(MenuPlatform::MacOs);
+        assert!(!model.set_capture_shortcuts(None, None));
+        assert!(model.set_capture_shortcuts(Some("CmdOrCtrl+Shift+2".into()), None));
+        for _ in 0..1000 { assert!(!model.set_capture_shortcuts(Some("CmdOrCtrl+Shift+2".into()), None)); }
+        let entries = build_menu_entries(&model);
+        let capture = entries.iter().find(|entry| matches!(entry, MenuEntry::Item { id: Some(id), .. }
+            if id == crate::menu::ids::CAPTURE_SCREEN_MENU_ID));
+        assert!(matches!(capture, Some(MenuEntry::Item { enabled: true, text, .. }) if text.contains("CmdOrCtrl+Shift+2")));
+        let recording = entries.iter().find(|entry| matches!(entry, MenuEntry::Item { id: Some(id), .. }
+            if id == crate::menu::ids::RECORD_SCREEN_MENU_ID));
+        assert!(matches!(recording, Some(MenuEntry::Item { enabled: true, text, .. }) if text == &model.labels.record_screen));
+        model.capture_shortcut = None;
+        assert!(build_menu_entries(&model).iter().any(|entry| matches!(entry,
+            MenuEntry::Item { id: Some(id), text, .. } if id == crate::menu::ids::CAPTURE_SCREEN_MENU_ID && text == &model.labels.capture_screen)));
+    }
+
+    #[test]
+    fn recording_tray_uses_the_native_anchor_and_freezes_after_pause() {
+        let mut model = TrayMenuModel::new(MenuPlatform::MacOs);
+        model.recording = Some(RecordingMenu {
+            phase: RecordingMenuPhase::Recording, duration_ms: 2_000, active_since_ms: Some(10_000),
+        });
+        let running = build_menu_entries_at(&model, 13_000);
+        assert!(running.iter().any(|entry| matches!(entry,
+            MenuEntry::Item { id: Some(id), enabled: true, .. }
+            if id == crate::menu::ids::RECORDING_ELAPSED_MENU_ID)));
+        assert_eq!(resolve_desktop_menu_action(crate::menu::ids::RECORDING_ELAPSED_MENU_ID), Some(DesktopMenuAction::StopRecording));
+        assert!(running.iter().any(|entry| matches!(entry,
+            MenuEntry::Item { id: Some(id), text, .. }
+            if id == crate::menu::ids::RECORDING_ELAPSED_MENU_ID && text.contains("00:05"))));
+        assert!(running.iter().any(|entry| matches!(entry,
+            MenuEntry::Item { id: Some(id), enabled: true, .. }
+            if id == crate::menu::ids::PAUSE_RECORDING_MENU_ID)));
+        assert!(running.iter().any(|entry| matches!(entry,
+            MenuEntry::Item { id: Some(id), enabled: true, .. }
+            if id == crate::menu::ids::STOP_RECORDING_MENU_ID)));
+        let routes = running.iter().filter_map(|entry| match entry {
+            MenuEntry::Item { id: Some(id), enabled: true, .. } => resolve_desktop_menu_action(id),
+            _ => None,
+        }).collect::<Vec<_>>();
+        assert!(routes.contains(&DesktopMenuAction::PauseRecording));
+        assert!(routes.contains(&DesktopMenuAction::StopRecording));
+        model.recording = Some(RecordingMenu {
+            phase: RecordingMenuPhase::Paused, duration_ms: 5_000, active_since_ms: None,
+        });
+        let paused = build_menu_entries_at(&model, 13_000);
+        assert_eq!(paused, build_menu_entries_at(&model, 1_013_000));
+        assert!(paused.iter().any(|entry| matches!(entry,
+            MenuEntry::Item { id: Some(id), enabled: true, .. }
+            if id == crate::menu::ids::RESUME_RECORDING_MENU_ID)));
+        assert!(paused.iter().any(|entry| matches!(entry,
+            MenuEntry::Item { id: Some(id), enabled: true, .. }
+            if resolve_desktop_menu_action(id) == Some(DesktopMenuAction::ResumeRecording))));
+        assert!(!paused.iter().any(|entry| matches!(entry,
+            MenuEntry::Item { id: Some(id), .. }
+            if id == crate::menu::ids::PAUSE_RECORDING_MENU_ID)));
+        let scheduled_paused_ticks = (0..1_000).filter(|now|
+            model.recording.unwrap().next_tick_ms(*now).is_some()).count();
+        assert_eq!(scheduled_paused_ticks, 0);
+        model.recording = Some(RecordingMenu {
+            phase: RecordingMenuPhase::Recording, duration_ms: 5_000, active_since_ms: Some(20_000),
+        });
+        assert_eq!(model.recording.unwrap().next_tick_ms(20_500), Some(500));
+        for phase in [RecordingMenuPhase::Preparing, RecordingMenuPhase::Finalizing, RecordingMenuPhase::Failed] {
+            assert_eq!(RecordingMenu { phase, duration_ms: 5_000, active_since_ms: None }.next_tick_ms(100_000), None);
+        }
+    }
+}
+
 /// How a background service here stands for its relay — the web UI's `ThisComputerRelayState`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -182,6 +256,15 @@ impl AutostartMode {
 pub struct TrayLabels {
     pub title: String,
     pub open: String,
+    pub capture_screen: String,
+    pub record_screen: String,
+    pub recording_elapsed: String,
+    pub recording_paused: String,
+    pub recording_preparing: String,
+    pub recording_finalizing: String,
+    pub pause_recording: String,
+    pub resume_recording: String,
+    pub stop_recording: String,
     pub open_in_happier: String,
     pub settings: String,
     pub start_at_login: String,
@@ -215,6 +298,15 @@ impl Default for TrayLabels {
         Self {
             title: "Happier".into(),
             open: "Open Happier".into(),
+            capture_screen: "Capture screen".into(),
+            record_screen: "Record screen".into(),
+            recording_elapsed: "Recording · {time}".into(),
+            recording_paused: "Paused · {time}".into(),
+            recording_preparing: "Preparing recording…".into(),
+            recording_finalizing: "Finishing recording…".into(),
+            pause_recording: "Pause recording".into(),
+            resume_recording: "Resume recording".into(),
+            stop_recording: "Stop recording".into(),
             open_in_happier: "Open in Happier".into(),
             settings: "Settings…".into(),
             start_at_login: "Start at login".into(),
@@ -253,9 +345,18 @@ impl TrayLabels {
     /// Replaces every blank label with its English default.
     pub fn with_fallbacks(mut self) -> Self {
         let english = Self::default();
-        let pairs: [(&mut String, String); 28] = [
+        let pairs: [(&mut String, String); 37] = [
             (&mut self.title, english.title),
             (&mut self.open, english.open),
+            (&mut self.capture_screen, english.capture_screen),
+            (&mut self.record_screen, english.record_screen),
+            (&mut self.recording_elapsed, english.recording_elapsed),
+            (&mut self.recording_paused, english.recording_paused),
+            (&mut self.recording_preparing, english.recording_preparing),
+            (&mut self.recording_finalizing, english.recording_finalizing),
+            (&mut self.pause_recording, english.pause_recording),
+            (&mut self.resume_recording, english.resume_recording),
+            (&mut self.stop_recording, english.stop_recording),
             (&mut self.open_in_happier, english.open_in_happier),
             (&mut self.settings, english.settings),
             (&mut self.start_at_login, english.start_at_login),
@@ -346,9 +447,54 @@ impl MenuPlatform {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RecordingMenuPhase { Preparing, Recording, Paused, Finalizing, Failed }
+
+/// A presentation of the recorder's timing anchor, never a second elapsed counter.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RecordingMenu {
+    pub phase: RecordingMenuPhase,
+    pub duration_ms: u64,
+    pub active_since_ms: Option<u64>,
+}
+
+impl RecordingMenu {
+    pub fn can_stop(self) -> bool {
+        matches!(self.phase, RecordingMenuPhase::Recording | RecordingMenuPhase::Paused)
+    }
+    pub fn elapsed_ms(self, now_ms: u64) -> u64 {
+        self.duration_ms.saturating_add(self.active_since_ms
+            .map(|start| now_ms.saturating_sub(start)).unwrap_or(0))
+    }
+
+    /// The label displays whole seconds; the next change is the next elapsed-second boundary.
+    /// Paused, preparing and settled states schedule no clock work.
+    pub fn next_tick_ms(self, now_ms: u64) -> Option<u64> {
+        (self.phase == RecordingMenuPhase::Recording && self.active_since_ms.is_some())
+            .then(|| 1_000 - self.elapsed_ms(now_ms) % 1_000)
+    }
+
+    pub fn label(self, labels: &TrayLabels, now_ms: u64) -> String {
+        let seconds = self.elapsed_ms(now_ms) / 1_000;
+        let time = if seconds >= 3_600 {
+            format!("{}:{:02}:{:02}", seconds / 3_600, seconds / 60 % 60, seconds % 60)
+        } else { format!("{:02}:{:02}", seconds / 60, seconds % 60) };
+        match self.phase {
+            RecordingMenuPhase::Preparing => labels.recording_preparing.clone(),
+            RecordingMenuPhase::Recording => labels.recording_elapsed.replace("{time}", &time),
+            RecordingMenuPhase::Paused => labels.recording_paused.replace("{time}", &time),
+            RecordingMenuPhase::Finalizing => labels.recording_finalizing.clone(),
+            RecordingMenuPhase::Failed => labels.action_failed_title.clone(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TrayMenuModel {
     pub labels: TrayLabels,
+    pub capture_shortcut: Option<String>,
+    pub recording_shortcut: Option<String>,
+    pub recording: Option<RecordingMenu>,
     /// The web UI's connection status line ("Connected · Online · 2/2"); none in menu-bar mode.
     pub status_line: Option<String>,
     pub services: ServiceList,
@@ -368,9 +514,18 @@ pub struct TrayMenuModel {
 }
 
 impl TrayMenuModel {
+    pub fn set_capture_shortcuts(&mut self, capture: Option<String>, recording: Option<String>) -> bool {
+        if self.capture_shortcut == capture && self.recording_shortcut == recording { return false; }
+        self.capture_shortcut = capture;
+        self.recording_shortcut = recording;
+        true
+    }
     pub fn new(platform: MenuPlatform) -> Self {
         Self {
             labels: TrayLabels::default(),
+            capture_shortcut: None,
+            recording_shortcut: None,
+            recording: None,
             status_line: None,
             services: ServiceList::Unread,
             running_managed_service_count: None,
@@ -648,8 +803,31 @@ fn service_submenu(model: &TrayMenuModel, row: &ServiceRow) -> MenuEntry {
 ///                                         (login start OFF: replaces Quit)
 /// ```
 pub fn build_menu_entries(model: &TrayMenuModel) -> Vec<MenuEntry> {
+    build_menu_entries_at(model, epoch_ms())
+}
+
+pub(super) fn epoch_ms() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default().as_millis() as u64
+}
+
+fn build_menu_entries_at(model: &TrayMenuModel, now_ms: u64) -> Vec<MenuEntry> {
     let labels = &model.labels;
     let mut entries = Vec::new();
+    if let Some(recording) = model.recording {
+        use crate::menu::ids::{RECORDING_ELAPSED_MENU_ID, PAUSE_RECORDING_MENU_ID,
+            RESUME_RECORDING_MENU_ID, STOP_RECORDING_MENU_ID};
+        entries.push(action(RECORDING_ELAPSED_MENU_ID, &recording.label(labels, now_ms), recording.can_stop(), None));
+        match recording.phase {
+            RecordingMenuPhase::Recording => entries.push(action(PAUSE_RECORDING_MENU_ID, &labels.pause_recording, true, None)),
+            RecordingMenuPhase::Paused => entries.push(action(RESUME_RECORDING_MENU_ID, &labels.resume_recording, true, None)),
+            _ => {}
+        }
+        if recording.can_stop() {
+            entries.push(action(STOP_RECORDING_MENU_ID, &labels.stop_recording, true, None));
+        }
+        entries.push(MenuEntry::Separator);
+    }
     if let Some(line) = model
         .status_line
         .as_deref()
@@ -691,6 +869,15 @@ pub fn build_menu_entries(model: &TrayMenuModel) -> Vec<MenuEntry> {
                 entries.push(disabled(&labels.incomplete));
             }
         }
+    }
+    entries.push(MenuEntry::Separator);
+
+    for (id, label, shortcut) in [
+        (crate::menu::ids::CAPTURE_SCREEN_MENU_ID, &labels.capture_screen, &model.capture_shortcut),
+        (crate::menu::ids::RECORD_SCREEN_MENU_ID, &labels.record_screen, &model.recording_shortcut),
+    ] {
+        let text = shortcut.as_ref().map_or_else(|| label.clone(), |shortcut| format!("{label} ({shortcut})"));
+        entries.push(action(id, &text, true, None));
     }
     entries.push(MenuEntry::Separator);
 
@@ -987,6 +1174,8 @@ mod tests {
                 "service:open:https://a.example.com",
                 "service:restart:https://a.example.com",
                 "service:stop:https://a.example.com",
+                crate::menu::ids::CAPTURE_SCREEN_MENU_ID,
+                crate::menu::ids::RECORD_SCREEN_MENU_ID,
                 SHOW_MAIN_WINDOW_MENU_ID,
                 OPEN_SETTINGS_MENU_ID,
                 TOGGLE_START_AT_LOGIN_MENU_ID,

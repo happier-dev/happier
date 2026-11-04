@@ -181,6 +181,8 @@ export type ComposerPickedAttachmentsPort = Readonly<{
 export type ComposerPresentationTarget = Readonly<{
     /** Picked-file occurrences remain with the incumbent transfer draft manager. */
     readPickedAttachments?: () => ComposerPickedAttachmentsPort | null;
+    /** Settles through this mounted composer's incumbent submission owner. */
+    submitDraft?: (options?: import('@/components/sessions/agentInput').AgentInputSendOptions) => Promise<import('@happier-dev/protocol/actions/actionExecutionResult').ActionExecuteResult>;
     readRevision: () => number;
     replace: (text: string, expectedRevision: number) => number;
     /**
@@ -292,6 +294,7 @@ export function useStableComposerPresentationTarget(
             target: {
                 readRevision: () => readCurrent().readRevision(),
                 replace: (text, expectedRevision) => readCurrent().replace(text, expectedRevision),
+                ...(target.submitDraft ? { submitDraft: (options) => readCurrent().submitDraft!(options) } : {}),
                 ...(target.isCurrent ? {
                     isCurrent: () => readCurrent().isCurrent?.() ?? true,
                 } : {}),
@@ -353,6 +356,8 @@ export function useStableComposerPresentationTarget(
 export type ComposerPresentationTargetRead = Readonly<{
     revision: number;
     replace: ComposerPresentationTarget['replace'];
+    readScope?: NonNullable<ComposerPresentationTarget['readScope']>;
+    submitDraft?: NonNullable<ComposerPresentationTarget['submitDraft']>;
     /**
      * The adapter's own current document view, when it publishes one. A viewer-local
      * caller that must APPEND rather than overwrite needs the text it is appending
@@ -2835,6 +2840,11 @@ export function readSessionComposerPresentationTargetAtAddress(
                 ? target.replace(text, expectedRevision)
                 : expectedRevision
         ),
+        ...(target.readScope ? { readScope: target.readScope } : {}),
+        ...(target.submitDraft ? { submitDraft: (options: Parameters<NonNullable<ComposerPresentationTarget['submitDraft']>>[0]) => (
+            isExactTargetCurrent() ? target.submitDraft!(options) : Promise.resolve({ ok: false as const,
+                errorCode: 'session_input_target_unavailable', error: 'session_input_target_unavailable' })
+        ) } : {}),
         ...(target.readSnapshot ? { readSnapshot: target.readSnapshot } : {}),
         ...(target.applySessionPresentationIntent
             ? {

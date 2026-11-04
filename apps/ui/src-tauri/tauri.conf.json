@@ -17,6 +17,8 @@
       "capabilities": [
         "default",
         "overlay",
+        "capture",
+        "capture-selection",
         "pet_overlay"
       ],
       "csp": null

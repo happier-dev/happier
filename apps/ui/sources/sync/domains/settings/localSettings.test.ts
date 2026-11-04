@@ -5,6 +5,18 @@ import { ACTIVITY_SURFACE_LOCAL_SETTING_DEFINITIONS } from './registry/local/loc
 import { applyLocalSettings, localSettingsDefaults, localSettingsParse } from './localSettings';
 
 describe('localSettingsParse', () => {
+    it('defaults capture sound on and window text off for older records without losing device choices', () => {
+        expect(localSettingsParse({ themePreference: 'dark' })).toMatchObject({
+            screenCaptureSound: true, screenCaptureIncludeWindowText: false, themePreference: 'dark',
+        });
+        expect(localSettingsParse({ screenCaptureSound: false, screenCaptureIncludeWindowText: true })).toMatchObject({
+            screenCaptureSound: false, screenCaptureIncludeWindowText: true,
+        });
+        expect(localSettingsParse({ screenCaptureSound: 'off', screenCaptureIncludeWindowText: 'on', themePreference: 'dark' })).toMatchObject({
+            screenCaptureSound: true, screenCaptureIncludeWindowText: false, themePreference: 'dark',
+        });
+    });
+
     it.each([
         [{ desktopOverlayPresentationMode: 'floating_overlay' }, 'floating'],
         [{ desktopOverlayAnchor: 'bottom_left' }, 'floating'],

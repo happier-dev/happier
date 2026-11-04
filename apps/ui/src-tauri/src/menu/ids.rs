@@ -17,6 +17,12 @@ pub const OPEN_UPDATES_MENU_ID: &str = "open-updates";
 pub const OPEN_SETTINGS_MENU_ID: &str = "open-settings";
 /// The tray's "Start at login" check item — the one login-start setting (R16 b).
 pub const TOGGLE_START_AT_LOGIN_MENU_ID: &str = "toggle-start-at-login";
+pub const CAPTURE_SCREEN_MENU_ID: &str = "capture-screen";
+pub const RECORD_SCREEN_MENU_ID: &str = "record-screen";
+pub const RECORDING_ELAPSED_MENU_ID: &str = "recording-elapsed";
+pub const PAUSE_RECORDING_MENU_ID: &str = "pause-recording";
+pub const RESUME_RECORDING_MENU_ID: &str = "resume-recording";
+pub const STOP_RECORDING_MENU_ID: &str = "stop-recording";
 
 const SERVICE_MENU_ID_PREFIX: &str = "service:";
 
@@ -63,6 +69,11 @@ pub enum DesktopMenuAction {
     QuitApp,
     StopServicesAndQuit,
     ToggleStartAtLogin,
+    CaptureScreen,
+    RecordScreen,
+    PauseRecording,
+    ResumeRecording,
+    StopRecording,
     Service {
         action: ServiceMenuAction,
         relay_url: String,
@@ -79,6 +90,11 @@ pub fn resolve_desktop_menu_action(menu_item_id: &str) -> Option<DesktopMenuActi
         QUIT_APP_MENU_ID => Some(DesktopMenuAction::QuitApp),
         STOP_SERVICES_AND_QUIT_MENU_ID => Some(DesktopMenuAction::StopServicesAndQuit),
         TOGGLE_START_AT_LOGIN_MENU_ID => Some(DesktopMenuAction::ToggleStartAtLogin),
+        CAPTURE_SCREEN_MENU_ID => Some(DesktopMenuAction::CaptureScreen),
+        RECORD_SCREEN_MENU_ID => Some(DesktopMenuAction::RecordScreen),
+        PAUSE_RECORDING_MENU_ID => Some(DesktopMenuAction::PauseRecording),
+        RESUME_RECORDING_MENU_ID => Some(DesktopMenuAction::ResumeRecording),
+        STOP_RECORDING_MENU_ID | RECORDING_ELAPSED_MENU_ID => Some(DesktopMenuAction::StopRecording),
         other => {
             let rest = other.strip_prefix(SERVICE_MENU_ID_PREFIX)?;
             let (action, relay_url) = rest.split_once(':')?;

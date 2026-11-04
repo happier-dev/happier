@@ -172,7 +172,8 @@ pub fn leave(app: &AppHandle) {
 /// as the tray's Open and a macOS reopen, which also leaves menu-bar mode — unless it is the login
 /// item firing again (`--menu-bar`), which asks for no window.
 pub fn on_second_launch(app: &AppHandle, args: Vec<String>) {
-    if !policy::second_launch_opens_main_window(&args) {
+    if !crate::capture::triggers::second_launch(app, &args)
+        || !policy::second_launch_opens_main_window(&args) {
         return;
     }
     crate::window_chrome::present_main_window_for_lifecycle_event(

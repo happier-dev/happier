@@ -1,0 +1,22 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "capture",
+  "description": "minimal IPC permissions for the thin Capture window",
+  "windows": ["capture", "capture_[0-9]*"],
+  "permissions": [
+    "core:default",
+    "allow-desktop-capture",
+    "allow-desktop-pick-folder",
+    "allow-desktop-recording-trim",
+    "allow-desktop-window-emit-action",
+    "allow-desktop-capture-window-ready",
+    "allow-desktop-capture-window-present",
+    "allow-desktop-capture-window-hide",
+    "allow-desktop-capture-window-set-floating",
+    "allow-desktop-get-window-chrome-policy",
+    "allow-desktop-set-window-title",
+    "allow-desktop-get-glass-state",
+    "allow-desktop-set-glass-panel-shape",
+    "allow-desktop-start-window-dragging"
+  ]
+}

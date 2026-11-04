@@ -894,6 +894,11 @@ export type SelectionListProps = Readonly<{
      * the footer then holds only this action. Row-level actions still belong to their rows.
      */
     footerAction?: React.ReactNode;
+    /**
+     * A row pinned under the scroller and above the keyboard hints ("New session…"). It never moves
+     * while the list filters. Unlike `bodyFooter` it does not scroll with the rows.
+     */
+    pinnedRow?: React.ReactNode;
     /** Optional element rendered to the left of the input (e.g. folder icon). */
     inputPrefix?: React.ReactNode;
     /** Notified when the search field gains focus (a host revealing rows only once someone starts adding). */

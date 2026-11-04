@@ -127,21 +127,24 @@ export function useNewSessionAttachmentsController(params: Readonly<{
         const trimmed = params.flowId.trim();
         return trimmed.length > 0 ? trimmed : null;
     }, [params.flowId]);
+    const draftScope = params.composerDocument
+        ? params.composerDocument.readScope()
+        : getActiveServerAccountScope();
     const removedFlowRef = React.useRef<string | null>(null);
     const attachmentDraftManager = useAttachmentDraftManager({
         enabled: attachmentsUploadsEnabled,
         maxFileBytes: attachmentsUploadConfig.maxFileBytes,
-        memoryKey: normalizedFlowId ? newSessionAttachmentDraftKey(normalizedFlowId) : null,
+        memoryKey: normalizedFlowId ? newSessionAttachmentDraftKey(normalizedFlowId, draftScope) : null,
         isCurrent: () => !normalizedFlowId || removedFlowRef.current !== normalizedFlowId,
         onPickedDrafts: (drafts) => {
             const document = params.composerDocument;
-            const scope = getActiveServerAccountScope();
+            const scope = draftScope;
             if (!document?.isCurrent() || !scope) return;
             insertComposerAttachmentReferences({ ref: document.ref, scope, items: (drafts).map(draft => ({ draft })) });
         },
         onRemoveDraft: (attachmentId) => {
             const document = params.composerDocument;
-            const scope = getActiveServerAccountScope();
+            const scope = draftScope;
             if (!document?.isCurrent() || !scope) return;
             removeMountedComposerAttachmentReferences({ ref: document.ref, scope, attachmentId });
         },
@@ -199,8 +202,8 @@ export function useNewSessionAttachmentsController(params: Readonly<{
         if (!normalizedFlowId) return;
         return subscribeNewSessionAttachmentDraftRemoval(normalizedFlowId, () => {
             removedFlowRef.current = normalizedFlowId;
-        });
-    }, [normalizedFlowId]);
+        }, draftScope);
+    }, [normalizedFlowId, draftScope]);
 
     const clearDraftsForFlow = React.useCallback((accepted: readonly AttachmentDraft[]) => {
         removeSubmittedDrafts(accepted);

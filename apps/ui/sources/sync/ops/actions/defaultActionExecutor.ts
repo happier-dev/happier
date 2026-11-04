@@ -733,6 +733,12 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
   beforeLocalSettingCommit?: () => void;
   /** Optional delivery leaf used by a surface that needs specialized ingress semantics. */
   sessionSendMessage?: NonNullable<ActionExecutorDeps['sessionSendMessage']>;
+  /** Host-only Retry after a capture was staged and Send settled unsuccessfully. */
+  screenCaptureSendDraftOnly?: boolean;
+  /** Native-verified Capture window press; ordinary UI and automation never supply it. */
+  screenCaptureWindowPress?: boolean;
+  /** Final discard effect supplied by main; the Capture UI already resolved its shared Undo hold. */
+  screenCaptureDiscard?: import('./screenCaptureActions').ScreenCaptureNativePort['discard'];
   /** Exact captured host Composer; never Action input, plugin metadata, or serialized authority. */
   sessionMessageComposerSubmission?: Readonly<{
     sourceComposerRef: import('@happier-dev/protocol/plugins/ui/composerRef').ComposerRefV1;
@@ -1276,6 +1282,14 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     usageSourceAction: accountContext ? createUiUsageSourceActionPort(accountContext, opts?.usageSourceDismiss) : undefined,
     scmActionExecute,
     appShellAction: createAppShellAction(accountContext),
+    screenCaptureAction: async args => {
+      const { createNativeScreenCaptureAction } = await import('./screenCaptureActions');
+      return createNativeScreenCaptureAction({
+        sendDraftOnly: opts?.screenCaptureSendDraftOnly,
+        captureWindowPress: opts?.screenCaptureWindowPress,
+        discard: opts?.screenCaptureDiscard,
+      })(args);
+    },
     notificationConfigurationAction: createNotificationConfigurationAction(accountContext ?? null),
     bugReportSubmit: createBugReportSubmitAction(accountContext ?? null),
     appUpdateAction: executeAppUpdateAction,

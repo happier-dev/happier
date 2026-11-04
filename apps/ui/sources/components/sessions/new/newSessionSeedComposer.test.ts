@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PluginUiNewSessionSeedV1Schema } from '@happier-dev/protocol/plugins/ui';
 import { ComposerAttachmentAuthorValueV1Schema, MAX_COMPOSER_ATTACHMENT_LABEL_CODE_POINTS_V1 } from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
+import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import {
     readNewSessionDraftFromRepository,
     writeNewSessionAuthoringDraftToRepository,
@@ -11,11 +12,19 @@ import {
 } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 
 import { readPluginNewSessionSeedV1, seedAndOpenNewSession } from './newSessionSeedComposer';
+import { clearAllNewSessionAttachmentDrafts, readNewSessionAttachmentDrafts } from './attachments/newSessionAttachmentDraftStore';
+import { resolveNewSessionDraftAttachmentFlowId } from './attachments/newSessionDraftAttachmentFlowId';
+import { projectAttachmentDraftToAgentInputRowItem } from '@/components/sessions/attachments/attachmentDraftPresentation';
+import { readAgentInputImageNumbers } from '@/components/sessions/agentInput/agentInputContracts';
+import { readAttachmentsUploadConfig } from '@/components/sessions/attachments/useAttachmentsUploadConfig';
+import { setRuntimeFetch, resetRuntimeFetch } from '@/utils/system/runtimeFetch';
+import { createNewSessionComposerDocumentOwner } from '@/components/sessions/composer/newSessionComposerDocumentOwner';
+import { composerReferencesFromStructuredMentions } from '@/components/sessions/composer/composerScopeAdapters';
 
 const scope = Object.freeze({ serverId: 'server-a', accountId: 'account-a' });
 const draftId = '00000000-0000-4000-8000-000000000042';
 
-afterEach(() => resetSessionDraftRepositoryForTests());
+afterEach(() => { resetSessionDraftRepositoryForTests(); clearAllNewSessionAttachmentDrafts(); resetRuntimeFetch(); });
 
 describe('readPluginNewSessionSeedV1', () => {
     it('admits the dedicated one-shot shape and rejects the retired append/replace prompt shape', () => {
@@ -33,6 +42,64 @@ describe('readPluginNewSessionSeedV1', () => {
 });
 
 describe('seedAndOpenNewSession', () => {
+    it('opens a capture-only draft without manufacturing a prompt', () => {
+        const navigate = vi.fn();
+        const outcome = seedAndOpenNewSession({ seed: {}, media: { items: [{ kind: 'image', source: {
+            kind: 'memory', bytes: decodeBase64('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aT0sAAAAASUVORK5CYII='),
+            name: 'capture.png', mimeType: 'image/png',
+        } }] }, scope, isCurrent: () => true, createDraftId: () => draftId, navigateToNewSession: navigate });
+        expect(outcome).toEqual({ kind: 'opened', dataId: null, draftId });
+        expect(readNewSessionDraftFromRepository({ scope, draftId })?.input).toMatch(/^\[capture.png\]/);
+        expect(readNewSessionAttachmentDrafts(resolveNewSessionDraftAttachmentFlowId(draftId), scope)).toHaveLength(1);
+        expect(navigate).toHaveBeenCalledOnce();
+    });
+
+    it('admits prepared captures and notes before navigation into the canonical draft without uploading', () => {
+        const network = vi.fn(async () => { throw new Error('Unexpected upload while seeding'); });
+        setRuntimeFetch(network);
+        const image = (name: string) => ({ kind: 'image' as const, source: { kind: 'memory' as const,
+            name, mimeType: 'image/png', bytes: new Uint8Array([137, 80, 78, 71]) } });
+        const navigate = vi.fn(() => ({ draft: readNewSessionDraftFromRepository({ scope, draftId }),
+            media: readNewSessionAttachmentDrafts(resolveNewSessionDraftAttachmentFlowId(draftId), scope) }));
+        const outcome = seedAndOpenNewSession({ seed: { prompt: 'Compare the totals' },
+            media: { items: [image('first.png'), image('second.png')], note: 'Check this clipping',
+                windowText: { name: 'Window text.txt', text: 'Terminal contents' } },
+            scope, isCurrent: () => true, createDraftId: () => draftId, navigateToNewSession: navigate });
+        expect(outcome).toEqual({ kind: 'opened', dataId: null, draftId });
+        const navigationResult = navigate.mock.results[0];
+        const handedOff = navigationResult?.type === 'return' ? navigationResult.value : undefined;
+        const draft = handedOff?.draft;
+        const media = handedOff?.media ?? [];
+        expect(media).toHaveLength(3);
+        expect(draft?.input).toMatch(/^Compare the totals\n\n\[first.png\]/);
+        expect(draft?.input.endsWith('Check this clipping')).toBe(true);
+        expect(draft?.input).not.toContain('Terminal contents');
+        const document = createNewSessionComposerDocumentOwner({ scope,
+            ref: { kind: 'newSession', instanceId: draftId } }).read().document;
+        const references = composerReferencesFromStructuredMentions({ text: document.text, mentions: document.structuredInputMentions });
+        expect(references).toHaveLength(2);
+        for (const reference of references) {
+            expect(document.text.slice(reference.start, reference.end)).toBe(reference.token);
+        }
+        const numbers = readAgentInputImageNumbers(media.map(projectAttachmentDraftToAgentInputRowItem));
+        expect(media.map(item => numbers.get(item.id) ?? null)).toEqual([1, 2, null]);
+        expect(media.every(item => item.status === 'pending' && !item.uploadedPath)).toBe(true);
+        expect(media[0]?.source).toMatchObject({ kind: 'memory', previewUri: expect.stringContaining('data:image/png;base64,') });
+        expect(network).not.toHaveBeenCalled();
+    });
+
+    it('refuses an oversized capture before creating a draft or mutating its media store', () => {
+        const navigate = vi.fn();
+        const outcome = seedAndOpenNewSession({ seed: { prompt: 'Look at this capture' },
+            media: { items: [{ kind: 'image', source: { kind: 'native', uri: 'file:///capture.png',
+                name: 'capture.png', mimeType: 'image/png', sizeBytes: readAttachmentsUploadConfig().maxFileBytes + 1 } }] },
+            scope, isCurrent: () => true, createDraftId: () => draftId, navigateToNewSession: navigate });
+        expect(outcome).toEqual({ kind: 'invalid', reason: 'seed_invalid' });
+        expect(navigate).not.toHaveBeenCalled();
+        expect(readNewSessionDraftFromRepository({ scope, draftId })).toBeNull();
+        expect(readNewSessionAttachmentDrafts(resolveNewSessionDraftAttachmentFlowId(draftId), scope)).toEqual([]);
+    });
+
     function harness(overrides: Partial<Parameters<typeof seedAndOpenNewSession>[0]> = {}) {
         const navigate = vi.fn(() => readNewSessionDraftFromRepository({ scope, draftId }));
         const outcome = seedAndOpenNewSession({

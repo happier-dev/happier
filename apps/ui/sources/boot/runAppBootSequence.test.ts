@@ -30,6 +30,36 @@ async function flushMicrotasks(): Promise<void> {
 }
 
 describe('runAppBootSequence', () => {
+    it('boots a desktop presenter without entering a held Home credential transaction', async () => {
+        const credentials = createDeferred<AuthCredentials | null>();
+        const drafts = createDeferred<void>();
+        const events: string[] = [];
+        const ready: AppBootReadyState[] = [];
+        const run = runAppBootSequence({
+            context: 'presenter',
+            loadFonts: async () => {},
+            sodiumReady: Promise.resolve(),
+            resolveCredentials: () => { events.push('credentials'); return credentials.promise; },
+            prepareWarmCache: async () => { events.push('account-cache'); },
+            prepareSessionDrafts: () => drafts.promise,
+            prepareTranslations: async () => { events.push('translations'); },
+            restoreSync: async () => { events.push('account-sync'); },
+            onReady: state => { ready.push(state); },
+        });
+        try {
+            await flushMicrotasks();
+            expect(ready).toEqual([]);
+            drafts.resolve();
+            await flushMicrotasks();
+            expect(ready).toEqual([{ credentials: null }]);
+            expect(events).toEqual(['translations']);
+        } finally {
+            drafts.resolve();
+            credentials.resolve(CREDENTIALS);
+            await run;
+        }
+    });
+
     it('surfaces a rejected crypto runtime while authoritative drafts are still loading', async () => {
         const drafts = createDeferred<void>();
         const failure = new Error('Crypto runtime initialization failed');

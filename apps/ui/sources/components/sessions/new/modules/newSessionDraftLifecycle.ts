@@ -31,7 +31,7 @@ export function preserveCreatedSessionSuccessorDraft(params: Readonly<{
     launchUserAttemptId: string;
     sessionId: string;
 }>): void {
-    const files = readNewSessionAttachmentDrafts(resolveNewSessionDraftAttachmentFlowId(params.draftId));
+    const files = readNewSessionAttachmentDrafts(resolveNewSessionDraftAttachmentFlowId(params.draftId), params.scope);
     if (files.length > 0) {
         writeSessionAttachmentDrafts({ ...params.scope, sessionId: params.sessionId,
             occurrenceId: composerRefV1Key({ kind: 'session', sessionId: params.sessionId }) }, files);
