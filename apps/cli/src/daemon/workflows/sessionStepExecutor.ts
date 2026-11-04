@@ -1079,6 +1079,8 @@ function assertWorkflowSessionReuseCompatible(
       && areSessionCapabilitySelectionsEquivalentV1(requested.capabilitySelection, actual.runtimeSelection.capabilitySelection)) continue;
     let requestedValue: unknown = requested[field];
     let retainedValue: unknown = retained;
+    // Native and pre-profile Session metadata omit the authored no-profile choice.
+    if (field === 'profileId') retainedValue = retained ?? null;
     if (field === 'unlistedTools') retainedValue = retained ?? 'ask';
     if (field === 'acpSessionModeId') {
       requestedValue = resolveSessionModeOverrideValue(requested.acpSessionModeId, actual.sessionModes);

@@ -1988,6 +1988,79 @@ describe('composed Workflow front door and claimed execution', () => {
     }) } })]);
   });
 
+  it.each(['native', 'legacy', 'selected_profile'] as const)(
+    'continues two explicit no-profile Session leaves against %s persisted metadata', async shape => {
+      const runId = '15151515-1515-4515-8515-151515151516';
+      const directory = await projectDirectory();
+      const connectedServices = { v: 2 as const, bindingsByServiceId: {
+        'happier.agent.claude/anthropic': { source: 'native' as const },
+      } };
+      const definition: WorkflowDefinitionV1 = {
+        version: 1, inputs: [], defaults: { agentTarget, connectedServices },
+        blocks: [step('one', { execution: { profileId: null } }), step('two', { execution: { profileId: null } })],
+      };
+      freshSessionBoundary = async raw => {
+        const spawn = SpawnDaemonSessionRequestSchema.parse(raw);
+        const runtimeDescriptorV1 = { v: 1 as const, agentId: 'claude', agent: {} };
+        const launch = await resolveSpawnChildEnvironment({
+          options: { directory, runtimeDescriptorV1,
+            connectedServices: ConnectedServiceBindingsV2IngressSchema.parse(spawn.connectedServices) },
+          processEnv: { NODE_ENV: 'test' }, profileEnvironmentVariables: {}, daemonSpawnHooks: null,
+          logDebug() {}, logInfo() {}, logWarn() {},
+        });
+        if (!launch.ok) throw new Error(launch.errorMessage);
+        // Native startup actually omits the profile field for no-profile launches.
+        const produced = createSessionMetadata({ flavor: 'claude', machineId, directory, startedBy: 'daemon',
+          permissionMode: 'default', runtimeDescriptorV1,
+          launchControlMetadata: captureSessionLaunchControlMetadata({ processEnvironment:
+            buildSpawnChildProcessEnv({ processEnv: { NODE_ENV: 'test' }, extraEnv: launch.extraEnvForChild }) }),
+        }).metadata;
+        expect(produced.profileId).toBeUndefined();
+        // Historical Sessions predate launch-control/profile fields. Keep the
+        // raw stored vector, rather than upgrading it with today's producer.
+        const legacy = { path: directory, machineId, flavor: 'claude', permissionMode: 'default', runtimeDescriptorV1, connectedServices };
+        const published = { ...buildCommittedLaunchMetadata({ options: spawn, directory, accountSettings: {} }),
+          ...(shape === 'legacy' ? legacy : produced),
+          ...(shape === 'selected_profile' ? { profileId: 'another-profile' } : {}) };
+        const owner = createSessionOwnerMetadataV1({ metadata: published });
+        if (!owner.ok) throw new Error(`profile_fixture_invalid:${owner.unsupportedFields.join(',')}`);
+        freshSessionRecords.set('fresh-no-profile', createSessionRecordFixture({ id: 'fresh-no-profile', active: true,
+          encryptionMode: 'plain', machineId, origin: { kind: 'run_step', runId }, workDepth: 1,
+          ...(shape === 'legacy' ? {} : { metadataLayoutVersion: 1, share: null,
+            ownerMetadata: { t: 'plain' as const, v: owner.ownerMetadata } }),
+          metadata: JSON.stringify(shape === 'legacy' ? published : projectSessionSharedMetadataV1({ metadata: published })),
+        }));
+        return { type: 'success', sessionId: 'fresh-no-profile', sessionCreationOutcome: {
+          disposition: 'created', organizationPlacement: { folderId: null, tagIds: [] },
+        } };
+      };
+      const destinations: string[] = [];
+      const sessionInput = sessionInputBoundary();
+      sessionInput.observe.mockImplementation(async request => {
+        await request.onInputMaterialized?.(Date.now());
+        destinations.push(request.sessionId);
+        return { ok: true, sessionId: request.sessionId, localId: request.localId,
+          result: { kind: 'final_text', text: request.localId } };
+      });
+      const acceptedEnvelope = await sealDirectAccepted({ runId, definition, directory });
+      const kit = createWorkflowRunStorageTestkit({ runId, machineId, origin: { kind: 'direct' }, acceptedEnvelope });
+      const result = await workflowDaemonProcess({ storage: kit, sessionInput, directory, readActualConversation: true })({
+        runId, attempt: 0, expectedRevision: 0, accountCurrentness: currentness, acceptedEnvelope,
+      });
+      if (shape === 'selected_profile') {
+        expect(result).toMatchObject({ state: 'interrupted' });
+        expect(destinations).toEqual(['fresh-no-profile']);
+        expect(openRowProgress(kit, rowFor(kit, 'two')!)).toMatchObject({ reason: {
+          code: 'workflow_conversation_unavailable', details: { reason: 'profileId',
+            expected: { kind: 'null' }, observed: { kind: 'string', ids: ['another-profile'] } },
+        } });
+      } else {
+        expect(result, JSON.stringify(kit.rows().map(row => openRowProgress(kit, row.index)))).toMatchObject({ state: 'succeeded' });
+        expect(destinations).toEqual(['fresh-no-profile', 'fresh-no-profile']);
+        expect(kit.run()).toMatchObject({ state: 'succeeded', workflowCustodyState: 'settled' });
+      }
+    });
+
   it('settles a successful Run with no selected final output while origin delivery remains unacknowledged', async () => {
     const runId = '10101010-1010-4010-8010-101010101010';
     const directory = await projectDirectory();
