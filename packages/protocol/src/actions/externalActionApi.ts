@@ -1,7 +1,7 @@
 import { MachineServiceLogsResourceContinuationV1Schema, MachineServiceLogsGenerationV1Schema } from '../daemon/machineServiceLogsResource.js';
 import { ActionOperationListActionInputV1Schema, ActionOperationGetActionInputV1Schema } from './specs/actionOperations.js';
 import { SessionInitialAccessDraftV1Schema } from '../sessions/access/sessionInitialAccessDraftV1.js';
-import { projectDeploymentNativeAdmissionV1 } from '../deployments/deploymentCandidatePublicationV1.js';
+import { projectDeploymentNativeAdmissionV1, DeploymentNativeAdmissionV1Schema, isDeploymentDomainNativeAdmissionV1 } from '../deployments/deploymentCandidatePublicationV1.js';
 import type { ArtifactBodyV1 } from '../artifacts/artifactBinaryV1.js';
 import type { ArtifactRevisionV1 } from '../artifacts/artifactRevisionV1.js';
 import { DeploymentChildExecutionProofV1Schema } from '../deployments/deploymentChildExecutionProofV1.js';
@@ -951,12 +951,39 @@ export const ExternalActionRequestEnvelopeV2Schema = lazyZodSchema(() => z.stric
   sessionSpawnAdmission: z.optional(ApiTokenSessionSpawnAdmissionV1Schema),
   handoffAdmission: z.optional(ExternalActionHandoffAdmissionV1Schema),
   pendingResetStartAdmission: z.optional(ExternalActionPendingResetStartAdmissionV1Schema),
+  deploymentNativeAdmission: z.optional(DeploymentNativeAdmissionV1Schema),
 }));
 export type ExternalActionRequestEnvelopeV2 = z.infer<typeof ExternalActionRequestEnvelopeV2Schema>;
 export const ExternalActionRequestEnvelopeSchema = lazyZodSchema(() => z.union([
   ExternalActionRequestEnvelopeV1Schema, ExternalActionRequestEnvelopeV2Schema,
 ]));
 export type ExternalActionRequestEnvelope = z.infer<typeof ExternalActionRequestEnvelopeSchema>;
+export function projectExternalActionDeploymentNativeEnvelopeAdmissionV1(input: Readonly<{
+  actionId: string; envelope: ExternalActionRequestEnvelope;
+}>) {
+  const native = input.actionId === 'deployments.deploy' || input.actionId === 'deployments.rollback'
+    || input.actionId === 'deployments.promote' || input.actionId === 'deployments.teardown'
+    || input.actionId === 'deployments.restart' || input.actionId === 'deployments.backups.restore'
+    || isDeploymentDomainChildActionIdV1(input.actionId);
+  const operationRead = input.actionId === 'action.operations.get';
+  if (!native && !operationRead) {
+    if (input.envelope.v === 2 && input.envelope.deploymentNativeAdmission) throw new TypeError('Unexpected native deployment admission');
+    return undefined;
+  }
+  const admission = input.envelope.v === 1 ? projectDeploymentNativeAdmissionV1(input.actionId, input.envelope.input)
+    : operationRead && input.envelope.deploymentNativeAdmission === undefined ? undefined
+      : DeploymentNativeAdmissionV1Schema.parse(input.envelope.deploymentNativeAdmission);
+  if (isDeploymentDomainChildActionIdV1(input.actionId)
+    ? !isDeploymentDomainNativeAdmissionV1(admission) || admission.actionId !== input.actionId
+    : isDeploymentDomainNativeAdmissionV1(admission)) throw new TypeError('Native deployment admission mismatch');
+  if ((input.actionId === 'deployments.restart') !== (admission !== undefined && 'kind' in admission && admission.kind === 'restart')) {
+    throw new TypeError('Native deployment restart admission mismatch');
+  }
+  if ((input.actionId === 'deployments.backups.restore') !== (admission !== undefined && 'kind' in admission && admission.kind === 'restore')) {
+    throw new TypeError('Native deployment restore admission mismatch');
+  }
+  return admission;
+}
 /** One input-bound reset purpose for both Home issuance and ordinary daemon relay. */
 export function projectExternalActionPendingResetStartEnvelopeAdmissionV1(input: Readonly<{
   actionId: string; envelope: ExternalActionRequestEnvelope; target?: ExternalActionTargetV1;
@@ -1655,3 +1682,5 @@ export { createDeploymentCandidatePublicationV1 } from '../deployments/deploymen
 export { isDeploymentNativeReadActionIdV1 } from '../deployments/deploymentReadAdmissionV1.js';
 export { DeploymentPreparationAdmissionV1Schema, isDeploymentPreparationActionIdV1, projectDeploymentPreparationAdmissionV1, deploymentPreparationOperationForActionV1,
   type DeploymentPreparationAdmissionV1 } from '../deployments/deploymentPreparationAdmissionV1.js';
+
+export { DeploymentNativeAdmissionV1Schema, isDeploymentDomainNativeAdmissionV1, type DeploymentNativeAdmissionV1 } from '../deployments/deploymentCandidatePublicationV1.js';

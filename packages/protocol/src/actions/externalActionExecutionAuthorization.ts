@@ -25,6 +25,7 @@ export type ExternalActionMachineRpcEventV1 = typeof SOCKET_RPC_EVENTS.CALL
   | typeof SESSION_PENDING_EXECUTION_RUN_ENQUEUE_BY_MACHINE_EVENT_V2;
 import { ExternalActionRequestEnvelopeSchema, ExternalActionRequestIdV1Schema, ExternalActionTargetV1Schema,
   ReviewedActionChildHttpProofV1Schema, type ReviewedActionChildHttpProofV1,
+  projectExternalActionDeploymentNativeEnvelopeAdmissionV1, isDeploymentDomainNativeAdmissionV1,
   type ExternalActionExecutionAuthorizationBindingV1, type ExternalActionExecutionAuthorizationV1,
   type ExternalActionTargetV1, type ExternalActionRequestEnvelope } from './externalActionApi.js';
 
@@ -89,13 +90,20 @@ export function computeExternalActionRequestEnvelopeDigestV1(envelope: ExternalA
 /** Exact envelope binding only; current principal and installation admission remain Home-owned. */
 export function isExternalActionAuthorizationBoundToEnvelope(binding: ExternalActionExecutionAuthorizationBindingV1,
   input: Readonly<{ actionId: string; machineId: string; envelope: ExternalActionRequestEnvelope }>): boolean {
+  try {
+    const nativeAdmission = projectExternalActionDeploymentNativeEnvelopeAdmissionV1(input);
   return binding.actionId === input.actionId && binding.machineId === input.machineId
     && binding.requestId === input.envelope.requestId
     && binding.idempotencyKey === input.envelope.idempotencyKey
     && (input.envelope.target?.kind === 'session'
       || input.envelope.target?.kind === 'machine' && input.envelope.target.machineId === input.machineId)
     && encodeExternalActionResolvedTargetV1(binding.target) === encodeExternalActionResolvedTargetV1(input.envelope.target)
-    && binding.requestEnvelopeDigest === computeExternalActionRequestEnvelopeDigestV1(input.envelope);
+    && binding.requestEnvelopeDigest === computeExternalActionRequestEnvelopeDigestV1(input.envelope)
+    && (isDeploymentDomainNativeAdmissionV1(nativeAdmission) || nativeAdmission !== undefined && 'kind' in nativeAdmission && (nativeAdmission.kind === 'restart' || nativeAdmission.kind === 'restore')
+      ? binding.environmentId === nativeAdmission.environmentId && sameStrictJsonValue(binding.deploymentNativeAdmission, nativeAdmission)
+      : (binding.actionId === 'action.operations.get' || binding.actionId === 'deployments.teardown'
+        ? binding.environmentId : binding.deploymentCandidatePublication?.environmentId) === nativeAdmission?.environmentId);
+  } catch { return false; }
 }
 
 /** Binds the real Session RPC carrier without reinterpreting its ciphertext as an Action envelope. */
