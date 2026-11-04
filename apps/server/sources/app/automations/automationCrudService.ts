@@ -1,3 +1,4 @@
+import { markSharedWorkflowTriggerSummaryChangedInTx } from './automationSharedWorkflowSummaries';
 import { getDbProviderFromEnv } from '@/storage/prisma';
 import { resolveDbSqlDialect } from "@/config/databaseProvider";
 import { applyAutomationEnabledTransitionTx } from './automationEnabledTransition';
@@ -4026,6 +4027,7 @@ export async function matchAutomationAccountEncryptionMigrationPostStateInTx(
 
 export async function markAutomationChangedTx(tx: Tx, params: { accountId: string; automationId: string }): Promise<AccountChangePublication> {
     await invalidateSessionReviewProjectionsForAutomationInTx(tx, params.automationId);
+    await markSharedWorkflowTriggerSummaryChangedInTx(tx, params.automationId);
     return await markAccountChanged(tx, {
         accountId: params.accountId,
         kind: "automation",
@@ -4743,7 +4745,10 @@ export async function createAutomationInTx(tx: Tx, params: Readonly<{
     await acquireWorkflowPublicationLocksInTx(tx, { accountId: params.accountId,
         automationIds: isAutomationCurrentUpsertInput(params.input) ? [params.input.automationId] : [],
         ...(isAutomationCurrentUpsertInput(params.input)
-            ? { runSourceTriggerWhere: { automationId: params.input.automationId } } : {}),
+            ? { runSourceTriggerWhere: { automationId: params.input.automationId },
+                automationDefinitionWrite: { id: params.input.automationId, accountId: params.accountId,
+                    workflowDefinitionId: params.input.workflowDefinitionId, scopeSessionId: params.input.scopeSessionId,
+                    executionRecipe: params.input.executionRecipe } } : {}),
         runIds: requestedWorkflowRunSourceIds(triggerInputs.map(item => item.trigger)),
         machineIds: (params.input.assignments ?? []).map(assignment => assignment.machineId),
         sessionIds: params.input.scopeSessionId ? [params.input.scopeSessionId] : [],
@@ -5003,6 +5008,9 @@ export async function updateAutomation(params: {
     return await inTx(async (tx) => {
         await acquireWorkflowPublicationLocksInTx(tx, { accountId: params.accountId, automationIds: [params.automationId],
             runSourceTriggerWhere: { automationId: params.automationId },
+            automationDefinitionWrite: { id: params.automationId, accountId: params.accountId,
+                workflowDefinitionId: params.input.workflowDefinitionId, scopeSessionId: params.input.scopeSessionId,
+                executionRecipe: params.input.executionRecipe },
             machineIds: (params.input.assignments ?? []).map(assignment => assignment.machineId) });
         const accountFence = await acquireAccountEncryptionTransitionFenceInTx(tx, params.accountId, "content");
         if (accountFence.status !== "ready") return null;
@@ -5439,6 +5447,9 @@ export async function reconcileAutomationDefinition(params: Readonly<{
     return await inTx(async (tx) => {
         await acquireWorkflowPublicationLocksInTx(tx, { accountId: params.accountId, automationIds: [params.automationId],
             runSourceTriggerWhere: { automationId: params.automationId },
+            automationDefinitionWrite: { id: params.automationId, accountId: params.accountId,
+                workflowDefinitionId: params.input.workflowDefinitionId, scopeSessionId: params.input.scopeSessionId,
+                executionRecipe: params.input.executionRecipe },
             runIds: requestedWorkflowRunSourceIds(params.input.triggers.map(item => item.trigger)),
             machineIds: params.input.assignments.map(assignment => assignment.machineId) });
         const accountFence = await acquireAccountEncryptionTransitionFenceInTx(

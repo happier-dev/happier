@@ -21,15 +21,54 @@ import { AutomationSessionLifecyclePolicySchema } from '../../automations/automa
 
 const Revision = z.number().check(z.int(), z.nonnegative(), z.int());
 /** Only public list-safe inputs consumed by the shared human-readable trigger summary. */
-export const WorkflowTriggerSummaryInputV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
-  zMini.pick(AutomationScheduleTriggerProjectionSchema, { kind: true, schedule: true }),
-  zMini.pick(AutomationPluginEventTriggerProjectionSchema, { kind: true, eventRef: true }),
-  zMini.pick(AutomationSessionLifecycleTriggerProjectionSchema, { kind: true, events: true }),
-  zMini.pick(AutomationRunLifecycleTriggerSchema, { kind: true, condition: true }),
-  z.strictObject({ kind: z.literal('prComment') }),
-  z.strictObject({ kind: z.literal('ciFailed') }),
-]));
+export const WorkflowTriggerSummaryInputV1Schema = lazyZodSchema(() => {
+  const historyIdentity = {
+    automationId: zMini.optional(asProtocolZod(AutomationIdV1Schema)),
+    triggerId: zMini.optional(AutomationTriggerIdSchema),
+  };
+  return z.discriminatedUnion('kind', [
+    zMini.extend(zMini.pick(AutomationScheduleTriggerProjectionSchema, { kind: true, schedule: true }), historyIdentity),
+    zMini.extend(zMini.pick(AutomationPluginEventTriggerProjectionSchema, { kind: true, eventRef: true }), historyIdentity),
+    zMini.extend(zMini.pick(AutomationSessionLifecycleTriggerProjectionSchema, { kind: true, events: true }), historyIdentity),
+    zMini.extend(zMini.pick(AutomationRunLifecycleTriggerSchema, { kind: true, condition: true }), historyIdentity),
+    z.strictObject({ kind: z.literal('prComment'), ...historyIdentity }),
+    z.strictObject({ kind: z.literal('ciFailed'), ...historyIdentity }),
+  ]);
+});
 export type WorkflowTriggerSummaryInputV1 = z.infer<typeof WorkflowTriggerSummaryInputV1Schema>;
+export const WorkflowTriggerSummaryV1Schema = lazyZodSchema(() => z.strictObject({
+  workflowDefinitionId: WorkflowDefinitionRefV1StringSchema,
+  triggers: z.array(WorkflowTriggerSummaryInputV1Schema),
+  nextRunAt: z.nullable(z.number().check(z.int(), z.nonnegative())),
+}));
+export type WorkflowTriggerSummaryV1 = z.infer<typeof WorkflowTriggerSummaryV1Schema>;
+
+/** Both owned and Team projections consume the scheduler's next time, never recompute it. */
+export function summarizeWorkflowTriggerRowsV1(rows: readonly Readonly<{
+  id: string; workflowDefinitionId?: string | null; enabled: boolean;
+  triggers: readonly import('../../automations/automationTriggerProjectionV1.js').AutomationTriggerListItem[];
+}>[]): Map<string, WorkflowTriggerSummaryV1> {
+  const result = new Map<string, WorkflowTriggerSummaryV1>();
+  for (const row of rows) {
+    if (!row.workflowDefinitionId) continue;
+    const summary = result.get(row.workflowDefinitionId) ?? { workflowDefinitionId: row.workflowDefinitionId, triggers: [], nextRunAt: null };
+    for (const trigger of row.triggers) {
+      const historyIdentity = { automationId: row.id, triggerId: trigger.id };
+      switch (trigger.kind) {
+        case 'schedule': summary.triggers.push({ ...historyIdentity, kind: trigger.kind, schedule: trigger.schedule }); break;
+        case 'pluginEvent': summary.triggers.push({ ...historyIdentity, kind: trigger.kind, eventRef: trigger.eventRef }); break;
+        case 'sessionLifecycle': summary.triggers.push({ ...historyIdentity, kind: trigger.kind, events: trigger.events }); break;
+        case 'runLifecycle': summary.triggers.push({ ...historyIdentity, kind: trigger.kind, condition: trigger.condition }); break;
+        case 'prComment': case 'ciFailed': summary.triggers.push({ ...historyIdentity, kind: trigger.kind }); break;
+      }
+      if (trigger.kind === 'schedule' && row.enabled && trigger.enabled && trigger.nextRunAt !== null) {
+        summary.nextRunAt = summary.nextRunAt === null ? trigger.nextRunAt : Math.min(summary.nextRunAt, trigger.nextRunAt);
+      }
+    }
+    result.set(row.workflowDefinitionId, summary);
+  }
+  return result;
+}
 const ContextFields = lazyZodSchema(() => zMini.omit(AutomationStoredWorkflowDefinitionV2Schema, { workspace: true, inlineDefinition: true, onComplete: true }));
 export const WorkflowTriggerListRequestV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ workflow: WorkflowDefinitionRefV1StringSchema }),

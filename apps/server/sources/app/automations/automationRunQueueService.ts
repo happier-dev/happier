@@ -1,3 +1,4 @@
+import { markSharedWorkflowTriggerSummaryChangedInTx } from './automationSharedWorkflowSummaries';
 import { AutomationTriggerIdSchema } from '@happier-dev/protocol/automations/automationTriggerIdentity';
 import { deriveAutomationOccurrenceKeyV1 } from '@happier-dev/protocol/automations/automationOccurrenceV1';
 
@@ -189,7 +190,7 @@ export async function advanceAutomationScheduleCursorAfterTerminalRunTx(params: 
             nextRunAt: trigger.nextRunAt,
         })
         : null;
-    await params.tx.automationTrigger.updateMany({
+    const updated = await params.tx.automationTrigger.updateMany({
         where: {
             id: trigger.id,
             automationId: trigger.automationId,
@@ -198,4 +199,5 @@ export async function advanceAutomationScheduleCursorAfterTerminalRunTx(params: 
         },
         data: { nextRunAt },
     });
+    if (updated.count > 0) await markSharedWorkflowTriggerSummaryChangedInTx(params.tx, trigger.automationId);
 }

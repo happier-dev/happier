@@ -1,3 +1,4 @@
+import { readSharedWorkflowTriggerSummaries } from '@/app/automations/automationSharedWorkflowSummaries';
 import { AutomationDefinitionDetailsRequestSchema, AutomationDefinitionDetailsResponseSchema } from '@happier-dev/protocol/automations/automationApiV3';
 import { z } from "zod/mini";
 import type { FastifyReply } from "fastify";
@@ -175,6 +176,9 @@ export function registerAutomationV3Routes(
                 });
             }
             return AutomationDefinitionListResponseSchema.parse({
+                ...(!query.cursor && (query.workflowDefinitionIds !== undefined || query.workflowDefinitionId !== undefined)
+                    ? { sharedWorkflowSummaries: await readSharedWorkflowTriggerSummaries({ accountId,
+                        workflowDefinitionIds: query.workflowDefinitionIds ?? [query.workflowDefinitionId!] }) } : {}),
                 automations: rows.map((row) => toAutomationDefinitionListItemApiDto(
                     row,
                     eventProjections,

@@ -1,3 +1,4 @@
+import { WorkflowTriggerSummaryV1Schema } from '../workflows/triggers/workflowTriggerActionsV1.js';
 import { maxCodeUnits } from '../strings/maxCodeUnits.js';
 import * as zMini from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
@@ -451,6 +452,8 @@ export const AutomationDefinitionDetailsResponseSchema = lazyZodSchema(() => z.s
 export type AutomationDefinitionDetailsResponse = z.infer<typeof AutomationDefinitionDetailsResponseSchema>;
 
 export const AutomationDefinitionListResponseSchema = lazyZodSchema(() => z.strictObject({
+  /** Authorized Team facts only; never another Account's private trigger-set details. */
+  sharedWorkflowSummaries: z.optional(z.array(WorkflowTriggerSummaryV1Schema)),
   automations: z.array(AutomationDefinitionListItemSchema).check(z.maxLength(AUTOMATION_V3_DEFINITION_LIST_MAX_ITEMS)),
   nextCursor: zMini.nullable(OPAQUE_CURSOR_SCHEMA),
 }));

@@ -1,3 +1,5 @@
+import type { AutomationDefinitionCreateRequest } from '@happier-dev/protocol/automations/automationApiV3';
+import { readSharedWorkflowTriggerSummaryRecipientsInTx, type SharedWorkflowSummaryDefinition } from '@/app/automations/automationSharedWorkflowSummaries';
 import type { Prisma } from "@prisma/client";
 import type { Tx } from "@/storage/inTx";
 import { portableQueryChunks } from "@/storage/portableQueryChunks";
@@ -19,6 +21,10 @@ export interface WorkflowPublicationScope {
     runIds?: readonly string[];
     runWhere?: Prisma.AutomationRunWhereInput;
     automationIds?: readonly string[];
+    /** Prospective structural facts must be admitted before a definition reseal. */
+    automationDefinitionWrite?: Readonly<Pick<AutomationDefinitionCreateRequest, 'workflowDefinitionId' | 'scopeSessionId' | 'executionRecipe'> & {
+        id: string; accountId: string;
+    }>;
     automationWhere?: Prisma.AutomationWhereInput;
     triggerIds?: readonly string[];
     runSourceTriggerWhere?: Prisma.AutomationTriggerWhereInput;
@@ -36,13 +42,16 @@ export interface WorkflowPublicationAudience {
     sessionIds: string[];
 }
 
-async function readAutomationPublicationAudienceInTx(tx: Tx, automationIds: readonly string[]): Promise<WorkflowPublicationAudience> {
-    if (automationIds.length === 0) return { accountIds: [], sessionIds: [] };
-    const automations: { accountId: string; scopeSessionId: string | null; assignments: { machineId: string }[] }[] = [];
+async function readAutomationPublicationAudienceInTx(tx: Tx, automationIds: readonly string[],
+    definitionWrite?: WorkflowPublicationScope['automationDefinitionWrite']): Promise<WorkflowPublicationAudience> {
+    if (automationIds.length === 0 && !definitionWrite) return { accountIds: [], sessionIds: [] };
+    const automations: (SharedWorkflowSummaryDefinition & { id: string; assignments: { machineId: string }[] })[] = [];
     // The enabled-assignment predicate and portable Prisma offset share the ID budget.
     for (const ids of portableQueryChunks({ values: [...new Set(automationIds)], bindingsPerValue: 1, fixedBindings: 2 })) {
         const rows = await tx.automation.findMany({ where: { id: { in: [...ids] } }, select: {
-            accountId: true, scopeSessionId: true, assignments: { where: { enabled: true }, select: { machineId: true } },
+            id: true, accountId: true, workflowDefinitionId: true, scopeSessionId: true, templateCiphertext: true,
+            account: { select: { encryptionMode: true } },
+            assignments: { where: { enabled: true }, select: { machineId: true } },
         } });
         automations.push(...rows);
     }
@@ -56,7 +65,18 @@ async function readAutomationPublicationAudienceInTx(tx: Tx, automationIds: read
         }))),
         sessionIds,
     });
-    return { accountIds: [...new Set([...automations.map(automation => automation.accountId), ...managedAccounts])].sort(), sessionIds };
+    const summaries: SharedWorkflowSummaryDefinition[] = automations.filter(row => row.id !== definitionWrite?.id);
+    if (definitionWrite) {
+        const stored = automations.find(row => row.id === definitionWrite.id);
+        const account = stored?.account ?? await tx.account.findUnique({ where: { id: definitionWrite.accountId }, select: { encryptionMode: true } });
+        if (account) summaries.push({ accountId: definitionWrite.accountId, account,
+            workflowDefinitionId: definitionWrite.workflowDefinitionId === undefined ? stored?.workflowDefinitionId ?? null : definitionWrite.workflowDefinitionId,
+            scopeSessionId: definitionWrite.scopeSessionId === undefined ? stored?.scopeSessionId ?? null : definitionWrite.scopeSessionId,
+            templateCiphertext: definitionWrite.executionRecipe === undefined ? stored?.templateCiphertext ?? '' : JSON.stringify(definitionWrite.executionRecipe),
+        });
+    }
+    const sharedAccounts = (await Promise.all(summaries.map(row => readSharedWorkflowTriggerSummaryRecipientsInTx(tx, row)))).flat();
+    return { accountIds: [...new Set([...automations.map(automation => automation.accountId), ...managedAccounts, ...sharedAccounts])].sort(), sessionIds };
 }
 
 /** Session fact writers collect lifecycle admission's review/wake audience before locking their source. */
@@ -102,7 +122,7 @@ export async function getWorkflowPublicationAudienceInTx(tx: Tx, scope: Workflow
         enabled: true, deletedAt: null, remainingOccurrences: 1, automation: { enabled: true, deletedAt: null },
     }, distinct: ["automationId"], select: { automationId: true } }) : [];
     for (const watcher of watchers) automationIds.add(watcher.automationId);
-    const automationAudience = await readAutomationPublicationAudienceInTx(tx, [...automationIds]);
+    const automationAudience = await readAutomationPublicationAudienceInTx(tx, [...automationIds], scope.automationDefinitionWrite);
     const followDestinations = runs.length ? await tx.sessionFollowEdge.findMany({ where: {
         sourceWorkflowRunId: { in: runs.map(run => run.id) }, relation: 'follower',
     }, select: { destinationSessionId: true } }) : [];
