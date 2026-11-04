@@ -11341,6 +11341,7 @@ settingsSession: {
     enterTmuxTempDir: "Ingrese la ruta del directorio temporal",
     tmuxUpdateEnvironment: "Actualizar entorno automáticamente",
     nameRequired: "El nombre del perfil es requerido",
+    invalidProfile: 'Revisa el nombre del perfil, las variables de entorno y los valores predeterminados antes de guardar.',
     deleteConfirm: ({ name }: { name: string }) =>
       `¿Estás seguro de que quieres eliminar el perfil "${name}"?`,
     editProfile: "Editar Perfil",

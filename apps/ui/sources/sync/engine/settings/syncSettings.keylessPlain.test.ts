@@ -2,7 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
 import { invalidateAccountEncryptionModeCache } from '@/sync/api/account/apiAccountEncryptionMode';
-import { settingsDefaults, type Settings } from '@/sync/domains/settings/settings';
+import { settingsDefaults, settingsParse, type Settings } from '@/sync/domains/settings/settings';
+import { AIBackendProfileSchema } from '@/sync/domains/profiles/profileCompatibility';
+import { buildProfileSaveSettingsDelta } from '@/sync/domains/profiles/profileMutations';
 import { storage } from '@/sync/domains/state/storage';
 import { savePendingSettings } from '@/sync/domains/state/persistence';
 import { syncSettings } from './syncSettings';
@@ -78,5 +80,31 @@ describe('syncSettings without account encryption material', () => {
         await expect(syncSettings({ credentials, encryption, pendingSettings: {}, clearPendingSettings: vi.fn() }))
             .rejects.toMatchObject({ code: 'encryption_material_unavailable' });
         expect(storage.getState().settingsVersion).toBe(0);
+    });
+
+    it('preserves unreadable profiles and bindings when a readable profile is saved', async () => {
+        const profile = AIBackendProfileSchema.parse({ id: 'visible', name: 'Visible' });
+        const unreadable = { id: 'unreadable', name: 'x'.repeat(101), futureField: true };
+        const bindings = { unreadable: { API_KEY: 'future-secret' } };
+        const raw = { profiles: [profile, unreadable], secretBindingsByProfileId: bindings };
+        serve({ t: 'plain', v: raw });
+        const view = settingsParse(raw);
+        const updated = { ...profile, name: 'Edited' };
+        const pendingSettings = buildProfileSaveSettingsDelta({
+            profiles: view.profiles,
+            secretBindingsByProfileId: view.secretBindingsByProfileId,
+            profile: updated,
+            profileSecretBindings: {},
+        });
+        const encryption = await createEncryptionFromAuthCredentials(credentials);
+
+        await syncSettings({ credentials, encryption, pendingSettings, clearPendingSettings: vi.fn() });
+
+        const post = boundary.serverFetch.mock.calls.find(([, init]) => init?.method === 'POST');
+        expect(JSON.parse(String(post?.[1]?.body))).toEqual({
+            content: { t: 'plain', v: { profiles: [updated, unreadable], secretBindingsByProfileId: bindings } },
+            expectedVersion: 4,
+        });
+        expect(storage.getState().settings.profiles).toEqual([updated]);
     });
 });

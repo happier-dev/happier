@@ -11391,6 +11391,7 @@ settingsSession: {
     deleteConfirm: ({ name }: { name: string }) =>
       `Tem certeza de que deseja excluir o perfil "${name}"?`,
     nameRequired: "O nome do perfil é obrigatório",
+    invalidProfile: 'Confira o nome do perfil, as variáveis de ambiente e os valores padrão antes de salvar.',
     builtIn: "Integrado",
     custom: "Personalizado",
     builtInSaveAsHint:

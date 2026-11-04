@@ -16,6 +16,13 @@ type ParseContext = Readonly<{
     isDev: boolean;
 }>;
 
+// Read projection and raw writeback must agree on which entries this client understands.
+export const accountSettingsArrayEntrySchemas: ReadonlyMap<string, z.ZodType> = new Map<string, z.ZodType>([
+    ['profiles', AIBackendProfileSchema],
+    ['secrets', SavedSecretSchema],
+    ['executionRunsGuidanceEntries', ExecutionRunsGuidanceEntrySchema],
+]);
+
 function logInvalidSettingEntry(params: {
     context: ParseContext;
     key: string;
@@ -41,53 +48,12 @@ export function applyAccountSettingsPerEntryParsing(params: {
 }): boolean {
     const { key, value, result, context } = params;
 
-    if (key === 'profiles') {
+    const entrySchema = accountSettingsArrayEntrySchemas.get(key);
+    if (entrySchema) {
         if (Array.isArray(value)) {
-            const parsedProfiles: Array<z.infer<typeof AIBackendProfileSchema>> = [];
-            for (const rawProfile of value) {
-                const parsedProfile = AIBackendProfileSchema.safeParse(rawProfile);
-                if (parsedProfile.success) {
-                    parsedProfiles.push(parsedProfile.data);
-                } else {
-                    logInvalidSettingEntry({
-                        context,
-                        key,
-                        issues: parsedProfile.error.issues,
-                        message: '[settingsParse] Dropping invalid profile entry',
-                    });
-                }
-            }
-            result.profiles = parsedProfiles;
-        }
-        return true;
-    }
-
-    if (key === 'secrets') {
-        if (Array.isArray(value)) {
-            const parsedSecrets: Array<z.infer<typeof SavedSecretSchema>> = [];
-            for (const rawSecret of value) {
-                const parsedSecret = SavedSecretSchema.safeParse(rawSecret);
-                if (parsedSecret.success) {
-                    parsedSecrets.push(parsedSecret.data);
-                } else {
-                    logInvalidSettingEntry({
-                        context,
-                        key,
-                        issues: parsedSecret.error.issues,
-                        message: '[settingsParse] Dropping invalid secret entry',
-                    });
-                }
-            }
-            result.secrets = parsedSecrets;
-        }
-        return true;
-    }
-
-    if (key === 'executionRunsGuidanceEntries') {
-        if (Array.isArray(value)) {
-            const parsedEntries: Array<z.infer<typeof ExecutionRunsGuidanceEntrySchema>> = [];
+            const parsedEntries: unknown[] = [];
             for (const rawEntry of value) {
-                const parsedEntry = ExecutionRunsGuidanceEntrySchema.safeParse(rawEntry);
+                const parsedEntry = entrySchema.safeParse(rawEntry);
                 if (parsedEntry.success) {
                     parsedEntries.push(parsedEntry.data);
                 } else {
@@ -95,11 +61,11 @@ export function applyAccountSettingsPerEntryParsing(params: {
                         context,
                         key,
                         issues: parsedEntry.error.issues,
-                        message: '[settingsParse] Dropping invalid executionRunsGuidance entry',
+                        message: `[settingsParse] Omitting unreadable ${key} entry from the runtime projection`,
                     });
                 }
             }
-            result.executionRunsGuidanceEntries = parsedEntries;
+            result[key] = parsedEntries;
         }
         return true;
     }

@@ -10671,6 +10671,7 @@ settingsSession: {
         enterTmuxTempDir: 'Pfad zum temporären Verzeichnis eingeben',
         tmuxUpdateEnvironment: 'Umgebung automatisch aktualisieren',
         nameRequired: 'Ein Profilname ist erforderlich',
+        invalidProfile: 'Prüfe vor dem Speichern den Profilnamen, die Umgebungsvariablen und die Standardwerte.',
         deleteConfirm: ({ name }: { name: string }) => `Willst du das Profil wirklich löschen: "${name}"?`,
         editProfile: 'Profil bearbeiten',
         addProfileTitle: 'Neues Profil hinzufügen',

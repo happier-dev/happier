@@ -10892,6 +10892,7 @@ settingsSession: {
     deleteConfirm: ({ name }: { name: string }) =>
       `确定要删除配置文件“${name}”吗？`,
     nameRequired: "配置文件名称为必填项",
+    invalidProfile: '保存前请检查配置名称、环境变量和默认设置。',
     builtIn: "内置",
     custom: "自定义",
     builtInSaveAsHint: "保存内置配置文件会创建一个新的自定义配置文件。",

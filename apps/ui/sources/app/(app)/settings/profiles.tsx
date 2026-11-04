@@ -253,12 +253,6 @@ const ProfileManager = React.memo(function ProfileManager({ onProfileSelect, sel
     }, [profileEnabledById]);
 
     function handleSaveProfile(profile: AIBackendProfile, profileSecretBindings: ProfileSecretBindings): boolean {
-        // Profile validation - ensure name is not empty
-        if (!profile.name || profile.name.trim() === '') {
-            Modal.alert(t('common.error'), t('profiles.nameRequired'));
-            return false;
-        }
-
         // Check if this is a built-in profile being edited
         const isBuiltIn = DEFAULT_PROFILES.some(bp => bp.id === profile.id);
         const builtInNames = DEFAULT_PROFILES

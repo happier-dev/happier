@@ -11253,6 +11253,7 @@ settingsSession: {
     enterTmuxTempDir: "Введите путь к временному каталогу",
     tmuxUpdateEnvironment: "Обновлять окружение автоматически",
     nameRequired: "Имя профиля обязательно",
+    invalidProfile: 'Перед сохранением проверьте имя профиля, переменные окружения и настройки по умолчанию.',
     deleteConfirm: ({ name }: { name: string }) =>
       `Вы уверены, что хотите удалить профиль "${name}"?`,
     editProfile: "Редактировать Профиль",

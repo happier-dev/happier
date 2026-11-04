@@ -10526,6 +10526,7 @@ settingsSession: {
         tmuxUpdateEnvironment: 'Actualitza l\'entorn tmux',
         deleteConfirm: ({ name }: { name: string }) => `Segur que vols eliminar el perfil "${name}"?`,
         nameRequired: 'El nom del perfil és obligatori',
+        invalidProfile: 'Revisa el nom del perfil, les variables d’entorn i els valors predeterminats abans de desar.',
         builtIn: 'Integrat',
         custom: 'Personalitzat',
         builtInSaveAsHint: 'Desar un perfil integrat crea un nou perfil personalitzat.',

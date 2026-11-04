@@ -111,6 +111,21 @@ function getCapturedEnvironmentVariablesListProps(): EnvironmentVariablesListPro
 }
 
 describe('ProfileEditForm secret binding draft', () => {
+    it('keeps an invalid profile draft open instead of submitting a profile the settings parser rejects', async () => {
+        profileEditFormTestState.modalAlertSpy.mockReset();
+        const { ProfileEditForm } = await import('./ProfileEditForm');
+        const onSave = vi.fn(() => true);
+        const saveRef = { current: null as null | (() => boolean) };
+        await renderScreen(React.createElement(ProfileEditForm, {
+            profile: { ...buildProfile(), name: 'x'.repeat(101) },
+            machineId: null, onSave, onCancel: vi.fn(), saveRef,
+        }));
+
+        expect(saveRef.current?.()).toBe(false);
+        expect(onSave).not.toHaveBeenCalled();
+        expect(profileEditFormTestState.modalAlertSpy).toHaveBeenCalled();
+    });
+
     it('keeps creation-picker selections local until the variable and binding are added together', async () => {
         capture.environmentVariablesListProps = null;
         capture.setSecretBindings.mockReset();

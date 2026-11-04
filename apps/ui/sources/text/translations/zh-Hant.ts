@@ -9229,6 +9229,7 @@ settingsSession: {
         enterTmuxTempDir: '輸入暫存目錄路徑',
         tmuxUpdateEnvironment: '自動更新環境',
         nameRequired: '設定檔名稱為必填',
+        invalidProfile: '儲存前請檢查設定檔名稱、環境變數和預設設定。',
         deleteConfirm: ({ name }: { name: string }) => `確定要刪除設定檔「${name}」嗎？`,
         editProfile: '編輯設定檔',
         addProfileTitle: '新增設定檔',

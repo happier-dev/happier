@@ -134,11 +134,6 @@ export default React.memo(function ProfileEditScreen() {
     });
 
     const handleSave = (savedProfile: AIBackendProfile, profileSecretBindings: ProfileSecretBindings): boolean => {
-        if (!savedProfile.name || savedProfile.name.trim() === '') {
-            Modal.alert(t('common.error'), t('profiles.nameRequired'));
-            return false;
-        }
-
         const isBuiltIn =
             savedProfile.isBuiltIn === true ||
             DEFAULT_PROFILES.some((bp) => bp.id === savedProfile.id) ||

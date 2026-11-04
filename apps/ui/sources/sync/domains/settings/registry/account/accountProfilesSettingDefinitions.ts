@@ -6,6 +6,8 @@ import { z } from 'zod';
 import { AIBackendProfileSchema } from '@/sync/domains/profiles/profileCompatibility';
 import { SavedSecretSchema } from '../../savedSecretTypes';
 
+export const ProfileSecretBindingsSchema = z.record(z.string(), z.record(z.string(), z.string())).default({});
+
 function buildProfilesSummaryProperties(value: unknown): Record<string, number> {
     const profiles = Array.isArray(value) ? value : [];
 
@@ -145,7 +147,7 @@ export const ACCOUNT_PROFILES_SETTING_DEFINITIONS = defineSettingDefinitions({
         },
     },
     secretBindingsByProfileId: {
-        schema: z.record(z.string(), z.record(z.string(), z.string())).default({}),
+        schema: ProfileSecretBindingsSchema,
         default: {},
         description: 'Default saved secret ID per profile and env var name',
         storageScope: 'account',

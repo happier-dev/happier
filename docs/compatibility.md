@@ -692,6 +692,28 @@ composer contribution edit fields it understands without deleting newer semantic
 authorize that client to execute the unknown contribution. Raw files, handles, secrets, and other
 device-only state remain outside the compatibility shape.
 
+### Unreadable account-settings entries (development)
+
+The released web readers `ui-web-v0.2.21` and
+`ui-web-v0.2.21-preview.212` at `f6f4032ffe21310f83a652c0c7dc07a205e66ee8`
+omit profiles, saved secrets and execution guidance entries they cannot parse
+from the runtime view. Replacing an array with that view can erase the omitted
+entries and their pruned profile-secret bindings.
+
+Updated 0.2 writeback uses the same entry schemas as the reader and retains
+unreadable baseline entries and their bindings. They remain unavailable to
+runtime consumers. Readable entries can still be edited or deleted; an unreadable
+collection or an identity collision refuses the affected write rather than
+overwriting unknown data. Profile editors validate with the canonical profile
+schema before submitting. The stored format and server API do not change.
+Older clients retain the destructive write behavior; this correction cannot
+restore entries already erased by an earlier write.
+
+0.3 keeps legacy profile/guidance arrays and bindings as read-only import sources;
+current profile entity admission and the saved-secret mutation owner validate
+writes separately. Its raw settings writer must not reintroduce writable legacy
+arrays to reproduce the 0.2 implementation.
+
 ### Request notification previews (development)
 
 `requestIncludeMessageText` extends the existing account notification preferences and

@@ -10703,6 +10703,7 @@ settingsSession: {
         enterTmuxTempDir: 'Enter temp directory path',
         tmuxUpdateEnvironment: 'Update environment automatically',
         nameRequired: 'Profile name is required',
+        invalidProfile: 'Check the profile name, environment variables, and defaults before saving.',
         deleteConfirm: ({ name }: { name: string }) => `Are you sure you want to delete the profile "${name}"?`,
         editProfile: 'Edit Profile',
         addProfileTitle: 'Add New Profile',

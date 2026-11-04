@@ -5,6 +5,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import {
+    AIBackendProfileSchema,
     getProfileDefaultBackendTarget,
     isProfileCompatibleWithBackendTarget,
     type AIBackendProfile,
@@ -634,11 +635,6 @@ export function ProfileEditForm({
     }, [profileDocs?.setupGuideUrl]);
 
     const handleSave = React.useCallback((): boolean => {
-        if (!name.trim()) {
-            Modal.alert(t('common.error'), t('profiles.nameRequired'));
-            return false;
-        }
-
         const { defaultPermissionModeClaude, defaultPermissionModeCodex, defaultPermissionModeGemini, ...profileBase } = profile as any;
         const defaultPermissionModeByTargetKey = stripLegacyProviderSentinelTargetKeys(
             stripUndefinedRecordValues(
@@ -687,7 +683,7 @@ export function ProfileEditForm({
         }, defaultBackendTarget);
 
         const persistedAuthMode = effectiveAuthMode;
-        return onSave({
+        const draft = {
             ...profileBase,
             name: name.trim(),
             environmentVariables,
@@ -716,7 +712,13 @@ export function ProfileEditForm({
                 }
                 : undefined,
             updatedAt: Date.now(),
-        }, secretBindingsDraft);
+        };
+        const parsed = AIBackendProfileSchema.safeParse(draft);
+        if (!parsed.success) {
+            Modal.alert(t('common.error'), t(name.trim() ? 'profiles.invalidProfile' : 'profiles.nameRequired'));
+            return false;
+        }
+        return onSave(parsed.data, secretBindingsDraft);
     }, [
         compatibilityByTargetKeyState,
         defaultBackendTargetKey,
@@ -753,6 +755,7 @@ export function ProfileEditForm({
                 <React.Fragment>
                     <View style={styles.inputContainer}>
                         <TextInput
+                            testID="profile-name"
                             style={styles.textInput}
                             placeholder={t('profiles.enterName')}
                             placeholderTextColor={theme.colors.input.placeholder}

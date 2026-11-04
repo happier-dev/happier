@@ -11343,6 +11343,7 @@ settingsSession: {
     enterTmuxTempDir: "Wprowadź ścieżkę do katalogu tymczasowego",
     tmuxUpdateEnvironment: "Aktualizuj środowisko automatycznie",
     nameRequired: "Nazwa profilu jest wymagana",
+    invalidProfile: 'Przed zapisaniem sprawdź nazwę profilu, zmienne środowiskowe i ustawienia domyślne.',
     deleteConfirm: ({ name }: { name: string }) =>
       `Czy na pewno chcesz usunąć profil "${name}"?`,
     editProfile: "Edytuj Profil",
