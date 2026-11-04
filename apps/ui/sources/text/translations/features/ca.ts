@@ -11019,6 +11019,7 @@ const translated = Shared_sessionListFilterTranslations.translated;
 
 const sessionListFilterTranslations = { ca: translated({
         spacesTitle: 'Espais',
+        spacesShow: "Mostra els espais",
         spacesEnabledDescription: "Vistes desades a la part superior de cada llista.",
         spacesDisabledDescription: "Totes les llistes fan servir filtres normals. Els teus espais es conserven.",
         spacesListEnabledDescription: "Canvia entre aquests espais des de la llista.",

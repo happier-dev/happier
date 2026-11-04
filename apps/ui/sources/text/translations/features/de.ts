@@ -11006,6 +11006,7 @@ const translated = Shared_sessionListFilterTranslations.translated;
 
 const sessionListFilterTranslations = { de: translated({
         spacesTitle: 'Bereiche',
+        spacesShow: "Bereiche anzeigen",
         spacesEnabledDescription: "Gespeicherte Ansichten oben in jeder Liste.",
         spacesDisabledDescription: "Alle Listen nutzen normale Filter. Deine Bereiche bleiben erhalten.",
         spacesListEnabledDescription: "Wechsle in der Liste zwischen diesen Bereichen.",

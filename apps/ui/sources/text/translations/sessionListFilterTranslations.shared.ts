@@ -6,6 +6,7 @@ export function translated(value: typeof en): typeof en { return value; }
 
 export const en = {
     spacesTitle: 'Spaces',
+    spacesShow: "Show spaces",
     spacesEnabledDescription: "Saved views at the top of each list.",
     spacesDisabledDescription: "Every list uses ordinary filters. Your spaces are kept.",
     spacesListEnabledDescription: "Switch between these spaces from the list.",

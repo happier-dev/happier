@@ -11033,6 +11033,7 @@ const translated = Shared_sessionListFilterTranslations.translated;
 
 const sessionListFilterTranslations = { pl: translated({
         spacesTitle: 'Przestrzenie',
+        spacesShow: "Pokaż przestrzenie",
         spacesEnabledDescription: "Zapisane widoki na górze każdej listy.",
         spacesDisabledDescription: "Wszystkie listy używają zwykłych filtrów. Twoje przestrzenie zostają zachowane.",
         spacesListEnabledDescription: "Przełączaj się między tymi przestrzeniami z listy.",

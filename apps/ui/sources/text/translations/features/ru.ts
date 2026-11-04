@@ -11044,6 +11044,7 @@ const translated = Shared_sessionListFilterTranslations.translated;
 
 const sessionListFilterTranslations = { ru: translated({
         spacesTitle: 'Пространства',
+        spacesShow: "Показывать пространства",
         spacesEnabledDescription: "Сохранённые представления в начале каждого списка.",
         spacesDisabledDescription: "Все списки используют обычные фильтры. Ваши пространства сохранены.",
         spacesListEnabledDescription: "Переключайтесь между этими пространствами в списке.",

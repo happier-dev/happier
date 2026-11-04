@@ -11008,6 +11008,7 @@ const translated = Shared_sessionListFilterTranslations.translated;
 
 const sessionListFilterTranslations = { ja: translated({
         spacesTitle: 'スペース',
+        spacesShow: "スペースを表示",
         spacesEnabledDescription: "各リストの上部に表示される保存済みビュー。",
         spacesDisabledDescription: "すべてのリストで通常のフィルターを使います。スペースは保持されます。",
         spacesListEnabledDescription: "リストからこれらのスペースを切り替えます。",

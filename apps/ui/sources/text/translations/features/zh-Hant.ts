@@ -11003,6 +11003,7 @@ const translated = Shared_sessionListFilterTranslations.translated;
 
 const sessionListFilterTranslations = { zhHant: translated({
         spacesTitle: '空間',
+        spacesShow: "顯示空間",
         spacesEnabledDescription: "顯示在每個清單頂端的已儲存檢視。",
         spacesDisabledDescription: "所有清單都使用一般篩選。你的空間會保留。",
         spacesListEnabledDescription: "在清單中切換這些空間。",

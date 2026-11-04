@@ -11019,6 +11019,7 @@ const translated = Shared_sessionListFilterTranslations.translated;
 
 const sessionListFilterTranslations = { it: translated({
         spacesTitle: 'Spazi',
+        spacesShow: "Mostra spazi",
         spacesEnabledDescription: "Viste salvate in cima a ogni elenco.",
         spacesDisabledDescription: "Tutti gli elenchi usano i filtri normali. I tuoi spazi restano salvati.",
         spacesListEnabledDescription: "Passa da uno spazio all’altro dall’elenco.",
