@@ -11,7 +11,7 @@ const resource = { serverId: 41, owned: { volumeIds: [], primaryIpIds: [] } };
 const launch = { serverTypeId: 'cx23', imageId: 'ubuntu-24.04', locationId: 'fsn1', publicNetworking: { ipv4: true, ipv6: false } };
 // Partial fixtures replace only host registration, credential materialization
 // and HTTP boundaries; public authoring/schema/native decoding remain real.
-async function activated(response: unknown, status = 200) {
+async function activated(response: unknown, status = 200, responseForUrl?: (url: string) => { status: number; body: unknown }) {
   const publicExports = exports as unknown as Record<string, unknown>;
   expect(typeof publicExports.activate).toBe('function');
   const handlers = new Map<string, ActionHandler>();
@@ -28,7 +28,8 @@ async function activated(response: unknown, status = 200) {
     } },
     http: { request: async (request: { url: string; headers?: Readonly<Record<string, string>> }) => {
       requests.push(request);
-      return { status, finalUrl: request.url, headers: {}, body: new TextEncoder().encode(JSON.stringify(response)) };
+      const reply = responseForUrl?.(request.url) ?? { status, body: response };
+      return { status: reply.status, finalUrl: request.url, headers: {}, body: new TextEncoder().encode(JSON.stringify(reply.body)) };
     } },
   } } as unknown as PluginInvocationContext;
   return { handlers, context, requests, materializations };
@@ -111,6 +112,19 @@ describe('public hetzner machine provisioner', () => {
       meta: { pagination: { next_page: null } } });
     expect(await runtime.handlers.get('reconcile')!({ correlation: { managedId: 'pending-1', requestId: 'original-request', launch } }, runtime.context))
       .toMatchObject({ kind: 'pending', nativeOperationRef: { value: { correlation: 'pending-1' } } });
+    expect(runtime.requests.every(request => request.method === 'GET')).toBe(true);
+  });
+  it.each([
+    { nativeOperation: { correlation: 'pending-1' } },
+    { correlation: { managedId: 'pending-1', requestId: 'original-request', launch } },
+  ])('settles an empty native acquisition without purchasing again: %j', async input => {
+    const runtime = await activated({}, 200, url => ({ status: 200, body: {
+      [new URL(url).pathname.endsWith('/primary_ips') ? 'primary_ips' : 'servers']: [],
+      meta: { pagination: { next_page: null } },
+    } }));
+    expect(exports.ROLE_SCHEMAS.acquireResult.parse(await runtime.handlers.get('reconcile')!(input, runtime.context)))
+      .toEqual({ kind: 'rejected', code: 'managed_not_found' });
+    expect(runtime.requests.map(request => new URL(request.url).pathname)).toEqual(['/v1/servers', '/v1/primary_ips']);
     expect(runtime.requests.every(request => request.method === 'GET')).toBe(true);
   });
   it('keeps the exact pending handle on unavailable recovery reads', async () => {

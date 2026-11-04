@@ -157,11 +157,21 @@ export function createHetznerNativeClient(options: HetznerNativeClientOptions) {
       } catch (error) { return { kind: 'unknown', code: codeOf(error), correlation: input.correlation }; }
     },
     inspect,
-    async recover(rawCorrelation: string): Promise<HetznerAcquireResult> {
+    async recover(rawCorrelation: string): Promise<Exclude<HetznerAcquireResult, { kind: 'rejected' }> | { kind: 'rejected'; code: 'managed_not_found' }> {
       const correlation = parseHetznerValue(HetznerCorrelationSchema, rawCorrelation);
       try {
         const candidates = await list('/servers', 'servers', serverSchema, `label_selector=${encodeURIComponent(`happier-managed=${correlation}`)}`);
         const exact = new Map(candidates.filter(server => server.labels['happier-managed'] === correlation).map(server => [server.id, server]));
+        if (candidates.length === 0) {
+          // A lost create response can also lose the automatically allocated IP ids.
+          // They carry no acquisition label, so only an empty inventory proves
+          // there is no remaining resource from this acquisition to clean up.
+          const inventory = decode(mini.object({ primary_ips: mini.array(mini.unknown()), meta: paginationSchema }),
+            await request('/primary_ips?page=1&per_page=1'));
+          if (inventory.primary_ips.length === 0 && inventory.meta.pagination.next_page === null) {
+            return { kind: 'rejected', code: 'managed_not_found' };
+          }
+        }
         if (exact.size !== 1) return { kind: 'unknown', code: exact.size ? 'native_identity_ambiguous' : 'native_identity_not_found', correlation };
         return bind([...exact.values()][0], { volumeIds: [], primaryIpIds: [] });
       } catch (error) { return { kind: 'unknown', code: codeOf(error), correlation }; }

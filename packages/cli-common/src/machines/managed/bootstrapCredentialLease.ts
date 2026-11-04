@@ -1,4 +1,6 @@
 import type { ManagedBootstrapCredentialInvocationBinding } from '@happier-dev/protocol/actions/executor/types';
+import { readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { isPluginError, PluginError } from '../../plugins/errors.js';
 
 export type ManagedBootstrapCredentialByteLease = Readonly<{
     kind: 'bytes';
@@ -48,7 +50,9 @@ export function createManagedBootstrapCredentialByteService(input: Readonly<{
                 return Object.freeze({ kind: 'bytes' as const, bytes, dispose });
             } catch (error) {
                 bytes?.fill(0);
-                throw error;
+                if (isPluginError(error)) throw error;
+                const { errorCode } = readUnexpectedActionErrorDiagnosticV1(error);
+                throw new PluginError({ code: errorCode ?? 'plugin_service_unavailable' });
             }
         })();
         return materialization;

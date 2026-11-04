@@ -133,6 +133,7 @@ export async function reconcileManagedIntent(params: ManagedMachineReconciliatio
         if (params.action === 'machines.managed.delete' && machine.desired === 'delete' && machine.desiredWhen === 'now'
             && machine.allocation === 'may-exist' && !machine.resource && !machine.nativeOperationRef) {
             machine = await reconcileManagedAcquisitionIdentity(params, machine, native);
+            if (machine.allocation === 'confirmed-absent') return machine;
         }
         const canceledCleanup = params.action === 'machines.managed.delete'
             && machine.creationState === 'canceled' && machine.desired === 'delete' && machine.desiredWhen === 'now' && machine.archivedAt === undefined;
@@ -181,12 +182,17 @@ export async function reconcileManagedIntent(params: ManagedMachineReconciliatio
                 }, null);
             }
             if (!machine.resource && machine.nativeOperationRef && native.contribution.definition.reconciliation) {
-                const recovered = AcquireResultV1Schema.parse(await native.invoke('reconcile', { nativeOperation: machine.nativeOperationRef.value }));
-                if (recovered.kind === 'bound' || recovered.kind === 'pending') {
-                    machine = await client.row('report', { ...client.correlation(machine), result: recovered }, null);
+                machine = await reconcileManagedAcquisitionIdentity(params, machine, native);
+                if (machine.allocation === 'confirmed-absent' && outstanding.intent === 'delete') {
+                    return await client.row('report-intent', { ...correlation,
+                        result: { kind: 'confirmed' }, observation: machine.observation }, null);
                 }
                 if (!machine.resource) return await client.row('report-intent', { ...correlation,
                     result: { kind: 'unknown', code: 'native_cleanup_unconfirmed' } }, null);
+                if (params.action === 'machines.managed.inspect') {
+                    return await client.row('report-intent', { ...correlation,
+                        result: { kind: 'unknown' }, observation: machine.observation }, null);
+                }
             }
             if (outstanding.intent === 'rebuild' && native.contribution.definition.reconciliation) {
                 const value = machine.resource!.value;

@@ -151,6 +151,17 @@ describe('Hetzner native boundary', () => {
     expect(await client.recover('row-1')).toEqual({ kind: 'unknown', code: 'native_identity_not_found', correlation: 'row-1' });
   });
 
+  it.each(['present', 'unavailable'] as const)('does not settle empty server recovery while primary IP inventory is %s', async state => {
+    const transport = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(json({ servers: [], meta: { pagination: { next_page: null } } }))
+      .mockResolvedValueOnce(state === 'present'
+        ? json({ primary_ips: [{ id: 9 }], meta: { pagination: { next_page: null } } })
+        : json({ error: { code: 'unauthorized' } }, 401));
+    const result = await createHetznerNativeClient({ token: 'private', fetch: transport }).recover('row-1');
+    expect(result).toMatchObject({ kind: 'unknown', code: state === 'present' ? 'native_identity_not_found' : 'native_authorization_failed' });
+    expect(transport.mock.calls.every(([, init]) => init?.method === 'GET')).toBe(true);
+  });
+
   it('retains server and attachments until exact server absence is observed', async () => {
     const transport = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(json({ action: { id: 10, status: 'running' } }))

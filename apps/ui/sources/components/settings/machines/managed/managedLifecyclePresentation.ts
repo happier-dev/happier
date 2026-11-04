@@ -157,7 +157,7 @@ export function describeManagedLifecycleState(
       return present(
         'warning',
         { cause: t('managedMachines.creation.canceledCleanup') },
-        ['review', 'checkNow', 'openProvider'],
+        ['review', 'checkNow', 'openProvider', 'remove'],
       );
     case 'stopPending':
       return present('pending', { detail: t('managedPower.stopPending') }, [

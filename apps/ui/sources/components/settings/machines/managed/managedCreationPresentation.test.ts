@@ -41,6 +41,11 @@ const machine = {
 } satisfies ManagedMachineV1;
 
 describe('managed creation presentation', () => {
+  it('offers manual removal while canceled creation cleanup cannot be confirmed', () => {
+    const canceled: ManagedMachineV1 = { ...machine, creationState: 'canceled', allocation: 'may-exist', resource: undefined,
+      desired: 'delete', cleanup: { disposition: 'pending', reason: 'creation_canceled' } };
+    expect(describeManagedCreation(canceled).actions).toContain('remove');
+  });
   it('keeps Account-owned installation recovery separate from earlier controller operations', () => {
     const accountOwned = { ...machine, controller: undefined };
     const earlierControllerOperation: ActionOperationProjection = {

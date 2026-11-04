@@ -403,7 +403,7 @@ function awaitPluginActionHandlerSettlementOrAbort(
  * Action input and result; invalid JSON data is omitted without suppressing
  * the proven failure code.
  */
-function readPluginError(error: unknown): Readonly<{
+export function readPluginActionError(error: unknown): Readonly<{
   code: string;
   message: string;
   retryable: boolean;
@@ -1044,7 +1044,7 @@ export function createPluginActionInvocation(params: Readonly<{
           const error = settlement.error;
           // A rejected handler settlement also already won the cancellation race.
           // Retirement afterwards cannot erase a known canonical failure.
-          const pluginError = readPluginError(error);
+          const pluginError = readPluginActionError(error);
           if (pluginError) {
             return Object.freeze({
               status: 'failed',

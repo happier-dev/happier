@@ -7,9 +7,67 @@ import { createMachineProvisionersInvocationService } from './machineProvisioner
 import { createManagedServiceCredentialFileOwner } from './managedServiceCredentialFileOwner';
 import type { PluginInvocationServicesSeed } from './types';
 import { createPluginInvocationLifetime } from '../lifetime';
+import { PluginError } from '@happier-dev/plugin-sdk';
+import { createPluginActionInvocation } from '@happier-dev/protocol/plugins/actions/invocation';
+import { ManagedMachineControllerError } from '@happier-dev/cli-common/machines/managed';
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
+
+describe('bootstrap credential failure Action settlement', () => {
+    function invocation(readFailure: unknown) {
+        const lifetime = createPluginInvocationLifetime();
+        let reads = 0;
+        let effectAttempted = false;
+        const service = createMachineProvisionersInvocationService({ seed: {
+            plugin: { id: 'acme.native', version: '0' },
+            contribution: { id: 'bootstrap', qualifiedId: 'acme.native/bootstrap' },
+            occurrenceId: 'occurrence', correlationId: 'invocation', surface: 'plugin',
+            signal: lifetime.signal, isOccurrenceCurrent: () => true, retainCleanup: lifetime.retainCleanup,
+            managedBootstrapCredential: { role: 'bootstrap', isCurrent: () => true,
+                // SavedSecret custody is the boundary; the byte service and Action settlement stay real.
+                readBootstrapCredential: async () => { reads++; throw readFailure; },
+            },
+        } });
+        expect(service).not.toBeNull();
+        const run = async () => {
+            await service!.materializeBootstrapCredential({ kind: 'bytes' });
+            effectAttempted = true;
+            return null;
+        };
+        const action = createPluginActionInvocation({ pluginId: 'acme.native', localId: 'bootstrap',
+            occurrenceSignal: lifetime.signal, isCurrent: () => true });
+        return { run, invoke: () => action.invoke(null, { handler: run }), lifetime,
+            reads: () => reads, effectAttempted: () => effectAttempted };
+    }
+
+    it.each([
+        { error: new ManagedMachineControllerError('credential_unavailable'), code: 'credential_unavailable' },
+        { error: Object.assign(new Error('private-saved-secret-fixture'), { code: 'private-arbitrary-code-fixture' }),
+            code: 'plugin_service_unavailable' },
+    ])('retains the closed credential failure $code through Action settlement before the handler effect', async ({ error, code }) => {
+        const runtime = invocation(error);
+        try {
+            const result = await runtime.invoke();
+            expect(runtime.reads()).toBe(1);
+            expect(runtime.effectAttempted()).toBe(false);
+            expect(result).toMatchObject({ status: 'failed', code, data: { name: 'PluginError', code } });
+            expect(JSON.stringify(result)).not.toContain('private-');
+        } finally { await runtime.lifetime.complete(); }
+    });
+
+    it('preserves canonical credential PluginError identity and native detail through Action settlement', async () => {
+        const error = new PluginError({ code: 'native_request_failed', details: {
+            nativeCause: { httpStatusClass: '4xx', code: 'invalid_input', fields: ['image'] },
+        } });
+        const runtime = invocation(error);
+        try {
+            await expect(runtime.run()).rejects.toBe(error);
+            expect(await runtime.invoke()).toMatchObject({ status: 'failed', code: error.code, data: error.data });
+            expect(runtime.effectAttempted()).toBe(false);
+        } finally { await runtime.lifetime.complete(); }
+    });
+});
 
 describe('admitted native bootstrap key delivery', () => {
     it('reopens retained material after queued lock admission so withdrawn credentials never reach another native reader', async () => {
@@ -24,7 +82,7 @@ describe('admitted native bootstrap key delivery', () => {
             surface: 'plugin', signal: new AbortController().signal, isOccurrenceCurrent: () => true,
             retainCleanup: cleanup => { cleanups.push(cleanup); },
             managedBootstrapCredential: { role: 'acquire', isCurrent: () => true, readBootstrapCredential: async () => {
-                if (!available) throw Object.assign(new Error('SavedSecret material was withdrawn'), { code: 'credential_unavailable' });
+                if (!available) throw new ManagedMachineControllerError('credential_unavailable');
                 return new TextEncoder().encode(key.privateKey);
             } } };
         const service = createMachineProvisionersInvocationService({ seed,

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { createPluginActionPresentUserGate, projectPluginActionFailureCode, projectPluginActionUnavailableOutcomeCode, type PluginActionInputParserIssue } from '@happier-dev/protocol/plugins/actions/invocation';
+import { createPluginActionPresentUserGate, projectPluginActionFailureCode, projectPluginActionUnavailableOutcomeCode, type PluginActionInputParserIssue, readPluginActionError } from '@happier-dev/protocol/plugins/actions/invocation';
 import { ActionOperationCredentialUseV1Schema, type ActionOperationCredentialUseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ApprovalExecutionV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -191,10 +191,10 @@ function failed(
   error: unknown,
   actionHandlerInvocation?: PluginActionHandlerInvocation,
 ): TargetActionExecutionResult {
+  const pluginError = readPluginActionError(error);
   return Object.freeze({
     status: 'failed',
-    code,
-    message: error instanceof Error ? error.message : code,
+    ...(pluginError ?? { code, message: error instanceof Error ? error.message : code }),
     ...(actionHandlerInvocation === undefined ? {} : { actionHandlerInvocation }),
   });
 }

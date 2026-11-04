@@ -84,6 +84,7 @@ export const PLUGIN = definePlugin({
         try {
           const result = await (await runtime(context)).recover(correlation);
           if (result.kind === 'bound') return { kind: 'bound' as const, resource: resourceRef(result.resource) };
+          if (result.kind === 'rejected') return result;
         } catch { /* An unavailable read neither proves absence nor authorizes another purchase. */ }
         return pending(correlation);
       },

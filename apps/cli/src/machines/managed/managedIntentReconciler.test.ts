@@ -70,7 +70,8 @@ function setup(decision: { kind: 'idle'; since: number } | { kind: 'busy' | 'unk
     nativeResult: { kind: 'confirmed' | 'unknown' } | { kind: 'refused'; code: string } = { kind: 'confirmed' }, intent: 'start' | 'stop' | 'suspend' | 'delete' | 'rebuild' = 'delete',
     inspectObservation?: ProviderObservationV1, onNativeEffect?: () => void,
     rebuildResult?: ReturnType<typeof MachineProvisionerRebuildResultV1Schema.parse>, recoverRebuild = false,
-    cleanupObservation?: { kind: 'confirmed' | 'retryable' } | { kind: 'unknown'; code?: string }) {
+    cleanupObservation?: { kind: 'confirmed' | 'retryable' } | { kind: 'unknown'; code?: string },
+    nativeFixtureOptions: Pick<NonNullable<Parameters<typeof fixture>[0]>, 'nativeRoleResults' | 'onInspect'> = {}) {
     const effects: string[] = [];
     const nativeInputs: unknown[] = [];
     const native = fixture({ privateNative: true, supportedIntents: [intent], ...(recoverRebuild ? { reconciliation: true, reconciliationResource: true } : {}),
@@ -80,7 +81,7 @@ function setup(decision: { kind: 'idle'; since: number } | { kind: 'busy' | 'unk
         ...(intent === 'rebuild' ? { rebuild: rebuildResult ?? { kind: 'unknown', recovery: { reference: 'old-native', reason: 'native_rebuild_unknown' } } } : {}),
         ...(inspectObservation ? { inspect: inspectObservation } : {}) }, onNativeRole: (role, input) => {
             onNativeEffect?.(); effects.push(role); nativeInputs.push(input);
-        } });
+        }, ...nativeFixtureOptions });
     const homeId = 'srv_managed_intent';
     const controller = { machineId: 'controller', installationId: 'installation' };
     const installationKeys = tweetnacl.sign.keyPair();
@@ -116,6 +117,8 @@ function setup(decision: { kind: 'idle'; since: number } | { kind: 'busy' | 'unk
         if (path.endsWith('/report')) {
             const report = ManagedControllerReportV1Schema.parse(body);
             if (report.result.kind === 'bound') machine = { ...machine, allocation: 'bound', resource: report.result.resource };
+            if (report.result.kind === 'rejected') machine = { ...machine, allocation: 'confirmed-absent' };
+            if (report.observation) machine = { ...machine, observation: report.observation };
         }
         if (path.endsWith('/submit-intent')) {
             const first = !machine.submittedNativeEffect; submitted = true;
@@ -733,6 +736,46 @@ describe('managed native intent through the accepted Action', () => {
         expect(test.nativeInputs).toEqual([{ nativeOperation: {} }]);
         expect(test.reports).toEqual([expect.objectContaining({ result: { kind: 'confirmed' },
             observation: expect.objectContaining({ availability: 'absent' }) })]);
+    });
+    it.each([{ label: 'Delete', action: 'delete' }, { label: 'Check now', action: 'inspect' }] as const)
+    ('finishes canceled creation $label when its acquisition read proves no native resource exists', async ({ action }) => {
+        const test = setup(undefined, undefined, 'delete', undefined, undefined, undefined, true, undefined,
+            { nativeRoleResults: { reconcile: { kind: 'rejected', code: 'managed_not_found' } } });
+        test.setMachine({ creationState: 'canceled', allocation: 'may-exist', resource: undefined, nativeOperationRef: undefined, enrolledMachineId: undefined,
+            cleanup: { disposition: 'pending', reason: 'creation_canceled' } });
+        if (action === 'delete') await expect(test.run()).resolves.toMatchObject({ kind: 'accepted', managedId: 'managed' });
+        else await expect(test.driver.execute('machines.managed.inspect', {
+            homeId: test.readMachine().homeId, managedId: test.readMachine().id,
+        }, test.options)).resolves.toMatchObject({ machine: { allocation: 'confirmed-absent' } });
+        expect(test.readMachine()).toMatchObject({ allocation: 'confirmed-absent', observation: { availability: 'absent' } });
+        expect(test.effects).toEqual(['reconcile']);
+        expect(test.post.mock.calls.filter(([url]) => String(url).endsWith('/submit-intent'))).toHaveLength(0);
+    });
+    it('settles canceled submitted cleanup when Check now proves the retained acquisition is absent', async () => {
+        const test = setup(undefined, undefined, 'delete', undefined, undefined, undefined, true, undefined,
+            { nativeRoleResults: { reconcile: { kind: 'rejected', code: 'managed_not_found' } } });
+        const machine = test.readMachine();
+        test.setMachine({ creationState: 'canceled', allocation: 'may-exist', resource: undefined, enrolledMachineId: undefined,
+            nativeOperationRef: { contributionRef: machine.launch.provider, schemaVersion: 1, value: {} },
+            submittedNativeEffect: { intentRevision: machine.intentRevision, requestId: 'control', intent: 'delete', controller: machine.controller },
+            cleanup: { disposition: 'pending', reason: 'creation_canceled' } });
+        await expect(test.driver.execute('machines.managed.inspect', { homeId: machine.homeId, managedId: machine.id }, test.options))
+            .resolves.toMatchObject({ machine: { allocation: 'confirmed-absent', observation: { availability: 'absent' } } });
+        expect(test.readMachine().submittedNativeEffect).toBeUndefined();
+        expect(test.effects).toEqual(['reconcile']);
+    });
+    it('uses the acquisition owner observation once when Check now recovers a submitted Delete resource', async () => {
+        const onInspect = vi.fn();
+        const test = setup(undefined, undefined, 'delete', { observedAt: 123, availability: 'present' }, undefined, undefined, true, undefined, { onInspect });
+        const machine = test.readMachine();
+        test.setMachine({ creationState: 'canceled', allocation: 'may-exist', resource: undefined, enrolledMachineId: undefined,
+            nativeOperationRef: { contributionRef: machine.launch.provider, schemaVersion: 1, value: {} },
+            submittedNativeEffect: { intentRevision: machine.intentRevision, requestId: 'control', intent: 'delete', controller: machine.controller } });
+        await expect(test.driver.execute('machines.managed.inspect', { homeId: machine.homeId, managedId: machine.id }, test.options))
+            .resolves.toMatchObject({ machine: { allocation: 'bound', submittedNativeEffect: { intent: 'delete' },
+                observation: { observedAt: 123, availability: 'present' } } });
+        expect(onInspect).toHaveBeenCalledTimes(1);
+        expect(test.effects).toEqual(['reconcile']);
     });
     it.each(['inspect', 'delete'] as const)('settles lost pending cleanup through %s without binding compute or replaying Delete', async action => {
         const test = setup(undefined, { kind: 'unknown' }, 'delete', { observedAt: 123, availability: 'absent' }, undefined,

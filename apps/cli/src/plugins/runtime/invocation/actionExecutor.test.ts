@@ -531,6 +531,22 @@ describe('target action executor', () => {
     });
   });
 
+  it('retains thrown native PluginError codes and causes through the final invocation boundary', async () => {
+    const nativeCause = { httpStatusClass: '4xx', code: 'forbidden' } as const;
+    const error = new PluginError({ code: 'native_access_refused', retryable: false,
+      details: { nativeCause, privateResponse: 'scoped-secret' } });
+    const executor = createExecutor({
+      resolve: () => resolved(),
+      invoke: async () => { throw error; },
+      redactFailureText: (_action, value) => value.replaceAll('scoped-secret', '[redacted]'),
+    });
+    await expect(executor.execute({
+      pluginId: 'acme.alpha', localId: 'run', input: {}, surface: 'cli',
+    })).resolves.toEqual({ status: 'failed', code: 'native_access_refused', message: 'native_access_refused',
+      retryable: false, data: { name: 'PluginError', code: 'native_access_refused', retryable: false,
+        details: { nativeCause, privateResponse: '[redacted]' } } });
+  });
+
   it('redacts admitted deeply nested failure data without falling back to a recursive privacy projection', async () => {
     let data: JsonValue = 'scoped-secret';
     const depth = 12_000;

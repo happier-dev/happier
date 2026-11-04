@@ -1267,9 +1267,11 @@ describe('managed Machine detail', () => {
     it.each([
         { allocation: 'confirmed-absent', consoleUrl: undefined },
         { allocation: 'may-exist', consoleUrl: undefined },
+        { allocation: 'may-exist', consoleUrl: undefined, noNativeRef: true },
         { allocation: 'bound', consoleUrl: undefined },
         { allocation: 'bound', consoleUrl: 'https://console.vendor.test/resources/exact-native-id' },
-    ] as const)('reviews manual responsibility before removing a $allocation resource and retains recovery during Ask ($consoleUrl)', async ({ allocation, consoleUrl }) => {
+    ] as const)('reviews manual responsibility before removing a $allocation resource and retains recovery during Ask ($consoleUrl)', async scenario => {
+        const { allocation, consoleUrl } = scenario;
         const openConsole = vi.fn();
         vi.stubGlobal('open', openConsole);
         const target = await upsertAndActivateServer({ serverUrl: 'https://managed-retire-review.test', scope: 'tab' });
@@ -1285,7 +1287,8 @@ describe('managed Machine detail', () => {
             launch: { provider, schemaVersion: 1, name: 'Ended guest', choices: {} }, controller,
             allocation, creationState: 'canceled', desired: 'delete', desiredWhen: 'now', intentRevision: 7,
             ...(allocation === 'may-exist' ? {
-                nativeOperationRef: { contributionRef: provider, schemaVersion: 1, value: { operationId: 'unknown-native-submission' } },
+                ...('noNativeRef' in scenario ? { cleanup: { disposition: 'pending' as const, reason: 'creation_canceled' } }
+                    : { nativeOperationRef: { contributionRef: provider, schemaVersion: 1, value: { operationId: 'unknown-native-submission' } } }),
                 recovery: { reference: 'original-native-recovery', reason: 'submission_result_unknown' },
             } : { resource: { contributionRef: provider, schemaVersion: 1,
                 value: { nativeId: 'original-native-id', cloud: 'native-cloud', region: 'native-region' } },
@@ -1329,6 +1332,7 @@ describe('managed Machine detail', () => {
             if (allocation === 'bound') expect(screen.findByTestId('managed-machine.recovery-manual')).not.toBeNull();
         }
         expect(retired).toEqual([]);
+        if ('noNativeRef' in scenario) expect(screen.findByTestId('managed-machine.progress:remove')).not.toBeNull();
         const remove = screen.tree.findAll(node => ['managed-machine.progress:remove', 'managed-machine.remove'].includes(node.props?.testID)
             && typeof node.props.onPress === 'function')[0];
         expect(remove).toBeDefined();
