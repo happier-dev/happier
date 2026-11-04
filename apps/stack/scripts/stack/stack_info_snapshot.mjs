@@ -19,7 +19,7 @@ import { resolveDefaultRepoEnv } from './stack_environment.mjs';
 import { resolveStackRuntimeMode } from '../runtime/shared/runtime_mode.mjs';
 import { inspectStackRuntimeSelection } from '../runtime/launch/inspectActiveRuntimeSnapshot.mjs';
 import { resolveStackCanonicalServerUrl, resolveStackServerEndpoint } from '../utils/server/urls.mjs';
-import { getObservedStackDaemonAsync, readStackRuntimeStateWithDaemonSync } from '../utils/stack/runtime_daemon_state.mjs';
+import { getObservedStackDaemonAsync, readStackRuntimeDaemonDesiredState, readStackRuntimeStateWithDaemonSync } from '../utils/stack/runtime_daemon_state.mjs';
 import { applyStackActiveServerScopeEnv, applyStackDaemonLifecycleScopeEnv } from '../utils/auth/stable_scope_id.mjs';
 import { resolveStackDaemonStartRequested } from '../utils/auth/daemon_gate.mjs';
 import { join } from 'node:path';
@@ -243,7 +243,7 @@ export async function readStackInfoSnapshot({
   const serverBackendPid = Number(runtimeState?.processes?.serverBackendPid);
   const expoPid = Number(runtimeState?.processes?.expoPid);
   const expoTailscaleForwarderPid = Number(runtimeState?.processes?.expoTailscaleForwarderPid);
-  const daemonExpected = resolveStackDaemonStartRequested({
+  const daemonConfigured = resolveStackDaemonStartRequested({
     env: {
       HAPPIER_STACK_DAEMON: getEnvValueAny(stackEnv, ['HAPPIER_STACK_DAEMON']),
     },
@@ -271,10 +271,16 @@ export async function readStackInfoSnapshot({
     ? runtimeState.remoteTargets
     : {};
   const remoteDaemon = resolveRuntimeRemoteServiceObservation(runtimeState, 'daemon');
+  // The worker's existing live status projection carries owner intent; the
+  // controller does not persist a second copy of that authority.
+  const daemonDesiredState = remoteDaemon.target
+    ? remoteDaemon.status === 'stopped-by-owner' ? 'stopped' : null
+    : readStackRuntimeDaemonDesiredState(runtimeState);
+  const daemonExpected = daemonDesiredState !== 'stopped' && daemonConfigured;
   const remoteDaemonRunning = remoteDaemon.running;
   // The target lifecycle reports retry/preparation, not proof of native exit.
   const remoteDaemonUnknown = Boolean(remoteDaemon.target
-    && !remoteDaemonRunning && !['stopped', 'not-running'].includes(remoteDaemon.status));
+    && !remoteDaemonRunning && !['stopped', 'not-running', 'stopped-by-owner'].includes(remoteDaemon.status));
   const remoteExpo = resolveRuntimeRemoteServiceObservation(runtimeState, 'expo');
   const remoteServer = resolveRuntimeRemoteServiceObservation(runtimeState, 'server');
   const sourceUiLaunch = sourceUi === 'export'
@@ -550,7 +556,9 @@ export async function readStackInfoSnapshot({
           pid: Number.isFinite(daemonPid) && daemonPid > 1 ? daemonPid : null,
           running: daemonRunning || remoteDaemonRunning,
           pidAlive: daemonPidAlive,
-          status: remoteDaemon.target ? (remoteDaemonUnknown ? 'unknown' : remoteDaemon.status) : observedDaemon.status,
+          desiredState: daemonDesiredState,
+          status: daemonDesiredState === 'stopped' && !daemonPidAlive && !daemonRunning && !remoteDaemonRunning ? 'stopped-by-owner'
+            : remoteDaemon.target ? (remoteDaemonUnknown ? 'unknown' : remoteDaemon.status) : observedDaemon.status,
           ...(remoteDaemon.target ? { lifecycleStatus: remoteDaemon.status,
             phase: remoteTargets[remoteDaemon.target]?.phase ?? null } : {}),
           source: remoteDaemon.target ? 'remote_target' : observedDaemon.source,

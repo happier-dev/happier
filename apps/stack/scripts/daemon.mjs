@@ -42,7 +42,7 @@ import {
   resolveCliDistBuildLockPath,
   withCliDistBuildLock,
 } from './utils/proc/cliDistBuildLock.mjs';
-import { recordStackRuntimeDaemonPid, syncStackRuntimeDaemonPidFromDaemonState } from './utils/stack/runtime_daemon_state.mjs';
+import { readStackRuntimeDaemonDesiredState, recordStackRuntimeDaemonPid, syncStackRuntimeDaemonPidFromDaemonState } from './utils/stack/runtime_daemon_state.mjs';
 import {
   getStackRuntimeProcessEntries,
   getStackRuntimeProcessInstanceFingerprint,
@@ -1955,10 +1955,14 @@ export async function startLocalDaemonWithAuth({
   preserveSessionsOnRestart = false,
   allowSignInRequired = false,
 }) {
+  const runtimeState = runtimeStatePath ? await readStackRuntimeStateFile(runtimeStatePath) : null;
+  if (readStackRuntimeDaemonDesiredState(runtimeState, { cliIdentity }) === 'stopped') {
+    return { ok: true, started: false, reason: 'daemon-stopped-by-owner' };
+  }
   // Recovery consumes the same selected source launch as explicit reloads.
   // A long-lived runner may still hold its original launch arguments.
   const selectedSource = sourceRuntimeLaunchUpdate?.launch
-    ?? (runtimeStatePath ? (await readStackRuntimeStateFile(runtimeStatePath))?.sourceRuntimeLaunch : null);
+    ?? runtimeState?.sourceRuntimeLaunch;
   if (selectedSource) {
     const launch = await resolveCliRuntimeLaunchSpec({ sourceRuntimeLaunch: selectedSource });
     cliBin = join(launch.cliDir, 'bin', 'happier.mjs');
@@ -2152,6 +2156,10 @@ export async function startLocalDaemonWithAuth({
   return await withStackDaemonLifecycleLock(
     { cliHomeDir, internalServerUrl, stackName: resolvedStackName },
     async () => {
+  // An explicit stop can arrive while preparation or lock admission is pending.
+  if (runtimeStatePath && readStackRuntimeDaemonDesiredState(
+    await readStackRuntimeStateFile(runtimeStatePath), { cliIdentity },
+  ) === 'stopped') return { ok: true, started: false, reason: 'daemon-stopped-by-owner' };
   if (preserveSessionsOnRestart) {
     if (!forceRestart || !sourceRuntimeLaunchUpdate || !runtimeStatePath) {
       throw new Error('[stack] session-preserving source restart requires a prepared source daemon launch and runtime state.');

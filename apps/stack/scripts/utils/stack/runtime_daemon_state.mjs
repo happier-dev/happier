@@ -5,6 +5,21 @@ import { isPidAlive, mutateStackRuntimeDaemonMembership, readStackRuntimeStateFi
 
 export const STACK_RUNTIME_DAEMON_MEMBERSHIP_INTERVAL_MS = 10_000;
 
+export function readStackRuntimeDaemonDesiredState(runtimeState, { cliIdentity = 'default' } = {}) {
+  const identity = String(cliIdentity ?? '').trim() || 'default';
+  // Runtime files written before owner-stop support retain ordinary crash recovery.
+  return runtimeState?.daemon?.desiredStateByIdentity?.[identity] === 'stopped' ? 'stopped' : 'running';
+}
+
+export async function recordStackRuntimeDaemonDesiredState(runtimeStatePath, desiredState, { cliIdentity = 'default' } = {}) {
+  if (!runtimeStatePath) throw new Error('[stack] daemon owner intent requires runtime state');
+  if (!['running', 'stopped'].includes(desiredState)) throw new Error('[stack] invalid daemon desired state');
+  const identity = String(cliIdentity ?? '').trim() || 'default';
+  return await recordStackRuntimeUpdate(runtimeStatePath, {
+    daemon: { desiredStateByIdentity: { [identity]: desiredState } },
+  });
+}
+
 export function normalizeDaemonPid(value) {
   const pid = Number(value);
   return Number.isFinite(pid) && pid > 1 ? pid : null;

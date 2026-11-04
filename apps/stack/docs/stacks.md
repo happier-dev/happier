@@ -488,6 +488,15 @@ hstack stack daemon <stack> start --identity=account-a
 hstack stack daemon <stack> stop  --identity=account-a
 ```
 
+In 0.3 development, `hstack stack daemon <stack> stop` keeps that identity's
+daemon stopped until an explicit `start` or `restart`. The stack's server and UI
+keep running. Owner intent is retained in the existing `stack.runtime.json`,
+so reinstalling the supervisor does not clear it. Unexpected daemon exits still
+use normal crash recovery. `hstack stack info <stack>` reports
+“daemon stopped by owner” for the default identity while it is stopped.
+Commands follow the observed daemon host. Existing supervisors must load the
+updated Stack tooling before this behavior is available.
+
 - For the **main** stack, use `<stack>=main` and the default `<port>=3005` (unless you changed it).
 - If you use Tailscale Serve, `HAPPIER_WEBAPP_URL` should be your HTTPS URL (what you get from `hstack tailscale url`).
 - Logs live under:

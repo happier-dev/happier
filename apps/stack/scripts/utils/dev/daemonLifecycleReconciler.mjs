@@ -1,8 +1,12 @@
 import { performance } from 'node:perf_hooks';
+import { readStackRuntimeStateFile } from '../stack/runtime_state.mjs';
+import { readStackRuntimeDaemonDesiredState } from '../stack/runtime_daemon_state.mjs';
 
 export function startOwnerDaemonLifecycleReconciler(
   {
     enabled,
+    runtimeStatePath = null,
+    cliIdentity = 'default',
     observe,
     onObservation,
     onObservationIntervalMs = 0,
@@ -35,13 +39,16 @@ export function startOwnerDaemonLifecycleReconciler(
       lastObservationDeliveryAt === null
       || observedAt - lastObservationDeliveryAt >= onObservationIntervalMs
     );
-    const recoveryEnabled = typeof recover === 'function' && isRecoveryEnabled() === true;
+    const stoppedByOwner = runtimeStatePath && readStackRuntimeDaemonDesiredState(
+      await readStackRuntimeStateFile(runtimeStatePath), { cliIdentity },
+    ) === 'stopped';
+    const recoveryEnabled = !stoppedByOwner && typeof recover === 'function' && isRecoveryEnabled() === true;
     // Auth-gated recovery previously did no probe between membership samples.
     // Retain that behavior under the shared observation owner.
     if (!recoveryEnabled && typeof onObservation === 'function' && !deliverObservation) {
       consecutiveAbsences = 0;
       recoveryAttempted = false;
-      return { skipped: true, reason: 'daemon-recovery-not-ready' };
+      return { skipped: true, reason: stoppedByOwner ? 'daemon-stopped-by-owner' : 'daemon-recovery-not-ready' };
     }
     const observation = await observe();
     if (deliverObservation) {
@@ -60,7 +67,7 @@ export function startOwnerDaemonLifecycleReconciler(
     if (!recoveryEnabled) {
       consecutiveAbsences = 0;
       recoveryAttempted = false;
-      return { skipped: true, reason: 'daemon-recovery-not-ready' };
+      return { skipped: true, reason: stoppedByOwner ? 'daemon-stopped-by-owner' : 'daemon-recovery-not-ready' };
     }
     const status = String(observation?.status ?? '').trim();
     if (status === 'running' || status === 'starting' || status === 'unreachable') {

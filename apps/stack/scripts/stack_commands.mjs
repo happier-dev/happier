@@ -1847,6 +1847,9 @@ async function cmdInfo({ rootDir, argv }) {
       ? ` (ownerPid=${ownerPid})`
       : '';
   console.log(`- running: ${out.runtime?.running ? 'yes' : 'no'}${runningPidSuffix}`);
+  if (out.runtime?.components?.daemon?.status === 'stopped-by-owner') {
+    console.log('- daemon stopped by owner');
+  }
   if (out.runtime?.sourcePreparation) {
     const { phase, component, targets } = out.runtime.sourcePreparation;
     console.log(`- source preparation: ${phase}${component ? ` (${component})` : ''}`);

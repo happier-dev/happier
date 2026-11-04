@@ -6,6 +6,43 @@ import { join } from 'node:path';
 
 import { startOwnerDaemonLifecycleReconciler } from './daemonLifecycleReconciler.mjs';
 import { syncStackRuntimeDaemonPidFromDaemonState } from '../stack/runtime_daemon_state.mjs';
+import { recordStackRuntimeUpdate } from '../stack/runtime_state.mjs';
+
+test('owner stop suppresses recovery across cadence and reinstallation until explicit running desire', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'hstack-daemon-desire-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const runtimeStatePath = join(root, 'stack.runtime.json');
+  await recordStackRuntimeUpdate(runtimeStatePath, {
+    daemon: { desiredStateByIdentity: { default: 'stopped', peer: 'running' } },
+  });
+  let recoveries = 0;
+  const install = (cliIdentity = 'default') => startOwnerDaemonLifecycleReconciler({
+    enabled: true, runtimeStatePath, cliIdentity,
+    observe: async () => ({ status: 'stopped' }),
+    recover: async () => { recoveries++; return { started: true }; },
+  }, { setIntervalImpl: () => ({ unref() {} }), clearIntervalImpl: () => {} });
+  for (let installation = 0; installation < 2; installation++) {
+    const reconciler = install();
+    try {
+      for (let tick = 0; tick < 5; tick++) await reconciler.reconcileNow();
+      assert.equal(recoveries, 0, 'stopped desire must prevent every recovery');
+    } finally { reconciler.close(); }
+  }
+  const peer = install('peer');
+  try {
+    await peer.reconcileNow();
+    await peer.reconcileNow();
+    assert.equal(recoveries, 1, 'one identity stop must not suppress another identity');
+  } finally { peer.close(); }
+  await recordStackRuntimeUpdate(runtimeStatePath, { daemon: { desiredStateByIdentity: { default: 'running' } } });
+  const reconciler = install();
+  try {
+    await reconciler.reconcileNow();
+    await reconciler.reconcileNow();
+    await reconciler.reconcileNow();
+    assert.equal(recoveries, 2, 'resumed desire retains one recovery per confirmed absence');
+  } finally { reconciler.close(); }
+});
 
 test('owner daemon observation persists state in service mode without enabling recovery', async () => {
   const persisted = [];

@@ -10,7 +10,8 @@ import { getComponentDir, getRepoDir, resolveStackEnvPath } from '../utils/paths
 import { run } from '../utils/proc/proc.mjs';
 import { resolveServerUrls } from '../utils/server/urls.mjs';
 import { parseCliIdentityOrThrow, resolveCliHomeDirForIdentity } from '../utils/stack/cli_identities.mjs';
-import { syncStackRuntimeDaemonPidFromDaemonState } from '../utils/stack/runtime_daemon_state.mjs';
+import { recordStackRuntimeDaemonDesiredState, syncStackRuntimeDaemonPidFromDaemonState } from '../utils/stack/runtime_daemon_state.mjs';
+import { withStackDaemonLifecycleLock } from '../utils/stack/daemon_lifecycle_lock.mjs';
 import { withStackEnv } from './stack_environment.mjs';
 import { banner, cmd as cmdFmt, sectionTitle } from '../utils/ui/layout.mjs';
 import { cyan, green } from '../utils/ui/ansi.mjs';
@@ -224,6 +225,7 @@ export async function runStackDaemonCommand({ rootDir, stackName, argv, json }) 
           }
         }
 
+        await recordStackRuntimeDaemonDesiredState(runtimePath, 'running', { cliIdentity: identity });
         const startResult = await startLocalDaemonWithAuth({
           cliBin,
           cliEntrypoint,
@@ -271,7 +273,10 @@ export async function runStackDaemonCommand({ rootDir, stackName, argv, json }) 
       }
 
       if (action === 'stop') {
-        await stopLocalDaemon({
+        // Publish desire before retirement. Join the existing launch lock so a
+        // start already in flight cannot outlive a completed explicit stop.
+        await recordStackRuntimeDaemonDesiredState(runtimePath, 'stopped', { cliIdentity: identity });
+        await withStackDaemonLifecycleLock({ cliHomeDir, internalServerUrl, stackName }, () => stopLocalDaemon({
           cliBin,
           cliEntrypoint,
           cliNodeEntrypoint,
@@ -284,7 +289,7 @@ export async function runStackDaemonCommand({ rootDir, stackName, argv, json }) 
           env: envForIdentity,
           stackName,
           cliIdentity: identity,
-        });
+        }));
         const status = await daemonStatusSummary({
           cliBin,
           cliEntrypoint,

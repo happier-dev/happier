@@ -843,6 +843,7 @@ async function main() {
     });
     const daemonLifecycleReconciler = startOwnerDaemonLifecycleReconciler({
       enabled: true,
+      runtimeStatePath,
       isShuttingDown: () => shuttingDown,
       observe: () => checkDaemonStatePingAware(cliHomeDir, {
         serverUrl: internalServerUrl,

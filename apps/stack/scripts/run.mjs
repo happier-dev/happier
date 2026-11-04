@@ -1065,6 +1065,7 @@ async function main() {
     });
     daemonLifecycleReconciler = startOwnerDaemonLifecycleReconciler({
       enabled: true,
+      runtimeStatePath,
       intervalMs: serviceMode ? STACK_RUNTIME_DAEMON_MEMBERSHIP_INTERVAL_MS : 1_000,
       isShuttingDown: () => shuttingDown,
       observe: async () => await checkDaemonStatePingAware(cliHomeDir, {
@@ -1395,6 +1396,7 @@ async function runControlledRemoteStack({ rootDir, flags, json, autostart, runti
       const daemonRuntimeEnv = getDaemonEnv({ baseEnv: env, cliHomeDir, internalServerUrl,
         publicServerUrl: urls.publicServerUrl, stackName: context.stackName, cliIdentity: 'default' });
       daemonReconciler = startOwnerDaemonLifecycleReconciler({ enabled: true,
+        runtimeStatePath: context.runtimeStatePath,
         intervalMs: STACK_RUNTIME_DAEMON_MEMBERSHIP_INTERVAL_MS,
         isShuttingDown: () => shuttingDown,
         observe: () => checkDaemonStatePingAware(cliHomeDir, {
