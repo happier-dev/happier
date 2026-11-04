@@ -1022,6 +1022,10 @@ The same owner-only metadata projection includes stored health observations
 present. It does not expose credential content or raw provider error text and
 does not backfill missing observations.
 
+Runtime currentness admits the exchange; registry retirement after a successful
+exchange does not veto its replacement. Account-mode authority, credential and
+configuration CAS, and refresh-lease checks still apply during settlement.
+
 For brokered Connected Account and Pool sources, the daemon's model projector reads
 the CLIProxyAPI contribution's credential-free catalog for the exact upstream
 purpose. The plugin generates those rows from its pinned SDK source. This read

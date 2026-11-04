@@ -44,6 +44,12 @@ import {
 import { ConnectedServiceQuotasCoordinator } from '../quotas/ConnectedServiceQuotasCoordinator';
 import { createBuiltInQualifiedRefreshHarness } from './ConnectedServiceRefreshCoordinator.qualifiedRefresh.testkit';
 
+// Genuine HTTP boundary: Node's runtime uses the package's Undici fetch.
+vi.mock('undici', async importOriginal => {
+  const runtime = await importOriginal<typeof import('undici')>();
+  return { ...runtime, fetch: (...args: Parameters<typeof globalThis.fetch>) => globalThis.fetch(...args) };
+});
+
 const service = Object.freeze({
   pluginId: 'happier.agent.codex',
   localId: 'openai-codex',

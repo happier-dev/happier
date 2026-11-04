@@ -10,11 +10,18 @@ import {
   sealQualifiedConnectedAccountContentEnvelope,
 } from '@happier-dev/protocol';
 
-import type { Credentials } from '@/persistence';
-import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import type { StoredCredentials } from '@/persistence';
+import { createAdmittedPluginRuntimeFixture, retireAdmittedPluginRuntimeRegistry } from '@/plugins/testkit/admittedRuntime';
 
 import { createQualifiedConnectedAccountEstablishedRuntimeOwner } from '../qualifiedConnectedAccountEstablishedRuntimeOwner';
+import { requireConnectedAccountCryptoMaterial, resolveConnectedAccountCryptoMaterial } from '../accountScopedCryptoMaterial';
 import { refreshQualifiedConnectedAccount } from './refreshQualifiedConnectedAccount';
+
+// Genuine HTTP boundary: Node's runtime uses the package's Undici fetch.
+vi.mock('undici', async importOriginal => {
+  const runtime = await importOriginal<typeof import('undici')>();
+  return { ...runtime, fetch: (...args: Parameters<typeof globalThis.fetch>) => globalThis.fetch(...args) };
+});
 
 const service = Object.freeze({
   pluginId: 'happier.agent.codex',
@@ -36,25 +43,26 @@ afterEach(async () => {
   }));
 });
 
-async function createHarness() {
+async function createHarness(idToken = 'id-old', accountMode: 'plain' | 'e2ee' = 'plain') {
   const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-qualified-refresh-'));
   createdDirectories.push(happyHomeDir);
-  const registry = await resolveExecutablePluginRuntimeRegistry({
+  const fixture = await createAdmittedPluginRuntimeFixture({
     happyHomeDir,
-    pluginIds: [service.pluginId],
-    resolveDevelopmentSourceAuthority: ({ pluginId, rootPath }) => ({
-      kind: 'development', registeredRootId: `qualified-refresh:${pluginId}`,
-      canonicalRoot: rootPath, observedRevision: 1,
-    }),
+    runtimeOptions: { pluginIds: [service.pluginId] },
   });
-  createdRegistries.push(registry);
-  let generationCurrent = true;
-  const credentials: Credentials = {
+  const { registry, controller: reloadController } = fixture;
+  createdRegistries.push(fixture);
+  let retireOnRelease = false;
+  const credentials: StoredCredentials = {
     token: 'happier-token',
-    encryption: {
+    encryption: accountMode === 'plain' ? null : {
       type: 'legacy',
       secret: new Uint8Array(32).fill(5),
     },
+  };
+  const contentMode = accountMode === 'plain' ? { accountMode: 'plain' as const } : {
+    accountMode: 'e2ee' as const,
+    material: requireConnectedAccountCryptoMaterial(credentials, resolveConnectedAccountCryptoMaterial(credentials)),
   };
   const credentialSnapshot = QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({
     ref: account,
@@ -64,13 +72,13 @@ async function createHarness() {
     configurationRevision: null,
     content: sealQualifiedConnectedAccountContentEnvelope({
       kind: 'credential',
-      accountMode: 'plain',
+      ...contentMode,
       payload: {
         v: 1,
         values: {
           accessToken: 'access-old',
           refreshToken: 'refresh-old',
-          idToken: 'id-old',
+          idToken,
           providerAccountId: 'account-1',
           expiresAtMs: '900',
         },
@@ -83,22 +91,28 @@ async function createHarness() {
       scopes: ['openid'],
     },
   });
+  const getAccountEncryptionMode = vi.fn(async () => accountMode);
   const owner = createQualifiedConnectedAccountEstablishedRuntimeOwner({
     reloadController: {
       async acquireRuntimeRegistry() {
+        const lease = await reloadController.acquireRuntimeRegistry();
         return {
-          registry,
-          source: 'active' as const,
-          durableRevision: registry.durableRevision ?? -1,
-          release: vi.fn(async () => undefined),
+          ...lease,
+          async release() {
+            await lease.release();
+            if (retireOnRelease) {
+              retireOnRelease = false;
+              await retireAdmittedPluginRuntimeRegistry({ controller: reloadController, registry, happyHomeDir });
+            }
+          },
         };
       },
       isRuntimeRegistryCurrent(candidate: typeof registry) {
-        return generationCurrent && candidate === registry;
+        return reloadController.isRuntimeRegistryCurrent(candidate);
       },
     },
     credentials,
-    getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
+    getAccountEncryptionMode,
     readCredential: vi.fn(async () => credentialSnapshot),
     readConfiguration: vi.fn(async () => null),
     configuration: {
@@ -128,15 +142,66 @@ async function createHarness() {
     credentials,
     credentialSnapshot,
     owner,
+    getAccountEncryptionMode,
     acquireRefreshLease,
     mutateCredential,
-    setGenerationCurrent(value: boolean) {
-      generationCurrent = value;
+    contentMode,
+    retireAfterExchange() { retireOnRelease = true; },
+    isRegistryCurrent() { return reloadController.isRuntimeRegistryCurrent(registry); },
+    async retireRegistry() {
+      await retireAdmittedPluginRuntimeRegistry({ controller: reloadController, registry, happyHomeDir });
     },
   };
 }
 
 describe('refreshQualifiedConnectedAccount', () => {
+  it.each([
+    ['plain', 'provider_response'], ['plain', 'after_exchange'], ['plain', 'before_persist'], ['plain', 'during_persist'],
+    ['e2ee', 'provider_response'], ['e2ee', 'after_exchange'], ['e2ee', 'before_persist'], ['e2ee', 'during_persist'],
+  ] as const)(
+    'settles the rotated token in %s mode after registry retirement %s adopts a successor publication', async (mode, timing) => {
+    const harness = await createHarness('id-old', mode);
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      if (timing === 'provider_response') await harness.retireRegistry();
+      return new Response(JSON.stringify({
+        access_token: 'access-new', refresh_token: 'refresh-new', expires_in: 3600,
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }));
+    if (timing === 'after_exchange') {
+      harness.retireAfterExchange();
+    } else if (timing === 'before_persist') {
+      harness.getAccountEncryptionMode.mockImplementation(async () => {
+        if (vi.mocked(fetch).mock.calls.length > 0) await harness.retireRegistry();
+        return mode;
+      });
+    } else if (timing === 'during_persist') {
+      harness.mutateCredential.mockImplementationOnce(async () => {
+        await harness.retireRegistry();
+        return { success: true, credentialRevision: nextCredentialRevision, configurationRevision: null };
+      });
+    }
+    await expect(refreshQualifiedConnectedAccount({
+      account, token: harness.credentials.token, ownerId: 'machine-1:runtime-1',
+      leaseMs: 60_000, operationId: 'rotate-across-reload', expectedCredential: harness.credentialSnapshot,
+      resolveV4Support: () => 'advertised', establishedRuntimeOwner: harness.owner,
+      acquireRefreshLease: harness.acquireRefreshLease, mutateCredential: harness.mutateCredential,
+    })).resolves.toMatchObject({ status: 'refreshed', credentialRevision: nextCredentialRevision });
+    expect(harness.isRegistryCurrent()).toBe(false);
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(harness.mutateCredential).toHaveBeenCalledOnce();
+    const mutation = harness.mutateCredential.mock.calls[0]![0].mutation as {
+      content: Parameters<typeof openQualifiedConnectedAccountContentEnvelope>[0]['envelope'];
+      metadata: Parameters<typeof parseQualifiedConnectedAccountCredentialPlaintextV1>[0]['metadata'];
+    };
+    expect(parseQualifiedConnectedAccountCredentialPlaintextV1({
+      ref: account,
+      authenticationModeId: 'oauth',
+      plaintext: openQualifiedConnectedAccountContentEnvelope({
+        kind: 'credential', ...harness.contentMode, envelope: mutation.content,
+      }),
+      metadata: mutation.metadata,
+    })).toMatchObject({ v: 1, values: { accessToken: 'access-new', refreshToken: 'refresh-new' } });
+  });
   it.each([
     ['busy', 'connected_account_refresh_lease_not_acquired'],
     ['owner', 'connected_account_refresh_lease_owner_mismatch'],

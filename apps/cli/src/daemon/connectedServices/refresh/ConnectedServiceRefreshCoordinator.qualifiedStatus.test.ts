@@ -23,6 +23,12 @@ import { createAdmittedPluginRuntimeFixture, retireAdmittedPluginRuntimeRegistry
 import { createQualifiedConnectedAccountEstablishedRuntimeOwner } from '../qualifiedConnectedAccountEstablishedRuntimeOwner';
 import { ConnectedServiceRefreshCoordinator } from './ConnectedServiceRefreshCoordinator';
 
+// Genuine HTTP boundary: Node's runtime uses the package's Undici fetch.
+vi.mock('undici', async importOriginal => {
+  const runtime = await importOriginal<typeof import('undici')>();
+  return { ...runtime, fetch: (...args: Parameters<typeof globalThis.fetch>) => globalThis.fetch(...args) };
+});
+
 const openAiService = Object.freeze({
   pluginId: 'happier.voice.openai',
   localId: 'openai',

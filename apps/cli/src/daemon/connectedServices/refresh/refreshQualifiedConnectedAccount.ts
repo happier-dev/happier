@@ -252,7 +252,7 @@ export async function refreshQualifiedConnectedAccount(input: Readonly<{
       !== expectedCredential.credentialRevision
     || configurationRevision
       !== expectedCredential.configurationRevision
-    || !invocation.basis.isCurrent()
+    || (input.reason === 'provider_context' && !invocation.basis.isCurrent())
   ) {
     throw new Error(
       'Qualified Connected Account refresh invocation no longer matches its exact lease and snapshot basis',
@@ -300,7 +300,7 @@ export async function refreshQualifiedConnectedAccount(input: Readonly<{
           : {}),
       },
     });
-  if (!invocation.basis.isCurrent() || !leaseCurrent) {
+  if ((input.reason === 'provider_context' && !invocation.basis.isCurrent()) || !leaseCurrent) {
     throw new Error(
       'Qualified Connected Account refresh generation or lease changed before credential settlement',
     );
@@ -324,7 +324,7 @@ export async function refreshQualifiedConnectedAccount(input: Readonly<{
   if (
     settled.credentialRevision === invocation.basis.credentialRevision
     || settled.configurationRevision !== configurationRevision
-    || !invocation.basis.isCurrent()
+    || (input.reason === 'provider_context' && !invocation.basis.isCurrent())
     || !leaseCurrent
   ) {
     throw new Error(
