@@ -243,6 +243,7 @@ export function useApprovalArtifact(input: Readonly<{
         || Boolean(serverId && resolution.kind !== 'bound' && resolution.kind !== 'resolving');
     return {
         artifact,
+        serverId,
         isLoading: observing && !homeUnavailable && !artifact && Boolean(artifactId) && (loading || (serverId !== null && resolution.kind === 'resolving')),
         homeUnavailable,
         error: error || (homeUnreachable && !artifact) || unresolvedServer || !scopeMatches
