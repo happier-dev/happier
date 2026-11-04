@@ -4,13 +4,15 @@ import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 import { reapHistoricalTempRoots } from './historical_temp_roots.mjs';
+import { measureReplicaSourceBytes } from './replica_source_bytes.mjs';
+import { measureColdDependencyBytes } from './dependency_materialization.mjs';
+import { HEAVYWEIGHT_COMMAND_RESOURCES, LEGACY_VALIDATION_ADMISSION_CLASSES } from './command_resources.mjs';
 import { getHappierTempRootForUid, prepareHappierTempDirOwnerCleanup, readHappierTempDirOwnerForDirectory,
   readHappierTempDirOwnerLiveness } from '../../../../../packages/cli-common/tempDirOwnership.mjs';
 
-import { HEAVYWEIGHT_COMMAND_RESOURCES, LEGACY_VALIDATION_ADMISSION_CLASSES } from './command_resources.mjs';
-
 const writeRootsByClass = {
   validation: ['repoDir'],
+  'source-replica': ['repoDir'],
   'dependency-install': ['repoDir', 'cacheBaseDir'],
   'package-dist': ['repoDir'],
   'runtime-build': ['repoDir', 'cacheBaseDir', 'scratchRoot'],
@@ -18,6 +20,10 @@ const writeRootsByClass = {
   'source-web-export': ['cacheBaseDir', 'scratchRoot'],
   compilation: ['repoDir'],
 };
+
+// Largest observed validation TMPDIR on mac2-linux (2026-11-01):
+// 1,886,444 KiB allocated. Leave room for another run before placing work.
+const measuredValidationScratchBytes = 1_931_718_656;
 
 function directory(path) {
   try { return lstatSync(path).isDirectory(); }
@@ -88,14 +94,17 @@ async function reapRuntimeBuildStaging(cacheBaseDir, scratchRoot, procRoot, owne
   return result;
 }
 
-// Refuse already-exhausted write filesystems. Resident dependencies, caches
-// and other jobs' existing outputs do not establish this operation's future
-// writes. No additional-write peak is measured, so do not invent a reservation.
-export async function inspectWorkerDiskBudget({ repoDir, cacheBaseDir, commandClass = 'runtime-build', scratchRoot = tmpdir(), observeFilesystem = observeWorkerFilesystem }) {
+// Refuse exhaustion and measured additional writes. Resident
+// dependencies, caches and other jobs' outputs are not additional demand.
+export async function inspectWorkerDiskBudget({ repoDir, cacheBaseDir, commandClass = 'runtime-build', scratchRoot = tmpdir(), requiredAdditionalBytes = 0, observeFilesystem = observeWorkerFilesystem }) {
+  if (!Number.isSafeInteger(requiredAdditionalBytes) || requiredAdditionalBytes < 0) {
+    throw new Error('worker additional-write measurement must be a nonnegative safe integer');
+  }
   // The same catalog owns memory and disk demand. Keep only historical
   // transport labels here; new admission classes declare their disk shape once.
   commandClass = HEAVYWEIGHT_COMMAND_RESOURCES[commandClass]?.diskClass
     ?? (LEGACY_VALIDATION_ADMISSION_CLASSES.includes(commandClass) ? 'validation' : commandClass);
+  if (commandClass === 'validation') requiredAdditionalBytes = Math.max(requiredAdditionalBytes, measuredValidationScratchBytes);
   if (!Object.hasOwn(writeRootsByClass, commandClass)) throw new Error(`unknown worker disk class: ${commandClass}`);
   const observations = new Map();
   const roots = { repoDir, cacheBaseDir, scratchRoot };
@@ -105,37 +114,46 @@ export async function inspectWorkerDiskBudget({ repoDir, cacheBaseDir, commandCl
     observations.set(fs.device, { ...fs, path });
   }
   const filesystems = [...observations.values()];
-  const admitted = filesystems.every(fs => fs.availableBytes > 0);
-  return { admitted, commandClass, filesystems, reason: admitted ? 'ready' : 'worker write filesystem exhausted' };
+  const admitted = filesystems.every(fs => fs.availableBytes > requiredAdditionalBytes);
+  return { admitted, commandClass, filesystems, reason: admitted ? 'ready'
+    : filesystems.some(fs => fs.availableBytes === 0) ? 'worker write filesystem exhausted'
+      : `worker disk headroom below measured additional writes (requires>${requiredAdditionalBytes} bytes free)` };
 }
 
-async function reapWorkerScratch(repoDir, scratchRoot, procRoot, ownerUid) {
-  const result = directory(scratchRoot) ? reapHistoricalTempRoots(scratchRoot, procRoot, { ownerUid })
-    : { reclaimedBytes: 0, reclaimedRoots: 0, retainedRoots: 0, observationUnavailable: null };
-  return result;
-}
-
-export async function admitWorkerDiskBudget({ repoDir, cacheBaseDir, commandClass, scratchRoot = tmpdir(), procRoot = '/proc', ownerUid = process.getuid(), observeFilesystem = observeWorkerFilesystem, maintenance = false }) {
-  const options = { repoDir, cacheBaseDir, commandClass, scratchRoot, observeFilesystem };
+export async function admitWorkerDiskBudget({ repoDir, cacheBaseDir, commandClass, scratchRoot = tmpdir(), additionalScratchRoots = [], requiredAdditionalBytes = 0, procRoot = '/proc', ownerUid = process.getuid(), observeFilesystem = observeWorkerFilesystem, maintenance = false }) {
+  const options = { repoDir, cacheBaseDir, commandClass, scratchRoot, requiredAdditionalBytes, observeFilesystem };
   const initial = await inspectWorkerDiskBudget(options);
   const reclamation = [];
   let current = initial;
   // Maintenance enforces age retention even on roomy workers. Admission only
   // spends time reclaiming when the measured containing filesystem is short.
+  // A command-replica marker, age and process absence do not establish that
+  // the controller-owned Mutagen session is inactive. This worker therefore
+  // has no authority to reclaim command replicas, including in maintenance.
   if ((!initial.admitted || maintenance) && process.platform === 'linux') {
     const steps = [
       ['runtime-build', () => reapRuntimeBuildStaging(cacheBaseDir, scratchRoot, procRoot, ownerUid)],
-      ['scratch', () => reapWorkerScratch(repoDir, scratchRoot, procRoot, ownerUid)],
+      ['scratch', () => {
+        const result = { reclaimedBytes: 0, reclaimedRoots: 0, retainedRoots: 0, observationUnavailable: null };
+        // Custody's tmpdir is command-private; historical jobs are its siblings
+        // beneath the configured CLI home, even with an explicit TMPDIR.
+        for (const parent of new Set([scratchRoot, join(dirname(cacheBaseDir), 'tmp'), ...additionalScratchRoots])) {
+          if (!directory(parent)) continue;
+          const sweep = reapHistoricalTempRoots(parent, procRoot, { ownerUid });
+          for (const key of ['reclaimedBytes', 'reclaimedRoots', 'retainedRoots']) result[key] += sweep[key];
+          result.observationUnavailable ??= sweep.observationUnavailable;
+        }
+        return result;
+      }],
     ];
     for (const [kind, run] of steps) {
       reclamation.push({ kind, ...await run() });
       // Reobserve the same write filesystems after custody-safe reclamation.
-      current = { ...initial, filesystems: initial.filesystems.map(fs => ({ ...fs, ...observeFilesystem(fs.path) })) };
-      current.admitted = current.filesystems.every(fs => fs.availableBytes > 0);
+      current = await inspectWorkerDiskBudget(options);
       if (current.admitted && !maintenance) break;
     }
   }
-  return { ...current, reason: current.admitted ? 'ready' : initial.reason,
+  return { ...current,
     reclaimedBytes: reclamation.reduce((sum, step) => sum + step.reclaimedBytes, 0), reclamation };
 }
 
@@ -144,15 +162,50 @@ export async function runWorkerDiskBudgetCommand(args = process.argv.slice(2)) {
   try {
     const options = { repoDir: value('repo') ?? process.cwd(), cacheBaseDir: value('cache') ?? process.env.HAPPIER_STACK_PM_CACHE_BASE_DIR,
       commandClass: value('class') ?? 'runtime-build',
+      requiredAdditionalBytes: Number(value('required-additional-bytes') ?? 0),
+      // Historical source-runtime jobs also used the persistent system temp
+      // root. Its age/UID/inode/live-use policy remains the same reaper's.
+      additionalScratchRoots: process.platform === 'linux' ? ['/var/tmp'] : [],
       ...(value('owner-uid') ? { ownerUid: Number(value('owner-uid')) } : {}) };
     if (!options.cacheBaseDir) throw new Error('configured worker cache owner unavailable');
+    // A failed first transition may already contain package.json. Reuse the
+    // same source membership for its resident bytes; the difference is a
+    // demonstrated minimum, not a replacement/staging/concurrency peak.
+    if (args.includes('--source-materialization') && directory(options.repoDir)) {
+      options.requiredAdditionalBytes = Math.max(0, options.requiredAdditionalBytes
+        - await measureReplicaSourceBytes(options.repoDir));
+    }
+    const footprint = args.includes('--cold-dependencies')
+      ? await measureColdDependencyBytes({ repoDir: options.repoDir }) : null;
+    if (footprint) {
+      options.requiredAdditionalBytes = Math.max(options.requiredAdditionalBytes, footprint.requiredAdditionalBytes);
+      for (const warning of footprint.warnings) {
+        process.stderr.write(`[preferred-execution] warning ${JSON.stringify(warning)}\n`);
+      }
+      // This is an additional pre-bootstrap check. The containing command
+      // already owns ordinary disk admission: no measured demand must not add
+      // another filesystem gate for pnpm, a warm tree or an unmatched identity.
+      if (options.requiredAdditionalBytes === 0) {
+        process.stdout.write(JSON.stringify({ admitted: true, commandClass: options.commandClass,
+          filesystems: [], reason: 'no measured additional dependency writes', reclaimedBytes: 0,
+          reclamation: [], warnings: footprint.warnings }) + '\n');
+        process.exitCode = 0;
+        return;
+      }
+    }
     const result = args.includes('--admit') || args.includes('--maintenance')
       ? await admitWorkerDiskBudget({ ...options, maintenance: args.includes('--maintenance') }) : await inspectWorkerDiskBudget(options);
+    if (footprint?.warnings.length) result.warnings = footprint.warnings;
     if (args.includes('--admit')) {
       process.stderr.write(`[preferred-execution] worker disk class=${result.commandClass}; ${result.filesystems.map(fs => `free=${fs.availableBytes}/${fs.totalBytes} path=${fs.path}`).join('; ')}; reclaimed=${result.reclaimedBytes} bytes; ${result.reason}\n`);
       process.stdout.write(JSON.stringify(result) + '\n');
       process.exitCode = result.admitted ? 0 : 76;
-    } else process.stdout.write(JSON.stringify(result) + '\n');
+    } else {
+      process.stdout.write(JSON.stringify(result) + '\n');
+      // Placement consumes the same class decision without reclaiming or
+      // entering admission. Status/diagnostic callers retain their JSON API.
+      if (args.includes('--check')) process.exitCode = result.admitted ? 0 : 76;
+    }
   } catch (error) {
     process.stderr.write(`[preferred-execution] worker disk observation unavailable: ${error.message}\n`);
     process.exitCode = 76;
