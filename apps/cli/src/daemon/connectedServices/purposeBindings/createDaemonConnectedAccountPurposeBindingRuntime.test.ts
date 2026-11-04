@@ -564,6 +564,29 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
     } };
   }
 
+  it.each([false, true])('resolves all requested fresh-group quota targets without an active Session (observed=%s)', async observed => {
+    const { runtime, qualifiedApi } = await coordinatorFixture(observed);
+    const accountIds = Array.from({ length: 5 }, (_, index) => `fresh-account-${index}`);
+    const group = {
+      ...testQualifiedGroup({ activeAccountId: accountIds[0], generation: 7,
+        members: accountIds.map(accountId => ({ accountId })) }),
+      ref: { service: openAiService, groupId: 'untracked-fresh-group' },
+    };
+    qualifiedApi.readGroup.mockResolvedValue(group);
+    qualifiedApi.listAccounts.mockResolvedValue({ service: openAiService, accounts: [
+      ...accountIds.map(accountId => testQualifiedProfile({ accountId })),
+      testQualifiedProfile({ accountId: 'outside-requested-group' }),
+    ] });
+
+    const targets = await runtime.listGroupQuotaTargets({
+      service: openAiService, groupId: group.ref.groupId,
+      accountIds: [...accountIds, 'outside-requested-group'], signal: new AbortController().signal,
+    });
+
+    expect(targets.map(target => ({ accountId: target.profile.ref.accountId, generation: target.groupGeneration })))
+      .toEqual(accountIds.map(accountId => ({ accountId, generation: 7 })));
+  });
+
   it.each([false, true])('keeps quota refreshes out of settled binding watches for 25 minutes (configured=%s)', async configured => {
     const store = selectedStore();
     const selected = store.current();

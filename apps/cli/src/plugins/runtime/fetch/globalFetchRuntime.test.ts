@@ -7,6 +7,7 @@ import { getCACertificates, setDefaultCACertificates } from 'node:tls';
 import { createRequire } from 'node:module';
 import { setImmediate as nextIoTurn } from 'node:timers/promises';
 import { Agent, getGlobalDispatcher, setGlobalDispatcher } from 'undici';
+import * as undici from 'undici';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -14,10 +15,21 @@ import { createGlobalFetchRuntime } from './globalFetchRuntime';
 import { createPluginHttpService } from './service';
 import { createEphemeralTlsServerFixture } from '../../../../../../packages/tests/src/testkit/tls/ephemeralTlsServerFixture.mjs';
 
+// Genuine network boundary; retain the package's real Agent, TLS and default fetch.
+vi.mock('undici', async importOriginal => {
+    const runtime = await importOriginal<typeof import('undici')>();
+    return { ...runtime, fetch: vi.fn(runtime.fetch) };
+});
+
 const STABLE_RESPONSE_BODY_CEILING_BYTES = 32 * 1024 * 1024;
 const servers: ReturnType<typeof createServer>[] = [];
 // Genuine clock boundary: Undici exposes its coarse HTTP timer clock for tests.
 const httpClock: { tick(delay?: number): void } = createRequire(import.meta.url)('undici/lib/util/timers.js');
+
+function stubFetch(fetchBoundary: typeof globalThis.fetch) {
+    // Genuine network boundary: fixture responses implement the shared Fetch surface.
+    vi.mocked(undici.fetch).mockImplementation(fetchBoundary as unknown as typeof undici.fetch);
+}
 
 function createTrackedStream(chunks: readonly Uint8Array[]) {
     let pullCount = 0;
@@ -48,6 +60,7 @@ function createTrackedStream(chunks: readonly Uint8Array[]) {
 
 describe('createGlobalFetchRuntime', () => {
     afterEach(async () => {
+        vi.mocked(undici.fetch).mockReset();
         vi.unstubAllGlobals();
         await Promise.all(servers.splice(0).map(async (server) => {
             await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -57,7 +70,7 @@ describe('createGlobalFetchRuntime', () => {
     it('releases a metadata-only response without pulling any response-body bytes', async () => {
         const tracked = createTrackedStream([new TextEncoder().encode('private response body')]);
         // Genuine network boundary: only status and peer metadata are consumed.
-        vi.stubGlobal('fetch', vi.fn(async () => new Response(tracked.body, { status: 200 })));
+        stubFetch(vi.fn(async () => new Response(tracked.body, { status: 200 })));
         const request = { url: 'https://health.example.test/health', redirect: 'manual' as const,
             responseBody: 'discard' as const };
         const result = await createGlobalFetchRuntime().request(request);
@@ -154,7 +167,7 @@ describe('createGlobalFetchRuntime', () => {
     it('reads a stream only on demand and retains no body read after disposal', async () => {
         const tracked = createTrackedStream([new TextEncoder().encode('first'), new TextEncoder().encode('later')]);
         // Genuine network boundary; a declared total length is not a buffered-body limit for a stream.
-        vi.stubGlobal('fetch', vi.fn(async () => new Response(tracked.body, {
+        stubFetch(vi.fn(async () => new Response(tracked.body, {
             headers: { 'content-length': String(STABLE_RESPONSE_BODY_CEILING_BYTES + 1) },
         })));
         const stream = await createGlobalFetchRuntime().requestStream!({ url: 'https://logs.example/read', redirect: 'error' });
@@ -293,7 +306,7 @@ describe('createGlobalFetchRuntime', () => {
             status: 302,
             headers: { location: 'https://next.example.test/result' },
         }));
-        vi.stubGlobal('fetch', fetchMock);
+        stubFetch(fetchMock);
 
         const response = await createGlobalFetchRuntime().request({
             url: 'https://api.example.test/start',
@@ -315,7 +328,7 @@ describe('createGlobalFetchRuntime', () => {
             new Uint8Array([1]),
             new Uint8Array([2]),
         ]);
-        vi.stubGlobal('fetch', vi.fn(async () => new Response(body.body)));
+        stubFetch(vi.fn(async () => new Response(body.body)));
 
         let error: unknown;
         try {
@@ -339,7 +352,7 @@ describe('createGlobalFetchRuntime', () => {
 
     it('cancels a known oversized body before its first chunk is pulled', async () => {
         const body = createTrackedStream([new Uint8Array([1])]);
-        vi.stubGlobal('fetch', vi.fn(async () => new Response(body.body, {
+        stubFetch(vi.fn(async () => new Response(body.body, {
             headers: { 'content-length': String(STABLE_RESPONSE_BODY_CEILING_BYTES + 1) },
         })));
 
@@ -366,7 +379,7 @@ describe('createGlobalFetchRuntime', () => {
         const expected = new Uint8Array(STABLE_RESPONSE_BODY_CEILING_BYTES);
         expected[0] = 1;
         expected[expected.byteLength - 1] = 2;
-        vi.stubGlobal('fetch', vi.fn(async () => new Response(createTrackedStream([expected]).body)));
+        stubFetch(vi.fn(async () => new Response(createTrackedStream([expected]).body)));
 
         const response = await createGlobalFetchRuntime().request({
             url: 'https://api.example.test/at-limit',
@@ -396,7 +409,7 @@ describe('createGlobalFetchRuntime', () => {
                 return new Promise<void>(() => undefined);
             },
         }, { highWaterMark: 0 });
-        vi.stubGlobal('fetch', vi.fn(async (_url: string, init?: RequestInit) => {
+        stubFetch(async (_url, init) => {
             receivedSignal = init?.signal;
             receivedSignal?.addEventListener('abort', () => {
                 const error = new Error('request aborted');
@@ -404,7 +417,7 @@ describe('createGlobalFetchRuntime', () => {
                 streamController?.error(error);
             }, { once: true });
             return new Response(body);
-        }));
+        });
 
         const pending = createGlobalFetchRuntime().request({
             url: 'https://api.example.test/slow',

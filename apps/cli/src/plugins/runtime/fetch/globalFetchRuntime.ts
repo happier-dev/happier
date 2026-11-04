@@ -73,7 +73,7 @@ export function createGlobalFetchRuntime(): PluginHttpRuntimeAdapter {
         };
     try {
       requestAbort.controller.signal.throwIfAborted();
-            const { Agent, buildConnector } = await loadUndici();
+            const { Agent, buildConnector, fetch: fetchWithDispatcher } = await loadUndici();
       requestAbort.controller.signal.throwIfAborted();
             let nativeTlsValidation: Readonly<{
                 rejectUnauthorized: true;
@@ -128,7 +128,11 @@ export function createGlobalFetchRuntime(): PluginHttpRuntimeAdapter {
         dispatcher, timeout: false,
                 ...(nativeTlsValidation ? { tls: nativeTlsValidation } : {}),
             } satisfies RequestInit & { dispatcher: typeof dispatcher; timeout: false; tls?: typeof nativeTlsValidation };
-      const response = await globalThis.fetch(request.url, init);
+      // Node's native fetch can use a different dispatcher ABI than this package.
+      // Bun owns the native TLS callback above and ignores the Undici dispatcher.
+      const response = process.versions.bun
+        ? await globalThis.fetch(request.url, init)
+        : await fetchWithDispatcher(request.url, { ...init, body: request.body });
             return { response, requestAbort, tlsPeer, dispose };
         } catch (error) { await dispose(); throw error; }
   };

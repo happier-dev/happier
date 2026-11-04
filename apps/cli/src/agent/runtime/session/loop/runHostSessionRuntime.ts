@@ -1,9 +1,7 @@
+import { resolveSessionMcpNativeLaunchMaterial } from '@/mcp/runtime/sessionMcpNativeLaunchMaterial';
 import { qualifyMcpExecutionSourceForHost, readMcpExecutionSource, refuseMcpExecutionSource } from '@/mcp/runtime/mcpExecutionSource';
 import { randomUUID } from 'node:crypto';
 import { readRunnerAgentSessionBootstrap } from '@/agent/runtime/session/process/runnerAgentSessionBootstrap';
-import { readAgentIsolationNativeIdentity } from '@/daemon/agentIsolation/agentIsolationNativeIdentity';
-import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
-import { requireAgentIsolationMaterialNativeIdentity } from '@/daemon/agentIsolation/agentLaunchMaterials';
 import type { SessionMcpLocalContext } from '@/mcp/runtime/sessionMcpLocalTransport';
 import { SessionStartupInputRefusalError } from '@/agent/runtime/session/input/sessionStartupInputRefusal';
 import { createRepositoryCheckpointCodeRollback } from '@/agent/runtime/checkpoints/repositoryCheckpointPromptLifecycle';
@@ -2824,46 +2822,17 @@ export async function runHostSessionRuntime(
   let nativeMcpRuntime: ReturnType<typeof createSessionMcpStdioRuntime> | undefined;
   let nativeMcpLaunchMaterial: HostSessionRuntimeFactoryParams['mcpLaunchMaterial'];
   const mcpPreparation = traceCapabilityPreparation('mcp_preparation', async () => {
-    const isolatedMaterial = await (async () => {
-      const bootstrapFile = process.env[HAPPIER_AGENT_RUNTIME_RUNNER_BOOTSTRAP_FILE_ENV_KEY];
-      const launch = bootstrapFile
-        ? (await readRunnerAgentSessionBootstrap(bootstrapFile)).launch
-        : undefined;
-      const identity = launch?.agentIsolationMemberIdentity;
-      const runtimeHome = launch?.agentIsolationRuntimeHome;
-      if (identity) {
-        // The private carrier retains a native observation, not Session
-        // authority. Bind it to the same captured birth and canonical Home
-        // used by this Session before granting the payload socket access.
-        const source = await readSessionAgentExecutionSource();
-        if (source.kind !== 'requester' || source.identity.kind !== 'isolated'
-          || !source.hostHomeServerIdentityId
-          || source.hostHomeServerIdentityId !== session.getServerIdentityId()) {
-          return refuseMcpExecutionSource('requester_authority_unavailable');
-        }
-        const nativeIdentity = requireAgentIsolationMaterialNativeIdentity(identity, {
-          ...source.identity, homeServerIdentityId: source.hostHomeServerIdentityId,
-        });
-        if (!runtimeHome || !isCanonicalAbsolutePathInsideRoot(nativeIdentity.home, runtimeHome)) {
-          return refuseMcpExecutionSource('requester_authority_unavailable');
-        }
-        return { identity: nativeIdentity, target: { runtimeHome, memberIdentity: nativeIdentity } };
-      }
-      if (config.machineMetadata.agentIsolation?.enabled === true) {
-        const source = await readSessionAgentExecutionSource();
-        if (source.kind !== 'requester' || source.identity.kind !== 'isolated'
-          || source.identity.separationRequired || !source.hostHomeServerIdentityId
-          || source.hostHomeServerIdentityId !== session.getServerIdentityId()) {
-          return refuseMcpExecutionSource('requester_authority_unavailable');
-        }
-        const nativeIdentity = await readAgentIsolationNativeIdentity(startupRegistrationLifetime.signal);
-        if (runtimeHome && !isCanonicalAbsolutePathInsideRoot(nativeIdentity.home, runtimeHome)) {
-          return refuseMcpExecutionSource('requester_authority_unavailable');
-        }
-        return { identity: nativeIdentity, ...(runtimeHome ? { target: { runtimeHome } } : {}) };
-      }
-      return null;
-    })();
+    const bootstrapFile = process.env[HAPPIER_AGENT_RUNTIME_RUNNER_BOOTSTRAP_FILE_ENV_KEY];
+    const launch = bootstrapFile
+      ? (await readRunnerAgentSessionBootstrap(bootstrapFile)).launch
+      : undefined;
+    const isolationEnabled = config.machineMetadata.agentIsolation?.enabled === true;
+    const isolatedMaterial = await resolveSessionMcpNativeLaunchMaterial({
+      launch, isolationEnabled, homeServerIdentityId: session.getServerIdentityId(),
+      source: launch?.agentIsolationMemberIdentity || launch?.agentIsolationRuntimeHome || isolationEnabled
+        ? await readSessionAgentExecutionSource() : { kind: 'local_user' },
+      signal: startupRegistrationLifetime.signal,
+    });
     const isolatedIdentity = isolatedMaterial?.identity;
     if (isolatedMaterial?.target) nativeMcpRuntime = createSessionMcpStdioRuntime({
       target: isolatedMaterial.target, nativeIdentity: isolatedMaterial.identity,
