@@ -355,6 +355,7 @@ export function installWorkspaceAdmissionProcessAdapter({ launcher, binDir = nul
   const childProcess = createRequire(import.meta.url)('node:child_process');
   const originalSpawn = childProcess.spawn;
   const originalFork = childProcess.fork;
+  const originalExecve = process.execve;
   const canonicalLauncher = join(sourceRoot, 'apps/stack/bin/hstack-exec');
   const custodyModule = join(sourceRoot, 'apps/stack/scripts/utils/proc/proc.mjs');
   const remapCommand = command => command === canonicalLauncher ? launcher : command;
@@ -385,10 +386,12 @@ export function installWorkspaceAdmissionProcessAdapter({ launcher, binDir = nul
   childProcess.spawn = (command, args, options) => originalSpawn(remapCommand(command), Array.isArray(args) ? remapArgs(args) : args, remapOptions(options));
   childProcess.fork = (modulePath, args, options) => originalFork(modulePath,
     Array.isArray(args) ? remapArgs([modulePath, ...args]).slice(1) : args, remapOptions(options));
+  process.execve = (command, args, env) => originalExecve(remapCommand(command), remapArgs(args), remapOptions({ env }).env);
   syncBuiltinESMExports();
   return () => {
     childProcess.spawn = originalSpawn;
     childProcess.fork = originalFork;
+    process.execve = originalExecve;
     syncBuiltinESMExports();
   };
 }

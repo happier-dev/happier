@@ -1,8 +1,9 @@
-import { installWorkspaceAdmissionProcessFixture } from '../../apps/stack/scripts/testkit/core/native_admission_fixture.mjs';
+import { holdNativeAdmissionFixtureMemory, installNativeAdmissionControllerFixture, installWorkspaceAdmissionProcessFixture } from '../../apps/stack/scripts/testkit/core/native_admission_fixture.mjs';
 import { resolveHeavyweightMemoryFloorKiB } from '../../apps/stack/scripts/utils/dev_targets/remote_commands.mjs';
 import * as diagnosticMessages from './commitTypeCoherenceDiagnostics.mjs';
 import assert from 'node:assert/strict';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
+import { once } from 'node:events';
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
@@ -51,7 +52,7 @@ async function checkout(t) {
     git('commit', '--quiet', '-m', `commit ${paths.join(' ')}`);
     return git('rev-parse', 'HEAD').trim();
   };
-  return { repo, write, commitOnly };
+  return { repo, write, commitOnly, git };
 }
 
 test('verdict dependencies omit unrelated modules while retaining configured global and module augmentations', async t => {
@@ -615,6 +616,95 @@ test('a pre-existing error in an unchanged file stays attributed to the base whe
   );
 });
 
+test('direct CLI and imported coherence checks queue together before starting compiler APIs',
+  { skip: process.platform !== 'linux', timeout: 30000 }, async t => {
+    const { repo, write, git } = await checkout(t);
+    const base = git('rev-parse', 'HEAD').trim();
+    await write('producer.ts', 'export const original = 2;\n');
+    git('add', '--', 'producer.ts');
+    const tree = git('write-tree').trim();
+    const native = await installNativeAdmissionControllerFixture(t, repo);
+    const floor = resolveHeavyweightMemoryFloorKiB('compilation');
+    const holder = await holdNativeAdmissionFixtureMemory(t, native,
+      { totalKiB: floor * 3, availableKiB: floor - 1 });
+    const entry = new URL('./checkCommitTypeCoherence.mjs', import.meta.url);
+    const message = join(repo, 'queued-message.txt');
+    await writeFile(message, 'fix: finalize admitted TypeScript packet\n');
+    const trace = join(repo, 'queued-work.jsonl');
+    const preload = join(repo, 'observe-queued-work.mjs');
+    // Observe real module and Git process boundaries before the broker admits the CLI.
+    await writeFile(preload, `
+import { createRequire, registerHooks, syncBuiltinESMExports } from 'node:module';
+import { appendFileSync } from 'node:fs';
+const record = kind => appendFileSync(${JSON.stringify(trace)}, JSON.stringify({ pid: process.pid, kind }) + '\\n');
+registerHooks({ resolve(specifier, context, next) {
+  if (specifier === 'typescript' || specifier === '@typescript/native/sync') record('compiler');
+  return next(specifier, context);
+} });
+const cp = createRequire(import.meta.url)('node:child_process');
+const net = createRequire(import.meta.url)('node:net');
+const write = net.Socket.prototype.write;
+net.Socket.prototype.write = function(data, ...args) {
+  if (typeof data === 'string' && data.startsWith('{')) {
+    try { if (JSON.parse(data).kind === 'acquire') record('admission'); } catch {}
+  }
+  return write.call(this, data, ...args);
+};
+const exec = cp.execFileSync;
+cp.execFileSync = (command, args, options) => {
+  if (command === 'git' && args[0] === 'cat-file') record('blob');
+  return exec(command, args, options);
+};
+syncBuiltinESMExports();
+`);
+    const commands = [
+      [fileURLToPath(entry), `--base=${base}`, `--tree=${tree}`, `--message-file=${message}`],
+      ['--input-type=module', '-e', `import { checkCommitTypeCoherence } from ${JSON.stringify(entry.href)};
+        const result = checkCommitTypeCoherence({ repo: process.cwd(), base: ${JSON.stringify(base)}, tree: ${JSON.stringify(tree)} });
+        if (result.fresh.length || result.unowned.length) process.exitCode = 1;`],
+    ];
+    const jobs = commands.map(args => {
+      const child = spawn(process.execPath, args, { cwd: repo,
+        env: { ...native.env, CI: '', NODE_OPTIONS: `${native.env.NODE_OPTIONS ?? ''} --import=${pathToFileURL(preload).href}` } });
+      const closed = once(child, 'close');
+      let output = '';
+      child.stdout.on('data', chunk => { output += chunk; });
+      child.stderr.on('data', chunk => { output += chunk; });
+      return { child, closed, output: () => output };
+    });
+    t.after(async () => {
+      for (const job of jobs) {
+        if (job.child.exitCode === null && job.child.signalCode === null) job.child.kill('SIGTERM');
+        await job.closed;
+      }
+    });
+    let status;
+    while (true) {
+      t.signal.throwIfAborted();
+      status = await native.brokerStatus();
+      if (status.waitingCount === 2) break;
+      for (const job of jobs) assert.equal(job.child.exitCode, null,
+        `a direct caller completed instead of waiting for compiler admission: ${job.output()}`);
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+    assert.equal(status.activeCount, 1, 'only the physical-memory holder is admitted');
+    assert.equal(status.queuedMemoryKiB, floor * 2, 'both API invocations reserve the canonical compiler floor');
+    const cliPid = jobs[0].child.pid;
+    const rss = (await readFile(`/proc/${cliPid}/status`, 'utf8')).match(/^VmRSS:\s+(\d+) kB$/mu)?.[1];
+    t.diagnostic(`queued TS CLI pid=${cliPid} RSS=${rss} KiB`);
+    const queued = (await readFile(trace, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+    assert.equal(queued.filter(event => event.pid === cliPid && event.kind !== 'admission').length, 0,
+      'plain TS CLI does zero compiler module loads and zero Git blob reads before admission');
+    assert.equal(queued.filter(event => event.kind === 'admission').length, 2, 'one reservation request per caller');
+    await holder.release();
+    for (const job of jobs) assert.deepEqual(await job.closed, [0, null], job.output());
+    assert.match(jobs[0].output(), /^committed [0-9a-f]+:/mu, 'the admitted TS packet reaches finalization');
+    const completed = (await readFile(trace, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+    assert.equal(completed.filter(event => event.kind === 'admission').length, 2, 'the admitted API never reserves a second slot');
+    assert.ok(completed.some(event => event.kind === 'compiler'), 'admitted work loads the compiler');
+    assert.ok(completed.some(event => event.kind === 'blob'), 'admitted work reads the Git tree');
+  });
+
 test('zero-source packets finalize with zero compiler loads and zero admission requests', { skip: process.platform !== 'linux' }, async t => {
   const { repo, write, commitOnly } = await checkout(t);
   const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
@@ -680,6 +770,14 @@ registerHooks({ resolve(specifier, context, next) {
   assert.notEqual(refused.status, 0, 'the relevant packet must reach real capacity admission');
   assert.match(refused.stderr, /HSTACK_MEMORY_CAPACITY/u);
   assert.doesNotMatch(refused.stdout, /coherent/u, 'refused compilation cannot publish a verdict');
+  const refusedEvents = (await readFile(trace, 'utf8')).trim().split('\n');
+  assert.ok(!refusedEvents.includes('compiler'), 'capacity refusal precedes compiler loading');
+  assert.ok(refusedEvents.includes('admission'), 'the TS packet reaches real admission');
+  await native.setMemoryObservation({ availableMemoryKiB: floor * 2, totalMemoryKiB: floor * 2 });
+  const admitted = spawnSync(process.execPath, [fileURLToPath(sourceEntry), `--base=${compileBase}`, `--tree=${compileTree}`], {
+    cwd: repo, env: { ...native.env, CI: '' }, encoding: 'utf8',
+  });
+  assert.equal(admitted.status, 0, admitted.stderr + admitted.stdout);
   const observed = (await readFile(trace, 'utf8')).trim().split('\n');
   assert.ok(observed.includes('compiler'), 'positive control observes compiler loading');
   assert.ok(observed.includes('admission'), 'positive control observes a real admission request');

@@ -4,15 +4,15 @@
 // file membership, as they exist in that tree rather than in the worktree. Reports only diagnostics
 // that the base tree does not already have.
 //
-//   ./apps/stack/bin/hstack-exec --local -- node scripts/workspaces/checkCommitTypeCoherence.mjs --base=<rev> --tree=<tree-ish>
+//   node scripts/workspaces/checkCommitTypeCoherence.mjs --base=<rev> --tree=<tree-ish>
 //   ... --base=<head> --tree=<private-tree> --message-file=<file>  (check, replay if needed, CAS commit)
-//   ./apps/stack/bin/hstack-exec --local -- node scripts/workspaces/checkCommitTypeCoherence.mjs <commit>...  (each against its first parent)
+//   node scripts/workspaces/checkCommitTypeCoherence.mjs <commit>...     (each against its first parent)
 //
 // Exit status: 0 coherent, 1 new diagnostics or unowned sources, 2 usage or runtime failure. It reads Git objects, so it
-// runs on the machine that owns the repository. TS packets require the local wrapper above:
-// the plain CLI loads compiler modules and Git blobs before its API launcher enters admission.
-// Zero-TS packets use plain `node scripts/workspaces/checkCommitTypeCoherence.mjs ...`:
-// the changed-source owner returns before compiler loading or admission, including finalization.
+// runs directly on the machine that owns the repository. The changed-source owner returns before
+// compiler loading or admission for zero-TS packets, including finalization. For TS packets the
+// Unix CLI replaces itself with canonical shell admission before loading compiler modules or blobs;
+// the admitted checker and its API launcher reuse that reservation. Native Windows keeps its API path.
 // Every compiler API, including imported and plain Node calls, uses the executor's
 // canonical admission. Admitted parents retain their reservation for this phase.
 //
@@ -375,7 +375,7 @@ function repository(repo) {
   };
 }
 
-export function checkCommitTypeCoherence({ repo, base, tree, onlyGroups }) {
+export function checkCommitTypeCoherence({ repo, base, tree, onlyGroups, beforeCompiler }) {
   const started = Date.now();
   const git = repository(repo);
   base = git.gitText(['rev-parse', '--verify', base]).trim();
@@ -384,6 +384,7 @@ export function checkCommitTypeCoherence({ repo, base, tree, onlyGroups }) {
   const changed = slice.filter(({ path }) => TYPESCRIPT_SOURCE.test(path));
   const result = { base, tree, changed: changed.length, roots: 0, unowned: [], fresh: [], groups: [], candidates: [] };
   if (changed.length === 0) return { ...result, ms: Date.now() - started };
+  beforeCompiler?.();
   ts ??= require('typescript');
   const { API } = require('@typescript/native/sync');
   const treeIndex = git.treeEntries(tree);
@@ -685,8 +686,17 @@ function main(argv) {
     return 2;
   }
   let incoherent = 0;
+  // This marker selects the re-entered CLI body; the API launcher still owns admission.
+  // Replacing the process releases its heap while the canonical launcher queues.
+  const beforeCompiler = process.platform === 'win32' || argv.includes('--compiler-admitted') ? undefined : () => {
+    const launcher = fileURLToPath(new URL('../../apps/stack/bin/hstack-exec', import.meta.url));
+    process.execve(launcher, [launcher, '--heavyweight-admission', '--class=compilation',
+      `--machine=${process.env.HAPPIER_DEV_TARGET_EXECUTION === '1' ? 'worker' : 'local'}`,
+      '--exec-admitted', '--', process.execPath, ...process.execArgv, fileURLToPath(import.meta.url),
+      '--compiler-admitted', ...argv], process.env);
+  };
   for (const target of targets) {
-    const result = checkCommitTypeCoherence({ repo, ...target });
+    const result = checkCommitTypeCoherence({ repo, ...target, beforeCompiler });
     const verdict = result.fresh.length || result.unowned.length ? 'INCOHERENT' : 'coherent';
     console.log(
       `${verdict} ${target.label}: changed=${result.changed} roots=${result.roots} new=${result.fresh.length} unowned=${result.unowned.length} ${(result.ms / 1000).toFixed(1)}s`,

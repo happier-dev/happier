@@ -133,7 +133,7 @@ Check type resolution for every packet that changes TypeScript, on the private t
 
 ```bash
 tree=$(GIT_INDEX_FILE="$idx" git write-tree)
-./apps/stack/bin/hstack-exec --local -- node scripts/workspaces/checkCommitTypeCoherence.mjs --base="$head" --tree="$tree"
+node scripts/workspaces/checkCommitTypeCoherence.mjs --base="$head" --tree="$tree"
 ```
 
 It type-checks the changed files and their direct importers as they exist in that tree, with the Microsoft compiler, and prints only diagnostics the base tree does not already have. Exit 1 means the slice is incoherent: add the missing producer or importer hunks, or drop the consumer, and rerun. It runs locally because it reads the Git object store, which worker replicas do not carry. Before a push, run it once with `--base=<remote tip> --tree=HEAD`, then pass commit ids to attribute any finding. It is a slice check, not the package typecheck: when a packet changes a barrel that other packages consume, a package's exports or tsconfig, or the check cannot run, run the touched packages' typecheck at the exact commit on a basis worktree through `hstack-exec --repo` (see `happier-remote-work`).
@@ -146,7 +146,7 @@ Check for accidental secrets and objects that violate the remote's file-size pol
 
 Do not claim a test or typecheck passed unless it ran. A coherent commit may proceed with a known unrelated failing check or unavailable saturated test environment only when the limitation is evidenced, unaffected, and disclosed. Do not repeatedly launch checks known to be infrastructure-blocked; continue independent packets and retry at a useful wave boundary.
 
-TypeScript packets must enter local admission through `hstack-exec --local` before the checker starts. The plain CLI currently loads compiler modules and Git blobs before its API launcher queues. Zero-TS packets use direct `node scripts/workspaces/checkCommitTypeCoherence.mjs ...`, including `--message-file` finalization, to retain the compiler-free fast path. The API launcher inherits an enclosing admission reservation; it does not reserve a second slot.
+Use direct `node scripts/workspaces/checkCommitTypeCoherence.mjs ...` for every packet, including `--message-file` finalization. The Git-only changed-source decision keeps zero-TS packets compiler-free. For TS packets on Unix hosts, the CLI replaces itself with canonical shell admission before loading compiler modules or Git blobs, releasing its heap while queued. The re-entered checker and API launcher inherit that reservation rather than reserving a second slot. Native Windows retains its existing native API path.
 
 ## 8. Commit from a private index
 

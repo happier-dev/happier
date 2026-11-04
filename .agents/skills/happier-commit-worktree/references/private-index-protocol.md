@@ -75,7 +75,7 @@ Then create the tree and use the checker-owned finalizer to prove it type-resolv
 
 ```bash
 tree=$(GIT_INDEX_FILE="$idx" git write-tree)
-finalization=$(./apps/stack/bin/hstack-exec --local -- node scripts/workspaces/checkCommitTypeCoherence.mjs --base="$head" --tree="$tree" --message-file=/tmp/happier-commit-message.txt) || exit "$?"
+finalization=$(node scripts/workspaces/checkCommitTypeCoherence.mjs --base="$head" --tree="$tree" --message-file=/tmp/happier-commit-message.txt) || exit "$?"
 printf '%s\n' "$finalization"
 commit=$(printf '%s\n' "$finalization" | sed -n 's/^committed \([0-9a-f]*\):.*/\1/p')
 git show --no-patch --format=fuller "$commit"
@@ -83,7 +83,7 @@ git show --no-patch --format=fuller "$commit"
 
 Verify the current-user identity and complete commit-specific co-authors in the message before invoking the finalizer, and inspect the created object with `git show --no-patch --format=fuller "$commit"` afterwards. The finalizer uses ordinary `git commit-tree` configuration, including configured signing; required hook-equivalent checks remain the caller's responsibility.
 
-For TS packets, use the local wrapper above on the Git-owning machine. The plain CLI currently loads compiler modules and Git blobs before its API launcher queues, so TS packets need admission before process startup. The API launcher inherits that reservation rather than reserving a second slot. For zero-TS packets, omit `./apps/stack/bin/hstack-exec --local --` and invoke `node` directly: the existing changed-source decision skips compiler loading and admission, including replay and finalization.
+Invoke the checker directly on the Git-owning machine for every packet. The Git-only changed-source decision skips compiler loading and admission for zero-TS packets, including replay and finalization. On Unix hosts, TS packets replace the CLI with canonical shell admission before loading compiler modules or Git blobs, so the CLI heap is released while queued. The admitted checker and API launcher reuse that reservation; an outer wrapper is unnecessary. Native Windows retains its existing native API path.
 
 The message file contains the complete subject, blank line, and body. Remove it after use if it contains no information worth retaining; do not create message files inside the repository.
 
