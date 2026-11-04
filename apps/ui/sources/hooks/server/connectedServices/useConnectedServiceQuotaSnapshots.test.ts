@@ -4,6 +4,9 @@ vi.mock('socket.io-client', async (importOriginal) =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 import { act } from 'react-test-renderer';
 import { QualifiedConnectedAccountGroupV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
+import { sealLegacyConnectedServiceQuotaSnapshotFixtureCiphertext } from '@happier-dev/protocol/testing/accountScopedCipherFixtures';
+import { isLegacyAuthCredentials } from '@/auth/storage/tokenStorage';
+import { decodeBase64 } from '@/encryption/base64';
 import { flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { storage } from '@/sync/domains/state/storageStore';
@@ -70,26 +73,43 @@ describe('useConnectedServiceQuotaSnapshots credential authority', () => {
     });
 
     it.each(['token', 'secret'] as const)('refetches and rejects an old in-flight read when %s changes', async field => {
+        if (field === 'secret') {
+            await boundary.dispose();
+            boundary = await createLegacyQuotaTestHarness({ accountMode: 'e2ee' });
+        }
+        const response = (meterId: string) => {
+            const snapshot = makeQuotaSnapshot({ serviceId: 'anthropic', meterId });
+            const credentials = boundary.account.credentials;
+            if (!isLegacyAuthCredentials(credentials)) return plainQuotaResponse(snapshot);
+            return Response.json({ sealed: { format: 'account_scoped_v1',
+                ciphertext: sealLegacyConnectedServiceQuotaSnapshotFixtureCiphertext({
+                    material: { type: 'legacy', secret: decodeBase64(credentials.secret, 'base64url') },
+                    payload: snapshot, randomBytes: length => new Uint8Array(length).fill(6),
+                }) }, metadata: { fetchedAt: snapshot.fetchedAt, staleAfterMs: snapshot.staleAfterMs, status: 'ok' } });
+        };
+        const read = field === 'secret' ? boundary.sealedRead : boundary.plainRead;
         const held = createDeferredResponse();
-        boundary.plainRead.mockImplementationOnce(() => held.promise);
+        read.mockImplementationOnce(() => held.promise);
         const { useConnectedServiceQuotaSnapshots } = await import('./useConnectedServiceQuotaSnapshots');
         const hook = await renderHook(() => useConnectedServiceQuotaSnapshots([{ serviceId: 'anthropic', profileId: 'work' }]), { wrapper: Wrapper });
         await flushHookEffects({ cycles: 8, turns: 8 });
-        expect(boundary.plainRead).toHaveBeenCalledTimes(1);
+        expect(read).toHaveBeenCalledTimes(1);
+        const oldResponse = response('old-credential');
         const nextCredentials = field === 'token'
             ? { ...stableCredentials, token: stableCredentials.token + '-renewed' }
-            : { ...stableCredentials, secret: Buffer.from(new Uint8Array(32).fill(4)).toString('base64url') };
+            : { ...boundary.account.credentials, secret: Buffer.from(new Uint8Array(32).fill(4)).toString('base64url') };
         const basis = getActiveServerSnapshot();
         // InjectedAuthProvider is the real controlled-credential boundary. Keep
         // Home generation fixed so reconnect invalidation cannot prove this test.
         boundary.account.credentials = nextCredentials;
-        boundary.plainRead.mockImplementation(async () => plainQuotaResponse(makeQuotaSnapshot({ serviceId: 'anthropic', meterId: 'new-credential' })));
+        read.mockImplementation(async () => response('new-credential'));
         await hook.rerender(); await flushHookEffects({ cycles: 8, turns: 8 });
         expect(getActiveServerSnapshot()).toEqual(basis);
-        expect(boundary.plainRead).toHaveBeenCalled();
-        expect(new Headers(boundary.plainRead.mock.lastCall?.[1]?.headers).get('Authorization')).toBe(`Bearer ${nextCredentials.token}`);
-        expect(hook.getCurrent().snapshotsByKey['anthropic/work']?.meters[0]?.meterId).toBe('new-credential');
-        await act(async () => { held.resolve(plainQuotaResponse(makeQuotaSnapshot({ serviceId: 'anthropic', meterId: 'old-credential' }))); });
+        expect(read).toHaveBeenCalled();
+        expect(new Headers(read.mock.lastCall?.[1]?.headers).get('Authorization')).toBe(`Bearer ${nextCredentials.token}`);
+        expect(hook.getCurrent().snapshotsByKey['anthropic/work']?.meters[0]?.meterId,
+            JSON.stringify(hook.getCurrent().errorsByKey)).toBe('new-credential');
+        await act(async () => { held.resolve(oldResponse); });
         await flushHookEffects({ cycles: 8, turns: 8 });
         expect(hook.getCurrent().snapshotsByKey['anthropic/work']?.meters[0]?.meterId).toBe('new-credential');
         expect(hook.getCurrent().loadingByKey['anthropic/work']).toBe(false);

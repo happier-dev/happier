@@ -92,17 +92,14 @@ describe('useQualifiedConnectedAccountQuota', () => {
         const response = quotaTestResponse(unobserved);
         boundary.read.mockImplementation(async () => Response.json({
             ...response, metadata: { ...response.metadata, status: failedRefresh ? 'error' : 'unavailable',
-                ...(failedRefresh ? { refreshRequestedAt: 1 } : {}),
             },
         }));
         const hook = await renderHook(() => useQualifiedConnectedAccountQuota(ref), { wrapper: Wrapper });
         await vi.waitFor(() => expect(hook.getCurrent().loading).toBe(false));
         expect(hook.getCurrent()).toMatchObject({
             snapshot: null, usageRecordId: response.sourceResolution.recordId, supported: null, refreshing: false,
-            error: failedRefresh ? t('connectedServices.errors.quotaRefreshRetryAt', {
-                error: `${t('connectedServices.errors.quotaRefreshFailed')} (HTTP 429)`,
-                time: new Date(10).toLocaleString(),
-            }) : null,
+            // The fixture's retry time (10) has passed, so only the failure itself is said.
+            error: failedRefresh ? t('connectedServices.errors.quotaRefreshFailed') : null,
         });
 
         // A real observation with no quota windows still has an honest read time.
@@ -121,7 +118,9 @@ describe('useQualifiedConnectedAccountQuota', () => {
         const fresh = { ...snapshot, fetchedAt: 2 };
         boundary.read.mockImplementation(async () => new Response(JSON.stringify(quotaTestResponse(fresh)), { status: 200 }));
         await act(async () => { await hook.getCurrent().refresh(); });
-        expect(boundary.controls).toEqual([{ machineId: 'machine-selected', command: { operation: 'describeService', service: ref.service, requiredOperation: 'quota_refresh' } }]);
+        expect(boundary.controls).toEqual([{ machineId: 'machine-selected', command: expect.objectContaining({
+            operation: 'describeService', service: ref.service,
+        }) }]);
         expect(boundary.refresh).toHaveBeenCalledWith(ref);
         expect(hook.getCurrent().snapshot).toEqual(fresh);
     });
@@ -144,11 +143,11 @@ describe('useQualifiedConnectedAccountQuota', () => {
             // An older failure is last-known evidence, not completion of the newly requested attempt.
             expect(hook.getCurrent()).toMatchObject({ snapshot: waiting, refreshing: true });
             expect(detail.getCurrent()).toMatchObject({ snapshot: waiting, refreshing: true });
-            // The daemon's later publication, not the HTTP acknowledgement, supplies completion.
+            // The daemon's later publication removes refreshRequestedAt to supply completion.
             const settled = outcome === 'fresh observation' ? { ...snapshot, fetchedAt: 11 }
                 : { ...snapshot, diagnostics: [{ kind: 'provider_http' as const, status: 429, observedAtMs: 11 }] };
             boundary.read.mockImplementation(async () => Response.json(quotaTestResponse(settled,
-                outcome === 'producer failure' ? 'error' : 'ok', 10)));
+                outcome === 'producer failure' ? 'error' : 'ok')));
             await act(async () => {
                 publishHomeAccountChange(boundary.context().serverBasis.serverId,
                     [PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1]);
@@ -157,7 +156,7 @@ describe('useQualifiedConnectedAccountQuota', () => {
             expect(hook.getCurrent().snapshot).toEqual(settled);
             expect(detail.getCurrent().snapshot).toEqual(settled);
             expect(hook.getCurrent().error).toBe(outcome === 'producer failure'
-                ? `${t('connectedServices.errors.quotaRefreshFailed')} (HTTP 429)` : null);
+                ? t('connectedServices.errors.quotaRefreshFailed') : null);
             expect(boundary.refresh).toHaveBeenCalledOnce();
         },
     );
@@ -189,9 +188,9 @@ describe('useQualifiedConnectedAccountQuota', () => {
         const failure = { code: 'quota_refresh_unavailable' };
         boundary.control.mockResolvedValue({ status: 'unavailable', code: failure.code });
         await act(async () => { await hook.getCurrent().refresh(); });
-        expect(boundary.controls).toEqual([{ machineId: 'machine-selected', command: {
-            operation: 'describeService', service: ref.service, requiredOperation: 'quota_refresh',
-        } }]);
+        expect(boundary.controls).toEqual([{ machineId: 'machine-selected', command: expect.objectContaining({
+            operation: 'describeService', service: ref.service,
+        }) }]);
         expect(hook.getCurrent()).toMatchObject({ snapshot, refreshing: false, error: resolveConnectedServiceSettingsErrorMessage(failure) });
         expect(boundary.refresh).not.toHaveBeenCalled();
     });

@@ -11,6 +11,7 @@ import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { updateEffectiveHomeViewState } from '@/sync/domains/server/selection/homeViewSelectionState';
 import { storage } from '@/sync/domains/state/storageStore';
 import { createQualifiedQuotaTestHarness } from './qualifiedConnectedAccountQuotaTestHarness';
+import { createAccountEncryptionCurrentnessFixtureForCredentials } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 
 vi.mock('socket.io-client', async importOriginal => (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
@@ -21,7 +22,6 @@ installDisconnectedServerSocketBoundary();
 export type ProfileRef = Readonly<{ serviceId: string; profileId: string }>;
 export const stableCredentials = {
     token: 'e30.' + Buffer.from(JSON.stringify({ sub: 'quota-account' })).toString('base64url') + '.signature',
-    secret: Buffer.from(new Uint8Array(32).fill(3)).toString('base64url'),
 } as const;
 
 export function plainQuotaResponse(snapshot: ConnectedServiceQuotaSnapshotV1 | null): Response {
@@ -37,13 +37,20 @@ export async function createLegacyQuotaTestHarness(options: Readonly<{
     serverUrl?: string;
     serverIdentityId?: string;
 }> = {}) {
+    const credentials = options.credentials ?? (options.accountMode === 'e2ee'
+        ? { ...stableCredentials, secret: Buffer.from(new Uint8Array(32).fill(3)).toString('base64url') }
+        : stableCredentials);
+    let account: { credentials: AuthCredentials } | undefined;
     const modeRead = vi.fn(async (): Promise<Response> => Response.json({ mode: options.accountMode ?? 'plain', updatedAt: 0 }));
     const plainRead = vi.fn(async (ref: ProfileRef, _init?: RequestInit): Promise<Response> => plainQuotaResponse(makeQuotaSnapshot({ serviceId: ref.serviceId as 'anthropic' | 'openai-codex' })));
     const sealedRead = vi.fn(async (_ref: ProfileRef, _init?: RequestInit): Promise<Response> => new Response('{}', { status: 404 }));
     const refreshRead = vi.fn(async (_ref: ProfileRef, _version: string): Promise<Response> => Response.json({ success: true }));
-    const boundary = await createQualifiedQuotaTestHarness({ ...options, credentials: options.credentials ?? stableCredentials,
+    const boundary = await createQualifiedQuotaTestHarness({ ...options, credentials,
         qualifiedAccountsProtocol: null, request: async (input, init) => {
             const url = new URL(String(input));
+            if (url.pathname === '/v1/account/encryption/currentness') {
+                return Response.json(createAccountEncryptionCurrentnessFixtureForCredentials(account?.credentials ?? credentials));
+            }
             if (url.pathname === '/v1/account/encryption') return modeRead();
             const match = /^\/(v2|v3)\/connect\/([^/]+)\/profiles\/([^/]+)\/quotas(\/refresh)?$/.exec(url.pathname);
             if (!match) return null;
@@ -52,6 +59,7 @@ export async function createLegacyQuotaTestHarness(options: Readonly<{
             return match[1] === 'v3' ? plainRead(ref, init) : sealedRead(ref, init);
         },
     });
+    account = boundary.account;
     boundary.control.mockImplementation(async service => ({
         status: 'described', service,
         descriptor: { id: service.localId, title: 'Predecessor service', authentication: { defaultModeId: 'manual', modes: [{
