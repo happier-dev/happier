@@ -1100,7 +1100,7 @@ export function useVoiceConversationsReadinessModel(props: {
               detail: shown.need ?? translateVoiceReadiness(shown.readiness.reasonKey, { service: resolveServiceTitle(serviceRows) }),
             },
         selected: serviceRows.some((row) => row.selected),
-        disabled: !serviceRows.some((row) => row.selectable),
+        disabled: !serviceRows.some((row) => row.selected || row.selectable),
         testID: `settings.voice.provider.${encodeURIComponent(shown.providerId)}.${encodeURIComponent(shown.optionId)}`,
       };
     }),

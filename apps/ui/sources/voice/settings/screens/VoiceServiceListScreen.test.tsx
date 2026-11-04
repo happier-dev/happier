@@ -18,6 +18,24 @@ vi.mock('expo-router', async () => {
 });
 
 describe('VoiceServiceListScreen', () => {
+  it('keeps the selected service enabled with its selection even when it cannot be selected again', async () => {
+    const voice = { ...settingsDefaults.voice, providerId: 'local_conversation' };
+    const account = await createVoiceSettingsAccountTestHarness({ ...settingsDefaults, voice });
+    try {
+      const hook = await renderHook(() => useVoiceConversationsReadinessModel({
+        voice, setVoice: () => {}, happierVoiceSupported: false,
+      }), { wrapper: ({ children }) => <AuthProvider initialCredentials={account.credentials}>{children}</AuthProvider> });
+      try {
+        expect(hook.getCurrent().serviceTiles.find(tile => tile.id === 'local_conversation'))
+          .toMatchObject({ selected: true, disabled: false });
+      } finally {
+        await hook.unmount();
+      }
+    } finally {
+      await account.dispose();
+    }
+  });
+
   it('does not recompute service readiness for unrelated Account settings but observes its credential roots', async () => {
     getPersistenceStorage().clearAll();
     const account = await createVoiceSettingsAccountTestHarness(settingsDefaults);
