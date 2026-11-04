@@ -110,6 +110,7 @@ Uncertainty is an investigation task, not a reason to skip in-scope work. Classi
 ## 7. Implement through a valid test and real path
 
 - Use `.agents/skills/happier-testing`. Production behavior changes require meaningful RED for the intended observable contract, minimal coherent GREEN, then refactoring with tests green.
+- When an approved decision changes behaviour, apply [happier-testing's same-change expectation rule](../happier-testing/SKILL.md#workflow), citing that decision; obsolete expectations escaped in glass, Machine badge, Share and picker/read-count tests (UI refinements, 2026-11-04).
 - Mock only genuine system boundaries; keep internal domain behavior real.
 - Implement through the canonical/public owner boundary and a consumed path, not a dormant horizontal spine.
 - Add a consumer only with its producer's export, schema, migration, registration or declaration available. For removals/renames of shared exports, specs and Actions, migrate consumers first and remove the producer last in one atomic edit batch; retain temporary compatibility exports if work must stop midway. Before ending each such batch, run `pnpm check:entry-loads` (hstack-exec AUTO) for fresh-process loads of changed Protocol/SDK modules and shipped entry graphs (daemon, CLI, server, UI catalog and SDK browser); report results or missing graph coverage. Incident basis: `.project/plans/2026-10-29-program-census/RESUME-DECISIONS.md` §2 (10-29 shared-package load break).
