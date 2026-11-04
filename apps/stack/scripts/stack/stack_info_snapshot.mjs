@@ -33,6 +33,7 @@ import { buildBorrowedExpoUiUrl, isBorrowedExpoConsumer, resolveBorrowedExpoRunt
 import { inspectWorkspaceQaStalePackagesForComponent } from '../../../../scripts/workspaces/ensureWorkspacePackagesBuilt.mjs';
 import { readJsonIfExists } from '../utils/fs/json.mjs';
 import { readPendingSourcePreparation } from '../runtime/shared/pending_source_start.mjs';
+import { readStackDaemonParticipants } from './daemon_participants.mjs';
 
 const readExistingEnv = readTextOrEmpty;
 
@@ -528,6 +529,11 @@ export async function readStackInfoSnapshot({
     selected: runtimeState?.sourceRuntimeLaunch?.entrypoint ?? null,
     loaded: daemonRunning ? observedDaemon.daemonState?.runtimeEntrypoint ?? null : null,
   };
+  const daemonParticipants = !sourceSnapshot ? undefined : remoteDaemon.target
+    ? remoteTargets[remoteDaemon.target]?.daemonParticipants ?? null
+    : await readStackDaemonParticipants({ stackName, stackBaseDir: baseDir, runtimeState,
+      cliHomeDir: join(baseDir, 'cli'), serverUrl: internalServerUrl, env: stackScopedEnv,
+      defaultObservation: observedDaemon.daemonState, selected: sourceRuntimeIdentities?.daemon?.selected ?? null });
 
   return {
     ok: true,
@@ -543,6 +549,7 @@ export async function readStackInfoSnapshot({
     runtime: {
       managedCli,
       daemonEntry,
+      ...(sourceSnapshot ? { daemonParticipants } : {}),
       script: typeof runtimeState?.script === 'string' ? runtimeState.script : null,
       ownerPid: Number.isFinite(ownerPid) && ownerPid > 1 ? ownerPid : null,
       runningPid: Number.isFinite(runningPid) && runningPid > 1 ? runningPid : null,

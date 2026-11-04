@@ -3,9 +3,10 @@ export function projectStackReloadVerification({ info, beforeManagedCli, auth, r
   const runtime = info?.runtime;
   const hasBaseline = beforeManagedCli?.status === 'installed' && Boolean(beforeManagedCli.binaryPath);
   const baseline = hasBaseline ? {} : { baseline: 'unavailable' };
-  const notReady = (check, evidence) => ({ status: 'NOT_READY', check, evidence, ...baseline });
+  const participants = runtime && Object.hasOwn(runtime, 'daemonParticipants') ? { participants: runtime.daemonParticipants } : {};
+  const notReady = (check, evidence) => ({ status: 'NOT_READY', check, evidence, ...baseline, ...participants });
   if (failure) {
-    const reason = failure.error?.actions?.finalization?.reason;
+    const reason = failure.error?.reason ?? failure.error?.actions?.finalization?.reason;
     return notReady(failure.check, {
       code: failure.error?.code ?? null,
       ...(reason ? { reason } : {}),
@@ -33,6 +34,10 @@ export function projectStackReloadVerification({ info, beforeManagedCli, auth, r
   if (runtime.components?.daemon?.running !== true) {
     return notReady('control', { status: runtime.components?.daemon?.status ?? 'unavailable' });
   }
+  if (runtime.daemonParticipants === null) return notReady('participants', { reason: 'participant_source_unknown' });
+  for (const participant of runtime.daemonParticipants ?? []) {
+    if (participant.reason) return notReady(`participant:${participant.identity}`, participant);
+  }
   if (auth?.authenticated !== true) return notReady('auth', { authenticated: false });
   if (runtime.health?.status !== 'healthy') {
     return notReady('readiness', { status: runtime.health?.status ?? 'unavailable', issues: runtime.health?.issues ?? [] });
@@ -45,7 +50,7 @@ export function projectStackReloadVerification({ info, beforeManagedCli, auth, r
   if (info.urls?.uiUrl && render?.status !== 'ready') {
     return notReady('render', { status: render?.status ?? 'pending' });
   }
-  return { status: 'READY', ...baseline, identities: runtime.sourceRuntimeIdentities ?? {
+  return { status: 'READY', ...baseline, ...participants, identities: runtime.sourceRuntimeIdentities ?? {
     snapshot: { selected: runtime.selectedSnapshotId, loaded: runtime.loadedSnapshotId },
   }, managedCli: afterManagedCli, render: info.urls?.uiUrl ? render : { status: 'disabled' } };
 }

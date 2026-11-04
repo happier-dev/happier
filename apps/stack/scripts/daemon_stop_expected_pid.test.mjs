@@ -60,7 +60,7 @@ for (const liveness of ['retired', 'alive', 'inconclusive']) {
         assert.throws(() => kill(daemonPid, 0), { code: 'ESRCH' });
         daemonPid = null;
       } else {
-        await assert.rejects(stop, { code: 'daemon_stop_incomplete' });
+        await assert.rejects(stop, { code: 'daemon_stop_incomplete', reason: 'daemon_liveness_inconclusive' });
         assert.doesNotThrow(() => kill(daemonPid, 0));
       }
     } finally {

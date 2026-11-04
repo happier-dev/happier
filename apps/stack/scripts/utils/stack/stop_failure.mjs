@@ -5,6 +5,7 @@ export function describeStackRuntimeCleanupFailure(actions) {
 }
 
 export function createStackRuntimeCleanupIncompleteError(actions, { stackName = actions.stackName ?? 'stack', restart = false } = {}) {
+  const daemonFailure = actions.errors?.find(failure => failure.step === 'daemon' && failure.code === 'daemon_stop_incomplete');
   const sessionsRemain = actions.finalization?.reason === 'session_cleanup_incomplete'
     || actions.daemonSessionsStopped?.ok === false;
   const recovery = actions.stopAuthorization?.authorized === false || actions.finalization?.reason === 'successor_state'
@@ -16,6 +17,8 @@ export function createStackRuntimeCleanupIncompleteError(actions, { stackName = 
     `[stack] ${stackName} stop cleanup is incomplete (${describeStackRuntimeCleanupFailure(actions)})`
       + (recovery ? `. Recovery: ${recovery}` : ''),
   ), {
-    code: 'ESTACKRUNTIMECLEANUPINCOMPLETE', phase: 'stop', retryable: false, recovery, actions,
+    code: 'ESTACKRUNTIMECLEANUPINCOMPLETE',
+    ...(daemonFailure?.reason ? { reason: daemonFailure.reason } : {}),
+    phase: 'stop', retryable: false, recovery, actions,
   });
 }

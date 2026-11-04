@@ -770,7 +770,8 @@ async function stopStackWithEnvInternal({
       });
       actions.daemonStopped = true;
     } catch (e) {
-      actions.errors.push({ step: 'daemon', error: e instanceof Error ? e.message : String(e) });
+      actions.errors.push({ step: 'daemon', error: e instanceof Error ? e.message : String(e),
+        ...(e?.code ? { code: e.code } : {}), ...(e?.reason ? { reason: e.reason } : {}) });
       cleanupResults.push({ ok: false, step: 'daemon', reason: 'cleanup_unconfirmed' });
     }
   }

@@ -50,7 +50,8 @@ export async function observeRemoteSourceRuntime({ stackName, baseDir, runtimeSt
     }
     remoteTargets[name] = { ...previous, serviceStatus, sourceRuntimeIdentities,
       ...(services.daemon ? { managedCli: observed?.managedCli ?? null } : {}),
-      ...(services.daemon ? { daemonEntry: observed?.daemonEntry ?? null } : {}) };
+      ...(services.daemon ? { daemonEntry: observed?.daemonEntry ?? null } : {}),
+      ...(services.daemon ? { daemonParticipants: observed?.daemonParticipants ?? null } : {}) };
   }));
   return { ...runtimeState, remoteTargets };
 }

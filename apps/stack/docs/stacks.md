@@ -252,6 +252,12 @@ node ./apps/stack/scripts/repo_local.mjs stack info exp1 --json
 
 This follows the observed daemon host, synchronizes its source mirror, selects the current daemon bundle, and uses authenticated `/restart` with an empty body to preserve Session runners. It does not restart the server or UI. Require the daemon's selected source identity to equal its loaded identity and actual readiness. The incumbent must already include the source-selection resolver; older loaded daemons need one owner-controlled initial load before this command can load newer source through `/restart`.
 
+Source reload verification also reports `participants`: the default daemon and named CLI identities recorded by the Stack daemon lifecycle commands. Each running participant reports its loaded bundle identity and source-capture time. A different selected bundle yields `participant_source_stale`; missing bundle evidence yields `participant_source_unknown`; unavailable control yields `participant_unavailable`. These make the verdict `NOT_READY`. An identity deliberately stopped by its owner is exempt only when observed stopped; a still-running participant reports `daemon_stop_incomplete` with its loaded identity and source time. A refused stop retains its typed reason in the reload verdict.
+
+Refresh a named participant with the same command and `--identity=<name>`, then verify the Stack again. A standalone daemon started with a separate home outside Stack commands is not registered with the Stack; its QA owner must refresh it separately. The Stack does not discover external homes or assume their lifecycle ownership.
+
+For an exported-UI-only change, use `node ./apps/stack/scripts/repo_local.mjs stack build exp1 --web --runtime=source --json`. This follows the observed server host and replaces its served export through the existing publication owner, keeping the server and daemons running. Reload the browser after publication. These component commands report their own results; they do not run the full reload READY verification. `stack runtime activate --web|--server|--daemon` selects native artifact snapshots and does not restart running source components.
+
 Source startup with `--ui=borrowed` skips the web export and uses the configured `HAPPIER_STACK_EXPO_SOURCE_STACK`. Setting the producer reference alone does not select borrowed UI. UI-only changes need a deliberate browser reload.
 
 ### Place QA browsers independently (0.3 development)

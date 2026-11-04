@@ -489,6 +489,7 @@ export async function checkDaemonStatePingAware(cliHomeDir, options = {}) {
       pid: Number(ping.pid) || state.pid,
       processInstanceFingerprint: ping.processInstanceFingerprint ?? null,
       distClosureFingerprint: ping.distClosureFingerprint ?? null,
+      runtimeEntrypoint: ping.state?.startedWithRuntimeEntrypoint ?? null,
     };
   }
   return {
@@ -1711,10 +1712,9 @@ async function killDaemonPidSafely({
     processInstanceFingerprint,
   });
   if (!terminated.killed) {
-    console.warn(
-      `[local] refusing to kill pid ${pid} from ${sourceLabel} (${terminated.reason ?? 'ownership or termination was not proven'})`
-    );
-    return false;
+    throw Object.assign(new Error(
+      `[local] refusing to kill pid ${pid} from ${sourceLabel} (${terminated.reason ?? 'ownership or termination was not proven'})`,
+    ), { code: 'daemon_stop_incomplete', reason: terminated.reason ?? 'process_identity_unverified' });
   }
   if (terminated.reason === 'already_exited') return false;
   console.log(`[local] killed stuck daemon pid ${pid} (from ${sourcePath || sourceLabel})`);
@@ -1930,6 +1930,7 @@ export async function stopLocalDaemon({
     if (!isRecordedStackProcessRetired(pid, recordedIdentity)) {
       const error = new Error(`[local] daemon retirement is incomplete (pid=${pid}); refusing to replace the retained daemon.`);
       error.code = 'daemon_stop_incomplete';
+      error.reason = liveness.status === 'alive' ? 'daemon_retirement_unconfirmed' : 'daemon_liveness_inconclusive';
       throw error;
     }
   }

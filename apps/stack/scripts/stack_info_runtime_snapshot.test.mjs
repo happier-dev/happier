@@ -1,7 +1,12 @@
+import { resolvePreferredStackDaemonStatePaths } from './utils/auth/credentials_paths.mjs';
+import { applyStackDaemonLifecycleScopeEnv } from './utils/auth/stable_scope_id.mjs';
+import { spawnTestProcess } from './testkit/core/spawn_test_process.mjs';
+import { randomUUID } from 'node:crypto';
+import { once } from 'node:events';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import http from 'node:http';
 
 import { withPatchedProcessEnv } from './testkit/core/env_scope.mjs';
@@ -296,4 +301,79 @@ test('reload observes managed CLI on the daemon host without substituting the co
   delete observation.daemonEntry;
   assert.equal((await readInfo(observation)).runtime.managedCli, null);
   assert.equal((await readInfo(observation)).runtime.daemonEntry, null);
+});
+
+test('stack info observes each registered identity through live control and exact loaded bundle metadata', async t => {
+  const fixture = await createRuntimeSnapshotFixture(t, { stackName: 'participant-info' });
+  withPatchedProcessEnv(t, { HAPPIER_STACK_STORAGE_DIR: fixture.storageDir });
+  const cliHomeDir = join(fixture.stackDir, 'cli-identities', 'account-b');
+  const env = applyStackDaemonLifecycleScopeEnv({ env: {
+    HAPPIER_STACK_STACK: fixture.stackName, HAPPIER_STACK_ENV_FILE: join(fixture.stackDir, 'env'),
+    HAPPIER_STACK_CLI_HOME_DIR: cliHomeDir, HAPPIER_HOME_DIR: cliHomeDir,
+  }, stackName: fixture.stackName, cliIdentity: 'account-b' });
+  const child = spawnTestProcess(process.execPath, ['-e', 'if(process.send)process.send("ready");setInterval(()=>{},1000)'],
+    { env: { ...process.env, ...env }, stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
+  t.after(async () => {
+    if (child.exitCode !== null || child.signalCode !== null) return;
+    const exited = once(child, 'exit');
+    child.kill();
+    await exited;
+  });
+  await once(child, 'message');
+  let requests = 0;
+  const server = http.createServer((_req, res) => {
+    requests++;
+    res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ ok: true }));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => { server.closeAllConnections(); server.close(resolve); }));
+  const entrypoint = join(fixture.stackDir, 'old-bundle/apps/cli/src/index.mjs');
+  await mkdir(dirname(entrypoint), { recursive: true });
+  await writeFile(entrypoint, 'export {};');
+  const sourceTime = '2026-11-03T12:59:00.000Z';
+  await writeFile(join(fixture.stackDir, 'old-bundle/source-bundle.json'), JSON.stringify({
+    identity: 'daemon-old', entrypoint, sourceCapture: { inputIdentity: 'a'.repeat(64), capturedAt: sourceTime },
+  }));
+  const { statePath } = resolvePreferredStackDaemonStatePaths({ cliHomeDir, env });
+  await mkdir(dirname(statePath), { recursive: true });
+  await writeFile(statePath, JSON.stringify({ pid: child.pid, httpPort: server.address().port,
+    startedAt: Date.now(), startedWithCliVersion: 'test', controlToken: randomUUID(), startedWithRuntimeEntrypoint: entrypoint }));
+  await writeFile(join(fixture.stackDir, 'stack.runtime.json'), JSON.stringify({ version: 1, stackName: fixture.stackName,
+    sourceRuntimeIdentities: { daemon: { selected: 'daemon-new', loaded: 'daemon-new' } },
+    daemon: { desiredStateByIdentity: { 'account-b': 'running', retired: 'stopped' } },
+  }));
+  const readInfo = () => readStackInfoSnapshot({ rootDir: process.cwd(), stackName: fixture.stackName,
+    synchronizeDaemonState: false });
+  const first = await readInfo();
+  const participant = first.runtime.daemonParticipants.find(row => row.identity === 'account-b');
+  assert.equal(participant.status, 'running');
+  assert.equal(participant.loaded, 'daemon-old');
+  assert.equal(participant.sourceTime, sourceTime);
+  assert.equal(participant.reason, 'participant_source_stale');
+  assert.equal(requests, 1, 'one control read per registered live identity per observation');
+  assert.equal(first.runtime.daemonParticipants.find(row => row.identity === 'retired').reason, null);
+  const currentEntrypoint = join(fixture.stackDir, 'current-bundle/apps/cli/src/index.mjs');
+  await mkdir(dirname(currentEntrypoint), { recursive: true });
+  await writeFile(currentEntrypoint, 'export {};');
+  const record = { identity: 'daemon-new', entrypoint: currentEntrypoint,
+    sourceCapture: { inputIdentity: 'b'.repeat(64), capturedAt: '2026-11-04T08:00:00.000Z' } };
+  await writeFile(join(fixture.stackDir, 'current-bundle/source-bundle.json'), JSON.stringify(record));
+  const state = JSON.parse(await readFile(statePath, 'utf8'));
+  await writeFile(statePath, JSON.stringify({ ...state, startedWithRuntimeEntrypoint: currentEntrypoint }));
+  assert.equal((await readInfo()).runtime.daemonParticipants.find(row => row.identity === 'account-b').reason, null);
+  assert.equal(requests, 2);
+  await writeFile(join(fixture.stackDir, 'stack.runtime.json'), JSON.stringify({ version: 1, stackName: fixture.stackName,
+    sourceRuntimeIdentities: { daemon: { selected: 'daemon-new', loaded: 'daemon-new' } },
+    daemon: { desiredStateByIdentity: { 'account-b': 'stopped', retired: 'stopped' } },
+  }));
+  const refusedStop = (await readInfo()).runtime.daemonParticipants.find(row => row.identity === 'account-b');
+  assert.equal(refusedStop.loaded, 'daemon-new', 'a requested stop does not hide a participant that is still running');
+  assert.equal(refusedStop.reason, 'daemon_stop_incomplete');
+  const runtimeState = JSON.parse(await readFile(join(fixture.stackDir, 'stack.runtime.json'), 'utf8'));
+  runtimeState.daemon.desiredStateByIdentity['account-b'] = 'running';
+  await writeFile(join(fixture.stackDir, 'stack.runtime.json'), JSON.stringify(runtimeState));
+  await writeFile(statePath, JSON.stringify({ ...state, startedWithRuntimeEntrypoint: join(fixture.stackDir, 'unrecorded.mjs') }));
+  const unknown = (await readInfo()).runtime.daemonParticipants.find(row => row.identity === 'account-b');
+  assert.equal(unknown.loaded, null);
+  assert.equal(unknown.reason, 'participant_source_unknown');
 });

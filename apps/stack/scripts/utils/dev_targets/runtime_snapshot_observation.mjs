@@ -13,7 +13,7 @@ export function buildRuntimeSnapshotObservationExpression({ target, paths, servi
     '  const state = info.runtime.components[component];',
     "  serviceStatus[component] = state.running ? 'running' : state.status ?? (state.ownershipStatus === 'unknown' ? 'unknown' : 'not-running');",
     '}',
-    `process.stdout.write(JSON.stringify({ sourceRuntimeIdentities, serviceStatus${services.daemon ? ', managedCli: info.runtime.managedCli, daemonEntry: info.runtime.daemonEntry' : ''} }));`,
+    `process.stdout.write(JSON.stringify({ sourceRuntimeIdentities, serviceStatus${services.daemon ? ', managedCli: info.runtime.managedCli, daemonEntry: info.runtime.daemonEntry, daemonParticipants: info.runtime.daemonParticipants' : ''} }));`,
     "})().catch(() => fail('runtime_observation_failed'));",
   ].join('\n');
 }
