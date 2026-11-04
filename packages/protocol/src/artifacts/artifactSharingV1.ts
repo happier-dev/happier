@@ -5,6 +5,7 @@ import type { ArtifactPublicAudienceV1 } from './artifactActionsV1.js';
 import type { ArtifactBodyV1 } from './artifactBinaryV1.js';
 import { isArtifactHtmlHeaderV1 } from './artifactHtmlV1.js';
 import { APPROVAL_ARTIFACT_KINDS_V1 } from '../approvals/approvalArtifactKindV1.js';
+import { DEPLOYMENT_DOMAIN_ARTIFACT_KIND_V1, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1 } from './deploymentArtifactKindsV1.js';
 import { WIDGET_SURFACE_ARTIFACT_KIND_V1, readWidgetSurfaceArtifactV1 } from '../widgets/widgetSurfaceArtifactV1.js';
 import { HOME_HUB_ARTIFACT_KIND_V1 } from '../home/homeHubArtifactV1.js';
 import { WIDGET_LAYOUT_FRAGMENT_ARTIFACT_KIND_V1 } from '../widgets/widgetLayoutFragmentArtifactV1.js';
@@ -209,6 +210,9 @@ const kindPolicies: readonly Readonly<ArtifactKindPolicyV1 & {
   { ...privatePolicy, kind: WIDGET_LAYOUT_FRAGMENT_ARTIFACT_KIND_V1, useKind: 'open', requiresTextBody: true },
   { ...privatePolicy, kind: USAGE_NOTICE_ARTIFACT_KIND_V1, useKind: 'open', requiresTextBody: true },
   { ...privatePolicy, kind: ACCOUNT_NOTICE_ARTIFACT_KIND_V1, useKind: 'open', requiresTextBody: true },
+  // Deployment intent and native receipts stay with the Deployments owner, never listed or shared as documents.
+  ...[DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, DEPLOYMENT_DOMAIN_ARTIFACT_KIND_V1]
+    .map(kind => ({ ...privatePolicy, kind, useKind: 'open' as const, requiresTextBody: true })),
 ];
 
 /** Indexed browser selection is the complement of this policy, including unknown kinds. */

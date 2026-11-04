@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
+import { deriveArtifactExcerptV1 } from '@happier-dev/protocol/artifacts/artifactExcerptV1';
 import { getWidgetSizeFootprintV1 } from '@happier-dev/protocol/widgets/widgetPresentationV1';
 import { readInboxItemFocus } from '@/components/inbox/inboxItemFocus';
 
@@ -290,6 +291,49 @@ describe('artifactBrowserModel', () => {
             .toEqual({ kind: 'markdown', text: 'a'.repeat(599) });
     });
 
+    it('never prints a stored record as prose: an unknown kind previews nothing, a document of JSON previews as code', () => {
+        for (const text of ['{"sourceIntent":{"kind":"stored","contentRevision":1', '{ "name": "env" }', '[{"a":1}]', '["a"]']) {
+            expect(readArtifactPreview(artifact('future', { kind: 'future.document.v9', excerpt: text }))).toEqual({ kind: 'none' });
+            expect(readArtifactPreview(artifact('excerpt', { title: 'Environment', excerpt: text }))).toEqual({ kind: 'code', text, language: 'JSON' });
+            expect(readArtifactPreview(artifact('body', { title: 'Environment' }, { body: text }))).toEqual({ kind: 'code', text, language: 'JSON' });
+        }
+        // Nothing to read in an empty record, and a future kind's prose is still prose.
+        for (const text of ['{}', '[]', ' { } ']) expect(readArtifactPreview(artifact('empty', { title: 'Environment' }, { body: text }))).toEqual({ kind: 'none' });
+        expect(readArtifactPreview(artifact('future-prose', { kind: 'future.document.v9', excerpt: 'First lines' }))).toEqual({ kind: 'markdown', text: 'First lines' });
+        expect(readArtifactPreview(artifact('file', { title: 'package.json' }, { body: '{"name":"app"}' })))
+            .toEqual({ kind: 'code', text: '{"name":"app"}', language: 'JSON' });
+        for (const text of ['{placeholder} goes in the header', '[Link](https://example.test) to the plan'])
+            expect(readArtifactPreview(artifact('prose', { title: 'Notes' }, { body: text }))).toEqual({ kind: 'markdown', text });
+    });
+
+    it('recovers authored text from an excerpt the header clip cut inside its stored envelope', () => {
+        const markdown = `# Review\nCheck "the" contract.\n${'word '.repeat(300)}`;
+        const prompt = deriveArtifactExcerptV1(JSON.stringify({ v: 1, markdown, createdAtMs: 1, updatedAtMs: 2 }));
+        const preview = readArtifactPreview(artifact('prompt', { kind: 'prompt_doc.v2', excerpt: prompt }));
+        expect(preview.kind).toBe('markdown');
+        expect(preview.kind === 'markdown' && preview.text.startsWith('# Review\nCheck "the" contract.\nword')).toBe(true);
+        const instructions = `Find regressions.\n${'word '.repeat(300)}`;
+        const role = deriveArtifactExcerptV1(JSON.stringify({ name: 'Reviewer', instructions, runsAs: { kind: 'session' } }));
+        const rolePreview = readArtifactPreview(artifact('role', { kind: 'role.v1', excerpt: role }));
+        expect(rolePreview.kind === 'markdown' && rolePreview.text.startsWith('Find regressions.\nword')).toBe(true);
+        // A clip can land inside an escape: the partial escape is dropped, never printed or thrown on.
+        for (const tail of ['\\', '\\u00', '\\n'.slice(0, 1)])
+            expect(readArtifactPreview(artifact('escape', { kind: 'prompt_doc.v2', excerpt: `{"v":1,"markdown":"Plan${tail}` })))
+                .toEqual({ kind: 'markdown', text: 'Plan' });
+        const facts = deriveArtifactExcerptV1(JSON.stringify({ v: 1, index: [{ id: 'a', text: 'Prefers pnpm' }, { id: 'b', text: `Uses ${'x'.repeat(700)}` }] }));
+        const memory = readArtifactPreview(artifact('memory', { kind: 'memory_doc.v1', excerpt: facts }));
+        expect(memory.kind === 'markdown' && memory.text.startsWith('- Prefers pnpm\n- Uses x')).toBe(true);
+    });
+
+    it('previews a Widget or launch profile by what it says it is for, and by its mark when it says nothing', () => {
+        const widget = JSON.stringify({ v: 1, id: 'focus', name: 'Daily focus', description: 'What to do first today.', body: { kind: 'html' } });
+        expect(readArtifactPreview(artifact('w', { kind: 'widget-definition.v1', excerpt: widget }))).toEqual({ kind: 'markdown', text: 'What to do first today.' });
+        expect(readArtifactPreview(artifact('w2', { kind: 'widget-definition.v1' }, { body: widget }))).toEqual({ kind: 'markdown', text: 'What to do first today.' });
+        const profile = JSON.stringify({ kind: 'launch-profile.v1', profile: { id: 'fast', name: 'Fast', description: 'Quick edits on the cheap model.' }, secretBindings: {} });
+        expect(readArtifactPreview(artifact('p', { kind: 'launch-profile.v1', excerpt: profile }))).toEqual({ kind: 'markdown', text: 'Quick edits on the cheap model.' });
+        expect(readArtifactPreview(artifact('p2', { kind: 'launch-profile.v1', excerpt: '{"kind":"launch-profile.v1","profile":{"id":"fast"' }))).toEqual({ kind: 'none' });
+    });
+
     it('previews authored Prompt and Role text rather than their stored JSON envelopes', () => {
         const prompt = JSON.stringify({ v: 1, markdown: '# Review\nCheck the changed contract.', createdAtMs: 1, updatedAtMs: 2 });
         const role = JSON.stringify({ name: 'Reviewer', instructions: 'Find reachable regressions.', runsAs: { kind: 'session' },
@@ -300,7 +344,7 @@ describe('artifactBrowserModel', () => {
             expect(readArtifactPreview(artifact(kind, header, { body }))).toEqual({ kind: 'markdown', text });
             expect(readArtifactPreview(artifact(kind, { kind, excerpt: body }))).toEqual({ kind: 'markdown', text });
             expect(readArtifactPreview(artifact(kind, header, { body: '{}' }))).toEqual({ kind: 'none' });
-            expect(readArtifactPreview(artifact(kind, { kind, excerpt: body.slice(0, 20) }))).toEqual({ kind: 'none' });
+            expect(readArtifactPreview(artifact(kind, { kind, excerpt: body.slice(0, 5) }))).toEqual({ kind: 'none' });
             expect(readArtifactPreview(artifact(kind, { kind, excerpt: body }, { body: null }))).toEqual({ kind: 'none' });
             expect(readArtifactPreview(artifact(kind, header, { body: JSON.stringify({ ...JSON.parse(body), future: true }) })))
                 .toEqual({ kind: 'markdown', text });
@@ -308,8 +352,9 @@ describe('artifactBrowserModel', () => {
         expect(readArtifactPreview(artifact('empty', { kind: 'prompt_doc.v2' }, {
             body: JSON.stringify({ v: 1, markdown: '', createdAtMs: 1, updatedAtMs: 2 }),
         }))).toEqual({ kind: 'none' });
+        // An ordinary document holding the same bytes stays that document: it is never reinterpreted as a Prompt.
         expect(readArtifactPreview(artifact('document', { title: 'Stored example' }, { body: prompt })))
-            .toEqual({ kind: 'markdown', text: prompt });
+            .toEqual({ kind: 'code', text: prompt, language: 'JSON' });
     });
 
     it('previews what a memory remembers and a skill says, never their stored envelopes', () => {

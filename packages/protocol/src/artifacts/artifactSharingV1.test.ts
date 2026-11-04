@@ -1,3 +1,5 @@
+import { DEPLOYMENT_DOMAIN_ARTIFACT_KIND_V1, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1,
+  DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1 } from './deploymentArtifactKindsV1.js';
 import { describe, expect, it } from 'vitest';
 import { prepareArtifactHeaderForBodyV1, prepareArtifactHeaderForRevisionV1 } from './artifactHeaderRestorationV1.js';
 import { buildWidgetSurfaceArtifactIdV1, buildWidgetSurfaceArtifactHeaderV1 } from '../widgets/widgetSurfaceArtifactV1.js';
@@ -26,6 +28,12 @@ const artifact = {
   },
 };
 describe('Document sharing kind owner', () => {
+  it('keeps deployment intent and native receipts out of ordinary public and people sharing', () => {
+    for (const kind of [DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, DEPLOYMENT_DOMAIN_ARTIFACT_KIND_V1]) {
+      expect(getArtifactUseTargetV1({ artifactId: 'deployment-content', header: { kind }, body: '{}' }))
+        .toMatchObject({ browserListed: false, publicLinkAllowed: false, canShare: false });
+    }
+  });
   it('reports the saved HTML or definition policy and never opens egress from arbitrary header metadata', () => {
     const bundle = ArtifactHtmlBundleV1Schema.parse({ v: 1, entrypoint: 'index.html', requestedCapabilities: { networkOrigins: ['https://assets.example.test'] },
       files: { 'index.html': { mime: 'text/html', contentBase64: 'PGgxPkhlbGxvPC9oMT4=' } } });

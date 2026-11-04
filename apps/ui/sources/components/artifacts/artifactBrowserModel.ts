@@ -127,58 +127,117 @@ export function readArtifactCodeLanguage(artifact: Pick<DecryptedArtifact, 'head
     return null;
 }
 
-/** The always-remembered facts, one per line, as the memory page lists them first. */
-function readMemoryPreviewText(content: unknown): string | undefined {
-    const parsed = MemoryDocBodyV1StoredSchema.safeParse(content);
-    if (!parsed.success || parsed.data.index.length === 0) return undefined;
-    return parsed.data.index.map((fact) => `- ${fact.text}`).join('\n');
+/**
+ * One string field of a stored JSON envelope a header excerpt may have clipped. JSON escapes every quote inside a
+ * string, so the key's exact bytes can only be a key; a clip inside an escape drops that partial escape.
+ */
+function readClippedEnvelopeStrings(stored: string, key: string): readonly string[] {
+    const marker = `"${key}":"`;
+    const values: string[] = [];
+    for (let at = stored.indexOf(marker); at >= 0; at = stored.indexOf(marker, at + marker.length)) {
+        const start = at + marker.length;
+        let end = start;
+        while (end < stored.length && stored[end] !== '"') {
+            const width = stored[end] !== '\\' ? 1 : stored[end + 1] === 'u' ? 6 : 2;
+            if (end + width > stored.length) break;
+            end += width;
+        }
+        try {
+            const value: unknown = JSON.parse(`"${stored.slice(start, end)}"`);
+            if (typeof value === 'string' && value.length > 0) values.push(value);
+        } catch {
+            // A value this reader cannot read previews as nothing.
+        }
+    }
+    return values;
 }
 
-/** A skill's own SKILL.md, without its front matter. */
-function readSkillPreviewText(content: unknown): string | undefined {
-    const parsed = PromptBundleBodyV1Schema.safeParse(content);
-    const entry = parsed.success
-        ? parsed.data.entries.find((candidate) => candidate.path === 'SKILL.md' && candidate.contentKind === 'utf8')
-        : undefined;
-    if (!entry) return undefined;
-    const text = new TextDecoder('utf-8', { fatal: false }).decode(decodeBase64(entry.contentBase64, 'base64'));
-    return text.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, '').trim() || undefined;
+function readFactLines(facts: readonly string[]): string | undefined {
+    return facts.length > 0 ? facts.map((fact) => `- ${fact}`).join('\n') : undefined;
 }
+
+/** A skill's own text without its front matter; a skill that is only front matter so far previews its description. */
+function readSkillMarkdown(text: string): string | undefined {
+    const frontMatter = /^---\r?\n([\s\S]*?)(?:\r?\n---\r?\n?|$)/.exec(text);
+    const rest = frontMatter ? text.slice(frontMatter[0].length).trim() : text.trim();
+    return rest || (frontMatter ? /^description:\s*(.+)$/m.exec(frontMatter[1]!)?.[1]?.trim() : undefined);
+}
+
+function decodeSkillBase64(contentBase64: string): string {
+    return new TextDecoder('utf-8', { fatal: false }).decode(decodeBase64(contentBase64, 'base64'));
+}
+
+/** The authored text inside a kind's stored envelope; a list read only has the excerpt, so a long one arrives clipped. */
+function readClippedEnvelopeText(kind: string, stored: string): string | undefined {
+    switch (kind) {
+        case 'prompt_doc.v2': return readClippedEnvelopeStrings(stored, 'markdown')[0];
+        case 'role.v1': return readClippedEnvelopeStrings(stored, 'instructions')[0];
+        case 'memory_doc.v1': return readFactLines(readClippedEnvelopeStrings(stored, 'text'));
+        case 'prompt_bundle.v2': {
+            const entry = stored.indexOf('"path":"SKILL.md"');
+            const content = entry < 0 ? undefined : readClippedEnvelopeStrings(stored.slice(entry), 'contentBase64')[0];
+            if (content === undefined) return undefined;
+            // Whole base64 quads only, and no replacement mark for a character the clip cut in half.
+            return readSkillMarkdown(decodeSkillBase64(content.slice(0, content.length - content.length % 4)).replace(/\uFFFD+$/, ''));
+        }
+        default: return readClippedEnvelopeStrings(stored, 'description')[0];
+    }
+}
+
+function readEnvelopeText(kind: string, stored: string): string | undefined {
+    let content: unknown;
+    try {
+        content = JSON.parse(stored);
+    } catch {
+        return readClippedEnvelopeText(kind, stored);
+    }
+    switch (kind) {
+        case 'prompt_doc.v2': {
+            const parsed = PromptDocBodyV1Schema.safeParse(content);
+            return parsed.success ? parsed.data.markdown : undefined;
+        }
+        case 'role.v1': {
+            const parsed = createStoredReadSchema(RoleArtifactV1Schema).safeParse(content);
+            return parsed.success ? parsed.data.instructions : undefined;
+        }
+        case 'memory_doc.v1': {
+            const parsed = MemoryDocBodyV1StoredSchema.safeParse(content);
+            return parsed.success ? readFactLines(parsed.data.index.map((fact) => fact.text)) : undefined;
+        }
+        case 'prompt_bundle.v2': {
+            const parsed = PromptBundleBodyV1Schema.safeParse(content);
+            const entry = parsed.success
+                ? parsed.data.entries.find((candidate) => candidate.path === 'SKILL.md' && candidate.contentKind === 'utf8')
+                : undefined;
+            return entry ? readSkillMarkdown(decodeSkillBase64(entry.contentBase64)) : undefined;
+        }
+        default: {
+            // Configuration is not prose: all it says about itself is what it is for.
+            const record = readRecord(content);
+            return nonEmptyString(readRecord(kind === 'launch-profile.v1' ? record?.profile : content)?.description) ?? undefined;
+        }
+    }
+}
+
+function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
+    return typeof value === 'object' && value !== null ? value as Readonly<Record<string, unknown>> : null;
+}
+
+/** The kinds whose stored body is an envelope around what the card should show. */
+const ENVELOPE_KINDS: ReadonlySet<unknown> = new Set(['prompt_doc.v2', 'role.v1', 'memory_doc.v1', 'prompt_bundle.v2', 'launch-profile.v1', 'widget-definition.v1']);
+
+/** JSON, not prose: a bracket opening an object or array, not one opening a sentence or a link. */
+const STORED_JSON_TEXT = /^\s*(?:\{\s*"|\[\s*["{[])/;
+const EMPTY_JSON_TEXT = /^\s*(?:\{\s*\}|\[\s*\])\s*$/;
 
 export function readArtifactPreview(artifact: Pick<DecryptedArtifact, 'id' | 'header' | 'rawHeader' | 'title' | 'body' | 'provenance'>): ArtifactPreview {
     const header = artifact.rawHeader ?? artifact.header;
     if (getArtifactUseTargetV1({ artifactId: artifact.id, header: header ?? {}, body: null }).kind === 'approval') return { kind: 'none' };
-    if (header?.kind === 'prompt_doc.v2' || header?.kind === 'role.v1') {
-        const stored = artifact.body === undefined ? header.excerpt : artifact.body;
+    if (ENVELOPE_KINDS.has(header?.kind)) {
+        const stored = artifact.body === undefined ? header?.excerpt : artifact.body;
         if (typeof stored !== 'string') return { kind: 'none' };
-        try {
-            const content: unknown = JSON.parse(stored);
-            let text: string | undefined;
-            if (header.kind === 'prompt_doc.v2') {
-                const parsed = PromptDocBodyV1Schema.safeParse(content);
-                if (parsed.success) text = parsed.data.markdown;
-            } else {
-                const parsed = createStoredReadSchema(RoleArtifactV1Schema).safeParse(content);
-                if (parsed.success) text = parsed.data.instructions;
-            }
-            const clipped = deriveArtifactExcerptV1(text ?? null);
-            return clipped ? { kind: 'markdown', text: clipped } : { kind: 'none' };
-        } catch {
-            return { kind: 'none' };
-        }
-    }
-    if (header?.kind === 'memory_doc.v1' || header?.kind === 'prompt_bundle.v2') {
-        // What a memory remembers and what a skill says, never the stored envelope around them.
-        const stored = artifact.body === undefined ? header.excerpt : artifact.body;
-        if (typeof stored !== 'string') return { kind: 'none' };
-        try {
-            const content: unknown = JSON.parse(stored);
-            const text = header.kind === 'memory_doc.v1' ? readMemoryPreviewText(content) : readSkillPreviewText(content);
-            const clipped = deriveArtifactExcerptV1(text ?? null);
-            return clipped ? { kind: 'markdown', text: clipped } : { kind: 'none' };
-        } catch {
-            return { kind: 'none' };
-        }
+        const clipped = deriveArtifactExcerptV1(readEnvelopeText(String(header?.kind), stored) ?? null);
+        return clipped ? { kind: 'markdown', text: clipped } : { kind: 'none' };
     }
     if (header?.kind === 'work-board.v1' && header.v === 1) {
         if (artifact.body !== undefined) {
@@ -204,8 +263,6 @@ export function readArtifactPreview(artifact: Pick<DecryptedArtifact, 'id' | 'he
         }
         return labels ? { kind: 'workflow', steps: labels.map((title) => ({ title })) } : { kind: 'none' };
     }
-    // A launch profile or a saved widget is configuration, not prose: its card shows the kind's mark, never the stored envelope.
-    if (header?.kind === 'launch-profile.v1' || header?.kind === 'widget-definition.v1') return { kind: 'none' };
     if (isArtifactHtmlHeaderV1(artifact.rawHeader ?? artifact.header)) return { kind: 'html', name: artifact.title ?? '' };
     if (artifact.body !== null && typeof artifact.body === 'object') {
         const reference = artifact.body;
@@ -221,7 +278,11 @@ export function readArtifactPreview(artifact: Pick<DecryptedArtifact, 'id' | 'he
     const clipped = deriveArtifactExcerptV1(text);
     if (clipped === undefined) return { kind: 'none' };
     const language = readArtifactCodeLanguage(artifact);
-    return language ? { kind: 'code', text: clipped, language } : { kind: 'markdown', text: clipped };
+    if (language) return { kind: 'code', text: clipped, language };
+    if (EMPTY_JSON_TEXT.test(clipped)) return { kind: 'none' };
+    if (!STORED_JSON_TEXT.test(clipped)) return { kind: 'markdown', text: clipped };
+    // A kind this client has no reader for keeps its record to itself; an ordinary document of JSON is code.
+    return typeof header?.kind === 'string' ? { kind: 'none' } : { kind: 'code', text: clipped, language: 'JSON' };
 }
 
 export type ArtifactBrowserSort = 'updated_desc' | 'created_desc' | 'title_asc';

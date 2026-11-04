@@ -576,7 +576,7 @@ function useBrowserAnatomy(presentation: 'grid' | 'list'): CollectionAnatomy<Art
     // A phone's row already shows the kind as its mark (lab A1p): the word under the age would say it twice.
     const phone = useDeviceType() === 'phone';
     return React.useMemo((): CollectionAnatomy<ArtifactBrowserRow> => ({
-        glyph: (row) => <Icon name={row.artifact.isDecrypted === false ? 'lock' : rowKindFact(row).icon} size={18} color={theme.colors.text.secondary} />,
+        glyph: (row) => <Icon name={row.artifact.isDecrypted === false ? 'lock' : rowKindFact(row).icon} size={20} color={theme.colors.text.secondary} />,
         title: (row) => (row.artifact.isDecrypted === false ? t('settingsAccount.restoreRequiredTitle') : rowTitle(row)),
         // A source, or who shared it; nothing when it is simply the viewer's own.
         where: (row) => {
@@ -587,7 +587,7 @@ function useBrowserAnatomy(presentation: 'grid' | 'list'): CollectionAnatomy<Art
                 testID={`artifacts:row:${row.key}:provenance`} />;
         },
         // A grid card's footer draws the age in its own right-aligned column (lab A1), so the kind stands alone.
-        ...(phone && presentation === 'list' ? {} : { reason: (row: ArtifactBrowserRow) => <Text style={stylesheet.reason}>{rowKindFact(row).label}</Text> }),
+        ...(phone && presentation === 'list' ? {} : { reason: (row: ArtifactBrowserRow) => rowKindFact(row).label }),
         // The "Edited" column is a narrow tabular one: the bare age ("45m") fits where "45m ago" was cut off (lab A2).
         age: (row) => formatShortRelativeTime(row.artifact.updatedAt),
         ...(presentation === 'grid' ? {
@@ -704,10 +704,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     grow: {
         flex: 1,
-    },
-    reason: {
-        fontSize: 12,
-        color: theme.colors.text.tertiary,
     },
     hint: {
         fontSize: 13,
