@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { PluginUiIconTokenV1Schema } from '@happier-dev/protocol';
+import { PluginUiIconTokenV1Schema } from '@happier-dev/protocol/plugins/contributions/ui/tokens';
 import { HAPPIER_ICON_NAMES } from '@happier-dev/plugin-ui/presentation';
 
 import * as iconTokenResolver from './resolvePluginUiIconToken';
@@ -64,6 +64,13 @@ const EXPECTED_PRIVATE_ICON_NAMES: Readonly<Record<string, IconName>> = Object.f
     generate: 'sparkle',
     workflow: 'play-circle',
     neutral: 'minus-circle',
+    rocket: 'rocket',
+    star: 'star',
+    flag: 'flag',
+    target: 'target',
+    flask: 'flask',
+    book: 'book',
+    heart: 'heart',
 });
 
 describe('resolvePluginUiIconToken', () => {

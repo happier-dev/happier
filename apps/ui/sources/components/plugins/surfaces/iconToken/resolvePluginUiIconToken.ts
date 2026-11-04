@@ -75,12 +75,28 @@ const PLUGIN_UI_ICON_TOKEN_TO_ICON_NAME: Readonly<Record<PluginUiIconTokenV1, Ic
     generate: 'sparkle',
     workflow: 'play-circle',
     neutral: 'minus-circle',
+    rocket: 'rocket',
+    star: 'star',
+    flag: 'flag',
+    target: 'target',
+    flask: 'flask',
+    book: 'book',
+    heart: 'heart',
 });
 
 /** Glyph rendered for a missing or non-canonical semantic icon token. */
 export const PLUGIN_UI_ICON_FALLBACK: IconName = 'puzzle-piece';
 
 const PLUGIN_UI_ICON_TOKEN_SET: ReadonlySet<string> = new Set(PLUGIN_UI_ICON_TOKENS_V1);
+
+/**
+ * The token that draws `name`: one of `preferred` first (a picker's own choices), then the token spelled like the
+ * glyph, then any; null when no token draws it.
+ */
+export function findPluginUiIconTokenForIconName(name: IconName, preferred: readonly PluginUiIconTokenV1[] = []): PluginUiIconTokenV1 | null {
+    const drawing = PLUGIN_UI_ICON_TOKENS_V1.filter(token => PLUGIN_UI_ICON_TOKEN_TO_ICON_NAME[token] === name);
+    return preferred.find(token => drawing.includes(token)) ?? drawing.find(token => token === name) ?? drawing[0] ?? null;
+}
 
 export type PluginUiIconDirection = 'ltr' | 'rtl';
 
