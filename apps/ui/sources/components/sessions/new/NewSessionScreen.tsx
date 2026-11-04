@@ -7,8 +7,6 @@ import { StoredPluginUiNewSessionSeedOriginV1Schema } from '@happier-dev/protoco
 import { ProjectSetupDraftFootnote, ProjectSetupDraftHeader } from '@/components/projects/projectSetup/ProjectSetupReturn';
 import type { SessionDirectoryIntentV1 } from '@happier-dev/protocol';
 
-import { NewSessionBlockingGuidance } from '@/components/sessions/new/components/NewSessionBlockingGuidance';
-import { useShouldBlockNewSessionWithGettingStartedGuidance } from '@/components/sessions/guidance/useShouldBlockNewSessionWithGettingStartedGuidance';
 import { NewSessionSimplePanel } from '@/components/sessions/new/components/NewSessionSimplePanel';
 import { NewSessionComposerCard } from '@/components/sessions/new/components/NewSessionComposerCard';
 import { NewSessionWizard } from '@/components/sessions/new/components/NewSessionWizard';
@@ -44,7 +42,6 @@ import {
 import { ComposerAuxiliaryFrame } from '@/components/sessions/shell/view/ComposerAuxiliaryFrame';
 import type { AgentInputStatusBadge } from '@/components/sessions/agentInput/agentInputContracts';
 import { useActionOperationByRequestId } from '@/sync/domains/actionOperations/useActionOperations';
-import { parseNewSessionCheckoutDraft } from '@/sync/domains/state/newSessionCheckoutDraft';
 import {
     clearNewSessionOrdinaryEntryDraftIdExact,
     readNewSessionOrdinaryEntryDraftId,
@@ -56,7 +53,6 @@ import { getStorage } from '@/sync/domains/state/storageStore';
 import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
 import { useServerCredentialAccountScopeBindings, useServerCredentialAccountScopeResolution } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { areServerAccountScopesEqual, type ServerAccountScope, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
-import { peekTempData, type NewSessionData } from '@/utils/sessions/tempDataStore';
 import { t } from '@/text';
 import { SessionDraftHydrationBoundary } from '@/components/sessions/drafts/SessionDraftHydrationBoundary';
 import { GlassSurface } from '@/components/ui/glass/GlassSurface';
@@ -69,11 +65,6 @@ import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
  * (`NewSessionEmbeddedHostProvider`).
  */
 export type NewSessionScreenPresentation = 'screen' | 'embedded';
-
-function hasSeededCheckoutIntent(value: unknown): boolean {
-    const draft = parseNewSessionCheckoutDraft(value);
-    return draft.checkoutCreationDraft !== null;
-}
 
 function NewSessionScreenInner(props: Readonly<{
     presentation: NewSessionScreenPresentation;
@@ -198,7 +189,6 @@ const NEW_SESSION_LOOK_TARGET: LookTarget = { surface: 'new-session' };
 
 function NewSessionContent(props: Readonly<{
     presentation: NewSessionScreenPresentation;
-    allowBlockingGuidance: boolean;
     composerTopContent?: React.ReactNode;
     composerBottomContent?: React.ReactNode;
     draftId: string;
@@ -209,7 +199,6 @@ function NewSessionContent(props: Readonly<{
     inputPlaceholder?: string;
     composerControlPreset?: 'full' | 'compact';
 }>) {
-    const shouldBlock = useShouldBlockNewSessionWithGettingStartedGuidance();
     // With no route card around it, the floating composer seats Look in its own status row,
     // beside Start another and Delete draft, instead of in the window's corner.
     const floatingComposer = useNewSessionFloatingComposer(props.presentation);
@@ -219,10 +208,6 @@ function NewSessionContent(props: Readonly<{
             <LookChip target={NEW_SESSION_LOOK_TARGET} testID="new-session-look" />
         </>
     ) : props.statusTrailingActions;
-
-    if (props.allowBlockingGuidance && shouldBlock) {
-        return <NewSessionBlockingGuidance presentation={props.presentation} />;
-    }
 
     return (
         <NewSessionScreenPortalScope presentation={props.presentation}>
@@ -330,12 +315,9 @@ function NewSessionScreenReady(props: NewSessionScreenProps & Readonly<{
     onDraftIdentityResolved: (draftId: string) => void;
 }>) {
     const { router, openDraft } = useNewSessionHostNavigation();
-    const { dataId, draftId: routeDraftId, draftOrigin, machineId, directory } = useNewSessionHostParams<{
-        dataId?: string;
+    const { draftId: routeDraftId, draftOrigin } = useNewSessionHostParams<{
         draftId?: string;
         draftOrigin?: string;
-        machineId?: string;
-        directory?: string;
     }>();
     const { draftScope, onDraftIdentityResolved } = props;
     const draftAction = useMountedActionExecution(draftScope, { openOnRequest: true });
@@ -417,25 +399,6 @@ function NewSessionScreenReady(props: NewSessionScreenProps & Readonly<{
         resolveOrdinaryEntry,
     ]);
 
-    const tempData = React.useMemo(() => {
-        return typeof dataId === 'string' ? peekTempData<NewSessionData>(dataId) : null;
-    }, [dataId]);
-
-    const hasSeededDraftIntent = React.useMemo(() => {
-        if (exactDraft?.materialized === true) return true;
-        return hasSeededCheckoutIntent({ checkoutCreationDraft: tempData?.checkoutCreationDraft ?? null });
-    }, [exactDraft?.materialized, tempData?.checkoutCreationDraft]);
-
-    const hasSeededRouteIntent = React.useMemo(() => {
-        return (
-            (typeof machineId === 'string' && machineId.trim().length > 0)
-            || (typeof directory === 'string' && directory.trim().length > 0)
-            || (typeof tempData?.machineId === 'string' && tempData.machineId.trim().length > 0)
-            || (typeof tempData?.directory === 'string' && tempData.directory.trim().length > 0)
-            || (typeof tempData?.path === 'string' && tempData.path.trim().length > 0)
-        );
-    }, [machineId, directory, tempData]);
-
     const draftConflictBanner = useSessionDraftConflictComposerBanner(exactDraft?.conflict ?? null);
     const draftSyncStatusBadge = React.useMemo(
         () => buildSessionDraftSyncStatusBadge(exactDraft?.status ?? 'clean'),
@@ -485,9 +448,6 @@ function NewSessionScreenReady(props: NewSessionScreenProps & Readonly<{
             // The model and its Composer custody are initialized for one exact draft.
             key={draftIdentity.draftId}
             presentation={props.presentation}
-            // Embedded, the page around the composer owns getting started (Home swaps to the
-            // guidance itself while no machine can run a session).
-            allowBlockingGuidance={props.presentation === 'screen' && !hasSeededDraftIntent && !hasSeededRouteIntent}
             composerTopContent={composerTopContent}
             composerBottomContent={composerBottomContent}
             draftId={draftIdentity.draftId}

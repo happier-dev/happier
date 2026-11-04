@@ -31,7 +31,6 @@ const mockState = vi.hoisted(() => ({
         draftServerId?: string;
         draftAccountId?: string;
     },
-    shouldBlockNewSession: true,
     wizardRenders: 0,
     draftReadScopes: [] as Array<{ serverId: string; accountId: string }>,
     draftDeleteCalls: [] as Array<Readonly<{
@@ -58,9 +57,6 @@ vi.mock('react-native', async () => {
 
 vi.mock('@/components/sessions/guidance/SessionGettingStartedGuidance', () => ({
     SessionGettingStartedGuidance: 'SessionGettingStartedGuidance',
-}));
-vi.mock('@/components/sessions/guidance/useShouldBlockNewSessionWithGettingStartedGuidance', () => ({
-    useShouldBlockNewSessionWithGettingStartedGuidance: () => mockState.shouldBlockNewSession,
 }));
 
 vi.mock('@/components/sessions/new/hooks/serverTarget/useNewSessionServerTargetState', () => ({
@@ -254,7 +250,6 @@ afterEach(async () => {
     storage.getState().clearProfileScope();
     mockState.tempData = null;
     mockState.serverId = 's1';
-    mockState.shouldBlockNewSession = true;
     mockState.resolvedTargetServerId = undefined;
     for (const key of Object.keys(mockState.localSearchParams)) {
         delete mockState.localSearchParams[key as keyof typeof mockState.localSearchParams];
@@ -307,7 +302,25 @@ async function seedConflictingDraft(draftId: string) {
     repository.configureSessionDraftRepository({ syncEnabled: false });
 }
 
-describe('/new (blocking guidance)', () => {
+describe('/new', () => {
+    // 58d AF1: with no machine yet, New Session is the same composer as first-run Home; its
+    // "Run on…" picker offers creating one or using one you have. No setup page replaces it.
+    it('opens the composer, not machine setup, once the Home is known to have no machines', async () => {
+        const previous = storage.getState();
+        try {
+            storage.setState({ isDataReady: true, machines: {},
+                machineListByServerId: { s1: [], s2: [] }, machineListStatusByServerId: {} });
+
+            const screen = await renderScreen(React.createElement(Screen));
+
+            expect(() => screen.findByType('NewSessionWizard')).not.toThrow();
+            expect(() => screen.findByType('SessionGettingStartedGuidance')).toThrow();
+        } finally {
+            storage.setState({ machines: previous.machines, machineListByServerId: previous.machineListByServerId,
+                machineListStatusByServerId: previous.machineListStatusByServerId });
+        }
+    });
+
     it.each([
         { intent: 'worktree draft', tempData: { workspaceId: 'workspace-1', workspaceLocationId: 'location-1',
             checkoutCreationDraft: { kind: 'git_worktree', displayName: 'feature-x', baseRef: 'main' } } },
@@ -323,7 +336,6 @@ describe('/new (blocking guidance)', () => {
     });
 
     it('opens a materialized draft without duplicate context copy and places conflict plus actions beside the composer', async () => {
-        mockState.shouldBlockNewSession = true;
         await seedConflictingDraft(mockState.localSearchParams.draftId!);
 
         const screen = await renderScreen(React.createElement(Screen));
@@ -346,7 +358,6 @@ describe('/new (blocking guidance)', () => {
 
     it('ignores unrelated Action operation updates while retaining exact launch custody', async () => {
         const draftId = mockState.localSearchParams.draftId!;
-        mockState.shouldBlockNewSession = false;
         repository.writeNewSessionDraft({ scope: { serverId: 's1', accountId: 'account-1' },
             draftId, patch: {}, materializationIntent: 'seeded' });
         repository.writeSessionDraftLocalSupplement({ scope: { serverId: 's1', accountId: 'account-1' },
@@ -397,7 +408,6 @@ describe('/new (blocking guidance)', () => {
 
     it('reopens and deletes a waiting draft through its route-qualified inactive Home Account', async () => {
         const draftId = '8e0a5dd1-b1df-43dd-b51e-b7787b30362e';
-        mockState.shouldBlockNewSession = false;
         await homes.reset();
         await seedPersistedHomeProfilesForTests({
             activeServerId: 'home-a',

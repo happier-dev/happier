@@ -39,7 +39,7 @@ import {
 } from '@/components/sessions/new/navigation/newSessionOrdinaryEntryRoute';
 
 
-export type SessionGettingStartedGuidanceVariant = 'phone' | 'sidebar' | 'primaryPane' | 'newSessionBlocking';
+export type SessionGettingStartedGuidanceVariant = 'phone' | 'sidebar' | 'primaryPane';
 
 const SESSION_GETTING_STARTED_GUIDANCE_FEATURE_ID = 'app.ui.sessionGettingStartedGuidance' as const satisfies FeatureId;
 
@@ -298,7 +298,7 @@ function SessionGettingStartedGuidanceViewImpl(props: SessionGettingStartedGuida
     const title = getSessionGettingStartedTitle(model.kind);
     const subtitle = getSessionGettingStartedSubtitle(model.kind, model.targetLabel);
     const showSummaryOnly = model.kind === 'create_session' || model.kind === 'select_session';
-    const showLogo = (props.variant === 'primaryPane' || props.variant === 'newSessionBlocking')
+    const showLogo = props.variant === 'primaryPane'
         && model.kind !== 'create_session'
         && model.kind !== 'select_session';
     const showSetupPrimaryCard = model.kind === 'connect_machine' || model.kind === 'start_daemon';

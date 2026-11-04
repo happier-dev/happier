@@ -168,7 +168,7 @@ async function mountRoute() {
     return screen;
 }
 
-describe('/new connect-machine guidance bypass', () => {
+describe('/new route entry', () => {
     it('resolves a bare route through the ordinary-entry owner and preserves its origin', async () => {
         await mountRoute();
         const generatedDraftId = routeState.params.draftId;
@@ -185,16 +185,13 @@ describe('/new connect-machine guidance bypass', () => {
         await mountRoute();
         expect(storage.getState().settings.newSessionOrdinaryEntryDraftId).toBe(draftId);
     });
-    it('renders the new-session screen when a machine+directory intent is present', async () => {
+    // 58d AF1: no machine yet is not a setup page; the real composer asks where to run.
+    it('opens the composer asking "Run on…" when the Home has no machine yet', async () => {
         const rendered = await mountRoute();
-        expect(rendered.findAllHostsByTestId('session-getting-started-scroll')).toHaveLength(1);
-        expect(rendered.findByTestId('new-session-composer-input')).toBeNull();
-        await act(async () => {
-            routeState.params = { ...routeState.params, machineId: 'machine-123', directory: '/Users/tester/project' };
-            for (const listener of routeState.listeners) listener();
-        });
         expect(rendered.findAllHostsByTestId('session-getting-started-scroll')).toHaveLength(0);
         expect(rendered.findByTestId('new-session-composer-input')).not.toBeNull();
+        await vi.waitFor(() => expect(rendered.findByTestId('agent-input-machine-chip')?.props.accessibilityLabel)
+            .toBe('agentInput.runOn'));
     });
     it('keeps the live composer owner mounted when the draft becomes materialized', async () => {
         routeState.params = { draftId, draftOrigin: 'ordinary' };

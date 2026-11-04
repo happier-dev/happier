@@ -90,7 +90,7 @@ vi.mock('@/components/navigation/connectionStatus/HomeReachabilityGate', () => (
 describe('SessionGettingStartedGuidanceView', () => {
   // An unreachable Home never blocks: the "Loading… Fetching your machines and sessions" state
   // settles into the reachability owner's "Can't reach {Home} · Retry" on every surface.
-  it.each([['sidebar', 'line'], ['primaryPane', 'pane'], ['newSessionBlocking', 'pane']] as const)(
+  it.each([['sidebar', 'line'], ['primaryPane', 'pane']] as const)(
     'settles its loading state through the Home reachability owner (%s)',
     async (variant, gateVariant) => {
       reachabilityState.unavailable = true;

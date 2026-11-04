@@ -114,7 +114,7 @@ describe('SessionGettingStartedGuidance (desktop-only setup CTA)', () => {
         expect(getPendingSetupIntent()?.phase).toBe('dismissed');
         const { SessionGettingStartedGuidance } = await import('./SessionGettingStartedGuidance');
 
-        for (const variant of ['sidebar', 'primaryPane', 'newSessionBlocking'] as const) {
+        for (const variant of ['sidebar', 'primaryPane'] as const) {
             const tree: renderer.ReactTestRenderer = (await renderScreen(<SessionGettingStartedGuidance variant={variant} />)).tree;
             expect(() => tree.root.findByProps({ testID: 'session-getting-started-open-setup' })).not.toThrow();
         }

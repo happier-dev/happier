@@ -1,3 +1,4 @@
+import { useHasMachineForGettingStartedGuidance } from '@/components/sessions/guidance/useHasMachineForGettingStartedGuidance';
 import { providerDeclarationContext } from '@/providers/catalog/accountProviderDeclarations';
 import { RuntimeDescriptorV1Schema } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
 import { sanitizeNewSessionConfigOverridesForModelSelection } from '@/components/sessions/new/modules/newSessionConfigOptionOverrideSanitization';
@@ -177,7 +178,7 @@ import type { AgentPluginSettingsSnapshot } from '@/agents/registry/registryUiBe
 import { useAgentScopedPluginSettingsSnapshot } from '@/agents/registry/useAgentScopedPluginSettingsSnapshot';
 import { resolveNewSessionOperationalBackendTarget } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
 import { buildNewSessionLaunchStatus } from '@/components/sessions/new/hooks/screenModel/newSessionLaunchStatusBadges';
-import { resolveNewSessionCreateAdmission } from '@/components/sessions/new/hooks/screenModel/newSessionCreateAdmission';
+import { resolveNewSessionCreateAdmission, resolveNewSessionTargetRequirement } from '@/components/sessions/new/hooks/screenModel/newSessionCreateAdmission';
 import { resolveAgentLaunchBlockedReasonForNewSession } from '@/components/sessions/new/modules/newSessionAgentSelection';
 import { describeTemporaryComputerLaunchBlock, describeTemporaryComputerUnavailability } from '@/components/sessions/new/hooks/temporaryComputerCopy';
 import type { NewSessionInstructionsCreationModel, NewSessionScreenModel } from '@/components/sessions/new/hooks/newSessionScreenModelTypes';
@@ -3888,11 +3889,17 @@ export function useNewSessionScreenModel(input?: Readonly<{
         acpCatalog: acpCatalog?.catalog ?? null, agentLabel, selectedCredentialMachineAgent,
         machineAgentsStatus: machineAgents.status, agentStartBlock,
     });
+    // The getting-started owner's "this Home has a machine" fact (unknown stays `null`): the composer's
+    // machine and folder chips and status line read it to ask where to run before any machine exists (58d AF1).
+    const hasMachine = useHasMachineForGettingStartedGuidance();
     const createAdmission = resolveNewSessionCreateAdmission([
-        { ready: canCreateFromAuthoring, reason: !selectedMachineId && !managedMachineSelection
-            ? t('newSession.noMachineSelected')
-            : directoryKind !== 'managed' && !selectedPath.trim()
-                ? t('newSession.noPathSelected') : t('newSession.machineUnavailableStatus') },
+        resolveNewSessionTargetRequirement({
+            ready: canCreateFromAuthoring,
+            hasTarget: Boolean(selectedMachineId || managedMachineSelection),
+            hasMachine,
+            needsFolder: directoryKind !== 'managed' && !selectedPath.trim(),
+            translate: t,
+        }),
         { ready: backendTarget.kind !== 'backend' || !backendTarget.configuredBackendId || acpCatalogReady,
             reason: agentLaunchBlockedReason ?? `${t('settings.acpCatalog')} · ${t('common.unavailable')}` },
         { ready: connectedAccountDefaultsStatus === 'ready',
