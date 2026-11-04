@@ -8,6 +8,32 @@ import { parseRecentWorkspaceFiles } from '@/sync/domains/workspaces/files/recen
 import { appendFileEditorAiSuggestionUsage, FileEditorAiSuggestionDailyUsageSchema } from '@/sync/domains/workspaces/languageIntelligence/fileEditorAiSuggestionUsage';
 
 describe('device-local keyed UI state', () => {
+    it('retains subscribed snapshots and indexes prefix writes across subscription gaps without rescanning storage', () => {
+        const state = createPersistentUiState('subscribe-retention', value => z.string().parse(value));
+        state.set('scope:a', 'before');
+        const scans = vi.spyOn(getPersistenceStorage(), 'getAllKeys');
+        const observation = state.observe('scope:');
+        const first = observation.read();
+        const changed = vi.fn();
+        let stop = observation.subscribe(changed);
+        try {
+            expect(observation.read()).toBe(first);
+            expect(scans).toHaveBeenCalledTimes(1);
+            state.set('unrelated:a', 'quiet');
+            expect(changed).not.toHaveBeenCalled();
+            expect(observation.read()).toBe(first);
+            stop();
+            state.set('scope:b', 'added in gap');
+            state.remove('scope:a');
+            stop = observation.subscribe(changed);
+            expect(observation.read()).toEqual({ 'scope:b': 'added in gap' });
+            expect(scans).toHaveBeenCalledTimes(1);
+            state.set('scope:b', 'after');
+            expect(observation.read()).toEqual({ 'scope:b': 'after' });
+            expect(changed).toHaveBeenCalledTimes(1);
+        } finally { stop(); scans.mockRestore(); }
+    });
+
     it('persists an explicit repair even when it equals a tolerant fallback', () => {
         const state = createPersistentUiState<string | null>('fallback-repair', value => z.catch(z.nullable(z.string()), null).parse(value));
         const device = getPersistenceStorage();

@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { SettingsDeclarationActionOutputSchemasV1 } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
 
 import { useSettingActionWriter } from '@/components/settings/catalog/useSettingActionWriter';
 import { useLocalSetting } from '@/sync/store/settingsReadHooks';
@@ -35,6 +34,6 @@ export function useNavigationSurfacePlacementActionWriter(surfaceId: NavigationS
     return React.useCallback(async (preferences: NavigationPlacementPreferences): Promise<boolean> => {
         const value = NavigationSurfacePlacementsV1Schema.parse({ ...placementsBySurface, [surfaceId]: preferences });
         const outcome = await writeSetting({ anchor: 'appearance.navigationPlacements' }, value);
-        return outcome.ok && SettingsDeclarationActionOutputSchemasV1['settings.set'].safeParse(outcome.result).success;
+        return outcome.ok;
     }, [placementsBySurface, surfaceId, writeSetting]);
 }

@@ -19,12 +19,14 @@ export function createPersistentUiState<T>(namespace: string, parse: (value: unk
     const listeners = new Set<() => void>();
     const keyedListeners = new Map<string, Set<() => void>>();
     const prefixListeners = new Map<string, Set<(key?: string) => void>>();
+    const prefixIndexes = new Map<string, Set<string>>();
     subscribePersistenceStorageCleared(() => {
         const previousKeys = new Set(values.keys());
         values.clear();
         snapshot = undefined;
         loadedKeys.clear();
         allLoaded = false;
+        prefixIndexes.clear();
         for (const listener of listeners) listener();
         for (const [key, subscriptions] of keyedListeners) {
             if (previousKeys.has(key)) for (const listener of subscriptions) listener();
@@ -94,6 +96,7 @@ export function createPersistentUiState<T>(namespace: string, parse: (value: unk
         } catch (error) { throw new UiStatePersistenceError(error); }
         values.set(key, value);
         loadedKeys.add(key);
+        for (const [selectedPrefix, keys] of prefixIndexes) if (key.startsWith(selectedPrefix)) keys.add(key);
         publish(key);
     };
     const remove = (key: string): void => {
@@ -101,6 +104,7 @@ export function createPersistentUiState<T>(namespace: string, parse: (value: unk
         if (!values.has(key)) return;
         try { getPersistenceStorage().delete(prefix + key); } catch (error) { throw new UiStatePersistenceError(error); }
         values.delete(key);
+        for (const keys of prefixIndexes.values()) keys.delete(key);
         publish(key);
     };
     const subscribeKey = (key: string, listener: () => void) => {
@@ -115,39 +119,40 @@ export function createPersistentUiState<T>(namespace: string, parse: (value: unk
     /** A mounted selection owns only its consumed keys; unrelated writes never read or publish it. */
     const observe = (selection: string | readonly string[]) => {
         let selected: Readonly<Record<string, T>> | undefined;
-        let prefixKeys: Set<string> | undefined;
-        const readSelected = () => {
-            if (selected) return selected;
-            if (typeof selection === 'string' && !prefixKeys) {
+        const readSelected = (refresh = false): Readonly<Record<string, T>> => {
+            if (selected && !refresh) return selected;
+            let keys: Iterable<string> = selection;
+            if (typeof selection === 'string') {
                 try {
-                    prefixKeys = new Set(getPersistenceStorage().getAllKeys()
-                        .filter(key => key.startsWith(prefix + selection)).map(key => key.slice(prefix.length)));
+                    let index = prefixIndexes.get(selection);
+                    if (!index) {
+                        index = new Set(getPersistenceStorage().getAllKeys()
+                            .filter(key => key.startsWith(prefix + selection)).map(key => key.slice(prefix.length)));
+                        prefixIndexes.set(selection, index);
+                    }
+                    keys = index;
                 } catch {
                     console.warn('[ui-state] Device state could not be read.');
                     return selected = {};
                 }
             }
             const entries: [string, T][] = [];
-            for (const key of typeof selection === 'string' ? prefixKeys! : selection) {
+            for (const key of keys) {
                 const value = read(key);
                 if (value !== undefined) entries.push([key, value]);
             }
+            if (selected && entries.length === Object.keys(selected).length
+                && entries.every(([key, value]) => Object.hasOwn(selected!, key) && Object.is(selected![key], value))) return selected;
             return selected = Object.fromEntries(entries);
         };
-        return { read: readSelected, subscribe: (listener: () => void) => {
+        return { read: () => readSelected(), subscribe: (listener: () => void) => {
             // Recheck the render-to-subscription gap through the same storage owner.
-            selected = undefined;
-            prefixKeys = undefined;
+            readSelected(true);
             if (typeof selection !== 'string') {
                 const stops = selection.map(key => subscribeKey(key, () => { selected = undefined; listener(); }));
                 return () => { for (const stop of stops) stop(); };
             }
-            const changed = (key?: string) => {
-                if (key === undefined) prefixKeys = undefined;
-                else if (prefixKeys) {
-                    if (values.has(key)) prefixKeys.add(key);
-                    else prefixKeys.delete(key);
-                }
+            const changed = () => {
                 selected = undefined;
                 listener();
             };

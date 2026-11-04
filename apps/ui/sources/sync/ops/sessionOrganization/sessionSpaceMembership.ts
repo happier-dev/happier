@@ -7,7 +7,8 @@ import { settingsParse } from '@/sync/domains/settings/settings';
 import { loadLocalSettings } from '@/sync/domains/state/settingsPersistence';
 import { invokeCollectionSpaceSetting } from '@/components/settings/session/collectionSpaceSettings';
 import { readCollectionSpaceDefaultV1 } from '@/components/settings/session/collectionSpaceDefaults';
-import { readSessionOrganizationSpaceMembership, type UiSessionOrganizationTag } from '@/sync/domains/session/organization';
+import { buildSessionOrganizationServerKey, readSessionOrganizationSpaceMembership, type UiSessionOrganizationTag } from '@/sync/domains/session/organization';
+import { getStorage } from '@/sync/domains/state/storageStore';
 import { fetchAndApplySessionOrganizationSnapshot } from './fetchSessionOrganizationSnapshot';
 import { createSessionOrganizationOpaqueId } from './sessionOrganizationIdAllocation';
 import { upsertSessionTag } from './upsertSessionTag';
@@ -49,15 +50,24 @@ async function readTags(destination: LazyActionAccountContext): Promise<readonly
     return received && snapshot ? snapshot.tags : null;
 }
 
+function readHeldTag(destination: LazyActionAccountContext, tagId: string): UiSessionOrganizationTag | undefined {
+    return getStorage().getState().sessionOrganizationTagsByTagKey[buildSessionOrganizationServerKey(destination.serverId, tagId)];
+}
+
 async function ensureTag(target: SessionSpaceMembershipTargetV1, space: CollectionSpaceV1<'sessionWork'>,
-    catalog: LazyActionAccountContext, destination: LazyActionAccountContext,
-    tags: readonly UiSessionOrganizationTag[]): Promise<Readonly<{ ok: true; tagId: string }> | Failure> {
+    catalog: LazyActionAccountContext, destination: LazyActionAccountContext): Promise<Readonly<{ ok: true; tagId: string }> | Failure> {
     const association = space.membership?.tags.find(tag => tag.accountId === destination.accountId
         && sameHome(tag.serverId, destination.serverId));
-    let tag = association ? tags.find(tag => tag.tagId === association.tagId) : undefined;
+    let tag = association ? readHeldTag(destination, association.tagId) : undefined;
     // An association to unavailable or mismatched content cannot become an ordinary tag write.
     if (association && (!tag || !ownsCatalogTag(tag, target))) return unavailable();
-    tag ??= tags.find(tag => ownsCatalogTag(tag, target));
+    let tags: readonly UiSessionOrganizationTag[] = [];
+    if (!tag) {
+        const snapshot = await readTags(destination);
+        if (!snapshot) return unavailable();
+        tags = snapshot;
+        tag = tags.find(tag => ownsCatalogTag(tag, target));
+    }
     if (!tag) {
         const tagId = createSessionOrganizationOpaqueId({ prefix: 'tag', usedIds: new Set(tags.map(tag => tag.tagId)) });
         tag = await upsertSessionTag({ credentials: destination.credentials, serverId: destination.serverId,
@@ -120,8 +130,7 @@ export async function ensureSessionSpaceMembershipTag(params: SessionSpaceMember
         return await withCatalog(params, destination, params.signal, async catalog => {
             const space = (await readSpaces(catalog)).find(space => space.id === params.spaceId);
             if (!space) return unavailable('space_not_found');
-            const tags = await readTags(ownDestination);
-            return tags ? ensureTag(params, space, catalog, ownDestination, tags) : unavailable();
+            return ensureTag(params, space, catalog, ownDestination);
         });
     } catch (error) { return failure(error, params.signal); }
     finally { destination?.dispose(); }
@@ -145,13 +154,11 @@ export async function setSessionSpaceMembership(args: Readonly<{ input: SessionS
             const space = spaces.find(space => space.id === input.spaceId);
             const source = input.operation === 'move' ? spaces.find(space => space.id === input.sourceSpaceId) : space;
             if (!space || input.operation === 'move' && !source) return unavailable('space_not_found');
-            const tags = await readTags(ownDestination);
-            if (!tags) return unavailable();
             const sourceAssociation = source?.membership?.tags.find(tag => tag.accountId === ownDestination.accountId
                 && sameHome(tag.serverId, ownDestination.serverId));
-            const sourceTag = sourceAssociation ? tags.find(tag => tag.tagId === sourceAssociation.tagId) : undefined;
+            const sourceTag = sourceAssociation ? readHeldTag(ownDestination, sourceAssociation.tagId) : undefined;
             if (sourceAssociation && (!sourceTag || !ownsCatalogTag(sourceTag, { ...input, spaceId: source!.id }))) return unavailable();
-            const added = input.operation === 'remove' ? null : await ensureTag(input, space, catalog, ownDestination, tags);
+            const added = input.operation === 'remove' ? null : await ensureTag(input, space, catalog, ownDestination);
             if (added && !added.ok) return added;
             const addTagIds = added?.ok ? [added.tagId] : [];
             const removeTagIds = input.operation !== 'add' && sourceAssociation && !addTagIds.includes(sourceAssociation.tagId)

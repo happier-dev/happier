@@ -85,6 +85,23 @@ async function fixture() {
 }
 
 describe('Space membership through the Action front door', () => {
+    it('uses held membership tags for repeated Add, Move, Remove and New without snapshot reads', async () => {
+        const f = await fixture();
+        expect(await f.execute('session.space_membership.set', f.input('a'), f.context)).toMatchObject({ ok: true });
+        expect(await f.execute('session.space_membership.set', f.input('b'), f.context)).toMatchObject({ ok: true });
+        const snapshots = () => homes.requests.filter(request => request.path.split('?')[0] === '/v2/session-organization');
+        const before = snapshots().length;
+        expect(before).toBeGreaterThan(0);
+        expect(await f.execute('session.space_membership.set', f.input('a'), f.context)).toMatchObject({ ok: true });
+        expect(await f.execute('session.space_membership.set', f.input('b', 'move', 'a'), f.context)).toMatchObject({ ok: true });
+        const { ensureSessionSpaceMembershipTag } = await import('./sessionSpaceMembership');
+        expect(await ensureSessionSpaceMembershipTag({ spaceId: 'b', spaceSettingsTarget: f.target,
+            serverId: f.serverId, expectedAccountId: f.accountId })).toMatchObject({ ok: true });
+        expect(await f.execute('session.space_membership.set', f.input('b', 'remove'), f.context)).toMatchObject({ ok: true });
+        expect(f.read().assigned).toEqual(['ordinary']);
+        expect(snapshots()).toHaveLength(before);
+    });
+
     it('overlapping first Add and New preparations return the same accepted catalog membership tag', async () => {
         const f = await fixture();
         let release!: () => void;

@@ -343,7 +343,7 @@ function areVisibleSessionListProjectionInputsEqual(
         && left.backgroundWorkAttentionMode === right.backgroundWorkAttentionMode
         && areSessionListGroupOrderMapsEqual(leftGroupOrder, rightGroupOrder)
         && areSessionWorkspaceOrderMapsEqual(leftWorkspaceOrder, rightWorkspaceOrder)
-        && areScalarRecordsEqual(left.collapsedGroupKeysV1, right.collapsedGroupKeysV1)
+        && left.collapsedGroupKeysV1 === right.collapsedGroupKeysV1
         && left.sessionFoldersFeatureEnabled === right.sessionFoldersFeatureEnabled
         && left.selection.enabled === right.selection.enabled
         && left.selection.presentation === right.selection.presentation
