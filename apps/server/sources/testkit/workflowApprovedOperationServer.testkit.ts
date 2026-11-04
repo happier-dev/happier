@@ -26,7 +26,7 @@ import { projectSourceRoutes } from '@/app/api/routes/projects/projectSourceRout
 import { artifactsRoutes } from '@/app/api/routes/artifacts/artifactsRoutes';
 import { startSocket } from '@/app/api/socket';
 import { featuresRoutes } from '@/app/api/routes/features/featuresRoutes';
-import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
+import { getOrCreateServerIdentityId, readCachedServerIdentityIdForHotPath } from '@/app/serverIdentity/serverIdentity';
 import { automationAccountCurrentnessSelect, deriveAutomationAccountCurrentnessWitness } from '@/app/automations/automationAccountCurrentness';
 import { createSignedPluginInstallationPublisherHeader } from './pluginInstallationPublisherTestkit';
 import { createLightSqliteHarness } from './lightSqliteHarness';
@@ -61,8 +61,11 @@ export async function startWorkflowApprovedOperationServer(input: Readonly<{
     /** Full daemon journeys use actual sockets and the ordinary Home owners. */
     installedMachine?: Readonly<{ machineId: string; installation: MachineInstallationIdentityV1; happyHomeDir: string }>;
 }> = {}) {
+    // These isolated databases share a process with the real Home identity
+    // owner. A later fixture must retain its already initialized identity.
+    const homeIdentityId = readCachedServerIdentityIdForHotPath() ?? `srv_${randomUUID().replaceAll('-', '')}`;
     const harness = await createLightSqliteHarness({ tempDirPrefix: 'workflow-approved-operation-', initAuth: true, initEncrypt: true,
-        env: { AUTH_REQUIRED_LOGIN_PROVIDERS: '', HAPPIER_SERVER_IDENTITY_ID: `srv_${randomUUID().replaceAll('-', '')}`,
+        env: { AUTH_REQUIRED_LOGIN_PROVIDERS: '', HAPPIER_SERVER_IDENTITY_ID: homeIdentityId,
             HAPPIER_FEATURE_WORKFLOWS__ENABLED: '1', HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1',
             HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional' } });
     const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
