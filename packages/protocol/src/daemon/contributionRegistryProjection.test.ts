@@ -51,6 +51,14 @@ const CONTRIBUTOR_SOURCE_CUSTODY = {
   installSource: 'archive',
 } as const;
 
+it('preserves cold Bot template descriptors in the canonical daemon family projection', () => {
+  const entry = { id: 'acme.bots/garden', pluginId: 'acme.bots', pluginVersion: '1.0.0',
+    definition: { id: 'garden', path: 'templates/garden.json' } };
+  const projection = PluginProjectionV2Schema.parse({ v: 2, generation: 1,
+    familiesById: { botTemplates: { family: 'botTemplates', entriesById: { [entry.id]: entry } } } });
+  expect(projection.familiesById.botTemplates?.entriesById[entry.id]).toEqual(entry);
+});
+
 /**
  * One complete final projected declarative model exactly as the CLI producer
  * emits it, typed against the Protocol wire contract. Used both as the

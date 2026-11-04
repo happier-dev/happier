@@ -1,3 +1,4 @@
+export { PluginBotTemplateContributionV1Schema, type PluginBotTemplateContributionV1 } from './botTemplates.js';
 import { PluginBotTemplateContributionV1Schema } from './botTemplates.js';
 import { BackupDestinationContributionV1Schema } from './backupDestinations.js';
 import { PluginClientExecutionReferenceV1Schema } from './clientExecution.js';
