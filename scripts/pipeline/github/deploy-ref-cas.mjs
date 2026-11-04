@@ -48,7 +48,6 @@ export function readRemoteRef(remote, targetRef, authorizationHeader = '') {
   const result = spawnSync('git', [...authArgs(authorizationHeader), 'ls-remote', '--refs', remote, targetRef], {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
-    timeout: 120_000,
   });
   if (result.status !== 0) throw new Error(result.stderr.trim() || `Unable to read ${targetRef} from ${remote}.`);
   const output = result.stdout.trim();
@@ -62,10 +61,12 @@ export function readRemoteRef(remote, targetRef, authorizationHeader = '') {
 
 /** @param {string} candidateSha @param {string} remote @param {string} authorizationHeader */
 function ensureCandidateCommit(candidateSha, remote, authorizationHeader) {
+  // Network Git calls here are bounded by the job's timeout-minutes. A 120 s cap killed this
+  // fetch mid-transfer on both channels in release run 41681172181, when GitHub fetches were slow.
   const fetch = spawnSync(
     'git',
     [...authArgs(authorizationHeader), 'fetch', '--no-tags', '--depth=1', remote, candidateSha],
-    { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 120_000 },
+    { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
   );
   if (fetch.status !== 0) throw new Error(fetch.stderr.trim() || `Unable to fetch candidate ${candidateSha} from ${remote}.`);
 
@@ -125,7 +126,7 @@ export function promoteDeployRef(input) {
     const push = spawnSync(
       'git',
       [...authArgs(authorizationHeader), 'push', `--force-with-lease=${lease}`, remote, `${candidateSha}:${targetRef}`],
-      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 120_000 },
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
     );
     if (push.status !== 0) mutationError = push.stderr.trim() || `Atomic promotion of ${targetRef} failed.`;
   }

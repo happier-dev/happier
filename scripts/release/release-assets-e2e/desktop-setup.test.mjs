@@ -241,6 +241,10 @@ test('predecessor setup params are what each released desktop sent, filled from 
     expectedAccountId: 'acct-1',
     surface: 'desktop.ui',
   });
+  // ui-desktop-v0.2.19 and v0.2.21 send the same contract as 0.2.17.
+  for (const tag of ['ui-desktop-v0.2.19', 'ui-desktop-v0.2.21']) {
+    assert.deepEqual(resolvePredecessorSetupParams(tag, target), resolvePredecessorSetupParams('ui-desktop-v0.2.17', target));
+  }
   // An uncharacterized release has no params, so the upgrade scenario reports BLOCKED.
   assert.equal(resolvePredecessorSetupParams('ui-desktop-v0.2.99', target), null);
 });
