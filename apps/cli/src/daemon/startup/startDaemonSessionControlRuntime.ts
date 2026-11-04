@@ -450,7 +450,6 @@ import {
   createStopSession,
   type StopSessionOptions,
 } from '../sessions/stopSession';
-import { createRequesterMachineSessionAccessLossCleanup } from '../sessions/requesterMachineAccessLoss';
 import {
   registerPidSpawnResourceCleanup,
   retireUpstreamAuthorityBeforeProcessStop,
@@ -9433,95 +9432,15 @@ daemonWorkSignal: AbortSignal;
   );
   params.onSimulatorPreviewRoutesReady?.(simulatorPreviewRuntime.routes);
   {
-    const cleanupSessions = createRequesterMachineSessionAccessLossCleanup({
-      serverId: params.serverId,
-      machineId: params.machineId,
-      pidToTrackedSession: params.pidToTrackedSession,
-      retireRequesterCredentials: async (binding) => {
-        const { retireRequesterSessionCredentialCustody } =
-          await import('../sessionEncryption/requesterSessionCredentials');
-        return await retireRequesterSessionCredentialCustody({
-          happyHomeDir: configuration.happyHomeDir,
-          ...binding,
-        });
-      },
-      stopSession: async (sessionId, options) => {
-        const expected = options?.expectedTrackedRunner;
-        if (
-          !expected ||
-          params.pidToTrackedSession.get(expected.tracked.pid) !==
-            expected.tracked
-        ) {
-          return { status: 'incomplete', reason: 'runner_signal_incomplete' };
-        }
-        return await stopSessionCore(sessionId, options);
-      },
-      beforeSignalExactTrackedRunner: (tracked) => {
-        // Only after the final signed Home check: host custody is
-        // not a manual requester Account/history mutation.
-        if (tracked.happySessionId)
-          sessionRunnerRespawnManager.markStopRequested(
-            tracked.happySessionId,
-            { reason: 'daemon_stop_session', requestedAtMs: Date.now() },
-          );
-      },
-    });
-    const cleanupServices = async (
-      input: Parameters<typeof cleanupSessions>[0],
-    ): Promise<Readonly<{ kind: 'settled' | 'incomplete' }>> => {
-      try {
-        if (
-          input.machineId !== params.machineId ||
-          !(await input.verifyCurrentMachineAdmission())
-        ) {
-          return { kind: 'incomplete' };
-        }
-        const lease = await acquireDaemonPluginRuntimeRegistryLease();
-        try {
-          const owner = lease.registry.projectManagedServices;
-          const ownerIsCurrent = () =>
-            pluginRuntimeController.getState().activeRegistry
-              ?.projectManagedServices === owner;
-          const verifyCurrentMachineAdmission = async () =>
-            ownerIsCurrent() &&
-            (await input.verifyCurrentMachineAdmission()) &&
-            ownerIsCurrent();
-          if (!(await verifyCurrentMachineAdmission()))
-            return { kind: 'incomplete' };
-          const witnesses = await owner.stopForAccessLoss(
-            {
-              serverId: params.serverId,
-              accountId: input.requesterAccountId,
-              machineId: input.machineId,
-              installationId: input.installationId,
-            },
-            { verifyCurrentMachineAdmission },
-          );
-          const definitive = witnesses.every(
-            (witness) =>
-              witness.status === 'stopped' ||
-              witness.status === 'cancelled_preparation',
-          );
-          return {
-            kind:
-              definitive && (await verifyCurrentMachineAdmission())
-                ? 'settled'
-                : 'incomplete',
-          };
-        } finally {
-          await lease.release();
-        }
-      } catch {
-        return { kind: 'incomplete' };
-      }
-    };
     const machineAccessLossReceiver: Parameters<ApiMachineClient['registerMachineAccessLossReceiver']>[0] = {
       serverId: params.serverId,
       readLiveWorkInventory: params.readLiveWorkInventory,
+      cleanupRequesterMachineResources: async ({ requesterAccountId }) => {
+        await pluginRuntimeController.retireHostResourceWatches(requesterAccountId);
+        return { kind: 'settled' };
+      },
       resolveInstallationId: () =>
         readInstallationIdentityIfExistsSync()?.installationId ?? null,
-      cleanupRequesterMachineSessions: cleanupSessions,
-      cleanupRequesterMachineServices: cleanupServices,
     };
     if (params.onMachineAccessLossReceiverReady) {
       params.onMachineAccessLossReceiverReady(machineAccessLossReceiver);

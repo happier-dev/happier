@@ -7,13 +7,10 @@ import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { authorizeMachineRpcRequest, verifyMachineRpcAdmissionCurrent, type MachineRpcAdmissionBoundary } from '@/api/machine/machineRpcAuthorization';
 import { registerMachineAccessLossReceiver } from '@/daemon/externalActions/registerMachineAccessLossReceiver';
-import { createRequesterMachineSessionAccessLossCleanup } from '@/daemon/sessions/requesterMachineAccessLoss';
-import { createStopSession } from '@/daemon/sessions/stopSession';
-import type { TrackedSession } from '@/daemon/types';
 import { createHostActionOperationRuntime } from './createHostActionOperationRuntime';
 
 describe('finite operation authenticated access-loss custody', () => {
-  it('reaches the same requester Stop owner without treating its requested Stop as settled or touching other work', async () => {
+  it('lets already admitted finite work finish after access loss at the next request boundary', async () => {
     let nextId = 0;
     const runtime = createHostActionOperationRuntime({ serverId: 'home', machineId: 'machine', resolveAccountId: async () => 'alice',
       custodyBinding: { serverId: 'home', installationId: 'installation' },
@@ -21,8 +18,8 @@ describe('finite operation authenticated access-loss custody', () => {
     const releases: (() => void)[] = [];
     const owners = new Map<string, AbortSignal>();
     const keys = tweetnacl.sign.keyPair();
-    // Only Home HTTP is substituted; signed verification, receiver, Session owner,
-    // operation scope, runner cancellation and terminal observation remain real.
+    // Only Home HTTP is substituted; signed verification, receiver, operation
+    // scope, runner cancellation and terminal observation remain real.
     const network = vi.spyOn(axios, 'post').mockResolvedValue({ status: 200, data: { v: 1, ok: true },
       statusText: '', headers: {}, config: { headers: new AxiosHeaders() } });
     try {
@@ -31,11 +28,7 @@ describe('finite operation authenticated access-loss custody', () => {
           privateKey: keys.secretKey, daemonToken: 'daemon', serverHttpBaseUrl: 'https://home.invalid' }) };
       const rpc = new RpcHandlerManager({ scopePrefix: 'machine', encryptionMode: 'plain',
         authorizeRequest: request => authorizeMachineRpcRequest(request, boundary) });
-      const tracked = new Map<number, TrackedSession>();
-      registerMachineAccessLossReceiver(rpc, { serverId: 'home', machineId: 'machine', resolveInstallationId: () => 'installation',
-        cleanupRequesterMachineSessions: createRequesterMachineSessionAccessLossCleanup({ serverId: 'home', machineId: 'machine',
-          pidToTrackedSession: tracked, stopSession: createStopSession({ pidToTrackedSession: tracked }) }),
-        cleanupRequesterMachineActionOperations: input => runtime.cleanupRequesterMachineOperations({ ...input, serverId: 'home' }) });
+      registerMachineAccessLossReceiver(rpc, { serverId: 'home', machineId: 'machine', resolveInstallationId: () => 'installation' });
       rpc.registerHandler('execute', (_input: unknown, context) => runtime.observeExecution({ actionId: 'projects.compute.exec', input: {},
         rpcContext: context,
         execute: async operation => {
@@ -53,17 +46,18 @@ describe('finite operation authenticated access-loss custody', () => {
           machineId: 'machine', installationId: 'installation', role: 'manage' as const, encryptionMode: 'plain' as const } };
       expect(await rpc.handleRequest({ ...request, authorization: undefined })).toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
       expect(owners.get('bob')?.aborted).toBe(false);
-      let resolved = false;
-      const retirement = rpc.handleRequest(request).then(result => { resolved = true; return result; });
-      await vi.waitFor(() => expect(owners.get('bob')?.aborted).toBe(true));
-      expect(owners.get('bob')?.aborted).toBe(true);
+      const interrupted = new Promise<'interrupted'>(resolve => {
+        owners.get('bob')!.addEventListener('abort', () => resolve('interrupted'), { once: true });
+      });
+      const retirement = rpc.handleRequest(request);
+      expect(await Promise.race([retirement.then(() => 'settled'), interrupted])).toBe('settled');
+      expect(owners.get('bob')?.aborted).toBe(false);
       expect(owners.get('carol')?.aborted).toBe(false);
       expect(owners.get('alice')?.aborted).toBe(false);
-      expect(resolved).toBe(false);
       expect(runtime.store.get({ accountId: 'bob', machineId: 'machine' }, 'operation-1')).toMatchObject({ state: 'accepted' });
       releases[0]!();
       expect(await retirement).toEqual({ kind: 'settled' });
-      expect(await runtime.runner.waitForTerminal({ accountId: 'bob', machineId: 'machine' }, 'operation-1')).toMatchObject({ state: 'cancelled' });
+      expect(await runtime.runner.waitForTerminal({ accountId: 'bob', machineId: 'machine' }, 'operation-1')).toMatchObject({ state: 'succeeded' });
       expect(await rpc.handleRequest(request)).toEqual({ kind: 'settled' });
     } finally { releases.forEach(release => release()); network.mockRestore(); }
   });

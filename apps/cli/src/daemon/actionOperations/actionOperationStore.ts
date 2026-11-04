@@ -375,6 +375,19 @@ export function createActionOperationStore(options?: Readonly<{
     hasMatchingInputIdentity(operationId: string, inputIdentity: string): boolean {
       return invocationMetadata.get(operationId)?.inputIdentity === inputIdentity;
     },
+    /** Strict local acceptance order, independent of wall-clock ties/corrections.
+     * Imported snapshots have no local invocation and cannot prove new admission.
+     */
+    wasInvocationAcceptedAfter(operationId: string, precedingOperationId: string): boolean {
+      if (operationId === precedingOperationId || !invocationMetadata.has(operationId)
+        || !invocationMetadata.has(precedingOperationId)) return false;
+      let preceding = false;
+      for (const id of invocationMetadata.keys()) {
+        if (id === operationId) return preceding;
+        if (id === precedingOperationId) preceding = true;
+      }
+      return false;
+    },
     readRequesterWorkAttribution(operationId: string): RequesterWorkAttributionV1 | null {
       return invocationMetadata.get(operationId)?.requesterWorkAttributionV1 ?? null;
     },

@@ -1096,7 +1096,6 @@
     "src/daemon/sessions/reconcileRecoveredSessionMachineControl.ts",
     "src/daemon/sessions/recoverStrandedTerminalControlServiceability.ts",
     "src/daemon/sessions/registerAcceptedSessionWorkspace.ts",
-    "src/daemon/sessions/requesterMachineAccessLoss.ts",
     "src/daemon/sessions/resolveSpawnWebhookResult.ts",
     "src/daemon/sessions/resolveTrackedSessionCatalogAgentId.ts",
     "src/daemon/sessions/resolveTrackedSessionExitSettlementEvidence.ts",

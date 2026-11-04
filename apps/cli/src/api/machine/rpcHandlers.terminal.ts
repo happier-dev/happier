@@ -74,7 +74,9 @@ export type MachineTerminalRpcRegistration = Readonly<{
     requesterAccountId: string;
     machineId: string;
     installationId: string;
-    verifyCurrentMachineAdmission: () => Promise<boolean>;
+    remainingRole?: 'use';
+    signal: AbortSignal;
+    isCurrentInstallation: () => boolean;
   }>) => Promise<Readonly<{ kind: 'settled' | 'incomplete' }>>;
   dispose: () => void;
 }>;
@@ -847,11 +849,12 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
         const custody = sessionManager?.getCustody(terminal.terminalId);
         if (!custody || custody.serverId !== input.serverId || custody.requesterAccountId !== input.requesterAccountId
           || custody.machineId !== input.machineId || custody.installationId !== input.installationId) continue;
-        // The finite Action owner cancels and settles its held work. A borrowed
-        // output view cannot promote presentation cleanup into task cancellation.
+        if (input.remainingRole === 'use' && custody.kind !== 'machine') continue;
+        // Admitted finite work finishes naturally; its output view does not
+        // promote presentation cleanup into task cancellation.
         if (sessionManager?.isFiniteHeld(terminal.terminalId)) continue;
         try {
-          if (!await input.verifyCurrentMachineAdmission()) return { kind: 'incomplete' };
+          if (input.signal.aborted || !input.isCurrentInstallation()) return { kind: 'incomplete' };
           if (sessionManager?.getCustody(terminal.terminalId) !== custody) return { kind: 'incomplete' };
           const settled = await settleTerminalClose(terminal.terminalId);
           if (!settled.ok) incomplete = true;

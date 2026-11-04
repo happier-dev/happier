@@ -4,9 +4,6 @@ import type { Machine } from '@/api/types';
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
-import { createRequesterMachineSessionAccessLossCleanup } from '@/daemon/sessions/requesterMachineAccessLoss';
-import { createStopSession } from '@/daemon/sessions/stopSession';
-import type { TrackedSession } from '@/daemon/types';
 
 import { ApiMachineClient } from './apiMachine';
 
@@ -46,15 +43,10 @@ async function settleWithin<T>(promise: Promise<T>, timeoutMs: number): Promise<
 describe('ApiMachineClient peer mediation RPC invoker', () => {
     it('registers installation access-loss custody without giving peer callers registration authority', async () => {
         const client = new ApiMachineClient('token', createMachine());
-        const tracked = new Map<number, TrackedSession>();
         try {
             client.registerMachineAccessLossReceiver({
                 serverId: 'home',
                 resolveInstallationId: () => 'installation_1',
-                cleanupRequesterMachineSessions: createRequesterMachineSessionAccessLossCleanup({
-                    serverId: 'home', machineId: 'machine_1', pidToTrackedSession: tracked,
-                    stopSession: createStopSession({ pidToTrackedSession: tracked }),
-                }),
             });
             const peerInvoker = client.getPeerMediationMachineRpcHandlerManager();
             expect('registerHandler' in peerInvoker).toBe(false);

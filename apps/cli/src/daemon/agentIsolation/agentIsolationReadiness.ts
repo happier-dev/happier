@@ -106,7 +106,8 @@ export async function observeAgentIsolationMemberLaunchReadiness(input: Readonly
   signal?: AbortSignal;
   system?: AgentIsolationReadinessSystem;
 }>): Promise<Readonly<{ kind: 'member_native_ready';
-  status: Extract<MachineAgentIsolationOwnStatusV1, { protection: 'member_separated' }>['status'] }> | Unavailable> {
+  status: Extract<MachineAgentIsolationOwnStatusV1, { protection: 'member_separated' }>['status'];
+  directories: NonNullable<Extract<MachineAgentIsolationOwnStatusV1, { protection: 'member_separated' }>['directories']> }> | Unavailable> {
   const unavailable = (code: Unavailable['code']): Unavailable => ({ kind: 'unavailable', code });
   if (process.platform !== 'linux') return unavailable('unsupported_platform');
   input.signal?.throwIfAborted();
@@ -127,7 +128,8 @@ export async function observeAgentIsolationMemberLaunchReadiness(input: Readonly
       { env: launch.env, inputBytes: launch.stdinPreamble, signal: input.signal, terminateOnAbort: terminateProcessTree });
     input.signal?.throwIfAborted();
     return Buffer.from(result.stdout).equals(Buffer.from('member-native-ready\n'))
-      ? { kind: 'member_native_ready', status: { kind: 'effective', platform: 'linux' } } : unavailable('launch_probe_failed');
+      ? { kind: 'member_native_ready', status: { kind: 'effective', platform: 'linux' },
+        directories: { home: identity.home, workspace: identity.workspaceRoot } } : unavailable('launch_probe_failed');
   } catch (error) {
     input.signal?.throwIfAborted();
     const code = error && typeof error === 'object' ? Reflect.get(error, 'code') : undefined;

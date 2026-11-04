@@ -1,3 +1,4 @@
+import { createAgentIsolationMemberOperations, type AgentIsolationMemberOperations } from '@/daemon/agentIsolation/createAgentIsolationMemberOperations';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { AgentIsolationEffectDependencies } from '@/daemon/agentIsolation/agentIsolationProvisioner';
 import { admitDeploymentArchiveFilesystemForHost } from '@/deployments/targets/ownServer/archiveFilesystemAdmission';
@@ -362,7 +363,7 @@ import { readAgentIsolationSnapshot } from '@/daemon/agentIsolation/agentIsolati
  */
 import { settleMachineCaddyFirewallForHost } from '@/machines/reachability/machineReachabilityHost';
 import { observeOwnDaemonReachability } from '@/machines/reachability/observeOwnDaemonReachability';
-import type { HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+import type { HostAgentIsolationLaunchContext, HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { prepareRequesterNativeOperation, type PrepareRequesterNativeOperationInput } from '@/daemon/agentIsolation/prepareNativeOperation';
 import { createSessionAgentIsolationMemberPreparation } from '@/daemon/agentIsolation/sessionPreparation';
 import { prepareDaemonAgentIsolationIdentity } from '@/daemon/spawn/prepareDaemonAgentIsolationIdentity';
@@ -1026,6 +1027,20 @@ export class ApiMachineClient {
     private get machineContentCodec(): MachineContentCodec { return this.machineContentContext.codec; }
     private get machineContentReady(): boolean { return this.machineContentContext.ready; }
     private readonly actionOperationRuntime: HostActionOperationRuntime;
+    private agentIsolationMemberOperations: AgentIsolationMemberOperations | null = null;
+
+    async prepareAgentIsolationMember(input: Parameters<NonNullable<HostAgentIsolationLaunchContext['prepareMember']>>[0]) {
+        const result = await this.agentIsolationMemberOperations?.prepare(input);
+        if (result?.kind !== 'ready') throw Object.assign(new PluginError({
+            code: 'agent_isolation_unavailable', message: 'Member execution requires owner setup', retryable: false,
+            details: { reason: 'member_setup_required', phase: 'native_execution_preparation',
+                ...(result?.kind === 'not_ready' ? { outcome: result.result.outcome,
+                    ...('reasonCode' in result.result ? { reasonCode: result.result.reasonCode } : {}) } : {}),
+            },
+        }), { rpcErrorCode: 'agent_isolation_unavailable' });
+        return { identity: result.identity, daemonObservation: result.daemonObservation };
+    }
+
 
     async resolveDeploymentSourceRequesterIdentity(context: import('@happier-dev/protocol').ActionExecutorContext): Promise<HostRequesterExecutionIdentity> {
         if (!this.filesystemEffectAdmission.resolveActionRequester) {
@@ -2649,11 +2664,10 @@ export class ApiMachineClient {
     }
 
     registerMachineAccessLossReceiver(options: Omit<Parameters<typeof registerMachineAccessLossReceiver>[1],
-        'machineId' | 'cleanupRequesterMachineActionOperations' | 'cleanupRequesterMachineTerminals'>): void {
+        'machineId' | 'cleanupRequesterMachineTerminals' | 'memberOperations'>): void {
+        const client = this;
         registerMachineAccessLossReceiver(this.rpcHandlerManager, { ...options, machineId: this.machine.id,
-            cleanupRequesterMachineActionOperations: input => this.cleanupRequesterMachineOperations({
-                ...input, serverId: options.serverId,
-            }),
+            get memberOperations() { return client.agentIsolationMemberOperations ?? undefined; },
             cleanupRequesterMachineTerminals: input => this.cleanupRequesterMachineTerminals({
                 ...input, serverId: options.serverId,
             }),
@@ -2907,6 +2921,22 @@ export class ApiMachineClient {
     }
 
     registerMachineAgentIsolationRoutes(effects: AgentIsolationEffectDependencies): void {
+        this.agentIsolationMemberOperations = createAgentIsolationMemberOperations({
+            effects, activeServerDir: configuration.activeServerDir, serverId: this.machineRuntimeServerId,
+            operations: this.actionOperationRuntime,
+            observeExecution: request => this.observeActionExecution(request),
+            readActivityInventory: () => this.lifecycleDependencies.managedActivity?.activity ?? null,
+            captureMetadataPort: () => this.captureMachineMetadataFieldPort(),
+            target: () => {
+                const custodianAccountId = readAccountIdFromToken(this.token);
+                const homeServerIdentityId = this.lifecycleDependencies.resolveCurrentServerIdentityId?.();
+                return custodianAccountId && homeServerIdentityId && this.machineRuntimeInstallationId
+                    && !this.projectionSchedulingClosed ? {
+                        custodianAccountId, homeServerIdentityId, machineId: this.machine.id,
+                        installationId: this.machineRuntimeInstallationId, encryptionMode: this.getMachineEncryptionMode(),
+                    } : null;
+            },
+        });
         registerDaemonMachineAgentIsolationRpcHandlers(this.rpcHandlerManager, {
             runActionOperation: request => this.runActionOperation(request),
             read: () => this.getAgentIsolationSnapshot(), effects,

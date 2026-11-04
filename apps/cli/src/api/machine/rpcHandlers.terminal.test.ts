@@ -415,7 +415,7 @@ describe('registerMachineTerminalRpcHandlers', () => {
       live = false;
       await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_INPUT)!({ terminalId, data: 'after revoke' }, reconnect)).resolves.toMatchObject({ ok: false, errorCode: 'terminal_forbidden' });
       await expect(registration.cleanupRequesterMachineTerminals({ serverId: 'home', requesterAccountId: 'bob', machineId: 'machine', installationId: 'installation',
-        verifyCurrentMachineAdmission: async () => true })).resolves.toEqual({ kind: 'settled' });
+        signal: new AbortController().signal, isCurrentInstallation: () => true })).resolves.toEqual({ kind: 'settled' });
       expect(h.sessionManager.list()).toEqual([]);
       expect(h.provider.spawned[0]!.pty.exited).toBe(true);
       expect(JSON.parse(JSON.stringify(authorization))).toEqual(root);
@@ -716,7 +716,7 @@ describe('registerMachineTerminalRpcHandlers', () => {
     } finally { registration.dispose(); await h.dispose(); }
   });
 
-  it('retires only exactly attributed standalone processes after a fresh access-loss check and observes real exit', async () => {
+  it('closes exact interactive terminals on access loss while admitted finite work keeps running', async () => {
     const provider = new FakeInteractivePtyProvider();
     let releaseStop: (() => void) | undefined;
     const stopped: number[] = [];
@@ -731,19 +731,25 @@ describe('registerMachineTerminalRpcHandlers', () => {
       },
     });
     const custody = { serverId: 'home', requesterAccountId: 'bob', machineId: 'machine', installationId: 'installation', workspaceRefId: 'accepted', projectKey: 'project', rootPath: '/project' };
-    const bob = sessionManager.ensure({ terminalKey: 'shell', cwd: '/project', custody });
-    const cara = sessionManager.ensure({ terminalKey: 'shell', cwd: '/project', custody: { ...custody, requesterAccountId: 'cara' } });
-    const presentedSession = sessionManager.ensure({ terminalKey: 'session-shell', cwd: '/project', sessionId: 'session-one',
+    const bob = await sessionManager.ensure({ terminalKey: 'shell', cwd: '/project', custody });
+    const cara = await sessionManager.ensure({ terminalKey: 'shell', cwd: '/project', custody: { ...custody, requesterAccountId: 'cara' } });
+    const presentedSession = await sessionManager.ensure({ terminalKey: 'session-shell', cwd: '/project', sessionId: 'session-one',
       custody: { kind: 'session', serverId: 'home', requesterAccountId: 'bob', machineId: 'machine', installationId: 'installation', sessionId: 'session-one', rootPath: '/project' } });
-    const held = sessionManager.ensure({ terminalKey: 'finite', cwd: '/project', custody, holdUntilExit: true,
+    const held = await sessionManager.ensure({ terminalKey: 'finite', cwd: '/project', custody, holdUntilExit: true,
       launchProcess: { file: '/managed/tool', args: [] } });
     const registration = registerMachineTerminalRpcHandlers({ rpcHandlerManager: { registerHandler() {} }, deps: { env: {}, sessionManager } });
     try {
-      const input = { serverId: 'home', requesterAccountId: 'bob', machineId: 'machine', installationId: 'installation', verifyCurrentMachineAdmission: async () => false };
+      const input = { serverId: 'home', requesterAccountId: 'bob', machineId: 'machine', installationId: 'installation',
+        signal: new AbortController().signal, isCurrentInstallation: () => false };
       await expect(registration.cleanupRequesterMachineTerminals(input)).resolves.toEqual({ kind: 'incomplete' });
       expect(stopped).toEqual([]);
+      const cancelled = new AbortController();
+      cancelled.abort();
+      await expect(registration.cleanupRequesterMachineTerminals({ ...input,
+        signal: cancelled.signal, isCurrentInstallation: () => true })).resolves.toEqual({ kind: 'incomplete' });
+      expect(stopped).toEqual([]);
       let settled = false;
-      const closing = registration.cleanupRequesterMachineTerminals({ ...input, verifyCurrentMachineAdmission: async () => true }).then(result => { settled = true; return result; });
+      const closing = registration.cleanupRequesterMachineTerminals({ ...input, isCurrentInstallation: () => true }).then(result => { settled = true; return result; });
       await vi.waitFor(() => expect(releaseStop).toBeTypeOf('function'));
       expect(settled).toBe(false);
       expect(bob.ok && sessionManager.list().some(terminal => terminal.terminalId === bob.terminalId)).toBe(true);

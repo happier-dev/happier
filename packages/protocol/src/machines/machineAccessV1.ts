@@ -149,7 +149,9 @@ export const MachineAdmissionVerifyResponseV1Schema = lazyZodSchema(() => z.stri
 
 /** Internal Home-to-installation custody request; routing identities are transport-owned. */
 export const MachineAccessLossCustodyRequestV1Schema = lazyZodSchema(() => z.union([
-  z.strictObject({ v: z.literal(1), subjectAccountId: z.string().check(z.minLength(1)) }),
+  z.strictObject({ v: z.literal(1), subjectAccountId: z.string().check(z.minLength(1)),
+    /** Home's remaining Use authority withdraws only Machine-custody interactive access. */
+    remainingRole: z.optional(z.literal('use')) }),
   z.strictObject({ v: z.literal(1), kind: z.literal('requesters') }),
 ]));
 export type MachineAccessLossCustodyRequestV1 = Readonly<z.infer<typeof MachineAccessLossCustodyRequestV1Schema>>;

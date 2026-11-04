@@ -5,7 +5,6 @@ import { MACHINE_RPC_TIMEOUT_ERROR_CODE, RPC_ERROR_CODES, type RpcErrorCode } fr
 import { CLIENT_UPGRADE_REQUIRED_ERROR_CODE } from '@happier-dev/protocol/clientCompatibility/upgradeRequiredV1';
 import { eventRouter } from '@/app/events/connectionEventRouter';
 import { readMachineAccessKeySessionBindingsInTx } from '@/app/accessKeys/sessionMachineAccessKeyMutations';
-import { db } from '@/storage/db';
 import { inReadSnapshot, inTx, type Tx } from '@/storage/inTx';
 import { log } from '@/utils/logging/log';
 import { resolveEffectiveMachineRoleInTx, resolveMachineAdmissionInTx } from './machineAccess';
@@ -95,23 +94,22 @@ async function forwardMachineAccessCustody(input: MachineCustody, callParams: Ma
     return { kind: 'incomplete', reason: `forward_failed:${knownCode ?? 'unknown'}` };
 }
 
-/** Delegates current effective loss to the daemon's existing composed cleanup owners. */
+/** Home's existing role snapshot projects full loss or Machine-only Manage withdrawal to cleanup. */
 export async function dispatchMachineAccessLossCustody(input: CustodyLoss): Promise<MachineAccessLossCustodyOutcome> {
-    let lossNoLongerCurrent = false;
-    const readCurrent = () => inReadSnapshot(async tx => {
-        if (await resolveEffectiveMachineRoleInTx(tx, { actorAccountId: input.subjectAccountId, machineId: input.machineId }) !== null) {
-            lossNoLongerCurrent = true;
-            return null;
-        }
-        return await readCurrentCustodyInTx(tx, input);
-    });
     let response: Awaited<ReturnType<typeof forwardMachineAccessCustody>>;
     try {
-        response = await forwardMachineAccessCustody(input, { v: 1, subjectAccountId: input.subjectAccountId }, readCurrent);
+        const current = await inReadSnapshot(async tx => {
+            const role = await resolveEffectiveMachineRoleInTx(tx, { actorAccountId: input.subjectAccountId, machineId: input.machineId });
+            if (role === 'manage') return null;
+            return { custody: await readCurrentCustodyInTx(tx, input), remainingRole: role };
+        });
+        if (!current) return { kind: 'settled' };
+        response = await forwardMachineAccessCustody(input, { v: 1, subjectAccountId: input.subjectAccountId,
+            ...(current.remainingRole === 'use' ? { remainingRole: 'use' } : {}),
+        }, async () => current.custody);
     } catch {
         response = { kind: 'incomplete', reason: 'custody_unavailable' };
     }
-    if (lossNoLongerCurrent) return { kind: 'settled' };
     const result = response?.kind === 'forwarded' ? MachineAccessLossCustodyResponseV1Schema.safeParse(response.result) : null;
     if (result?.success && result.data.kind === 'settled') return { kind: 'settled' };
     const outcome: IncompleteCustody = response?.kind === 'incomplete' ? response
@@ -123,14 +121,13 @@ export async function dispatchMachineAccessLossCustody(input: CustodyLoss): Prom
 
 /** History and live attribution supply subjects; only current access loss authorizes cleanup. */
 export async function recoverMachineAccessLossCustody(input: MachineCustody): Promise<void> {
-    const machine = await db.machine.findUnique({ where: { id: input.machineId }, select: { accountId: true, installationId: true } });
-    if (!machine || machine.accountId !== input.expectedCustodianAccountId || machine.installationId !== input.expectedInstallationId) return;
+    const admission = await inReadSnapshot(tx => readCurrentCustodyInTx(tx, input));
+    if (admission.kind === 'incomplete') return;
     const bindings = await inTx(tx => readMachineAccessKeySessionBindingsInTx(tx, {
         accountId: input.expectedCustodianAccountId, machineId: input.machineId,
     }));
     const subjects = new Set(bindings.map(binding => binding.accountId));
-    const response = await forwardMachineAccessCustody(input, { v: 1, kind: 'requesters' },
-        () => inReadSnapshot(tx => readCurrentCustodyInTx(tx, input)));
+    const response = await forwardMachineAccessCustody(input, { v: 1, kind: 'requesters' }, async () => admission);
     const census = response?.kind === 'forwarded' ? MachineAccessLossRequesterCensusResponseV1Schema.safeParse(response.result) : null;
     if (census?.success) for (const accountId of census.data.accountIds) subjects.add(accountId);
     if (!census?.success || census.data.coverage !== 'complete') {

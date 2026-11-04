@@ -89,10 +89,11 @@ export async function applyMachineAccessImpactsInTx(
     const after = await resolveEffectiveMachineAccessForMachinesInTx(tx, { machineIds: [...beforeByMachine.keys()], accountIds });
     const changedAccountIds = new Set<string>();
     const revokedAccountIds = new Set<string>();
-    const publications: Array<{ machineId: string; changed: Set<string>; revoked: Set<string> }> = [];
+    const publications: Array<{ machineId: string; changed: Set<string>; revoked: Set<string>; manageLost: Set<string> }> = [];
     for (const [machineId, before] of beforeByMachine) {
         const changed = new Set<string>();
         const revoked = new Set<string>();
+        const manageLost = new Set<string>();
         for (const [accountId, beforeRole] of before) {
             const afterRole = after.get(machineId)?.get(accountId) ?? null;
             if (beforeRole === afterRole && accountId !== input.directGrantChangedAccountId) continue;
@@ -102,27 +103,29 @@ export async function applyMachineAccessImpactsInTx(
                 revoked.add(accountId);
                 revokedAccountIds.add(accountId);
             }
+            if (beforeRole === 'manage' && afterRole === 'use') manageLost.add(accountId);
         }
         if (changed.size === 0 && !input.grantRosterChanged) continue;
 
         // Current Manage holders consume the same changed-Machine projection to
         // refresh sharing and current recipient work; this creates no key queue.
         for (const accountId of await readMachineManageRecipientAccountIdsInTx(tx, machineId)) changed.add(accountId);
-        publications.push({ machineId, changed, revoked });
+        publications.push({ machineId, changed, revoked, manageLost });
     }
 
     await acquireAccountChangePublicationLocksInTx(tx, publications.flatMap(publication => [...publication.changed]));
-    for (const { machineId, changed, revoked } of publications) {
+    for (const { machineId, changed, revoked, manageLost } of publications) {
         await markAccountsChanged(tx, { accountIds: [...changed], kind: MACHINE_RECIPIENT_ACCESS_CHANGE_KIND_V1, entityId: machineId });
 
-        if (revoked.size === 0) continue;
+        if (revoked.size === 0 && manageLost.size === 0) continue;
         const machine = await tx.machine.findUnique({ where: { id: machineId }, select: { accountId: true, installationId: true } });
         if (!machine) continue;
-        const sessionBindings = await readMachineAccessKeySessionBindingsInTx(tx, { accountId: machine.accountId, machineId });
-        for (const accountId of revoked) {
+        const sessionBindings = revoked.size === 0 ? []
+            : await readMachineAccessKeySessionBindingsInTx(tx, { accountId: machine.accountId, machineId });
+        for (const accountId of new Set([...revoked, ...manageLost])) {
             const actorBindings = sessionBindings.filter(binding => binding.accountId === accountId);
             afterTx(tx, () => {
-                eventRouter.disconnectMachineAndSessionSockets({ accountId, machineId, sessionBindings: actorBindings });
+                if (revoked.has(accountId)) eventRouter.disconnectMachineAndSessionSockets({ accountId, machineId, sessionBindings: actorBindings });
                 if (!machine.installationId) {
                     log({ module: "machine-access", level: "warn", machineId, subjectAccountId: accountId,
                         reason: "installation_unavailable" }, "Requester Session access-loss cleanup remains incomplete: installation unavailable");

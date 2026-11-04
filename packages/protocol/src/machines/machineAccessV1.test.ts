@@ -21,6 +21,9 @@ describe('Machine access V1 admission boundaries', () => {
   it('accepts only a cleanup subject and actual settled or incomplete custody results', () => {
     expect(MachineAccessLossCustodyRequestV1Schema.parse({ v: 1, subjectAccountId: 'bob' }))
       .toEqual({ v: 1, subjectAccountId: 'bob' });
+    expect(MachineAccessLossCustodyRequestV1Schema.parse({ v: 1, subjectAccountId: 'bob', remainingRole: 'use' }))
+      .toEqual({ v: 1, subjectAccountId: 'bob', remainingRole: 'use' });
+    expect(MachineAccessLossCustodyRequestV1Schema.safeParse({ v: 1, subjectAccountId: 'bob', remainingRole: 'manage' }).success).toBe(false);
     expect(MachineAccessLossCustodyRequestV1Schema.parse({ v: 1, kind: 'requesters' }))
       .toEqual({ v: 1, kind: 'requesters' });
     expect(MachineAccessLossCustodyRequestV1Schema.safeParse({ v: 1, kind: 'requesters', subjectAccountId: 'bob' }).success).toBe(false);
