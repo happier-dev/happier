@@ -113,11 +113,16 @@ export function readSessionPreparationFailureDiagnostic(error: unknown): Readonl
       ? { preparationCause: readDataRecord(cause.preparationCause) ?? null }
       : {}),
   });
+  const closedCause = parsedCause.success ? parsedCause.data : null;
+  const causeReason = closedCause && closedCause.failureReason !== 'unknown'
+    && closedCause.failureReason !== 'unclassified_provider_error' ? closedCause.failureReason
+    : closedCause?.code && ProviderErrorCodeV1Schema.safeParse(closedCause.code).success ? closedCause.code : null;
   const originalCode = readClosedField(error, 'code', preparationDiagnosticCodes);
   const reason = readClosedField(error, 'reason', preparationDiagnosticReasons);
   return {
     originalCode,
-    reason: reason === 'unknown' && originalCode === 'agent_isolation_unavailable' ? originalCode : reason,
+    reason: reason === 'unknown' && causeReason ? causeReason
+      : reason === 'unknown' && originalCode === 'agent_isolation_unavailable' ? originalCode : reason,
     contextSource: readClosedField(error, 'contextSource', preparationDiagnosticSources),
     ...(parsedCause.success ? { failureCause: parsedCause.data } : {}),
   };

@@ -27,3 +27,18 @@ it('omits malformed or accessor-backed native causes without reading their value
   }
   expect(reads).toBe(0);
 });
+
+it.each([
+  { code: 'provider_endpoint_auth_required', failureReason: 'authentication_required', providerErrorCode: 'Unauthorized' },
+  { code: 'provider_endpoint_unauthorized', failureReason: 'unclassified_provider_error', providerErrorCode: 401 },
+])('retains the provider startup category in the real runner diagnostic ($code)', cause => {
+  const failureCause = { phase: 'client_start', ...cause };
+  const error = new PluginError({ code: 'agent_startup_failed', message: '/private/credential PRIVATE_TOKEN',
+    details: { failureCause } });
+  expect(readSessionPreparationFailureDiagnostic(error)).toMatchObject({
+    originalCode: 'agent_startup_failed',
+    reason: cause.failureReason === 'unclassified_provider_error' ? cause.code : cause.failureReason,
+    failureCause,
+  });
+  expect(JSON.stringify(readSessionPreparationFailureDiagnostic(error))).not.toMatch(/private|PRIVATE/);
+});
