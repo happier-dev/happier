@@ -2306,6 +2306,9 @@ importers:
       '@happier-dev/cli-common':
         specifier: 0.0.0
         version: link:../cli-common
+      '@happier-dev/deployment-protocol':
+        specifier: 0.0.0
+        version: link:../deployment-protocol
       '@happier-dev/protocol':
         specifier: 0.0.0
         version: link:../protocol

@@ -561,6 +561,7 @@
     "@happier-dev/agents",
     "@happier-dev/brand",
     "@happier-dev/cli-common",
+    "@happier-dev/deployment-protocol",
     "@happier-dev/protocol",
     "@happier-dev/release-runtime"
   ],
@@ -568,6 +569,7 @@
     "@happier-dev/agents": "0.0.0",
     "@happier-dev/brand": "0.0.0",
     "@happier-dev/cli-common": "0.0.0",
+    "@happier-dev/deployment-protocol": "0.0.0",
     "@happier-dev/protocol": "0.0.0",
     "@happier-dev/release-runtime": "0.0.0",
     "@noble/hashes": "^1.8.0",
