@@ -497,7 +497,21 @@ export function resolveDevTargetExecutionPolicy(
   };
 }
 
-export function resolveDevTargetsConfigPath({ stackName, env = process.env }) {
+export function resolveDevTargetsConfigPath({ stackName, env = process.env,
+  useExecutionOverride = true, explicitStack = false } = {}) {
+  const path = useExecutionOverride ? env.HAPPIER_EXEC_CONFIG_PATH : undefined;
+  if (path) {
+    if (explicitStack) {
+      throw new Error('[dev-targets] --stack cannot be combined with HAPPIER_EXEC_CONFIG_PATH; unset the override to select a stack');
+    }
+    if (!isAbsolute(path)) {
+      throw new Error('[dev-targets] HAPPIER_EXEC_CONFIG_PATH must be an absolute path');
+    }
+    if (/[\0\r\n]/.test(path)) {
+      throw new Error('[dev-targets] invalid HAPPIER_EXEC_CONFIG_PATH');
+    }
+    return resolve(path);
+  }
   const resolvedStack = requireNonEmptyString(stackName, 'stackName');
   return join(resolveStackEnvPath(resolvedStack, env).baseDir, 'dev-targets.json');
 }
@@ -507,19 +521,14 @@ export function resolveDevTargetsConfigPath({ stackName, env = process.env }) {
  * Runtime/service placement continues to load its own Stack configuration.
  */
 export async function loadDevTargetExecutionConfig({ stackName, env = process.env } = {}) {
-  const path = env.HAPPIER_EXEC_CONFIG_PATH;
-  if (path && !isAbsolute(path)) {
-    throw new Error('[dev-targets] HAPPIER_EXEC_CONFIG_PATH must be an absolute path');
-  }
-  if (path && /[\0\r\n]/.test(path)) {
-    throw new Error('[dev-targets] invalid HAPPIER_EXEC_CONFIG_PATH');
-  }
-  return await loadDevTargetsConfig({ stackName, path: path ? resolve(path) : undefined, env, allowMissing: !path });
+  const path = resolveDevTargetsConfigPath({ stackName, env });
+  return await loadDevTargetsConfig({ path, env, allowMissing: !env.HAPPIER_EXEC_CONFIG_PATH });
 }
 
 export async function loadDevTargetsConfig({ stackName, path: configPath, env = process.env, allowMissing = true,
   buildPlacementOwnerPath, logger = console }) {
-  const path = configPath ?? resolveDevTargetsConfigPath({ stackName, env });
+  // Runtime/service callers select a Stack resource, not command policy.
+  const path = configPath ?? resolveDevTargetsConfigPath({ stackName, env, useExecutionOverride: false });
   try {
     const raw = JSON.parse(await readFile(path, 'utf8'));
     if (buildPlacementOwnerPath && raw?.runtimePlacement?.build != null) {
