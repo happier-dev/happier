@@ -2735,7 +2735,7 @@ describe('Codex app-server temporary recoverable turn failures', () => {
       });
       const rejection = createCodexAppServerRpcError({
         method, code: -32000,
-        message: `model 'gpt-6.1-sol' is not enabled in rustponsesapi (${privateSentinel})`,
+        message: `model 'gpt-6.1-sol' is not enabled in rustponsesapi (Bearer ${privateSentinel})`,
         data: { plan_type: privateSentinel, rate_limits: { provider_note: privateSentinel } },
       });
       if (method === 'thread/start') clientState.rejectNextThreadStart(rejection);
@@ -2752,7 +2752,11 @@ describe('Codex app-server temporary recoverable turn failures', () => {
       const diagnostic = {
         code: 'connected_service_model_start_rejected', severity: 'error',
         message: 'The connected account cannot start the requested model.',
-        details: { runtimeAuthClassification: {
+        details: { providerErrorCode: -32000, method, messageClass: 'JsonRpcApplicationError', failureCause: {
+          ...(method === 'thread/start' ? { code: 'agent_startup_rpc_rejected' } : {}),
+          phase: method === 'thread/start' ? 'thread_open' : 'turn_start', failureReason: 'plan', providerErrorCode: -32000,
+          providerErrorMessage: "model 'gpt-6.1-sol' is not enabled in rustponsesapi (Bearer [REDACTED])",
+        }, runtimeAuthClassification: {
           kind: 'plan', limitCategory: 'plan_invalid', serviceId: 'openai-codex',
           profileId: 'ineligible-member', groupId: 'happier',
           groupGeneration: 12, expectedCredentialRevision: 'csr_0123456789abcdefghijkl',
@@ -2778,10 +2782,12 @@ describe('Codex app-server temporary recoverable turn failures', () => {
   });
 
   it.each([
-    new Error("model 'gpt-6.1-sol' is not enabled in rustponsesapi"),
-    createCodexAppServerRpcError({ method: 'turn/start', code: -32000, message: 'Usage limit exceeded',
-      data: { codexErrorInfo: 'UsageLimitExceeded' } }),
-  ])('keeps custody unknown without a definite model-entitlement application rejection (%s)', async (error) => {
+    { title: 'unanswered failure', error: new Error("model 'gpt-6.1-sol' is not enabled in rustponsesapi"), status: 'unavailable' },
+    { title: 'answered usage-limit refusal', error: createCodexAppServerRpcError({
+      method: 'turn/start', code: -32000, message: 'Usage limit exceeded; Bearer usage-limit-secret-fixture',
+      data: { codexErrorInfo: 'UsageLimitExceeded' },
+    }), status: 'rejected' },
+  ] as const)('distinguishes definite refusal from unknown custody for $title', async ({ error, status }) => {
     const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
     const runtime = createRuntime({ ctx: { logger } });
     clientState.rejectNextTurnStart(error);
@@ -2789,22 +2795,42 @@ describe('Codex app-server temporary recoverable turn failures', () => {
     const events: AgentExecutionRunConversationEventV1[] = [];
     native.watch((event) => events.push(event));
     try {
-      await expect(native.send({
+      const result = await native.send({
         inputIds: ['input-1'], input: { text: 'original input' },
         delivery: { kind: 'newTurn', turnId: 'host-turn-1' },
-      })).resolves.toMatchObject({
-        status: 'unavailable', diagnostic: { code: 'codex_send_outcome_unknown' },
       });
-      expect(events.some((event) => event.kind === 'input-custody-unknown')).toBe(true);
-      expect(events.some((event) => event.kind === 'input-rejected')).toBe(false);
+      if (status === 'rejected') {
+        expect(result).toMatchObject({ status, retryable: false, diagnostic: {
+          code: 'provider_request_rejected',
+          details: {
+            providerErrorCode: -32000, method: 'turn/start', messageClass: 'JsonRpcApplicationError',
+            failureCause: {
+              phase: 'turn_start', failureReason: 'usage_limit', providerErrorCode: -32000,
+              providerErrorMessage: 'Usage limit exceeded; Bearer [REDACTED]',
+            },
+          },
+        } });
+        expect(events).toEqual([expect.objectContaining({
+          kind: 'input-rejected', inputIds: ['input-1'], retryable: false, diagnostic: result.diagnostic,
+        })]);
+      } else {
+        expect(result).toMatchObject({ status, diagnostic: { code: 'codex_send_outcome_unknown' } });
+        expect(events.some((event) => event.kind === 'input-custody-unknown')).toBe(true);
+        expect(events.some((event) => event.kind === 'input-rejected')).toBe(false);
+      }
       expect(logger.warn.mock.calls.filter(([message]) => message === 'Codex app-server turn failed')).toEqual([
         ['Codex app-server turn failed', {
-          failureReason: error.name === 'JsonRpcApplicationError' ? 'usage_limit' : 'unclassified_provider_error',
-          ...(error.name === 'JsonRpcApplicationError' ? { providerErrorCode: 'UsageLimitExceeded' } : {}),
+          causeCode: status === 'rejected' ? 'usage_limit' : 'codex_app_server_turn_failed', phase: 'turn_start',
+          failureReason: error.name === 'JsonRpcApplicationError' ? 'usage_limit' : 'plan',
+          ...(error.name === 'JsonRpcApplicationError' ? {
+            providerErrorCode: -32000,
+            providerErrorMessage: 'Usage limit exceeded; Bearer [REDACTED]',
+          } : {}),
           providerStartAcknowledged: false,
         }],
       ]);
       expect(JSON.stringify(logger.warn.mock.calls)).not.toContain(error.message);
+      expect(JSON.stringify([result, events, logger.warn.mock.calls])).not.toContain('usage-limit-secret-fixture');
     } finally { await native.dispose(); }
   });
 
