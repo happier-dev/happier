@@ -516,6 +516,7 @@ export const DeploymentTargetScopeV1Schema = ProjectSourceOwnerV1Schema;
 export type DeploymentTargetScopeV1 = z.infer<typeof DeploymentTargetScopeV1Schema>;
 export const DeploymentTargetLinksListInputV1Schema = lazyZodSchema(() => z.strictObject({
   ...home, scope: DeploymentTargetScopeV1Schema,
+  selection: z.optional(z.strictObject({ source: DeploymentTargetSourceV1Schema, targetKind: DeploymentIdentifierV1Schema })),
   cursor: ProjectSourcesListInputV1Schema.shape.cursor, limit: ProjectSourcesListInputV1Schema.shape.limit,
 }));
 export type DeploymentTargetLinksListInputV1 = z.infer<typeof DeploymentTargetLinksListInputV1Schema>;

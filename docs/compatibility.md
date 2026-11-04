@@ -5156,3 +5156,17 @@ all inputs remain unchanged, including for older CLI readers. The development-on
 alternate disposition owner or compatibility adapter is added. Deploy the additive
 migration before loading the new server; rolling back the server after tombstones
 exist would expose them again in old lists and is unsupported.
+
+Target comparison lists accept optional `selection` with the public source and
+target kind. The server applies it before paging and content admission; matching
+candidates retain their complete-coverage and private duplicate checks. Updated
+Link clients send this selector and require the matching server schema. Older
+strict 0.3 servers reject it; unselected list requests remain valid, with no
+whole-inventory retry for selected requests.
+
+Target lists reuse the existing opaque deployment cursor envelope when the last
+selected row is omitted, so an empty partial page can reach later valid rows
+without exposing the omitted identity. These tokens bind the actor, Home, owner
+scope and target selection and require the updated target-list reader. Existing
+raw admitted-row cursors and requests without cursors remain valid. Environment
+cursor bindings and persistence formats do not change.
