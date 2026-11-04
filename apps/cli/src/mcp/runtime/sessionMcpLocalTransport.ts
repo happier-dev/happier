@@ -71,7 +71,7 @@ export async function prepareSessionMcpLocalTransport(options: SessionMcpLocalTr
                     await chmod(localContext.socketPath, 0o600);
                     if (!sameIdentity) {
                         await grantExactUidPathAccess({ path: localContext.socketPath, uid: options.agentUid,
-                            access: 'rw-', directory: false });
+                            access: 'rw-', directory: false, kind: 'socket' });
                     } else {
                         // Isolated launches publish through the single Agent-launch frame.
                         // A same-UID Session uses this owner's private transient directory.

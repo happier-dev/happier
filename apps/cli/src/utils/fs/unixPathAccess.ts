@@ -29,6 +29,8 @@ type ExactUidPathAccess = Readonly<{
     /** Fresh staging entries already carry their preserved source mode. */
     preservePermissions?: true;
     directory: boolean;
+    /** Sockets are admitted explicitly; an ordinary file grant never accepts one. */
+    kind?: 'socket';
     inherit?: true;
 }>;
 
@@ -36,16 +38,18 @@ function assertUid(uid: number): void {
     if (!Number.isSafeInteger(uid) || uid < 0) throw new Error('Native Unix path access is unavailable');
 }
 
-async function assertOwnedEntry(handle: FileHandle, directory: boolean) {
+async function assertOwnedEntry(handle: FileHandle, directory: boolean, kind?: 'socket') {
     const entry = await handle.stat();
-    if (entry.uid !== process.getuid?.() || (directory ? !entry.isDirectory() : !entry.isFile() || entry.nlink !== 1)) {
+    const expectedType = directory ? kind === undefined && entry.isDirectory()
+        : kind === 'socket' ? entry.isSocket() : entry.isFile();
+    if (entry.uid !== process.getuid?.() || !expectedType || (!directory && entry.nlink !== 1)) {
         throw new Error('Native Unix path access is unavailable');
     }
     return entry;
 }
 
 async function grantPinnedEntry(input: ExactUidPathAccess, handle: FileHandle, path: string): Promise<void> {
-    const observed = await assertOwnedEntry(handle, input.directory);
+    const observed = await assertOwnedEntry(handle, input.directory, input.kind);
     if (input.uid === process.getuid?.()) return;
     const entry = input.preservePermissions ? observed : undefined;
     if (input.access === 'owner' && !entry) throw new Error('Native Unix path access is unavailable');

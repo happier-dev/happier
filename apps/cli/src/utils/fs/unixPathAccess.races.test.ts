@@ -1,6 +1,7 @@
 import { chmodSync, lstatSync, renameSync, statSync, symlinkSync } from 'node:fs';
 import { link, mkdir, mkdtemp, readFile, rm, stat, writeFile, type FileHandle } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { createServer } from 'node:net';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import * as access from './unixPathAccess';
@@ -18,7 +19,9 @@ vi.mock('node:child_process', () => ({ execFile(command: string, args: string[],
     const target = args.at(-1)!;
     const observed = statSync(target); const key = `${observed.dev}:${observed.ino}`;
     boundary.inodes.push(observed.ino);
-    const entries = boundary.acls.get(key) ?? new Map([['user:', 'rwx'], ['group:', '---'], ['other:', '---']]);
+    const permission = (bits: number) => `${bits & 4 ? 'r' : '-'}${bits & 2 ? 'w' : '-'}${bits & 1 ? 'x' : '-'}`;
+    const entries = boundary.acls.get(key) ?? new Map([['user:', permission((observed.mode >> 6) & 7)],
+        ['group:', permission((observed.mode >> 3) & 7)], ['other:', permission(observed.mode & 7)]]);
     boundary.acls.set(key, entries);
     if (command === 'setfacl') {
         chmodSync(target, 0o750);
@@ -156,3 +159,31 @@ it.skipIf(process.platform !== 'linux')('refuses a hard-linked ACL file before e
     expect(await readFile(file, 'utf8')).toBe('private');
     expect(lstatSync(file).mode & 0o777).toBe(0o600);
 });
+
+it.skipIf(process.platform !== 'linux').each(['leaf', 'parent'] as const)(
+    'pins an explicitly selected socket through a hostile %s replacement', async replacement => {
+        const { root, parent, victim } = await fixture();
+        const leaf = join(parent, 'mcp.sock'); const victimFile = join(victim, 'mcp.sock');
+        await writeFile(victimFile, 'private', { mode: 0o600 });
+        const server = createServer();
+        await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(leaf, resolve); });
+        chmodSync(leaf, 0o600);
+        try {
+            const inode = (await stat(leaf)).ino;
+            // Sockets require an explicit kind; ordinary file grants cannot widen this capability.
+            await expect(access.grantExactUidPathAccess({ path: leaf, uid: 994, access: 'rw-', directory: false })).rejects.toThrow();
+            expect(boundary.inodes).toEqual([]);
+            boundary.swap = () => {
+                const replaced = replacement === 'leaf' ? leaf : parent;
+                renameSync(replaced, join(root, 'displaced'));
+                symlinkSync(replacement === 'leaf' ? victimFile : victim, replaced);
+            };
+            await access.grantExactUidPathAccess({ path: leaf, uid: 994, access: 'rw-', directory: false, kind: 'socket' });
+            expect(boundary.inodes.length).toBeGreaterThan(0);
+            expect(boundary.inodes.every(actual => actual === inode)).toBe(true);
+            expect(boundary.acls.has(inodeKey(victimFile))).toBe(false);
+            expect((await stat(victimFile)).mode & 0o777).toBe(0o600);
+            expect(await readFile(victimFile, 'utf8')).toBe('private');
+        } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
+    },
+);
