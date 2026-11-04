@@ -2,6 +2,8 @@ import { readLocalDirectVoiceSettings } from '@/sync/domains/settings/voiceSetti
 import { afterAll } from 'vitest';
 import { warmLocalVoiceEngineHarnessGraph } from './localVoiceEngine.testHarness';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { createDeferred } from '@/dev/testkit';
+import { voiceConversationRuntimeMachine } from '@/voice/runtime/machine/VoiceConversationRuntimeMachine';
 
 import {
     expoSpeechSpeak,
@@ -41,6 +43,64 @@ describe('local voice engine TTS behavior', () => {
         speechRecStart.mockImplementation(() => emitSpeechRecEvent('audiostart'));
         speechRecStop.mockImplementation(() => emitSpeechRecEvent('end'));
     }, 180_000);
+
+    it.each(['End', 'fresh Start'] as const)('keeps finite synthesis visibly pending and drops its late audio after %s', async recovery => {
+        const storage = await getStorage();
+        const config = readLocalDirectVoiceSettings(storage.getState().settings.voice);
+        storage.__setState({ settings: { ...storage.getState().settings, voice: {
+            ...storage.getState().settings.voice, providerId: 'local_direct',
+            executionMachine: { mode: 'fixed', machineId: 'machine-1' },
+            providers: { ...storage.getState().settings.voice.providers,
+                local_direct: { schemaVersion: 1, config: { ...config,
+                    stt: { ...config.stt, provider: 'device' },
+                    tts: { ...config.tts, provider: 'happier.voice.google/google-cloud-tts', autoSpeakReplies: true, bargeInEnabled: true },
+                } },
+                'happier.voice.google/google-cloud-tts': { schemaVersion: 2, config: {
+                    voiceName: 'en-US-Wavenet-D', languageCode: 'en-US', format: 'mp3', speakingRate: 1, pitch: 0,
+                } },
+            },
+        } } });
+        const synthesizing = createDeferred<void>();
+        const synthesis = createDeferred<{ bytes: Uint8Array; mimeType: string }>();
+        localVoiceSpeechOutputBoundary.speechSynthesizeRpc.mockImplementationOnce(() => {
+            synthesizing.resolve(); return synthesis.promise;
+        });
+        localVoicePendingEnqueue.mockImplementationOnce(async request => {
+            await publishLocalVoiceSubmittedUserMessage(request);
+            await publishLocalVoiceAssistantMessage({ sessionId: 's1', id: 'finite-reply', text: 'A useful answer.' });
+            return acknowledgeLocalVoicePendingEnqueue(request);
+        });
+        await localVoiceEngine.toggleLocalVoiceTurn('s1');
+        emitSpeechRecEvent('result', { isFinal: true, results: [{ transcript: 'question', confidence: 0.9, segments: [] }] });
+        const sending = localVoiceEngine.toggleLocalVoiceTurn('s1').then(() => null, error => error);
+        emitSpeechRecEvent('end', {});
+        try {
+            await synthesizing.promise;
+            vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+            await vi.advanceTimersByTimeAsync(60_001);
+            expect(voiceConversationRuntimeMachine.getSnapshot()).toMatchObject({ controlSessionId: 's1', state: 'thinking' });
+            // The clock probe ends here; fresh native acquisition must retain
+            // the real event-loop scheduling used by the transport boundary.
+            vi.useRealTimers();
+            if (recovery === 'End') {
+                await localVoiceEngine.stopLocalVoiceSession();
+                expect(localVoiceEngine.getLocalVoiceState().status).toBe('idle');
+                expect(localVoiceSpeechOutputBoundary.getAudioSessionCoordinator().getSnapshot().leaseCount).toBe(0);
+            } else {
+                await localVoiceEngine.toggleLocalVoiceTurn('s1');
+                expect(localVoiceEngine.getLocalVoiceState().status).toBe('recording');
+            }
+            synthesis.resolve({ bytes: new Uint8Array([1]), mimeType: 'audio/mpeg' });
+            await sending;
+            expect(localVoiceSpeechOutputBoundary.encodedAudio.start).not.toHaveBeenCalled();
+            expect(localVoiceEngine.getLocalVoiceState().status).toBe(recovery === 'End' ? 'idle' : 'recording');
+        } finally {
+            vi.useRealTimers();
+            synthesis.resolve({ bytes: new Uint8Array([1]), mimeType: 'audio/mpeg' });
+            await sending;
+            await localVoiceEngine.stopLocalVoiceSession();
+        }
+    });
 
     it.each(['device', 'local_neural'] as const)('supports manual barge-in with the retained device producer after selecting %s STT', async (nextProvider) => {
         const storage = await getStorage();
