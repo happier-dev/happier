@@ -8273,6 +8273,8 @@ localTailscale: {
         daemon_shutting_down: "対象のマシンで Happier を終了しています。そのマシンで再起動してから、セッションを再試行してください。",
         skills_unavailable: "スキルの配信を利用できません。対象のマシンを確認してから、セッションを再試行してください。",
         team_credential_provider_selection_not_current: "選択した Team のプロバイダーを利用できません。Team のモデル選択を確認してから、セッションを再試行してください。",
+        team_credential_model_selection_required: "このセッションを開始する前に、Team のモデルを選択してください。",
+        action_outcome_unknown: "外部操作の結果を確認できませんでした。再試行する前にその状態を確認してください。",
         teamCredential: "共有された Team の認証情報がリクエストを拒否しました。",
       },
     },

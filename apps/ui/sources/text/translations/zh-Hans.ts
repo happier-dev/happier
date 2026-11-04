@@ -7653,6 +7653,8 @@ export const zhHans: TranslationStructure = {
         daemon_shutting_down: "Happier 正在目标机器上关闭。请在该机器上重新启动，然后重试会话。",
         skills_unavailable: "技能分发不可用。请检查目标机器，然后重试会话。",
         team_credential_provider_selection_not_current: "所选的 Team 提供商不可用。请检查 Team 的模型选择，然后重试会话。",
+        team_credential_model_selection_required: "请先选择一个 Team 模型，再启动此会话。",
+        action_outcome_unknown: "无法确认外部操作的结果。请在重试前检查其状态。",
         teamCredential: "共享的 Team 凭据拒绝了该请求。",
       },
     },

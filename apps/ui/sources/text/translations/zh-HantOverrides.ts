@@ -6488,6 +6488,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
               daemon_shutting_down: "Happier 正在目標機器上關閉。請在該機器上重新啟動，然後重試工作階段。",
               skills_unavailable: "技能派送無法使用。請檢查目標機器，然後重試工作階段。",
               team_credential_provider_selection_not_current: "所選的 Team 提供者無法使用。請檢查 Team 的模型選擇，然後重試工作階段。",
+              team_credential_model_selection_required: "請先選擇一個 Team 模型，再啟動此工作階段。",
+              action_outcome_unknown: "無法確認外部操作的結果。請在重試前檢查其狀態。",
               teamCredential: "共用的 Team 憑證拒絕了該請求。",
             },
           },

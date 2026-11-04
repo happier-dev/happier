@@ -9460,6 +9460,8 @@ const enSession = {
       daemon_shutting_down: 'Happier is shutting down on the target machine. Restart it there, then retry the session.',
       skills_unavailable: 'Skill delivery is unavailable. Check the target machine, then retry the session.',
       team_credential_provider_selection_not_current: 'The selected Team provider is unavailable. Review the Team model selection, then retry the session.',
+      team_credential_model_selection_required: 'Choose a Team model before starting this session.',
+      action_outcome_unknown: "The external operation could not be confirmed. Check its status before retrying.",
       teamCredential: 'The shared Team credential refused the request.',
     },
   },
