@@ -11020,6 +11020,17 @@ const en = Shared_sessionListFilterTranslations.en;
 const translated = Shared_sessionListFilterTranslations.translated;
 
 const sessionListFilterTranslations = { ru: translated({
+        spacesTitle: 'Пространства',
+        spacesEnabledDescription: "Сохранённые представления в начале каждого списка.",
+        spacesDisabledDescription: "Все списки используют обычные фильтры. Ваши пространства сохранены.",
+        spacesListEnabledDescription: "Переключайтесь между этими пространствами в списке.",
+        spacesListDisabledDescription: "Этот список использует обычные фильтры. Ваши пространства сохранены.",
+        spacesListMasterOffDescription: "Пространства выключены во всех списках. Включение вернёт их.",
+        spacesMembershipAddTo: "Добавить в пространство",
+        spacesMembershipMoveTo: "Переместить в пространство",
+        spacesMembershipRemoveFrom: "Убрать из пространства",
+        spacesMembershipSmartMayRemain: "Сессии, подходящие под его фильтр, по-прежнему там показываются.", spacesEdit: "Изменить пространство…",
+        spacesManageDescription: "Сохранённые представления, между которыми вы переключаетесь на полосе, сочетанием клавиш или свайпом на телефоне.", spacesEditNamed: ({ name }: { name: string }) => `Изменить ${name}`,
         filtersTitle: 'Фильтры сессий', filtersSearch: 'Поиск фильтров…', filtersShow: 'Показывать',
         filtersScope: 'Охват', filtersShowSessions: 'Сессии', filtersShowRuns: 'Запуски', filtersShowBoth: 'Оба',
         filtersShowBothSummary: 'Сессии и запуски', filtersStartedByNone: 'Инициаторы не выбраны',
@@ -11134,6 +11145,8 @@ const sessionPageTranslations = { ru: translated({
                 resume: "Возобновить",
                 unarchive: "Вернуть из архива",
                 openToResume: "Открыть, чтобы возобновить",
+                section: "Раздел",
+                sectionNone: "Нет",
                 cliNoticeTitle: ({ machine }: { machine: string }) => `Обновите CLI на ${machine}`,
                 cliNoticeReason: ({ version, command }: { version: string; command: string }) => `Некоторым функциям сессии нужен Happier CLI ${version}. Выполните там ${command}.`,
                 addNote: "Добавить заметку",
@@ -11375,6 +11388,7 @@ const ru: typeof en = {
     runsStale: 'Запуски рабочих процессов могут быть неактуальны',
     list: {
         level: ({ level }) => `Уровень ${level}`,
+        coordinator: 'Координатор',
         subSessions: ({ count }) => `Подсессий: ${count}`,
         transcriptSessions: ({ count }) => `Сессии · ${count}`,
         showReports: ({ name, count }) => (count > 0 ? `Показать сессии под ${name} (${count})` : `Показать сессии под ${name}`),
@@ -15951,6 +15965,10 @@ const ru = translated(workflowValueReferenceTranslations.ru, {
         answeredBy: ({ name }) => `Ответ от ${name}`,
         answeredByYou: 'Ваш ответ',
         answeredByPerson: 'Ответ от другого человека',
+        editedBy: ({ name }) => `Изменил(а) ${name}`,
+        editedByYou: 'Изменено вами',
+        editedByPerson: 'Изменено другим человеком',
+        editedByAgent: 'Изменено агентом',
         completedWithFailures: ({ completed, failed }) =>
             `Завершено с ошибками. Выполнено: ${completed}. Не удалось завершить: ${failed}.`,
         approvalWanted: ({ block }) => `${block} хочет выполнить команду.`,

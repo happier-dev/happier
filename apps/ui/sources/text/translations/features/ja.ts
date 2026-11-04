@@ -10984,6 +10984,17 @@ const en = Shared_sessionListFilterTranslations.en;
 const translated = Shared_sessionListFilterTranslations.translated;
 
 const sessionListFilterTranslations = { ja: translated({
+        spacesTitle: 'スペース',
+        spacesEnabledDescription: "各リストの上部に表示される保存済みビュー。",
+        spacesDisabledDescription: "すべてのリストで通常のフィルターを使います。スペースは保持されます。",
+        spacesListEnabledDescription: "リストからこれらのスペースを切り替えます。",
+        spacesListDisabledDescription: "このリストは通常のフィルターを使います。スペースは保持されます。",
+        spacesListMasterOffDescription: "すべてのリストでスペースがオフです。オンにすると元に戻ります。",
+        spacesMembershipAddTo: "スペースに追加",
+        spacesMembershipMoveTo: "スペースに移動",
+        spacesMembershipRemoveFrom: "スペースから削除",
+        spacesMembershipSmartMayRemain: "フィルターに一致するセッションは引き続き表示されます。", spacesEdit: "スペースを編集…",
+        spacesManageDescription: "ストリップ、ショートカット、またはスマートフォンでのスワイプで切り替える保存済みビュー。", spacesEditNamed: ({ name }: { name: string }) => `${name}を編集`,
         filtersTitle: 'セッションフィルター', filtersSearch: 'フィルターを検索…', filtersShow: '表示',
         filtersScope: '範囲', filtersShowSessions: 'セッション', filtersShowRuns: '実行', filtersShowBoth: '両方',
         filtersShowBothSummary: 'セッションと実行', filtersStartedByNone: '開始者が未選択',
@@ -11098,6 +11109,8 @@ const sessionPageTranslations = { ja: translated({
                 resume: "再開",
                 unarchive: "アーカイブを解除",
                 openToResume: "開いて再開",
+                section: "セクション",
+                sectionNone: "なし",
                 cliNoticeTitle: ({ machine }: { machine: string }) => `${machine} の CLI を更新`,
                 cliNoticeReason: ({ version, command }: { version: string; command: string }) => `一部のセッション機能には Happier CLI ${version} が必要です。そのマシンで ${command} を実行してください。`,
                 addNote: "メモを追加",
@@ -11338,6 +11351,7 @@ const ja: typeof en = {
     runsStale: 'ワークフローの実行が最新でない可能性があります',
     list: {
         level: ({ level }) => `レベル ${level}`,
+        coordinator: 'コーディネーター',
         subSessions: ({ count }) => `${count} 件のサブセッション`,
         transcriptSessions: ({ count }) => `セッション · ${count}`,
         showReports: ({ name, count }) => (count > 0 ? `${name} の下の ${count} 件のセッションを表示` : `${name} の下のセッションを表示`),
@@ -15906,6 +15920,10 @@ const ja = translated(workflowValueReferenceTranslations.ja, {
         answeredBy: ({ name }) => `${name}が回答`,
         answeredByYou: 'あなたが回答',
         answeredByPerson: '他のユーザーが回答',
+        editedBy: ({ name }) => `${name}が編集`,
+        editedByYou: 'あなたが編集',
+        editedByPerson: '他のユーザーが編集',
+        editedByAgent: 'エージェントが編集',
         completedWithFailures: ({ completed, failed }) =>
             `失敗ありで完了しました。${completed} 件が完了し、${failed} 件は終えられませんでした。`,
         approvalWanted: ({ block }) => `${block} がコマンドを実行しようとしています。`,

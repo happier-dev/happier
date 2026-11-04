@@ -62,6 +62,8 @@ export const english = {
             resume: "Resume",
             unarchive: "Unarchive",
             openToResume: "Open to resume",
+            section: "Section",
+            sectionNone: "None",
             cliNoticeTitle: ({ machine }: { machine: string }) => `Update the CLI on ${machine}`,
             cliNoticeReason: ({ version, command }: { version: string; command: string }) => `Some session features need Happier CLI ${version}. Run ${command} there.`,
             addNote: "Add a note",

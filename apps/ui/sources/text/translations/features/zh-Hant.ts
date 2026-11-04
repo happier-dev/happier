@@ -10979,6 +10979,17 @@ const en = Shared_sessionListFilterTranslations.en;
 const translated = Shared_sessionListFilterTranslations.translated;
 
 const sessionListFilterTranslations = { zhHant: translated({
+        spacesTitle: '空間',
+        spacesEnabledDescription: "顯示在每個清單頂端的已儲存檢視。",
+        spacesDisabledDescription: "所有清單都使用一般篩選。你的空間會保留。",
+        spacesListEnabledDescription: "在清單中切換這些空間。",
+        spacesListDisabledDescription: "此清單使用一般篩選。你的空間會保留。",
+        spacesListMasterOffDescription: "所有清單的空間都已關閉。開啟後會恢復。",
+        spacesMembershipAddTo: "加入空間",
+        spacesMembershipMoveTo: "移至空間",
+        spacesMembershipRemoveFrom: "從空間移除",
+        spacesMembershipSmartMayRemain: "符合其篩選條件的工作階段仍會顯示在那裡。", spacesEdit: "編輯空間…",
+        spacesManageDescription: "可透過標籤列、快捷鍵或在手機上滑動切換的已儲存檢視。", spacesEditNamed: ({ name }: { name: string }) => `編輯${name}`,
         filtersTitle: '工作階段篩選', filtersSearch: '搜尋篩選條件…', filtersShow: '顯示',
         filtersScope: '範圍', filtersShowSessions: '工作階段', filtersShowRuns: '執行', filtersShowBoth: '兩者',
         filtersShowBothSummary: '工作階段和執行', filtersStartedByNone: '未選擇發起者',
@@ -11093,6 +11104,8 @@ const sessionPageTranslations = { 'zh-Hant': translated({
                 resume: "繼續",
                 unarchive: "取消封存",
                 openToResume: "開啟以繼續",
+                section: "分區",
+                sectionNone: "無",
                 cliNoticeTitle: ({ machine }: { machine: string }) => `更新 ${machine} 上的 CLI`,
                 cliNoticeReason: ({ version, command }: { version: string; command: string }) => `部分工作階段功能需要 Happier CLI ${version}。請在那台機器上執行 ${command}。`,
                 addNote: "新增備註",
@@ -11334,6 +11347,7 @@ const zhHant: typeof en = {
     runsStale: '工作流程執行可能不是最新的',
     list: {
         level: ({ level }) => `第 ${level} 層`,
+        coordinator: '協調者',
         subSessions: ({ count }) => `${count} 個子工作階段`,
         transcriptSessions: ({ count }) => `工作階段 · ${count}`,
         showReports: ({ name, count }) => (count > 0 ? `顯示 ${name} 下的 ${count} 個工作階段` : `顯示 ${name} 下的工作階段`),
@@ -15902,6 +15916,10 @@ const zhHant = translated(workflowValueReferenceTranslations['zh-Hant'], {
         answeredBy: ({ name }) => `由${name}回答`,
         answeredByYou: '由你回答',
         answeredByPerson: '由其他人回答',
+        editedBy: ({ name }) => `由${name}編輯`,
+        editedByYou: '由你編輯',
+        editedByPerson: '由其他人編輯',
+        editedByAgent: '由代理編輯',
         completedWithFailures: ({ completed, failed }) =>
             `已完成，但有失敗。${completed} 個已完成，${failed} 個未能完成。`,
         approvalWanted: ({ block }) => `${block} 想要執行一個指令。`,

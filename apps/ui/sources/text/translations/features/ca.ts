@@ -10995,6 +10995,17 @@ const en = Shared_sessionListFilterTranslations.en;
 const translated = Shared_sessionListFilterTranslations.translated;
 
 const sessionListFilterTranslations = { ca: translated({
+        spacesTitle: 'Espais',
+        spacesEnabledDescription: "Vistes desades a la part superior de cada llista.",
+        spacesDisabledDescription: "Totes les llistes fan servir filtres normals. Els teus espais es conserven.",
+        spacesListEnabledDescription: "Canvia entre aquests espais des de la llista.",
+        spacesListDisabledDescription: "Aquesta llista fa servir filtres normals. Els teus espais es conserven.",
+        spacesListMasterOffDescription: "Els espais estan desactivats a totes les llistes. Activar-ho els torna a mostrar.",
+        spacesMembershipAddTo: "Afegeix a l’espai",
+        spacesMembershipMoveTo: "Mou a l’espai",
+        spacesMembershipRemoveFrom: "Treu de l’espai",
+        spacesMembershipSmartMayRemain: "Les sessions que coincideixen amb el seu filtre s’hi continuen mostrant.", spacesEdit: "Edita l’espai…",
+        spacesManageDescription: "Vistes desades entre les quals canvies des de la barra, amb una drecera o lliscant al telèfon.", spacesEditNamed: ({ name }: { name: string }) => `Edita ${name}`,
         filtersTitle: 'Filtres de sessions', filtersSearch: 'Cerca filtres…', filtersShow: 'Mostra',
         filtersScope: 'Àmbit', filtersShowSessions: 'Sessions', filtersShowRuns: 'Execucions', filtersShowBoth: 'Ambdues',
         filtersShowBothSummary: 'Sessions i execucions', filtersStartedByNone: 'Cap iniciador seleccionat',
@@ -11109,6 +11120,8 @@ const sessionPageTranslations = { ca: translated({
                 resume: "Reprèn",
                 unarchive: "Desarxiva",
                 openToResume: "Obre per reprendre",
+                section: "Secció",
+                sectionNone: "Cap",
                 cliNoticeTitle: ({ machine }: { machine: string }) => `Actualitza el CLI a ${machine}`,
                 cliNoticeReason: ({ version, command }: { version: string; command: string }) => `Algunes funcions de la sessió necessiten Happier CLI ${version}. Executa ${command} allà.`,
                 addNote: "Afegeix una nota",
@@ -11350,6 +11363,7 @@ const ca: typeof en = {
     runsStale: 'Les execucions de fluxos de treball poden no estar al dia',
     list: {
         level: ({ level }) => `Nivell ${level}`,
+        coordinator: 'Coordinador',
         subSessions: ({ count }) => (count === 1 ? '1 subsessió' : `${count} subsessions`),
         transcriptSessions: ({ count }) => `Sessions · ${count}`,
         showReports: ({ name, count }) => (count > 0 ? `Mostra ${count} sessions sota ${name}` : `Mostra les sessions sota ${name}`),
@@ -15942,6 +15956,10 @@ const ca = translated(workflowValueReferenceTranslations.ca, {
         answeredBy: ({ name }) => `Respost per ${name}`,
         answeredByYou: 'Respost per tu',
         answeredByPerson: 'Respost per una altra persona',
+        editedBy: ({ name }) => `Editat per ${name}`,
+        editedByYou: 'Editat per tu',
+        editedByPerson: 'Editat per una altra persona',
+        editedByAgent: 'Editat per un agent',
         completedWithFailures: ({ completed, failed }) =>
             `Completat amb errors. ${completed} ${completed === 1 ? 'completat' : 'completats'}; ${failed} no ${failed === 1 ? 'ha pogut' : 'han pogut'} acabar.`,
         approvalWanted: ({ block }) => `${block} vol executar una ordre.`,

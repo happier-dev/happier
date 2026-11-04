@@ -10979,6 +10979,17 @@ const en = Shared_sessionListFilterTranslations.en;
 const translated = Shared_sessionListFilterTranslations.translated;
 
 const sessionListFilterTranslations = { zhHans: translated({
+        spacesTitle: '空间',
+        spacesEnabledDescription: "显示在每个列表顶部的已保存视图。",
+        spacesDisabledDescription: "所有列表都使用普通筛选。你的空间会保留。",
+        spacesListEnabledDescription: "在列表中切换这些空间。",
+        spacesListDisabledDescription: "此列表使用普通筛选。你的空间会保留。",
+        spacesListMasterOffDescription: "所有列表的空间都已关闭。打开后会恢复。",
+        spacesMembershipAddTo: "添加到空间",
+        spacesMembershipMoveTo: "移动到空间",
+        spacesMembershipRemoveFrom: "从空间移除",
+        spacesMembershipSmartMayRemain: "符合其筛选条件的会话仍会显示在那里。", spacesEdit: "编辑空间…",
+        spacesManageDescription: "可通过标签栏、快捷键或在手机上滑动切换的已保存视图。", spacesEditNamed: ({ name }: { name: string }) => `编辑${name}`,
         filtersTitle: '会话筛选', filtersSearch: '搜索筛选条件…', filtersShow: '显示',
         filtersScope: '范围', filtersShowSessions: '会话', filtersShowRuns: '运行', filtersShowBoth: '两者',
         filtersShowBothSummary: '会话和运行', filtersStartedByNone: '未选择发起者',
@@ -11093,6 +11104,8 @@ const sessionPageTranslations = { 'zh-Hans': translated({
                 resume: "恢复",
                 unarchive: "取消归档",
                 openToResume: "打开以恢复",
+                section: "分区",
+                sectionNone: "无",
                 cliNoticeTitle: ({ machine }: { machine: string }) => `更新 ${machine} 上的 CLI`,
                 cliNoticeReason: ({ version, command }: { version: string; command: string }) => `部分会话功能需要 Happier CLI ${version}。请在那台机器上运行 ${command}。`,
                 addNote: "添加备注",
@@ -11334,6 +11347,7 @@ const zhHans: typeof en = {
     runsStale: '工作流运行可能不是最新的',
     list: {
         level: ({ level }) => `第 ${level} 级`,
+        coordinator: '协调者',
         subSessions: ({ count }) => `${count} 个子会话`,
         transcriptSessions: ({ count }) => `会话 · ${count}`,
         showReports: ({ name, count }) => (count > 0 ? `显示 ${name} 下的 ${count} 个会话` : `显示 ${name} 下的会话`),
@@ -15902,6 +15916,10 @@ const zhHans = translated(workflowValueReferenceTranslations.zh, {
         answeredBy: ({ name }) => `由${name}回答`,
         answeredByYou: '由你回答',
         answeredByPerson: '由其他人回答',
+        editedBy: ({ name }) => `由${name}编辑`,
+        editedByYou: '由你编辑',
+        editedByPerson: '由其他人编辑',
+        editedByAgent: '由智能体编辑',
         completedWithFailures: ({ completed, failed }) =>
             `已完成，但有失败。${completed} 个已完成，${failed} 个未能完成。`,
         approvalWanted: ({ block }) => `${block} 想要执行一条命令。`,

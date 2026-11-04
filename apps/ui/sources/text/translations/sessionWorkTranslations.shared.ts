@@ -121,6 +121,7 @@ export const en = {
     runsStale: 'Workflow runs may be out of date',
     list: {
         level: ({ level }: { level: number }) => `Level ${level}`,
+        coordinator: 'Coordinator',
         subSessions: ({ count }: { count: number }) => (count === 1 ? '1 sub-session' : `${count} sub-sessions`),
         transcriptSessions: ({ count }: { count: number }) => `Sessions · ${count}`,
         showReports: ({ name, count }: { name: string; count: number }) => (count > 0 ? `Show ${count} sessions under ${name}` : `Show sessions under ${name}`),

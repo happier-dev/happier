@@ -614,6 +614,10 @@ export const en = {
         answeredBy: ({ name }: { name: string }) => `Answered by ${name}`,
         answeredByYou: 'Answered by you',
         answeredByPerson: 'Answered by another person',
+        editedBy: ({ name }: { name: string }) => `Edited by ${name}`,
+        editedByYou: 'Edited by you',
+        editedByPerson: 'Edited by another person',
+        editedByAgent: 'Edited by an agent',
         completedWithFailures: ({ completed, failed }: { completed: number; failed: number }) =>
             `Completed with failures. ${completed} completed; ${failed} could not finish.`,
         approvalWanted: ({ block }: { block: string }) => `${block} wants to run a command.`,

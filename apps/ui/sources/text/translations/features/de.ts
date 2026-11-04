@@ -10982,6 +10982,17 @@ const en = Shared_sessionListFilterTranslations.en;
 const translated = Shared_sessionListFilterTranslations.translated;
 
 const sessionListFilterTranslations = { de: translated({
+        spacesTitle: 'Bereiche',
+        spacesEnabledDescription: "Gespeicherte Ansichten oben in jeder Liste.",
+        spacesDisabledDescription: "Alle Listen nutzen normale Filter. Deine Bereiche bleiben erhalten.",
+        spacesListEnabledDescription: "Wechsle in der Liste zwischen diesen Bereichen.",
+        spacesListDisabledDescription: "Diese Liste nutzt normale Filter. Deine Bereiche bleiben erhalten.",
+        spacesListMasterOffDescription: "Bereiche sind in allen Listen aus. Einschalten holt sie zurück.",
+        spacesMembershipAddTo: "Zum Bereich hinzufügen",
+        spacesMembershipMoveTo: "In Bereich verschieben",
+        spacesMembershipRemoveFrom: "Aus Bereich entfernen",
+        spacesMembershipSmartMayRemain: "Sitzungen, die zu seinem Filter passen, erscheinen dort weiterhin.", spacesEdit: "Bereich bearbeiten…",
+        spacesManageDescription: "Gespeicherte Ansichten, zwischen denen du über die Leiste, per Tastenkürzel oder auf dem Telefon per Wischen wechselst.", spacesEditNamed: ({ name }: { name: string }) => `${name} bearbeiten`,
         filtersTitle: 'Session-Filter', filtersSearch: 'Filter durchsuchen…', filtersShow: 'Anzeigen',
         filtersScope: 'Bereich', filtersShowSessions: 'Sessions', filtersShowRuns: 'Läufe', filtersShowBoth: 'Beides',
         filtersShowBothSummary: 'Sessions und Läufe', filtersStartedByNone: 'Keine Starter ausgewählt',
@@ -11096,6 +11107,8 @@ const sessionPageTranslations = { de: translated({
                 resume: "Fortsetzen",
                 unarchive: "Wiederherstellen",
                 openToResume: "Zum Fortsetzen öffnen",
+                section: "Abschnitt",
+                sectionNone: "Keiner",
                 cliNoticeTitle: ({ machine }: { machine: string }) => `CLI auf ${machine} aktualisieren`,
                 cliNoticeReason: ({ version, command }: { version: string; command: string }) => `Einige Sitzungsfunktionen brauchen Happier CLI ${version}. Führe dort ${command} aus.`,
                 addNote: "Notiz hinzufügen",
@@ -11337,6 +11350,7 @@ const de: typeof en = {
     runsStale: 'Workflow-Läufe sind möglicherweise nicht aktuell',
     list: {
         level: ({ level }) => `Ebene ${level}`,
+        coordinator: 'Koordinator',
         subSessions: ({ count }) => (count === 1 ? '1 Untersitzung' : `${count} Untersitzungen`),
         transcriptSessions: ({ count }) => `Sitzungen · ${count}`,
         showReports: ({ name, count }) => (count > 0 ? `${count} Sitzungen unter ${name} anzeigen` : `Sitzungen unter ${name} anzeigen`),
@@ -15412,6 +15426,10 @@ const de = translated(workflowValueReferenceTranslations.de, {
         answeredBy: ({ name }) => `Beantwortet von ${name}`,
         answeredByYou: 'Von dir beantwortet',
         answeredByPerson: 'Von einer anderen Person beantwortet',
+        editedBy: ({ name }) => `Bearbeitet von ${name}`,
+        editedByYou: 'Von dir bearbeitet',
+        editedByPerson: 'Von einer anderen Person bearbeitet',
+        editedByAgent: 'Von einem Agenten bearbeitet',
         completedWithFailures: ({ completed, failed }) =>
             `Abgeschlossen, mit Fehlern. ${completed} abgeschlossen; ${failed} ${failed === 1 ? 'konnte' : 'konnten'} nicht beendet werden.`,
         approvalWanted: ({ block }) => `${block} möchte einen Befehl ausführen.`,

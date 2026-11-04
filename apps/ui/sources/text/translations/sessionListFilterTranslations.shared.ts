@@ -5,6 +5,17 @@ export function translated(value: typeof en): typeof en { return value; }
 
 
 export const en = {
+    spacesTitle: 'Spaces',
+    spacesEnabledDescription: "Saved views at the top of each list.",
+    spacesDisabledDescription: "Every list uses ordinary filters. Your spaces are kept.",
+    spacesListEnabledDescription: "Switch between these spaces from the list.",
+    spacesListDisabledDescription: "This list uses ordinary filters. Your spaces are kept.",
+    spacesListMasterOffDescription: "Spaces are off for every list. Turning this on brings them back.",
+    spacesMembershipAddTo: "Add to space",
+    spacesMembershipMoveTo: "Move to space",
+    spacesMembershipRemoveFrom: "Remove from space",
+    spacesMembershipSmartMayRemain: "Sessions that match its filter still show there.", spacesEdit: "Edit space…",
+        spacesManageDescription: "Saved views you switch between from the strip, with a shortcut or a swipe on a phone.", spacesEditNamed: ({ name }: { name: string }) => `Edit ${name}`,
     filtersTitle: 'Session filters', filtersSearch: 'Search filters…', filtersShow: 'Show',
     filtersScope: 'Scope', filtersShowSessions: 'Sessions', filtersShowRuns: 'Runs', filtersShowBoth: 'Both',
     filtersShowBothSummary: 'Sessions and runs', filtersStartedByNone: 'No starters selected',
