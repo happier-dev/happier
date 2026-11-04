@@ -25,6 +25,7 @@ import { resolveVoiceSurfaceRecovery } from '@/components/voice/surface/resolveV
 import { resolveVoiceConnectRecoveryTarget } from '@/components/voice/surface/resolveVoiceConnectRecoveryTarget';
 import { resolveVoiceAttemptControl } from '@/components/voice/attempt/resolveVoiceAttemptControl';
 import { projectVoiceAttemptPresentation } from '@/components/voice/attempt/projectVoiceAttemptPresentation';
+import { readSafeVoiceRuntimeFailureCode } from '@/voice/runtime/voiceRuntimeFailureCode';
 import { resolveAgentCatalogTitle } from '@/agents/backendCatalog/agentCatalogProjection';
 import { resolveVoiceServiceTitle } from '@/voice/registry/voiceProviderPresentation';
 import { createPluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
@@ -141,6 +142,7 @@ async function readConversation(target: VoiceStartIntent = { kind: 'default' }):
         presentation: projectVoiceAttemptPresentation({
             control, attemptId, ended: visibleEnded !== null, errorCode: snapshot.errorCode, errorMessage: snapshot.errorMessage,
             errorConnectedServiceDiagnostic: snapshot.errorConnectedServiceDiagnostic,
+            errorProviderMessage: snapshot.errorProviderMessage,
             recoveryAction, recoveryContext: context,
             serviceTitle: entry ? resolveVoiceServiceTitle(entry, tLoose, createPluginLocalizedTextResolver({ projection: null })) : t('voicePresence.title'),
             agentTitle: agent ? resolveAgentCatalogTitle(agent.localId) : null,
@@ -210,10 +212,16 @@ export async function executeVoiceConversationAction(
     // Preparation can await feature availability. A start admitted at rest must never become
     // toggle's End command for an attempt another surface started while this caller was waiting.
     if (!voiceSessionManager.matchesAttempt(current.voice.attemptId)) return unavailable('stale_voice_attempt');
+    let startFailureCode: string | null = null;
     if (actionId === 'ui.voice_global.start') {
         const latest = voiceSessionManager.getSnapshot();
         if (!current.voice.canStart || latest.status !== 'disconnected' || latest.canStop) return unavailable('voice_start_unavailable');
-        await voiceSessionManager.toggle(current.idleTarget.kind === 'session' ? current.idleTarget.sessionAddress : null);
+        try {
+            await voiceSessionManager.toggle(current.idleTarget.kind === 'session' ? current.idleTarget.sessionAddress : null);
+        } catch (error) {
+            startFailureCode = readSafeVoiceRuntimeFailureCode(error);
+            if (!startFailureCode) throw error;
+        }
     } else {
         if (!('expectedAttempt' in value) || typeof value.expectedAttempt !== 'string'
             || !voiceSessionManager.matchesAttempt(value.expectedAttempt)) return unavailable('stale_voice_attempt');
@@ -277,5 +285,7 @@ export async function executeVoiceConversationAction(
     if (deps.isCurrent?.() === false) return unavailable('voice_action_account_changed');
     const resultVoice = (await readConversation(current.idleTarget)).voice;
     if (deps.isCurrent?.() === false) return unavailable('voice_action_account_changed');
-    return { status: 'completed', voice: resultVoice };
+    return startFailureCode
+        ? { status: 'unavailable', code: startFailureCode, voice: resultVoice }
+        : { status: 'completed', voice: resultVoice };
 }

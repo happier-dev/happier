@@ -259,6 +259,34 @@ async function createHarness(start = true, featureEnabled = true, deferActivatio
 }
 
 describe('generated OpenAI conversation Actions through the lifecycle owner', () => {
+    it.each([
+        { reason: 'usage_limit', message: 'Codex usage limit reached. Try another connected account or try again after your limit resets.', recovery: 'open_settings' },
+        { reason: 'acp_turn_failed', message: 'Cannot connect to API. token=PRIVATE_TOKEN /home/alice/private/model', recovery: 'retry' },
+    ])('keeps the sanitized $reason cause in public Voice status', async ({ reason, message, recovery }) => {
+        const { lifecycle, invoke } = await createHarness(false);
+        const { voiceConversationRuntimeMachine } = await import('@/voice/runtime/machine/VoiceConversationRuntimeMachine');
+        const { createVoiceMachineError } = await import('@/voice/runtime/machine/voiceMachineError');
+        const { deriveLocalVoiceSessionSnapshot } = await import('@/voice/runtime/machine/deriveLocalVoiceSessionSnapshot');
+        try {
+            // Public reads also serve a retained failed attempt with no mounted runtime controller.
+            setVoiceSessionLifecycleController(null);
+            voiceConversationRuntimeMachine.setError({
+                controlSessionId: 'session-original',
+                error: createVoiceMachineError({ kind: 'provider_error', reason, cause: new Error(message) }),
+            });
+            const snapshot = deriveLocalVoiceSessionSnapshot('local_conversation', 'local', voiceConversationRuntimeMachine.getSnapshot());
+            setVoiceSessionSnapshot(snapshot);
+            const result = await invoke('ui.voice_global.get', {});
+            expect(result).toMatchObject({ status: 'completed', voice: { presentation: {
+                surfaceState: 'error', failureKind: 'provider_error',
+                failureMessage: snapshot.errorProviderMessage, recovery: { action: recovery },
+            } } });
+            expect(result.voice.presentation?.failureMessage).toContain(message.split('.')[0]);
+            expect(JSON.stringify(result)).not.toMatch(/PRIVATE_TOKEN|\/home\/alice/);
+            expect(VoiceConversationActionOutputSchemas['ui.voice_global.get'].safeParse(result).success).toBe(true);
+        } finally { await lifecycle.dispose(); }
+    });
+
     it('cancels first Start during activation without opening the provider after it settles', async () => {
         const fixture = await createHarness(false, true, true);
         const starting = fixture.lifecycle.toggle({ serverId: fixture.serverId, sessionId: 'session-original' });

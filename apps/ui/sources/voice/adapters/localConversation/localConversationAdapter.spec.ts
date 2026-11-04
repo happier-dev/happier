@@ -8,8 +8,9 @@ import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSes
 import type { VoiceCurrentUiToolPort } from '@/voice/tools/currentUiContextToolPort';
 import { readLocalConversationVoiceSettings } from '@/sync/domains/settings/voiceSettings';
 import {
-  getStorage, loadLocalVoiceEngineWithCompatState, localVoiceAgentRpc,
+  expoSpeechSpeak, getStorage, loadLocalVoiceEngineWithCompatState, localVoiceAgentRpc,
   localVoiceHomeId, localVoiceRouteState, registerLocalVoiceEngineHarnessHooks, sessionRpcWithServerScope, warmLocalVoiceEngineHarnessGraph,
+  waitForLocalVoiceBoundaryEvent, waitForLocalVoiceState,
 } from '@/voice/local/localVoiceEngine.testHarness';
 
 const restoreHarnessModuleLoader = await warmLocalVoiceEngineHarnessGraph();
@@ -231,6 +232,46 @@ describe('local conversation voice adapter', () => {
       expect(admittedProviderText()).toContain('Voice approvals are enabled');
       expect(admittedProviderText()).toContain('Native Codex Realtime cannot decide requests');
     } finally {
+      await adapter.stop({ sessionId: VOICE_AGENT_GLOBAL_SESSION_ID });
+      setVoiceSessionSnapshot(adapter.getSnapshot());
+    }
+  });
+
+  it('speaks the Home public Brief request through the connected Local Agent', async () => {
+    const { InboxModelBoundary } = await import('@/hooks/inbox/useInboxModel');
+    const { useVoiceBriefHomeRequest, useVoiceBriefRequest } = await import('@/components/voice/brief/useVoiceBriefRequest');
+    const { executeVoiceBriefOperation } = await import('@/components/voice/brief/voiceBriefActionRuntime');
+    const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
+    const credentials = await TokenStorage.getCredentialsForServerUrl(getActiveServerSnapshot().serverUrl);
+    if (!credentials) throw new Error('Home Brief requires restored Account credentials');
+    const storage = await getStorage();
+    const state = storage.getState();
+    const config = readLocalConversationVoiceSettings(state.settings.voice);
+    storage.__setState({ settings: { ...state.settings, voice: { ...state.settings.voice,
+      providers: { ...state.settings.voice.providers, local_conversation: { schemaVersion: 1,
+        config: { ...config, tts: { ...config.tts, provider: 'device', autoSpeakReplies: true } } } } } } });
+    await adapter.toggle({ sessionId: VOICE_AGENT_GLOBAL_SESSION_ID });
+    await adapter.setMuted({ sessionId: VOICE_AGENT_GLOBAL_SESSION_ID, muted: true });
+    setVoiceSessionSnapshot(adapter.getSnapshot());
+    function HomeBrief() { useVoiceBriefRequest(); return null; }
+    function Home() {
+      const [open, setOpen] = React.useState(false);
+      useVoiceBriefHomeRequest({ available: true, onOpen: () => setOpen(true) });
+      return open ? React.createElement(InboxModelBoundary, { children: React.createElement(HomeBrief) }) : null;
+    }
+    const screen = await renderScreen(React.createElement(InjectedAuthProvider, { credentials, children:
+      React.createElement(MainAppTabStateProvider, { children: React.createElement(AppPaneProvider, { children:
+        React.createElement(Home) }) }) }));
+    try {
+      await React.act(async () => { expect(executeVoiceBriefOperation('request').ok).toBe(true); });
+      await waitForLocalVoiceBoundaryEvent('speech');
+      await waitForLocalVoiceState(state => state.status === 'idle' || state.error !== null);
+      expect(admittedProviderText()).toContain('INBOX BRIEF');
+      expect(expoSpeechSpeak.mock.calls.some(([text]) => typeof text === 'string' && text.includes('Daemon reply'))).toBe(true);
+      expect(adapter.getSnapshot()).toMatchObject({ status: 'connected', mode: 'idle' });
+      expect(adapter.getSnapshot().errorMessage).toBeUndefined();
+    } finally {
+      await screen.unmount();
       await adapter.stop({ sessionId: VOICE_AGENT_GLOBAL_SESSION_ID });
       setVoiceSessionSnapshot(adapter.getSnapshot());
     }
