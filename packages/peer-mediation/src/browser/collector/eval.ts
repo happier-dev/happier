@@ -1,11 +1,16 @@
 export const INJECTED_EVAL_RUNTIME = `
+  var pendingEvals = new Map();
+
+  function cancelPendingEvals() {
+    pendingEvals.forEach(function (pending) { pending.cancel(); });
+  }
+
   function handleEvalCommand(message) {
     if (!isCurrentEvalCommand(message)) return;
     var request = message.request;
-    var timeoutMs = Math.max(1, Math.min(Number(request.timeoutMs || 2000), 10000));
-
-    if (evalSuppressed) {
-      postEvalResult(request, 'collectorDegraded', undefined, 'collector_degraded');
+    if (request.action === 'cancel') {
+      var pending = pendingEvals.get(request.evalRequestId);
+      if (pending) pending.cancel();
       return;
     }
 
@@ -21,32 +26,23 @@ export const INJECTED_EVAL_RUNTIME = `
     var expression = String(request.expression || '');
     emitEvalAudit('eval.requested', {
       evalRequestId: request.evalRequestId,
-      expressionPreview: expression.slice(0, 4096),
-      expressionTruncated: expression.length > 4096,
-      timeoutMs: timeoutMs,
+      expressionPreview: expression,
+      expressionTruncated: false,
       objectGroupId: request.objectGroupId
     });
 
     var settled = false;
-    var startedAt = now();
-    var timeoutId = setTimeout(function () {
+    pendingEvals.set(request.evalRequestId, { cancel: function () {
       if (settled) return;
       settled = true;
-      markEvalDegraded(request, timeoutMs);
-      postEvalResult(request, 'timedOut', undefined, 'collector_degraded');
-    }, timeoutMs);
+      pendingEvals.delete(request.evalRequestId);
+      postEvalResult(request, 'cancelled');
+    } });
 
     function complete(value) {
       if (settled) return;
-      if (now() - startedAt > timeoutMs) {
-        settled = true;
-        clearTimeout(timeoutId);
-        markEvalDegraded(request, timeoutMs);
-        postEvalResult(request, 'timedOut', undefined, 'collector_degraded');
-        return;
-      }
       settled = true;
-      clearTimeout(timeoutId);
+      pendingEvals.delete(request.evalRequestId);
       var result = toRemoteObject(value, request.objectGroupId);
       emitEvalAudit('eval.completed', {
         evalRequestId: request.evalRequestId,
@@ -60,7 +56,7 @@ export const INJECTED_EVAL_RUNTIME = `
     function fail(error) {
       if (settled) return;
       settled = true;
-      clearTimeout(timeoutId);
+      pendingEvals.delete(request.evalRequestId);
       emitEvalAudit('eval.failed', {
         evalRequestId: request.evalRequestId,
         errorAvailable: Boolean(error)
@@ -84,10 +80,6 @@ export const INJECTED_EVAL_RUNTIME = `
     if (!isCurrentGetPropertiesCommand(message)) return;
     var request = message.request;
 
-    if (evalSuppressed) {
-      postPropertiesResult(request, 'collectorDegraded', [], 'collector_degraded');
-      return;
-    }
     if (request.diagnosticsInteractionEnabled !== true) {
       postPropertiesResult(request, 'blocked', [], 'collector_denied');
       return;
@@ -125,10 +117,6 @@ export const INJECTED_EVAL_RUNTIME = `
     if (!isCurrentReleaseCommand(message)) return;
     var request = message.request;
 
-    if (evalSuppressed) {
-      postReleaseResult(request, 'collectorDegraded', 'collector_degraded');
-      return;
-    }
     if (request.diagnosticsInteractionEnabled !== true) {
       postReleaseResult(request, 'blocked', 'collector_denied');
       return;

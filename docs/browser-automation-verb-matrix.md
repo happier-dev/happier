@@ -292,6 +292,19 @@ when a value is clipped. Empty values remain explicit. `visibleText` remains the
 agents verifying typed input should also inspect `axNodes`. Confidential-input holds and existing
 sensitive-page admission still apply. This is an unreleased 0.3 development contract.
 
+Owner-initiated eval and element picking have no automatic deadline or expression,
+preview, or expansion-depth cutoff. The person can cancel an eval. CDP cancellation
+requests termination in that runtime and can interrupt other concurrent evals or the
+next script on the same target; an injected-page cancel discards a pending asynchronous result,
+but cannot interrupt synchronous JavaScript that prevents the page from receiving the
+cancel message. Cancellation does not roll back expression side effects or cancel
+arbitrary page-owned asynchronous work. CDP marks termination experimental and defines
+it for current or next execution ([official protocol](https://raw.githubusercontent.com/ChromeDevTools/devtools-protocol/master/json/js_protocol.json)); cancellation before issuing an eval only settles the invocation.
+The unreleased 0.3 eval request/result schemas add cancellation and
+remove the timeout field together with their callers; older closed-schema readers
+cannot consume the new cancel variant. Ordinary eval requests without a timeout retain
+their shape. This coordinated source change has no persistence migration.
+
 The launch suggestion owner supplies detected-listener identity in
 `sourceClass.inventoryEntryId`. Services Open, lifecycle controls, row/listener association and
 daemon preview registration consume that projection; a launcher display id is not inventory

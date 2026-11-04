@@ -1,7 +1,4 @@
-import { BROWSER_DIAGNOSTICS_PREVIEW_MAX_PROPERTIES, BROWSER_DIAGNOSTICS_PREVIEW_MAX_VALUE_LENGTH } from '@happier-dev/protocol/browser/diagnostics/v1';
-
 export const INJECTED_OBJECT_INSPECTOR_RUNTIME = `
-	  var evalSuppressed = false;
   var objectSeq = 0;
   var objectGroups = {};
   var pickerSeq = 0;
@@ -33,22 +30,19 @@ export const INJECTED_OBJECT_INSPECTOR_RUNTIME = `
 
   function previewProperties(value) {
     try {
-      return Object.keys(Object(value)).slice(0, ${BROWSER_DIAGNOSTICS_PREVIEW_MAX_PROPERTIES}).map(function (name) {
+      return Object.keys(Object(value)).map(function (name) {
         var propertyValue;
         var propertyPreview;
         var truncated = false;
         try {
           propertyValue = value[name];
-          propertyPreview = preview(propertyValue);
-          truncated = typeof propertyValue === 'string'
-            ? propertyValue.length > ${BROWSER_DIAGNOSTICS_PREVIEW_MAX_VALUE_LENGTH}
-            : typeof propertyPreview === 'string' && propertyPreview.length > ${BROWSER_DIAGNOSTICS_PREVIEW_MAX_VALUE_LENGTH};
+          propertyPreview = typeof propertyValue === 'string' ? propertyValue : preview(propertyValue);
         } catch (_error) {
           propertyPreview = '[unavailable]';
         }
         return {
           name: String(name),
-          valuePreview: String(propertyPreview || '').slice(0, ${BROWSER_DIAGNOSTICS_PREVIEW_MAX_VALUE_LENGTH}),
+          valuePreview: String(propertyPreview || ''),
           truncated: truncated
         };
       });
@@ -156,17 +150,6 @@ export const INJECTED_OBJECT_INSPECTOR_RUNTIME = `
     var event = baseEvent('console', kind, Object.assign({ tier: 'injectedPage' }, data));
     event.redaction.level = 'valuesRedacted';
     postEvents([event]);
-  }
-
-  function markEvalDegraded(request, timeoutMs) {
-    evalSuppressed = true;
-    postEvents([
-      baseEvent('pageInfo', 'collector.degraded', { reasonCode: 'eval_timeout' })
-    ]);
-    emitEvalAudit('eval.timedOut', {
-      evalRequestId: request.evalRequestId,
-      timeoutMs: timeoutMs
-    });
   }
 
   function isCurrentEvalCommand(message) {

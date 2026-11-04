@@ -62,6 +62,47 @@ afterEach(() => {
     clearBrowserRuntimeControlRegistryForTests();
 });
 
+it('cancels the active console eval invocation and sends an engine cancellation', async () => {
+    stubCryptoRandomUuid();
+    const view = createLocalPreviewView({ engineKind: 'nativeWebView', navigationGeneration: 0 });
+    const hook = await renderHook(() => useBrowserDiagnosticsRuntime({ view, enabled: true }));
+    await act(async () => { hook.getCurrent()?.interaction?.onEnableInteraction?.(); });
+    await act(async () => { hook.getCurrent()?.requestEval({ expression: 'new Promise(() => {})' }); });
+    const request = hook.getCurrent()?.bridge?.evalRequest;
+    expect(request).toBeDefined();
+    expect(request).not.toHaveProperty('timeoutMs');
+    await act(async () => { hook.getCurrent()?.interaction?.evalConsole?.onCancelEval(request!.evalRequestId); });
+    expect(hook.getCurrent()?.bridge?.evalRequest).toMatchObject({ evalRequestId: request!.evalRequestId, action: 'cancel' });
+    expect(hook.getCurrent()?.interaction?.evalConsole?.entries[0]).toMatchObject({ status: 'cancelled' });
+    await act(async () => { hook.getCurrent()?.bridge?.onEvalResult?.({ v: 1, evalRequestId: request!.evalRequestId,
+        viewId: view.viewId, navigationGeneration: 0, status: 'completed', tier: 'injectedPage', audited: true }); });
+    expect(hook.getCurrent()?.interaction?.evalConsole?.entries[0]?.status).toBe('cancelled');
+});
+
+it.each(['console', 'signal'] as const)('cancels an incoming eval Action from its %s cancellation owner', async owner => {
+    stubCryptoRandomUuid();
+    const view = createLocalPreviewView({ engineKind: 'nativeWebView', navigationGeneration: 0 });
+    const hook = await renderHook(() => useBrowserDiagnosticsRuntime({ view, enabled: true }));
+    const controller = new AbortController();
+    let pending!: ReturnType<typeof executor.execute>;
+    await act(async () => {
+        pending = executor.execute('browser.diagnostics.eval', { v: 1, evalRequestId: 'incoming_eval',
+            browserSessionId: view.browserSessionId, viewId: view.viewId, navigationGeneration: 0,
+            tier: 'injectedPage', expression: 'new Promise(() => {})', objectGroupId: 'incoming_group',
+            diagnosticsInteractionEnabled: true },
+        { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, bypassApprovals: true, signal: controller.signal });
+    });
+    await flushHookEffects({ cycles: 2, turns: 2 });
+    expect(hook.getCurrent()?.bridge?.evalRequest).toMatchObject({ evalRequestId: 'incoming_eval' });
+    await act(async () => {
+        if (owner === 'console') hook.getCurrent()?.interaction?.evalConsole?.onCancelEval('incoming_eval');
+        else controller.abort();
+    });
+    expect(hook.getCurrent()?.bridge?.evalRequest).toMatchObject({ evalRequestId: 'incoming_eval', action: 'cancel' });
+    expect(await pending).toMatchObject({ ok: true, result: { status: 'cancelled' } });
+    expect(hook.getCurrent()?.interaction?.evalConsole?.entries[0]).toMatchObject({ status: 'cancelled' });
+});
+
 function stubCryptoRandomUuid(): void {
     let sequence = 0;
     vi.stubGlobal('crypto', {

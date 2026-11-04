@@ -32,7 +32,7 @@ export type BrowserDiagnosticsActionRouteFailure = Readonly<{
  * environments without a live sidecar it is simply absent and the verbs fail closed.
  */
 export type BrowserDiagnosticsInteractionTransport = Readonly<{
-  dispatch(actionId: RuntimeActionIdV1, input: unknown): Promise<unknown>;
+  dispatch(actionId: RuntimeActionIdV1, input: unknown, browserSessionId: string): Promise<unknown>;
   releaseObjectGroupsForView?(
     input: Readonly<{ browserSessionId: string; viewId: string }>,
   ): void | Promise<void>;
@@ -109,13 +109,9 @@ export function createBrowserDiagnosticsActionRoutes(input: Readonly<{
         if (!interaction) return disabled('browser_diagnostics_route_unavailable');
         const parsed = getActionSpec(actionId).inputSchema.safeParse(rawInput ?? {});
         if (!parsed.success) return invalidParameters;
-        // Action routing owns the Browser Session; injected/CDP engine requests keep their
-        // original closed schemas and derive their page from the registered view binding.
-        if (actionId !== 'browser.diagnostics.pause' && actionId !== 'browser.diagnostics.resume') {
-          const { browserSessionId: _browserSessionId, ...engineInput } = parsed.data as Record<string, unknown>;
-          return await interaction.dispatch(actionId, engineInput);
-        }
-        return await interaction.dispatch(actionId, parsed.data);
+        // Keep the Action's Session identity beside the closed engine request.
+        const { browserSessionId, ...engineInput } = parsed.data as Record<string, unknown> & { browserSessionId: string };
+        return await interaction.dispatch(actionId, engineInput, browserSessionId);
       }
       return invalidParameters;
     },

@@ -6,6 +6,8 @@ import {
 } from '@happier-dev/protocol/browser/diagnostics/v1';
 import { describe, expect, it, vi } from 'vitest';
 import { createSurfaceInputControl } from '../../surfaces/inputControl';
+import { createBrowserSidecarCdpTransport } from '../sidecar/cdpTransport';
+import type { LoopbackWebSocketJsonClientV1 } from '@/plugins/runtime/exec/privateContract';
 
 import {
   createBrowserDiagnosticsInteractionTransport,
@@ -22,9 +24,7 @@ const BROWSER_SESSION_ID = 'browser_session_1';
 const VIEW_ID = 'view_1';
 const HANDLE: BrowserSidecarCdpPageHandle = { targetId: 'target_1', sessionId: 'cdp_session_1' };
 
-type DispatchPageCommand = (
-  input: BrowserSidecarCdpPageHandle & Readonly<{ method: string; params?: Record<string, unknown> }>,
-) => Promise<unknown>;
+type DispatchPageCommand = BrowserDiagnosticsInteractionContextCapture['transport']['dispatchPageCommand'];
 
 type Harness = {
   contextCapture: BrowserDiagnosticsInteractionContextCapture;
@@ -115,7 +115,7 @@ function evalRequest(overrides: Record<string, unknown> = {}): Record<string, un
     navigationGeneration: 0,
     tier: 'cdp',
     expression: '1 + 1',
-    timeoutMs: 2000,
+
     objectGroupId: 'group_1',
     diagnosticsInteractionEnabled: true,
     ...overrides,
@@ -133,6 +133,30 @@ function deferred<T>() {
 }
 
 describe('browser diagnostics interaction transport (DIAG-INTERACTION)', () => {
+  it('keeps same-name picker selection and confidentiality drains isolated by Session', async () => {
+    const controls = { session_a: createSurfaceInputControl(), session_b: createSurfaceInputControl() };
+    const harness = createHarness({ resolveHandle: view => ({ targetId: view.browserSessionId, sessionId: view.browserSessionId }) });
+    const transport = createBrowserDiagnosticsInteractionTransport({ contextCapture: harness.contextCapture,
+      resolveInputControl: view => controls[view.browserSessionId as keyof typeof controls] });
+    harness.bindView({ browserSessionId: 'session_a' });
+    harness.bindView({ browserSessionId: 'session_b' });
+    const request = { v: 1, pickerRequestId: 'picker', viewId: VIEW_ID, navigationGeneration: 0,
+      tier: 'cdp', action: 'start', diagnosticsInteractionEnabled: true };
+    let siblingSettled = false;
+    const first = transport.dispatch('browser.diagnostics.elementPicker.start', request, 'session_a');
+    const second = transport.dispatch('browser.diagnostics.elementPicker.start', request, 'session_b')
+      .then(result => { siblingSettled = true; return result; });
+    try {
+      await vi.waitFor(() => expect(harness.dispatchPageCommand.mock.calls.filter(([command]) =>
+        command.method === 'Overlay.setInspectMode' && command.params?.mode === 'searchForNode')).toHaveLength(2));
+      await controls.session_a.beginConfidentialityHold();
+      await expect(first).resolves.toMatchObject({ status: 'cancelled' });
+      expect(siblingSettled).toBe(false);
+      harness.emitCdpEvent({ sessionId: 'session_b', method: 'Overlay.inspectNodeRequested', params: { backendNodeId: 42 } });
+      await expect(second).resolves.toMatchObject({ status: 'selected', backendNodeRef: '42' });
+    } finally { await transport.dispose(); await Promise.all([first, second]); }
+  });
+
   it('keeps scalar values and all expanded properties, and marks partial previews', async () => {
     const longValue = 'x'.repeat(70_000);
     const responses = {
@@ -145,19 +169,19 @@ describe('browser diagnostics interaction transport (DIAG-INTERACTION)', () => {
     const transport = createBrowserDiagnosticsInteractionTransport({ contextCapture: harness.contextCapture });
     harness.bindView();
     try {
-      const scalar = BrowserDiagnosticsEvalResultV1Schema.parse(await transport.dispatch('browser.diagnostics.eval', evalRequest()));
+      const scalar = BrowserDiagnosticsEvalResultV1Schema.parse(await transport.dispatch('browser.diagnostics.eval', evalRequest(), BROWSER_SESSION_ID));
       expect(scalar).toMatchObject({ status: 'completed', result: { type: 'string' } });
       expect(scalar.result?.value).toHaveLength(longValue.length);
       const expanded = BrowserDiagnosticsGetPropertiesResultV1Schema.parse(await transport.dispatch('browser.diagnostics.getProperties', {
         v: 1, propertyRequestId: 'properties', viewId: VIEW_ID, navigationGeneration: 0, tier: 'cdp',
         objectId: 'object', objectGroupId: 'group_1', diagnosticsInteractionEnabled: true,
-      }));
+      }, BROWSER_SESSION_ID));
       expect(expanded.properties).toHaveLength(101);
       expect(expanded.properties[100]?.value.value).toHaveLength(longValue.length);
     } finally { await transport.dispose(); }
   });
 
-  it('does not report clipped or CDP-overflow previews as complete', async () => {
+  it('preserves every CDP preview property and marks engine overflow', async () => {
     const harness = createHarness({ responses: { 'Runtime.evaluate': { result: {
       type: 'object', objectId: 'object', preview: { overflow: true,
         properties: Array.from({ length: 12 }, (_, i) => ({ name: `property_${i}`, value: 'x'.repeat(1_500) })) },
@@ -165,10 +189,93 @@ describe('browser diagnostics interaction transport (DIAG-INTERACTION)', () => {
     const transport = createBrowserDiagnosticsInteractionTransport({ contextCapture: harness.contextCapture });
     harness.bindView();
     try {
-      const result = BrowserDiagnosticsEvalResultV1Schema.parse(await transport.dispatch('browser.diagnostics.eval', evalRequest()));
+      const result = BrowserDiagnosticsEvalResultV1Schema.parse(await transport.dispatch('browser.diagnostics.eval', evalRequest(), BROWSER_SESSION_ID));
       expect(result.result).toMatchObject({ previewTruncated: true });
-      expect(result.result?.preview.every(property => property.truncated)).toBe(true);
+      expect(result.result?.preview).toHaveLength(12);
+      expect(result.result?.preview[11]?.valuePreview).toHaveLength(1_500);
     } finally { await transport.dispose(); }
+  });
+
+  it('runs long expressions without a deadline and cancels a pending eval at the engine', async () => {
+    const harness = createHarness();
+    const response = deferred<unknown>();
+    const executing = deferred<void>();
+    harness.dispatchPageCommand.mockImplementation(async ({ method }) => {
+      if (method === 'Runtime.evaluate') { executing.resolve(); return response.promise; }
+      return {};
+    });
+    const transport = createBrowserDiagnosticsInteractionTransport({ contextCapture: harness.contextCapture });
+    harness.bindView();
+    const request = evalRequest({ expression: ' '.repeat(5_000) + 'new Promise(() => {})' });
+    const pending = transport.dispatch('browser.diagnostics.eval', request, BROWSER_SESSION_ID);
+    try {
+      await executing.promise;
+      const command = harness.dispatchPageCommand.mock.calls.find(([entry]) => entry.method === 'Runtime.evaluate')?.[0];
+      expect(command?.params).not.toHaveProperty('timeout');
+      const cancelled = await transport.dispatch('browser.diagnostics.eval', { ...request, action: 'cancel' }, BROWSER_SESSION_ID);
+      expect(cancelled).toMatchObject({ status: 'cancelled' });
+      await expect(pending).resolves.toMatchObject({ status: 'cancelled' });
+      expect(command?.signal?.aborted).toBe(true);
+      expect(harness.dispatchPageCommand).toHaveBeenCalledWith(expect.objectContaining({ method: 'Runtime.terminateExecution' }));
+    } finally { response.resolve({ result: { type: 'number', value: 1 } }); await pending; await transport.dispose(); }
+  });
+
+  it('honors cancellation while the engine is enabling before evaluation starts', async () => {
+    const harness = createHarness();
+    const enable = deferred<unknown>();
+    const enabling = deferred<void>();
+    harness.dispatchPageCommand.mockImplementation(async ({ method }) => {
+      if (method === 'Runtime.enable') { enabling.resolve(); return enable.promise; }
+      return { result: { type: 'number', value: 42 } };
+    });
+    const transport = createBrowserDiagnosticsInteractionTransport({ contextCapture: harness.contextCapture });
+    harness.bindView();
+    const request = evalRequest();
+    const pending = transport.dispatch('browser.diagnostics.eval', request, BROWSER_SESSION_ID);
+    try {
+      await enabling.promise;
+      await transport.dispatch('browser.diagnostics.eval', { ...request, action: 'cancel' }, BROWSER_SESSION_ID);
+      await expect(pending).resolves.toMatchObject({ status: 'cancelled' });
+      expect(harness.dispatchPageCommand.mock.calls.some(([command]) => command.method === 'Runtime.terminateExecution')).toBe(false);
+      enable.resolve({});
+      expect(harness.dispatchPageCommand.mock.calls.some(([command]) => command.method === 'Runtime.evaluate')).toBe(false);
+    } finally { enable.resolve({}); await pending; await transport.dispose(); }
+  });
+
+  it('aborts the real CDP transport await when a pending evaluation is cancelled', async () => {
+    const listeners = new Set<(message: unknown) => void | Promise<void>>();
+    const evaluating = deferred<void>();
+    // Only the JSON connection to Chromium is replaced; CDP request ownership stays real.
+    const client: LoopbackWebSocketJsonClientV1 = {
+      closed: new Promise<void>(() => {}),
+      subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
+      async sendJson(message) {
+        if (!message || typeof message !== 'object' || !('id' in message) || !('method' in message)) return;
+        if (message.method === 'Runtime.evaluate') { evaluating.resolve(); return; }
+        for (const listener of listeners) await listener({ id: message.id, result: {} });
+      },
+    };
+    const cdp = createBrowserSidecarCdpTransport({ client });
+    const harness = createHarness();
+    let wireOutcome = 'pending';
+    const transport = createBrowserDiagnosticsInteractionTransport({ contextCapture: {
+      ...harness.contextCapture,
+      transport: { dispatchPageCommand(command) {
+        const pending = cdp.dispatchPageCommand(command);
+        if (command.method === 'Runtime.evaluate') void pending.then(
+          () => { wireOutcome = 'completed'; }, error => { wireOutcome = error instanceof Error ? error.name : 'unknown'; });
+        return pending;
+      } },
+    } });
+    harness.bindView();
+    const request = evalRequest();
+    const pending = transport.dispatch('browser.diagnostics.eval', request, BROWSER_SESSION_ID);
+    try {
+      await evaluating.promise;
+      await transport.dispatch('browser.diagnostics.eval', { ...request, action: 'cancel' }, BROWSER_SESSION_ID);
+      await expect(pending).resolves.toMatchObject({ status: 'cancelled' });
+      await vi.waitFor(() => expect(wireOutcome).toBe('AbortError'));
+    } finally { await transport.dispose(); cdp.dispose(); await pending; }
   });
 
   it('refuses injected-page eval at the CDP-only engine without executing a Machine effect', async () => {
@@ -179,7 +286,7 @@ describe('browser diagnostics interaction transport (DIAG-INTERACTION)', () => {
     harness.bindView();
     try {
       const result = BrowserDiagnosticsEvalResultV1Schema.parse(await transport.dispatch(
-        'browser.diagnostics.eval', evalRequest({ tier: 'injectedPage' }),
+        'browser.diagnostics.eval', evalRequest({ tier: 'injectedPage' }), BROWSER_SESSION_ID,
       ));
       expect(result).toMatchObject({ status: 'blocked', errorCode: 'adapter_unavailable', tier: 'injectedPage' });
       expect(harness.dispatchPageCommand).not.toHaveBeenCalled();
@@ -199,7 +306,7 @@ describe('browser diagnostics interaction transport (DIAG-INTERACTION)', () => {
       contextCapture: harness.contextCapture, resolveInputControl: () => control,
     });
     harness.bindView();
-    const read = transport.dispatch('browser.diagnostics.pause', { viewId: VIEW_ID, browserSessionId: BROWSER_SESSION_ID });
+    const read = transport.dispatch('browser.diagnostics.pause', { viewId: VIEW_ID, browserSessionId: BROWSER_SESSION_ID }, BROWSER_SESSION_ID);
     await entered.promise;
     let drained = false;
     const hold = control.beginConfidentialityHold().then(() => { drained = true; });
@@ -209,8 +316,8 @@ describe('browser diagnostics interaction transport (DIAG-INTERACTION)', () => {
     expect(await read).toMatchObject({ ok: false });
     await hold;
     const count = harness.dispatchPageCommand.mock.calls.length;
-    expect(await transport.dispatch('browser.diagnostics.pause', { viewId: VIEW_ID })).toMatchObject({ ok: false });
-    expect(await transport.dispatch('browser.diagnostics.resume', { viewId: VIEW_ID })).toMatchObject({ ok: false });
+    expect(await transport.dispatch('browser.diagnostics.pause', { viewId: VIEW_ID }, BROWSER_SESSION_ID)).toMatchObject({ ok: false });
+    expect(await transport.dispatch('browser.diagnostics.resume', { viewId: VIEW_ID }, BROWSER_SESSION_ID)).toMatchObject({ ok: false });
     expect(harness.dispatchPageCommand.mock.calls).toHaveLength(count);
     await transport.dispose();
   });
@@ -227,7 +334,7 @@ describe('browser diagnostics interaction transport (DIAG-INTERACTION)', () => {
     const transport = createBrowserDiagnosticsInteractionTransport({ contextCapture: harness.contextCapture,
       resolveInputControl: () => control });
     harness.bindView();
-    const read = transport.dispatch('browser.diagnostics.eval', evalRequest());
+    const read = transport.dispatch('browser.diagnostics.eval', evalRequest(), BROWSER_SESSION_ID);
     await entered.promise;
     let drained = false;
     const hold = control.beginConfidentialityHold().then(() => { drained = true; });
@@ -239,11 +346,11 @@ describe('browser diagnostics interaction transport (DIAG-INTERACTION)', () => {
     expect(result).toMatchObject({ status: 'failed' });
     await hold;
     const count = harness.dispatchPageCommand.mock.calls.length;
-    expect(await transport.dispatch('browser.diagnostics.eval', evalRequest())).toMatchObject({ status: 'failed' });
+    expect(await transport.dispatch('browser.diagnostics.eval', evalRequest(), BROWSER_SESSION_ID)).toMatchObject({ status: 'failed' });
     expect(await transport.dispatch('browser.diagnostics.getProperties', {
       v: 1, propertyRequestId: 'property_held', viewId: VIEW_ID, navigationGeneration: 0,
       tier: 'cdp', objectId: 'field', objectGroupId: 'group_1', diagnosticsInteractionEnabled: true,
-    })).toMatchObject({ status: 'failed', properties: [] });
+    }, BROWSER_SESSION_ID)).toMatchObject({ status: 'failed', properties: [] });
     expect(harness.dispatchPageCommand.mock.calls).toHaveLength(count);
     await transport.dispose?.();
   });
@@ -262,7 +369,7 @@ describe('browser diagnostics interaction transport (DIAG-INTERACTION)', () => {
       contextCapture: harness.contextCapture, resolveInputControl: () => control, onError,
     });
     harness.bindView();
-    const read = transport.dispatch('browser.diagnostics.eval', evalRequest());
+    const read = transport.dispatch('browser.diagnostics.eval', evalRequest(), BROWSER_SESSION_ID);
     await entered.promise;
     const hold = control.beginConfidentialityHold();
     response.reject(new Error('fixture-secret'));
@@ -282,7 +389,7 @@ describe('browser diagnostics interaction transport (DIAG-INTERACTION)', () => {
     const picker = transport.dispatch('browser.diagnostics.elementPicker.start', {
       v: 1, pickerRequestId: 'picker_held', viewId: VIEW_ID, navigationGeneration: 0,
       tier: 'cdp', action: 'start', diagnosticsInteractionEnabled: true,
-    });
+    }, BROWSER_SESSION_ID);
     await entered.promise;
     try {
       await control.beginConfidentialityHold();
@@ -302,7 +409,7 @@ describe('browser diagnostics interaction transport (DIAG-INTERACTION)', () => {
     const transport = createBrowserDiagnosticsInteractionTransport({ contextCapture: harness.contextCapture });
     harness.bindView();
 
-    const result = await transport.dispatch('browser.diagnostics.eval', evalRequest());
+    const result = await transport.dispatch('browser.diagnostics.eval', evalRequest(), BROWSER_SESSION_ID);
 
     // The live result must strictly satisfy the canonical output contract the front door enforces.
     expect(() => BrowserDiagnosticsEvalResultV1Schema.parse(result)).not.toThrow();
@@ -334,17 +441,16 @@ describe('browser diagnostics interaction transport (DIAG-INTERACTION)', () => {
     const transport = createBrowserDiagnosticsInteractionTransport({ contextCapture: harness.contextCapture });
     harness.bindView();
 
-    const result = (await transport.dispatch('browser.diagnostics.eval', evalRequest())) as { status: string; result?: unknown };
+    const result = (await transport.dispatch('browser.diagnostics.eval', evalRequest(), BROWSER_SESSION_ID)) as { status: string; result?: unknown };
     expect(result.status).toBe('failed');
     expect(result.result).toMatchObject({ type: 'object', objectId: 'err_1' });
   });
 
   it('fails closed with target_detached when no live page handle resolves for the view', async () => {
-    const harness = createHarness();
-    // No bindView() ⇒ the viewId cannot resolve a browserSessionId.
+    const harness = createHarness({ resolveHandle: () => null });
     const transport = createBrowserDiagnosticsInteractionTransport({ contextCapture: harness.contextCapture });
 
-    const result = (await transport.dispatch('browser.diagnostics.eval', evalRequest())) as { status: string; errorCode?: string };
+    const result = (await transport.dispatch('browser.diagnostics.eval', evalRequest(), BROWSER_SESSION_ID)) as { status: string; errorCode?: string };
     expect(result).toMatchObject({ status: 'failed', errorCode: 'target_detached' });
     expect(harness.dispatchPageCommand).not.toHaveBeenCalled();
   });
@@ -373,7 +479,7 @@ describe('browser diagnostics interaction transport (DIAG-INTERACTION)', () => {
       objectId: 'object_1',
       objectGroupId: 'group_1',
       diagnosticsInteractionEnabled: true,
-    })) as { status: string; objectId: string; properties: ReadonlyArray<{ name: string }> };
+    }, BROWSER_SESSION_ID)) as { status: string; objectId: string; properties: ReadonlyArray<{ name: string }> };
 
     expect(() => BrowserDiagnosticsGetPropertiesResultV1Schema.parse(result)).not.toThrow();
     expect(result.status).toBe('completed');
@@ -394,7 +500,7 @@ describe('browser diagnostics interaction transport (DIAG-INTERACTION)', () => {
       tier: 'cdp',
       objectGroupId: 'group_1',
       diagnosticsInteractionEnabled: true,
-    })) as { status: string; objectGroupId: string };
+    }, BROWSER_SESSION_ID)) as { status: string; objectGroupId: string };
 
     expect(() => BrowserDiagnosticsReleaseObjectGroupResultV1Schema.parse(result)).not.toThrow();
     expect(result).toMatchObject({ status: 'completed', objectGroupId: 'group_1' });
@@ -416,7 +522,7 @@ describe('browser diagnostics interaction transport (DIAG-INTERACTION)', () => {
       .filter(([arg]) => arg.method === 'Runtime.releaseObjectGroup')
       .map(([arg]) => String(arg.params?.objectGroup ?? ''));
 
-    await transport.dispatch('browser.diagnostics.eval', evalRequest({ objectGroupId: 'group_same_document' }));
+    await transport.dispatch('browser.diagnostics.eval', evalRequest({ objectGroupId: 'group_same_document' }), BROWSER_SESSION_ID);
     harness.emitCdpEvent({
       method: 'Page.navigatedWithinDocument',
       params: { url: 'https://browser.example.test/#next' },
@@ -434,7 +540,7 @@ describe('browser diagnostics interaction transport (DIAG-INTERACTION)', () => {
       objectId: 'object_1',
       objectGroupId: 'group_same_document',
       diagnosticsInteractionEnabled: true,
-    })).resolves.toMatchObject({
+    }, BROWSER_SESSION_ID)).resolves.toMatchObject({
       status: 'failed',
       errorCode: 'navigation_stale',
       properties: [],
@@ -443,7 +549,7 @@ describe('browser diagnostics interaction transport (DIAG-INTERACTION)', () => {
     await transport.dispatch('browser.diagnostics.eval', evalRequest({
       evalRequestId: 'eval_full_navigation',
       objectGroupId: 'group_full_navigation',
-    }));
+    }), BROWSER_SESSION_ID);
     harness.emitCdpEvent({
       method: 'Page.frameNavigated',
       params: { frame: { id: 'frame_1', parentId: undefined, url: 'https://browser.example.test/next' } },
@@ -456,14 +562,14 @@ describe('browser diagnostics interaction transport (DIAG-INTERACTION)', () => {
     await transport.dispatch('browser.diagnostics.eval', evalRequest({
       evalRequestId: 'eval_close',
       objectGroupId: 'group_view_close',
-    }));
+    }), BROWSER_SESSION_ID);
     harness.unbindView();
     await vi.waitFor(() => {
       expect(releasedGroups()).toContain('group_view_close');
     });
   });
 
-  it('auto-releases least-recently tracked object groups when a client never releases them', async () => {
+  it('preserves live object groups until their lifecycle owner releases them', async () => {
     const harness = createHarness({
       responses: {
         'Runtime.evaluate': { result: { type: 'object', objectId: 'object_1', className: 'Object' } },
@@ -476,24 +582,15 @@ describe('browser diagnostics interaction transport (DIAG-INTERACTION)', () => {
       await transport.dispatch('browser.diagnostics.eval', evalRequest({
         evalRequestId: `eval_${index}`,
         objectGroupId: `group_${index}`,
-      }));
+      }), BROWSER_SESSION_ID);
     }
 
-    await vi.waitFor(() => {
-      const releasedGroups = harness.dispatchPageCommand.mock.calls
-        .filter(([arg]) => arg.method === 'Runtime.releaseObjectGroup')
-        .map(([arg]) => String(arg.params?.objectGroup ?? ''));
-      expect(releasedGroups).toEqual([
-        'group_0',
-        'group_1',
-        'group_2',
-        'group_3',
-        'group_4',
-        'group_5',
-        'group_6',
-        'group_7',
-      ]);
-    });
+    const releasedGroups = () => harness.dispatchPageCommand.mock.calls
+      .filter(([arg]) => arg.method === 'Runtime.releaseObjectGroup')
+      .map(([arg]) => String(arg.params?.objectGroup ?? ''));
+    expect(releasedGroups()).toEqual([]);
+    await transport.dispose();
+    expect(new Set(releasedGroups())).toEqual(new Set(Array.from({ length: 520 }, (_, index) => `group_${index}`)));
   });
 
   it('maps pause to Debugger.pause and resume to Debugger.resume using the input browserSessionId', async () => {
@@ -503,11 +600,11 @@ describe('browser diagnostics interaction transport (DIAG-INTERACTION)', () => {
     const paused = await transport.dispatch('browser.diagnostics.pause', {
       browserSessionId: BROWSER_SESSION_ID,
       viewId: VIEW_ID,
-    });
+    }, BROWSER_SESSION_ID);
     const resumed = await transport.dispatch('browser.diagnostics.resume', {
       browserSessionId: BROWSER_SESSION_ID,
       viewId: VIEW_ID,
-    });
+    }, BROWSER_SESSION_ID);
 
     expect(paused).toMatchObject({ ok: true, status: 'paused' });
     expect(resumed).toMatchObject({ ok: true, status: 'resumed' });
@@ -532,7 +629,7 @@ describe('browser diagnostics interaction transport (DIAG-INTERACTION)', () => {
       tier: 'cdp',
       action: 'start',
       diagnosticsInteractionEnabled: true,
-    })) as { status: string; backendNodeRef?: string };
+    }, BROWSER_SESSION_ID)) as { status: string; backendNodeRef?: string };
 
     expect(() => BrowserDiagnosticsElementPickerResultV1Schema.parse(result)).not.toThrow();
     expect(result.status).toBe('selected');
@@ -550,7 +647,7 @@ describe('browser diagnostics interaction transport (DIAG-INTERACTION)', () => {
     // A generous picker timeout proves the start resolves via the cancel interrupt, not a timeout.
     const transport = createBrowserDiagnosticsInteractionTransport({
       contextCapture: harness.contextCapture,
-      pickerTimeoutMs: 5000,
+
     });
     harness.bindView();
 
@@ -562,7 +659,7 @@ describe('browser diagnostics interaction transport (DIAG-INTERACTION)', () => {
       tier: 'cdp',
       action: 'start',
       diagnosticsInteractionEnabled: true,
-    });
+    }, BROWSER_SESSION_ID);
     // Allow the start dispatch to engage inspect mode (register the pending picker) before cancelling.
     await new Promise((resolve) => setTimeout(resolve, 20));
     const cancelResult = (await transport.dispatch('browser.diagnostics.elementPicker.cancel', {
@@ -573,11 +670,29 @@ describe('browser diagnostics interaction transport (DIAG-INTERACTION)', () => {
       tier: 'cdp',
       action: 'cancel',
       diagnosticsInteractionEnabled: true,
-    })) as { status: string };
+    }, BROWSER_SESSION_ID)) as { status: string };
 
     const startResult = (await startPromise) as { status: string };
     expect(cancelResult.status).toBe('cancelled');
     expect(startResult.status).toBe('cancelled');
+  });
+
+  it('keeps a picker pending beyond sixty seconds until the person cancels', async () => {
+    vi.useFakeTimers();
+    const harness = createHarness();
+    const transport = createBrowserDiagnosticsInteractionTransport({ contextCapture: harness.contextCapture });
+    harness.bindView();
+    let settled = false;
+    const request = { v: 1, pickerRequestId: 'long-picker', viewId: VIEW_ID, navigationGeneration: 0,
+      tier: 'cdp', action: 'start', diagnosticsInteractionEnabled: true };
+    const pending = transport.dispatch('browser.diagnostics.elementPicker.start', request, BROWSER_SESSION_ID)
+      .then(value => { settled = true; return value; });
+    try {
+      await vi.advanceTimersByTimeAsync(60_001);
+      expect(settled).toBe(false);
+      await transport.dispatch('browser.diagnostics.elementPicker.cancel', { ...request, action: 'cancel' }, BROWSER_SESSION_ID);
+      expect(await pending).toMatchObject({ status: 'cancelled' });
+    } finally { await transport.dispose(); vi.useRealTimers(); }
   });
 
   it('fails the picker closed when the sidecar exposes no CDP event stream', async () => {
@@ -593,7 +708,7 @@ describe('browser diagnostics interaction transport (DIAG-INTERACTION)', () => {
       tier: 'cdp',
       action: 'start',
       diagnosticsInteractionEnabled: true,
-    })) as { status: string; errorCode?: string };
+    }, BROWSER_SESSION_ID)) as { status: string; errorCode?: string };
 
     expect(result).toMatchObject({ status: 'failed', errorCode: 'collector_unavailable' });
   });
@@ -606,11 +721,11 @@ describe('browser diagnostics interaction transport (DIAG-INTERACTION)', () => {
     });
     const transport = createBrowserDiagnosticsInteractionTransport({
       contextCapture: harness.contextCapture,
-      pickerTimeoutMs: 60_000,
+
     });
     harness.bindView();
 
-    await transport.dispatch('browser.diagnostics.eval', evalRequest({ objectGroupId: 'group_dispose' }));
+    await transport.dispatch('browser.diagnostics.eval', evalRequest({ objectGroupId: 'group_dispose' }), BROWSER_SESSION_ID);
     const pickerStart = transport.dispatch('browser.diagnostics.elementPicker.start', {
       v: 1,
       pickerRequestId: 'picker_dispose',
@@ -619,7 +734,7 @@ describe('browser diagnostics interaction transport (DIAG-INTERACTION)', () => {
       tier: 'cdp',
       action: 'start',
       diagnosticsInteractionEnabled: true,
-    });
+    }, BROWSER_SESSION_ID);
     await vi.waitFor(() => {
       expect(harness.hasLifecycleListener()).toBe(true);
       expect(harness.hasCdpListener()).toBe(true);
@@ -646,7 +761,7 @@ describe('browser diagnostics interaction transport (DIAG-INTERACTION)', () => {
 
     const afterDispose = await transport.dispatch(
       'browser.diagnostics.eval',
-      evalRequest({ evalRequestId: 'eval_after_dispose' }),
+      evalRequest({ evalRequestId: 'eval_after_dispose' }), BROWSER_SESSION_ID,
     );
     expect(afterDispose).toMatchObject({ status: 'failed', errorCode: 'target_detached' });
   });
@@ -655,7 +770,7 @@ describe('browser diagnostics interaction transport (DIAG-INTERACTION)', () => {
     const harness = createHarness();
     const transport = createBrowserDiagnosticsInteractionTransport({
       contextCapture: harness.contextCapture,
-      pickerTimeoutMs: 200,
+
     });
     harness.bindView();
     const baselineCdpListenerCount = harness.cdpListenerCount();
@@ -671,7 +786,7 @@ describe('browser diagnostics interaction transport (DIAG-INTERACTION)', () => {
         tier: 'cdp',
         action: 'start',
         diagnosticsInteractionEnabled: true,
-      });
+      }, BROWSER_SESSION_ID);
       await vi.waitFor(() => expect(harness.cdpListenerCount()).toBe(baselineCdpListenerCount + 1));
 
       secondStart = transport.dispatch('browser.diagnostics.elementPicker.start', {
@@ -682,7 +797,7 @@ describe('browser diagnostics interaction transport (DIAG-INTERACTION)', () => {
         tier: 'cdp',
         action: 'start',
         diagnosticsInteractionEnabled: true,
-      });
+      }, BROWSER_SESSION_ID);
       await vi.waitFor(() => {
         const inspectStarts = harness.dispatchPageCommand.mock.calls.filter(
           ([arg]) => arg.method === 'Overlay.setInspectMode' && arg.params?.mode === 'searchForNode',
@@ -700,7 +815,7 @@ describe('browser diagnostics interaction transport (DIAG-INTERACTION)', () => {
     expect(harness.cdpListenerCount()).toBe(0);
   });
 
-  it('waits for in-flight eval cleanup before disposal completes', async () => {
+  it('cancels in-flight evaluation and releases its group before disposal completes', async () => {
     const evalResponse = deferred<unknown>();
     const harness = createHarness({
       responses: {
@@ -714,7 +829,7 @@ describe('browser diagnostics interaction transport (DIAG-INTERACTION)', () => {
 
     const evalPromise = transport.dispatch(
       'browser.diagnostics.eval',
-      evalRequest({ objectGroupId: 'group_inflight' }),
+      evalRequest({ objectGroupId: 'group_inflight' }), BROWSER_SESSION_ID,
     );
     await vi.waitFor(() => {
       expect(harness.dispatchPageCommand.mock.calls.some(([arg]) => arg.method === 'Runtime.evaluate')).toBe(true);
@@ -727,15 +842,29 @@ describe('browser diagnostics interaction transport (DIAG-INTERACTION)', () => {
     await Promise.resolve();
     expect(disposeCompleted).toBe(false);
 
-    evalResponse.resolve({ result: { type: 'object', objectId: 'object_inflight', className: 'Object' } });
-
     await disposePromise;
-    await evalPromise;
+    await expect(evalPromise).resolves.toMatchObject({ status: 'cancelled' });
+    evalResponse.resolve({ result: { type: 'object', objectId: 'object_inflight', className: 'Object' } });
     expect(harness.dispatchPageCommand).toHaveBeenCalledWith(
       expect.objectContaining({
         method: 'Runtime.releaseObjectGroup',
         params: { objectGroup: 'group_inflight' },
       }),
     );
+  });
+
+  it('terminates each affected runtime once when disposal cancels several pending evaluations', async () => {
+    const response = deferred<unknown>();
+    const harness = createHarness({ responses: { 'Runtime.evaluate': response.promise } });
+    const transport = createBrowserDiagnosticsInteractionTransport({ contextCapture: harness.contextCapture });
+    harness.bindView();
+    const pending = ['first', 'second'].map(evalRequestId => transport.dispatch('browser.diagnostics.eval',
+      evalRequest({ evalRequestId, objectGroupId: evalRequestId }), BROWSER_SESSION_ID));
+    try {
+      await vi.waitFor(() => expect(harness.dispatchPageCommand.mock.calls.filter(([command]) => command.method === 'Runtime.evaluate')).toHaveLength(2));
+      await transport.dispose();
+      expect(await Promise.all(pending)).toEqual([expect.objectContaining({ status: 'cancelled' }), expect.objectContaining({ status: 'cancelled' })]);
+      expect(harness.dispatchPageCommand.mock.calls.filter(([command]) => command.method === 'Runtime.terminateExecution')).toHaveLength(1);
+    } finally { response.resolve({}); await transport.dispose(); await Promise.all(pending); }
   });
 });

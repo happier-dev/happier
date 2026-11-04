@@ -390,6 +390,7 @@ export const INJECTED_LIFECYCLE_FOOTER = `
     teardown: function () {
       if (restored) return;
       restored = true;
+      cancelPendingEvals();
       teardownElementPicker();
       Object.keys(originalConsole).forEach(function (level) {
         console[level] = originalConsole[level];

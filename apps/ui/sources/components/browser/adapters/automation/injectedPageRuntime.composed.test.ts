@@ -50,12 +50,33 @@ beforeEach(() => {
 afterEach(() => { runtimeWindow.__happierBrowserRuntime?.teardown(); vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe('mounted browser Action to installed collector', () => {
+    it('keeps eval pending beyond former deadlines until a nonce-bound cancel and ignores late completion', async () => {
+        const host = mountCollector();
+        let complete!: (value: unknown) => void;
+        vi.stubGlobal('__longEval', new Promise(resolve => { complete = resolve; }));
+        const request = { v: 1 as const, evalRequestId: 'long_eval', viewId: identity.viewId, navigationGeneration: 0,
+            tier: 'injectedPage' as const, expression: '__longEval' + ' '.repeat(5_000),
+            objectGroupId: 'group', diagnosticsInteractionEnabled: true as const };
+        const send = (command: typeof request & { action?: 'cancel' }) => new Function(
+            buildInjectedBrowserDiagnosticsEvalCommandScript({ ...identity, version: '1.0.0', request: command }))();
+        send(request);
+        await vi.advanceTimersByTimeAsync(60_001);
+        const results = () => host.messages.map(raw => parseInjectedBrowserDiagnosticsMessage(raw, identity))
+            .filter(message => message.ok && 'evalResult' in message && message.evalResult?.evalRequestId === request.evalRequestId);
+        expect(results()).toHaveLength(0);
+        send({ ...request, action: 'cancel' });
+        expect(results()).toMatchObject([{ evalResult: { status: 'cancelled' } }]);
+        complete({ late: true });
+        await Promise.resolve();
+        expect(results()).toHaveLength(1);
+    });
+
     it('returns full eval values and expands every retained property through the diagnostics reader', () => {
         const host = mountCollector();
         const longValue = 'x'.repeat(70_000);
         vi.stubGlobal('__fx80Value', longValue);
         const request = { v: 1 as const, evalRequestId: 'eval', viewId: identity.viewId, navigationGeneration: 0,
-            tier: 'injectedPage' as const, expression: '__fx80Value', timeoutMs: 2_000,
+            tier: 'injectedPage' as const, expression: '__fx80Value',
             objectGroupId: 'group', diagnosticsInteractionEnabled: true as const };
         new Function(buildInjectedBrowserDiagnosticsEvalCommandScript({ ...identity, version: '1.0.0', request }))();
         const scalar = parseInjectedBrowserDiagnosticsMessage(host.messages.at(-1)!, identity);
@@ -65,7 +86,7 @@ describe('mounted browser Action to installed collector', () => {
         vi.stubGlobal('__fx80Value', Object.fromEntries(Array.from({ length: 101 }, (_, i) => [`property_${i}`, longValue])));
         new Function(buildInjectedBrowserDiagnosticsEvalCommandScript({ ...identity, version: '1.0.0', request }))();
         const object = parseInjectedBrowserDiagnosticsMessage(host.messages.at(-1)!, identity);
-        expect(object).toMatchObject({ ok: true, evalResult: { result: { previewTruncated: true } } });
+        expect(object).toMatchObject({ ok: true, evalResult: { result: { previewTruncated: false } } });
         if (!object.ok || !('evalResult' in object) || !object.evalResult?.result?.objectId) throw new Error('Expected object reference');
         new Function(buildInjectedBrowserDiagnosticsGetPropertiesCommandScript({ ...identity, version: '1.0.0', request: {
             v: 1, propertyRequestId: 'properties', viewId: identity.viewId, navigationGeneration: 0, tier: 'injectedPage',

@@ -65,6 +65,7 @@ type BrowserDiagnosticsPendingRequests = Readonly<{
 type PendingDiagnosticsResult = Readonly<{
     request: BrowserDiagnosticsPendingRequests;
     settle: (result: unknown) => void;
+    cancel: () => void;
     dispose: () => void;
 }>;
 
@@ -85,7 +86,6 @@ function projectPendingRequests(pending: Iterable<PendingDiagnosticsResult>): Br
 
 export type BrowserDiagnosticsEvalCommandInput = Readonly<{
     expression: string;
-    timeoutMs?: number;
     objectGroupId?: string;
 }>;
 
@@ -374,6 +374,12 @@ export function useBrowserDiagnosticsRuntime(
             || args.context.signal?.aborted) return unavailable;
         const { browserSessionId: _browserSessionId, ...engineRequest } = request;
         const requestId = request.evalRequestId ?? request.propertyRequestId ?? request.releaseRequestId ?? request.pickerRequestId;
+        if (args.actionId === 'browser.diagnostics.eval' && request.action === 'cancel') {
+            const evalRequest = BrowserDiagnosticsEvalRequestV1Schema.parse(engineRequest);
+            pendingResults.current.get(evalRequest.evalRequestId)?.cancel();
+            return { v: 1, evalRequestId: evalRequest.evalRequestId, viewId: view.viewId,
+                navigationGeneration: view.navigationGeneration, tier: 'injectedPage', audited: true, status: 'cancelled' };
+        }
         if (typeof requestId !== 'string' || pendingResults.current.has(requestId)) return unavailable;
         let pendingRequest: BrowserDiagnosticsPendingRequests;
         switch (args.actionId) {
@@ -407,8 +413,19 @@ export function useBrowserDiagnosticsRuntime(
             setInteractionEnabled(true);
         }
         return await new Promise(resolve => {
-            const onAbort = () => settleResult(requestId, { ok: false, errorCode: 'outcome_unknown', error: 'outcome_unknown' });
-            pendingResults.current.set(requestId, { request: pendingRequest, settle: resolve, dispose: () => args.context.signal?.removeEventListener('abort', onAbort) });
+            const onAbort = () => {
+                const evalRequest = pendingRequest.evalRequest;
+                if (!evalRequest) {
+                    settleResult(requestId, { ok: false, errorCode: 'outcome_unknown', error: 'outcome_unknown' });
+                    return;
+                }
+                settleResult(requestId, { v: 1, evalRequestId: requestId, viewId: view.viewId,
+                    navigationGeneration: view.navigationGeneration, tier: 'injectedPage', audited: true, status: 'cancelled' });
+                setEvalEntries(entries => entries.map(entry => entry.evalRequestId === requestId ? { ...entry, status: 'cancelled' } : entry));
+                setPendingRequests(current => ({ ...current, evalRequest: { ...evalRequest, action: 'cancel' } }));
+            };
+            pendingResults.current.set(requestId, { request: pendingRequest, settle: resolve, cancel: onAbort,
+                dispose: () => args.context.signal?.removeEventListener('abort', onAbort) });
             args.context.signal?.addEventListener('abort', onAbort, { once: true });
             setPendingRequests(projectPendingRequests(pendingResults.current.values()));
         });
@@ -467,7 +484,6 @@ export function useBrowserDiagnosticsRuntime(
             navigationGeneration: view.navigationGeneration,
             tier: 'injectedPage',
             expression: requestInput.expression,
-            timeoutMs: requestInput.timeoutMs ?? 2_000,
             objectGroupId,
             diagnosticsInteractionEnabled: true,
         };
@@ -671,6 +687,7 @@ export function useBrowserDiagnosticsRuntime(
             objectProperties,
             onSubmitExpression: (expression) => requestEval({ expression }),
             onExpandObject: expandObject,
+            onCancelEval: evalRequestId => pendingResults.current.get(evalRequestId)?.cancel(),
         };
         return {
             state: 'enabled',

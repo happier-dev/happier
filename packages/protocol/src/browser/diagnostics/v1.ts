@@ -12,9 +12,6 @@ import { rejectUnsafeBrowserEgressKeys } from './egress/keyRejection.js';
 
 const IdSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.maxLength(256)));
 const NonNegativeIntSchema = lazyZodSchema(() => z.number().check(z.int(), z.nonnegative()));
-// Presentation-only previews retain the existing wire bounds. Expansion carries full values.
-export const BROWSER_DIAGNOSTICS_PREVIEW_MAX_PROPERTIES = 10;
-export const BROWSER_DIAGNOSTICS_PREVIEW_MAX_VALUE_LENGTH = 1024;
 
 export const BrowserDiagnosticFamilyV1Schema = lazyZodSchema(() => z.enum([
   'console',
@@ -551,7 +548,7 @@ export type DaemonBrowserDiagnosticsSnapshotResponseV1 = z.infer<
 
 export const BrowserDiagnosticsRemoteObjectPreviewPropertyV1Schema = lazyZodSchema(() => z.strictObject({
     name: z.string(),
-    valuePreview: z.string().check(z.maxLength(BROWSER_DIAGNOSTICS_PREVIEW_MAX_VALUE_LENGTH)),
+    valuePreview: z.string(),
     truncated: z._default(z.optional(z.boolean()), false),
   }));
 export type BrowserDiagnosticsRemoteObjectPreviewPropertyV1 = z.infer<
@@ -564,7 +561,7 @@ export const BrowserDiagnosticsRemoteObjectV1Schema = lazyZodSchema(() => z.stri
     objectId: z.optional(IdSchema),
     className: z.optional(z.string().check(z.trim(), z.minLength(1))),
     description: z.optional(z.string()),
-    preview: z._default(z.optional(z.array(BrowserDiagnosticsRemoteObjectPreviewPropertyV1Schema).check(z.maxLength(BROWSER_DIAGNOSTICS_PREVIEW_MAX_PROPERTIES))), []),
+    preview: z._default(z.optional(z.array(BrowserDiagnosticsRemoteObjectPreviewPropertyV1Schema)), []),
     previewTruncated: z.optional(z.boolean()),
   }).check(z.superRefine((value, context) => {
     if ((value.type === 'object' || value.type === 'function') && !value.objectId) {
@@ -591,8 +588,8 @@ export const BrowserDiagnosticsEvalRequestV1Schema = lazyZodSchema(() => z.stric
     viewId: IdSchema,
     navigationGeneration: NonNegativeIntSchema,
     tier: BrowserDiagnosticsEvalTierV1Schema,
-    expression: z.string().check(z.trim(), z.minLength(1), z.maxLength(4096)),
-    timeoutMs: z._default(z.optional(z.number().check(z.int(), z.positive(), z.maximum(10_000))), 2000),
+    expression: z.string().check(z.trim(), z.minLength(1)),
+    action: z.optional(z.literal('cancel')),
     objectGroupId: IdSchema,
     diagnosticsInteractionEnabled: z.literal(true),
   }));
@@ -603,7 +600,7 @@ export const BrowserDiagnosticsEvalResultV1Schema = lazyZodSchema(() => z.strict
     evalRequestId: IdSchema,
     viewId: IdSchema,
     navigationGeneration: NonNegativeIntSchema,
-    status: z.enum(['completed', 'failed', 'timedOut', 'blocked', 'collectorDegraded']),
+    status: z.enum(['completed', 'failed', 'timedOut', 'blocked', 'collectorDegraded', 'cancelled']),
     tier: BrowserDiagnosticsEvalTierV1Schema,
     audited: z.literal(true),
     result: z.optional(BrowserDiagnosticsRemoteObjectV1Schema),

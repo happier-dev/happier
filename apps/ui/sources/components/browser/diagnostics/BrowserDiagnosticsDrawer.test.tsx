@@ -385,6 +385,7 @@ describe('BrowserDiagnosticsDrawer', () => {
                 objectProperties: {},
                 onSubmitExpression,
                 onExpandObject: vi.fn(() => true),
+                onCancelEval: vi.fn(),
             },
         };
 

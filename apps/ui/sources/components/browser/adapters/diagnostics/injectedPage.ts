@@ -270,14 +270,13 @@ function sanitizeInjectedDiagnosticDataForEvent(
         && event.kind === 'eval.requested'
     ) {
         const expressionPreview = typeof data.expressionPreview === 'string'
-            ? data.expressionPreview.slice(0, 4096)
+            ? data.expressionPreview
             : undefined;
         return {
             ...(typeof data.evalRequestId === 'string' ? { evalRequestId: data.evalRequestId } : {}),
             ...(data.tier === 'injectedPage' ? { tier: data.tier } : {}),
             ...(expressionPreview ? { expressionPreview } : {}),
             expressionTruncated: data.expressionTruncated === true,
-            ...(Number.isInteger(data.timeoutMs) ? { timeoutMs: data.timeoutMs } : {}),
             ...(typeof data.objectGroupId === 'string' ? { objectGroupId: data.objectGroupId } : {}),
         };
     }

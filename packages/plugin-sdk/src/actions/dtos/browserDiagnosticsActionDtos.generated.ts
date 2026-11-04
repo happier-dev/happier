@@ -34,7 +34,7 @@ export type BrowserDiagnosticsActionInputById = {
         expression: string;
         objectGroupId: string;
         diagnosticsInteractionEnabled: true;
-        timeoutMs?: number | undefined;
+        action?: 'cancel' | undefined;
     };
     readonly "browser.diagnostics.getProperties": {
         browserSessionId: string;
@@ -137,7 +137,7 @@ export type BrowserDiagnosticsActionResultById = {
         evalRequestId: string;
         viewId: string;
         navigationGeneration: number;
-        status: 'completed' | 'failed' | 'timedOut' | 'blocked' | 'collectorDegraded';
+        status: 'blocked' | 'cancelled' | 'collectorDegraded' | 'completed' | 'failed' | 'timedOut';
         tier: 'cdp' | 'injectedPage';
         audited: true;
         result?: {

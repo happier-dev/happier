@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { createBrowserDiagnosticsActionRoutes } from './actionRoutes';
 import { createBrowserDiagnosticsDaemonStore, type BrowserDiagnosticsDaemonStore } from './store';
+import { createBrowserDiagnosticsInteractionTransport } from './interactionTransport';
+import type { BrowserSidecarViewLifecycleSubscriber } from '../sidecar/controlAdapter';
 
 const view = { browserSessionId: 'browser_session_1', viewId: 'view_1' } as const;
 
@@ -47,6 +49,33 @@ function createDiagnosticsStore(
 }
 
 describe('browser diagnostics action routes (DEV-5)', () => {
+  it('evaluates same-name views in their own Session and keeps the sibling binding after close', async () => {
+    let lifecycle: BrowserSidecarViewLifecycleSubscriber | undefined;
+    const releasedTargets: string[] = [];
+    const interaction = createBrowserDiagnosticsInteractionTransport({ contextCapture: {
+      subscribeViewLifecycle: listener => { lifecycle = listener; return () => { lifecycle = undefined; }; },
+      resolvePageHandle: target => ({ targetId: target.browserSessionId }),
+      transport: { dispatchPageCommand: async command => {
+        if (command.method === 'Runtime.releaseObjectGroup') releasedTargets.push(command.targetId);
+        return command.method === 'Runtime.evaluate'
+          ? { result: { type: 'string', value: command.targetId === 'session_a' ? '380×845' : '780×493' } } : {};
+      } },
+    } });
+    const owner = createBrowserDiagnosticsActionRoutes({ store: createBrowserDiagnosticsDaemonStore({ machineId: 'machine' }), interaction });
+    const request = (browserSessionId: string) => ({ v: 1, browserSessionId, viewId: 'shared-name',
+      evalRequestId: 'viewport', navigationGeneration: 0, tier: 'cdp', expression: 'viewport',
+      objectGroupId: 'viewport', diagnosticsInteractionEnabled: true });
+    try {
+      lifecycle?.({ type: 'bound', browserSessionId: 'session_a', viewId: 'shared-name' });
+      lifecycle?.({ type: 'bound', browserSessionId: 'session_b', viewId: 'shared-name' });
+      await expect(owner.dispatch('browser.diagnostics.eval', request('session_a'))).resolves.toMatchObject({ result: { value: '380×845' } });
+      await expect(owner.dispatch('browser.diagnostics.eval', request('session_b'))).resolves.toMatchObject({ result: { value: '780×493' } });
+      lifecycle?.({ type: 'unbound', browserSessionId: 'session_b', viewId: 'shared-name' });
+      await vi.waitFor(() => expect(releasedTargets).toEqual(['session_b']));
+      await expect(owner.dispatch('browser.diagnostics.eval', request('session_a'))).resolves.toMatchObject({ result: { value: '380×845' } });
+    } finally { await interaction.dispose(); }
+  });
+
   it('snapshot returns the live store snapshot (route contract: not *_route_unavailable)', async () => {
     const store = createBrowserDiagnosticsDaemonStore({ machineId: 'machine_1', now: () => 5000 });
     const owner = createBrowserDiagnosticsActionRoutes({ store });

@@ -29,7 +29,6 @@ type InjectedPageModule = Readonly<{
             navigationGeneration: number;
             tier: 'injectedPage';
             expression: string;
-            timeoutMs?: number;
             objectGroupId: string;
             diagnosticsInteractionEnabled: true;
         }>;
@@ -1533,7 +1532,7 @@ describe('injected browser diagnostics collector', () => {
                 navigationGeneration: expectedCollector.navigationGeneration,
                 tier: 'injectedPage',
                 expression: '({ ok: true })',
-                timeoutMs: 2_000,
+
                 objectGroupId: 'group_1',
                 diagnosticsInteractionEnabled: true,
             },

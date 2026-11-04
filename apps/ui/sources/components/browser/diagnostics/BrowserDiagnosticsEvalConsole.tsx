@@ -6,9 +6,10 @@ import { Text, TextInput } from '@/components/ui/text/Text';
 import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
 import { Typography } from '@/constants/Typography';
 import type {
+    BrowserDiagnosticsEvalResultV1,
     BrowserDiagnosticsObjectPropertyV1,
     BrowserDiagnosticsRemoteObjectV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/browser/diagnostics/v1';
 import { t } from '@/text';
 
 /**
@@ -22,13 +23,11 @@ import { t } from '@/text';
  * by LANE-CONSENT — this component is only mounted while interaction is `enabled`.
  */
 
-const MAX_OBJECT_INSPECTOR_DEPTH = 6;
-
 export type BrowserDiagnosticsEvalConsoleEntry = Readonly<{
     evalRequestId: string;
     expression: string;
     objectGroupId: string;
-    status: 'pending' | 'completed' | 'failed' | 'timedOut' | 'blocked' | 'collectorDegraded';
+    status: 'pending' | BrowserDiagnosticsEvalResultV1['status'];
     result?: BrowserDiagnosticsRemoteObjectV1;
     errorCode?: string;
 }>;
@@ -44,6 +43,7 @@ export type BrowserDiagnosticsEvalConsoleControls = Readonly<{
     objectProperties: Readonly<Record<string, BrowserDiagnosticsObjectInspectorEntry>>;
     onSubmitExpression: (expression: string) => boolean;
     onExpandObject: (objectId: string, objectGroupId: string) => boolean;
+    onCancelEval: (evalRequestId: string) => void;
 }>;
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -148,6 +148,8 @@ function entryStatusLabel(status: BrowserDiagnosticsEvalConsoleEntry['status']):
             return t('browserDiagnostics.host.interaction.eval.statusPending');
         case 'completed':
             return t('browserDiagnostics.host.interaction.eval.statusCompleted');
+        case 'cancelled':
+            return t('status.canceled');
         case 'failed':
             return t('browserDiagnostics.host.interaction.eval.statusFailed');
         case 'timedOut':
@@ -173,13 +175,12 @@ function BrowserDiagnosticsObjectNode(props: Readonly<{
     remote: RemoteObjectNode;
     objectGroupId: string;
     controls: BrowserDiagnosticsEvalConsoleControls;
-    depth: number;
     testID: string;
 }>): React.ReactElement {
-    const { remote, objectGroupId, controls, depth, testID } = props;
+    const { remote, objectGroupId, controls, testID } = props;
     const objectId = remote.objectId;
     const inspector = objectId ? controls.objectProperties[objectId] : undefined;
-    const expandable = !!objectId && depth < MAX_OBJECT_INSPECTOR_DEPTH;
+    const expandable = !!objectId;
     // Expansion is per-node UI state, NOT derived from cache presence: deriving `expanded` from the
     // shared properties cache meant a node could never be collapsed (the "collapse" toggle just
     // re-ran `onExpandObject` and re-fetched). Track it locally so collapse hides the subtree and
@@ -231,7 +232,6 @@ function BrowserDiagnosticsObjectNode(props: Readonly<{
                                 remote={property.value}
                                 objectGroupId={objectGroupId}
                                 controls={controls}
-                                depth={depth + 1}
                                 testID={`${testID}-${sanitizeTestIdPart(property.name)}`}
                             />
                         ))
@@ -248,10 +248,15 @@ function BrowserDiagnosticsEvalEntryView(props: Readonly<{
     testID: string;
 }>): React.ReactElement {
     const { entry, controls, testID } = props;
+    const entryId = sanitizeTestIdPart(entry.evalRequestId);
     return (
         <View testID={`${testID}-entry-${sanitizeTestIdPart(entry.evalRequestId)}`} style={stylesheet.entry}>
             <Text style={stylesheet.expression}>{entry.expression}</Text>
             <Text style={stylesheet.meta}>{entryStatusLabel(entry.status)}</Text>
+                {entry.status === 'pending' ? (
+                    <ToolbarButton testID={`${testID}-cancel-${entryId}`}
+                        label={t('common.cancel')} onPress={() => controls.onCancelEval(entry.evalRequestId)} />
+                ) : null}
             {entry.errorCode ? (
                 <Text style={stylesheet.error}>
                     {t('browserDiagnostics.host.interaction.eval.error', { reasonCode: entry.errorCode })}
@@ -263,7 +268,6 @@ function BrowserDiagnosticsEvalEntryView(props: Readonly<{
                     remote={entry.result}
                     objectGroupId={entry.objectGroupId}
                     controls={controls}
-                    depth={0}
                     testID={`${testID}-result-${sanitizeTestIdPart(entry.evalRequestId)}`}
                 />
             ) : null}

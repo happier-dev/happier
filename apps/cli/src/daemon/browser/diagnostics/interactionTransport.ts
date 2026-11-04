@@ -1,4 +1,5 @@
-import { BROWSER_DIAGNOSTICS_PREVIEW_MAX_PROPERTIES, BROWSER_DIAGNOSTICS_PREVIEW_MAX_VALUE_LENGTH, BrowserDiagnosticsElementPickerRequestV1Schema, BrowserDiagnosticsEvalRequestV1Schema, BrowserDiagnosticsGetPropertiesRequestV1Schema, BrowserDiagnosticsReleaseObjectGroupRequestV1Schema } from '@happier-dev/protocol/browser/diagnostics/v1';
+import { browserViewKey } from '@happier-dev/protocol/browser/view/key';
+import { BrowserDiagnosticsElementPickerRequestV1Schema, BrowserDiagnosticsEvalRequestV1Schema, BrowserDiagnosticsGetPropertiesRequestV1Schema, BrowserDiagnosticsReleaseObjectGroupRequestV1Schema } from '@happier-dev/protocol/browser/diagnostics/v1';
 import type { BrowserDiagnosticsElementPickerRequestV1, BrowserDiagnosticsElementPickerResultV1, BrowserDiagnosticsEvalRequestV1, BrowserDiagnosticsEvalResultV1, BrowserDiagnosticsExpandedRemoteObjectV1, BrowserDiagnosticsGetPropertiesRequestV1, BrowserDiagnosticsGetPropertiesResultV1, BrowserDiagnosticsObjectPropertyV1, BrowserDiagnosticsReleaseObjectGroupRequestV1, BrowserDiagnosticsReleaseObjectGroupResultV1, BrowserDiagnosticsRemoteObjectPreviewPropertyV1, BrowserDiagnosticsRemoteObjectV1, RuntimeActionIdV1 } from '@happier-dev/protocol';
 
 import type {
@@ -29,20 +30,22 @@ import type { SurfaceInputControl } from '../../surfaces/inputControl';
  *  - `getProperties`         -> `Runtime.getProperties` (own properties, previews)
  *  - `releaseObjectGroup`    -> `Runtime.releaseObjectGroup`
  *  - `elementPicker.start`   -> `Overlay.enable` + `Overlay.setInspectMode(searchForNode)`, then awaits
- *                               the `Overlay.inspectNodeRequested` selection event (or cancel/timeout)
+ *                               the `Overlay.inspectNodeRequested` selection event (or cancel)
  *  - `elementPicker.cancel`  -> `Overlay.setInspectMode(none)` + `Overlay.disable` (interrupts a start)
  */
 
 const ID_MAX = 256;
-const DEFAULT_PICKER_TIMEOUT_MS = 60_000;
 const RELEASED_OBJECT_GROUP_KEY_LIMIT = 512;
-const TRACKED_OBJECT_GROUP_LIMIT = 512;
 
 type CdpPageCommandTransport = Readonly<{
   dispatchPageCommand(
     input: BrowserSidecarCdpPageHandle & Readonly<{ method: string; params?: Record<string, unknown> }>,
   ): Promise<unknown>;
 }>;
+
+type DiagnosticView = Readonly<{ browserSessionId: string; viewId: string }>;
+type ScopedRequest<T> = T & DiagnosticView;
+type PendingEval = Readonly<{ view: DiagnosticView; handle: BrowserSidecarCdpPageHandle; cancel(): boolean }>;
 
 type PendingPicker = Readonly<{
   handle: BrowserSidecarCdpPageHandle;
@@ -62,7 +65,7 @@ export type BrowserDiagnosticsInteractionContextCapture = Readonly<{
   resolvePageHandle(
     view: Readonly<{ browserSessionId: string; viewId: string }>,
   ): BrowserSidecarCdpPageHandle | null;
-  /** View ⇄ CDP page-handle bindings (so a viewId-only request can resolve its browserSessionId). */
+  /** Session-scoped view ⇄ CDP page-handle binding lifecycle. */
   subscribeViewLifecycle(listener: BrowserSidecarViewLifecycleSubscriber): () => void;
   /** Live CDP event stream — required for the interactive element picker selection await. */
   subscribeCdpEvents?(listener: BrowserSidecarCdpEventSubscriber): () => void;
@@ -70,8 +73,6 @@ export type BrowserDiagnosticsInteractionContextCapture = Readonly<{
 
 export type BrowserDiagnosticsInteractionTransportInput = Readonly<{
   contextCapture: BrowserDiagnosticsInteractionContextCapture;
-  /** Element-picker selection timeout. Defaults to 60s. */
-  pickerTimeoutMs?: number;
   onError?: (error: unknown) => void;
   resolveInputControl?: (view: Readonly<{ browserSessionId: string; viewId: string }>) => SurfaceInputControl | undefined;
 }>;
@@ -124,9 +125,7 @@ function buildPreview(cdp: Record<string, unknown>): Readonly<{ properties: Brow
     if (typeof prop.name !== 'string') continue;
     const name = prop.name;
     const valuePreview = valuePreviewString(prop.value);
-    out.push({ name, valuePreview: clamp(valuePreview, BROWSER_DIAGNOSTICS_PREVIEW_MAX_VALUE_LENGTH),
-      truncated: valuePreview.length > BROWSER_DIAGNOSTICS_PREVIEW_MAX_VALUE_LENGTH || record(prop.valuePreview)?.overflow === true });
-    if (out.length >= BROWSER_DIAGNOSTICS_PREVIEW_MAX_PROPERTIES) break;
+    out.push({ name, valuePreview, truncated: record(prop.valuePreview)?.overflow === true });
   }
   return { properties: out, truncated: preview?.overflow === true || properties.length > out.length || out.some(property => property.truncated) };
 }
@@ -198,44 +197,54 @@ export function createBrowserDiagnosticsInteractionTransport(
   input: BrowserDiagnosticsInteractionTransportInput,
 ): BrowserDiagnosticsInteractionTransport {
   const { contextCapture } = input;
-  const pickerTimeoutMs = input.pickerTimeoutMs ?? DEFAULT_PICKER_TIMEOUT_MS;
   const onError = input.onError ?? (() => undefined);
   let disposed = false;
+  const pendingEvals = new Map<string, PendingEval>();
 
-  // viewId -> browserSessionId, learned from the control adapter's view-binding lifecycle so a
-  // request that carries only a viewId (eval/getProperties/releaseObjectGroup/elementPicker) can be
-  // resolved to its owning CDP page handle.
-  const viewSessions = new Map<string, Readonly<{ browserSessionId: string; unregisterDrain?: () => void }>>();
+  async function cancelEvals(matches: (pending: PendingEval, key: string) => boolean): Promise<void> {
+    const handles = new Map<string, BrowserSidecarCdpPageHandle>();
+    for (const [key, pending] of pendingEvals) {
+      if (!matches(pending, key)) continue;
+      if (pending.cancel()) handles.set(handleKey(pending.handle), pending.handle);
+    }
+    await Promise.all([...handles.values()].map(handle => tryPageCommand(handle, 'Runtime.terminateExecution')));
+  }
+
+  const viewSessions = new Map<string, DiagnosticView & Readonly<{ unregisterDrain?: () => void }>>();
   const unsubscribeLifecycle = contextCapture.subscribeViewLifecycle((event) => {
     if (disposed) return;
+    const key = browserViewKey(event);
     if (event.type === 'bound') {
-      viewSessions.get(event.viewId)?.unregisterDrain?.();
+      viewSessions.get(key)?.unregisterDrain?.();
       const control = input.resolveInputControl?.(event);
       const unregisterDrain = control?.registerConfidentialityDrain(async () => {
-        const picker = pendingPickers.get(event.viewId);
+        await cancelEvals(pending => browserViewKey(pending.view) === key);
+        const picker = pendingPickers.get(key);
         if (picker) { picker.cancel(); await disablePickerOverlay(picker.handle); }
         await releaseTrackedObjectGroupsForView(event);
       });
-      viewSessions.set(event.viewId, { browserSessionId: event.browserSessionId, unregisterDrain });
+      viewSessions.set(key, { browserSessionId: event.browserSessionId, viewId: event.viewId, unregisterDrain });
     } else {
-      const picker = pendingPickers.get(event.viewId);
+      void cancelEvals(pending => browserViewKey(pending.view) === key);
+      const picker = pendingPickers.get(key);
       if (picker) { picker.cancel(); void disablePickerOverlay(picker.handle); }
       void releaseTrackedObjectGroupsForView({
         browserSessionId: event.browserSessionId,
         viewId: event.viewId,
       });
-      viewSessions.get(event.viewId)?.unregisterDrain?.();
-      viewSessions.delete(event.viewId);
+      viewSessions.get(key)?.unregisterDrain?.();
+      viewSessions.delete(key);
     }
   });
   const unsubscribeCdpNavigation = contextCapture.subscribeCdpEvents?.((notification) => {
     if (disposed) return;
     if (!isNavigationInvalidatingEvent(notification)) return;
+    void cancelEvals(pending => pending.handle.sessionId === notification.sessionId);
     void releaseTrackedObjectGroupsForCdpEvent(notification);
   }) ?? null;
 
-  // Pending element-picker awaits, keyed by viewId, so an `elementPicker.cancel` can interrupt a
-  // standing `elementPicker.start` instead of waiting out its timeout.
+  // Pending element-picker awaits, keyed by browserViewKey, so an `elementPicker.cancel` can interrupt a
+  // standing `elementPicker.start`.
   const pendingPickers = new Map<string, PendingPicker>();
   const trackedObjectGroups = new Map<string, TrackedObjectGroup>();
   const releasedObjectGroupKeys = new Set<string>();
@@ -271,13 +280,12 @@ export function createBrowserDiagnosticsInteractionTransport(
   }
 
   function trackObjectGroup(
-    request: Readonly<{ viewId: string; navigationGeneration: number; objectGroupId: string }>,
+    request: ScopedRequest<Readonly<{ navigationGeneration: number; objectGroupId: string }>>,
     handle: BrowserSidecarCdpPageHandle,
   ): void {
     const normalizedObjectGroupId = request.objectGroupId.trim();
     if (!normalizedObjectGroupId) return;
-    const browserSessionId = viewSessions.get(request.viewId)?.browserSessionId;
-    if (!browserSessionId) return;
+    const { browserSessionId } = request;
     const key = objectGroupKey(handle, normalizedObjectGroupId);
     releasedObjectGroupKeys.delete(key);
     trackedObjectGroups.delete(key);
@@ -288,11 +296,6 @@ export function createBrowserDiagnosticsInteractionTransport(
       handle,
       objectGroupId: normalizedObjectGroupId,
     });
-    if (trackedObjectGroups.size <= TRACKED_OBJECT_GROUP_LIMIT) return;
-    const oldest = trackedObjectGroups.keys().next().value;
-    if (typeof oldest === 'string') {
-      void runTrackedDispatch(() => releaseTrackedObjectGroupByKey(oldest));
-    }
   }
 
   function untrackObjectGroup(handle: BrowserSidecarCdpPageHandle, objectGroupId: string): void {
@@ -303,37 +306,36 @@ export function createBrowserDiagnosticsInteractionTransport(
     rememberReleasedObjectGroupKey(key);
   }
 
-  function resolveHandle(view: Readonly<{ viewId: string; browserSessionId?: string }>): BrowserSidecarCdpPageHandle | null {
+  function resolveHandle(view: DiagnosticView): BrowserSidecarCdpPageHandle | null {
     if (disposed) return null;
-    const browserSessionId = view.browserSessionId ?? viewSessions.get(view.viewId)?.browserSessionId;
-    if (!browserSessionId) return null;
-    return contextCapture.resolvePageHandle({ browserSessionId, viewId: view.viewId });
+    return contextCapture.resolvePageHandle(view);
   }
 
   function pageCommand(
     handle: BrowserSidecarCdpPageHandle,
     method: string,
     params?: Record<string, unknown>,
+    signal?: AbortSignal,
   ): Promise<unknown> {
     return contextCapture.transport.dispatchPageCommand({
       targetId: handle.targetId,
       ...(handle.sessionId ? { sessionId: handle.sessionId } : {}),
       method,
       ...(params ? { params } : {}),
+      ...(signal ? { signal } : {}),
     });
   }
 
-  function inputControl(view: Readonly<{ viewId: string; browserSessionId?: string }>): SurfaceInputControl | undefined {
-    const browserSessionId = view.browserSessionId ?? viewSessions.get(view.viewId)?.browserSessionId;
-    return browserSessionId ? input.resolveInputControl?.({ browserSessionId, viewId: view.viewId }) : undefined;
+  function inputControl(view: DiagnosticView): SurfaceInputControl | undefined {
+    return input.resolveInputControl?.(view);
   }
 
   function reportError(error: unknown, handle: BrowserSidecarCdpPageHandle): void {
-    const view = [...viewSessions].find(([viewId, entry]) => {
-      const current = contextCapture.resolvePageHandle({ browserSessionId: entry.browserSessionId, viewId });
+    const view = [...viewSessions.values()].find(entry => {
+      const current = contextCapture.resolvePageHandle(entry);
       return current?.targetId === handle.targetId && current.sessionId === handle.sessionId;
     });
-    if (view && inputControl({ viewId: view[0] })?.isObservationHeld()) return;
+    if (view && inputControl(view)?.isObservationHeld()) return;
     onError(view || !input.resolveInputControl ? error : new Error('browser_diagnostics_transport_failed'));
   }
 
@@ -341,12 +343,13 @@ export function createBrowserDiagnosticsInteractionTransport(
     handle: BrowserSidecarCdpPageHandle,
     method: string,
     params?: Record<string, unknown>,
+    signal?: AbortSignal,
   ): Promise<void> {
     try {
-      await pageCommand(handle, method, params);
+      await pageCommand(handle, method, params, signal);
     } catch (error) {
       // Best-effort domain enables / teardown must never throw out of a verb dispatch.
-      reportError(error, handle);
+      if (!signal?.aborted) reportError(error, handle);
     }
   }
 
@@ -382,14 +385,6 @@ export function createBrowserDiagnosticsInteractionTransport(
     for (const group of groups) {
       await releaseTrackedObjectGroup(group);
     }
-  }
-
-  async function releaseTrackedObjectGroupByKey(key: string): Promise<void> {
-    const group = trackedObjectGroups.get(key);
-    if (!group) return;
-    trackedObjectGroups.delete(key);
-    rememberReleasedObjectGroupKey(key);
-    await releaseTrackedObjectGroup(group);
   }
 
   async function releaseTrackedObjectGroup(group: TrackedObjectGroup): Promise<void> {
@@ -441,29 +436,50 @@ export function createBrowserDiagnosticsInteractionTransport(
     };
   }
 
-  async function runEval(request: BrowserDiagnosticsEvalRequestV1): Promise<BrowserDiagnosticsEvalResultV1> {
+  async function runEval(request: ScopedRequest<BrowserDiagnosticsEvalRequestV1>): Promise<BrowserDiagnosticsEvalResultV1> {
+    if (request.action === 'cancel') {
+      await cancelEvals((_pending, key) => key === `${browserViewKey(request)}\u0000${request.evalRequestId}`);
+      return evalResult(request, 'cancelled');
+    }
     const control = inputControl(request);
     const handle = resolveHandle(request);
     if (!handle) return evalResult(request, 'failed', { errorCode: 'target_detached' });
-    await tryPageCommand(handle, 'Runtime.enable');
-    if (inputControl(request)?.isObservationHeld()) return evalResult(request, 'failed', { errorCode: 'collector_unavailable' });
     let raw: unknown;
+    const key = `${browserViewKey(request)}\u0000${request.evalRequestId}`;
+    const controller = new AbortController();
+    let evaluationIssued = false;
+    let cancel!: () => boolean;
+    const cancelled = new Promise<Readonly<{ cancelled: true }>>(resolve => { cancel = () => {
+      resolve({ cancelled: true });
+      controller.abort();
+      // CDP terminateExecution can target the next script; only interrupt our issued evaluation.
+      return evaluationIssued;
+    }; });
+    const pending = { view: request, handle, cancel };
+    pendingEvals.set(key, pending);
     try {
-      raw = await pageCommand(handle, 'Runtime.evaluate', {
+      const enabled = await Promise.race([tryPageCommand(handle, 'Runtime.enable', undefined, controller.signal).then(() => ({ cancelled: false as const })), cancelled]);
+      if (enabled.cancelled) return evalResult(request, 'cancelled');
+      if (control?.isObservationHeld()) return evalResult(request, 'failed', { errorCode: 'collector_unavailable' });
+      trackObjectGroup(request, handle);
+      evaluationIssued = true;
+      const outcome = await Promise.race([pageCommand(handle, 'Runtime.evaluate', {
         expression: request.expression,
         objectGroup: request.objectGroupId,
         includeCommandLineAPI: true,
         returnByValue: false,
         generatePreview: true,
         awaitPromise: true,
-        timeout: request.timeoutMs,
         userGesture: false,
-      });
+      }, controller.signal).then(value => ({ cancelled: false as const, value })), cancelled]);
+      if (outcome.cancelled) return evalResult(request, 'cancelled');
+      raw = outcome.value;
     } catch (error) {
       if (!control?.isObservationHeld()) reportError(error, handle);
       return evalResult(request, 'failed', { errorCode: 'collector_degraded' });
+    } finally {
+      if (pendingEvals.get(key) === pending) pendingEvals.delete(key);
     }
-    trackObjectGroup(request, handle);
     const rec = record(raw);
     if (!rec) return evalResult(request, 'completed');
     const exceptionDetails = record(rec.exceptionDetails);
@@ -495,7 +511,7 @@ export function createBrowserDiagnosticsInteractionTransport(
   }
 
   async function runGetProperties(
-    request: BrowserDiagnosticsGetPropertiesRequestV1,
+    request: ScopedRequest<BrowserDiagnosticsGetPropertiesRequestV1>,
   ): Promise<BrowserDiagnosticsGetPropertiesResultV1> {
     const control = inputControl(request);
     const handle = resolveHandle(request);
@@ -549,7 +565,7 @@ export function createBrowserDiagnosticsInteractionTransport(
   }
 
   async function runReleaseObjectGroup(
-    request: BrowserDiagnosticsReleaseObjectGroupRequestV1,
+    request: ScopedRequest<BrowserDiagnosticsReleaseObjectGroupRequestV1>,
   ): Promise<BrowserDiagnosticsReleaseObjectGroupResultV1> {
     const handle = resolveHandle(request);
     if (!handle) return releaseResult(request, 'failed', 'target_detached');
@@ -583,29 +599,28 @@ export function createBrowserDiagnosticsInteractionTransport(
 
   function awaitInspectSelection(
     handle: BrowserSidecarCdpPageHandle,
-    viewId: string,
-  ): Promise<{ kind: 'selected'; backendNodeId: number } | { kind: 'cancelled' } | { kind: 'timeout' }> {
+    view: DiagnosticView,
+  ): Promise<{ kind: 'selected'; backendNodeId: number } | { kind: 'cancelled' }> {
     const subscribe = contextCapture.subscribeCdpEvents;
+    const key = browserViewKey(view);
     return new Promise((resolve) => {
       if (disposed) {
         resolve({ kind: 'cancelled' });
         return;
       }
-      pendingPickers.get(viewId)?.cancel();
+      pendingPickers.get(key)?.cancel();
       let settled = false;
       let unsubscribe: (() => void) | null = null;
-      let timer: ReturnType<typeof setTimeout> | null = null;
       const finish = (
-        value: { kind: 'selected'; backendNodeId: number } | { kind: 'cancelled' } | { kind: 'timeout' },
+        value: { kind: 'selected'; backendNodeId: number } | { kind: 'cancelled' },
       ): void => {
         if (settled) return;
         settled = true;
         if (unsubscribe) unsubscribe();
-        if (timer) clearTimeout(timer);
-        pendingPickers.delete(viewId);
+        pendingPickers.delete(key);
         resolve(value);
       };
-      pendingPickers.set(viewId, {
+      pendingPickers.set(key, {
         handle,
         cancel: () => finish({ kind: 'cancelled' }),
       });
@@ -619,12 +634,11 @@ export function createBrowserDiagnosticsInteractionTransport(
           }
         });
       }
-      timer = setTimeout(() => finish({ kind: 'timeout' }), pickerTimeoutMs);
     });
   }
 
   async function runElementPickerStart(
-    request: BrowserDiagnosticsElementPickerRequestV1,
+    request: ScopedRequest<BrowserDiagnosticsElementPickerRequestV1>,
   ): Promise<BrowserDiagnosticsElementPickerResultV1> {
     const control = inputControl(request);
     const handle = resolveHandle(request);
@@ -638,7 +652,7 @@ export function createBrowserDiagnosticsInteractionTransport(
     if (control?.isObservationHeld()) return pickerResult(request, 'cancelled');
     await tryPageCommand(handle, 'Overlay.enable');
     if (control?.isObservationHeld()) { await disablePickerOverlay(handle); return pickerResult(request, 'cancelled'); }
-    const selection = awaitInspectSelection(handle, request.viewId);
+    const selection = awaitInspectSelection(handle, request);
     await tryPageCommand(handle, 'Overlay.setInspectMode', {
       mode: 'searchForNode',
       highlightConfig: {
@@ -656,9 +670,9 @@ export function createBrowserDiagnosticsInteractionTransport(
   }
 
   async function runElementPickerCancel(
-    request: BrowserDiagnosticsElementPickerRequestV1,
+    request: ScopedRequest<BrowserDiagnosticsElementPickerRequestV1>,
   ): Promise<BrowserDiagnosticsElementPickerResultV1> {
-    const pending = pendingPickers.get(request.viewId);
+    const pending = pendingPickers.get(browserViewKey(request));
     if (pending) pending.cancel();
     const handle = resolveHandle(request);
     if (handle) {
@@ -670,14 +684,14 @@ export function createBrowserDiagnosticsInteractionTransport(
   async function runPauseResume(
     actionId: 'browser.diagnostics.pause' | 'browser.diagnostics.resume',
     input: unknown,
+    browserSessionId: string,
   ): Promise<unknown> {
     const view = record(input);
     const viewId = typeof view?.viewId === 'string' ? view.viewId : '';
-    const browserSessionId = typeof view?.browserSessionId === 'string' ? view.browserSessionId : undefined;
     if (!viewId) return { ok: false, status: 'unavailable', errorCode: 'invalid_parameters' };
-    const handle = resolveHandle({ viewId, ...(browserSessionId ? { browserSessionId } : {}) });
+    const handle = resolveHandle({ viewId, browserSessionId });
     if (!handle) return { ok: false, status: 'unavailable', errorCode: 'target_detached' };
-    const control = inputControl({ viewId, ...(browserSessionId ? { browserSessionId } : {}) });
+    const control = inputControl({ viewId, browserSessionId });
     if (actionId === 'browser.diagnostics.pause') {
       await tryPageCommand(handle, 'Debugger.enable');
       if (control?.isObservationHeld()) return { ok: false, status: 'unavailable', errorCode: 'collector_unavailable' };
@@ -717,6 +731,7 @@ export function createBrowserDiagnosticsInteractionTransport(
         onError(error);
       }
       const pending = Array.from(pendingPickers.values());
+      await cancelEvals(() => true);
       for (const picker of pending) {
         picker.cancel();
       }
@@ -731,51 +746,51 @@ export function createBrowserDiagnosticsInteractionTransport(
       releasedObjectGroupKeys.clear();
     },
     releaseObjectGroupsForView: releaseTrackedObjectGroupsForView,
-    async dispatch(actionId: RuntimeActionIdV1, input: unknown): Promise<unknown> {
+    async dispatch(actionId: RuntimeActionIdV1, input: unknown, browserSessionId: string): Promise<unknown> {
       switch (actionId) {
         case 'browser.diagnostics.pause':
         case 'browser.diagnostics.resume': {
           const view = record(input);
           const viewId = typeof view?.viewId === 'string' ? view.viewId : '';
-          const browserSessionId = typeof view?.browserSessionId === 'string' ? view.browserSessionId : undefined;
-          const control = inputControl({ viewId, ...(browserSessionId ? { browserSessionId } : {}) });
-          const read = () => runTrackedDispatch(() => runPauseResume(actionId, input));
+          const control = inputControl({ viewId, browserSessionId });
+          const read = () => runTrackedDispatch(() => runPauseResume(actionId, input, browserSessionId));
           return (control ? await control.observeWhile(read) : await read()) ?? { ok: false, status: 'unavailable', errorCode: 'collector_unavailable' };
         }
         case 'browser.diagnostics.eval': {
           const parsed = BrowserDiagnosticsEvalRequestV1Schema.safeParse(input);
           if (!parsed.success) return invalid;
           if (parsed.data.tier !== 'cdp') return evalResult(parsed.data, 'blocked', { errorCode: 'adapter_unavailable' });
-          const control = inputControl(parsed.data);
-          const read = () => runTrackedDispatch(() => runEval(parsed.data));
+          if (parsed.data.action === 'cancel') return await runTrackedDispatch(() => runEval({ ...parsed.data, browserSessionId }));
+          const control = inputControl({ ...parsed.data, browserSessionId });
+          const read = () => runTrackedDispatch(() => runEval({ ...parsed.data, browserSessionId }));
           return (control ? await control.observeWhile(read) : await read()) ?? evalResult(parsed.data, 'failed', { errorCode: 'collector_unavailable' });
         }
         case 'browser.diagnostics.getProperties': {
           const parsed = BrowserDiagnosticsGetPropertiesRequestV1Schema.safeParse(input);
           if (!parsed.success) return invalid;
           if (parsed.data.tier !== 'cdp') return propertiesResult(parsed.data, 'blocked', { errorCode: 'adapter_unavailable' });
-          const control = inputControl(parsed.data);
-          const read = () => runTrackedDispatch(() => runGetProperties(parsed.data));
+          const control = inputControl({ ...parsed.data, browserSessionId });
+          const read = () => runTrackedDispatch(() => runGetProperties({ ...parsed.data, browserSessionId }));
           return (control ? await control.observeWhile(read) : await read()) ?? propertiesResult(parsed.data, 'failed', { errorCode: 'collector_unavailable' });
         }
         case 'browser.diagnostics.releaseObjectGroup': {
           const parsed = BrowserDiagnosticsReleaseObjectGroupRequestV1Schema.safeParse(input);
           if (!parsed.success) return invalid;
           if (parsed.data.tier !== 'cdp') return releaseResult(parsed.data, 'blocked', 'adapter_unavailable');
-          return await runTrackedDispatch(() => runReleaseObjectGroup(parsed.data));
+          return await runTrackedDispatch(() => runReleaseObjectGroup({ ...parsed.data, browserSessionId }));
         }
         case 'browser.diagnostics.elementPicker.start': {
           const parsed = BrowserDiagnosticsElementPickerRequestV1Schema.safeParse(input);
           if (!parsed.success || parsed.data.action !== 'start') return invalid;
           if (parsed.data.tier !== 'cdp') return pickerResult(parsed.data, 'blocked', { errorCode: 'adapter_unavailable' });
-          if (inputControl(parsed.data)?.isObservationHeld()) return pickerResult(parsed.data, 'cancelled');
-          return await runTrackedDispatch(() => runElementPickerStart(parsed.data));
+          if (inputControl({ ...parsed.data, browserSessionId })?.isObservationHeld()) return pickerResult(parsed.data, 'cancelled');
+          return await runTrackedDispatch(() => runElementPickerStart({ ...parsed.data, browserSessionId }));
         }
         case 'browser.diagnostics.elementPicker.cancel': {
           const parsed = BrowserDiagnosticsElementPickerRequestV1Schema.safeParse(input);
           if (!parsed.success || parsed.data.action !== 'cancel') return invalid;
           if (parsed.data.tier !== 'cdp') return pickerResult(parsed.data, 'blocked', { errorCode: 'adapter_unavailable' });
-          return await runTrackedDispatch(() => runElementPickerCancel(parsed.data));
+          return await runTrackedDispatch(() => runElementPickerCancel({ ...parsed.data, browserSessionId }));
         }
         default:
           return invalid;

@@ -22,6 +22,7 @@ function createControls(
         objectProperties: Readonly<Record<string, BrowserDiagnosticsObjectInspectorEntry>>;
         onSubmitExpression: (expression: string) => boolean;
         onExpandObject: (objectId: string, objectGroupId: string) => boolean;
+        onCancelEval: (evalRequestId: string) => void;
     }> = {},
 ): BrowserDiagnosticsEvalConsoleControls {
     return {
@@ -29,10 +30,37 @@ function createControls(
         objectProperties: overrides.objectProperties ?? {},
         onSubmitExpression: overrides.onSubmitExpression ?? vi.fn(() => true),
         onExpandObject: overrides.onExpandObject ?? vi.fn(() => true),
+        onCancelEval: overrides.onCancelEval ?? vi.fn(),
     };
 }
 
 describe('BrowserDiagnosticsEvalConsole', () => {
+    it('lets the person cancel a pending evaluation', async () => {
+        const onCancelEval = vi.fn();
+        const screen = await renderScreen(<BrowserDiagnosticsEvalConsole testID="diag-eval" controls={createControls({
+            entries: [{ evalRequestId: 'held', expression: 'promise', objectGroupId: 'group', status: 'pending' }], onCancelEval,
+        })} />);
+        await act(async () => { screen.pressByTestId('diag-eval-cancel-held'); });
+        expect(onCancelEval).toHaveBeenCalledWith('held');
+    });
+
+    it('keeps on-demand expansion available beyond six levels', async () => {
+        const objectProperties = Object.fromEntries(Array.from({ length: 9 }, (_, i) => [`object_${i}`, {
+            status: 'loaded' as const, properties: [{ name: 'child', value: { type: 'object' as const,
+                objectId: `object_${i + 1}`, preview: [] }, enumerable: true }],
+        }]));
+        const screen = await renderScreen(<BrowserDiagnosticsEvalConsole testID="diag-eval" controls={createControls({
+            entries: [{ evalRequestId: 'deep', expression: 'nested', objectGroupId: 'group', status: 'completed',
+                result: { type: 'object', objectId: 'object_0', preview: [] } }], objectProperties,
+        })} />);
+        let testId = 'diag-eval-result-deep';
+        for (let depth = 0; depth < 8; depth += 1) {
+            await act(async () => { screen.pressByTestId(`${testId}-expand`); });
+            testId += '-child';
+        }
+        expect(screen.findByTestId(`${testId}-expand`)).not.toBeNull();
+    });
+
     it('marks a partial preview and keeps expansion available through the last property', async () => {
         const onExpandObject = vi.fn(() => true);
         const screen = await renderScreen(<BrowserDiagnosticsEvalConsole testID="diag-eval" controls={createControls({

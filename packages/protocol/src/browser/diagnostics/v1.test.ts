@@ -542,6 +542,14 @@ describe('browser diagnostics protocol contracts', () => {
     expect(result.success).toBe(false);
   });
 
+  it('admits full expressions without a default deadline and the matching cancellation command', async () => {
+    const { BrowserDiagnosticsEvalRequestV1Schema } = await import('./v1');
+    const request = { v: 1, evalRequestId: 'held', viewId: 'view', navigationGeneration: 0,
+      tier: 'cdp', expression: 'a'.repeat(5_000), objectGroupId: 'group', diagnosticsInteractionEnabled: true };
+    expect(BrowserDiagnosticsEvalRequestV1Schema.parse(request)).not.toHaveProperty('timeoutMs');
+    expect(BrowserDiagnosticsEvalRequestV1Schema.parse({ ...request, action: 'cancel' })).toMatchObject({ action: 'cancel' });
+  });
+
   it('parses gated eval results as remote-object references', async () => {
     const mod = await import('./v1.js').catch(() => null);
 
@@ -649,7 +657,7 @@ describe('browser diagnostics protocol contracts', () => {
       navigationGeneration: 7,
       tier: 'injectedPage',
       expression: '({ ok: true })',
-      timeoutMs: 2000,
+
       objectGroupId: 'group_1',
       diagnosticsInteractionEnabled: true,
     };
