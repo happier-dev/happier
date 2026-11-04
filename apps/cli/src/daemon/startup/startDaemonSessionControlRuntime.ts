@@ -428,6 +428,7 @@ import {
   type CliServerFeaturesSnapshot,
 } from '@/features/serverFeaturesClient';
 import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
+import { resolveDaemonProvidersFeatureEnabled } from '@/daemon/spawn/providerFeatureDecision';
 import type { LocalServicesRuntimeActionRoutes } from '../local/services/actions/runtimeActionExecutor';
 import type { DaemonLocalServicesMachineRpcRoutes } from '@/rpc/handlers/daemonLocalServices';
 import { createLocalPageTitleEnricher } from '../local/services/inventory/pageTitle';
@@ -1794,8 +1795,10 @@ daemonWorkSignal: AbortSignal;
         resolveManagedPurposeBindingIntent: context?.resolveManagedPurposeBindingIntent ?? params.resolveManagedPurposeBindingIntent,
         connectedAccountRequestAuthRegistry,
         connectedAccountRequestAuthHttpPort: connectedAccountRequestAuthHttpPort ?? undefined,
-        resolveProvidersFeatureEnabled: async () => resolveCliFeatureDecision({ featureId: 'providers',
-          env: params.processEnv, serverSnapshot: await fetchServerFeaturesSnapshot({ serverUrl: resolveServerHttpBaseUrl() }) }).state === 'enabled',
+        resolveProvidersFeatureEnabled: () => resolveDaemonProvidersFeatureEnabled({
+          api: context?.api ?? params.api,
+          env: params.processEnv,
+        }),
         readModelProjection: createAccountScopedProviderModelProjectionReader({
           serverUrl: context?.bootstrap.serverHttpBaseUrl ?? params.serverBaseUrl,
           readCredentials: async () => context?.bootstrap.credentials ?? params.credentials,
@@ -4511,20 +4514,11 @@ daemonWorkSignal: AbortSignal;
                 sessionAttachCleanupByPid:
                   spawnParams.sessionAttachCleanupByPid,
                 processEnv: spawnParams.processEnv,
-                resolveProvidersFeatureEnabled: async () => {
-                  const serverSnapshot =
-                    await (spawnParams.resolveServerFeaturesSnapshot?.() ??
-                      fetchServerFeaturesSnapshot({
-                        serverUrl: resolveServerHttpBaseUrl(),
-                      }));
-                  return (
-                    resolveCliFeatureDecision({
-                      featureId: 'providers',
-                      env: spawnParams.processEnv,
-                      ...(serverSnapshot ? { serverSnapshot } : {}),
-                    }).state === 'enabled'
-                  );
-                },
+                resolveProvidersFeatureEnabled: () => resolveDaemonProvidersFeatureEnabled({
+                  api: spawnParams.api,
+                  env: spawnParams.processEnv,
+                  resolveServerFeaturesSnapshot: spawnParams.resolveServerFeaturesSnapshot,
+                }),
                 ...(spawnParams.resolveManagedPurposeBindingIntent
                   ? {
                       resolveManagedPurposeBindingIntent:
