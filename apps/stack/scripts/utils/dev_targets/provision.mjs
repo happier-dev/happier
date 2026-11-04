@@ -715,6 +715,7 @@ export function renderSshConfig({
     `  StrictHostKeyChecking ${strictHostKeyChecking}`,
     '  BatchMode yes',
     '  ConnectTimeout 10',
+    '  ConnectionAttempts 2',
     '  ServerAliveInterval 15',
     '  ServerAliveCountMax 3',
     '  ControlMaster auto',

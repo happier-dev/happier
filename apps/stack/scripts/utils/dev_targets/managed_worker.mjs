@@ -52,6 +52,7 @@ export function renderGuestSshConfig({
     `  StrictHostKeyChecking ${strictHostKeyChecking}`,
     '  BatchMode yes',
     '  ConnectTimeout 180',
+    '  ConnectionAttempts 2',
     '  ServerAliveInterval 30',
     '  ServerAliveCountMax 6',
     '  ControlMaster auto',
@@ -161,18 +162,7 @@ export async function reconcileManagedLimaDevTargetSshPublication(
   if (!configPath || !alias) throw new Error('[dev-targets] managed guest SSH publication is incomplete');
 
   const original = await readFile(configPath, 'utf8');
-  let next = replaceSshConfigDirective(original, 'Port', String(port));
-  const hostKeyAliasAdded = !/^\s*HostKeyAlias\s+/m.test(next);
-  if (hostKeyAliasAdded) {
-    next = next.replace(/^(\s*HostName\s+.*)$/m, `$1\n  HostKeyAlias ${alias}`);
-  }
-  // Published proxy configs used loopback as the multiplex identity. Give each
-  // guest its own identity while retaining the outer host's loopback destination.
-  if (/^\s*HostName\s+127\.0\.0\.1\s*$/m.test(next) &&
-      /^\s*ProxyCommand\s+.* -W %h:%p\s*$/m.test(next)) {
-    next = replaceSshConfigDirective(next, 'HostName', alias);
-    next = next.replace(/( -W )%h:%p(?=\s*$)/m, (_, prefix) => `${prefix}127.0.0.1:%p`);
-  }
+  const next = replaceSshConfigDirective(original, 'Port', String(port));
   const changed = next !== original;
   if (!changed && !guestVerified) return { changed: false, port, hostKeyAliasAdded: false };
 
@@ -180,7 +170,7 @@ export async function reconcileManagedLimaDevTargetSshPublication(
   await writePrivateFile(configPath, strictConfig);
   const strictProbe = await runSshProbe({ configPath, alias, env });
   if (strictProbe?.ok === true || strictProbe?.exitCode === 0) {
-    return { changed, port, hostKeyAliasAdded };
+    return { changed, port, hostKeyAliasAdded: false };
   }
   if (!guestVerified || !isHostKeyVerificationFailure(strictProbe)) {
     requireProbe(strictProbe, 'managed guest refreshed SSH verification failed');
@@ -199,7 +189,7 @@ export async function reconcileManagedLimaDevTargetSshPublication(
     await runSshProbe({ configPath, alias, env }),
     'managed guest strict SSH verification failed',
   );
-  return { changed, port, hostKeyAliasAdded };
+  return { changed, port, hostKeyAliasAdded: false };
 }
 
 export async function provisionManagedLimaDevTarget(

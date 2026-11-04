@@ -6,7 +6,6 @@ import test from 'node:test';
 
 import {
   provisionManagedLimaDevTarget,
-  reconcileManagedLimaDevTargetSshPublication,
 } from './managed_worker.mjs';
 
 for (const name of ['worker', `worker-${'a'.repeat(40)}-tail`]) {
@@ -160,6 +159,7 @@ test(`managed worker enrollment preserves ${name} identity in host and guest pub
   assert.match(guestConfig, /ControlPath "~\/\.ssh\/happier-managed-%C"/);
   assert.match(guestConfig, /ServerAliveInterval 30/);
   assert.match(guestConfig, /ServerAliveCountMax 6/);
+  assert.match(guestConfig, /ConnectionAttempts 2/);
   assert.match(guestConfig, /StrictHostKeyChecking yes/);
 });
 }
@@ -227,57 +227,4 @@ test('managed worker can reuse an existing outer Dev Target connection without e
   assert.equal(target.managedRuntime.host.ssh, 'happier-dev-target-mac');
   assert.equal(target.managedRuntime.host.sshConfigFile, outerTarget.sshConfigFile);
   assert.equal(target.managedRuntime.architecture, 'x86_64');
-});
-
-test('managed worker SSH publication follows a changed Lima port and migrates to a port-independent host identity', async (t) => {
-  const root = await mkdtemp(join(tmpdir(), 'happier-managed-worker-refresh-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
-  const configPath = join(root, 'guest.ssh.config');
-  await writeFile(configPath, [
-    'Host happier-dev-target-worker',
-    '  HostName 127.0.0.1',
-    '  ProxyCommand ssh -T -F /tmp/outer.conf outer -W %h:%p',
-    '  Port 54321',
-    '  User lima',
-    `  UserKnownHostsFile "${join(root, 'known-hosts')}"`,
-    '  StrictHostKeyChecking yes',
-    '',
-  ].join('\n'));
-  const modes = [];
-
-  const result = await reconcileManagedLimaDevTargetSshPublication({
-    target: {
-      name: 'worker',
-      ssh: 'happier-dev-target-worker',
-      sshConfigFile: configPath,
-      managedRuntime: { kind: 'lima' },
-    },
-    sshLocalPort: 60955,
-    guestVerified: true,
-    env: {},
-  }, {
-    runSshProbe: async ({ configPath: probedPath }) => {
-      const contents = await readFile(probedPath, 'utf8');
-      const strictHostKeyChecking = contents.match(/StrictHostKeyChecking (\S+)/)?.[1];
-      modes.push(strictHostKeyChecking);
-      if (strictHostKeyChecking === 'yes' && modes.length === 1) {
-        return {
-          ok: false,
-          exitCode: 255,
-          out: '',
-          err: 'No ED25519 host key is known for happier-dev-target-worker and you have requested strict checking.',
-        };
-      }
-      return { ok: true, exitCode: 0, out: '', err: '' };
-    },
-  });
-
-  assert.deepEqual(result, { changed: true, port: 60955, hostKeyAliasAdded: true });
-  assert.deepEqual(modes, ['yes', 'accept-new', 'yes']);
-  const contents = await readFile(configPath, 'utf8');
-  assert.match(contents, /HostName happier-dev-target-worker/);
-  assert.match(contents, /-W 127\.0\.0\.1:%p/);
-  assert.match(contents, /Port 60955/);
-  assert.match(contents, /HostKeyAlias happier-dev-target-worker/);
-  assert.match(contents, /StrictHostKeyChecking yes/);
 });

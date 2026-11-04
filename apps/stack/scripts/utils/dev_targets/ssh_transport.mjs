@@ -1,6 +1,6 @@
-// Doctor and lifecycle control share the existing two-attempt recovery policy.
-// A refused multiplex session or connect timeout happens before dispatch. Other
-// exit-255 results may follow execution and must never replay the command.
+// OpenSSH owns connection attempts through each worker configuration. Only a
+// refused multiplex session proves that a fresh connection can recover before
+// dispatch. Other exit-255 results must never replay the command.
 export function classifyDevTargetSshDiagnostic(line) {
   const diagnostic = String(line ?? '').trim();
   if (/^ssh: connect to host .+ port \d+: Connection timed out$/i.test(diagnostic)) return 'ssh-connect-timeout';
@@ -26,6 +26,6 @@ export function resolveDevTargetSshDiagnostic(result) {
 export async function runDevTargetSshProcess(input, runProcess) {
   const result = await runProcess(input);
   if (!['ssh', 'scp'].includes(input.command)
-    || !['ssh-connect-timeout', 'ssh-multiplex-session-refused'].includes(resolveDevTargetSshDiagnostic(result))) return result;
+    || resolveDevTargetSshDiagnostic(result) !== 'ssh-multiplex-session-refused') return result;
   return await runProcess({ ...input, args: ['-o', 'ControlMaster=no', '-o', 'ControlPath=none', ...input.args] });
 }

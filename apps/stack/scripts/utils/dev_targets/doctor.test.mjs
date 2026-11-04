@@ -101,7 +101,7 @@ test('dev-target doctor never reports malformed or failed runtime identity as ob
   }
 });
 
-test('dev-target doctor retries one transient SSH connect timeout before accepting the target', async () => {
+test('dev-target doctor leaves connect attempts to the worker SSH configuration', async () => {
   let sshAttempts = 0;
   const result = await runDevTargetsDoctor(
     { targets: [targets[0]], env: {} },
@@ -116,14 +116,15 @@ test('dev-target doctor retries one transient SSH connect timeout before accepti
     },
   );
 
-  assert.equal(sshAttempts, 2);
-  assert.equal(result.ok, true);
+  assert.equal(sshAttempts, 1);
+  assert.equal(result.ok, false);
   assert.deepEqual(result.targets[0], {
     name: 'linux',
     platform: 'posix',
     ssh: 'happier-stack-linux',
-    ok: true,
-    code: 0,
+    ok: false,
+    code: 255,
+    diagnosticReason: 'ssh-connect-timeout',
   });
 });
 
@@ -146,31 +147,6 @@ test('dev-target doctor retries a refused multiplex session through a fresh conn
   assert.equal(sshCalls.length, 2);
   assert.equal(sshCalls[0].args.includes('ControlPath=none'), false);
   assert.equal(sshCalls[1].args.includes('ControlPath=none'), true);
-});
-
-test('dev-target doctor retains a typed reason after bounded transient SSH retries are exhausted', async () => {
-  let sshAttempts = 0;
-  const result = await runDevTargetsDoctor(
-    { targets: [targets[0]], env: {} },
-    {
-      async runProcess(input) {
-        if (input.command === 'mutagen') return { code: 0 };
-        sshAttempts += 1;
-        return { code: 255, stderr: 'ssh: connect to host 100.98.30.76 port 22: Connection timed out' };
-      },
-    },
-  );
-
-  assert.equal(sshAttempts, 2);
-  assert.equal(result.ok, false);
-  assert.deepEqual(result.targets[0], {
-    name: 'linux',
-    platform: 'posix',
-    ssh: 'happier-stack-linux',
-    ok: false,
-    code: 255,
-    diagnosticReason: 'ssh-connect-timeout',
-  });
 });
 
 test('dev-target doctor does not retry SSH authentication failures', async () => {

@@ -193,6 +193,7 @@ test(`POSIX provisioning preserves ${name} in its dedicated identity and remote 
     const resolved = await promisify(execFile)('ssh', ['-G', '-F', target.sshConfigFile, target.ssh]);
     assert.match(resolved.stdout, /^controlmaster auto$/m);
     assert.match(resolved.stdout, /^controlpersist 600$/m);
+    assert.match(resolved.stdout, /^connectionattempts 2$/m);
     assert.match(resolved.stdout, /^controlpath .*happier-dev-target-/m);
   } finally {
     await rm(root, { recursive: true, force: true });
