@@ -18,8 +18,7 @@ const { primeServerFeaturesSnapshot, resetServerFeaturesClientForTests } = await
 import {
     DaemonVoiceInferenceTtsStreamStartRequestSchema, DaemonVoiceInferenceTtsStreamStartResponseSchema,
     DaemonVoiceInferenceTtsStreamNextResponseSchema, DaemonVoiceInferenceTtsStreamAckResponseSchema,
-    DaemonVoiceInferenceTtsStreamCancelResponseSchema, DaemonVoiceInferenceTtsSynthesizeRequestSchema,
-    DaemonVoiceInferenceTtsSynthesizeResponseSchema,
+    DaemonVoiceInferenceTtsStreamCancelResponseSchema,
 } from '@happier-dev/protocol/daemon/voiceInference';
 import { SOCKET_RPC_EVENTS, SocketRpcCancellationPayloadSchema, SocketRpcRequestIdSchema } from '@happier-dev/protocol/socketRpc';
 const { DaemonVoiceInferenceClient } = await import("./DaemonVoiceInferenceClient");
@@ -30,9 +29,7 @@ const { DaemonTtsController } = await import("./DaemonTtsController");
 const daemonRpc = vi.fn();
 type ServiceRequest = Omit<Parameters<InstanceType<typeof DaemonVoiceInferenceClient>['startSegmentedTts']>[0], 'signal'>;
 type DaemonServiceResponses = Readonly<{
-    synthesizeText?: (request: ServiceRequest) => Promise<unknown>;
     startSegmentedTts?: (request: ServiceRequest) => Promise<unknown>;
-    malformedDaemonAudioOutput?: true;
 }>;
 function record(value: unknown): Record<string, unknown> {
     if (!value || typeof value !== 'object') throw new Error('invalid daemon fixture');
@@ -47,36 +44,17 @@ async function callService(stream: Record<string, unknown>, method: string, args
 // client parses them, decodes bytes and owns stream cancellation/ACK lifecycle.
 function createDaemonClientAtRpcBoundary(service: DaemonServiceResponses) {
     let stream: Record<string, unknown> | null = null;
-    let audio: Record<string, unknown> | null = null;
     const segments = new Map<string, Record<string, unknown>>();
     daemonRpc.mockImplementation(async (request: { method: string; payload: unknown }) => {
         const payload = record(request.payload);
-        if (request.method.endsWith('.stream.start') || request.method.endsWith('.tts.synthesize')) {
-            const parsed = request.method.endsWith('.stream.start')
-                ? DaemonVoiceInferenceTtsStreamStartRequestSchema.parse(payload)
-                : DaemonVoiceInferenceTtsSynthesizeRequestSchema.parse(payload);
+        if (request.method.endsWith('.stream.start')) {
+            const parsed = DaemonVoiceInferenceTtsStreamStartRequestSchema.parse(payload);
             const input = { sessionId: null, text: parsed.text, packId: parsed.packId, voiceId: parsed.voiceId,
                 speed: parsed.speed, output: parsed.output } satisfies ServiceRequest;
-            if (request.method.endsWith('.stream.start')) {
-                stream = record(await service.startSegmentedTts?.(input));
-                return DaemonVoiceInferenceTtsStreamStartResponseSchema.parse({ ok: true, requestId: parsed.requestId,
-                    streamId: stream.streamId, generation: stream.generation, segmentCount: stream.segmentCount, output: parsed.output });
-            }
-            audio = record(await service.synthesizeText?.(input));
-            if (audio.ok === false) return DaemonVoiceInferenceTtsSynthesizeResponseSchema.parse(audio);
-            const bytes = audio.bytes;
-            if (!(bytes instanceof Uint8Array)) throw new Error('daemon audio fixture missing bytes');
-            const response = { ok: true, requestId: parsed.requestId,
-                downloadId: 'tts-download', chunkSizeBytes: Math.max(1, bytes.byteLength), sizeBytes: bytes.byteLength,
-                name: 'tts.wav', output: audio.output };
-            // Deliberately malformed remote wire data must reach the real strict reader.
-            return service.malformedDaemonAudioOutput ? response : DaemonVoiceInferenceTtsSynthesizeResponseSchema.parse(response);
+            stream = record(await service.startSegmentedTts?.(input));
+            return DaemonVoiceInferenceTtsStreamStartResponseSchema.parse({ ok: true, requestId: parsed.requestId,
+                streamId: stream.streamId, generation: stream.generation, segmentCount: stream.segmentCount, output: parsed.output });
         }
-        if (request.method.endsWith('.tts.chunk')) {
-            if (!(audio?.bytes instanceof Uint8Array)) throw new Error('daemon download not started');
-            return { success: true, contentBase64: Buffer.from(audio.bytes).toString('base64'), isLast: true };
-        }
-        if (request.method.endsWith('.tts.finalize')) return { success: true };
         if (!stream) throw new Error('daemon stream not started');
         if (request.method.endsWith('.stream.next')) {
             const event = record(await callService(stream, 'next'));
@@ -111,9 +89,7 @@ function createDaemonClientAtRpcBoundary(service: DaemonServiceResponses) {
         }
         throw new Error('unexpected daemon TTS method: ' + request.method);
     });
-    const client = new DaemonVoiceInferenceClient();
-    // The documented batch-only dependency still runs the real synthesis client.
-    return service.startSegmentedTts ? client : { synthesizeText: client.synthesizeText.bind(client) };
+    return new DaemonVoiceInferenceClient();
 }
 const initialSettings = storage.getState().settings;
 const initialMachines = storage.getState().machines;
@@ -167,8 +143,13 @@ describe('DaemonTtsController', () => {
         const playback = createVoicePlaybackController();
         let audioStarted = false;
         const controller = new DaemonTtsController({
-            client: createDaemonClientAtRpcBoundary({ synthesizeText: async () => ({
-                bytes: new Uint8Array([1]), output: { codec: 'wav', mimeType: 'audio/wav' },
+            client: createDaemonClientAtRpcBoundary({ startSegmentedTts: async () => ({
+                streamId: 'tts-stream-interrupt', generation: 0, segmentCount: 1,
+                next: async () => ({ type: 'segment', streamId: 'tts-stream-interrupt', generation: 0,
+                    segmentId: 'tts-stream-interrupt:0', segmentIndex: 0, segmentCount: 1,
+                    bytes: new Uint8Array([1]), output: { codec: 'wav', mimeType: 'audio/wav' }, isLastSegment: true }),
+                ackSegment: async () => {},
+                cancel: async () => {},
             }) }),
             // Model asynchronous platform setup before the native player registers its target.
             playAudioBytesWithStopper: async options => {
@@ -213,102 +194,6 @@ describe('DaemonTtsController', () => {
         expect(played).toBe(false);
     });
 
-    it('synthesizes with the daemon client and plays the returned audio bytes', async () => {
-        const synthesizeText = vi.fn().mockResolvedValue({
-            bytes: new Uint8Array(Buffer.from('voice-audio')),
-            output: { codec: 'wav', mimeType: 'audio/wav' },
-        });
-        const onSpeaking = vi.fn();
-        const playAudioBytesWithStopper = vi.fn(async (opts: any) => {
-            expect(onSpeaking).not.toHaveBeenCalled();
-            opts.onPlaybackStarted?.();
-            expect(onSpeaking).toHaveBeenCalledTimes(1);
-        });
-        const registerPlaybackStopper = vi.fn((_stopper: () => void) => () => {});
-
-        const controller = new DaemonTtsController({
-            client: createDaemonClientAtRpcBoundary({ synthesizeText }),
-            playAudioBytesWithStopper,
-        });
-
-        await controller.speak({
-            sessionId: 'session-1',
-            text: 'hello daemon',
-            packId: 'kokoro-82m-v1.0-onnx-q8-wasm',
-            voiceId: 'af_heart',
-            speed: 1,
-            registerPlaybackStopper,
-            onSpeaking,
-        });
-
-        expect(onSpeaking).toHaveBeenCalledTimes(1);
-        expect(daemonRpc).toHaveBeenCalledWith(expect.objectContaining({
-            method: 'daemon.voiceInference.tts.synthesize',
-            payload: expect.objectContaining({
-            text: 'hello daemon',
-            packId: 'kokoro-82m-v1.0-onnx-q8-wasm',
-            voiceId: 'af_heart',
-            output: { codec: 'wav', mimeType: 'audio/wav' },
-            }),
-        }));
-        expect(playAudioBytesWithStopper).toHaveBeenCalledWith(expect.objectContaining({
-            format: 'wav',
-            onPlaybackStarted: expect.any(Function),
-        }));
-    });
-
-    it.each(['runtime_unavailable', 'unsupported_codec'] as const)(
-        'does not enter speaking when the real daemon reports %s before audio is playable', async (errorCode) => {
-        const synthesizeText = vi.fn().mockResolvedValue({ ok: false, errorCode, error: 'boom' });
-        const onSpeaking = vi.fn();
-        const playAudioBytesWithStopper = vi.fn();
-
-        const controller = new DaemonTtsController({
-            client: createDaemonClientAtRpcBoundary({ synthesizeText }),
-            playAudioBytesWithStopper,
-        });
-
-        await expect(controller.speak({
-            sessionId: 'session-1',
-            text: 'hello daemon',
-            packId: 'kokoro-82m-v1.0-onnx-q8-wasm',
-            voiceId: 'af_heart',
-            speed: 1,
-            registerPlaybackStopper: (_stopper: () => void) => () => {},
-            onSpeaking,
-        })).rejects.toMatchObject({ code: errorCode });
-
-        expect(onSpeaking).not.toHaveBeenCalled();
-        expect(playAudioBytesWithStopper).not.toHaveBeenCalled();
-    });
-
-    it('does not enter speaking when batch playback fails before start', async () => {
-        const synthesizeText = vi.fn().mockResolvedValue({
-            bytes: new Uint8Array(Buffer.from('voice-audio')),
-            output: { codec: 'wav', mimeType: 'audio/wav' },
-        });
-        const onSpeaking = vi.fn();
-
-        const controller = new DaemonTtsController({
-            client: createDaemonClientAtRpcBoundary({ synthesizeText }),
-            playAudioBytesWithStopper: vi.fn(async () => {
-                throw new Error('decode failed');
-            }),
-        });
-
-        await expect(controller.speak({
-            sessionId: 'session-1',
-            text: 'hello daemon',
-            packId: 'kokoro-82m-v1.0-onnx-q8-wasm',
-            voiceId: 'af_heart',
-            speed: 1,
-            registerPlaybackStopper: (_stopper: () => void) => () => {},
-            onSpeaking,
-        })).rejects.toThrow('decode failed');
-
-        expect(onSpeaking).not.toHaveBeenCalled();
-    });
-
     it('plays the first daemon segment before the second segment is ready and acks after playback', async () => {
         const secondSegment = (() => {
             let resolve!: (value: any) => void;
@@ -351,7 +236,7 @@ describe('DaemonTtsController', () => {
         });
 
         const controller = new DaemonTtsController({
-            client: createDaemonClientAtRpcBoundary({ synthesizeText: vi.fn(), startSegmentedTts }),
+            client: createDaemonClientAtRpcBoundary({ startSegmentedTts }),
             playAudioBytesWithStopper,
         });
 
@@ -438,7 +323,7 @@ describe('DaemonTtsController', () => {
             if (playbackCalls === 1) await firstPlayback;
         });
         const controller = new DaemonTtsController({
-            client: createDaemonClientAtRpcBoundary({ synthesizeText: vi.fn(), startSegmentedTts }),
+            client: createDaemonClientAtRpcBoundary({ startSegmentedTts }),
             playAudioBytesWithStopper,
         });
         const speaking = controller.speak({
@@ -505,7 +390,7 @@ describe('DaemonTtsController', () => {
             await firstPlaybackFailure;
         });
         const controller = new DaemonTtsController({
-            client: createDaemonClientAtRpcBoundary({ synthesizeText: vi.fn(), startSegmentedTts }),
+            client: createDaemonClientAtRpcBoundary({ startSegmentedTts }),
             playAudioBytesWithStopper,
         });
         const speaking = controller.speak({
@@ -577,7 +462,7 @@ describe('DaemonTtsController', () => {
             }
         });
         const controller = new DaemonTtsController({
-            client: createDaemonClientAtRpcBoundary({ synthesizeText: vi.fn(), startSegmentedTts }),
+            client: createDaemonClientAtRpcBoundary({ startSegmentedTts }),
             playAudioBytesWithStopper,
         });
 
@@ -622,7 +507,7 @@ describe('DaemonTtsController', () => {
         const onSpeaking = vi.fn();
 
         const controller = new DaemonTtsController({
-            client: createDaemonClientAtRpcBoundary({ synthesizeText: vi.fn(), startSegmentedTts }),
+            client: createDaemonClientAtRpcBoundary({ startSegmentedTts }),
             playAudioBytesWithStopper,
         });
 
@@ -681,7 +566,7 @@ describe('DaemonTtsController', () => {
         const onSpeaking = vi.fn();
 
         const controller = new DaemonTtsController({
-            client: createDaemonClientAtRpcBoundary({ synthesizeText: vi.fn(), startSegmentedTts }),
+            client: createDaemonClientAtRpcBoundary({ startSegmentedTts }),
             playAudioBytesWithStopper: vi.fn(async () => {
                 throw new Error('playback failed');
             }),
@@ -742,7 +627,7 @@ describe('DaemonTtsController', () => {
         });
 
         const controller = new DaemonTtsController({
-            client: createDaemonClientAtRpcBoundary({ synthesizeText: vi.fn(), startSegmentedTts }),
+            client: createDaemonClientAtRpcBoundary({ startSegmentedTts }),
             playAudioBytesWithStopper,
         });
 
@@ -769,7 +654,7 @@ describe('DaemonTtsController', () => {
         const onSpeaking = vi.fn();
 
         const controller = new DaemonTtsController({
-            client: createDaemonClientAtRpcBoundary({ synthesizeText: vi.fn(), startSegmentedTts }),
+            client: createDaemonClientAtRpcBoundary({ startSegmentedTts }),
             playAudioBytesWithStopper: vi.fn(),
         });
 
@@ -807,7 +692,7 @@ describe('DaemonTtsController', () => {
         const playAudioBytesWithStopper = vi.fn().mockResolvedValue(undefined);
 
         const controller = new DaemonTtsController({
-            client: createDaemonClientAtRpcBoundary({ synthesizeText: vi.fn(), startSegmentedTts }),
+            client: createDaemonClientAtRpcBoundary({ startSegmentedTts }),
             playAudioBytesWithStopper,
         });
 
@@ -857,7 +742,7 @@ describe('DaemonTtsController', () => {
         const startSegmentedTts = vi.fn(() => streamStarted);
         const playAudioBytesWithStopper = vi.fn();
         const controller = new DaemonTtsController({
-            client: createDaemonClientAtRpcBoundary({ synthesizeText: vi.fn(), startSegmentedTts }),
+            client: createDaemonClientAtRpcBoundary({ startSegmentedTts }),
             playAudioBytesWithStopper,
         });
 
@@ -908,7 +793,7 @@ describe('DaemonTtsController', () => {
         const registerPlaybackStopper = vi.fn(() => () => {});
         const playAudioBytesWithStopper = vi.fn();
         const controller = new DaemonTtsController({
-            client: createDaemonClientAtRpcBoundary({ synthesizeText: vi.fn(), startSegmentedTts }),
+            client: createDaemonClientAtRpcBoundary({ startSegmentedTts }),
             playAudioBytesWithStopper,
         });
 
@@ -927,55 +812,6 @@ describe('DaemonTtsController', () => {
         expect(playAudioBytesWithStopper).not.toHaveBeenCalled();
     });
 
-    it('rejects an unsupported daemon wire codec through the real strict reader before playback', async () => {
-        const synthesizeText = vi.fn().mockResolvedValue({
-            bytes: new Uint8Array(Buffer.from('voice-audio')),
-            output: { codec: 'opus', mimeType: 'audio/opus' },
-        });
-        const playAudioBytesWithStopper = vi.fn();
-
-        const controller = new DaemonTtsController({
-            client: createDaemonClientAtRpcBoundary({ synthesizeText, malformedDaemonAudioOutput: true }),
-            playAudioBytesWithStopper,
-        });
-
-        await expect(controller.speak({
-            text: 'hello daemon',
-            packId: 'kokoro-82m-v1.0-onnx-q8-wasm',
-            voiceId: 'af_heart',
-            speed: 1,
-            registerPlaybackStopper: (_stopper) => () => {},
-            onSpeaking: vi.fn(),
-        })).rejects.toMatchObject({
-            code: 'internal_error',
-        });
-        expect(playAudioBytesWithStopper).not.toHaveBeenCalled();
-    });
-
-    it('rejects a mismatched daemon wire codec and mime type through the real strict reader', async () => {
-        const synthesizeText = vi.fn().mockResolvedValue({
-            bytes: new Uint8Array(Buffer.from('voice-audio')),
-            output: { codec: 'mp3', mimeType: 'audio/wav' },
-        });
-        const playAudioBytesWithStopper = vi.fn();
-
-        const controller = new DaemonTtsController({
-            client: createDaemonClientAtRpcBoundary({ synthesizeText, malformedDaemonAudioOutput: true }),
-            playAudioBytesWithStopper,
-        });
-
-        await expect(controller.speak({
-            text: 'hello daemon',
-            packId: 'kokoro-82m-v1.0-onnx-q8-wasm',
-            voiceId: 'af_heart',
-            speed: 1,
-            registerPlaybackStopper: (_stopper) => () => {},
-            onSpeaking: vi.fn(),
-        })).rejects.toMatchObject({
-            code: 'internal_error',
-        });
-        expect(playAudioBytesWithStopper).not.toHaveBeenCalled();
-    });
 });
 
 afterAll(() => network.dispose());

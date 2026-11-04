@@ -6,14 +6,10 @@ import {
     DaemonVoiceInferenceModelsRemoveResponseSchema,
     DaemonVoiceInferenceModelsStatusResponseSchema,
     DaemonVoiceInferenceStatusResponseSchema,
-    DaemonVoiceInferenceTtsAbortResponseSchema,
-    DaemonVoiceInferenceTtsChunkResponseSchema,
-    DaemonVoiceInferenceTtsFinalizeResponseSchema,
     DaemonVoiceInferenceTtsStreamAckResponseSchema,
     DaemonVoiceInferenceTtsStreamCancelResponseSchema,
     DaemonVoiceInferenceTtsStreamNextResponseSchema,
     DaemonVoiceInferenceTtsStreamStartResponseSchema,
-    DaemonVoiceInferenceTtsSynthesizeResponseSchema,
     DaemonVoiceInferenceSttUploadAbortResponseSchema,
     DaemonVoiceInferenceSttUploadChunkResponseSchema,
     DaemonVoiceInferenceSttUploadFinalizeResponseSchema,
@@ -27,7 +23,6 @@ import {
     type DaemonVoiceInferenceModelStatus,
     type DaemonVoiceInferenceModelLicenseAcceptRequest,
     type DaemonVoiceInferenceStatusResponse,
-    type DaemonVoiceInferenceTtsSynthesizeResponse,
     type DaemonVoiceInferenceTtsStreamEvent,
     type DaemonVoiceInferenceSttTranscribeResponse,
     type DaemonVoiceInferenceSttStreamChunkResponse,
@@ -41,7 +36,7 @@ import { isRuntimeFeatureEnabled } from '@/sync/domains/features/featureDecision
 import type { LocalUploadSource } from '@/sync/runtime/files/localUploadSourceReader';
 import { openLocalUploadSourceReader } from '@/sync/runtime/files/localUploadSourceReader';
 import { createOrderedMachineRpcCaller, machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
-import { downloadInChunks, uploadInChunks } from '@/sync/domains/transfers/runtime/transferRuntime/carriers/chunkTransferClient';
+import { uploadInChunks } from '@/sync/domains/transfers/runtime/transferRuntime/carriers/chunkTransferClient';
 import { randomUUID } from '@/platform/randomUUID';
 import {
     resolveVoiceHomeDaemonMachineId,
@@ -89,17 +84,6 @@ function throwIfErrorResponse<T extends Readonly<{
             response.error ?? 'daemon_voice_inference_error',
         );
     }
-}
-
-function concatBytes(chunks: readonly Uint8Array[]): Uint8Array {
-    const totalSize = chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
-    const merged = new Uint8Array(totalSize);
-    let offset = 0;
-    for (const chunk of chunks) {
-        merged.set(chunk, offset);
-        offset += chunk.byteLength;
-    }
-    return merged;
 }
 
 function decodeBase64Bytes(value: string): Uint8Array {
@@ -364,118 +348,6 @@ export class DaemonVoiceInferenceClient {
             }),
         );
         throwIfErrorResponse(response);
-    }
-
-    async synthesizeText(params: Readonly<{
-        sessionId?: string | null;
-        text: string;
-        packId: string | null;
-        voiceId: string | null;
-        speed: number | null;
-        output: DaemonVoiceInferenceAudioOutput;
-        signal?: AbortSignal | null;
-    }>): Promise<Readonly<{ bytes: Uint8Array; output: DaemonVoiceInferenceAudioOutput }>> {
-        const cleanupRpc = this.captureCleanupRpc();
-        const machineTarget = await this.resolveMachineTarget();
-        const requestId = this.deps.createRequestId();
-        const diagnostics = this.deps.resolveDiagnosticsCaptureContext({
-            sessionId: params.sessionId,
-            direction: 'tts_output',
-            durationMs: null,
-        });
-        const cancelRequest = async () => {
-            try {
-                await cleanupRpc({
-                    machineId: machineTarget.machineId,
-                    method: RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_CANCEL,
-                    payload: { requestId },
-                });
-            } catch {
-                // best effort
-            }
-        };
-        const abortListener = () => {
-            void cancelRequest();
-        };
-        params.signal?.addEventListener('abort', abortListener, { once: true });
-
-        try {
-            const synthesizeResponse = parseSchema<DaemonVoiceInferenceTtsSynthesizeResponse>(
-                DaemonVoiceInferenceTtsSynthesizeResponseSchema,
-                await this.deps.machineRpcWithServerScope({
-                    machineId: machineTarget.machineId,
-                    method: RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_SYNTHESIZE,
-                    payload: {
-                        requestId,
-                        text: params.text,
-                        packId: params.packId,
-                        voiceId: params.voiceId,
-                        speed: params.speed,
-                        output: params.output,
-                        ...(diagnostics ? { diagnostics } : {}),
-                    },
-                    // Thread the D12 abort signal so barge-in/cancel terminates the in-flight
-                    // synthesis RPC immediately; the explicit tts.cancel above remains the
-                    // daemon-side terminator.
-                    ...(params.signal ? { signal: params.signal } : {}),
-                }),
-            );
-            throwIfErrorResponse(synthesizeResponse);
-
-            const chunks: Uint8Array[] = [];
-            const downloadResult = await downloadInChunks({
-                init: async () => ({
-                    success: true,
-                    downloadId: synthesizeResponse.downloadId,
-                    chunkSizeBytes: synthesizeResponse.chunkSizeBytes,
-                    sizeBytes: synthesizeResponse.sizeBytes,
-                }),
-                readChunk: async ({ downloadId, index }) =>
-                    parseSchema(
-                        DaemonVoiceInferenceTtsChunkResponseSchema,
-                        await this.deps.machineRpcWithServerScope({
-                            machineId: machineTarget.machineId,
-                            method: RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_CHUNK,
-                            ...(params.signal ? { signal: params.signal } : {}),
-                            payload: { downloadId, index },
-                        }),
-                    ),
-                finalize: async ({ downloadId }) =>
-                    parseSchema(
-                        DaemonVoiceInferenceTtsFinalizeResponseSchema,
-                        await this.deps.machineRpcWithServerScope({
-                            machineId: machineTarget.machineId,
-                            method: RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_FINALIZE,
-                            ...(params.signal ? { signal: params.signal } : {}),
-                            payload: { downloadId },
-                        }),
-                    ),
-                abort: async ({ downloadId }) =>
-                    parseSchema(
-                        DaemonVoiceInferenceTtsAbortResponseSchema,
-                        await cleanupRpc({
-                            machineId: machineTarget.machineId,
-                            method: RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_ABORT,
-                            payload: { downloadId },
-                        }),
-                    ),
-                writeBytes: async (bytes) => {
-                    chunks.push(bytes);
-                },
-                signal: params.signal ?? null,
-            });
-
-            if (!downloadResult.ok) {
-                throw createDaemonVoiceInferenceClientError('download_failed', downloadResult.error);
-            }
-
-            return {
-                bytes: concatBytes(chunks),
-                output: synthesizeResponse.output,
-            };
-        } finally {
-            params.signal?.removeEventListener('abort', abortListener);
-        }
     }
 
     async startSegmentedTts(params: Readonly<{

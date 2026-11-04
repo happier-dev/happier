@@ -62,7 +62,7 @@ function toDaemonTtsControllerErrorCode(code: string): Parameters<typeof createD
 }
 
 export type DaemonTtsControllerDeps = Readonly<{
-    client: Pick<DaemonVoiceInferenceClient, 'synthesizeText'> & Partial<Pick<DaemonVoiceInferenceClient, 'startSegmentedTts'>>;
+    client: Pick<DaemonVoiceInferenceClient, 'startSegmentedTts'>;
     playAudioBytesWithStopper: typeof playAudioBytesWithStopper;
 }>;
 
@@ -161,43 +161,18 @@ export class DaemonTtsController {
 
             const requestedOutput = params.output ?? VOICE_RUNTIME_CONFIG_DEFAULTS.daemonInference.tts.defaultCodec;
             const normalizedOutput = normalizeDaemonTtsOutput(requestedOutput);
-            const startSegmentedTts = this.deps.client.startSegmentedTts;
-            if (typeof startSegmentedTts === 'function') {
-                await this.speakSegmented({
-                    sessionId: params.sessionId ?? null,
-                    text: params.text,
-                    packId: params.packId,
-                    voiceId: params.voiceId,
-                    speed: params.speed,
-                    output: normalizedOutput,
-                    registerPlaybackOnly,
-                    stopActivePlayback,
-                    onSpeaking: notifySpeakingOnce,
-                    abortController,
-                    startSegmentedTts: startSegmentedTts.bind(this.deps.client),
-                });
-                return;
-            }
-
-            const synthesized = await this.deps.client.synthesizeText({
+            await this.speakSegmented({
                 sessionId: params.sessionId ?? null,
                 text: params.text,
                 packId: params.packId,
                 voiceId: params.voiceId,
                 speed: params.speed,
                 output: normalizedOutput,
-                signal: abortController.signal,
-            });
-
-            // Cancellation can race a completed synthesis/download. Never admit
-            // that late result to playback after the owning stopper retired it.
-            if (abortController.signal.aborted) return;
-
-            await this.deps.playAudioBytesWithStopper({
-                bytes: toExactArrayBuffer(synthesized.bytes),
-                format: toPlayableAudioFormat(synthesized.output),
-                registerPlaybackStopper: registerPlaybackOnly,
-                onPlaybackStarted: notifySpeakingOnce,
+                registerPlaybackOnly,
+                stopActivePlayback,
+                onSpeaking: notifySpeakingOnce,
+                abortController,
+                startSegmentedTts: this.deps.client.startSegmentedTts.bind(this.deps.client),
             });
         } finally {
             params.signal?.removeEventListener('abort', abortListener);
@@ -217,7 +192,7 @@ export class DaemonTtsController {
         stopActivePlayback: () => void;
         onSpeaking: () => void;
         abortController: AbortController;
-        startSegmentedTts: NonNullable<DaemonTtsControllerDeps['client']['startSegmentedTts']>;
+        startSegmentedTts: DaemonTtsControllerDeps['client']['startSegmentedTts'];
     }>): Promise<void> {
         const epoch = ++this.speakEpoch;
         let stream: DaemonSegmentedTtsSession | null = null;
