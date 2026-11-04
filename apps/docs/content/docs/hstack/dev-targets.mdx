@@ -1256,11 +1256,12 @@ configured mirror sharing that cache, including the 0.2 command mirror, and reta
 workspaces. Unknown UID or same-UID process visibility or unavailable lockfiles preserve data; a full worker may
 therefore require maintenance with sufficient process-observation permissions. Checkout-local
 logs and temporary outputs under `.project/logs` and `.project/tmp` are excluded from synchronization.
-Current development dispatch recovers scan-only problems on an otherwise connected, scanned session
-with a completed cycle by requesting a fresh rescan through the existing causal flush barrier.
-`status` reports the scan path/error and rescan eligibility. Dispatch admits only after fresh clean
-post-flush evidence; persistent scan problems, conflicts, transition problems and disconnected
-sessions remain unavailable. No mirror files are edited to recover a transient source rewrite.
+Current development dispatch recovers classified transient scan and transition problems through the
+existing causal flush barrier. If a transient remains after the requested cycle, the barrier requests
+one fresh rescan, including when the problem first appeared during that cycle. `status` reports the
+path/error and rescan eligibility. Dispatch admits only after fresh clean post-flush evidence;
+persistent or unclassified problems, conflicts and disconnected sessions remain unavailable.
+No mirror files are edited to recover a transient source rewrite.
 A one-way replica can occasionally retain ignored generated files after their local source root is
 deleted. On startup, the sync service repairs that narrow conflict only when the local root is still
 absent and the remote residue is limited to target-local generated artifacts. Source conflicts,

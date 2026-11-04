@@ -256,9 +256,9 @@ flush_and_check_sync() {
   }
   trap 'cancel_control_flush' HUP INT TERM
   # Mutagen acknowledges the cycle triggered after this request, even when
-  # later alpha changes have already started another cycle. Do not restart
-  # the caller's barrier for a quiet/problem-free period: a remaining failed
-  # transfer settles with its path and can be retried by the next request.
+  # later alpha changes have already started another cycle. A classified
+  # filesystem race gets one fresh rescan; do not wait for a quiet source.
+  # Remaining problems settle with their path.
   # Progress stays diagnostic; stdout belongs to health records or payloads.
   "$control_path" -- "$@" >&2 &
   control_child=$!
@@ -268,6 +268,18 @@ flush_and_check_sync() {
   if [ "$status" -eq 0 ]; then
     check_sync_session_clean "$session_name"
     status=$?
+    if [ "$status" -eq 2 ]; then
+      printf '%s\n' "hstack-dev-target-control: $session_name requesting one fresh scan after transient filesystem churn" >&2
+      "$control_path" -- "$@" >&2 &
+      control_child=$!
+      wait "$control_child"
+      status=$?
+      control_child=''
+      if [ "$status" -eq 0 ]; then
+        check_sync_session_clean "$session_name"
+        status=$?
+      fi
+    fi
     if [ "$status" -eq 2 ]; then
       printf '%s\n' "HSTACK_SYNC_PROBLEM: $session_name: $problem_details" >&2
       status=1

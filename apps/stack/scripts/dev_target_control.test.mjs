@@ -105,7 +105,9 @@ test('dispatch recovery rescans transient scan problems and rejects persistent o
   ].join('\n'));
   const env = { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ''}`,
     MUTAGEN_DATA_DIRECTORY: join(root, 'mutagen', 'data'), DBUS_SESSION_BUS_ADDRESS: '' };
-  const recover = (mode, error = 'hashed size mismatch: 847308 != 28672') => spawnSync(controlExecutable, ['--sync-check', 'happier-linux'], {
+  const recover = (mode, error = 'hashed size mismatch: 847308 != 28672', flush = false) => spawnSync(controlExecutable, flush
+    ? ['--sync-flush', 'happier-linux', '--', 'mutagen', 'sync', 'flush', 'happier-linux']
+    : ['--sync-check', 'happier-linux'], {
     env: { ...env, PROBLEM_MODE: mode, SCAN_ERROR: error }, encoding: 'utf8',
   });
   for (const mode of ['transition', 'conflict']) {
@@ -123,14 +125,15 @@ test('dispatch recovery rescans transient scan problems and rejects persistent o
   }
   const transient = recover('transient');
   assert.equal(transient.status, 0, transient.stderr);
+  await assert.rejects(readFile(flushed), { code: 'ENOENT' });
+  const recovered = recover('transient', undefined, true);
+  assert.equal(recovered.status, 0, recovered.stderr);
   assert.equal(await readFile(flushed, 'utf8'), 'cycle');
   await rm(flushed);
-  const persistent = recover('persistent');
+  assert.equal(recover('persistent').status, 0, 'candidate inspection admits classified rescan without performing it');
+  const persistent = recover('persistent', undefined, true);
   assert.equal(persistent.status, 1, persistent.stderr);
-  assert.equal(await readFile(flushed, 'utf8'), 'cycle');
-  await rm(flushed);
-  assert.equal(recover('transient').status, 0);
-  assert.equal(await readFile(flushed, 'utf8'), 'cycle');
+  assert.equal(await readFile(flushed, 'utf8'), 'cyclecycle', 'a persistent scan problem settles after one rescan');
   await rm(flushed);
   const postflush = spawnSync(controlExecutable, ['--sync-flush', 'happier-linux', '--', 'mutagen', 'sync', 'flush', 'happier-linux'], {
     env: { ...env, PROBLEM_MODE: 'postflush', SCAN_ERROR: 'hashed size mismatch: 1 != 2' }, encoding: 'utf8',
@@ -152,7 +155,7 @@ test('the causal barrier retries known transient transition problems once and re
     'case "$2" in',
     '  flush) printf cycle >> "$FLUSH_MARKER"; exit 0 ;;',
     '  list)',
-    '    prefix=; case "$5" in *".Path"*) prefix="source|" ;; esac',
+    '    prefix=; case "$5" in *".Path"*) prefix=".project/plans/audit/lanes/captures/matrix.json|" ;; esac',
     '    transition=1/0',
     '    if [ "$PROBLEM_MODE" = clears ] && [ -e "$FLUSH_MARKER" ]; then transition=0/0; fi',
     '    if [ "$PROBLEM_MODE" = postflush ] && [ ! -e "$FLUSH_MARKER" ]; then transition=0/0; fi',
@@ -176,24 +179,29 @@ test('the causal barrier retries known transient transition problems once and re
     alpha: { connected: true, scanned: true }, beta: { connected: true, scanned: true,
       transitionProblems: [{ path: 'source', error }], excludedTransitionProblems },
   }]), 'happier-linux');
+  const postflush = run('postflush', errors[2], true);
+  assert.equal(postflush.status, 0, postflush.stderr);
+  assert.equal(await readFile(marker, 'utf8'), 'cyclecycle', 'a race during the admitted flush gets one fresh cycle');
+  await rm(marker);
   for (const error of errors) {
     assert.equal(inspect(error).recovery, 'rescan', 'JSON and native consumers must share the same recovery policy');
     const recovered = run('clears', error);
     assert.equal(recovered.status, 0, recovered.stderr);
+    await assert.rejects(readFile(marker), { code: 'ENOENT' });
+    const flushed = run('clears', error, true);
+    assert.equal(flushed.status, 0, flushed.stderr);
     assert.equal(await readFile(marker, 'utf8'), 'cycle');
     await rm(marker);
   }
-  assert.notEqual(run('persistent', errors[0]).status, 0);
-  assert.equal(await readFile(marker, 'utf8'), 'cycle', 'persistent problems cannot cause an unbounded retry');
+  assert.equal(run('persistent', errors[0]).status, 0);
+  assert.notEqual(run('persistent', errors[0], true).status, 0);
+  assert.equal(await readFile(marker, 'utf8'), 'cyclecycle', 'persistent problems cannot cause an unbounded retry');
   await rm(marker);
   for (const [mode, error] of [['persistent', 'unable to set staged file permissions: permission denied'], ['excluded', errors[0]], ['persistent', `${errors[0]}\npermission denied`]]) {
     assert.equal(inspect(error, mode === 'excluded' ? 1 : 0).recovery, undefined);
     assert.notEqual(run(mode, error).status, 0);
     await assert.rejects(readFile(marker), { code: 'ENOENT' });
   }
-  const postflush = run('postflush', errors[0], true);
-  assert.equal(postflush.status, 0, postflush.stderr);
-  assert.equal(await readFile(marker, 'utf8'), 'cyclecycle', 'a race during the admitted flush gets one fresh cycle');
 });
 
 test('native barrier blocks and names project data, stale mirror links and symlinked parents', {
@@ -231,7 +239,7 @@ test('native barrier blocks and names project data, stale mirror links and symli
     MUTAGEN_DATA_DIRECTORY: join(root, 'mutagen', 'data'), DBUS_SESSION_BUS_ADDRESS: '',
     SCAN_COUNT: '0', EXCLUDED: '0', CYCLES: '7', CONFLICTS: '0', PROBLEM_PATH: capture,
     PROBLEM_ERROR: 'apply failed' };
-  const run = extra => spawnSync(controlExecutable, ['--sync-check', 'happier-linux'], {
+  const run = extra => spawnSync(controlExecutable, ['--sync-flush', 'happier-linux', '--', 'mutagen', 'sync', 'flush', 'happier-linux'], {
     env: { ...env, ...extra }, encoding: 'utf8',
   });
   for (const PROBLEM_KIND of ['scan', 'transition']) {

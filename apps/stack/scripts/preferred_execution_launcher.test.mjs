@@ -1321,14 +1321,21 @@ test('automatic placement flushes an eligible no-watch first-cycle worker before
   assert.equal((trace.match(/mutagen:sync flush/g) ?? []).length, 1);
 });
 
-for (const { problem, flushes, selectRoomy = false } of [
+for (const { problem, flushes, selectRoomy = false, projectEvidence = false } of [
   { problem: 'unable to relocate staged file: file exists', flushes: 1 },
+  { problem: 'unable to swap file: unable to set staged file permissions: unable to set permission bits: chmod /staging/evidence: no such file or directory', flushes: 2, projectEvidence: true },
   { problem: 'unable to swap file: unable to set staged file permissions: unable to set permission bits: chmod /staging/source: no such file or directory', flushes: 3 },
   { problem: 'unable to set staged file permissions: chmod /staging/source: no such file or directory', flushes: 3, selectRoomy: true },
-]) test(selectRoomy ? 'automatic placement never flushes an unselected transient mirror'
+]) test(projectEvidence ? 'automatic placement settles project evidence churn arising during its flush with one rescan'
+  : selectRoomy ? 'automatic placement never flushes an unselected transient mirror'
   : flushes === 1 ? 'automatic placement recovers a transient staged-file problem in its requested cycle'
     : 'automatic placement reports a remaining staged-file problem after its requested cycle', async t => {
   const fixture = await memoryRoutingFixture(t, { availableKiB: 28000000, roomyLoad: 12 });
+  if (!selectRoomy && flushes > 2) {
+    fixture.config.commandExecution.targets = ['starved'];
+    await writeFile(fixture.configPath, JSON.stringify(fixture.config));
+    await writeNativeProjectionFixture(join(fixture.stackDir, 'dev-target-exec-v1.sh'), renderNativeExecutionProjection(fixture.config, { repoRoot }));
+  }
   if (selectRoomy) {
     const sample = (await readFile(fixture.samplePath, 'utf8')).trim().split(' ');
     sample[1] = '200';
@@ -1342,18 +1349,18 @@ for (const { problem, flushes, selectRoomy = false } of [
     '  flush) [ "$3" != happier-starved ] || printf "cycle\\n" >> "$COLLISION_MARKER"; printf "\\rForcing synchronization cycle for session fixture\\r" ;;',
     '  list)',
     '    transition=0/0',
-    `    if [ "$3" = happier-starved ] && [ "$(wc -l < "$COLLISION_MARKER" 2>/dev/null || printf 0)" -lt ${flushes} ]; then transition=1/0; fi`,
-    '    printf "%s|Watching|false|true|1|0/0|0/0|true|1|0/0|%s|active|2|ok|0|0\\n" "$3" "$transition"',
-    `    [ "$transition" = 0/0 ] || printf '%s\\n' ${posixQuote(`fixture/source.mjs|${problem}`)} ;;`,
+    `    if [ "$3" = happier-starved ] && [ "$(wc -l < "$COLLISION_MARKER" 2>/dev/null || printf 0)" -lt ${flushes} ]${projectEvidence ? ' && [ -e "$COLLISION_MARKER" ]' : ''}; then transition=1/0; fi`,
+    `    printf "%s|${projectEvidence ? 'Scanning' : 'Watching'}|false|true|1|0/0|0/0|true|1|0/0|%s|active|2|ok|0|0\\n" "$3" "$transition"`,
+    `    [ "$transition" = 0/0 ] || printf '%s\\n' ${posixQuote(`${projectEvidence ? '.project/plans/2026-10-23-calm-shell/lanes/ATMOS-DARK-captures/matrix.json' : 'fixture/source.mjs'}|${problem}`)} ;;`,
     'esac',
   ].join('\n'));
   const result = spawnSync('/bin/sh', [launcher, '--', 'probe-command'], {
     ...fixture.invocation, env: { ...fixture.invocation.env, COLLISION_MARKER: marker },
   });
-  const unresolved = !selectRoomy && flushes > 1;
+  const unresolved = !selectRoomy && flushes > 2;
   assert.equal(result.status, unresolved ? 1 : 0, result.stderr);
   assert.equal(result.stdout.trim(), unresolved ? '' : selectRoomy ? 'remote:roomy' : 'remote:starved',
-    'an unresolved transfer must settle before dispatch while recovery preserves load-based selection');
+    `an unresolved transfer must settle before dispatch while recovery preserves load-based selection: ${result.stderr}`);
   const trace = await readFile(fixture.invocation.env.FIXTURE_TRACE, 'utf8');
   if (selectRoomy) {
     assert.equal((trace.match(/mutagen:sync flush happier-starved\b/g) ?? []).length, 0,
@@ -1369,8 +1376,8 @@ for (const { problem, flushes, selectRoomy = false } of [
   } else {
     assert.ok(trace.indexOf('mutagen:sync flush') < trace.lastIndexOf('remote_execution_custody.sh'), trace);
   }
-  assert.equal((trace.match(/mutagen:sync flush/g) ?? []).length, 1,
-    'the selected worker crosses one requested cycle, without restarting for later churn');
+  assert.equal((trace.match(/mutagen:sync flush/g) ?? []).length, Math.min(flushes, 2),
+    'the selected worker crosses its requested cycle and at most one classified rescan');
 });
 
 test('remote admission state failure is typed before payload dispatch', async (t) => {
