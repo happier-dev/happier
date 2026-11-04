@@ -2051,9 +2051,36 @@ test('source reload validates replacement health on scratch data while preservin
   const server = await reloadServerGraph(graph, reloadHttpServerSource);
   const incumbent = graph.fixture.path('incumbent.sqlite');
   await writeFile(incumbent, 'retained-incumbent-data');
-  const admitted = await admitSourceRuntimeReload({ stackBaseDir: graph.stackBaseDir, components: { server }, pending: graph.pending,
+  const childProcess = (await import('node:child_process')).default;
+  const queueRefusal = Object.assign(new Error('fixture validation queue is saturated'), { code: 'EFIXTUREADMISSION' });
+  let admissionRequests = 0;
+  // Process launch is the system boundary: retain the real smoke child,
+  // server boot and health read, but make validation admission unavailable.
+  for (const method of ['spawn', 'fork']) {
+    const original = childProcess[method];
+    t.mock.method(childProcess, method, (command, args, options) => {
+      if (args.some(argument => argument.includes('--heavyweight-admission'))) {
+        admissionRequests += 1;
+        throw queueRefusal;
+      }
+      return original(command, args, options);
+    });
+  }
+  syncBuiltinESMExports();
+  let admitted;
+  try {
+    const repoDir = fileURLToPath(new URL('../../../../', import.meta.url));
+    await assert.rejects(runSourceBuildCommand({ repoDir, command: process.execPath, args: ['-e', ''],
+      env: { ...process.env, HAPPIER_WORKSPACE_BUILD_STARTUP: '' }, signal: t.signal }), { code: 'EFIXTUREADMISSION' });
+    assert.equal(admissionRequests, 1, 'ordinary lane validation retains its capacity admission');
+    admitted = await admitSourceRuntimeReload({ stackBaseDir: graph.stackBaseDir, components: { server, daemon: graph.daemon }, pending: graph.pending,
     env: { ...process.env, HAPPIER_STACK_REPO_DIR: fileURLToPath(new URL('../../../../', import.meta.url)),
       HAPPIER_SERVER_LIGHT_DATA_DIR: graph.fixture.root, DATABASE_URL: pathToFileURL(incumbent).href } });
+    assert.equal(admissionRequests, 1, 'replacement service lifecycle adds zero validation admission requests');
+  } finally {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  }
   assert.equal(await readFile(incumbent, 'utf8'), 'retained-incumbent-data');
   assert.deepEqual(JSON.parse(await readFile(graph.runtimePath, 'utf8')), graph.runtime);
   await admitted.activate();

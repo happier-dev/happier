@@ -1035,6 +1035,13 @@ unrelated workspace closure. Component typecheck preparation does not rebuild
 dependencies; the compiler reads their published declarations and emits its own
 project declarations. Ordinary strict publication retains its live-input fence.
 
+In development 0.3, replacement server/UI smoke is part of Stack service
+lifecycle and runs directly through the existing process-custody owner, outside
+the validation capacity queue. It retains the same authored-source Node
+invocation policy and scratch-data isolation. The reload coordinator holds no
+capacity reservation; finite builders and ordinary lane validation retain their
+own admission. Existing service-memory observation accounts for the smoke tree.
+
 The development 0.3 compiler-only Gate divides the root's existing compiler owners between
 `--compiler-partition=ui` and `--compiler-partition=host` in its existing compiler
 and artifact jobs. Both use `--prepared-workspaces` after the shared preparation;

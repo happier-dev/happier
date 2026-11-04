@@ -7,7 +7,7 @@ import { createRequire } from 'node:module';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { performance } from 'node:perf_hooks';
-import { runSourceBuildCommand } from '../utils/proc/runSourceBuildCommand.mjs';
+import { runSourceBuildCommand, sourceBuildNodeArgs } from '../utils/proc/runSourceBuildCommand.mjs';
 import { runWorkspaceBuildAdmission } from '../utils/proc/workspace_build_admission.mjs';
 import { isWorkspaceBundleLockActive } from '../../../../packages/cli-common/workspaceBundleLock.mjs';
 import { isPidAlive, observePidLiveness } from '../utils/proc/pids.mjs';
@@ -937,9 +937,12 @@ export async function admitSourceRuntimeReload({ stackBaseDir, components, ui = 
   if (components.daemon) await probeCliDistRuntimeImport(components.daemon.entrypoint,
     { cwd: components.daemon.cliDir, env, signal: pending.signal });
   if (components.server || ui) {
-    await runSourceBuildCommand({ repoDir: env.HAPPIER_STACK_REPO_DIR,
+    // Replacement health smoke is service lifecycle; finite builders own admission.
+    const repoDir = env.HAPPIER_STACK_REPO_DIR;
+    await run(process.execPath, sourceBuildNodeArgs({ repoDir,
       scriptPath: fileURLToPath(new URL('../runtime/launch/smokeSourceRuntimeReload.mjs', import.meta.url)),
-      args: [JSON.stringify({ components, ui })], env, signal: pending.signal, captureStdout: false, captureStderr: true });
+      args: [JSON.stringify({ components, ui })] }),
+    { cwd: repoDir, env, signal: pending.signal, ownedProcessGroup: true, captureFailureDiagnostic: true });
   }
   const sourceRoot = join(stackBaseDir, 'source-runtime');
   return { activate: () => pending.publish(() => withJsonOwnerFileLock(async () => {
