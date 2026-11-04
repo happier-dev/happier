@@ -7,9 +7,18 @@ import { SessionEffectiveNotificationV1Schema, type SessionEffectiveNotification
 import { ViewerReadStateV1Schema, type ViewerReadStateV1 } from './readState.js';
 import { SessionPersonalRelevanceV1Schema, type SessionPersonalRelevanceV1 } from './relevance.js';
 
+/** Home computes an inception boundary; only the authorized client decides whether this rule matches. */
+export const SessionPersonalRuleReadStateV1Schema = lazyZodSchema(() => z.strictObject({
+  ruleId: z.string().check(z.minLength(1)),
+  ruleVersion: z.number().check(z.int(), z.nonnegative(), z.maximum(Number.MAX_SAFE_INTEGER)),
+  readState: ViewerReadStateV1Schema,
+}));
+export type SessionPersonalRuleReadStateV1 = z.infer<typeof SessionPersonalRuleReadStateV1Schema>;
+
 /** Account-private read projection; additive outer facts are safely dropped, while each known nested fact stays closed. */
 export const SessionViewerProjectionV1Schema = lazyZodSchema(() => z.object({
   readState: ViewerReadStateV1Schema,
+  ruleReadStates: z.optional(z.readonly(z.array(SessionPersonalRuleReadStateV1Schema))),
   /** Own-Account organization assignments held by membership query pages. */
   tagIds: z.optional(z.readonly(z.array(z.string().check(z.minLength(1))))),
   latestFailureSeq: z.nullable(z.number().check(z.int(), z.gte(0))),
@@ -21,6 +30,8 @@ export const SessionViewerProjectionV1Schema = lazyZodSchema(() => z.object({
 
 export type SessionViewerProjectionV1 = Readonly<{
   readState: ViewerReadStateV1;
+  /** Private read projections, never Follow membership, match evidence or persisted cursors. */
+  ruleReadStates?: readonly SessionPersonalRuleReadStateV1[];
   tagIds?: readonly string[];
   latestFailureSeq: number | null;
   relevance: SessionPersonalRelevanceV1;

@@ -12,6 +12,15 @@ const VIEWER = {
 };
 
 describe('SessionViewerProjectionV1 compatibility', () => {
+  it('retains exact private rule read projections and rejects authority-shaped extras', () => {
+    const ruleReadStates = [{ ruleId: 'project', ruleVersion: 3,
+      readState: { state: 'tracking' as const, lastViewedSessionSeq: 4, unreadSince: 500 } }];
+    expect(SessionViewerProjectionV1Schema.parse({ ...VIEWER, ruleReadStates }))
+      .toEqual({ ...VIEWER, ruleReadStates });
+    expect(SessionViewerProjectionV1Schema.safeParse({ ...VIEWER,
+      ruleReadStates: [{ ...ruleReadStates[0], accountId: 'foreign' }] }).success).toBe(false);
+  });
+
   it('drops additive viewer facts while keeping known fields strict', () => {
     expect(SessionViewerProjectionV1Schema.parse({
       ...VIEWER,

@@ -29,6 +29,7 @@ import {
     type SessionPersonalDiscussionFacts,
 } from "./discussionFacts";
 import { projectSessionFollowFacts } from "./followFacts";
+import { loadSessionRuleReadStatesInTx, type SessionRuleReadStates } from "./readState";
 
 /** Select only the requesting Account's private relations beside canonical access facts. */
 export function createSessionPersonalProjectionSelect(accountId: string, context: SessionAccessProjectionContext = {}) {
@@ -244,6 +245,7 @@ export function doesSessionViewerNeedAttention(params: Parameters<typeof project
 export function projectSessionViewer(params: Readonly<{
     row: SessionPersonalProjectionRow;
     latestFailureSeq: number | null;
+    ruleReadStates?: SessionRuleReadStates;
     viewerAccountId: string;
     discussion: SessionPersonalDiscussionFacts;
     qualifiedTeamIds?: ReadonlySet<string>;
@@ -259,6 +261,7 @@ export function projectSessionViewer(params: Readonly<{
     });
     return {
         readState: state.readState,
+        ...(params.ruleReadStates?.length ? { ruleReadStates: params.ruleReadStates } : {}),
         latestFailureSeq: state.latestFailureSeq,
         follow: { ...state.follow, ...(state.access && row.responsibleAccountId !== undefined ? {
             defaultRelationships: projectSessionFollowDefaultRelationshipsV1({ responsibleForMe: state.responsible,
@@ -293,8 +296,6 @@ export function projectSessionViewer(params: Readonly<{
 /** Current Account/access admission also protects private read acknowledgments and push candidates. */
 export async function loadSessionViewerProjection(params: Readonly<{ accountId: string; sessionId: string; authentication: import("@/app/session/access/sessionAccessAuthentication").SessionAccessAuthentication }>): Promise<SessionViewerProjectionV1 | null> {
     return inReadSnapshot(async tx => {
-        const account = await tx.account.findUnique({ where: { id: params.accountId }, select: { status: true } });
-        if (account?.status !== "active") return null;
         const accessResolution = await resolveEffectiveSessionAccessWhere({
             tx,
             accountId: params.accountId,
@@ -308,6 +309,9 @@ export async function loadSessionViewerProjection(params: Readonly<{ accountId: 
         });
         if (!row) return null;
         const failureSequences = await loadSessionLatestFailureSequencesInTx(tx, [row]);
+        const ruleReadStates = await loadSessionRuleReadStatesInTx(tx, {
+            ...params, rows: [row], collectiveAccessSnapshot: accessResolution.collectiveAccessSnapshot,
+        });
         const discussion = await loadSessionPersonalDiscussionFactsInTx(tx, {
             accountId: params.accountId,
             sessionIds: [params.sessionId],
@@ -315,6 +319,7 @@ export async function loadSessionViewerProjection(params: Readonly<{ accountId: 
         return projectSessionViewer({
             row,
             latestFailureSeq: failureSequences.get(row.id) ?? null,
+            ruleReadStates: ruleReadStates.get(row.id),
             viewerAccountId: params.accountId,
             discussion: discussion.get(params.sessionId) ?? QUIET_SESSION_PERSONAL_DISCUSSION_FACTS,
             qualifiedTeamIds: accessResolution.qualifiedTeamIds,

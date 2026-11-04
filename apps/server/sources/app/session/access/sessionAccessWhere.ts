@@ -42,6 +42,8 @@ type SessionCollectiveAccessMembership = Prisma.TeamMembershipGetPayload<{
 /** One request/transaction-local membership and credential view for all list selectors. */
 export type SessionCollectiveAccessSnapshot = Readonly<{
     accountId: string;
+    /** Captured by access admission in the consuming transaction. */
+    accountActive?: boolean;
     memberships: readonly SessionCollectiveAccessMembership[];
     qualifiedTeamIds: ReadonlySet<string>;
 }>;
@@ -53,14 +55,17 @@ function grantCapabilityWhere(capability: SessionCapability) {
     return { accessLevel: { in: levels }, ...(rule.delegation ? { canApprovePermissions: true } : {}) };
 }
 
-function composeAccessWhere(input: AccessWhereInput, collective: Prisma.SessionWhereInput[] = []): Prisma.SessionWhereInput {
+function composeAccessWhere(input: AccessWhereInput, collective: Prisma.SessionWhereInput[] = [], activeAccountResolved = false): Prisma.SessionWhereInput {
     const rule = SESSION_CAPABILITY_RULES[input.capability];
-    const owner: Prisma.SessionWhereInput = { accountId: input.accountId, account: { status: "active" } };
+    const owner: Prisma.SessionWhereInput = { accountId: input.accountId,
+        ...(activeAccountResolved ? {} : { account: { status: "active" as const } }) };
     if (rule.level === "owner") return owner;
     return { OR: [
         owner,
         { AND: [createSessionTranscriptShareableWhere(), { OR: [
-            { shares: { some: { sharedWithUserId: input.accountId, sharedWithUser: { status: "active" }, ...grantCapabilityWhere(input.capability) } } },
+            { shares: { some: { sharedWithUserId: input.accountId,
+                ...(activeAccountResolved ? {} : { sharedWithUser: { status: "active" as const } }),
+                ...grantCapabilityWhere(input.capability) } } },
             ...collective,
         ] }] },
     ] };
@@ -91,6 +96,17 @@ export async function resolveEffectiveSessionAccessWhere(
     qualifiedTeamIds: ReadonlySet<string>;
     collectiveAccessSnapshot: SessionCollectiveAccessSnapshot;
 }>> {
+    // The consuming transaction captures this caller fact once. Leaving the
+    // same constant Account join inside every candidate OR forces PostgreSQL
+    // to hash/sort the Session relation before applying an ordered page limit.
+    const accountActive = input.collectiveAccessSnapshot?.accountActive
+        ?? ((await input.tx.account.findUnique({ where: { id: input.accountId }, select: { status: true } }))?.status === "active");
+    if (!accountActive) {
+        return {
+            where: { id: { in: [] } }, qualifiedTeamIds: new Set(),
+            collectiveAccessSnapshot: { accountId: input.accountId, accountActive, memberships: [], qualifiedTeamIds: new Set() },
+        };
+    }
     const runtimePrincipal = input.authentication.sessionRuntimePrincipal;
     if (runtimePrincipal) {
         const capabilities = projectSessionAccessCapabilitiesV1({
@@ -105,25 +121,27 @@ export async function resolveEffectiveSessionAccessWhere(
                 ? {
                     id: runtimePrincipal.sessionId,
                     accountId: runtimePrincipal.accountId,
-                    account: { status: "active" },
                 }
                 : { id: { in: [] } },
             qualifiedTeamIds: new Set(),
             collectiveAccessSnapshot: {
                 accountId: input.accountId,
+                accountActive,
                 memberships: [],
                 qualifiedTeamIds: new Set(),
             },
         };
     }
-    const collectiveAccessSnapshot = input.collectiveAccessSnapshot
-        ?? await resolveSessionCollectiveAccessSnapshotInTx(input);
+    const collectiveAccessSnapshot = {
+        ...(input.collectiveAccessSnapshot ?? await resolveSessionCollectiveAccessSnapshotInTx(input)),
+        accountActive,
+    };
     const collective = await buildCollectiveAccessBranches(
         { ...input, collectiveAccessSnapshot },
         {},
     );
     return {
-        where: composeAccessWhere(input, collective),
+        where: composeAccessWhere(input, collective, true),
         qualifiedTeamIds: collectiveAccessSnapshot.qualifiedTeamIds,
         collectiveAccessSnapshot,
     };

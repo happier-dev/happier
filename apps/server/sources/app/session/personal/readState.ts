@@ -1,6 +1,11 @@
 import { isSessionPersonallyTrackedV1 } from '@happier-dev/protocol/sessions/personal/tracking';
 import { clearFulfilledAccountSessionFollowOnceInTx } from '@/app/session/follow/accountFollowService';
 import { projectViewerReadStateV1, type ViewerReadStateV1 } from '@happier-dev/protocol/sessions';
+import type { SessionViewerProjectionV1 } from '@happier-dev/protocol/sessions/personal/viewer';
+import { isApiTokenGrantRestrictedV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
+import { parseSessionFollowRulePhysicalKeyV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowRuleV1';
+import { readAccountFollowRuleProjectionRowsInTx, type AccountFollowRuleProjectionRows } from '@/app/session/follow/accountFollowRuleService';
+import { portableQueryChunks } from '@/storage/portableQueryChunks';
 
 import { db } from "@/storage/db";
 import { inReadSnapshot, inTx, transactionResult, type TransactionResult, type Tx } from "@/storage/inTx";
@@ -9,6 +14,7 @@ import { acquireSessionAccountCursorLocksInTx } from "@/app/session/changeTracki
 import { AccountStatus } from "@/storage/prisma";
 import { assertSessionCapabilityInTx } from "@/app/session/access/sessionAccess";
 import type { SessionAccessAuthentication } from "@/app/session/access/sessionAccessAuthentication";
+import type { SessionCollectiveAccessSnapshot } from "@/app/session/access/sessionAccessWhere";
 import {
     applySessionTranscriptPublicationCeilingToProjection,
     SESSION_TRANSCRIPT_PUBLICATION_SELECT,
@@ -47,6 +53,109 @@ export type ViewerReadStateRow = Readonly<{
 
 type ReadStateClient = Pick<Tx, "accountSessionReadState">;
 type SessionReader = Pick<Tx, "session" | "accountSessionFollow">;
+
+export type SessionRuleReadStates = NonNullable<SessionViewerProjectionV1['ruleReadStates']>;
+export type SessionRuleReadBoundary = Readonly<{
+    ruleId: string;
+    ruleVersion: number;
+    createdAt: number;
+    beforeInceptionSeq: number;
+}>;
+
+type SessionRuleReadRow = SessionTranscriptPublicationFields & Readonly<{
+    id: string;
+    seq: number;
+    accountReadStates?: readonly Readonly<{ accountId: string; lastViewedSessionSeq: number; unreadSince: Date | null }>[];
+}>;
+
+/** Combines candidate boundaries with this read's actual viewer cursor and publication ceiling. */
+export function projectSessionRuleReadStates(input: Readonly<{
+    visibleSessionSeq: number;
+    boundaries: readonly SessionRuleReadBoundary[];
+    readState: ViewerReadStateV1;
+}>): SessionRuleReadStates {
+    const { visibleSessionSeq, readState } = input;
+    const cursor = readState.state === 'tracking' ? readState.lastViewedSessionSeq : 0;
+    const unreadSince = readState.state === 'tracking' ? readState.unreadSince : null;
+    return input.boundaries.map(rule => {
+        const boundary = Math.max(cursor, rule.beforeInceptionSeq);
+        return { ruleId: rule.ruleId, ruleVersion: rule.ruleVersion,
+            readState: projectViewerReadStateV1({ tracked: true, visibleSessionSeq, row: {
+                lastViewedSessionSeq: boundary,
+                unreadSince: visibleSessionSeq > boundary ? Math.max(unreadSince ?? rule.createdAt, rule.createdAt) : null,
+            } }),
+        };
+    });
+}
+
+/**
+ * Private rule inception supplies a read-only boundary even before that rule has
+ * encountered a source. This projects candidates, never a filter match or an
+ * enrollment: the authorized client chooses its exact matching rule version.
+ * Message cutoffs are set reads per distinct inception, not per rule or Session.
+ */
+export async function loadSessionRuleReadBoundariesInTx(tx: Tx, input: Readonly<{
+    accountId: string;
+    authentication: SessionAccessAuthentication;
+    sessionIds: readonly string[];
+    ruleRows?: AccountFollowRuleProjectionRows;
+    collectiveAccessSnapshot?: SessionCollectiveAccessSnapshot;
+}>): Promise<ReadonlyMap<string, readonly SessionRuleReadBoundary[]>> {
+    const result = new Map<string, readonly SessionRuleReadBoundary[]>();
+    if (!input.sessionIds.length || input.authentication.sessionRuntimePrincipal
+        || input.authentication.apiTokenGrant && isApiTokenGrantRestrictedV1(input.authentication.apiTokenGrant)) return result;
+    const sessionIds = [...new Set(input.sessionIds)];
+    const listed = input.ruleRows === undefined ? await readAccountFollowRuleProjectionRowsInTx(tx, input) : input.ruleRows;
+    // The reserved-row owner admits Account mode before disclosing any rule facts.
+    if (listed?.status !== 'listed') return result;
+    const rules = listed.rows.flatMap(row => {
+        const ruleId = parseSessionFollowRulePhysicalKeyV1(row.physicalKey);
+        const rule = row.envelope;
+        return ruleId !== null && rule?.receiver.kind === 'account' && rule.inception
+            ? [{ ruleId, ruleVersion: rule.version, createdAt: rule.inception.createdAt }] : [];
+    });
+    const rulesByInception = new Map<number, typeof rules>();
+    for (const rule of rules) {
+        const group = rulesByInception.get(rule.createdAt) ?? [];
+        group.push(rule);
+        rulesByInception.set(rule.createdAt, group);
+    }
+    for (const [createdAt, inceptionRules] of rulesByInception) {
+        const beforeBySession = new Map<string, number>();
+        // Creation cutoff plus Prisma's OFFSET bind share the portable SQL budget.
+        for (const ids of portableQueryChunks({ values: sessionIds, bindingsPerValue: 1, fixedBindings: 2 })) {
+            const cutoffs = await tx.sessionMessage.groupBy({ by: ['sessionId'],
+                where: { sessionId: { in: [...ids] }, createdAt: { lt: new Date(createdAt) } },
+                _max: { seq: true },
+            });
+            for (const cutoff of cutoffs) beforeBySession.set(cutoff.sessionId, cutoff._max.seq ?? 0);
+        }
+        for (const sessionId of sessionIds) {
+            result.set(sessionId, [...result.get(sessionId) ?? [], ...inceptionRules.map(rule => ({
+                ...rule, beforeInceptionSeq: beforeBySession.get(sessionId) ?? 0,
+            }))]);
+        }
+    }
+    return result;
+}
+
+export async function loadSessionRuleReadStatesInTx(tx: Tx, input: Readonly<{
+    accountId: string;
+    authentication: SessionAccessAuthentication;
+    rows: readonly SessionRuleReadRow[];
+    ruleRows?: AccountFollowRuleProjectionRows;
+    collectiveAccessSnapshot?: SessionCollectiveAccessSnapshot;
+}>): Promise<ReadonlyMap<string, SessionRuleReadStates>> {
+    const boundaries = await loadSessionRuleReadBoundariesInTx(tx, { ...input, sessionIds: input.rows.map(row => row.id) });
+    return new Map(input.rows.flatMap(row => {
+        const rules = boundaries.get(row.id);
+        if (!rules) return [];
+        const visibleSessionSeq = resolveVisibleSessionSeq(row);
+        const existing = row.accountReadStates?.find(state => state.accountId === input.accountId);
+        const readState = projectViewerReadState({ tracked: existing !== undefined, row: existing ?? null, visibleSessionSeq });
+        return [[row.id, projectSessionRuleReadStates({ visibleSessionSeq, readState, boundaries: rules })] as const];
+    }));
+}
 
 const SESSION_READ_CEILING_SELECT = {
     ...SESSION_TRANSCRIPT_PUBLICATION_SELECT,

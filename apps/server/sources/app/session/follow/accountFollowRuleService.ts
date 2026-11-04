@@ -13,6 +13,7 @@ import { listReservedAccountScopedKvRowsInTx, readReservedAccountScopedKvRowInTx
 import { resolveEffectiveSessionAccess } from '@/app/session/access/sessionAccess';
 import { mayInjectSessionContextInTx } from '@/app/session/access/sessionContextInjection';
 import type { SessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication';
+import type { SessionCollectiveAccessSnapshot } from '@/app/session/access/sessionAccessWhere';
 import { inReadSnapshot, inTx, type Tx } from '@/storage/inTx';
 import { readSnapshotWithCurrentAdmission } from '@/storage/readSnapshotWithCurrentAdmission';
 import { markSessionFollowsChangedInTx } from './changes';
@@ -32,6 +33,9 @@ export const accountFollowRuleRowDomain: ReservedAccountScopedKvRowDomain<Sessio
     assertEnvelopeForMode(row, mode) { assertSessionFollowRuleContentForModeV1(row.content, mode); },
 };
 type Scope = Readonly<{ accountId: string; authentication: SessionAccessAuthentication }>;
+type ProjectionScope = Scope & Readonly<{
+    collectiveAccessSnapshot?: SessionCollectiveAccessSnapshot;
+}>;
 type RuleResult<T> = Readonly<{ ok: true; value: T }> | Readonly<{ ok: false; error: SessionFollowRuleFailureV1 }>;
 
 function failure(result: ReservedAccountScopedKvRowFailure): { ok: false; error: SessionFollowRuleFailureV1 } {
@@ -72,21 +76,37 @@ export async function listAccountFollowRuleRowsInTx(tx: Tx, input: Readonly<{ ac
             ? { ...row, envelope: { ...row.envelope, inception: { createdAt } } } : row;
     }) };
 }
-async function admitAccount(tx: Tx, input: Scope): Promise<SessionFollowRuleFailureV1 | null> {
+async function admitAccount(tx: Tx, input: ProjectionScope): Promise<SessionFollowRuleFailureV1 | null> {
     if (input.authentication.sessionRuntimePrincipal
         || input.authentication.apiTokenGrant && isApiTokenGrantRestrictedV1(input.authentication.apiTokenGrant)) return 'credential_scope_denied';
-    const account = await tx.account.findUnique({ where: { id: input.accountId }, select: { status: true } });
-    return account && isActiveHomeAccountStatus(account.status) ? null : 'account_inactive';
+    let accountActive = input.collectiveAccessSnapshot?.accountActive;
+    if (accountActive === undefined) {
+        const account = await tx.account.findUnique({ where: { id: input.accountId }, select: { status: true } });
+        accountActive = account !== null && isActiveHomeAccountStatus(account.status);
+    }
+    return accountActive ? null : 'account_inactive';
 }
 
 /** Content-free private membership for the existing batched Session projection, not another rule census. */
-export async function readAccountFollowRuleReceiverCountsInTx(tx: Tx, input: Scope): Promise<ReadonlyMap<string, number> | null> {
+export async function readAccountFollowRuleReceiverCountsInTx(tx: Tx, input: ProjectionScope): Promise<ReadonlyMap<string, number> | null> {
     if (await admitAccount(tx, input)) return null;
     // Receiver counts need admitted envelopes, not each retained rule's creation instant.
     const listed = await listReservedAccountScopedKvRowsInTx(tx, {
         accountId: input.accountId, physicalPrefix: SESSION_FOLLOW_RULE_ACCOUNT_PREFIX_V1, domain: accountFollowRuleRowDomain,
     });
-    if (listed.status !== 'listed') return null;
+    return projectAccountFollowRuleReceiverCounts(listed);
+}
+
+export type AccountFollowRuleProjectionRows = Awaited<ReturnType<typeof listAccountFollowRuleRowsInTx>> | null;
+
+/** One private census for a containing read that needs both receiver counts and inception facts. */
+export async function readAccountFollowRuleProjectionRowsInTx(tx: Tx, input: ProjectionScope): Promise<AccountFollowRuleProjectionRows> {
+    if (await admitAccount(tx, input)) return null;
+    return listAccountFollowRuleRowsInTx(tx, input);
+}
+
+export function projectAccountFollowRuleReceiverCounts(listed: AccountFollowRuleProjectionRows): ReadonlyMap<string, number> | null {
+    if (listed?.status !== 'listed') return null;
     const counts = new Map<string, number>();
     for (const row of listed.rows) {
         if (parseSessionFollowRulePhysicalKeyV1(row.physicalKey) === null) return null;

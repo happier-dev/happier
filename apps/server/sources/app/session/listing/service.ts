@@ -512,6 +512,7 @@ async function listFilteredSessionsForAccount(params: Readonly<{
                 : undefined;
         const ruleReceiverCounts = await readAccountFollowRuleReceiverCountsInTx(tx, {
             accountId: params.userId, authentication: params.authentication,
+            collectiveAccessSnapshot: accessResolution.collectiveAccessSnapshot,
         });
         const admitCoordinators: SessionListRowAdmission = async rows => {
             const projected = await projectSessionManagerForRowsInTx(tx, {
