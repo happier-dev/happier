@@ -896,6 +896,11 @@ export async function updateSessionMetadataEnvelopeTupleWithRetry(
       SessionMetadataInactiveModelIntentExpectationV1;
     teamCredentialBindings?: SessionTeamCredentialBindingIntentListV1;
     acceptedTeamCredentialBinding?: SessionTeamCredentialBindingIntentListV1[number] | null;
+    /** Carries validated refreshes and committed binding facts to a retaining writer. */
+    onOwnerSnapshotContextChanged?: (admission: Readonly<{
+      accountEncryptionCurrentness: AccountEncryptionCurrentnessResponse;
+      acceptedTeamCredentialBinding: NonNullable<Awaited<ReturnType<typeof fetchSessionByIdCompat>>>['acceptedTeamCredentialBinding'];
+    }>) => void;
     teamCredentialBindingOperation?: SessionTeamCredentialBindingMutationOperationV1;
     teamVisibilityGrantConsent?: Readonly<{ teamId: string }>;
     mutateLegacy?: (
@@ -1045,6 +1050,11 @@ export async function updateSessionMetadataEnvelopeTupleWithRetry(
           patch: transportPatch,
         });
         if (result.success) {
+          if (teamCredentialBindings && accountEncryptionCurrentness) {
+            acceptedTeamCredentialBinding = teamCredentialBindings.find(binding => binding.slot.kind === 'provider_model')
+              ?? acceptedTeamCredentialBinding;
+            params.onOwnerSnapshotContextChanged?.({ accountEncryptionCurrentness, acceptedTeamCredentialBinding });
+          }
           // A shared-editor commit never carries an Agent-state version because
           // the server's shared-editor tuple mode does not write that value.
           if (transportPatch.mode === 'shared_editor') {
@@ -1194,6 +1204,8 @@ export async function updateSessionMetadataEnvelopeTupleWithRetry(
             accountEncryptionCurrentness: refreshedAccountCurrentness,
             rawSession: authoritativeRaw,
           });
+        params.onOwnerSnapshotContextChanged?.({ accountEncryptionCurrentness: refreshedAccountCurrentness,
+          acceptedTeamCredentialBinding: authoritativeRaw.acceptedTeamCredentialBinding });
         return toSharedTupleSnapshot(params.mutation.kind === 'ensureDisplayProjection'
           ? attachDisplayProjectionAvailability({ snapshot: authoritativeSnapshot,
             credentials: owner.credentials, accountEncryptionCurrentness: refreshedAccountCurrentness,

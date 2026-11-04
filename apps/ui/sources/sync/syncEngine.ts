@@ -13278,6 +13278,19 @@ class Sync {
               sourceServerId,
               shouldContinue,
               onAccountChangeWake: (wake) => {
+                  // A current-view push already applied this exact Session
+                  // publication. Keep the history cursor unchanged: an uncovered
+                  // wake/reconnect still consumes every durable feed row.
+                  if (wake.t === 'account-change' && wake.changeKinds?.length === 1
+                      && wake.changeKinds[0] === 'session' && wake.entityIds?.length
+                      && wake.sessionSystemRecords?.length === 0 && parsedUpdate
+                      && context.credentials === this.credentials && shouldContinue()
+                      && wake.entityIds.every((sessionId: string) => {
+                          const address = normalizeSessionAddress(sourceServerId, sessionId);
+                          const observed = address ? sessionRuntimeObservations.read(address) : undefined;
+                          return observed?.serverObservationAccountId === this.serverID
+                              && observed.serverObservationCursor === parsedUpdate.seq;
+                      })) return;
 
                   // Catalogs that need current rows independently of the history
                   // cursor opt into this wake at the existing snapshot lifecycle.

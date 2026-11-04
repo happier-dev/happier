@@ -1601,6 +1601,32 @@ describe('sync AccountChange catch-up projection', () => {
         harness.disconnectServer();
     });
 
+    it('keeps a covered Session wake quiet without advancing the durable feed and repairs the next uncovered cursor', async () => {
+        const runtime = await prepareAccountChangeWakeSchedulingHarness();
+        const { storage } = await import('./domains/state/storage');
+        const { loadChangesCursor } = await import('./domains/state/persistence');
+        const sessionId = 'covered-session-write';
+        const scope = runtime.getChangesCursorScope();
+        if (!scope || typeof scope === 'string' || !scope.serverScope) throw new Error('Expected the Account Home scope');
+        const persistedCursorBefore = loadChangesCursor(scope);
+        storage.getState().applySessions([createSessionFixture({ id: sessionId, serverId: scope.serverScope,
+            encryptionMode: 'plain', metadataVersion: 1, agentStateVersion: 1 })]);
+        await runtime.handleUpdate({ id: 'covered-current-view', seq: 9, createdAt: 9, body: {
+            t: 'update-session', id: sessionId, agentState: { version: 2, value: JSON.stringify({ controlledByUser: true }) },
+        } });
+        const wake = { ...accountChangeWake('covered-wake'), body: { t: 'account-change',
+            changeKinds: ['session'], entityIds: [sessionId], sessionSystemRecords: [] } };
+        await runtime.handleUpdate(wake);
+        expect(changesResponse).not.toHaveBeenCalled();
+        expect(runtime.changesCursor).toBe('0');
+        expect(loadChangesCursor(runtime.getChangesCursorScope())).toBe(persistedCursorBefore);
+        await runtime.handleUpdate({ ...wake, id: 'next-uncovered-wake', seq: 10 });
+        await waitForHomeGovernance(() => expect(changesResponse).toHaveBeenCalledOnce());
+        await waitForHomeGovernance(() => expect(runtime.resumeInFlight).toBeNull());
+        expect(new URL(changesResponse.mock.calls[0]![0].url).searchParams.get('after')).toBe('0');
+    });
+
+
     it('coalesces wakes received after a changes response into one trailing canonical catch-up', async () => {
         const harness = await prepareAccountChangeWakeSchedulingHarness();
         const { subscribeHomeAccountChange } = await import('./runtime/orchestration/homeAccountChange');

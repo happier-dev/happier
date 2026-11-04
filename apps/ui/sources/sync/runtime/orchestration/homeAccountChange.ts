@@ -4,7 +4,7 @@ import {
     type HomeCredentialMutationEvent,
 } from '@/auth/storage/tokenStorage';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
-import { plannedSessionReadinessChanges, planSessionReadinessWake, type SessionReadinessChanges, accountChangeKindsAffectWorkflowTriggers, accountChangeKindsAffectWorkflowDefinitions, planSyncActionsFromChanges, plannedChangesAffectSessionListQuery, plannedChangesAffectWorkflowTriggers, plannedChangesAffectWorkflowDefinitions } from './changesPlanner';
+import { plannedChangesAffectProfileCatalog, plannedChangesAffectUsageQuery, plannedSessionReadinessChanges, planSessionReadinessWake, type SessionReadinessChanges, accountChangeKindsAffectWorkflowTriggers, accountChangeKindsAffectWorkflowDefinitions, planSyncActionsFromChanges, plannedChangesAffectSessionListQuery, plannedChangesAffectWorkflowTriggers, plannedChangesAffectWorkflowDefinitions } from './changesPlanner';
 import type { SessionSystemRecordInvalidationV1 } from '@happier-dev/protocol/sessions/board/changeHint';
 import { readSavedSecretDisclosureActivityEntityIdV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 
@@ -216,10 +216,25 @@ export function publishHomeAccountChangeForRouting(
         && !(accountWakePlan.invalidate.settings && accountWakePlan.invalidate.profile)
         && !accountWakePlan.invalidate.savedSecretResources
         && plannedChangesAffectSessionListQuery(accountWakePlan) === false ? accountWakePlan : null;
+    // Known non-Account domains can exclude unrelated catalogs by kind. Reuse
+    // the planner with conservative missing hints rather than widening every
+    // Session publication into a Profile/Settings/Workflow refresh.
+    const kindWakePlan = (details?.source === 'catch-up-pending' || details?.source === 'socket')
+        && !unknownKinds && rawKinds?.length === 1 && rawKinds[0] !== 'account' && entityIds?.length
+        ? planSyncActionsFromChanges(entityIds.map(entityId => ({ kind: rawKinds[0]!, entityId, cursor: 0, changedAt: 0 }))) : null;
+    const routingPlan = scopedAccountPlan ?? (kindWakePlan?.unsupportedChanges.length === 0 ? kindWakePlan : null);
+    const readinessWakePlan = accountWakePlan ?? kindWakePlan;
+    const sessionListQueryAffects = details?.sessionListQueryAffects
+        ?? (scopedAccountPlan ? plannedChangesAffectSessionListQuery(scopedAccountPlan) : undefined);
+    const profileCatalogAffects = details?.profileCatalogAffects
+        ?? (routingPlan ? plannedChangesAffectProfileCatalog(routingPlan) : undefined);
+    const accountSettingsAffects = details?.accountSettingsAffects ?? routingPlan?.invalidate.settings;
+    const usageQueryAffects = details?.usageQueryAffects
+        ?? (routingPlan ? plannedChangesAffectUsageQuery(routingPlan) : undefined);
     const workflowTriggersAffect = details?.workflowTriggersAffect
-        ?? (scopedAccountPlan ? plannedChangesAffectWorkflowTriggers(scopedAccountPlan) : undefined);
+        ?? (routingPlan ? plannedChangesAffectWorkflowTriggers(routingPlan) : undefined);
     const workflowDefinitionsAffect = details?.workflowDefinitionsAffect
-        ?? (scopedAccountPlan ? plannedChangesAffectWorkflowDefinitions(scopedAccountPlan) : undefined);
+        ?? (routingPlan ? plannedChangesAffectWorkflowDefinitions(routingPlan) : undefined);
     // Explicit record routing is produced only when no unknown Account fact
     // joined this wake. Retain its Session ids too: legacy workflow readers on
     // a secondary Home have no detailed feed cursor to recover a mixed wake.
@@ -227,8 +242,8 @@ export function publishHomeAccountChangeForRouting(
         || (rawKinds.includes('account') && details?.sessionSystemRecords === undefined && !disclosureOnly && !scopedAccountPlan)));
     const changeKinds = coarse ? undefined : rawKinds;
     const sessionReadinessChanges = details?.source === 'connected' || details?.source === 'snapshot'
-        ? 'all' : details?.sessionReadinessChanges ?? (unknownKinds ? 'all' : accountWakePlan
-            ? plannedSessionReadinessChanges(accountWakePlan) : planSessionReadinessWake(rawKinds, entityIds));
+        ? 'all' : details?.sessionReadinessChanges ?? (unknownKinds ? 'all' : readinessWakePlan
+            ? plannedSessionReadinessChanges(readinessWakePlan) : planSessionReadinessWake(rawKinds, entityIds));
     const event = Object.freeze({
         serverId,
         sessionReadinessChanges: sessionReadinessChanges === 'all' ? 'all' as const : Object.freeze({
@@ -241,14 +256,14 @@ export function publishHomeAccountChangeForRouting(
         ...(details?.workflowRunsMaterialized ? { workflowRunsMaterialized: true as const } : {}),
         ...(details?.savedSecretResourcesRefreshStarted ? { savedSecretResourcesRefreshStarted: true as const } : {}),
         ...(details?.changeKinds ? { changeKinds: Object.freeze([...new Set(details.changeKinds)]) } : {}),
-        ...(details?.sessionListQueryAffects !== undefined
-            ? { sessionListQueryAffects: details.sessionListQueryAffects }
+        ...(sessionListQueryAffects !== undefined
+            ? { sessionListQueryAffects }
             : {}),
-        ...(details?.profileCatalogAffects !== undefined ? { profileCatalogAffects: details.profileCatalogAffects } : {}),
-        accountSettingsAffects: details?.accountSettingsAffects ?? (details?.changeKinds === undefined
+        ...(profileCatalogAffects !== undefined ? { profileCatalogAffects } : {}),
+        accountSettingsAffects: accountSettingsAffects ?? (details?.changeKinds === undefined
             || details.changeKinds.length === 0
             || details.changeKinds.some(kind => kind === 'account' || !ChangeKindSchema.safeParse(kind).success)),
-        ...(details?.usageQueryAffects !== undefined ? { usageQueryAffects: details.usageQueryAffects } : {}),
+        ...(usageQueryAffects !== undefined ? { usageQueryAffects } : {}),
         workflowTriggersAffect: !disclosureOnly && (details?.source === 'connected' || coarse
             || (workflowTriggersAffect ?? accountChangeKindsAffectWorkflowTriggers(changeKinds))),
         workflowDefinitionsAffect: details?.source === 'connected' || details?.source === 'snapshot'

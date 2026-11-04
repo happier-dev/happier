@@ -126,6 +126,22 @@ supplying both combines them with AND. Folder selection is exact membership,
 not a descendant walk. An unknown id matches no assignment. Existing access,
 storage, audience, attention and cursor predicates still apply.
 
+In 0.3 development, a focused client ignores a Session-only advisory wake when
+every named Session already applied that exact Account cursor and the wake
+explicitly excludes System-record changes. This does not advance the durable
+feed cursor: an uncovered wake or reconnect still consumes the history. Missing
+routing facts, mixed kinds and record changes retain catch-up. Home catalog
+relevance comes from the existing change planner, so known Session traffic does
+not widen into Settings, Profile or Workflow catalog refreshes.
+
+Metadata writers that publish a committed current view retain the durable
+change row and send its advisory wake only to sockets outside that current-view
+audience. Machine sockets and other Session sockets retain their wake; layout-0
+shared recipients do too because flat private metadata is owner-only. Mixed
+transaction wakes remain conservative. A failed current-view projection wakes
+its recipients for ordinary cursor recovery. Writers without a current-view
+publisher, including historical import, keep the ordinary wake.
+
 **Lane 07 correction in progress (0.3 development):** the server's optional
 nonnegative `metadataUpgradeRequiredCount` must survive the existing summary and
 awareness result contracts through UI, CLI, Actions and SDK consumers. A positive

@@ -2003,6 +2003,14 @@ server persistence layer.
   This prevents unrelated publisher metadata from invalidating an in-flight
   question original. Real Agent-state changes still advance their version;
   layout-0 owner migration retains its separate transition contract.
+- In 0.3 development, the runner retains its own committed tuple and admitted
+  Account encryption context while its credentials and applied tuple versions
+  match. Ordinary writes carry those versions to the server CAS; equal mutations
+  send no request. A conflict refreshes the Session and Account currentness once
+  through the canonical retry owner, including the accepted Team binding. The
+  current-publisher proof is reused only on its admitted socket contract; the
+  server checks that fence on the write. Reconnect or changed credentials needs
+  a new admission. No Account mode is inferred from key presence.
 - In 0.3 development, scoped bulk Session reads can share the exact batch's
   `createOperationAccountCurrentnessSource` through
   `readSessionSnapshotForAuthority`. Each Session still validates its stored
