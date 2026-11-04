@@ -198,7 +198,7 @@ export interface VoiceAgentClient {
     }>,
   ): Promise<{ streamId: string }>;
   readTurnStream(
-    params: Readonly<{ sessionId: string; voiceAgentId: string; streamId: string; cursor: number; maxEvents?: number; signal?: AbortSignal }>,
+    params: Readonly<{ sessionId: string; voiceAgentId: string; streamId: string; cursor: number; maxEvents?: number; waitForEvents?: boolean; signal?: AbortSignal }>,
   ): Promise<ExecutionRunTurnStreamReadResponse>;
   cancelTurnStream(params: Readonly<{ sessionId: string; voiceAgentId: string; streamId: string }>): Promise<{ ok: true }>;
   commitUserTranscript?(params: Readonly<{

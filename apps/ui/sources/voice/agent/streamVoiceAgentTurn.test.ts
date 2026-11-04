@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { VOICE_OUTPUT_INCOMPLETE_TEXT, SessionCurrentProjectionRecordV1Schema } from '@happier-dev/protocol';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { ExecutionRunTurnStreamReadRequestSchema, type ExecutionRunTurnStreamReadRequest } from '@happier-dev/protocol/execution/runs/streaming';
 import { createDeferred, createSessionFixture } from '@/dev/testkit';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -21,12 +22,12 @@ const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
 // response decoding, output sequencing/redaction and transcript custody stay real.
 function serveVoiceStream(reply: Readonly<{
     start: () => Promise<unknown>;
-    read: () => Promise<unknown>;
+    read: (request: ExecutionRunTurnStreamReadRequest) => Promise<unknown>;
     cancel: () => Promise<unknown>;
 }>) {
     network.setRpcResponder(async request => {
         if (request.method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START) return reply.start();
-        if (request.method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_READ) return reply.read();
+        if (request.method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_READ) return reply.read(ExecutionRunTurnStreamReadRequestSchema.parse(request.payload));
         if (request.method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_CANCEL) return reply.cancel();
         throw new Error(`Unexpected Voice stream RPC: ${request.method}`);
     });
@@ -52,6 +53,82 @@ beforeEach(async () => {
 afterAll(() => network.dispose());
 
 describe('streamVoiceAgentTurn', () => {
+    it('paces an empty predecessor wait reply and cancels its compatibility delay', async () => {
+        const entered = createDeferred<void>();
+        const response = createDeferred<void>();
+        const client = serveVoiceStream({ start: async () => ({ streamId: 'old-stream' }),
+            read: async () => {
+                entered.resolve();
+                await response.promise;
+                return { streamId: 'old-stream', events: [], nextCursor: 0, done: false };
+            }, cancel: async () => ({ ok: true }) });
+        await client.startTurnStream({ sessionId: 'sys_voice', voiceAgentId: 'run', userText: 'hello' });
+        const caller = new AbortController();
+        let settled = false;
+        const read = client.readTurnStream({ sessionId: 'sys_voice', voiceAgentId: 'run', streamId: 'old-stream',
+            cursor: 0, waitForEvents: true, signal: caller.signal });
+        void read.then(() => { settled = true; }, () => { settled = true; });
+        try {
+            await entered.promise;
+            vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+            response.resolve();
+            await vi.advanceTimersByTimeAsync(0);
+            expect(settled).toBe(false);
+            caller.abort();
+            await expect(read).rejects.toMatchObject({ name: 'AbortError' });
+        } finally {
+            response.resolve();
+            caller.abort();
+            await read.catch(() => {});
+            vi.useRealTimers();
+        }
+    });
+
+    it('finishes valid work beyond the former total-turn deadline', async () => {
+        const clock = vi.spyOn(Date, 'now');
+        const initialTime = Date.now();
+        let reads = 0;
+        const client = serveVoiceStream({ start: async () => ({ streamId: 'long-turn' }),
+            read: async () => {
+                reads += 1;
+                clock.mockReturnValue(initialTime + 31 * 60 * 1000);
+                return { streamId: 'long-turn', events: reads === 1
+                    ? [{ t: 'delta', textDelta: 'Still working. ' }]
+                    : [{ t: 'done', assistantText: 'Finished.' }], nextCursor: reads, done: reads === 2 };
+            }, cancel: async () => ({ ok: true }) });
+        try {
+            await expect(streamVoiceAgentTurn({ sessionId: 'sys_voice',
+                handle: { client, voiceAgentId: 'run', rpcSessionId: 'sys_voice' },
+                userText: 'hello', displayUserText: 'hello' })).resolves.toMatchObject({ assistantText: 'Finished.' });
+        } finally {
+            clock.mockRestore();
+        }
+    });
+
+    it('holds one event wait while quiet and wakes for output', async () => {
+        const entered = createDeferred<void>();
+        const output = createDeferred<unknown>();
+        const reads: ExecutionRunTurnStreamReadRequest[] = [];
+        const caller = new AbortController();
+        const client = serveVoiceStream({ start: async () => ({ streamId: 'held-stream' }),
+            read: async request => { reads.push(request); entered.resolve(); return output.promise; },
+            cancel: async () => ({ ok: true }) });
+        const handle = { client, voiceAgentId: 'run', rpcSessionId: 'sys_voice' };
+        const work = streamVoiceAgentTurn({ sessionId: 'sys_voice', handle, userText: 'hello', displayUserText: 'hello',
+            options: { signal: caller.signal } });
+        void work.catch(() => {});
+        try {
+            await entered.promise;
+            expect(reads).toEqual([expect.objectContaining({ waitForEvents: true, cursor: 0 })]);
+            output.resolve({ streamId: 'held-stream', events: [{ t: 'done', assistantText: 'Awake' }], nextCursor: 1, done: true });
+            await expect(work).resolves.toMatchObject({ assistantText: 'Awake' });
+            expect(reads).toHaveLength(1);
+        } finally {
+            caller.abort();
+            await work.catch(() => {});
+        }
+    });
+
     it('carries a delivered instruction receipt through the daemon strict reader once per stream', async () => {
         const receipt = { serverId: home.id, sessionId: 'target' };
         const receipts: unknown[] = [];

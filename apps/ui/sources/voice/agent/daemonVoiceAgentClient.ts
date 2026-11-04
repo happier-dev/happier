@@ -15,6 +15,10 @@ import { streamVoiceAgentTurn } from './streamVoiceAgentTurn';
 import { requiresProviderSafeModelSelectionRpc } from '@/sync/ops/providerDaemonSessionCompatibility';
 import { requiresProviderSafeExecutionRunStartRpc } from '@happier-dev/protocol/execution/runs/startRequest';
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
+import { sleepWithSignal } from '@happier-dev/plugin-sdk/async';
+import { storage } from '@/sync/domains/state/storage';
+import { readLocalConversationSettingsFromAccountSettings } from '@/voice/local/localVoiceSettings';
+import { resolveVoiceTurnStreamReadConfig } from './resolveVoiceTurnStreamReadConfig';
 import { buildBackendTargetKeyV2, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 
 const VOICE_AGENT_LIFECYCLE_RPC_TIMEOUT_MS = null;
@@ -189,7 +193,7 @@ export class DaemonVoiceAgentClient implements VoiceAgentClient {
   ): Promise<{ assistantText: string; actions?: VoiceAssistantAction[] }> {
     // The non-streaming daemon turn shares the single canonical turn read-loop. We omit
     // No output observer is needed in this non-streaming path, but reuse the same
-    // poll / timeout / abort / cancel semantics from streamVoiceAgentTurn so there is exactly
+    // event-wait / abort / cancel semantics from streamVoiceAgentTurn so there is exactly
     // one parser and one abort path for daemon turns.
     const handle = {
       client: this,
@@ -298,21 +302,38 @@ export class DaemonVoiceAgentClient implements VoiceAgentClient {
   }
 
   async readTurnStream(
-    params: Readonly<{ sessionId: string; voiceAgentId: string; streamId: string; cursor: number; maxEvents?: number; signal?: AbortSignal }>,
+    params: Readonly<{ sessionId: string; voiceAgentId: string; streamId: string; cursor: number; maxEvents?: number; waitForEvents?: boolean; signal?: AbortSignal }>,
   ): Promise<ExecutionRunTurnStreamReadResponse> {
     const res: any = await this.sessionRpc({
       sessionId: params.sessionId,
       method: SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_READ,
       signal: params.signal,
+      ...(params.waitForEvents ? { timeoutMs: null } : {}),
       payload: {
         runId: params.voiceAgentId,
         streamId: params.streamId,
         cursor: params.cursor,
         ...(typeof params.maxEvents === 'number' ? { maxEvents: params.maxEvents } : {}),
+        ...(params.waitForEvents ? { waitForEvents: true } : {}),
       },
     });
     throwIfRpcError(res);
-    return ensureOk(res, ExecutionRunTurnStreamReadResponseSchema);
+    const read = ensureOk(res, ExecutionRunTurnStreamReadResponseSchema);
+    if (params.waitForEvents && !read.done && read.events.length === 0) {
+      // 0.2 fd3f03529d accepts but ignores waitForEvents. Pace its immediate
+      // empty replies with the existing read interval; remove when 0.2 daemons
+      // leave support. Current daemons hold the read until an event or End.
+      const config = resolveVoiceTurnStreamReadConfig(
+        readLocalConversationSettingsFromAccountSettings(storage.getState().settings),
+      );
+      const lifetime = mergeAbortSignals([params.signal, this.lifetimeSignal]);
+      try {
+        await sleepWithSignal(config.pollIntervalMs, lifetime.signal);
+      } finally {
+        lifetime.dispose();
+      }
+    }
+    return read;
   }
 
   async cancelTurnStream(params: Readonly<{ sessionId: string; voiceAgentId: string; streamId: string }>): Promise<{ ok: true }> {

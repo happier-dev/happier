@@ -58,14 +58,10 @@ export async function streamVoiceAgentTurn(params: Readonly<{
         let doneAssistantText: string | null = null;
         let doneActions: NonNullable<Awaited<ReturnType<VoiceAgentHandle['client']['sendTurn']>>['actions']> = [];
         let outputTurn = createVoiceAgentOutputTurnV1(started.streamId);
-        const startedAtMs = Date.now();
         let preparedInstructionsPublished = false;
 
         while (true) {
             abort.throwIfAborted();
-            const elapsedMs = Date.now() - startedAtMs;
-            if (streamCfg.streamTimeoutMs !== null && elapsedMs >= streamCfg.streamTimeoutMs) break;
-
             const read = await abort.race(
                 params.handle.client.readTurnStream({
                     sessionId: params.handle.rpcSessionId,
@@ -73,6 +69,7 @@ export async function streamVoiceAgentTurn(params: Readonly<{
                     streamId: started.streamId,
                     cursor,
                     maxEvents: streamCfg.maxEvents,
+                    waitForEvents: true,
                     signal: params.options?.signal,
                 }),
             );
@@ -130,17 +127,7 @@ export async function streamVoiceAgentTurn(params: Readonly<{
                 return { assistantText: (doneAssistantText ?? mergedDeltaText).trim(), actions: doneActions };
             }
 
-            if (streamCfg.streamTimeoutMs === null) {
-                await abort.race(new Promise((resolve) => setTimeout(resolve, streamCfg.pollIntervalMs)));
-                continue;
-            }
-
-            const remainingMs = streamCfg.streamTimeoutMs - (Date.now() - startedAtMs);
-            if (remainingMs <= 0) break;
-            await abort.race(new Promise((resolve) => setTimeout(resolve, Math.min(streamCfg.pollIntervalMs, remainingMs))));
         }
-
-        throw new Error('stream_timeout');
     } catch (error) {
         if (!started) {
             const carrier: RpcErrorCarrier = error && typeof error === 'object'

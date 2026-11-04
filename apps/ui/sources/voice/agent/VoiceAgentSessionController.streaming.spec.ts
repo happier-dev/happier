@@ -1078,29 +1078,6 @@ describe('VoiceExecutionTransport (streaming)', () => {
     );
   });
 
-  it('times out using configured turnStreamTimeoutMs (not a hard-coded poll count)', async () => {
-    daemonStreamRead.mockImplementation(async () => ({
-      streamId: 'stream-1',
-      events: [],
-      nextCursor: 1,
-      done: false,
-    }));
-
-    const controller = createVoiceExecutionTransport();
-    await controller.ensureRunning('s1');
-    vi.useFakeTimers();
-    const sendTurnOutcome = trackPromise(controller.sendTurn('s1', 'hello'));
-
-    await flushHookEffects({ cycles: 1, advanceTimersMs: 1300 });
-
-    const outcome = await sendTurnOutcome.settled;
-    if (outcome.status !== 'rejected') {
-      throw new Error(`Expected rejection outcome, received ${outcome.status}`);
-    }
-    expect(String(outcome.reason)).toContain('stream_timeout');
-    expect(daemonStreamCancel).toHaveBeenCalledTimes(1);
-  });
-
   it('does not fall back to networkTimeoutMs when turnStreamTimeoutMs is null', async () => {
     let readCount = 0;
     daemonStreamRead.mockImplementation(async () => {
@@ -1155,47 +1132,6 @@ describe('VoiceExecutionTransport (streaming)', () => {
     expect(daemonStreamCancel).toHaveBeenCalledTimes(0);
   });
 
-  it('supports long streamed turns (does not clamp turnStreamTimeoutMs to 60s)', async () => {
-    daemonStreamRead.mockImplementation(async () => ({
-      streamId: 'stream-1',
-      events: [],
-      nextCursor: 1,
-      done: false,
-    }));
-
-    setControllerState(() =>
-      createVoiceControllerState({
-        voice: {
-          streaming: {
-            turnStreamTimeoutMs: 65_000,
-          },
-        },
-        sessions: {
-          sys_voice: {
-            id: 'sys_voice',
-            modelMode: 'default',
-            metadata: { flavor: 'claude', systemSessionV1: { v: 1, key: 'voice_carrier', hidden: true } },
-          },
-          s1: { id: 's1', active: true, presence: 'online', modelMode: 'default', metadata: createLocallyControllableSessionMetadata() },
-        },
-      }),
-    );
-
-    const controller = createVoiceExecutionTransport();
-    await controller.ensureRunning('s1');
-    vi.useFakeTimers();
-
-    const sendTurnOutcome = trackPromise(controller.sendTurn('s1', 'hello'));
-
-    await flushHookEffects({ cycles: 1, advanceTimersMs: 61_000 });
-    expect(sendTurnOutcome.isSettled()).toBe(false);
-
-    await flushHookEffects({ cycles: 1, advanceTimersMs: 4_000 });
-    const outcome = await sendTurnOutcome.settled;
-    expect(outcome).toMatchObject({ status: 'rejected' });
-    expect(String((outcome.status === 'rejected' ? outcome.reason : null) as any)).toContain('stream_timeout');
-  });
-
   it('aborts a streamed turn when the provided abort signal is aborted', async () => {
     try {
       const readTurnStarted = createDeferred<void>();
@@ -1233,51 +1169,6 @@ describe('VoiceExecutionTransport (streaming)', () => {
       await flushHookEffects({ cycles: 1, advanceTimersMs: 10 });
       vi.useRealTimers();
     }
-  });
-
-  it('supports very long streamed turns (does not clamp turnStreamTimeoutMs to 10min)', async () => {
-    daemonStreamRead.mockImplementation(async () => ({
-      streamId: 'stream-1',
-      events: [],
-      nextCursor: 1,
-      done: false,
-    }));
-
-    setControllerState(() =>
-      createVoiceControllerState({
-        voice: {
-          streaming: {
-            turnReadPollIntervalMs: 500,
-            turnStreamTimeoutMs: 900_000,
-          },
-        },
-        sessions: {
-          sys_voice: {
-            id: 'sys_voice',
-            modelMode: 'default',
-            metadata: { flavor: 'claude', systemSessionV1: { v: 1, key: 'voice_carrier', hidden: true } },
-          },
-          s1: { id: 's1', active: true, presence: 'online', modelMode: 'default', metadata: createLocallyControllableSessionMetadata() },
-        },
-      }),
-    );
-
-    const controller = createVoiceExecutionTransport();
-    await controller.ensureRunning('s1');
-    vi.useFakeTimers();
-
-    const sendTurnOutcome = trackPromise(controller.sendTurn('s1', 'hello'));
-
-    await flushHookEffects({ cycles: 1, advanceTimersMs: 899_000 });
-    expect(sendTurnOutcome.isSettled()).toBe(false);
-
-    await flushHookEffects({ cycles: 1, advanceTimersMs: 1_000 });
-    const outcome = await sendTurnOutcome.settled;
-    if (outcome.status !== 'rejected') {
-      throw new Error(`Expected rejection outcome, received ${outcome.status}`);
-    }
-    expect(String(outcome.reason)).toContain('stream_timeout');
-    expect(daemonStreamCancel).toHaveBeenCalledTimes(1);
   });
 
   it('ignores non-finite or invalid streaming config values (does not short-circuit the stream loop)', async () => {
