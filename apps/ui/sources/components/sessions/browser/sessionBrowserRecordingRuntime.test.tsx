@@ -29,7 +29,7 @@ const modalSpies = vi.hoisted(() => ({ alert: vi.fn() }));
 
 vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({ confirmResult: true, spies: { alert: modalSpies.alert } }).module;
+    return createModalModuleMock({ confirmResult: true, renderCustomModals: true, spies: { alert: modalSpies.alert } }).module;
 });
 
 // Only the network boundaries are replaced. Both the legacy RPC (RED) and admitted
@@ -744,6 +744,34 @@ describe('session browser recording runtime', () => {
         expect(machineRpcMock.start).toHaveBeenLastCalledWith(expect.objectContaining({
             input: expect.objectContaining({ mediaTarget: expect.objectContaining({ sessionId: 'session_2' }) }),
         }));
+    });
+
+    it('presents Ask-first recording consent in place and starts only after its visible approval', async () => {
+        await registerNativeCaptureHandler();
+        await homes.requireUiApproval(homeId, 'browser.recording.start');
+        machineRpcMock.start.mockResolvedValueOnce({ ok: true, result: { status: 'started', recording: recording() } });
+        const { ModalProvider } = await import('@/modal');
+        const { useSessionBrowserRecordingRuntime } = await import('./sessionBrowserRecordingRuntime');
+        function Probe() {
+            const runtime = useSessionBrowserRecordingRuntime({
+                enabled: true, sessionId: 'session_1', machineId: 'machine_1', serverId: 'srv_recording',
+                recordingCapabilities, nowMs: () => 10_000,
+            });
+            return <View>
+                <Text testID="active-recording-id">{runtime?.state.activeRecordingIdByViewId.view_1 ?? 'none'}</Text>
+                <Pressable testID="start-recording" disabled={!runtime}
+                    onPress={() => { void runtime?.browserShellRecording.onStartRecording?.(nativeRecordingRequest); }} />
+            </View>;
+        }
+        const screen = await renderRecordingScreen(<ModalProvider><Probe /></ModalProvider>);
+        await screen.pressByTestIdAsync('start-recording');
+        await waitForHomeGovernance(() => expect(homes.artifacts(homeId).list()).toHaveLength(1));
+        expect(machineRpcMock.start).not.toHaveBeenCalled();
+        expect(screen.findByTestId('active-recording-id')?.props.children).toBe('none');
+        await waitForHomeGovernance(() => expect(screen.findByTestId('approvals.approve')).toBeTruthy());
+        await screen.pressByTestIdAsync('approvals.approve');
+        await waitForHomeGovernance(() => expect(screen.findByTestId('active-recording-id')?.props.children).toBe('recording_1'));
+        expect(screen.findByTestId('approvals.in-place')).toBeNull();
     });
 
     it('retains an Ask-first start until approval settles or its mounted session retires', async () => {

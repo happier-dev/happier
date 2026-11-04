@@ -16,6 +16,7 @@ import {
 } from '@happier-dev/protocol/browser/recording/v1';
 import * as React from 'react';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { useInPlaceApprovalReview } from '@/components/approvals/ApprovalReviewInPlace';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 
 import type { BrowserShellRecordingState } from '@/components/browser/BrowserShell';
@@ -188,7 +189,8 @@ export function useSessionBrowserRecordingRuntime(
     const serverId = typeof params.serverId === 'string' && params.serverId.trim().length > 0
         ? params.serverId.trim()
         : null;
-    const { execute, isCurrent, ready } = useMountedActionExecution(serverId, { retainInvocation: true });
+    const { execute, isCurrent, ready, approval } = useMountedActionExecution(serverId, { retainInvocation: true });
+    const approvalReview = useInPlaceApprovalReview(approval);
     const enabled = params.enabled && machineId != null && presented && ready;
     const nowMs = params.nowMs ?? Date.now;
     const recordingCapabilities = params.recordingCapabilities
@@ -227,7 +229,10 @@ export function useSessionBrowserRecordingRuntime(
         const signal = requestScope.current?.signal;
         if (!signal || signal.aborted) return;
         const pending = startInFlightByViewIdRef.current;
-        if (pending.has(request.viewId)) return;
+        if (pending.has(request.viewId)) {
+            approvalReview.reopen();
+            return;
+        }
         pending.add(request.viewId);
         const startedAtMs = nowMs();
         const captureSource = resolveCaptureSource(request, machineId);
@@ -274,6 +279,7 @@ export function useSessionBrowserRecordingRuntime(
             pending.delete(request.viewId);
         }
     }, [
+        approvalReview.reopen,
         enabled,
         execute,
         isCurrent,
