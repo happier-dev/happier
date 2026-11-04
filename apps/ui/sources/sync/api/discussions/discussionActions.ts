@@ -43,6 +43,7 @@ import { prepareDiscussionAttachmentUpload, requestDiscussionAttachmentUpload, r
 import { requestDiscussionHttp } from './discussionHttp';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { isActionAccountScopeChangedError, isActionEffectResult } from '@/sync/domains/scope/actionAccountScopeError';
+import { createActionApprovalContinuation, type ActionApprovalContinuation } from '@/components/approvals/actionApprovalContinuation';
 
 type DiscussionAction = NonNullable<ActionExecutorDeps['discussionAction']>;
 type DiscussionActionResult<T extends DiscussionActionIdV1> = z.infer<(typeof DISCUSSION_ACTION_OUTPUT_SCHEMAS_V1)[T]>;
@@ -396,9 +397,15 @@ export async function readDiscussionAttentionPage(options: AdapterOptions, input
     }
 }
 
+type DiscussionApprovalCallbacks<T> = Readonly<{
+    onPending: (continuation: ActionApprovalContinuation) => void;
+    onSettled: (outcome: DiscussionClientOutcome<T>) => void;
+}>;
+
 export function createDiscussionClient(options: Readonly<{ scope: ServerAccountScope; availability: SessionCollaborationAvailability }>) {
     const run = async <T extends keyof ClientActionInputs>(actionId: T, input: ClientActionInputs[T], signal?: AbortSignal,
-        onSessionTargetsResolved?: ActionExecutorContext['onSessionTargetsResolved'], attachmentSources?: readonly PreparedAttachmentSource[]): Promise<DiscussionClientOutcome<ClientActionResult<T>>> => {
+        onSessionTargetsResolved?: ActionExecutorContext['onSessionTargetsResolved'], attachmentSources?: readonly PreparedAttachmentSource[],
+        continuation?: DiscussionApprovalCallbacks<ClientActionResult<T>>): Promise<DiscussionClientOutcome<ClientActionResult<T>>> => {
         if (options.availability === 'unavailable') return { kind: 'failed', errorCode: 'unsupported_action' };
         const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
         const result = await createDefaultActionExecutor(attachmentSources ? { discussionAttachmentSources: attachmentSources } : undefined).execute(actionId, input, { surface: 'ui', serverId: options.scope.serverId,
@@ -407,7 +414,15 @@ export function createDiscussionClient(options: Readonly<{ scope: ServerAccountS
             ...(signal ? { signal } : {}) });
         if (!result.ok) return { kind: 'failed', errorCode: result.errorCode };
         const approval = ActionApprovalRequestCreatedResultSchema.safeParse(result.result);
-        if (approval.success) return { kind: 'approval_request_created', artifactId: approval.data.artifactId, actionId: approval.data.actionId };
+        if (approval.success) {
+            continuation?.onPending(createActionApprovalContinuation<ClientActionResult<T>, T>({
+                artifactId: approval.data.artifactId, actionId, scope: options.scope, expectedInput: input,
+                ...(signal ? { signal } : {}), refreshAfterExecution: false,
+                onSucceeded: value => continuation.onSettled({ kind: 'succeeded', value }),
+                onFailed: errorCode => continuation.onSettled({ kind: 'failed', errorCode }),
+            }));
+            return { kind: 'approval_request_created', artifactId: approval.data.artifactId, actionId: approval.data.actionId };
+        }
         const parsed = CLIENT_ACTION_OUTPUT_SCHEMAS[actionId].safeParse(result.result);
         return parsed.success ? { kind: 'succeeded', value: parsed.data as ClientActionResult<T> } : { kind: 'failed', errorCode: 'outcome_unknown' };
     };
@@ -440,7 +455,9 @@ export function createDiscussionClient(options: Readonly<{ scope: ServerAccountS
             } catch { return { kind: 'failed', errorCode: signal?.aborted ? 'canceled' : 'discussion_read_denied' }; }
             finally { account?.dispose(); }
         },
-        secondOpinion: (input: DiscussionActionInputV1ById['discussion.second_opinion.start'], signal?: AbortSignal) => run('discussion.second_opinion.start', input, signal),
+        secondOpinion: (input: DiscussionActionInputV1ById['discussion.second_opinion.start'], signal?: AbortSignal,
+            continuation?: DiscussionApprovalCallbacks<ClientActionResult<'discussion.second_opinion.start'>>) =>
+            run('discussion.second_opinion.start', input, signal, undefined, undefined, continuation),
         list: (input: DiscussionActionInputV1ById['discussion.list'] = {}, signal?: AbortSignal) => run('discussion.list', input, signal),
         listCandidates: (input: DiscussionActionInputV1ById['discussion.candidates.list'], signal?: AbortSignal) => run('discussion.candidates.list', input, signal),
         get: (discussionId: string, signal?: AbortSignal) => run('discussion.get', { discussionId }, signal),
@@ -453,7 +470,8 @@ export function createDiscussionClient(options: Readonly<{ scope: ServerAccountS
             participants?: readonly NonNullable<DiscussionActionInputV1ById['discussion.create']['participants']>[number][];
             attachmentSources?: readonly PreparedAttachmentSource[];
             onResolvedParticipants?: (participants: readonly DiscussionInitialParticipantV1[]) => void;
-            replyTarget?: DiscussionActionInputV1ById['discussion.post']['replyTarget'] }, signal?: AbortSignal): Promise<DiscussionClientOutcome<DiscussionCreateResultV1>> => {
+            replyTarget?: DiscussionActionInputV1ById['discussion.post']['replyTarget'] }, signal?: AbortSignal,
+            continuation?: DiscussionApprovalCallbacks<DiscussionCreateResultV1>): Promise<DiscussionClientOutcome<DiscussionCreateResultV1>> => {
             if ('kind' in input.content && input.content.kind === 'doc_passage_comment') {
                 // The Doc comment owner declares no initial-audience operand.
                 // Never acknowledge invitations that delegation would discard.
@@ -481,7 +499,7 @@ export function createDiscussionClient(options: Readonly<{ scope: ServerAccountS
                 if (resolution.actionId !== 'discussion.create') return;
                 const resolved = DiscussionCreateInputV1Schema.parse(resolution.input);
                 input.onResolvedParticipants?.(DiscussionInitialParticipantsV1Schema.parse(resolved.participants ?? []));
-            }, input.attachmentSources);
+            }, input.attachmentSources, continuation);
         },
         post: (input: Omit<DiscussionActionInputV1ById['discussion.post'], 'mentionedAccountIds' | 'mentionedSessionIds' | 'attachmentSources'> & { mentionedAccountIds?: readonly string[]; mentionedSessionIds?: readonly string[];
             attachmentSources?: readonly PreparedAttachmentSource[] }, signal?: AbortSignal) => {
