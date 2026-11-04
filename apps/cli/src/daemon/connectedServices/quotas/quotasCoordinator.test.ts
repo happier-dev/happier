@@ -38,9 +38,6 @@ import {
   sealProviderAccountUsageSnapshot,
   sealQualifiedConnectedAccountContentEnvelope,
 } from '@happier-dev/protocol';
-import {
-  sealLegacyConnectedServiceQuotaSnapshotFixtureCiphertext,
-} from '@happier-dev/protocol/testing/accountScopedCipherFixtures';
 import type {
   BuiltInLegacyConnectedAccountOperation,
   ConnectedAccountServiceKey,
@@ -241,7 +238,6 @@ type QualifiedProviderAccountUsageWriteArgs = Readonly<{
 }>;
 type FetchArgs = Parameters<ConnectedServiceQuotaFetcher['loadQuota']>[0];
 type SealedCredentialResponse = NonNullable<Awaited<ReturnType<QuotaApi['getConnectedServiceCredentialSealed']>>>;
-type SealedQuotaSnapshotResponse = NonNullable<Awaited<ReturnType<QuotaApi['getConnectedServiceQuotaSnapshotSealed']>>>;
 type ConnectedServiceAuthGroupResponse = ConnectedServiceAuthGroupV1;
 type LegacyQualifiedConnectedAccountGroupReader = (params: Readonly<{
   service: { pluginId: string; localId: string };
@@ -1665,99 +1661,31 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     ).not.toHaveBeenCalled();
   });
 
-  it('does not start a legacy quota fetch after the peer changes while acquiring its lease', async () => {
-    const now = 1_000_000;
-    let peerClass:
-      | 'revisioned_v2_v3'
-      | 'advertised_v4' = 'revisioned_v2_v3';
-    const record = buildConnectedServiceCredentialRecord({
-      now,
-      serviceId: 'openai-codex',
-      profileId: 'work',
-      kind: 'oauth',
-      expiresAt: now + 60_000,
-      oauth: {
-        accessToken: 'access',
-        refreshToken: 'refresh',
-        idToken: null,
-        scope: null,
-        tokenType: null,
-        providerAccountId: 'acct',
-        providerEmail: 'user@example.com',
-      },
-    });
+  it('does not schedule quota polling for an idle scalar binding without a qualified owner', async () => {
     const loadQuota = vi.fn(async () => null);
     const coordinator = new ConnectedServiceQuotasCoordinator({
       api: {
-        getAccountEncryptionMode:
-          vi.fn(async () => 'plain' as const),
-        getConnectedServiceCredentialPlain: vi.fn(async () => ({
-          content: { t: 'plain' as const, v: record },
-          revisionSemantics: 'revisioned' as const,
-          credentialRevision:
-            'csr_0123456789ABCDEFGHJKMNPQRS',
-        })),
-        getConnectedServiceQuotaSnapshotPlain:
-          vi.fn(async () => null),
-        getConnectedServiceQuotaSnapshotSealed:
-          vi.fn(async () => null),
-        getConnectedServiceCredentialSealed:
-          vi.fn(async () => null),
-        acquireConnectedServiceRefreshLease: vi.fn(async () => {
-          peerClass = 'advertised_v4';
-          return {
-            acquired: true,
-            leaseUntil: now + 30_000,
-          };
-        }),
-      } as unknown as QuotaApi,
-      credentials: {
-        token: 'happy-token',
-        encryption: {
-          type: 'legacy',
-          secret: new Uint8Array(32).fill(9),
-        },
+        getAccountEncryptionMode: async () => 'plain',
+        getConnectedServiceQuotaSnapshotSealed: async () => null,
+        getConnectedServiceCredentialSealed: async () => null,
       },
-      quotaFetchers: [{
-        serviceId: 'openai-codex',
-        loadQuota,
-      }],
-      now: () => now,
-      randomBytes: (length) =>
-        new Uint8Array(length).fill(7),
-      machineIdProvider: () => 'machine-1',
+      credentials: { token: 'happy-token', encryption: null },
+      quotaFetchers: [{ serviceId: 'openai-codex', loadQuota }],
+      now: () => 1_000_000,
+      randomBytes: (length) => new Uint8Array(length).fill(7),
       discoveryEnabled: false,
-      qualifiedConnectedAccountRuntime: {
-        resolvePeerClass: () => peerClass,
-        resolveOperationTransport: () =>
-          peerClass === 'revisioned_v2_v3'
-            ? {
-                kind: 'legacy' as const,
-                peerClass,
-                serviceId: 'openai-codex' as const,
-              }
-            : { kind: 'v4' as const },
-        establishedRuntimeOwner: {
-          invokeWithReceipt: vi.fn(),
-        },
-        listScheduledAccounts: vi.fn(async () => []),
-      } as unknown as QualifiedConnectedAccountQuotaRuntime,
     });
     coordinator.registerSpawnTarget({
       pid: 123,
       connectedServicesBindingsRaw: {
         v: 1,
         bindingsByServiceId: {
-          'openai-codex': {
-            source: 'connected',
-            profileId: 'work',
-          },
+          'openai-codex': { source: 'connected', profileId: 'work' },
         },
       },
     });
 
-    await coordinator.tickOnce();
-
+    await expect(coordinator.tickOnce()).resolves.toEqual({ nextAutomaticRunAfterMs: null });
     expect(loadQuota).not.toHaveBeenCalled();
   });
 
@@ -3278,170 +3206,6 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     expect(writeProviderAccountUsage).not.toHaveBeenCalled();
   });
 
-  it('opens predecessor-rich V2 quota ciphertext through the legacy boundary codec', () => {
-    const secret = new Uint8Array(32).fill(9);
-    const payload = {
-      v: 1,
-      serviceId: 'openai-codex',
-      profileId: 'work',
-      fetchedAt: 1_000,
-      staleAfterMs: 300_000,
-      planLabel: null,
-      accountLabel: null,
-      recoveryCredits: {
-        kind: 'usage_limit_resets',
-        availableCount: 1,
-        totalCount: 1,
-        credits: [{
-          providerCreditId: 'credit-1',
-          kind: 'rate_limit_reset',
-          status: 'available',
-          providerResetType: 'five_hour',
-        }],
-      },
-      meters: [],
-    };
-    const ciphertext =
-      sealLegacyConnectedServiceQuotaSnapshotFixtureCiphertext({
-      material: { type: 'legacy', secret },
-      payload,
-      randomBytes: (length) => new Uint8Array(length).fill(6),
-      });
-    const coordinator = new ConnectedServiceQuotasCoordinator({
-      api: {
-        getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
-        getConnectedServiceCredentialSealed: vi.fn(async () => null),
-      },
-      credentials: {
-        token: 'happy-token',
-        encryption: { type: 'legacy', secret },
-      },
-      quotaFetchers: [],
-      now: () => 1_000,
-      randomBytes: (length) => new Uint8Array(length).fill(6),
-    });
-    const owner = coordinator as unknown as Readonly<{
-      openExistingQuotaSnapshot(input: Readonly<{
-        accountMode: 'e2ee';
-        existing: SealedQuotaSnapshotResponse;
-        material: { type: 'legacy'; secret: Uint8Array };
-      }>): ConnectedServiceQuotaSnapshotV1 | null;
-    }>;
-
-    expect(owner.openExistingQuotaSnapshot({
-      accountMode: 'e2ee',
-      existing: {
-        sealed: { format: 'account_scoped_v1', ciphertext },
-        metadata: {
-          fetchedAt: 1_000,
-          staleAfterMs: 300_000,
-          status: 'ok',
-        },
-      },
-      material: { type: 'legacy', secret },
-    })).toMatchObject({
-      recoveryCredits: {
-        availableCount: 1,
-        credits: [{
-          id: 'credit-1',
-          kind: 'rate_limit_reset',
-          status: 'available',
-        }],
-      },
-    });
-  });
-
-  it('distinguishes absent quota snapshots from retained corrupt or locked authoritative content', () => {
-    const secret = new Uint8Array(32).fill(9);
-    const coordinator = new ConnectedServiceQuotasCoordinator({
-      api: {
-        getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
-        getConnectedServiceCredentialSealed: vi.fn(async () => null),
-      },
-      credentials: {
-        token: 'happy-token',
-        encryption: { type: 'legacy', secret },
-      },
-      quotaFetchers: [],
-      now: () => 1_000,
-      randomBytes: (length) => new Uint8Array(length).fill(6),
-    });
-    const owner = coordinator as unknown as Readonly<{
-      openExistingQuotaSnapshot(input: Readonly<{
-        accountMode: 'plain' | 'e2ee';
-        existing: SealedQuotaSnapshotResponse | Readonly<{
-          content: { t: 'plain'; v: unknown };
-          metadata: {
-            fetchedAt: number;
-            staleAfterMs: number;
-            status: 'ok';
-          };
-        }> | null;
-        material: { type: 'legacy'; secret: Uint8Array } | null;
-      }>): ConnectedServiceQuotaSnapshotV1 | null;
-    }>;
-
-    expect(owner.openExistingQuotaSnapshot({
-      accountMode: 'plain',
-      existing: null,
-      material: null,
-    })).toBeNull();
-    expect(() => owner.openExistingQuotaSnapshot({
-      accountMode: 'plain',
-      existing: {
-        content: { t: 'plain', v: { v: 999 } },
-        metadata: {
-          fetchedAt: 1_000,
-          staleAfterMs: 300_000,
-          status: 'ok',
-        },
-      },
-      material: null,
-    })).toThrow(expect.objectContaining({
-      code: 'connected_service_stored_content_unavailable',
-      reason: 'stored_content_corrupt',
-      contentKind: 'quota_snapshot',
-    }));
-    expect(() => owner.openExistingQuotaSnapshot({
-      accountMode: 'e2ee',
-      existing: {
-        sealed: {
-          format: 'account_scoped_v1',
-          ciphertext: 'retained-e2ee-ciphertext',
-        },
-        metadata: {
-          fetchedAt: 1_000,
-          staleAfterMs: 300_000,
-          status: 'ok',
-        },
-      },
-      material: null,
-    })).toThrow(expect.objectContaining({
-      code: 'connected_service_stored_content_unavailable',
-      reason: 'encryption_material_unavailable',
-      contentKind: 'quota_snapshot',
-    }));
-    expect(() => owner.openExistingQuotaSnapshot({
-      accountMode: 'e2ee',
-      existing: {
-        sealed: {
-          format: 'account_scoped_v1',
-          ciphertext: 'authentication-failed-ciphertext',
-        },
-        metadata: {
-          fetchedAt: 1_000,
-          staleAfterMs: 300_000,
-          status: 'ok',
-        },
-      },
-      material: { type: 'legacy', secret },
-    })).toThrow(expect.objectContaining({
-      code: 'connected_service_stored_content_unavailable',
-      reason: 'stored_content_corrupt',
-      contentKind: 'quota_snapshot',
-    }));
-  });
-
   it('does not refresh or replace an authoritative stale corrupt quota snapshot', async () => {
     const now = 1_000_000;
     const record = buildConnectedServiceCredentialRecord({
@@ -3887,7 +3651,6 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       quotaFetchers: [fetcher],
       now: () => now,
       randomBytes: (length: number) => randomBytes(length),
-      machineIdProvider: () => 'machine-1',
     });
     coordinator.registerSpawnTarget({
       pid: 123,

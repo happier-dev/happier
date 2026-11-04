@@ -680,16 +680,6 @@ export async function startDaemonConnectedServiceRuntime(
       failureBackoffJitterPct,
       quotaPersistenceMaxConsecutiveFailures,
     } = resolveConnectedServiceQuotasDaemonOptions(params.processEnv);
-    const quotaFetchLeaseMs = resolvePositiveIntEnv(
-      params.processEnv.HAPPIER_CONNECTED_SERVICES_QUOTA_FETCH_LEASE_MS,
-      30_000,
-      { min: 1_000, max: 5 * 60_000 },
-    );
-    const quotaFetchLeaseContentionWaitMaxMs = resolvePositiveIntEnv(
-      params.processEnv.HAPPIER_CONNECTED_SERVICES_QUOTA_FETCH_LEASE_CONTENTION_WAIT_MAX_MS,
-      5_000,
-      { min: 0, max: 60_000 },
-    );
     const groupSwitchCheckMinIntervalMs = resolvePositiveIntEnv(
       params.processEnv.HAPPIER_CONNECTED_SERVICES_QUOTA_GROUP_SWITCH_CHECK_MIN_INTERVAL_MS,
       60_000,
@@ -764,10 +754,6 @@ export async function startDaemonConnectedServiceRuntime(
       failureBackoffMinMs,
       failureBackoffMaxMs,
       failureBackoffJitterPct,
-      machineIdProvider: () => params.machineId,
-      ownerIdProvider: () => `${params.machineId}:${params.runtimeId}`,
-      quotaFetchLeaseMs,
-      quotaFetchLeaseContentionWaitMaxMs,
       runtimeQuotaSnapshots: connectedServiceQuotaRuntimeSnapshots,
       accountUsageStore: params.providerAccountUsageStore,
       runtimeRegistry: connectedServiceRuntimeRegistry,
