@@ -4,7 +4,7 @@ import { machineSetup } from '@happier-dev/cli-common';
 import { MachineEffectInternalRequestSchema } from '@/machines/setup/effectInternalProtocol';
 import type { MachineElevationSpawn } from '@/machines/adminAccess/runElevatedEffect';
 import { expect, it, onTestFinished, vi } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resolveInstalledMachineEffectCli } from '@/machines/adminAccess/runElevatedEffect';
@@ -12,9 +12,83 @@ import { getMachineSetupDesiredV1 } from '@happier-dev/protocol';
 import type { DeploymentEnvironmentContentV1 } from '@happier-dev/deployment-protocol';
 import { createOwnServerDeploymentRuntimeForHost } from './ownServerDeploymentHostRuntime';
 import { createNativeCaddyRoutes } from '@/machines/reachability/nativeCaddyRoutes';
+import { createServer } from 'node:http';
+
+// Translate the native socket namespace at the OS/HTTP boundaries. Keep real
+// filesystem notifications, Unix transport and Caddy readiness beneath setup.
+const caddySocketFs = vi.hoisted(() => ({ directory: '' }));
+vi.mock('node:fs', async importOriginal => {
+    const actual = await importOriginal<typeof import('node:fs')>();
+    return { ...actual, watch: new Proxy(actual.watch, { apply(target, receiver, args) {
+        const path: unknown = args[0];
+        if (caddySocketFs.directory && typeof path === 'string' && path === '/run/happier-caddy') args[0] = caddySocketFs.directory;
+        return Reflect.apply(target, receiver, args);
+    } }) };
+});
+vi.mock('node:http', async importOriginal => {
+    const actual = await importOriginal<typeof import('node:http')>();
+    return { ...actual, request: new Proxy(actual.request, { apply(target, receiver, args) {
+        const options: unknown = args[0];
+        if (caddySocketFs.directory && options && typeof options === 'object' && 'socketPath' in options
+            && options.socketPath === '/run/happier-caddy/admin.sock') {
+            args[0] = { ...options, socketPath: `${caddySocketFs.directory}/admin.sock` };
+        }
+        return Reflect.apply(target, receiver, args);
+    } }) };
+});
 
 const environment: DeploymentEnvironmentContentV1 = { name: 'Staging', retainPreviousDeployments: 1, bindings: [],
-    definition: { kind: 'repository', ref: 'main', compose: { path: 'compose.yaml', profiles: [], services: [] } } };
+    definition: { kind: 'repository', ref: 'main', compose: { path: 'compose.yaml', profiles: [], services: [] } },
+    ingress: { kind: 'cloudflareTunnel' } };
+
+it.skipIf(process.platform === 'win32')('upgrades the exact retained Happier private seed for public ingress without claiming custom seed content', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'domain-caddy-seed-'));
+    onTestFinished(() => rm(root, { recursive: true, force: true }));
+    // Captured from eadc2422, 2026-11-02 #36; SHA256 c217df0245baab3a0f36d34716b201c5bc3a5ace4f2340cd0788b495b5f66ba9.
+    const retainedSeed = '{"admin":{"listen":"unix//run/happier-caddy/admin.sock|0660","config":{"persist":true}},"apps":{"http":{"servers":{"happier_private":{"listen":[":8080"],"automatic_https":{"disable":true},"routes":[{"handle":[{"handler":"static_response","status_code":404}],"terminal":true}],"errors":{"routes":[]}}}}}}';
+    const runtime = createOwnServerDeploymentRuntimeForHost({ credentials: { token: 'fixture', encryption: null },
+        serverId: 'home', serverHttpBaseUrl: 'https://home.test', machineId: 'machine',
+        resolveRequesterIdentity: async () => ({ kind: 'unknown', reason: 'requester_authority_unavailable' }),
+        async acquirePluginRuntimeRegistryLease() { throw new Error('Uses deployed service facts'); } });
+    const prepared = runtime.prepareDomainCaddy!({
+        domain: { hostname: 'app.example.test', target: { service: 'web', containerPort: 80 } },
+        environment: { ...environment, ingress: undefined },
+        replicas: [{ containerName: 'deployed-web-1', networkNames: ['deployed_default'] }],
+        privateNetworks: [], daemonGroup: 'happier', daemonGroupId: process.getgid!(),
+    });
+    if (prepared.status !== 'ready') throw new Error('Expected public Caddy preparation');
+    const produced = prepared.steps.find(step => step.kind === 'file');
+    if (!produced || produced.kind !== 'file') throw new Error('Expected Caddy seed file');
+    // Only the filesystem location and getent OS boundary differ from the real host.
+    const step = { ...produced, path: join(root, 'initial.json') };
+    const backend = machineSetup.createMachineSetupNativeBackend({ run: async command => {
+        if (command.executable !== 'getent') throw new Error('Seed upgrade must not run a native service command');
+        return { code: 0, stdout: command.args.includes('passwd')
+            ? `root:x:${process.getuid!()}:${process.getgid!()}::/root:/bin/sh\n`
+            : `happier:x:${process.getgid!()}:\n`, stderr: '' };
+    } });
+    const basis = { kind: 'bootstrap' as const, managedId: 'seed-fixture', operationId: 'seed-upgrade', admittedInputDigest: 'a'.repeat(64) };
+    const autosave = join(root, 'config', 'caddy', 'autosave.json');
+    await mkdir(join(root, 'config', 'caddy'), { recursive: true });
+    await writeFile(autosave, 'retained live routes and certificate state');
+    await writeFile(step.path, retainedSeed);
+    await chmod(step.path, 0o600);
+    const plan = await machineSetup.checkMachineSetupEffectPlan({ basis, steps: [step], backend });
+    expect(plan.nativeFacts).toMatchObject([{ stepId: 'caddy-initial-config', status: 'drifted' }]);
+    expect(await machineSetup.applyMachineSetupEffectPlan({ plan, backend })).toMatchObject({ status: 'applied' });
+    expect(await readFile(step.path, 'utf8')).toBe(prepared.input.initialConfig);
+    expect(await backend.observe(step)).toMatchObject({ status: 'satisfied' });
+    expect(await readFile(autosave, 'utf8')).toBe('retained live routes and certificate state');
+    const repeat = await machineSetup.checkMachineSetupEffectPlan({ basis, steps: [step], backend });
+    expect(repeat.nativeFacts).toMatchObject([{ status: 'satisfied' }]);
+    expect(await machineSetup.applyMachineSetupEffectPlan({ plan: repeat, backend })).toMatchObject({ status: 'applied' });
+
+    const customSeed = retainedSeed.replace('404', '200');
+    await writeFile(step.path, customSeed);
+    expect(await backend.observe(step)).toMatchObject({ status: 'unavailable', reason: 'foreign_effect_conflict' });
+    await expect(backend.apply(step)).rejects.toMatchObject({ reasonCode: 'foreign_effect_conflict' });
+    expect(await readFile(step.path, 'utf8')).toBe(customSeed);
+});
 
 it('assembles the Machine Caddy origin independently of the unpublished workload port', async () => {
     const runtime = createOwnServerDeploymentRuntimeForHost({ credentials: { token: 'fixture', encryption: null },
@@ -83,7 +157,7 @@ it('prepares Caddy without ingress and preserves the Admin Access None refusal b
         async acquirePluginRuntimeRegistryLease() { throw new Error('Uses the deployed service facts'); } });
     const prepared = runtime.prepareDomainCaddy!({
         domain: { hostname: 'app.example.test', target: { service: 'web', containerPort: 80 } },
-        environment, replicas: [{ containerName: 'deployed-web-1', networkNames: ['deployed_default'] }],
+        environment: { ...environment, ingress: undefined }, replicas: [{ containerName: 'deployed-web-1', networkNames: ['deployed_default'] }],
         privateNetworks: [], daemonGroup: 'happier', daemonGroupId: 1001,
     });
     expect(prepared.status).toBe('ready');
@@ -109,7 +183,7 @@ it('prepares Caddy without ingress and preserves the Admin Access None refusal b
 });
 
 
-it.each(['preauthorized', 'ask', 'failed-setup'] as const)('runs the canonical Caddy setup and native container leaf with %s administrator access', async mode => {
+it.skipIf(process.platform === 'win32').each(['preauthorized', 'ask', 'failed-setup'] as const)('runs the canonical Caddy setup and native container leaf with %s administrator access', async mode => {
     const runtime = createOwnServerDeploymentRuntimeForHost({ credentials: { token: 'fixture', encryption: null },
         serverId: 'home', serverHttpBaseUrl: 'https://home.test', machineId: `machine-${mode}`,
         resolveRequesterIdentity: async () => ({ kind: 'unknown', reason: 'requester_authority_unavailable' }),
@@ -120,6 +194,15 @@ it.each(['preauthorized', 'ask', 'failed-setup'] as const)('runs the canonical C
         privateNetworks: [], daemonGroup: 'happier', daemonGroupId: 1001,
     });
     if (prepared.status !== 'ready') throw new Error('Expected the container Caddy leaf');
+    const socketDirectory = await mkdtemp('/tmp/hcr-');
+    caddySocketFs.directory = socketDirectory;
+    const server = createServer((_request, response) => response.end(prepared.input.initialConfig));
+    await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(join(socketDirectory, 'admin.sock'), resolve); });
+    onTestFinished(async () => {
+        caddySocketFs.directory = '';
+        await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+        await rm(socketDirectory, { recursive: true, force: true });
+    });
     let prompts = 0;
     const failures: unknown[] = [];
     const dockerCommands: string[][] = [];
@@ -182,6 +265,11 @@ it.each(['preauthorized', 'ask', 'failed-setup'] as const)('runs the canonical C
             if (command.args[0] === 'container' && command.args[1] === 'ls') return { code: 0, stdout: '', stderr: '' };
             if (command.args[0] === 'container' && command.args[1] === 'create') return { code: 0, stdout: 'owned-caddy', stderr: '' };
             if (command.args[0] === 'container' && command.args[1] === 'start') return { code: 0, stdout: 'owned-caddy', stderr: '' };
+            if (command.args[0] === 'container' && command.args[1] === 'wait') return new Promise(resolve => {
+                const abort = () => resolve({ code: 1, stdout: '', stderr: '' });
+                if (command.signal?.aborted) abort();
+                else command.signal?.addEventListener('abort', abort, { once: true });
+            });
             throw new Error('Unexpected Docker command');
         },
     });

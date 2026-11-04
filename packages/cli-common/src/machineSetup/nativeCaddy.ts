@@ -4,6 +4,8 @@ import { runMachineSetupNativeCommand, type MachineSetupNativeCommand, type Mach
 import { isIP } from 'node:net';
 import { dirname, join, posix } from 'node:path';
 import { readFile } from 'node:fs/promises';
+import { watch } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { request } from 'node:http';
 import type { MachinePrivateNetworkObservationV1 } from '@happier-dev/protocol/plugins/contributions/accessProviders';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
@@ -20,7 +22,29 @@ export type NativeCaddySetupInput = Readonly<{
 }>;
 export type NativeCaddyContainerResult = Readonly<{ status: 'ready'; containerId: string }>
     | Readonly<{ status: 'needs_setup' }>
-    | Readonly<{ status: 'unavailable'; reason: 'foreign_effect_conflict' | 'required_fact_unavailable' | 'private_scope_unenforceable' | 'native_effect_failed' }>;
+    | Readonly<{ status: 'unavailable'; reason: 'foreign_effect_conflict' | 'required_fact_unavailable' | 'private_scope_unenforceable' | 'native_effect_failed'; details?: NativeCaddyFailureDetails }>;
+type NativeCaddyFailureDetails = Readonly<{
+    failure: Readonly<{ kind: 'native_observation_unavailable' | 'native_effect_failed';
+        reason: 'required_fact_unavailable' | 'native_effect_failed'; requiredFact: keyof typeof caddyFactRemedies; errorCode?: string }>;
+    remedy: string;
+}>;
+const caddyFactRemedies = {
+    caddyContainer: 'Restore access to the selected Docker engine and inspect the owned Caddy container before retrying.',
+    caddyMountedSeed: 'Restore daemon-group read access to the owned Caddy seed and its mounted state directory before retrying.',
+    caddyAdminSocket: 'Configure the owned Caddy admin API on its mounted Unix socket, with daemon-group access, before retrying.',
+    caddyAdminConfig: 'Check Caddy startup and daemon-group access to its mounted Unix admin socket. Retry the Domain action after Caddy serves its live configuration; preserve the owned container for reconciliation.',
+    caddyPublishedBindings: 'Restore Docker observation of the owned Caddy TCP publications before retrying.',
+    caddyListeners: 'Inspect the live Caddy HTTP listener configuration before retrying.',
+};
+function caddyFactUnavailable(requiredFact: keyof typeof caddyFactRemedies, error?: unknown) {
+    const code = typeof error === 'string' ? error : object(error)?.code;
+    const errorCode = typeof code === 'string' && /^(?:E[A-Z]+|HTTP_\d{3})$/.test(code) ? code : undefined;
+    return { status: 'unavailable' as const, reason: 'required_fact_unavailable' as const, details: {
+        failure: { kind: 'native_observation_unavailable' as const, reason: 'required_fact_unavailable' as const,
+            requiredFact, ...(errorCode ? { errorCode } : {}) },
+        remedy: `Required fact ${requiredFact} is unavailable. ${caddyFactRemedies[requiredFact]}`,
+    } };
+}
 export const nativeCaddyImage = 'docker.io/library/caddy@sha256:c3d7ee5d2b11f9dc54f947f68a734c84e9c9666c92c88a7f30b9cba5da182adb';
 /** caddy@1's reviewed default, not a workload port or a port allocator. */
 export const nativeCaddyProfile = {
@@ -28,6 +52,10 @@ export const nativeCaddyProfile = {
     stateDirectory: '/var/lib/happier/caddy', adminDirectory: '/run/happier-caddy',
     portRequirement: { id: 'caddy-private-origin', exposure: 'privateNetwork', protocol: 'tcp',
         containerPort: 8080, hostPort: 8080 },
+    publicPortRequirements: [
+        { id: 'caddy-public-http', exposure: 'public', protocol: 'tcp', containerPort: 80, hostPort: 80 },
+        { id: 'caddy-public-https', exposure: 'public', protocol: 'tcp', containerPort: 443, hostPort: 443 },
+    ],
 } as const;
 
 export function createNativeCaddySetupInput(input: Readonly<{
@@ -42,7 +70,8 @@ export function createNativeCaddySetupInput(input: Readonly<{
     };
 }
 
-export function createCaddyContainerSetupSteps(input: NativeCaddySetupInput): MachineRecipeStepV1[] {
+export function createCaddyContainerSetupSteps(input: NativeCaddySetupInput,
+    options: Readonly<{ previousInitialConfig?: string }> = {}): MachineRecipeStepV1[] {
     return [
         { ...machineStateRootStep, path: dirname(input.stateDirectory) },
         { id: 'caddy-state-directory', kind: 'directory', path: input.stateDirectory, owner: 'root', group: input.daemonGroup, mode: 0o750 },
@@ -51,6 +80,9 @@ export function createCaddyContainerSetupSteps(input: NativeCaddySetupInput): Ma
         })),
         { id: 'caddy-admin-directory', kind: 'directory', path: input.adminDirectory, owner: 'root', group: input.daemonGroup, mode: 0o750 },
         { id: 'caddy-initial-config', kind: 'file', path: join(input.stateDirectory, 'initial.json'), owner: 'root', group: input.daemonGroup, mode: 0o640,
+            ...(options.previousInitialConfig !== undefined ? {
+                expectedContentDigest: createHash('sha256').update(options.previousInitialConfig).digest('hex'),
+            } : {}),
             content: { kind: 'literal', value: input.initialConfig } },
     ];
 }
@@ -99,7 +131,7 @@ export type NativeCaddyObservationResult = Readonly<{
     containerOrigins?: readonly Readonly<{ serverId: string; networkName: string; service: string }>[];
     privateOrigins?: readonly Readonly<{ serverId: string; endpoint: string; network: MachinePrivateNetworkObservationV1 }>[];
 }> | Readonly<{ status: 'needs_setup' }> | Readonly<{ status: 'stopped'; containerId: string }>
-    | Readonly<{ status: 'unavailable'; reason: 'required_fact_unavailable' | 'foreign_effect_conflict' }>;
+    | Readonly<{ status: 'unavailable'; reason: 'required_fact_unavailable' | 'foreign_effect_conflict'; details?: NativeCaddyFailureDetails }>;
 type NativeOptions = Readonly<{ run?: (command: MachineSetupNativeCommand) => Promise<MachineSetupNativeCommandResult>; signal?: AbortSignal }>;
 type ContainerInput = Readonly<{ dockerHost?: string; containerName?: string }>;
 
@@ -274,27 +306,32 @@ export async function observeNativeCaddyContainer(input: ContainerInput & Readon
     privateBinding?: NativeCaddySetupInput['privateBinding'];
 }>,
     options: NativeOptions = {}): Promise<NativeCaddyObservationResult> {
+    let requiredFact: keyof typeof caddyFactRemedies = 'caddyContainer';
     try {
         const container = await inspectOwnedContainer(input, nativeDocker(input, options));
-        if (container.status !== 'observed') return container;
+        if (container.status !== 'observed') return container.status === 'unavailable' && container.reason === 'required_fact_unavailable'
+            ? caddyFactUnavailable(requiredFact) : container;
         if (!container.running) return { status: 'stopped', containerId: container.containerId };
         const configPath = mountedPath(container.host, '/etc/caddy/happier.json');
         if (!configPath) return { status: 'unavailable', reason: 'foreign_effect_conflict' };
+        requiredFact = 'caddyMountedSeed';
         const seed = object(JSON.parse(await readFile(configPath, 'utf8')) as unknown);
+        if (!seed) return caddyFactUnavailable(requiredFact);
         const socketPath = seed && adminSocket(container.host, seed);
-        if (!socketPath) return { status: 'unavailable', reason: 'required_fact_unavailable' };
+        if (!socketPath) return caddyFactUnavailable('caddyAdminSocket');
+        requiredFact = 'caddyAdminConfig';
         const response = await createNativeCaddyAdminExchange(socketPath)({ method: 'GET', path: '/config/', signal: options.signal });
+        if (response.status !== 200) return caddyFactUnavailable(requiredFact, `HTTP_${response.status}`);
         const config = response.status === 200 ? object(response.value) : undefined;
         const httpServers = object(object(object(config?.apps)?.http)?.servers);
         const endpoints = publishedEndpoints(container.ports);
-        if (!config || adminSocket(container.host, config) !== socketPath || !httpServers || !endpoints) {
-            return { status: 'unavailable', reason: 'required_fact_unavailable' };
-        }
+        if (!config || adminSocket(container.host, config) !== socketPath || !httpServers) return caddyFactUnavailable(requiredFact);
+        if (!endpoints) return caddyFactUnavailable('caddyPublishedBindings');
         const servers: NativeCaddyServerObservation[] = [];
         for (const [serverId, value] of Object.entries(httpServers)) {
             const server = object(value);
             if (!server || !Array.isArray(server.listen) || !server.listen.every((value): value is string => typeof value === 'string')) {
-                return { status: 'unavailable', reason: 'required_fact_unavailable' };
+                return caddyFactUnavailable('caddyListeners');
             }
             const ports = server.listen.map(listener => listenerPort(listener, container.networks));
             servers.push({ serverId, listen: server.listen, tls: Array.isArray(server.tls_connection_policies) && server.tls_connection_policies.length > 0,
@@ -334,9 +371,9 @@ export async function observeNativeCaddyContainer(input: ContainerInput & Readon
                     && network.interfaceName === privateBinding.interfaceName && network.addresses.includes(endpoint.hostAddress)).map(network => ({ serverId: server.serverId,
                         endpoint: `${isIP(endpoint.hostAddress) === 6 ? `[${endpoint.hostAddress}]` : endpoint.hostAddress}:${endpoint.hostPort}`, network })))) } : {}),
         };
-    } catch {
+    } catch (error) {
         options.signal?.throwIfAborted();
-        return { status: 'unavailable', reason: 'required_fact_unavailable' };
+        return caddyFactUnavailable(requiredFact, error);
     }
 }
 function mounts(input: NativeCaddySetupInput) {
@@ -345,6 +382,64 @@ function mounts(input: NativeCaddySetupInput) {
         { source: input.adminDirectory, target: '/run/happier-caddy', readOnly: false },
         { source: join(input.stateDirectory, 'initial.json'), target: '/etc/caddy/happier.json', readOnly: true },
     ];
+}
+
+/** Docker start acknowledges the process, not its admin API. Observe socket
+ * creation/chmod and container exit under the admitted operation's cancellation;
+ * no polling, retry budget or competing readiness deadline is introduced. */
+async function startNativeCaddyContainer(input: NativeCaddySetupInput, containerId: string, options: NativeOptions): Promise<NativeCaddyContainerResult> {
+    const seed = object(JSON.parse(input.initialConfig) as unknown);
+    const host = { Mounts: mounts(input).map(mount => ({ Type: 'bind', Source: mount.source, Target: mount.target })) };
+    const socketPath = seed && adminSocket(host, seed);
+    if (!socketPath) return caddyFactUnavailable('caddyAdminSocket');
+    let changed = false, wake: (() => void) | undefined, watchError: unknown;
+    const notify = () => { changed = true; wake?.(); };
+    const lifetime = new AbortController();
+    let watcher: ReturnType<typeof watch>;
+    try { watcher = watch(dirname(socketPath), notify); }
+    catch (error) { return caddyFactUnavailable('caddyAdminSocket', error); }
+    watcher.on('error', error => { watchError = error; lifetime.abort(); notify(); });
+    const abort = () => { lifetime.abort(options.signal?.reason); notify(); };
+    options.signal?.addEventListener('abort', abort, { once: true });
+    let exited: MachineSetupNativeCommandResult | undefined, exitError: unknown;
+    let exit: Promise<void> | undefined;
+    try {
+        options.signal?.throwIfAborted();
+        if ((await nativeDocker(input, options)(['container', 'start', '--', containerId])).code !== 0) {
+            return { status: 'unavailable', reason: 'native_effect_failed' };
+        }
+        exit = nativeDocker(input, { ...options, signal: lifetime.signal })(['container', 'wait', '--', containerId])
+            .then(result => { exited = result; lifetime.abort(); notify(); }, error => { exitError = error; lifetime.abort(); notify(); });
+        const exchange = createNativeCaddyAdminExchange(socketPath);
+        while (true) {
+            options.signal?.throwIfAborted();
+            if (watchError) return caddyFactUnavailable('caddyAdminSocket', watchError);
+            if (exitError || exited?.code !== undefined && exited.code !== 0) return caddyFactUnavailable('caddyContainer', exitError ?? exited?.errorCode);
+            if (exited) return { status: 'unavailable', reason: 'native_effect_failed', details: {
+                failure: { kind: 'native_effect_failed', reason: 'native_effect_failed', requiredFact: 'caddyAdminConfig' },
+                remedy: 'Caddy exited before caddyAdminConfig became available. Inspect Caddy startup logs and correct the startup failure before retrying; preserve its owned state for reconciliation.',
+            } };
+            changed = false;
+            try {
+                const response = await exchange({ method: 'GET', path: '/config/', signal: lifetime.signal });
+                if (response.status !== 200) return caddyFactUnavailable('caddyAdminConfig', `HTTP_${response.status}`);
+                if (!object(response.value)) return caddyFactUnavailable('caddyAdminConfig');
+                return { status: 'ready', containerId };
+            } catch (error) {
+                options.signal?.throwIfAborted();
+                if (lifetime.signal.aborted) continue;
+                const code = object(error)?.code;
+                if (code !== 'ENOENT' && code !== 'ECONNREFUSED') return caddyFactUnavailable('caddyAdminConfig', error);
+                if (!changed) await new Promise<void>(resolve => { wake = resolve; });
+                wake = undefined;
+            }
+        }
+    } finally {
+        watcher.close();
+        options.signal?.removeEventListener('abort', abort);
+        lifetime.abort();
+        await exit;
+    }
 }
 function portBindings(exposures: readonly NativeCaddyFirewallExposure[]) {
     const ports: Record<string, Array<{ HostIp: string; HostPort: string }>> = {};
@@ -365,6 +460,41 @@ function matchingPorts(actual: unknown, expected: ReturnType<typeof portBindings
                     return item?.HostIp === binding.HostIp && item.HostPort === binding.HostPort;
                 }));
         });
+}
+
+/** PUT creates only missing keys; it cannot overwrite another Domain's config.
+ * Caddy persists these additions for --resume: https://caddyserver.com/docs/api#put-configpath */
+async function ensurePublicCaddyConfig(input: NativeCaddySetupInput, host: Record<string, unknown>, options: NativeOptions): Promise<boolean> {
+    if (!input.publicBindings?.length) return true;
+    const seed = object(JSON.parse(input.initialConfig) as unknown);
+    const socketPath = seed && adminSocket(host, seed);
+    if (!seed || !socketPath) return false;
+    const exchange = createNativeCaddyAdminExchange(socketPath);
+    const response = await exchange({ method: 'GET', path: '/config/', signal: options.signal });
+    const current = response.status === 200 ? object(response.value) : undefined;
+    const apps = object(current?.apps), desiredApps = object(seed.apps);
+    const servers = object(object(apps?.http)?.servers), desiredServers = object(object(desiredApps?.http)?.servers);
+    if (!apps || !servers || !desiredApps || !desiredServers || adminSocket(host, current!) !== socketPath) return false;
+    const create = async (path: string, value: unknown) => (await exchange({ method: 'PUT', path, value, signal: options.signal })).status === 200;
+    if (apps.tls === undefined && desiredApps.tls !== undefined && !await create('/config/apps/tls', desiredApps.tls)) return false;
+    const ports = new Set(input.publicBindings.map(binding => binding.containerPort ?? binding.hostPort));
+    for (const [id, value] of Object.entries(desiredServers)) {
+        const server = object(value);
+        if (servers[id] !== undefined || !Array.isArray(server?.listen)
+            || !server.listen.some(listener => typeof listener === 'string' && ports.has(Number(listener.slice(listener.lastIndexOf(':') + 1))))) continue;
+        if (!await create(`/config/apps/http/servers/${encodeURIComponent(id)}`, server)) return false;
+    }
+    return true;
+}
+
+function extendsPublicPorts(actual: unknown, input: NativeCaddySetupInput): boolean {
+    const ports = actual === null ? {} : object(actual);
+    if (!ports) return false;
+    const expected = portBindings(readCaddyContainerFirewallExposures(input));
+    const publicPorts = portBindings(input.publicBindings ?? []);
+    return Object.entries(ports).every(([key, values]) => matchingPorts({ [key]: values }, { [key]: expected[key] ?? [] }))
+        && Object.entries(expected).every(([key, values]) => matchingPorts({ [key]: ports[key] ?? [] }, { [key]: values })
+            || matchingPorts({ [key]: values }, { [key]: publicPorts[key] ?? [] }));
 }
 
 /** Setup is settled before entry; binding effects settle after the existing
@@ -395,10 +525,12 @@ export async function ensureNativeCaddyContainer(input: NativeCaddySetupInput, o
     // name selection also avoids interpreting inspect's shared error exit as
     // either a missing container or a permission/transport failure.
     const container = await inspectOwnedContainer(input, run);
-    if (container.status === 'unavailable') return container;
-    let id: string;
+    if (container.status === 'unavailable') return container.reason === 'required_fact_unavailable'
+        ? caddyFactUnavailable('caddyContainer') : container;
+    let id = container.status === 'observed' ? container.containerId : '';
     let running = false;
     let networks: Record<string, unknown> = {};
+    let create = container.status !== 'observed';
     if (container.status === 'observed') {
         const { config, host } = container;
         if (config.User !== `0:${input.daemonGroupId}`
@@ -407,13 +539,38 @@ export async function ensureNativeCaddyContainer(input: NativeCaddySetupInput, o
                 const mount = object(value);
                 return mount?.Type === 'bind' && mount.Source === expected.source && mount.Target === expected.target
                     && (mount.ReadOnly ?? false) === expected.readOnly;
-            })) || !matchingPorts(host.PortBindings, portBindings(exposures))) return unavailable('foreign_effect_conflict');
+            }))) return unavailable('foreign_effect_conflict');
+        const bindingsMatch = matchingPorts(host.PortBindings, portBindings(exposures));
+        if (!bindingsMatch && !extendsPublicPorts(host.PortBindings, input)) return unavailable('foreign_effect_conflict');
         id = container.containerId;
         running = container.running;
         networks = container.networks;
         await options.settleBindings?.();
-    } else {
-        await options.settleBindings?.();
+        if (input.publicBindings?.length) {
+            if (!running) {
+                const started = await startNativeCaddyContainer(input, id, options);
+                if (started.status !== 'ready') return started;
+                running = true;
+            }
+            try {
+                if (!await ensurePublicCaddyConfig(input, host, options)) return caddyFactUnavailable('caddyAdminConfig');
+            } catch (error) {
+                options.signal?.throwIfAborted();
+                return caddyFactUnavailable('caddyAdminConfig', error);
+            }
+        }
+        if (!bindingsMatch) {
+            // Docker publications are immutable. The admitted owned extension
+            // retains durable autosave/data and every incumbent network.
+            if (running && (await run(['container', 'stop', '--', id])).code !== 0) return unavailable('native_effect_failed');
+            if ((await run(['container', 'rm', '--', id])).code !== 0) return unavailable('native_effect_failed');
+            create = true;
+            running = false;
+        }
+    }
+    if (create) {
+        if (container.status !== 'observed') await options.settleBindings?.();
+        const retainedNetworks = Object.keys(networks);
         const created = await run(['container', 'create', '--name', input.containerName, '--label', `${ownerLabel}=${ownerValue}`,
             '--restart', 'unless-stopped', '--user', `0:${input.daemonGroupId}`, '--network', input.routedNetworks[0]!,
             ...expectedMounts.flatMap(mount => ['--mount', `type=bind,src=${mount.source},dst=${mount.target},readonly=${mount.readOnly}`]),
@@ -423,12 +580,16 @@ export async function ensureNativeCaddyContainer(input: NativeCaddySetupInput, o
         id = created.stdout.trim();
         if (!id) throw new Error('Native Caddy creation outcome is unknown');
         networks = { [input.routedNetworks[0]!]: {} };
+        const retained = await connectNativeCaddyNetworks({ dockerHost: input.dockerHost, containerId: id,
+            observedNetworkNames: Object.keys(networks), networkNames: retainedNetworks }, options);
+        if (retained.status !== 'ready') return retained;
+        networks = Object.fromEntries([...retainedNetworks, input.routedNetworks[0]!].map(name => [name, {}]));
     }
-    // Keep incumbent attachments for P41's all-replica drain. No route or
-    // autosave rewrite, container recreation, health probe or retry occurs.
+    // Keep incumbent attachments for P41's all-replica drain. Existing route
+    // content stays in Caddy's durable autosave through publication changes.
     const connected = await connectNativeCaddyNetworks({ dockerHost: input.dockerHost, containerId: id,
         observedNetworkNames: Object.keys(networks), networkNames: input.routedNetworks }, options);
     if (connected.status !== 'ready') return connected;
-    if (!running && (await run(['container', 'start', '--', id])).code !== 0) return unavailable('native_effect_failed');
+    if (!running) return startNativeCaddyContainer(input, id, options);
     return { status: 'ready', containerId: id };
 }

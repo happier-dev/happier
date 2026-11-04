@@ -1,3 +1,4 @@
+import { refuseDeploymentAuthorization } from '@/deployments/deploymentAuthorizationFailure';
 import { join } from 'node:path';
 import { nativeCaddyProfile, createNativeCaddySetupInput, createNativeCaddyBindings,
     createCaddyContainerSetupSteps, ensureNativeCaddyContainer, type NativeCaddyFirewallExposure } from '@happier-dev/cli-common/machineSetup';
@@ -102,11 +103,14 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
 
             const assertAuthority = async () => {
                 signal.throwIfAborted();
-                await host.assertInstalledCurrent?.();
                 const authorization = request.context.externalActionExecutionAuthorization;
-                if (authorization && (!authorization.requesterAccountProjection || !authorization.requesterHttpProjection)) return refuse('action_forbidden');
+                if (authorization && !authorization.requesterAccountProjection) return refuseDeploymentAuthorization('requester_account_projection_missing');
+                if (authorization && !authorization.requesterHttpProjection) return refuseDeploymentAuthorization('requester_http_projection_missing');
                 signal.throwIfAborted();
             };
+            // Admit installed custody once per acquisition; finite native work
+            // retains that custody and observes cancellation through its local signal.
+            await host.assertInstalledCurrent?.();
             const capturedSource = await readDeploymentSourceIntentForHost({ host: { ...host, signal, assertAuthority },
                 request: { environment, context: request.context, actionId: request.actionId,
                     ...(content ? { sourceIntent: content.sourceIntent } : 'sourceIntent' in request && request.sourceIntent
@@ -269,6 +273,35 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
                 throw error;
             }
     }
+    const acquireNative = async (input: Readonly<{ machineId: string; installationId: string;
+        request: Readonly<{ input: Readonly<{ serverId: string }>; context: ActionExecutorContext }> }>, recheck: () => Promise<void>) => {
+        const identity = readInstallationIdentityIfExistsSync();
+        if (!identity || input.machineId !== host.machineId || input.installationId !== identity.installationId
+            || input.request.input.serverId !== host.serverId) return refuse('target_mismatch');
+        const context = input.request.context;
+        const signal = context.signal && host.signal ? AbortSignal.any([context.signal, host.signal])
+            : context.signal ?? host.signal ?? new AbortController().signal;
+        let released = false;
+        const assertCurrent = async () => {
+            signal.throwIfAborted();
+            if (released) return refuse('deployment_source_unavailable');
+            const authorization = context.externalActionExecutionAuthorization;
+            if (authorization && !authorization.requesterAccountProjection) return refuseDeploymentAuthorization('requester_account_projection_missing');
+            if (authorization && !authorization.requesterHttpProjection) return refuseDeploymentAuthorization('requester_http_projection_missing');
+            if (!authorization && (context.externalActionCredential || context.rpcSessionAuthorization)) return refuseDeploymentAuthorization('requester_authorization_missing');
+        };
+        await assertCurrent();
+        await host.assertInstalledCurrent?.();
+        await recheck();
+        const deploymentRoot = await resolveOwnServerDeploymentRootForHost(configuration.happyHomeDir, host.serverId);
+        const native = createOwnServerNativeRuntime({ cwd: deploymentRoot, signal, isCurrent: () => !released });
+        return { ...native, deploymentRoot, assertCurrent, async release() {
+            if (released) return;
+            released = true;
+            try { await native.settleNative(); }
+            finally { await readPluginExecProcessCustodyForHost(native.exec).requestStop(); }
+        } };
+    };
     return {
         prepareDomainCaddy(request) {
             const routedNetworks = [...new Set(request.replicas.flatMap(replica => [...replica.networkNames]))];
@@ -280,6 +313,12 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
                 && item.exposure === 'privateNetwork').map(item => item.privateNetwork!))];
             if (networks.length > 1) return { status: 'unavailable', reason: 'private_scope_unenforceable' };
             const exposures: NativeCaddyFirewallExposure[] = [];
+            const publicIngress = !request.environment.ingress || request.environment.ingress.kind === 'edgeCaddy'
+                && request.environment.ingress.edgeMachineId === host.machineId;
+            if (publicIngress) exposures.push(...nativeCaddyProfile.publicPortRequirements.map(requirement => ({
+                requirementId: requirement.id, exposure: requirement.exposure, protocol: requirement.protocol,
+                containerPort: requirement.containerPort, hostPort: requirement.hostPort, hostAddress: '0.0.0.0',
+            })));
             const candidates = request.privateNetworks.filter(network => network.state === 'ready'
                 && network.interfaceName && network.networkIdentity && (!networks.length || network.networkIdentity === networks[0]));
             if (candidates.length > 1) return { status: 'unavailable', reason: 'private_scope_unenforceable' };
@@ -295,11 +334,20 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
             const bindings = createNativeCaddyBindings({ originPort: nativeCaddyProfile.portRequirement.containerPort,
                 exposures, privateNetworks: request.privateNetworks });
             if (bindings.status !== 'ready') return bindings;
+            const privateSeedInput = { adminSocket: '/run/happier-caddy/admin.sock',
+                originListen: [`:${nativeCaddyProfile.portRequirement.containerPort}`] as const };
             const input = createNativeCaddySetupInput({ daemonGroup: request.daemonGroup, daemonGroupId: request.daemonGroupId,
                 routedNetworks, initialConfig: JSON.stringify(materializeCaddyInitialConfigV1({
-                    adminSocket: '/run/happier-caddy/admin.sock', originListen: [`:${nativeCaddyProfile.portRequirement.containerPort}`],
+                    ...privateSeedInput,
+                    ...(publicIngress ? { publicListen: [`:${nativeCaddyProfile.publicPortRequirements[1].containerPort}`] as const,
+                        publicHttpListen: [`:${nativeCaddyProfile.publicPortRequirements[0].containerPort}`] as const } : {}),
                 })), bindings: { privateBinding: bindings.privateBinding, publicBindings: bindings.publicBindings } });
-            const steps = createCaddyContainerSetupSteps(input);
+            // The earlier owned private-only seed is an exact known predecessor,
+            // not foreign content. The native file owner still rejects other bytes.
+            // Live routes/certificates remain in Caddy's separate autosave state.
+            const steps = createCaddyContainerSetupSteps(input, publicIngress ? {
+                previousInitialConfig: JSON.stringify(materializeCaddyInitialConfigV1(privateSeedInput)),
+            } : {});
             return { status: 'ready', input, steps,
                 async ensure({ setup, context, actionId, installationId, dockerEngineId, run, signal }) {
                     const operationId = context.operationAcceptance?.operationId ?? context.actionRequestId;
@@ -324,11 +372,11 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
                             } : {}),
                         });
                         if (!applied) return refuse('outcome_unknown');
-                        if (input.privateBinding && !setup.settleCaddyFirewall) return refuse('private_scope_unenforceable');
+                        if ((input.privateBinding || input.publicBindings?.length) && !setup.settleCaddyFirewall) return refuse('private_scope_unenforceable');
                         const setupResult = applied;
                         return machineNativeEffectAdmission.runStage(native, () => ensureNativeCaddyContainer(input, { run, signal, setupResult,
                             settleBindings: async () => {
-                                if (input.privateBinding) await setup.settleCaddyFirewall!({ machineId: host.machineId, installationId,
+                                if (input.privateBinding || input.publicBindings?.length) await setup.settleCaddyFirewall!({ machineId: host.machineId, installationId,
                                     operationId, basis, caddy: input, native, elevation, signal });
                             } }));
                     });
@@ -336,34 +384,7 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
 
         },
         acquire,
-        async acquireRetention(input, recheck) {
-            const identity = readInstallationIdentityIfExistsSync();
-            if (!identity || input.machineId !== host.machineId || input.installationId !== identity.installationId
-                || input.request.input.serverId !== host.serverId) return refuse('target_mismatch');
-            const context = input.request.context;
-            const signal = context.signal && host.signal ? AbortSignal.any([context.signal, host.signal])
-                : context.signal ?? host.signal ?? new AbortController().signal;
-            let released = false;
-            const assertCurrent = async () => {
-                signal.throwIfAborted();
-                if (released) return refuse('deployment_source_unavailable');
-                await host.assertInstalledCurrent?.();
-                const authorization = context.externalActionExecutionAuthorization;
-                if (authorization && (!authorization.requesterAccountProjection || !authorization.requesterHttpProjection)) return refuse('action_forbidden');
-                if (!authorization && (context.externalActionCredential || context.rpcSessionAuthorization)) return refuse('action_forbidden');
-                await recheck();
-                signal.throwIfAborted();
-            };
-            await assertCurrent();
-            const deploymentRoot = await resolveOwnServerDeploymentRootForHost(configuration.happyHomeDir, host.serverId);
-            const native = createOwnServerNativeRuntime({ cwd: deploymentRoot, signal, isCurrent: () => !released });
-            return { ...native, deploymentRoot, assertCurrent, async release() {
-                if (released) return;
-                released = true;
-                try { await native.settleNative(); }
-                finally { await readPluginExecProcessCustodyForHost(native.exec).requestStop(); }
-            } };
-        },
+        acquireRetention: acquireNative,
         acquireCandidate(request, environment) {
             return acquire({ actionId: 'deployments.deploy', context: request.context, executionRole: 'build',
                 input: { serverId: host.serverId, environmentId: request.environmentId, targetLinkId: request.targetLinkId },

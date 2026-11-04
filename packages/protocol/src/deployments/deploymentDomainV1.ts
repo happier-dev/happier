@@ -1,16 +1,16 @@
-import { MachinePrivateNetworkObservationV1Schema } from '../plugins/contributions/accessProviders.js';
-import { MachineInstallationProofV1Schema } from '../machines/identity/installationIdentity.js';
-import { type MachineInstallationProofPayloadV1 } from '../machines/identity/installationIdentity.js';
-import { computeCanonicalDomainSeparatedDigest } from '../crypto/canonicalDigest.js';
-import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
-import { verifyEd25519Signature } from '../crypto/ed25519.js';
-import { decodeBase64 } from '../crypto/base64.js';
-import { ArtifactJsonUpdateHttpInputV1Schema } from '../artifacts/artifactMutationHttpV1.js';
 import { z } from 'zod/mini';
+export { DeploymentDomainHealthCheckV1Schema, type DeploymentDomainHealthCheckV1 } from './deploymentDomainHealthCheckV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revision,
     DeploymentTimestampV1Schema as timestamp } from './deploymentIdentifiersV1.js';
 import { DeploymentArtifactContentReferenceV1Schema } from './deploymentArtifactContentReferenceV1.js';
+import { MachineInstallationProofV1Schema, type MachineInstallationProofPayloadV1 } from '../machines/identity/installationIdentity.js';
+import { decodeBase64 } from '../crypto/base64.js';
+import { verifyEd25519Signature } from '../crypto/ed25519.js';
+import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
+import { computeCanonicalDomainSeparatedDigest } from '../crypto/canonicalDigest.js';
+import { MachinePrivateNetworkObservationV1Schema } from '../plugins/contributions/accessProviders.js';
+import { ArtifactJsonUpdateHttpInputV1Schema } from '../artifacts/artifactMutationHttpV1.js';
 
 /** Finite installed observations remain inside the private controller-to-target payload. */
 export const DeploymentDomainMachineTopologyV1Schema = lazyZodSchema(() => z.strictObject({
@@ -78,8 +78,20 @@ export const DeploymentDomainPlacementV1Schema = lazyZodSchema(() => z.strictObj
     targetLinkContent: z.optional(DeploymentArtifactContentReferenceV1Schema),
 }));
 export type DeploymentDomainPlacementV1 = z.infer<typeof DeploymentDomainPlacementV1Schema>;
+/** Installation-signed, last-observed facts; no addresses, route material or reachability claim. */
+export const DeploymentDomainNetworkExposureV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+    z.strictObject({ kind: z.literal('ready'), listener: z.enum(['privateOrigin', 'public']),
+        listeners: z.array(z.strictObject({ tls: z.boolean(), automaticHttpsDisabled: z.boolean(),
+            endpoints: z.array(z.strictObject({ audience: z.enum(['loopback', 'privateNetwork', 'wildcard', 'other']),
+                hostPort: z.number().check(z.int(), z.positive()),
+                containerPort: z.number().check(z.int(), z.positive()), protocol: z.literal('tcp') })) })),
+        localOrigin: z.boolean(), fallback: z.boolean() }),
+    z.strictObject({ kind: z.literal('unavailable'), reason: id }),
+]));
+export type DeploymentDomainNetworkExposureV1 = z.infer<typeof DeploymentDomainNetworkExposureV1Schema>;
 export const DeploymentDomainCapturedPlacementsV1Schema = lazyZodSchema(() => z.array(z.extend(DeploymentDomainPlacementV1Schema, {
     installationPublicKey: z.string().check(z.minLength(1)),
+    networkExposure: z.optional(DeploymentDomainNetworkExposureV1Schema),
     execution: z.optional(z.strictObject({ controller: z.strictObject({ machineId: id, installationId: id }),
         requestEnvelopeDigest: z.string().check(z.minLength(1)), actionId: z.enum(['deployments.domains.add', 'deployments.domains.remove']),
     })),
@@ -91,12 +103,12 @@ export const DeploymentDomainStateV1Schema = lazyZodSchema(() => z.enum([
 
 /** Source-admitted metadata records a reference, not current private-body access. */
 export const DeploymentDomainHeaderV1Schema = lazyZodSchema(() => z.strictObject({
-placements: z.optional(z.array(DeploymentDomainPlacementV1Schema)),
-
     v: z.literal(1), id, environmentId: id, targetLinkId: id, revision,
     state: DeploymentDomainStateV1Schema, ...DeploymentArtifactContentReferenceV1Schema.shape,
     createdByAccountId: id, observedAtMs: z.optional(timestamp),
-
+    placements: z.optional(z.array(DeploymentDomainPlacementV1Schema)),
+    networkExposure: z.optional(z.array(z.strictObject({ machineId: id, installationId: id, nativeServer: id,
+        listener: z.enum(['privateOrigin', 'public']), observation: DeploymentDomainNetworkExposureV1Schema }))),
     createdAtMs: timestamp, updatedAtMs: timestamp, deletedAtMs: z.optional(timestamp),
 }));
 export type DeploymentDomainHeaderV1 = z.infer<typeof DeploymentDomainHeaderV1Schema>;
@@ -126,6 +138,7 @@ export const DeploymentDomainListInputV1Schema = lazyZodSchema(() => z.strictObj
 export const DeploymentDomainVerifyInputV1Schema = DeploymentDomainRemoveInputV1Schema;
 export const DeploymentDomainObservationBodyV1Schema = lazyZodSchema(() => z.strictObject({
     capture: DeploymentDomainPlacementV1Schema, state: z.enum(['active', 'warning', 'failed', 'removed']),
+    networkExposure: z.optional(DeploymentDomainNetworkExposureV1Schema),
     removal: z.optional(NativeCaddyRemovalV1Schema),
 }).check(z.refine(value => (value.state === 'removed') === (value.removal !== undefined),
     { message: 'Removed observations require exact native absence.' })));
@@ -157,7 +170,6 @@ export type DeploymentDomainPreparedContentInputV1 = z.infer<typeof DeploymentDo
 export type DeploymentDomainObservationBodyV1 = z.infer<typeof DeploymentDomainObservationBodyV1Schema>;
 
 /** The incumbent installation-proof envelope signs exact material, native evidence and Domain CAS. */
-
 export function deploymentDomainObservationProofPayloadV1(input: Readonly<{
     expectedDomainRevision: number; observation: DeploymentDomainObservationBodyV1;
 }>): MachineInstallationProofPayloadV1 {

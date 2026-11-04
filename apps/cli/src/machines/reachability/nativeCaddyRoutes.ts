@@ -1,17 +1,46 @@
 import { isDeepStrictEqual } from 'node:util';
 import tweetnacl from 'tweetnacl';
-import { type NativeCaddyAdminExchange } from '@happier-dev/cli-common/machineSetup';
+import { type NativeCaddyAdminExchange, type NativeCaddyObservationResult } from '@happier-dev/cli-common/machineSetup';
 export { createNativeCaddyAdminExchange, type NativeCaddyAdminExchange } from '@happier-dev/cli-common/machineSetup';
-import { nativeCaddyRemovalSigningBytes as removalBytes, verifyNativeCaddyRemovalProofV1, nativeCaddyDomainRouteIdsV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import type { NativeCaddyRoutePlacement, NativeCaddyRemoval } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-export type { NativeCaddyRoutePlacement, NativeCaddyRemoval } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { nativeCaddyRemovalSigningBytes as removalBytes, verifyNativeCaddyRemovalProofV1, nativeCaddyDomainRouteIdsV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
+import type { NativeCaddyRoutePlacement, NativeCaddyRemoval, DeploymentDomainNetworkExposureV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
+import { isLoopbackHostname, normalizeHostnameForLoopbackCheck } from '@happier-dev/protocol/server/urls/loopbackHostname';
+export type { NativeCaddyRoutePlacement, NativeCaddyRemoval } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import { CaddyDomainMaterializationError, caddyPublicHttpServerId, materializeCaddyDomainRouteV1, materializeCaddyDomainRemovalV1, materializeCaddyDomainReplicaSetV1,
     type CaddyDomainRouteInput, type CaddyDomainRouteMaterial, type CaddyDomainRouteRemovalInput } from '@/deployments/targets/ownServer/caddyRouteMaterialization';
 
-export type NativeCaddyRouteResult = Readonly<{ kind: 'active' }> | Readonly<{ kind: 'absent' }>
+export type NativeCaddyRouteResult = Readonly<{ kind: 'active'; networkExposure?: NativeCaddyExposureResult }> | Readonly<{ kind: 'absent' }>
     | Readonly<{ kind: 'conflict' | 'unknown' | 'unavailable' | 'cancelled'; reason: string }>;
+/** Credential-free installed facts. Listener role does not assert Internet reachability. */
+export type NativeCaddyExposureResult = DeploymentDomainNetworkExposureV1;
 type RouteRequest = Readonly<{ placement: NativeCaddyRoutePlacement; route: CaddyDomainRouteRemovalInput; signal?: AbortSignal }>;
-type ActivationRequest = Omit<RouteRequest, 'route'> & Readonly<{ route: CaddyDomainRouteInput }>;
+type ActivationRequest = Omit<RouteRequest, 'route'> & Readonly<{ route: CaddyDomainRouteInput; captureExposure?: NativeCaddyObservationResult }>;
+type InstalledListeners = Pick<Extract<NativeCaddyExposureResult, { kind: 'ready' }>, 'kind' | 'listener' | 'listeners'>
+    | Extract<NativeCaddyExposureResult, { kind: 'unavailable' }>;
+function installedListeners(request: RouteRequest, caddy: NativeCaddyObservationResult): InstalledListeners {
+    if (caddy.status !== 'ready') return { kind: 'unavailable',
+        reason: caddy.status === 'unavailable' ? caddy.reason : 'required_fact_unavailable' };
+    const server = caddy.servers.find(server => server.serverId === request.placement.nativeServer);
+    if (!server) return { kind: 'unavailable', reason: 'required_fact_unavailable' };
+    const privateAddresses = new Set(caddy.privateOrigins?.flatMap(origin => origin.network.addresses)
+        .map(normalizeHostnameForLoopbackCheck));
+    const audience = (address: string): Extract<NativeCaddyExposureResult, { kind: 'ready' }>['listeners'][number]['endpoints'][number]['audience'] => {
+        if (isLoopbackHostname(address)) return 'loopback';
+        const normalized = normalizeHostnameForLoopbackCheck(address);
+        if (normalized === '0.0.0.0' || normalized === '::') return 'wildcard';
+        return privateAddresses.has(normalized) ? 'privateNetwork' : 'other';
+    };
+    const httpServerId = request.route.listener === 'public' ? caddyPublicHttpServerId(server.serverId) : undefined;
+    return { kind: 'ready', listener: request.route.listener,
+        listeners: caddy.servers.filter(item => item.serverId === server.serverId || item.serverId === httpServerId)
+            .map(item => ({ tls: item.tls, automaticHttpsDisabled: item.automaticHttpsDisabled,
+                endpoints: item.endpoints.map(endpoint => ({ audience: audience(endpoint.hostAddress),
+                    hostPort: endpoint.hostPort, containerPort: endpoint.containerPort, protocol: 'tcp' as const })) })) };
+}
+function materialExposure(installed: InstalledListeners, material: CaddyDomainRouteMaterial): NativeCaddyExposureResult {
+    return installed.kind === 'ready' ? { ...installed,
+        localOrigin: material.replicaProxy !== undefined, fallback: material.fallbackRoute !== undefined } : installed;
+}
 export type NativeCaddyStartFirstLeg = Readonly<{
     placement: NativeCaddyRoutePlacement;
     route: Omit<CaddyDomainRouteInput, 'upstreams'>;
@@ -178,14 +207,27 @@ export function createNativeCaddyRoutes(host: Readonly<{
     };
     const hasRoutingInput = (route: CaddyDomainRouteRemovalInput | CaddyDomainRouteInput): route is CaddyDomainRouteInput =>
         'upstreams' in route && 'privateSourceRanges' in route;
-    const observe = async (request: RouteRequest | ActivationRequest): Promise<NativeCaddyRouteResult> => {
-        const refusal = admitted(request); if (refusal) return refusal;
+    const readObservation = async (request: RouteRequest | ActivationRequest): Promise<Readonly<{
+        result: NativeCaddyRouteResult; material?: CaddyDomainRouteMaterial;
+    }>> => {
+        const refusal = admitted(request); if (refusal) return { result: refusal };
         try {
             const snapshot = await read(request);
             const material = hasRoutingInput(request.route) ? materializeCaddyDomainRouteV1(request.route) : ownedMaterial(snapshot, request);
-            return material ? inspect(snapshot, material, request) : { kind: 'conflict', reason: 'route_conflict' };
+            return material ? { result: inspect(snapshot, material, request), material }
+                : { result: { kind: 'conflict', reason: 'route_conflict' } };
         }
-        catch (error) { return failure(error, request.signal, false); }
+        catch (error) { return { result: failure(error, request.signal, false) }; }
+    };
+    const observe = async (request: RouteRequest | ActivationRequest): Promise<NativeCaddyRouteResult> =>
+        (await readObservation(request)).result;
+    const readExposure = async (request: RouteRequest & Readonly<{ caddy: NativeCaddyObservationResult }>): Promise<NativeCaddyExposureResult> => {
+        const installed = installedListeners(request, request.caddy);
+        if (installed.kind !== 'ready') return installed;
+        const { result, material } = await readObservation(request);
+        if (result.kind !== 'active' || !material) return { kind: 'unavailable',
+            reason: result.kind === 'absent' ? 'route_absent' : 'reason' in result ? result.reason : 'required_fact_unavailable' };
+        return materialExposure(installed, material);
     };
     const write = async (request: RouteRequest, snapshot: ConfigRoot, method: 'PUT' | 'PATCH' | 'DELETE', path: string, value?: unknown) => {
         request.signal?.throwIfAborted();
@@ -242,7 +284,9 @@ export function createNativeCaddyRoutes(host: Readonly<{
                 // native config concurrency, never a repeat Home/permission check.
                 snapshot[change.root] = await readRoot(request, root.path);
             }
-            return inspect(snapshot, material, request);
+            const result = inspect(snapshot, material, request);
+            return result.kind === 'active' && request.captureExposure
+                ? { ...result, networkExposure: materialExposure(installedListeners(request, request.captureExposure), material) } : result;
         } catch (error) { return failure(error, request.signal, issued); }
     };
     const remove = async (request: RouteRequest): Promise<NativeCaddyRouteResult | NativeCaddyRemoval> => {
@@ -311,5 +355,5 @@ export function createNativeCaddyRoutes(host: Readonly<{
             return inspect(snapshot, desired, { ...request, route: material.observedRoute });
         } catch (error) { return failure(error, request.signal, issued); }
     };
-    return { activate, observe, remove, readStartFirstLeg, switchReplicas };
+    return { activate, observe, readExposure, remove, readStartFirstLeg, switchReplicas };
 }
