@@ -36,6 +36,7 @@ import { normalizeCurrentHappierSessionId } from '@/agent/runtime/session/curren
 import type { ClaudeEffectiveModelObservation } from './sessionModels/effectiveModelUpdate';
 import { readClaudeMainChainAssistantModelId } from './sessionModels/readClaudeMainChainAssistantModelId';
 import { isLivePrimaryClaudeProviderMessage, isSidechainSessionHook } from './utils/sessionHookAttribution';
+import { completeClaudeRemoteClear } from './remote/localCommands';
 
 function buildClaudeEffortArgs(params: Readonly<{
     modelId: unknown;
@@ -216,13 +217,7 @@ export async function claudeRemote(opts: {
 
     // Handle /clear command
     if (specialCommand.type === 'clear') {
-        if (opts.onCompletionEvent) {
-            opts.onCompletionEvent('Context was reset');
-        }
-        if (opts.onSessionReset) {
-            opts.onSessionReset();
-        }
-        promptSettlements.accept(initial);
+        await completeClaudeRemoteClear(opts, () => promptSettlements.accept(initial));
         return;
     }
 

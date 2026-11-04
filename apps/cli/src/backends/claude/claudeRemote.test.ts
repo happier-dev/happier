@@ -112,6 +112,29 @@ describe('claudeRemote', () => {
     resolveClaudeCliPathMock.mockReturnValue('/resolved/claude-cli.js');
   });
 
+  it('completes the /clear turn before returning so the next queued prompt can start', async () => {
+    const lifecycle = createSessionTurnLifecycle({
+      sessionId: 'clear-session', enqueueSessionTurn: async () => {},
+    });
+    const accepted: string[] = [];
+    const { claudeRemote } = await import('./claudeRemote');
+    await lifecycle.beginTurn({ provider: 'claude' });
+    try {
+      await claudeRemote(createBaseOptions({
+        nextMessage: async () => ({ message: '/clear', mode: defaultMode(), userMessageLocalIds: ['clear'] }),
+        onPromptAcceptedByProvider: ({ userMessageLocalIds }) => { accepted.push(...userMessageLocalIds); },
+        onReady: async () => {
+          expect(accepted).toEqual(['clear']);
+          await lifecycle.completeTurn({ provider: 'claude' });
+        },
+      }));
+      expect(lifecycle.hasActiveTurn()).toBe(false);
+      expect(mockQuery).not.toHaveBeenCalled();
+    } finally {
+      await lifecycle.endSession();
+    }
+  });
+
 
   it('does not refresh turn silence from replay, foreign sessions or sidechain SDK traffic', async () => {
     vi.useFakeTimers();

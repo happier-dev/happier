@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { claudeRemoteAgentSdk } from './claudeRemoteAgentSdk';
 import { makeMode } from './claudeRemoteAgentSdk.testkit';
+import { createSessionTurnLifecycle } from '@/agent/runtime/session/turn/lifecycle';
 
 describe('claudeRemoteAgentSdk stream events', () => {
     it('keeps rejected allowance availability and sidechain errors out of parent failure recovery', async () => {
@@ -104,34 +105,44 @@ describe('claudeRemoteAgentSdk stream events', () => {
         const onPromptAcceptedByProvider = vi.fn();
         const onSessionReset = vi.fn();
         const createQuery = vi.fn();
+        const lifecycle = createSessionTurnLifecycle({ sessionId: 'clear-session', enqueueSessionTurn: async () => {} });
+        await lifecycle.beginTurn({ provider: 'claude' });
 
-        await claudeRemoteAgentSdk({
-            sessionId: null,
-            transcriptPath: null,
-            path: '/tmp',
-            claudeExecutablePath: '/tmp/claude',
-            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
-            isAborted: () => false,
-            nextMessage: async () => ({
-                message: '/clear',
-                mode: makeMode({ claudeRemoteAgentSdkEnabled: true }),
+        try {
+            await claudeRemoteAgentSdk({
+                sessionId: null,
+                transcriptPath: null,
+                path: '/tmp',
+                claudeExecutablePath: '/tmp/claude',
+                canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+                isAborted: () => false,
+                nextMessage: async () => ({
+                    message: '/clear',
+                    mode: makeMode({ claudeRemoteAgentSdkEnabled: true }),
+                    maxUserMessageSeq: 4,
+                    userMessageLocalIds: ['clear-local-4'],
+                }),
+                onReady: async () => {
+                    expect(onPromptAcceptedByProvider).toHaveBeenCalledOnce();
+                    await lifecycle.completeTurn({ provider: 'claude' });
+                },
+                onSessionFound: () => {},
+                onMessage: () => {},
+                onSessionReset,
+                onPromptAcceptedByProvider,
+                createQuery,
+            });
+
+            expect(lifecycle.hasActiveTurn()).toBe(false);
+            expect(onSessionReset).toHaveBeenCalledTimes(1);
+            expect(createQuery).not.toHaveBeenCalled();
+            expect(onPromptAcceptedByProvider).toHaveBeenCalledExactlyOnceWith({
                 maxUserMessageSeq: 4,
                 userMessageLocalIds: ['clear-local-4'],
-            }),
-            onReady: () => {},
-            onSessionFound: () => {},
-            onMessage: () => {},
-            onSessionReset,
-            onPromptAcceptedByProvider,
-            createQuery,
-        } as any);
-
-        expect(onSessionReset).toHaveBeenCalledTimes(1);
-        expect(createQuery).not.toHaveBeenCalled();
-        expect(onPromptAcceptedByProvider).toHaveBeenCalledExactlyOnceWith({
-            maxUserMessageSeq: 4,
-            userMessageLocalIds: ['clear-local-4'],
-        });
+            });
+        } finally {
+            await lifecycle.endSession();
+        }
     });
 
     it('rejects the claimed prompt before effect when Agent SDK preflight fails', async () => {

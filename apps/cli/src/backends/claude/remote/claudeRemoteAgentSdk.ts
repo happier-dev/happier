@@ -70,6 +70,7 @@ import {
 import { repairClaudeTranscriptAfterInterrupt } from './agentSdk/repairClaudeTranscriptAfterInterrupt';
 import { readNonBlankOpaqueIdentifier } from '@/utils/opaqueIdentifiers';
 import { parseCheckpointsCommand, parseRewindCommand } from './agentSdk/claudeAgentSdkSlashCommands';
+import { completeClaudeRemoteClear } from './localCommands';
 import {
     mapClaudeRateLimitEventToQuotaEvidence,
     readClaudeRateLimitEventWindows,
@@ -360,9 +361,7 @@ export async function claudeRemoteAgentSdk(opts: {
 
     const specialCommand = parseSpecialCommand(initial.message);
     if (specialCommand.type === 'clear') {
-        opts.onCompletionEvent?.('Context was reset');
-        opts.onSessionReset?.();
-        promptSettlements.accept(initial);
+        await completeClaudeRemoteClear(opts, () => promptSettlements.accept(initial));
         return;
     }
 
@@ -1479,6 +1478,85 @@ Current model: ${lastAppliedRuntimeSettings.model ?? 'provider default'}.${messa
                 signal.addEventListener('abort', () => resolve(ABORTED), { once: true });
             });
 
+        const handleFileCheckpointCommand = async (next: ClaudeRemoteProviderAcceptedPrompt<EnhancedMode>): Promise<boolean> => {
+            const checkpointsCommand = parseCheckpointsCommand(next.message);
+            const rewindCommand = parseRewindCommand(next.message);
+            if (!checkpointsCommand && !rewindCommand) return false;
+
+            promptSettlements.accept(next);
+            if (checkpointsCommand) {
+                if (!enableFileCheckpointing) {
+                    opts.onCompletionEvent?.('No checkpoints are available unless file checkpointing is enabled.');
+                    return true;
+                }
+
+                if (checkpointIds.length === 0) {
+                    opts.onCompletionEvent?.('No checkpoints have been captured yet.');
+                    return true;
+                }
+
+                opts.onCompletionEvent?.(
+                    [
+                        'Available checkpoints (newest first):',
+                        ...checkpointIds
+                            .slice()
+                            .reverse()
+                            .map((id) => `- ${id}`),
+                        '',
+                        'Note: Agent SDK rewind restores files only; it does not rewind the conversation.',
+                        'To rewind: /rewind <checkpoint-id> --confirm',
+                    ].join('\n'),
+                );
+                return true;
+            }
+
+            if (rewindCommand) {
+                if (!enableFileCheckpointing) {
+                    opts.onCompletionEvent?.('Rewind is not available unless file checkpointing is enabled.');
+                    return true;
+                }
+
+                const checkpointId = rewindCommand.checkpointId ?? lastCheckpointId;
+                if (!checkpointId) {
+                    opts.onCompletionEvent?.('No checkpoint id is available yet. Send a normal message first, then try /rewind again.');
+                    return true;
+                }
+
+                if (!rewindCommand.confirmed) {
+                    opts.onCompletionEvent?.(
+                        [
+                            'Rewind is a destructive filesystem operation.',
+                            'It restores files to a previous checkpoint and may discard your local file edits.',
+                            '',
+                            'Important: Agent SDK rewind restores files only; it does not rewind the conversation.',
+                            '',
+                            `To confirm, re-run: /rewind ${checkpointId} --confirm`,
+                        ].join('\n'),
+                    );
+                    return true;
+                }
+
+                const result: unknown = await response.rewindFiles?.(checkpointId, undefined);
+                if (result && typeof result === 'object' && 'canRewind' in result && result.canRewind === false) {
+                    const error = 'error' in result && typeof result.error === 'string' ? result.error : 'Rewind failed';
+                    opts.onCompletionEvent?.(error);
+                    return true;
+                }
+
+                emitMessage({
+                    type: 'system',
+                    subtype: 'happier',
+                    happierTraceMarker: 'checkpoint-rewind',
+                    checkpointId,
+                });
+                recordTraceMarker({ kind: 'checkpoint-rewind', payload: { marker: 'checkpoint-rewind', checkpointId } });
+                opts.onCompletionEvent?.(`Rewound files to checkpoint ${checkpointId}`);
+                return true;
+            }
+
+            return false;
+        };
+
         const scheduleNextMessagePump = () => {
             if (nextMessagePump) return;
 
@@ -1514,90 +1592,17 @@ Current model: ${lastAppliedRuntimeSettings.model ?? 'provider default'}.${messa
                             return;
                         }
 
-                        const checkpointsCommand = parseCheckpointsCommand(next.message);
-                        if (checkpointsCommand) {
-                            if (!enableFileCheckpointing) {
-                                opts.onCompletionEvent?.('No checkpoints are available unless file checkpointing is enabled.');
-                                promptSettlements.accept(next);
-                                continue;
-                            }
-
-                            if (checkpointIds.length === 0) {
-                                opts.onCompletionEvent?.('No checkpoints have been captured yet.');
-                                promptSettlements.accept(next);
-                                continue;
-                            }
-
-                            opts.onCompletionEvent?.(
-                                [
-                                    'Available checkpoints (newest first):',
-                                    ...checkpointIds
-                                        .slice()
-                                        .reverse()
-                                        .map((id) => `- ${id}`),
-                                    '',
-                                    'Note: Agent SDK rewind restores files only; it does not rewind the conversation.',
-                                    'To rewind: /rewind <checkpoint-id> --confirm',
-                                ].join('\n'),
-                            );
-                            promptSettlements.accept(next);
-                            continue;
-                        }
-
-                        const rewindCommand = parseRewindCommand(next.message);
-                        if (rewindCommand) {
-                            if (!enableFileCheckpointing) {
-                                opts.onCompletionEvent?.('Rewind is not available unless file checkpointing is enabled.');
-                                promptSettlements.accept(next);
-                                continue;
-                            }
-
-                            const checkpointId = rewindCommand.checkpointId ?? lastCheckpointId;
-                            if (!checkpointId) {
-                                opts.onCompletionEvent?.('No checkpoint id is available yet. Send a normal message first, then try /rewind again.');
-                                promptSettlements.accept(next);
-                                continue;
-                            }
-
-                            if (!rewindCommand.confirmed) {
-                                opts.onCompletionEvent?.(
-                                    [
-                                        'Rewind is a destructive filesystem operation.',
-                                        'It restores files to a previous checkpoint and may discard your local file edits.',
-                                        '',
-                                        'Important: Agent SDK rewind restores files only; it does not rewind the conversation.',
-                                        '',
-                                        `To confirm, re-run: /rewind ${checkpointId} --confirm`,
-                                    ].join('\n'),
-                                );
-                                promptSettlements.accept(next);
-                                continue;
-                            }
-
-                            promptSettlements.accept(next);
-                            const result = await (response as any).rewindFiles?.(checkpointId, undefined);
-                            if (result && typeof result === 'object' && (result as any).canRewind === false) {
-                                const error = typeof (result as any).error === 'string' ? (result as any).error : 'Rewind failed';
-                                opts.onCompletionEvent?.(error);
-                                continue;
-                            }
-
-                            emitMessage({
-                                type: 'system',
-                                subtype: 'happier',
-                                happierTraceMarker: 'checkpoint-rewind',
-                                checkpointId,
-                            } as any);
-                            recordTraceMarker({ kind: 'checkpoint-rewind', payload: { marker: 'checkpoint-rewind', checkpointId } });
-                            opts.onCompletionEvent?.(`Rewound files to checkpoint ${checkpointId}`);
+                        // A local command read after a result owns a new launcher turn, but an
+                        // explicit action during provider work must not complete that active turn.
+                        const completesLocalTurn = !foregroundTurnInterruptActive;
+                        if (await handleFileCheckpointCommand(next)) {
+                            if (completesLocalTurn) await opts.onReady();
                             continue;
                         }
 
                         const nextSpecial = parseSpecialCommand(next.message);
                         if (nextSpecial.type === 'clear') {
-                            opts.onCompletionEvent?.('Context was reset');
-                            opts.onSessionReset?.();
-                            promptSettlements.accept(next);
+                            await completeClaudeRemoteClear(opts, () => promptSettlements.accept(next));
                             messages.end();
                             try {
                                 response?.close?.();
