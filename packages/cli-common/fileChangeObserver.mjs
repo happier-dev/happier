@@ -28,7 +28,9 @@ export function createFileChangeObserver(directories, { isRelevant } = {}) {
     }
   };
   return {
-    capture(readSnapshot) { observe(); return readSnapshot(); },
+    // wait arms before rechecking the snapshot. Uncontended reads must not
+    // reconfigure native filesystem watching and interrupt Metro notifications.
+    capture(readSnapshot) { return readSnapshot(); },
     async wait({ snapshot, readSnapshot, maxWaitMs, signal }) {
       signal?.throwIfAborted();
       await new Promise((resolve, reject) => {
