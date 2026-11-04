@@ -30,7 +30,14 @@ async function contentAuthorityFailure(tx: Tx, artifact: AdmittedArtifact, owner
         ? deploymentFailure('deployment_content_unavailable') : null;
 }
 
-/** Before receipt admission, review reads one exact candidate's current header without opening its body. */
+/** Bind the existing Artifact head atomically without opening a private body or writing another content store. */
+export async function admitDeploymentStoredContentInTx(tx: Tx, actorAccountId: string, owner: ProjectSourceOwnerV1,
+    reference: DeploymentContentReference, expectedStoredKind: string, access: 'read' | 'write' = 'write',
+    pendingDeploy?: DeploymentPendingDeployV1,
+): Promise<DeploymentFailure | null> {
+    return (await admitDeploymentStoredContentsInTx(tx, actorAccountId, owner,
+        [{ reference, expectedStoredKind, access, pendingDeploy }]))[0]!;
+}
 
 export async function admitDeploymentStoredContentsInTx(tx: Tx, actorAccountId: string, owner: ProjectSourceOwnerV1,
     inputs: readonly Readonly<{ reference: DeploymentContentReference; expectedStoredKind: string;
