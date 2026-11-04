@@ -1,15 +1,13 @@
-import type { Prisma } from "@prisma/client";
-
-import { auditSessionSystemRecordAddressesPage } from "./backfillSessionSystemRecordAddresses";
+import { SESSION_SYSTEM_RECORD_CONTRACT_MIGRATION } from "./sessionSystemRecordMigrationDeployment";
 
 export const SESSION_SYSTEM_RECORDS_PROTOCOL_V1 = 1 as const;
 
 export const SESSION_SYSTEM_RECORDS_CONTRACT_MIGRATION =
-    "20260810120000_contract_session_system_record_addresses";
+    SESSION_SYSTEM_RECORD_CONTRACT_MIGRATION;
 
 type MigrationContractDatabase = Readonly<{
     $queryRawUnsafe(query: string): Promise<unknown>;
-}> & Pick<Prisma.TransactionClient, "sessionSystemRecord">;
+}>;
 
 function isFinishedContractMigrationRow(value: unknown): boolean {
     return typeof value === "object"
@@ -18,25 +16,16 @@ function isFinishedContractMigrationRow(value: unknown): boolean {
         && value.migration_name === SESSION_SYSTEM_RECORDS_CONTRACT_MIGRATION;
 }
 
-async function hasAuditedCurrentVersionContract(database: MigrationContractDatabase): Promise<boolean> {
-    let afterId: string | undefined;
-    do {
-        const audit = await auditSessionSystemRecordAddressesPage({
-            db: database,
-            afterId,
-        });
-        if (audit.nullRows !== 0 || audit.mismatchedRows !== 0) return false;
-        afterId = audit.nextAfterId ?? undefined;
-    } while (afterId !== undefined);
-    return true;
-}
-
 /**
  * Protocol v1 is a post-CONTRACT capability, not a feature flag. This is the
  * single process-local projection of the incumbent Session persistence
  * contract: legacy host records remain available during EXPAND/backfill, but
  * plugin records cannot be advertised or executed until the final migration
- * has been observed on the connected database.
+ * has been observed on the connected database. Its deployment owner performs
+ * the final address backfill/audit before CONTRACT; database constraints then
+ * reject predecessor row shapes. Current writers derive canonical addresses
+ * and readers validate them. Startup reads the completed contract rather
+ * than re-auditing every persisted record.
  */
 let sessionSystemRecordsProtocolV1Active = false;
 
@@ -55,8 +44,7 @@ export async function initializeSessionSystemRecordsProtocolV1Activation(
             + "AND finished_at IS NOT NULL AND rolled_back_at IS NULL",
         );
         sessionSystemRecordsProtocolV1Active = Array.isArray(rows)
-            && rows.some(isFinishedContractMigrationRow)
-            && await hasAuditedCurrentVersionContract(database);
+            && rows.some(isFinishedContractMigrationRow);
     } catch {
         // A database that cannot prove its final migration remains fail-closed
         // for v1 while ordinary predecessor host operations stay available.

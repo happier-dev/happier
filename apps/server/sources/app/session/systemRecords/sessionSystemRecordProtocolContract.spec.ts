@@ -7,7 +7,7 @@ import {
     SESSION_SYSTEM_RECORDS_CONTRACT_MIGRATION,
 } from "./sessionSystemRecordProtocolContract";
 
-// Prisma is the system boundary; these fixtures expose only the audited findMany operation.
+// Prisma is the system boundary; keep activation independent of the record inventory.
 type ProtocolActivationDatabase = Parameters<typeof initializeSessionSystemRecordsProtocolV1Activation>[0];
 
 describe("Session System Records protocol-v1 database contract", () => {
@@ -35,32 +35,29 @@ describe("Session System Records protocol-v1 database contract", () => {
         ));
     });
 
-    it("keeps v1 inactive when the final current-version audit finds a legacy row", async () => {
-        const findMany = vi.fn().mockResolvedValue([
-            {
-                id: "legacy-row",
-                ownerKind: null,
-                pluginId: null,
-                namespace: "memory",
-                localId: "memory:synopsis:v1:1",
-                namespaceAddressKey: null,
-                recordAddressKey: null,
-                version: 1,
-            },
+    it("activates from the audited migration contract without reading the record inventory", async () => {
+        const findMany = vi.fn().mockRejectedValue(new Error("record inventory must not be read at startup"));
+        const query = vi.fn().mockResolvedValue([
+            { migration_name: SESSION_SYSTEM_RECORDS_CONTRACT_MIGRATION },
         ]);
 
         await expect(initializeSessionSystemRecordsProtocolV1Activation({
-            $queryRawUnsafe: vi.fn().mockResolvedValue([
-                { migration_name: SESSION_SYSTEM_RECORDS_CONTRACT_MIGRATION },
-            ]),
+            $queryRawUnsafe: query,
             sessionSystemRecord: { findMany },
-        } as unknown as ProtocolActivationDatabase)).resolves.toBe(false);
+        } as unknown as ProtocolActivationDatabase)).resolves.toBe(true);
 
-        expect(findMany).toHaveBeenCalledWith(expect.objectContaining({
-            orderBy: { id: "asc" },
-            take: expect.any(Number),
-        }));
-        expect(isSessionSystemRecordsProtocolV1Active()).toBe(false);
+        expect(query).toHaveBeenCalledTimes(1);
+        expect(findMany).not.toHaveBeenCalled();
+        expect(isSessionSystemRecordsProtocolV1Active()).toBe(true);
+    });
+
+    it("does not treat another migration or malformed ledger result as CONTRACT activation", async () => {
+        for (const rows of [[{ migration_name: "expand-only" }], [null], {}]) {
+            await expect(initializeSessionSystemRecordsProtocolV1Activation({
+                $queryRawUnsafe: async () => rows,
+            } as unknown as ProtocolActivationDatabase)).resolves.toBe(false);
+            expect(isSessionSystemRecordsProtocolV1Active()).toBe(false);
+        }
     });
 
     it("keeps v1 inactive without preventing an expanded-only server from starting", async () => {
