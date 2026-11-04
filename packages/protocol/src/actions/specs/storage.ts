@@ -14,6 +14,7 @@ import {
   MachineStorageItemsListResultV1Schema, MachineStorageSuggestionsDeclineInputV1Schema, MachineStorageSuggestionsDeclineResultV1Schema,
   DiskScanStateV1Schema, MachineStorageScanStartInputV1Schema, MachineStorageScanGetInputV1Schema, MachineStorageScanGetResultV1Schema,
   MachineStorageScanCancelInputV1Schema, MachineStorageScanSkipInputV1Schema, MachineStorageProtectedAddInputV1Schema, MachineStorageProtectedRemoveInputV1Schema,
+  MachineStorageDockerPruneInputV1Schema, MachineStorageDockerPruneResultV1Schema,
 } from '../../storage/storageV1.js';
 import { MachineResourcesPolicyMutationResultV1Schema } from '../../machines/resources/machineResourcesPolicyV1.js';
 import { subsetNarrowing } from '../../approvals/approvalNarrowing.js';
@@ -41,6 +42,7 @@ export const MACHINE_STORAGE_ACTION_INPUT_SCHEMAS = {
   'machines.storage.scan.skip': MachineStorageScanSkipInputV1Schema,
   'machines.storage.protected.add': MachineStorageProtectedAddInputV1Schema,
   'machines.storage.protected.remove': MachineStorageProtectedRemoveInputV1Schema,
+  'machines.storage.docker.prune': MachineStorageDockerPruneInputV1Schema,
 } as const;
 export type MachineStorageActionInput = z.infer<(typeof MACHINE_STORAGE_ACTION_INPUT_SCHEMAS)[MachineStorageActionId]>;
 export const MACHINE_STORAGE_ACTION_OUTPUT_SCHEMAS = {
@@ -63,6 +65,7 @@ export const MACHINE_STORAGE_ACTION_OUTPUT_SCHEMAS = {
   'machines.storage.scan.skip': DiskScanStateV1Schema,
   'machines.storage.protected.add': MachineResourcesPolicyMutationResultV1Schema,
   'machines.storage.protected.remove': MachineResourcesPolicyMutationResultV1Schema,
+  'machines.storage.docker.prune': MachineStorageDockerPruneResultV1Schema,
 } as const;
 const surfaces = { ui: true, cli: true, agent: true, mcp: true, voice: true, rpc: false } as const;
 const fields = [
@@ -94,7 +97,10 @@ function cleanupSpec<const Id extends MachineStorageActionId>([id, title, descri
   readonly [Id, string, string, string, 'read' | 'write' | 'danger', 'safe' | 'danger', z.input<(typeof MACHINE_STORAGE_ACTION_INPUT_SCHEMAS)[Id]>?]): MachineStorageActionSpec<Id> {
   return {
     ...base, id, approval: { result: 'required' }, title, description, safety, sideEffectClass,
-    ...(id === 'machines.storage.deleteNow' || id === 'machines.storage.trash.empty'
+    ...(id === 'machines.storage.docker.prune' ? { operation: {
+      version: 1, visibility: 'activity', progress: 'reported', presentation: { onStart: 'current' },
+    } as const } : {}),
+    ...(id === 'machines.storage.deleteNow' || id === 'machines.storage.trash.empty' || id === 'machines.storage.docker.prune'
       ? { confirmVerb: { key: 'common.delete', fallback: 'Delete' }, irreversible: true as const } : {}),
     ...(id === 'machines.storage.trash.move' ? { approvalPolicy: {
       uiConfirmation: 'direct' as const,
@@ -105,7 +111,9 @@ function cleanupSpec<const Id extends MachineStorageActionId>([id, title, descri
     } } : {}),
     ...(id === 'machines.storage.protected.remove' ? { approvalPolicy: { agentDefault: 'authority' as const, requiredSurfaces: ['mcp', 'plugin'] as const } } : {}),
     toolExposure: { agent: id === 'machines.storage.suggestions.list' ? 'direct' as const : 'discoverable_only' as const },
-    prompting: { agentGuidance: `${storageReferenceGuidance} ${sideEffectClass === 'read'
+    prompting: { agentGuidance: id === 'machines.storage.docker.prune'
+      ? 'Use this Machine’s exact target and one explicit reviewed image set or the safe unused selection. Never infer custody from a native id, tagless status or Docker’s dangling label. The receiving Storage owner proves expired deployment receipt aliases and retained/running protection. Volumes, bind data, foreign images and unproven build cache are kept. This Action’s own user setting decides approval; never substitute shell prune commands.'
+      : `${storageReferenceGuidance} ${sideEffectClass === 'read'
       ? 'Read current storage facts before proposing cleanup. Suggestions omit Keep and Forbidden items and respect declined items. Use machines.storage.scan.get with the find view for requests such as finding 2 GB .mov files; Large and Old are views of the same scan, and since facts describe growth only when reported.'
       : sideEffectClass === 'danger'
         ? 'Read machines.storage.summary.get and machines.storage.suggestions.list first, then check the complete item set through machines.storage.items.check. Propose once through the set Action with reasons and what is lost; never repeat single-item cleanup effects in a loop. The approval UI lets the person select a subset: Safe begins selected, Caution and Keep begin unselected, Keep explains what is lost, and Forbidden goes in notIncluded without a selectable item. claimedVerdict describes the reviewed facts, never a second approval decision; this Action’s own user setting decides approval. Prefer machines.storage.trash.move; use machines.storage.deleteNow only when explicitly asked to delete permanently. For example, “find 20 GB to free” becomes one Trash-move proposal with goalBytes. If a build fails with ENOSPC, propose only this session’s own build outputs and Happier-managed caches, with retry describing the failed task; outside-Happier caches require the whole-disk opt-in. Request emptyAfter only to present the explicit permanent choice “Move to Trash, empty it and retry”; the UI may reduce it to “Move to Trash and retry”, which keeps Undo and frees space only when Trash empties on the same volume. Do not claim disk space is freed while items remain in Trash. If nothing is worth doing, say so without an effect call.'
@@ -130,6 +138,7 @@ const cleanupSpecs = [
   cleanupSpec(['machines.storage.items.check', 'Review storage items', 'Checks each served storage item again: what it is, where it lives and what removing it would lose.', RPC_METHODS.DAEMON_STORAGE_ITEMS_CHECK, 'read', 'safe', { machineId: '{{machineId}}', refs: [exampleServedRef] }]),
   cleanupSpec(['machines.storage.trash.move', 'Move storage items to Trash', 'Moves reviewed items to Happier’s Trash, where you can put them back. Forbidden paths are refused; Keep items require confirmation of what is lost or the agent Action’s approval.', RPC_METHODS.DAEMON_STORAGE_TRASH_MOVE, 'danger', 'danger', { machineId: '{{machineId}}', items: [{ ref: exampleRef, expect: '{{expect}}', claimedVerdict: 'safe' }] }]),
   cleanupSpec(['machines.storage.deleteNow', 'Delete storage items now', 'Permanently delete reviewed items; this cannot be undone.', RPC_METHODS.DAEMON_STORAGE_DELETE_NOW, 'danger', 'danger']),
+  cleanupSpec(['machines.storage.docker.prune', 'Clean up Docker images', 'Remove unused deployment images with proven expired receipt custody. Keeps retained, running and foreign images, volumes and data; unproven build cache is kept.', RPC_METHODS.DAEMON_STORAGE_DOCKER_PRUNE, 'danger', 'danger']),
   cleanupSpec(['machines.storage.trash.empty', 'Empty Happier’s Trash', 'Deletes what is in Happier’s Trash for good and gives the space back. This can’t be undone.', RPC_METHODS.DAEMON_STORAGE_TRASH_EMPTY, 'danger', 'danger']),
   cleanupSpec(['machines.storage.trash.restore', 'Put storage items back', 'Puts items back from Happier’s Trash without overwriting anything already there.', RPC_METHODS.DAEMON_STORAGE_TRASH_RESTORE, 'write', 'safe', { machineId: '{{machineId}}', entryIds: ['{{entryId}}'] }]),
   cleanupSpec(['machines.storage.worktrees.list', 'Read worktrees', 'Your worktrees with their sizes, and why each one is kept or can go.', RPC_METHODS.DAEMON_STORAGE_WORKTREES_LIST, 'read', 'safe', { machineId: '{{machineId}}' }]),

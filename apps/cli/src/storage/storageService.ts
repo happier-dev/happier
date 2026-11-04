@@ -27,6 +27,9 @@ import type { SizedStorageCategoryItem, StoragePathUse } from './categories/type
 import { logger } from '@/ui/logger';
 import { timeWebLatencyPhase } from '@/daemon/externalActions/webLatencyTrace';
 import { scmWorktreeMutationActivity } from '@/scm/worktreeMutationActivity';
+import type { ActionExecutorContext } from '@happier-dev/protocol';
+import type { MachineStorageDockerPruneInputV1 } from '@happier-dev/protocol/storage/storageV1';
+import type { createStorageDockerPruneForHost } from './dockerPrune';
 
 export type StorageEnvironmentProtectionFacts = Pick<StorageProtectionFacts,
     'platform' | 'systemPaths' | 'personalFolders' | 'knownFolders' | 'env' | 'browserProfileRoots' | 'cloudSyncedFolders'>;
@@ -43,6 +46,7 @@ export type StorageOperationActor = Readonly<{
 }>;
 
 export type StorageServiceDeps = Readonly<{
+    dockerPrune?: ReturnType<typeof createStorageDockerPruneForHost>;
     catalog: StorageCategoryCatalogDeps;
     readVolumes: () => readonly Readonly<{ id: string; label: string; mount: string; totalBytes: number; availableBytes: number;
         reservedBytes?: number; apfsContainerId?: string; availableIncludingPurgeableBytes?: number }>[];
@@ -544,6 +548,17 @@ export function createStorageService(deps: StorageServiceDeps) {
             return options.actor ? operations.summaryForActor(current, options.actor, items) : current;
         },
         revision: () => revision,
+        async dockerPrune(request: MachineStorageDockerPruneInputV1, options: Readonly<{
+            actor: StorageOperationActor; context: ActionExecutorContext;
+        }>) {
+            assertActive(options.context.signal);
+            await options.actor.assertCurrentAuthority();
+            assertActive(options.context.signal);
+            if (!deps.dockerPrune) return { kind: 'unsupported' as const, reason: 'native_runtime_unavailable' as const, removed: [], kept: [] };
+            const result = await deps.dockerPrune(request, options);
+            if (result.removed.length) invalidate();
+            return result;
+        },
         subscribe(listener: () => void) { assertActive(); listeners.add(listener); return () => { listeners.delete(listener); }; },
         invalidate,
         dispose() { if (disposed) return; disposed = true; operations.dispose(); unsubscribe?.(); unsubscribeWorktrees(); unsubscribeVolumes?.();

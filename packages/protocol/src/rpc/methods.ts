@@ -224,6 +224,7 @@ export const RPC_METHODS = {
   DAEMON_STORAGE_ITEMS_CHECK: 'daemon.storage.items.check',
   DAEMON_STORAGE_TRASH_MOVE: 'daemon.storage.trash.move',
   DAEMON_STORAGE_DELETE_NOW: 'daemon.storage.deleteNow',
+  DAEMON_STORAGE_DOCKER_PRUNE: 'daemon.storage.docker.prune',
   DAEMON_STORAGE_TRASH_EMPTY: 'daemon.storage.trash.empty',
   DAEMON_STORAGE_TRASH_RESTORE: 'daemon.storage.trash.restore',
   DAEMON_STORAGE_WORKTREES_LIST: 'daemon.storage.worktrees.list',

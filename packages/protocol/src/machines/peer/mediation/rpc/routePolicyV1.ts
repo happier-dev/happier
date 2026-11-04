@@ -322,6 +322,7 @@ const DIRECT_EPHEMERAL_POLICIES = Object.freeze([
     [RPC_METHODS.DAEMON_STORAGE_SCAN_SKIP, 'machines.storage.scan.skip'],
     [RPC_METHODS.DAEMON_STORAGE_PROTECTED_ADD, 'machines.storage.protected.add'],
     [RPC_METHODS.DAEMON_STORAGE_PROTECTED_REMOVE, 'machines.storage.protected.remove'],
+    [RPC_METHODS.DAEMON_STORAGE_DOCKER_PRUNE, 'machines.storage.docker.prune'],
   ] as const).map(([method, actionId]) => ({ ...actionSpecServerRequired(method, 'destructive_or_recovery_mutation',
     'Custodian-only storage operation through its canonical Action owner.', actionId), sharedMachineAccess: 'custodian_only' as const })),
   directEphemeral(RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_SNAPSHOT, 'Daemon-local local-services inventory snapshot read with no server persistence or cross-device fanout.', 'readTranscript'),

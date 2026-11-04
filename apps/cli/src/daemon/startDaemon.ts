@@ -2956,6 +2956,17 @@ const pluginRuntimeOwner = createDaemonPluginRuntimeOwner({
         };
         return {
           serverId: target.serverId, machineId: target.machineId, custodianAccountId: target.custodianAccountId,
+          dockerPrune: (await import('@/storage/dockerPrune')).createStorageDockerPruneForHost({
+            credentials: capturedCredentials, serverId: target.serverId, serverHttpBaseUrl: configuration.serverUrl,
+            machineId: target.machineId, installationId: target.installationId, happyHomeDir: home,
+            async assertInstalledCurrent() {
+              const current = machineResourceTarget();
+              if (credentials !== capturedCredentials || !current || current.serverId !== target.serverId
+                || current.machineId !== target.machineId || current.installationId !== target.installationId
+                || current.custodianAccountId !== target.custodianAccountId)
+                throw Object.assign(new Error('Storage deployment authority changed'), { code: 'unauthorized' });
+            },
+          }),
           homeDir: homedir(), activityLog: currentGuard.activityLog,
           attributionFor: accountId => ({ serverId: target.serverId, accountId,
             machineId: target.machineId, installationId: target.installationId }),

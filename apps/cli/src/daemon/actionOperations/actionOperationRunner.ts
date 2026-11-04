@@ -1,3 +1,4 @@
+import { MachineStorageDockerPruneResultV1Schema } from '@happier-dev/protocol';
 import { MachineServiceAdoptResultV1Schema } from '@happier-dev/protocol/local/services/adoptionV1';
 import { randomUUID } from 'node:crypto';
 
@@ -111,7 +112,8 @@ function isUnconfirmedNativeOutcome(actionId: string, result: ActionExecuteResul
 function isUnconfirmedOwnedOutcome(actionId: string, result: ActionExecuteResult): boolean {
   if (actionId === 'machines.reboot') return !result.ok && result.errorCode === 'action_outcome_unknown';
   if (actionId === 'machines.managed.power.set' || actionId === 'machines.managed.delete' || actionId === 'machines.managed.rebuild'
-    || actionId === 'machines.managed.acquire' || actionId === 'machines.managed.bootstrap.retry') {
+    || actionId === 'machines.managed.acquire' || actionId === 'machines.managed.bootstrap.retry'
+    || actionId === 'machines.storage.docker.prune') {
     return !result.ok && result.errorCode === 'action_outcome_unknown';
   }
   if (actionId === 'daemon.filesystem.upload' || actionId === 'daemon.filesystem.download' || actionId === 'daemon.filesystem.copy') {
@@ -272,6 +274,9 @@ export function createActionOperationRunner(deps: Readonly<{
             // turn an unconfirmed physical effect into known terminal evidence.
             deps.store.updateObservation(operationId, { kind: 'outcome_uncertain',
               code: handlerResult.ok ? nativeOutcome.errorCode : handlerResult.errorCode });
+            const pruneReceipt = action.actionId === 'machines.storage.docker.prune' && handlerResult.ok
+              ? MachineStorageDockerPruneResultV1Schema.safeParse(handlerResult.result) : null;
+            if (pruneReceipt?.success && pruneReceipt.data.kind === 'outcome_unknown') return handlerResult;
             const rebootReceipt = action.actionId === 'machines.reboot' && handlerResult.ok
               ? MachineRebootResultV1Schema.safeParse(handlerResult.result) : null;
             if (rebootReceipt?.success && rebootReceipt.data.kind === 'accepted'

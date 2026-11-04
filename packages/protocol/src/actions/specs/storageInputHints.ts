@@ -55,4 +55,8 @@ export const STORAGE_OPERATION_INPUT_FIELDS = {
   'machines.storage.scan.skip': [scanId, path],
   'machines.storage.protected.add': [path],
   'machines.storage.protected.remove': [path],
+  'machines.storage.docker.prune': [
+    { path: 'expectedEngineId', title: 'Reviewed Docker engine', widget: 'text' },
+    { path: 'selection', title: 'Reviewed image selection or safe unused selection', widget: 'json', required: true },
+  ],
 } satisfies Record<ActionId, ActionInputFieldHint[]>;

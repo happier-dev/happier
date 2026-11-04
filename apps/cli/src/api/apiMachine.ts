@@ -2991,7 +2991,8 @@ export class ApiMachineClient {
     }
 
     registerStorageRoutes(options: DaemonStorageRoutes): void {
-        registerDaemonStorageRpcHandlers(this.rpcHandlerManager, options);
+        registerDaemonStorageRpcHandlers(this.rpcHandlerManager, { ...options,
+            observeActionExecution: request => this.actionOperationRuntime.observeExecution(request) });
     }
 
     registerConnectedAccountDaemonRuntime(runtime: ConnectedAccountDaemonRuntime): void {

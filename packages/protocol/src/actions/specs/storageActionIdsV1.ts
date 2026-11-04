@@ -7,4 +7,5 @@ export const MACHINE_STORAGE_ACTION_IDS = [
   'machines.storage.worktrees.list', 'machines.storage.suggestions.list', 'machines.storage.suggestions.decline',
   'machines.storage.scan.start', 'machines.storage.scan.get', 'machines.storage.scan.cancel', 'machines.storage.scan.skip',
   'machines.storage.protected.add', 'machines.storage.protected.remove',
+  'machines.storage.docker.prune',
 ] as const;

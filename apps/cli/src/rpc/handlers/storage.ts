@@ -20,9 +20,13 @@ import {
 import { MachineResourcesPolicyMutationResultV1Schema } from '@happier-dev/protocol/machines/resources/machineResourcesPolicyV1';
 import { doesMachineRpcTargetMatchAdmission } from '@/api/machine/machineRpcAuthorization';
 import { timeWebLatencyPhase } from '@/daemon/externalActions/webLatencyTrace';
+import { buildActionExecutorContextForRpc } from './_actionDispatchAdapter';
+import { MachineStorageDockerPruneInputV1Schema } from '@happier-dev/protocol/storage/storageV1';
+import { runHostActionOperation, type HostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 
 export type DaemonStorageTarget = Readonly<{ serverId: string; machineId: string; installationId: string; custodianAccountId: string }>;
 export type DaemonStorageRoutes = Readonly<{
+    observeActionExecution?: HostActionOperationRuntime['observeExecution'];
     target: () => DaemonStorageTarget | null;
     getService: (target: DaemonStorageTarget) => Promise<StorageService>;
     readOwnSessionIds: (accountId: string) => Promise<ReadonlySet<string>> | ReadonlySet<string>;
@@ -280,6 +284,27 @@ export function registerDaemonStorageRpcHandlers(rpc: RpcHandlerRegistrar, optio
         (service, request, operation) => service.trashMove(request, operation), false, true);
     registerOperation(RPC_METHODS.DAEMON_STORAGE_DELETE_NOW, MachineStorageDeleteNowInputV1Schema, PileApplyResultV1Schema,
         (service, request, operation) => service.deleteNow(request, operation), false, true);
+    rpc.registerHandler(RPC_METHODS.DAEMON_STORAGE_DOCKER_PRUNE, async (raw: unknown, context) => {
+        const request = MachineStorageDockerPruneInputV1Schema.parse(raw);
+        const access = admission(request, context, true);
+        await access.assertCurrent();
+        const result = await callStorageOwner(async () => {
+            const actor = await readActor(access, context, true);
+            const service = await options.getService(access.target!);
+            await access.assertLocalAuthority();
+            const actionContext = buildActionExecutorContextForRpc({ ...context, actionId: 'machines.storage.docker.prune',
+                serverId: access.target!.serverId });
+            if (!options.observeActionExecution) return { kind: 'unsupported' as const, reason: 'native_runtime_unavailable' as const,
+                removed: [], kept: [] };
+            const outcome = await runHostActionOperation(options.observeActionExecution, {
+                actionId: 'machines.storage.docker.prune', input: request, context: actionContext,
+                execute: async current => ({ ok: true, result: await service.dockerPrune(request, { actor, context: current }) }),
+            }, context);
+            if (!outcome.ok) throw new RpcError(outcome.error, outcome.errorCode);
+            return outcome.result;
+        }, access.assertLocalAuthority);
+        return result;
+    });
     registerOperation(RPC_METHODS.DAEMON_STORAGE_TRASH_EMPTY, MachineStorageTrashEmptyInputV1Schema, TrashEmptyResultV1Schema,
         (service, request, operation) => service.trashEmpty(request, operation), false, true);
     registerOperation(RPC_METHODS.DAEMON_STORAGE_TRASH_RESTORE, MachineStorageTrashRestoreInputV1Schema, TrashRestoreResultV1Schema,
