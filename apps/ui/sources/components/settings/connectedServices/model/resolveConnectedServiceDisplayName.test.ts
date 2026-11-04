@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
 import { getLegacyConnectedServiceRegistryEntry } from '@/sync/domains/connectedServices/connectedServiceRegistry';
+import { BUNDLED_ACCOUNT_CONNECTED_SERVICE_DECLARATIONS } from '@/agents/registry/generatedBundledPluginEntries';
+import { projectConnectedAccountDescriptorV1 } from '@happier-dev/protocol/connect/connectedAccountUiProjectionV1';
+import { projectConnectedServiceRegistryEntries } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 
 import {
     resolveConnectedServiceDisplayName,
@@ -42,6 +45,22 @@ describe('resolveConnectedServiceShortName', () => {
 });
 
 describe('resolveQualifiedConnectedServiceRegistryDisplayName', () => {
+    it.each([
+        ['happier.agent.claude', 'claude-subscription'],
+        ['happier.machine.vercel', 'vercel-account'],
+        ['happier.scm.forge.github', 'github-account'],
+    ])('keeps the admitted bundled name before and after descriptor settlement (%s/%s)', (pluginId, localId) => {
+        const declaration = BUNDLED_ACCOUNT_CONNECTED_SERVICE_DECLARATIONS[`${pluginId}/${localId}`];
+        expect(declaration).toBeDefined();
+        const descriptor = projectConnectedAccountDescriptorV1({ descriptor: declaration!.descriptor,
+            pluginId, serviceId: localId, provenance: 'first_party', sourceKind: 'bundled',
+            availability: { state: 'available', reason: 'resolved' }, diagnostics: [] });
+        const entries = projectConnectedServiceRegistryEntries({ scopeKey: 'home', status: 'ready',
+            descriptors: [descriptor], conflicts: [], errorReason: null });
+        const service = { pluginId, localId };
+        expect(resolveQualifiedConnectedServiceRegistryDisplayName({ entries: [] }, service, key => key))
+            .toBe(resolveQualifiedConnectedServiceRegistryDisplayName({ entries }, service, key => key));
+    });
     it('reads the exact daemon-projected applied descriptor instead of an installed-manifest guess', () => {
         expect(resolveQualifiedConnectedServiceRegistryDisplayName({
             entries: [{
@@ -100,11 +119,11 @@ describe('resolveQualifiedConnectedServiceRegistryDisplayName', () => {
         expect(resolveQualifiedConnectedServiceRegistryDisplayName({ entries: [] }, {
             pluginId: 'happier.agent.claude',
             localId: 'claude-subscription',
-        }, (key) => key)).toBe('connectedServices.serviceNames.claudeSubscription');
+        }, (key) => key)).toBe('Claude');
         expect(resolveQualifiedConnectedServiceRegistryDisplayName({ entries: [] }, {
             pluginId: 'happier.agent.claude',
             localId: 'anthropic',
-        }, (key) => key)).toBe('connectedServices.serviceNames.anthropic');
+        }, (key) => key)).toBe('Anthropic API key');
     });
 
     it('names a retained external service from its stored identity without claiming it is installed', () => {

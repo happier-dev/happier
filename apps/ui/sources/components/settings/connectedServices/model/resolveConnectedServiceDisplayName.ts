@@ -2,7 +2,7 @@ import { resolveProjectedLocalizedText } from '@/components/plugins/surfaces/res
 import type { PluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import { humanizeConnectedServiceIdentity } from '@/sync/domains/connectedServices/connectedServiceIdentityLabel';
 import {
-    getGeneratedLegacyConnectedServiceRegistryFallback,
+    getConnectedServiceRegistryIdentityFallback,
     getLegacyConnectedServiceRegistryEntry,
     type ConnectedServiceDisplayNameKey,
     type ConnectedServiceRegistryEntry,
@@ -33,9 +33,9 @@ export function resolveConnectedServiceRegistryEntryDisplayName(
 
 /**
  * A qualified service's entry in the daemon-published, currently applied descriptor projection, else
- * (before that projection arrives) a built-in service's generated entry. Callers must not infer a
- * presentation title from an installed plugin manifest: it may not be current or executable for this
- * server scope.
+ * (before that projection arrives) its read-only identity entry. The registry
+ * supplies admitted bundled titles without granting execution; installed
+ * third-party manifests are never consulted as a substitute for a projection.
  */
 export function resolveQualifiedConnectedServiceRegistryEntry(
     registry: Pick<ConnectedServiceRegistrySnapshot, 'entries'>,
@@ -44,7 +44,7 @@ export function resolveQualifiedConnectedServiceRegistryEntry(
     return registry.entries.find((candidate) => (
         candidate.service?.pluginId === service.pluginId
         && candidate.service.localId === service.localId
-    )) ?? getGeneratedLegacyConnectedServiceRegistryFallback(service);
+    )) ?? getConnectedServiceRegistryIdentityFallback(service);
 }
 
 /** A qualified service's name, through `resolveQualifiedConnectedServiceRegistryEntry`. */

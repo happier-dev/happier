@@ -491,7 +491,7 @@ export function getGeneratedLegacyConnectedServiceRegistryFallback(
 export function getConnectedServiceRegistryIdentityFallback(
   service: PluginContributionIdentityV1,
 ): ConnectedServiceRegistryEntry {
-  return getGeneratedLegacyConnectedServiceRegistryFallback(service) ?? {
+  const fallback = getGeneratedLegacyConnectedServiceRegistryFallback(service) ?? {
     serviceId: service.localId,
     service,
     connectCommand: '',
@@ -499,6 +499,8 @@ export function getConnectedServiceRegistryIdentityFallback(
     supportsToken: false,
     executable: false,
   };
+  const declaration = BUNDLED_ACCOUNT_CONNECTED_SERVICE_DECLARATIONS[buildQualifiedPluginContributionKey(service)];
+  return declaration ? { ...fallback, projectedTitle: declaration.descriptor.title } : fallback;
 }
 
 /**
