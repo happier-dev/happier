@@ -4944,9 +4944,10 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                         selectedProviderConnectionId !== null
                         && !useRunnerManagedProviderBinding
                         && (
-                            !providerBindingHandoff
-                            || providerBindingHandoff.sessionBindingMetadata
-                                .connectionId !== selectedProviderConnectionId
+                            providerBindingHandoff
+                                ? providerBindingHandoff.sessionBindingMetadata
+                                    .connectionId !== selectedProviderConnectionId
+                                : hostRuntimeParams.providerBindingMaterialization === undefined
                         )
                     ) {
                         throw new Error(
@@ -4990,7 +4991,10 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                         identity.agentId,
                         lateInput,
                         metadataForOpen,
-                        providerBindingHandoff?.materialization,
+                        providerBindingHandoff?.materialization
+                            ?? (useRunnerManagedProviderBinding
+                                ? undefined
+                                : hostRuntimeParams.providerBindingMaterialization),
                         hostRuntimeParams.getPermissionMode(),
                         hostRuntimeParams.getWorkspaceWrites,
                         {

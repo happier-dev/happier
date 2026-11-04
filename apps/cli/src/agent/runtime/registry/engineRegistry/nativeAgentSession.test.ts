@@ -7737,7 +7737,7 @@ describe('native Agent session host adapter', () => {
         expect(cleanup).toHaveBeenCalledOnce();
     });
 
-    it('keeps an authoritative external Provider handoff and never starts runner-managed Provider custody', async () => {
+    it.each(['early', 'late'] as const)('keeps an authoritative %s external Provider handoff without runner-managed custody', async (handoffPhase) => {
         const agentId = 'acme-runner-direct-provider-agent';
         const agentTargetKey = `backend:${agentId}` as const;
         const contributions = createExternalContributionFixtures(agentId);
@@ -7834,11 +7834,13 @@ describe('native Agent session host adapter', () => {
                     environmentVariables: {
                         HAPPIER_CODEX_PROVIDER_API_KEY:
                             'direct-provider-credential',
-                        [HAPPIER_PROVIDER_BINDING_LAUNCH_MATERIALIZATION_V1_ENV_KEY]:
-                            serializeProviderBindingLaunchHandoffForEnv(
-                                materialization,
-                                metadata,
-                            ),
+                        ...(handoffPhase === 'late' ? {
+                            [HAPPIER_PROVIDER_BINDING_LAUNCH_MATERIALIZATION_V1_ENV_KEY]:
+                                serializeProviderBindingLaunchHandoffForEnv(
+                                    materialization,
+                                    metadata,
+                                ),
+                        } : {}),
                     },
                     unsetEnvironmentVariables: [],
                     sensitiveEnvironmentVariableNames: [],
@@ -7852,6 +7854,7 @@ describe('native Agent session host adapter', () => {
         const created = await plan.config.createSessionRuntime({
             directory: '/tmp/acme-runner-direct-provider-agent',
             metadata: { providerBindingV1: metadata },
+            ...(handoffPhase === 'early' ? { providerBindingMaterialization: materialization } : {}),
             machineId: 'machine-1',
             session: createNativeSessionClientTestPort(
                 'session-runner-direct-provider',
