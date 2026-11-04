@@ -30,6 +30,12 @@ describe('background-work attention Settings declaration', () => {
 });
 
 describe('portable built-in Settings declarations', () => {
+  it('addresses collapsed groups through the device disclosure owner rather than a Settings key', () => {
+    const declaration = readBuiltInSettingDeclarationV1('session.list.collapsedGroups');
+    expect(declaration?.storage).toEqual({ scope: 'local', kind: 'localOwner',
+      owner: 'sessionListDisclosureBinding', access: 'read_write' });
+  });
+
   it.each([
     ['toolRendering.collapsedOverrides', 'toolViewDetailLevelByToolName', 'compact'],
     ['toolRendering.expandedOverrides', 'toolViewExpandedDetailLevelByToolName', 'summary'],
