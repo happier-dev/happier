@@ -7607,7 +7607,6 @@
     "sources/voice/settings/voiceSettingsSwitchAccessibility.architecture.test.ts",
     "sources/voice/settings/welcome.test.ts",
     "sources/voice/shared/redactVoicePathLikeData.spec.ts",
-    "sources/voice/shared/voiceSpawnAttempt.test.ts",
     "sources/voice/sherpa/stt/sherpaStreamingSttPacks.spec.ts",
     "sources/voice/tools/actionImpl/admittedSessionReferenceCorpus.test.ts",
     "sources/voice/tools/actionImpl/agentCatalogList.accountHome.test.ts",

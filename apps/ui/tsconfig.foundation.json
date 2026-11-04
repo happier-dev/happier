@@ -3631,7 +3631,6 @@
     "sources/voice/settings/welcome.ts",
     "sources/voice/shared/normalizeNonEmptyString.ts",
     "sources/voice/shared/redactVoicePathLikeData.ts",
-    "sources/voice/shared/voiceSpawnAttempt.ts",
     "sources/voice/tools/localVoiceEffectOutcomeCustody.ts",
     "sources/voice/tools/realtimeToolBarrier.ts",
     "sources/voice/tools/voiceActionExecution.ts",
