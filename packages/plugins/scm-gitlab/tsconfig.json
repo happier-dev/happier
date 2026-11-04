@@ -11,7 +11,7 @@
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
-    "jsx": "react",
+    "jsx": "react-jsx",
     "strict": true,
     "skipLibCheck": true,
     "types": ["node"]

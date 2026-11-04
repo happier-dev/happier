@@ -12,7 +12,7 @@
     "declarationMap": true,
     "sourceMap": true,
     "strict": true,
-    "jsx": "react",
+    "jsx": "react-jsx",
     "skipLibCheck": true,
     "types": ["node"]
   },

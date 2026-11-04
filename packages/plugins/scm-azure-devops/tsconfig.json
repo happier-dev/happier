@@ -16,7 +16,7 @@
     "sourceMap": true,
     "strict": true,
     "skipLibCheck": true,
-    "jsx": "react",
+    "jsx": "react-jsx",
     "types": [
       "node"
     ]

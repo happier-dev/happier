@@ -4,7 +4,18 @@ import {
     isPluginActionHandlerInvocationNotStartedAdvisory,
     isPluginError,
     PluginError,
+    readPluginErrorRequestIdV1,
 } from './errors.js';
+
+describe('readPluginErrorRequestIdV1', () => {
+    it('retains the request identity from a cross-realm refusal without accepting malformed details', () => {
+        expect(readPluginErrorRequestIdV1({ code: 'unavailable', details: { requestId: 'request-17' } })).toBe('request-17');
+        for (const details of [undefined, null, false, 17, 'request-17', [], { requestId: 17 }]) {
+            expect(readPluginErrorRequestIdV1({ details })).toBeUndefined();
+        }
+        expect(readPluginErrorRequestIdV1(undefined)).toBeUndefined();
+    });
+});
 
 describe('isPluginError', () => {
     it('recognizes the public fields produced by PluginError construction', () => {

@@ -38,6 +38,14 @@ export type PluginErrorData = Readonly<{
     execLaunch?: 'notStarted';
 }>;
 
+/** Request identity carried by Action and Resource refusals across runtime realms. */
+export function readPluginErrorRequestIdV1(error: unknown): string | undefined {
+    const details = error !== null && typeof error === 'object' ? Reflect.get(error, 'details') : undefined;
+    const requestId = details !== null && typeof details === 'object' && !Array.isArray(details)
+        ? Reflect.get(details, 'requestId') : undefined;
+    return typeof requestId === 'string' ? requestId : undefined;
+}
+
 export interface PluginError {
     readonly actionHandlerInvocation?: PluginActionHandlerInvocation;
     readonly execLaunch?: 'notStarted';

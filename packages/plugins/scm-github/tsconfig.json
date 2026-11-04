@@ -13,7 +13,7 @@
     "declarationMap": true,
     "sourceMap": true,
     "strict": true,
-    "jsx": "react",
+    "jsx": "react-jsx",
     "skipLibCheck": true
   },
   "include": ["src/**/*.ts", "src/**/*.tsx"],

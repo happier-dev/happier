@@ -158,7 +158,7 @@ export type { PluginDaemonDatabaseRuntimeProjection } from './definePlugin.js';
 export type { PluginAccountCollectionMigrationRuntimeProjection } from './definePlugin.js';
 export type { PluginRequestInterceptorDefinition } from './definePlugin.js';
 export type { PluginDiagnosticData } from './diagnostics.js';
-export { isPluginError, PluginError } from './errors.js';
+export { isPluginError, PluginError, readPluginErrorRequestIdV1 } from './errors.js';
 export type { PluginErrorData } from './errors.js';
 export type { PluginIdentity } from './identity.js';
 export type { PluginInvocationCaller } from './invocation.js';

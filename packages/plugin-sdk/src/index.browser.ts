@@ -261,6 +261,7 @@ export { isRecord } from './sessions/fileStores/records.js';
 export { parseJsonLine } from './sessions/fileStores/records.js';
 export { parseTimestampMs } from './sessions/fileStores/records.js';
 export { projectPluginFailureText } from './diagnostics.js';
+export { readPluginErrorRequestIdV1 } from './errors.js';
 export { readString } from './sessions/fileStores/records.js';
 export { readTrimmedString } from './sessions/fileStores/records.js';
 export { redactBugReportSensitiveText } from './diagnostics.js';

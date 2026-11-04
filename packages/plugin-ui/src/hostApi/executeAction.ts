@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { isPluginError, type JsonValue, type PluginDiagnosticData } from '@happier-dev/plugin-sdk';
+import { isPluginError, readPluginErrorRequestIdV1, type JsonValue, type PluginDiagnosticData } from '@happier-dev/plugin-sdk';
 import type {
   PluginUiActionExecutionOptions,
   PluginUiActionInputFor,
@@ -115,9 +115,7 @@ export function projectPluginActionRejectionV1<Result>(error: unknown, translate
   }
   const message = readErrorMessage(error, code, translate);
   const details = (error as { details?: unknown } | null)?.details;
-  const requestIdValue = details !== null && typeof details === 'object' && !Array.isArray(details)
-    ? Reflect.get(details, 'requestId') : undefined;
-  const requestId = typeof requestIdValue === 'string' ? requestIdValue : undefined;
+  const requestId = readPluginErrorRequestIdV1(error);
   const receiptLost = details !== null && typeof details === 'object' && !Array.isArray(details)
     && Reflect.get(details, 'layer') === 'transport'
     && Reflect.get(details, 'phase') === 'settlement';
