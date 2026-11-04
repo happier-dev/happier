@@ -1,12 +1,12 @@
-import { useRef, type ReactNode } from 'react';
+import { Fragment, useId, useRef, type ReactNode } from 'react';
 import { View } from 'react-native';
 
 import { useOptionalHappierUiTypography } from '../../environment/context.js';
 import type { HappierUiTheme } from '../../environment/types.js';
 import { HappierPressable } from '../interaction/Pressable.js';
-import { resolveHappierPageTextStyle } from '../layout/pageText.js';
+import { HAPPIER_PAGE_TEXT, resolveHappierPageTextStyle } from '../layout/pageText.js';
 import { HappierText } from '../text/Text.js';
-import { HappierRadioMark } from './RadioMark.js';
+import { HAPPIER_RADIO_MARK_METRICS, HappierRadioMark } from './RadioMark.js';
 
 /** The gap between the mark and its label, and each option's vertical inset (lab `.fm-rd` rows). */
 export const HAPPIER_RADIO_CHOICE_LIST_METRICS = Object.freeze({
@@ -17,7 +17,20 @@ export const HAPPIER_RADIO_CHOICE_LIST_METRICS = Object.freeze({
 export type HappierRadioChoiceOption<T extends string = string> = Readonly<{
   id: T;
   title: string;
+  /**
+   * What choosing it means, one short line under the title (a level's consequence). With descriptions
+   * each option reads as a row: title at the row-title step, its meaning in secondary ink beneath, the
+   * mark level with the title's first line. The title stays the accessible name; the description follows it.
+   */
+  description?: string;
   disabled?: boolean;
+  /** This option's own test id; otherwise `testIDPrefix:id`. */
+  testID?: string;
+  /**
+   * What the option holds once chosen (a level's breakdown), shown on the option's text column under it.
+   * A caller passes it for the chosen option only; it is not part of the option's accessible name.
+   */
+  detail?: ReactNode;
 }>;
 
 /**
@@ -45,6 +58,7 @@ export function HappierRadioChoiceList<T extends string>(
   }>,
 ) {
   const typography = useOptionalHappierUiTypography();
+  const descriptionIdBase = useId();
   const controls = useRef<Array<Readonly<{ focus: () => void }> | null>>([]);
   const move = (from: number, delta: number) => {
     const count = props.options.length;
@@ -61,6 +75,10 @@ export function HappierRadioChoiceList<T extends string>(
   const tabStop = props.options.some((option) => option.id === props.value)
     ? props.value
     : (props.options[0]?.id ?? null);
+  const titleText = resolveHappierPageTextStyle('rowTitle', typography);
+  const descriptionText = resolveHappierPageTextStyle('rowDescription', typography);
+  // The mark centres on the title's first line, not on the whole title-and-description block.
+  const describedMarkOffset = Math.max(0, (HAPPIER_PAGE_TEXT.rowTitle.lineHeight - HAPPIER_RADIO_MARK_METRICS.size) / 2);
   return (
     <View
       accessibilityRole="radiogroup"
@@ -70,15 +88,18 @@ export function HappierRadioChoiceList<T extends string>(
       {props.options.map((option, index) => {
         const selected = option.id === props.value;
         const disabled = props.disabled === true || option.disabled === true;
+        const described = option.description !== undefined && option.description.length > 0;
+        const descriptionId = `${descriptionIdBase}-${option.id}-description`;
         return (
+          <Fragment key={option.id}>
           <HappierPressable
-            key={option.id}
-            testID={props.testIDPrefix ? `${props.testIDPrefix}:${option.id}` : undefined}
+            testID={option.testID ?? (props.testIDPrefix ? `${props.testIDPrefix}:${option.id}` : undefined)}
             controlRef={(instance) => {
               controls.current[index] = instance;
             }}
             accessibilityRole="radio"
             accessibilityLabel={option.title}
+            {...(described ? { accessibilityHint: option.description, describedById: descriptionId } : {})}
             checked={selected}
             tabIndex={option.id === tabStop ? 0 : -1}
             disabled={disabled}
@@ -96,13 +117,25 @@ export function HappierRadioChoiceList<T extends string>(
             }}
             style={{
               flexDirection: 'row',
-              alignItems: 'center',
+              alignItems: described ? 'flex-start' : 'center',
               gap: HAPPIER_RADIO_CHOICE_LIST_METRICS.markGap,
               paddingVertical: HAPPIER_RADIO_CHOICE_LIST_METRICS.optionPaddingVertical,
             }}
           >
-            <HappierRadioMark selected={selected} disabled={disabled} theme={props.theme} />
-            {props.renderTitle ? (
+            <HappierRadioMark
+              selected={selected}
+              disabled={disabled}
+              theme={props.theme}
+              {...(described ? { style: { marginTop: describedMarkOffset } } : {})}
+            />
+            {described ? (
+              <View style={{ flexShrink: 1, flexGrow: 1 }}>
+                <HappierText style={{ ...titleText, color: props.theme.colors.text }}>{option.title}</HappierText>
+                <HappierText nativeID={descriptionId} style={{ ...descriptionText, color: props.theme.colors.secondaryText }}>
+                  {option.description}
+                </HappierText>
+              </View>
+            ) : props.renderTitle ? (
               props.renderTitle(option, selected)
             ) : (
               <HappierText
@@ -116,6 +149,12 @@ export function HappierRadioChoiceList<T extends string>(
               </HappierText>
             )}
           </HappierPressable>
+          {option.detail === undefined || option.detail === null ? null : (
+            <View style={{ paddingLeft: HAPPIER_RADIO_MARK_METRICS.size + HAPPIER_RADIO_CHOICE_LIST_METRICS.markGap, paddingBottom: HAPPIER_RADIO_CHOICE_LIST_METRICS.optionPaddingVertical }}>
+              {option.detail}
+            </View>
+          )}
+          </Fragment>
         );
       })}
     </View>

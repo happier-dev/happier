@@ -13,6 +13,28 @@ const OPTIONS = [
 ] as const;
 
 describe('radio choice list', () => {
+  it('draws an option’s description under its title and reads it after the title', () => {
+    const view = mountThroughReactNativeWeb(
+      <HappierRadioChoiceList
+        accessibilityLabel="How much you hear"
+        options={[
+          { id: 'important', title: 'Important', description: 'Interrupts you only when it needs you.' },
+          { id: 'quiet', title: 'Quiet' },
+        ]}
+        value="important"
+        onChange={() => undefined}
+        theme={createSurfaceContext().theme}
+        testIDPrefix="level"
+      />,
+    );
+    onTestFinished(() => view.unmount());
+    const important = view.container.querySelector<HTMLElement>('[data-testid="level:important"]')!;
+    expect(important.textContent).toContain('Important');
+    expect(important.textContent).toContain('Interrupts you only when it needs you.');
+    // The title stays the accessible name; the description is read after it.
+    expect(important.getAttribute('aria-label')).toBe('Important');
+  });
+
   it('does not change a disabled group with arrow keys, including keys sent to its previously focused choice', () => {
     const onChange = vi.fn();
     const view = mountThroughReactNativeWeb(

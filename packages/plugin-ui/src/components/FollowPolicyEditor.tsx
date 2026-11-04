@@ -1,11 +1,12 @@
 import type { ReactElement } from 'react';
 import { StyleSheet, View } from 'react-native';
 
+import { HappierRadioChoiceList } from '../presentation/form/RadioChoiceList.js';
 import { useHappierColumnEdgeRemainder } from '../presentation/layout/columnEdge.js';
 import { HAPPIER_PAGE_METRICS } from '../presentation/layout/pageMetrics.js';
 import { HappierText } from '../presentation/text/Text.js';
 import { Select } from './Form.js';
-import { Item, ItemGroup } from './List.js';
+import { ItemGroup } from './List.js';
 import { SettingRow } from './Setting.js';
 import {
   usePluginTheme,
@@ -60,34 +61,20 @@ const PRESET_LABELS: Readonly<Record<string, string>> = {
 const PERSON_COPY = {
   presetLabel: 'How much you hear',
   presetDescriptions: {
-    everything:
-      'Interrupts you whenever something happens. Messages arrive quietly in Inbox.',
-    important:
-      'Interrupts you only when it needs you, fails or stalls. Everything else waits quietly in Inbox.',
+    everything: 'Interrupts you whenever something happens.',
+    important: 'Interrupts you only when it needs you, fails or stalls.',
     quiet: 'Nothing interrupts you. Updates wait quietly in Inbox.',
-    custom:
-      'Choose what interrupts you, what arrives quietly and what is left out.',
-  },
-  groups: {
-    interrupt: { title: 'Interrupts you', channel: 'Push' },
-    quiet: { title: 'Arrives quietly', channel: 'Inbox' },
+    custom: 'Choose how each event reaches you.',
   },
   deliveries: { quiet: 'Inbox', interrupt: 'Push' },
 } as const;
 const SESSION_COPY = {
   presetLabel: 'How much it hears',
   presetDescriptions: {
-    everything:
-      'Wakes it whenever something happens. Messages wait for its next turn.',
-    important:
-      'Wakes it only when something needs it, fails or stalls. Everything else waits for its next turn.',
+    everything: 'Wakes it whenever something happens.',
+    important: 'Wakes it only when something needs it, fails or stalls.',
     quiet: 'Nothing wakes it. Updates wait for its next turn.',
-    custom:
-      'Choose what wakes it, what waits for its next turn and what is left out.',
-  },
-  groups: {
-    interrupt: { title: 'Wakes it', channel: 'Wake' },
-    quiet: { title: 'Waits for its next turn', channel: 'Next turn' },
+    custom: 'Choose how each event reaches it.',
   },
   deliveries: { quiet: 'Next turn', interrupt: 'Wake' },
 } as const;
@@ -114,7 +101,8 @@ const DELIVERIES = [
   'quiet',
   'interrupt',
 ] as const satisfies readonly FollowPolicyEditorDelivery[];
-const GROUP_DELIVERIES = ['interrupt', 'quiet'] as const;
+/** The chosen level's breakdown, loudest first: what interrupts, what waits, what is left out. */
+const LEGEND_DELIVERIES = ['interrupt', 'quiet', 'off'] as const satisfies readonly FollowPolicyEditorDelivery[];
 
 function eventLabel(translate: PluginTranslate, id: string): string {
   return translate(`${KEY}.event.${id}`, EVENT_LABELS[id] ?? id);
@@ -148,8 +136,9 @@ function presetRows(
 }
 
 /**
- * The one Follow policy editor (C1 §4.3, lab P2): the four presets, what the chosen one means, and the
- * events it covers grouped by how they reach you; Custom gives each event its own Off · Inbox · Push.
+ * The one Follow policy editor (C1 §4.3, lab P2): the four levels as one radio choice, each with its own
+ * meaning, and under them the chosen level's breakdown — each channel (Push, Inbox, Off) and the events
+ * it carries, in the same words Custom's rows use; Custom gives each event its own Off · Inbox · Push.
  * Core's personal Follow, Session sources, rules and plugins bind the same editor; it holds no state and
  * writes nothing — the caller's Follow owner applies each choice.
  */
@@ -172,41 +161,57 @@ export function FollowPolicyEditor(
       ? translate(`${KEY}.delivery.off`, 'Off')
       : translate(`${copyKey}.delivery.${delivery}`, copy.deliveries[delivery]),
   }));
-  const off = rows.filter((row) => row.delivery === 'off');
-  // The presets and the Not-included line stand on the sheets' edge; a column that already draws it adds none.
+  // The levels and their breakdown stand on the sheets' edge; a column that already draws it adds none.
   const edgePx = useHappierColumnEdgeRemainder(HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx);
+  // What the chosen level means, as facts and not as rows, under that level: each channel, then the events that
+  // reach it. Rows here would read as choices; the only choices are the levels (and Custom's own rows).
+  const legendRows = LEGEND_DELIVERIES.flatMap((delivery) => {
+    const members = rows.filter((row) => row.delivery === delivery);
+    if (members.length === 0) return [];
+    const channel = delivery === 'off'
+      ? translate(`${KEY}.delivery.off`, 'Off')
+      : translate(`${copyKey}.delivery.${delivery}`, copy.deliveries[delivery]);
+    return [{ delivery, channel, events: members.map((row) => eventLabel(translate, row.id)).join(', ') }];
+  });
+  // A label | value grid: every row's label cell also holds the other rows' labels at no height, so each cell is
+  // as wide as the widest label and the values share one column (a wrapped value hangs in it) on the first frame.
+  const legend = custom ? null : (
+    <View style={styles.legend} testID={`${testID}.legend`}>
+      {legendRows.map((row) => (
+        <View key={row.delivery} style={styles.legendRow} testID={`${testID}.group.${row.delivery}`}>
+          <View style={styles.legendLabel}>
+            <HappierText variant="meta" tone="neutral">{row.channel}</HappierText>
+            {legendRows.filter((other) => other !== row).map((other) => (
+              <View key={other.delivery} style={styles.legendLabelSizer} aria-hidden importantForAccessibility="no-hide-descendants">
+                <HappierText variant="meta">{other.channel}</HappierText>
+              </View>
+            ))}
+          </View>
+          <HappierText variant="meta" tone="secondary" style={styles.legendValue}>{row.events}</HappierText>
+        </View>
+      ))}
+    </View>
+  );
   return (
     <View testID={testID} style={styles.root}>
-      <View style={[styles.presets, { paddingHorizontal: edgePx }]}>
-        <Select
-          label={presetLabel}
-          presentation="segmented"
-          fill
+      <View style={[styles.levels, { paddingHorizontal: edgePx }]} testID={`${testID}.presets`}>
+        <HappierRadioChoiceList
+          accessibilityLabel={presetLabel}
           options={props.presets.map((preset) => ({
-            value: preset,
-            label: translate(
-              `${KEY}.preset.${preset}`,
-              PRESET_LABELS[preset] ?? preset,
+            id: preset,
+            title: translate(`${KEY}.preset.${preset}`, PRESET_LABELS[preset] ?? preset),
+            description: translate(
+              `${copyKey}.presetDescription.${preset}`,
+              copy.presetDescriptions[preset as keyof typeof copy.presetDescriptions] ?? '',
             ),
             testID: `${testID}.preset.${preset}`,
+            ...(preset === props.preset && legend !== null ? { detail: legend } : {}),
           }))}
           value={props.preset}
           disabled={props.disabled}
-          onChange={(value) => {
-            if (typeof value === 'string') props.onSelectPreset(value);
-          }}
-          testID={`${testID}.presets`}
+          onChange={props.onSelectPreset}
+          theme={theme}
         />
-        <HappierText
-          variant="body"
-          style={{ color: theme.colors.secondaryText }}
-          testID={`${testID}.description`}
-        >
-          {translate(
-            `${copyKey}.presetDescription.${props.preset}`,
-            copy.presetDescriptions[props.preset as keyof typeof copy.presetDescriptions] ?? '',
-          )}
-        </HappierText>
       </View>
       {custom ? (
         <ItemGroup
@@ -246,53 +251,7 @@ export function FollowPolicyEditor(
             />
           ))}
         </ItemGroup>
-      ) : (
-        <>
-          {GROUP_DELIVERIES.map((delivery) => {
-            const group = copy.groups[delivery];
-            const members = rows.filter((row) => row.delivery === delivery);
-            if (members.length === 0) return null;
-            return (
-              <ItemGroup
-                key={delivery}
-                title={translate(`${copyKey}.group.${delivery}`, group.title)}
-                action={
-                  <HappierText
-                    variant="meta"
-                    style={{ color: theme.colors.secondaryText }}
-                  >
-                    {translate(`${copyKey}.channel.${delivery}`, group.channel)}
-                  </HappierText>
-                }
-                testID={`${testID}.group.${delivery}`}
-              >
-                {members.map((row) => {
-                  const description = eventDescription(translate, row.id);
-                  return (
-                    <Item
-                      key={row.id}
-                      title={eventLabel(translate, row.id)}
-                      {...(description === undefined
-                        ? {}
-                        : { subtitle: description })}
-                      testID={`${testID}.event.${row.id}`}
-                    />
-                  );
-                })}
-              </ItemGroup>
-            );
-          })}
-          {off.length > 0 ? (
-            <HappierText
-              variant="meta"
-              style={{ color: theme.colors.secondaryText, paddingHorizontal: edgePx }}
-              testID={`${testID}.group.off`}
-            >
-              {`${translate(`${KEY}.group.off`, 'Not included')} · ${off.map((row) => eventLabel(translate, row.id)).join(', ')}`}
-            </HappierText>
-          ) : null}
-        </>
-      )}
+      ) : null}
     </View>
   );
 }
@@ -300,5 +259,10 @@ export function FollowPolicyEditor(
 const styles = StyleSheet.create({
   root: { gap: HAPPIER_PAGE_METRICS.groupSeparatorGapPx },
   // The presets take the container's width (never wider), so a narrow pane can fit the segmented control.
-  presets: { gap: HAPPIER_PAGE_METRICS.groupHeadingGapPx },
+  levels: { gap: HAPPIER_PAGE_METRICS.groupHeadingGapPx },
+  legend: { gap: HAPPIER_PAGE_METRICS.groupHeadingGapPx / 2, paddingTop: HAPPIER_PAGE_METRICS.groupHeadingGapPx / 2 },
+  legendRow: { flexDirection: 'row', gap: HAPPIER_PAGE_METRICS.groupHeadingGapPx },
+  legendLabel: { flexShrink: 0 },
+  legendLabelSizer: { height: 0, overflow: 'hidden' },
+  legendValue: { flex: 1 },
 });
