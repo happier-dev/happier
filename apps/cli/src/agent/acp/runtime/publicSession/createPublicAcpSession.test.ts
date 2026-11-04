@@ -621,7 +621,17 @@ function writePublicComposerAgent(dir: string): string {
             ok(request.id, { success: true });
           } else if (request.method === 'session/prompt') {
             const sessionId = request.params.sessionId;
-            if (scenario.startsWith('provider-limit-request-')) {
+            if (scenario === 'opencode-quota-error' || scenario === 'opencode-generation-error') {
+              // OpenCode v1.19.0 acp/service.ts:839-892 and acp/error.ts:86-93:
+              // completed generation failures become session/prompt internal errors, without output.
+              // The generic failure message was captured on agent-qa-providers r1103f.
+              send({ jsonrpc: '2.0', id: request.id, error: {
+                code: -32603,
+                message: 'Internal error: ' + (scenario === 'opencode-quota-error'
+                  ? 'Free usage limit reached' : 'Cannot connect to API: Unable to connect. Is the computer able to access the url?'),
+                data: { service: 'session', errorName: 'APIError' },
+              } });
+            } else if (scenario.startsWith('provider-limit-request-')) {
               send({ jsonrpc: '2.0', id: request.id, error: {
                 code: -32603, message: 'Fixture provider rejection',
                 data: { status: 429, token: 'private-provider-token',
@@ -717,7 +727,10 @@ function writePublicComposerAgent(dir: string): string {
                   ok(request.id, { stopReason: 'refusal' });
                 } else {
                   if (scenario === 'prompt-recovery-after-output') update(sessionId, 'output before provider failure');
-                  send({ jsonrpc: '2.0', id: request.id, error: { code: -32603, message: 'provider unavailable' } });
+                  send({ jsonrpc: '2.0', id: request.id, error: {
+                    code: scenario === 'prompt-recovery-before-effect' ? -32602 : -32603,
+                    message: 'provider unavailable',
+                  } });
                 }
               } else {
                 // ACP does not require a user-message echo. Stream the entire reply
@@ -3667,9 +3680,9 @@ describe('createPublicAcpSession', () => {
     });
   });
 
-  it.each(['prompt-rejected-before-effect', 'prompt-connection-rejected', 'prompt-long-rejected'])('maps a request-scoped prompt rejection before provider effect to input-rejected (%s)', async scenario => {
+  it('maps protocol validation rejection before provider effect to input-rejected', async () => {
     await withTempDir('happier-public-acp-prompt-rejected-', async (dir) => {
-      const fixture = createFixture(dir, scenario);
+      const fixture = createFixture(dir, 'prompt-rejected-before-effect');
       const session = await createPublicAcpSession({
         kind: 'create',
         sessionId: 'host-prompt-rejected',
@@ -3691,8 +3704,7 @@ describe('createPublicAcpSession', () => {
           retryable: true,
           diagnostic: expect.objectContaining({
             code: 'acp_input_rejected_before_effect',
-            message: scenario !== 'prompt-rejected-before-effect'
-              ? expect.stringContaining('Cannot connect to API') : 'prompt rejected before effect',
+            message: 'prompt rejected before effect',
           }),
         }));
         expect(events.some((event) => event.kind === 'input-accepted')).toBe(false);
@@ -3707,9 +3719,8 @@ describe('createPublicAcpSession', () => {
           },
         } });
         for (const event of events) await project(event);
-        expect(history).toMatchObject([{ body: { type: 'message', message: expect.stringContaining(
-          scenario !== 'prompt-rejected-before-effect' ? 'Cannot connect to API' : 'prompt rejected before effect') },
-          meta: { runtimeIssueCode: 'acp_input_rejected_before_effect', runtimeIssueRequestErrorCode: scenario !== 'prompt-rejected-before-effect' ? -32603 : -32602 } }]);
+        expect(history).toMatchObject([{ body: { type: 'message', message: expect.stringContaining('prompt rejected before effect') },
+          meta: { runtimeIssueCode: 'acp_input_rejected_before_effect', runtimeIssueRequestErrorCode: -32602 } }]);
         expect(history.some(row => row.body.type === 'turn_failed')).toBe(false);
       } finally {
         subscription.dispose();
@@ -3717,6 +3728,49 @@ describe('createPublicAcpSession', () => {
       }
     });
   });
+
+  it.each(['opencode-quota-error', 'opencode-generation-error', 'prompt-connection-rejected', 'prompt-long-rejected'])(
+    'settles a terminal prompt-processing error without output as a failed turn (%s)', async scenario => {
+      await withTempDir('happier-public-acp-provider-error-', async dir => {
+        const fixture = createFixture(dir, scenario);
+        const session = await createPublicAcpSession({ kind: 'create', sessionId: 'host-provider-error', cwd: dir },
+          fixture.options, fixture.dependencies);
+        const events: AgentSessionRuntimeEvent[] = [];
+        const subscription = session.watch(event => { events.push(event); });
+        try {
+          await session.send({ inputIds: ['provider-error-input'], input: { text: 'hello' },
+            delivery: { kind: 'newTurn', turnId: 'provider-error-turn' } });
+          await waitForCondition(() => events.some(event => event.kind === 'turn-failed' || event.kind === 'input-rejected'),
+            { timeoutMs: 5000, intervalMs: 10, label: 'terminal prompt error' });
+          expect(events.map(event => event.kind)).toEqual([
+            'provider-session-id', 'input-accepted', 'turn-start', 'turn-failed',
+          ]);
+          const failure = events.find(event => event.kind === 'turn-failed');
+          if (!failure || failure.kind !== 'turn-failed') throw new Error('Expected a failed provider turn');
+          expect(failure.diagnostic).toMatchObject({ code: 'acp_turn_failed', details: { requestErrorCode: -32603 } });
+          const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', error: failure.diagnostic });
+          if (scenario === 'opencode-quota-error') {
+            expect(issue).toMatchObject({ source: 'usage_limit', usageLimit: { limitCategory: 'usage_limit' } });
+          } else if (scenario === 'opencode-generation-error') {
+            expect(failure.diagnostic.message).toContain('Cannot connect to API: Unable to connect. Is the computer able to access the url?');
+            expect(issue.source).not.toBe('usage_limit');
+          }
+          const invariant = createAgentSessionTurnInvariant({ sessionId: 'host-provider-error' });
+          expect(events.map(event => invariant.observe(event).status)).toEqual(events.map(() => 'accepted'));
+          const history: ACPMessageData[] = [];
+          const project = createRuntimeFailureTranscriptProjector({ provider: 'test-agent', providerName: 'Test Agent', session: {
+            sessionId: 'host-provider-error', enqueueAgentMessageCommitted: async (_provider, body) => {
+              history.push(body);
+              return { persisted: true, delivered: false };
+            },
+          } });
+          for (const event of events) await project(event);
+          expect(history).toEqual(expect.arrayContaining([expect.objectContaining({ type: 'turn_failed' })]));
+          expect(JSON.stringify({ events, history })).not.toMatch(/private-api-token|private-error-data/u);
+        } finally { subscription.dispose(); await session.dispose(); }
+      });
+    },
+  );
 
   it('settles consumed input before publishing a failed turn after provider output', async () => {
     await withTempDir('happier-public-acp-prompt-ambiguous-', async (dir) => {

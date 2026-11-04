@@ -4,6 +4,13 @@ The host owns the executable Session and turn lifecycle. An Agent plugin supplie
 
 This page describes **0.3 development source**, not a shipped release or a completed live-validation gate. It is the standing architecture reference; approved plans remain the execution contract for their assigned work.
 
+ACP `session/prompt` JSON-RPC internal errors (`-32603`) settle a failed turn
+even when generation produced no assistant output. Protocol validation refusals
+remain input rejections. The host's existing runtime-issue classifier and failure
+transcript projector preserve provider messages and typed usage limits for
+Session, UI, Voice and finite Run consumers. Nonterminal provider retry activity
+does not establish turn completion.
+
 ## Idle compaction (unreleased 0.3)
 
 Idle compaction belongs to the Session host. One compaction descriptor, authored

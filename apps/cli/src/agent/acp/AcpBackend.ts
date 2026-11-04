@@ -2471,6 +2471,12 @@ export class AcpBackend implements CatalogAcpBackend {
         return { kind: 'effect_observed_without_prompt_response' };
       }
       if (error instanceof RequestError) {
+        // An internal-error response ends session/prompt; OpenCode uses it for
+        // completed provider failures without streamed output. Preserve that
+        // failed completion on the normal turn path.
+        if (error.code === -32603) {
+          return { kind: 'accepted_by_prompt_response' };
+        }
         return { kind: 'rejected_before_effect', error: normalizedError };
       }
       return { kind: 'effect_may_have_occurred', error: normalizedError };
