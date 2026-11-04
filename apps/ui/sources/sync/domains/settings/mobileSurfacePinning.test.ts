@@ -104,4 +104,12 @@ describe('navigation placements', () => {
         const ungrouped = [{ id: 'a', group: 'app' }, { id: 'b' }];
         expect(resolveNavigationOverflow(ungrouped, [], { availableSize: 80, itemSize: 40, separatorSize: 10 })).toEqual({ shown: ungrouped, overflow: [] });
     });
+
+    it('reserves measured room for a permanent Customize More trigger', () => {
+        const pinned = ['chat', 'participants', 'agents', 'details'].map(id => ({ id }));
+        const options = { availableSize: 4, itemSize: 1, reserveOverflowSlot: true };
+        expect(resolveNavigationOverflow(pinned, [], options)).toEqual({ shown: pinned.slice(0, 3), overflow: pinned.slice(3) });
+        expect(resolveNavigationOverflow(pinned, [], { ...options, availableSize: 5 })).toEqual({ shown: pinned, overflow: [] });
+        expect(resolveNavigationOverflow(pinned, [], { ...options, availableSize: null })).toEqual({ shown: pinned, overflow: [] });
+    });
 });

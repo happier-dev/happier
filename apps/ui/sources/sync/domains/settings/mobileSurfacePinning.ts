@@ -222,12 +222,12 @@ export function readNavigationSurfacePlacements(local: Readonly<{
 /** Fit the measured prefix, accounting for separators and a single overflow trigger. */
 export function resolveNavigationOverflow<T extends Readonly<{ id: string; group?: string }>>(
     pinned: readonly T[], explicitOverflow: readonly T[],
-    options: Readonly<{ availableSize: number | null; itemSize: number; separatorSize?: number }>,
+    options: Readonly<{ availableSize: number | null; itemSize: number; separatorSize?: number; reserveOverflowSlot?: boolean }>,
 ): Readonly<{ shown: readonly T[]; overflow: readonly T[] }> {
     const separatorSize = options.separatorSize ?? 0;
     const prefixSizes = [0];
     pinned.forEach((item, index) => prefixSizes.push(prefixSizes[index]! + options.itemSize + (index > 0 && item.group !== undefined && pinned[index - 1]!.group !== item.group ? separatorSize : 0)));
-    if (options.availableSize === null || (explicitOverflow.length === 0 && prefixSizes[pinned.length]! <= options.availableSize)) {
+    if (options.availableSize === null || (!options.reserveOverflowSlot && explicitOverflow.length === 0 && prefixSizes[pinned.length]! <= options.availableSize)) {
         return { shown: pinned, overflow: explicitOverflow };
     }
     let shownCount = pinned.length;
