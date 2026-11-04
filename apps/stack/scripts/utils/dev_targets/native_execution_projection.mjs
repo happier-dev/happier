@@ -193,7 +193,9 @@ async function main() {
     const packageRoot = join(resolve(process.argv[3]), 'packages/protocol');
     const generator = join(packageRoot, 'scripts/generate-exports.mjs');
     if (existsSync(generator)) {
-      const { prepareProtocolExports } = await import(pathToFileURL(generator).href);
+      // The controller owns preparation tools; a fresh sibling supplies only
+      // package inputs until its worker installs dependencies after this sync.
+      const { prepareProtocolExports } = await import('../../../../../packages/protocol/scripts/generate-exports.mjs');
       const { resolveWorkspaceBundlePublicationMode } = await import('../../../../../scripts/workspaces/workspaceBundlePublication.mjs');
       await prepareProtocolExports({ packageRoot, publicationMode: resolveWorkspaceBundlePublicationMode({
         argv: process.argv.slice(4), env: process.env,

@@ -20,10 +20,11 @@ test('AUTO synchronization publishes Protocol exports on the controller before t
   await writeFile(join(packageRoot, 'tsconfig.json'), JSON.stringify({ include: ['src/**/*.ts'] }));
   await writeFile(join(packageRoot, 'export-aliases.json'), '{}');
   await writeFile(join(packageRoot, 'src/added.ts'), 'export const value = 1;');
-  // Relocate only the fixture package root; the projection CLI, generator,
-  // TypeScript inventory and publication lock remain the production owners.
+  // A fresh sibling has its own source generator but no installed tools.
+  // Controller preparation must use the executor's tools for this package root.
   const generator = new URL('../../../../../packages/protocol/scripts/generate-exports.mjs', import.meta.url).href;
-  await writeFile(join(packageRoot, 'scripts/generate-exports.mjs'), `export * from ${JSON.stringify(generator)};`);
+  await writeFile(join(packageRoot, 'scripts/generate-exports.mjs'), await readFile(new URL(generator)));
+  await assert.rejects(stat(fixture.path('node_modules')), { code: 'ENOENT' });
   const launcher = await readFile(new URL('../../../bin/hstack-exec', import.meta.url), 'utf8');
   const start = launcher.indexOf('\nflush_selected_sync() {');
   const end = launcher.indexOf('\nremote_load_probe() {', start);
@@ -66,7 +67,7 @@ flush_selected_sync "$@"
   assert.equal(result.status, 0, result.stderr);
   assert.equal((await stat(manifestPath)).mtimeMs, marker.getTime(), 'unchanged AUTO preparation publishes no manifest');
   await writeFile(manifestPath, original);
-  for (const context of [{ CI: 'true' }, { npm_lifecycle_event: 'prepack' }, {}]) {
+  for (const context of [{ CI: 'true' }, { npm_lifecycle_event: 'prepack' }, { HAPPIER_DEV_TARGET_EXECUTION: '1' }, {}]) {
     const args = Object.keys(context).length ? [] : ['--artifact'];
     const strict = spawnSync('/bin/sh', [script, fixture.root,
       fileURLToPath(new URL('./native_execution_projection.mjs', import.meta.url)), transport, ...args],
