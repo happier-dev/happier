@@ -525,7 +525,11 @@ const WorkflowDefinitionLibraryHeaderV1Schema = lazyZodSchema(() => (<T extends 
   ownerAccountId: z.optional(z.string().check(z.minLength(1))), access: zMini.optional(ArtifactCallerAccessV1Schema),
   /** Opened owner-private provenance, never attribution from the stored shared header. */
   savedBy: zMini.optional(WorkflowDefinitionSavedByV1Schema),
+  /** Ordering fact from the admitted Artifact page; never requires a detail read. */
+  updatedAt: z.optional(z.number().check(z.int(), z.nonnegative())),
   triggers: z.array(WorkflowTriggerSummaryInputV1Schema),
+  /** Summary enrichment failed; empty trigger facts are unknown, not proof of no triggers. */
+  triggerSummaryErrorCode: z.optional(WorkflowOperationErrorCodeV1Schema),
   /** Earliest enabled occurrence supplied by the Automation scheduler, never calculated by a reader. */
   nextRunAt: z.nullable(z.number().check(z.int(), z.nonnegative(), z.int())),
 })));

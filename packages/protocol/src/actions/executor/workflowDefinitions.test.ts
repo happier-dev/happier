@@ -25,7 +25,7 @@ function readEmptyTriggerSummaries() {
   // Automation persistence is a boundary; the canonical census projection remains real.
   return createWorkflowTriggerActions({ automations: {
     list: async () => ({ automations: [], nextCursor: null }), listDetails: unused, get: unused, create: unused, reconcile: unused, delete: unused,
-  }, openContext: unused, sealContext: unused, newId: unused, resolveWorkflow: unused }).readWorkflowSummaries();
+  }, openContext: unused, sealContext: unused, newId: unused, resolveWorkflow: unused }).readWorkflowSummaries([]);
 }
 
 describe('shared workflow definition create', () => {

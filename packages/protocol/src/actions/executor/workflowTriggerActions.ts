@@ -31,6 +31,7 @@ import {
   type SessionTriggerUpdateRequestV1, type SessionTriggerRemoveRequestV1,
   type SessionPullRequestLinkV1, type SessionTriggerDefinitionV1,
   type WorkflowTriggerSummaryInputV1,
+  summarizeWorkflowTriggerRowsV1,
   SessionInitialTriggerV1Schema, type SessionInitialTriggerV1, type SessionInitialTriggerDefinitionV1,
 } from '../../workflows/triggers/workflowTriggerActionsV1.js';
 import { SessionInitialTriggerAdmissionV1Schema, type SessionInitialTriggerAdmissionV1 } from '../../sessions/creation/sessionInitialTriggerAdmissionV1.js';
@@ -106,7 +107,7 @@ export type WorkflowTriggerActionsDependencies = Readonly<{
 
 export interface WorkflowTriggerActions {
   runNow: (raw: WorkflowTriggerRunNowRequestV1, caller?: Caller) => Promise<AutomationV3RunMutationResponse>;
-  readWorkflowSummaries: () => Promise<ReadonlyMap<string, Readonly<{
+  readWorkflowSummaries: (workflowDefinitionIds: readonly string[]) => Promise<ReadonlyMap<string, Readonly<{
     triggers: readonly WorkflowTriggerSummaryInputV1[]; nextRunAt: number | null;
   }>>>;
   list: (raw: WorkflowTriggerListRequestV1, caller?: Caller) => Promise<ReturnType<typeof WorkflowTriggerListResultV1Schema.parse>>;
@@ -439,28 +440,23 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
         return receipt;
       } catch (cause) { return unresolvedWriteReceipt(cause); }
     },
-    readWorkflowSummaries: async (): Promise<ReadonlyMap<string, Readonly<{ triggers: readonly WorkflowTriggerSummaryInputV1[]; nextRunAt: number | null }>>> => {
+    readWorkflowSummaries: async (workflowDefinitionIds: readonly string[]): Promise<ReadonlyMap<string, Readonly<{ triggers: readonly WorkflowTriggerSummaryInputV1[]; nextRunAt: number | null }>>> => {
       const summaries = new Map<string, { triggers: WorkflowTriggerSummaryInputV1[]; nextRunAt: number | null }>();
-      for (const row of await scopedRows(deps.automations)) {
-        if (!row.workflowDefinitionId) continue;
-        const summary = summaries.get(row.workflowDefinitionId) ?? { triggers: [], nextRunAt: null };
-        const triggers = summary.triggers;
-        for (const trigger of row.triggers) {
-          switch (trigger.kind) {
-            case 'schedule':
-              triggers.push({ kind: trigger.kind, schedule: trigger.schedule });
-              if (row.enabled && trigger.enabled && trigger.nextRunAt !== null) {
-                summary.nextRunAt = summary.nextRunAt === null ? trigger.nextRunAt : Math.min(summary.nextRunAt, trigger.nextRunAt);
-              }
-              break;
-            case 'pluginEvent': triggers.push({ kind: trigger.kind, eventRef: trigger.eventRef }); break;
-            case 'sessionLifecycle': triggers.push({ kind: trigger.kind, events: trigger.events }); break;
-            case 'runLifecycle': triggers.push({ kind: trigger.kind, condition: trigger.condition }); break;
-            case 'prComment': case 'ciFailed': triggers.push({ kind: trigger.kind }); break;
-          }
+      const selected = new Set(workflowDefinitionIds);
+      if (selected.size === 0) return summaries;
+      let cursor: string | undefined;
+      do {
+        const page = await deps.automations.list({ workflowDefinitionIds: [...selected], ...(cursor ? { cursor } : {}) });
+        const owned = summarizeWorkflowTriggerRowsV1(page.automations.filter(row => (row.scopeSessionId ?? null) === null));
+        for (const value of [...owned.values(), ...(page.sharedWorkflowSummaries ?? [])]) {
+          if (!selected.has(value.workflowDefinitionId)) continue;
+          const summary = summaries.get(value.workflowDefinitionId) ?? { triggers: [], nextRunAt: null };
+          summary.triggers.push(...value.triggers);
+          if (value.nextRunAt !== null) summary.nextRunAt = summary.nextRunAt === null ? value.nextRunAt : Math.min(summary.nextRunAt, value.nextRunAt);
+          summaries.set(value.workflowDefinitionId, summary);
         }
-        summaries.set(row.workflowDefinitionId, summary);
-      }
+        cursor = page.nextCursor ?? undefined;
+      } while (cursor);
       return summaries;
     },
     list: async (raw: WorkflowTriggerListRequestV1, caller?: Caller) => {

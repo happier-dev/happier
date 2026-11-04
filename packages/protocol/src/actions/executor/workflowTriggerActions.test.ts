@@ -528,9 +528,24 @@ describe('workflow trigger Automation composition', () => {
     const read = createWorkflowTriggerActions({ ...deps, automations: { ...deps.automations,
       get: async () => { throw new Error('summary_must_not_open_private_detail'); } },
       openContext: async () => { throw new Error('summary_must_not_open_private_context'); } });
-    expect(await read.readWorkflowSummaries()).toEqual(new Map([[workflow, {
-      triggers: [{ kind: 'schedule', schedule: trigger.schedule }], nextRunAt: null,
+    expect(await read.readWorkflowSummaries([workflow])).toEqual(new Map([[workflow, {
+      triggers: [{ kind: 'schedule', schedule: trigger.schedule, automationId: saved.set.automationId,
+        triggerId: saved.triggerId }], nextRunAt: null,
     }]]));
+  });
+  it('merges the authorized Team summary into the same library facts without opening another Account context', async () => {
+    const { deps, actions } = fixture();
+    const saved = await actions.add({ workflow, project, trigger });
+    const read = createWorkflowTriggerActions({ ...deps, automations: { ...deps.automations,
+      list: async input => ({ ...await deps.automations.list(input), sharedWorkflowSummaries: [{
+        workflowDefinitionId: workflow, triggers: [{ kind: 'schedule' as const, schedule: trigger.schedule }], nextRunAt: 1,
+      }] }),
+      get: async () => { throw new Error('Team_summary_must_not_read_private_details'); },
+    } });
+    expect((await read.readWorkflowSummaries([workflow])).get(workflow)).toEqual({
+      triggers: [{ kind: 'schedule', schedule: trigger.schedule, automationId: saved.set.automationId,
+        triggerId: saved.triggerId }, { kind: 'schedule', schedule: trigger.schedule }], nextRunAt: 1,
+    });
   });
   it('uses the earliest enabled scheduler occurrence across attached sets without recomputing schedules', async () => {
     const { rows, actions } = fixture();
@@ -544,9 +559,9 @@ describe('workflow trigger Automation composition', () => {
     ] });
     rows.set('disabled-set', { ...row, id: 'disabled-set', enabled: false, triggers: [{ ...scheduled, nextRunAt: 50 }] });
     rows.set('session-set', { ...row, id: 'session-set', scopeSessionId: 'session', triggers: [{ ...scheduled, nextRunAt: 10 }] });
-    expect((await actions.readWorkflowSummaries()).get(workflow)).toMatchObject({ nextRunAt: 400 });
+    expect((await actions.readWorkflowSummaries([workflow])).get(workflow)).toMatchObject({ nextRunAt: 400 });
     rows.set(row.id, { ...row, triggers: [{ ...scheduled, nextRunAt: null }] });
-    expect((await actions.readWorkflowSummaries()).get(workflow)).toMatchObject({ nextRunAt: null });
+    expect((await actions.readWorkflowSummaries([workflow])).get(workflow)).toMatchObject({ nextRunAt: null });
   });
   it('preserves cancellation instead of turning it into link unavailability', async () => {
     const { deps } = fixture();

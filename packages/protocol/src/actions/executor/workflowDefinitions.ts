@@ -1,3 +1,5 @@
+import { parseWorkflowDefinitionRefV1 } from '../../workflows/workflowDefinitionRefV1.js';
+import { normalizeWorkflowActionThrownError } from './workflowAccountActions.js';
 import {
   WorkflowDefinitionArtifactBodyV1ReadSchema,
   WorkflowDefinitionArtifactHeaderV1Schema,
@@ -180,7 +182,6 @@ export function createWorkflowDefinitionActions(params: Readonly<{
     },
     list: async ({ limit, cursor: inputCursor }: Readonly<{ cursor?: string; limit?: number }>): Promise<WorkflowDefinitionListResultV1> => {
       const definitions: WorkflowDefinitionListResultV1['definitions'] = [];
-      let triggerSummaries: Awaited<ReturnType<NonNullable<typeof params.readWorkflowTriggerSummaries>>> | undefined;
       const pluginPage = async (start: number) => {
         const sources = await readPluginWorkflows();
         const pluginWorkflows: WorkflowPluginSourceV1[] = [];
@@ -219,6 +220,29 @@ export function createWorkflowDefinitionActions(params: Readonly<{
           }
           throw error;
         }
+        const demandedIds = page.items.filter(artifact => artifact.header.kind === 'workflow-definition.v1'
+          && WorkflowDefinitionIdV1Schema.safeParse(artifact.artifactId).success)
+          .slice(0, limit === undefined ? undefined : limit - definitions.length)
+          // Noncanonical Artifact identities cannot be Automation references;
+          // keep their display rows without poisoning neighboring summaries.
+          .filter(artifact => parseWorkflowDefinitionRefV1(artifact.artifactId)?.kind === 'artifact')
+          .map(artifact => artifact.artifactId);
+        let triggerSummaries: Awaited<ReturnType<NonNullable<typeof params.readWorkflowTriggerSummaries>>> | undefined;
+        let triggerSummaryErrorCode: WorkflowDefinitionListResultV1['definitions'][number]['triggerSummaryErrorCode'];
+        if (demandedIds.length > 0) {
+          try {
+            if (!params.readWorkflowTriggerSummaries) {
+              throw Object.assign(new Error('workflow_trigger_summary_unavailable'), { code: 'target_unavailable' });
+            }
+            triggerSummaries = await params.readWorkflowTriggerSummaries(demandedIds);
+          } catch (error) {
+            // Authorized Artifact content does not depend on scheduler enrichment.
+            // Preserve the typed failure and never retry with an unfiltered census.
+            const failure = normalizeWorkflowActionThrownError(error, undefined, true);
+            if (failure.errorCode === 'cancelled') throw error;
+            triggerSummaryErrorCode = failure.errorCode;
+          }
+        }
         for (const artifact of page.items) {
           if (artifact.header.kind !== 'workflow-definition.v1') continue;
           const identity = WorkflowDefinitionIdV1Schema.safeParse(artifact.artifactId);
@@ -229,12 +253,6 @@ export function createWorkflowDefinitionActions(params: Readonly<{
             headerVersion: artifact.headerVersion,
             bodyVersion: artifact.bodyVersion,
           }, parsed.data) ? parsed.data : null;
-          if (!triggerSummaries) {
-            if (!params.readWorkflowTriggerSummaries) {
-              throw Object.assign(new Error('workflow_trigger_summary_unavailable'), { code: 'target_unavailable' });
-            }
-            triggerSummaries = await params.readWorkflowTriggerSummaries();
-          }
           let opened: WorkflowDefinitionV1 | null = null;
           let reason: WorkflowDefinitionContentUnavailableReasonV1 = readableHeader ? 'missing_body'
             : parsed.success ? 'revision_mismatch' : 'invalid_header';
@@ -246,11 +264,13 @@ export function createWorkflowDefinitionActions(params: Readonly<{
             if (!error || typeof error !== 'object' || Reflect.get(error, 'code') !== 'content_unavailable') throw error;
             reason = artifact.body == null ? 'missing_body' : 'invalid_body';
           }
-          const summary = triggerSummaries.get(artifact.artifactId);
+          const summary = triggerSummaries?.get(artifact.artifactId);
           const facts = {
             ownerAccountId: artifact.ownerAccountId, access: artifact.access,
+            updatedAt: artifact.updatedAt,
             ...(artifact.provenance ? { savedBy: artifact.provenance.savedBy } : {}),
             triggers: [...(summary?.triggers ?? [])], nextRunAt: summary?.nextRunAt ?? null,
+            ...(triggerSummaryErrorCode === undefined ? {} : { triggerSummaryErrorCode }),
           };
           // Rejected header bytes remain rejected. List presentation uses the
           // authorized Artifact identity/revision and only validated display facts;

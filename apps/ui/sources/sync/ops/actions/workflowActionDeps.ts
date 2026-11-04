@@ -185,7 +185,7 @@ export function createUiWorkflowAction(params: Readonly<{
     };
     const definitions = createWorkflowDefinitionActions({
         artifactStore: account.workflowArtifacts,
-        readWorkflowTriggerSummaries: () => triggers.readWorkflowSummaries(),
+        readWorkflowTriggerSummaries: (definitionIds) => triggers.readWorkflowSummaries(definitionIds),
         encodeListCursor: account.encodeArtifactListCursor,
         readPluginWorkflows: async () => {
             account.assertCurrent();
