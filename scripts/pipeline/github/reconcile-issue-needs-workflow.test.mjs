@@ -28,7 +28,8 @@ test('PR lifecycle handoff runs trusted default-branch policy without executing 
   const workflow = await readFile(resolve(repoRoot, '.github/workflows/issue-needs-handoff.yml'), 'utf8');
   assert.match(workflow, /pull_request_target:\s*\n\s+types: \[opened, reopened, ready_for_review, synchronize, closed\]/);
   assert.match(workflow, /ref: \$\{\{ github\.event\.repository\.default_branch \}\}/);
-  assert.match(workflow, /pull-requests: read/);
+  assert.match(workflow, /pull-requests: write/);
+  assert.match(workflow, /persist-credentials: false/);
   assert.match(workflow, /group: .*github\.event\.issue\.number \|\| github\.event\.pull_request\.number/);
   assert.doesNotMatch(workflow, /pull_request\.head|pull_request\.merge|checkout.*--/);
   assert.doesNotMatch(workflow, /pull_request_review:|pull_request_review_comment:/);
