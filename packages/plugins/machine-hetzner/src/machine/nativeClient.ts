@@ -26,8 +26,12 @@ const sizeSchema = mini.object({
 const imageSchema = mini.object({
   id: nativeId(), name: mini.nullable(text()), architecture: mini.enum(['x86', 'arm']),
   description: mini.optional(mini.nullable(mini.string().check(mini.trim()))),
-  type: mini.enum(['system', 'snapshot', 'backup', 'app']), status: text(), deprecated: mini.nullable(text()),
-});
+  type: mini.enum(['system', 'snapshot', 'backup', 'app']), status: text(),
+  // REST v1 removed deprecated on 2026-11-02. Decode current and legacy
+  // responses here; a missing native deprecation fact is still unavailable.
+  deprecated: mini.optional(mini.nullable(text())),
+  deprecation: mini.optional(mini.nullable(mini.object({ announced: text(), unavailable_after: text() }))),
+}).check(mini.refine(image => image.deprecation !== undefined || image.deprecated !== undefined));
 const locationSchema = mini.object({ id: nativeId(), name: text(), description: text(),
   country: mini.optional(mini.nullable(text())),
 });
@@ -91,7 +95,9 @@ export function createHetznerNativeClient(options: HetznerNativeClientOptions) {
     while (page !== null) {
       if (seen.has(page)) throw new HetznerNativeError('native_response_invalid');
       seen.add(page);
-      const reply = await request(`${path}?page=${page}${query ? `&${query}` : ''}`);
+      // REST v1 Pagination (docs.hetzner.cloud/reference/cloud), verified
+      // 2026-11-04: default 25, maximum 50. Follow every page without capping results.
+      const reply = await request(`${path}?page=${page}&per_page=50${query ? `&${query}` : ''}`);
       const envelope = decode(mini.record(mini.string(), mini.unknown()), reply);
       const items = parseHetznerValue(mini.array(mini.unknown()), envelope[key], 'native_response_invalid');
       const meta = parseHetznerValue(paginationSchema, envelope.meta, 'native_response_invalid');
@@ -112,7 +118,7 @@ export function createHetznerNativeClient(options: HetznerNativeClientOptions) {
     return { kind: 'bound', resource: { serverId: server.id, owned }, power: powerFact(server.status ?? ''), ...(nativeAction ? { nativeAction } : {}) };
   }
   return {
-    async check() { await request('/servers?page=1'); return { available: true as const }; },
+    async check() { await request('/servers?page=1&per_page=1'); return { available: true as const }; },
     async acquire(rawInput: unknown): Promise<HetznerAcquireResult> {
       const input = parseHetznerValue(HetznerAcquireV1Schema, rawInput);
       const publicKey = input.bootstrapSshPublicKey.split(' ').slice(0, 2).join(' ');
@@ -202,7 +208,9 @@ export function createHetznerNativeClient(options: HetznerNativeClientOptions) {
       const price = (amount: string, unit: HetznerNativePrice['unit'], source = `${apiOrigin}/server_types`): HetznerNativePrice => ({ amount, currency: pricing.currency, unit, source, observedAt });
       return { sizes: sizes.map(size => ({ ...size, prices: size.prices.map(entry => ({
         location: entry.location, hourly: price(entry.price_hourly.gross, 'hour'), monthly: price(entry.price_monthly.gross, 'month'),
-      })) })), images, locations, observedAt,
+      })) })), images: images.map(({ deprecation, ...image }) => ({ ...image,
+        deprecated: deprecation === undefined ? image.deprecated ?? null : deprecation?.announced ?? null,
+      })), locations, observedAt,
         ...(pricing.primary_ips ? { primaryIpPrices: pricing.primary_ips.map(primaryIp => ({ type: primaryIp.type, prices: primaryIp.prices.map(entry => ({
           location: entry.location, hourly: price(entry.price_hourly.gross, 'hour', `${apiOrigin}/pricing#primary_ips`), monthly: price(entry.price_monthly.gross, 'month', `${apiOrigin}/pricing#primary_ips`),
         })) })) } : {}),

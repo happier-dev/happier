@@ -8,6 +8,48 @@ const acquire = { launch, name: 'work', correlation: 'row-1', bootstrapSshPublic
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
 
 describe('Hetzner native boundary', () => {
+  it('reads one server for availability and preserves a multi-page catalog with minimum native requests', async () => {
+    // Two maximum-size API pages plus a tail must preserve every image.
+    const deprecation = { announced: '2026-08-31T00:00:00Z', unavailable_after: '2026-11-30T00:00:00Z' };
+    const image = { name: 'ubuntu', architecture: 'x86', type: 'system', status: 'available' };
+    const images = [
+      { ...image, id: 1, deprecation: null },
+      { ...image, id: 2, deprecated: null, deprecation },
+      { ...image, id: 3, deprecated: deprecation.announced },
+      ...Array.from({ length: 98 }, (_, index) => ({ ...image, id: index + 4, deprecated: null })),
+    ];
+    const transport = vi.fn<typeof fetch>(async input => {
+      const url = new URL(String(input));
+      if (url.pathname === '/v1/servers') return json({ servers: [] });
+      if (url.pathname === '/v1/pricing') return json({ pricing: { currency: 'EUR' } });
+      const key = url.pathname.slice('/v1/'.length);
+      const values = key === 'images' ? images : [];
+      const page = Number(url.searchParams.get('page') ?? 1);
+      const perPage = Number(url.searchParams.get('per_page') ?? 25);
+      const end = page * perPage;
+      return json({ [key]: values.slice(end - perPage, end), meta: { pagination: { next_page: end < values.length ? page + 1 : null } } });
+    });
+    const client = createHetznerNativeClient({ token: 'fixture', fetch: transport });
+    expect(await client.check()).toEqual({ available: true });
+    expect.soft(new URL(String(transport.mock.calls[0][0])).searchParams.get('per_page')).toBe('1');
+    const options = await client.options();
+    expect(options.images.map(image => image.id)).toEqual(images.map(image => image.id));
+    expect(options.images.slice(0, 3).map(image => image.deprecated)).toEqual([null, deprecation.announced, deprecation.announced]);
+    expect(transport.mock.calls.filter(([url]) => new URL(String(url)).pathname === '/v1/images')).toHaveLength(3);
+    expect(transport.mock.calls).toHaveLength(7); // One health read, three image pages, two empty catalogs, one pricing read.
+  });
+
+  it('rejects a catalog image with no native deprecation fact', async () => {
+    const transport = vi.fn<typeof fetch>(async input => {
+      const key = new URL(String(input)).pathname.slice('/v1/'.length);
+      if (key === 'pricing') return json({ pricing: { currency: 'EUR' } });
+      return json({ [key]: key === 'images' ? [{ id: 1, name: 'ubuntu', architecture: 'x86', type: 'system', status: 'available' }] : [],
+        meta: { pagination: { next_page: null } } });
+    });
+    await expect(createHetznerNativeClient({ token: 'fixture', fetch: transport }).options())
+      .rejects.toMatchObject({ code: 'native_response_invalid' });
+  });
+
   it('retains create uncertainty after a dropped reply without replaying allocation', async () => {
     const transport = vi.fn<typeof fetch>().mockRejectedValue(new Error('token-do-not-disclose'));
     const client = createHetznerNativeClient({ token: 'token-do-not-disclose', fetch: transport });
