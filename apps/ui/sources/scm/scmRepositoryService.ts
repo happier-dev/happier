@@ -25,6 +25,17 @@ import {
     mergeScmCapabilities,
 } from '@/scm/core/snapshotMappers';
 import { resolveCanonicalScmProjectKey } from '@/scm/core/resolveCanonicalScmProjectKey';
+import { storage } from '@/sync/domains/state/storage';
+import { captureActiveServerAccountScopeLifetime, type ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { readMachineControlTargetForSession, type SessionMachineControlTarget } from '@/sync/ops/sessionMachineTarget';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { isSessionAccessOwner } from '@/sync/engine/sessions/normalizeSessionAccessProjection';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { applyObservedSessionBranch } from '@/sync/domains/session/metadata/sessionBranchObservation';
+import { normalizeLocalPathForComparison } from '@/utils/path/resolvePathRelativeToRoot';
+import { resolveAbsolutePath } from '@/utils/path/pathUtils';
+import { sync } from '@/sync/sync';
+import { log } from '@/log';
 
 const DEFAULT_MAX_REPO_ENRICHMENT_CACHE_ENTRIES = 32;
 const DEFAULT_MAX_PER_REPO_ENRICHMENT_ENTRIES = 64;
@@ -35,6 +46,44 @@ type RepoSnapshotRequestContext = Readonly<{
     resolvedPath: string;
     includeWorktreeStatus: boolean;
 }>;
+
+/** Publishes only a real observation made by this already-demanded Session request. */
+async function publishObservedSessionBranch(input: Readonly<{
+    sessionId: string;
+    lifetime: ActiveServerAccountScopeLifetime | null;
+    target: SessionMachineControlTarget | null;
+    snapshot: UiScmWorkingSnapshot;
+}>): Promise<void> {
+    const { lifetime, target, snapshot, sessionId } = input;
+    if (!lifetime || !target || !snapshot.repo.isRepo || !snapshot.repo.rootPath) return;
+    const identity = { sessionId, serverId: lifetime.scope.serverId, accountId: lifetime.scope.accountId };
+    const isCurrent = (): boolean => {
+        if (!lifetime.isCurrent()) return false;
+        const session = storage.getState().sessions[sessionId];
+        if (!session || !isSessionAccessOwner(session.access, session.accessLevel)
+            || (session.serverId && !areServerProfileIdentifiersEquivalent(session.serverId, identity.serverId))
+            || !readSessionOwnerMetadataView(session)) return false;
+        const currentTarget = readMachineControlTargetForSession(identity);
+        return currentTarget !== null && currentTarget.machineId === target.machineId
+            && normalizeLocalPathForComparison(currentTarget.basePath) === normalizeLocalPathForComparison(target.basePath);
+    };
+    if (!isCurrent()) return;
+    const metadata = readSessionOwnerMetadataView(storage.getState().sessions[sessionId]!);
+    if (!metadata) return;
+    const observation = { machineId: target.machineId, path: resolveAbsolutePath(target.basePath, metadata.homeDir),
+        rootPath: snapshot.repo.rootPath, branch: snapshot.branch };
+    // Equal or unavailable observations do not enter the writer: no mutation read, write or retry.
+    if (applyObservedSessionBranch(metadata, observation) === metadata) return;
+    try {
+        await sync.patchSessionMetadataWithRetry(sessionId,
+            current => isCurrent() ? applyObservedSessionBranch(current, observation) : current,
+            { serverId: identity.serverId, accountLifetime: lifetime, shouldContinue: isCurrent });
+    } catch {
+        // SCM remains usable if its optional last-observed projection cannot be committed.
+        // The next ordinary demand can publish again; there is no background retry/poll.
+        log.log('SCM branch observation could not update Session owner metadata');
+    }
+}
 
 function splitNormalizedPathSegments(path: string): readonly string[] {
     const normalized = normalizeFileSystemPath(path);
@@ -488,6 +537,14 @@ export class ScmRepositoryService {
 
         return await this.fetchSnapshotForRepoIdentity(request.repoIdentityKey, async () => {
             const fetchedAt = Date.now();
+            const lifetime = captureActiveServerAccountScopeLifetime();
+            const heldSession = storage.getState().sessions[sessionId];
+            const heldOwnerMetadata = heldSession && isSessionAccessOwner(heldSession.access, heldSession.accessLevel)
+                ? readSessionOwnerMetadataView(heldSession) : null;
+            const target = lifetime && heldOwnerMetadata ? readMachineControlTargetForSession({
+                sessionId, serverId: lifetime.scope.serverId, accountId: lifetime.scope.accountId,
+            }) : null;
+
 
             // Session SCM RPC runs within the session working directory already. Passing an absolute
             // `cwd` is both redundant and brittle (tilde paths, symlink differences, etc.) because
@@ -498,12 +555,14 @@ export class ScmRepositoryService {
                 machineId: request.machineId,
                 snapshot: readSuccessfulSnapshot(response) ?? null,
             });
-            return normalizeScmSnapshotResponseOrThrow({
+            const snapshot = normalizeScmSnapshotResponseOrThrow({
                 response,
                 projectKey,
                 fetchedAt,
                 emptyRootPath: null,
             });
+            await publishObservedSessionBranch({ sessionId, lifetime, target, snapshot });
+            return snapshot;
         }, {
             requestContext: request.machineId
                 ? {
