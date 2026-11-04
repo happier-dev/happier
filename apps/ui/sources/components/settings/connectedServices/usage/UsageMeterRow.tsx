@@ -37,6 +37,13 @@ export const USAGE_METER_METRICS = Object.freeze({
     rowGapPx: 7,
 });
 
+/**
+ * A stack's one name column: every inline row in a {@link UsageMeterStack} reports its name's natural width and
+ * takes the widest, so the bars of one table start (and end) on the same x whatever their names (owner 11-01).
+ */
+type UsageMeterNameColumn = Readonly<{ widthPx: number; report: (rowId: string, widthPx: number | null) => void }>;
+const UsageMeterNameColumnContext = React.createContext<UsageMeterNameColumn | null>(null);
+
 /** Where the meter sits: a page or popover row, a narrow card (Home, the grid), or a wide detail. */
 export type UsageMeterSize = 'default' | 'card' | 'wide';
 
@@ -89,6 +96,10 @@ export const UsageMeterRow = React.memo(function UsageMeterRow(props: UsageMeter
     // Healthy is quiet: colour is reserved for a window that needs attention.
     const barTone: MeterTone = props.tone === 'success' ? 'neutral' : props.tone;
     const [width, setWidth] = React.useState<number | null>(null);
+    const nameColumn = React.useContext(UsageMeterNameColumnContext);
+    const rowId = React.useId();
+    const reportName = nameColumn?.report;
+    React.useEffect(() => () => reportName?.(rowId, null), [reportName, rowId]);
     const size = props.size === 'wide' && width !== null && width < PAGE_LIST_METRICS.rowStackBelowWidthPx ? 'default' : props.size ?? 'default';
     const left = remaining !== null
         ? ACCOUNT_BLOCK_GAUGE_LABEL_FORMATTER.remaining({ percent: `${remaining}%` })
@@ -166,8 +177,14 @@ export const UsageMeterRow = React.memo(function UsageMeterRow(props: UsageMeter
             const next = event.nativeEvent.layout.width;
             if (Number.isFinite(next) && next > 0) setWidth(next);
         }} accessible accessibilityLabel={accessibilityLabel}>
-            {/* The name holds its column and grows past it rather than truncating while the bar has room. */}
-            <Text style={[styles.label, styles.inlineLabel, { minWidth: labelWidth }]}>{props.label}</Text>
+            {/* The name holds its column (its stack's widest name) and grows past it rather than truncating while the
+                bar has room; the name itself is measured at its own width so the stack can find the widest. */}
+            <View style={[styles.labelColumn, { minWidth: Math.max(labelWidth, nameColumn?.widthPx ?? 0) }]}>
+                <Text style={[styles.label, styles.inlineLabel]} onLayout={reportName ? (event) => {
+                    const next = event.nativeEvent.layout.width;
+                    if (Number.isFinite(next) && next > 0) reportName(rowId, Math.ceil(next));
+                } : undefined}>{props.label}</Text>
+            </View>
             {bar}
             {props.loading ? (
                 <View style={[styles.valueSlot, { marginRight: resetWidth + USAGE_METER_METRICS.gapPx }]}>
@@ -188,9 +205,22 @@ export const UsageMeterRow = React.memo(function UsageMeterRow(props: UsageMeter
     );
 });
 
-/** A stack of meters with the shared row gap. */
+/** A stack of meters with the shared row gap and one name column, so it reads as one table. */
 export const UsageMeterStack = React.memo(function UsageMeterStack(props: Readonly<{ children: React.ReactNode; testID?: string }>) {
-    return <View testID={props.testID} style={stylesheet.stack}>{props.children}</View>;
+    const [names, setNames] = React.useState<ReadonlyMap<string, number>>(() => new Map());
+    const report = React.useCallback((rowId: string, widthPx: number | null) => setNames((current) => {
+        if ((current.get(rowId) ?? null) === widthPx) return current;
+        const next = new Map(current);
+        if (widthPx === null) next.delete(rowId); else next.set(rowId, widthPx);
+        return next;
+    }), []);
+    const widthPx = names.size > 0 ? Math.max(...names.values()) : 0;
+    const column = React.useMemo(() => ({ widthPx, report }), [report, widthPx]);
+    return (
+        <UsageMeterNameColumnContext.Provider value={column}>
+            <View testID={props.testID} style={stylesheet.stack}>{props.children}</View>
+        </UsageMeterNameColumnContext.Provider>
+    );
 });
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -230,7 +260,11 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     inlineLabel: {
         width: 'auto',
+        alignSelf: 'flex-start',
+    },
+    labelColumn: {
         flexShrink: 1,
+        minWidth: 0,
     },
     bar: {
         flex: 1,

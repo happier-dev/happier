@@ -4,7 +4,7 @@ import { act } from 'react-test-renderer';
 
 import { renderScreen } from '@/dev/testkit';
 
-import { UsageMeterRow } from './UsageMeterRow';
+import { UsageMeterRow, UsageMeterStack } from './UsageMeterRow';
 
 const NOW = Date.UTC(2026, 8, 30, 10, 40);
 const MIN = 60_000;
@@ -14,6 +14,29 @@ function texts(screen: Awaited<ReturnType<typeof renderScreen>>): string {
 }
 
 describe('UsageMeterRow (lab csvc MT, the one meter)', () => {
+    it('lines a stack up as one table: every name takes the widest name, so each bar starts on one x (owner 11-01)', async () => {
+        const screen = await renderScreen(
+            <UsageMeterStack>
+                <UsageMeterRow label="Weekly" remainingPct={87} resetsAt={NOW + 135 * MIN} tone="neutral" now={NOW} size="card" />
+                <UsageMeterRow label="Weekly (all models)" remainingPct={87} resetsAt={NOW + 135 * MIN} tone="neutral" now={NOW} size="card" />
+            </UsageMeterStack>,
+        );
+        const name = (label: string) => screen.root.findAll((node) => typeof node.type === 'string'
+            && node.props.children === label && typeof node.props.onLayout === 'function')[0]!;
+        // The name's column: the nearest box around the name that holds a minimum width.
+        const columnWidth = (label: string) => {
+            for (let node = name(label).parent; node; node = node.parent) {
+                const style = [node.props.style].flat(Infinity).reduce((all: Record<string, unknown>, part) => ({ ...all, ...(part ?? {}) }), {});
+                if (typeof style.minWidth === 'number' && style.minWidth > 0) return style.minWidth;
+            }
+            return undefined;
+        };
+        act(() => name('Weekly').props.onLayout({ nativeEvent: { layout: { width: 44, height: 16, x: 0, y: 0 } } }));
+        act(() => name('Weekly (all models)').props.onLayout({ nativeEvent: { layout: { width: 121.4, height: 16, x: 0, y: 0 } } }));
+        expect(columnWidth('Weekly')).toBe(122);
+        expect(columnWidth('Weekly (all models)')).toBe(122);
+    });
+
     it('drops the redundant clock time when a wide meter is measured in a narrow pane', async () => {
         const screen = await renderScreen(<UsageMeterRow testID="meter" label="5-hour" remainingPct={42} resetsAt={NOW + 135 * MIN} tone="neutral" now={NOW} size="wide" />);
         const at = new Date(NOW + 135 * MIN).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
