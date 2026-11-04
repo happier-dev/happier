@@ -788,6 +788,35 @@ describe('useInSessionAgentPickerControls', () => {
         expect(hook.getCurrent().armedContinuation).toBeNull();
     });
 
+    it.each(['feature', 'catalog'] as const)(
+        'offers confirmed targets when the %s arrives after a Codex picker opens',
+        async (arrival) => {
+            const entries = [entry('codex'), entry('claude'), entry('opencode')];
+            const source = { ...supportedSource, currentBackendTargetKey: 'backend:codex' };
+            const ready = { entries, source, currentAgentId: 'codex', featureDecision: { state: 'enabled' } } as const;
+            const currentRow: AgentInputChipPickerOption = { id: 'engine:codex', label: 'Codex' };
+            const rows = () => hook.getCurrent().composeAgentPickerOptions([currentRow]);
+            const hook = await renderControls({
+                ...ready,
+                ...(arrival === 'feature' ? { featureDecision: null } : { entries: [entries[0]!] }),
+            });
+            await openPicker(hook);
+            expect(rows()).toEqual([currentRow]);
+            expect(machineRpcWithServerScope).not.toHaveBeenCalled();
+
+            await hook.rerender(ready);
+            await act(async () => { await Promise.resolve(); });
+
+            expect(rows().map(row => row.id)).toEqual(['engine:codex', 'backend:claude', 'backend:opencode']);
+            expect(rows().slice(1).every(row => row.disabled === false)).toBe(true);
+            await act(async () => rows()[1]?.onSelectImmediate?.());
+            expect(hook.getCurrent().armedContinuation?.selection.agentId).toBe('claude');
+            // One batch answers the newly offered targets; unchanged publications do not re-read them.
+            await hook.rerender(ready);
+            expect(machineRpcWithServerScope).toHaveBeenCalledTimes(1);
+        },
+    );
+
     it('drops an armed choice the moment the gate closes underneath it', async () => {
         const hook = await renderControls();
         await openPicker(hook);
@@ -945,9 +974,11 @@ describe('useInSessionAgentPickerControls', () => {
         });
         expect(hook.getCurrent().armedContinuation).not.toBeNull();
 
-        // Exactly what SessionView passes when the Session's machine drops:
-        // `isMachineOnline(...)` goes false and every target becomes unavailable.
-        await hook.rerender({ source: { ...supportedSource, machinePresence: 'offline' } });
+        machineRpcWithServerScope.mockResolvedValue({ v: 1, inspections: [
+            { type: 'unavailable', reason: 'unsupported_session' },
+        ] });
+        await hook.rerender({ machine: { ...onlineMachine, connectionGeneration: 2 } });
+        await act(async () => { await Promise.resolve(); });
 
         // The open popover keeps the shape it opened with, so the cancel gesture is
         // still on screen and the arm is still reachable — the invariant is that an
@@ -1110,7 +1141,7 @@ describe('useInSessionAgentPickerControls', () => {
         expect(optionsOf(hook.getCurrent())).toEqual([CURRENT_AGENT_ROW]);
     });
 
-    it('never calls a machine it already knows is offline, and offers no rail', async () => {
+    it('never calls an offline machine and keeps candidates visible with its reason', async () => {
         const hook = await renderControls({
             entries: [entry('claude'), entry('codex'), entry('gemini')],
             source: { ...supportedSource, machinePresence: 'offline' },
@@ -1118,14 +1149,21 @@ describe('useInSessionAgentPickerControls', () => {
         await openPicker(hook);
 
         expect(machineRpcWithServerScope).not.toHaveBeenCalled();
-        expect(optionsOf(hook.getCurrent())).toEqual([CURRENT_AGENT_ROW]);
+        expect(optionsOf(hook.getCurrent()).map(option => option.id))
+            .toEqual(['engine:claude', 'backend:codex', 'backend:gemini']);
+        for (const option of optionsOf(hook.getCurrent()).slice(1)) {
+            expect(option).toMatchObject({ disabled: true, subtitle: t('session.machineOfflineNoticeTitle') });
+        }
     });
 
     it('keeps refused rows stable during the first open and omits them on the next open', async () => {
-        machineRpcWithServerScope.mockRejectedValue(Object.assign(
-            new Error('RPC method not available'),
-            { rpcErrorCode: 'RPC_METHOD_NOT_AVAILABLE' },
-        ));
+        machineRpcWithServerScope.mockResolvedValue({
+            v: 1,
+            inspections: [
+                { type: 'unavailable', reason: 'unsupported_session' },
+                { type: 'unavailable', reason: 'unsupported_session' },
+            ],
+        });
         const hook = await renderControls({ entries: [entry('claude'), entry('codex'), entry('gemini')] });
         expect(machineRpcWithServerScope).not.toHaveBeenCalled();
         await openPicker(hook);
@@ -1174,6 +1212,40 @@ describe('useInSessionAgentPickerControls', () => {
         expect(optionsOf(hook.getCurrent()).map((option) => option.id)).toEqual(whileWaiting);
     });
 
+    it.each(['RPC_TRANSPORT_UNAVAILABLE', 'RPC_METHOD_NOT_AVAILABLE'])(
+        'keeps candidates disabled with a reason after an eligible read fails with %s and the picker reopens',
+        async (rpcErrorCode) => {
+            const props = {
+                currentAgentId: 'codex',
+                entries: [entry('codex'), entry('claude'), entry('opencode')],
+                source: { ...supportedSource, currentBackendTargetKey: 'backend:codex' },
+            };
+            const hook = await renderControls(props);
+            const rows = () => hook.getCurrent().composeAgentPickerOptions([
+                { ...CURRENT_AGENT_ROW, id: 'engine:codex', label: 'codex' },
+            ]);
+            await openPicker(hook);
+            expect(rows().slice(1).every(option => option.disabled === false)).toBe(true);
+
+            machineRpcWithServerScope.mockRejectedValue(Object.assign(new Error('discovery read failed'), { rpcErrorCode }));
+            await hook.rerender({ ...props, machine: { ...onlineMachine, connectionGeneration: 2 } });
+            await act(async () => hook.getCurrent().onAgentPickerVisibilityChange(false));
+            await openPicker(hook);
+
+            expect(rows().map(option => option.id))
+                .toEqual(['engine:codex', 'backend:claude', 'backend:opencode']);
+            for (const option of rows().slice(1)) {
+                expect(option).toMatchObject({
+                    disabled: true,
+                    subtitle: t('session.agentContinuation.unavailable.updateOrReconnect'),
+                });
+                expect(option.detailDescription).toBe(option.subtitle);
+                expect(option.onSelectImmediate).toBeUndefined();
+            }
+            expect(hook.getCurrent().armedContinuation).toBeNull();
+        },
+    );
+
     it('keeps pending targets disabled in the same open picker until the batch answers', async () => {
         let resolveInspection: ((value: unknown) => void) | null = null;
         machineRpcWithServerScope.mockImplementation(() => new Promise((resolve) => { resolveInspection = resolve; }));
@@ -1206,7 +1278,7 @@ describe('useInSessionAgentPickerControls', () => {
             .toEqual(['engine:claude', 'backend:codex']);
     });
 
-    it('keeps a target-specific block on its own row, said once, and never twice on screen', async () => {
+    it('exposes a target-specific block on the disabled row without allowing it to arm', async () => {
         // One Agent is switchable, so the rail is live and the blocked Agent stays
         // in it — plainly disabled, with its own reason read once in the detail pane.
         const hook = await renderControls({
@@ -1229,7 +1301,8 @@ describe('useInSessionAgentPickerControls', () => {
         const geminiOption = options[2];
         expect(geminiOption).toMatchObject({ disabled: true, muted: true });
         // Plainly disabled in the rail; the reason is read once, in the detail pane.
-        expect(geminiOption?.subtitle).toBeUndefined();
+        expect(geminiOption?.subtitle)
+            .toBe(t('session.agentContinuation.unavailable.targetNoSessions', { agent: 'gemini' }));
         expect(geminiOption?.detailDescription)
             .toBe(t('session.agentContinuation.unavailable.targetNoSessions', { agent: 'gemini' }));
         expect(geminiOption?.onApply).toBeUndefined();

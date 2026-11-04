@@ -379,7 +379,7 @@ export type InSessionAgentPickerControls = Readonly<{
     onAgentPickerVisibilityChange: (visible: boolean) => void;
 }>;
 
-type UnavailableEligibility = Extract<SessionAgentContinuationEligibility, { status: 'unavailable' }>;
+type UnavailableEligibility = Extract<SessionAgentContinuationEligibility, { status: 'unavailable' | 'indeterminate' }>;
 
 type SessionAgentPickerTargetRow = Readonly<{
     entry: ResolvedBackendCatalogEntry;
@@ -409,10 +409,8 @@ function resolveTargetRowUnavailableText(
                 return t('session.agentContinuation.unavailable.unsupportedSession', { agent: agentLabel });
             case 'target_unavailable':
                 return t('session.agentContinuation.unavailable.targetUnavailable', { agent: agentLabel });
-            // Presence is one fact held for the Session, so an offline machine
-            // blocks every row and the rail is gone before this could be read.
             case 'machine_offline':
-                return null;
+                return t('session.machineOfflineNoticeTitle');
         }
     }
     switch (eligibility.reason) {
@@ -559,19 +557,20 @@ export function useInSessionAgentPickerControls(
     // Pending targets keep the shared picker reachable before its first open;
     // only answered eligible targets can be armed.
     const hasSwitchableTarget = targetRows.some((row) => row.eligibility.status === 'eligible');
-    // Every target has been decided — answered by the machine, or refused by the
-    // local rules before the machine was ever asked.
-    const railDecisionSettled = targetRows.every((row) => row.eligibility.status !== 'checking');
+    // Only an eligibility verdict settles the question; a failed read does not.
+    const railDecisionSettled = targetRows.every((row) => (
+        row.eligibility.status !== 'checking' && row.eligibility.status !== 'indeterminate'
+    ));
 
     // What the rail decision would be from everything known right now; the latch
-    // below turns it into the one value this popover keeps.
+    // below keeps offered rows reachable throughout this popover.
     //
     // A closed gate produces no rail — not a rail of rows stuck on "checking"
     // because nothing was ever asked, and not a rail of disabled rows repeating
     // one fact about the deployment down a list of Agents. Nor does a Session
     // with no other Agent, or one whose every target has been refused.
     //
-    // It stays one value, because two things depend on it and they must not
+    // Both consumers share one value, because they must not
     // disagree: the rows the composer is given, and whether an armed choice is
     // still cancellable.
     const railOffersRowsNow = featureEnabled
@@ -579,12 +578,17 @@ export function useInSessionAgentPickerControls(
         && targetRows.length > 0
         && (hasSwitchableTarget || (!railDecisionSettled && inspectableTargetSelections.length > 0));
 
-    // Keep one geometry throughout an open popover. Its initial pending rows
-    // may settle disabled, but do not remove a column under the reader. Closing
+    // Once offered, keep rows throughout an open popover. Pending rows may
+    // settle disabled, but do not remove a column under the reader. Closing
     // uses the settled answer for the next open.
     const railLatchRef = React.useRef<Readonly<{ open: boolean; decided: boolean | null }>>(
         { open: false, decided: null },
     );
+    // Feature/catalog readiness can arrive after opening. Reveal those targets
+    // without requiring a close/reopen, while retaining any already offered rows.
+    if (pickerVisible && railOffersRowsNow && railLatchRef.current.decided !== true) {
+        railLatchRef.current = { open: true, decided: true };
+    }
     const railOffersRows = pickerVisible
         ? railLatchRef.current.decided === true
         : railOffersRowsNow;
@@ -768,7 +772,9 @@ export function useInSessionAgentPickerControls(
 
         const row = targetRows.find(({ entry }) => entry.backendTargetKey === persisted.backendTargetKey);
         const stillHonourable = row !== undefined
-            && (row.eligibility.status === 'eligible' || row.eligibility.status === 'checking')
+            && (row.eligibility.status === 'eligible'
+                || row.eligibility.status === 'checking'
+                || row.eligibility.status === 'indeterminate')
             && resolveContinuationAgentId(row.entry) === persisted.intent.selection.agentId
             && persisted.intent.sourceAgentId === currentAgentId;
         if (stillHonourable) {
@@ -888,7 +894,11 @@ export function useInSessionAgentPickerControls(
             },
             favoriteBackendTargetKeys: params.favoriteBackendTargetKeys ?? [],
             resolvePresentation: (entry) => {
-                if (!purposeDefaultsReady(entry)) return { disabled: true, muted: true };
+                if (!purposeDefaultsReady(entry)) return {
+                    subtitle: t(purposeCatalog.status === 'loading' ? 'common.loading' : 'common.unavailable'),
+                    disabled: true,
+                    muted: true,
+                };
                 const eligibility = eligibilityByTargetKey.get(entry.backendTargetKey);
                 // A row still being asked about is held in the same restrained
                 // treatment as an unavailable one, so nothing can be armed before
@@ -900,11 +910,14 @@ export function useInSessionAgentPickerControls(
                         muted: true,
                     };
                 }
-                // A blocked row is plainly disabled and says nothing in the rail.
-                // Its reason is stated once, in the detail pane, for whoever asks
-                // — never twice on the same screen.
-                if (eligibility.status === 'unavailable') {
-                    return { disabled: true, muted: true };
+                // Disabled rows cannot open their detail pane. Keep the owner's
+                // reason on the row itself, including an inconclusive read.
+                if (eligibility.status === 'unavailable' || eligibility.status === 'indeterminate') {
+                    return {
+                        subtitle: resolveTargetRowUnavailableText(eligibility, entry.title) ?? undefined,
+                        disabled: true,
+                        muted: true,
+                    };
                 }
                 // No subtitle for the armed row either: a second line wraps in the
                 // rail and breaks its rhythm, which is exactly why the running row
@@ -920,14 +933,9 @@ export function useInSessionAgentPickerControls(
             },
             resolveBehavior: ({ entry, presentation }) => {
                 if (presentation.disabled) {
-                    const eligibility = eligibilityByTargetKey.get(entry.backendTargetKey);
                     return {
                         detailTitle: entry.title,
-                        detailDescription: !purposeDefaultsReady(entry)
-                            ? t(purposeCatalog.status === 'loading' ? 'common.loading' : 'common.unavailable')
-                            : eligibility?.status === 'unavailable'
-                            ? resolveTargetRowUnavailableText(eligibility, entry.title) ?? undefined
-                            : t('session.agentContinuation.checking'),
+                        detailDescription: presentation.subtitle,
                     };
                 }
                 // Choosing this Agent, or one of its models, IS the choice. There is

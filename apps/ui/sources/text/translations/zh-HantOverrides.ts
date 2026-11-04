@@ -6650,7 +6650,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                 unavailable: {
                     unsupportedSession: ({ agent }: { agent: string }) => `這個工作階段無法由 ${agent} 繼續。`,
                     updateCli: '請更新這台機器上的 CLI 以切換代理。',
-                    updateOrReconnect: '請更新或重新連線 CLI 以切換代理。',
+                    updateOrReconnect: "無法檢查代理切換。請關閉並重新開啟選擇器以重試。",
                     targetNoSessions: ({ agent }: { agent: string }) => `${agent} 無法執行工作階段。`,
                     targetNotProven: ({ agent }: { agent: string }) => `尚未支援切換到 ${agent}。`,
                     targetUnavailable: ({ agent }: { agent: string }) => `${agent} 在這台機器上無法使用。`,

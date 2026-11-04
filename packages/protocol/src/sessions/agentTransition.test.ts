@@ -311,7 +311,7 @@ describe('session continuation inspection', () => {
     expect(parsed.success).toBe(false);
   });
 
-  it('distinguishes update-required from machine-offline using machine presence', () => {
+  it('never infers a version mismatch from missing RPC discovery and online presence', () => {
     for (const vector of V.inspection.unavailablePresentation) {
       expect(
         resolveSessionContinuationUnavailablePresentationV1({

@@ -16,12 +16,10 @@ import { readRpcErrorCode } from '@/sync/runtime/rpcErrors';
  *
  * The daemon's own union already carries `operation_unavailable`, which the
  * transport produces both for a daemon that predates the operation and for a
- * machine it cannot reach. Presence splits those two at the protocol's
- * presentation owner. But a timeout, an aborted call, a broken socket or a
- * response this client cannot parse prove NEITHER: reporting them as
- * `operation_unavailable` would make an online machine read as "update the CLI",
- * which is a false instruction. They resolve to `indeterminate` instead, and the
- * picker says so.
+ * machine it cannot reach. Online presence does not disambiguate a discovery
+ * failure from an old daemon. The protocol presentation owner never infers a
+ * version mismatch from this outcome. Other transport or parse failures resolve
+ * to `indeterminate`; neither outcome establishes a target refusal.
  */
 export type SessionContinuationInspectionQueryV1 =
     /** The machine answered — including its own typed `unavailable` reasons. */

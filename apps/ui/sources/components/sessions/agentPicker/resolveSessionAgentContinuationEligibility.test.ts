@@ -162,14 +162,15 @@ describe('resolveSessionAgentContinuationEligibility', () => {
             SessionAgentContinuationInspectionState,
             Partial<SessionAgentContinuationSourceState>,
             string,
+            'unavailable' | 'indeterminate',
         ]> = [
             // METHOD_NOT_AVAILABLE collapses "old daemon" and "unreachable machine",
-            // so presence is what narrows it.
-            [unavailable('operation_unavailable'), { machinePresence: 'online' }, 'update_cli'],
-            [unavailable('operation_unavailable'), { machinePresence: 'offline' }, 'machine_offline'],
-            [unavailable('operation_unavailable'), { machinePresence: 'unknown' }, 'update_or_reconnect'],
-            [unavailable('unsupported_session'), {}, 'unsupported_session'],
-            [unavailable('target_unavailable'), {}, 'target_unavailable'],
+            // and online presence is not positive version evidence.
+            [unavailable('operation_unavailable'), { machinePresence: 'online' }, 'update_or_reconnect', 'indeterminate'],
+            [unavailable('operation_unavailable'), { machinePresence: 'offline' }, 'machine_offline', 'indeterminate'],
+            [unavailable('operation_unavailable'), { machinePresence: 'unknown' }, 'update_or_reconnect', 'indeterminate'],
+            [unavailable('unsupported_session'), {}, 'unsupported_session', 'unavailable'],
+            [unavailable('target_unavailable'), {}, 'target_unavailable', 'unavailable'],
             [{
                 status: 'answered',
                 inspection: {
@@ -177,15 +178,15 @@ describe('resolveSessionAgentContinuationEligibility', () => {
                     protocolVersion: 1,
                     sameSessionTransition: false,
                 },
-            }, {}, 'unsupported_session'],
+            }, {}, 'unsupported_session', 'unavailable'],
         ];
 
-        for (const [inspection, sourceOverride, presentation] of cases) {
+        for (const [inspection, sourceOverride, presentation, status] of cases) {
             expect(resolveSessionAgentContinuationEligibility({
                 entry: codex,
                 source: { ...eligibleSource, ...sourceOverride },
                 inspection,
-            })).toEqual({ status: 'unavailable', kind: 'continuation', presentation });
+            })).toEqual({ status, kind: 'continuation', presentation });
         }
     });
 
@@ -199,7 +200,7 @@ describe('resolveSessionAgentContinuationEligibility', () => {
                 source: { ...eligibleSource, machinePresence },
                 inspection: { status: 'indeterminate' },
             })).toEqual({
-                status: 'unavailable',
+                status: 'indeterminate',
                 kind: 'continuation',
                 presentation: 'update_or_reconnect',
             });

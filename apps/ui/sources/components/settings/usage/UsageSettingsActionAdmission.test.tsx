@@ -7,6 +7,8 @@ import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/s
 import type { UsageWidgetBodyModel } from './useUsageWidgetResource';
 import { ConnectedPresentationRecordV1Schema, ConnectedPresentationRowMutationV1Schema } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
 import type { UsagePlanAccount } from './widgets/plans/usagePlansModel';
+import { CONNECTED_SERVICE_POOL_SELECTION_RPC_METHOD, ConnectedServicePoolSelectionGetResponseV1Schema } from '@happier-dev/protocol/connect/connectedServicePoolSelection';
+import type { ServerScopedMachineRpcParams } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcTypes';
 
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
@@ -45,6 +47,8 @@ const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMe
 const { normalizeUsageQuery, getUsageQueryKey } = await import('@happier-dev/protocol/inputs/usageQuery');
 const { ApprovalRequestV2Schema, AccountProfileSchema } = await import('@happier-dev/protocol');
 const { z } = await import('zod/mini');
+const machineRpc = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc');
+const { t } = await import('@/text');
 
 const settingsInput = z.object({ content: z.object({ t: z.literal('plain'), v: z.record(z.string(), z.unknown()) }), expectedVersion: z.number() });
 let serverId: string;
@@ -436,6 +440,53 @@ describe('Usage settings UI Action admission', () => {
         await waitForHomeGovernance(() => expect(storage.getState().settings.usageRoutingHintsEnabled).toBe(false));
         expect(screen.findAllByTestId('session-model-routing-hint.hide')).toHaveLength(0);
         await screen.unmount();
+    });
+
+    it.each(['transport', 'connected_account_daemon_owner_unavailable', 'connected_account_daemon_runtime_unavailable'] as const)(
+        'distinguishes a failed routing read (%s) and recovers when the picker closes and reopens', async failure => {
+        const entry = createResolvedAgentCatalogEntryFixture({ agentId: 'claude' });
+        const declaration = entry.connectedAccounts[0]!;
+        const group = { service: declaration.service, groupId: 'fallbacks' };
+        applyConnectedAccountCatalogSnapshot({ serverId, accountId: 'usage-account' }, 'purposes', {
+            status: 'ready', revision: 1,
+            record: { key: 'purposes', value: { v: 1, bindings: [{
+                purpose: { consumer: entry.identity!, purpose: declaration.purpose },
+                target: { kind: 'group', ...group },
+            }] } },
+        }, true);
+        const selected = { profileId: 'preferred', priority: 1, createdAtMs: 1, enabled: true, leastLimitedScore: null };
+        const response = ConnectedServicePoolSelectionGetResponseV1Schema.parse({ group, observedAtMs: 1,
+            selection: { selected, reason: 'selected', excluded: [], decisionTrace: {
+                activeProfileId: selected.profileId, reason: 'selected', strategy: 'priority', selectionBasis: 'preference', sticky: false,
+                orderedEligibleCandidates: [selected], candidates: [{ profileId: selected.profileId, decision: 'selected',
+                    quotaEvidence: { status: 'fresh', remainingPercent: 75 } }],
+            } },
+        });
+        let requests = 0;
+        // Machine RPC is the network boundary; routing reads, Action admission and U3 validation stay real.
+        const rpc = vi.spyOn(machineRpc, 'machineRpcWithServerScope').mockImplementation(async <R, A>(input: ServerScopedMachineRpcParams<A>) => {
+            expect(input.method).toBe(CONNECTED_SERVICE_POOL_SELECTION_RPC_METHOD);
+            input.onIssued?.();
+            if (++requests === 1) {
+                if (failure === 'transport') throw new Error('RPC discovery temporarily unavailable');
+                return ConnectedServicePoolSelectionGetResponseV1Schema.parse({ status: 'unavailable', code: failure }) as R;
+            }
+            return response as R;
+        });
+        try {
+            const credentials = await TokenStorage.getCredentialsForServerUrl('https://usage-settings.test');
+            const content = <InjectedAuthProvider credentials={credentials}><SessionModelRoutingHint entry={entry} machineId="routing-machine" /></InjectedAuthProvider>;
+            const screen = await renderScreen(content);
+            await waitForHomeGovernance(() => expect(screen.findAllByProps({ children: t('usage.board.plans.hintReadFailed') }).length).toBeGreaterThan(0));
+            expect(screen.findAllByProps({ children: t('usage.board.plans.hintUnavailable') })).toHaveLength(0);
+            expect(requests).toBe(1);
+            await screen.unmount();
+            const reopened = await renderScreen(content);
+            await waitForHomeGovernance(() => expect(reopened.findAllByProps({ children: t('usage.board.plans.cellLeft', { percent: '75%' }) }).length).toBeGreaterThan(0));
+            expect(reopened.findAllByProps({ children: t('usage.board.plans.hintReadFailed') })).toHaveLength(0);
+            expect(requests).toBe(2);
+            await reopened.unmount();
+        } finally { rpc.mockRestore(); }
     });
 
     it('does not persist partial night hours and withholds a complete range until approval', async () => {

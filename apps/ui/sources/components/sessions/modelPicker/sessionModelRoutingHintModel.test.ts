@@ -138,18 +138,45 @@ describe('Routing hint in the agent/model picker', () => {
     ]);
   });
 
-  it('keeps an unanswered selector read as unknown rather than guessing an order', () => {
+  it.each([
+    ['pending', undefined, 'loading'],
+    ['failed', 'failed' as const, 'failed'],
+    ['owner unavailable', ConnectedServicePoolSelectionGetResponseV1Schema.parse({
+      status: 'unavailable', code: 'connected_account_daemon_owner_unavailable',
+    }), 'failed'],
+    ['runtime unavailable', ConnectedServicePoolSelectionGetResponseV1Schema.parse({
+      status: 'unavailable', code: 'connected_account_daemon_runtime_unavailable',
+    }), 'failed'],
+    ['invalid response', ConnectedServicePoolSelectionGetResponseV1Schema.parse({
+      status: 'unavailable', code: 'connected_account_daemon_response_invalid',
+    }), 'failed'],
+    ['unsupported read', ConnectedServicePoolSelectionGetResponseV1Schema.parse({
+      status: 'unavailable', code: 'unsupported',
+    }), 'failed'],
+  ] as const)('keeps a %s selector read distinct without guessing an order', (_kind, response, state) => {
     const hint = buildSessionModelRoutingHint({
       enabled: true,
       targets: [pool],
-      selections: new Map([
-        [sessionModelRoutingHintPoolKey(pool), 'failed' as const],
-      ]),
+      selections: response ? new Map([[sessionModelRoutingHintPoolKey(pool), response]]) : new Map(),
     });
     expect(hint!.pools[0]).toMatchObject({
-      state: 'unavailable',
+      state,
       selected: null,
       next: [],
     });
+  });
+
+  it('preserves an answered pool with no eligible account as a settled selector result', () => {
+    if (!('selection' in ready)) throw new Error('Expected selector evidence');
+    const response = ConnectedServicePoolSelectionGetResponseV1Schema.parse({
+      ...ready,
+      selection: { ...ready.selection, selected: null, reason: 'no_eligible_members',
+        decisionTrace: { ...ready.selection.decisionTrace, activeProfileId: null,
+          reason: 'no_eligible_members', selectionBasis: 'no_eligible_members', sticky: false,
+          orderedEligibleCandidates: [], candidates: [] } },
+    });
+    expect(buildSessionModelRoutingHint({ enabled: true, targets: [pool],
+      selections: new Map([[sessionModelRoutingHintPoolKey(pool), response]]),
+    })!.pools[0]).toMatchObject({ state: 'ready', selected: null, next: [] });
   });
 });

@@ -9591,7 +9591,7 @@ const enSession = {
       unsupportedSession: ({ agent }: { agent: string }) =>
         `This Session can’t continue with ${agent}.`,
       updateCli: 'Update the CLI on this machine to switch Agents.',
-      updateOrReconnect: 'Update or reconnect the CLI to switch Agents.',
+      updateOrReconnect: "Agent switching could not be checked. Close and reopen the picker to retry.",
       targetNoSessions: ({ agent }: { agent: string }) =>
         `${agent} can’t run a Session.`,
       targetNotProven: ({ agent }: { agent: string }) =>
@@ -19644,6 +19644,7 @@ const enUsage = {
       hintSticky: "kept while it lasts",
       hintThen: ({ names }: { names: string | number }) => `then ${names}`,
       hintUnavailable: "Switching order unavailable",
+      hintReadFailed: "Could not check switching order. Close and reopen the picker to retry.",
       hintLoading: "Reading the switching order",
       hintFooter: "Accounts follow your switching preference",
       hintHide: "Hide",

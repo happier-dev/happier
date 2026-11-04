@@ -370,11 +370,11 @@ export type SessionContinuationInspectionBatchResultV1 =
 export type SessionContinuationMachinePresenceV1 = 'online' | 'offline' | 'unknown';
 
 export const SessionContinuationUnavailablePresentationV1Schema = lazyZodSchema(() => z.enum([
-  /** Daemon is reachable but predates the operation. */
+  /** Reserved for positively established version incompatibility. */
   'update_cli',
   /** The machine is not reachable at all. */
   'machine_offline',
-  /** Reachability is unknown, so the cause genuinely cannot be narrowed. */
+  /** Inspection failed without establishing a target refusal or version mismatch. */
   'update_or_reconnect',
   'unsupported_session',
   'target_unavailable',
@@ -384,10 +384,10 @@ export type SessionContinuationUnavailablePresentationV1 =
 
 /**
  * The transport collapses "old daemon" and "machine unreachable" into one
- * METHOD_NOT_AVAILABLE, so the RPC alone cannot tell them apart. The CLIENT can,
- * by combining the inspection reason with the machine-presence fact it already
- * holds. This is the one owner of that composition — UI surfaces consume it
- * rather than each re-deriving the three-way branch.
+ * METHOD_NOT_AVAILABLE. Online presence does not prove that RPC discovery reached
+ * the daemon, so neither input establishes an obsolete CLI version. This owner
+ * reports only the offline fact or the inconclusive read; consumers do not infer
+ * a version requirement from transport failure.
  */
 export function resolveSessionContinuationUnavailablePresentationV1(
   params: Readonly<{
@@ -398,7 +398,6 @@ export function resolveSessionContinuationUnavailablePresentationV1(
   if (params.reason === 'unsupported_session') return 'unsupported_session';
   if (params.reason === 'target_unavailable') return 'target_unavailable';
   if (params.machinePresence === 'offline') return 'machine_offline';
-  if (params.machinePresence === 'online') return 'update_cli';
   return 'update_or_reconnect';
 }
 

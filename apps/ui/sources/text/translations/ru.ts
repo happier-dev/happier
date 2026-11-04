@@ -8458,7 +8458,7 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
       unavailable: {
         unsupportedSession: ({ agent }: { agent: string }) => `Эту сессию нельзя продолжить с ${agent}.`,
         updateCli: "Обновите CLI на этой машине, чтобы сменить агента.",
-        updateOrReconnect: "Обновите или переподключите CLI, чтобы сменить агента.",
+        updateOrReconnect: "Не удалось проверить переключение агента. Закройте и снова откройте список, чтобы повторить попытку.",
         targetNoSessions: ({ agent }: { agent: string }) => `${agent} не может вести сессию.`,
         targetNotProven: ({ agent }: { agent: string }) => `Переключение на ${agent} пока не поддерживается.`,
         targetUnavailable: ({ agent }: { agent: string }) => `${agent} недоступен на этой машине.`,
@@ -16044,6 +16044,7 @@ settingsSession: {
             hintSticky: "остаётся, пока хватает",
             hintThen: ({ names }: { names: string | number }) => `затем ${names}`,
             hintUnavailable: "Порядок переключения недоступен",
+            hintReadFailed: "Не удалось проверить порядок переключения. Закройте и снова откройте список, чтобы повторить попытку.",
             hintLoading: "Чтение порядка переключения",
             hintFooter: "Аккаунты следуют вашему порядку переключения",
             hintHide: "Скрыть",

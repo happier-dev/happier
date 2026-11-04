@@ -630,16 +630,22 @@ describe('useInSessionAgentPickerControls arm draft', () => {
         expect(readPersistedArm()).toBeNull();
     });
 
-    it('drops the persisted arm with the live one when the rail that could cancel it goes', async () => {
+    it('keeps the persisted arm cancellable while its machine is offline', async () => {
         const hook = await renderControls({ entries: [entry('claude'), entry('codex'), entry('gemini')] });
         await armTarget(hook, 'agent:happier.agent.codex/codex');
         expect(readPersistedArm()).toBeDefined();
 
-        // Every target refused: the rail is gone, and with it the only gesture that
-        // could cancel the arm. A persisted arm here would come back uncancellable.
+        // Offline does not establish a target refusal, so closing and reopening
+        // must retain both the candidates and the existing cancellation gesture.
         await hook.rerender({ source: { ...supportedSource, machinePresence: 'offline' } });
         await act(async () => hook.getCurrent().onAgentPickerVisibilityChange(false));
 
+        expect(hook.getCurrent().armedContinuation).toEqual(armedIntentFor('codex'));
+        expect(readPersistedArm()).toBeDefined();
+        await act(async () => hook.getCurrent().onAgentPickerVisibilityChange(true));
+        await act(async () => {
+            hook.getCurrent().composeAgentPickerOptions([CURRENT_AGENT_ROW])[0]?.onSelectImmediate?.();
+        });
         expect(hook.getCurrent().armedContinuation).toBeNull();
         expect(readPersistedArm()).toBeNull();
     });

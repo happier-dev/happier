@@ -18,7 +18,7 @@ export type SessionModelRoutingHintCandidate = Readonly<{
 export type SessionModelRoutingHintPool = Readonly<{
   key: string;
   group: Extract<SessionModelRoutingHintTarget, { kind: 'group' }>;
-  state: 'loading' | 'unavailable' | 'ready';
+  state: 'loading' | 'failed' | 'ready';
   /** The account the daemon selector uses now; `sticky` when it stays on it past a preferred one. */
   selected:
     | (SessionModelRoutingHintCandidate & Readonly<{ sticky: boolean }>)
@@ -72,7 +72,7 @@ export function buildSessionModelRoutingHint(
       pools.push({
         key,
         group: target,
-        state: response === 'loading' ? 'loading' : 'unavailable',
+        state: response === 'loading' ? 'loading' : 'failed',
         selected: null,
         next: [],
         excluded: [],

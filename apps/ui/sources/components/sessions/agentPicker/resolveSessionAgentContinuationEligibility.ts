@@ -52,6 +52,11 @@ export type SessionAgentContinuationEligibility =
     | Readonly<{ status: 'current' }>
     | Readonly<{ status: 'eligible' }>
     | Readonly<{ status: 'checking' }>
+    | Readonly<{
+        status: 'indeterminate';
+        kind: 'continuation';
+        presentation: SessionContinuationUnavailablePresentationV1;
+    }>
     | Readonly<{ status: 'unavailable'; kind: 'local'; reason: SessionAgentContinuationLocalReason }>
     | Readonly<{
         status: 'unavailable';
@@ -136,19 +141,13 @@ export function resolveSessionAgentContinuationSessionReason(
 
 /** Called only once the target's question has actually been answered or given up on. */
 function resolveContinuationAvailability(
-    inspection: SessionContinuationInspectionQueryV1,
+    inspection: Extract<SessionContinuationInspectionQueryV1, { status: 'answered' }>,
     machinePresence: SessionContinuationMachinePresenceV1,
 ): SessionContinuationUnavailablePresentationV1 | null {
-    if (inspection.status === 'indeterminate') {
-        // The call did not complete, which is evidence of nothing. Telling an
-        // online machine's owner to update the CLI would be a false instruction,
-        // so only the openly ambiguous presentation is truthful here.
-        return 'update_or_reconnect';
-    }
     const answer = inspection.inspection;
     if (answer.type === 'unavailable') {
-        // The transport collapses "daemon predates the operation" and "machine
-        // unreachable" into one outcome; the shared owner splits them using presence.
+        // Missing discovery does not establish a version mismatch. The shared
+        // presentation owner reports only facts these inputs actually establish.
         return resolveSessionContinuationUnavailablePresentationV1({
             reason: answer.reason,
             machinePresence,
@@ -161,6 +160,15 @@ function resolveContinuationAvailability(
         });
     }
     return null;
+}
+
+/** The eligibility owner also decides which read outcomes can be retried on reopen. */
+export function isSessionAgentContinuationInspectionIndeterminate(
+    inspection: SessionAgentContinuationInspectionState,
+): boolean {
+    return inspection.status === 'indeterminate'
+        || (inspection.status === 'answered' && inspection.inspection.type === 'unavailable'
+            && inspection.inspection.reason === 'operation_unavailable');
 }
 
 /**
@@ -194,10 +202,19 @@ export function resolveSessionAgentContinuationEligibility(params: Readonly<{
     if (inspection.status === 'checking') {
         return { status: 'checking' };
     }
+    if (inspection.status === 'indeterminate') {
+        return { status: 'indeterminate', kind: 'continuation', presentation: 'update_or_reconnect' };
+    }
 
     const continuationUnavailable = resolveContinuationAvailability(inspection, source.machinePresence);
     if (continuationUnavailable !== null) {
-        return { status: 'unavailable', kind: 'continuation', presentation: continuationUnavailable };
+        // Missing operation/reachability is not a refusal of this exact target.
+        // Preserve that distinction so a failed read cannot remove candidates.
+        return {
+            status: isSessionAgentContinuationInspectionIndeterminate(inspection) ? 'indeterminate' : 'unavailable',
+            kind: 'continuation',
+            presentation: continuationUnavailable,
+        };
     }
 
     return { status: 'eligible' };

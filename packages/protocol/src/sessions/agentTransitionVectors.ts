@@ -313,10 +313,10 @@ export const SESSION_AGENT_TRANSITION_VECTORS = {
     },
     /**
      * METHOD_NOT_AVAILABLE collapses "old daemon" and "unreachable machine".
-     * The client disambiguates with the machine-presence fact it already holds.
+     * Online presence does not prove that discovery reached the operation.
      */
     unavailablePresentation: [
-      { reason: 'operation_unavailable', machinePresence: 'online', expected: 'update_cli' },
+      { reason: 'operation_unavailable', machinePresence: 'online', expected: 'update_or_reconnect' },
       { reason: 'operation_unavailable', machinePresence: 'offline', expected: 'machine_offline' },
       {
         reason: 'operation_unavailable',

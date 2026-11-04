@@ -7744,7 +7744,7 @@ export const zhHans: TranslationStructure = {
       unavailable: {
         unsupportedSession: ({ agent }: { agent: string }) => `此会话无法由 ${agent} 继续。`,
         updateCli: "请更新这台机器上的 CLI 以切换代理。",
-        updateOrReconnect: "请更新或重新连接 CLI 以切换代理。",
+        updateOrReconnect: "无法检查代理切换。请关闭并重新打开选择器以重试。",
         targetNoSessions: ({ agent }: { agent: string }) => `${agent} 无法运行会话。`,
         targetNotProven: ({ agent }: { agent: string }) => `尚不支持切换到 ${agent}。`,
         targetUnavailable: ({ agent }: { agent: string }) => `${agent} 在这台机器上不可用。`,
@@ -15735,6 +15735,7 @@ settingsSession: {
             hintSticky: "用完前保持使用",
             hintThen: ({ names }: { names: string | number }) => `然后 ${names}`,
             hintUnavailable: "无法获取切换顺序",
+            hintReadFailed: "无法检查切换顺序。请关闭并重新打开选择器以重试。",
             hintLoading: "正在读取切换顺序",
             hintFooter: "账号遵循你的切换偏好",
             hintHide: "隐藏",

@@ -8364,7 +8364,7 @@ localTailscale: {
       unavailable: {
         unsupportedSession: ({ agent }: { agent: string }) => `このセッションを ${agent} で続けることはできません。`,
         updateCli: "エージェントを切り替えるには、このマシンの CLI を更新してください。",
-        updateOrReconnect: "エージェントを切り替えるには CLI を更新するか再接続してください。",
+        updateOrReconnect: "エージェントの切り替えを確認できませんでした。選択画面を閉じて開き直すと再試行できます。",
         targetNoSessions: ({ agent }: { agent: string }) => `${agent} はセッションを実行できません。`,
         targetNotProven: ({ agent }: { agent: string }) => `${agent} への切り替えはまだ利用できません。`,
         targetUnavailable: ({ agent }: { agent: string }) => `${agent} はこのマシンでは利用できません。`,
@@ -16375,6 +16375,7 @@ settingsSession: {
             hintSticky: "残量がある間は継続",
             hintThen: ({ names }: { names: string | number }) => `次に ${names}`,
             hintUnavailable: "切り替え順序を取得できません",
+            hintReadFailed: "切り替え順序を確認できませんでした。選択画面を閉じて開き直すと再試行できます。",
             hintLoading: "切り替え順序を読み込み中",
             hintFooter: "アカウントは切り替え設定に従います",
             hintHide: "非表示",

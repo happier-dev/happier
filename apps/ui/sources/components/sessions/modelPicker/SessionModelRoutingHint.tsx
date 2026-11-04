@@ -228,7 +228,9 @@ function RoutingHintBody(
             <Text style={styles.quiet}>
               {pool.state === 'loading'
                 ? t('usage.board.plans.hintLoading')
-                : t('usage.board.plans.hintUnavailable')}
+                : pool.state === 'failed'
+                  ? t('usage.board.plans.hintReadFailed')
+                  : t('usage.board.plans.hintUnavailable')}
             </Text>
           )}
         </View>

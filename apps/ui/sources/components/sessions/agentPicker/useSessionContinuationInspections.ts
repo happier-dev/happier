@@ -9,9 +9,10 @@ import type {
 
 import { inspectSessionContinuationsOnMachine } from '@/sync/ops/sessionContinuationInspection';
 
-import type {
-    SessionAgentContinuationInspectionState,
-    SessionAgentContinuationMachineTarget,
+import {
+    isSessionAgentContinuationInspectionIndeterminate,
+    type SessionAgentContinuationInspectionState,
+    type SessionAgentContinuationMachineTarget,
 } from './resolveSessionAgentContinuationEligibility';
 
 const CHECKING: SessionAgentContinuationInspectionState = { status: 'checking' };
@@ -54,9 +55,9 @@ function selectionKey(selection: SessionAgentTransitionSelectionV1): string {
  * **One runtime pair, one answer.** Answers are cached against the realtime
  * connection, the daemon generation, and the machine state they were read over,
  * and discarded when any of them changes, because inspection reserves nothing and
- * re-reading is the only way it stays true. Caching also matters for a negative:
- * the machine RPC already retries once on `METHOD_NOT_AVAILABLE`, so an old daemon
- * costs two round trips per ask.
+ * re-reading is the only way it stays true. Inconclusive reads stay settled while
+ * open, then release on close so the person can reopen to retry. Positive target
+ * refusals remain answers; failed discovery never becomes one.
  *
  * **Never asks a machine known to be offline.** That answer is already held, and
  * waiting out a transport timeout to rediscover it would leave the row reading
@@ -102,6 +103,22 @@ export function useSessionContinuationInspections(
     const targetSelectionsRef = React.useRef(targetSelections);
     targetSelectionsRef.current = targetSelections;
     const targetsKey = targetSelections.map(selectionKey).join('\u0000');
+
+    React.useEffect(() => {
+        if (demanded) return;
+        const retryableKeys = [...answers].filter(([, answer]) => (
+            isSessionAgentContinuationInspectionIndeterminate(answer)
+        )).map(([key]) => key);
+        if (retryableKeys.length === 0) return;
+        // Only closing/hiding ends this inspection attempt. Changing another
+        // target while open must not silently retry unrelated failed reads.
+        for (const key of retryableKeys) scopeRef.current.asked.delete(key);
+        setAnswers((current) => {
+            const next = new Map(current);
+            for (const key of retryableKeys) next.delete(key);
+            return next;
+        });
+    }, [answers, demanded]);
 
     React.useEffect(() => {
         if (!demanded || offline || !machineId) return;

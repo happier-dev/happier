@@ -638,6 +638,20 @@ the existing Agent detail. The canonical destination decision precedes source bu
 an eligible armed destination bypasses that source-runtime choice. Other routes retain their existing
 preflight and refusal policies.
 
+The picker's `resolveSessionAgentContinuationEligibility` preserves checking and indeterminate
+inspection states separately from a positive refusal. Failed reads and an unavailable inspection
+operation keep candidate Agents visible and disabled across closing and reopening; their reason
+is supplied on the row as well as in its detail data. Only an established refusal can settle a
+target as unavailable. Later feature/catalog readiness can reveal alternatives in an already-open
+picker. These presentation states never authorize a transition; only an eligible target can arm one.
+
+Online Machine presence and `METHOD_NOT_AVAILABLE` do not establish a CLI version mismatch:
+RPC discovery can fail independently. The shared Protocol presentation owner reports an
+inconclusive check rather than recommending an update. Closing the picker releases inconclusive
+inspection answers, so reopening explicitly retries them; settled positive answers and refusals
+are retained. The selected Agent's routing hint also distinguishes a failed read from an answered
+unavailable order and explains its existing close/reopen retry. Neither path polls.
+
 Target auth is a read-only preview of the configured Account purpose defaults, resolved through
 `resolveAgentConnectedAccountPurposeDefaults` and projected with the existing binding owner. Requested
 profile, group and Team resource identity is preserved when unavailable. Team preview readiness uses
