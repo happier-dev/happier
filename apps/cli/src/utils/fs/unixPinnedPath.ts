@@ -28,7 +28,11 @@ async function withEntry<T>(parent: FileHandle, parts: string[], directory: bool
     if (parts.length === 0) return effect(parent, descriptorPath(parent));
     const [name, ...rest] = parts;
     const path = `${descriptorPath(parent)}/${name}`;
-    const flags = rest.length > 0 || directory ? directoryFlags : O_PATH | constants.O_NOFOLLOW;
+    // Native identity ancestors intentionally allow search without listing
+    // (0711). Pin traversal with O_PATH; only the selected directory needs a
+    // readable handle for its admitted effects. Every component stays no-follow.
+    const flags = rest.length > 0 ? O_PATH | constants.O_DIRECTORY | constants.O_NOFOLLOW
+        : directory ? directoryFlags : O_PATH | constants.O_NOFOLLOW;
     let entry: FileHandle;
     try { entry = await open(path, flags); }
     catch (error) {

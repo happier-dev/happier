@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, readdir, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, readFile, readdir, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough, Readable } from 'node:stream';
@@ -98,6 +98,25 @@ describe.skipIf(process.platform !== 'linux')('finite native operation runtime',
     expect(await readdir(join(agentHome, 'runtime/operations'))).toEqual([]);
     expect(await bytes(agentHome)).toBe(38 * 1024 * 1024);
   }, 60_000);
+
+  it.skipIf(process.getuid?.() === 0)('launches and retires native operations through search-only identity ancestors without widening them', async () => {
+    const parent = await home();
+    const agentHome = join(parent, 'identity');
+    await mkdir(agentHome, { mode: 0o700 });
+    await chmod(parent, 0o111);
+    try {
+      const lease = await operation(agentHome, 'search-only');
+      const streams = io(agentHome); let output = '';
+      streams.stdout.on('data', chunk => { output += String(chunk); });
+      expect(await executeAgentLaunchPayload(launch(agentHome, 'search-only', 'process.stdout.write("native-ready")'), streams))
+        .toEqual({ code: 0, signal: null });
+      expect(output).toBe('native-ready');
+      await lease.dispose();
+      expect(await readdir(join(agentHome, 'runtime/operations'))).toEqual([]);
+      expect((await stat(join(agentHome, '.cache'))).mode & 0o777).toBe(0o700);
+      expect((await stat(parent)).mode & 0o777).toBe(0o111);
+    } finally { await chmod(parent, 0o700); }
+  });
 
   it('separates two native identity caches while concurrent operations of one identity share theirs', async () => {
     const first = await home(); const second = await home();
