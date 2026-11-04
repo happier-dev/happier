@@ -476,6 +476,17 @@ uses the existing stream control path and daemon automation/controller owner for
 it does not acquire a simulator lease. Capture acknowledgement and viewer network credit remain
 separate authorities.
 
+The shared CDP producer also owns encoding in unreleased 0.3 source. Viewer-only
+capture uses the controlling viewer's applied viewport/DPR from the browser viewport
+owner as `maxWidth`/`maxHeight`. Passive viewers fit that picture. During repeated
+repaints it targets 0.75 of the CSS dimensions at JPEG quality 65 (including high-DPR
+emulation); after 250 ms without a frame it
+restarts the same screencast at full viewer size and quality 80 to push a detailed
+still. This is one settling deadline, with no polling or idle recapture. Recording
+and observation subscribers retain native-sized quality-80 capture and suppress
+motion adaptation while attached. Capture restart/stop and CDP ACKs remain owned
+by that one producer; there is no additional encoder or quality protocol field.
+
 In 0.3 development, controller and navigation metadata uses that same scoped frame carrier
 without requiring a new CDP picture. The server uses the Protocol stream meter for both image
 and metadata delivery. Metadata consumes byte credit and the signed byte budgets, but not image

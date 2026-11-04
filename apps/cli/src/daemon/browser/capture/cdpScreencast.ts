@@ -2,6 +2,18 @@ import { browserViewKey } from '@happier-dev/protocol/browser/view/key';
 
 import type { BrowserSidecarContextCaptureSurface, BrowserSidecarCdpPageHandle } from '../sidecar/controlAdapter';
 import type { SurfaceInputControl } from '../../surfaces/inputControl';
+import type { BrowserViewportOwner } from '../sidecar/viewport';
+
+// BR-STREAM-QUALITY's Chrome 155 encoding sweep: 0.75 / 65 used 66,793 B
+// versus 150,298 B at the native default, retaining readable moving text.
+// 80 matched native-default size/detail in that sweep for stills and recording.
+const STILL_QUALITY = 80;
+const MOTION_QUALITY = 65;
+const MOTION_SCALE = 0.75;
+// Three observed QA frame periods (~78 ms) plus a compositor tick. This is a
+// one-shot quiet deadline, not a capture cadence or an operation timeout.
+const MOTION_SETTLE_MS = 250;
+type Encoding = Readonly<{ format: 'jpeg'; quality: number; maxWidth?: number; maxHeight?: number }>;
 
 export type BrowserCaptureView = Readonly<{ browserSessionId: string; viewId: string }>;
 export type BrowserCdpScreencastFrame = Readonly<{
@@ -31,6 +43,12 @@ type Capture = {
     stopping: Promise<void> | null;
     closed: boolean;
     unsubscribe: () => void;
+    viewportOwner?: BrowserViewportOwner;
+    encoding: Encoding;
+    updating: Promise<void>;
+    motion: boolean;
+    previousFrameAt: number | null;
+    settleTimer: ReturnType<typeof setTimeout> | null;
 };
 
 /** One page screencast and one CDP ACK owner, shared by recording and live viewers. */
@@ -47,13 +65,72 @@ export function createBrowserCdpScreencastProducer(input: Readonly<{
     function report(consumer: Consumer, error: unknown): void {
         try { consumer.onError?.(error); } catch { /* A failing subscriber cannot break other consumers. */ }
     }
+    function clearMotion(capture: Capture): void {
+        if (capture.settleTimer !== null) clearTimeout(capture.settleTimer);
+        capture.settleTimer = null;
+        capture.motion = false;
+        capture.previousFrameAt = null;
+    }
+    function needsNativeDetail(capture: Capture): boolean {
+        for (const consumer of capture.consumers) if (consumer.purpose !== 'humanViewer') return true;
+        return false;
+    }
+    function encodingFor(capture: Capture, view: BrowserCaptureView): Encoding {
+        // Recording/observation consumes native detail, independently of viewers.
+        const nativeDetail = needsNativeDetail(capture);
+        const viewport = nativeDetail ? undefined : capture.viewportOwner?.getViewport(view);
+        // Chrome's emulated high-DPR screencast can still be CSS-sized (measured
+        // 1280x800 at DPR 2). Motion targets CSS detail so the cap actually shrinks
+        // pixels there too; settled capture allows the entire viewer backing store.
+        const scale = capture.motion && !nativeDetail ? MOTION_SCALE : (viewport?.deviceScaleFactor ?? 1);
+        return { format: 'jpeg', quality: capture.motion && !nativeDetail ? MOTION_QUALITY : STILL_QUALITY,
+            ...(viewport ? { maxWidth: Math.max(1, Math.round(viewport.width * scale)),
+                maxHeight: Math.max(1, Math.round(viewport.height * scale)) } : {}) };
+    }
+    function updateEncoding(capture: Capture, view: BrowserCaptureView): void {
+        // CDP has no in-place parameter update. Serialize stop/start with final stop;
+        // read the geometry owner's latest applied value when this change takes effect.
+        capture.updating = capture.updating.then(async () => {
+            if (capture.closed || !await capture.started) return;
+            const next = encodingFor(capture, view);
+            const previous = capture.encoding;
+            if (next.quality === previous.quality && next.maxWidth === previous.maxWidth && next.maxHeight === previous.maxHeight) return;
+            await dispatch({ ...capture.handle, method: 'Page.stopScreencast' });
+            if (capture.closed) return;
+            capture.encoding = next;
+            capture.previousFrameAt = null;
+            await dispatch({ ...capture.handle, method: 'Page.startScreencast', params: next });
+        }).catch((error: unknown) => {
+            for (const subscriber of capture.consumers) report(subscriber, error);
+        });
+    }
+    function observeMotion(capture: Capture, view: BrowserCaptureView, arrivedAt: number): void {
+        if (needsNativeDetail(capture)) return;
+        const previous = capture.previousFrameAt;
+        capture.previousFrameAt = arrivedAt;
+        if (!capture.motion && previous !== null && arrivedAt - previous < MOTION_SETTLE_MS) {
+            capture.motion = true;
+            updateEncoding(capture, view);
+        }
+        if (!capture.motion) return;
+        if (capture.settleTimer !== null) clearTimeout(capture.settleTimer);
+        capture.settleTimer = setTimeout(() => {
+            clearMotion(capture);
+            // Restart pushes the detailed still even when the page no longer repaints.
+            updateEncoding(capture, view);
+        }, MOTION_SETTLE_MS);
+        // The Node daemon handle also supports unref; browser ambient timer overloads omit it.
+        (capture.settleTimer as ReturnType<typeof setTimeout> & { unref?: () => void }).unref?.();
+    }
     function close(key: string, capture: Capture): Promise<void> {
         if (capture.stopping) return capture.stopping;
         capture.closed = true;
+        clearMotion(capture);
         capture.lastFrame = null;
         capture.unsubscribe();
         capture.stopping = (async () => {
             try {
+                await capture.updating;
                 if (await capture.started) await dispatch({ ...capture.handle, method: 'Page.stopScreencast' });
             } finally {
                 if (captures.get(key) === capture) captures.delete(key);
@@ -99,6 +176,9 @@ export function createBrowserCdpScreencastProducer(input: Readonly<{
                 const created: Capture = {
                     handle, consumers: new Set(), lastFrame: null, started: Promise.resolve(false), stopping: null,
                     closed: false, unsubscribe: () => undefined,
+                    viewportOwner: input.contextCapture.resolveViewportOwner?.(consumer.view),
+                    encoding: { format: 'jpeg', quality: STILL_QUALITY }, updating: Promise.resolve(),
+                    motion: false, previousFrameAt: null, settleTimer: null,
                 };
                 capture = created;
                 captures.set(key, created);
@@ -119,6 +199,7 @@ export function createBrowserCdpScreencastProducer(input: Readonly<{
                             ...(typeof dimensions.deviceHeight === 'number' && dimensions.deviceHeight > 0 ? { height: dimensions.deviceHeight } : {}),
                         };
                         created.lastFrame = frame;
+                        observeMotion(created, consumer.view, frame.timestampMs);
                         for (const subscriber of [...created.consumers]) {
                             if (subscriber.purpose !== 'humanViewer' && control?.isObservationHeld()) continue;
                             try { subscriber.onFrame(frame); } catch (error) { report(subscriber, error); }
@@ -128,9 +209,16 @@ export function createBrowserCdpScreencastProducer(input: Readonly<{
                             .catch((error: unknown) => { for (const subscriber of created.consumers) report(subscriber, error); });
                     }
                 });
-                created.started = dispatch({ ...handle, method: 'Page.startScreencast', params: { format: 'jpeg' } })
+                const unsubscribeFrames = created.unsubscribe;
+                const unsubscribeViewport = created.viewportOwner?.subscribe(view => {
+                    if (browserViewKey(view) === key) updateEncoding(created, view);
+                });
+                created.unsubscribe = () => { unsubscribeFrames(); unsubscribeViewport?.(); };
+                created.encoding = encodingFor(created, consumer.view);
+                created.started = dispatch({ ...handle, method: 'Page.startScreencast', params: created.encoding })
                     .then(() => true, (error: unknown) => {
                         created.closed = true;
+                        clearMotion(created);
                         created.unsubscribe();
                         if (captures.get(key) === created) captures.delete(key);
                         for (const subscriber of created.consumers) report(subscriber, error);
@@ -138,6 +226,8 @@ export function createBrowserCdpScreencastProducer(input: Readonly<{
                     });
             } else {
                 capture.consumers.add(consumer);
+                if (consumer.purpose !== 'humanViewer') clearMotion(capture);
+                updateEncoding(capture, consumer.view);
                 // Chromium only emits on repaint. A newly admitted human viewer needs the
                 // current picture even while another viewer/recording keeps this capture alive.
                 // Observation subscribers still wait for fresh, non-confidential evidence.
@@ -147,9 +237,12 @@ export function createBrowserCdpScreencastProducer(input: Readonly<{
             }
             const current = capture;
             if (!await current.started || current.closed) return null;
+            await current.updating;
+            if (current.closed) return null;
             if (consumer.purpose !== 'humanViewer' && control?.isObservationHeld()) {
                 current.consumers.delete(consumer);
                 if (!current.consumers.size) await close(key, current);
+                else updateEncoding(current, consumer.view);
                 return null;
             }
             let released = false;
@@ -159,6 +252,7 @@ export function createBrowserCdpScreencastProducer(input: Readonly<{
                     released = true;
                     current.consumers.delete(consumer);
                     if (!current.consumers.size) await close(key, current);
+                    else updateEncoding(current, consumer.view);
                 },
             };
         },
