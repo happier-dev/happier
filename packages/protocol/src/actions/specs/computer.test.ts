@@ -17,6 +17,15 @@ function nativeSpec(id: string) {
 }
 
 describe('native computer Action contracts', () => {
+  it('keeps clipboard text in present-user live invocations and off automation surfaces', () => {
+    for (const id of ['computer.clipboard.read', 'computer.clipboard.write']) {
+      const spec = nativeSpec(id);
+      expect(spec.requiredAuthority).toBe('present_user');
+      expect(spec.approvalInputCustody).toBe('live_only');
+      expect(spec.approvalResultCustody).toBe('live_only');
+      expect(spec.surfaces).toMatchObject({ ui: true, agent: false, mcp: false, api: false, plugin: false });
+    }
+  });
   it('admits provider-bound input through the existing computer.input Action', () => {
     const schema = nativeSpec('computer.input').inputSchema;
     const input = { machineId: 'machine_1', target, captureId: 'capture_1', provider: 'agent-desktop' };

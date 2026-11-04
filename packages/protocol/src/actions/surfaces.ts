@@ -86,6 +86,9 @@ export function isRuntimeActionExecutorReal(actionId: RuntimeActionIdV1): boolea
 }
 
 export function resolveRuntimeActionSurfaces(actionId: RuntimeActionIdV1): PreNormalizedActionSurfaces {
+  if (actionId === 'computer.clipboard.read' || actionId === 'computer.clipboard.write') {
+    return { ...RUNTIME_ACTION_DISABLED_SURFACES, ui: true };
+  }
   if (ACTION_ID_FAMILIES_V1.browser_diagnostics.some((id) => id === actionId)) {
     return { ...RUNTIME_ACTION_ENABLED_SURFACES, cli: true };
   }

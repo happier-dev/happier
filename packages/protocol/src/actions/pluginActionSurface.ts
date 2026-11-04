@@ -59,6 +59,12 @@ export function isHumanSecretApiExcludedActionId(
   return HUMAN_SECRET_API_EXCLUSION_ACTION_ID_SET.has(actionId as ActionId);
 }
 
+/** The same present-person clipboard boundary applies to Plugin and Agent callers. */
+export const CLIPBOARD_AUTOMATION_EXCLUSION_REASONS = Object.freeze({
+  'computer.clipboard.read': 'Only the present person in the app may transfer text from a remote desktop clipboard.',
+  'computer.clipboard.write': 'Only the present person in the app may transfer text to a remote desktop clipboard.',
+} as const satisfies Readonly<Partial<Record<ActionId, string>>>);
+
 /**
  * The one policy owner for Actions omitted from trusted-plugin discovery and
  * invocation. It is intentionally independent of ActionSpec payload schemas so
@@ -66,6 +72,7 @@ export function isHumanSecretApiExcludedActionId(
  * initialization cycle through the full Action registry.
  */
 export const PLUGIN_SURFACE_EXCLUSION_REASONS = Object.freeze({
+  ...CLIPBOARD_AUTOMATION_EXCLUSION_REASONS,
   ...INTERNAL_ACTION_REASONS,
   'session.view.toolCalls.set': 'Plan 60 §6 reserves transcript visibility for the human reading the conversation.',
   'plugin.webhook.delivery.movePending': 'Host-requestable delivery control through UI/CLI/Agent/MCP; direct plugin admission stays withheld.',

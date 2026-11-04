@@ -241,6 +241,14 @@ function createRuntimeActionSpecFor<
     } : {}),
     ...(actionId !== 'computer.secret.fill' && Object.hasOwn(COMPUTER_RUNTIME_ACTION_INPUT_SCHEMAS, actionId)
       ? { projectObservationInput: projectComputerObservationInput } : {}),
+    ...(actionId === 'computer.clipboard.read' || actionId === 'computer.clipboard.write' ? {
+      requiredAuthority: 'present_user' as const,
+      approvalInputCustody: 'live_only' as const,
+      approvalResultCustody: 'live_only' as const,
+      projectObservationInput: () => ({}),
+      projectObservationOutput: () => ({}),
+      approvalPresentation: { summary: () => 'Exchange clipboard text with the selected computer. Content stays private to this live invocation.' },
+    } : {}),
     inputHints: {
       title,
       description: executorReal ? humanDescription : RUNTIME_ACTION_PROJECTION_CONTRACT_HINT_DESCRIPTION,

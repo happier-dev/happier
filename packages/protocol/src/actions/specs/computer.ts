@@ -3,6 +3,8 @@ import {
   ComputerCaptureResponseV1Schema,
   ComputerControlStatusResponseV1Schema,
   ComputerInputRequestV1Schema,
+  ComputerClipboardWriteRequestV1Schema,
+  ComputerClipboardResultV1Schema,
   ComputerSecretFillRequestV1Schema,
   SecretFillSettlementV1Schema,
   ComputerQueryResponseV1Schema,
@@ -47,6 +49,8 @@ type ComputerRuntimeActionInputSchemas = Readonly<{
   'computer.capture': typeof ComputerTargetRequestV1Schema;
   'computer.query': typeof ComputerTargetRequestV1Schema;
   'computer.input': typeof ComputerInputRequestV1Schema;
+  'computer.clipboard.read': typeof ComputerTargetRequestV1Schema;
+  'computer.clipboard.write': typeof ComputerClipboardWriteRequestV1Schema;
   'computer.secret.fill': typeof ComputerSecretFillRequestV1Schema;
   'computer.control.status': typeof ComputerTargetRequestV1Schema;
   'computer.control.interrupt': typeof ComputerTargetRequestV1Schema;
@@ -61,6 +65,8 @@ type ComputerRuntimeActionOutputSchemas = Readonly<{
   'computer.capture': typeof ComputerCaptureResponseV1Schema;
   'computer.query': typeof ComputerQueryResponseV1Schema;
   'computer.input': typeof ComputerActionResultV1Schema;
+  'computer.clipboard.read': typeof ComputerClipboardResultV1Schema;
+  'computer.clipboard.write': typeof ComputerClipboardResultV1Schema;
   'computer.secret.fill': typeof SecretFillSettlementV1Schema;
   'computer.control.status': typeof ComputerControlStatusResponseV1Schema;
   'computer.control.interrupt': typeof ComputerActionResultV1Schema;
@@ -76,6 +82,8 @@ export const COMPUTER_RUNTIME_ACTION_INPUT_SCHEMAS: ComputerRuntimeActionInputSc
   'computer.capture': ComputerTargetRequestV1Schema,
   'computer.query': ComputerTargetRequestV1Schema,
   'computer.input': ComputerInputRequestV1Schema,
+  'computer.clipboard.read': ComputerTargetRequestV1Schema,
+  'computer.clipboard.write': ComputerClipboardWriteRequestV1Schema,
   'computer.secret.fill': ComputerSecretFillRequestV1Schema,
   'computer.control.status': ComputerTargetRequestV1Schema,
   'computer.control.interrupt': ComputerTargetRequestV1Schema,
@@ -91,6 +99,8 @@ export const COMPUTER_RUNTIME_ACTION_OUTPUT_SCHEMAS: ComputerRuntimeActionOutput
   'computer.capture': ComputerCaptureResponseV1Schema,
   'computer.query': ComputerQueryResponseV1Schema,
   'computer.input': ComputerActionResultV1Schema,
+  'computer.clipboard.read': ComputerClipboardResultV1Schema,
+  'computer.clipboard.write': ComputerClipboardResultV1Schema,
   'computer.secret.fill': SecretFillSettlementV1Schema,
   'computer.control.status': ComputerControlStatusResponseV1Schema,
   'computer.control.interrupt': ComputerActionResultV1Schema,
@@ -118,6 +128,8 @@ export const COMPUTER_RUNTIME_ACTION_SPEC_FAMILY = Object.freeze({
     'computer.capture': 'Capture computer target',
     'computer.query': 'Read computer accessibility',
     'computer.input': 'Send computer input',
+    'computer.clipboard.read': 'Copy from the computer clipboard',
+    'computer.clipboard.write': 'Paste to the computer clipboard',
     'computer.secret.fill': 'Request confidential credential entry',
     'computer.control.status': 'Get computer control status',
     'computer.control.interrupt': 'Interrupt computer input',
@@ -132,6 +144,8 @@ export const COMPUTER_RUNTIME_ACTION_SPEC_FAMILY = Object.freeze({
     'computer.capture': 'Capture the selected native target as a Session image reference with its exact image and native input geometry.',
     'computer.query': 'Read available native accessibility information for the selected target, reporting partial or unavailable information truthfully. The producing provider and captureId bind returned element IDs to subsequent computer.input operations.',
     'computer.input': 'Send click, key, text, drag, wheel, or element click/set_value input against a current capture of a Use-enabled target. An optional provider selects an enabled installed provider; element IDs remain bound to their producing provider and observation. See-only access refuses input. Delivery alone does not prove the requested effect.',
+    'computer.clipboard.read': 'Read text from the selected computer desktop clipboard for the present user. Clipboard content stays private to the live invocation.',
+    'computer.clipboard.write': 'Write text to the selected computer desktop clipboard for the present user. Clipboard content stays private to the live invocation.',
     'computer.secret.fill': 'Request a human credential choice for the exact observed native field. The request and settlement contain no credential value. Unsupported field or confidential observation verification refuses entry.',
     'computer.control.status': 'Read the host controller, stopping state, and in-flight agent activity with redacted target presentation for the selected native target.',
     'computer.control.interrupt': 'Stop agent input and drain accepted input before returning control to the present user.',

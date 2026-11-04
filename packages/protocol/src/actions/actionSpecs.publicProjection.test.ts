@@ -16,6 +16,12 @@ import {
 } from './actionSpecs.js';
 
 describe('Action public projection', () => {
+  it.each(['computer.clipboard.read', 'computer.clipboard.write'] as const)('keeps %s in the present-person UI rather than public automation', id => {
+    expect(getActionSpec(id).requiredAuthority).toBe('present_user');
+    expect(PublicActionIdSchema.safeParse(id).success).toBe(false);
+    expect(Object.hasOwn(PUBLIC_ACTION_INPUT_SCHEMAS, id)).toBe(false);
+    expect(Object.hasOwn(PUBLIC_ACTION_OUTPUT_SCHEMAS, id)).toBe(false);
+  });
   it('admits private recap export as client rendering with the same strict compose input', () => {
     expect(PublicActionIdSchema.safeParse('usage.recap.export').success).toBe(true);
     const spec = getActionSpec('usage.recap.export');

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { computerTargetKeyV1, resolveComputerAccess } from '@happier-dev/protocol/computer/v1';
 import { normalizeBrowserActiveTargetRect, BrowserActiveTargetV1Schema } from '@happier-dev/protocol/browser/events/activeTarget';
 import type { ComputerTargetV1, ComputerInputOperationV1, ComputerActionResultV1, ComputerAccessV1, BrowserActiveTargetV1, ComputerControlStatusResponseV1, ComputerCaptureGeometryV1, ComputerAccessibilityNodeV1, MachineLiveStreamControlSidebandV1, SessionImageMediaReferenceV1 } from '@happier-dev/protocol';
-import type { ComputerProviderIdV1 } from '@happier-dev/protocol/computer/v1';
+import type { ComputerClipboardOperationV1, ComputerClipboardResultV1, ComputerProviderIdV1 } from '@happier-dev/protocol/computer/v1';
 import { createManagedComputerDriver } from './driver/managedComputerDriver';
 import { createSurfaceInputControl } from '../surfaces/inputControl';
 import { createSimulatorFrameProducerCaptureAdapter } from '../devices/simulator/capture/adapter';
@@ -241,6 +241,21 @@ export function createComputerCaptureSource(input: Readonly<{
     setCaptureMedia: (media: NonNullable<typeof captureMedia>) => { captureMedia = media; },
     observe,
     input: (captureId: string, operation: ComputerInputOperationV1, requestedBy: 'agent' | 'human', signal?: AbortSignal) => execute(captureId, operation, requestedBy, signal),
+    async clipboard(operation: ComputerClipboardOperationV1, signal?: AbortSignal): Promise<ComputerClipboardResultV1> {
+      signal?.throwIfAborted();
+      const drain = await control.takeOver();
+      if (drain.completion === 'unknown') return { ok: false, code: 'human_input_interruption_uncertain' };
+      const result = await control.execute({ requestedBy: 'human', signal,
+        effect: async abortSignal => {
+          if (abortSignal.aborted) return { ok: false, code: 'canceled' } as const;
+          const native = await getDriver();
+          return native.clipboard ? await native.clipboard(input.target, operation, { signal: abortSignal })
+            : { ok: false, code: 'clipboard_not_supported' } as const;
+        },
+        classifyCompletion: () => 'known',
+      });
+      return result.ok ? result.value : { ok: false, code: result.errorCode };
+    },
     status,
     async readStatus(): Promise<ComputerControlStatusResponseV1> {
       // Retired/quarantined sources cannot read fresh OS grants. Their control

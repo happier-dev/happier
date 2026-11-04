@@ -1,3 +1,4 @@
+import { ComputerClipboardWriteRequestV1Schema } from '@happier-dev/protocol/computer/v1';
 import { ComputerInputRequestV1Schema, ComputerTargetRequestV1Schema, ComputerTargetsListRequestV1Schema, ComputerMachineRequestV1Schema, ComputerTargetSelectRequestV1Schema, ComputerOpenSettingsRequestV1Schema, resolveComputerAccess } from '@happier-dev/protocol/computer/v1';
 import type { ActionExecutorContext, ComputerTargetV1, RuntimeActionExecute, RuntimeActionIdV1 } from '@happier-dev/protocol';
 import type { MachineLiveStreamCaptureRegistry } from '../peer/mediation/stream/captureRegistry';
@@ -85,11 +86,14 @@ export function createComputerRoutes(input: Readonly<{machineId: string; machine
     async dispatch(actionId, rawInput, context) {
       const sessionId = context.defaultSessionId;
       if (!context.authority || (!sessionId && actionId !== 'computer.permissions.openSettings')) return failure('computer_session_required');
+      const clipboard = actionId === 'computer.clipboard.read' || actionId === 'computer.clipboard.write';
+      if (clipboard && context.authority !== 'present_user') return failure('present_user_required');
       const list = actionId === 'computer.targets.list';
       const parsed = (list ? ComputerTargetsListRequestV1Schema
         : actionId === 'computer.target.get' ? ComputerMachineRequestV1Schema
         : actionId === 'computer.target.select' ? ComputerTargetSelectRequestV1Schema
-        : actionId === 'computer.permissions.openSettings' ? ComputerOpenSettingsRequestV1Schema : actionId === 'computer.input'
+        : actionId === 'computer.permissions.openSettings' ? ComputerOpenSettingsRequestV1Schema
+        : actionId === 'computer.clipboard.write' ? ComputerClipboardWriteRequestV1Schema : actionId === 'computer.input'
         ? ComputerInputRequestV1Schema : ComputerTargetRequestV1Schema).safeParse(rawInput);
       if (!parsed.success) return failure('invalid_parameters');
       if (parsed.data.machineId !== input.machineId) return failure('computer_machine_mismatch');
@@ -230,6 +234,8 @@ export function createComputerRoutes(input: Readonly<{machineId: string; machine
       }
       const identity = { target: source.target, sourceId, provider };
       try {
+        if (clipboard) return await source.clipboard(actionId === 'computer.clipboard.read' ? { kind: 'read' }
+          : { kind: 'write', text: ComputerClipboardWriteRequestV1Schema.parse(parsed.data).text }, context.signal);
         if (actionId === 'computer.capture' || actionId === 'computer.query') {
           const observed = await source.observe(context.authority === 'present_user' ? 'human' : 'agent');
           context.signal?.throwIfAborted();

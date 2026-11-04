@@ -641,6 +641,8 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'computer.capture',
     'computer.query',
     'computer.input',
+    'computer.clipboard.read',
+    'computer.clipboard.write',
     'computer.secret.fill',
     'computer.control.status',
     'computer.control.interrupt',
