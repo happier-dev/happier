@@ -104,7 +104,7 @@ describe('Session activity startup socket recovery', () => {
         for (const id of ['workflow.definition.get', 'workflow.run.list', 'workflow.starters.list',
             'workflow.starters.resolve', 'boards.list'] as const) expect(policy(id), id).toBe(true);
         const requiresApproval = createMcpActionApprovalRequirement({ actionSettingsProvider, surface: 'agent' });
-        expect(requiresApproval('workflow.definition.create')).toBe(true);
+        expect(requiresApproval('workflow.definition.create', { surface: 'agent' })).toBe(true);
         goOffline();
         expect(policy('workflow.definition.list')).toBe(false);
     });

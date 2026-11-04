@@ -576,7 +576,7 @@ export function createHappierMcpServer(
 
       resetGlobalVoiceAgent: async () => {},
       isActionEnabled: (id) => isActionEnabled(id),
-      isActionApprovalRequired: (id) => isActionApprovalRequired(id),
+      isActionApprovalRequired,
     },
   );
 

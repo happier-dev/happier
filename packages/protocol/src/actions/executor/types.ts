@@ -3205,7 +3205,9 @@ export type ActionExecutorDeps = Readonly<{
    * When true, the executor will create an approval request instead of executing the action.
    * Host-admitted UI defaults are resolved against the hook's current persisted policy.
    */
-  isActionApprovalRequired?: (actionId: ActionId, ctx: ActionExecutorContext, input?: unknown, defaultUiConfirmation?: boolean) => boolean;
+  isActionApprovalRequired?: (actionId: ActionId, ctx: ActionExecutorContext, input?: unknown, defaultUiConfirmation?: boolean,
+    approvedOperation?: Pick<WorkflowApprovedOperationV1, 'parent' | 'steps'> | null, approvalScope?: import('../actionSettings.js').ActionApprovalScopeV1,
+    defaultSafety?: import('../actionSpecs.js').ActionSpec['safety']) => boolean;
 
   // Server routing resolver (optional)
   resolveServerIdForSessionId?: (sessionId: string) => string | null;

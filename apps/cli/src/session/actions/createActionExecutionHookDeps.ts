@@ -109,6 +109,9 @@ export function createActionExecutionHookDeps(): Pick<
       const lease = tryAcquireAuthoritativePluginRuntimeRegistryLease();
       if (!lease) return { status: 'continue' as const, input: request.input };
       try {
+        if (!hasActionHookConsumer(lease.registry, 'action.execute.before')) {
+          return { status: 'continue' as const, input: request.input };
+        }
         let payload: ActionExecuteBeforeHookPayload;
         try {
           payload = buildBeforePayload(request);
@@ -128,6 +131,7 @@ export function createActionExecutionHookDeps(): Pick<
       const lease = tryAcquireAuthoritativePluginRuntimeRegistryLease();
       if (!lease) return;
       try {
+        if (!hasActionHookConsumer(lease.registry, 'action.execute.after')) return;
         await observeActionExecutionThroughRuntimeRegistry({
           runtimeRegistry: lease.registry,
           payload: buildAfterPayload(observation),
@@ -137,4 +141,15 @@ export function createActionExecutionHookDeps(): Pick<
       }
     },
   });
+}
+
+function hasActionHookConsumer(
+  registry: NonNullable<ReturnType<typeof tryAcquireAuthoritativePluginRuntimeRegistryLease>>['registry'],
+  hookId: 'action.execute.before' | 'action.execute.after',
+): boolean {
+  // Declared hooks may still need on-demand activation. Dispatch retains the
+  // authoritative filter matching, activation and failure decisions.
+  return Boolean(registry.hookHandlersByHookId.get(hookId)?.length)
+    || registry.contributes.activationTargets.some(target =>
+      target.manifest.contributes.hooks.some(hook => hook.on === hookId));
 }

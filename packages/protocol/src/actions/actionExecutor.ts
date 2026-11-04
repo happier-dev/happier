@@ -975,6 +975,15 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       && typeof action.pluginId === 'string' && typeof action.localId === 'string'
       ? formatQualifiedPluginActionId({ pluginId: action.pluginId, localId: action.localId })
       : parseQualifiedPluginActionId(actionId) !== null ? actionId : undefined;
+    if (discovery) {
+      // Before operand resolution only the Action ceiling is knowable. The
+      // concrete operand reaches the full grant owner once, below.
+      return isApiTokenGrantActionAllowedV1(grant,
+        rootInputAction ?? (contributedQualifiedId && actionId !== 'action.invoke' ? 'action.invoke' : actionId),
+        contributedQualifiedId)
+        ? null : { ok: false, errorCode: 'credential_scope_denied', error: 'credential_scope_denied',
+          details: { reason: 'action_not_granted' } };
+    }
     const widgetSurface = (actionId === 'widgets.snapshot.post' || isActionFamilyId(actionId, WidgetInstanceActionIdV1Schema)) ? readWidgetActionSurfaceV1(input) : null;
     const widgetSessionId = widgetSurface?.owner.kind === 'sessionBoard' || widgetSurface?.owner.kind === 'companion' ? widgetSurface.owner.sessionId : null;
     const definitionAction = isActionFamilyId(actionId, WidgetDefinitionActionIdV1Schema)
@@ -993,8 +1002,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       : widgetSurface || definitionAction || omittedContributedTarget ? null : ctx.externalActionTarget
       ?? (ctx.defaultSessionId ? { kind: 'session' as const, sessionId: ctx.defaultSessionId } : null);
     const result = evaluateApiTokenGrantV1({
-      grant: discovery ? { ...grant, targets: null, create: null, automationIds: null }
-        : actionId === 'approval.request.decide' ? { ...grant, targets: null } : grant,
+      grant: actionId === 'approval.request.decide' ? { ...grant, targets: null } : grant,
       actionId: rootInputAction ?? (contributedQualifiedId && actionId !== 'action.invoke' ? 'action.invoke' : actionId),
       ...(contributedQualifiedId ? { contributedQualifiedId } : {}),
       ...(actionId === 'session.spawn_new' && input !== undefined ? { spawnInput: input } : {}),
@@ -2061,11 +2069,10 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       return await executeHostChild('session.archive', { sessionId, alsoArchiveReports: false }, childContext);
     };
     const existingAdmission = options?.prepared;
-    const normalizedContext = normalizeActionCallerContext(existingAdmission?.context ?? context ?? {});
-    if (!normalizedContext) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
-    let ctx: ActionExecutorContext = normalizedContext;
+    // Public ingress normalized the caller; replay/continuation contexts are host-owned.
+    let ctx: ActionExecutorContext = existingAdmission?.context ?? context ?? {};
 
-    const attestationFailure = sessionAttestedContextCallerFailure(actionId, input, ctx);
+    const attestationFailure = existingAdmission ? null : sessionAttestedContextCallerFailure(actionId, input, ctx);
     if (attestationFailure) return attestationFailure;
 
     const originationPreferenceFailure = resolveActionOriginationPreferenceFailureV1(actionId, ctx);
@@ -2075,7 +2082,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     if (listAccessFailure) return listAccessFailure;
 
     const spec = getActionSpec(actionId);
-    {
+    if (!options?.sessionTargetLeaf && !existingAdmission) {
       const authorityFailure = requiredAuthorityFailure(spec, ctx, input);
       if (authorityFailure) {
         return actionId === 'execution.run.start'
@@ -2084,7 +2091,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       }
     }
     const hostInternal = options?.hostInternal === true;
-    const actionGrantFailure = credentialScopeFailure(actionId, ctx, actionId === 'action.invoke' || hostInternal ? input : undefined,
+    const actionGrantFailure = options?.sessionTargetLeaf || existingAdmission ? null : credentialScopeFailure(actionId, ctx, actionId === 'action.invoke' || hostInternal ? input : undefined,
       true, undefined, hostInternal);
     if (actionGrantFailure) return actionGrantFailure;
     const liveEnvironmentScope = spec.approvalScope === 'environment';
@@ -2330,7 +2337,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     }
     // The Action grant was checked before target reads. Selector intent is not
     // a credential target; each concrete leaf re-enters full target admission.
-    const credentialFailure = sessionTarget && ctx.sessionTargetsV1 && !options?.sessionTargetLeaf
+    const credentialFailure = existingAdmission || sessionTarget && ctx.sessionTargetsV1 && !options?.sessionTargetLeaf
       ? null : await admitCredentialScope(actionId, ctx, admittedInput, hostInternal);
     if (credentialFailure) return credentialFailure;
     const workspaceFailure = workspaceWriteFailure(spec, admittedInput, ctx);
@@ -6839,8 +6846,6 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters',
     });
     let ctx: ActionExecutorContext = normalizedContext;
-    const attestationFailure = sessionAttestedContextCallerFailure(actionId, input, ctx);
-    if (attestationFailure) return settlePrepareResult(actionId, attestationFailure);
     const spec = getActionSpec(actionId);
     const workspaceFailure = workspaceWriteFailure(spec, input, ctx);
     if (workspaceFailure) return settlePrepareResult(actionId, workspaceFailure);
@@ -6852,10 +6857,6 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         error: 'session_input_target_update_required',
       });
     }
-    const authorityFailure = requiredAuthorityFailure(spec, ctx, input);
-    if (authorityFailure) {
-      return settlePrepareResult(actionId, classifyExecutionRunStartPreDispatchFailure(actionId, authorityFailure));
-    }
     let selectorIntent = false;
     const sessionTarget = readActionSessionTargetDeclaration(actionId, input, ctx);
     if (sessionTarget) {
@@ -6864,10 +6865,6 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         : typeof normalizeSessionTargetV1(readActionSessionTargetField(readRecord(input), sessionTarget.field)) !== 'string'; }
       catch { /* Canonical semantic parsing below returns invalid_parameters. */ }
     }
-    const credentialFailure = selectorIntent
-      ? credentialScopeFailure(actionId, ctx, hostInternal ? input : undefined, true, undefined, hostInternal)
-      : await admitCredentialScope(actionId, ctx, actionId === 'session.spawn_new' ? undefined : input, hostInternal);
-    if (credentialFailure) return settlePrepareResult(actionId, credentialFailure);
     if (ctx.surface === 'plugin' && ctx.actionCaller?.kind !== 'plugin') {
       return settlePrepareResult(actionId, classifyExecutionRunStartPreDispatchFailure(actionId, {
         ok: false,

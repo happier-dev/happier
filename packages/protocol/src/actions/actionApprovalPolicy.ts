@@ -187,23 +187,17 @@ export function isApprovalRequiredByActionsSettings(
   defaultUiConfirmation?: boolean,
   defaultConfirmation?: boolean,
   approvedOperation?: Pick<WorkflowApprovedOperationV1, 'parent' | 'steps'> | null,
+  approvalScope?: ActionApprovalScopeV1,
 ): boolean {
   if (isHostAdmittedReviewedChildPolicyV1(approvedOperation, actionId, input)) return false;
   const requestActionId = ActionIdSchema.safeParse(actionId);
   if (requestActionId.success && !isActionApprovalWaivable(getActionSpec(requestActionId.data))) return true;
-  const surface = resolveApprovalSurface(ctx);
-  const rawSurface = ctx?.surface;
-  const override: ActionSettingsOverride | undefined = settings.actions?.[actionId];
-  const required = Array.isArray(override?.approvalRequiredSurfaces) ? override.approvalRequiredSurfaces : [];
-  if (typeof rawSurface === 'string' && required.some((requiredSurface) => requiredSurface === rawSurface)) return true;
+  const explicit = readExplicitActionApprovalPreferenceV1(actionId, settings, ctx, approvalScope);
+  if (explicit !== undefined) return explicit;
   if (requestActionId.success && getActionSpec(requestActionId.data).approvalPolicy?.pluginCaptureWaiver === true) {
     return ctx?.surface !== 'plugin' || ctx.actionCaller?.kind !== 'plugin'
       || settings.pluginHostCaptureApprovalWaived?.includes(ctx.actionCaller.pluginId) !== true;
   }
-  const waived = Array.isArray(settings.approvalWaivedSurfaces?.[actionId])
-    ? settings.approvalWaivedSurfaces[actionId]
-    : [];
-  if (surface.kind !== 'ambiguous' && waived.includes(surface.surface)) return false;
   if (requestActionId.success && isAutomationApprovalRequestSurface(ctx?.surface, getActionSpec(requestActionId.data), input)
     && canRequestPresentUserApprovalForActionInputV1(getActionSpec(requestActionId.data), input)) return true;
 
@@ -253,11 +247,11 @@ export function resolveActionApprovalRouting(args: ResolveActionApprovalRoutingA
     ? explicitComputerApproval
     : args.defaultConfirmation === true
     ? hasPolicyContext ? isApprovalRequiredByActionsSettings(args.actionId, args.settings ?? { v: 1, actions: {} }, args.context,
-      args.defaultSafety, undefined, args.input, args.defaultUiConfirmation, true, args.approvedOperation) : true
+      args.defaultSafety, undefined, args.input, args.defaultUiConfirmation, true, args.approvedOperation, args.approvalScope) : true
     : typeof args.requiredByPolicy === 'boolean'
     ? args.requiredByPolicy
     : hasPolicyContext
-      ? isApprovalRequiredByActionsSettings(args.actionId, args.settings ?? { v: 1, actions: {} }, args.context, args.defaultSafety, undefined, args.input, args.defaultUiConfirmation, undefined, args.approvedOperation)
+      ? isApprovalRequiredByActionsSettings(args.actionId, args.settings ?? { v: 1, actions: {} }, args.context, args.defaultSafety, undefined, args.input, args.defaultUiConfirmation, undefined, args.approvedOperation, args.approvalScope)
       : presentUserRequest || (args.defaultSafety !== undefined || args.defaultUiConfirmation !== undefined
         ? requiresDefaultApprovalFloor(args.actionId, args.context, args.defaultSafety, args.input, args.defaultUiConfirmation)
         : resolveUnwiredApprovalDefault(args.actionId, args.context, args.input));

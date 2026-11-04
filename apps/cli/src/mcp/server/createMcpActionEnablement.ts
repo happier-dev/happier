@@ -2,7 +2,7 @@ import { getActionRequiredServerFeatureId } from '@happier-dev/protocol/actions/
 import { isActionEnabledByActionsSettings } from '@happier-dev/protocol/actions/actionSettings';
 import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { isActionEnabledWithSessionMemory } from '@happier-dev/protocol/actions/actionSurfaceAvailability';
-import type { AccountSettings, ActionId, ActionSurfaces } from '@happier-dev/protocol';
+import type { AccountSettings, ActionExecutorDeps, ActionId, ActionSurfaces } from '@happier-dev/protocol';
 
 import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
@@ -97,13 +97,14 @@ export function createMcpActionApprovalRequirement(params: Readonly<{
   getAccountSettings?: (() => AccountSettings | null) | null;
   actionSettingsProvider?: RuntimeActionSettingsProvider | null;
   surface: keyof ActionSurfaces;
-}>): (id: ActionId) => boolean {
+}>): NonNullable<ActionExecutorDeps['isActionApprovalRequired']> {
   const provider = params.actionSettingsProvider ?? createMcpActionSettingsProvider({
     accountSettings: params.accountSettings ?? null,
     getAccountSettings: params.getAccountSettings ?? null,
   });
-  return (id) =>
+  // Input-dependent defaults (for example fresh-folder consent) read the admitted input.
+  return (id, _context, input, defaultUiConfirmation, approvedOperation, approvalScope, defaultSafety) =>
     isApprovalRequiredByActionsSettings(id, provider.getActionsSettings(), {
       surface: params.surface,
-    });
+    }, defaultSafety, undefined, input, defaultUiConfirmation, undefined, approvedOperation, approvalScope);
 }

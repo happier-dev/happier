@@ -2,11 +2,13 @@ import { describe, expect, it, vi } from 'vitest';
 import { FeaturesResponseSchema, accountSettingsParse, isApprovalRequiredByActionsSettings } from '@happier-dev/protocol';
 
 import {
+  createMcpActionApprovalRequirement,
   createMcpActionEnablementWithServerFeatureAvailability,
   createMcpActionSettingsProvider,
 } from './createMcpActionEnablement';
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 
 function readySnapshot(features: unknown, capabilities: unknown = {}): CliServerFeaturesSnapshot {
   return {
@@ -39,6 +41,26 @@ function createEnablement(snapshot: CliServerFeaturesSnapshot | undefined) {
 }
 
 describe('Lane 10 Action feature availability', () => {
+  it.each((['agent', 'mcp'] as const).flatMap(surface => [
+    { surface, actionId: 'machines.agentIsolation.set' as const, scope: { kind: 'machine' as const, machineId: 'my-machine' } },
+    { surface, actionId: 'deployments.deploy' as const, scope: { kind: 'environment' as const, environmentId: 'my-environment' } },
+  ]))('honors scoped Ask and Waive for $actionId on $surface like the shared policy', ({ surface, actionId, scope }) => {
+    for (const mode of ['required', 'waived'] as const) {
+      const settings = ActionsSettingsV1Schema.parse({ v: 1,
+        actions: mode === 'waived' ? { [actionId]: { approvalRequiredSurfaces: [surface, 'ui'] } } : {},
+        ...(mode === 'required' ? { approvalWaivedSurfaces: { [actionId]: [surface, 'ui'] } } : {}),
+        scopedApprovalPreferences: [{ actionId, scope,
+          approvalRequiredSurfaces: mode === 'required' ? [surface, 'ui'] : [],
+          approvalWaivedSurfaces: mode === 'waived' ? [surface, 'ui'] : [] }],
+      });
+      const requirement = createMcpActionApprovalRequirement({ surface,
+        accountSettings: accountSettingsParse({ actionsSettingsV1: settings }) });
+      const expected = isApprovalRequiredByActionsSettings(actionId, settings, { surface: 'ui', authority: 'present_user' }, undefined,
+        undefined, undefined, undefined, undefined, undefined, scope);
+      expect(expected).toBe(mode === 'required');
+      expect(requirement(actionId, { surface }, undefined, undefined, undefined, scope)).toBe(expected);
+    }
+  });
   it('preserves explicitly scoped invocation getters without borrowing focused Account policy', () => {
     resetActiveAccountSettingsSnapshotForTests();
     setActiveAccountSettingsSnapshot({
@@ -213,5 +235,16 @@ describe('Lane 10 Action feature availability', () => {
     expect(createEnablement(readySnapshot(features))('teams.credentials.externalKeys.create')).toBe(false);
     // Sibling families keep depending on their own bit only.
     expect(createEnablement(notPublicHttps)('teams.credentials.create')).toBe(true);
+  });
+});
+
+describe('MCP Action approval requirement', () => {
+  it('classifies input-dependent person-class requests from the admitted input', () => {
+    const requiresApproval = createMcpActionApprovalRequirement({ accountSettings: accountSettingsParse({}), surface: 'mcp' });
+    // Ordinary navigation stays direct; fresh-folder consent defaults to Ask (no present-user floor behind it).
+    expect(requiresApproval('session.open', { surface: 'mcp' }, { sessionId: 's1' })).toBe(false);
+    expect(requiresApproval('session.open', { surface: 'mcp' }, { sessionId: 's1', approvedNewDirectoryCreation: true })).toBe(true);
+    expect(requiresApproval('projects.prepare', { surface: 'mcp' }, { consentScope: 'untilChanged', heldOperationId: 'op', expectedEffectDigest: 'd' }))
+      .toBe(true);
   });
 });

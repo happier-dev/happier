@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
+import * as authority from './decisionAuthority.js';
+import * as credentials from '../auth/apiTokenGrant.js';
+import * as callerContext from './executor/callerContext.js';
 
 function createExecutor(overrides: Partial<ActionExecutorDeps> = {}) {
   return createActionExecutor({
@@ -40,6 +43,31 @@ function createExecutor(overrides: Partial<ActionExecutorDeps> = {}) {
 }
 
 describe('createActionExecutor execution interception', () => {
+  it.each(['cli', 'agent', 'mcp'] as const)('evaluates authority and credential scope once for a hook-wired %s Action request', async surface => {
+    // Call-through instrumentation measures real admission, not a replacement policy.
+    const admissions = vi.spyOn(authority, 'resolveCredentialActionAdmissionV1');
+    const grants = vi.spyOn(credentials, 'evaluateApiTokenGrantV1');
+    const normalizations = vi.spyOn(callerContext, 'normalizeActionCallerContext');
+    const attestations = vi.spyOn(callerContext, 'sessionAttestedContextCallerFailure');
+    const executor = createExecutor({
+      interceptActionExecution: async ({ input }) => ({ status: 'continue', input }),
+      observeActionExecution: async () => undefined,
+      sessionStateFieldSet: async () => ({ updated: true }),
+    });
+    try {
+      expect(await executor.execute('session.title.set', { sessionId: 'allowed', title: 'Title' }, {
+        surface, authority: 'account_automation', defaultSessionId: 'allowed', bypassApprovals: true,
+        externalActionCredential: { accountId: 'account', principalId: 'token', credentialId: 'token', grant: {
+          v: 1, actions: { families: [], ids: ['session.title.set'] }, targets: { sessions: ['allowed'], machines: [] },
+          approve: false, origins: [], models: null, permissionModes: null, create: null,
+        } },
+      })).toMatchObject({ ok: true });
+      expect(admissions).toHaveBeenCalledTimes(1);
+      expect(grants).toHaveBeenCalledTimes(1);
+      expect(normalizations).toHaveBeenCalledTimes(1);
+      expect(attestations).toHaveBeenCalledTimes(1);
+    } finally { admissions.mockRestore(); grants.mockRestore(); normalizations.mockRestore(); attestations.mockRestore(); }
+  });
   it.each([false, true])('diagnoses invalid generic Action inputs before interception (observed=%s)', async observed => {
     const interceptActionExecution = vi.fn(async () => ({ status: 'continue' as const, input: {} }));
     const executor = createExecutor(observed ? { interceptActionExecution } : {});

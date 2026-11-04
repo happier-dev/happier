@@ -125,8 +125,8 @@ function actionGranted(grant: ApiTokenGrantV1, actionId: string, contributedQual
 }
 
 /** Whether the grant lets a token call this Action at all (operand restrictions are checked separately). */
-export function isApiTokenGrantActionAllowedV1(grant: ApiTokenGrantV1, actionId: string): boolean {
-  return actionGranted(grant, actionId);
+export function isApiTokenGrantActionAllowedV1(grant: ApiTokenGrantV1, actionId: string, contributedQualifiedId?: string): boolean {
+  return actionGranted(grant, actionId, contributedQualifiedId);
 }
 
 export function isApiTokenGrantTargetMemberV1(grant: ApiTokenGrantV1, target?: ExternalActionTargetV1 | null, targetMachineId?: string | null): boolean {

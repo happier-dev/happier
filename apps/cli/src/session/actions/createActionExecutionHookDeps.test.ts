@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ActionExecuteAfterHookPayloadSchema,
   ActionExecuteBeforeHookPayloadSchema,
@@ -20,13 +20,34 @@ vi.mock('@/plugins/runtime/hooks/execution/dispatchExecutionInterceptionHooks', 
 }));
 
 import { createActionExecutionHookDeps } from './createActionExecutionHookDeps';
+import * as plainData from '@/plugins/runtime/plainData';
 
 describe('createActionExecutionHookDeps', () => {
+  beforeEach(() => vi.clearAllMocks());
+  it('does not clone Action input or result when the runtime has no hook consumers', async () => {
+    const clones = vi.spyOn(plainData, 'clonePluginPlainData');
+    mocks.tryAcquireLease.mockReturnValue({
+      registry: { hookHandlersByHookId: new Map(), contributes: { activationTargets: [] } },
+      release: mocks.release,
+    });
+    const input = { sessionId: 'session-1', title: 'Title' };
+    const context = { surface: 'cli' as const };
+    const caller = { kind: 'host' as const };
+    const deps = createActionExecutionHookDeps();
+    try {
+      await deps.interceptActionExecution?.({ actionId: 'session.title.set', input, context, caller });
+      await deps.observeActionExecution?.({ actionId: 'session.title.set', input, context, caller,
+        result: { ok: true, result: { updated: true } } });
+      expect(clones).not.toHaveBeenCalled();
+    } finally { clones.mockRestore(); }
+  });
   it('projects a full internal plugin caller to the strict public caller shape for before and after hooks', async () => {
     let beforePayload: unknown;
     let afterPayload: unknown;
     mocks.tryAcquireLease.mockReturnValue({
-      registry: {} as never,
+      registry: { hookHandlersByHookId: new Map([
+        ['action.execute.before', [{}]], ['action.execute.after', [{}]],
+      ]), contributes: { activationTargets: [] } },
       release: mocks.release,
     });
     mocks.intercept.mockImplementation(async (params: Readonly<{ payload: unknown }>) => {
@@ -95,7 +116,9 @@ describe('createActionExecutionHookDeps', () => {
   it('preserves the api surface in before and after hook payloads', async () => {
     const observedSurfaces: string[] = [];
     mocks.tryAcquireLease.mockReturnValue({
-      registry: {} as never,
+      registry: { hookHandlersByHookId: new Map([
+        ['action.execute.before', [{}]], ['action.execute.after', [{}]],
+      ]), contributes: { activationTargets: [] } },
       release: mocks.release,
     });
     mocks.intercept.mockImplementation(async (params: Readonly<{ payload: unknown }>) => {
