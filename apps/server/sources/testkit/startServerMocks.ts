@@ -139,6 +139,7 @@ export function createStartServerDbMocks(options: StartServerDbMockOptions = {})
       initDbSqlite: (...args: any[]) => initDbSqlite(...args),
       createDbSqliteMaintenanceClient: (...args: any[]) => createDbSqliteMaintenanceClient(...args),
       applySqliteRuntimePragmas: (...args: any[]) => applySqliteRuntimePragmas(...args),
+      disconnectDbReadinessProbe: async () => {},
       shutdownDbPglite: (...args: any[]) => shutdownDbPglite(...args),
       isPrismaErrorCode: (...args: [unknown, string]) => isPrismaErrorCode(...args),
     },

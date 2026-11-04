@@ -23,6 +23,8 @@ describe('Runtime Activity snapshot socket event on SQLite', () => {
     beforeAll(async () => {
         harness = await createLightSqliteHarness({
             tempDirPrefix: 'happier-runtime-activity-snapshot-socket-',
+            // These cases exhaust transaction acquisition by holding the pool's only connection.
+            env: { HAPPIER_SQLITE_CONNECTION_LIMIT: '1' },
             initAuth: false,
             initEncrypt: false,
             initFiles: false,
