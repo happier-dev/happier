@@ -1458,7 +1458,13 @@ Inventory and daemon-scoped system-tool capability caches use the existing
 machine contribution-registry currentness revision. Unrelated workspace-sync or
 local-service publications do not move these readers to empty cache namespaces.
 A failed projection read retains available descriptors and last-good facts for
-display, but marks inventory error/stale; retained facts do not authorize launch.
+display, but marks inventory error/stale. In 0.3 development, New Session uses
+`resolveAgentSessionStartBlock` for its inventory eligibility decision: missing,
+checking, unknown and stale observations leave Start enabled. Only positively
+known Agent unavailability blocks it. The picker and compatible Profiles use the
+same decision, with sign-in checked against the launch's selected credential.
+An attempted launch still passes through daemon admission and reports its typed
+failure; an unanswered inventory check neither certifies readiness nor refuses it.
 Projection RPCs retain the shared connection/setup budget without imposing an
 operation deadline on daemon projection work.
 

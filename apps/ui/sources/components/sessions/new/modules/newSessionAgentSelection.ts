@@ -1,12 +1,12 @@
 import type { AgentId } from '@/agents/catalog/catalog';
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import type { MachineAgent } from '@/agents/machineAgents/machineAgentTypes';
-import { isMachineAgentReady, resolveMachineAgentState } from '@/agents/machineAgents/resolveMachineAgentState';
+import { resolveMachineAgentState } from '@/agents/machineAgents/resolveMachineAgentState';
 import type { MachineAgentsSnapshot } from '@/agents/machineAgents/machineAgentInventoryStore';
 import type { DaemonMergedProjectionPhase } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import type { PersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import type { AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
-import { isMachineAgentUnchecked, resolveMachineAgentStatus } from '@/components/machines/agents/machineAgentPresentation';
+import { resolveAgentSessionStartBlock, resolveMachineAgentStatus } from '@/components/machines/agents/machineAgentPresentation';
 import { formatMachineAgentStatus } from '@/components/machines/agents/machineAgentCopy';
 import { t } from '@/text';
 
@@ -40,9 +40,8 @@ export function resolveAgentLaunchBlockedReasonForNewSession(params: Readonly<{
         return catalogLoading ? t('machineAgents.checking') : t('newSession.selectAiBackendTitle');
     }
     return params.selectedBackendEntry.capabilities?.session?.supported === false ? `${params.agentLabel} · ${t('common.unavailable')}`
-        : params.selectedBackendEntry.kind === 'configuredBackend' || isMachineAgentReady(params.selectedCredentialMachineAgent) ? null
-        // An unused embedded composer waits for the check without claiming one is running.
-        : isMachineAgentUnchecked(params.selectedCredentialMachineAgent ?? null, params.machineAgentsStatus) ? ''
+        : params.selectedBackendEntry.kind === 'configuredBackend'
+            || resolveAgentSessionStartBlock(params.selectedCredentialMachineAgent ?? null) === null ? null
         : params.agentStartBlock?.text ?? `${params.agentLabel} · ${formatMachineAgentStatus(resolveMachineAgentStatus(
             params.selectedCredentialMachineAgent ?? null, undefined, params.machineAgentsStatus,
         ))}`;
@@ -59,10 +58,9 @@ export type NewSessionProfileAvailabilityReason =
 
 /** Choosing an executable is not credential admission; Start checks the exact binding. */
 function isAgentExecutableSelectable(agent: MachineAgent | undefined): boolean {
-    if (isMachineAgentReady(agent)) return true;
-    if (!agent || agent.stale || (agent.state !== 'needsSignIn'
-        && !(agent.state === 'unknown' && agent.signIn.status === 'unknown'))) return false;
-    return isMachineAgentReady({ ...agent, state: resolveMachineAgentState({ ...agent, authenticationRequired: false }) });
+    if (resolveAgentSessionStartBlock(agent ?? null) === null) return true;
+    if (!agent || agent.state !== 'needsSignIn') return false;
+    return resolveAgentSessionStartBlock({ ...agent, state: resolveMachineAgentState({ ...agent, authenticationRequired: false }) }) === null;
 }
 
 function resolveAgentUnavailabilityReasonForNewSession(

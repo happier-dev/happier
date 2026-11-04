@@ -45,13 +45,22 @@ const configuredEntry: NewSessionSelectableBackendEntry = {
 };
 
 describe('newSessionAgentSelection', () => {
+    // Coordination 2026-11-04: unknown inventory does not establish unavailability.
+    it('allows launch when a failed cold Machine check has no Agent row', () => {
+        expect(resolveAgentLaunchBlockedReasonForNewSession({ backendTarget: codexEntry.backendTarget,
+            selectedBackendEntry: codexEntry, projectionPhase: 'error', acpCatalog: null, agentLabel: 'Codex',
+            selectedCredentialMachineAgent: null, machineAgentsStatus: 'error',
+            agentStartBlock: null,
+        })).toBeNull();
+    });
+
     it('keeps a known installed Agent selectable while required sign-in is unknown', () => {
         const agent = createMachineAgent('codex', { state: 'unknown',
             signIn: { status: 'unknown', via: null, nativeLogin: 'terminal', connectedServices: [] } });
         expect(isAgentSelectableForNewSession({ agentId: 'codex', machineAgentsById: { codex: agent } })).toBe(true);
         expect(resolveAgentLaunchBlockedReasonForNewSession({ backendTarget: codexEntry.backendTarget,
             selectedBackendEntry: codexEntry, projectionPhase: 'ready', acpCatalog: null, agentLabel: 'Codex',
-            selectedCredentialMachineAgent: agent, machineAgentsStatus: 'ready', agentStartBlock: null })).not.toBeNull();
+            selectedCredentialMachineAgent: agent, machineAgentsStatus: 'ready', agentStartBlock: null })).toBeNull();
     });
     it.each(['external', 'configured', 'legacyConfigured'] as const)('keeps an unresolved %s target checking only while its catalog is loading', (kind) => {
         const scope = { serverId: `new-session-${kind}`, accountId: 'readiness-test' };
@@ -90,8 +99,33 @@ describe('newSessionAgentSelection', () => {
             machineAgentsStatus: 'ready', agentStartBlock: null,
         })).toBeNull();
     });
-    it('fails closed before the selected machine has been checked', () => {
-        expect(isAgentSelectableForNewSession({ agentId: 'codex', machineAgentsById: {} })).toBe(false);
+    it('allows selection before the selected machine has been checked', () => {
+        expect(isAgentSelectableForNewSession({ agentId: 'codex', machineAgentsById: {} })).toBe(true);
+    });
+
+    it.each([
+        { stale: true }, { state: 'checking' }, { state: 'unknown', installed: false },
+    ] satisfies ReadonlyArray<Partial<MachineAgent>>)('allows uncertain inventory through picker, profile and launch (%j)', overrides => {
+        const agent = createMachineAgent('codex', overrides);
+        const machineAgentsById = { codex: agent };
+        expect(isBackendEntrySelectableForNewSession({ entry: codexEntry, machineAgentsById })).toBe(true);
+        expect(resolveProfileAvailabilityForNewSession({ candidateBackendEntries: [codexEntry], machineAgentsById }))
+            .toEqual({ available: true });
+        expect(resolveAgentLaunchBlockedReasonForNewSession({ backendTarget: codexEntry.backendTarget,
+            selectedBackendEntry: codexEntry, projectionPhase: 'ready', acpCatalog: null, agentLabel: 'Codex',
+            selectedCredentialMachineAgent: agent, machineAgentsStatus: 'loading', agentStartBlock: null })).toBeNull();
+    });
+
+    it.each([
+        { installed: false },
+        { signIn: { status: 'signedOut', via: null, nativeLogin: 'terminal', connectedServices: [] } },
+        { dependencies: [{ key: 'dep.acp', title: 'ACP server', installed: false, version: null }] },
+        { platform: { supported: false, reason: 'arch' } },
+    ] satisfies ReadonlyArray<Partial<MachineAgent>>)('blocks launch for positively known unavailability (%j)', overrides => {
+        expect(resolveAgentLaunchBlockedReasonForNewSession({ backendTarget: codexEntry.backendTarget,
+            selectedBackendEntry: codexEntry, projectionPhase: 'ready', acpCatalog: null, agentLabel: 'Codex',
+            selectedCredentialMachineAgent: createMachineAgent('codex', overrides), machineAgentsStatus: 'ready',
+            agentStartBlock: null })).not.toBeNull();
     });
 
     it('does not select Antigravity when its dependency exists but its own CLI is missing', () => {
@@ -106,9 +140,6 @@ describe('newSessionAgentSelection', () => {
 
     it.each([
         ['missing dependency', { dependencies: [{ key: 'dep.acp', title: 'ACP server', installed: false, version: null }] }],
-        ['stale', { stale: true }],
-        ['checking', { state: 'checking' }],
-        ['unknown inventory', { state: 'unknown' }],
         ['installing', { state: 'installing' }],
         ['failed', { state: 'failed' }],
         ['unsupported', { platform: { supported: false, reason: 'arch' } }],
@@ -149,33 +180,32 @@ describe('newSessionAgentSelection', () => {
         })).toBe('opencode');
     });
 
-    it('does not offer a next agent when no inventory row is ready', () => {
+    it('cycles unresolved Agents without waiting for inventory', () => {
         expect(resolveNextSelectableAgentForNewSession({
             candidateAgentIds: ['claude', 'codex'], currentAgentId: 'claude', machineAgentsById: {},
-        })).toBeNull();
+        })).toBe('codex');
     });
 
-    it('marks profiles available only when a compatible inventory row remains ready', () => {
+    it('keeps profiles available unless every compatible Agent is known unavailable', () => {
         expect(resolveProfileAvailabilityForNewSession({
             candidateBackendEntries: [claudeEntry, codexEntry],
             machineAgentsById: { claude: createMachineAgent('claude', { installed: false }), codex: createMachineAgent('codex') },
         })).toEqual({ available: true });
         expect(resolveProfileAvailabilityForNewSession({
             candidateBackendEntries: [claudeEntry, codexEntry], machineAgentsById: {},
-        })).toEqual({ available: false, reason: 'agent-not-ready:any' });
+        })).toEqual({ available: true });
     });
 
-    it('does not describe unknown or stale inventory as a missing CLI and still fails closed', () => {
+    it('does not describe unknown or stale inventory as a missing CLI', () => {
         for (const agent of [
             undefined,
             createMachineAgent('codex', { state: 'unknown', stale: true }),
             createMachineAgent('codex', { stale: true }),
-            createMachineAgent('codex', { dependencies: [{ key: 'dep.acp', title: 'ACP server', installed: false, version: null }] }),
         ]) {
             const machineAgentsById = { codex: agent };
             expect(resolveBackendEntryUnavailabilityReasonForNewSession({ entry: codexEntry, machineAgentsById }))
-                .toBe('agent-not-ready:codex');
-            expect(isBackendEntrySelectableForNewSession({ entry: codexEntry, machineAgentsById })).toBe(false);
+                .toBeNull();
+            expect(isBackendEntrySelectableForNewSession({ entry: codexEntry, machineAgentsById })).toBe(true);
         }
         expect(resolveBackendEntryUnavailabilityReasonForNewSession({
             entry: codexEntry, machineAgentsById: { codex: createMachineAgent('codex', { installed: false }) },
@@ -206,7 +236,6 @@ describe('newSessionAgentSelection', () => {
         { installed: false },
         { dependencies: [{ key: 'dep.acp', title: 'ACP server', installed: false, version: null }] },
         { platform: { supported: false, reason: 'arch' } },
-        { stale: true },
     ] satisfies ReadonlyArray<Partial<MachineAgent>>)('never treats sign-out as a bypass for executable eligibility (%j)', (overrides) => {
         expect(isBackendEntrySelectableForNewSession({ entry: claudeEntry,
             machineAgentsById: { claude: createMachineAgent('claude', { ...overrides, state: 'needsSignIn' }) },
@@ -224,12 +253,12 @@ describe('newSessionAgentSelection', () => {
         })).toEqual(configuredEntry);
     });
 
-    it('requires the contributed Agent inventory row for plugin backends', () => {
+    it('allows plugin backends before their contributed Agent inventory is known', () => {
         const entry: NewSessionSelectableBackendEntry = {
             backendTarget: { kind: 'backend', backendId: 'acme.review' }, backendTargetKey: 'backend:acme.review',
             builtInAgentId: null, agentId: 'acme.review/assistant', kind: 'pluginBackend',
         };
-        expect(isBackendEntrySelectableForNewSession({ entry, machineAgentsById: {} })).toBe(false);
+        expect(isBackendEntrySelectableForNewSession({ entry, machineAgentsById: {} })).toBe(true);
         expect(isBackendEntrySelectableForNewSession({
             entry, machineAgentsById: { 'acme.review/assistant': createMachineAgent('acme.review/assistant') },
         })).toBe(true);
