@@ -1,3 +1,4 @@
+import { resolveMachineRpcExternalActionEffectV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import type { CliActionDepsParams } from './types';
 import type { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { ACTION_ID_FAMILIES_V1 } from '@happier-dev/protocol/actions/actionIds';
@@ -10,7 +11,7 @@ import type { RpcLocalActionContext } from '@/api/rpc/types';
 import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
 import { resolveSocketRpcSessionAuthorization } from '@happier-dev/protocol/socketRpc';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
-import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { getActionSpec, listActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
 import { configuration } from '@/configuration';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { dispatchOriginalAccountAction } from '@/api/externalActionExecutionAuthorization';
@@ -185,6 +186,11 @@ export function createCliMachineActionTransport(
     const admittedLocalRequester = requester?.authorization.binding.machineId === input.machineId;
     const managedBinding = input.context?.externalActionExecutionAuthorization?.binding;
     const managedAdmission = input.context?.machineAdmission;
+    const boundToThisMachine = Boolean(managedBinding && managedAdmission
+      && managedBinding.machineId === input.machineId && managedAdmission.machineId === input.machineId
+      && managedBinding.installationId === managedAdmission.installationId
+      && managedBinding.accountId === managedAdmission.actorAccountId
+      && managedBinding.custodianAccountId === managedAdmission.custodianAccountId);
     // This in-process admission was installed only after opening the exact
     // controller codec and rechecking Home. Reuse it for the two scoped reads;
     // serializing a self-RPC would lose that private receiver authority.
@@ -199,6 +205,13 @@ export function createCliMachineActionTransport(
       && managedBinding.accountId === managedAdmission.actorAccountId
       && managedBinding.custodianAccountId === managedAdmission.custodianAccountId
       && input.context?.verifyMachineAdmissionCurrent && await input.context.verifyMachineAdmissionCurrent());
+    // Spend the installed native Action admission, including its exact-target preview.
+    const admittedLocalAction = Boolean(boundToThisMachine && managedBinding
+      && managedBinding.installationId === params.externalActionMachineInstallationId
+      && managedBinding.actionId === input.effectActionId
+      && (listActionSpecs().find(spec => spec.id === managedBinding.actionId)?.bindings?.rpcMethod === input.method
+        || input.method === 'machines.agentIsolation.preview'
+          && resolveMachineRpcExternalActionEffectV1(input.method, managedBinding) === input.effectActionId));
     const admittedProcessRead = admittedLocalRequester && input.processEnvironmentRead !== undefined
       && [RPC_METHODS.MACHINES_PROCESSES_LIST, RPC_METHODS.MACHINES_PROCESSES_GET, RPC_METHODS.MACHINES_PROCESSES_CHECK]
         .some(method => method === input.method);
@@ -207,8 +220,8 @@ export function createCliMachineActionTransport(
     // and let the canonical protocol map classify ordinary SCM callers.
     const requiresScmSessionIngress = input.authorization && !admittedLocalRequester
       && input.method.startsWith('scm.') && resolveSocketRpcSessionAuthorization(input.method) !== null;
-    if (!requiresScmSessionIngress && direct?.machineId === input.machineId && (!externalRequest || admittedLocalRequester || admittedLocalManaged)
-      && (!authenticatedMachineIngressMethods.has(input.method) || admittedProcessRead)) {
+    if (!requiresScmSessionIngress && direct?.machineId === input.machineId && (!externalRequest || admittedLocalRequester || admittedLocalManaged || admittedLocalAction)
+      && (!authenticatedMachineIngressMethods.has(input.method) || admittedProcessRead || admittedLocalAction)) {
       const localActionContext: RpcLocalActionContext = {
         ...(input.context?.authenticatedLocalRootCustody
           ? { authenticatedLocalRootCustody: input.context.authenticatedLocalRootCustody } : {}),
@@ -218,7 +231,7 @@ export function createCliMachineActionTransport(
           && typeof input.request === 'object' && 'type' in input.request && input.request.type === 'resume-session'
           ? { resumeActionContext: input.context } : {}),
         ...(input.context?.surface ? { surface: input.context.surface } : {}),
-        ...((admittedLocalRequester || admittedLocalManaged) && input.context?.externalActionExecutionAuthorization
+        ...((admittedLocalRequester || admittedLocalManaged || admittedLocalAction) && input.context?.externalActionExecutionAuthorization
           ? { externalActionExecutionAuthorization: input.context.externalActionExecutionAuthorization } : {}),
         ...((input.authority ?? input.context?.authority) ? { authority: input.authority ?? input.context?.authority } : {}),
         ...(input.context?.actionCaller ? { actionCaller: input.context.actionCaller } : {}),

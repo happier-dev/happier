@@ -37,9 +37,10 @@ describe('Agent isolation Action admission', () => {
       .toEqual(['machines.agentIsolation.preview', 'machines.agentIsolation.preview']);
   });
 
-  it('still creates ordinary approval for a fresh changing request', async () => {
+  it.each([0, 1])('still creates ordinary approval for a fresh changing request at metadata version %s', async metadataVersion => {
     const harness = createHarness(true);
-    expect(await harness.executor.execute(actionId, input, harness.context)).toMatchObject({ ok: true,
+    harness.machineAgentIsolationAction.mockResolvedValue({ ...preview, metadataVersion });
+    expect(await harness.executor.execute(actionId, { ...input, expectedMetadataVersion: metadataVersion }, harness.context)).toMatchObject({ ok: true,
       result: { kind: 'approval_request_created', actionId, artifactId: 'isolation-review' } });
     expect(harness.approvalsCreate).toHaveBeenCalledOnce();
     expect(harness.machineAgentIsolationAction.mock.calls.map(([request]) => request.actionId))

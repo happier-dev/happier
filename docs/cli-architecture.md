@@ -58,6 +58,14 @@ its typed unavailable status and prerequisite reason through the existing Machin
 daemon-state owner; the controller preserves that same closed cause when reporting
 an isolation failure. Native recovery payloads are excluded. Authentication,
 admission and unknown failures still fail the operation.
+
+During managed enrollment, isolation Set's admission preview retains the signed
+Set effect on its exact Machine installation. It is a read within that admission,
+not another independently authorized Action. The retained creation policy still
+must verify; failure returns `managed_enrollment_policy_unverified`. Enrollment
+copies the ready preview's metadata version into Set, including a new Machine's
+version zero. Stale versions settle as a conflict before approval.
+
 Preparation refusals before native CHECK carry `status.prerequisite` with a
 closed `reason` and `requiredFact`, plus a concrete `remedy`. The intent owner
 distinguishes an unavailable workspace census from a valid empty one and reports

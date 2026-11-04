@@ -1,6 +1,7 @@
 import { readMachineDeploymentReferencesV1 } from '@happier-dev/protocol/machines/machineReferenceCensusV1';
 import { MACHINE_REACHABILITY_ACTION_INPUT_SCHEMAS_V1 } from '@happier-dev/protocol';
 import { MACHINE_REACHABILITY_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol';
+import { resolveMachineRpcExternalActionEffectV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import { createUsageSourceActionPort } from '@happier-dev/protocol/actions/executor/usageSourceActions';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { CliActionDepsParams } from './types';
@@ -223,10 +224,13 @@ export function createCliMachineResourceActionDeps(
       if (denied) return denied;
       return withProjectHome(async () => {
         const request = MACHINE_AGENT_ISOLATION_ACTION_INPUT_SCHEMAS[actionId].parse(input);
-        if (!await verifyManagedCreationAgentIsolationInput({ actionId, request, context,
+        const effectActionId = actionId === 'machines.agentIsolation.preview'
+          && resolveMachineRpcExternalActionEffectV1(actionId, context.externalActionExecutionAuthorization?.binding)
+            === 'machines.agentIsolation.set' ? 'machines.agentIsolation.set' : actionId;
+        if (!await verifyManagedCreationAgentIsolationInput({ actionId: effectActionId, request, context,
           serverHttpBaseUrl: resolveServerHttpBaseUrl(), daemonToken: params.token, serverIdentityId: params.serverIdentityId,
           privateKey: params.externalActionMachineRequestPrivateKey, installationId: params.externalActionMachineInstallationId })) {
-          return { ok: false as const, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
+          return { ok: false as const, errorCode: 'managed_enrollment_policy_unverified', error: 'managed_enrollment_policy_unverified' };
         }
         const assertCurrent = async () => {
           signal?.throwIfAborted();
@@ -235,7 +239,7 @@ export function createCliMachineResourceActionDeps(
           signal?.throwIfAborted();
         };
         const invoke = (options = {}) => callMachineAction({ machineId: request.machineId, serverId, method: actionId,
-          request: { ...request, serverId }, authority: context.authority, context, effectActionId: actionId, exactMachine: true,
+          request: { ...request, serverId }, authority: context.authority, context, effectActionId, exactMachine: true,
           ...(signal ? { signal } : {}), ...options });
         if (actionId === 'machines.agentIsolation.preview') { await assertCurrent(); return invoke(); }
         const { executeCapturedMachineAction } = await import('@/api/machine/capturedMachineAction');

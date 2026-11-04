@@ -19,6 +19,24 @@ async function importRpcPolicy() {
 }
 
 describe('MachineRpcRoutePolicyV1', () => {
+  it('keeps the isolation set proof for its exact-target admission preview', async () => {
+    const { resolveMachineRpcExternalActionEffectV1: resolve } = await import('./routePolicyV1');
+    const binding = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'set-proof', binding: {
+      accountId: 'owner', custodianAccountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 },
+      serverIdentityId: 'home', machineId: 'guest', installationId: 'guest-installation',
+      actionId: 'machines.agentIsolation.set', requestId: 'first-set', requestEnvelopeDigest: 'a'.repeat(43),
+      target: { kind: 'machine', machineId: 'guest' },
+    } }).binding;
+    const selected = { machineId: 'guest', installationId: 'guest-installation' };
+    expect(resolve('machines.agentIsolation.preview', binding, selected)).toBe('machines.agentIsolation.set');
+    expect(resolve('machines.agentIsolation.preview')).toBe('machines.agentIsolation.preview');
+    expect(resolve('machines.agentIsolation.preview', { ...binding,
+      target: { kind: 'machine', machineId: 'foreign' } }, selected)).toBeNull();
+    expect(resolve('machines.agentIsolation.preview', binding, { ...selected, machineId: 'foreign' })).toBeNull();
+    expect(resolve('machines.agentIsolation.preview', binding, { ...selected, installationId: 'replacement' })).toBeNull();
+    expect(resolve('machines.agentIsolation.set', { ...binding, actionId: 'machines.agentIsolation.preview' }, selected))
+      .toBe('machines.agentIsolation.set'); // Caller still must match the returned effect to its signed binding.
+  });
   it('spends the exact Agent inventory root on both inventory observation phases', async () => {
     const { resolveMachineRpcExternalActionEffectV1: resolve } = await import('./routePolicyV1');
     const binding = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'inventory-root', binding: {

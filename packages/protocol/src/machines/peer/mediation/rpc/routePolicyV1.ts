@@ -1156,6 +1156,13 @@ export function resolveMachineRpcRoutePolicy(method: string): MachineRpcRoutePol
 export function resolveMachineRpcExternalActionEffectV1(method: string,
   binding?: ExternalActionExecutionAuthorizationV1['binding'],
   selectedTarget?: Readonly<{ machineId: string; installationId: string }>): string | null {
+  if (binding?.actionId === 'machines.agentIsolation.set' && method === 'machines.agentIsolation.preview') {
+    // Set admission reads its native review under the same signed effect.
+    // This projection cannot turn a preview proof into permission to write.
+    return binding.target.kind === 'machine' && binding.target.machineId === binding.machineId
+      && (!selectedTarget || selectedTarget.machineId === binding.machineId && selectedTarget.installationId === binding.installationId)
+      ? binding.actionId : null;
+  }
   if (binding?.actionId === 'machines.agents.list'
     && (method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE
       || method === RPC_METHODS.CAPABILITIES_DETECT)) {
