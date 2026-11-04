@@ -82,6 +82,7 @@ export function buildActionCliInvokeHelpModel(options: ActionCliInvokeHelpOption
       { label: `${ACTION_CLI_REQUEST_ID_FLAG} <id>`, description: 'Request correlation identifier; do not reuse after a daemon restart to mean "the same request"' },
       { label: `${ACTION_CLI_SERVER_ID_FLAG} <serverId>`, description: 'Use credentials and endpoint for an exact saved Home' },
       { label: `${ACTION_CLI_MACHINE_ID_FLAG} <machineId>`, description: 'Route this invocation to an exact machine' },
+      { label: '--yes', description: 'Approve requested Action confirmations without prompting' },
       { label: ACTION_CLI_JSON_OUTPUT_FLAG, description: 'Stable JSON envelope on stdout' },
       { label: ACTION_CLI_HELP_FLAGS.join(', '), description: 'Show this help' },
     ].map((row) => Object.freeze(row))),

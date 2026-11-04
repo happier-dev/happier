@@ -1,3 +1,5 @@
+import { ApiTokenGrantV1Schema } from '../auth/apiTokenGrant.js';
+import { createSessionMembershipReadFixture } from '../sessions/read/sessionReadBatchV1.testkit.js';
 import { describe, expect, it } from 'vitest';
 import { ApprovalRequestV2Schema, type ApprovalRequest } from '../approvals/approvalRequestV1.js';
 import { decideApprovalRequestTransition } from '../approvals/approvalRequestTransition.js';
@@ -34,6 +36,8 @@ function harness() {
       nextCursor: incomplete ? 'missing-page' : null, hasNext: incomplete,
       attentionNextCursor: null, attentionHasNext: false,
     }),
+    sessionRead: async ({ sessionIds }: Parameters<NonNullable<ActionExecutorDeps['sessionRead']>>[0]) =>
+      createSessionMembershipReadFixture(sessionIds, workers),
     readSessionManager: async () => ({ kind: 'manager' as const, address: { serverId: 'home', sessionId: 'manager' } }),
     sessionSendMessage: async (args: Parameters<NonNullable<ActionExecutorDeps['sessionSendMessage']>>[0]) => {
       if (args.sessionId === inaccessible) return { ok: false, errorCode: 'permission_denied', error: 'permission_denied' };
@@ -76,6 +80,52 @@ function harness() {
 }
 
 describe('SessionTarget at the Actions front door', () => {
+  it('evaluates group enablement once while admitting every concrete credential target', async () => {
+    const h = harness();
+    h.setWorkers(['a', 'b', 'c']);
+    h.deny('b');
+    let enabledReads = 0;
+    let actionGrantReads = 0;
+    const targetAdmissions: string[] = [];
+    const grant = ApiTokenGrantV1Schema.parse({ v: 1, actions: { families: [], ids: ['session.message.send'] },
+      targets: { sessions: [], machines: ['granted-machine'] }, approve: false,
+      origins: [], models: null, permissionModes: null, create: null });
+    // Observe the captured credential's Action ceiling without replacing the
+    // grant evaluator. Each newly bound target still uses real grant admission.
+    grant.actions = { families: [], get ids() { actionGrantReads++; return ['session.message.send']; } };
+    const executor = createActionExecutor({ ...h.deps,
+      isActionEnabled: () => { enabledReads++; return true; },
+      // The authenticated Home resolves each Session's current Machine for
+      // the real credential-target owner; no internal admission is mocked.
+      resolveApiTokenGrantSessionMachineId: async ({ sessionId }: Parameters<NonNullable<ActionExecutorDeps['resolveApiTokenGrantSessionMachineId']>>[0]) => {
+        targetAdmissions.push(sessionId);
+        return 'granted-machine';
+      },
+    } as unknown as ActionExecutorDeps);
+    const prepared = await executor.prepare('session.message.send', {
+      sessionId: { selector: 'workers' }, message: 'hello',
+    }, { ...context, bypassApprovals: true, externalActionCredential: {
+      accountId: 'account', principalId: 'token', credentialId: 'token',
+      grant,
+    } });
+    expect(prepared.kind).toBe('ready');
+    if (prepared.kind !== 'ready') throw new Error('Expected admitted group send');
+    const admittedActionGrantReads = actionGrantReads;
+    expect(admittedActionGrantReads).toBeGreaterThan(0);
+    expect(targetAdmissions).toEqual([]);
+    const result = await prepared.invocation.run();
+    expect(result).toMatchObject({ ok: true, result: { kind: 'fanout', results: [
+      { target: { sessionId: 'a' }, result: { ok: true } },
+      { target: { sessionId: 'b' }, result: { ok: false, errorCode: 'permission_denied' } },
+      { target: { sessionId: 'c' }, result: { ok: true } },
+    ] } });
+    expect(targetAdmissions).toEqual(['a', 'b', 'c']);
+    expect(h.effects.map(effect => effect.sessionId)).toEqual(['a', 'c']);
+    expect(enabledReads).toBe(1);
+    expect(actionGrantReads - admittedActionGrantReads).toBe(0);
+  });
+
+
   it('binds restricted selector roots to the proved caller before enumerating workers', async () => {
     const h = harness();
     const caller = { kind: 'session', sessionId: 'parent', starterDepth: 0, turnDepth: 0 } as const;

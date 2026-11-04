@@ -1,3 +1,4 @@
+import { promptConfirmYesNo } from '@/terminal/prompts/promptConfirmYesNo';
 import { showHelp } from '../actions/discoveryHelp';
 import { randomUUID } from 'node:crypto';
 import { definitionList, fail, renderHelpPage, sectionTitle } from '@happier-dev/cli-common/output';
@@ -64,8 +65,9 @@ const ACTION_CLI_PROJECT_DIRECTORY_FLAG = '--project-directory' as const;
 const ACTION_CLI_WORKSPACE_REF_ID_FLAG = '--workspace-ref-id' as const;
 const ACTION_CLI_SOURCE_PATH_FLAG = '--source-path' as const;
 const ACTION_CLI_DESTINATION_PATH_FLAG = '--destination-path' as const;
-const INVOKE_USAGE = 'Usage: happier actions invoke <action-id> [--<field> <value>...] [--input-json <json>] [--request-id <id>] [--server-id <id>] [--machine-id <id>] [--project-directory <path>] [--workspace-ref-id <id>] [--wait] [--json]';
+const INVOKE_USAGE = 'Usage: happier actions invoke <action-id> [--<field> <value>...] [--input-json <json>] [--request-id <id>] [--server-id <id>] [--machine-id <id>] [--project-directory <path>] [--workspace-ref-id <id>] [--yes] [--wait] [--json]';
 const INVOKE_WAIT_FLAG = '--wait' as const;
+const INVOKE_YES_FLAG = '--yes' as const;
 
 /** CLI-owned transport flags; they never become Action input. */
 const INVOKE_TRANSPORT_VALUE_FLAGS = [
@@ -149,12 +151,12 @@ function resolveInvokeActionInput(
   assertCommandArguments(args, {
     usage: INVOKE_USAGE,
     startIndex: 1,
-    booleanFlags: [ACTION_CLI_JSON_OUTPUT_FLAG, ...finiteFlags, ...flags.booleanFlags],
+    booleanFlags: [ACTION_CLI_JSON_OUTPUT_FLAG, INVOKE_YES_FLAG, ...finiteFlags, ...flags.booleanFlags],
     valueFlags: [...INVOKE_TRANSPORT_VALUE_FLAGS, ACTION_CLI_WHOLE_INPUT_FLAG, ...flags.valueFlags],
     literalValueFlags: [ACTION_CLI_SOURCE_PATH_FLAG, ACTION_CLI_DESTINATION_PATH_FLAG],
     maxPositionals: 1,
   });
-  const stripped = stripCliOwnedFlags(args.slice(1), { booleanFlags: finiteFlags, valueFlags: [...INVOKE_TRANSPORT_VALUE_FLAGS] });
+  const stripped = stripCliOwnedFlags(args.slice(1), { booleanFlags: [INVOKE_YES_FLAG, ...finiteFlags], valueFlags: [...INVOKE_TRANSPORT_VALUE_FLAGS] });
   // The exact Action id is the first positional after `invoke`. Removing that
   // exact slot, rather than searching by value, preserves a field value that
   // happens to equal the Action id.
@@ -192,7 +194,7 @@ function compileDiscoveredActionFields(definition: ActionDefinitionV1): InvokeCo
     fields: compileActionCliFieldsFromJsonSchema({
       jsonSchema: definition.inputSchema,
       hints: definition.inputHints ?? undefined,
-      reservedFlags: INVOKE_TRANSPORT_VALUE_FLAGS,
+      reservedFlags: [...INVOKE_TRANSPORT_VALUE_FLAGS, INVOKE_YES_FLAG],
     }),
   });
 }
@@ -314,7 +316,7 @@ async function execute(args: string[], deps: ActionsDeps, signal?: AbortSignal):
         if (!signedRootActionId.success) throw Object.assign(new Error(`Unknown Action id: ${requested}`), { code: 'invalid_arguments' });
         const spec = getActionSpec(signedRootActionId.data);
         const compiled = compileActionCliFields(spec, {
-          reservedFlags: [...INVOKE_TRANSPORT_VALUE_FLAGS, ...(supportsFiniteActionOutcome(signedRootActionId.data) ? [INVOKE_WAIT_FLAG] : [])],
+          reservedFlags: [...INVOKE_TRANSPORT_VALUE_FLAGS, INVOKE_YES_FLAG, ...(supportsFiniteActionOutcome(signedRootActionId.data) ? [INVOKE_WAIT_FLAG] : [])],
         });
         const invokeFields: InvokeCompiledFields = {
           kind: 'local',
@@ -400,6 +402,21 @@ async function execute(args: string[], deps: ActionsDeps, signal?: AbortSignal):
       ? () => deps.readCredentialsForServerIdFn(fixedServer.serverId)
       : deps.readCredentialsFn,
     externalActionClient: true as const,
+    onApprovalRequested: async (artifactId: string, confirmationSignal: AbortSignal): Promise<ActionExecuteResult> => {
+      console.error(`Waiting for approval: ${artifactId}`);
+      let approve = hasInvokeOption(args, INVOKE_YES_FLAG);
+      if (!approve) {
+        try {
+          approve = await promptConfirmYesNo('Approve this Action?', { default: 'no', signal: confirmationSignal });
+        } catch (error) {
+          if (confirmationSignal.aborted) throw error;
+        }
+      }
+      const decision = await executor.execute('approval.request.decide', { artifactId, decision: approve ? 'approve' : 'reject' },
+        { ...context, signal: confirmationSignal, actionRequestId: randomUUID() });
+      return !approve && decision.ok
+        ? { ok: false, errorCode: 'approval_rejected', error: 'approval_rejected' } : decision;
+    },
     ...(machineId ? { machineId } : {}),
   };
   const executor = await deps.createExecutorFn(fixedServer

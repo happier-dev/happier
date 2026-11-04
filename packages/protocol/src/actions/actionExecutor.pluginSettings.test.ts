@@ -9,6 +9,22 @@ import type { ApprovalRequest } from '../approvals/approvalRequestV1.js';
 import { ApprovalRequestV2Schema } from '../approvals/approvalRequestV1.js';
 
 describe('createActionExecutor (plugin Settings administration)', () => {
+  it('admits an ordinary Settings operand once and does not re-admit its prepared dispatch', async () => {
+    const admitInput = vi.fn(async () => null);
+    const port = Object.assign(async () => ({ ok: true, kind: 'plugins.settings.set' as const,
+      data: { scope: { kind: 'account' as const }, target: { kind: 'account' as const },
+        localId: 'enabled', revision: '8', application: { kind: 'live' as const } } }), { admitInput });
+    const executor = createActionExecutor({ pluginSettingsAdministrationAction: port });
+    const prepared = await executor.prepare('plugins.settings.set', {
+      pluginId: 'acme.settings', scope: { kind: 'account' }, target: { kind: 'account' },
+      localId: 'enabled', value: true, expectedRevision: '7',
+    }, { surface: 'cli', authority: 'present_user', bypassApprovals: true });
+    expect(prepared.kind, JSON.stringify(prepared)).toBe('ready');
+    expect(admitInput).toHaveBeenCalledTimes(1);
+    if (prepared.kind !== 'ready') throw new Error('Expected admitted Settings write');
+    await expect(prepared.invocation.run()).resolves.toMatchObject({ ok: true });
+    expect(admitInput).toHaveBeenCalledTimes(1);
+  });
   it('defaults automation and irreversible UI Settings writes to approval while letting users waive each surface', () => {
     const defaults = ActionsSettingsV1Schema.parse({ v: 1 });
     for (const actionId of [

@@ -89,6 +89,35 @@ async function expectPromiseStillPending(promise: Promise<unknown>): Promise<voi
 }
 
 describe('createCliActionExecutorHarness', () => {
+  it.each(['live', 'recorded', 'notification', 'refused'] as const)(
+    'consumes one forwarded approval without resubmitting its Action (%s)', async delivery => {
+      const pending = { kind: 'approval_request_created', artifactId: 'forwarded-approval', actionId: 'browser.diagnostics.snapshot' };
+      const receipt = { v: 1, machineId: 'machine', generatedAt: 1, refreshState: 'idle', events: [], diagnostics: [] };
+      const failure = { ok: false as const, errorCode: 'approval_rejected', error: 'approval_rejected' };
+      const notification = vi.fn(async () => delivery === 'notification' ? undefined
+        : delivery === 'refused' ? failure
+          : { ok: true as const, result: { ok: true, status: 'executed',
+            ...(delivery === 'live' ? { liveExecution: { ok: true, result: receipt } } : {}) } });
+      // The installed browser adapter is an OS/daemon transport boundary.
+      const native = vi.fn(async () => pending);
+      const read = vi.fn(async () => ApprovalRequestV2Schema.parse({ v: 2, createdAtMs: 1, updatedAtMs: 2,
+        createdBy: { surface: 'cli' }, requestedSurface: 'cli', actionId: pending.actionId,
+        actionArgs: { browserSessionId: 'session', viewId: 'view' }, summary: 'Browser diagnostics',
+        executionOriginV1: { v: 1, authority: 'present_user', surface: 'cli', caller: { kind: 'host' },
+          serverId: 'home', actionId: pending.actionId, requestId: 'browser-request' },
+        status: 'executed', decision: { kind: 'approve', decidedAtMs: 2 },
+        execution: { ok: true, effectAttempted: true, executedAtMs: 2, result: receipt } }));
+      const { executor } = createCliActionExecutorHarness({ token: 'token', sessionId: 'session', mode: 'plain', ctx: null,
+        onApprovalRequested: notification }, { ...createUnavailableActionTransportDeps(),
+        runtimeActionExecute: native, approvalsGet: read });
+      expect(await executor.execute('browser.diagnostics.snapshot', { browserSessionId: 'session', viewId: 'view' },
+        { surface: 'cli' })).toEqual(delivery === 'notification' ? { ok: true, result: pending }
+          : delivery === 'refused' ? failure : { ok: true, result: receipt });
+      expect(notification).toHaveBeenCalledOnce();
+      expect(notification).toHaveBeenCalledWith('forwarded-approval', expect.any(AbortSignal));
+      expect(native).toHaveBeenCalledOnce();
+      expect(read).toHaveBeenCalledTimes(delivery === 'recorded' ? 1 : 0);
+    });
   beforeEach(() => { wire.sockets.length = 0; wire.io.mockClear(); });
   afterEach(() => vi.restoreAllMocks());
   it.each(['update', 'reconnect'] as const)('delivers an independently persisted PDF rejection to the Agent MCP caller on %s', async wake => {

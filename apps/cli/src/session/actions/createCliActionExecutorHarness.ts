@@ -1,3 +1,6 @@
+import { randomUUID } from 'node:crypto';
+import { ActionApprovalRequestCreatedResultSchema, ActionExecuteResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ApprovalRequestGetResultV1Schema } from '@happier-dev/protocol/approvals/approvalRequestPublicRead';
 import { settleApprovalRequestReplayInputs } from '@happier-dev/protocol/approvals/approvalRequestTransition';
 import { StoredApprovalRequestSchema, type ApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { buildActionExecuteResultFromRecordedApprovalExecution, createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
@@ -33,6 +36,34 @@ type ApprovalResolveBlockingDecisionArgs = Parameters<NonNullable<ActionExecutor
 type ApprovalUpdateArgs = Parameters<NonNullable<ActionExecutorDeps['approvalsUpdate']>>[0];
 type ApprovalCreateArgs = Parameters<NonNullable<ActionExecutorDeps['approvalsCreate']>>[0];
 
+type CliApprovalRequestedHandler = (artifactId: string, signal: AbortSignal) => void | ActionExecuteResult | Promise<void | ActionExecuteResult>;
+
+/** Consume the existing approval decision; the original Action is never submitted again. */
+export async function consumeDeferredCliApprovalResult(result: ActionExecuteResult, options: Readonly<{
+  onApprovalRequested?: CliApprovalRequestedHandler;
+  execute: ReturnType<typeof createActionExecutor>['execute'];
+  context?: ActionExecutorContext;
+}>): Promise<ActionExecuteResult> {
+  if (!result.ok || !options.onApprovalRequested) return result;
+  const pending = ActionApprovalRequestCreatedResultSchema.safeParse(result.result);
+  if (!pending.success) return result;
+  const decision = await options.onApprovalRequested(pending.data.artifactId,
+    options.context?.signal ?? new AbortController().signal);
+  // Some hosts only present the approval id and leave the decision elsewhere.
+  if (!decision) return result;
+  if (!decision.ok) return decision;
+  if (decision.result && typeof decision.result === 'object' && 'liveExecution' in decision.result) {
+    const live = ActionExecuteResultSchema.safeParse(decision.result.liveExecution);
+    if (live.success) return live.data;
+  }
+  const observed = await options.execute('approval.request.get', { artifactId: pending.data.artifactId },
+    { ...options.context, actionRequestId: randomUUID() });
+  if (!observed.ok) return observed;
+  const receipt = ApprovalRequestGetResultV1Schema.safeParse(observed.result);
+  if (!receipt.success) return { ok: false, errorCode: 'invalid_action_transport_output', error: 'invalid_action_transport_output' };
+  return buildActionExecuteResultFromRecordedApprovalExecution(receipt.data.request) ?? result;
+}
+
 /** Admission can defer Ask only when the receiving Account policy retains it. */
 export function isOriginalCliApprovalPreservedAtAccount(actionId: ActionSettingsActionId, input: unknown,
   context: ActionExecutorContext, provider: RuntimeActionSettingsProvider): boolean {
@@ -58,6 +89,8 @@ export function createCliActionExecutorHarness(
     sessionMemoryEnabled?: boolean;
     /** Machine owning an installed runtime override; remote children retain Machine transport. */
     runtimeActionMachineId?: string;
+    /** Host prompt/notification; decisions still use approval.request.decide. */
+    onApprovalRequested?: CliApprovalRequestedHandler;
   }>,
   overrides?: Partial<ActionExecutorDeps>,
 ): Readonly<{
@@ -303,6 +336,11 @@ export function createCliActionExecutorHarness(
     ? runWithServerHttpBaseUrl(params.serverHttpBaseUrl, run)
     : run();
 
+  const consumeDeferredApproval = (result: ActionExecuteResult, context: ActionExecutorContext) =>
+    consumeDeferredCliApprovalResult(result, { onApprovalRequested: params.onApprovalRequested,
+      execute: (actionId, input, actionContext) => executor.execute(actionId, input, actionContext), context });
+
+
   return {
     deps,
     observeRecordedApprovalExecution: async args => {
@@ -362,8 +400,16 @@ export function createCliActionExecutorHarness(
       return result;
     },
     executor: {
-      prepare: (actionId, input, context) => runOnCapturedHome(() => executor.prepare(actionId, input, resolveContext(context, actionId))),
-      execute: (actionId, input, context) => runOnCapturedHome(() => executor.execute(actionId, input, resolveContext(context, actionId))),
+      prepare: (actionId, input, context) => runOnCapturedHome(async () => {
+        const resolved = resolveContext(context, actionId);
+        const prepared = await executor.prepare(actionId, input, resolved);
+        return prepared.kind === 'ready' ? { ...prepared,
+          invocation: { run: async () => consumeDeferredApproval(await prepared.invocation.run(), resolved) } } : prepared;
+      }),
+      execute: (actionId, input, context) => runOnCapturedHome(async () => {
+        const resolved = resolveContext(context, actionId);
+        return await consumeDeferredApproval(await executor.execute(actionId, input, resolved), resolved);
+      }),
       continueConfidentialApprovalRequest: (input, context) => runOnCapturedHome(() => executor.continueConfidentialApprovalRequest(input, resolveContext(context))),
       replayApprovedApprovalRequest: (args) => runOnCapturedHome(() => executor.replayApprovedApprovalRequest(args)),
     },

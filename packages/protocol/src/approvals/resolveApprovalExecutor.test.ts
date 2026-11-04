@@ -13,7 +13,7 @@ const cases = [
   { actionId: 'paths.list_recent', input: { machineId: 'machine', limit: 10 }, expected: { kind: 'daemon', machineId: 'machine' } },
   { actionId: 'session.stop', input: { sessionId: 'session' }, expected: { kind: 'daemon', machineId: 'machine', sessionId: 'session' } },
   { actionId: 'mcp.servers.signIn.start', input: { serverId: 'oauth-server' }, expected: { kind: 'live_invocation' } },
-  { actionId: 'teams.credentials.externalKeys.create', input: { resourceId: 'resource', teamMembershipId: 'membership', label: 'Reviewed key' }, expected: { kind: 'live_invocation' } },
+  { actionId: 'teams.credentials.externalKeys.create', input: { resourceId: 'resource', teamMembershipId: 'membership', label: 'Reviewed key' }, expected: { kind: 'app', placement: 'account' } },
 ] as const;
 
 function requestFor(actionId: Parameters<typeof getActionSpec>[0], input: unknown, surface: typeof surfaces[number] = 'cli') {
@@ -28,6 +28,14 @@ function requestFor(actionId: Parameters<typeof getActionSpec>[0], input: unknow
 }
 
 describe('resolveApprovalExecutor', () => {
+  it('routes deferred live-only authentication results to the captured Machine', () => {
+    const request = requestFor('connectedServices.authentication.beginConnect', {
+      machineId: 'machine', service: { pluginId: 'example.accounts', localId: 'service' }, modeId: 'manual',
+    });
+    expect(resolveApprovalExecutor(request)).toEqual({ kind: 'daemon', machineId: 'machine' });
+  });
+
+
   it.each(surfaces)('returns a retained bootstrap retry to its captured Machine across %s approval replay', surface => {
     const request = requestFor('machines.managed.bootstrap.retry', {
       homeId: 'home', managedId: 'retained-running-guest', expectedIntentRevision: 1,

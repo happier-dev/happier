@@ -5,6 +5,7 @@ import { type ActionId } from '../actionIds.js';
 import type { ActionExecuteResult, ActionExecutorContext } from './types.js';
 import { getActionSpec } from '../actionSpecs.js';
 import { requiresExactDaemonApprovalReplay, type ApprovalRequest } from '../../approvals/approvalRequestV1.js';
+import type { ApprovalRequestPublicRead } from '../../approvals/approvalRequestPublicRead.js';
 import type { ActionExecuteFailure } from './types.js';
 import { normalizeId } from './inputReading.js';
 import { readApprovalExecutionFailure, ApprovalStaleFailureDetailsSchema } from '../../approvals/approvalExecutionFailure.js';
@@ -74,16 +75,17 @@ export function buildApprovalDecisionResult(request: ApprovalRequest, liveResult
   }
 }
 
-export function buildActionExecuteResultFromRecordedApprovalExecution(request: ApprovalRequest): ActionExecuteResult | null {
+export function buildActionExecuteResultFromRecordedApprovalExecution(request: ApprovalRequest | ApprovalRequestPublicRead): ActionExecuteResult | null {
   if (!request.execution) return null;
+  const operationCredentialUses = request.v === 2 || !('actionId' in request)
+    ? request.execution.operationCredentialUses : undefined;
   if (request.execution.ok) {
     return { ok: true, result: request.execution.result,
-      ...(request.v === 2 && request.execution.operationCredentialUses?.length
-        ? { operationCredentialUses: request.execution.operationCredentialUses } : {}) };
+      ...(operationCredentialUses?.length ? { operationCredentialUses } : {}) };
   }
   const failure = readApprovalExecutionFailure(request);
-  return failure && request.v === 2 && request.execution.operationCredentialUses?.length
-    ? { ...failure, operationCredentialUses: request.execution.operationCredentialUses } : failure;
+  return failure && operationCredentialUses?.length
+    ? { ...failure, operationCredentialUses } : failure;
 }
 
 export function projectApprovalRequestPluginCaller(

@@ -69,6 +69,8 @@ export type CoreOptions = Readonly<{
       /** Only public execute offers the host's transient UI default confirmation. */
       confirmUiDefault?: boolean;
       prepared?: PreparedCoreAdmission;
+      /** Private schema admission for this exact value, invalidated by input binding. */
+      admittedInputSchema?: ActionSpec['inputSchema'];
       hostInternal?: boolean;
       approvalReplay?: boolean;
       /** This private dispatch already holds a concrete address, even if its ID resembles shorthand. */

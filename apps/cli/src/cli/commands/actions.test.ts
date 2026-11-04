@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
 const credentialBoundary = vi.hoisted(() => ({ readStoredCredentials: vi.fn() }));
+const approvalTerminal = vi.hoisted(() => ({ promptInput: vi.fn(async () => 'yes') }));
+vi.mock('@/terminal/prompts/promptInput', async importOriginal => ({
+  ...await importOriginal<typeof import('@/terminal/prompts/promptInput')>(),
+  promptInput: approvalTerminal.promptInput,
+}));
 vi.mock('@/persistence', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/persistence')>(),
   readStoredCredentials: credentialBoundary.readStoredCredentials,
@@ -98,6 +103,41 @@ function contributedActionDefinition() {
 }
 
 describe('actions root command', () => {
+  it.each([false, true])('collects forwarded approval through the ordinary CLI decision (yes: %s)', async yes => {
+    let output = '';
+    vi.spyOn(process.stdout, 'write').mockImplementation((chunk, ...args) => {
+      output += String(chunk);
+      const callback = args.find(argument => typeof argument === 'function');
+      if (typeof callback === 'function') callback();
+      return true;
+    });
+    const notice = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    approvalTerminal.promptInput.mockClear();
+    const input = { browserSessionId: 'session', viewId: 'view' };
+    const receipt = { v: 1, machineId: 'machine', generatedAt: 1, refreshState: 'idle', events: [], diagnostics: [] };
+    // Another surface may have completed the approval before this terminal
+    // decides it. Artifact persistence and the browser daemon are boundaries.
+    const request: ApprovalRequest = { v: 2, status: 'executed', createdAtMs: 1, updatedAtMs: 2,
+      createdBy: { surface: 'cli' }, requestedSurface: 'cli', actionId: 'browser.diagnostics.snapshot',
+      executionOriginV1: { v: 1, authority: 'present_user', surface: 'cli', caller: { kind: 'host' },
+        serverId: 'home', actionId: 'browser.diagnostics.snapshot', requestId: 'browser-request' },
+      actionArgs: input, summary: 'Browser diagnostics', decision: { kind: 'approve', decidedAtMs: 2 },
+      execution: { ok: true, effectAttempted: true, executedAtMs: 2, result: receipt } };
+    const native = vi.fn(async () => ({ kind: 'approval_request_created', artifactId: 'cli-forwarded', actionId: request.actionId }));
+    await handleActionsCommand(['invoke', request.actionId, '--input-json', JSON.stringify(input), ...(yes ? ['--yes'] : []), '--json'], {
+      readCredentialsFn: async () => credentials('stored_session'),
+      createExecutorFn: params => ({ ...createCliActionExecutorHarness({ token: 'token', sessionId: 'session', mode: 'plain', ctx: null,
+        onApprovalRequested: params.onApprovalRequested }, { ...createUnavailableActionTransportDeps(),
+        runtimeActionExecute: native, approvalsGet: async () => request,
+        approvalsUpdate: async () => ({ ok: true }) }).executor,
+        resolveSessionTarget: async () => { throw new Error('Unexpected Session lookup'); } }),
+    });
+    expect(JSON.parse(output), output).toMatchObject({ ok: true, data: receipt });
+    expect(notice.mock.calls.flat().join(' ')).toContain('cli-forwarded');
+    expect(approvalTerminal.promptInput).toHaveBeenCalledTimes(yes ? 0 : 1);
+    expect(native).toHaveBeenCalledOnce();
+  });
+
   it.each(['succeeded', 'held', 'missing', 'mismatched', 'home-alias', 'foreign-home'] as const)('finite pending submission observes its recorded host for %s', async outcome => {
     let output = '';
     vi.spyOn(process.stdout, 'write').mockImplementation((chunk, ...args) => {
@@ -332,8 +372,10 @@ describe('actions root command', () => {
     const coordinator = createBlockingApprovalCoordinator();
     const cancellation = new AbortController();
     let request: ApprovalRequest | null = null;
+    let onApprovalRequested: Parameters<typeof createCliActionExecutorHarness>[0]['onApprovalRequested'];
     const effect = vi.fn(async () => result);
-    const { executor } = createCliActionExecutorHarness({ token: 'synthetic-account', sessionId: '', mode: 'plain', ctx: null }, {
+    const { executor } = createCliActionExecutorHarness({ token: 'synthetic-account', sessionId: '', mode: 'plain', ctx: null,
+      onApprovalRequested: (artifactId, signal) => onApprovalRequested?.(artifactId, signal) }, {
       // Account HTTP/Artifact persistence and device credential provenance are boundaries.
       accountApiTokensCreateAction: effect,
       isActionApprovalRequired: id => id === 'account.apiTokens.create',
@@ -346,21 +388,17 @@ describe('actions root command', () => {
     });
     const invoke = handleActionsCommand(['invoke', 'account.apiTokens.create', '--input-json', JSON.stringify({ tokenId, label: 'CLI trigger' }), '--json'], {
       readCredentialsFn: async () => credentials('stored_session'),
-      createExecutorFn: () => ({
+      createExecutorFn: params => { onApprovalRequested = params.onApprovalRequested; return ({
         execute: (...[id, input, context]: Parameters<typeof executor.execute>) => executor.execute(id, input, {
           ...context, authority: 'present_user', runtimeAccountId: 'account-1', serverId: 'home-1', defaultSessionMachineId: 'token-machine',
         }),
         // This server lookup boundary must remain unreachable for an Account Action.
         resolveSessionTarget: async () => { throw new Error('Unexpected Session lookup'); },
-      }),
+      }); },
     }, cancellation.signal);
     try {
-      await vi.waitFor(() => expect(coordinator.getLiveWaiterCount('cli-token-approval')).toBe(1));
-      expect(effect).not.toHaveBeenCalled();
-      const decided = await executor.execute('approval.request.decide', { artifactId: 'cli-token-approval', decision: 'approve' }, {
-        surface: 'ui', authority: 'present_user', serverId: 'home-1', actionCaller: { kind: 'host' },
-      });
-      expect(decided).toMatchObject({ ok: true });
+      // ACT-ADMIT-ONCE-2: CLI result custody returns a deferred receipt and the
+      // ordinary terminal confirmation decides it, without a blocking waiter.
       await invoke;
       expect(JSON.parse(output)).toMatchObject({ ok: true, data: result });
       expect(effect).toHaveBeenCalledOnce();

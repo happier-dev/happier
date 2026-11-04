@@ -43,6 +43,7 @@ import type {
   ApprovalRequest,
   ApprovalRequestV2,
 } from './approvalRequestV1.js';
+import type { ApprovalRequestPublicRead } from './approvalRequestPublicRead.js';
 export { ApprovalStaleReasonSchema, ApprovalStaleFailureDetailsSchema, type ApprovalStaleReason } from './approvalStaleReason.js';
 
 function parseStrictApprovalFailure(input: Readonly<{
@@ -366,11 +367,11 @@ function readTypedDomainFailure(value: unknown): ActionExecuteFailure | null {
 
 /** Read terminal history without trusting legacy or unvalidated opaque fields. */
 export function readApprovalExecutionFailure(
-  request: ApprovalRequest,
+  request: ApprovalRequest | ApprovalRequestPublicRead,
 ): ActionExecuteFailure | null {
   const execution = request.execution;
   if (!execution) return null;
-  if (execution.ok === true) return readDomainExecutionFailure(request);
+  if (execution.ok === true) return 'actionId' in request ? readDomainExecutionFailure(request) : null;
   if (execution.ok !== false) return null;
   const errorCode = typeof execution.errorCode === 'string' && execution.errorCode.trim().length > 0
     ? execution.errorCode
@@ -379,9 +380,11 @@ export function readApprovalExecutionFailure(
     ? execution.error
     : errorCode;
   const failure: ActionExecuteFailure = { ok: false, errorCode, error };
-  if (request.v !== 2 || execution.details === undefined) return failure;
+  if (request.v !== 2) return failure;
+  const details = request.execution?.details;
+  if (details === undefined) return failure;
   return parseStrictApprovalFailure({
     request,
-    failure: { ...failure, details: execution.details },
+    failure: { ...failure, details },
   }, true) ?? failure;
 }

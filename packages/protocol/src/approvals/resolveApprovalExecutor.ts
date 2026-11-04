@@ -38,9 +38,10 @@ export function resolveApprovalExecutor(request: ApprovalRequest | TargetActionA
   if (ConfidentialActionInputReviewV1Schema.safeParse(readRecord(request.preview).confidentialInputs).success) {
     return { kind: 'live_invocation', ...(origin.machineId ? { daemonMachineId: origin.machineId } : {}) };
   }
-  // Private operands/results and host-retained closures cannot be reconstructed
-  // from an Artifact. Their authenticated decision resumes the original waiter.
-  if (spec.approvalInputCustody === 'live_only' || spec.approvalResultCustody === 'live_only'
+  // Private operands and blocking results retain their original waiter.
+  // Deferred results execute at the captured origin and persist its safe receipt.
+  if (spec.approvalInputCustody === 'live_only'
+    || spec.approvalResultCustody === 'live_only' && request.approval?.flow !== 'deferred'
     // The person's value or Saved Secret selection is supplied only to the
     // authenticated confidential continuation, never to durable replay.
     || isNativeSecretFillAction(actionId.data)

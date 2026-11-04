@@ -270,14 +270,13 @@ export function resolveActionApprovalRouting(args: ResolveActionApprovalRoutingA
   // while the original invocation returns immediately. CLI commands likewise
   // need the Artifact id before exiting, rather than a silent daemon HTTP
   // waiter whose response expires before a human can discover the approval.
-  // Live-only custody is
-  // the deliberate exception, on either side of the call: the exact invocation
-  // stays as the blocking waiter because its raw result — or its raw
-  // credential-bearing input — must never become durable Artifact custody.
-  // Keep required-result metadata for replay/settlement, and leave Agent/MCP
-  // blocking callers unchanged.
-  const custodyStaysOnLiveInvocation = args.spec.approvalResultCustody === 'live_only'
-    || args.spec.approvalInputCustody === 'live_only';
+  // Private inputs keep the exact invocation. CLI live-only results instead
+  // execute at the approved origin and retain only their observation projection
+  // on the Artifact; the deciding person can receive the live result directly.
+  // Keep required-result metadata for replay/settlement. Durable Agent/MCP
+  // requests also return the Artifact unless this host retains live custody.
+  const custodyStaysOnLiveInvocation = args.spec.approvalInputCustody === 'live_only'
+    || args.spec.approvalResultCustody === 'live_only' && args.context?.surface !== 'cli';
   // A mounted Settings field already owns an exact declaration/target intent.
   // Retain that same closure with the incumbent human waiter; Artifact replay
   // cannot restore a host-private field assertion. Other UI/CLI callers keep

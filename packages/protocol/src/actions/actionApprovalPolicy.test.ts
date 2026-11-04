@@ -18,6 +18,13 @@ import {
   resolveActionApprovalRouting,
 } from './actionApprovalPolicy.js';
 
+it('returns CLI live-only results through deferred approval decision custody', () => {
+  const actionId = 'connectedServices.authentication.beginConnect';
+  expect(resolveActionApprovalRouting({ actionId, spec: getActionSpec(actionId),
+    requiredByPolicy: true, context: { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' } } }))
+    .toMatchObject({ required: true, flow: 'deferred' });
+});
+
 const EMPTY_SETTINGS: ActionsSettingsV1 = { v: 1, actions: {} as any };
 // Approved FIN 03 §5.4/§5.7 exception; every other danger row retains its floor.
 const DIRECT_SCOPED_SESSION_TRIGGER_REMOVAL =
@@ -3963,7 +3970,7 @@ describe('isApprovalRequiredByActionsSettings', () => {
         requiredByPolicy: true,
         context: { surface: 'cli', authority: 'present_user' } as any,
       }),
-    ).toEqual({ required: true, flow: 'blocking', result: 'required' });
+    ).toEqual({ required: true, flow: 'deferred', result: 'required' });
     for (const surface of ['agent', 'mcp'] as const) {
       expect(
         resolveActionApprovalRouting({

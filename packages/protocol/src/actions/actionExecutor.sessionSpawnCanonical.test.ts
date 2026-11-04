@@ -80,6 +80,41 @@ function createExternalSpawnApprovalContext(requestId: string) {
 
 describe('session.spawn_new canonical execution', () => {
 
+  it.each([true, false])('checks the create grant against the Role-stamped Agent (matching=%s)', async matching => {
+    const roleAgentTarget = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } };
+    const sessionSpawnNew = vi.fn<ActionExecutorDeps['sessionSpawnNew']>(async () => ({
+      type: 'pending', retryWithSameCreationKey: true, outcome: 'accepted',
+    }));
+    const context = createExternalSpawnApprovalContext('role-grant');
+    const roleTargetKey = buildBackendTargetKeyV2(roleAgentTarget);
+    const grant = { ...API_TOKEN_FULL_GRANT_V1, create: {
+      machineId: 'machine-host', directory: 'managed' as const,
+      agentTargetKey: buildBackendTargetKeyV2(matching ? roleAgentTarget : apiSpawnInput.agentTarget),
+      placement: { folderId: null, tagIds: [] },
+    } };
+    const result = await createActionExecutor({ sessionSpawnNew }).execute('session.spawn_new', {
+      ...apiSpawnInput, directory: { kind: 'managed' }, roleId: 'builder',
+    }, { ...context, bypassApprovals: true,
+      externalActionCredential: { ...context.externalActionCredential, grant },
+      externalActionExecutionAuthorization: { ...context.externalActionExecutionAuthorization,
+        binding: { ...context.externalActionExecutionAuthorization.binding, grant } },
+      agentStartContext: { ...agentStartContext, caller: { kind: 'originless', runId: 'role-grant', runDepth: 0 },
+        baseline: { ...agentStartContext.baseline, machineId: 'machine-host' }, roles: {
+          builder: { roleId: 'builder', name: 'Builder', instructions: 'Build it', engine: { agentTargetKey: roleTargetKey },
+            runsAs: { kind: 'session' }, workspaceWrites: 'allow', secondOpinion: 'off', enabled: true },
+        } },
+    });
+    if (matching) {
+      expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
+      expect(sessionSpawnNew).toHaveBeenCalledWith(expect.objectContaining({
+        admittedInput: expect.objectContaining({ agentTarget: roleAgentTarget }),
+      }));
+    } else {
+      expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
+      expect(sessionSpawnNew).not.toHaveBeenCalled();
+    }
+  });
+
   it('returns unsupported_action when this host has no Session spawn implementation', async () => {
     // The missing native host implementation is the boundary; parsing and dispatch stay real.
     const executor = createActionExecutor({} as ActionExecutorDeps);

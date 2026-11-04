@@ -8,7 +8,7 @@ import { ActionIdSchema } from './actionIds.js';
 import { buildApprovalExecutionOriginV1, createActionExecutor, type ActionExecutorDeps, type ActionExecutorContext } from './actionExecutor.js';
 import { computeExternalActionRequestEnvelopeDigestV1 } from './externalActionExecutionAuthorization.js';
 import type { ExternalActionExecutionAuthorizationV1 } from './externalActionApi.js';
-import { isApprovalRequiredByActionsSettings } from './actionApprovalPolicy.js';
+import { isApprovalRequiredByActionsSettings, requiresAgentEgressRedaction } from './actionApprovalPolicy.js';
 import { ActionsSettingsV1Schema } from './actionSettings.js';
 import { API_TOKEN_FULL_GRANT_V1 } from '../auth/apiTokenGrant.js';
 import { createWorkflowTriggerActions } from './executor/workflowTriggerActions.js';
@@ -2732,6 +2732,62 @@ describe('createActionExecutor (approvals)', () => {
     }));
   });
 
+  it.each([false, true])('executes deferred CLI authentication on the daemon after its caller exits (nativeFailure=%s)', async nativeFailure => {
+    let stored: ApprovalRequest | null = null;
+    const persisted: ApprovalRequest[] = [];
+    const effects: unknown[] = [];
+    const boundary: Partial<ActionExecutorDeps> = {
+      approvalsCreate: async ({ request }) => { stored = ApprovalRequestSchema.parse(request); return { artifactId: 'detached-connect' }; },
+      approvalsGet: async () => stored,
+      approvalsUpdate: async ({ request }) => {
+        if (!stored) throw new Error('Missing approval');
+        const next = ApprovalRequestSchema.parse(request);
+        const transition = decideApprovalRequestTransition(stored, next);
+        if (!transition.ok) return transition;
+        stored = next; persisted.push(next); return { ok: true };
+      },
+      // The native service transport is the boundary. New daemon composition
+      // below shares durable Artifact storage, never the original CLI closure.
+      connectedServiceAction: async ({ input }) => {
+        effects.push(input);
+        if (nativeFailure) throw Object.assign(new Error('Service unavailable'), { code: 'connected_account_service_unavailable' });
+        return { status: 'awaitingManual', attemptId: 'connected-attempt' };
+      },
+      approvalsWaitForDecision: async () => { throw new Error('Deferred CLI requests must not retain a waiter'); },
+    };
+    const caller = new AbortController();
+    const input = { machineId: 'machine-1', service: { pluginId: 'example.accounts', localId: 'service' }, modeId: 'manual' };
+    const context = { surface: 'cli' as const, authority: 'present_user' as const,
+      actionCaller: { kind: 'host' as const }, runtimeAccountId: 'account-1', serverId: 'server-1',
+      serverIdentityId: 'srv_home', actionRequestId: 'detached-connect', signal: caller.signal,
+      actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: {
+        'connectedServices.authentication.beginConnect': { approvalRequiredSurfaces: ['cli'] },
+      } }) };
+    expect(await createExecutor(boundary).execute('connectedServices.authentication.beginConnect', input, context))
+      .toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'detached-connect' } });
+    expect(effects).toEqual([]);
+    caller.abort();
+    const decision = await createExecutor(boundary).execute('approval.request.decide', {
+      artifactId: 'detached-connect', decision: 'approve',
+    }, { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
+      runtimeAccountId: 'account-1', serverId: 'server-1', serverIdentityId: 'srv_home' });
+    expect(decision, JSON.stringify(decision)).toMatchObject({ ok: true, result: {
+      status: nativeFailure ? 'failed' : 'executed', execution: { ok: !nativeFailure },
+    } });
+    expect(effects).toEqual([input]);
+    expect(JSON.stringify(persisted)).not.toContain('RPC_TRANSPORT_UNAVAILABLE');
+    expect(stored).toMatchObject({ status: nativeFailure ? 'failed' : 'executed', execution: { ok: !nativeFailure } });
+    const collected = await createExecutor(boundary).execute('approval.request.get', {
+      artifactId: 'detached-connect',
+    }, { surface: 'cli', authority: 'present_user', runtimeAccountId: 'account-1', serverId: 'server-1' });
+    expect(collected).toMatchObject({ ok: true, result: { request: {
+      status: nativeFailure ? 'failed' : 'executed',
+      execution: nativeFailure
+        ? { ok: false, errorCode: 'action_failed' }
+        : { ok: true, result: { status: 'awaitingManual', attemptId: 'connected-attempt' } },
+    } } });
+  });
+
   it('keeps a present-user invitation approval on its live mounted invocation', async () => {
     const approvalsCreate = vi.fn(async () => ({ artifactId: 'ui-home-approval-1' }));
     const approvalsUpdate = vi.fn(async () => ({ ok: true as const }));
@@ -4065,6 +4121,49 @@ describe('createActionExecutor (approvals)', () => {
       result: { ok: true, status: 'rejected' },
     });
     expect(approvalRequestApprovedReplay).not.toHaveBeenCalled();
+  });
+
+  it.each(['api', 'ui'] as const)('keeps Session-caller egress redacted when replaying a stored %s origin', async surface => {
+    const base = createApprovalRequest('approved', {
+      actionId: 'session.title.set', actionArgs: { sessionId: 's1', title: 'Title' },
+    });
+    const target = { kind: 'session' as const, sessionId: 's1' };
+    const authorization: ExternalActionExecutionAuthorizationV1 = { v: 1, token: 'home-admitted-api-replay', binding: {
+      serverIdentityId: 'stable-home', accountId: 'alice', principalId: 'token', credentialId: 'credential',
+      custodianAccountId: 'alice', installationId: 'installation',
+      machineId: 'machine-1', actionId: base.actionId, requestId: 'stored-replay', target,
+      requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1({
+        v: 1, requestId: 'stored-replay', target, input: base.actionArgs,
+      }),
+      grant: API_TOKEN_FULL_GRANT_V1,
+    } };
+    let storedRequest = ApprovalRequestV2Schema.parse({ ...base, requestedSurface: surface, executionOriginV1: {
+      v: 1, authority: 'account_automation', surface,
+      caller: { kind: 'session', sessionId: 's1', starterDepth: 0, turnDepth: 0 },
+      serverId: 'server-1', machineId: 'machine-1', sessionId: 's1', accountId: 'alice',
+      ...(surface === 'api' ? {
+        serverIdentityId: 'stable-home', principalId: 'token', credentialId: 'credential', target,
+        externalActionExecutionAuthorization: authorization,
+        externalActionInputSignature: signExternalActionApprovalInputV1({
+          authorizationToken: authorization.token, actionId: base.actionId, target, input: base.actionArgs,
+          privateKey: tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(39)).secretKey,
+        }),
+      } : {}),
+      callerPermissionMode: 'yolo', actionId: base.actionId, requestId: 'stored-replay',
+    } });
+    const egressDecisions: boolean[] = [];
+    const executor = createExecutor({
+      approvalsGet: async () => storedRequest,
+      approvalsUpdate: async ({ request }) => { storedRequest = ApprovalRequestV2Schema.parse(request); return { ok: true }; },
+      sessionStateFieldSet: async ({ context }) => {
+        egressDecisions.push(requiresAgentEgressRedaction(context));
+        return { updated: true };
+      },
+    });
+    const replay = await executor.replayApprovedApprovalRequest({ artifactId: 'session-replay' });
+    expect(replay, JSON.stringify(replay))
+      .toMatchObject({ ok: true, result: { status: 'executed' } });
+    expect(egressDecisions).toEqual([true]);
   });
 
   it('replays only an already-approved Artifact through the immutable origin', async () => {

@@ -6115,6 +6115,16 @@ scoped to the mounted Account's own Session store.
 
 ## Approval is decided in one place
 
+In 0.3 development, CLI Actions with live-only results return the typed
+`approval_request_created` result and its Artifact id as soon as approval is
+requested. The CLI presents that id and prompts for a decision, or approves with
+`--yes`. The captured executor runs an approved deferred request through the
+ordinary decision-to-execution path, independently of the original CLI
+connection. A later `approval.request.get` collects the typed observation-safe
+execution receipt; private result fields are returned only to the live person
+deciding. Actions requiring live-only input keep their existing retained-input
+custody instead of persisting that input for deferred replay.
+
 In 0.3 development, a retained native plugin `discussion.post` or
 `discussion.reply` keeps its open person approval when its executable generation
 retires. The successor reconstructs the native operands from the existing

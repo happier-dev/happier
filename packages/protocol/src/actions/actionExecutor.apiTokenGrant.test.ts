@@ -127,7 +127,7 @@ describe('ActionExecutor API token grant admission', () => {
       resolveApiTokenGrantSessionMachineId: async () => sourceMachine,
     } as unknown as ActionExecutorDeps);
     const ctx: ActionExecutorContext = { ...context(['session.board.item.upsert']), serverId: 'home', surface: 'cli', authority: 'present_user',
-      presentUserConfirmation: { actionId: 'session.board.item.upsert' } };
+      actionsSettings: normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { 'session.board.item.upsert': ['cli'] } }) };
     if (!ctx.externalActionCredential?.grant) throw new Error('Expected grant');
     ctx.externalActionCredential.grant.targets = { sessions: ['s1'], machines: ['m-source'] };
     const input = { sessionId: 's1', itemId: 'copied', expectedItemRevision: null, destination: 'transcript',
@@ -141,10 +141,14 @@ describe('ActionExecutor API token grant admission', () => {
     expect(prepared.kind, JSON.stringify(prepared)).toBe('ready');
     if (prepared.kind !== 'ready') throw new Error('Expected frozen copy admission');
     expect(sourceReads).toEqual(['s2']);
+    // A narrowed grant applies to the next admission; this admitted invocation finishes.
     ctx.externalActionCredential.grant.targets = { sessions: ['s1'], machines: [] };
-    expect(await prepared.invocation.run()).toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
+    expect(await prepared.invocation.run()).toMatchObject({ ok: true });
     expect(sourceReads).toEqual(['s2']);
-    expect(writes).toBe(0);
+    expect(writes).toBe(1);
+    expect(await executor.prepare('session.board.item.upsert', input, ctx))
+      .toMatchObject({ kind: 'settled', result: { ok: false, errorCode: 'credential_scope_denied' } });
+    expect(writes).toBe(1);
   });
   it('admits machine-granted persisted Session reads only through authenticated source attribution', async () => {
     const sessionTranscriptGet = async () => ({ ok: true as const, sessionId: 's1', items: [], nextCursor: null, hasMore: false,
@@ -164,11 +168,16 @@ describe('ActionExecutor API token grant admission', () => {
     const prepared = await executor.prepare('session.transcript.get', { sessionId: 's1' }, ctx);
     expect(prepared.kind).toBe('ready');
     if (prepared.kind !== 'ready') throw new Error('Expected admitted read');
+    // Dispatch spends the prepared target admission: zero attribution reads.
+    const attributionsAtAdmission = attributedSessions.length;
     expect(await prepared.invocation.run()).toMatchObject({ ok: true });
+    expect(attributedSessions).toHaveLength(attributionsAtAdmission);
     const moved = await executor.prepare('session.transcript.get', { sessionId: 's1' }, ctx);
     if (moved.kind !== 'ready') throw new Error('Expected prepared read');
     sourceMachineId = 'm2';
-    expect(await moved.invocation.run()).toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
+    expect(await moved.invocation.run()).toMatchObject({ ok: true });
+    expect(await executor.prepare('session.transcript.get', { sessionId: 's1' }, ctx))
+      .toMatchObject({ kind: 'settled', result: { ok: false, errorCode: 'credential_scope_denied' } });
     for (const machineId of ['m2', null]) {
       const denied = createActionExecutor({ sessionTranscriptGet,
         resolveApiTokenGrantSessionMachineId: async () => machineId,
@@ -341,7 +350,7 @@ describe('ActionExecutor API token grant admission', () => {
     expect(sessionStateFieldSet).not.toHaveBeenCalled();
   });
 
-  it('rechecks the credential grant when a prepared invocation starts', async () => {
+  it('retains the admitted Action ceiling when a prepared invocation starts', async () => {
     const sessionStateFieldSet = vi.fn(async () => ({ ok: true }));
     const executor = createActionExecutor({ sessionStateFieldSet } as unknown as ActionExecutorDeps);
     const ctx = context(['session.title.set']);
@@ -349,8 +358,10 @@ describe('ActionExecutor API token grant admission', () => {
     expect(prepared.kind).toBe('ready');
     if (prepared.kind !== 'ready' || !ctx.externalActionCredential?.grant) throw new Error('Expected prepared grant');
     ctx.externalActionCredential.grant.actions = { families: [], ids: ['session.message.send'] };
-    expect(await prepared.invocation.run()).toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
-    expect(sessionStateFieldSet).not.toHaveBeenCalled();
+    // ACTIONS-INTENT-CHALLENGE step 5: captured admission survives preparation;
+    // the receiving server authorizes the call with the captured credential.
+    expect(await prepared.invocation.run()).toMatchObject({ ok: true });
+    expect(sessionStateFieldSet).toHaveBeenCalledOnce();
   });
 
   it('filters discovery and refuses schemas and options for an ungranted action', async () => {

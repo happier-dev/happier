@@ -84,7 +84,7 @@ import type {
   SessionSpawnDirectTargetTransport,
 } from './createCliActionDeps';
 import { createCliActionExecutor } from './createCliActionExecutor';
-import { isOriginalCliApprovalPreservedAtAccount } from './createCliActionExecutorHarness';
+import { consumeDeferredCliApprovalResult, isOriginalCliApprovalPreservedAtAccount } from './createCliActionExecutorHarness';
 import { resolveActionOriginationPreferenceFailureV1 } from '@happier-dev/protocol/actions/executor/actionOriginationPreferences';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
@@ -708,6 +708,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
   postAgentDiscussionMessage?: Parameters<typeof createCliActionDeps>[0]['postAgentDiscussionMessage'];
   postWorkflowDiscussionMessage?: Parameters<typeof createCliActionDeps>[0]['postWorkflowDiscussionMessage'];
   workflowRequesterCustody?: Parameters<typeof createCliActionDeps>[0]['workflowRequesterCustody'];
+  onApprovalRequested?: Parameters<typeof createCliActionExecutor>[0]['onApprovalRequested'];
   onRequesterSessionCredentialDisclosure?: Parameters<typeof dispatchRequesterSessionSpawnNewRpc>[0]['onRequesterSessionCredentialDisclosure'];
   scmFilesystemAccessPolicy?: FilesystemAccessPolicy;
   /** Receives the exact dispatch boundary for Home-owned HTTP Actions. */
@@ -1099,6 +1100,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
       accountServerActionDeps,
       token: credentials.token,
       credentials,
+      ...(params.onApprovalRequested ? { onApprovalRequested: params.onApprovalRequested } : {}),
       ...(prepareApprovalExecutionOriginContext ? { prepareApprovalExecutionOriginContext } : {}),
       isCredentialCurrent: async () => sameStoredCredentials(credentials, await readCurrentCredentials()),
       ...(params.onRequesterSessionCredentialDisclosure
@@ -1746,7 +1748,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
           const dispatchCredentialsCurrent = sameStoredCredentials(credentials, await readCurrentCredentials());
           if (signal?.aborted) return actionFailure('cancelled');
           if (!dispatchCredentialsCurrent) return actionFailure('credential_scope_retired');
-          return await requestDaemonSignedRootActionExecution({
+          const result = await requestDaemonSignedRootActionExecution({
             actionId: parsedActionId.data,
             input: admittedInput,
             ...(target ? { target } : {}),
@@ -1761,6 +1763,9 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
                 : buildTerminalAuthorityCeiling({ token: credentials.token, serverHttpBaseUrl: resolveActionServerApiUrl() })
               : {}),
           });
+          return await consumeDeferredCliApprovalResult(result, { onApprovalRequested: params.onApprovalRequested,
+            execute: async (actionId, input, actionContext) => (await resolveExecutor(credentials)).execute(actionId, input, actionContext),
+            context: signal ? { ...context, signal } : context });
         }) };
       }
       return { context: originalContext, invocation: null };

@@ -26,8 +26,50 @@ import { McpServerCatalogRowReadResponseV1Schema } from '@happier-dev/protocol/m
 import { createCliMcpServerStore } from '@/settings/mcp/mcpServerStore';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 
+// The daemon uses bundled Undici; keep the file's HTTP fixtures at that same
+// network boundary while retaining its real control transport and parsers.
+vi.mock('undici', async importOriginal => {
+    const actual = await importOriginal<typeof import('undici')>();
+    return { ...actual, fetch: (...args: Parameters<typeof fetch>) => globalThis.fetch(...args),
+        default: { ...actual.default, fetch: (...args: Parameters<typeof fetch>) => globalThis.fetch(...args) } };
+});
+
 describe('paired terminal Action admission', () => {
     afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+    it.each(['execute', 'prepare'] as const)('consumes a forwarded approval at the real signed-root %s ingress', async method => {
+        await withConfiguredDaemonTestHome({ prefix: 'happier-terminal-deferred-approval-' }, async () => {
+            const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner', tokenEpoch: 0,
+                provenance: { v: 1, kind: 'terminal', authority: 'account_automation' } })).toString('base64url')}.signature`;
+            const credentials = { token, encryption: null, credentialProvenance: 'stored_session' as const };
+            writeDaemonState({ pid: process.pid, httpPort: 43123, startedAt: Date.now(), startedWithCliVersion: 'test',
+                controlToken: 'fixture-control-token', machineId: 'own-machine', accountId: 'owner' });
+            const actionId = 'mcp.servers.signIn.start';
+            const input = { serverId: 'fixture' };
+            const receipt = { attemptId: 'attempt', machineId: 'own-machine', authorizationUrl: 'https://issuer.fixture.test/authorize', expiresAtMs: 5000 };
+            const onApprovalRequested = vi.fn(async () => ({ ok: true as const,
+                result: { ok: true, status: 'executed', liveExecution: { ok: true, result: receipt } } }));
+            // Only the authenticated local daemon HTTP transport is substituted.
+            const ingress = vi.fn(async (url: unknown, options: RequestInit) => {
+                expect(String(url)).toBe('http://127.0.0.1:43123/actions/root/execute');
+                expect(JSON.parse(String(options.body))).toMatchObject({ actionId, input });
+                return Response.json({ ok: true, result: { kind: 'approval_request_created', actionId, artifactId: 'signed-root-approval' } });
+            });
+            vi.stubGlobal('fetch', ingress);
+            const executor = createCliActionExecutorFromCredentials({ credentials, externalActionClient: true,
+                serverId: configuration.activeServerId, serverIdentityId: 'srv_home', serverApiUrl: 'https://home.test',
+                machineId: 'own-machine', onApprovalRequested,
+                actionsSettingsProvider: { getActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1 }) } });
+            const result = method === 'execute' ? await executor.execute(actionId, input, { surface: 'cli' })
+                : await (async () => {
+                    const prepared = await executor.prepare(actionId, input, { surface: 'cli' });
+                    return prepared.kind === 'ready' ? await prepared.invocation.run() : prepared.result;
+                })();
+            expect(result).toEqual({ ok: true, result: receipt });
+            expect(onApprovalRequested).toHaveBeenCalledOnce();
+            expect(ingress).toHaveBeenCalledOnce();
+        });
+    });
 
     it('retains the canonical selector refusal when an explicit terminal Machine conflicts with the envelope', async () => {
         await withConfiguredDaemonTestHome({ prefix: 'happier-cli-terminal-selection-' }, async () => {
