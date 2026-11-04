@@ -3,6 +3,17 @@ import { createPlanetDots, createPlanetScene } from '@happier-dev/brand/planet';
 import { createPlanetCanvasSceneCache, snapCanvasBox } from './planetCanvasScene';
 
 describe('planet drawing input', () => {
+    it('retains sampled body and haze while outer glyphs advance through the brand field', () => {
+        const resolve = createPlanetCanvasSceneCache();
+        const options = { R: 120, cx: 160, cy: 90, view: { w: 390, h: 260 }, theme: 'dark', rate: 0.5 } as const;
+        const props = { options, width: 390, height: 260 };
+        const rest = resolve(props, 2);
+        const next = resolve({ ...props, options: { ...options, time: 6 } }, 2);
+        expect(next.body).toBe(rest.body);
+        expect(next.haze).toBe(rest.haze);
+        expect(next.cells).toEqual(createPlanetScene({ ...options, time: 6, dpr: 2 }).cells);
+        expect(next.cells).not.toEqual(rest.cells);
+    });
     it('preserves every lab scene dot and digit at the device pixel ratio', () => {
         const resolvePlanetCanvasScene = createPlanetCanvasSceneCache();
         const options = { R: 120, cx: 160, cy: 90, view: { w: 390, h: 260 }, theme: 'light', field: { overStyle: 'ink' } } as const;
