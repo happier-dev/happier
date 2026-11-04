@@ -13,6 +13,8 @@
  * issue immediately, while the confirming read after a local queue write bypasses this entry
  * entirely and stays immediate by construction.
  */
+import { fireAndForget } from '@/utils/system/fireAndForget';
+
 export const PENDING_SNAPSHOT_REFRESH_FLOOR_MS = 1_000;
 
 type TimerHandle = ReturnType<typeof setTimeout>;
@@ -51,7 +53,12 @@ export function createPendingSnapshotRefreshFloor(): Readonly<{
                 state.trailingReconcileTimer = setTimeout(() => {
                     const currentState = statesBySessionId.get(sessionId);
                     if (currentState) currentState.trailingReconcileTimer = null;
-                    void startReconcile(sessionId, reconcile);
+                    // fireAndForget mirrors the pre-floor caller's failure surface: a rejected
+                    // reconcile here must surface as a tagged error, not a bare unhandled
+                    // rejection from a timer the caller no longer awaits.
+                    fireAndForget(startReconcile(sessionId, reconcile), {
+                        tag: 'pendingSnapshotRefreshFloor.trailingReconcile',
+                    });
                 }, PENDING_SNAPSHOT_REFRESH_FLOOR_MS - (nowMs - state.lastReconcileStartedAtMs));
             }
             return Promise.resolve();

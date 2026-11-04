@@ -51,4 +51,26 @@ describe('createPendingSnapshotRefreshFloor', () => {
         await vi.advanceTimersByTimeAsync(PENDING_SNAPSHOT_REFRESH_FLOOR_MS + 100);
         expect(reconcile).toHaveBeenCalledTimes(3);
     });
+
+    it('surfaces a rejected trailing reconcile as a tagged error, not a bare unhandled rejection', async () => {
+        const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+        try {
+            const reconcile = vi.fn()
+                .mockResolvedValueOnce(undefined)
+                .mockRejectedValueOnce(new Error('owner route failed'));
+            const floor = createPendingSnapshotRefreshFloor();
+
+            await floor.sample('s-floor-reject', reconcile);
+            await floor.sample('s-floor-reject', reconcile);
+
+            await vi.advanceTimersByTimeAsync(PENDING_SNAPSHOT_REFRESH_FLOOR_MS + 100);
+            expect(reconcile).toHaveBeenCalledTimes(2);
+            expect(consoleError).toHaveBeenCalledWith(
+                '[fireAndForget] pendingSnapshotRefreshFloor.trailingReconcile',
+                expect.any(Error),
+            );
+        } finally {
+            consoleError.mockRestore();
+        }
+    });
 });
