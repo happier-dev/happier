@@ -29,7 +29,9 @@ export async function describeExecutionRunProtocolV2(
       method: RPC_METHODS.CAPABILITIES_DESCRIBE,
       request: {},
       ...(opts?.serverId ? { serverId: opts.serverId } : {}),
-      ...(opts ? { context: { ...opts, callerPermissionMode: opts.effectiveCallerPermissionMode } } : {}),
+      ...(opts ? { context: { ...opts, callerPermissionMode: opts.effectiveCallerPermissionMode,
+        ...(opts.workflowRunId ? { executionRunWorkflowRunId: opts.workflowRunId } : {}),
+      } } : {}),
       ...(opts?.externalActionExecutionAuthorization
         ? { effectActionId: opts.externalActionExecutionAuthorization.binding.actionId } : {}),
       ...(opts?.authority ? { authority: opts.authority } : {}),
