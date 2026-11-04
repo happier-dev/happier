@@ -4,13 +4,15 @@
 // file membership, as they exist in that tree rather than in the worktree. Reports only diagnostics
 // that the base tree does not already have.
 //
-//   node scripts/workspaces/checkCommitTypeCoherence.mjs --base=<rev> --tree=<tree-ish>
+//   ./apps/stack/bin/hstack-exec --local -- node scripts/workspaces/checkCommitTypeCoherence.mjs --base=<rev> --tree=<tree-ish>
 //   ... --base=<head> --tree=<private-tree> --message-file=<file>  (check, replay if needed, CAS commit)
-//   node scripts/workspaces/checkCommitTypeCoherence.mjs <commit>...     (each against its first parent)
+//   ./apps/stack/bin/hstack-exec --local -- node scripts/workspaces/checkCommitTypeCoherence.mjs <commit>...  (each against its first parent)
 //
 // Exit status: 0 coherent, 1 new diagnostics or unowned sources, 2 usage or runtime failure. It reads Git objects, so it
-// runs directly on the machine that owns the repository (`node scripts/workspaces/checkCommitTypeCoherence.mjs ...`).
-// The changed-source owner returns before loading compiler modules or entering compiler admission.
+// runs on the machine that owns the repository. TS packets require the local wrapper above:
+// the plain CLI loads compiler modules and Git blobs before its API launcher enters admission.
+// Zero-TS packets use plain `node scripts/workspaces/checkCommitTypeCoherence.mjs ...`:
+// the changed-source owner returns before compiler loading or admission, including finalization.
 // Every compiler API, including imported and plain Node calls, uses the executor's
 // canonical admission. Admitted parents retain their reservation for this phase.
 //
