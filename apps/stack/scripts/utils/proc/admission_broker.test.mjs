@@ -19,6 +19,43 @@ import { admitWorkerDiskBudget } from '../dev_targets/worker_disk_budget.mjs';
 
 const linux = { skip: process.platform !== 'linux' };
 
+test('measured validation floors admit concurrent focused work without a controller margin', linux, async t => {
+  const { resolveRemoteCommandPolicy, resolveHeavyweightMemoryFloorKiB } = await import('../dev_targets/remote_commands.mjs');
+  const repoRoot = fileURLToPath(new URL('../../../../../', import.meta.url));
+  const policy = resolveRemoteCommandPolicy(['vitest', 'run', 'sources/utils/path/resolvePathRelativeToRoot.test.ts'],
+    { repoRoot, cwd: join(repoRoot, 'apps/ui') });
+  const floorKiB = resolveHeavyweightMemoryFloorKiB(policy.heavyClass, { machine: 'local' });
+  const concurrentRuns = 3;
+  // Largest successful focused tree peak; owner Q1 rounds up without margin.
+  const measuredFloorKiB = Math.ceil(779072 / (1024 * 1024)) * 1024 * 1024;
+  const capacityKiB = concurrentRuns * measuredFloorKiB;
+  const readMemory = () => ({ availableMemoryKiB: capacityKiB, totalMemoryKiB: 64 * 1024 * 1024 });
+  const legacy = await fixture(t, { readMemory });
+  for (let index = 0; index < concurrentRuns; index++) {
+    // Historical controller minimum observed before this change.
+    await acquire(legacy.root, 8 * 1024 * 1024, t);
+  }
+  const legacySample = await request(legacy.root, { kind: 'sample' });
+  await legacySample.next();
+  legacySample.socket.destroy();
+  assert.equal(legacy.broker.status().activeCount, 0);
+  assert.equal(legacy.broker.status().waitingCount, concurrentRuns);
+  const { root, broker } = await fixture(t, {
+    readMemory,
+  });
+  for (let index = 0; index < concurrentRuns; index++) {
+    const client = await acquire(root, floorKiB, t);
+    const sample = await request(root, { kind: 'sample' });
+    await sample.next();
+    sample.socket.destroy();
+    assert.equal(broker.status().waitingCount, 0, 'fitting focused work must not queue behind its own oversized floor');
+    await client.admit();
+  }
+  assert.equal(broker.status().activeCount, concurrentRuns);
+  assert.equal(broker.status().waitingCount, 0);
+  assert.equal(broker.status().reservedMemoryKiB, concurrentRuns * floorKiB);
+});
+
 test('a waiting client can reuse its priority after a reserved publication is unwound before payload admission', linux, async t => {
   const { root } = await fixture(t);
   const locks = [{ path: join(root, 'publication.lock') }];

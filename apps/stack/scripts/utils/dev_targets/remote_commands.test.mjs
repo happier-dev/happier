@@ -260,10 +260,23 @@ test('source web export classification reserves its measured process-tree envelo
     assert.ok(policy.heavyClass, 'the finite export must have a declared envelope');
     const required = commandPolicy.resolveHeavyweightMemoryFloorKiB(policy.heavyClass);
     assert.ok(required > commandPolicy.resolveHeavyweightMemoryFloorKiB('validation'),
-      'the export must not inherit the unrelated 6 GiB suite budget');
+      'the export must not inherit the unrelated suite budget');
     // nl1 cold export at its admitted CPU allowance (47 transform threads),
     // sampled from the enclosing process independently of Metro's event loop.
-    assert.equal(required, Math.ceil((32907788 + 1608848) / (1024 * 1024)) * 1024 * 1024);
+    // Owner Q1: recorded peak rounded up, with no blanket margin. The
+    // completed 2026-10-30 export (11,723,928 KiB live-tree HWM) fits below
+    // the retained eight-thread peak; explicit 47-thread callers retain theirs.
+    assert.equal(required, Math.ceil(32907788 / (1024 * 1024)) * 1024 * 1024);
+    for (const [workers, peakKiB] of [[1, 8236000], [8, 12711296], [47, 32907788]]) {
+      const roundedKiB = Math.ceil(peakKiB / (1024 * 1024)) * 1024 * 1024;
+      assert.equal(commandPolicy.resolveHeavyweightMemoryFloorKiB(policy.heavyClass, { workers }), roundedKiB);
+      if (process.platform !== 'win32') {
+        const native = spawnSync('/bin/sh', ['-c', '. "$1"; heavyweight_memory_floor_kib "$2" worker "$3"',
+          'policy', artifact, policy.heavyClass, String(workers)], { encoding: 'utf8' });
+        assert.equal(native.status, 0, native.stderr);
+        assert.equal(Number(native.stdout), roundedKiB);
+      }
+    }
     assert.equal(commandPolicy.resolveHeavyweightMemoryFloorKiB('source-bundle'), 10 * 1024 * 1024,
       'runtime source bundles retain their independently measured envelope');
     if (process.platform !== 'win32') {
@@ -608,25 +621,26 @@ test('host and first-party plugin source Vitest skip emitted publication while r
   const root = fileURLToPath(new URL('../../../../../', import.meta.url)).replace(/\/$/u, '');
   const artifact = fileURLToPath(new URL('./native_command_policy.sh', import.meta.url));
   assert.equal(readFileSync(artifact, 'utf8'), renderNativeCommandPolicy());
-  for (const component of ['apps/server', 'packages/cli-common', 'packages/sdk', 'packages/channels-protocol', 'packages/email-transports-protocol', 'packages/plugins/channels', 'packages/plugins/channel-email', 'packages/plugins/channel-telegram', 'packages/plugins/channel-discord', 'packages/plugins/scm-github', 'packages/plugins/scm-gitlab', 'packages/plugins/app-context', 'packages/plugins/inspector']) {
+  for (const component of ['apps/server', 'packages/cli-common', 'packages/sdk', 'packages/embed', 'packages/channels-protocol', 'packages/email-transports-protocol', 'packages/plugins/channels', 'packages/plugins/channel-email', 'packages/plugins/channel-telegram', 'packages/plugins/channel-discord', 'packages/plugins/scm-github', 'packages/plugins/scm-gitlab', 'packages/plugins/app-context', 'packages/plugins/inspector']) {
     const args = ['node', 'node_modules/vitest/vitest.mjs', 'run', '--config', 'vitest.config.ts', 'src/ingress.test.ts'];
     const cases = [
-      { args, kind: 'source-test' },
+      { args, kind: 'source-test', heavyClass: component === 'packages/plugins/channels' ? 'focused-validation' : 'validation' },
       ...['--config=vitest.integration.config.ts', '--root=../other', '--workspace=custom.workspace.ts', '--project=artifact']
         .map(override => ({ args: [...args, override], kind: component === 'apps/server' && override === '--config=vitest.integration.config.ts' ? 'source-test' : 'runtime' })),
       ...(component === 'apps/server' ? [{
         args: ['--script=vitest:local', 'run', '--isolate', '-c', 'vitest.config.ts', 'sources/app/api/socket/externalActionDispatcher.test.ts'],
         kind: 'source-test',
+        heavyClass: 'focused-validation',
       }] : []),
     ];
-    for (const { args, kind } of cases) {
+    for (const { args, kind, heavyClass = 'validation' } of cases) {
       const policy = resolveRemoteCommandPolicy(args, { repoRoot: root, cwd: join(root, component) });
       assert.equal(policy.kind, kind);
-      assert.equal(policy.heavyClass, 'validation');
+      assert.equal(policy.heavyClass, heavyClass);
       if (process.platform !== 'win32') {
         const native = spawnSync('/bin/sh', ['-c', '. "$1"; repo_root=$2; invoked_cwd=$2/$3; shift 3; resolve_native_command_policy "$@"; printf "%s,%s" "$policy_kind" "$policy_heavyClass"', 'policy', artifact, root, component, ...args], { encoding: 'utf8' });
         assert.equal(native.status, 0, native.stderr);
-        assert.equal(native.stdout, `${kind},validation`);
+        assert.equal(native.stdout, `${kind},${heavyClass}`);
       }
     }
   }
@@ -2938,4 +2952,218 @@ test('policy CLI resolves a CLI package typecheck whose policy imports modules t
   const result = spawnSync(process.execPath, [cli, '--package-policy', root, join(root, 'apps/cli'), 'pnpm', 'run', 'typecheck'], { encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /^policy_kind='typecheck'$/mu);
+});
+
+test('focused source validation uses its measured shape while compiler and suite demand retain their floor', async t => {
+  const repoRoot = fileURLToPath(new URL('../../../../../', import.meta.url));
+  const fixture = await createTempFixture(t, { prefix: 'focused-validation-policy-' });
+  const artifact = fixture.path('policy.sh');
+  await writeFile(artifact, renderNativeCommandPolicy());
+  for (const [component, tail, expected] of [
+    ['apps/ui', ['sources/utils/path/resolvePathRelativeToRoot.test.ts'], 'focused-validation'],
+    ['apps/cli', ['src/utils/path/expandHomeDirPath.test.ts'], 'focused-validation'],
+    ['apps/server', ['sources/app/session/turns/parseSessionTurnState.test.ts'], 'focused-validation'],
+    ['packages/channels-protocol', ['src/v1/text.test.ts'], 'focused-validation'],
+    ['packages/support', [], 'validation'],
+    ['apps/ui', ['sources/utils/path'], 'validation'],
+    ['apps/ui', ['--testNamePattern', 'sources/utils/path/resolvePathRelativeToRoot.test.ts'], 'compilation'],
+    ['apps/ui', ['sources/utils/path/missing.test.ts'], 'validation'],
+    ['apps/server', ['--config', 'vitest.config.ts', '--config', 'vitest.integration.config.ts',
+      'sources/app/session/turns/parseSessionTurnState.test.ts'], 'validation'],
+    ['apps/ui', ['--config', 'vitest.config.ts', '--config', 'vitest.config.ts',
+      'sources/utils/path/resolvePathRelativeToRoot.test.ts'], 'compilation'],
+    ['packages/channels-protocol', ['src/sdkSchemaClosure.test.ts'], 'compilation'],
+    ['apps/cli', ['--config', 'vitest.integration.config.ts', 'src/utils/path/expandHomeDirPath.test.ts'], 'compilation'],
+  ]) await t.test(`${component} ${tail.join(' ') || 'suite'}`, async () => {
+    const args = ['pnpm', '--dir', component, 'exec', 'vitest', 'run', ...tail];
+    const policy = await commandPolicy.resolvePackageCommandPolicy(args, { repoRoot, cwd: repoRoot });
+    assert.equal(policy.heavyClass, expected);
+    const floor = commandPolicy.resolveHeavyweightMemoryFloorKiB(policy.heavyClass);
+    assert.equal(commandPolicy.resolveHeavyweightMemoryFloorKiB(policy.heavyClass, { machine: 'local' }), floor);
+    if (expected === 'compilation') {
+      assert.ok(floor > commandPolicy.resolveHeavyweightMemoryFloorKiB('validation'),
+        'a selected compiler consumer still reserves its containing compiler workload');
+    }
+    if (process.platform === 'win32') return;
+    const native = spawnSync('/bin/sh', ['-c', '. "$1"; repo_root=$2; invoked_cwd=$2; shift 2; resolve_native_command_policy "$@"; printf "%s" "$policy_heavyClass"',
+      'policy', artifact, repoRoot, ...args], { encoding: 'utf8' });
+    assert.equal(native.status, 0, native.stderr);
+    assert.equal(native.stdout, expected);
+  });
+  await t.test('entry loads retain their larger measured process-tree peak', async () => {
+    const args = ['node', 'apps/stack/scripts/perf/entry-load.mjs'];
+    const policy = await commandPolicy.resolvePackageCommandPolicy(args, { repoRoot, cwd: repoRoot });
+    assert.equal(policy.heavyClass, 'entry-loads');
+    // Successful loaded run: validation-floor-sizing-1104/measure.log.
+    assert.ok(commandPolicy.resolveHeavyweightMemoryFloorKiB(policy.heavyClass) >= 2309808);
+    if (process.platform === 'win32') return;
+    const native = spawnSync('/bin/sh', ['-c', '. "$1"; repo_root=$2; invoked_cwd=$2; shift 2; resolve_native_command_policy "$@"; printf "%s" "$policy_heavyClass"',
+      'policy', artifact, repoRoot, ...args], { encoding: 'utf8' });
+    assert.equal(native.status, 0, native.stderr);
+    assert.equal(native.stdout, policy.heavyClass);
+  });
+  await t.test('public focused package aliases consume the selected payload floor', async () => {
+    const policy = await commandPolicy.resolvePackageCommandPolicy(
+      ['pnpm', '--dir', 'packages/channels-protocol', 'test', 'src/v1/text.test.ts'], { repoRoot, cwd: repoRoot });
+    assert.equal(policy.heavyClass, 'focused-validation');
+  });
+});
+
+test('focused test selections reserve compilation only for compiler files or compiler setup', async t => {
+  const root = fileURLToPath(new URL('../../../../../', import.meta.url));
+  const fixture = await createTempFixture(t, { prefix: 'focused-compiler-policy-' });
+  const artifact = fixture.path('policy.sh');
+  await writeFile(artifact, renderNativeCommandPolicy());
+  for (const [component, tail, expected] of [
+    ['apps/ui', ["sources/components/settings/teams/credentials/TeamCredentialExternalApiScreen.test.tsx"], 'focused-validation'],
+    ['apps/cli', ['src/api/artifacts/accountArtifactStore.test.ts', '-t', 'x'], 'focused-validation'],
+    ['apps/ui', ['sources/utils/path/pathUtils.spec.ts'], 'focused-validation'],
+    ['apps/ui', ['sources/components/plain.test.tsx'], 'validation'],
+    ['apps/cli', ['scripts/build.test.ts'], 'compilation'],
+    ['apps/cli', ['src/api/artifacts/accountArtifactStore.test.ts', 'scripts/build.test.ts', '-t', 'x'], 'compilation'],
+    ['apps/ui', ['sources/text/declarationEmission.test.ts'], 'compilation'],
+    ['apps/ui', ['declarationEmission'], 'compilation'],
+    ['apps/ui', ['declarationemission'], 'compilation'],
+    ['apps/ui', [join(root, 'apps/ui/sources/text/declarationEmission.test.ts')], 'compilation'],
+    ['apps/ui', ['../ui/sources/text/declarationEmission.test.ts'], 'compilation'],
+    ['apps/ui', [root], 'compilation'],
+    ['apps/ui', [root.split('/').filter(Boolean).at(-1)], 'validation'],
+    ['apps/ui', ['sources/utils/path'], 'validation'],
+    ['apps/ui', ['sources/utils/path/pathUtils.spec.ts', '-t', 'declarationEmission.test.ts'], 'focused-validation'],
+    ['apps/ui', ['-t', 'pathUtils.spec.ts'], 'compilation'],
+    ['packages/plugin-sdk', ['--config', 'vitest.source.config.ts', 'src/plain.test.ts'], 'validation'],
+    ['packages/plugin-sdk', ['src/plain.test.ts'], 'validation'],
+    ['packages/plugin-sdk', ['--config', 'vitest.source.config.ts', 'src/definePlugin.externalFixture.test.ts'], 'compilation'],
+    ['packages/plugin-sdk', ['src/publicDeclarations.externalFixture.test.ts'], 'compilation'],
+    ['packages/protocol', ['src/plain.test.ts'], 'validation'],
+    ['packages/protocol', ['--config', '../../vitest.config.ts', 'src/plain.test.ts'], 'validation'],
+    ['packages/cli-common', ['src/plain.test.ts'], 'validation'],
+    ['packages/channels-protocol', ['src/plain.test.ts'], 'validation'],
+    ['packages/triage-protocol', ['src/plain.test.ts'], 'compilation'],
+    ['apps/cli', ['--config', 'vitest.integration.config.ts', 'src/plain.integration.test.ts'], 'compilation'],
+    ['apps/cli', ['--config', 'vitest.inMemory.config.ts', 'src/plain.test.ts'], 'validation'],
+  ]) await t.test(`${component} ${tail.join(' ')}`, async () => {
+    const args = ['pnpm', '--dir', component, 'exec', 'vitest', 'run', ...tail];
+    const policy = await commandPolicy.resolvePackageCommandPolicy(args, { repoRoot: root, cwd: root });
+    assert.equal(policy.heavyClass, expected);
+    if (process.platform === 'win32') return;
+    const native = spawnSync('/bin/sh', ['-c', '. "$1"; repo_root=$2; invoked_cwd=$2; shift 2; resolve_native_command_policy "$@"; printf "%s" "$policy_heavyClass"',
+      'policy', artifact, root, ...args], { encoding: 'utf8' });
+    assert.equal(native.status, 0, native.stderr);
+    assert.equal(native.stdout, expected);
+  });
+});
+
+test('CLI integration skips publication and compilation admission only when setup skips its builds', async t => {
+  const root = fileURLToPath(new URL('../../../../../', import.meta.url));
+  const cwd = join(root, 'apps/cli');
+  const fixture = await createTempFixture(t, { prefix: 'hstack-cli-source-policy-' });
+  const artifact = fixture.path('policy.sh');
+  await writeFile(artifact, renderNativeCommandPolicy());
+  const args = ['pnpm', 'exec', 'vitest', 'run', '--config', 'vitest.integration.config.ts',
+    'src/plugins/authoring/bundleDaemonRuntime.integration.test.ts', '-t', 'installs the maintained Store kind'];
+  for (const value of ['', 'false', '1', 'true', ' YES ']) {
+    const skipped = ['1', 'true', ' YES '].includes(value);
+    const env = { ...process.env, HAPPIER_CLI_TEST_SKIP_BUILD: value };
+    await t.test(value || 'unset', async () => {
+      const policy = resolveRemoteCommandPolicy(args, { cwd, env });
+      assert.equal(policy.kind, skipped ? 'source-test' : 'runtime');
+      assert.equal(policy.heavyClass, skipped ? 'focused-validation' : 'compilation');
+      if (skipped) {
+        assert.equal(policy.workspaceLock, '');
+        const preparation = await (await import('./remote_validation_preparation.mjs')).prepareRemoteValidationWorkspace({
+          repoDir: fixture.root, componentRelativeDir: policy.component,
+          // Native custody has its real preflight in the composed replay;
+          // this isolated boundary proves the workspace-publication skip.
+          validationKind: policy.kind,
+        });
+        assert.deepEqual(preparation.skipped, ['workspace-source-test']);
+      }
+      if (process.platform === 'win32') return;
+      const native = spawnSync('/bin/sh', ['-c',
+        '. "$1"; repo_root=$2; invoked_cwd=$2/apps/cli; shift 2; resolve_native_command_policy "$@" || exit $?; printf "%s,%s,%s" "$policy_kind" "$policy_heavyClass" "$policy_workspaceLock"',
+        'policy', artifact, root, ...args], { encoding: 'utf8', env });
+      assert.equal(native.status, 0, native.stderr);
+      assert.equal(native.stdout, `${policy.kind},${policy.heavyClass},${policy.workspaceLock}`);
+    });
+  }
+  for (const override of ['--root=../ui', '--workspace=other.ts', '--config=unknown.config.ts']) {
+    const policy = resolveRemoteCommandPolicy([...args, override], {
+      cwd, env: { ...process.env, HAPPIER_CLI_TEST_SKIP_BUILD: '1' },
+    });
+    assert.equal(policy.kind, 'runtime', override);
+  }
+  // Skipping setup does not skip compilers invoked by selected test bodies.
+  for (const selection of [[], ['src/plugins/scaffold/scaffold.integration.test.ts']]) {
+    const compilerArgs = [...args.slice(0, 6), ...selection];
+    const env = { ...process.env, HAPPIER_CLI_TEST_SKIP_BUILD: '1' };
+    const policy = resolveRemoteCommandPolicy(compilerArgs, { cwd, env });
+    assert.equal(policy.kind, 'source-test');
+    assert.equal(policy.heavyClass, 'compilation', selection.join(' ') || 'whole integration suite');
+    if (process.platform === 'win32') continue;
+    const native = spawnSync('/bin/sh', ['-c',
+      '. "$1"; repo_root=$2; invoked_cwd=$2/apps/cli; shift 2; resolve_native_command_policy "$@" || exit $?; printf "%s,%s" "$policy_kind" "$policy_heavyClass"',
+      'policy', artifact, root, ...compilerArgs], { encoding: 'utf8', env });
+    assert.equal(native.status, 0, native.stderr);
+    assert.equal(native.stdout, 'source-test,compilation');
+  }
+});
+
+test('Forge CI exact source Vitest command skips package-dist preparation in both dispatchers', async t => {
+  const root = fileURLToPath(new URL('../../../../../', import.meta.url));
+  const cwd = join(root, 'packages/forge-ci');
+  const args = ['pnpm', 'exec', 'vitest', 'run', '--config', 'vitest.config.ts', 'src/ui/mountedCiIntent.test.ts'];
+  const policy = await commandPolicy.resolvePackageCommandPolicy(args, { repoRoot: root, cwd });
+  t.diagnostic(`Forge command classification: ${policy.kind}; placement: ${policy.placementHeavyClass || policy.heavyClass}`);
+  assert.equal(policy.kind, 'source-test');
+  assert.equal(policy.heavyClass, 'focused-validation');
+  assert.ok(!policy.placementHeavyClass || policy.placementHeavyClass === 'focused-validation');
+  const fixture = await createTempFixture(t, { prefix: 'forge-ci-source-policy-' });
+  const { prepareRemoteValidationWorkspace } = await import('./remote_validation_preparation.mjs');
+  const prepared = await prepareRemoteValidationWorkspace({
+    repoDir: fixture.root, componentRelativeDir: policy.component,
+    validationKind: policy.kind, requiredTools: policy.requiredTools,
+  });
+  assert.deepEqual(prepared.built, []);
+  assert.deepEqual(prepared.skipped, ['workspace-source-test']);
+  if (process.platform === 'win32') return;
+  const artifact = fixture.path('policy.sh');
+  await writeFile(artifact, renderNativeCommandPolicy());
+  const native = spawnSync('/bin/sh', ['-c', '. "$1"; repo_root=$2; invoked_cwd=$3; shift 3; resolve_native_command_policy "$@"; printf "%s,%s" "$policy_kind" "$policy_heavyClass"',
+    'policy', artifact, root, cwd, ...args], { encoding: 'utf8' });
+  assert.equal(native.status, 0, native.stderr);
+  assert.equal(native.stdout, 'source-test,focused-validation');
+  for (const override of ['--config=vitest.integration.config.ts', '--root=../other', '--workspace=custom.workspace.ts', '--project=artifact']) {
+    assert.equal(resolveRemoteCommandPolicy([...args, override], { repoRoot: root, cwd }).kind, 'runtime', override);
+    const overridden = spawnSync('/bin/sh', ['-c', '. "$1"; repo_root=$2; invoked_cwd=$3; shift 3; resolve_native_command_policy "$@"; printf "%s" "$policy_kind"',
+      'policy', artifact, root, cwd, ...args, override], { encoding: 'utf8' });
+    assert.equal(overridden.status, 0, overridden.stderr);
+    assert.equal(overridden.stdout, 'runtime', override);
+  }
+});
+
+test('measured native workload reservations round the recorded peak without a blanket margin', async t => {
+  // SYSTEMIC-DELETE owner Q1 (2026-10-29): measured peak, rounded up.
+  // Retained evidence: SYSTEMIC-DELETE/step10-native-source-test-measurement.log
+  // and step10-dependency-install-topological-setup-measurement.log;
+  // entry-loads-footprint-1029/measure-v{2,4}.log; custody cold raw
+  // .project/tmp/validation-cost-1024-go-cold-corrected.jsonl, SUMMARY.
+  for (const [className, peakKiB] of [
+    ['native-source-test', 103824],
+    ['native-custody', 366000],
+    ['dependency-install', 2374684],
+    ['validation', 1824752],
+    // validation-floor-sizing-1104/measurements.json, loaded Linux workers.
+    ['focused-validation', 779072],
+    ['entry-loads', 2361852],
+  ]) {
+    await t.test(className, () => {
+      const expectedKiB = Math.ceil(peakKiB / (1024 * 1024)) * 1024 * 1024;
+      assert.equal(commandPolicy.resolveHeavyweightMemoryFloorKiB(className), expectedKiB, className);
+      if (process.platform === 'win32') return;
+      const native = spawnSync('/bin/sh', ['-c', `${renderNativeCommandPolicy()}\nheavyweight_memory_floor_kib "$1"`, 'floor', className], { encoding: 'utf8' });
+      assert.equal(native.status, 0, native.stderr);
+      assert.equal(Number(native.stdout), expectedKiB, className);
+    });
+  }
 });

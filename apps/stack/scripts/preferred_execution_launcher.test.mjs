@@ -362,15 +362,16 @@ syncBuiltinESMExports();
   const insufficient = invoke(uiFloorKiB - 1, ['--allow-local-compilation'], { CI: '1' });
   assert.equal(insufficient.status, 1, insufficient.stderr);
   assert.equal(insufficient.stdout, '');
-  assert.match(insufficient.stderr, new RegExp(`insufficient memory capacity.*compilation-ui.*requires=${uiFloorKiB}`));
+  assert.match(insufficient.stderr, /HSTACK_MEMORY_CAPACITY/);
   const admitted = invoke(40 * 1024 * 1024, ['--allow-local-compilation'], { CI: '1' });
   assert.equal(admitted.status, 7, admitted.stderr);
   assert.equal(admitted.stdout, 'compiler-started\n');
   assert.deepEqual(JSON.parse(await readFile(parentState, 'utf8')), { admitted: false },
     'only the producer and compiler leaf may admit this mixed package lifecycle');
-  const localFloor = invoke(7 * 1024 * 1024, ['--allow-local-compilation'], {}, ['apps/stack/bin/hstack-exec', '--heavyweight-admission', '--class=package-dist', '--', 'node', '-e', '']);
-  assert.equal(localFloor.status, 1, localFloor.stderr);
-  assert.match(localFloor.stderr, /insufficient memory capacity.*requires=8388608/);
+  const packageFloorKiB = resolveHeavyweightMemoryFloorKiB('package-dist');
+  const localFloor = invoke(packageFloorKiB - 1, ['--allow-local-compilation'], {}, ['apps/stack/bin/hstack-exec', '--heavyweight-admission', '--class=package-dist', '--', 'node', '-e', '']);
+  assert.equal(localFloor.status, 75, localFloor.stderr);
+  assert.match(localFloor.stderr, /HSTACK_MEMORY_CAPACITY/);
 });
 
 test('worker disk admission rejects an exhausted write filesystem before starting payload', async t => {
@@ -2127,8 +2128,7 @@ test('compilation capacity target admission rejects a physically undersized mach
       const result = spawnSync('/bin/sh', args, { ...invocation, env: { ...invocation.env, CI: ci }, timeout: 10_000 });
       assert.equal(result.status, 1, result.stderr);
       assert.equal(result.stdout, '');
-      assert.match(result.stderr, new RegExp(`memory capacity.*compilation.*${resolveHeavyweightMemoryFloorKiB('compilation')}`));
-      assert.match(result.stderr, /route remotely/);
+      assert.match(result.stderr, /HSTACK_MEMORY_CAPACITY/);
     }
   }
 });

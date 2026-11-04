@@ -18,6 +18,12 @@ import { resolveCliPublicationBuildSteps } from '../../../../cli/scripts/buildPu
 import { sourceWebExportDiagnosticEnv } from '../../build/sourceWebExportArgs.mjs';
 import { resolveExpoExportWorkers } from '../expo/exportWorkers.mjs';
 
+import { isCliTestBuildSkipped } from '../../../../cli/scripts/vitestPreparation.mjs';
+import { readVitestSourcePreparation } from './vitest_config_preparation.mjs';
+import { COMPILER_TEST_SUITES, readVitestFileFilters, refineCompilerSuiteSelection } from './compiler_test_suites.mjs';
+import { HEAVYWEIGHT_COMMAND_RESOURCES, LEGACY_VALIDATION_ADMISSION_CLASSES, SOURCE_WEB_EXPORT_MEMORY as EXPORT_MEMORY } from './command_resources.mjs';
+export { HEAVYWEIGHT_COMMAND_RESOURCES, LEGACY_VALIDATION_ADMISSION_CLASSES } from './command_resources.mjs';
+
 // Both dispatchers evaluate this policy. The native artifact is generated once,
 // while argv and path normalization remain thin transport adapters.
 // The native transport and controller coalescer consume this same projection.
@@ -42,6 +48,7 @@ export const REMOTE_COMMAND_CLASSIFICATION = Object.freeze({
   packageManagerCommands: Object.freeze(['npm', 'npx', 'pnpm', 'yarn']),
   sourceTestComponents: Object.freeze(['apps/cli', 'apps/ui', 'apps/server', 'packages/cli-common', 'packages/sdk', 'packages/plugin-ui', 'packages/plugins/triage', 'packages/channels-protocol', 'packages/email-transports-protocol', 'packages/plugins/channels', 'packages/plugins/channel-email', 'packages/plugins/channel-telegram', 'packages/plugins/channel-discord', 'packages/plugins/scm-github', 'packages/plugins/scm-gitlab', 'packages/plugins/app-context', 'packages/plugins/inspector', 'packages/plugins/linear', 'packages/plugins/jira', 'packages/plugins/sentry', 'packages/plugins/posthog', 'packages/plugins/claude']),
   sourceTestConfigs: Object.freeze(['vitest.config.ts']),
+  compilerTestSuites: COMPILER_TEST_SUITES,
   // Server Vitest lanes share the workspace-source resolver. Derive their
   // configs from the package so specialized lanes also skip dist publication.
   serverSourceTestConfigs: Object.freeze(readdirSync(new URL('../../../../../apps/server/', import.meta.url))
@@ -63,6 +70,7 @@ const DEFAULT_COMMAND_POLICY = Object.freeze({
   generator: '0', generatorCheck: '0', componentFromNative: '0',
   localCompile: '0', requiredTools: '', selfPublisher: '0', compilerLeaf: '0', workspaceLock: '',
   preparationBuildMode: 'strict',
+  compilerSuite: '0',
 });
 const validation = { validation: '1', bootstrap: '1', heavyClass: 'validation' };
 // Available-memory envelopes, not process limits or fixed concurrency slots.
@@ -91,37 +99,8 @@ const validation = { validation: '1', bootstrap: '1', heavyClass: 'validation' }
 // declaration pass was OOM-killed on linux2 at 12,356,912 KiB anonymous RSS.
 // The larger current tree plus the existing 1,608,848 KiB measured headroom
 // is 10,269,176 KiB, rounded up to 10 GiB.
-// 2026-10-23 nl1 Linux x64 cold source-web export, maxWorkers=1: whole-tree
-// VmRSS peak 7,699,992 KiB; live-descendant VmHWM sum 8,236,000 KiB, sampled
-// every second (largest interval 1,317 ms). Peak occurred in Metro's
-// serialization tail, with 75,349,720 KiB host MemAvailable. The larger
-// VmHWM sum + the same 1,608,848 KiB headroom = 9,844,848 KiB, rounded up
-// to 10 GiB; the serial export fit the source-bundle envelope.
-// 2026-10-23 nl1 Linux x64 export at the executor's observed GOMAXPROCS=47:
-// the enclosing sampler measured 32,907,788 KiB concurrent process-tree RSS
-// (2,139 samples, largest interval 1,012 ms, no unreadable processes).
-// Add the same 1,608,848 KiB headroom: 34,516,636 KiB, rounded up to 33 GiB.
-// Keep web export separate from the smaller measured runtime source bundles.
-// These observations do not certify a maximum for larger CPU allowances.
-const HEAVYWEIGHT_MEMORY_KIB = Object.freeze({
-  validation: 6291456,
-  // 2026-10-12 Linux native policy fixture: runner + test VmHWM sum 111,684
-  // KiB. Reuse the existing measured 1,608,848 KiB headroom and round up to
-  // whole GiB. Only one proven built-in/source-only file receives this class;
-  // emitted imports, loaders, subprocesses and whole suites keep their class.
-  'native-source-test': 2 * 1024 * 1024,
-  'source-bundle': 10 * 1024 * 1024,
-  'source-web-export': 33 * 1024 * 1024,
-  'dependency-install': 6291456,
-  'package-dist': 6291456,
-  'runtime-build': 18874368,
-  compilation: 20 * 1024 * 1024,
-  'compilation-ui': 20 * 1024 * 1024,
-  'compilation-cli': 15 * 1024 * 1024,
-  'compilation-server': 16 * 1024 * 1024,
-});
-const HEAVYWEIGHT_COMPILE_CLASSES = ['compilation', 'compilation-ui', 'compilation-cli', 'compilation-server', 'package-dist', 'runtime-build'];
-export const SOURCE_WEB_EXPORT_ADMISSION_CLASS = 'source-web-export';
+// These historical source/runtime/compilation classes and package-dist are not Q1-complete:
+// removing their legacy margin still needs successful class calibration.
 
 // 2026-10-23 nl1 Linux x64 cold exports: one thread's conservative live-tree
 // VmHWM sum was 8,236,000 KiB; 47 threads' concurrent RSS peak was 32,907,788
@@ -133,10 +112,15 @@ export const SOURCE_WEB_EXPORT_ADMISSION_CLASS = 'source-web-export';
 // RSS rather than assuming cold is always larger. Both are off the endpoint
 // line, so interpolate piecewise through that measured knot. Moving source
 // and CPU allowances differ; these are estimates, not certified maxima.
-// Retain exactly the existing headroom and rational slopes for GiB edges.
-const EXPORT_MEMORY = Object.freeze({ serialKiB: 8236000, parallelKiB: 32907788,
-  intermediateKiB: 12711296, intermediateThreads: 8, parallelThreads: 47,
-  headroomKiB: 1608848, gibKiB: 1024 * 1024 });
+// 2026-10-30 completed finite export: RSS 11,316,692/live-HWM 11,723,928 KiB,
+// 105,073 all-task snapshots, zero unreadable processes; SYSTEMIC-DELETE/
+// step10-continuation-six-source-web-export-measurement.log. Keep the larger
+// recorded peaks above and round without a blanket margin (owner Q1).
+const HEAVYWEIGHT_MEMORY_KIB = Object.freeze(Object.fromEntries(
+  Object.entries(HEAVYWEIGHT_COMMAND_RESOURCES).map(([name, resource]) => [name, resource.memoryKiB])));
+const HEAVYWEIGHT_COMPILE_CLASSES = ['compilation', 'compilation-ui', 'compilation-cli', 'compilation-server', 'package-dist', 'runtime-build', 'native-custody'];
+export const SOURCE_WEB_EXPORT_ADMISSION_CLASS = 'source-web-export';
+
 function exportMemorySegment(startThreads, startKiB, endThreads, endKiB) {
   const denominator = endThreads - startThreads;
   const numerator = endKiB - startKiB;
@@ -147,20 +131,26 @@ const EXPORT_MEMORY_SEGMENTS = [
   exportMemorySegment(EXPORT_MEMORY.intermediateThreads, EXPORT_MEMORY.intermediateKiB, EXPORT_MEMORY.parallelThreads, EXPORT_MEMORY.parallelKiB),
 ];
 
-// The primary VM's browser/agent workloads pause below 8 GiB MemAvailable
-// (2026-10-06 observation). Worker envelopes remain class-owned; only local
-// admission raises smaller envelopes to this measured controller floor.
-const LOCAL_HEAVYWEIGHT_MEMORY_FLOOR_KIB = 8 * 1024 * 1024;
-
-export function resolveHeavyweightMemoryFloorKiB(className, { machine = 'worker', workers } = {}) {
+export function resolveHeavyweightMemoryFloorKiB(className, { workers } = {}) {
   const segment = EXPORT_MEMORY_SEGMENTS[workers <= EXPORT_MEMORY.intermediateThreads ? 0 : 1];
   const floor = className === SOURCE_WEB_EXPORT_ADMISSION_CLASS && Number.isSafeInteger(workers) && workers > 0
-    ? Math.ceil((segment.baseNumerator + segment.numerator * workers + EXPORT_MEMORY.headroomKiB * segment.denominator)
+    ? Math.ceil((segment.baseNumerator + segment.numerator * workers)
       / (segment.denominator * EXPORT_MEMORY.gibKiB)) * EXPORT_MEMORY.gibKiB
     : HEAVYWEIGHT_MEMORY_KIB[className] ?? HEAVYWEIGHT_MEMORY_KIB.compilation;
-  return machine === 'local' ? Math.max(floor, LOCAL_HEAVYWEIGHT_MEMORY_FLOOR_KIB) : floor;
+  return floor;
 }
+function largestHeavyweightClass(...classes) {
+  return classes.filter(Boolean).reduce((largest, candidate) => !largest
+    || resolveHeavyweightMemoryFloorKiB(candidate) > resolveHeavyweightMemoryFloorKiB(largest) ? candidate : largest, '');
+}
+
 const COMMAND_RULES = [
+  // Serial entry graphs have their own measured envelope. SDK preparation
+  // still retains the controller compilation guard.
+  { when: { command: ['node', 'nodejs'], nativeTest: ['0'],
+    entryRepositoryPath: ['apps/stack/scripts/perf/entry-load.mjs'] },
+    set: { ...validation, kind: 'source-test', componentOverride: 'apps/stack', localCompile: '1', heavyClass: 'entry-loads' } },
+
   { when: { hasScript: ['1'] }, set: { bootstrap: '1' } },
   { when: { command: ['git'] }, set: { placement: 'primary-only', commandClass: 'vcs-authority' } },
   { when: { command: ['find', 'grep', 'rg'] }, set: { commandClass: 'source-search' } },
@@ -327,7 +317,7 @@ const FINAL_COMMAND_RULES = [
   ...Object.keys(HEAVYWEIGHT_MEMORY_KIB).map(heavyClass => ({
     when: { admissionWrapper: ['1'], admissionClass: [heavyClass] }, set: { heavyClass },
   })),
-  { when: { admissionWrapper: ['1'], admissionClass: ['targeted-validation', 'full-validation'] }, set: { heavyClass: 'validation' } },
+  { when: { admissionWrapper: ['1'], admissionClass: LEGACY_VALIDATION_ADMISSION_CLASSES }, set: { heavyClass: 'validation' } },
   // CLI unit aliases use the same source resolver as direct Vitest. Runtime
   // preparation would build the emitted closure and escalate their parent
   // validation reservation for the rest of the test run.
@@ -338,15 +328,18 @@ const FINAL_COMMAND_RULES = [
   // lease before the payload. Retaining it through tests prevents a nested
   // compiler from waiting for its legitimate larger resource envelope.
   { when: { kind: ['source-test'], component: ['apps/cli'], workerTool: ['vitest'] }, set: { workspaceLock: '' } },
-  // The complete source-unit lane executes real compiler owners. Explicit
-  // file requests retain validation; compiler-consuming focused requests use
-  // the existing explicit admission-class wrapper, not a filename registry.
-  { when: { kind: ['source-test'], component: ['apps/cli'], workerTool: ['vitest'],
-    config: ['vitest.config.ts'], generatorCheck: ['0'], testFileSelected: ['0'] },
-    set: { heavyClass: 'compilation' } },
   // Verified UI and server lanes keep their workspace-source resolvers.
   { when: { kind: ['runtime'], runnerKnown: ['1'], component: ['apps/ui'], config: REMOTE_COMMAND_CLASSIFICATION.uiSourceTestConfigs, resolverOverride: ['0'] }, set: { kind: 'source-test' } },
   { when: { kind: ['runtime'], runnerKnown: ['1'], component: ['apps/server'], config: REMOTE_COMMAND_CLASSIFICATION.serverSourceTestConfigs, resolverOverride: ['0'] }, set: { kind: 'source-test' } },
+  // These suites execute the canonical compiler or its API in test bodies.
+  // Reserve the composed workload before starting the parent: placement-only
+  // demand cannot cover nested admission. Refine focused file selections
+  // against this same inventory and preserve explicit enclosing reservations.
+  ...REMOTE_COMMAND_CLASSIFICATION.compilerTestSuites.map(suite => ({
+    when: { workerTool: ['vitest'], generatorCheck: ['0'], admissionWrapper: ['0'], resolverOverride: ['0'], heavyClass: ['validation'], component: [suite.component], config: suite.configs },
+    set: { heavyClass: 'compilation', compilerSuite: '1' },
+  })),
+  { when: { component: ['.'], script: ['test:tooling:self'], admissionWrapper: ['0'], heavyClass: ['validation'] }, set: { heavyClass: 'compilation' } },
   { when: { heavyClass: HEAVYWEIGHT_COMPILE_CLASSES }, set: { localCompile: '1' } },
 ];
 function commandBasename(value) {
@@ -404,7 +397,7 @@ function normalizeCommandArguments(commandArgs, cwd, repoRoot = COMMAND_REPO_ROO
   }
   const managerIndex = command === 'corepack' ? 1 : 0;
   const manager = commandBasename(args[managerIndex]);
-  let script = '', entry = commandBasename(args[1]), managerCwd = '', managerNode = '0', workspace = '', managerEntryIndex = 1;
+  let script = '', scriptArguments = [], entry = commandBasename(args[1]), managerCwd = '', managerNode = '0', workspace = '', managerEntryIndex = 1;
   let managerRun = false;
   if (REMOTE_COMMAND_CLASSIFICATION.packageManagerCommands.includes(manager)) {
     for (let index = managerIndex + 1; index < args.length; index += 1) {
@@ -427,6 +420,7 @@ function normalizeCommandArguments(commandArgs, cwd, repoRoot = COMMAND_REPO_ROO
       }
       if (arg === 'run') { managerRun = true; continue; }
       script = arg;
+      scriptArguments = args.slice(index + 1).filter((value, offset) => offset !== 0 || value !== '--');
       if (arg === 'node') { managerNode = '1'; managerEntryIndex = index + 1; entry = commandBasename(args[managerEntryIndex]); }
       break;
     }
@@ -497,6 +491,9 @@ function normalizeCommandArguments(commandArgs, cwd, repoRoot = COMMAND_REPO_ROO
       : path.startsWith('/') ? path : posix.join(nativeCwd, path));
   });
   const testComponents = testPaths.map(path => nativeTestComponent(path, normalizedRepoRoot));
+  const vitestArguments = command === 'vitest' ? args.slice(1)
+    : ['vitest.mjs', 'run-vitest-with-heartbeat.mjs', 'runVitestShards.mjs'].includes(entry) ? args.slice(entryIndex + 1)
+      : scriptArguments;
   let admissionClass = '';
   if (command === 'hstack-exec' && args[1] === '--heavyweight-admission') {
     admissionClass = 'validation';
@@ -506,7 +503,7 @@ function normalizeCommandArguments(commandArgs, cwd, repoRoot = COMMAND_REPO_ROO
     }
   }
   return {
-    command, manager, script, family: script.split(':', 1)[0], entry, entryPath, entryRepositoryPath, managerNode, admissionClass, workspace,
+    command, manager, script, scriptArguments, vitestArguments, family: script.split(':', 1)[0], entry, entryPath, entryRepositoryPath, managerNode, admissionClass, workspace,
     admissionWrapper: command === 'hstack-exec' && args[1] === '--heavyweight-admission' ? '1' : '0',
     noCheck,
     declarations: args.includes('--declarations') ? '1' : '0',
@@ -572,7 +569,7 @@ async function resolvePackageCommandManifest(commandArgs, { repoRoot = COMMAND_R
   const packageDir = await resolveCommandPackageDirectory({ ...facts, cwd }, repoRoot);
   if (!packageDir) return null;
   try {
-    return { packageDir, packageJson: readCommandPackageJson(packageDir), scriptName: facts.script };
+    return { packageDir, packageJson: readCommandPackageJson(packageDir), scriptName: facts.script, scriptArguments: facts.scriptArguments };
   } catch (error) {
     if (error.code === 'ENOENT' || error instanceof SyntaxError) return null;
     throw error;
@@ -618,8 +615,36 @@ export function resolveRemoteCommandPolicy(commandArgs, { cwd = '.', repoRoot = 
   else if (facts.component.startsWith(normalizedRepoRoot + '/')) facts.component = facts.component.slice(normalizedRepoRoot.length + 1);
   facts.packageComponent = facts.component.startsWith('packages/') ? '1' : '0';
   applyCommandRules(facts, FINAL_COMMAND_RULES, policy);
+  let skipCompilerSetup = false;
+  if ((facts.component === 'apps/cli' || policy.kind === 'runtime') && policy.workerTool === 'vitest'
+    && policy.runnerKnown === '1' && facts.resolverOverride === '0' && policy.generatorCheck === '0'
+    && facts.config === commandBasename(facts.config)) {
+    const preparation = readVitestSourcePreparation(join(repoRoot, facts.component, facts.config), path => {
+      const baseFacts = { ...facts, component: normalizeCommandPath(relative(repoRoot, dirname(path))), config: commandBasename(path) };
+      const basePolicy = applyCommandRules(baseFacts, COMMAND_RULES, { ...DEFAULT_COMMAND_POLICY });
+      applyCommandRules(baseFacts, FINAL_COMMAND_RULES, basePolicy);
+      return basePolicy.kind === 'source-test';
+    });
+    const skipBuild = isCliTestBuildSkipped(env);
+    if (preparation && (!preparation.buildsDist || skipBuild)) {
+      policy.kind = 'source-test';
+      policy.workspaceLock = '';
+      // The full setup's compiler demand disappears only when setup itself
+      // skips publication. Explicit enclosing reservations remain authoritative.
+      skipCompilerSetup = preparation.buildsDist && skipBuild;
+    }
+  }
   if ((policy.kind === 'source-test' || facts.component === 'apps/cli') && policy.workerTool === 'vitest' && policy.generatorCheck === '0') {
     policy.requiredTools = resolveSourceTestRequiredTools(repoRoot, facts.component, policy.requiredTools);
+  }
+  refineCompilerSuiteSelection(policy, facts, repoRoot, skipCompilerSetup);
+  if (policy.kind === 'source-test' && policy.workerTool === 'vitest'
+    && policy.heavyClass === 'validation' && facts.admissionWrapper === '0') {
+    const filters = readVitestFileFilters(facts);
+    if (filters.length === 1 && /\.(?:test|spec)\.[cm]?[jt]sx?$/u.test(filters[0])
+      && existsSync(resolve(repoRoot, facts.component, filters[0]))) {
+      policy.heavyClass = 'focused-validation';
+    }
   }
   if (['node', 'nodejs'].includes(facts.command) && facts.nativeTest === '1'
     && facts.nativeTestPath && facts.nativeLoader === '0' && !env.NODE_OPTIONS
@@ -679,13 +704,15 @@ function workspaceBuildCommands(script) {
  * Light generators retain their command policy. A new compiler entry point
  * must be classified there, rather than hidden behind a light generator.
  */
-async function resolveWorkspacePackageScriptPolicy({ packageJson, cwd = process.cwd(), env = process.env, repoRoot = COMMAND_REPO_ROOT, scriptName = 'build' } = {}) {
+async function resolveWorkspacePackageScriptPolicy({ packageJson, cwd = process.cwd(), env = process.env, repoRoot = COMMAND_REPO_ROOT, scriptName = 'build', scriptArguments = [] } = {}) {
   let admissionClass = '';
+  let knownAdmissionClass = '';
   let sawPublisher = false;
   let selfPublisher = true;
   const requiredTools = new Set();
-  const include = (candidate) => {
+  const include = (candidate, known = true) => {
     if (!candidate) return;
+    if (known) knownAdmissionClass = largestHeavyweightClass(knownAdmissionClass, candidate);
     const candidateFloor = resolveHeavyweightMemoryFloorKiB(candidate);
     const currentFloor = admissionClass ? resolveHeavyweightMemoryFloorKiB(admissionClass) : 0;
     if (candidateFloor > currentFloor || (candidateFloor === currentFloor
@@ -694,29 +721,35 @@ async function resolveWorkspacePackageScriptPolicy({ packageJson, cwd = process.
     }
   };
   const visiting = new Set();
-  const visit = async (name, packageDir, metadata) => {
+  const visit = async (name, packageDir, metadata, forwardedArguments = []) => {
     const scripts = metadata?.scripts ?? {};
     const identity = `${packageDir}\0${name}`;
-    if (visiting.has(identity) || typeof scripts[name] !== 'string') { include('compilation'); selfPublisher = false; return; }
+    if (visiting.has(identity) || typeof scripts[name] !== 'string') { include('compilation', false); selfPublisher = false; return; }
     visiting.add(identity);
     for (const hook of [`pre${name}`, name, `post${name}`]) {
       if (hook !== name && !(hook in scripts)) continue;
       const commands = typeof scripts[hook] === 'string' ? workspaceBuildCommands(scripts[hook]) : null;
-      if (!commands) { include('compilation'); selfPublisher = false; continue; }
-      for (const args of commands) {
+      if (!commands) { include('compilation', false); selfPublisher = false; continue; }
+      for (const [index, command] of commands.entries()) {
+        const args = hook === name && index === commands.length - 1 ? [...command, ...forwardedArguments] : command;
         const facts = normalizeCommandArguments(args, packageDir, repoRoot);
         const policy = await resolveComposedTypecheckPolicy(args, { cwd: packageDir, repoRoot, env });
         for (const tool of policy.requiredTools.split(/\s+/u).filter(Boolean)) requiredTools.add(tool);
         const dispatchedScript = facts.command === 'hstack-exec'
           ? args.find(arg => arg.startsWith('--script='))?.slice('--script='.length) : '';
-        if (dispatchedScript) { await visit(dispatchedScript, packageDir, metadata); continue; }
+        if (dispatchedScript) {
+          const forwarded = args.slice(args.findIndex(arg => arg.startsWith('--script=')) + 1);
+          if (forwarded[0] === '--') forwarded.shift();
+          await visit(dispatchedScript, packageDir, metadata, forwarded);
+          continue;
+        }
         if (facts.script && REMOTE_COMMAND_CLASSIFICATION.packageManagerCommands.includes(facts.manager)) {
-          if (facts.manager === 'npx') { include('compilation'); selfPublisher = false; }
+          if (facts.manager === 'npx') { include('compilation', false); selfPublisher = false; }
           else if (facts.managerCwd || facts.workspace) {
             const referenced = await resolvePackageCommandManifest(args, { repoRoot, cwd: packageDir });
-            if (referenced) await visit(referenced.scriptName, referenced.packageDir, referenced.packageJson);
-            else { include('compilation'); selfPublisher = false; }
-          } else await visit(facts.script, packageDir, metadata);
+            if (referenced) await visit(referenced.scriptName, referenced.packageDir, referenced.packageJson, referenced.scriptArguments);
+            else { include('compilation', false); selfPublisher = false; }
+          } else await visit(facts.script, packageDir, metadata, facts.scriptArguments);
           continue;
         }
         const wrapperScript = facts.entry === 'bundleWorkspaceDeps.mjs'
@@ -724,7 +757,7 @@ async function resolveWorkspacePackageScriptPolicy({ packageJson, cwd = process.
         if (wrapperScript) {
           if (policy.selfPublisher === '1') sawPublisher = true;
           else selfPublisher = false;
-          await visit(wrapperScript, packageDir, metadata);
+          await visit(wrapperScript, packageDir, metadata, forwardedArguments);
           continue;
         }
         // Unclassified Node entries are the manifest's light generators.
@@ -741,8 +774,8 @@ async function resolveWorkspacePackageScriptPolicy({ packageJson, cwd = process.
     }
     visiting.delete(identity);
   };
-  await visit(scriptName, resolve(cwd), packageJson);
-  return { admissionClass: admissionClass || 'compilation', selfPublisher: selfPublisher && sawPublisher,
+  await visit(scriptName, resolve(cwd), packageJson, scriptArguments);
+  return { admissionClass: admissionClass || 'compilation', knownAdmissionClass, selfPublisher: selfPublisher && sawPublisher,
     requiredTools: [...requiredTools].join(' ') };
 }
 
@@ -802,9 +835,11 @@ export async function resolvePackageCommandPolicy(commandArgs, options = {}) {
     const resolved = await resolveWorkspacePackageScriptPolicy({ ...options, ...manifest, cwd: manifest.packageDir });
     for (const tool of resolved.requiredTools.split(/\s+/u).filter(Boolean)) requiredTools.add(tool);
     if (resolved.selfPublisher) selfPublisher = '1';
-    if (resolved.selfPublisher || (policy.kind === 'typecheck'
-      && resolveHeavyweightMemoryFloorKiB(resolved.admissionClass) > resolveHeavyweightMemoryFloorKiB(heavyClass))) {
-      heavyClass = resolved.admissionClass;
+    const requiredClass = resolved.selfPublisher || policy.kind === 'typecheck' ? resolved.admissionClass : resolved.knownAdmissionClass;
+    if (resolved.selfPublisher || (requiredClass && (!heavyClass
+      || (heavyClass === 'validation' && requiredClass === 'focused-validation')
+      || resolveHeavyweightMemoryFloorKiB(requiredClass) > resolveHeavyweightMemoryFloorKiB(heavyClass)))) {
+      heavyClass = requiredClass;
     }
   }
   if (policy.selfPublisher === '1' && normalizeCommandArguments(commandArgs, options.cwd, options.repoRoot).entry === 'bundleWorkspaceDeps.mjs') {
@@ -861,28 +896,22 @@ export function renderNativeCommandPolicy() {
     ...Object.entries(HEAVYWEIGHT_MEMORY_KIB).map(([key, value]) => '    ' + key + ') heavyweight_policy_floor=' + posixQuote(String(value)) + ' ;;'),
     // Historical dispatch labels are validation, while unrecognized resource
     // classes must not silently acquire a smaller compilation envelope.
-    '    targeted-validation|full-validation) heavyweight_policy_floor=' + posixQuote(String(HEAVYWEIGHT_MEMORY_KIB.validation)) + ' ;;',
+    ...LEGACY_VALIDATION_ADMISSION_CLASSES.map(name => '    ' + name + ') heavyweight_policy_floor=' + posixQuote(String(HEAVYWEIGHT_MEMORY_KIB.validation)) + ' ;;'),
     '    *) heavyweight_policy_floor=' + posixQuote(String(HEAVYWEIGHT_MEMORY_KIB.compilation)) + ' ;;',
     '  esac',
     '  if [ "$1" = source-web-export ]; then',
     '    case "${3-}" in \'\'|*[!0-9]*|0) ;;',
-    `      *) heavyweight_policy_floor=$(awk -v threads="$3" 'BEGIN { if(threads<=${EXPORT_MEMORY.intermediateThreads}) {${serialSegment}} else {${parallelSegment}}; total=b+n*threads+${EXPORT_MEMORY.headroomKiB}*d; unit=d*${EXPORT_MEMORY.gibKiB}; printf "%.0f", (int(total/unit)+(total%unit>0))*${EXPORT_MEMORY.gibKiB} }') ;;`,
+    `      *) heavyweight_policy_floor=$(awk -v threads="$3" 'BEGIN { if(threads<=${EXPORT_MEMORY.intermediateThreads}) {${serialSegment}} else {${parallelSegment}}; total=b+n*threads; unit=d*${EXPORT_MEMORY.gibKiB}; printf "%.0f", (int(total/unit)+(total%unit>0))*${EXPORT_MEMORY.gibKiB} }') ;;`,
     '    esac',
-    '  fi',
-    '  if [ "${2-}" = local ] && [ "$heavyweight_policy_floor" -lt ' + LOCAL_HEAVYWEIGHT_MEMORY_FLOOR_KIB + ' ]; then',
-    '    heavyweight_policy_floor=' + posixQuote(String(LOCAL_HEAVYWEIGHT_MEMORY_FLOOR_KIB)),
     '  fi',
     '  printf \'%s\' "$heavyweight_policy_floor"', '}',
     'source_web_export_workers_for_memory_kib() {',
-    `  awk -v cpu="$1" -v memory="$2" 'BEGIN { memory=int(memory/${EXPORT_MEMORY.gibKiB})*${EXPORT_MEMORY.gibKiB}; if(memory<=${EXPORT_MEMORY.intermediateKiB + EXPORT_MEMORY.headroomKiB}) {${serialSegment}} else {${parallelSegment}}; workers=int((memory*d-b-${EXPORT_MEMORY.headroomKiB}*d)/n); if(workers<1) workers=1; if(workers>cpu) workers=cpu; printf "%.0f", workers }'`,
+    `  awk -v cpu="$1" -v memory="$2" 'BEGIN { memory=int(memory/${EXPORT_MEMORY.gibKiB})*${EXPORT_MEMORY.gibKiB}; if(memory<=${EXPORT_MEMORY.intermediateKiB}) {${serialSegment}} else {${parallelSegment}}; workers=int((memory*d-b)/n); if(workers<1) workers=1; if(workers>cpu) workers=cpu; printf "%.0f", workers }'`,
     '}',
     'native_command_policy_base() {',
     ...Object.entries(DEFAULT_COMMAND_POLICY).map(([key, value]) => '  policy_' + key + '=' + posixQuote(value)),
     renderShellCommandRules(COMMAND_RULES), '}',
-    'native_command_policy_finish() {', renderShellCommandRules(FINAL_COMMAND_RULES),
-    '  if { [ "$policy_kind" = source-test ] || [ "$policy_component" = apps/cli ]; } && [ "$policy_workerTool" = vitest ] && [ "$policy_generatorCheck" = 0 ]; then',
-    '    policy_requiredTools=$(node "${projection_command_policy:-$repo_root/apps/stack/scripts/utils/dev_targets/remote_commands.mjs}" --source-test-tools "$repo_root" "$policy_component" "$policy_requiredTools") || return $?',
-    '  fi', '}',
+    'native_command_policy_finish() {', renderShellCommandRules(FINAL_COMMAND_RULES), '}',
     'native_package_manager() { case "$1" in ' + REMOTE_COMMAND_CLASSIFICATION.packageManagerCommands.join('|') + ') return 0 ;; *) return 1 ;; esac; }',
     NATIVE_COMMAND_NORMALIZATION,
   ].join('\n');
@@ -983,6 +1012,20 @@ native_try_admission_payload() {
   return 1
 }
 resolve_native_command_policy() {
+  native_test_policy_resolved=0
+  native_resolve_command_policy_arguments "$@" || return $?
+  # Recursive argv normalization already resolved the actual payload. Reuse
+  # its metadata child rather than parsing a package-manager alias twice.
+  [ "$native_test_policy_resolved" = 0 ] || return 0
+  if [ "$policy_workerTool" = vitest ] && [ "$policy_generatorCheck" = 0 ] && [ "$policy_admissionWrapper" = 0 ]; then
+    native_policy_request_cwd=$invoked_cwd
+    [ "\${explicit_relative_cwd_set-0}" != 1 ] || native_policy_request_cwd=$repo_root/$explicit_relative_cwd
+    native_vitest_policy=$(node "\${projection_command_policy:-$repo_root/apps/stack/scripts/utils/dev_targets/remote_commands.mjs}" --vitest-policy "$repo_root" "$native_policy_request_cwd" "$@") || return $?
+    eval "$native_vitest_policy"
+    native_test_policy_resolved=1
+  fi
+}
+native_resolve_command_policy_arguments() {
   [ "\${1-}" = -- ] && shift
   case "\${1-}" in --script=*) native_script=\${1#--script=}; shift; [ "\${1-}" = -- ] && shift; set -- pnpm run --silent "$native_script" "$@" ;; esac
   native_command_basename "\${1-}"; policy_command=$native_basename
@@ -2315,11 +2358,12 @@ export async function runRemoteCommandPolicyCli(argv = process.argv.slice(2)) {
     return 0;
   }
   const sourceTestTools = args[0] === '--source-test-tools';
+  const vitestPolicy = args[0] === '--vitest-policy';
   const selfPublishing = args[0] === '--self-publishing';
   const publisherPolicy = args[0] === '--publisher-policy';
   const packagePolicy = args[0] === '--package-policy';
   const binaryCwd = args[0] === '--binary-cwd';
-  if (sourceTestTools || selfPublishing || publisherPolicy || packagePolicy || binaryCwd) args.shift();
+  if (sourceTestTools || vitestPolicy || selfPublishing || publisherPolicy || packagePolicy || binaryCwd) args.shift();
   const [repoRoot, cwd, ...commandArgs] = args;
   try {
     if (binaryCwd) {
@@ -2331,6 +2375,13 @@ export async function runRemoteCommandPolicyCli(argv = process.argv.slice(2)) {
     }
     if (sourceTestTools) {
       process.stdout.write(resolveSourceTestRequiredTools(repoRoot, cwd, commandArgs[0] ?? '') + '\n');
+      return 0;
+    }
+    if (vitestPolicy) {
+      const policy = resolveRemoteCommandPolicy(commandArgs, { repoRoot, cwd });
+      for (const key of ['kind', 'workspaceLock', 'requiredTools', 'heavyClass', 'localCompile']) {
+        process.stdout.write(`policy_${key}=${posixQuote(policy[key])}\n`);
+      }
       return 0;
     }
     if (packagePolicy) {

@@ -7,6 +7,8 @@ import { reapHistoricalTempRoots } from './historical_temp_roots.mjs';
 import { getHappierTempRootForUid, prepareHappierTempDirOwnerCleanup, readHappierTempDirOwnerForDirectory,
   readHappierTempDirOwnerLiveness } from '../../../../../packages/cli-common/tempDirOwnership.mjs';
 
+import { HEAVYWEIGHT_COMMAND_RESOURCES, LEGACY_VALIDATION_ADMISSION_CLASSES } from './command_resources.mjs';
+
 const writeRootsByClass = {
   validation: ['repoDir'],
   'dependency-install': ['repoDir', 'cacheBaseDir'],
@@ -90,8 +92,10 @@ async function reapRuntimeBuildStaging(cacheBaseDir, scratchRoot, procRoot, owne
 // and other jobs' existing outputs do not establish this operation's future
 // writes. No additional-write peak is measured, so do not invent a reservation.
 export async function inspectWorkerDiskBudget({ repoDir, cacheBaseDir, commandClass = 'runtime-build', scratchRoot = tmpdir(), observeFilesystem = observeWorkerFilesystem }) {
-  if (['targeted-validation', 'full-validation', 'native-source-test'].includes(commandClass)) commandClass = 'validation';
-  if (['compilation-ui', 'compilation-cli', 'compilation-server'].includes(commandClass)) commandClass = 'compilation';
+  // The same catalog owns memory and disk demand. Keep only historical
+  // transport labels here; new admission classes declare their disk shape once.
+  commandClass = HEAVYWEIGHT_COMMAND_RESOURCES[commandClass]?.diskClass
+    ?? (LEGACY_VALIDATION_ADMISSION_CLASSES.includes(commandClass) ? 'validation' : commandClass);
   if (!Object.hasOwn(writeRootsByClass, commandClass)) throw new Error(`unknown worker disk class: ${commandClass}`);
   const observations = new Map();
   const roots = { repoDir, cacheBaseDir, scratchRoot };

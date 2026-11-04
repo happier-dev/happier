@@ -237,3 +237,16 @@ test('resident dependencies and caches do not become additional disk demand', as
     assert.equal((await inspectWorkerDiskBudget({ ...options, commandClass })).admitted, true, `${commandClass} reuses the existing install`);
   }
 });
+
+test('every admission resource class has executable disk admission', async () => {
+  const { HEAVYWEIGHT_COMMAND_RESOURCES } = await import('./remote_commands.mjs');
+  const { inspectWorkerDiskBudget } = await import('./worker_disk_budget.mjs');
+  for (const [commandClass, resource] of Object.entries(HEAVYWEIGHT_COMMAND_RESOURCES)) {
+    const result = await inspectWorkerDiskBudget({ repoDir: '/fixture/repo', cacheBaseDir: '/fixture/cache',
+      scratchRoot: '/fixture/scratch', commandClass,
+      observeFilesystem: path => ({ device: path, availableBytes: 100 * 1024 ** 3, totalBytes: 200 * 1024 ** 3 }) });
+    assert.equal(result.admitted, true, commandClass);
+    assert.equal(result.commandClass, resource.diskClass, `${commandClass} must use its declared disk shape`);
+    assert.ok(result.filesystems.length > 0, `${commandClass} must check its write filesystem`);
+  }
+});
