@@ -74,22 +74,23 @@ describe('createTurnEndpointController', () => {
         expect(onSignal).toHaveBeenCalledWith(expect.objectContaining({ transcript: 'Please update the server' }));
     });
 
-    it('extends structurally incomplete utterances instead of firing at the acoustic delay', async () => {
+    it.each(['I also need to', 'Call the function(', 'keep the comma,'])('uses the chosen silence timing for %s without guessing intent from text', async (transcript) => {
         vi.useFakeTimers();
         const onSignal = vi.fn();
         const controller = createTurnEndpointController({ onSignal, now: () => Date.now() });
         controller.startSession('session-1');
         controller.signalHeuristicTranscriptFinalized({
             sessionId: 'session-1',
-            transcript: 'I also need to',
+            transcript,
             policy: normalizeTurnEndpointPolicy({ silenceMs: 700, minSpeechMs: 0 }),
         });
-        await vi.advanceTimersByTimeAsync(700);
+        await vi.advanceTimersByTimeAsync(699);
         expect(onSignal).not.toHaveBeenCalled();
-        await vi.advanceTimersByTimeAsync(700);
+        await vi.advanceTimersByTimeAsync(1);
         expect(onSignal).toHaveBeenCalledTimes(1);
         expect(onSignal).toHaveBeenCalledWith(expect.objectContaining({
-            endpoint: { reason: 'structural_incomplete', confidence: 0.7 },
+            transcript,
+            endpoint: { reason: 'structural_fallback', confidence: null },
         }));
     });
 

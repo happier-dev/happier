@@ -3530,7 +3530,6 @@
     "sources/voice/diagnostics/revocationObligationPersistence.ts",
     "sources/voice/diagnostics/runtimeStatus.ts",
     "sources/voice/history/voiceHistorySessionDiscovery.ts",
-    "sources/voice/input/SemanticEndpointDetector.ts",
     "sources/voice/input/deviceSpeechRecognitionAvailability.ts",
     "sources/voice/input/guessAudioMimeType.ts",
     "sources/voice/input/prepareDaemonVoiceInferenceSttSource.ts",

@@ -1,10 +1,5 @@
 import { computeTurnEndpointDelayMs, type TurnEndpointPolicy } from './TurnEndpointDetector';
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
-import {
-    createStructuralEndpointHeuristic,
-    resolveSemanticEndpointDelayMs,
-    type SemanticEndpointDetector,
-} from '@/voice/input/SemanticEndpointDetector';
 
 export type TurnEndpointSignalSource =
     | 'heuristic'
@@ -33,7 +28,7 @@ export type TurnEndpointSignal = Readonly<{
      */
     confidence?: number | null;
     endpoint: Readonly<{
-        reason: 'acoustic_endpoint' | 'model_complete' | 'model_incomplete' | 'structural_incomplete' | 'structural_fallback';
+        reason: 'acoustic_endpoint' | 'structural_fallback';
         confidence: number | null;
     }>;
 }>;
@@ -52,7 +47,6 @@ type TurnEndpointControllerDeps = Readonly<{
     onSignal: (signal: TurnEndpointSignal) => void;
     queueTask?: (task: () => void) => void;
     setTimer?: (task: () => void, waitMs: number) => ReturnType<typeof setTimeout>;
-    semanticEndpointDetector?: SemanticEndpointDetector;
 }>;
 
 export type TurnEndpointController = Readonly<{
@@ -78,7 +72,6 @@ export function createTurnEndpointController(deps: TurnEndpointControllerDeps): 
     const setTimer = deps.setTimer ?? ((task, waitMs) => setTimeout(task, waitMs));
     const clearTimer = deps.clearTimer ?? ((timer) => clearTimeout(timer));
     const queueTask = deps.queueTask ?? ((task) => queueMicrotask(task));
-    const semanticEndpointDetector = deps.semanticEndpointDetector ?? createStructuralEndpointHeuristic();
 
     let nextToken = 1;
     let activeSession: ActiveTurnEndpointSession | null = null;
@@ -166,28 +159,8 @@ export function createTurnEndpointController(deps: TurnEndpointControllerDeps): 
 
             const expectedToken = activeSession.token;
             const speechElapsedMs = now() - activeSession.startedAt;
-            const baseDelayMs = computeTurnEndpointDelayMs(policy, speechElapsedMs);
-            const semanticVerdict = semanticEndpointDetector.evaluate({
-                transcript,
-                speechElapsedMs,
-            });
-            const waitMs = resolveSemanticEndpointDelayMs({
-                detector: { evaluate: () => semanticVerdict },
-                policy,
-                baseDelayMs,
-                transcript,
-                speechElapsedMs,
-            });
-            const endpoint: TurnEndpointSignal['endpoint'] = semanticVerdict.kind === 'complete'
-                ? { reason: 'model_complete', confidence: semanticVerdict.confidence }
-                : semanticVerdict.kind === 'incomplete'
-                    ? {
-                        reason: semanticVerdict.reason === 'model_incomplete'
-                            ? 'model_incomplete'
-                            : 'structural_incomplete',
-                        confidence: semanticVerdict.confidence,
-                    }
-                    : { reason: 'structural_fallback', confidence: null };
+            const waitMs = computeTurnEndpointDelayMs(policy, speechElapsedMs);
+            const endpoint: TurnEndpointSignal['endpoint'] = { reason: 'structural_fallback', confidence: null };
             replaceActiveSession({
                 ...activeSession,
                 timer: null,

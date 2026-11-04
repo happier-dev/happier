@@ -2959,7 +2959,6 @@
     "sources/voice/history/voiceHistoryInitialLoadState.test.ts",
     "sources/voice/history/voiceHistorySessionDiscovery.test.ts",
     "sources/voice/input/DeviceSttController.spec.ts",
-    "sources/voice/input/SemanticEndpointDetector.spec.ts",
     "sources/voice/input/SherpaStreamingSttController.spec.ts",
     "sources/voice/input/SherpaStreamingSttController.web.spec.ts",
     "sources/voice/input/guessAudioMimeType.spec.ts",
