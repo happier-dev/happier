@@ -67,7 +67,7 @@ import { PERSONAL_SAVED_SECRET_ACTION_IDS_V1 } from '../account/settings/persona
 import { ARTIFACT_ACCESS_ACTION_IDS_V1 } from '../artifacts/artifactAccessV1.js';
 import { ARTIFACT_ACTION_IDS_V1 } from '../artifacts/artifactActionIdsV1.js';
 import { DOC_COLLABORATION_ACTION_IDS_V1 } from '../artifacts/artifactCollaborationActionIdsV1.js';
-import { WORKSPACE_ACTION_IDS } from './workspaceActionFamily.js';
+import { WORKSPACE_ACTION_IDS } from './workspaceActionIdsV1.js';
 import { PROJECT_ACTION_IDS_V1 } from './projectActionIdsV1.js';
 import { PROJECT_DEFINITION_ACTION_IDS } from './projectDefinitionActionFamily.js';
 import { CONNECTED_SERVICE_CONFIGURATION_ACTION_IDS_V1 } from '../connect/configurationActionIdsV1.js';
