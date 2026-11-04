@@ -74,7 +74,7 @@ export function createMachineDaemonStatePublication(context: Readonly<{
         // The exposed snapshot can already have discarded an unverified endpoint
         // while the server still retains it. That is a known content difference.
         const needsPersistedWithdrawal = context.needsPersistedIrohEndpointWithdrawal();
-        let updated = current;
+        let updated: DaemonState | null = current;
         const outcomes = new Map<Publication, MachinePublicationOutcome>();
         batch = batch.filter(publication => {
           if (context.shouldSuppress(publication.options?.allowWhileQuiescing)) {

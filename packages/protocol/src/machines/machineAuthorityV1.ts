@@ -1,5 +1,5 @@
 import type { MachineAdminAccessObservationV1, MachineAdminAccessV1 } from './adminAccessV1.js';
-import type { MachineAgentIsolationStatusV1 } from './agentIsolationV1.js';
+import { readMachineAgentIsolationPolicyV1, resolveMachineAgentExecutionPlacementV1, type MachineAgentIsolationStatusV1 } from './agentIsolationV1.js';
 
 export type MachineAuthorityFreshnessV1 = 'current' | 'stale';
 export type MachineHostAuthorityV1 = 'administrator' | 'ordinary' | 'unknown';
@@ -13,6 +13,8 @@ export type MachineAuthorityInputV1 = Readonly<{
   freshness?: MachineAuthorityFreshnessV1;
   desiredAdminAccess?: MachineAdminAccessV1 | null;
   isolation?: MachineAgentIsolationStatusV1 | null;
+  platform?: string | null;
+  isolationPolicy?: unknown;
   sharedMachine?: boolean;
   /** Observed target engine, never the client or target OS alone. */
   engine?: 'native' | 'dockerDesktop' | 'unknown';
@@ -27,6 +29,10 @@ export type MachineAuthorityPresentationV1 = Readonly<{
   groupMembership: NonNullable<MachineAdminAccessObservationV1['groupMembership']>;
   desiredAdminAccess: MachineAdminAccessV1 | null;
   isolation: MachineAgentIsolationStatusV1 | null;
+  separateUsers: Readonly<{
+    placement: ReturnType<typeof resolveMachineAgentExecutionPlacementV1> | null;
+    canEnable: boolean;
+  }>;
   sharedAgentUid: boolean;
   /** Material actually delivered to this Machine, not the requester's entire Account. */
   deliveredMaterial: Readonly<{ ownerVisible: true; sharedUserPeerVisible: boolean }>;
@@ -56,6 +62,13 @@ export function presentMachineAuthorityV1(input: MachineAuthorityInputV1): Machi
   const freshness = observation ? input.freshness ?? 'stale' : 'stale';
   const hostAuthority = freshness === 'current' ? lastKnownHostAuthority : 'unknown';
   const isolation = input.isolation ?? null;
+  // A known target platform proves metadata is readable; only then is an absent policy the default.
+  const policy = input.platform ? readMachineAgentIsolationPolicyV1(input.isolationPolicy == null
+    ? {} : { agentIsolation: input.isolationPolicy }) : null;
+  const placement = policy?.status === 'ready' && input.platform
+    ? resolveMachineAgentExecutionPlacementV1({ policy: policy.policy, platform: input.platform }) : null;
+  const separateUsers = { placement, canEnable: input.platform === 'linux' && placement !== null && placement !== 'member'
+    && isolation?.kind !== 'unavailable' };
   const agentHostAuthority = freshness !== 'current' || isolation === null ? 'unknown'
     : isolation.kind === 'effective' ? 'ordinary' : hostAuthority;
   const authorization = observation?.tailscaledOperator?.authorization ?? 'unknown';
@@ -64,7 +77,7 @@ export function presentMachineAuthorityV1(input: MachineAuthorityInputV1): Machi
     rootEquivalentGroups: observation?.rootEquivalentGroups ?? null,
     groupMembership: observation?.groupMembership ?? { state: 'unknown' },
     desiredAdminAccess: input.desiredAdminAccess ?? null,
-    isolation, sharedAgentUid: input.sharedMachine === true,
+    isolation, separateUsers, sharedAgentUid: input.sharedMachine === true,
     // Every current effective isolation shape still uses happier-agent. Neither
     // desired policy nor unknown/stale setup proves distinct member identities.
     deliveredMaterial: { ownerVisible: true, sharedUserPeerVisible: input.sharedMachine !== false },

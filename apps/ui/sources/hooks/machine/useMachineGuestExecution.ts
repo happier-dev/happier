@@ -1,6 +1,6 @@
 import * as React from 'react';
-import { readMachineAgentIsolationPolicyV1, resolveMachineAgentExecutionPlacementV1,
-    type MachineAgentIsolationPreviewResultV1, type MachineAgentIsolationSetInputV1 } from '@happier-dev/protocol';
+import type { MachineAgentIsolationPreviewResultV1, MachineAgentIsolationSetInputV1 } from '@happier-dev/protocol/machines/agentIsolationV1';
+import { presentMachineAuthorityV1 } from '@happier-dev/protocol/machines/machineAuthorityV1';
 import { useMachineField } from '@/sync/store/hooks';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { FrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
@@ -18,11 +18,9 @@ export function useMachineGuestExecution(input: Readonly<{
     const options = { serverId: scope.serverId };
     const platform = useMachineField(machineId, 'metadata', 'platform', options);
     const storedPolicy = useMachineField(machineId, 'metadata', 'agentIsolation', options);
-    // A known platform proves metadata is readable. Missing policy then means
-    // the canonical default; missing/unreadable metadata is still unknown.
-    const policy = platform ? readMachineAgentIsolationPolicyV1(storedPolicy ? { agentIsolation: storedPolicy } : {}) : null;
-    const placement = policy?.status === 'ready' && platform
-        ? resolveMachineAgentExecutionPlacementV1({ policy: policy.policy, platform }) : null;
+    const isolation = useMachineField(machineId, 'daemonState', 'agentIsolation', options);
+    const { separateUsers } = presentMachineAuthorityV1({ platform, isolationPolicy: storedPolicy, isolation });
+    const { placement } = separateUsers;
     const previewSeparateUsers = React.useCallback((signal?: AbortSignal) => execute('machines.agentIsolation.preview', {
         serverId: scope.serverId, machineId, enabled: true, memberProvisioning: 'linuxUsersV1',
     }, { surface: 'ui', authority: 'present_user', serverId: scope.serverId, expectedAccountId: scope.accountId, signal }),
@@ -36,6 +34,6 @@ export function useMachineGuestExecution(input: Readonly<{
         } satisfies MachineAgentIsolationSetInputV1,
         { surface: 'ui', authority: 'present_user', serverId: scope.serverId, expectedAccountId: scope.accountId, signal }),
     [execute, scope.serverId, scope.accountId, machineId]);
-    return { placement, showOwnerUserDisclosure: placement !== null && placement !== 'member', canEnableSeparateUsers: input.canManage && platform === 'linux' && placement !== null && placement !== 'member',
+    return { placement, showOwnerUserDisclosure: placement !== null && placement !== 'member', canEnableSeparateUsers: input.canManage && separateUsers.canEnable,
         previewSeparateUsers, applySeparateUsers };
 }

@@ -1,7 +1,7 @@
 import { MachineReachabilityObservationV1Schema } from './reachability/machineReachabilityPostureV1.js';
 import { MachineSetupDesiredV1Schema } from './setup/machineSetupSourcesV1.js';
-import { MachineAgentIsolationPolicyV1Schema } from './agentIsolationV1.js';
-import { MachineAdminAccessV1Schema } from './adminAccessV1.js';
+import { MachineAgentIsolationPolicyV1Schema, MachineAgentIsolationStatusV1Schema } from './agentIsolationV1.js';
+import { MachineAdminAccessV1Schema, MachineAdminAccessObservationV1Schema, StoredMachineAdminAccessObservationV1Schema } from './adminAccessV1.js';
 import { MachineServiceWatchesV1Schema } from './machineServiceWatchesV1.js';
 import { MachineReachabilityPostureV1Schema } from './reachability/machineReachabilityPostureV1.js';
 import { AccessProviderSelectionV1Schema } from '../plugins/contributions/accessProviders.js';
@@ -81,6 +81,8 @@ const PeerFlowSchema = lazyZodSchema(() => z.strictObject({ active: z.boolean() 
 export const MachinePublishedDaemonStateV1Schema = lazyZodSchema(() => z.strictObject({
   setup: z.optional(MachineSetupObservationV1Schema),
   status: z.string(),
+  agentIsolation: z.optional(MachineAgentIsolationStatusV1Schema),
+  adminAccess: z.optional(MachineAdminAccessObservationV1Schema),
   pid: z.optional(z.number()),
   httpPort: z.optional(z.number()),
   startedAt: z.optional(z.number()),
@@ -122,6 +124,8 @@ export const StoredMachinePublishedMetadataV1Schema = lazyZodSchema(() => z.exte
   agentInventory: z.catch(z.optional(createStoredReadSchema(MachinePublishedAgentInventoryV1Schema)), undefined),
 }));
 export const StoredMachinePublishedDaemonStateV1Schema = lazyZodSchema(() => z.extend(createStoredReadSchema(MachinePublishedDaemonStateV1Schema), {
+  adminAccess: z.optional(StoredMachineAdminAccessObservationV1Schema),
+  agentIsolation: z.catch(z.optional(createStoredReadSchema(MachineAgentIsolationStatusV1Schema)), undefined),
   // Optional service presentation failures cannot erase unrelated daemon facts.
   localServices: z.catch(z.optional(createStoredReadSchema(LocalServiceMachineSummaryV1Schema)), undefined),
 }));
