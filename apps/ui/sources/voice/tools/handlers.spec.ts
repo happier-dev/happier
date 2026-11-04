@@ -2238,6 +2238,16 @@ describe('voice tool handlers', () => {
     expect(serialized).not.toContain('private connected-service');
   });
 
+  it('does not expose an unrecognized reply publisher error as a Voice error code', () => {
+    const serialized = serializeVoiceActionExecuteResult('session.message.reply', {
+      ok: true,
+      result: { v: 1, ok: false, error: 'private publisher diagnostic' },
+    });
+
+    expect(JSON.parse(serialized)).toMatchObject({ ok: false, errorCode: 'unknown_error' });
+    expect(serialized).not.toContain('private publisher diagnostic');
+  });
+
   it.each(['session_stop_failed', 'session_stop_requested'] as const)(
     'reports an unconfirmed Session Stop as a Voice tool failure (%s)', (code) => {
       const serialized = serializeVoiceActionExecuteResult('session.stop', {
