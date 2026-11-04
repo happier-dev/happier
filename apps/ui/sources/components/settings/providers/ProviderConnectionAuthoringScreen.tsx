@@ -743,7 +743,8 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
     const contextBar = (
         <MachineAdministrationContextBar
             label={t('settingsProvidersCollection.machineScopeLabel')}
-            selection={providerTarget.selection}
+            // Choosing where to test this draft edits a field; it does not leave the editor.
+            selection={{ ...providerTarget.selection, changeIntent: 'draft' }}
             testIDPrefix="settings.providers.administration.target"
         />
     );

@@ -14,6 +14,7 @@ import { DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, PROVIDER_CONNECTIONS_ROWS_ROUT
 import { PROVIDER_ACTION_INPUT_SCHEMAS_V1, PROVIDER_CONNECTION_ACTION_ID_BY_OPERATION_V1 } from '@happier-dev/protocol/providers/providerActionsV1';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { reportPopoverContentLayout, withPopoverWebGlobals } from '@/dev/testkit';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
@@ -1295,53 +1296,51 @@ describe('ProviderConnectionAuthoringScreen', () => {
         expect(navigationPreventRemove.enabled).toBe(false);
     });
 
-    it.each(['custom', 'detected'] as const)('discards the mounted %s authoring draft when the shared machine selector changes target', async (kind) => {
+    it('keeps the draft when its Machine field changes and still guards departure', () => withPopoverWebGlobals(async () => {
         await administrationTarget.controller.setMachines([{ machineId: 'machine-a' }, { machineId: 'machine-b' }]);
         const { ProviderConnectionAuthoringScreen } = await import('./ProviderConnectionAuthoringScreen');
-        const screen = await renderScreen(<ProviderConnectionAuthoringScreen {...(kind === 'detected' ? {
-            contributionKey: 'acme.plugin/ollama',
-            candidateId: 'discovery-candidate:v1:default',
-            displayName: 'Detected Ollama',
-        } : {})} />);
-        const nameField = () => screen.findAllByType(FieldTextInput)
-            .find((field) => field.props.accessibilityLabel === 'settingsProviders.authoring.name');
+        const { MachineAdministrationContextBar } = await import('@/components/settings/machines/MachineAdministrationContextBar');
+        const screen = await renderScreen(<ProviderConnectionAuthoringScreen />);
+        const field = (label: string) => screen.findAllByType(FieldTextInput)
+            .find((entry) => entry.props.accessibilityLabel === label);
+        const name = 'Keep this gateway';
+        const baseUrl = 'https://gateway.example/v1';
+        const models = '/models';
         await React.act(async () => {
-            nameField()?.props.onChangeText('Discard this draft');
+            field('settingsProviders.authoring.name')!.props.onChangeText(name);
+            field('settingsProviders.authoring.baseUrl')!.props.onChangeText(baseUrl);
+            field('settingsProviders.authoring.modelsPath')!.props.onChangeText(models);
         });
         expect(getActiveUnsavedChangesGuard()?.isDirtyRef.current).toBe(true);
+        modalAlert.mockClear();
+        await screen.pressByTestIdAsync('settings.providers.administration.target.chip');
+        await React.act(async () => { reportPopoverContentLayout(screen.tree, { width: 320, height: 400 }); });
+        await screen.pressByTestIdAsync('settings.providers.administration.target.picker-option:machine-b');
+        expect(modalAlert).not.toHaveBeenCalled();
+        expect(screen.findByType(MachineAdministrationContextBar).props.selection.selectedTarget?.machineId).toBe('machine-b');
+        expect(field('settingsProviders.authoring.name')?.props.value).toBe(name);
+        expect(field('settingsProviders.authoring.baseUrl')?.props.value).toBe(baseUrl);
+        expect(field('settingsProviders.authoring.modelsPath')?.props.value).toBe(models);
+        expect(getActiveUnsavedChangesGuard()?.isDirtyRef.current).toBe(true);
+
+        // A real departure is still a navigation transaction, unlike editing the Machine field.
         let navigationResult: true | Promise<boolean> = true;
         await React.act(async () => {
-            navigationResult = runGuardedNavigation(async () => { await administrationTarget.controller.select('machine-b'); });
+            navigationResult = runGuardedNavigation(() => { routerPush('/settings/providers/pc_other'); });
             await flushHookEffects({ cycles: 1, turns: 2 });
         });
+        expect(routerPush).not.toHaveBeenCalled();
         const buttons = modalAlert.mock.calls.at(-1)?.[2] as Array<{ style?: string; onPress?: () => void }>;
+        expect(buttons.some(button => button.style === 'destructive')).toBe(true);
         await React.act(async () => {
-            buttons.find((button) => button.style === 'destructive')?.onPress?.();
+            buttons.find(button => button.style === 'cancel')!.onPress?.();
             await navigationResult;
         });
-        expect(nameField()?.props.value ?? '').toBe('');
-        expect(getActiveUnsavedChangesGuard()?.isDirtyRef.current).toBe(false);
-        if (kind === 'detected') {
-            await React.act(async () => {
-                nameField()?.props.onChangeText('Discard this one too');
-            });
-            await React.act(async () => {
-                navigationResult = runGuardedNavigation(() => { routerPush('/settings/providers/pc_other'); });
-                await flushHookEffects({ cycles: 1, turns: 2 });
-            });
-            const nextButtons = modalAlert.mock.calls.at(-1)?.[2] as Array<{ style?: string; onPress?: () => void }>;
-            await React.act(async () => {
-                nextButtons.find((button) => button.style === 'destructive')?.onPress?.();
-                await navigationResult;
-            });
-            expect(describeProviderConnections.mock.calls.at(-1)?.[0]).toMatchObject({
-                machineId: 'machine-b',
-                authoringPreview: { selectedCandidateId: null, displayName: null },
-            });
-            expect(getActiveUnsavedChangesGuard()?.isDirtyRef.current).toBe(false);
-        }
+        expect(routerPush).not.toHaveBeenCalled();
+        expect(field('settingsProviders.authoring.name')?.props.value).toBe(name);
+        expect(getActiveUnsavedChangesGuard()?.isDirtyRef.current).toBe(true);
         expect(run).not.toHaveBeenCalled();
-    });
+    }));
 
     it('keeps the required connection name visible, focusable, and continuous in advanced mode', async () => {
         const { ProviderConnectionAuthoringScreen } = await import('./ProviderConnectionAuthoringScreen');
