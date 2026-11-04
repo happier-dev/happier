@@ -35,6 +35,7 @@ const styles = StyleSheet.create((theme) => ({
     },
     phoneTabs: {
         paddingHorizontal: theme.space.s16,
+        paddingTop: theme.space.s8,
         paddingBottom: theme.space.s4,
     },
 }));

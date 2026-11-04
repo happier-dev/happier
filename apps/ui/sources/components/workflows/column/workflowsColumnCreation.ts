@@ -11,3 +11,13 @@ export const WorkflowsColumnOwnsCreationContext = React.createContext(false);
 export function useWorkflowsColumnOwnsCreation(): boolean {
     return React.useContext(WorkflowsColumnOwnsCreationContext);
 }
+
+/**
+ * True when the column is the page on a phone-sized window and leads with the page's name, so the home
+ * under its Definitions/Runs switch does not head the page a second time (R8). The column decides.
+ */
+export const WorkflowsColumnHeadsPageContext = React.createContext(false);
+
+export function useWorkflowsColumnHeadsPage(): boolean {
+    return React.useContext(WorkflowsColumnHeadsPageContext);
+}

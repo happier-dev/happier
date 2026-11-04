@@ -875,6 +875,48 @@ describe('workflow library summaries and filter', () => {
         }
     });
 
+    it('opens a phone-sized page on its name, then the switch, then the scope line with its spaces, then search (R8)', async () => {
+        windowSize.width = 390;
+        execute.mockImplementation(async (actionId: string) => {
+            if (actionId === 'workflow.definition.list') return { ok: true, result: { definitions: [{
+                kind: 'workflow-definition.v1', definitionId: '10000000-0000-4000-8000-000000000051', revision: { headerVersion: 1, bodyVersion: 1 },
+                metadata: { title: 'Saved workflow' }, ownerAccountId: 'account-a', access: 'owner',
+                contentStatus: 'available', stepCount: 1, triggers: [], nextRunAt: null,
+            }] } };
+            if (actionId === 'workflow.run.summaries') return { ok: true, result: { summaries: [], remainingSourceArtifactIds: [] } };
+            if (actionId === 'workflow.trigger.list') return { ok: true, result: { sets: [] } };
+            if (actionId === 'workflow.run.list') return { ok: true, result: { runs: [], metadataByRunId: {} } };
+            return { ok: false, errorCode: 'unexpected', error: 'unexpected' };
+        });
+        try {
+            const screen = await renderScreen(<DestinationInstanceHost tabId="workflows" ref={{ kind: 'workflows', params: {} }}
+                pathname="/workflows" focused visible navigation={{ push: routerPush, replace: () => {}, back: () => {} }}>
+                <WorkflowsDestinationIndex />
+            </DestinationInstanceHost>, { wrapper: Wrapper });
+            await vi.waitFor(() => expect(screen.findHostByTestId('workflows-home:row:10000000-0000-4000-8000-000000000051')).not.toBeNull());
+            const ids: string[] = [];
+            screen.tree.root.findAll((node) => {
+                if (typeof node.type === 'string' && typeof node.props?.testID === 'string') ids.push(node.props.testID);
+                return false;
+            });
+            const at = (id: string) => ids.findIndex((candidate) => candidate === id || candidate.startsWith(id));
+            expect(at('workflows-column:header')).toBeGreaterThanOrEqual(0);
+            expect(at('workflows-column:header')).toBeLessThan(at('workflows-column:view'));
+            expect(at('workflows-column:view')).toBeLessThan(at('workflows-home-space-title'));
+            // One name on the page: the home under the column does not head itself a second time.
+            expect(screen.findHostByTestId('workflows-home:header')).toBeNull();
+            // The strip shares the scope line; only the search takes a line of its own.
+            const line = screen.findHostByTestId('workflows-home:scope-line');
+            expect(line?.findAll((node) => typeof node.type === 'string' && String(node.props?.testID ?? '').startsWith('workflows-home-space-strip')).length).toBeGreaterThan(0);
+            expect(line?.findAll((node) => node.props?.testID === 'workflows-home:search')).toHaveLength(0);
+            // Actions sit on the name's line; the switch has its row to itself.
+            const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+            expect(screen.findAllByType(DropdownMenu).some((menu) => menu.props.testID === 'workflows-column:add:menu')).toBe(true);
+            expect(screen.findHostByTestId('workflows-column:header')?.findAll((node) => node.props?.testID === 'workflows-column:add:menu').length).toBeGreaterThan(0);
+        } finally {
+            windowSize.width = 800;
+        }
+    });
     it('paints count and shared trigger wording, and filters attached triggers without losing manual workflows', async () => {
         let deletedDefinitionId: string | undefined;
         automationDefinitionResponse = async (url, init) => init?.method === 'DELETE'

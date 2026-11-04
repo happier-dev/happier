@@ -11,7 +11,8 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { CollectionList, CollectionListGroupLabel, CollectionNavigationRow, CollectionSkeletonRows, collectionListStyles } from '@/components/ui/lists/collection/CollectionList';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
-import { useNavigationTitleChromeShowsTitle } from '@/components/ui/layout/navigationTitleChrome';
+import { NavigationLargeTitleProvider, useNavigationTitleChromeShowsTitle } from '@/components/ui/layout/navigationTitleChrome';
+import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { useViewportClass } from '@/utils/platform/useViewportClass';
@@ -35,7 +36,7 @@ import { t, tLoose } from '@/text';
 import { formatWorkflowDefinitionContentUnavailableReason, formatWorkflowDefinitionLibraryTitle } from '@/components/workflows/presentation/workflowProblemPresentation';
 
 import { WorkflowsColumnActions } from './WorkflowsColumnActions';
-import { WorkflowsColumnOwnsCreationContext } from './workflowsColumnCreation';
+import { WorkflowsColumnHeadsPageContext, WorkflowsColumnOwnsCreationContext } from './workflowsColumnCreation';
 import { WorkflowPurposeGlyph } from '../presentation/WorkflowPurposeGlyph';
 import { WorkStatusRowMark } from '@/components/work/status/WorkStatusRowMark';
 import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
@@ -61,6 +62,9 @@ export const WorkflowsColumn = React.memo(function WorkflowsColumn(props: Readon
     const titleChrome = useNavigationTitleChromeShowsTitle();
     const phone = useViewportClass() === 'compact';
     const ownsCreation = (titleChrome || phone) && props.definitionsContent !== undefined;
+    // A phone-sized window with no navigation bar over the page: it opens on its name, with the actions on the
+    // name's line, then the switch. Under a native header the bar already carries the name.
+    const headsPage = phone && !titleChrome && props.definitionsContent !== undefined;
     const pathname = usePathname();
     const params = useGlobalSearchParams<{ trigger?: string }>();
     const [view, setView] = React.useState<WorkflowsColumnView>(() => isRunPath(pathname) ? 'runs' : 'definitions');
@@ -71,10 +75,10 @@ export const WorkflowsColumn = React.memo(function WorkflowsColumn(props: Readon
     }, [pathname, params.trigger]);
     // As the page the switch is a row of its own on the sheets' edge; in the column it is the compact icon
     // switch in the band under the title (WorkflowsColumnList), never in the title row.
-    // With no navigation chrome above it (a phone browser, an installed web app) the switch is the page's first
-    // row and clears the device's top edge itself; under a native header it only needs the page's own breathing room.
+    // With no navigation chrome above it (a phone browser, an installed web app) the page's name leads and clears the
+    // device's top edge itself, the switch under it; under a native header the switch only needs the page's own breathing room.
     const safeAreaTop = useChromeSafeAreaInsets().top;
-    const viewTabs = <View style={[styles.views, styles.viewsOnPage, { paddingTop: HAPPIER_PAGE_METRICS.pageHeaderUnderChromePaddingTopPx + (titleChrome ? 0 : safeAreaTop) }]}>
+    const viewTabs = <View style={[styles.views, styles.viewsOnPage, headsPage ? styles.viewsUnderPageTitle : { paddingTop: HAPPIER_PAGE_METRICS.pageHeaderUnderChromePaddingTopPx + (titleChrome ? 0 : safeAreaTop) }]}>
             <View style={styles.viewTabs}>
                 <SegmentedTabBar<WorkflowsColumnView>
                 testIDPrefix="workflows-column:view"
@@ -88,15 +92,22 @@ export const WorkflowsColumn = React.memo(function WorkflowsColumn(props: Readon
                 segmentSizing="equal"
                 />
             </View>
-            {props.definitionsContent === undefined ? null : <WorkflowsColumnActions canCreate={ownsCreation} />}
+            {props.definitionsContent === undefined || headsPage ? null : <WorkflowsColumnActions canCreate={ownsCreation} />}
         </View>;
     // Without a shell column, Definitions is the full home, not a second compact navigation list.
     // The same view owner still reaches Runs; the home carries its own page identity, actions and spaces.
     if (props.definitionsContent !== undefined && access.kind === 'workflows') {
         return <View testID="workflows-column" style={styles.column}>
+            {headsPage ? <View testID="workflows-column:header" style={{ paddingTop: safeAreaTop }}>
+                <NavigationLargeTitleProvider largeTitle>
+                    <PageHeader title={t('workflows.title')} actionsPlacement="page" actions={<WorkflowsColumnActions canCreate={ownsCreation} />} />
+                </NavigationLargeTitleProvider>
+            </View> : null}
             {viewTabs}
             {view === 'runs' ? <SessionsList fixedShow="runs" pathname={pathname} /> : (
-                <WorkflowsColumnOwnsCreationContext.Provider value={ownsCreation}>{props.definitionsContent}</WorkflowsColumnOwnsCreationContext.Provider>
+                <WorkflowsColumnOwnsCreationContext.Provider value={ownsCreation}>
+                    <WorkflowsColumnHeadsPageContext.Provider value={headsPage}>{props.definitionsContent}</WorkflowsColumnHeadsPageContext.Provider>
+                </WorkflowsColumnOwnsCreationContext.Provider>
             )}
         </View>;
     }
@@ -340,6 +351,8 @@ const styles = StyleSheet.create((theme) => ({
         flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },
     // As the destination's page (a phone), the switch sits on the page sheets' edge, not the column's row inset.
     viewsOnPage: { paddingHorizontal: HAPPIER_PAGE_METRICS.sheetInsetPx },
+    // Under the page's large title, the same gap the Inbox's tabs keep (lab `phone-P4`).
+    viewsUnderPageTitle: { paddingTop: theme.space.s8, paddingBottom: 0 },
     viewTabs: { flex: 1, minWidth: 0 },
     definitionsList: { backgroundColor: 'transparent' },
     // The switch's one place in both views: the band under the title, ending the row the spaces strip

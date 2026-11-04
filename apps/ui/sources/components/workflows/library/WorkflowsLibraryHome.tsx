@@ -45,7 +45,7 @@ import { t } from '@/text';
 
 import { confirmWorkflowDocumentExport } from '../actions/confirmWorkflowDocumentExport';
 import { WORKFLOWS_IMPORT_ROUTE, WORKFLOWS_NEW_ROUTE } from '../column/WorkflowsColumnActions';
-import { useWorkflowsColumnOwnsCreation } from '../column/workflowsColumnCreation';
+import { useWorkflowsColumnHeadsPage, useWorkflowsColumnOwnsCreation } from '../column/workflowsColumnCreation';
 import {
     dismissWorkflowLibraryDeletionReceipt,
     useWorkflowRunWindow,
@@ -123,6 +123,7 @@ export function WorkflowsLibraryHome(): React.ReactElement {
     const router = useRouter();
     const openAgent = useWorkflowAgentAuthoring();
     const columnOwnsCreation = useWorkflowsColumnOwnsCreation();
+    const columnHeadsPage = useWorkflowsColumnHeadsPage();
     const phone = useViewportClass() === 'compact';
     const focused = useIsFocused();
     // The one Workflow library controller (R8-7): the column beside this page narrows through the same draft.
@@ -205,15 +206,23 @@ export function WorkflowsLibraryHome(): React.ReactElement {
 
     const search = <CompactSearchField testID="workflows-home:search" accessibilityLabel={t('workflows.destination.searchPlaceholder')}
         placeholder={t('workflows.destination.searchPlaceholder')} value={query} onChangeText={libraryView.setSearchQuery} style={phone ? styles.searchPhone : styles.search} />;
+    // An empty deletion landing lends its real New workflow action to the header so focus never lands on BODY.
+    const landingNeedsNew = deleted && deletionFocusRequest === undefined;
+    const newWorkflowButton = <RoundButton
+        testID="workflows-home:new"
+        controlRef={setCreationRef}
+        title={t('workflows.newWorkflow')}
+        leading={<Icon name="plus" size={14} color={theme.colors.button.primary.tint} />}
+        onPress={newWorkflow}
+    />;
     const header = (<>
-        <PageHeader
+        {columnHeadsPage ? (landingNeedsNew ? <View style={styles.headerActions}>{newWorkflowButton}</View> : null) : <PageHeader
             testID="workflows-home:header"
             title={t('workflows.title')}
             description={t('workflows.destination.description')}
-            actionsPlacement={deleted && deletionFocusRequest === undefined ? 'page' : undefined}
-            // The column normally owns phone creation. An empty deletion landing lends
-            // its real New workflow action to the header so focus never lands on BODY.
-            actions={columnOwnsCreation && !(deleted && deletionFocusRequest === undefined) ? undefined : (
+            actionsPlacement={landingNeedsNew ? 'page' : undefined}
+            // The column normally owns phone creation.
+            actions={columnOwnsCreation && !landingNeedsNew ? undefined : (
                 <View style={styles.headerActions}>
                     {!columnOwnsCreation ? <><RoundButton
                         testID="workflows-home:import"
@@ -227,29 +236,22 @@ export function WorkflowsLibraryHome(): React.ReactElement {
                         title={t('workflows.authoring.create')}
                         leading={<Icon name="sparkle" size={14} color={theme.colors.text.primary} />}
                         onPress={createWithAgent} /></> : null}
-                    <RoundButton
-                        testID="workflows-home:new"
-                        controlRef={setCreationRef}
-                        title={t('workflows.newWorkflow')}
-                        leading={<Icon name="plus" size={14} color={theme.colors.button.primary.tint} />}
-                        onPress={newWorkflow}
-                    />
+                    {newWorkflowButton}
                 </View>
             )}
-        />
+        />}
         {deleted ? <View testID="workflows-home:deleted-focus">
             <SurfaceStateCard testID="workflows-home:deleted" size="line" kind="success" title={t('common.deleted')} accessibilitySemantics="status" />
         </View> : null}
         {/* The space header (R9, R8-7): the same title chevron, filter, strip and condition tokens as the column, over one draft. */}
-        <View style={styles.controlLine}>
+        {/* A phone keeps the strip on the line of the title it belongs to; the search takes its own line below. */}
+        <View testID="workflows-home:scope-line" style={[styles.controlLine, phone ? styles.controlLinePhone : null]}>
             {spaceHeader.titleControl}
-            <View style={styles.controlLineGrow} />
+            {phone ? <View style={styles.spaceStripInline}>{spaceHeader.strip}</View> : <View style={styles.controlLineGrow} />}
             {spaceHeader.filterButton}
             {phone ? null : search}
         </View>
-        <View style={styles.spaceStrip}>{spaceHeader.strip}</View>
-        {/* A phone keeps the strip under the title it belongs to; the search takes its own line below. */}
-        {phone ? <View style={styles.controlLine}>{search}</View> : null}
+        {phone ? <View style={styles.controlLine}>{search}</View> : <View style={styles.spaceStrip}>{spaceHeader.strip}</View>}
         {spaceHeader.overlays}
     </>);
 
@@ -638,6 +640,13 @@ const styles = StyleSheet.create((theme) => ({
     },
     controlLineGrow: {
         flexGrow: 1,
+    },
+    controlLinePhone: {
+        flexWrap: 'nowrap',
+    },
+    spaceStripInline: {
+        flex: 1,
+        minWidth: 0,
     },
     // As on the Artifacts toolbar: the search gives up width first and takes its own line on a phone.
     search: {
