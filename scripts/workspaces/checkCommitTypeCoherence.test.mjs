@@ -1,10 +1,12 @@
+import { installWorkspaceAdmissionProcessFixture } from '../../apps/stack/scripts/testkit/core/native_admission_fixture.mjs';
+import { resolveHeavyweightMemoryFloorKiB } from '../../apps/stack/scripts/utils/dev_targets/remote_commands.mjs';
 import * as diagnosticMessages from './commitTypeCoherenceDiagnostics.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { delimiter, join } from 'node:path';
 import { existsSync } from 'node:fs';
 import * as coherence from './checkCommitTypeCoherence.mjs';
@@ -611,6 +613,76 @@ test('a pre-existing error in an unchanged file stays attributed to the base whe
     checkCommitTypeCoherence({ repo, base: broken, tree: commit }).fresh.length,
     0,
   );
+});
+
+test('zero-source packets finalize with zero compiler loads and zero admission requests', { skip: process.platform !== 'linux' }, async t => {
+  const { repo, write, commitOnly } = await checkout(t);
+  const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
+  const base = git('rev-parse', 'HEAD');
+  await write('tool.mjs', 'export const tool = true;\n');
+  await write('notes.md', 'No compiler inputs changed.\n');
+  const packetEnv = { ...process.env, GIT_INDEX_FILE: join(repo, 'packet.index') };
+  const packetGit = (...args) => execFileSync('git', args, { cwd: repo, env: packetEnv, encoding: 'utf8' }).trim();
+  packetGit('read-tree', base);
+  packetGit('add', '--', 'tool.mjs', 'notes.md');
+  const tree = packetGit('write-tree');
+  const native = await installWorkspaceAdmissionProcessFixture(t, repo);
+  const floor = resolveHeavyweightMemoryFloorKiB('compilation', { machine: 'local' });
+  await native.setMemoryObservation({ availableMemoryKiB: floor - 1, totalMemoryKiB: floor - 1 });
+  const sourceEntry = new URL('./checkCommitTypeCoherence.mjs', import.meta.url);
+  const trace = join(repo, 'compiler-work.jsonl');
+  const preload = join(repo, 'observe-compiler-work.mjs');
+  // Observe module loading and the real admission process boundary; no internal decisions are mocked.
+  await writeFile(preload, `
+import { registerHooks } from 'node:module';
+import { appendFileSync } from 'node:fs';
+registerHooks({ resolve(specifier, context, next) {
+  const result = next(specifier, context);
+  const kind = specifier === 'typescript' || specifier === '@typescript/native/sync' ? 'compiler'
+    : result.url.endsWith('/admission_client.mjs') ? 'admission' : undefined;
+  if (kind) appendFileSync(${JSON.stringify(trace)}, kind + '\\n');
+  return result;
+} });
+`);
+  native.env.NODE_OPTIONS += ` --import=${pathToFileURL(preload).href}`;
+  const message = join(repo, 'message.txt');
+  await writeFile(message, 'fix: compiler-free finalization\n');
+  // HEAD moves after the packet: the same fast path must still reach replay and CAS.
+  await write('later.md', 'Concurrent independent change.\n');
+  const parent = commitOnly('later.md');
+  for (const finalize of [false, true]) {
+    const result = spawnSync(process.execPath, [fileURLToPath(sourceEntry), `--base=${base}`, `--tree=${tree}`,
+      ...(finalize ? [`--message-file=${message}`] : [])], {
+      cwd: repo, env: { ...native.env, CI: '' }, encoding: 'utf8',
+    });
+    assert.equal(result.status, 0, result.stderr + result.stdout);
+    assert.match(result.stdout, /coherent .*changed=0 roots=0 new=0 unowned=0/u);
+  }
+  const events = existsSync(trace) ? (await readFile(trace, 'utf8')).trim().split('\n') : [];
+  assert.equal(events.filter(value => value === 'compiler').length, 0, 'zero compiler module loads');
+  assert.equal(events.filter(value => value === 'admission').length, 0, 'zero compiler admission requests');
+  assert.equal(git('rev-parse', 'HEAD^'), parent);
+  assert.equal(git('show', 'HEAD:later.md'), 'Concurrent independent change.');
+  assert.equal(git('show', 'HEAD:tool.mjs'), 'export const tool = true;');
+
+  // The same observer must see real compiler work for a TS/config packet.
+  const compileBase = git('rev-parse', 'HEAD');
+  await write('producer.ts', 'export const original = 2;\n');
+  const config = JSON.parse(await readFile(join(repo, 'tsconfig.json'), 'utf8'));
+  config.compilerOptions.noUncheckedIndexedAccess = true;
+  await write('tsconfig.json', JSON.stringify(config));
+  packetGit('read-tree', compileBase);
+  packetGit('add', '--', 'producer.ts', 'tsconfig.json');
+  const compileTree = packetGit('write-tree');
+  const refused = spawnSync(process.execPath, [fileURLToPath(sourceEntry), `--base=${compileBase}`, `--tree=${compileTree}`], {
+    cwd: repo, env: { ...native.env, CI: '' }, encoding: 'utf8',
+  });
+  assert.notEqual(refused.status, 0, 'the relevant packet must reach real capacity admission');
+  assert.match(refused.stderr, /HSTACK_MEMORY_CAPACITY/u);
+  assert.doesNotMatch(refused.stdout, /coherent/u, 'refused compilation cannot publish a verdict');
+  const observed = (await readFile(trace, 'utf8')).trim().split('\n');
+  assert.ok(observed.includes('compiler'), 'positive control observes compiler loading');
+  assert.ok(observed.includes('admission'), 'positive control observes a real admission request');
 });
 
 test('retains the nested cause in native compiler diagnostic messages', () => {

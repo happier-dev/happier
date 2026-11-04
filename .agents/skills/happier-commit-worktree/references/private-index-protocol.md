@@ -75,13 +75,15 @@ Then create the tree and use the checker-owned finalizer to prove it type-resolv
 
 ```bash
 tree=$(GIT_INDEX_FILE="$idx" git write-tree)
-finalization=$(./apps/stack/bin/hstack-exec --local -- node scripts/workspaces/checkCommitTypeCoherence.mjs --base="$head" --tree="$tree" --message-file=/tmp/happier-commit-message.txt) || exit "$?"
+finalization=$(node scripts/workspaces/checkCommitTypeCoherence.mjs --base="$head" --tree="$tree" --message-file=/tmp/happier-commit-message.txt) || exit "$?"
 printf '%s\n' "$finalization"
 commit=$(printf '%s\n' "$finalization" | sed -n 's/^committed \([0-9a-f]*\):.*/\1/p')
 git show --no-patch --format=fuller "$commit"
 ```
 
 Verify the current-user identity and complete commit-specific co-authors in the message before invoking the finalizer, and inspect the created object with `git show --no-patch --format=fuller "$commit"` afterwards. The finalizer uses ordinary `git commit-tree` configuration, including configured signing; required hook-equivalent checks remain the caller's responsibility.
+
+Invoke the checker directly on the Git-owning machine. Its packet decision precedes compiler loading; compiler work enters canonical admission through the API launcher. An enclosing executor compilation reservation would admit before that decision.
 
 The message file contains the complete subject, blank line, and body. Remove it after use if it contains no information worth retaining; do not create message files inside the repository.
 

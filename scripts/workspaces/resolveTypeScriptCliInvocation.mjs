@@ -3,10 +3,10 @@ import { createRequire } from 'node:module';
 import { dirname, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
+import { NATIVE_TYPESCRIPT_PACKAGE_JSON, resolveTypeScriptApiExecutable } from './resolveTypeScriptApiExecutable.mjs';
 import { resolveRemoteCommandPolicy } from '../../apps/stack/scripts/utils/dev_targets/remote_commands.mjs';
 import { isWorkspaceBuildStartup } from '../../apps/stack/scripts/utils/proc/workspace_build_admission.mjs';
 
-const NATIVE_TYPESCRIPT_PACKAGE_JSON = '@typescript/native/package.json';
 const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 
 export function typecheckCompilerOptions(args, workspaceDir) {
@@ -87,7 +87,7 @@ export function resolveTypeScriptCliInvocation(params) {
   // The synchronous native API spawns an executable, not the Node CLI wrapper.
   // Reuse the selected package's platform resolver; API tooling always selects Microsoft.
   const apiExecutable = params.args?.includes('--api')
-    ? { apiExecutable: createRequire(packageJsonPath)('./lib/getExePath.js').default() }
+    ? { apiExecutable: resolveTypeScriptApiExecutable(packageJsonPath) }
     : {};
   // Rust snapshots and internal declarations never share Microsoft's caches.
   const cacheSuffix = options ? '.tsrs' : '';

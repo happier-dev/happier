@@ -9,7 +9,10 @@
 //   node scripts/workspaces/checkCommitTypeCoherence.mjs <commit>...     (each against its first parent)
 //
 // Exit status: 0 coherent, 1 new diagnostics or unowned sources, 2 usage or runtime failure. It reads Git objects, so it
-// runs on the machine that owns the repository (`./apps/stack/bin/hstack-exec --local -- node ...`).
+// runs directly on the machine that owns the repository (`node scripts/workspaces/checkCommitTypeCoherence.mjs ...`).
+// The changed-source owner returns before loading compiler modules or entering compiler admission.
+// Every compiler API, including imported and plain Node calls, uses the executor's
+// canonical admission. Admitted parents retain their reservation for this phase.
 //
 // The checkout is read through a request-filesystem layer of the Microsoft compiler's API: compiler
 // inputs whose bytes differ from the tree carry the tree's blob, paths the tree lacks (including
@@ -23,11 +26,13 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { posix, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { API } from '@typescript/native/sync';
-import ts from 'typescript';
-import { resolveTypeScriptCliInvocation } from './resolveTypeScriptCliInvocation.mjs';
+import { createRequire } from 'node:module';
+import { resolveTypeScriptApiExecutable } from './resolveTypeScriptApiExecutable.mjs';
 import { diagnosticHunks, diagnosticMessageText, newDiagnostics } from './commitTypeCoherenceDiagnostics.mjs';
-import { uiTypedRoutesDeclaration } from '../../apps/ui/scripts/deriveTypecheckProjects.mjs';
+import { uiTypedRoutesDeclaration } from '../../apps/ui/scripts/uiTypedRoutesDeclaration.mjs';
+
+const require = createRequire(import.meta.url);
+let ts;
 
 const TYPESCRIPT_SOURCE = /\.(?:[cm]?ts|tsx)$/u;
 const COMPILER_INPUT = /\.(?:[cm]?[jt]sx?|json)$/u;
@@ -377,6 +382,8 @@ export function checkCommitTypeCoherence({ repo, base, tree, onlyGroups }) {
   const changed = slice.filter(({ path }) => TYPESCRIPT_SOURCE.test(path));
   const result = { base, tree, changed: changed.length, roots: 0, unowned: [], fresh: [], groups: [], candidates: [] };
   if (changed.length === 0) return { ...result, ms: Date.now() - started };
+  ts ??= require('typescript');
+  const { API } = require('@typescript/native/sync');
   const treeIndex = git.treeEntries(tree);
   let roots = [
     ...new Set([
@@ -388,8 +395,9 @@ export function checkCommitTypeCoherence({ repo, base, tree, onlyGroups }) {
   result.candidates = [...groups].map(([id, files]) => ({ id, roots: files }));
   if (onlyGroups) for (const dir of groups.keys()) if (!onlyGroups.has(dir)) groups.delete(dir);
   Object.assign(result, { roots: roots.length, unowned });
-  const compiler = resolveTypeScriptCliInvocation({ args: ['--api'], workspaceDir: repo });
-  const api = new API({ cwd: repo, tsserverPath: compiler.apiExecutable });
+  const api = new API({ cwd: repo, tsserverPath: process.platform === 'win32'
+    ? resolveTypeScriptApiExecutable()
+    : fileURLToPath(new URL('./runCommitTypeCoherenceApi.mjs', import.meta.url)) });
   try {
     const layer = git.layerFor(tree, treeIndex);
     Object.assign(layer.files, git.typedRouteInputs(groups, treeIndex));
