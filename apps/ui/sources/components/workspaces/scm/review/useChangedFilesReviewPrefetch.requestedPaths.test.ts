@@ -1,7 +1,6 @@
-import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi, afterEach } from 'vitest';
-import { renderScreen } from '@/dev/testkit';
+import { act, renderHook } from '@/dev/testkit';
+import { useChangedFilesReviewPrefetch } from './useChangedFilesReviewPrefetch';
 import { installFilesContentCommonModuleMocks } from './filesContentTestHelpers';
 
 let prefetchConcurrencySetting: number | null = null;
@@ -40,37 +39,13 @@ function file(fullPath: string) {
     return { fullPath } as any;
 }
 
-type HookValue = ReturnType<typeof import('./useChangedFilesReviewPrefetch')['useChangedFilesReviewPrefetch']>;
-
-async function renderHook(useValue: () => HookValue): Promise<{ getCurrent: () => HookValue; unmount: () => void }> {
-    let current: HookValue | null = null;
-    function Test() {
-        current = useValue();
-        return null;
-    }
-    let root: renderer.ReactTestRenderer | null = null;
-    root = (await renderScreen(React.createElement(Test))).tree;
-    return {
-        getCurrent: () => {
-            if (!current) throw new Error('Hook did not render');
-            return current;
-        },
-        unmount: () => {
-            if (!root) return;
-            act(() => root?.unmount());
-        },
-    };
-}
-
 afterEach(() => {
     prefetchConcurrencySetting = null;
     vi.clearAllMocks();
-    vi.resetModules();
 });
 
 describe('useChangedFilesReviewPrefetch (requestedPaths)', () => {
     it('returns initialRequestedPaths before viewability updates', async () => {
-        const { useChangedFilesReviewPrefetch } = await import('./useChangedFilesReviewPrefetch');
 
         const hook = await renderHook(() => useChangedFilesReviewPrefetch({
             sessionId: 's1',
@@ -85,11 +60,10 @@ describe('useChangedFilesReviewPrefetch (requestedPaths)', () => {
         }));
 
         expect(hook.getCurrent().requestedPaths).toEqual(['a.ts']);
-        hook.unmount();
+        await hook.unmount();
     });
 
     it('updates requestedPaths from onViewableItemsChanged even when prefetch is disabled', async () => {
-        const { useChangedFilesReviewPrefetch } = await import('./useChangedFilesReviewPrefetch');
 
         const hook = await renderHook(() => useChangedFilesReviewPrefetch({
             sessionId: 's1',
@@ -109,18 +83,17 @@ describe('useChangedFilesReviewPrefetch (requestedPaths)', () => {
         await vi.waitFor(() => {
             expect(hook.getCurrent().requestedPaths).toEqual(['b.ts']);
         });
-        hook.unmount();
+        await hook.unmount();
     });
 
-    it('does not acquire offscreen diffs and observes workspace rows without a Session', async () => {
+    it.each(['', 'captured-session'])('leaves custom file-read acquisition to the demand loader (Session: %s)', async (readSessionId) => {
         prefetchConcurrencySetting = 2;
         const sessionId = 'workspace:repo:prefetch-custom';
         const { scmDiffCache } = await import('@/scm/diffCache/scmDiffCacheSingleton');
         scmDiffCache.invalidateSession(sessionId);
-        const { useChangedFilesReviewPrefetch } = await import('./useChangedFilesReviewPrefetch');
 
         const hook = await renderHook(() => useChangedFilesReviewPrefetch({
-            sessionId: '',
+            sessionId: readSessionId,
             snapshotSignature: 'sig-1',
             diffArea: 'pending' as any,
             rows: [
@@ -149,11 +122,10 @@ describe('useChangedFilesReviewPrefetch (requestedPaths)', () => {
         act(() => { hook.getCurrent().onViewableItemsChanged({ viewableItems: [{ index: 1 }] }); });
         await vi.waitFor(() => { expect(hook.getCurrent().requestedPaths).toEqual(['b.ts']); });
         expect(prefetchDiffSpy).not.toHaveBeenCalled();
-        hook.unmount();
+        await hook.unmount();
     });
 
     it('requests nothing when the visible viewport contains only a section header', async () => {
-        const { useChangedFilesReviewPrefetch } = await import('./useChangedFilesReviewPrefetch');
         const hook = await renderHook(() => useChangedFilesReviewPrefetch({
             sessionId: 's1', snapshotSignature: 'collapsed', diffArea: 'pending',
             rows: [{ kind: 'section', key: 'section', title: 'Changes' }, { kind: 'file', file: file('b.ts') }] as any,
@@ -163,6 +135,6 @@ describe('useChangedFilesReviewPrefetch (requestedPaths)', () => {
         act(() => { hook.getCurrent().onViewableItemsChanged({ viewableItems: [{ index: 0 }] }); });
         await vi.waitFor(() => { expect(hook.getCurrent().viewableRowIndices).toEqual([0]); });
         expect(hook.getCurrent().requestedPaths).toEqual([]);
-        hook.unmount();
+        await hook.unmount();
     });
 });

@@ -121,33 +121,23 @@ export function useChangedFilesReviewPrefetch(input: Readonly<{
             cache: scmDiffCache,
             fetchDiff: async ({ sessionId, diffArea, path, snapshotSignature }) => {
                 const file = fileStatusByPathRef.current.get(path) ?? null;
-                const response = fetchUnifiedDiffForPath
-                    ? await fetchUnifiedDiffForPath({
-                        diffArea,
-                        snapshotSignature,
-                        diffCache: scmDiffCache,
-                        path,
-                        file,
-                        normalizeError: (e) => normalizeErrorRef.current(e),
-                        fallbackError: input.fallbackError,
-                    })
-                    : await fetchSessionUnifiedDiffForPath({
-                        sessionId,
-                        diffArea,
-                        snapshotSignature,
-                        diffCache: scmDiffCache,
-                        path,
-                        file,
-                        normalizeError: (e) => normalizeErrorRef.current(e),
-                        fallbackError: input.fallbackError,
-                    });
+                const response = await fetchSessionUnifiedDiffForPath({
+                    sessionId,
+                    diffArea,
+                    snapshotSignature,
+                    diffCache: scmDiffCache,
+                    path,
+                    file,
+                    normalizeError: (e) => normalizeErrorRef.current(e),
+                    fallbackError: input.fallbackError,
+                });
                 return response.success
                     ? ({ success: true, diff: response.diff } as const)
                     : ({ success: false, error: response.error } as const);
             },
             now: () => Date.now(),
             maxConcurrency: Math.max(1, prefetchConcurrency || 1),
-        }), [fetchUnifiedDiffForPath]);
+        }), [input.fallbackError]);
     React.useEffect(() => {
         if (!prefetchEnabled) return;
         prefetchScheduler.setMaxConcurrency(prefetchConcurrency);
@@ -173,6 +163,9 @@ export function useChangedFilesReviewPrefetch(input: Readonly<{
 
     React.useEffect(() => {
         if (!prefetchEnabled) return;
+        // Custom read ports belong to the demand loader, which owns their queue
+        // and cancellation. They do not share the live Session acquisition cache.
+        if (fetchUnifiedDiffForPath) return;
         const signature = input.snapshotSignature;
         if (!signature) return;
         if (!prefetchWindowPaths || prefetchWindowPaths.length === 0) return;
@@ -189,7 +182,7 @@ export function useChangedFilesReviewPrefetch(input: Readonly<{
             diffArea: input.diffArea,
             paths: toPrefetch,
         });
-    }, [input.diffArea, input.isCollapsed, input.sessionId, input.snapshotSignature, prefetchEnabled, prefetchWindowPaths, requestedPaths, prefetchScheduler]);
+    }, [input.diffArea, input.isCollapsed, input.sessionId, input.snapshotSignature, prefetchEnabled, prefetchWindowPaths, requestedPaths, prefetchScheduler, fetchUnifiedDiffForPath]);
 
     const maxDiffLoadConcurrency = prefetchEnabled ? prefetchConcurrency : 1;
     return { prefetchEnabled, requestedPaths, prefetchWindowPaths, onViewableItemsChanged, viewableRowIndices, maxDiffLoadConcurrency };
