@@ -3,6 +3,69 @@ import { describe, expect, it } from 'vitest';
 import { PluginConnectedAccountAuthenticationModeV2Schema, PluginConnectedAccountConfigurationFieldV2Schema, PluginConnectedAccountDescriptorContributionV2Schema } from './pluginConnectedAccountAuthenticationV2.js';
 import { ConnectedAccountUiProjectionEntryV1Schema, projectConnectedAccountDescriptorV1 } from './connectedAccountUiProjectionV1.js';
 
+it('defers only declared optional Account configuration fields until OAuth succeeds', () => {
+  const mode = { id: 'browser', kind: 'oauthAuthorizationCode', callbackUrl: 'https://provider.example/callback',
+    pkce: 'required', outcomeReconciliation: 'providerCheck', postAuthenticationFieldIds: ['accountId'],
+    configuration: { scope: 'account', changeBehavior: 'reconnect', fields: [
+      { id: 'accountId', title: 'Account', schema: { type: 'string' } },
+    ] } };
+  expect(PluginConnectedAccountAuthenticationModeV2Schema.safeParse(mode).success).toBe(true);
+  for (const candidate of [
+    { ...mode, postAuthenticationFieldIds: ['missing'] },
+    { ...mode, postAuthenticationFieldIds: ['accountId', 'accountId'] },
+    { ...mode, configuration: { ...mode.configuration, scope: 'service' } },
+    { ...mode, configuration: { ...mode.configuration, fields: [{ ...mode.configuration.fields[0], required: true }] } },
+  ]) expect(PluginConnectedAccountAuthenticationModeV2Schema.safeParse(candidate).success).toBe(false);
+});
+
+it('binds OAuth client configuration only to distinct declared public string fields', () => {
+  const mode = { id: 'browser', kind: 'oauthAuthorizationCode', callbackUrl: 'https://provider.example/callback',
+    pkce: 'required', outcomeReconciliation: 'none',
+    clientConfiguration: { clientIdFieldId: 'clientId', scopesFieldId: 'scopes' },
+    configuration: { scope: 'account', changeBehavior: 'reconnect', fields: [
+      { id: 'clientId', title: 'Client ID', schema: { type: 'string' } },
+      { id: 'scopes', title: 'Scopes', schema: { type: 'string' } },
+    ] } };
+  expect(PluginConnectedAccountAuthenticationModeV2Schema.safeParse(mode).success).toBe(true);
+  const semanticOrigin = { ...mode.configuration.fields[1], semantic: 'connectedAccountOrigin',
+    required: true, schema: { type: 'string', minLength: 1 } };
+  expect(PluginConnectedAccountConfigurationFieldV2Schema.safeParse(semanticOrigin).success).toBe(true);
+  for (const candidate of [
+    { ...mode, configuration: undefined },
+    { ...mode, clientConfiguration: { clientIdFieldId: 'missing', scopesFieldId: 'scopes' } },
+    { ...mode, clientConfiguration: { clientIdFieldId: 'clientId', scopesFieldId: 'clientId' } },
+    { ...mode, configuration: { ...mode.configuration, fields: [mode.configuration.fields[0],
+      { ...mode.configuration.fields[1], secret: true }] } },
+    { ...mode, configuration: { ...mode.configuration, fields: [mode.configuration.fields[0],
+      { ...mode.configuration.fields[1], schema: { type: 'boolean' } }] } },
+    { ...mode, configuration: { ...mode.configuration, fields: [mode.configuration.fields[0], semanticOrigin] } },
+    { ...mode, kind: 'manual', fields: [] },
+  ]) expect(PluginConnectedAccountAuthenticationModeV2Schema.safeParse(candidate).success).toBe(false);
+});
+
+it('preserves optional Advanced configuration fields through the real UI projection', () => {
+  const configuration = { scope: 'account', changeBehavior: 'reconnect', fields: [
+    { id: 'accountId', title: 'Account ID', required: true, schema: { type: 'string' } },
+    { id: 'clientId', title: 'Client ID', schema: { type: 'string' }, presentation: { advanced: true } },
+    { id: 'registeredScopes', title: 'Scopes', schema: { type: 'string' }, presentation: { advanced: true } },
+  ] };
+  const descriptor = PluginConnectedAccountDescriptorContributionV2Schema.parse({
+    id: 'deploy', title: 'Deployment account', authentication: { defaultModeId: 'browser', modes: [{
+      id: 'browser', kind: 'oauthAuthorizationCode', callbackUrl: 'https://provider.example/callback',
+      pkce: 'required', outcomeReconciliation: 'none', configuration,
+      clientConfiguration: { clientIdFieldId: 'clientId', scopesFieldId: 'registeredScopes' },
+    }] },
+  });
+  const projection = ConnectedAccountUiProjectionEntryV1Schema.parse(projectConnectedAccountDescriptorV1({
+    descriptor, serviceId: 'deploy', pluginId: 'acme.deployment', provenance: 'external', sourceKind: 'installed',
+    availability: { state: 'available', reason: 'resolved' }, diagnostics: [],
+  }));
+  expect(projection.authentication.modes[0]?.configuration?.fields.find(field => field.id === 'clientId')?.presentation?.advanced).toBe(true);
+  expect(projection.authentication.modes[0]).toMatchObject({
+    clientConfiguration: { clientIdFieldId: 'clientId', scopesFieldId: 'registeredScopes' },
+  });
+});
+
 it('preserves mode-owned manual setup navigation and checklist through the real UI projection', () => {
   const setup = { url: 'https://provider.example/account/tokens', checklist: [
     'Name the token Happier.',

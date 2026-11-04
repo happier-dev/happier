@@ -168,6 +168,11 @@ export const PluginConnectedAccountConfigurationV2Schema = lazyZodSchema(() => z
 export type PluginConnectedAccountConfigurationV2 =
   z.infer<typeof PluginConnectedAccountConfigurationV2Schema>;
 
+const PluginConnectedAccountClientConfigurationV2Schema = lazyZodSchema(() => z.strictObject({
+  clientIdFieldId: PluginSettingFieldIdV2Schema,
+  scopesFieldId: PluginSettingFieldIdV2Schema,
+}));
+
 const PluginConnectedAccountOutcomeReconciliationV2Schema =
   lazyZodSchema(() => z.enum(['providerCheck', 'lateEvidence', 'none']));
 
@@ -181,6 +186,23 @@ export type PluginConnectedAccountDirectExportV2 = z.infer<
   typeof PluginConnectedAccountDirectExportV2Schema
 >;
 
+/**
+ * Presentation guidance for creating a mode's credential or client: `url` is the provider console, `checklist[0]`
+ * is the sentence that opens it, `permissions` lists what it must allow per feature. Presentation only.
+ */
+export const PluginConnectedAccountSetupGuideV2Schema = lazyZodSchema(() => z.strictObject({
+  url: ConnectedAccountBillingUrlSchema,
+  checklist: z.array(PluginLocalizedStringV2Schema),
+  /** What the credential must allow, per feature: a list to pick from, not more steps. */
+  permissions: z.optional(z.array(z.strictObject({
+    feature: PluginLocalizedStringV2Schema,
+    items: z.array(PluginLocalizedStringV2Schema).check(z.minLength(1)),
+  }))),
+  createKeyTitle: z.optional(PluginLocalizedStringV2Schema),
+  billingNote: z.optional(PluginLocalizedStringV2Schema),
+  shapeHint: z.optional(PluginLocalizedStringV2Schema),
+}));
+
 export const PluginConnectedAccountAuthenticationModeV2Schema =
   lazyZodSchema(() => z.discriminatedUnion('kind', [
     z.strictObject({
@@ -189,18 +211,7 @@ export const PluginConnectedAccountAuthenticationModeV2Schema =
       title: z.optional(PluginLocalizedStringV2Schema),
       outcomeReconciliation: z.literal('none'),
       fields: PluginConnectedAccountAuthenticationFieldsV2Schema,
-      setup: z.optional(z.strictObject({
-        url: ConnectedAccountBillingUrlSchema,
-        checklist: z.array(PluginLocalizedStringV2Schema),
-        /** What the credential must allow, per feature: a list to pick from, not more steps. */
-        permissions: z.optional(z.array(z.strictObject({
-          feature: PluginLocalizedStringV2Schema,
-          items: z.array(PluginLocalizedStringV2Schema).check(z.minLength(1)),
-        }))),
-        createKeyTitle: z.optional(PluginLocalizedStringV2Schema),
-        billingNote: z.optional(PluginLocalizedStringV2Schema),
-        shapeHint: z.optional(PluginLocalizedStringV2Schema),
-      })),
+      setup: z.optional(PluginConnectedAccountSetupGuideV2Schema),
       configuration: z.optional(PluginConnectedAccountConfigurationV2Schema),
       directExport: z.optional(PluginConnectedAccountDirectExportV2Schema),
       /** Verified manual input fields staged under these exact credential keys. */
@@ -240,9 +251,21 @@ export const PluginConnectedAccountAuthenticationModeV2Schema =
       scopes: z.optional(z.array(z.string().check(z.trim(), z.minLength(1)))),
       pkce: z.literal('required'),
       allowRawAuthorizationCode: z.optional(z.boolean()),
+      /** Declared optional Account fields whose choices become available only after authorization. */
+      postAuthenticationFieldIds: z.optional(z.array(PluginSettingFieldIdV2Schema)),
+      /** How to register an own client, shown with the client fields; the declared `callbackUrl` is offered to copy. */
+      setup: z.optional(PluginConnectedAccountSetupGuideV2Schema),
       outcomeReconciliation: PluginConnectedAccountOutcomeReconciliationV2Schema,
       configuration: z.optional(PluginConnectedAccountConfigurationV2Schema),
+      clientConfiguration: z.optional(PluginConnectedAccountClientConfigurationV2Schema),
     }).check(z.superRefine((mode, context) => {
+      if (mode.postAuthenticationFieldIds !== undefined
+        && (mode.configuration?.scope !== 'account'
+          || new Set(mode.postAuthenticationFieldIds).size !== mode.postAuthenticationFieldIds.length
+          || mode.postAuthenticationFieldIds.some(id => !mode.configuration?.fields.some(field => field.id === id && field.required !== true)))) {
+        context.addIssue({ code: 'custom', path: ['postAuthenticationFieldIds'],
+          message: 'Post-authentication fields must reference distinct optional Account configuration fields.' });
+      }
       if (mode.callbackUrl === undefined) {
         context.addIssue({
           code: 'custom',
@@ -258,8 +281,18 @@ export const PluginConnectedAccountAuthenticationModeV2Schema =
       scopes: z.optional(z.array(z.string().check(z.trim(), z.minLength(1)))),
       outcomeReconciliation: PluginConnectedAccountOutcomeReconciliationV2Schema,
       configuration: z.optional(PluginConnectedAccountConfigurationV2Schema),
+      clientConfiguration: z.optional(PluginConnectedAccountClientConfigurationV2Schema),
     }),
-  ]));
+  ]).check(z.superRefine((mode, context) => {
+    if (mode.kind === 'manual' || mode.clientConfiguration === undefined) return;
+    const { clientIdFieldId, scopesFieldId } = mode.clientConfiguration;
+    const ids = [clientIdFieldId, scopesFieldId];
+    if (clientIdFieldId === scopesFieldId || ids.some(id => !mode.configuration?.fields.some(field =>
+      field.id === id && field.secret !== true && field.semantic === undefined && field.schema.type === 'string'))) {
+      context.addIssue({ code: 'custom', path: ['clientConfiguration'],
+        message: 'OAuth client configuration must reference distinct declared public string configuration fields.' });
+    }
+  })));
 export type PluginConnectedAccountAuthenticationModeV2 =
   z.infer<typeof PluginConnectedAccountAuthenticationModeV2Schema>;
 

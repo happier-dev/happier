@@ -4,6 +4,43 @@ import { ConnectedAccountUiProjectionEntryV1Schema, projectConnectedAccountDescr
 import { PluginConnectedAccountDescriptorContributionV2Schema } from './pluginConnectedAccountAuthenticationV2.js';
 
 describe('ConnectedAccountUiProjectionEntryV1', () => {
+  it('projects declaration-owned manual guidance and rejects credential-bearing console links', () => {
+    const setup = { url: 'https://provider.test/keys', checklist: ['Create an API key.', { key: 'provider.copyKey', fallback: 'Copy the key here.' }] };
+    const raw = { id: 'keys', title: 'Provider', authentication: {
+      defaultModeId: 'manual', modes: [{ id: 'manual', kind: 'manual', outcomeReconciliation: 'none', fields: [], setup }],
+    } };
+    const descriptor = PluginConnectedAccountDescriptorContributionV2Schema.parse(raw);
+    const projected = projectConnectedAccountDescriptorV1({ descriptor, pluginId: 'acme.provider', serviceId: 'keys',
+      provenance: 'external', sourceKind: 'installed', availability: { state: 'available', reason: 'resolved' }, diagnostics: [] });
+    expect(ConnectedAccountUiProjectionEntryV1Schema.parse(projected).authentication.modes[0]).toMatchObject({ setup });
+    expect(PluginConnectedAccountDescriptorContributionV2Schema.safeParse({ ...raw, ui: { manual: setup } }).success).toBe(false);
+    for (const url of ['http://provider.test/keys', 'https://secret@provider.test/keys']) {
+      expect(PluginConnectedAccountDescriptorContributionV2Schema.safeParse({ ...raw, authentication: {
+        ...raw.authentication, modes: [{ ...raw.authentication.modes[0], setup: { ...setup, url } }],
+      } }).success).toBe(false);
+    }
+  });
+  it('keeps per-feature permissions and Advanced fields of a manual mode through the projection', () => {
+    const permissions = [{ feature: 'Workers', items: ['Workers Scripts: Edit', { key: 'provider.ci', fallback: 'Workers CI: Edit' }] }];
+    const field = { id: 'clientId', title: 'Client ID', schema: { type: 'string' }, presentation: { advanced: true } };
+    const descriptor = PluginConnectedAccountDescriptorContributionV2Schema.parse({ id: 'keys', title: 'Provider', authentication: {
+      defaultModeId: 'manual', modes: [{ id: 'manual', kind: 'manual', outcomeReconciliation: 'none', fields: [field],
+        setup: { url: 'https://provider.test/keys', checklist: ['Create a token.'], permissions } }],
+    } });
+    const projected = ConnectedAccountUiProjectionEntryV1Schema.parse(projectConnectedAccountDescriptorV1({ descriptor, pluginId: 'acme.provider', serviceId: 'keys',
+      provenance: 'external', sourceKind: 'installed', availability: { state: 'available', reason: 'resolved' }, diagnostics: [] }));
+    expect(projected.authentication.modes[0]).toMatchObject({ setup: { permissions }, fields: [{ presentation: { advanced: true } }] });
+  });
+  it('keeps a browser sign-in mode\u2019s own-client guide through the projection', () => {
+    const setup = { url: 'https://provider.test/clients', checklist: ['Register a client'], permissions: [{ feature: 'Workers', items: ['Scripts: Edit'] }] };
+    const descriptor = PluginConnectedAccountDescriptorContributionV2Schema.parse({ id: 'oauth', title: 'Provider', authentication: {
+      defaultModeId: 'oauth', modes: [{ id: 'oauth', kind: 'oauthAuthorizationCode', callbackUrl: 'https://app.test/callback',
+        pkce: 'required', outcomeReconciliation: 'none', setup }],
+    } });
+    const projected = ConnectedAccountUiProjectionEntryV1Schema.parse(projectConnectedAccountDescriptorV1({ descriptor, pluginId: 'acme.provider', serviceId: 'oauth',
+      provenance: 'external', sourceKind: 'installed', availability: { state: 'available', reason: 'resolved' }, diagnostics: [] }));
+    expect(projected.authentication.modes[0]).toMatchObject({ setup });
+  });
   it('projects optional Cloud machines presentation from an external descriptor without granting availability', () => {
     const raw = { id: 'cloud', title: 'Acme Cloud', ui: { category: 'cloud-machines' }, authentication: {
       defaultModeId: 'manual', modes: [{ id: 'manual', kind: 'manual', outcomeReconciliation: 'none', fields: [] }],
