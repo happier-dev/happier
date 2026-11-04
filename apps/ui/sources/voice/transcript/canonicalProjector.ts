@@ -1,5 +1,3 @@
-import { sha256 } from '@noble/hashes/sha2';
-import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils';
 import {
   VoiceRealtimeStableIdSchema,
   VoiceTranscriptCanonicalEventV1Schema,
@@ -102,7 +100,6 @@ export function readCanonicalVoiceTranscriptAttemptKey(id: unknown, role: 'user'
 }
 
 type CanonicalVoiceTranscriptProjectorDeps = Readonly<{
-  maxItems?: number;
   maxDiagnostics?: number;
   persistFinal?: (item: CanonicalVoiceTranscriptItem) => void;
   onProjection?: (item: CanonicalVoiceTranscriptItem) => void;
@@ -126,30 +123,11 @@ function eventFingerprint(event: VoiceTranscriptCanonicalEventV1): string {
   ]);
 }
 
-function eventFingerprintDigest(fingerprint: string): string {
-  return bytesToHex(sha256(utf8ToBytes(fingerprint)));
-}
-
 export function createCanonicalVoiceTranscriptProjector(deps: CanonicalVoiceTranscriptProjectorDeps = {}) {
-  const maxItems = clampPositiveInteger(deps.maxItems, 500);
   const maxDiagnostics = clampPositiveInteger(deps.maxDiagnostics, 64);
-  const maxEventIds = Math.max(maxItems * 4, 128);
   const items = new Map<string, CanonicalVoiceTranscriptItem>();
   const seenEventIds = new Map<string, string>();
   const lastItemEventFingerprints = new Map<string, string>();
-  type FinalizedItemMetadata = Readonly<{
-    role: 'user' | 'assistant';
-    revision: number;
-    firstSequence: number;
-    lastSequence: number;
-    fingerprintDigest: string;
-  }>;
-  // One compact attempt-local authority record per finalized identity survives
-  // snapshot eviction so a provider's later higher-revision correction can
-  // still replace its final. It deliberately excludes transcript text and is
-  // cleared with the attempt.
-  const finalizedItemMetadata = new Map<string, FinalizedItemMetadata>();
-  const eventIdOrder: string[] = [];
   type PendingAdmittedPersistenceEvent = {
     admission: CanonicalVoiceTranscriptPersistenceAdmission;
     eventId: string;
@@ -195,36 +173,6 @@ export function createCanonicalVoiceTranscriptProjector(deps: CanonicalVoiceTran
 
   const rememberEventId = (eventId: string, fingerprint: string): void => {
     seenEventIds.set(eventId, fingerprint);
-    eventIdOrder.push(eventId);
-    while (eventIdOrder.length > maxEventIds) {
-      const retired = eventIdOrder.shift();
-      if (retired) seenEventIds.delete(retired);
-    }
-  };
-
-  const rememberFinalizedItem = (
-    item: CanonicalVoiceTranscriptItem,
-    fingerprint: string,
-  ): void => {
-    finalizedItemMetadata.delete(item.itemId);
-    finalizedItemMetadata.set(item.itemId, Object.freeze({
-      role: item.role,
-      revision: item.revision,
-      firstSequence: item.firstSequence,
-      lastSequence: item.lastSequence,
-      fingerprintDigest: eventFingerprintDigest(fingerprint),
-    }));
-  };
-
-  const evictItems = (): void => {
-    while (items.size > maxItems) {
-      const oldest = [...items.values()].sort((left, right) => (
-        left.firstSequence - right.firstSequence || left.itemId.localeCompare(right.itemId)
-      ))[0];
-      if (!oldest) return;
-      items.delete(oldest.itemId);
-      lastItemEventFingerprints.delete(oldest.itemId);
-    }
   };
 
   const greatestReservedLiveSequence = (): number => {
@@ -289,8 +237,6 @@ export function createCanonicalVoiceTranscriptProjector(deps: CanonicalVoiceTran
     items.clear();
     seenEventIds.clear();
     lastItemEventFingerprints.clear();
-    finalizedItemMetadata.clear();
-    eventIdOrder.length = 0;
     pendingAdmittedPersistenceEventsByEventId.clear();
     pendingAdmittedPersistenceEventsByItemId.clear();
     diagnosticCount = 0;
@@ -334,7 +280,7 @@ export function createCanonicalVoiceTranscriptProjector(deps: CanonicalVoiceTran
     }
 
     const previous = items.get(event.itemId) ?? null;
-    const finalized = finalizedItemMetadata.get(event.itemId) ?? null;
+    const finalized = previous?.final ? previous : null;
     const pendingByItemId = pendingAdmittedPersistenceEventsByItemId.get(event.itemId);
     if (pendingByItemId) {
       return pendingByItemId.fingerprint === fingerprint
@@ -344,13 +290,7 @@ export function createCanonicalVoiceTranscriptProjector(deps: CanonicalVoiceTran
     const previousRole = previous?.role ?? finalized?.role;
     if (previousRole && previousRole !== event.role) return diagnose('conflicting_duplicate', event);
     const lastItemFingerprint = lastItemEventFingerprints.get(event.itemId);
-    if (
-      lastItemFingerprint === fingerprint
-      || (
-        lastItemFingerprint === undefined
-        && finalized?.fingerprintDigest === eventFingerprintDigest(fingerprint)
-      )
-    ) {
+    if (lastItemFingerprint === fingerprint) {
       rememberEventId(event.eventId, fingerprint);
       return { status: 'duplicate', item: previous };
     }
@@ -396,10 +336,8 @@ export function createCanonicalVoiceTranscriptProjector(deps: CanonicalVoiceTran
     if (next.final) deps.persistFinal?.(next);
     items.set(next.itemId, next);
     lastItemEventFingerprints.set(next.itemId, fingerprint);
-    if (next.final) rememberFinalizedItem(next, fingerprint);
     rememberEventId(event.eventId, fingerprint);
     if (event.provenance === 'live') lastLiveSequence = event.sequence;
-    evictItems();
     deps.onProjection?.(next);
     return { status: 'applied', item: next };
   };
@@ -445,7 +383,7 @@ export function createCanonicalVoiceTranscriptProjector(deps: CanonicalVoiceTran
     }
 
     const previous = items.get(event.itemId) ?? null;
-    const finalized = finalizedItemMetadata.get(event.itemId) ?? null;
+    const finalized = previous?.final ? previous : null;
     const pendingByItemId = pendingAdmittedPersistenceEventsByItemId.get(event.itemId);
     const pendingPredecessor = pendingByItemId ?? null;
     const previousAuthority = pendingPredecessor?.item ?? previous;
@@ -455,13 +393,7 @@ export function createCanonicalVoiceTranscriptProjector(deps: CanonicalVoiceTran
       return null;
     }
     const lastItemFingerprint = lastItemEventFingerprints.get(event.itemId);
-    if (
-      lastItemFingerprint === fingerprint
-      || (
-        lastItemFingerprint === undefined
-        && finalized?.fingerprintDigest === eventFingerprintDigest(fingerprint)
-      )
-    ) return null;
+    if (lastItemFingerprint === fingerprint) return null;
     if (
       event.provenance === 'live'
       && event.sequence <= Math.max(lastLiveSequence, greatestReservedLiveSequence())
@@ -549,12 +481,10 @@ export function createCanonicalVoiceTranscriptProjector(deps: CanonicalVoiceTran
     if (appliedToCurrentSnapshot) {
       items.set(pending.item.itemId, pending.item);
       lastItemEventFingerprints.set(pending.item.itemId, pending.fingerprint);
-      rememberFinalizedItem(pending.item, pending.fingerprint);
       rememberEventId(pending.eventId, pending.fingerprint);
       if (pending.item.provenance === 'live') {
         lastLiveSequence = Math.max(lastLiveSequence, pending.item.lastSequence);
       }
-      evictItems();
     }
     deps.persistFinal?.(pending.item);
     if (appliedToCurrentSnapshot) deps.onProjection?.(pending.item);

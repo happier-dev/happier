@@ -289,11 +289,10 @@ describe('canonical voice transcript projector', () => {
     expect(diagnostics).toEqual(['correction_without_final', 'late_after_final', 'out_of_order']);
   });
 
-  it('keeps evicted finals as correction authority for the active attempt', async () => {
+  it('keeps earlier finals as correction authority for the active attempt', async () => {
     const diagnostics: string[] = [];
     const persistFinal = persistCanonicalItem;
     const projector = createCanonicalVoiceTranscriptProjector({
-      maxItems: 1,
       persistFinal,
       onDiagnostic: (diagnostic) => diagnostics.push(diagnostic.code),
     });
@@ -315,7 +314,7 @@ describe('canonical voice transcript projector', () => {
       itemId: 'retained-item',
       text: 'newer item',
     }))).toMatchObject({ status: 'applied' });
-    expect(projector.snapshot().map((item) => item.itemId)).toEqual(['retained-item']);
+    expect(projector.snapshot().map((item) => item.itemId)).toEqual(['evicted-item', 'retained-item']);
 
     const firstCorrection = event({
       type: 'voice.transcript.corrected',
@@ -334,7 +333,7 @@ describe('canonical voice transcript projector', () => {
       ...firstCorrection,
       eventId: 'evicted-correction-1-replay',
       provenance: 'replay',
-    })).toEqual({ status: 'duplicate', item: null });
+    })).toMatchObject({ status: 'duplicate' });
     expect(projector.project(event({
       type: 'voice.transcript.corrected',
       sequence: 4,
@@ -357,7 +356,7 @@ describe('canonical voice transcript projector', () => {
       text: 'must not replace a correction',
     }))).toMatchObject({ status: 'rejected' });
 
-    expect(projector.snapshot().map((item) => item.itemId)).toEqual(['retained-item']);
+    expect(projector.snapshot().map((item) => item.itemId)).toEqual(['evicted-item', 'retained-item']);
     await settleWrites();
     expect(wireRequests).toHaveLength(4);
     expect(storedCarrierRows().map(row => 'text' in row ? row.text : null)).toEqual(['second correction', 'newer item']);
@@ -492,12 +491,12 @@ describe('canonical voice transcript projector', () => {
     ]);
   });
 
-  it('invalidates stale epochs and bounds retained item state', () => {
-    const projector = createCanonicalVoiceTranscriptProjector({ maxItems: 2 });
+  it('invalidates stale epochs and releases the prior attempt state', () => {
+    const projector = createCanonicalVoiceTranscriptProjector();
     projector.project(event({ itemId: 'item-1', type: 'voice.transcript.final', eventId: 'e1' }));
     projector.project(event({ itemId: 'item-2', type: 'voice.transcript.final', eventId: 'e2', sequence: 2 }));
     projector.project(event({ itemId: 'item-3', type: 'voice.transcript.final', eventId: 'e3', sequence: 3 }));
-    expect(projector.snapshot().map((item) => item.itemId)).toEqual(['item-2', 'item-3']);
+    expect(projector.snapshot().map((item) => item.itemId)).toEqual(['item-1', 'item-2', 'item-3']);
 
     expect(projector.resetEpoch(2)).toBe(true);
     expect(projector.snapshot()).toEqual([]);
@@ -1439,22 +1438,50 @@ describe('canonical voice transcript projector', () => {
     }
   });
 
-  it('bounds per-conversation canonical projector state with least-recently-used eviction', () => {
+  it('retains every demanded attempt beyond the former conversation cache count until explicit release', async () => {
     const projector = createVoiceTranscriptProjector({
       getState: storage.getState,
-      persistFinal: writeTranscript,
       nowMs: () => 100,
-      maxCanonicalConversations: 2,
     });
-    projector.projectCanonicalEvent({ conversationSessionId: 'one', event: event({ itemId: 'one' }) });
-    projector.projectCanonicalEvent({ conversationSessionId: 'two', event: event({ itemId: 'two' }) });
-    projector.canonicalSnapshot('one');
-    projector.projectCanonicalEvent({ conversationSessionId: 'three', event: event({ itemId: 'three' }) });
+    const attempts = Array.from({ length: 65 }, (_, index) => {
+      const id = `demanded-${index}`;
+      const attempt = projector.beginCanonicalAttempt(id);
+      projector.projectCanonicalEvent({ conversationSessionId: id, event: event({ itemId: id, text: id, epoch: attempt.epoch }) });
+      return { id, attempt };
+    });
+    for (const { id } of attempts) expect(projector.canonicalSnapshot(id)).toEqual([expect.objectContaining({ text: id })]);
+    for (const { id, attempt } of attempts) {
+      expect(await projector.releaseCanonicalConversation(id, attempt.attemptIdentity)).toBe(true);
+      expect(projector.canonicalSnapshot(id)).toEqual([]);
+    }
+    expect(projector.canonicalProjectorCount()).toBe(0);
+  });
 
-    expect(projector.canonicalProjectorCount()).toBe(2);
-    expect(projector.canonicalSnapshot('one')).toHaveLength(1);
-    expect(projector.canonicalSnapshot('two')).toEqual([]);
-    expect(projector.canonicalProjectorCount()).toBe(2);
+  it('keeps accepted content beyond the old pending threshold while its first ACK is delayed', async () => {
+    const acknowledgement = createDeferred<void>();
+    beforeAcknowledgement = () => acknowledgement.promise;
+    const projector = createVoiceTranscriptProjector({ getState: storage.getState, persistFinal: writeTranscript });
+    const attempt = projector.beginCanonicalAttempt('carrier');
+    try {
+      for (let index = 0; index < 501; index += 1) {
+        expect(projector.projectCanonicalEvent({ conversationSessionId: 'carrier', event: event({
+          type: 'voice.transcript.final', epoch: attempt.epoch, sequence: index + 1,
+          eventId: `delayed-${index}`, itemId: `delayed-${index}`, text: `accepted-${index}`,
+        }) }).status).toBe('applied');
+      }
+      await waitForTranscriptRequests(1);
+      expect(storedCarrierRows()).toEqual([]);
+      expect(projector.canonicalSnapshot('carrier')).toHaveLength(501);
+      expect(projector.canonicalSnapshot('carrier')[0]?.text).toBe('accepted-0');
+    } finally {
+      acknowledgement.resolve();
+      await projector.settleAdmittedCanonicalPersistence({ conversationSessionId: 'carrier', attemptIdentity: attempt.attemptIdentity });
+    }
+    expect(storedCarrierRows()).toHaveLength(501);
+    expect(new Set(wireRequests.map(request => request.localId)).size).toBe(501);
+    expect(await projector.releaseCanonicalConversation('carrier', attempt.attemptIdentity)).toBe(true);
+    expect(projector.canonicalSnapshot('carrier')).toEqual([]);
+    expect(storedCarrierRows()).toHaveLength(501);
   });
 
   it('does not create state or evict an active conversation when reading a missing snapshot', () => {
@@ -1462,7 +1489,6 @@ describe('canonical voice transcript projector', () => {
       getState: storage.getState,
       persistFinal: writeTranscript,
       nowMs: () => 100,
-      maxCanonicalConversations: 2,
     });
     projector.projectCanonicalEvent({ conversationSessionId: 'one', event: event({ itemId: 'one' }) });
     projector.projectCanonicalEvent({ conversationSessionId: 'two', event: event({ itemId: 'two' }) });

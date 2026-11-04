@@ -322,29 +322,6 @@ describe('VoiceTranscriptProjector', () => {
         expect(second?.createdAt).toBe(101);
     });
 
-    it('bounds the in-memory unreconciled projection ring and retires reconciled ephemerals', async () => {
-        const { createVoiceTranscriptProjector } = await import('./VoiceTranscriptProjector');
-        const { VOICE_TRANSCRIPT_UNRECONCILED_EVENT_RING_MAX } = await import('./voiceTranscriptBounds');
-
-        const projector = createVoiceTranscriptProjector({ getState: storage.getState, nowMs: () => 100 });
-
-        // Push more distinct no-turn (unreconciled) projections than the ring cap.
-        const overflow = VOICE_TRANSCRIPT_UNRECONCILED_EVENT_RING_MAX + 25;
-        for (let index = 0; index < overflow; index += 1) {
-            projector.projectUserText({ conversationSessionId: 'carrier-s1', text: `pending-${index}` });
-        }
-        expect(projector.unreconciledProjectionCount()).toBe(VOICE_TRANSCRIPT_UNRECONCILED_EVENT_RING_MAX);
-
-        // Reconciling an ephemeral into its canonical turn retires it from the ring.
-        const before = projector.unreconciledProjectionCount();
-        projector.projectUserText({
-            conversationSessionId: 'carrier-s1',
-            text: `pending-${overflow - 1}`,
-            turn: { epoch: 1, role: 'user', ts: 1, voiceAgentId: 'va_1' },
-        });
-        expect(projector.unreconciledProjectionCount()).toBe(before - 1);
-    });
-
     it('selects transcript entries from projected session messages in created order', async () => {
         const { selectVoiceTranscriptEntriesForConversationSession } = await import('./voiceTranscriptSelectors');
 

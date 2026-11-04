@@ -254,8 +254,8 @@ describe('canonical voice transcript persistence admission', () => {
     expect(projector.project(correction)).toMatchObject({ status: 'applied' });
   });
 
-  it('keeps evicted finals as correction authority through deferred admission', () => {
-    const projector = createCanonicalVoiceTranscriptProjector({ maxItems: 1 });
+  it('keeps earlier finals as correction authority through deferred admission', () => {
+    const projector = createCanonicalVoiceTranscriptProjector();
     expect(projector.project(finalEvent({
       eventId: 'evicted-final',
       itemId: 'evicted-turn',
@@ -268,7 +268,7 @@ describe('canonical voice transcript persistence admission', () => {
       sequence: 2,
       text: 'newer item',
     }))).toMatchObject({ status: 'applied' });
-    expect(projector.snapshot().map((item) => item.itemId)).toEqual(['retained-turn']);
+    expect(projector.snapshot().map((item) => item.itemId)).toEqual(['evicted-turn', 'retained-turn']);
 
     const firstCorrection = projector.admitPersistenceEvent(finalEvent({
       type: 'voice.transcript.corrected',
@@ -307,6 +307,6 @@ describe('canonical voice transcript persistence admission', () => {
       revision: 4,
       text: 'must not replace a correction',
     }))).toBeNull();
-    expect(projector.snapshot().map((item) => item.itemId)).toEqual(['retained-turn']);
+    expect(projector.snapshot().map((item) => item.itemId)).toEqual(['evicted-turn', 'retained-turn']);
   });
 });
