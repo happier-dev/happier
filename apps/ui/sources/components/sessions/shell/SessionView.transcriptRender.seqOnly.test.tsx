@@ -1003,7 +1003,9 @@ describe('SessionView (transcript rendering for seq-only sessions)', () => {
             expect(surfaceMountSpy).not.toHaveBeenCalled();
             expect(surfaceUnmountSpy).not.toHaveBeenCalled();
             expect(shouldRenderChatTimelineForSessionMock).not.toHaveBeenCalled();
-            expect(fetchPendingMessagesSpy).toHaveBeenCalledWith('s1');
+            // serverDriven: this effect re-fires per pendingVersion bump, so its refresh joins the
+            // sync entry's burst-collapsing floor instead of minting one server read per bump.
+            expect(fetchPendingMessagesSpy).toHaveBeenCalledWith('s1', undefined, { serverDriven: true });
 
             await screen.unmount();
         } finally {

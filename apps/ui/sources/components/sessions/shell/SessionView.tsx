@@ -1979,7 +1979,12 @@ const SessionPendingMessagesRefresh = React.memo(function SessionPendingMessages
 
     React.useEffect(() => {
         return runAfterInteractionsWithFallback(() => {
-            fireAndForget(sync.fetchPendingMessages(sessionId), { tag: 'SessionView.fetchPendingMessages' });
+            fireAndForget(
+                // serverDriven: this effect re-fires on every pendingVersion bump, so a push burst
+                // must collapse at the sync entry instead of minting one server read per bump (#856).
+                sync.fetchPendingMessages(sessionId, undefined, { serverDriven: true }),
+                { tag: 'SessionView.fetchPendingMessages' },
+            );
         });
     }, [sessionId, pendingVersion]);
 

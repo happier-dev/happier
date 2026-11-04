@@ -494,6 +494,7 @@ import {
     type PendingQueueEncryption,
     type PendingQueueReadEncryption,
 } from './engine/pending/pendingQueueV2';
+import { createPendingSnapshotRefreshFloor } from './engine/pending/pendingSnapshotRefreshFloor';
 import { createPendingQueueRequest } from './engine/pending/createPendingQueueRequest';
 import {
     resolvePendingInputServerWireMode,
@@ -990,6 +991,7 @@ class Sync {
       private resumeInFlight: Promise<void> | null = null;
       private changesCatchUpQueuedAfterResume = false;
       private pendingOutboxRearmInFlightByScope = new Map<string, Promise<void>>();
+      private readonly pendingSnapshotRefreshFloor = createPendingSnapshotRefreshFloor();
       private readonly usesPersistentDesktopSync = isTauriDesktop();
       private isForeground = this.usesPersistentDesktopSync || AppState.currentState === 'active';
       public encryptionCache = new EncryptionCache();
@@ -3646,6 +3648,25 @@ class Sync {
     }
 
     async fetchPendingMessages(
+        sessionId: string,
+        expectedOutboxScope?: ServerAccountScope,
+        options?: { serverDriven?: boolean },
+    ): Promise<void> {
+        // Server-push-driven re-triggers (each pendingVersion bump re-firing the session refresh,
+        // #856) collapse to one reconcile per floor window plus a trailing edge that lands the
+        // last trigger. Every other caller — user-initiated recovery (action-conflict, resume,
+        // catch-up), outbox rearm, and the queue's own local-write confirming reads — runs
+        // immediately.
+        if (options?.serverDriven !== true) {
+            return this.fetchPendingMessagesUnsampled(sessionId, expectedOutboxScope);
+        }
+        return this.pendingSnapshotRefreshFloor.sample(
+            sessionId,
+            () => this.fetchPendingMessagesUnsampled(sessionId, expectedOutboxScope),
+        );
+    }
+
+    private async fetchPendingMessagesUnsampled(
         sessionId: string,
         expectedOutboxScope?: ServerAccountScope,
     ): Promise<void> {
