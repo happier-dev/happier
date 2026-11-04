@@ -1569,6 +1569,16 @@ async function ensureWorkspacePackageNamesBuiltPass(monorepoRoot, packageNames, 
   const admittedWorkspacePackageNames = await collectWorkspaceDependencyClosure(
     packageNames ?? [], packageDirsByName, { includeDevDependencies, packageJsonByDir },
   );
+  const protocolDir = admittedWorkspacePackageNames.has('@happier-dev/protocol')
+    ? packageDirsByName.get('@happier-dev/protocol') : undefined;
+  const protocolExportGenerator = protocolDir && join(protocolDir, 'scripts/generate-exports.mjs');
+  if (protocolExportGenerator && existsSync(protocolExportGenerator)) {
+    const { prepareProtocolExports } = await import(pathToFileURL(protocolExportGenerator).href);
+    const protocolManifest = await prepareProtocolExports({ packageRoot: protocolDir, env, publicationMode, signal });
+    // Export publication changes no dependency edges. Capture and graph-drift
+    // inspection must consume its resulting manifest, not the earlier map.
+    packageJsonByDir.set(protocolDir, protocolManifest);
+  }
   const scheduleConcurrentPackageBuild = createAsyncConcurrencyLimiter(inheritedAdmission ? 1 : maxConcurrentBuilds);
   const scheduleBundledWorkspacePackageBuild = createAsyncConcurrencyLimiter(1);
   const schedulePackageBuild = (packageJson, packageDir, operation) => (

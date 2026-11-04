@@ -7,10 +7,13 @@ Shared cross-package contracts between Happier CLI and Happier app.
 The generator derives exact package exports from the compiler's source inventory;
 `export-aliases.json` owns renamed entrypoints and directory-index aliases.
 Run `pnpm --filter @happier-dev/protocol generate:exports` after adding or moving
-a public module, before capture or source preparation. Commit the resulting map;
-runtime preparation and Metro consume it without loading development tooling.
-Do not hand-edit `package.json#exports`. Builds, typechecks and `check:exports`
-reject stale output without writing.
+a public module, or let local workspace preparation refresh it before capture.
+AUTO prepares the controller's map before synchronization; workers verify the
+synchronized map without writing it.
+Preparation uses the same atomic writer and leaves current maps untouched.
+Commit the resulting map. CI and artifact/package publication verify it without
+writing; explicit builds, typechecks and `check:exports` also reject stale output.
+Do not hand-edit `package.json#exports`. Captured builds and Metro consume the map.
 
 During source authoring, leave
 `pnpm --filter @happier-dev/protocol generate:exports --watch` running to publish

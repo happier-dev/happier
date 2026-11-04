@@ -1190,6 +1190,12 @@ EOF
 }
 
 flush_selected_sync() {
+  # Publish authored inputs on the controller before synchronizing the worker.
+  # Captured builds and remote preparation only verify this projection.
+  if [ "$requires_remote_dependencies" -eq 1 ] || [ "$requires_remote_workspace_preparation" -eq 1 ]; then
+    run_dependency_free_node "$projection_generator" --prepare-protocol-exports \
+      "${command_repo_root:-$repo_root}" "$@" >&2 || return $?
+  fi
   selected_sync_name=$(sync_name_for_target "$selected_name" "$selected_number") || return 1
   configure_mutagen_environment
   exec "$script_dir/hstack-dev-target-control" \
@@ -2211,7 +2217,7 @@ handle_selected_command_connection_failure() {
 
 cleanup_probe_tmp
 trap - EXIT HUP INT TERM
-flush_selected_sync &
+flush_selected_sync "$@" &
 flush_pid=$!
 cancel_selected_flush() {
   kill -TERM "$flush_pid" 2>/dev/null || true

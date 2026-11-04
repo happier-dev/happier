@@ -189,6 +189,18 @@ export async function writeNativeExecutionProjection({ configPath, outputPath, r
 }
 
 async function main() {
+  if (process.argv[2] === '--prepare-protocol-exports') {
+    const packageRoot = join(resolve(process.argv[3]), 'packages/protocol');
+    const generator = join(packageRoot, 'scripts/generate-exports.mjs');
+    if (existsSync(generator)) {
+      const { prepareProtocolExports } = await import(pathToFileURL(generator).href);
+      const { resolveWorkspaceBundlePublicationMode } = await import('../../../../../scripts/workspaces/workspaceBundlePublication.mjs');
+      await prepareProtocolExports({ packageRoot, publicationMode: resolveWorkspaceBundlePublicationMode({
+        argv: process.argv.slice(4), env: process.env,
+      }) });
+    }
+    return;
+  }
   if (process.argv[2] === '--validate-execution-config') {
     const loaded = await loadDevTargetExecutionConfig();
     process.stdout.write(`${loaded.path}\n`);

@@ -5,7 +5,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { watch } from 'node:fs';
 import { test, expect } from 'vitest';
-import { generateProtocolExports, watchProtocolExports } from './generate-exports.mjs';
+import { generateProtocolExports, prepareProtocolExports, watchProtocolExports } from './generate-exports.mjs';
 import { readWorkspacePackages, resolveWorkspaceSource } from '../../cli-common/sourceRuntimeEntries.mjs';
 import { captureBuildInputFiles } from '../../../scripts/workspaces/buildInputConvergence.mjs';
 import { readWorkspaceBuildInputs } from '../../../apps/stack/scripts/utils/fs/workspaceBuildInputs.mjs';
@@ -76,6 +76,31 @@ test('publishes newly added source subpaths without hand-editing the manifest', 
 
 test('published exports match the current compiled public source inventory', async () => {
   await generateProtocolExports({ check: true });
+});
+
+test.each([
+  { env: { CI: 'true' } },
+  { env: { HAPPIER_DEV_TARGET_EXECUTION: '1' } },
+  { env: { npm_lifecycle_event: 'prepack' } },
+  { env: { npm_lifecycle_event: 'publish' } },
+  { env: {}, publicationMode: 'artifact' },
+])('CI and publication preparation verifies stale maps without writing: %j', async context => {
+  const packageRoot = await mkdtemp(join(tmpdir(), 'protocol-verification-'));
+  try {
+    await mkdir(join(packageRoot, 'src'));
+    const manifestPath = join(packageRoot, 'package.json');
+    const original = JSON.stringify({ name: '@happier-dev/protocol', exports: {} });
+    await writeFile(manifestPath, original);
+    await writeFile(join(packageRoot, 'tsconfig.json'), JSON.stringify({ include: ['src/**/*.ts'] }));
+    await writeFile(join(packageRoot, 'export-aliases.json'), '{}');
+    await writeFile(join(packageRoot, 'src/added.ts'), 'export const value = 1;');
+    await expect(prepareProtocolExports({ packageRoot, ...context })).rejects.toThrow('Protocol exports are stale');
+    expect(await readFile(manifestPath, 'utf8')).toBe(original);
+    await generateProtocolExports({ packageRoot });
+    await prepareProtocolExports({ packageRoot, ...context });
+  } finally {
+    await rm(packageRoot, { recursive: true, force: true });
+  }
 });
 
 test('the development watcher publishes a new leaf before tooling-free workspace capture', async () => {

@@ -1512,10 +1512,15 @@ inventory by development tooling before workspace capture.
 Renamed and directory-index entrypoints are owned by
 `packages/protocol/export-aliases.json`; tests, declaration inputs and fixture
 support stay private. Run Protocol's `generate:exports` command after adding or
-moving a public module and commit the resulting map. Runtime/source preparation,
-captured inputs and Metro consume that map without running its generator, which
-requires the development TypeScript tooling. The canonical workspace input
-inventory includes the alias configuration; builds/typechecks reject stale maps.
+moving a public module, or let local workspace preparation refresh the map before
+capture, then commit the resulting map. AUTO prepares the controller's map before
+synchronization; workers verify the synchronized map without writing it.
+Preparation delegates to the same atomic,
+idempotent generator, which requires the development TypeScript tooling. CI and
+artifact/package publication verify the committed map without writing. Captured
+builds and Metro consume the map without running its writer. The canonical
+workspace input inventory includes the alias configuration; explicit builds,
+typechecks and `check:exports` reject stale maps.
 For automatic publication while authoring source modules, run Protocol's
 `generate:exports --watch` development command. It updates the authored manifest
 through the same generator and existing watcher/lock owners, before subsequent
