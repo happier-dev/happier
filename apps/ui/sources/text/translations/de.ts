@@ -4643,6 +4643,8 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
                 `Übersprungen: ${count} ${plural({ count, singular: 'Datei', plural: 'Dateien' })} die die maximale Anhanggröße überschreiten.`,
             noClipboardImageTitle: 'Kein Bild in der Zwischenablage',
             noClipboardImageBody: 'Kopier ein Bild und füg es dann als Anhang ein.',
+            sourceMissingBody: "Die Quelldatei fehlt. Entferne diesen Anhang und hänge die Datei erneut an.",
+            recoveryFailedBody: "Die Entwurfsanhänge konnten nicht wiederhergestellt werden. Deine gespeicherten Daten wurden beibehalten. Öffne den Entwurf erneut, sobald der Speicher verfügbar ist.",
         },
     },
 

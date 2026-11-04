@@ -5206,6 +5206,8 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
         `Saltati ${count} ${plural({ count, singular: "file", plural: "file" })} che superano la dimensione massima dell’allegato.`,
       noClipboardImageTitle: "Nessuna immagine negli appunti",
       noClipboardImageBody: "Copia un'immagine e incollala come allegato.",
+      sourceMissingBody: "Il file di origine non è disponibile. Rimuovi questo allegato e allega di nuovo il file.",
+      recoveryFailedBody: "Non è stato possibile ripristinare gli allegati della bozza. I dati salvati sono stati conservati. Riapri la bozza quando l’archiviazione sarà disponibile.",
     },
   },
 

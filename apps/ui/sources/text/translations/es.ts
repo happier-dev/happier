@@ -5018,6 +5018,8 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
         `Se omitieron ${count} ${plural({ count, singular: "archivo", plural: "archivos" })} que superan el tamaño máximo de adjunto.`,
       noClipboardImageTitle: "No hay imagen en el portapapeles",
       noClipboardImageBody: "Copia una imagen y pégala como adjunto.",
+      sourceMissingBody: "Falta el archivo de origen. Elimina este adjunto y vuelve a adjuntar el archivo.",
+      recoveryFailedBody: "No se pudieron restaurar los adjuntos del borrador. Se han conservado tus datos. Vuelve a abrir el borrador cuando el almacenamiento esté disponible.",
     },
   },
 

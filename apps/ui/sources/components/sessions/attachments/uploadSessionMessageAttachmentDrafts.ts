@@ -35,11 +35,12 @@ export function captureSessionMessageAttachmentDrafts(drafts: readonly Attachmen
     // native URIs retain the ordinary uploader's source-file lifetime contract.
     const captureFile = (source: AttachmentsUploadFileSource): AttachmentsUploadFileSource => source.kind === 'memory'
         ? { ...source, bytes: new Uint8Array(source.bytes) } : { ...source };
-    return drafts.map(({ id, source, targetUploadedCheckpoints }) => ({
+    return drafts.map(({ id, source, targetUploadedCheckpoints, errorCode, error }) => ({
         id,
         source: source.kind === 'folder' ? { ...source, entries: source.entries.map(entry => ({ ...entry, source: captureFile(entry.source) })),
             ...(source.directories ? { directories: [...source.directories] } : {}) } : captureFile(source),
-        status: 'pending',
+        status: errorCode === 'attachment_source_missing' ? 'error' : 'pending',
+        ...(errorCode === 'attachment_source_missing' ? { errorCode, error } : {}),
         ...(targetUploadedCheckpoints ? { targetUploadedCheckpoints: targetUploadedCheckpoints.map(checkpoint => ({
             ...checkpoint, target: { ...checkpoint.target },
             ...(checkpoint.executionTarget ? { executionTarget: { ...checkpoint.executionTarget } } : {}),

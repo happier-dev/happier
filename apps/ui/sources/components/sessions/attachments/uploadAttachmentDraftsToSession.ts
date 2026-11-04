@@ -14,7 +14,7 @@ import { classifyTransferFailure, readTransferFailureCode } from '@/sync/domains
 import { isTransferFinalizeRecoveryFailure } from '@/sync/domains/transfers/runtime/transferRuntime';
 import type { SessionAttachmentsUploadFinalizeResponse, SessionAttachmentTransferContext } from '@/sync/domains/transfers/runtime/transferRuntime/families/sessionAttachmentTransfers';
 
-import { sendableAttachmentDrafts, type AttachmentDraft } from './attachmentDraftModel';
+import { assertAttachmentDraftSourcesAvailable, sendableAttachmentDrafts, type AttachmentDraft } from './attachmentDraftModel';
 import type { ExactSessionMachineTargetIdentity } from '@/sync/ops/sessionMachineTarget';
 
 export { buildUploadedAttachment, buildAttachmentMessageMeta, type UploadedAttachment } from '@happier-dev/protocol/messages/structured/sessionAttachmentsInputV1';
@@ -139,6 +139,8 @@ export async function uploadAttachmentDraftsToSession(args: Readonly<{
 }>> {
     const messageLocalId = args.messageLocalId ?? randomUUID();
     const uploaded: UploadedAttachment[] = [];
+
+    assertAttachmentDraftSourcesAvailable(args.drafts);
 
     for (const draft of sendableAttachmentDrafts(args.drafts)) {
         args.signal?.throwIfAborted();

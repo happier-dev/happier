@@ -290,6 +290,7 @@ export function useNewSessionAttachmentsController(params: Readonly<{
     ]);
 
     const handleSend = React.useCallback((options?: NewSessionAgentInputSendOptions) => {
+        fireAndForget((async () => {
         const promptText = options?.inputTextOverride ?? params.promptStore.getPrompt();
         const submit = (opts?: HandleCreateSessionOptions) => {
             blurActiveElementOnWeb();
@@ -298,7 +299,7 @@ export function useNewSessionAttachmentsController(params: Readonly<{
             });
         };
 
-        const draftSnapshot = getSendableDraftsSnapshot();
+        const draftSnapshot = await attachmentDraftManager.prepareDraftsForSubmit();
         const hasAttachments = attachmentsUploadsEnabled && draftSnapshot.length > 0;
         // One freeze at Send for both launch targets. The ordinary Machine path
         // still settles while this owner is mounted and rebuilds from the live
@@ -525,6 +526,7 @@ export function useNewSessionAttachmentsController(params: Readonly<{
             initialPrompt: promptText,
             structuredInputMetaOverrides,
         }), { tag: 'NewSessionAttachmentsController.submitInitialInput' });
+        })(), { onError: error => Modal.alert(t('common.error'), error instanceof Error ? error.message : t('attachments.alerts.recoveryFailedBody')) });
     }, [
         hostCreatesSession,
         applyDraftPatch,
@@ -535,6 +537,7 @@ export function useNewSessionAttachmentsController(params: Readonly<{
         discoverableReviewCommentsScope,
         getDraftsSnapshot,
         getSendableDraftsSnapshot,
+        attachmentDraftManager.prepareDraftsForSubmit,
         hasReviewCommentDrafts,
         includedReviewCommentDrafts,
         params.composerDocument,

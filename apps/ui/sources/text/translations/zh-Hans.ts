@@ -4771,6 +4771,8 @@ export const zhHans: TranslationStructure = {
         `已跳过 ${count} 个超过最大附件大小的文件。`,
       noClipboardImageTitle: "剪贴板中没有图片",
       noClipboardImageBody: "请先复制图片，然后将其粘贴为附件。",
+      sourceMissingBody: "源文件丢失。请移除此附件并重新添加文件。",
+      recoveryFailedBody: "无法恢复草稿附件。已保存的数据已保留。存储可用后，请重新打开草稿。",
     },
   },
 

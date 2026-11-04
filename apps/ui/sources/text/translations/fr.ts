@@ -4854,6 +4854,8 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
         `Ignorés : ${count} ${plural({ count, singular: "fichier", plural: "fichiers" })} au-delà de la taille max des pièces jointes.`,
       noClipboardImageTitle: "Aucune image dans le presse-papiers",
       noClipboardImageBody: "Copie une image, puis colle-la comme pièce jointe.",
+      sourceMissingBody: "Le fichier source est introuvable. Supprimez cette pièce jointe et joignez à nouveau le fichier.",
+      recoveryFailedBody: "Les pièces jointes du brouillon n’ont pas pu être restaurées. Vos données ont été conservées. Rouvrez le brouillon lorsque le stockage est disponible.",
     },
   },
 

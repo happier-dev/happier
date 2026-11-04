@@ -4704,6 +4704,8 @@ encryptedUnavailable: "Detalls xifrats no disponibles",
                 `S\'han omès ${count} ${plural({ count, singular: 'fitxer', plural: 'fitxers' })} que superen la mida màxima d\'adjunt.`,
             noClipboardImageTitle: 'No hi ha cap imatge al porta-retalls',
             noClipboardImageBody: 'Copia una imatge i enganxa-la com a adjunt.',
+            sourceMissingBody: "Falta el fitxer d’origen. Elimina aquest adjunt i torna a adjuntar el fitxer.",
+            recoveryFailedBody: "No s’han pogut restaurar els adjunts de l’esborrany. Les dades s’han conservat. Torna a obrir l’esborrany quan l’emmagatzematge estigui disponible.",
         },
     },
 

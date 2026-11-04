@@ -6568,7 +6568,7 @@ export function useSessionComposerController({
                         // Capture all semantic fields before an asynchronous send-choice prompt.
                         // The canonical draft owner later clears only this exact value/revision snapshot.
                         const semanticDraftSnapshot = captureComposerSemanticDraftCurrentnessSnapshot();
-                        const submittedAttachmentDrafts = sendableAttachmentDrafts(getAttachmentDraftsSnapshot());
+                        const submittedAttachmentDrafts = await attachmentDraftManager.prepareDraftsForSubmit();
                         if (submittedAttachmentDrafts.length > 0 && !attachmentsUploadsAvailable) {
                             Modal.alert(t('common.error'), describeUploadFailure(
                                 classifyTransferFailure({ errorCode: MACHINE_RPC_TIMEOUT_ERROR_CODE }), t('common.machine'),

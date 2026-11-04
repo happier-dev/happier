@@ -9,8 +9,8 @@ import { Modal } from '@/modal';
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { nativeReadClipboardImageAttachment } from '@/utils/files/nativeClipboardImageAttachment';
-import { removeSubmittedAttachmentDrafts, sendableAttachmentDrafts, type AttachmentDraft } from './attachmentDraftModel';
-import { getAttachmentDraftsSnapshotForKey, patchAttachmentDraftForKey, settleAttachmentDraftsForKey,
+import { assertAttachmentDraftSourcesAvailable, removeSubmittedAttachmentDrafts, sendableAttachmentDrafts, type AttachmentDraft } from './attachmentDraftModel';
+import { flushAttachmentDraftsForKey, getAttachmentDraftsSnapshotForKey, patchAttachmentDraftForKey, settleAttachmentDraftsForKey,
     subscribeAttachmentDraftsForKey, writeAttachmentDraftsForKey } from './attachmentDraftMemoryStore';
 import type { AttachmentsUploadConfig } from '@/sync/domains/transfers/ops/uploadSessionAttachment';
 import type { SessionAttachmentTransferContext } from '@/sync/domains/transfers/runtime/transferRuntime/families/sessionAttachmentTransfers';
@@ -34,6 +34,7 @@ export function useAttachmentDraftManager(params: Readonly<{
     drafts: readonly AttachmentDraft[];
     getDraftsSnapshot: () => readonly AttachmentDraft[];
     getSendableDraftsSnapshot: () => readonly AttachmentDraft[];
+    prepareDraftsForSubmit: () => Promise<readonly AttachmentDraft[]>;
     /** Process-local mutation revision for compare-and-restore consumers. */
     getDraftRevisionSnapshot: () => number;
     hasSendableAttachments: boolean;
@@ -73,6 +74,13 @@ export function useAttachmentDraftManager(params: Readonly<{
         ? memoryKey ? getAttachmentDraftsSnapshotForKey(memoryKey) : [] : draftsRef.current, [memoryKey]);
     const getSendableDraftsSnapshot = React.useCallback(() => sendableAttachmentDrafts(getDraftsSnapshot()), [getDraftsSnapshot]);
     const getDraftRevisionSnapshot = React.useCallback(() => draftRevisionRef.current, []);
+
+    const prepareDraftsForSubmit = React.useCallback(async () => {
+        if (memoryKey) await flushAttachmentDraftsForKey(memoryKey);
+        const current = memoryKey ? getAttachmentDraftsSnapshotForKey(memoryKey) : draftsRef.current;
+        assertAttachmentDraftSourcesAvailable(current);
+        return sendableAttachmentDrafts(current);
+    }, [memoryKey]);
 
     const commitDrafts = React.useCallback((updater: (previous: AttachmentDraft[]) => AttachmentDraft[]) => {
         if (!mounted.current || activeMemoryKey.current !== memoryKey) return;
@@ -187,7 +195,7 @@ export function useAttachmentDraftManager(params: Readonly<{
         const changed = activeMemoryKey.current !== memoryKey;
         activeMemoryKey.current = memoryKey;
         if (changed) replaceDrafts(memoryKey ? getAttachmentDraftsSnapshotForKey(memoryKey) : []);
-        else if (memoryKey) writeAttachmentDraftsForKey(memoryKey, draftsRef.current);
+        else if (memoryKey && draftsRef.current.length > 0) writeAttachmentDraftsForKey(memoryKey, draftsRef.current);
         if (!memoryKey) return;
         const follow = () => {
             if (!mounted.current || activeMemoryKey.current !== memoryKey) return;
@@ -249,6 +257,7 @@ export function useAttachmentDraftManager(params: Readonly<{
         drafts,
         getDraftsSnapshot,
         getSendableDraftsSnapshot,
+        prepareDraftsForSubmit,
         getDraftRevisionSnapshot,
         hasSendableAttachments: sendableAttachmentDrafts(drafts).length > 0,
         agentInputAttachments,
@@ -271,6 +280,7 @@ export function useAttachmentDraftManager(params: Readonly<{
         getDraftRevisionSnapshot,
         getDraftsSnapshot,
         getSendableDraftsSnapshot,
+        prepareDraftsForSubmit,
         removeDraft,
         removeSubmittedDrafts,
         replaceDrafts,

@@ -5128,6 +5128,8 @@ encryptedUnavailable: "Detalhes encriptados indisponíveis",
         `Ignorados ${count} ${plural({ count, singular: "arquivo", plural: "arquivos" })} que excedem o tamanho máximo de anexo.`,
       noClipboardImageTitle: "Nenhuma imagem na área de transferência",
       noClipboardImageBody: "Copie uma imagem e cole-a como anexo.",
+      sourceMissingBody: "O ficheiro de origem está em falta. Remova este anexo e volte a anexar o ficheiro.",
+      recoveryFailedBody: "Não foi possível restaurar os anexos do rascunho. Os seus dados foram preservados. Reabra o rascunho quando o armazenamento estiver disponível.",
     },
   },
 

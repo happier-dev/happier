@@ -6,7 +6,7 @@ import type { AttachmentsUploadConfig, sessionAttachmentsUploadFile } from '@/sy
 import type { ExactSessionMachineTargetIdentity } from '@/sync/ops/sessionMachineTarget';
 import type { AttachmentDraft } from './attachmentDraftModel';
 import { captureSessionMessageAttachmentDrafts, recordAttachmentTargetUploadCheckpoint,
-    uploadSessionMessageAttachmentDrafts } from './uploadSessionMessageAttachmentDrafts';
+    uploadSessionMessageAttachmentDrafts, uploadSessionMessageAttachmentDrafts as uploadDrafts } from './uploadSessionMessageAttachmentDrafts';
 import { clearSessionAttachmentDrafts, readSessionAttachmentDrafts, writeSessionAttachmentDrafts } from './sessionAttachmentDraftStore';
 import type { AttachmentTargetUploadedDraftCheckpoint } from './uploadAttachmentDraftsToSession';
 import { createTransferFinalizeRecovery, settleTransferFinalizeRecovery } from '@/sync/domains/transfers/runtime/transferRuntime/plumbing/directTransferFinalizeRecovery';
@@ -41,6 +41,17 @@ function uploader() {
 
 describe('uploadSessionMessageAttachmentDrafts', () => {
     beforeEach(() => { modalShow.mockReset(); });
+
+    it('retains a missing-source refusal through invocation capture and never uploads empty bytes', async () => {
+        const uploadFile = uploader();
+        const missing: AttachmentDraft = { id: 'missing', status: 'error', errorCode: 'attachment_source_missing',
+            error: 'Please re-attach the missing source.',
+            source: { kind: 'memory', name: 'Capture.png', mimeType: 'image/png', bytes: new Uint8Array(),
+                savedFile: { kind: 'capture', captureRef: 'deleted-file', content: 'source' } } };
+        expect(await uploadDrafts({ target, executionTarget, drafts: [missing], config,
+            messageLocalId: 'message-a', isCurrent: () => true, uploadFile })).toBeNull();
+        expect(uploadFile).not.toHaveBeenCalled();
+    });
 
     it('reuses an issued checkpoint only for the exact qualified leaf and message attempt after source draft remount', async () => {
         const scope = { serverId: 'source-home', accountId: 'source-account', sessionId: 'source-session', occurrenceId: 'main' };

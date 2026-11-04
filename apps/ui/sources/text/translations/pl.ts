@@ -4863,6 +4863,8 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
         `Pominięto ${count} ${plural({ count, one: "plik", few: "pliki", many: "plików" })}, które przekraczają maksymalny rozmiar załącznika.`,
       noClipboardImageTitle: "Brak obrazu w schowku",
       noClipboardImageBody: "Skopiuj obraz, a potem wklej go jako załącznik.",
+      sourceMissingBody: "Brakuje pliku źródłowego. Usuń ten załącznik i dołącz plik ponownie.",
+      recoveryFailedBody: "Nie udało się przywrócić załączników szkicu. Zapisane dane zostały zachowane. Otwórz szkic ponownie, gdy pamięć będzie dostępna.",
     },
   },
 

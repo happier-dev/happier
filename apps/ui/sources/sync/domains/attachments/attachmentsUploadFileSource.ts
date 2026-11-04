@@ -1,3 +1,7 @@
+/** Device-only recovery reference; never part of the synchronized draft document. */
+export type SavedAttachmentFile = Readonly<{ kind: 'capture'; captureRef: string; content: 'prepared' | 'source' }>
+    | Readonly<{ kind: 'native'; uri: string }>;
+
 export type AttachmentsUploadFileSource =
     | Readonly<{ kind: 'web'; file: File }>
     | Readonly<{
@@ -6,6 +10,7 @@ export type AttachmentsUploadFileSource =
         name: string;
         mimeType?: string | null;
         previewUri?: string | null;
+        savedFile?: SavedAttachmentFile;
     }>
     | Readonly<{
         kind: 'native';

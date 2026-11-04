@@ -5507,6 +5507,8 @@ const enAttachments = {
       `Skipped ${count} ${plural({ count, singular: 'file', plural: 'files' })} that exceed the max attachment size.`,
     noClipboardImageTitle: 'No clipboard image',
     noClipboardImageBody: 'Copy an image, then paste it as an attachment.',
+    sourceMissingBody: 'The source file is missing. Remove this attachment and re-attach the file.',
+    recoveryFailedBody: 'Draft attachments could not be restored. Your saved data has been kept. Re-open the draft when storage is available.',
   },
 };
 
