@@ -203,7 +203,9 @@ export const PageHeader = React.memo(function PageHeader(props: PageHeaderProps)
         [descriptionLines],
     );
     const titleNode = props.titleEditor
-        ? <InlineTextField editor={props.titleEditor} style={stylesheet.titleInput} />
+        // The editable title stops where the read-only one does, until the person edits it.
+        ? <InlineTextField editor={props.titleEditor} style={stylesheet.titleInput}
+            restingLines={PAGE_TITLE_MAX_LINES} />
         : props.title;
     const descriptionNode = props.descriptionEditor
         ? <InlineTextField editor={props.descriptionEditor} multiline style={stylesheet.descriptionInput} />

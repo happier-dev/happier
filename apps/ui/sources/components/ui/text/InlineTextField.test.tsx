@@ -42,4 +42,17 @@ describe('InlineTextField web geometry', () => {
         expect(StyleSheet.flatten(field().props.style).height).toBe(32);
         expect(field().props.value).toBe('A long workflow name');
     });
+
+    it('at rest shows a long title clamped to its resting lines, keeps the full value editable, and opens it on focus', async () => {
+        const { InlineTextField } = await import('./InlineTextField');
+        const long = 'Run the shell command: sleep 1500 (wait for it to finish; do not touch any file). Then reply.';
+        const screen = await renderScreen(<InlineTextField editor={{ value: long, placeholder: 'Name',
+            accessibilityLabel: 'Name', onChangeText: () => {}, testID: 'title' }} style={{ fontSize: 24 }} restingLines={2} />);
+        const resting = () => screen.findHostByTestId('title-resting');
+        expect(resting()?.props.numberOfLines).toBe(2);
+        // The field itself still carries the whole title, so a click places the caret and readers hear all of it.
+        expect(screen.findHostByTestId('title')!.props.value).toBe(long);
+        await act(async () => screen.findHostByTestId('title')!.props.onFocus());
+        expect(resting()).toBeNull();
+    });
 });

@@ -1,8 +1,8 @@
 import * as React from 'react';
-import { Platform, type TextInput as NativeTextInput, type StyleProp, type TextStyle } from 'react-native';
+import { Platform, View, type TextInput as NativeTextInput, type StyleProp, type TextStyle } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
-import { TextInput } from './Text';
+import { Text, TextInput } from './Text';
 
 export type InlineTextEditor = Readonly<{
     value: string;
@@ -24,6 +24,12 @@ export function InlineTextField(props: Readonly<{
     style: StyleProp<TextStyle>;
     /** `ink`: the placeholder is the title a reader sees until one is typed (an unnamed block's kind). */
     placeholderTone?: 'quiet' | 'ink';
+    /**
+     * At rest (not being edited) the text stops at this many lines with an ellipsis, like the read-only title it
+     * stands for; the field under it still holds the whole value, so a click places the caret and readers hear
+     * all of it, and focusing it shows everything.
+     */
+    restingLines?: number;
 }>) {
     const { theme } = useUnistyles();
     const { editor } = props;
@@ -83,7 +89,8 @@ export function InlineTextField(props: Readonly<{
             inputRef.current?.blur?.();
         }
     }, [singleLine]);
-    return (
+    const resting = props.restingLines !== undefined && !focused && editor.value.length > 0;
+    const field = (
         <TextInput
             ref={setInputRef}
             testID={editor.testID}
@@ -111,7 +118,26 @@ export function InlineTextField(props: Readonly<{
                 latestRef.current.onChangeText(value);
             }}
             scrollEnabled={false}
-            style={[props.style, contentHeight === null ? null : { height: contentHeight }]}
+            style={[props.style, contentHeight === null ? null : { height: contentHeight }, resting ? RESTING_FIELD_STYLE : null]}
         />
     );
+    if (!resting) return field;
+    return (
+        <View style={RESTING_FRAME_STYLE}>
+            <Text
+                testID={editor.testID ? `${editor.testID}-resting` : undefined}
+                numberOfLines={props.restingLines}
+                aria-hidden
+                importantForAccessibility="no-hide-descendants"
+                style={props.style}
+            >
+                {editor.value}
+            </Text>
+            {field}
+        </View>
+    );
 }
+
+const RESTING_FRAME_STYLE = { position: 'relative' } as const;
+/** The field lies over the clamped words, invisible, so pressing them edits the title where it was pressed. */
+const RESTING_FIELD_STYLE = { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, height: '100%', opacity: 0 } as const;
