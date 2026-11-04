@@ -5022,3 +5022,40 @@ older strict development readers require the matching Protocol update before
 using the new daemon response (the existing 0.3 all-component direct cut).
 There is no persisted format, new Action, wire epoch or released/predecessor
 counterpart for this isolation retirement seam.
+
+## Paged SCM capture reads (unreleased 0.3)
+
+Capture inputs add the closed `projection: { kind: 'index', cursor?, path? }`
+request. Its success adds `page: { totalFiles, nextCursor }`; projected files
+carry explicit deferred evidence without patch strings. Source, comparison,
+page and file envelopes remain closed; persistence still writes full evidence.
+The existing captured source union and RPC wire epoch are unchanged. This
+request cannot be safely ignored: older strict capture handlers reject it, and
+the UI reports that refusal without retrying a legacy whole-evidence request.
+Older development clients can still read small legacy replies; oversized
+legacy reads fail within the existing reply budget with a client-update reason.
+
+Captured `scm.diff.file` reads omit the legacy required top-level `path` and
+instead use the closed `captured: { comparisonId, source, path, sessionId? }`
+selector. An old daemon therefore refuses the request instead of silently
+returning a live working-tree diff. Ordinary file requests and their semantics
+are unchanged. The response's optional `capturedFile` carries the retained
+file; it is not a new persisted format or an alternate evidence authority.
+
+Session-scoped file reads use the existing optional `readTranscript` Session
+authorization classification. Load that registry entry and the captured-file
+handler together with the UI transport. Captured file reads take the same SCM
+Action admission path as the index: Session scope is the ceiling, followed by
+admitted Machine or signed public-Action custody and forwarded Session lookup.
+Request selectors do not grant authority. A refused scope never falls back to a
+broader Machine read or a live diff. Mixed intermediate 0.3 builds are not certified;
+the coordinated component upgrade requirement in this document still applies.
+
+The inspected 0.2 basis (`b06b31d66f9474bcf322627ae63ecf6a37d4a9a2`, clean
+SCM protocol/handler paths) and source tags `cli-v0.2.17` / `ui-web-v0.2.18`
+(`a2c45c86804b24e60ac0b76146a3ef36dfcaa15b`) expose ordinary file diff but no
+capture counterpart. These observations establish source compatibility, not
+artifact deployment certification; the existing 0.3 encrypted-RPC coordinated
+upgrade rule still applies. No legacy giant-response fallback is introduced.
+Saved generated-result response schemas are unchanged; their embedded full
+comparisons are a separate, still-unbounded response path.

@@ -1,4 +1,4 @@
-import type { ScmComparison } from '@happier-dev/protocol';
+import type { ScmComparison } from '@happier-dev/protocol/scm/comparison';
 import type { SessionScmReviewComparison } from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
 import { useSessionMachineDisplayIdentity, useSessionMachineTarget } from '@/components/sessions/model/useSessionMachineTarget';
 import { useCapturedScmComparison } from './useCapturedScmComparison';

@@ -456,7 +456,7 @@ const WorkspaceReviewBody = React.memo((props: WorkspaceScmReviewDetailsViewProp
                 onSelectComparison={(next, evidenceSessionId) => selectTarget({ comparison: next,
                     ...(evidenceSessionId ? { evidenceSessionId } : {}) })}
                 onSelectView={(next) => selectTarget({ view: next })} rootPath={props.rootPath}
-                fileCount={capture.comparison?.inventory.files.length ?? (snapshot ? changedFiles.allRepositoryChangedFiles.length : null)}
+                fileCount={capture.page?.totalFiles ?? capture.comparison?.inventory.files.length ?? (snapshot ? changedFiles.allRepositoryChangedFiles.length : null)}
                 reading={reading} marksAvailable={marks.unavailableReason === null && marks.record !== null}
                 modelLabel={bound.viewModel?.producer?.modelId} explain={explain} onExplainChange={(next) => selectTarget({ explain: next })}
                 onExplainDraft={bound.scope && bound.machine && comparison.kind !== 'session' && comparison.kind !== 'turnCheckpoint'
@@ -477,6 +477,8 @@ const WorkspaceReviewBody = React.memo((props: WorkspaceScmReviewDetailsViewProp
                         workspaceScope={scope} discardEnabled={scmWriteEnabled && snapshot?.capabilities?.writeDiscard === true}
                         sessionId={props.evidenceSessionId ?? props.host.sessionId ?? undefined}
                         marks={bound.capturedComparison?.id === capture.comparison.id ? marks : undefined} onRefresh={capture.retry}
+                        error={capture.error}
+                        host={props.host} serverId={props.serverId} page={capture.page} onLoadMore={capture.loadMore} loadingMore={capture.loading}
                         comparisonChrome={comparisonChrome} maxFiles={maxFiles} maxChangedLines={maxChangedLines}
                         initialScrollTop={mountedInitialReviewState.scrollTop} onScrollTopChange={onScrollTopChange}
                         initialCollapsedPaths={mountedInitialReviewState.collapsedPaths} onCollapsedPathsChange={onCollapsedPathsChange} />

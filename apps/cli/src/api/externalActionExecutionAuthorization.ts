@@ -859,6 +859,8 @@ export async function projectExternalActionRequesterHttpAuthorization(input: Rea
   installationId: string;
   privateKey: ExternalActionMachineRequestSigningKey;
   isCurrent?: () => Promise<boolean>;
+  /** The calling ingress already spent Home admission on this exact root. */
+  rootAdmitted?: true;
   /** Exact child ingress already rechecks the retained SOURCE packet at Home. */
   forwardedMove?: Readonly<{ credentials: StoredCredentials; isCurrent(): Promise<boolean> }>;
   signal?: AbortSignal;
@@ -930,11 +932,12 @@ export async function projectExternalActionRequesterHttpAuthorization(input: Rea
     });
     return current && await locallyCurrent(signal);
   };
-  // This exact private custody has already passed Home admission. Rebuilding
-  // its HTTP ports is the same authority decision, not a new native effect.
-  // Wire-only carriers still need their own fresh proof.
-  if (!await (admittedCustody ? locallyCurrent() : verifyCurrent())) return null;
-  const isCurrent = admittedCustody ? locallyCurrent : verifyCurrent;
+  // Rebuilding HTTP ports over an admitted root is the same authority decision.
+  // A wire-only carrier spends one Home proof here; finite work then stays local
+  // and the next signed request re-admits. A forwarded child keeps its receiver proof.
+  const admitted = Boolean(admittedCustody || input.rootAdmitted);
+  if (!await (admitted ? locallyCurrent() : verifyCurrent())) return null;
+  const isCurrent = admitted ? locallyCurrent : verifyCurrent;
   if (requesterAccountProjection) {
     Object.defineProperty(authorization, 'requesterAccountProjection', {
       value: requesterAccountProjection, enumerable: false,

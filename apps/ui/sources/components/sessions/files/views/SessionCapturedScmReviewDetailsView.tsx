@@ -16,7 +16,6 @@ import { presentStartReviewDialog } from '@/components/sessions/reviews/walkthro
 import { useRunSessionModels } from '@/components/sessions/runs/useRunSessionModels';
 import { useReviewComposerHandoff } from '@/components/sessions/reviews/comments/useReviewComposerHandoff';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
-import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { useSession, useSetting } from '@/sync/domains/state/storage';
 import { useWorkspaceScopeForSession } from '@/sync/domains/session/resolveWorkspaceScopeForSession';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
@@ -79,7 +78,7 @@ export function SessionCapturedScmReviewDetailsView(props: SessionScmReviewDetai
                     ...props.target, comparison: { ...comparison, comparisonId: started.comparisonId }, view: 'walkthrough' }), { intent: 'pinned' });
             } });
     }, [captured.comparison, machineReachable, comparison, props.sessionId, props.serverId, props.target, scopeLabel, openDetailsTab, setPersistedReviewTabState]);
-    const fileCount = captured.comparison?.inventory.files.length ?? null;
+    const fileCount = captured.page?.totalFiles ?? captured.comparison?.inventory.files.length ?? null;
     const scopeOptions = React.useMemo(() => listFilesComparisonScopeOptions(NO_LOCAL_SCOPES, latestTurnId, comparison,
         { currentFileCount: fileCount ?? undefined }), [comparison, fileCount, latestTurnId]);
     const selectComparison = React.useCallback((next: SessionScmReviewComparison) => openDetailsTab(
@@ -102,8 +101,9 @@ export function SessionCapturedScmReviewDetailsView(props: SessionScmReviewDetai
             startedReviewRunIds={startedReviewRunIds}
             renderBar={renderBar} onShowFiles={onShowFiles} onOpenFile={onShowFiles} onOpenComposer={goToComposer} />}
         renderFiles={(chrome) => <>
-            {captured.error ? <AttentionBanner presentation="strip" testID="captured-comparison-error" tone="warning" title={captured.error} /> : null}
             {captured.comparison ? <CapturedComparisonFilesView activeReviewFile={activeReviewFile} comparison={captured.comparison} sessionId={props.sessionId}
+                error={captured.error}
+                serverId={props.serverId} page={captured.page} onLoadMore={captured.loadMore} loadingMore={captured.loading}
                 workspaceScope={workspaceScope} marks={marks} discardEnabled={scmWriteEnabled} onRefresh={captured.retry}
                 comparisonChrome={chrome} initialCollapsedPaths={mountedInitialReviewState.collapsedPaths}
                 onCollapsedPathsChange={onCollapsedPathsChange} initialScrollTop={mountedInitialReviewState.scrollTop}

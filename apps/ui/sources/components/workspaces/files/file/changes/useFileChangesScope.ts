@@ -25,6 +25,7 @@ export function useFileChangesScope(params: Readonly<{
     latestTurnId?: string | null;
     knownComparison?: CaptureParams['knownComparison'];
     refreshLiveDiff?: () => void;
+    filePath?: string;
 }>) {
     const selection = React.useMemo(() => resolveFileChangesScope({ storedScope: params.view?.changesScope, initialChanges: params.initialChanges,
         sessionId: params.host.sessionId, latestTurnId: params.latestTurnId }),
@@ -38,7 +39,7 @@ export function useFileChangesScope(params: Readonly<{
     [turnId, current]);
     const captured = useCapturedScmComparison({ host: params.host, machine: params.machine, identity: params.identity,
         serverId: params.serverId, comparison: selector, active: params.active !== false && selection.capture,
-        knownComparison: params.knownComparison });
+        knownComparison: params.knownComparison, filePath: params.filePath });
     const setScope = React.useCallback((scope: FileChangesScope) => {
         params.onChangesScopeChange(FileChangesScopeSchema.parse(scope));
     }, [params.onChangesScopeChange]);

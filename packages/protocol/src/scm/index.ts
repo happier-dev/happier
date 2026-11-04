@@ -20,7 +20,7 @@ import {
 } from './operationError.js';
 import { ScmRequestBaseSchema } from './requestBase.js';
 import { ScmOperationOutcomeSchema } from './operationOutcome.js';
-import { ScmComparisonSourceSchema, ScmRevisionRangeV1Schema } from './comparison.js';
+import { ScmComparisonFileSchema, ScmComparisonSourceSchema, ScmRevisionRangeV1Schema } from './comparison.js';
 import { FilesystemPreparedExportSchema } from '../actions/filesystemActionFamily.js';
 import { ScmCommitOidSchema, ScmCommitExpectedRefSchema, ScmCommitPublicationSchema, ScmCommitHookContentChangesSchema } from './commitPublication.js';
 import { ScmRepositoryOperationKindSchema } from './operationState.js';
@@ -252,9 +252,28 @@ export const ScmDiffFileRequestSchema = lazyZodSchema(() => z.extend(ScmRequestB
 }));
 export type ScmDiffFileRequest = z.infer<typeof ScmDiffFileRequestSchema>;
 
+const ScmCapturedDiffFileRequestSchema = lazyZodSchema(() => z.strictObject({
+  ...ScmRequestBaseSchema.shape, captured: z.strictObject({
+    comparisonId: z.string().check(z.regex(/^[a-f0-9]{64}$/)), source: ScmComparisonSourceSchema,
+    path: z.string().check(z.minLength(1)), sessionId: z.optional(z.string().check(z.minLength(1))),
+  }),
+}));
+const ScmLegacyDiffFileActionRequestSchema = lazyZodSchema(() => z.extend(ScmDiffFileRequestSchema, {
+  captured: z.optional(z.never()),
+}));
+/** Named arms bound declaration inference without widening either wire contract.
+ * Missing legacy path makes old daemons refuse rather than return live worktree bytes. */
+export const ScmDiffFileActionRequestSchema: z.ZodMiniUnion<[
+  typeof ScmCapturedDiffFileRequestSchema, typeof ScmLegacyDiffFileActionRequestSchema,
+]> = lazyZodSchema(() => z.union([
+  ScmCapturedDiffFileRequestSchema, ScmLegacyDiffFileActionRequestSchema,
+]));
+export type ScmDiffFileActionRequest = z.infer<typeof ScmDiffFileActionRequestSchema>;
+
 export const ScmDiffFileResponseSchema = lazyZodSchema(() => z.object({
   success: z.boolean(),
   diff: z.optional(z.string()),
+  capturedFile: z.optional(ScmComparisonFileSchema),
   reviewUnits: z.optional(z.array(z.strictObject({
     key: z.string().check(z.regex(/^[a-f0-9]{64}$/)),
     hunkIndex: z.number().check(z.int(), z.nonnegative()),

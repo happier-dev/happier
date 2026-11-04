@@ -36,6 +36,9 @@ export type FileChangesReviewParams = Readonly<{
   filePath: string;
   /** The live snapshot diff the page already reads (Uncommitted). */
   liveDiff: string | null;
+  /** The existing file read owner decides whether a missing diff is pending, empty or failed. */
+  liveDiffLoading?: boolean;
+  liveDiffError?: string | null;
   /** The open file's actual working-snapshot status, for comparison Discard eligibility. */
   liveEntry?: Pick<ScmWorkingEntry, 'path' | 'kind' | 'hasIncludedDelta'> | null;
   refreshLiveDiff: () => void;
@@ -97,6 +100,7 @@ export function useFileChangesReview(params: FileChangesReviewParams) {
     onChangesScopeChange: params.onChangesScopeChange,
     initialChanges: params.initialChanges,
     latestTurnId,
+    filePath: resolveMachineAbsolutePath({ ...scope, requestPath: filePath, pathKind: 'workspace_entry' }),
     refreshLiveDiff: params.refreshLiveDiff,
   });
   const current = changes.current;
@@ -121,12 +125,15 @@ export function useFileChangesReview(params: FileChangesReviewParams) {
   const turnNumber = useSessionTurnNumber(sessionId, scope.serverId, turnId);
   const machineName = reachability.machineName;
 
+  const error = live ? params.liveDiffError ?? null : changes.error;
   const status: 'loading' | 'error' | 'empty' | 'ready' = live
-    ? params.liveDiff === null
-      ? 'loading'
-      : params.liveDiff
-        ? 'ready'
-        : 'empty'
+    ? params.liveDiff
+      ? 'ready'
+      : error
+        ? 'error'
+        : (params.liveDiffLoading ?? params.liveDiff === null)
+          ? 'loading'
+          : 'empty'
     : changes.loading && !captured
       ? 'loading'
       : changes.error && !captured
@@ -281,7 +288,7 @@ export function useFileChangesReview(params: FileChangesReviewParams) {
     selectScope,
     turnNumber,
     status,
-    error: changes.error,
+    error,
     unifiedDiff,
     capturedFile,
     comparison: captured,

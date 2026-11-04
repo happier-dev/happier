@@ -209,7 +209,7 @@ const SCM_GIT_ACTION_SPECS_PREFIX = [
     bindings: { rpcMethod: 'scm.diff.file' },
     surfaces: { ui: false, voice: false, agent: true, mcp: true, cli: true, rpc: true },
     sideEffectClass: 'read',
-    inputSchema: scm.ScmDiffFileRequestSchema,
+    inputSchema: scm.ScmDiffFileActionRequestSchema,
     outputSchema: scm.ScmDiffFileResponseSchema,
     inputHints: {
       title: 'Diff file',

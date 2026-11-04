@@ -1295,6 +1295,7 @@ function WorkspaceFileDetailsPage(props: WorkspaceFileDetailsViewProps & Readonl
     const changesReview = useFileChangesReview({
         scope, sessionId: sessionId || null, filePath,
         liveDiff: diffContent, refreshLiveDiff: onRefresh, view: fileView, onChangesScopeChange,
+        liveDiffLoading: isDiffLoading || isLoading, liveDiffError: error,
         initialChanges,
         liveEntry: fileEntry,
         contentHash: fileContent?.contentHash ?? null,

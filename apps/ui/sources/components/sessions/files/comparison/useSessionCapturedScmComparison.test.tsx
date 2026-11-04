@@ -86,6 +86,33 @@ const changedFile = { path: 'src/changed.ts', changeKind: 'modified', binary: fa
     evidence: { state: 'available', unifiedDiff: 'diff --git a/src/changed.ts b/src/changed.ts\n--- a/src/changed.ts\n+++ b/src/changed.ts\n@@ -1 +1 @@\n-old\n+new\n' }, occurrences: [] } as const;
 
 describe('Files reads the canonical captured comparison through authenticated RPC', () => {
+    it('retains a completed turn capture when navigation pins it before switching to Files', async () => {
+        const source = { kind: 'turnCheckpoint' as const, turnId: 'completed-turn' };
+        const comparison = ScmComparisonSchema.parse({ id: 'f'.repeat(64), source,
+            repository: { rootPath: '/repo/exact' }, endpoints: { before: 'turn-start', after: 'turn-final' },
+            inventory: { state: 'complete', reasons: [], files: [changedFile] } });
+        boundary.response = { success: true, comparison, metadata: { sourceKey: comparison.id, source } };
+        const prior = await mount(source);
+        await prior.unmount();
+        boundary.calls = [];
+        const sessionId = 'capture-turnCheckpoint';
+        const serverId = getStorage().getState().sessions[sessionId]!.serverId!;
+        const hook = await renderHook<ReturnType<typeof useSessionCapturedScmComparison>, SessionScmReviewComparison>((selector) => useSessionCapturedScmComparison({
+            sessionId, serverId, comparison: selector,
+        }), { initialProps: source });
+        await vi.waitFor(() => expect(hook.getCurrent().comparison).toEqual(comparison));
+        boundary.response = { success: false, errorCode: 'DIFF_UNAVAILABLE', error: 'A second read must not replace evidence already loaded.' };
+        await hook.rerender({ ...source, comparisonId: comparison.id });
+        expect(hook.getCurrent()).toMatchObject({ comparison, loading: false, error: null });
+        expect(comparisonCalls()).toHaveLength(1);
+        // A different pinned identity must still read its own evidence and
+        // must never inherit this turn's previous successful comparison.
+        await hook.rerender({ ...source, comparisonId: 'e'.repeat(64) });
+        await vi.waitFor(() => expect(hook.getCurrent().loading).toBe(false));
+        expect(hook.getCurrent().comparison).toBeNull();
+        expect(hook.getCurrent().error).toBeTruthy();
+        expect(comparisonCalls()).toHaveLength(2);
+    });
     it('reviews captured files with one keyboard cursor, numbering and content-key marks', async () => {
         const mounted = await mount({ kind: 'session' });
         await mounted.unmount();
@@ -379,7 +406,7 @@ describe('Files reads the canonical captured comparison through authenticated RP
         const hook = await mount(source);
         await vi.waitFor(() => expect(hook.getCurrent().comparison).toEqual(comparison));
         expect(boundary.calls).toEqual([expect.objectContaining({ method: RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE,
-            payload: { sessionId: 'capture-pullRequest', cwd: '/repo/exact', source } })]);
+            payload: { sessionId: 'capture-pullRequest', cwd: '/repo/exact', source, projection: { kind: 'index' } } })]);
     });
     it('reads a pinned identity and preserves an unavailable response without recapturing source', async () => {
         const source = { kind: 'commit' as const, commit: 'old-ref' };
@@ -388,7 +415,7 @@ describe('Files reads the canonical captured comparison through authenticated RP
         const hook = await mount({ ...source, comparisonId });
         await vi.waitFor(() => expect(hook.getCurrent().error).toBe('saved_evidence_missing'));
         expect(hook.getCurrent().comparison).toBeNull();
-        expect(boundary.calls).toEqual([expect.objectContaining({ payload: { sessionId: 'capture-commit', cwd: '/repo/exact', source, comparisonId } })]);
+        expect(boundary.calls).toEqual([expect.objectContaining({ payload: { sessionId: 'capture-commit', cwd: '/repo/exact', source, comparisonId, projection: { kind: 'index' } } })]);
     });
     it('clears a failed read when exact saved evidence becomes available without recapturing', async () => {
         const source = { kind: 'commit' as const, commit: 'old-ref' };
@@ -430,7 +457,7 @@ describe('Files reads the canonical captured comparison through authenticated RP
         expect(screen.findByTestId('scm-review-diff-area-menu')).toBeNull();
         expect(comparisonCalls().map((call) => call.method)).toEqual([RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE]);
     });
-    it('opens direct Walkthrough with its saved exact evidence and enables review without recapturing', async () => {
+    it.each(['walkthrough', 'files'] as const)('cold-opens direct %s with one saved evidence read and no duplicate capture', async (view) => {
         const source = { kind: 'commit' as const, commit: 'old-ref' };
         boundary.response = { success: false, error: 'must_not_recapture', errorCode: 'DIFF_UNAVAILABLE' };
         const hook = await mount(source);
@@ -443,14 +470,20 @@ describe('Files reads the canonical captured comparison through authenticated RP
         const result = ScmDiffSummaryResultSchema.parse({ resultId: 'saved-result', revision: 1, canUndo: false,
             output: { success: true, resultId: 'saved-result', revision: 1, sourceKey: id, metadata: { sourceKey: id, source },
                 comparison: { id, source, repository: { rootPath: '/repo/exact' }, endpoints: { before: 'old-before', after: 'old-after' },
-                    inventory: { state: 'complete', files: [changedFile], reasons: [] } }, requestedOutputs: ['walkthrough'],
-                outputs: { walkthrough: { state: 'pending' } }, analysis: { suppliedChangeRefs: [], analysedChangeRefs: [], remainingChangeRefs: [] } } });
-        loadSavedScmDiffSummaryResult({ sessionId: 'capture-commit', scope, result });
+                    inventory: { state: 'complete', files: [{ ...changedFile, occurrences: [{
+                        id: 'saved:changed', alias: 'changed', path: changedFile.path, position: 0,
+                        before: { startLine: 1, lineCount: 1 }, after: { startLine: 1, lineCount: 1 },
+                    }] }], reasons: [] } }, requestedOutputs: ['walkthrough'],
+                outputs: { walkthrough: { state: 'pending' } }, analysis: { suppliedChangeRefs: ['saved:changed'], analysedChangeRefs: [], remainingChangeRefs: ['saved:changed'] } } });
         boundary.savedResponse = { success: true, result };
+        boundary.savedInventory = { success: true, results: [{ cwd: '/repo/exact', sessionId: 'capture-commit',
+            resultId: result.resultId, revision: result.revision, comparisonId: id, source, bytes: 1, updatedAtMs: 1 }],
+            count: 1, bytes: 1 };
         const screen = await renderScreen(<AppPaneProvider><SessionScmReviewDetailsView sessionId="capture-commit"
-            serverId={serverId} scopeId="session:capture-commit" target={{ comparison: source, view: 'walkthrough' }} /></AppPaneProvider>);
+            serverId={serverId} scopeId="session:capture-commit" target={{ comparison: { ...source, comparisonId: id }, view }} /></AppPaneProvider>);
         await vi.waitFor(() => expect(screen.findByTestId('scm-comparison-start-review')?.props.disabled).toBe(false));
-        expect(boundary.calls.filter((call) => call.method === RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE)).toEqual([]);
+        expect(boundary.calls.filter((call) => call.method === RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE).length).toBe(0);
+        expect(boundary.calls.filter((call) => call.method === RPC_METHODS.SCM_DIFF_SUMMARY_RESULT_READ).length).toBe(1);
         expect(boundary.calls.find((call) => call.method === RPC_METHODS.SCM_DIFF_SUMMARY_RESULT_READ)?.payload)
             .toEqual({ cwd: '/repo/exact', resultId: 'saved-result' });
     });
@@ -513,7 +546,7 @@ describe('Files reads the canonical captured comparison through authenticated RP
         const root = screen.findByType(SessionCapturedScmReviewDetailsView).findAll((node) => typeof node.props.onLayout === 'function')[0]!;
         await act(async () => root.props.onLayout({ nativeEvent: { layout: { width: 390 } } }));
         expect(screen.findByTestId('scm-comparison-bar')).toBeNull();
-        expect(screen.findByTestId('scm-comparison-phone-back')).toBeTruthy();
+        expect(screen.findByTestId('scm-comparison-phone-more')).toBeTruthy();
         const menu = screen.findAllByType((await import('@/components/ui/forms/dropdown/DropdownMenu')).DropdownMenu)
             .find((node) => node.props.testID === 'scm-comparison-phone-actions')!;
         await act(async () => menu.props.onSelect('view:walkthrough'));
@@ -536,14 +569,18 @@ describe('Files reads the canonical captured comparison through authenticated RP
                 producer: { kind: 'generation', modelId: 'fixture-model' },
                 outputs: { walkthrough: { state: 'complete', value: SPECIMEN_WALKTHROUGH } }, analysis: SPECIMEN_ANALYSIS_COMPLETE } });
         loadSavedScmDiffSummaryResult({ sessionId: 'capture-commit', scope, result });
+        const { createSessionPaneScopeId } = await import('@/components/sessions/panes/sessionPaneScopeId');
+        // Earlier cases deliberately leave retained pane navigation behind. This is a new
+        // mounted destination instance, so exercise its navigation without inheriting theirs.
+        const savedFilesScopeId = createSessionPaneScopeId('capture-commit', serverId, 'saved-phone-files');
         // The real Details surface feeds its current pane resource back into the view after navigation.
         function SavedFilesPane() {
-            const pane = useAppPaneScope('session:capture-commit');
+            const pane = useAppPaneScope(savedFilesScopeId);
             const tab = pane.scopeState?.details.tabs.find((candidate) => candidate.kind === 'scmReview');
             const target = tab ? readSessionScmReviewTarget(tab.resource)
                 : { comparison: { ...source, comparisonId: comparison.id }, view: 'files' as const };
             return <SessionScmReviewDetailsView sessionId="capture-commit" serverId={serverId}
-                scopeId="session:capture-commit" target={target} />;
+                scopeId={savedFilesScopeId} target={target} />;
         }
         const screen = await renderScreen(<AppPaneProvider><SavedFilesPane /></AppPaneProvider>);
         await vi.waitFor(() => expect(screen.findHostByTestId('captured-comparison-files')).toBeTruthy());

@@ -149,6 +149,38 @@ Capture comparison evidence first, then optionally ask one analysis Run for
 `summary`, `walkthrough`, `commitPlan`, or a combination. Capture requires no
 model. Opening a Walkthrough destination does not start generation; Start does.
 
+Files and Review request `scm.diffSummary.capture` with
+`projection: { kind: 'index', cursor?, path? }`. The daemon retains the full
+comparison; replies carry file metadata with explicit `deferred` diff evidence
+and `page: { totalFiles, nextCursor }`. A file destination selects its absolute
+Machine path and reads only that file's pinned evidence through `scm.diff.file`
+using `{ cwd, captured: { comparisonId, source, path, sessionId? } }`. It never
+substitutes a current working-tree diff for captured evidence. Review loads the
+next metadata page only through its visible More action.
+
+Session-scoped reads carry the existing Session authorization through the
+canonical socket method classification. Index and captured-file reads share
+the SCM Action admission owner, including admitted Machine or signed
+public-Action custody and forwarded Session lookup. Session scope remains a
+ceiling; request selectors do not grant access. Session-origin requests use the
+same workspace binding for both reads. The existing Session-namespace fallback
+to repository-level captures is intentionally preserved.
+
+The complete JSON reply fits `WORKSPACE_FILE_RPC_MAX_RESPONSE_UTF8_BYTES`
+from Protocol's workspace-files transport budget (18,749,807 bytes), derived
+from the socket floor after authenticated RPC, cipher and base64 framing.
+Pages have explicit continuation; an individual entry or file exceeding the
+budget fails visibly rather than being silently truncated. Legacy small
+capture replies remain readable, while an oversized legacy request receives a
+typed failure asking for a client update. Other files' retained patch evidence
+stays daemon-side during these capture and file reads. File dependency failures leave Loading, offer Retry,
+and preserve any last-known-good content with the canonical freshness line.
+
+This projection does not yet cover `scm.diffSummary.result.read`: saved generated
+results still embed the full comparison. A pinned Files route restoring such a
+result can therefore bypass capture paging; that separate response contract
+needs the same bounded projection before all saved-result routes are bounded.
+
 Attached Review and generation admission use the existing Execution Run start
 RPC under the caller's cancellation lifetime, without the generic Session RPC
 acknowledgement deadline. The response identifies the admitted Run; existing

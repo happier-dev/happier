@@ -18,7 +18,7 @@ import type * as scm from '@happier-dev/protocol/scm';
 import { parseScmRepositoryCloneRpcRequest, projectScmLegacyRpcResponse } from './scmRpcCompatibility';
 import { isStoredScmReviewEvidenceAction } from './placement';
 import { prepareDiscardAgainstComparison, type PreparedComparisonDiscard } from './discard/discardAgainstComparison';
-import { DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_RAW_PAYLOAD_BYTES } from '@happier-dev/protocol/features/payload/capabilities/machineTunnelCapabilities';
+import { WORKSPACE_FILE_RPC_MAX_RESPONSE_UTF8_BYTES } from '@happier-dev/protocol/machines/workspaceFiles';
 
 import { resolveFilesystemAccessPolicy, type FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import { authorizeFilesystemPath } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemPathAuthorization';
@@ -26,6 +26,7 @@ import type { ScmBackendRegistry } from '@/scm/registry';
 import { resolveCwd } from '@/scm/runtime';
 import { createNonRepositoryScmSnapshotResponse, notRepositoryResponse, runScmRoute } from '@/scm/rpc/dispatch';
 import { captureScmComparison, readCapturedScmComparison } from '@/scm/comparisons/captureScmComparison';
+import { findCapturedComparisonFile, projectCapturedComparison } from '@/scm/comparisons/projectCapturedComparison';
 import type { ReadRepositoryCheckpointTranscriptPage } from '@/scm/checkpoints/readRepositoryCheckpointTranscriptPage';
 import type { ReadPullRequestComparisonPage } from '@/scm/comparisons/readPullRequestComparisonPage';
 import { executeScmDiffSummaryResultAction } from './executeScmDiffSummaryResultAction';
@@ -320,7 +321,7 @@ async function runLocalScmAction(params: ExecuteScmActionOperationParams & Reado
                     ...(params.readComparisonTranscriptPage ? { readTranscriptPage: params.readComparisonTranscriptPage } : {}),
                     ...(params.readPullRequestComparisonPage ? { readPullRequestComparisonPage: params.readPullRequestComparisonPage } : {}),
                 });
-                return { success: true, comparison: captured.comparison, metadata: captured.metadata };
+                return projectCapturedComparison(captured, request.projection);
             } catch (error) {
                 const code = error && typeof error === 'object' && 'code' in error
                     ? ScmDiffSummaryErrorCodeSchema.safeParse(error.code) : null;
@@ -373,7 +374,28 @@ async function runLocalScmAction(params: ExecuteScmActionOperationParams & Reado
             return params.deliverFileAtRevision ? await params.deliverFileAtRevision(request, response, params.signal) : response;
         }
         case 'scm.diff.file': {
-            const request = params.input as scm.ScmDiffFileRequest;
+            const request = params.input as scm.ScmDiffFileActionRequest;
+            if ('captured' in request && request.captured) {
+                const authorized = resolveCwd(request.cwd, params.workingDirectory, params.accessPolicy ?? resolveFilesystemAccessPolicy());
+                const unavailable = { success: false as const, errorCode: SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED,
+                    error: 'Captured file evidence is unavailable for this caller, source or file.' };
+                if (!authorized.ok) return unavailable;
+                const sourceSessionId = typeof request.captured.source.sessionId === 'string' ? request.captured.source.sessionId : undefined;
+                if (!await admitReviewScope(params, { cwd: authorized.cwd,
+                    ...(request.captured.sessionId ? { sessionId: request.captured.sessionId } : {}),
+                    ...(sourceSessionId ? { sourceSessionId } : {}) })) return unavailable;
+                try {
+                    const captured = await readCapturedScmComparison({ cwd: authorized.cwd, ...request.captured });
+                    const file = findCapturedComparisonFile(captured, request.captured.path);
+                    if (!file || typeof file.evidence.unifiedDiff !== 'string') return unavailable;
+                    if (Buffer.byteLength(file.evidence.unifiedDiff, 'utf8') * 2 > WORKSPACE_FILE_RPC_MAX_RESPONSE_UTF8_BYTES) {
+                        return { ...unavailable, error: 'Captured file evidence exceeds the socket response limit.' };
+                    }
+                    const response = { success: true, diff: file.evidence.unifiedDiff, capturedFile: file };
+                    return Buffer.byteLength(JSON.stringify(response), 'utf8') <= WORKSPACE_FILE_RPC_MAX_RESPONSE_UTF8_BYTES
+                        ? response : { ...unavailable, error: 'Captured file evidence exceeds the socket response limit.' };
+                } catch { return unavailable; }
+            }
             const response = await runScmRoute<scm.ScmDiffFileRequest, scm.ScmDiffFileResponse>({
                 request,
                 ...routeBase,
@@ -501,7 +523,7 @@ async function runLocalScmAction(params: ExecuteScmActionOperationParams & Reado
                             weight: Buffer.byteLength(JSON.stringify(item.result.inverseEdits), 'utf8') }];
                         return [];
                     }).sort((a, b) => b.weight - a.weight);
-                    const exceedsReplyBudget = () => Buffer.byteLength(JSON.stringify(projectedResponse()), 'utf8') > DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_RAW_PAYLOAD_BYTES;
+                    const exceedsReplyBudget = () => Buffer.byteLength(JSON.stringify(projectedResponse()), 'utf8') > WORKSPACE_FILE_RPC_MAX_RESPONSE_UTF8_BYTES;
                     while (exceedsReplyBudget() && undoPayloads.length) {
                         const { item, bytes } = undoPayloads.shift()!;
                         if (!params.prepareFileBytesExport) return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.COMPARISON_UNAVAILABLE,

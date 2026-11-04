@@ -236,7 +236,8 @@ export function createSessionBoundScmAction(
         ...(context.signal ? { signal: context.signal } : {}) })) return { ok: false, errorCode: 'server_scope_mismatch', error: 'server_scope_mismatch' };
       // Only the installed daemon has a serving runtime. A runner on the same
       // Machine must still take transport; it cannot recreate that registry.
-      const nativeScmAction = actionId.startsWith('scm.diffSummary.') || actionId === 'scm.blame.get';
+      const nativeScmAction = actionId.startsWith('scm.diffSummary.') || actionId === 'scm.blame.get'
+        || actionId === 'scm.diff.file' && retainedReviewAction;
       const localRuntime = !retainedReviewAction && nativeScmAction
         ? tryAcquireAuthoritativePluginRuntimeRegistryLease() : null;
       const installedScmOwner = localRuntime !== null;

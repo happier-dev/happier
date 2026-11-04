@@ -127,11 +127,15 @@ export type ScmDiffSummaryGenerateInput =
 export const ScmComparisonCaptureInputSchema = lazyZodSchema(() => z.strictObject({
   cwd: z.string().check(z.minLength(1)), sessionId: z.optional(z.string().check(z.minLength(1))),
   comparisonId: z.optional(z.string().check(z.regex(/^[a-f0-9]{64}$/))),
+  projection: z.optional(z.strictObject({ kind: z.literal('index'),
+    cursor: z.optional(z.number().check(z.int(), z.nonnegative())),
+    path: z.optional(z.string().check(z.minLength(1))),
+  })),
   backendPreference: z.optional(ScmBackendPreferenceSchema), source: ScmDiffSummarySourceSchema,
   turnId: z.optional(z.string().check(z.minLength(1))), checkpointReceiptId: z.optional(z.string().check(z.minLength(1))),
   turnEvidenceMode: z.optional(ScmDiffSummaryTurnEvidenceModeSchema),
 }).check(z.superRefine((value, ctx) => {
-  const { comparisonId: _comparisonId, ...selectors } = value;
+  const { comparisonId: _comparisonId, projection: _projection, ...selectors } = value;
   const parsed = ScmDiffSummaryGenerateInputSchema.safeParse(selectors);
   if (!parsed.success) for (const issue of parsed.error.issues) {
     ctx.addIssue({ code: "custom", message: issue.message, path: issue.path });
@@ -450,7 +454,11 @@ export type ScmDiffSummaryGenerateOutput =
   z.infer<typeof ScmDiffSummaryGenerateOutputSchema>;
 
 export const ScmComparisonCaptureOutputSchema = lazyZodSchema(() => z.discriminatedUnion('success', [
-  z.strictObject({ success: z.literal(true), comparison: ScmComparisonSchema, metadata: ScmDiffSummaryMetadataSchema }),
+  z.strictObject({ success: z.literal(true), comparison: ScmComparisonSchema, metadata: ScmDiffSummaryMetadataSchema,
+    /** Page coverage is distinct from the captured source inventory's coverage. */
+    page: z.optional(z.strictObject({ totalFiles: z.number().check(z.int(), z.nonnegative()),
+      nextCursor: z.nullable(z.number().check(z.int(), z.nonnegative())) })),
+  }),
   z.strictObject({ success: z.literal(false), error: z.string().check(z.minLength(1)), errorCode: ScmDiffSummaryErrorCodeSchema }),
 ]));
 export type ScmComparisonCaptureOutput = z.infer<typeof ScmComparisonCaptureOutputSchema>;

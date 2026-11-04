@@ -14,6 +14,8 @@ import type {
     ScmDiffSummaryResult,
 } from '@happier-dev/protocol';
 import { SCM_DIFF_SUMMARY_CACHE_SCHEMA_VERSION, ScmComparisonCaptureOutputSchema, ScmDiffSummaryGenerateOutputSchema } from '@happier-dev/protocol/scm';
+import { ScmDiffFileResponseSchema, type ScmDiffFileResponse } from '@happier-dev/protocol/scm';
+import type { ScmComparisonSource } from '@happier-dev/protocol/scm/comparison';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends';
 import { ExecutionRunGetResponseSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
 
@@ -60,12 +62,12 @@ export type ScmComparisonCaptureRpc = (
     opts?: Readonly<{ serverId?: string | null; scope?: ServerAccountScope; signal?: AbortSignal }>,
 ) => Promise<ScmComparisonCaptureResult>;
 
-export type CaptureScmComparisonParams = ScmDiffSummaryHost & Readonly<{
+export type CaptureScmComparisonParams<Input = ScmComparisonCaptureInput> = ScmDiffSummaryHost & Readonly<{
     serverId?: string | null;
     scope?: ServerAccountScope;
     signal?: AbortSignal;
     shouldContinue?: () => boolean;
-    input: ScmComparisonCaptureInput;
+    input: Input;
 }>;
 
 export type ScmDiffSummaryGetExecutionRun = (
@@ -302,7 +304,8 @@ export function createScmDiffSummaryOperations(deps: ScmDiffSummaryOperationsDep
         const retired = (): ScmComparisonCaptureResult => ({ success: false,
             error: 'The captured Account or Session retired.', errorCode: 'SCM_DIFF_SUMMARY_SCOPE_RETIRED' });
         if (!current()) return retired();
-        const request = { ...params.input, ...(params.sessionId ? { sessionId: params.sessionId } : {}) };
+        const request = { ...params.input, projection: params.input.projection ?? { kind: 'index' as const },
+            ...(params.sessionId ? { sessionId: params.sessionId } : {}) };
         const result = await invokeUiScmAction({ actionId: 'scm.diffSummary.capture', input: request,
             schema: ScmComparisonCaptureOutputSchema, context: actionContext(params), executor: deps.actionExecutor,
             shouldContinue: current });
@@ -340,6 +343,21 @@ export function createScmDiffSummaryOperations(deps: ScmDiffSummaryOperationsDep
         }
         const error = readOperationError(result);
         return { success: false, error: error?.error ?? 'Unsupported SCM comparison capture response', ...(error?.errorCode ? { errorCode: error.errorCode } : {}) };
+    };
+
+    const readCapturedFile = async (params: CaptureScmComparisonParams<Readonly<{
+        cwd: string; comparisonId: string; source: ScmComparisonSource; path: string;
+    }>>): Promise<ScmDiffFileResponse> => {
+        const current = () => !params.signal?.aborted && params.shouldContinue?.() !== false;
+        const result = await invokeUiScmAction({ actionId: 'scm.diff.file',
+            input: { cwd: params.input.cwd, captured: { comparisonId: params.input.comparisonId,
+                source: params.input.source, path: params.input.path,
+                ...(params.sessionId ? { sessionId: params.sessionId } : {}) } },
+            schema: ScmDiffFileResponseSchema, context: actionContext(params), executor: deps.actionExecutor,
+            shouldContinue: current });
+        const parsed = ScmDiffFileResponseSchema.safeParse(result);
+        if (parsed.success) return parsed.data;
+        return { success: false, error: readOperationError(result)?.error ?? 'Captured file evidence is unavailable' };
     };
 
     const generateFromUserAction = async (params: GenerateScmDiffSummaryParams): Promise<ScmDiffSummaryOperationResult> => {
@@ -595,6 +613,7 @@ export function createScmDiffSummaryOperations(deps: ScmDiffSummaryOperationsDep
         getState,
         subscribe,
         captureComparison,
+        readCapturedFile,
         generateFromUserAction,
         prefetch,
         refreshRun,
@@ -645,6 +664,7 @@ const defaultOperations = createScmDiffSummaryOperations();
 
 export const generateScmDiffSummaryFromUserAction = defaultOperations.generateFromUserAction;
 export const captureScmComparisonForSession = defaultOperations.captureComparison;
+export const readCapturedScmFileForSession = defaultOperations.readCapturedFile;
 export const refreshScmDiffSummaryRun = defaultOperations.refreshRun;
 export const applySavedScmDiffSummaryResult = defaultOperations.applySavedResult;
 export const loadSavedScmDiffSummaryResult = defaultOperations.loadSavedResult;

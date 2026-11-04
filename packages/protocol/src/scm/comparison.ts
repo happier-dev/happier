@@ -85,9 +85,13 @@ export const ScmComparisonFileSchema = lazyZodSchema(() => z.strictObject({
   path: identity, previousPath: z.optional(identity), changeKind: identity,
   beforeBlobId: z.optional(identity), afterBlobId: z.optional(identity),
   binary: z.nullable(z.boolean()), generated: z.boolean(), lockfile: z.boolean(),
+  linesAdded: z.optional(z.number().check(z.int(), z.nonnegative())),
+  linesRemoved: z.optional(z.number().check(z.int(), z.nonnegative())),
   evidence: z.discriminatedUnion('state', [
     z.strictObject({ state: z.literal('available'), unifiedDiff: z.string() }),
     z.strictObject({ state: z.literal('unavailable'), reason: identity, unifiedDiff: z.optional(z.string()) }),
+    /** Transport-only index projection; retained evidence is read by comparison identity. */
+    z.strictObject({ state: z.literal('deferred'), reason: identity, unifiedDiff: z.optional(z.never()) }),
   ]),
   occurrences: z.array(ScmChangeOccurrenceSchema),
 }));

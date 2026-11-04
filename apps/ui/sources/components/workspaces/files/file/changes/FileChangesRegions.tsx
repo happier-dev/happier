@@ -5,6 +5,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { DiffViewerHunks } from '@/components/ui/code/diff/diffViewerTypes';
 import { DiffHunkRowRegistryContext, useDiffHunkReadingLine } from '@/components/ui/code/diff/hunks/diffHunkReadingLine';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { ReviewBar } from '@/components/workspaces/scm/review/hunkReview/ReviewBar';
 import { ReviewStrip } from '@/components/workspaces/scm/review/hunkReview/ReviewStrip';
 import { useReviewKeyboard } from '@/components/workspaces/scm/review/hunkReview/useReviewKeyboard';
@@ -171,8 +172,12 @@ export function FileChangesBody(
       ) : null}
     </View>
   );
+  const retainedFailure = review.error && review.status !== 'error' ? (
+    <SurfaceFreshnessLine testID="file-changes-stale" reason={review.error} tone="warning"
+      action={{ label: t('common.retry'), onPress: review.refresh }} />
+  ) : null;
   const viewer = props.image ? resolveFileViewerKind({ path: props.image.filePath }) : null;
-  if (props.image && viewer && (viewer.kind === 'image' || viewer.kind === 'svg') && review.status !== 'loading') {
+  if (props.image && viewer && (viewer.kind === 'image' || viewer.kind === 'svg') && review.status !== 'loading' && review.status !== 'error') {
     const imageCompare = (
       <FileChangesImageCompare review={review} scope={props.image.scope} filePath={props.image.filePath}
         liveChangeKind={props.image.liveChangeKind} />
@@ -180,10 +185,11 @@ export function FileChangesBody(
     // Phones (lab RV1vp): Before over After, then the source changes, in one scroll. The wells lead the
     // diff inside its own scroller, so they scroll away and the changes get the screen.
     if (phone && viewer.kind === 'svg' && review.status === 'ready' && review.unifiedDiff) {
-      return textRegion(review.unifiedDiff, imageCompare);
+      return <>{retainedFailure}{textRegion(review.unifiedDiff, imageCompare)}</>;
     }
     return (
       <View style={styles.body}>
+        {retainedFailure}
         {imageCompare}
         {viewer.kind === 'svg' && review.status === 'ready' && review.unifiedDiff ? textRegion(review.unifiedDiff) : null}
       </View>
@@ -216,6 +222,8 @@ export function FileChangesBody(
       review.scopeKind === 'turn' &&
       review.scopeTabs.some((tab) => tab.id === 'session');
     return (
+      <>
+      {retainedFailure}
       <SurfaceStateCard
         testID="file-changes-empty"
         kind="empty"
@@ -232,9 +240,10 @@ export function FileChangesBody(
             }
           : {})}
       />
+      </>
     );
   }
-  return textRegion(review.unifiedDiff);
+  return <>{retainedFailure}{textRegion(review.unifiedDiff)}</>;
 }
 
 const styles = StyleSheet.create({

@@ -20,8 +20,6 @@ import type {
     ScmCommitCreateResponse,
     ScmDiffCommitRequest,
     ScmDiffCommitResponse,
-    ScmDiffFileRequest,
-    ScmDiffFileResponse,
     ScmLogListRequest,
     ScmLogListResponse,
     ScmRemoteAddRequest,
@@ -181,14 +179,14 @@ export function registerScmHandlers(
             return scmRpcOperationContextStorage.getStore()?.context.signal;
         },
     } as const;
-    const authorizeWorkSession = async (sessionId: string): Promise<boolean> => {
+    const authorizeWorkSession = async (sessionId: string | undefined): Promise<boolean> => {
         const ingress = scmRpcOperationContextStorage.getStore()?.context;
         return ingress?.signal.aborted === false && ingress.authorization?.kind === 'session.write'
             && ingress.authorization.sessionId === sessionId;
     };
     registerActionSpecRpcHandlers({
         rpcHandlerManager: scopedRegistrar(false),
-        actionIds: ['scm.blame.get', 'scm.diffSummary.capture', 'scm.diffSummary.generate', 'scm.diffSummary.draftPullRequest',
+        actionIds: ['scm.blame.get', 'scm.diff.file', 'scm.diffSummary.capture', 'scm.diffSummary.generate', 'scm.diffSummary.draftPullRequest',
             'scm.diffSummary.result.list', 'scm.diffSummary.result.clear',
             'scm.diffSummary.result.read', 'scm.diffSummary.result.edit',
             'scm.diffSummary.result.undo', 'scm.diffSummary.result.delete',
@@ -199,6 +197,18 @@ export function registerScmHandlers(
             'scm.diffSummary.reviewed.mark', 'scm.diffSummary.reviewed.unmark'],
         ...(deps?.machineId ? { targetMachineId: deps.machineId } : {}),
         defaultMachineTarget: true,
+        mapRequestForMethod: async ({ actionId, input }) => {
+            if (actionId !== 'scm.diff.file') return { accepted: true, input };
+            // The scoped registrar already admitted the target. Preserve its
+            // envelope for captured evidence's canonical Action admission.
+            const request = input && typeof input === 'object' && 'kind' in input
+                && input.kind === 'targeted_action_rpc' && 'input' in input ? input.input : input;
+            if (request && typeof request === 'object' && 'captured' in request) return { accepted: true, input };
+            // Released live file diffs retain their direct backend/response ABI.
+            return { accepted: false, response: await executeScmActionOperation({
+                actionId: 'scm.diff.file', input: request, ...routeBase, rpcCompatibility: true,
+            }) };
+        },
         ...(deps?.actionExecutor ? { actionExecutor: deps.actionExecutor } : {}),
         resolveActionExecutor: async () => {
             const credentials = await readStoredCredentials().catch(() => null);
@@ -330,16 +340,6 @@ export function registerScmHandlers(
         async (request) => await executeScmActionOperation({
             actionId: 'scm.file.read', input: request, ...routeBase,
         }) as ScmFileReadResponse,
-    );
-
-    scmRpcHandlerManager.registerHandler<ScmDiffFileRequest, ScmDiffFileResponse>(
-        RPC_METHODS.SCM_DIFF_FILE,
-        async (request) => await executeScmActionOperation({
-            actionId: 'scm.diff.file',
-            input: request,
-            ...routeBase,
-            rpcCompatibility: true,
-        }) as ScmDiffFileResponse,
     );
 
     scmRpcHandlerManager.registerHandler<ScmDiffCommitRequest, ScmDiffCommitResponse>(

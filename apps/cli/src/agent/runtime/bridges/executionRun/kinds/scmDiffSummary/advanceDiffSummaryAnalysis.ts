@@ -199,7 +199,7 @@ function currentComparison(comparison: ScmComparison, state: AnalysisState): Scm
   const part = partComparison(comparison, state.current);
   if (state.currentDiff === undefined) return part;
   return { ...part, inventory: { ...part.inventory, files: part.inventory.files.map((file) => ({ ...file,
-    evidence: { ...file.evidence, unifiedDiff: state.currentDiff! },
+    evidence: file.evidence.state === 'deferred' ? file.evidence : { ...file.evidence, unifiedDiff: state.currentDiff! },
   })) } };
 }
 
@@ -222,7 +222,8 @@ function partComparison(comparison: ScmComparison, refs: readonly string[]): Scm
     const unifiedDiff = (starts.length ? diff.slice(0, starts[0]) : '') + available.flatMap((change, index) =>
       selected.has(change.id) ? [diff.slice(starts[index], starts[index + 1] ?? diff.length)] : []).join('');
     return [{ ...file, occurrences, evidence: file.evidence.state === 'available'
-      ? { state: 'available' as const, unifiedDiff } : { ...file.evidence, unifiedDiff } }];
+      ? { state: 'available' as const, unifiedDiff } : file.evidence.state === 'deferred'
+        ? file.evidence : { ...file.evidence, unifiedDiff } }];
   });
   return { ...comparison, inventory: { ...comparison.inventory, files } };
 }
