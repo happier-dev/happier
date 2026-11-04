@@ -166,22 +166,18 @@ function buildForwards(projection, workspace) {
     ? projection.runtime.ports
     : {};
   const serverPort = servicePort(runtimePorts.server) ?? projection.environment.serverPort;
-  const serverProxy = projection.runtime.serverProxy && typeof projection.runtime.serverProxy === 'object'
-    ? projection.runtime.serverProxy
-    : {};
-  const serverBackend = serverProxy.enabled === true
-    ? servicePort(runtimePorts.serverBackend) ?? serverPort
-    : serverPort;
+  // The guest's server port is the stable gateway. Its proxy owns the rotating
+  // backend port, which must not become part of this persistent tunnel's plan.
   const hostServerPort = hostTargetServicePort(projection, workspace, 'server');
   const forwards = [];
-  if (serverPort && serverBackend) {
+  if (serverPort) {
     forwards.push({
       service: 'server',
-      ...(hostServerPort ? { transport: 'host', guestTargetPort: serverBackend } : {}),
+      ...(hostServerPort ? { transport: 'host', guestTargetPort: serverPort } : {}),
       listenHost: '0.0.0.0',
       listenPort: serverPort,
       targetHost: '127.0.0.1',
-      targetPort: hostServerPort ?? serverBackend,
+      targetPort: hostServerPort ?? serverPort,
     });
   }
 

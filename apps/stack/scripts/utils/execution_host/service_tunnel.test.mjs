@@ -144,7 +144,7 @@ test('SSH primary discovers and forwards declared services through enrolled SSH 
   assert.equal(result.statePath, fixture.path('home', 'execution-host-tunnels', 'ssh-nl2-0.3.json'));
   assert.ok(boundary.spawned[0].args.includes('enrolled-nl2'));
   assert.ok(boundary.spawned[0].args.includes(fixture.path('ssh-config')));
-  assert.ok(boundary.spawned[0].args.includes('*:52753:127.0.0.1:52754'));
+  assert.ok(boundary.spawned[0].args.includes('*:52753:127.0.0.1:52753'));
   assert.ok(boundary.spawned[0].args.includes('*:18829:127.0.0.1:18829'));
   assert.equal((await stopExecutionHostServiceTunnel(options)).changed, true);
   boundary.spawned.length = 0;
@@ -220,7 +220,7 @@ for (const changedField of ['ssh', 'sshConfigFile']) {
   });
 }
 
-test('runtime projection reads only the selected guest Stack declaration and maps server backend plus Expo web', async () => {
+test('runtime projection reads only the selected guest Stack declaration and maps the stable server gateway plus Expo web', async () => {
   const executor = runtimeExecutor(runtimeProjection());
   const result = await inspectExecutionHostStackRuntime({
     profile: profile('/Users/example/.happier-stack/lima'),
@@ -231,7 +231,7 @@ test('runtime projection reads only the selected guest Stack declaration and map
 
   assert.equal(result.stackName, 'repo-dev-1234567890');
   assert.deepEqual(result.forwards, [
-    { service: 'server', listenHost: '0.0.0.0', listenPort: 52753, targetHost: '127.0.0.1', targetPort: 52754 },
+    { service: 'server', listenHost: '0.0.0.0', listenPort: 52753, targetHost: '127.0.0.1', targetPort: 52753 },
     { service: 'expo-web', listenHost: '0.0.0.0', listenPort: 18829, targetHost: '127.0.0.1', targetPort: 18829 },
   ]);
   assert.deepEqual(executor.calls[0].args.slice(0, 7), [
@@ -240,6 +240,22 @@ test('runtime projection reads only the selected guest Stack declaration and map
   assert.match(executor.calls[0].args[7], /HAPPIER_STACK_REPO_DIR/);
   assert.doesNotMatch(executor.calls[0].args[7], /\bnode\b/);
   assert.equal(executor.calls[0].args.at(-1), 'repo-dev-1234567890');
+});
+
+test('backend rotation leaves the public service tunnel unchanged', async t => {
+  const fixture = await createTempFixture(t);
+  const env = { HAPPIER_STACK_HOME_DIR: fixture.path('home') };
+  const executor = runtimeExecutor(runtimeProjection({ expoEnabled: false }));
+  const boundary = tunnelBoundary({ listenerPids: (_port, spawned) => spawned.length > boundary.terminated.length ? [731] : [] });
+  const options = { profile: profile(fixture.path('lima')), workspaceId: '0.3', executor, env, boundary };
+  const first = await ensureExecutionHostServiceTunnel(options);
+  assert.equal(first.status, 'running');
+  executor.capture = async () => ({ exitCode: 0, out: runtimeProjection({ backendPort: 52755, expoEnabled: false }), err: '' });
+  const afterReload = await ensureExecutionHostServiceTunnel(options);
+  assert.equal(afterReload.changed, false);
+  assert.equal(boundary.terminated.length, 0);
+  const state = JSON.parse(await readFile(afterReload.statePath, 'utf8'));
+  assert.equal(state.forwards[0].targetPort, 52753);
 });
 
 test('runtime projection exposes the pinned Expo endpoint when Expo runs on a Dev Target', async () => {
@@ -318,7 +334,8 @@ test('runtime projection keeps one coherent guest transport when only one target
     'expoPort=18829',
     JSON.stringify({
       stackName: 'repo-dev-1234567890',
-      ports: { server: 52753, serverBackend: null },
+      ports: { server: 52753, serverBackend: 52754 },
+      serverProxy: { enabled: true, mode: 'proxy' },
       placement: { server: 'mac-host', expo: 'mac-host', daemon: 'local' },
       remoteTargets: {
         'mac-host': {
@@ -397,7 +414,7 @@ test('execution-host service tunnel starts one detached SSH transport with all r
     '-o', 'ExitOnForwardFailure=yes',
     '-o', 'ServerAliveInterval=15',
     '-o', 'ServerAliveCountMax=3',
-    '-L', '*:52753:127.0.0.1:52754',
+    '-L', '*:52753:127.0.0.1:52753',
     '-L', '*:18829:127.0.0.1:18829',
     '-N', 'lima-primary',
   ]);
@@ -997,7 +1014,7 @@ test('service tunnel supervision rechecks a stable runtime plan without replacin
   assert.equal(boundary.terminated.length, 0);
   const state = JSON.parse(await readFile(`${fixture.path('home')}/execution-host-tunnels/primary-0.3.json`, 'utf8'));
   assert.deepEqual(state.forwards, [
-    { service: 'server', listenHost: '0.0.0.0', listenPort: 52753, targetHost: '127.0.0.1', targetPort: 52754 },
+    { service: 'server', listenHost: '0.0.0.0', listenPort: 52753, targetHost: '127.0.0.1', targetPort: 52753 },
     { service: 'expo-web', listenHost: '0.0.0.0', listenPort: 19364, targetHost: '127.0.0.1', targetPort: 19364 },
   ]);
 });
@@ -1069,7 +1086,7 @@ test('service tunnel supervision replaces a healthy transport when the runtime p
   assert.deepEqual(boundary.terminated.map(({ pid }) => pid), [731]);
   const state = JSON.parse(await readFile(`${fixture.path('home')}/execution-host-tunnels/primary-0.3.json`, 'utf8'));
   assert.deepEqual(state.forwards, [
-    { service: 'server', listenHost: '0.0.0.0', listenPort: 52753, targetHost: '127.0.0.1', targetPort: 52754 },
+    { service: 'server', listenHost: '0.0.0.0', listenPort: 52753, targetHost: '127.0.0.1', targetPort: 52753 },
     { service: 'expo-web', listenHost: '0.0.0.0', listenPort: 19364, targetHost: '127.0.0.1', targetPort: 19364 },
   ]);
 });
@@ -1150,7 +1167,7 @@ test('service tunnel supervision replaces a pre-dispatch plan after the guest pu
   assert.deepEqual(boundary.terminated.map(({ pid }) => pid), [731]);
   const state = JSON.parse(await readFile(`${fixture.path('home')}/execution-host-tunnels/primary-0.3.json`, 'utf8'));
   assert.deepEqual(state.forwards, [
-    { service: 'server', listenHost: '0.0.0.0', listenPort: 52753, targetHost: '127.0.0.1', targetPort: 52754 },
+    { service: 'server', listenHost: '0.0.0.0', listenPort: 52753, targetHost: '127.0.0.1', targetPort: 52753 },
     { service: 'expo-web', listenHost: '0.0.0.0', listenPort: 18829, targetHost: '127.0.0.1', targetPort: 18829 },
   ]);
 });
@@ -1221,7 +1238,7 @@ test('service tunnel supervision treats an untimestamped pre-start declaration a
   assert.deepEqual(boundary.terminated.map(({ pid }) => pid), [731]);
   const state = JSON.parse(await readFile(`${fixture.path('home')}/execution-host-tunnels/primary-0.3.json`, 'utf8'));
   assert.deepEqual(state.forwards, [
-    { service: 'server', listenHost: '0.0.0.0', listenPort: 52753, targetHost: '127.0.0.1', targetPort: 52754 },
+    { service: 'server', listenHost: '0.0.0.0', listenPort: 52753, targetHost: '127.0.0.1', targetPort: 52753 },
     { service: 'expo-web', listenHost: '0.0.0.0', listenPort: 18829, targetHost: '127.0.0.1', targetPort: 18829 },
   ]);
 });
@@ -1288,7 +1305,7 @@ test('service tunnel supervision waits through a canonical replacement without s
     boundary: { ...sharedBoundary, delay: async () => {} },
   });
 
-  projection = runtimeProjection({ backendPort: 52755 });
+  projection = runtimeProjection({ expoPort: 19364 });
   const replacement = ensureExecutionHostServiceTunnel({
     ...input,
     boundary: {
@@ -1444,7 +1461,7 @@ test('a queued explicit stop observes a failed replacement as already stopped', 
   };
   await ensureExecutionHostServiceTunnel(input);
 
-  projection = runtimeProjection({ backendPort: 52755 });
+  projection = runtimeProjection({ expoPort: 19364 });
   replacement = true;
   await assert.rejects(
     ensureExecutionHostServiceTunnel(input),
@@ -1643,7 +1660,7 @@ test('a cancelled reconciliation waiting behind an incumbent cannot replace its 
   assert.deepEqual(spawned.map(({ child }) => child.pid), [731, 732]);
   const state = JSON.parse(await readFile(`${fixture.path('home')}/execution-host-tunnels/primary-0.3.json`, 'utf8'));
   assert.equal(state.pid, 732);
-  assert.equal(state.forwards[0].targetPort, 52755);
+  assert.equal(state.forwards[0].targetPort, 52753);
 });
 
 test('service tunnel fails closed on a foreign listener and never terminates it', async (t) => {
@@ -1692,17 +1709,17 @@ test('service tunnel refuses to stop when its saved PID has a different process 
   assert.equal(replacement.terminated.length, 0);
 });
 
-test('service tunnel replaces only its PID-verified SSH child when a Stack runtime declares a changed backend', async (t) => {
+test('service tunnel replaces only its PID-verified SSH child when a Stack runtime declares a changed Expo endpoint', async (t) => {
   const fixture = await createTempFixture(t, { prefix: 'execution-host-service-tunnel-reconcile-' });
   const env = { HAPPIER_STACK_HOME_DIR: fixture.path('home') };
-  let backendPort = 52754;
+  let expoPort = 18829;
   const executor = {
     async capture() {
-      return { exitCode: 0, out: runtimeProjection({ backendPort }), err: '' };
+      return { exitCode: 0, out: runtimeProjection({ expoPort }), err: '' };
     },
   };
   const boundary = tunnelBoundary({
-    listenerPids: (port, spawned) => spawned.length > boundary.terminated.length && (port === 52753 || port === 18829)
+    listenerPids: (port, spawned) => spawned.length > boundary.terminated.length && (port === 52753 || port === 18829 || port === 19364)
       ? [731]
       : [],
   });
@@ -1717,7 +1734,7 @@ test('service tunnel replaces only its PID-verified SSH child when a Stack runti
   };
 
   await ensureExecutionHostServiceTunnel(input);
-  backendPort = 52755;
+  expoPort = 19364;
   const reconciled = await ensureExecutionHostServiceTunnel(input);
 
   assert.equal(reconciled.changed, true);

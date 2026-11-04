@@ -38,6 +38,20 @@ Useful knobs:
 - `HAPPIER_TAILSCALE_BIN` (preferred unified override)
 - `HAPPIER_STACK_TAILSCALE_BIN` (legacy stack-specific alias)
 
+### Mac execution hosts
+
+In unreleased 0.3 development source, an execution host's `hstack start` or
+`hstack dev` reconciles its declared workspace service tunnels. The server
+tunnel targets the controller's stable server port, so server backend reloads
+keep the same public route. Host-local service placement retains its own local
+endpoint.
+
+If Serve returns 502 while the controller's `/health` works, inspect the tunnel
+on the Mac with `hstack dev-vm forward status --workspace-id=0.3 --json` and repair
+it with `hstack dev-vm forward reconcile --workspace-id=0.3 --json`, using the
+workspace id from that host's execution-host profile. This reconciles the
+existing tunnel without restarting the stack or changing other Serve routes.
+
 ## Using the native Happier mobile app (optional)
 
 The native Happier mobile app has an “API Endpoint” setting (developer mode).
