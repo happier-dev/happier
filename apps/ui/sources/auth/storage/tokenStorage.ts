@@ -12,6 +12,7 @@ import type { AuthEntryProviderPresentationV1, TeamInvitationPostAuthContinuatio
 import { readStorageScopeFromEnv, scopedStorageId } from '@/utils/system/storageScope';
 import { normalizeInternalReturnPath } from '@/utils/path/routeUtils';
 import { desktopHostKind } from '@/utils/platform/desktopHost';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import {
     areServerProfileIdentifiersEquivalent,
     getActiveServerId,
@@ -114,6 +115,16 @@ export type HomeCredentialMutationEvent = Readonly<{
     serverUrl: string;
     credentials?: AuthCredentials;
 }>;
+
+/** A missing credential permits a full shell's existing Connect recovery, never authenticated content. */
+export type HomeCredentialContext = Readonly<{ serverId: string; accountId: string | null }>;
+
+/** Routing facts only. Bearers and encryption material remain with this credential owner. */
+function homeAccountCredentialScope(serverId: string | null, token: string | undefined): ServerAccountScope | null {
+    if (!serverId || !token) return null;
+    try { return { serverId, accountId: parseToken(token) }; }
+    catch { return null; } // Malformed stored credentials cannot identify an eligible Account context.
+}
 
 type HomeCredentialMutationListener = (event: HomeCredentialMutationEvent) => void;
 
@@ -2109,6 +2120,19 @@ function listKnownServerCleanupTargets(): CredentialCleanupTarget[] {
     return targets;
 }
 
+async function listHomeCredentialContextsUnderMutationAuthority(authority: HomeMutationAuthority): Promise<HomeCredentialContext[]> {
+    const contexts: HomeCredentialContext[] = [];
+    for (const target of listKnownServerCleanupTargets()) {
+        const options = { serverId: target.serverId };
+        const identity = resolveHomeCredentialMutationTarget(target.serverUrl, options);
+        if (!identity) continue;
+        const credentials = await getHomeCredentialsUnderMutationAuthority(authority, target.serverUrl, options);
+        const scope = homeAccountCredentialScope(identity.serverId, credentials?.token);
+        contexts.push({ serverId: identity.serverId, accountId: scope?.accountId ?? null });
+    }
+    return contexts;
+}
+
 type WebScopedCredentialSnapshot = Readonly<{
     key: string;
     raw: string;
@@ -2914,6 +2938,10 @@ export async function removeHomeCredentialsUnderMutationAuthority(
 export const TokenStorage = {
     /** Dedicated Account Service credential namespace (never the active Home). */
     accountDirectoryAuthCredentials,
+
+    async listHomeCredentialContexts(): Promise<readonly HomeCredentialContext[]> {
+        return await withHomeMutationAuthority(undefined, listHomeCredentialContextsUnderMutationAuthority);
+    },
 
     async getAuthAutoRedirectSuppressedUntil(): Promise<number> {
         const key = await getAuthAutoRedirectSuppressedUntilKey();

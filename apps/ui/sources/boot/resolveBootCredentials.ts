@@ -17,6 +17,7 @@ import { activateStackRuntimeServer, readStackRuntimeServerUrl } from '@/sync/do
 import { invokeDesktopHost, isDesktopHost } from '@/utils/platform/desktopHost';
 import { guardAccountEncryptionFirstKeyCredentialMutation } from '@/sync/ops/account/accountEncryptionFirstKeyExternalAuth';
 import { resolveRoutineServerSelectionScope } from '@/sync/domains/server/selection/serverSelectionScope';
+import { parseToken } from '@/utils/auth/parseToken';
 
 function resolveBootServerUrlFromTerminalConnectHash(): string | null {
     if (typeof window === 'undefined') return null;
@@ -89,8 +90,16 @@ async function resolveBootCredentialAdoption(
     target: Readonly<{
         serverUrl: string;
         serverId?: string;
+        accountId?: string;
     }>,
 ): Promise<AuthCredentials | null> {
+    if (target.accountId) {
+        try {
+            if (parseToken(credentials.token) !== target.accountId) return null;
+        } catch {
+            return null;
+        }
+    }
     const classification =
         await TokenStorage
             .classifyPendingExternalAuthFirstKeyRejectedCredential({
@@ -159,18 +168,21 @@ async function resolveAndPersistStackDesktopBootCredentials(
         : await readRetainedBootCredentials();
 }
 
-export async function resolveBootCredentials(platformOs: string): Promise<AuthCredentials | null> {
-    const routineSelectionScope = resolveRoutineServerSelectionScope(platformOs, isDesktopHost());
-    const webServerOverride = platformOs === 'web'
+export async function resolveBootCredentials(platformOs: string, target?: Readonly<{
+    serverId: string;
+    accountId: string;
+}>): Promise<AuthCredentials | null> {
+    const routineSelectionScope = target ? 'tab' : resolveRoutineServerSelectionScope(platformOs, isDesktopHost());
+    const webServerOverride = platformOs === 'web' && !target
         ? readWebServerUrlOverrideFromLocation()
         : null;
     const stackRuntimeServerUrl = platformOs === 'web' ? readStackRuntimeServerUrl() : null;
 
     const explicitBootServerUrl = webServerOverride?.serverUrl
-        ?? (platformOs === 'web' ? resolveBootServerUrlFromTerminalConnectHash() : null);
-    const destinationServerId = platformOs === 'web' && !explicitBootServerUrl
+        ?? (platformOs === 'web' && !target ? resolveBootServerUrlFromTerminalConnectHash() : null);
+    const destinationServerId = target?.serverId ?? (platformOs === 'web' && !explicitBootServerUrl
         ? readWebDestinationServerIdFromLocation()
-        : null;
+        : null);
     const destinationServer = destinationServerId ? getServerProfileById(destinationServerId) : null;
     // An explicit destination cannot borrow an unrelated Home's credential or create a profile.
     if (destinationServerId && !destinationServer) return null;
@@ -203,9 +215,12 @@ export async function resolveBootCredentials(platformOs: string): Promise<AuthCr
                 {
                     serverUrl: bootServerUrl,
                     serverId: savedBootServer.id,
+                    ...(target ? { accountId: target.accountId } : {}),
                 },
             );
         }
+        // A secondary restores only its saved Account. Native context cannot import a new bearer.
+        if (target) return null;
         return await resolveAndPersistStackDesktopBootCredentials({
             serverUrl: bootServerUrl,
             serverId: savedBootServer.id,
