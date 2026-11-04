@@ -3,9 +3,11 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 
 import { killProcessTree, spawnProc } from '../proc/proc.mjs';
-import { inspectDevTargetSync, runDevTargetCommand } from './executor.mjs';
+import { inspectDevTargetSync, prepareDevTargetSourceCommand, runDevTargetCommand } from './executor.mjs';
 import {
   DEV_TARGET_DISPOSABLE_REPLICA_ARTIFACT_ROOTS,
+  hasCurrentMutagenProjectTarget,
+  resolveMutagenProjectTargets,
   isMutagenProjectOwnedBy,
   resolveMutagenSessionName,
 } from './mutagen_project.mjs';
@@ -27,6 +29,9 @@ import {
 } from './sync_project.mjs';
 import { startDevTargetRuntime } from './managed_runtime.mjs';
 import { buildRemoteEnsureDirectoriesCommand } from './remote_commands.mjs';
+import { resolveDevTargetExecutionPolicy } from './config.mjs';
+import { resolveDevTargetServicePlans } from './service_placement.mjs';
+import { measureReplicaSourceBytes } from './replica_source_bytes.mjs';
 
 function defaultSpawnMonitor({ command, args, env, lineFilter }) {
   return spawnProc('mutagen', command, args, env, { lineFilter });
@@ -65,9 +70,9 @@ function assertUsableStatus(target, status) {
   );
 }
 
-async function defaultEnsureReplicaRoots({ targets, stackBaseDir, env }) {
-  await Promise.all(targets.map(async (target) => {
-    const result = await runDevTargetControlProcess({
+async function defaultEnsureReplicaRoots({ targets, stackBaseDir, env, commandReplica = false, sourceBytes, requireSourceAdmission = false, prepareExecutor }) {
+  const results = await Promise.all(targets.map(async (target) => {
+    const ensure = async (requiredAdditionalBytes) => await runDevTargetControlProcess({
       label: `remote:${target.name}`,
       command: 'ssh',
       args: [
@@ -75,14 +80,25 @@ async function defaultEnsureReplicaRoots({ targets, stackBaseDir, env }) {
         '-o',
         'BatchMode=yes',
         target.ssh,
-        buildRemoteEnsureDirectoriesCommand(target),
+        buildRemoteEnsureDirectoriesCommand(target, { commandReplica, requiredAdditionalBytes, requireSourceAdmission }),
       ],
       env,
     });
+    let result = await ensure();
+    const cold = result.out?.split(/\r?\n/).includes('__HAPPIER_COMMAND_REPLICA_UNMATERIALIZED__');
+    if (result?.code === 0 && cold && sourceBytes) {
+      // The admission owner lives in the primary executor mirror, not the
+      // cold command replica. Refresh it through the existing causal barrier
+      // before asking it to certify the measured-write ingress.
+      if (prepareExecutor) await prepareExecutor(target);
+      result = await ensure(await sourceBytes());
+    }
     if (result?.code !== 0) {
       throw new Error(`[dev-targets] ${target.name} replica directory bootstrap failed`);
     }
+    return result.out?.split(/\r?\n/).includes('__HAPPIER_COMMAND_REPLICA_UNMATERIALIZED__') ? target.name : null;
   }));
+  return results.filter(Boolean);
 }
 
 export async function repairRecoverableDevTargetSyncConflicts(
@@ -320,7 +336,7 @@ export async function startDevTargetSyncService(
 // Sibling checkouts are command replicas only. Provision through the existing
 // project owner without a monitor or spontaneous source propagation. Seed new
 // sessions once; every later command crosses the launcher's selected barrier.
-export async function prepareDevTargetCommandSync({ stackBaseDir, sourceDir, targets, env = process.env }) {
+export async function prepareDevTargetCommandSync({ stackBaseDir, sourceDir, targets, executorSourceDir, executorStackBaseDir, env = process.env }) {
   env = { ...env, HAPPIER_STACK_SYNC_SOURCE_DIR: sourceDir };
   const runtime = resolveDevTargetMutagenRuntime({ stackBaseDir, env });
   const desired = await readFile(runtime.projectFile, 'utf8').catch(() => null);
@@ -329,28 +345,57 @@ export async function prepareDevTargetCommandSync({ stackBaseDir, sourceDir, tar
   const state = await defaultReadPreparationState({ stackBaseDir, env });
   // Unreachable replicas remain unavailable to ordinary AUTO selection; they
   // must not prevent a healthy sibling worker from becoming usable.
-  const roots = await Promise.allSettled(targets.map(target => defaultEnsureReplicaRoots({ targets: [target], stackBaseDir, env })));
+  const runtimeTargets = new Set(resolveDevTargetServicePlans({ targets: config.targets,
+    policy: resolveDevTargetExecutionPolicy(config), requested: { server: true, expo: true, daemon: true },
+  }).targets.filter(plan => Object.values(plan.services).some(Boolean)).map(plan => plan.target.name));
+  let sourceMeasurement;
+  const sourceBytes = () => sourceMeasurement ??= measureReplicaSourceBytes(sourceDir, env);
+  const prepareExecutor = executorSourceDir && executorStackBaseDir
+    ? target => prepareDevTargetSourceCommand({ target, sourceDir: executorSourceDir,
+      stackBaseDir: executorStackBaseDir, flush: true, env }) : undefined;
+  const roots = await Promise.allSettled(targets.map(target => defaultEnsureReplicaRoots({
+    targets: [target], stackBaseDir, env, commandReplica: !runtimeTargets.has(target.name), sourceBytes,
+    requireSourceAdmission: state?.targets?.[target.name]?.state !== 'ready' || !desired
+      || !hasCurrentMutagenProjectTarget(desired, { sourceDir, target, config, ownerId: INDEPENDENT_DEV_TARGET_SYNC_OWNER }),
+    prepareExecutor,
+  })));
   // A worker whose replica root cannot be prepared (SSH refused, disk full)
   // cannot be proven a safe one-way destination now. Omit it from this
   // project and record it failed; a later dispatch re-adds it once reachable.
-  for (const root of roots) {
-    if (root.status === 'rejected') process.stderr.write(`[dev-targets] command replica directory preflight: ${errorMessage(root.reason)}\n`);
-  }
   const reachable = targets.filter((_, index) => roots[index].status === 'fulfilled');
-  if (reachable.length === 0) throw roots[0].reason;
-  const unchanged = desired && isEquivalentMutagenProject(desired, renderMutagenProject({ sourceDir, targets: reachable, config }));
-  if (unchanged && reachable.length === targets.length
-    && targets.every(target => state?.targets?.[target.name]?.state === 'ready')) return;
+  const excludedTargets = targets.filter((_, index) => roots[index].status === 'rejected').map(target => target.name);
+  roots.forEach(result => {
+    if (result.status === 'rejected') process.stderr.write(`${errorMessage(result.reason)}\n`);
+  });
+  if (reachable.length === 0) {
+    throw Object.assign(new AggregateError(roots.map(result => result.reason),
+      `[dev-targets] DEV_TARGET_REPLICA_BOOTSTRAP_FAILED: no eligible replica target (${excludedTargets.join(', ')})`), {
+      code: 'DEV_TARGET_REPLICA_BOOTSTRAP_FAILED', targets: excludedTargets,
+    });
+  }
+  const projectTargets = resolveMutagenProjectTargets(desired, {
+    sourceDir, targets: reachable, excludedTargets, config, ownerId: INDEPENDENT_DEV_TARGET_SYNC_OWNER,
+  });
+  const unchanged = desired && isEquivalentMutagenProject(desired, renderMutagenProject({ sourceDir, targets: projectTargets, config }));
+  const unmaterialized = new Set(roots.flatMap(result => result.status === 'fulfilled' ? result.value : []));
+  if (unchanged && reachable.length === targets.length && unmaterialized.size === 0
+    && targets.every(target => state?.targets?.[target.name]?.state === 'ready')) return { excludedTargets };
   const project = await ensureDevTargetSyncProject({
-    stackBaseDir, sourceDir, targets: reachable, ownerId: INDEPENDENT_DEV_TARGET_SYNC_OWNER,
+    stackBaseDir, sourceDir, targets: reachable, preserveExistingTargets: true, excludedTargets,
+    ownerId: INDEPENDENT_DEV_TARGET_SYNC_OWNER,
     allowIndependentBorrow: false, env,
   });
   const pending = targets.filter((target, index) => !unchanged || state?.targets?.[target.name]?.state !== 'ready'
-    || roots[index].status === 'rejected');
+    || roots[index].status === 'rejected' || unmaterialized.has(target.name));
   const results = await Promise.allSettled(pending.map(async target => {
     const root = roots[targets.indexOf(target)];
     if (root.status === 'rejected') throw root.reason;
     await resumeDevTargetSync({ target, env: project.env });
+    if (unmaterialized.has(target.name)) {
+      const reset = await runDevTargetControlProcess({ label: `sync:${target.name}`, command: 'mutagen',
+        args: ['sync', 'reset', resolveMutagenSessionName(target.name, sourceDir)], env: project.env });
+      if (reset.code !== 0) throw new Error(`[dev-targets] ${target.name} synchronization reset failed for retired command replica`);
+    }
     await flushDevTargetSync({ target, env: project.env });
   }));
   const prepared = { ...(unchanged ? state?.targets : {}) };
@@ -360,6 +405,7 @@ export async function prepareDevTargetCommandSync({ stackBaseDir, sourceDir, tar
   await defaultWritePreparationState({ stackBaseDir, env, state: {
     version: 1, state: results.every(result => result.status === 'fulfilled') ? 'ready' : 'failed', targets: prepared,
   } });
+  return { excludedTargets };
 }
 
 export async function waitForDevTargetSyncMonitor(

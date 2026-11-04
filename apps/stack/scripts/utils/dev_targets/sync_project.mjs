@@ -1,6 +1,6 @@
 import { mkdir, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, posix, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readProcessHostIdentitySync } from '@happier-dev/cli-common/processInstance';
 
@@ -11,6 +11,8 @@ import { loadDevTargetsConfig } from './config.mjs';
 import {
   buildMutagenProjectArgs,
   DEV_TARGET_SYNC_EXECUTOR_REPO,
+  hasCurrentMutagenProjectTarget,
+  resolveMutagenProjectTargets,
   isEquivalentMutagenProject,
   isExecutionHostCandidateSyncOwner,
   isMutagenProjectOwnedBy,
@@ -31,6 +33,11 @@ export const INDEPENDENT_DEV_TARGET_SYNC_OWNER = 'dev-target-sync-service';
 
 function projectSessionNames(contents) {
   return [...String(contents ?? '').matchAll(/^  (happier-[A-Za-z0-9-]+):$/gm)].map(match => match[1]);
+}
+
+// Mutagen's SSH endpoint model stores the configured user separately.
+function mutagenSshHost(sshTarget) {
+  return sshTarget.split('@').at(-1);
 }
 
 export async function resolveOwnedDevTargetSyncProjectSources({ stackBaseDir, ownerId, env = process.env }) {
@@ -97,10 +104,10 @@ export function buildDevTargetControlLaunch({ command, args, syncFlushSession = 
 }
 
 export async function runDevTargetControlProcess(input, { capture = runCaptureResult } = {}) {
-  return await runDevTargetSshProcess(input, async ({ label, command, args, env, syncFlushSession = null }) => {
+  return await runDevTargetSshProcess(input, async ({ label, command, args, env, input: stdin, silent = false, syncFlushSession = null }) => {
     const launch = buildDevTargetControlLaunch({ command, args, syncFlushSession });
     const result = await capture(launch.command, launch.args, {
-      env, streamLabel: label, stdoutDiagnosticStream: process.stderr,
+      env, input: stdin, streamLabel: silent ? undefined : label, stdoutDiagnosticStream: process.stderr,
     });
     return { ...result, code: result.exitCode };
   });
@@ -330,6 +337,8 @@ async function ensureDevTargetSyncProjectUnlocked(
     sourceDir,
     targets,
     requiredTargets = targets,
+    preserveExistingTargets = false,
+    excludedTargets = [],
     ownerId,
     allowIndependentBorrow,
     borrowOnly = false,
@@ -345,6 +354,7 @@ async function ensureDevTargetSyncProjectUnlocked(
   } = env;
   const candidateProducer = isExecutionHostCandidateSyncOwner(ownerId);
   const runtime = resolveDevTargetMutagenRuntime({ stackBaseDir, sourceDir, ownerId, env: mutagenControlEnv });
+  sourceDir = runtime.sourceDir;
   // Routing and candidate producers own distinct projects in the shared daemon.
   // Ordinary Stack supervisors only borrow their existing producer mirrors.
   if (borrowOnly || allowIndependentBorrow || (ownerId !== INDEPENDENT_DEV_TARGET_SYNC_OWNER && !candidateProducer)) {
@@ -353,6 +363,24 @@ async function ensureDevTargetSyncProjectUnlocked(
     const unhealthyTargets = await inspectBorrowedIndependentDevTargetSyncProject({ requiredTargets, mutagenRuntime: runtime }, { runProcess });
     return { ...runtime, openSsh: { sshArgs: ['-F', join(runtime.opensshDir, 'config')], mutagenEnv: runtime.env }, ownership: 'borrowed',
       unhealthyTargets, projectCreated: false, release: async () => {} };
+  }
+  const existingProject = await readFile(runtime.projectFile, 'utf8').catch(() => null);
+  const config = (await loadDevTargetsConfig({ path: join(stackBaseDir, 'dev-targets.json') })).config;
+  // Membership is authoritative only under this existing lifecycle lock.
+  // A command's pre-bootstrap snapshot can precede another pin's admission.
+  if (preserveExistingTargets) targets = resolveMutagenProjectTargets(existingProject, {
+    sourceDir, targets, excludedTargets, config, ownerId,
+  });
+  const requiredNames = new Set(requiredTargets.map(target => target.name));
+  const retainedTargets = targets.filter(target => !requiredNames.has(target.name));
+  // Only this producer's unchanged source/endpoint/watch entries can bypass
+  // new-destination safety. A caller cannot declare an unprepared peer safe.
+  for (const target of retainedTargets) {
+    if (!hasCurrentMutagenProjectTarget(existingProject, { sourceDir, target, config, ownerId })) {
+      throw Object.assign(new Error(`[dev-targets] unprepared retained replica: ${target.name}`), {
+        code: 'DEV_TARGET_REPLICA_NOT_PREPARED',
+      });
+    }
   }
   const openSsh = await prepareDevTargetOpenSsh({
     targets,
@@ -367,18 +395,17 @@ async function ensureDevTargetSyncProjectUnlocked(
   });
   // Registration can describe an authoritative endpoint. Only this producer
   // may turn it into a one-way destination, so validate before any mutation.
-  await assertDevTargetReplicaSafety({ sourceDir, targets, sshArgs: openSsh.sshArgs, env: mutagenRuntime.env }, { runProcess });
+  await assertDevTargetReplicaSafety({ sourceDir, targets: requiredTargets, sshArgs: openSsh.sshArgs, env: mutagenRuntime.env }, { runProcess });
   requireSuccessful(await runProcess({
     label: 'mutagen',
     command: 'mutagen',
     args: ['version'],
     env: mutagenRuntime.env,
   }), 'Mutagen preflight');
-  const existingProject = await readFile(mutagenRuntime.projectFile, 'utf8').catch(() => null);
   const desiredProject = renderMutagenProject({
     sourceDir,
     targets,
-    config: (await loadDevTargetsConfig({ path: join(stackBaseDir, 'dev-targets.json') })).config,
+    config,
     ownerId: candidateProducer ? ownerId : INDEPENDENT_DEV_TARGET_SYNC_OWNER,
   });
 
@@ -395,6 +422,17 @@ async function ensureDevTargetSyncProjectUnlocked(
   requireSuccessful(listed, 'Mutagen repository session inventory');
   const sessions = JSON.parse(listed.out || '[]');
   if (!Array.isArray(sessions)) throw new Error('[dev-targets] invalid Mutagen repository session inventory');
+  // A project lock scopes its alpha, but the daemon can hold projects for
+  // other alphas too. Never activate a second source writer at their endpoint.
+  for (const target of targets) {
+    const collision = sessions.some(session => session.beta?.protocol === 'ssh'
+      && session.beta.host === mutagenSshHost(target.ssh)
+      && posix.normalize(session.beta.path ?? '') === posix.normalize(target.repoDir)
+      && (session.alpha?.protocol !== 'local' || resolve(session.alpha.path ?? '') !== resolve(sourceDir)));
+    if (collision) throw Object.assign(new Error(`[dev-targets] ${target.name} replica destination belongs to another source`), {
+      code: 'DEV_TARGET_REPLICA_COLLISION',
+    });
+  }
   const projectNames = new Set([...projectSessionNames(existingProject), ...projectSessionNames(desiredProject)]);
   const terminated = new Set();
   for (const session of sessions) {
@@ -413,13 +451,14 @@ async function ensureDevTargetSyncProjectUnlocked(
   const canResumeProject = isEquivalentMutagenProject(existingProject, desiredProject);
   let resumed = false;
   if (canResumeProject) {
-    const result = await runProcess({
-      label: 'mutagen',
-      command: 'mutagen',
-      args: buildMutagenProjectArgs('resume', mutagenRuntime.projectFile),
-      env: mutagenRuntime.env,
-    });
-    resumed = result?.code === 0;
+    if (retainedTargets.length === 0) {
+      await runProcess({
+        label: 'mutagen',
+        command: 'mutagen',
+        args: buildMutagenProjectArgs('resume', mutagenRuntime.projectFile),
+        env: mutagenRuntime.env,
+      });
+    }
     resumed = targets.every(target => (
       parseMutagenSyncList(currentSessions, resolveMutagenSessionName(target.name, sourceDir)).state !== 'missing'
     ));
@@ -446,6 +485,17 @@ async function ensureDevTargetSyncProjectUnlocked(
     projectCreated = true;
   } else {
     await writeFile(mutagenRuntime.projectFile, desiredProject, 'utf8');
+  }
+  if (projectCreated) {
+    const activePeers = retainedTargets.filter(target => sessions.some(session => (
+      session.name === resolveMutagenSessionName(target.name, sourceDir) && session.paused === false
+    )));
+    const restored = await Promise.allSettled(activePeers.map(target => (
+      resumeDevTargetSync({ target, env: mutagenRuntime.env }, { runProcess })
+    )));
+    restored.forEach((result, index) => {
+      if (result.status === 'rejected') process.stderr.write(`[dev-targets] ${activePeers[index].name} existing mirror resume failed\n`);
+    });
   }
   requireSuccessful(await runProcess({
     label: 'mutagen',
@@ -507,7 +557,7 @@ export async function ensurePrimaryStandbySync(
         for (const endpoint of writers) {
           const url = endpoint?.url ?? endpoint;
           const path = String(url?.path ?? '').replace(/\/+$/u, '');
-          if (url?.host === profile.standby.ssh.split('@').at(-1)
+          if (url?.host === mutagenSshHost(profile.standby.ssh)
             && (path === source || path.startsWith(`${source}/`) || source.startsWith(`${path}/`))) {
             throw new Error('[dev-targets] STANDBY_SYNC_OVERLAP: scoped standby competes with an existing writer');
           }
@@ -566,7 +616,7 @@ export async function ensurePrimaryStandbySync(
         const host = String(url?.host ?? '');
         // One-way standby must never compete with an ordinary worker writer.
         if (host && [profile, profile.standby].some(peer =>
-          peer.ssh.split('@').at(-1) === host && (endpointPath === peer.homeDir
+          mutagenSshHost(peer.ssh) === host && (endpointPath === peer.homeDir
             || endpointPath.startsWith(`${peer.homeDir}/`)))) {
           throw new Error('[dev-targets] STANDBY_SYNC_OVERLAP: pause/remove the existing worker replica before declaring its home a standby');
         }
@@ -671,11 +721,18 @@ async function releaseIndependentDevTargetSyncProjectUnlocked(
 }
 
 export async function releaseIndependentDevTargetSyncProject(input, dependencies = {}) {
+  const env = input.env ?? process.env;
+  // Readiness may default to the routing producer, but destructive release
+  // must carry its source scope before even resolving the lifecycle lock.
+  if (typeof env.HAPPIER_STACK_SYNC_SOURCE_DIR !== 'string'
+    || !isAbsolute(env.HAPPIER_STACK_SYNC_SOURCE_DIR)) {
+    throw new Error('[dev-targets] HAPPIER_STACK_SYNC_SOURCE_DIR must be an explicit absolute path to release synchronization');
+  }
   const withProjectLifecycleLock = dependencies.withProjectLifecycleLock
     ?? withDevTargetSyncProjectLifecycleLock;
   return await withProjectLifecycleLock({
     stackBaseDir: input.stackBaseDir,
-    env: input.env ?? process.env,
+    env,
   }, async () => await releaseIndependentDevTargetSyncProjectUnlocked(input, dependencies));
 }
 

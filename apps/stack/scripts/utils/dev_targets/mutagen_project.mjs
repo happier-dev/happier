@@ -216,6 +216,23 @@ export function renderMutagenProject({ sourceDir, targets, config = null, ownerI
 }
 
 
+export function hasCurrentMutagenProjectTarget(contents, { sourceDir, target, config, ownerId }) {
+  if (!isMutagenProjectOwnedBy(contents, ownerId)) return false;
+  const rendered = renderMutagenProject({ sourceDir, targets: [target], config, ownerId });
+  const entry = rendered.slice(rendered.indexOf(`  ${resolveMutagenSessionName(target.name, sourceDir)}:\n`));
+  return contents.includes(entry);
+}
+
+export function resolveMutagenProjectTargets(contents, { sourceDir, targets, excludedTargets = [], config, ownerId }) {
+  const requested = new Set(targets.map(target => target.name));
+  const excluded = new Set(excludedTargets);
+  const candidates = new Map(config.targets.map(target => [target.name, target]));
+  for (const target of targets) candidates.set(target.name, target);
+  return [...candidates.values()].filter(target => requested.has(target.name) || (
+    !excluded.has(target.name) && hasCurrentMutagenProjectTarget(contents, { sourceDir, target, config, ownerId })
+  ));
+}
+
 export function buildMutagenProjectArgs(action, projectFile) {
   const normalized = String(action ?? '').trim();
   const supported = new Set(['start', 'list', 'flush', 'pause', 'resume', 'reset', 'terminate']);

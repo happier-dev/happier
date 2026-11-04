@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
-import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
 
@@ -22,8 +23,16 @@ import {
   waitForDevTargetSyncMonitor,
 } from './sync_service.mjs';
 
+
 const envFor = root => ({ HAPPIER_STACK_STORAGE_DIR: root });
 const runtimeFor = (root, sourceDir = DEV_TARGET_SYNC_EXECUTOR_REPO) => resolveDevTargetMutagenRuntime({ stackBaseDir: root, sourceDir, env: envFor(root) });
+
+async function installCommandReplicaExecutor(fixture, bin) {
+  await symlink(fileURLToPath(new URL('../../../../../', import.meta.url)), fixture.path('primary'), 'dir');
+  // The fixture links its executor; physical worker checkouts need no override.
+  await writeFile(join(bin, 'node'), `#!/bin/sh\nexec '${process.execPath}' --preserve-symlinks-main "$@"\n`);
+  await chmod(join(bin, 'node'), 0o700);
+}
 
 const targets = [
   { name: 'mac' },
@@ -43,9 +52,16 @@ test('sync startup seeds an unscanned no-watch session once through the canonica
     'const name = args[2] === "--template" ? "happier-worker" : args[2];',
     'const template = args[args.indexOf("--template") + 1];',
     'const marker = process.env.HSTACK_TEST_SYNC_STATE;',
+    'const emptyReplica = process.env.HSTACK_TEST_SYNC_EMPTY_REPLICA;',
+    'if (family === "sync" && action === "reset" && emptyReplica) {',
+    '  if (args[2] !== process.env.HSTACK_TEST_SYNC_EXPECTED_RESET_NAME) throw new Error("reset must select the retired command replica only");',
+    '  fs.rmSync(emptyReplica, {force:true});',
+    '}',
     'if (family === "sync" && action === "flush") {',
+    '  if (emptyReplica && fs.existsSync(emptyReplica)) throw new Error("replica root emptying requires history reset");',
     '  if (process.env.HSTACK_TEST_SYNC_FLUSH_FAILED === "1") process.exit(7);',
     '  fs.writeFileSync(marker, String(Number(fs.existsSync(marker) ? fs.readFileSync(marker,"utf8") : 0) + 1));',
+    '  if (process.env.HSTACK_TEST_SYNC_REPLICA_ROOT) fs.writeFileSync(process.env.HSTACK_TEST_SYNC_REPLICA_ROOT + "/package.json", JSON.stringify({private:true}));',
     '}',
     'if (family === "sync" && action === "list") {',
     '  const seeded = fs.existsSync(marker);',
@@ -81,22 +97,50 @@ test('sync startup seeds an unscanned no-watch session once through the canonica
   delete env.HSTACK_TEST_SYNC_FLUSH_FAILED;
   const stackBaseDir = fixture.path('command-stack');
   await mkdir(stackBaseDir);
-  const commandTarget = { name: 'worker', platform: 'posix', ssh: 'worker', repoDir: '/mirror/0.2', cliHomeDir: '/home/worker' };
+  // Execute directory setup at the real OS boundary while Mutagen stays external.
+  await writeFile(join(bin, 'ssh'), '#!/bin/sh\nfor command; do :; done\nexec /bin/sh -c "$command"\n');
+  await installCommandReplicaExecutor(fixture, bin);
+  const sourceDir = fixture.path('source');
+  await mkdir(sourceDir);
+  await writeFile(join(sourceDir, 'package.json'), '{}');
+  const commandTarget = { name: 'worker', platform: 'posix', ssh: 'worker', repoDir: fixture.path('command-mirror'),
+    executorRepoDir: fixture.path('primary'), cliHomeDir: fixture.path('worker-home'), remotePath: [bin, ...process.env.PATH.split(':')] };
+  env.HSTACK_TEST_SYNC_REPLICA_ROOT = commandTarget.repoDir;
   await writeFile(join(stackBaseDir, 'dev-targets.json'), JSON.stringify({
     version: 3, targets: [commandTarget],
     runtimePlacement: { server: { mode: 'local' }, expo: { mode: 'local' }, daemon: { mode: 'local' } },
     commandExecution: { mode: 'auto', targets: ['worker'], fallback: 'local' },
   }));
-  const prepare = () => prepareDevTargetCommandSync({ stackBaseDir, sourceDir: '/source/0.2', targets: [commandTarget], env });
+  const prepare = () => prepareDevTargetCommandSync({ stackBaseDir, sourceDir, targets: [commandTarget], env });
   await prepare();
   assert.equal(await readFile(env.HSTACK_TEST_SYNC_STATE, 'utf8'), '1');
+  const oldUse = new Date(Date.now() - 48 * 3600000);
+  await utimes(commandTarget.repoDir, oldUse, oldUse);
   const legacySession = join(stackBaseDir, 'mutagen/data/sessions/sync_existing');
   await mkdir(dirname(legacySession), { recursive: true });
   await writeFile(legacySession, 'opaque legacy session');
   await prepare();
   assert.equal(await readFile(env.HSTACK_TEST_SYNC_STATE, 'utf8'), '1', 'remaining legacy sessions must not refuse live dispatch through an already prepared shared replica');
-  const project = await readFile(resolveDevTargetMutagenRuntime({ stackBaseDir, sourceDir: '/source/0.2', env }).projectFile, 'utf8');
+  assert.ok((await stat(commandTarget.repoDir)).mtimeMs > oldUse.getTime(), 'dispatch refreshes mirror last use without another Mutagen scan');
+  await rm(commandTarget.repoDir, { recursive: true });
+  await mkdir(commandTarget.repoDir); // A prior recovery can stop after mkdir, before reset/flush.
+  // Mutagen 0.18.1 halts on root deletion/emptying until its history is reset.
+  // This mock is the external Mutagen boundary; directory preparation stays real.
+  env.HSTACK_TEST_SYNC_EMPTY_REPLICA = fixture.path('empty-replica-history');
+  env.HSTACK_TEST_SYNC_EXPECTED_RESET_NAME = resolveMutagenSessionName(commandTarget.name, sourceDir);
+  await writeFile(env.HSTACK_TEST_SYNC_EMPTY_REPLICA, 'previous replica contained source');
+  await prepare();
+  assert.ok((await stat(commandTarget.repoDir)).isDirectory(), 'a retired mirror can be recreated before the selected flush');
+  assert.equal(await readFile(env.HSTACK_TEST_SYNC_STATE, 'utf8'), '2', 'only retired-replica recovery needs a new seed flush');
+  await assert.rejects(readFile(env.HSTACK_TEST_SYNC_EMPTY_REPLICA), { code: 'ENOENT' });
+  const project = await readFile(resolveDevTargetMutagenRuntime({ stackBaseDir, sourceDir, env }).projectFile, 'utf8');
   assert.doesNotMatch(project, /portable|pollingInterval/);
+  const runtimeConfig = JSON.parse(await readFile(join(stackBaseDir, 'dev-targets.json'), 'utf8'));
+  await writeFile(join(stackBaseDir, 'dev-targets.json'), JSON.stringify({ ...runtimeConfig,
+    runtimePlacement: { ...runtimeConfig.runtimePlacement, daemon: { mode: 'prefer-target', target: commandTarget.name } } }));
+  await prepare();
+  await assert.rejects(readFile(join(commandTarget.repoDir, '.happier/command-replica.json')), { code: 'ENOENT' },
+    'an explicitly placed runtime repository must lose disposable command-replica ownership');
 });
 
 test('detached sync start recreates requested sessions missing from its canonical project', async (t) => {
@@ -839,6 +883,7 @@ test('sibling command sync skips an unreachable worker and prepares the reachabl
   const fixture = await createTempFixture(t, { prefix: 'hstack-command-sync-unreachable-' });
   const bin = fixture.path('bin');
   await mkdir(bin);
+  await installCommandReplicaExecutor(fixture, bin);
   // External boundaries only: SSH (one host refuses, as sshd does when it is
   // down or out of disk) and Mutagen. Directory setup and replica safety
   // observations run their real shell commands on this host.
@@ -854,7 +899,7 @@ test('sibling command sync skips an unreachable worker and prepares the reachabl
   const flushed = fixture.path('flushed');
   const env = { ...process.env, ...envFor(fixture.root), PATH: `${bin}:${process.env.PATH}`, DBUS_SESSION_BUS_ADDRESS: '', HSTACK_TEST_FLUSHED: flushed };
   const target = name => ({ name, platform: 'posix', ssh: `${name}-host`, repoDir: fixture.path(`mirror-${name}`),
-    executorRepoDir: fixture.path('primary'), cliHomeDir: fixture.path(`home-${name}`) });
+    executorRepoDir: fixture.path('primary'), cliHomeDir: fixture.path(`home-${name}`), remotePath: [bin, ...process.env.PATH.split(':')] });
   const [dead, live] = [target('dead'), target('live')];
   const stackBaseDir = fixture.path('command-stack');
   await mkdir(stackBaseDir);
@@ -868,5 +913,10 @@ test('sibling command sync skips an unreachable worker and prepares the reachabl
   await prepareDevTargetCommandSync({ stackBaseDir, sourceDir, targets: [dead, live], env });
   assert.deepEqual((await readFile(flushed, 'utf8')).trim().split('\n'), [resolveMutagenSessionName('live', sourceDir)]);
   // With no reachable worker there is nothing to prepare: fail closed.
-  await assert.rejects(prepareDevTargetCommandSync({ stackBaseDir, sourceDir, targets: [dead], env }));
+  await assert.rejects(prepareDevTargetCommandSync({ stackBaseDir, sourceDir, targets: [dead], env }), error => {
+    assert.equal(error.code, 'DEV_TARGET_REPLICA_BOOTSTRAP_FAILED');
+    assert.deepEqual(error.targets, ['dead']);
+    assert.ok(error instanceof AggregateError);
+    return true;
+  });
 });

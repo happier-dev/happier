@@ -119,7 +119,8 @@ test('renderMutagenProject creates one-way source replicas while retaining targe
     '.tmp',
     '.playwright-cli',
     'packages/brand/brand',
-    'packages/plugins/*/.happier-plugin',
+    'packages/plugins/*/.happier-plugin/*',
+    '!packages/plugins/*/.happier-plugin/plugin.json',
     'packages/plugin-sdk/fixtures/qa-plugin-authoring/created/qa-*/.happier-plugin',
     '.project',
     '.happier',
@@ -190,6 +191,7 @@ test('renderMutagenProject creates one-way source replicas while retaining targe
     '/.project/plans/**/*.cpuprofile',
     '/.project/plans/**/browser-diagnostics.json',
     '/.project/plans/**/.DS_Store',
+    '/.project/plans/**/BOARD.md',
   ]) {
     assert.ok(rendered.includes(`- "${ignored}"`));
   }
@@ -261,8 +263,17 @@ test('renderMutagenProject preserves default exclusions inside re-included proje
   await writeFile(fixture.path('.gitignore'), `${ignores.join('\n')}\n`);
   await writeFile(fixture.path('empty-excludes'), '');
 
-  const excluded = [];
+  const excluded = [
+    'packages/plugins/codex/.happier-plugin/daemon.cjs',
+    'packages/plugins/codex/.happier-plugin/.happier-chunks/chunk.js',
+    'packages/plugins/codex/.happier-plugin/agent/runtime/factory.js',
+    'packages/plugins/sentry/.happier-plugin/ui/index.js',
+    'packages/plugin-sdk/fixtures/qa-plugin-authoring/created/qa-example/.happier-plugin/plugin.json',
+  ];
   const included = ['.project/README.md', 'packages/triage-qa/src/coverage/source.ts',
+    'packages/plugins/codex/.happier-plugin/plugin.json',
+    'packages/plugins/sentry/.happier-plugin/plugin.json',
+    'packages/plugin-sdk/fixtures/authored/.happier-plugin/plugin.json',
     'packages/protocol/src/browser/target/source.ts',
     'apps/cli/src/plugins/testkit/fixtures/packed-external-voice-provider/dist/index.js'];
   const excludeGeneratedNativeProjects = (ui) => {
@@ -298,17 +309,48 @@ test('renderMutagenProject preserves default exclusions inside re-included proje
     excludeGeneratedNativeProjects(scratch);
     included.push(`${scratch}/package.json`);
   }
+  excluded.push('.project/plans/BOARD.md', '.project/plans/audit/BOARD.md',
+    '.project/plans/audit/lanes/verify/BOARD.md');
+  included.push('.project/tasks/BOARD.md', 'packages/fixture/BOARD.md');
   excluded.push('.project/reviews/report.md', '.project/plans/qa/browser-diagnostics.json',
     '.project/plans/qa/capture.har', 'packages/fixture/.project/plans/source.ts');
+  // Controller-only reference checkouts may be linked by absolute or escaping
+  // relative paths. Ignore their roots before portable symlink scanning.
+  for (const [root, destination] of [
+    ['.project/plans/audit', fixture.root],
+    ['.project/plans/audit/nested', '../../../../../outside-reference-checkout'],
+  ]) {
+    await mkdir(fixture.path(root), { recursive: true });
+    await symlink(destination, fixture.path(root, 'refs'), process.platform === 'win32' ? 'junction' : 'dir');
+    excluded.push(`${root}/refs`);
+  }
+  await writeFile(fixture.path('.project/plans/audit/source.ts'), 'export {};\n');
+  if (process.platform !== 'win32') {
+    await symlink('source.ts', fixture.path('.project/plans/audit/source-link.ts'), 'file');
+  }
+  included.push('.project/plans/audit/source-link.ts', '.project/tasks/refs/source.ts',
+    'packages/fixture/refs/source.ts');
   excluded.push('.project/plans/2026-08-23-ru2-surfaces-finalization/impl-2026-09-30/lanes/qa-login/resume-currentness.json');
   included.push('.project/plans/2026-08-23-ru2-surfaces-finalization/impl-2026-09-30/lanes/QA-LOGIN-JOURNEY.md');
+  for (const directory of ['logs', 'timelines', 'captures', 'tmp']) {
+    for (const root of ['.project/plans', '.project/plans/audit/lanes/verify']) {
+      excluded.push(`${root}/${directory}`, `${root}/${directory}/N5-timeline.txt`);
+    }
+  }
   for (const root of ['.project/plans/qa-shots', '.project/plans/audit/qa-shots']) {
     for (const directory of ['acc1', 'ACC1', 'plat1b', 'PLAT1b']) {
       excluded.push(`${root}/${directory}`, `${root}/${directory}/capture.json`);
     }
   }
   included.push('.project/plans/audit/README.md', '.project/tasks/qa-shots/source.ts',
-    'packages/fixture/qa-shots/source.ts');
+    'packages/fixture/qa-shots/source.ts',
+    '.project/plans/2026-10-17-coordination/qa/baselines/ui.json',
+    '.project/plans/audit/briefs/sync-wedge.md',
+    '.project/plans/audit/lanes/verify/config.json',
+    '.project/plans/runtime-unification-v2/execution/packet-ledger.tsv',
+    '.project/plans/plugin-sdk-author-surface-convergence/symbol-map/MIGRATION-MAP.generated.json',
+    '.project/scripts/eu2-source-checks/ui.json',
+    '.project/scripts/dep-simplify-1024/custody-overlay/source.mjs');
   const ignored = execFileSync('git', ['-C', fixture.root, '-c', `core.excludesFile=${fixture.path('empty-excludes')}`,
     'check-ignore', '--no-index', '--stdin', '-z'], {
     input: `${[...excluded, ...included].join('\0')}\0`, encoding: 'utf8',

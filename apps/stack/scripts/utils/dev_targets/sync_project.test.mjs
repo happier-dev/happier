@@ -4,6 +4,7 @@ import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs
 import { syncBuiltinESMExports } from 'node:module';
 import { hostname, tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
+import { Writable } from 'node:stream';
 import test from 'node:test';
 
 import { withJsonOwnerFileLock } from '../proc/jsonOwnerFileLock.mjs';
@@ -18,6 +19,7 @@ import {
 } from './sync_project.mjs';
 import { DEV_TARGET_SYNC_EXECUTOR_REPO, DEV_TARGET_MUTAGEN_IGNORE_PATHS, renderMutagenProject, resolveMutagenSessionName } from './mutagen_project.mjs';
 import { resolveDevTargetMutagenRuntime } from './mutagen_runtime.mjs';
+import { parseDevTargetsConfig } from './config.mjs';
 import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
 import { runCaptureResult } from '../proc/proc.mjs';
 
@@ -32,6 +34,80 @@ const target = {
   repoDir: '/Users/dev/happier',
   cliHomeDir: '/Users/dev/.happier',
 };
+
+test('partial project preparation cannot retain a replica without prior canonical admission', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-retained-admission-' });
+  const stackBaseDir = fixture.path('stack');
+  await mkdir(stackBaseDir);
+  await writeFile(join(stackBaseDir, 'dev-targets.json'), JSON.stringify({ version: 3, targets: [target] }));
+  const calls = [];
+  await assert.rejects(ensureDevTargetSyncProject({
+    stackBaseDir, sourceDir: fixture.root, targets: [target], requiredTargets: [],
+    ownerId: INDEPENDENT_DEV_TARGET_SYNC_OWNER, env: envFor(fixture.root),
+  }, { runProcess: async ({ command }) => {
+    calls.push(command);
+    return { code: 0, out: '[]' };
+  } }), { code: 'DEV_TARGET_REPLICA_NOT_PREPARED' });
+  assert.deepEqual(calls, []);
+});
+
+test('pin admission renders the requested endpoint when configuration changes before the lock', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-pin-endpoint-' });
+  const sourceDir = fixture.path('source');
+  const stackBaseDir = fixture.path('stack');
+  await Promise.all([mkdir(sourceDir), mkdir(stackBaseDir)]);
+  const selected = { ...target, ssh: 'admitted-host', repoDir: '/admitted/mirror' };
+  const replacement = { ...selected, ssh: 'unchecked-host', repoDir: '/unchecked/mirror' };
+  const config = parseDevTargetsConfig({ version: 3, targets: [replacement] });
+  await writeFile(join(stackBaseDir, 'dev-targets.json'), JSON.stringify(config));
+  const env = envFor(fixture.root);
+  const checkedHosts = [];
+  const runtime = await ensureDevTargetSyncProject({
+    stackBaseDir, sourceDir, targets: [selected], preserveExistingTargets: true,
+    ownerId: INDEPENDENT_DEV_TARGET_SYNC_OWNER, env,
+  }, { runProcess: async ({ command, args }) => {
+    if (command === 'ssh') checkedHosts.push(args.at(-2));
+    return { code: 0, out: args[0] === 'sync' && args[1] === 'list' ? '[]' : '' };
+  } });
+  assert.ok(checkedHosts.includes(selected.ssh));
+  assert.ok(await readFile(runtime.projectFile, 'utf8') === renderMutagenProject({
+    sourceDir, targets: [selected], config, ownerId: INDEPENDENT_DEV_TARGET_SYNC_OWNER,
+  }), 'rendered destination must be the endpoint that received fresh admission');
+});
+
+test('concurrent pin extensions merge under the existing project lock and retain paused peers', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-concurrent-pins-' });
+  const sourceDir = fixture.path('source');
+  const stackBaseDir = fixture.path('stack');
+  await Promise.all([mkdir(sourceDir), mkdir(stackBaseDir)]);
+  const targets = ['peer', 'first', 'second'].map(name => ({ ...target, name, ssh: `${name}-host` }));
+  const config = parseDevTargetsConfig({ version: 3, targets, commandExecution: { mode: 'auto', targets: targets.map(target => target.name), fallback: 'error' } });
+  const env = envFor(fixture.root);
+  await writeFile(join(stackBaseDir, 'dev-targets.json'), JSON.stringify(config));
+  const runtime = resolveDevTargetMutagenRuntime({ stackBaseDir, sourceDir, env });
+  await mkdir(dirname(runtime.projectFile), { recursive: true });
+  await writeFile(runtime.projectFile, renderMutagenProject({ sourceDir, targets: [targets[0]], config, ownerId: INDEPENDENT_DEV_TARGET_SYNC_OWNER }));
+  const resumed = [];
+  const runProcess = async ({ command, args }) => {
+    if (command === 'ssh') return { code: 0, out: '' };
+    if (args[0] === 'sync' && args[1] === 'resume') resumed.push(args[2]);
+    if (args[0] === 'sync' && args[1] === 'list' && args[2] === '--template') {
+      const project = await readFile(runtime.projectFile, 'utf8');
+      return { code: 0, out: JSON.stringify(targets.filter(target => project.includes(`  ${resolveMutagenSessionName(target.name, sourceDir)}:\n`)).map(target => ({
+        name: resolveMutagenSessionName(target.name, sourceDir), identifier: `session-${target.name}`,
+        mode: 'one-way-replica', paused: target.name === 'peer', alpha: { protocol: 'local', path: sourceDir },
+      }))) };
+    }
+    return { code: 0, out: '' };
+  };
+  await Promise.all(targets.slice(1).map(selected => ensureDevTargetSyncProject({
+    stackBaseDir, sourceDir, targets: [targets[0], selected], requiredTargets: [selected],
+    preserveExistingTargets: true, ownerId: INDEPENDENT_DEV_TARGET_SYNC_OWNER, env,
+  }, { runProcess })));
+  const project = await readFile(runtime.projectFile, 'utf8');
+  for (const target of targets) assert.ok(project.includes(`  ${resolveMutagenSessionName(target.name, sourceDir)}:\n`), `lost mirror: ${target.name}`);
+  assert.equal(resumed.includes(resolveMutagenSessionName('peer', sourceDir)), false);
+});
 
 for (const platform of ['darwin', 'win32']) {
   test(`sync owner identifies a self-target across private user namespaces (${platform})`, async t => {
@@ -139,12 +215,12 @@ test('standby capture status reuses the configured SSH transport', async t => {
 
 test('candidate producer creates and pauses only its own project in the shared repository runtime', async t => {
   const { root } = await createTempFixture(t, { prefix: 'hstack-candidate-shared-runtime-' });
+  await writeFile(join(root, 'dev-targets.json'), JSON.stringify({ version: 1, targets: [target] }));
   const sourceDir = join(root, 'source');
   const env = envFor(root);
   const ownerId = 'execution-host-candidate-0.3';
   const candidateTarget = { ...target, name: ownerId, repoDir: '/guest/candidate' };
   const ordinary = runtimeFor(root, sourceDir);
-  await writeFile(join(root, 'dev-targets.json'), JSON.stringify({ version: 1, targets: [target] }));
   await mkdir(dirname(ordinary.projectFile), { recursive: true });
   const ordinaryProject = renderMutagenProject({ sourceDir, targets: [target], ownerId: INDEPENDENT_DEV_TARGET_SYNC_OWNER });
   await writeFile(ordinary.projectFile, ordinaryProject);
@@ -192,6 +268,39 @@ test('candidate producer creates and pauses only its own project in the shared r
   assert.equal(calls.some(args => args[0] === 'sync' && args[1] === 'terminate'), false);
 });
 
+test('replica admission refuses a destination already written by another alpha', async t => {
+  const { root } = await createTempFixture(t, { prefix: 'hstack-sync-beta-collision-' });
+  const sourceDir = join(root, 'steward');
+  await writeFile(join(root, 'dev-targets.json'), JSON.stringify({ version: 3, targets: [target] }));
+  const runtime = runtimeFor(root, sourceDir);
+  const mutations = [];
+  const input = { stackBaseDir: root, sourceDir, targets: [target], ownerId: INDEPENDENT_DEV_TARGET_SYNC_OWNER, env: envFor(root) };
+  const sessions = [{ identifier: 'primary-session', name: 'primary', mode: 'one-way-replica',
+    alpha: { protocol: 'local', path: join(root, 'primary') },
+    beta: { protocol: 'ssh', host: target.ssh, path: target.repoDir } }];
+  const runProcess = async ({ command, args }) => {
+    if (command === 'mutagen' && args[0] === 'sync' && args[1] === 'list') return { code: 0, out: JSON.stringify(sessions) };
+    if (command === 'mutagen' && (args[0] === 'project' || args[1] === 'terminate')) mutations.push(args);
+    return { code: 0, out: '' };
+  };
+  await assert.rejects(ensureDevTargetSyncProject(input, { runProcess }), { code: 'DEV_TARGET_REPLICA_COLLISION' });
+  assert.deepEqual(mutations, []);
+  // Mutagen 0.18.1 serializes an SSH URL's user separately from its host.
+  const qualified = { ...input, targets: [{ ...target, ssh: `replica@${target.ssh}` }] };
+  sessions[0].beta.user = 'replica';
+  await assert.rejects(ensureDevTargetSyncProject(qualified, { runProcess }), { code: 'DEV_TARGET_REPLICA_COLLISION' });
+  assert.deepEqual(mutations, []);
+  await assert.rejects(readFile(runtime.projectFile), { code: 'ENOENT' });
+  // The same alpha may reclaim its existing destination through the real owner.
+  sessions[0].alpha.path = sourceDir;
+  await ensureDevTargetSyncProject(input, { runProcess });
+  assert.ok((await readFile(runtime.projectFile, 'utf8')).includes(target.repoDir));
+  // Source scope can also come from the runtime owner's environment default.
+  await ensureDevTargetSyncProject({ ...input, sourceDir: undefined,
+    env: { ...input.env, HAPPIER_STACK_SYNC_SOURCE_DIR: sourceDir } }, { runProcess });
+  await ensureDevTargetSyncProject(qualified, { runProcess });
+});
+
 test('project reconciliation removes orphan writers by identifier before resuming or rotating the repository project', async t => {
   const { root } = await createTempFixture(t, { prefix: 'hstack-sync-orphan-writers-' });
   const sourceDir = join(root, '0.2');
@@ -206,7 +315,9 @@ test('project reconciliation removes orphan writers by identifier before resumin
     beta: { protocol: 'ssh', host: target.ssh, path: target.repoDir, connected: true, scanned: true },
     paused: false, status: 'watching', successfulCycles: 1 });
   const sessions = [session('sync_orphan', 'proj_old'), session('sync_current', 'proj_current'),
-    session('sync_other_repository', 'proj_other', join(root, 'other'))];
+    // Lane brief task3: unrelated sources own distinct replica destinations.
+    { ...session('sync_other_repository', 'proj_other', join(root, 'other')),
+      beta: { protocol: 'ssh', host: target.ssh, path: `${target.repoDir}-other` } }];
   const input = { stackBaseDir: root, sourceDir, targets: [target], ownerId: INDEPENDENT_DEV_TARGET_SYNC_OWNER, env: envFor(root) };
   const runProcess = async ({ args }) => {
     if (args[0] === 'sync' && args[1] === 'list') return { code: 0, out: JSON.stringify(sessions) };
@@ -401,16 +512,32 @@ test('dev-target control waits for its configured critical slice beyond the form
 });
 
 test('canonical dev-target control runner captures stdout while streaming diagnostics', async () => {
+  let output = '';
+  const diagnostics = new Writable({ write(chunk, encoding, done) { output += chunk.toString(); done(); } });
+  const capture = (command, args, options) => runCaptureResult(command, args, {
+    ...options, stdoutDiagnosticStream: diagnostics, stderrDiagnosticStream: diagnostics,
+  });
   const result = await runDevTargetControlProcess({
     label: 'dev-target-control-test',
     command: process.execPath,
     args: ['-e', 'process.stdout.write("session-json\\n"); process.stderr.write("diagnostic\\n")'],
     env: process.env,
-  });
+  }, { capture });
 
   assert.equal(result.code, 0);
   assert.equal(result.out, 'session-json\n');
   assert.equal(result.err, 'diagnostic\n');
+  assert.equal(output.split('\n').filter(Boolean).length, 2, 'ordinary command diagnostics still stream');
+  output = '';
+  const quiet = await runDevTargetControlProcess({
+    label: 'dev-target-control-test', command: process.execPath,
+    args: ['-e', 'process.stdout.write("session-json\\n"); process.stderr.write("diagnostic\\n")'],
+    env: process.env, silent: true,
+  }, { capture });
+  assert.equal(quiet.code, 0);
+  assert.equal(quiet.out, 'session-json\n');
+  assert.equal(quiet.err, 'diagnostic\n');
+  assert.equal(output, '', 'silent machine-readable probes retain results without publishing raw diagnostic lines');
 });
 
 test('runs a future independent Mutagen daemon control launch in the protected critical user slice', async (t) => {
@@ -529,8 +656,8 @@ test('independent sync start owns and resumes the canonical Mutagen project', as
 
 test('source policy replacement does not require a paused replica to become reachable', async t => {
   const { root } = await createTempFixture(t, { prefix: 'hstack-sync-policy-offline-' });
-  const projectFile = projectFor(root);
   await writeFile(join(root, 'dev-targets.json'), JSON.stringify({ version: 1, targets: [target] }));
+  const projectFile = projectFor(root);
   await mkdir(dirname(projectFile), { recursive: true });
   const desired = renderMutagenProject({ sourceDir: DEV_TARGET_SYNC_EXECUTOR_REPO,
     targets: [target], ownerId: INDEPENDENT_DEV_TARGET_SYNC_OWNER });
@@ -560,8 +687,8 @@ test('source policy replacement does not require a paused replica to become reac
 
 test('equivalent project keeps reconnecting sessions when project resume reports an offline endpoint', async () => {
   const root = await mkdtemp(join(tmpdir(), 'happier-sync-project-reconnect-'));
-  const projectFile = projectFor(root);
   await writeFile(join(root, 'dev-targets.json'), JSON.stringify({ version: 1, targets: [target] }));
+  const projectFile = projectFor(root);
   await mkdir(dirname(projectFor(root)), { recursive: true });
   await writeFile(projectFile, renderMutagenProject({
     sourceDir: DEV_TARGET_SYNC_EXECUTOR_REPO,
@@ -598,8 +725,8 @@ test('equivalent project keeps reconnecting sessions when project resume reports
 
 test('a project resume failure never restarts the shared daemon hosting other repositories', async () => {
   const root = await mkdtemp(join(tmpdir(), 'happier-sync-project-ssh-daemon-'));
-  const projectFile = projectFor(root);
   await writeFile(join(root, 'dev-targets.json'), JSON.stringify({ version: 1, targets: [target] }));
+  const projectFile = projectFor(root);
   await mkdir(dirname(projectFor(root)), { recursive: true });
   await writeFile(projectFile, renderMutagenProject({
     sourceDir: DEV_TARGET_SYNC_EXECUTOR_REPO,
@@ -722,7 +849,7 @@ test('QA consumers borrow a stale producer project without changing its membersh
   const projectFile = projectFor(root);
   await mkdir(dirname(projectFile), { recursive: true });
   const project = renderMutagenProject({ sourceDir: DEV_TARGET_SYNC_EXECUTOR_REPO, targets: [target], ownerId: INDEPENDENT_DEV_TARGET_SYNC_OWNER });
-  const staleProject = project.replace('        - "packages/plugins/*/.happier-plugin"\n', '');
+  const staleProject = project.replace('        - "!packages/plugins/*/.happier-plugin/plugin.json"\n', '');
   await writeFile(projectFile, staleProject);
   const calls = [];
   const result = await ensureDevTargetSyncProject({ stackBaseDir: join(root, 'agent-qa'), sourceDir: DEV_TARGET_SYNC_EXECUTOR_REPO,
@@ -747,7 +874,7 @@ test('sync-service release waits for stale independent reconciliation before cha
     ownerId: INDEPENDENT_DEV_TARGET_SYNC_OWNER,
   });
   const staleProject = desiredProject.replace(
-    '        - "packages/plugins/*/.happier-plugin"\n',
+    '        - "!packages/plugins/*/.happier-plugin/plugin.json"\n',
     '',
   );
   assert.notEqual(staleProject, desiredProject);
@@ -790,7 +917,8 @@ test('sync-service release waits for stale independent reconciliation before cha
     });
     await terminationStarted;
 
-    release = releaseIndependentDevTargetSyncProject({ stackBaseDir: root, env: envFor(root) }, {
+    release = releaseIndependentDevTargetSyncProject({ stackBaseDir: root,
+      env: { ...envFor(root), HAPPIER_STACK_SYNC_SOURCE_DIR: DEV_TARGET_SYNC_EXECUTOR_REPO } }, {
       runProcess: async ({ command, args }) => {
         releaseCalls.push({ command, args });
         pauseStartedResolve();
@@ -904,6 +1032,36 @@ test('Stack default runner exposes a nonzero independent status exit as target u
   assert.equal(result.unhealthyTargets.get(target.name), 'unavailable');
 });
 
+test('independent sync release refuses missing source scope without touching the primary project', async t => {
+  const { root } = await createTempFixture(t, { prefix: 'hstack-sync-release-scope-' });
+  const primary = projectFor(root);
+  const contents = renderMutagenProject({ sourceDir: DEV_TARGET_SYNC_EXECUTOR_REPO,
+    targets: [target], ownerId: INDEPENDENT_DEV_TARGET_SYNC_OWNER });
+  await mkdir(dirname(primary), { recursive: true });
+  await writeFile(primary, contents);
+  const calls = [];
+  for (const source of [undefined, '', '   ', 'relative-basis']) {
+    await assert.rejects(releaseIndependentDevTargetSyncProject({ stackBaseDir: root,
+      env: { ...envFor(root), ...(source === undefined ? {} : { HAPPIER_STACK_SYNC_SOURCE_DIR: source }) },
+    }, { runProcess: async input => { calls.push(input); return { code: 0 }; } }),
+    /HAPPIER_STACK_SYNC_SOURCE_DIR.*absolute/i);
+    assert.equal(await readFile(primary, 'utf8'), contents);
+  }
+  assert.deepEqual(calls, [], 'invalid scope must not reach Mutagen or pause primary');
+  const sourceDir = join(root, 'basis');
+  const scratch = runtimeFor(root, sourceDir).projectFile;
+  await mkdir(dirname(scratch), { recursive: true });
+  await writeFile(scratch, renderMutagenProject({ sourceDir,
+    targets: [target], ownerId: INDEPENDENT_DEV_TARGET_SYNC_OWNER }));
+  assert.equal(await releaseIndependentDevTargetSyncProject({ stackBaseDir: root,
+    env: { ...envFor(root), HAPPIER_STACK_SYNC_SOURCE_DIR: sourceDir },
+  }, { runProcess: async input => { calls.push(input); return { code: 0 }; } }), true);
+  assert.equal(await readFile(primary, 'utf8'), contents);
+  assert.doesNotMatch(await readFile(scratch, 'utf8'), /^# hstack-owner:/);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].args.at(-1), scratch);
+});
+
 test('independent sync stop releases ownership before pausing so interruption cannot advertise stale ownership', async () => {
   const root = await mkdtemp(join(tmpdir(), 'happier-sync-project-stop-'));
   const projectFile = projectFor(root);
@@ -917,7 +1075,7 @@ test('independent sync stop releases ownership before pausing so interruption ca
 
   const released = await releaseIndependentDevTargetSyncProject({
     stackBaseDir: root,
-    env: envFor(root),
+    env: { ...envFor(root), HAPPIER_STACK_SYNC_SOURCE_DIR: DEV_TARGET_SYNC_EXECUTOR_REPO },
   }, {
     runProcess: async ({ command, args }) => {
       calls.push({ command, args });
@@ -944,7 +1102,7 @@ test('independent sync stop restores ownership when project pause fails normally
   await assert.rejects(
     releaseIndependentDevTargetSyncProject({
       stackBaseDir: root,
-      env: envFor(root),
+      env: { ...envFor(root), HAPPIER_STACK_SYNC_SOURCE_DIR: DEV_TARGET_SYNC_EXECUTOR_REPO },
     }, {
       runProcess: async () => ({ code: 7 }),
     }),
@@ -970,7 +1128,7 @@ test('independent sync stop leaves ownership released when project pause is inte
   await assert.rejects(
     releaseIndependentDevTargetSyncProject({
       stackBaseDir: root,
-      env: envFor(root),
+      env: { ...envFor(root), HAPPIER_STACK_SYNC_SOURCE_DIR: DEV_TARGET_SYNC_EXECUTOR_REPO },
     }, {
       runProcess: async () => {
         throw new Error('interrupted after launch');
