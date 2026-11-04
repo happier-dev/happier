@@ -411,6 +411,46 @@ test('worker disk admission rejects an exhausted write filesystem before startin
   await assert.rejects(access(payload), { code: 'ENOENT' });
 });
 
+test('worker disk admission rejects exhaustion and insufficient measured validation scratch', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'hstack-disk-admission-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const { launcher: native } = await installNativeAdmissionFixture({ root });
+  const checkout = join(root, 'native-owner');
+  const cache = join(root, 'cli/cache');
+  await mkdir(join(cache, 'yarn/v6'), { recursive: true });
+  await mkdir(join(checkout, 'node_modules'), { recursive: true });
+  await writeFile(join(checkout, 'node_modules/data'), 'dependency'.repeat(8192));
+  const bin = join(root, 'bin');
+  await mkdir(bin);
+  // df and memory telemetry are the OS boundaries; filesystem measurement,
+  // class admission, process identity and retention execute their real owners.
+  const diskObservation = join(root, 'disk-available-kib');
+  await executable(join(bin, 'df'), `#!/bin/sh
+read available < ${posixQuote(diskObservation)}
+printf "Filesystem 1024-blocks Used Available Capacity Mounted\\nfixture 10000000 100000 %s 99%% /\\n" "$available"
+`);
+  await executable(join(bin, 'awk'), '#!/bin/sh\ncase "$*" in */proc/meminfo*) printf "28000000 30000000\\n" ;; */proc/loadavg*|*/proc/pressure/*) printf "0\\n" ;; *) exec /usr/bin/awk "$@" ;; esac\n');
+  await executable(join(bin, 'systemctl'), '#!/bin/sh\nexit 1\n');
+  const payload = join(root, 'started');
+  for (const [commandClass, freeKiB, admitted] of [['runtime-build', 0, false], ['validation', 0, false], ['native-source-test', 0, false],
+    ['validation', 200 * 1024, false], ['native-source-test', 6688, false],
+    ['validation', 2 * 1024 * 1024, true], ['native-source-test', 2 * 1024 * 1024, true]]) {
+    await writeFile(diskObservation, `${freeKiB}\n`);
+    const result = spawnSync('/bin/sh', [native, '--heavyweight-admission', `--class=${commandClass}`, '--machine=worker', '--failure-id=disk-test', '--no-wait', '--', process.execPath, '-e', 'require("node:fs").writeFileSync(process.argv[1], "started")', payload], {
+      cwd: checkout, encoding: 'utf8', env: { ...executionNeutralEnv, PATH: `${bin}:${process.env.PATH}`, TMPDIR: root,
+        HAPPIER_STACK_PM_CACHE_BASE_DIR: cache, FIXTURE_DISK_AVAILABLE_KIB: String(freeKiB) },
+    });
+    assert.equal(result.status, admitted ? 0 : 75, result.stderr);
+    if (admitted) {
+      assert.equal(await readFile(payload, 'utf8'), 'started');
+      await rm(payload);
+    } else {
+      assert.match(result.stderr, /HSTACK_ADMISSION_DISK:disk-test/);
+      await assert.rejects(access(payload), { code: 'ENOENT' });
+    }
+  }
+});
+
 test('inherited admission preserves the parent admission when disk changes during its payload', async t => {
   const root = await mkdtemp(join(tmpdir(), 'happier-disk-escalation-'));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -1279,6 +1319,57 @@ test('controller coalescing ends its real dispatch when its private broker is ki
   jobSettled = true;
 });
 
+
+test('AUTO validation reserves measured disk scratch for fresh and reused cached samples', async t => {
+  for (const cached of [false, true]) {
+    for (const { availableBytes, name, selected } of [
+      { availableBytes: 22000000 * 1024, name: 'ample', selected: 'starved' },
+      { availableBytes: 6848512, name: 'positive below measured scratch', selected: 'roomy' },
+      { availableBytes: 0, name: 'exhausted', selected: 'roomy' },
+    ]) {
+      await t.test(`${cached ? 'cached' : 'fresh'} ${name}`, async t => {
+        const fixture = await memoryRoutingFixture(t, { availableKiB: 28000000, roomyLoad: 12 });
+        // Replay ample space, the observed small positive free-block count,
+        // and exhaustion. Validation now reserves its measured scratch writes.
+        // SSH is the system boundary. Run the real disk owner below it with
+        // df's filesystem observation, rather than replacing its decision.
+        const sshPath = join(fixture.binDir, 'ssh');
+        const sshBoundary = join(fixture.binDir, 'ssh-boundary');
+        await executable(sshBoundary, await readFile(sshPath, 'utf8'));
+        await executable(join(fixture.binDir, 'df'), '#!/bin/sh\nprintf "Filesystem 1024-blocks Used Available Capacity Mounted\\nfixture 100000000 1 %s 100%% /\\n" "$DF_FREE_KIB"\n');
+        await executable(sshPath, `#!/bin/sh
+case "$*" in *worker_disk_budget.mjs*--check*getconf*)
+  case "$*" in *starved-host*) free=$(awk '{print $4}' "$STARVED_SAMPLE") ;; *) free=22000000 ;; esac
+  DF_FREE_KIB=$free ${posixQuote(process.execPath)} ${posixQuote(join(repoRoot, 'apps/stack/scripts/utils/dev_targets/worker_disk_budget.mjs'))} --check --class=validation ${posixQuote(`--repo=${repoRoot}`)} ${posixQuote(`--cache=${fixture.root}`)} >/dev/null || exit $?
+esac
+exec ${posixQuote(sshBoundary)} "$@"
+`);
+        const sample = (await readFile(fixture.samplePath, 'utf8')).trim().split(/\s+/);
+        sample[3] = String(availableBytes / 1024);
+        await writeFile(fixture.samplePath, sample.join(' ') + '\n');
+        const invoke = () => spawnSync('/bin/sh', [launcher, '--', 'node', '--test', 'focused.test.mjs'], fixture.invocation);
+        let probesBefore;
+        if (cached) {
+          const warm = invoke();
+          assert.equal(warm.status, 0, warm.stderr);
+          assert.equal(warm.stdout, `remote:${selected}\n`);
+          probesBefore = (await readFile(fixture.invocation.env.FIXTURE_TRACE, 'utf8')).split('\n')
+            .filter(line => line.includes('getconf')).length;
+        }
+        const result = invoke();
+        assert.equal(result.status, 0, result.stderr);
+        assert.equal(result.stdout, `remote:${selected}\n`);
+        assert.deepEqual((await readFile(fixture.invocation.env.DISPATCHES, 'utf8')).trim().split('\n'),
+          cached ? [selected, selected] : [selected], 'workers below measured validation scratch must be excluded before preparation');
+        if (cached) {
+          assert.equal((await readFile(fixture.invocation.env.FIXTURE_TRACE, 'utf8')).split('\n')
+            .filter(line => line.includes('getconf')).length, probesBefore,
+          'healthy samples remain cached; a rejected worker cannot dispatch');
+        }
+      });
+    }
+  }
+});
 
 test('automatic placement excludes mac-host unless it is in the configured command pool', async (t) => {
   const fixture = await memoryRoutingFixture(t, { availableKiB: 28000000, roomyLoad: 12 });
