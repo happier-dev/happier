@@ -1,4 +1,4 @@
-import { useState, type ReactElement } from 'react';
+import { useState, type ComponentType, type ReactElement } from 'react';
 import { Image as ReactNativeImage, View } from 'react-native';
 
 import type { HappierUiTheme } from '../../environment/types.js';
@@ -6,6 +6,34 @@ import { HappierText } from '../text/Text.js';
 import { readHappierRenderableImageSource } from './renderableImage.js';
 
 export type HappierImageSize = 'small' | 'medium' | 'large';
+
+// Host-private structural image sources preserve native assets and URI variants
+// without importing the renderer's ambient declarations (RN 0.83 ImageSource).
+type ImageHostUriSource = Readonly<{
+  uri?: string;
+  bundle?: string;
+  method?: string;
+  headers?: Readonly<Record<string, string>>;
+  cache?: 'default' | 'reload' | 'force-cache' | 'only-if-cached';
+  body?: string;
+  width?: number;
+  height?: number;
+  scale?: number;
+}>;
+type ImageHostSource = number | ImageHostUriSource | ImageHostUriSource[];
+
+// Describe only what this renderer supplies. Native Image types would load its
+// ambient globals into every external author using the public brand mark.
+type ImageHostProps = Readonly<{
+  source: ImageHostSource;
+  onError: () => void;
+  accessibilityLabel?: string;
+  accessible: boolean;
+  testID?: string;
+  resizeMode: 'contain';
+  tintColor?: string;
+  style: Readonly<{ width: number; height: number }>;
+}>;
 
 const IMAGE_SIZE: Readonly<Record<HappierImageSize, number>> = Object.freeze({
   small: 32,
@@ -70,14 +98,18 @@ export function HappierImage(props: Readonly<{
   fallbackAccessibilityHidden?: boolean;
   /** Internal author diagnostic emitted by the Resource-owning component. */
   onDecodeError?: () => void;
+  /** Package-private host binding, absent from public image/brand wrappers. */
+  source?: ImageHostSource;
+  imageHost?: ComponentType<ImageHostProps>;
 }>): ReactElement {
   const pixels = resolveHappierImagePixels(props.size);
-  const source = readHappierRenderableImageSource(props.bytes);
+  const source = props.source ?? readHappierRenderableImageSource(props.bytes);
+  const ImageHost = props.imageHost ?? ReactNativeImage;
   const [failedSource, setFailedSource] = useState<typeof source>();
   const renderableSource = source === failedSource ? undefined : source;
   if (renderableSource) {
     return (
-      <ReactNativeImage
+      <ImageHost
         source={renderableSource}
         onError={() => {
           setFailedSource(renderableSource);
@@ -147,11 +179,43 @@ export type HappierBrandMarkProps = Readonly<{
 }>;
 
 export function HappierBrandMark(props: HappierBrandMarkProps): ReactElement {
+  return (
+    <HappierBrandMarkInternal
+      displayName={props.displayName}
+      bytes={props.bytes}
+      size={props.size}
+      pixelSize={props.pixelSize}
+      showName={props.showName}
+      theme={props.theme}
+      monochrome={props.monochrome}
+      testID={props.testID}
+      externallyLabelled={props.externallyLabelled}
+      onDecodeError={props.onDecodeError}
+    />
+  );
+}
+
+/** Host-only admitted artwork; intentionally absent from every public barrel. */
+export type HostCatalogMark = Readonly<{
+  displayName: string;
+  bytes?: Uint8Array;
+  light?: ImageHostSource;
+  dark?: ImageHostSource;
+  monochrome?: boolean;
+}>;
+
+/** The single drawing/fallback owner behind both public and private bindings. */
+export function HappierBrandMarkInternal(props: HappierBrandMarkProps & Readonly<{
+  source?: ImageHostSource;
+  imageHost?: ComponentType<ImageHostProps>;
+}>): ReactElement {
   const showName = props.showName === true;
   const fallback = resolveHappierBrandFallback(props.displayName);
   const image = (
     <HappierImage
       bytes={props.bytes}
+      source={props.source}
+      imageHost={props.imageHost}
       size={props.size}
       fallback={fallback}
       theme={props.theme}

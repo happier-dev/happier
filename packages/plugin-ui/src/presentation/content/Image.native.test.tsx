@@ -54,6 +54,34 @@ afterEach(() => {
 });
 
 describe('HappierImage byte source derivation', () => {
+  it.each([false, true])('ignores unsupported runtime source and host props with admitted bytes: %s', async (withBytes) => {
+    const context = createSurfaceContext({ colorScheme: 'light', contrast: 'normal' });
+    const bytes = withBytes ? createAdmittedBrandPngFixture() : undefined;
+    const imageHost = vi.fn(() => null);
+    // JavaScript callers can supply extra props despite the public TS contract.
+    const runtimeProps = {
+      displayName: 'GitHub',
+      bytes,
+      theme: context.theme,
+      source: { uri: 'https://example.invalid/unsupported.png' },
+      imageHost,
+    };
+
+    await act(async () => {
+      renderer = create(<HappierBrandMark {...runtimeProps} />);
+    });
+
+    expect(imageHost).not.toHaveBeenCalled();
+    if (bytes) {
+      const admitted = materializeHappierRenderableImage(bytes);
+      expect(admitted.admitted).toBe(true);
+      expect(renderer!.root.findByType('Image').props.source).toBe(admitted.admitted ? admitted.source : null);
+    } else {
+      expect(renderer!.root.findAllByType('Image')).toHaveLength(0);
+      expect(renderer!.root.findByType('Text').props.children).toBe('G');
+    }
+  });
+
   it('exposes the decoder-failure callback on the public brand-mark contract', async () => {
     const context = createSurfaceContext({ colorScheme: 'light', contrast: 'normal' });
     const onDecodeError = vi.fn();
