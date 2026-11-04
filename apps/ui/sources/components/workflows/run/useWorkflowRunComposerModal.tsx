@@ -1,11 +1,10 @@
 import * as React from 'react';
-import { View, useWindowDimensions } from 'react-native';
+import { View } from 'react-native';
 
 import type { CustomModalInjectedProps } from '@/modal';
-import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
-import { Popover } from '@/components/ui/popover/Popover';
+import { createAnchoredSheetChrome } from '@/modal/components/card/anchoredSheetChrome';
 import { t } from '@/text';
-import { isMobileLayoutWidth } from '@/components/sessions/layout/isMobileLayoutWidth';
+import { COMPOSER_CONTENT_HORIZONTAL_INSET } from '@/components/sessions/agentInput/composerContentInset';
 import { KeyboardShortcutContextBridge, useKeyboardShortcutContextSnapshot, type KeyboardShortcutContextSnapshot } from '@/keyboard';
 
 import { useWorkflowCardModal } from './useWorkflowCardModal';
@@ -33,7 +32,9 @@ function WorkflowRunComposerModal(
     // The modal's own close control dismisses it (`onRequestClose`); the composer has no Cancel row.
     const { keyboardContext, accountLifetime, ...composerProps } = props;
     return <WorkflowAccountLifetimeProvider value={accountLifetime}><KeyboardShortcutContextBridge snapshot={keyboardContext}>
-        <WorkflowRunComposer {...composerProps} autoFocusComposer={composerProps.autoFocusComposer ?? true} />
+        {/* The sheet's form keeps the sheet header's edge at every width (lab flWork `libP`). */}
+        <WorkflowRunComposer {...composerProps} autoFocusComposer={composerProps.autoFocusComposer ?? true}
+            contentPaddingHorizontal={composerProps.contentPaddingHorizontal ?? COMPOSER_CONTENT_HORIZONTAL_INSET} />
     </KeyboardShortcutContextBridge></WorkflowAccountLifetimeProvider>;
 }
 
@@ -49,14 +50,10 @@ export function useWorkflowRunComposerModal(params: Readonly<{
     anchorRef?: React.RefObject<View | null>;
     accountLifetime?: ServerAccountScopeLifetime | null;
 }>): React.ReactElement | null {
-    const { width } = useWindowDimensions();
     const keyboardContext = useKeyboardShortcutContextSnapshot();
     const accountLifetime = useWorkflowAccountLifetime(params.accountLifetime);
-    // An entry point whose trigger is not on screen (a step's "run with another agent" while the
-    // header's Run again is withdrawn) has nothing to anchor to and uses the canonical modal.
-    const anchored = params.anchorRef !== undefined && params.anchorRef.current != null && !isMobileLayoutWidth(width);
     const hostedIntentRef = React.useRef(false);
-    hostedIntentRef.current = params.open && !anchored && params.props !== null;
+    hostedIntentRef.current = params.open && params.props !== null;
     const onRunRef = React.useRef(params.props?.onRun);
     onRunRef.current = params.props?.onRun;
     // The canonical host retains content for its exit motion. Its retired Start must not
@@ -72,39 +69,18 @@ export function useWorkflowRunComposerModal(params: Readonly<{
     const modalProps = React.useMemo(() => params.props === null ? null
         : { ...params.props, onRun: runForCurrentIntent, keyboardContext, accountLifetime }, [accountLifetime, keyboardContext, params.props, runForCurrentIntent]);
     useWorkflowCardModal({
-        open: params.open && !anchored,
+        open: params.open,
         component: WorkflowRunComposerModal,
         props: modalProps,
         title: params.props?.workflowName ?? t('workflows.start.workflow'),
         testID: params.testID ?? 'workflow-run-inputs-modal',
-        phonePresentation: 'sheet',
-        material: 'solid',
+        chrome: createAnchoredSheetChrome({
+            title: params.props?.workflowName ?? t('workflows.start.workflow'),
+            testID: params.testID ?? 'workflow-run-inputs-modal',
+            ...(params.anchorRef?.current ? { anchor: { kind: 'view', ref: params.anchorRef } as const } : {}),
+        }),
         focusReturnRef: params.anchorRef,
         ...(params.props === null ? {} : { onRequestClose: cancelHostedIntent }),
     });
-    if (!params.open || params.props === null || !anchored || params.anchorRef === undefined) return null;
-    const composerProps = params.props;
-    return (
-        <Popover
-            open
-            anchorRef={params.anchorRef}
-            focusReturnRef={params.anchorRef}
-            // Anchored under Run now, right edges aligned (convo-N7); it flips above only when the
-            // space below cannot hold it, and never covers the page from the window's top edge.
-            placement="bottom"
-            flip
-            portal={{ web: { target: 'body' }, native: true, matchAnchorWidth: false, anchorAlign: 'end' }}
-            maxWidthCap={520}
-            onRequestClose={params.props.onCancel}
-        >
-            {({ maxHeight, maxWidth }) => (
-                <FloatingOverlay role="panel" maxHeight={maxHeight} surfaceChrome="theme"
-                    containerStyle={{ width: Math.min(maxWidth, 520) }}>
-                    <WorkflowAccountLifetimeProvider value={accountLifetime}>
-                        <WorkflowRunComposer {...composerProps} autoFocusComposer={composerProps.autoFocusComposer ?? true} triggerNamesShortcut />
-                    </WorkflowAccountLifetimeProvider>
-                </FloatingOverlay>
-            )}
-        </Popover>
-    );
+    return null;
 }

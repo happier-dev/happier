@@ -109,6 +109,8 @@ export type WorkflowRunComposerProps = Readonly<{
     retainedRequest?: WorkflowRunNowRetainedRequest | null;
     /** The opening launcher requests focus once its caller input and Start are ready. */
     autoFocusComposer?: boolean;
+    /** A host with its own gutter (the Start pane and phone sheet) sets the column's side inset; defaults to the conversation's. */
+    contentPaddingHorizontal?: number;
     /** Hangs from the control that already names the run key (Run now): Start does not repeat it. */
     triggerNamesShortcut?: boolean;
     testIDPrefix?: string;
@@ -160,7 +162,10 @@ export function WorkflowRunComposer(props: WorkflowRunComposerProps): React.Reac
     // While an earlier request is unsettled, the review is that request: its inputs, Roles and Team.
     const retained = props.retainedRequest ?? null;
     const { width: screenWidth } = useWindowDimensions();
-    const column = resolveAgentInputColumn({ screenWidth });
+    const column = resolveAgentInputColumn({
+        screenWidth,
+        ...(props.contentPaddingHorizontal === undefined ? {} : { contentPaddingHorizontal: props.contentPaddingHorizontal }),
+    });
     const columnStyle = [styles.column, { paddingHorizontal: column.paddingHorizontal }];
     const columnInnerStyle = [styles.columnInner, column.maxWidth === undefined ? null : { maxWidth: column.maxWidth }];
     const retainedSource = retained?.input.source;
@@ -358,6 +363,7 @@ export function WorkflowRunComposer(props: WorkflowRunComposerProps): React.Reac
                         panelPresentation="document"
                         inputPresentation={main === null ? 'controlsOnly' : 'full'}
                         panelStyle={styles.hostedPanel}
+                        {...(props.contentPaddingHorizontal === undefined ? {} : { contentPaddingHorizontal: props.contentPaddingHorizontal })}
                         surfaceGroup={props.surfaceGroup}
                         {...props.authoringControls}
                         value={main === null ? props.preview ?? props.workflowName ?? t('workflows.start.preview')

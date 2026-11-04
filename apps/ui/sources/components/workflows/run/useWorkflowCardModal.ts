@@ -2,6 +2,7 @@ import * as React from 'react';
 
 import { Modal, type CustomModalComponentType, type CustomModalInjectedProps } from '@/modal';
 import type { FocusReturnRef } from '@/keyboard/focusReturn';
+import type { CustomModalChromeCardConfig } from '@/modal/types';
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation/pageMetrics';
 
 /**
@@ -32,6 +33,7 @@ export function useWorkflowCardModal<C extends CustomModalComponentType<any>>(pa
     focusReturnRef?: FocusReturnRef;
     phonePresentation?: 'card' | 'sheet';
     material?: 'glass' | 'solid';
+    chrome?: CustomModalChromeCardConfig;
 }>): void {
     const { open, component, props, identity, title, subtitle, testID, onRequestClose, focusReturnRef, phonePresentation, material } = params;
     const modalRef = React.useRef<Readonly<{ id: string; identity: string | null | undefined }> | null>(null);
@@ -61,7 +63,7 @@ export function useWorkflowCardModal<C extends CustomModalComponentType<any>>(pa
             onRequestClose: () => onRequestCloseRef.current?.(),
             closeOnBackdrop: true,
             ...(focusReturnRef === undefined ? {} : { focusReturnRef }),
-            chrome: {
+            chrome: params.chrome ?? {
                 kind: 'card',
                 ...(material === undefined ? {} : { material }),
                 title,

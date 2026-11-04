@@ -111,23 +111,23 @@ describe('useWorkflowRunComposerModal', () => {
         expect(mounted.visible()).toHaveLength(1);
         expect(mounted.visible()[0]).toMatchObject({
             focusReturnRef: anchorRef,
-            chrome: { phonePresentation: 'sheet', material: 'solid' },
+            chrome: { phonePresentation: 'sheet', scrollHost: 'bounded', bodyScroll: 'none' },
         });
         expect(mounted.screen.findByType(ModalCardFrame).props.presentation).toBe('sheet');
         expect(mounted.screen.findAllByType(Popover)).toHaveLength(0);
         expect(mounted.screen.findHostByTestId('workflow-run-inputs-run')).not.toBeNull();
     });
 
-    it('returns an anchored start surface without opening a second modal card', async () => {
+    it('hosts a wide anchored start in the shared returning sheet chrome', async () => {
         const anchorRef = React.createRef<React.ElementRef<typeof View>>();
         const mounted = await present({
             open: true, props: sheetProps(), anchorRef,
         }, true);
         expect(anchorRef.current).not.toBeNull();
-        expect(mounted.visible()).toHaveLength(0);
-        const popover = mounted.screen.findByType(Popover);
-        expect(popover.props.anchorRef).toBe(anchorRef);
-        expect(popover.props.focusReturnRef).toBe(anchorRef);
+        expect(mounted.visible()).toHaveLength(1);
+        expect(mounted.visible()[0]).toMatchObject({ focusReturnRef: anchorRef,
+            chrome: { phonePresentation: 'sheet', scrollHost: 'bounded', bodyScroll: 'none',
+                anchor: { kind: 'view', ref: anchorRef } } });
         expect(mounted.screen.findHostByTestId('workflow-run-inputs-run')).not.toBeNull();
     });
 
