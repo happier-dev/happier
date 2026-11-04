@@ -63,6 +63,12 @@ export const SavedSecretCreateEditor = React.memo(function SavedSecretCreateEdit
     onDirtyChange?: (dirty: boolean) => void;
     /** The newly created resource's canonical reference. */
     onCreated: (ref: string, storage: SecretStorage) => void | Promise<void>;
+    /** The name a new secret gets unless the person types another (a Connect sheet's "DeepSeek key"). */
+    initialName?: string;
+    /** The primary's words where the sheet names what it saves ("Save key"); "Save secret" by default. */
+    submitLabel?: string;
+    /** `sheet`: the Connect sheet's card supplies the gutter, so the form adds none of its own. */
+    presentation?: 'sheet';
 }>) {
     const { theme } = useUnistyles();
     const sharedAvailable = props.scope !== null && props.sharedAvailable !== false;
@@ -75,6 +81,9 @@ export const SavedSecretCreateEditor = React.memo(function SavedSecretCreateEdit
     // Linked secrets are personal-only: the Machine that uses one reads it from the owner's vault.
     const storage: SecretStorage = linkedSource ? 'personal' : !personalAvailable ? 'shared' : !sharedAvailable ? 'personal' : chosenStorage;
     const [name, setName] = React.useState('');
+    // A suggested name makes Name optional: an empty field saves under the suggestion.
+    const suggestedName = props.initialName?.trim() ?? '';
+    const effectiveName = name.trim() || suggestedName;
     const [value, setValue] = React.useState('');
     const [linkAccount, setLinkAccount] = React.useState('');
     const [linkReference, setLinkReference] = React.useState('');
@@ -254,12 +263,12 @@ export const SavedSecretCreateEditor = React.memo(function SavedSecretCreateEdit
     }, [finishCreated, grants, kind, props.requestApproval, props.scope, scopeKey, value]);
 
     const submit = React.useCallback(async () => {
-        const trimmedName = name.trim();
+        const trimmedName = effectiveName;
         if ((named && !trimmedName) || !material || operationInFlight.current || props.approvalPending) return;
         if (vaultMode === 'existing') await submitLink();
         else if (storage === 'personal') await submitPersonal(trimmedName);
         else await submitShared(trimmedName);
-    }, [material, name, named, props.approvalPending, storage, submitLink, submitPersonal, submitShared, vaultMode]);
+    }, [effectiveName, material, named, props.approvalPending, storage, submitLink, submitPersonal, submitShared, vaultMode]);
 
     const busy = submitting || props.approvalPending;
     const storageTabs = React.useMemo(() => [
@@ -278,43 +287,15 @@ export const SavedSecretCreateEditor = React.memo(function SavedSecretCreateEdit
         ? itemSelection === 'all' ? t('secretsSettings.vaultLinkAll', { vault: vault.name })
             : t('secretsSettings.vaultLinkCount', { count: chosenItemCount })
         : vaultMode === 'new' && vault ? t('secretsSettings.vaultSaveTo', { vault: vault.name })
-        : t('secretsSettings.save');
+        : (props.submitLabel ?? t('secretsSettings.save'));
     const kindTabs = React.useMemo(() => SECRET_KINDS.map((candidate) => ({
         id: candidate,
         label: t(`secrets.catalog.kinds.${candidate}`),
     })), []);
 
     return (
-        <View style={styles.body} testID="saved-secret-create-editor">
+        <View style={props.presentation === 'sheet' ? styles.sheetBody : styles.body} testID="saved-secret-create-editor">
             <View style={styles.fields}>
-                {named ? <FieldItem label={t('secrets.fields.name')}>
-                    <FieldTextInput
-                        testID="saved-secret-create-name"
-                        value={name}
-                        onChangeText={setName}
-                        placeholder={t('secrets.placeholders.nameExample')}
-                        accessibilityLabel={t('secrets.fields.name')}
-                        editable={!busy}
-                        autoFocus
-                    />
-                </FieldItem> : null}
-                {sources.length > 0 ? (
-                    <FieldItem
-                        label={t('secretsSettings.originTitle')}
-                        supportingText={linkedSource
-                            ? t('secretsSettings.originLinkedDescription', { provider: linkedSource.title })
-                            : undefined}
-                    >
-                        <SegmentedTabBar
-                            labelSize="field"
-                            tabs={originTabs}
-                            activeTabId={linkedSource ? linkedSource.key : VALUE_ORIGIN}
-                            onSelectTab={setChosenOrigin}
-                            disabled={busy}
-                            testIDPrefix="saved-secret-create-origin"
-                        />
-                    </FieldItem>
-                ) : null}
                 {linkedSource && vaultMode ? (
                     <>
                         {storable ? (
@@ -391,9 +372,39 @@ export const SavedSecretCreateEditor = React.memo(function SavedSecretCreateEdit
                             editable={!busy}
                             secureTextEntry
                             monospace
+                            autoFocus
                         />
                     </FieldItem>
                 )}
+                {/* One order on every key sheet: the value, its name, then where it is kept. */}
+                {named ? <FieldItem label={t('secrets.fields.name')}
+                    supportingText={suggestedName ? t('connectedServicesSettings.keyNameOptional') : undefined}>
+                    <FieldTextInput
+                        testID="saved-secret-create-name"
+                        value={name}
+                        onChangeText={setName}
+                        placeholder={suggestedName || t('secrets.placeholders.nameExample')}
+                        accessibilityLabel={t('secrets.fields.name')}
+                        editable={!busy}
+                    />
+                </FieldItem> : null}
+                {sources.length > 0 ? (
+                    <FieldItem
+                        label={t('secretsSettings.originTitle')}
+                        supportingText={linkedSource
+                            ? t('secretsSettings.originLinkedDescription', { provider: linkedSource.title })
+                            : undefined}
+                    >
+                        <SegmentedTabBar
+                            labelSize="field"
+                            tabs={originTabs}
+                            activeTabId={linkedSource ? linkedSource.key : VALUE_ORIGIN}
+                            onSelectTab={setChosenOrigin}
+                            disabled={busy}
+                            testIDPrefix="saved-secret-create-origin"
+                        />
+                    </FieldItem>
+                ) : null}
                 {personalAvailable && sharedAvailable && !linkedSource ? (
                     <FieldItem
                         label={t('secretsSettings.keepTitle')}
@@ -456,7 +467,7 @@ export const SavedSecretCreateEditor = React.memo(function SavedSecretCreateEdit
                     testID="saved-secret-create-submit"
                     title={submitTitle}
                     loading={busy}
-                    disabled={busy || (named && !name.trim()) || !material}
+                    disabled={busy || (named && !effectiveName) || !material}
                     onPress={() => { void submit(); }}
                 />
             </View></RoundButtonSizeScope>
@@ -467,6 +478,7 @@ export const SavedSecretCreateEditor = React.memo(function SavedSecretCreateEdit
 const styles = StyleSheet.create(() => ({
     body: { paddingHorizontal: 16, paddingTop: 4, paddingBottom: 16, gap: 14 },
     fields: { gap: 12, width: '100%' },
+    sheetBody: { gap: 14 },
     actions: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'flex-end', alignItems: 'center', gap: 8 },
     notice: { fontSize: 13, lineHeight: 18 },
 }));
