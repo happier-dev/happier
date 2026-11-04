@@ -115,6 +115,9 @@ function LegacyProfileEditFormReady({
     legacyCloneSource,
     acpCatalogSnapshot,
 }: LegacyProfileEditFormProps & Readonly<{ acpCatalogSnapshot: AcpCatalogSnapshotV1 | undefined }>) {
+    // Save the captured draft against its original row revision, as its fields
+    // also remain intact when the catalog refreshes the same Profile.
+    const initialProfile = React.useRef(profile).current;
     const { theme, rt } = useUnistyles();
     const router = useRouter();
     const routeParams = useLocalSearchParams<{
@@ -527,7 +530,7 @@ function LegacyProfileEditFormReady({
             return false;
         }
         return onSave(buildLegacyProfileSave({
-            profile,
+            profile: initialProfile,
             name,
             environmentVariables,
             envVarRequirements: derivedEnvVarRequirements,
@@ -543,6 +546,7 @@ function LegacyProfileEditFormReady({
             preserveSourceDefinition: sourcePreservingClone && bodyUnchanged,
         }), secretBindings);
     }, [
+        initialProfile,
         compatibilityByTargetKeyState,
         defaultBackendTargetKey,
         defaultPermissionModesByTargetKey,
@@ -553,7 +557,6 @@ function LegacyProfileEditFormReady({
         machineLoginRequirement.selectableTargetKey,
         name,
         onSave,
-        profile,
         readPrivateSecretBindingsForSave,
         notifySaveUnavailable,
         resolvedBackendEntries,

@@ -42,6 +42,9 @@ export type SlimProfileEditFormProps = Readonly<{
 }>;
 
 export function SlimProfileEditForm(props: SlimProfileEditFormProps) {
+    // The fields and their admitted revision share one baseline. A refreshed row
+    // cannot authorize overwriting another editor's change with this draft.
+    const initialProfile = React.useRef(props.profile).current;
     const [name, setName] = React.useState(props.profile.name);
     const { onNameChange } = props;
     React.useEffect(() => {
@@ -143,7 +146,7 @@ export function SlimProfileEditForm(props: SlimProfileEditFormProps) {
             return false;
         }
         const result = buildSlimProfileSave(
-            props.profile,
+            initialProfile,
             {
                 name,
                 description,
@@ -186,6 +189,7 @@ export function SlimProfileEditForm(props: SlimProfileEditFormProps) {
         preferredAgentTargetKey,
         preferredModelSelection,
         props,
+        initialProfile,
         reservedEnvironmentAuthorityReady,
         reservedEnvironmentVariableNames,
         skillSeeds,
