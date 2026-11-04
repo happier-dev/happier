@@ -95,6 +95,20 @@ describe('buildConnectedServicesIndexModel · who uses what', () => {
         expect(project(true).sheets.find(sheet => sheet.service.pluginId === CODEX.pluginId)?.attentionAccountId).toBe('me');
     });
 
+    it('keeps account positions while refreshed health settles without losing the attention target', () => {
+        const project = (settled: boolean) => buildConnectedServicesIndexModel({
+            transport: 'advertised-v4', entries: [entry(CODEX, 'ChatGPT')],
+            qualifiedAccounts: [account(CODEX, 'a'), { ...account(CODEX, 'b'), status: settled ? 'needs_reauth' : 'connected' }],
+            qualifiedGroups: [], legacyServices: [], defaultAccountByServiceKey: {},
+            resolveLabel: () => 'ChatGPT', resolveFallbackEntry: () => null,
+            presentDiagnostics: () => ({ primary: null, supportDetails: null }), loadingLabel: 'Loading',
+        }).sheets[0]!;
+        expect(project(false).accounts.map(account => account.accountId)).toEqual(['a', 'b']);
+        expect(project(true).accounts.map(account => account.accountId)).toEqual(['a', 'b']);
+        expect(project(true).attentionAccountId).toBe('b');
+        expect(project(true).connectedCount).toBe(1);
+    });
+
     it('names the agents that sign in with each service and splits agent accounts from code and tools', () => {
         const model = build(AGENTS);
         const claude = model.sheets.find((sheet) => sheet.service.localId === 'anthropic')!;

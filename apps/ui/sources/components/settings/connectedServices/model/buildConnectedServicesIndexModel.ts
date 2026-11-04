@@ -6,7 +6,6 @@ import type { QualifiedConnectedAccountPurposeBindingTargetV1 } from '@happier-d
 
 import { canExecuteConnectedServiceAction, type ConnectedServiceRegistryEntry } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import {
-    compareAccountHealthSeverity,
     deriveAccountHealth,
     worstAccountHealth,
     type AccountHealth,
@@ -82,7 +81,7 @@ export type ConnectedServicesIndexSheet = Readonly<{
     canOpen: boolean;
     /** Action admission from the executable projection or the released built-in legacy ingress. */
     canAdd: boolean;
-    /** Worst health first, then a stable id order. */
+    /** Stable identity order; health updates do not move the account being read. */
     accounts: readonly ConnectedServicesIndexAccount[];
     connectedCount: number;
     groupCount: number;
@@ -143,10 +142,7 @@ function isUsable(status: unknown): boolean {
 function sortAccounts(
     accounts: readonly ConnectedServicesIndexAccount[],
 ): readonly ConnectedServicesIndexAccount[] {
-    return [...accounts].sort((left, right) => {
-        const rank = compareAccountHealthSeverity(healthOf(left.status), healthOf(right.status));
-        return rank !== 0 ? rank : left.accountId.localeCompare(right.accountId);
-    });
+    return [...accounts].sort((left, right) => left.accountId.localeCompare(right.accountId));
 }
 
 /**
