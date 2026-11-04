@@ -21,6 +21,7 @@ describe.runIf(process.platform === 'linux' && userInfo().uid !== 0)('builtin Ma
     const authoredProvider = createDockerNetworkAuthoredProvider(false, true);
     const selected = builtin(withKey);
     const f = await journey('external', [], { authoredProvider, providerSelection: selected, builtinTailscale: true });
+    await f.os.installEngineProbeTools();
     const api = await createGenericDefaultFactoryJourney(f);
     // Adoption must not opportunistically change a different existing operator;
     // a managed key join must bind operator setup to the captured daemon identity.
@@ -106,6 +107,43 @@ describe.runIf(process.platform === 'linux' && userInfo().uid !== 0)('builtin Ma
       expect(f.elevation.diagnostics.flatMap(diagnostic => diagnostic.requests).every(request => request.mode === 'check')).toBe(true);
       expect(f.hostNative.calls.filter(call => call.executable === '/usr/sbin/nft').every(call =>
         call.args.join(' ') === '--version' || call.args.join(' ') === '-j list tables')).toBe(true);
+    } finally { await api.dispose(); }
+  });
+
+  it('applies an approved public SSH closure through the original Action before saving the posture', async () => {
+    const { f, api } = prepared;
+    await api.connectMachineControl();
+    try {
+      await f.hostNative.setNativeSshPort(2205);
+      const snapshot = api.client.getMachineMetadataSnapshot();
+      if (snapshot.status !== 'ready') throw new Error('The public Machine metadata is unavailable');
+      const current = MachineReachabilityPostureV1Schema.parse(snapshot.metadata.reachabilityPosture);
+      const posture = { ...current, revision: current.revision + 1,
+        management: { ...current.management, publicSsh: { kind: 'closed' as const },
+          independentRecovery: { kind: 'providerConsole' as const, evidence: 'userAttested' as const, confirmedAtMs: 1_793_610_000_000 } } };
+      f.hostNative.setOnFirewallMutation(() => {
+        expect(api.client.getMachineMetadataSnapshot()).toMatchObject({ status: 'ready',
+          metadata: { reachabilityPosture: current } });
+      });
+      const raw = await api.inspectOriginalCli({ serverId: f.home.serverIdentityId, machineId,
+        change: { kind: 'posture', posture } });
+      expect(raw.ok, JSON.stringify(raw)).toBe(true);
+      if (!raw.ok) throw new Error(raw.errorCode);
+      const review = parseReachabilityInspectResult(raw.result);
+      expect(review.plan?.basis).toMatchObject({ firewallTransition: {
+        intent: { kind: 'retainSsh', publicSsh: { kind: 'closed' } },
+      } });
+      const configured = await executeReviewedReachabilityConfigure(f, api, review);
+      expect(parseCompletedReachabilityConfigure(configured.result)).toMatchObject({ status: 'applied', posture,
+        observation: { management: { publicSsh: 'closed' } } });
+      const rules = await import('node:fs/promises').then(fs => fs.readFile('/etc/happier/firewall/rules.nft', 'utf8'));
+      expect(rules).toContain('ct state new drop');
+      expect(rules).not.toContain('tcp dport 2205 accept');
+      expect(f.hostNative.firewallStages[0]).toContain('tcp dport 2205 accept');
+      expect(f.hostNative.firewallStages.at(-1)).toBe(rules);
+      expect(f.elevation.diagnostics.flatMap(diagnostic => diagnostic.requests)).toEqual(expect.arrayContaining([
+        expect.objectContaining({ mode: 'apply' }),
+      ]));
     } finally { await api.dispose(); }
   });
 

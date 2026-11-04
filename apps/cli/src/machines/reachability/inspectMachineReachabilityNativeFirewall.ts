@@ -1,5 +1,5 @@
 import { createMachineFirewallTransitionObservationStepV1, readMachineFirewallTransitionFactsV1 } from '@happier-dev/cli-common/machineSetup';
-import type { MachineSetupEffectPlanV1, MachineFirewallTransitionFactsV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
+import type { MachineSetupEffectPlanV1, MachineFirewallTransitionFactsV1, MachineFirewallTransitionIntentV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { checkElevatedMachineSetupPlanResult, type MachineElevationDependencies } from '../adminAccess/runElevatedEffect';
 
@@ -8,8 +8,9 @@ import { checkElevatedMachineSetupPlanResult, type MachineElevationDependencies 
 export async function inspectMachineReachabilityNativeFirewall(input: Readonly<{
   machineId: string; requestId: string; signal?: AbortSignal;
   basis: MachineSetupEffectPlanV1['basis'];
+  caddy?: MachineFirewallTransitionIntentV1['caddy'];
 }>, elevation: MachineElevationDependencies): Promise<ActionExecuteFailure | Readonly<{ ok: true; facts: MachineFirewallTransitionFactsV1 }>> {
-  const step = createMachineFirewallTransitionObservationStepV1({ caddy: {} });
+  const step = createMachineFirewallTransitionObservationStepV1({ caddy: input.caddy ?? {} });
   const result = await checkElevatedMachineSetupPlanResult({ machineId: input.machineId,
     operationId: input.requestId, signal: input.signal, basis: input.basis, steps: [step] }, elevation);
   if (result.outcome !== 'checked') {

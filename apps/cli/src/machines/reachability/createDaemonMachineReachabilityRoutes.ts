@@ -25,6 +25,7 @@ import { projectMachineReachabilityObservation, readMachineReachabilityMetadata 
 import { prepareReachabilityReviewedChildrenForHost } from './reachabilityProviderHost';
 import { createProjectNativeIo } from '@/workspaces/projectSetup/projectNativeIo';
 import { createProjectNativeInvocationCustody } from '@/workspaces/projectSetup/projectSetupExecution';
+import { observeOwnDaemonReachability } from './observeOwnDaemonReachability';
 import type { OwnerRemainderPort } from '@/daemon/processes/endOwnerRemainder';
 
 type Target = Readonly<{ serverId: string; machineId: string; installationId: string; custodianAccountId: string }>;
@@ -33,7 +34,8 @@ export type DaemonMachineReachabilityRoutes = Readonly<{
   agentIsolation: HostAgentIsolationLaunchContext;
   adminAccess: Pick<DaemonMachineAdminAccessRoutes, 'observer'>;
   ownerRemainder?: OwnerRemainderPort;
-  getMachineClient(): Pick<ApiMachineClient, 'updateDaemonState' | 'resolveMachineSetupRuntime'> | null;
+  getMachineClient(): Pick<ApiMachineClient, 'updateDaemonState' | 'resolveMachineSetupRuntime'
+    | 'callConnectedClientRpc' | 'isMachineControlRegistrationReady'> | null;
 }>;
 
 /** The current daemon's existing authorities are captured on each admitted call. */
@@ -126,6 +128,7 @@ export async function executeDaemonMachineReachabilityAction(options: MetadataRo
       const layout = resolveFirstPartyInstallLayout({ componentId: 'happier-cli', channel });
       const component = getFirstPartyComponentCatalogEntry('happier-cli');
       const deps = { target, port, context, runtimeRegistry: lease.registry, isCurrent,
+        readDaemonProof: () => observeOwnDaemonReachability({ client, signal }),
         happyHomeDir: configuration.happyHomeDir, agentIsolation: options.agentIsolation,
         nativeEffects: {
           userHomeDirectory: homedir(),

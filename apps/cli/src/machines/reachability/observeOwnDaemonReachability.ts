@@ -2,7 +2,12 @@ import type { ApiMachineClient } from '@/api/apiMachine';
 import type { MachineReachabilityObservationV1 } from '@happier-dev/protocol/machines/reachability/machineReachabilityPostureV1';
 import { isMachineRequestReachabilityFailureV1 } from '@happier-dev/protocol/machines/machineReachabilityV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
-import { createRpcCallError } from '@happier-dev/protocol/rpcErrors';
+import { createRpcCallError, readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
+
+export type OwnDaemonReachabilityProof = Readonly<{
+  status: MachineReachabilityObservationV1['management']['daemon'];
+  errorCode?: string;
+}>;
 
 /** The already-admitted daemon factory captures its target/client together.
  * The ACK is an actual Home-routed call to THIS client's Machine, never
@@ -12,11 +17,16 @@ import { createRpcCallError } from '@happier-dev/protocol/rpcErrors';
 export async function observeOwnDaemonReachability(input: Readonly<{
   client: Pick<ApiMachineClient, 'callConnectedClientRpc' | 'isMachineControlRegistrationReady'>;
   signal?: AbortSignal;
-}>): Promise<MachineReachabilityObservationV1['management']['daemon']> {
-  const reply = await input.client.callConnectedClientRpc(RPC_METHODS.CAPABILITIES_DESCRIBE, {}, { signal: input.signal, timeoutMs: null });
-  const registered = input.client.isMachineControlRegistrationReady();
-  if (!registered || !reply.ok && isMachineRequestReachabilityFailureV1(createRpcCallError({
-    error: reply.error ?? 'Daemon observation failed', errorCode: reply.errorCode,
-  }))) return 'unavailable';
-  return reply.ok ? 'ready' : 'unknown';
+}>): Promise<OwnDaemonReachabilityProof> {
+  try {
+    const reply = await input.client.callConnectedClientRpc(RPC_METHODS.CAPABILITIES_DESCRIBE, {}, { signal: input.signal, timeoutMs: null });
+    const registered = input.client.isMachineControlRegistrationReady();
+    const status = !registered || !reply.ok && isMachineRequestReachabilityFailureV1(createRpcCallError({
+      error: reply.error ?? 'Daemon observation failed', errorCode: reply.errorCode,
+    })) ? 'unavailable' : reply.ok ? 'ready' : 'unknown';
+    return { status, ...(!reply.ok && reply.errorCode ? { errorCode: reply.errorCode } : {}) };
+  } catch (error) {
+    const errorCode = readRpcErrorCode(error);
+    return { status: 'unknown', ...(errorCode ? { errorCode } : {}) };
+  }
 }

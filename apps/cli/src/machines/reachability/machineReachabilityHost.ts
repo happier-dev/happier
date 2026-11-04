@@ -25,6 +25,8 @@ import type { ApiMachineClient } from '@/api/apiMachine';
 import type { HostAgentIsolationLaunchContext } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { readAgentIsolationNativeIdentity } from '@/daemon/agentIsolation/agentIsolationNativeIdentity';
 import { machineNativeEffectAdmission, MachineNativeEffectAdmissionError } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
+import { readNativeDockerEffectEngines } from '@/daemon/local/services/launch/nativeComposeEngine';
+import { observeNativeCaddyFirewallBindings } from '@happier-dev/cli-common/machineSetup';
 import { buildPluginProjectionFamilyV2 } from '@/plugins/projection/families';
 import { machineRecipesProjectionFamily } from '@/plugins/projection/registry/machineRecipes';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
@@ -55,6 +57,7 @@ export type MachineReachabilityHostDependencies = Readonly<{
   installationIdentityFile?: string;
   runNative?: (command: MachineSetupNativeCommand) => Promise<MachineSetupNativeCommandResult>;
   readNetworkInterfaces?: typeof networkInterfaces;
+  readDaemonProof?: RetainedSshTransitionInput['readDaemonProof'];
   publish(observation: MachineReachabilityObservationV1): Promise<MachineReachabilityObservationV1>;
 }>;
 
@@ -136,7 +139,9 @@ async function prepare(input: MachineReachabilityInspectInputV1, deps: MachineRe
   const nativeProfiles: NonNullable<MachineReachabilityPlanBasisV1['nativeProfiles']> = [];
   if (change?.kind === 'posture') {
     if (change.posture.defaultServiceIngress.kind !== 'none'
-      || state.posture && !sameStrictJsonValue(change.posture.management, state.posture.management))
+      || state.posture && change.posture.management.publicSsh.kind === 'open'
+        && !sameStrictJsonValue(change.posture.management.publicSsh, state.posture.management.publicSsh)
+      || state.posture && !sameStrictJsonValue(change.posture.management.providers, state.posture.management.providers))
       return refuse('machine_reachability_closure_unsupported');
     if (state.posture ? change.posture.revision !== state.posture.revision + 1
       && !sameStrictJsonValue(change.posture, state.posture) : change.posture.revision !== 0) return refuse('plan_changed');
@@ -258,14 +263,31 @@ async function prepare(input: MachineReachabilityInspectInputV1, deps: MachineRe
   // A first posture has no saved policy to review against. Bind its native
   // facts in the plan, and rebuild them at configure before the metadata CAS.
   let nativeFirewall: MachineReachabilityPlanBasisV1['nativeFirewall'];
+  let firewallTransition: MachineReachabilityPlanBasisV1['firewallTransition'];
+  const sshChanged = change?.kind === 'posture' && !!state.posture
+    && !sameStrictJsonValue(change.posture.management.publicSsh, state.posture.management.publicSsh);
+  const reviewFirewall = change?.kind === 'posture' && (sshChanged || change.posture.management.publicSsh.kind === 'closed');
   if (actionId === 'machines.reachability.inspect' && (!change || change.kind === 'posture')
-    || change?.kind === 'posture' && !state.posture) {
+    || change?.kind === 'posture' && (!state.posture || reviewFirewall)) {
     const requestId = deps.context.actionRequestId;
     if (!requestId) return refuse('admission_unavailable');
     const setup = await getMachineSetupDesiredV1(deps.port);
     if (setup.status !== 'ready') return refuse(`machine_setup_content_${setup.status}`);
+    let bindings: NonNullable<MachineReachabilityPlanBasisV1['firewallTransition']>['intent']['caddy'] = {};
+    let dockerEngineIds: string[] = [];
+    if (reviewFirewall) {
+      const observed = await observeNativeCaddyFirewallBindings({ privateNetworks: observation.privateNetworks },
+        { run: deps.runNative, signal: deps.context.signal });
+      if (observed.status !== 'ready') return refuse(observed.reason, observed.details);
+      bindings = observed.bindings;
+      dockerEngineIds = [...await readNativeDockerEffectEngines({ io: deps.nativeEffects.environmentIo,
+        command: 'docker', prefix: [], cwd: deps.nativeEffects.userHomeDirectory,
+        env: Object.fromEntries(Object.entries(deps.nativeEffects.hostEnvironment ?? process.env)
+          .filter((entry): entry is [string, string] => typeof entry[1] === 'string')), signal: deps.context.signal })].sort();
+    }
     const native = await inspectMachineReachabilityNativeFirewall({ machineId: deps.target.machineId, requestId,
-      signal: deps.context.signal, basis: { kind: 'setup', machineId: deps.target.machineId, desiredRevision: setup.policy.revision } },
+      signal: deps.context.signal, caddy: bindings,
+      basis: { kind: 'setup', machineId: deps.target.machineId, desiredRevision: setup.policy.revision } },
     { ...deps.elevation, verifyCurrent: deps.isCurrent });
     if (!native.ok) return native;
     const facts = native.facts;
@@ -273,15 +295,20 @@ async function prepare(input: MachineReachabilityInspectInputV1, deps: MachineRe
       facts.externalInterfaces.includes(endpoint.interfaceName) && endpoint.sourceCidrs.length > 0) ? 'open' : 'closed';
     observation = { ...observation, nativeFirewall: facts,
       management: { ...observation.management, publicSsh } };
-    if (change?.kind === 'posture' && !state.posture) {
+    if (change?.kind === 'posture' && (!state.posture || reviewFirewall)) {
       if (facts.status === 'unavailable') return refuse('required_fact_unavailable');
-      nativeFirewall = facts;
+      const needsTransition = sshChanged || change.posture.management.publicSsh.kind === 'closed'
+        && facts.retainedSshEndpoints.some(endpoint => endpoint.sourceCidrs.length > 0);
+      if (!state.posture || needsTransition) nativeFirewall = facts;
+      if (needsTransition) firewallTransition = { setupRevision: setup.policy.revision, dockerEngineIds,
+        intent: { v: 1, kind: 'retainSsh', caddy: bindings, publicSsh: change.posture.management.publicSsh } };
     }
   }
   const basis: MachineReachabilityPlanBasisV1 | undefined = change ? { machineId: deps.target.machineId,
     installationId: deps.target.installationId, currentPostureRevision: state.posture?.revision ?? null,
     currentSelections: state.selections, change, occurrences, recipePlans,
     ...(nativeFirewall ? { nativeFirewall } : {}),
+    ...(firewallTransition ? { firewallTransition } : {}),
     ...(nativeProfiles.length ? { nativeProfiles } : {}),
     ...(credentialFileReview ? { credentialFileReview } : {}) } : undefined;
   const plan = basis ? MachineReachabilityPlanV1Schema.parse({ basis, reviewedPlanDigest: reviewedPlanDigest(basis) }) : undefined;
@@ -310,8 +337,9 @@ export async function executeMachineReachabilityTransition(input: MachineReachab
       errorCode: 'plan_changed', error: 'plan_changed', effectAttempted: false };
   const operationId = deps.context.operationAcceptance?.operationId;
   if (!operationId || deps.context.operationAcceptance?.actionId !== 'machines.reachability.configure') return refuse('operation_unavailable');
-  const readKeys = () => resolveMachineSetupNativeEffectKeys({ ...deps.nativeEffects,
-    plans: plan.basis.recipePlans.map(entry => entry.plan), signal: deps.context.signal });
+  const readKeys = async () => [...await resolveMachineSetupNativeEffectKeys({ ...deps.nativeEffects,
+    plans: plan.basis.recipePlans.map(entry => entry.plan), signal: deps.context.signal }),
+    ...(plan.basis.firewallTransition?.dockerEngineIds ?? []).map(dockerEndpoint => ({ kind: 'dockerEngine' as const, dockerEndpoint }))];
   try {
   const keys = await readKeys();
   return await machineNativeEffectAdmission.run({ operation: { operationId, kind: 'machines.reachability.configure', signal: deps.context.signal }, keys,
@@ -351,6 +379,7 @@ export async function executeMachineReachabilityTransition(input: MachineReachab
       return refuse(result.status === 'conflict' ? 'plan_changed' : 'machine_metadata_unavailable');
     };
     let status: 'applied' | 'unchanged' | 'outcome_unknown' = 'applied';
+    let verifiedPublicSsh: 'closed' | undefined;
     let failureCode: string | undefined;
     let knownFailure: ActionExecuteFailure | undefined;
     let anyNativeEffectPossible = false;
@@ -375,8 +404,40 @@ export async function executeMachineReachabilityTransition(input: MachineReachab
     try {
       if (!await current()) return refuse('plan_changed');
       if (input.change.kind === 'posture') {
-        const written = await write(input.change);
-        status = written === 'unchanged' || written === 'satisfied' ? 'unchanged' : 'applied';
+        const transition = plan.basis.firewallTransition;
+        if (transition) {
+          if (!deps.readDaemonProof) return refuse('machine_unavailable');
+          const daemon = await deps.readDaemonProof();
+          if (daemon.status !== 'ready') return refuse('required_fact_unavailable', {
+            failure: { kind: 'daemon_reachability_unavailable', reason: 'required_fact_unavailable',
+              requiredFact: 'homeRoutedDaemonAck', ...(daemon.errorCode ? { errorCode: daemon.errorCode } : {}) },
+            remedy: 'Restore this Machine’s daemon RPC route through Home before changing public SSH access.',
+          });
+          const transitioned = await executeRetainedSshTransition({ machineId: deps.target.machineId,
+            installationId: deps.target.installationId, operationId, native, port: deps.port, field: reachabilityPostureField,
+            expectedMetadataVersion: currentState.metadataVersion, current: currentState.posture, desired: input.change.posture,
+            basis: { kind: 'setup', machineId: deps.target.machineId, desiredRevision: transition.setupRevision },
+            firewallIntent: transition.intent, elevation: deps.elevation, readDaemonProof: deps.readDaemonProof,
+            signal: deps.context.signal });
+          currentState = { ...currentState, metadataVersion: transitioned.metadataVersion, posture: transitioned.posture };
+          anyNativeEffectPossible = transitioned.effectAttempted;
+          if (transitioned.status !== 'applied' && transitioned.status !== 'unchanged') {
+            const code = transitioned.errorCode ?? transitioned.status;
+            return { ok: false as const, errorCode: code, error: code, effectAttempted: transitioned.effectAttempted,
+              details: { status: transitioned.status,
+                ...(transitioned.failure ? { failure: transitioned.failure } : {}),
+                ...(transitioned.recovery ? { recovery: transitioned.recovery } : {}),
+                ...(transitioned.restoration ? { restoration: transitioned.restoration } : {}),
+                remedy: transitioned.failure?.requiredFact
+                  ? `Required fact ${transitioned.failure.requiredFact} is unavailable. Restore that native observation or the Machine’s daemon RPC route through Home, and inspect the returned restoration before changing public SSH access again.`
+                  : 'Public SSH access is unconfirmed. The firewall change may still be installed. Inspect this Machine’s firewall and any returned restoration or recovery instructions before reviewing another public SSH change.' } };
+          }
+          status = transitioned.status;
+          if (transition.intent.publicSsh.kind === 'closed') verifiedPublicSsh = 'closed';
+        } else {
+          const written = await write(input.change);
+          status = written === 'unchanged' || written === 'satisfied' ? 'unchanged' : 'applied';
+        }
       } else {
         const change = input.change;
         const membershipEntry = prepared.membershipEntry;
@@ -574,7 +635,8 @@ export async function executeMachineReachabilityTransition(input: MachineReachab
       if (!metadataOutcomeUnknown && cleanupConfirmed && definiteRefusal
         && (anyNativeEffectPossible || await restorePriorSelection())) {
         knownFailure = { ok: false, errorCode: failureCode, error: failureCode, effectAttempted: anyNativeEffectPossible,
-          ...(setupApplied ? { details: { setupOutcome: 'applied' } } : {}) };
+          ...(setupApplied ? { details: { setupOutcome: 'applied' } }
+            : error && typeof error === 'object' && 'details' in error ? { details: error.details } : {}) };
       } else {
         status = 'outcome_unknown';
         if (!cleanupConfirmed || selectionRecordWritten && !anyNativeEffectPossible || metadataOutcomeUnknown) failureCode = 'recoveryRequired';
@@ -597,7 +659,8 @@ export async function executeMachineReachabilityTransition(input: MachineReachab
       };
     });
     let observation: MachineReachabilityObservationV1;
-    try { observation = await deps.publish(observed); }
+    try { observation = await deps.publish(verifiedPublicSsh
+      ? { ...observed, management: { ...observed.management, publicSsh: verifiedPublicSsh } } : observed); }
     catch {
       // Publication is not native outcome authority. Keep an already known
       // refusal or uncertainty, and never discard confirmed setup evidence.

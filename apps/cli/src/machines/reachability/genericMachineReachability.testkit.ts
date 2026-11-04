@@ -1097,6 +1097,10 @@ export function createGenericHostNativeBoundary(params: Readonly<{
   const engineId = 'fixture-observed-engine';
   let nativeSshPort: number | null | undefined;
   let socketActivatedSsh = false;
+  let firewallTable: string | undefined;
+  let firewallActive = false, firewallEnabled = false;
+  const firewallStages: string[] = [];
+  let onFirewallMutation: (() => void | Promise<void>) | undefined;
   const externalInterface = Object.entries(networkInterfaces()).find(([, entries]) => entries?.some(entry => !entry.internal))?.[0];
   const ok = (stdout = '') => ({ code: 0, stdout, stderr: '' });
   const runNative = async (command: MachineSetupNativeCommand): Promise<MachineSetupNativeCommandResult> => {
@@ -1105,8 +1109,18 @@ export function createGenericHostNativeBoundary(params: Readonly<{
     if (nativeSshPort !== undefined) {
       if (command.executable === '/usr/sbin/nft') {
         if (args.join(' ') === '--version') return ok('nftables v1.0.0');
-        expect(args).toEqual(['-j', 'list', 'tables']);
-        return ok(JSON.stringify({ nftables: [] }));
+        if (args.includes('-c')) return ok();
+        if (args.includes('tables')) return ok(JSON.stringify({ nftables: firewallTable
+          ? [{ table: { family: 'inet', name: 'happier' } }] : [] }));
+        if (args.includes('list')) return { code: firewallTable ? 0 : 1, stdout: firewallTable ?? '', stderr: '' };
+        if (args.includes('-f')) {
+          firewallTable = await readFile(args[args.indexOf('-f') + 1]!, 'utf8');
+          firewallStages.push(firewallTable);
+          await onFirewallMutation?.();
+          return ok();
+        }
+        if (args[0] === 'delete') { firewallTable = undefined; return ok(); }
+        throw new Error('Unexpected nft OS boundary command');
       }
       if (command.executable === 'ip') {
         expect(args).toEqual(['-j', expect.stringMatching(/^-([46])$/u), 'route', 'show', 'default']);
@@ -1199,6 +1213,15 @@ export function createGenericHostNativeBoundary(params: Readonly<{
       return { code: names.every(name => installed.has(name)) ? 0 : 1, stdout: rows, stderr: '' };
     }
     if (command.executable === 'systemctl' || command.executable === '/usr/bin/systemctl') {
+      if (args.includes('happier-firewall.service')) {
+        if (args[0] === 'show') return ok(`LoadState=${existsSync('/etc/systemd/system/happier-firewall.service') ? 'loaded' : 'not-found'}\nUnitFileState=${firewallEnabled ? 'enabled' : 'disabled'}\nActiveState=${firewallActive ? 'active' : 'inactive'}\n`);
+        if (args[0] === 'enable') firewallEnabled = true;
+        else if (args[0] === 'disable') firewallEnabled = false;
+        else if (args[0] === 'start') firewallActive = true;
+        else if (args[0] === 'stop') firewallActive = false;
+        else throw new Error('Unexpected firewall service OS boundary command');
+        return ok();
+      }
       if (args[0] === '--system') {
         expect(args).toEqual(['--system', 'show', '--property=ActiveState', '--property=MainPID', '--', 'docker.service']);
         return ok('ActiveState=active\nMainPID=42\n');
@@ -1223,7 +1246,8 @@ export function createGenericHostNativeBoundary(params: Readonly<{
     }
     throw new Error(`Unexpected P20 native process ${command.executable}`);
   };
-  return { calls, runNative, installed, engineId, dockerUnitMutations,
+  return { calls, runNative, installed, engineId, dockerUnitMutations, firewallStages,
+    setOnFirewallMutation(callback: () => void | Promise<void>) { onFirewallMutation = callback; },
     async setNativeSshPort(port: number | null, socketActivated = false) {
       if (!externalInterface) throw new Error('The OS fixture requires an external interface');
       await mkdir('/usr/sbin', { recursive: true, mode: 0o755 });
@@ -1489,6 +1513,7 @@ export async function createGenericDefaultFactoryJourney(fixture: Awaited<Return
   const lifetime = new AbortController();
   let receivingRpc: RpcHandlerManager | undefined;
   let receivingSocket: ReturnType<typeof createApiSessionSocketStub> | undefined;
+  let machineTransportConnected = false;
   type RelayCancellation = { targetRequestId: string; cancelled: boolean; dispatched: boolean };
   let originalConfigureRequestId: string | undefined;
   type RelayPhase = 'credential_read' | 'security_read' | 'receiver';
@@ -1526,6 +1551,12 @@ export async function createGenericDefaultFactoryJourney(fixture: Awaited<Return
   const originalCreateSocket = syncClient.createHappierSocket;
   const homeSockets = vi.spyOn(syncClient, 'createHappierSocket').mockImplementation(params => {
     if (params.endpoint !== fixture.accountRuntime.serverHttpBaseUrl) return originalCreateSocket(params);
+    if (params.clientType === 'machine-scoped' && receivingSocket) {
+      machineTransportConnected = true;
+      const transportSocket = receivingSocket as unknown as ReturnType<typeof originalCreateSocket>['socket'];
+      return { socket: transportSocket, transport: syncClient.createSocketTransportAdapter(transportSocket,
+        { connectTimeoutMs: params.connectTimeoutMs }) };
+    }
     // Home correlations belong to each authenticated calling socket. Different
     // callers may use the same local id without sharing cancellation authority.
     const activeCancellations = new Map<string, RelayCancellation>();
@@ -1688,7 +1719,12 @@ export async function createGenericDefaultFactoryJourney(fixture: Awaited<Return
     const statePublicationRejections: Readonly<{ nativeMutations: number; keyPresent: boolean; setupInstalled: boolean }>[] = [];
     client = runWithServerHttpBaseUrl(fixture.accountRuntime.serverHttpBaseUrl,
       () => new ApiMachineClient(daemonCredentials.token, machine, { runtimeId }));
-    const socket = createApiSessionSocketStub({ connected: true, emitWithAck: async (event, raw) => {
+    const socket = createApiSessionSocketStub({ connected: true,
+      emit(event, args, transport) {
+        if (machineTransportConnected && event === SOCKET_RPC_EVENTS.REGISTER) {
+          queueMicrotask(() => transport.trigger(SOCKET_RPC_EVENTS.REGISTERED, args[0]));
+        }
+      }, emitWithAck: async (event, raw) => {
       // Socket.IO is the untyped transport boundary; preserve the exact codec's
       // emitted content and let the actual ApiMachine publisher consume its ack.
       const request = raw as Readonly<{ expectedVersion: number; metadata: string; daemonState: string }>;
@@ -1709,7 +1745,22 @@ export async function createGenericDefaultFactoryJourney(fixture: Awaited<Return
       if (event === 'machine-update-metadata') {
         metadataPublications.push(raw); return { result: 'success', version: request.expectedVersion + 1, metadata: request.metadata };
       }
-      throw new Error(`Unexpected fixture Machine socket event ${event}`);
+      if (event === SOCKET_RPC_EVENTS.CALL && raw && typeof raw === 'object'
+        && Reflect.get(raw, 'method') === `${machine.id}:${RPC_METHODS.CAPABILITIES_DESCRIBE}`) {
+        // Home's exact self-observation route returns the real installed handler's
+        // ACK, rather than substituting a proof or granting mutation authority.
+        const access = machine.access;
+        if (!access) throw new Error('The installed Machine fixture has no access context');
+        const packet = raw as SocketRpcRequestPayload;
+        const result = await receivingRpc!.handleRequest({ method: packet.method, params: packet.params,
+          requestId: packet.requestId, timeoutMs: packet.timeoutMs,
+          transportResponseEnvelopeVersion: packet.transportResponseEnvelopeVersion,
+          machineAdmission: SocketRpcMachineAdmissionContextV1Schema.parse({ actorAccountId: fixture.accountRuntime.accountId,
+            custodianAccountId: access.custodian.accountId, machineId: machine.id,
+            installationId: machine.installationId, role: access.role, encryptionMode: 'plain' }) });
+        return { ok: true, result };
+      }
+      return resolveApiSessionSocketDefaultAck(event, raw);
     } });
     Reflect.set(client, 'socket', socket);
     const installed = client;
@@ -1879,6 +1930,10 @@ export async function createGenericDefaultFactoryJourney(fixture: Awaited<Return
     };
     console.info('Generic public journey stage', { stage: 'runtime_ready', atMs: Date.now() });
     return { client: installed, machine, runtimeId, runtime, invoke,
+      async connectMachineControl() {
+        installed.connect();
+        await vi.waitFor(() => expect(installed.isMachineControlRegistrationReady()).toBe(true));
+      },
       requesterAdmission: signedHome.manageGrantee?.machineAdmission,
       signal: lifetime.signal,
       async trackCompletion<T>(work: () => Promise<T>): Promise<T> {

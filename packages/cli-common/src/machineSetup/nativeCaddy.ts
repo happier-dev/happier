@@ -8,6 +8,7 @@ import { watch } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { request } from 'node:http';
 import type { MachinePrivateNetworkObservationV1 } from '@happier-dev/protocol/plugins/contributions/accessProviders';
+import type { MachineFirewallTransitionBindingsV1 } from '@happier-dev/protocol/machines/setup/machineFirewallV1';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 
 export type NativeCaddyFirewallExposure = NonNullable<Extract<MachineRecipeStepV1, { kind: 'firewall' }>['exposures']>[number];
@@ -279,6 +280,54 @@ function publishedEndpoints(value: unknown): NativeCaddyPublishedEndpoint[] | un
     }
     return endpoints;
 }
+
+/** Review all owned publications, including stopped Caddy's configured binds.
+ * Profile requirements own exposure intent; current private-network facts own
+ * scope. No listener/admin observation can silently omit a retained permit. */
+export async function observeNativeCaddyFirewallBindings(input: ContainerInput & Readonly<{
+    privateNetworks: readonly MachinePrivateNetworkObservationV1[];
+}>, options: NativeOptions = {}): Promise<Readonly<{ status: 'ready'; bindings: MachineFirewallTransitionBindingsV1 }>
+    | Readonly<{ status: 'unavailable'; reason: 'required_fact_unavailable' | 'foreign_effect_conflict' | 'private_scope_unenforceable';
+        details?: NativeCaddyFailureDetails }>> {
+    try {
+        const container = await inspectOwnedContainer(input, nativeDocker(input, options));
+        if (container.status === 'needs_setup') return { status: 'ready', bindings: { publicBindings: [] } };
+        if (container.status !== 'observed') return container;
+        const requirements = [nativeCaddyProfile.portRequirement, ...nativeCaddyProfile.publicPortRequirements];
+        const configured = container.host.PortBindings;
+        const ports = configured === null ? {} : object(configured);
+        if (!ports || Object.keys(ports).some(key => !requirements.some(requirement => key === `${requirement.containerPort}/${requirement.protocol}`)))
+            return caddyFactUnavailable('caddyPublishedBindings');
+        const endpoints = publishedEndpoints(configured);
+        if (!endpoints) return caddyFactUnavailable('caddyPublishedBindings');
+        const exposures: NativeCaddyFirewallExposure[] = [];
+        for (const endpoint of endpoints) {
+            const requirement = requirements.find(requirement => requirement.containerPort === endpoint.containerPort)!;
+            const { id: requirementId, ...declaration } = requirement;
+            if (requirement.exposure === 'public') {
+                exposures.push({ ...declaration, ...endpoint, requirementId });
+            } else {
+                const networks = input.privateNetworks.filter(network => network.state === 'ready'
+                    && network.addresses.includes(endpoint.hostAddress));
+                if (networks.length !== 1) return { status: 'unavailable', reason: 'private_scope_unenforceable' };
+                const network = networks[0]!;
+                if (!network.networkIdentity) return { status: 'unavailable', reason: 'private_scope_unenforceable' };
+                exposures.push({ ...declaration, ...endpoint, requirementId,
+                    providerId: privateProviderId(network), networkIdentity: network.networkIdentity });
+            }
+        }
+        const bindings = createNativeCaddyBindings({ originPort: nativeCaddyProfile.portRequirement.containerPort,
+            exposures, privateNetworks: input.privateNetworks });
+        if (bindings.status !== 'ready') return bindings;
+        return { status: 'ready', bindings: { publicBindings: [...bindings.publicBindings],
+            ...(bindings.privateBinding ? { privateBinding: { ...bindings.privateBinding,
+                sourceRanges: [...bindings.privateBinding.sourceRanges] } } : {}) } };
+    } catch (error) {
+        options.signal?.throwIfAborted();
+        return caddyFactUnavailable('caddyContainer', error);
+    }
+}
+
 function listenerPort(listener: string, networks: Record<string, unknown>, endpointAddress?: string): number | undefined {
     // Caddy network addresses may have a network prefix. Only TCP HTTP
     // listeners correspond to Docker's TCP publications; Unix/UDP do not.

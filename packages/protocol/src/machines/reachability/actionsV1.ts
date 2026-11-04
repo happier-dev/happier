@@ -4,7 +4,7 @@ import { AccessProviderSelectionV1Schema } from '../../plugins/contributions/acc
 import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
 import { PluginContributionIdentityV1Schema } from '../../plugins/contributionIdentity.js';
 import { MachineSetupRecipePlanV1Schema } from '../managed/actionsV1.js';
-import { MachineFirewallTransitionFactsV1Schema } from '../setup/machineFirewallV1.js';
+import { MachineFirewallTransitionFactsV1Schema, MachineFirewallTransitionIntentV1Schema } from '../setup/machineFirewallV1.js';
 import { MachineReachabilityPostureV1Schema, MachineReachabilityObservationV1Schema } from './machineReachabilityPostureV1.js';
 import { ActionOperationIdentifierV1Schema } from '../../actions/operations/identifierV1.js';
 
@@ -35,6 +35,9 @@ export const MachineReachabilityPlanBasisV1Schema = lazyZodSchema(() => z.strict
   occurrences: z.array(z.strictObject({ provider: asProtocolZod(PluginContributionIdentityV1Schema), occurrenceId: text() })),
   recipePlans: z.array(MachineSetupRecipePlanV1Schema),
   nativeFirewall: z.optional(MachineFirewallTransitionFactsV1Schema),
+  firewallTransition: z.optional(z.strictObject({
+    intent: MachineFirewallTransitionIntentV1Schema, setupRevision: revision(), dockerEngineIds: z.array(text()),
+  })),
   nativeProfiles: z.optional(z.array(z.strictObject({
     provider: z.strictObject({ kind: z.literal('builtin'), id: text() }),
     profileId: z.nullable(text()), networkIdentity: z.nullable(text()),

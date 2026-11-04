@@ -5,7 +5,7 @@ import type { MachineMetadataFieldDefinitionV1, MachineMetadataFieldPortV1 } fro
 import type { MachineElevationDependencies } from '@/machines/adminAccess/runElevatedEffect';
 import type { MachineElevatedResultV1, MachineFirewallRecoveryV1, MachineFirewallRestorationV1 } from '@happier-dev/protocol/machines/adminAccessV1';
 import type { MachineNativeEffectContext } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
-import type { MachineReachabilityObservationV1 } from '@happier-dev/protocol/machines/reachability/machineReachabilityPostureV1';
+import type { OwnDaemonReachabilityProof } from './observeOwnDaemonReachability';
 import { mutateMachineMetadataFieldV1 } from '@happier-dev/protocol/machines/machineMetadataFieldV1';
 import { runElevatedMachineFirewallPlans } from '@/machines/adminAccess/runElevatedEffect';
 import { machineNativeEffectAdmission } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
@@ -19,7 +19,7 @@ export type RetainedSshTransitionInput = Readonly<{
   field: MachineMetadataFieldDefinitionV1<MachineReachabilityPostureV1 | null>;
   native: MachineNativeEffectContext;
   elevation: Omit<MachineElevationDependencies, 'verifyCurrent'>;
-  readDaemonProof(): Promise<MachineReachabilityObservationV1['management']['daemon']>;
+  readDaemonProof(): Promise<OwnDaemonReachabilityProof>;
   signal?: AbortSignal;
 }>;
 
@@ -28,7 +28,10 @@ type TransitionResult = Readonly<{
   /** Last confirmed field read/write, not a current-state assertion on unknown. */
   metadataVersion: number; posture: MachineReachabilityPostureV1 | null;
   effectAttempted: boolean; errorCode?: string;
-  failure?: Extract<MachineElevatedResultV1, { outcome: 'outcome_unknown' }>['failure'];
+  failure?: Extract<MachineElevatedResultV1, { outcome: 'outcome_unknown' }>['failure'] | Readonly<{
+    kind: 'daemon_reachability_unavailable'; reason: 'required_fact_unavailable'; requiredFact: 'homeRoutedDaemonAck';
+    errorCode?: string;
+  }>;
   /** Exact native capture for the existing offline recovery card, not a store. */
   recovery?: MachineFirewallRecoveryV1;
   restoration?: MachineFirewallRestorationV1;
@@ -42,7 +45,7 @@ export async function executeRetainedSshTransition(input: RetainedSshTransitionI
   let recovery: MachineFirewallRecoveryV1 | undefined, restoration: MachineFirewallRestorationV1 | undefined;
   let failure: TransitionResult['failure'];
   const alreadyDesired = input.field.equal(input.current, input.desired);
-  let failureCode = 'required_fact_unavailable';
+  let failureCode: string | undefined;
   const result = (status: TransitionResult['status'], errorCode?: string): TransitionResult => ({
     status, posture, metadataVersion, effectAttempted, ...(errorCode ? { errorCode } : {}),
     ...(recovery ? { recovery } : {}), ...(restoration ? { restoration } : {}),
@@ -68,8 +71,10 @@ export async function executeRetainedSshTransition(input: RetainedSshTransitionI
           if (cancelled()) { failureCode = 'cancelled'; return 'undo'; }
           const daemon = await input.readDaemonProof();
           if (cancelled()) { failureCode = 'cancelled'; return 'undo'; }
-          if (daemon !== 'ready') {
-            failureCode = daemon === 'unavailable' ? 'machine_unavailable' : 'required_fact_unavailable';
+          if (daemon.status !== 'ready') {
+            failureCode = daemon.status === 'unavailable' ? 'machine_unavailable' : 'required_fact_unavailable';
+            failure = { kind: 'daemon_reachability_unavailable', reason: 'required_fact_unavailable', requiredFact: 'homeRoutedDaemonAck',
+              ...(daemon.errorCode ? { errorCode: daemon.errorCode } : {}) };
             return 'undo';
           }
           if (!await stage.verifyNative()) { failureCode = 'enforcement_unknown'; return 'undo'; }
@@ -93,7 +98,7 @@ export async function executeRetainedSshTransition(input: RetainedSshTransitionI
         },
       }));
     restoration = 'restoration' in elevated ? elevated.restoration : undefined;
-    failure = 'failure' in elevated ? elevated.failure : undefined;
+    failure = ('failure' in elevated ? elevated.failure : undefined) ?? failure;
     nativeRestored = restoration?.status === 'verified';
     if (elevated.outcome === 'applied' && acknowledgedWrite) return result(alreadyDesired ? 'unchanged' : 'applied');
     if (acknowledgedWrite && nativeRestored) {
@@ -110,11 +115,14 @@ export async function executeRetainedSshTransition(input: RetainedSshTransitionI
     // Only the native owner's positive restoration can guide compensation;
     // generic failed/cancelled event statuses never establish that proof.
     if (nativeRestored) return elevated.outcome === 'outcome_unknown'
-      ? result('outcome_unknown', 'outcome_unknown') : result('rolledBack', failureCode);
-    if (elevated.outcome === 'not_applied') return result('refused', elevated.reasonCode);
+      ? result('outcome_unknown', 'outcome_unknown') : result('rolledBack', failureCode
+        ?? (elevated.outcome === 'not_applied' ? elevated.reasonCode : 'outcome_unknown'));
+    if (elevated.outcome === 'not_applied') return result('refused',
+      failure?.kind === 'native_check_unavailable' && failure.reason === 'required_fact_unavailable'
+        ? failure.reason : elevated.reasonCode);
     if (elevated.outcome === 'needs_attendance') return result('refused', 'needs_attendance');
     return result('outcome_unknown', 'outcome_unknown');
   } catch {
-    return result(effectAttempted ? 'outcome_unknown' : 'refused', effectAttempted ? 'outcome_unknown' : 'required_fact_unavailable');
+    return result(effectAttempted ? 'outcome_unknown' : 'refused', 'outcome_unknown');
   }
 }

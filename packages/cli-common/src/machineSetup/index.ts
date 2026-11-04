@@ -26,7 +26,7 @@ export { createMachineFirewallTransitionObservationStepV1, readMachineFirewallTr
     materializeMachineFirewallTransitionV1, type MachineFirewallTransitionFactsV1,
     type MachineFirewallTransitionMaterializationV1 } from './nativeFirewallTransition.js';
 export { nativeCaddyProfile, createNativeCaddySetupInput, createCaddyContainerSetupSteps, ensureNativeCaddyContainer, readCaddyContainerFirewallExposures, nativeCaddyImage,
-    createNativeCaddyBindings, observeNativeCaddyContainer, connectNativeCaddyNetworks, type NativeCaddyObservationResult,
+    createNativeCaddyBindings, observeNativeCaddyContainer, observeNativeCaddyFirewallBindings, connectNativeCaddyNetworks, type NativeCaddyObservationResult,
     createNativeCaddyAdminExchange, hashNativeCaddyPassword, type NativeCaddyAdminExchange,
     type NativeCaddyPublishedEndpoint, type NativeCaddyServerObservation,
     type NativeCaddySetupInput, type NativeCaddyFirewallExposure, type NativeCaddyContainerResult } from './nativeCaddy.js';

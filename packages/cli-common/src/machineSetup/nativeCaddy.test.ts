@@ -7,7 +7,7 @@ import { DeploymentDomainMachineTopologyV1Schema } from '@happier-dev/protocol/d
 import { getRelayAccessProvider } from '../relayAccess/registry.js';
 import { applyMachineSetupEffectPlan, checkMachineSetupEffectPlan } from './index.js';
 import { createMachineSetupNativeBackend, type MachineSetupNativeCommand, type MachineSetupNativeCommandResult } from './nativeBackend.js';
-import { ensureNativeCaddyContainer, nativeCaddyImage, readCaddyContainerFirewallExposures, observeNativeCaddyContainer, createNativeCaddyBindings, connectNativeCaddyNetworks, hashNativeCaddyPassword, createCaddyContainerSetupSteps, type NativeCaddySetupInput } from './nativeCaddy.js';
+import { ensureNativeCaddyContainer, nativeCaddyImage, nativeCaddyProfile, readCaddyContainerFirewallExposures, observeNativeCaddyContainer, observeNativeCaddyFirewallBindings, createNativeCaddyBindings, connectNativeCaddyNetworks, hashNativeCaddyPassword, createCaddyContainerSetupSteps, type NativeCaddySetupInput } from './nativeCaddy.js';
 
 const roots: string[] = [];
 const servers: Server[] = [];
@@ -382,6 +382,90 @@ it('assembles bindings from exact admitted exposures and the selected observed p
         .toEqual({ status: 'ready', privateBinding: f.input.privateBinding, publicBindings: [publicBinding] });
     expect(createNativeCaddyBindings({ originPort: f.input.originPort, exposures: [exposure], privateNetworks: [{ ...network, networkIdentity: 'other' }] }))
         .toEqual({ status: 'unavailable', reason: 'private_scope_unenforceable' });
+});
+
+function existingCaddyBindingsFixture() {
+    const network = { provider: { kind: 'builtin' as const, id: 'tailscale' }, networkIdentity: 'tailnet-a', displayName: null,
+        dnsName: null, addresses: ['100.70.80.90'], interfaceName: 'tailscale0', sourceRanges: ['100.64.0.0/10'], magicDnsEnabled: null, state: 'ready' as const };
+    const ports: Record<string, Array<{ HostIp: string; HostPort: string }>> = {
+        '80/tcp': [{ HostIp: '0.0.0.0', HostPort: '80' }],
+        '443/tcp': [{ HostIp: '0.0.0.0', HostPort: '443' }, { HostIp: '::', HostPort: '443' }],
+        '8080/tcp': [{ HostIp: network.addresses[0]!, HostPort: '18080' }],
+    };
+    // Docker is the boundary. Configured publications remain present while
+    // stopped, when NetworkSettings.Ports and Caddy's admin API are absent.
+    const container = { Id: 'owned-caddy-id', Name: '/happier-caddy',
+        Config: { Image: nativeCaddyImage, Cmd: ['caddy', 'run', '--resume', '--config', '/etc/caddy/happier.json'],
+            Labels: { 'dev.happier.machine-setup.recipe': 'caddy@1' } },
+        HostConfig: { RestartPolicy: { Name: 'unless-stopped' }, Mounts: [], Binds: null, PortBindings: ports },
+        State: { Running: false }, NetworkSettings: { Networks: {}, Ports: null } };
+    const commands: MachineSetupNativeCommand[] = [];
+    const run = async (command: MachineSetupNativeCommand) => {
+        commands.push(command);
+        const args = command.args.slice(2);
+        expect(command.executable).toBe('docker');
+        expect(command.args.slice(0, 2)).toEqual(['--host', 'unix:///selected-docker.sock']);
+        if (args[0] === 'container' && args[1] === 'ls') return ok(JSON.stringify(container.Id));
+        if (args[0] === 'container' && args[1] === 'inspect') return ok(JSON.stringify([container]));
+        throw new Error('Binding observation must not mutate Docker');
+    };
+    return { network, container, commands, run, input: { dockerHost: 'unix:///selected-docker.sock', privateNetworks: [network] } };
+}
+
+it.each([false, true])('reviews every configured Caddy permit without requiring live admin or listeners (running=%s)', async running => {
+    const f = existingCaddyBindingsFixture();
+    f.container.State.Running = running;
+    const result = await observeNativeCaddyFirewallBindings(f.input, { run: f.run });
+    expect(result).toEqual({ status: 'ready', bindings: {
+        publicBindings: [
+            { requirementId: nativeCaddyProfile.publicPortRequirements[0].id, exposure: 'public', protocol: 'tcp', containerPort: 80, hostPort: 80, hostAddress: '0.0.0.0' },
+            { requirementId: nativeCaddyProfile.publicPortRequirements[1].id, exposure: 'public', protocol: 'tcp', containerPort: 443, hostPort: 443, hostAddress: '0.0.0.0' },
+            { requirementId: nativeCaddyProfile.publicPortRequirements[1].id, exposure: 'public', protocol: 'tcp', containerPort: 443, hostPort: 443, hostAddress: '::' },
+        ],
+        privateBinding: { exposure: { requirementId: nativeCaddyProfile.portRequirement.id, exposure: 'privateNetwork', protocol: 'tcp',
+            containerPort: 8080, hostPort: 18080, hostAddress: '100.70.80.90', providerId: 'tailscale', networkIdentity: 'tailnet-a' },
+            interfaceName: 'tailscale0', sourceRanges: ['100.64.0.0/10'] },
+    } });
+    // One inventory and one inspect supply the whole set, with no per-binding
+    // process or admin read and no start/retry operation.
+    expect(f.commands).toHaveLength(2);
+});
+
+it('returns empty Caddy permits only after a successful empty owned-container inventory', async () => {
+    expect(await observeNativeCaddyFirewallBindings({ privateNetworks: [] }, { run: async command => {
+        expect(command.args.slice(0, 2)).toEqual(['container', 'ls']);
+        return ok();
+    } })).toEqual({ status: 'ready', bindings: { publicBindings: [] } });
+    expect(await observeNativeCaddyFirewallBindings({ privateNetworks: [] }, { run: async () => ({ code: 1, stdout: '', stderr: 'unavailable' }) }))
+        .toMatchObject({ status: 'unavailable', reason: 'required_fact_unavailable' });
+});
+
+it('reviews public-only Caddy publications without requiring a private network', async () => {
+    const f = existingCaddyBindingsFixture();
+    delete f.container.HostConfig.PortBindings['8080/tcp'];
+    expect(await observeNativeCaddyFirewallBindings({ ...f.input, privateNetworks: [] }, { run: f.run }))
+        .toMatchObject({ status: 'ready', bindings: { publicBindings: [
+            { hostAddress: '0.0.0.0', hostPort: 80 }, { hostAddress: '0.0.0.0', hostPort: 443 }, { hostAddress: '::', hostPort: 443 },
+        ] } });
+});
+
+it.each(['missing', 'unknown', 'ambiguous', 'unscoped'] as const)('refuses %s private scope instead of dropping or broadening a configured Caddy permit', async scope => {
+    const f = existingCaddyBindingsFixture();
+    const privateNetworks = scope === 'missing' ? [] : scope === 'unknown' ? [{ ...f.network, state: 'unknown' as const }]
+        : scope === 'ambiguous' ? [f.network, { ...f.network, networkIdentity: 'tailnet-b' }]
+            : [{ ...f.network, sourceRanges: [] }];
+    expect(await observeNativeCaddyFirewallBindings({ ...f.input, privateNetworks }, { run: f.run }))
+        .toMatchObject({ status: 'unavailable', reason: 'private_scope_unenforceable' });
+});
+
+it.each(['foreign', 'unknownPublication', 'malformedPublication', 'missingPublications'] as const)('refuses %s Caddy configuration without claiming an empty permit set', async failure => {
+    const f = existingCaddyBindingsFixture();
+    if (failure === 'foreign') f.container.Config.Image = 'foreign-image';
+    if (failure === 'unknownPublication') f.container.HostConfig.PortBindings['9000/udp'] = [{ HostIp: '0.0.0.0', HostPort: '9000' }];
+    if (failure === 'malformedPublication') f.container.HostConfig.PortBindings['443/tcp'] = [{ HostIp: 'invalid', HostPort: '443' }];
+    if (failure === 'missingPublications') Reflect.deleteProperty(f.container.HostConfig, 'PortBindings');
+    expect(await observeNativeCaddyFirewallBindings(f.input, { run: f.run })).toMatchObject({ status: 'unavailable',
+        reason: failure === 'foreign' ? 'foreign_effect_conflict' : 'required_fact_unavailable' });
 });
 
 it.skipIf(process.platform === 'win32')('does not project a Docker-published port through a loopback-only Caddy listener', async () => {
