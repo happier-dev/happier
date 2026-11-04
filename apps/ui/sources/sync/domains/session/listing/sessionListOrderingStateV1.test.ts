@@ -5,6 +5,7 @@ import type { SessionListViewItem } from './sessionListViewData';
 import { sessionAddressKey } from '../sessionAddress';
 import {
     normalizeSessionListGroupOrderV1ForSource,
+    normalizeSessionListGroupOrderV1ForIndexSource,
     PINNED_GROUP_KEY_V1,
     sortSessionListViewItemsByOrderingMode,
 } from './sessionListOrderingStateV1';
@@ -153,7 +154,7 @@ describe('sessionListOrderingStateV1', () => {
         ]);
     });
 
-    it('removes missing session keys from group order when the group is present in the source', () => {
+    it('preserves unseen session keys when the ordered group is in the current window', () => {
         const g = 'server:s1:day:2026-02-17';
         const sessionKey = sessionAddressKey({ serverId: 's1', sessionId: 'a' });
         const source: SessionListViewItem[] = [
@@ -169,10 +170,10 @@ describe('sessionListOrderingStateV1', () => {
             },
         });
 
-        expect(normalized).toEqual({ [g]: [sessionKey] });
+        expect(normalized).toEqual({ [g]: [sessionKey, sessionAddressKey({ serverId: 's1', sessionId: 'missing' })] });
     });
 
-    it('preserves folder keys that are direct children of the ordered group', () => {
+    it('preserves saved folder keys even when the current window omits their rows', () => {
         const rootFolderGroupKey = 'folder:s1:workspaceScope:s1:m1:/repo:root';
         const planningFolderGroupKey = 'folder:s1:workspaceScope:s1:m1:/repo:planning';
         const rootSessionKey = sessionAddressKey({ serverId: 's1', sessionId: 'root' });
@@ -199,7 +200,7 @@ describe('sessionListOrderingStateV1', () => {
         });
 
         expect(normalized).toEqual({
-            [rootFolderGroupKey]: [rootSessionKey, folderOrderKey('planning')],
+            [rootFolderGroupKey]: [rootSessionKey, folderOrderKey('planning'), folderOrderKey('missing')],
         });
     });
 
@@ -279,7 +280,32 @@ describe('sessionListOrderingStateV1', () => {
         });
 
         expect(first).toBe(second);
-        expect(first).toEqual({ [g]: [bKey, aKey] });
+        expect(first).toEqual({ [g]: [bKey, aKey, sessionAddressKey({ serverId: 's1', sessionId: 'missing' })] });
+    });
+
+    it.each(['source', 'index'] as const)('preserves unseen ordinary rows, empty scopes and identity through %s normalization', (kind) => {
+        const g = 'visible-group';
+        const visible = sessionAddressKey({ serverId: 's1', sessionId: 'visible' });
+        const unseen = sessionAddressKey({ serverId: 's1', sessionId: 'unseen' });
+        const offWindow = sessionAddressKey({ serverId: 's1', sessionId: 'off-window' });
+        const order = { [g]: [unseen, visible], 'off-window-group': [offWindow], 'empty-group': [] };
+        const pinnedSessionKeysV1: string[] = [];
+        const normalize = (sessionListGroupOrderV1: Record<string, string[]>) => kind === 'source'
+            ? normalizeSessionListGroupOrderV1ForSource({
+                source: [makeSessionItem({ serverId: 's1', sessionId: 'visible', groupKey: g })],
+                pinnedSessionKeysV1, sessionListGroupOrderV1,
+            })
+            : normalizeSessionListGroupOrderV1ForIndexSource({
+                source: [{ type: 'session', serverId: 's1', sessionId: 'visible', groupKey: g, groupKind: 'project' }],
+                pinnedSessionKeysV1, sessionListGroupOrderV1,
+            });
+
+        expect(normalize(order)).toBe(order);
+        const needsNormalization = { ...order, [g]: [` ${unseen} `, visible, unseen], [PINNED_GROUP_KEY_V1]: [visible] };
+        const normalized = normalize(needsNormalization);
+        expect(normalized).toEqual(order);
+        expect(normalized['off-window-group']).toBe(order['off-window-group']);
+        expect(normalize(normalized)).toBe(normalized);
     });
 
     it('reuses a shared empty map when normalization removes all group order entries', () => {
@@ -355,6 +381,26 @@ describe('sessionListOrderingStateV1', () => {
         expect(normalized[g][110]).toBe(sessionAddressKey({ serverId: 's1', sessionId: 's110' }));
     });
 
+    it('workspace normalization requires a qualified matching Home before completing Project identity', () => {
+        const serverId = 'home-a';
+        const scope = buildSessionWorkspaceOrderScopeKey(serverId);
+        const fallback = sessionProjectGroupingIdentityKey(buildSessionProjectGroupingIdentity(serverId, {
+            machineId: 'machine-a', pathKey: '/repo',
+        }));
+        const savedOrder = { [scope]: [fallback] };
+        const withoutAcceptedIdentity = normalizeSessionWorkspaceOrderV1ForSource({ source: [], sessionWorkspaceOrderV1: savedOrder });
+        const source = (workspaceServerId: string | null): SessionListIndexItem[] => [{
+            type: 'session', serverId, sessionId: 'session-a', projectKey: { serverId, projectKey: 'accepted-project' },
+            workspace: { t: 'workspaceScope', serverId: workspaceServerId, machineId: 'machine-a', rootPath: '/repo' },
+        }];
+        for (const workspaceServerId of [null, '', 'foreign-home']) {
+            expect(normalizeSessionWorkspaceOrderV1ForSource({ source: source(workspaceServerId), sessionWorkspaceOrderV1: savedOrder }))
+                .toEqual(withoutAcceptedIdentity);
+        }
+        expect(normalizeSessionWorkspaceOrderV1ForSource({ source: source(serverId), sessionWorkspaceOrderV1: savedOrder }))
+            .toEqual({ [scope]: [JSON.stringify(['project', serverId, 'accepted-project'])] });
+    });
+
     it('preserves custom workspace order beyond the former 100-item cap', () => {
         const serverId = 's1';
         const scopeKey = buildSessionWorkspaceOrderScopeKey(serverId);
@@ -379,7 +425,7 @@ describe('sessionListOrderingStateV1', () => {
         expect(normalized[scopeKey]?.[110]).toBe('/repo-110');
     });
 
-    it('reorders legacy-FNV-colliding project identities independently', () => {
+    it('keeps exact tuple identities independent during in-memory reordering', () => {
         const serverId = 'home-a';
         const identityA = sessionProjectGroupingIdentityKey(buildSessionProjectGroupingIdentity(serverId, {
             machineId: 'm29645',

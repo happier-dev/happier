@@ -12,6 +12,11 @@ import { ScheduledWorkflowSection } from '@/components/workflows/triggers/Schedu
 import { SessionListSearchChrome } from './search/SessionListSearchChrome';
 import { buildSessionListActiveFilterChips, readSessionListWorkFilterSummary } from './search/SessionListFilterControl';
 import { Icon } from '@/components/ui/icons/Icon';
+import {
+    SessionListAttentionInteractionContext,
+    useSessionListAttentionInteractionHeld,
+    useSessionListAttentionInteractionOwner,
+} from './useSessionListAttentionInteraction';
 import { HomeReachabilityGate } from '@/components/navigation/connectionStatus/HomeReachabilityGate';
 import {
     useSessionListViewFilterController,
@@ -26,6 +31,8 @@ import {
 } from './scroll/useSessionListScrollRetention';
 import { buildSessionListRetentionKey } from './scroll/sessionListRetentionKey';
 import { useVisibleSessionListPaneState, type VisibleSessionListPaneState } from '@/hooks/session/useVisibleSessionListPaneState';
+import { useSessionListLayoutChoice } from '@/hooks/session/sessionListLayoutIntent';
+import { buildSessionListCollapseContextKey } from '@/sync/domains/session/listing/sessionListCollapseState';
 import { sync } from '@/sync/sync';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { runRefreshDiagnosticAction } from '@/utils/system/userInteractionDiagnostics';
@@ -40,6 +47,7 @@ import { SessionListOrganizeBar } from './organize/SessionListOrganizeBar';
 import { SessionListStagedMoveDock, SessionListStagedMoveProvider } from './keyboardMove/SessionListStagedMoveDock';
 import { SessionListSelectionActionBarHost } from './selection/SessionListSelectionActionBar';
 import { KeyboardAwareScreen } from '@/components/ui/keyboardAvoidance/KeyboardAwareScreen';
+import { SessionSectionDraftContext, useSessionSectionDraftController } from '@/components/sessions/organization/useSessionSectionDraft';
 import {
     readRetainedSessionListPaneState,
     releaseRetainedSessionListPaneState,
@@ -48,7 +56,7 @@ import {
     setRetainedSessionListPaneReferenceCorpusActive,
 } from './sessionListPaneRetention';
 import type { SessionListViewContext } from './search/sessionListViewFilters';
-import type { SessionListFilterV1 } from '@happier-dev/protocol';
+import type { SessionListFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 import {
     registerSessionListRouteRemovalRelease,
     type SessionListRouteRemovalNavigation,
@@ -136,15 +144,17 @@ export function SessionsListViewWithFilterController(props: Readonly<{
     surfaceOwnership?: Partial<SessionListSurfaceOwnership>;
     releaseRetentionOnRouteRemoval?: boolean;
 }>) {
+    const attentionInteraction = useSessionListAttentionInteractionOwner();
     React.useEffect(() => {
         fireAndForget(preloadEnrichedMarkdownRuntime(), { tag: 'SessionsList.preloadEnrichedMarkdownRuntime' });
     }, []);
 
     const filterController = props.filterController;
     const corpusStorage = props.corpusStorage;
-    const storageKind = filterController.sourceAvailable ? filterController.filters.source : 'persisted';
+    const storageKind = filterController.sourceAvailable ? filterController.displayFilters.source : 'persisted';
     if (props.paneState) {
         return (
+            <SessionListAttentionInteractionContext.Provider value={attentionInteraction}>
             <SessionsListViewContent
                 storageKind={storageKind}
                 corpusStorage={corpusStorage}
@@ -153,10 +163,12 @@ export function SessionsListViewWithFilterController(props: Readonly<{
                 pathname={props.pathname}
                 surfaceOwnership={props.surfaceOwnership}
             />
+            </SessionListAttentionInteractionContext.Provider>
         );
     }
 
     return (
+        <SessionListAttentionInteractionContext.Provider value={attentionInteraction}>
         <SessionsListViewWithResolvedPaneState
             storageKind={storageKind}
             corpusStorage={corpusStorage}
@@ -165,6 +177,7 @@ export function SessionsListViewWithFilterController(props: Readonly<{
             surfaceOwnership={props.surfaceOwnership}
             releaseRetentionOnRouteRemoval={props.releaseRetentionOnRouteRemoval}
         />
+        </SessionListAttentionInteractionContext.Provider>
     );
 }
 
@@ -176,20 +189,28 @@ function SessionsListViewWithResolvedPaneState(props: Readonly<{
     surfaceOwnership?: Partial<SessionListSurfaceOwnership>;
     releaseRetentionOnRouteRemoval?: boolean;
 }>) {
+    const attentionInteraction = React.useContext(SessionListAttentionInteractionContext);
+    const attentionInteractionHeld = useSessionListAttentionInteractionHeld(attentionInteraction);
     const surfaceOwnership = normalizeSessionListSurfaceOwnership(props.surfaceOwnership);
     const sourceScopeKey = props.filterController.retentionScopeKey;
+    const layout = useSessionListLayoutChoice();
+    const collapseContextKey = buildSessionListCollapseContextKey(props.filterController, layout);
     const retentionIdentity = React.useMemo(() => ({
         storageKind: props.storageKind,
         pathname: props.pathname,
         sourceScopeKey,
     }), [props.pathname, props.storageKind, sourceScopeKey]);
     const paneState = useVisibleSessionListPaneState(props.storageKind, {
+        collapseContextKey,
         pathname: props.pathname,
         sessionListSurfaceDataActive: surfaceOwnership.dataActive,
+        attentionInteractionHeld: surfaceOwnership.interactive && attentionInteractionHeld,
         queryHomes: props.filterController.pagingHomes,
         emptyQuerySelectionComplete: props.filterController.emptyQuerySelectionComplete,
         corpusStorage: props.corpusStorage,
-        workFilter: props.filterController.filters,
+        workFilter: props.filterController.displayFilters,
+        spaceMembership: props.filterController.spaceMembership,
+        filterControlsRequired: props.filterController.filterControlsRequired,
     });
     React.useEffect(() => {
         if (!surfaceOwnership.dataActive) return;
@@ -308,7 +329,7 @@ function VisibleSessionsListViewContent(
 ) {
     const styles = sessionListStyles;
     const maxWidthStyle = useLayoutMaxWidthStyle();
-    const runsPresentation = props.filterController.filters.show === 'runs';
+    const runsPresentation = props.filterController.displayFilters.show === 'runs';
     const contentContainerStyle = React.useMemo(
         () => [styles.contentContainer, runsPresentation ? null : maxWidthStyle],
         [maxWidthStyle, runsPresentation, styles.contentContainer],
@@ -316,7 +337,8 @@ function VisibleSessionsListViewContent(
     const safeArea = useChromeSafeAreaInsets();
     const sourceScopeKey = props.filterController.retentionScopeKey;
     const surfaceOwnership = props.surfaceOwnership;
-    const showSessionSections = props.corpusStorage === 'active' && props.filterController.filters.show !== 'runs';
+    const showSessionSections = props.corpusStorage === 'active' && props.filterController.displayFilters.show !== 'runs';
+    const layout = useSessionListLayoutChoice();
     const surfaceDataActiveRef = React.useRef(surfaceOwnership.dataActive);
     const pageScrollDemandRef = React.useRef(false);
     surfaceDataActiveRef.current = surfaceOwnership.dataActive;
@@ -325,6 +347,15 @@ function VisibleSessionsListViewContent(
     }, [surfaceOwnership.dataActive]);
     React.useEffect(() => () => {
         surfaceDataActiveRef.current = false;
+    }, []);
+    // Expo Router (Vaul/Radix) modals on web often install document-level scroll-lock listeners
+    // that `preventDefault()` wheel/touch scroll, which breaks scrolling inside nested scroll views.
+    // Stopping propagation here keeps the event within the sessions list subtree so native scrolling works.
+    // It reads refs only, so the memoized list content keeps one handler for its lifetime.
+    const handleStopScrollEventPropagationOnWeb = React.useCallback((event: { stopPropagation?: () => void } | null | undefined) => {
+        if (Platform.OS !== 'web') return;
+        if (surfaceDataActiveRef.current) pageScrollDemandRef.current = true;
+        if (typeof event?.stopPropagation === 'function') event.stopPropagation();
     }, []);
     const [refreshingSessions, setRefreshingSessions] = React.useState(false);
     const refreshingSessionsRef = React.useRef(false);
@@ -364,13 +395,13 @@ function VisibleSessionsListViewContent(
         if (!surfaceDataActiveRef.current) return;
         const runWindow = props.paneState.workflowRunWindow;
         if (runWindow?.hasMore && !runWindow.loadingMore) runWindow.loadMore();
-        if (props.filterController.filters.show === 'runs') return;
+        if (props.filterController.displayFilters.show === 'runs') return;
         const query = props.paneState.query;
         fireAndForget(
             query?.active === true ? query.loadNext() : sync.fetchMoreSessions(),
             { tag: query?.active === true ? 'SessionsList.query.loadNext' : 'SessionsList.fetchMoreSessions' },
         );
-    }, [props.filterController.filters.show, props.paneState.query, props.paneState.workflowRunWindow]);
+    }, [props.filterController.displayFilters.show, props.paneState.query, props.paneState.workflowRunWindow]);
     const handleLoadMoreSessionsForViewport = React.useCallback(() => {
         // End callbacks also fire on mount, restoration and content changes.
         // One real scroll interaction can demand one page; programmatic scroll
@@ -390,7 +421,7 @@ function VisibleSessionsListViewContent(
             else runWindow?.retry();
             await runRefreshDiagnosticAction(
                 { action: 'pull_to_refresh', screen: 'session_list' },
-                () => props.filterController.filters.show === 'runs'
+                () => props.filterController.displayFilters.show === 'runs'
                     ? Promise.resolve()
                     : props.paneState.query?.active === true
                         ? retryFailedOperation ? props.paneState.query.retry() : props.paneState.query.refresh()
@@ -400,7 +431,7 @@ function VisibleSessionsListViewContent(
             refreshingSessionsRef.current = false;
             setRefreshingSessions(false);
         }
-    }, [props.filterController.filters.show, props.paneState.query, props.paneState.workflowRunWindow]);
+    }, [props.filterController.displayFilters.show, props.paneState.query, props.paneState.workflowRunWindow]);
     const handleRetrySessions = React.useCallback(() => handleRefreshSessions(true), [handleRefreshSessions]);
     const handleClearFilters = React.useCallback(() => {
         props.filterController.resetFilters();
@@ -456,13 +487,7 @@ function VisibleSessionsListViewContent(
             />
         );
     }, [handleRefreshSessions, refreshingSessions, surfaceOwnership.dataActive]);
-    const queryVisibleSessionCount = React.useMemo(
-        () => viewState.nodeIds.reduce(
-            (count, nodeId) => count + (nodeId.startsWith('session:') || nodeId.startsWith('workflow_run:') ? 1 : 0),
-            0,
-        ),
-        [viewState.nodeIds],
-    );
+    const queryVisibleSessionCount = viewState.visibleEntityCount;
     const queryPresentationState = React.useMemo(() => {
         const presentation = props.paneState.queryPresentation;
         if (!presentation) return undefined;
@@ -514,6 +539,7 @@ function VisibleSessionsListViewContent(
     );
 
     return (
+        <SessionSectionDraftContext.Provider value={viewState.sectionDraftController}>
         <SessionListSelectionStoreProvider store={viewState.sessionListSelectionStore}>
         <SessionListOrganizeModeProvider>
         <SessionListStagedMoveProvider handleRowKey={viewState.stagedMove.handleRowKey}>
@@ -565,21 +591,13 @@ function VisibleSessionsListViewContent(
                         viewabilityConfig={viewState.viewabilityConfig}
                         onLayout={handleTreeViewportLayout}
                         onContentSizeChange={viewState.onTreeContentSizeChange}
-                        onStopScrollEventPropagationOnWeb={(event: any) => {
-                            // Expo Router (Vaul/Radix) modals on web often install document-level scroll-lock listeners
-                            // that `preventDefault()` wheel/touch scroll, which breaks scrolling inside nested scroll views.
-                            // Stopping propagation here keeps the event within the sessions list subtree so native scrolling works.
-                            if (Platform.OS !== 'web') return;
-                            if (surfaceDataActiveRef.current) pageScrollDemandRef.current = true;
-                            if (typeof event?.stopPropagation === 'function') event.stopPropagation();
-                        }}
-                        folderFocus={viewState.folderFocus}
+                        onRegisterTreeRowBounds={viewState.onRegisterTreeRowBounds}
+                        onUnregisterTreeRowBounds={viewState.onUnregisterTreeRowBounds}
+                        onStopScrollEventPropagationOnWeb={handleStopScrollEventPropagationOnWeb}
                         showDrafts={showSessionSections}
-                        showReminders={props.filterController.filters.show !== 'runs'}
+                        showReminders={props.filterController.displayFilters.show !== 'runs'}
                         scheduledSection={scheduledSection}
-                        folderFocusRootTitle={viewState.folderFocusRootTitle}
-                        onClearFolderFocus={viewState.onClearFolderFocus}
-                        onSelectFolderBreadcrumb={viewState.onSelectFolderBreadcrumb}
+                        layout={layout}
                     />
                 </SyncPerformanceReactProfiler>
                 <SessionListDropOverlay
@@ -598,6 +616,7 @@ function VisibleSessionsListViewContent(
         </SessionListStagedMoveProvider>
         </SessionListOrganizeModeProvider>
         </SessionListSelectionStoreProvider>
+        </SessionSectionDraftContext.Provider>
     );
 }
 
@@ -609,6 +628,7 @@ const SessionListTitleChrome = React.memo(function SessionListTitleChrome(props:
     presentation: React.ComponentProps<typeof SessionListSearchChrome>['presentation'];
 }>) {
     const organize = useSessionListOrganizeMode();
-    if (organize.active) return <SessionListOrganizeBar onDone={organize.exit} />;
+    const sectionDraft = useSessionSectionDraftController();
+    if (organize.active) return <SessionListOrganizeBar onDone={organize.exit} onNewSection={sectionDraft?.openNew} />;
     return <SessionListSearchChrome {...props.searchChrome} filterSummary={props.filterSummary} filterChips={props.filterChips} presentation={props.presentation} />;
 });

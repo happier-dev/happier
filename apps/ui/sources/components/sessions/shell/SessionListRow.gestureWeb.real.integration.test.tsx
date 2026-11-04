@@ -90,6 +90,9 @@ describe('SessionListRow real web gesture', () => {
             const getRowMoveActionHandlers = useSessionListRowMoveActionHandlers({
                 openMoveSheetForTreeRow: async () => {},
                 moveTreeRowToWorkspaceRoot: () => {},
+                readSectionMoveMenuItems: () => null,
+                moveTreeRowToSection: () => {},
+                readSpaceMembershipMenu: () => null,
                 moveTreeRowByKeyboard: (rowId, _label, direction) => { writes.push({ direction, key: rowId }); },
             });
             return (
@@ -173,17 +176,17 @@ describe('SessionListRow real web gesture', () => {
             cancelCarry = () => runtime.cancel();
             const interactions = useSessionListRowInteractions({
                 folderActionsEnabled: true, isFolderActionsEnabledForServerId: () => true,
-                sessionFoldersV1: DEFAULT_SESSION_FOLDERS_V1, listItems: items,
-                currentGroupOrderMap: {}, currentWorkspaceOrderMap: {}, sessionListOrderingModeV1: 'custom',
-                sessionListSectionModeV1: 'activity', manualSessionOrderingEnabled: true,
-                setSessionListGroupOrderV1: async () => {}, setSessionWorkspaceOrderV1: async () => {}, setSessionFoldersV1: async () => {},
+                sessionSections: [], listItems: items,
+                currentGroupOrderMap: {}, currentWorkspaceOrderMap: {}, sessionListLayoutV1: 'projects',
+                manualSessionOrderingEnabled: true,
+                setSessionListGroupOrderV1: async () => {}, setSessionWorkspaceOrderV1: async () => {},
                 pinnedKeySet: new Set(), sessionTags: {}, setSessionPinForKey: () => {}, setSessionTagsForKey: () => {},
             });
             React.useEffect(() => {
                 interactions.handleTreeViewportMeasure({ measureInWindow: callback => callback(0, 0, 300, 900) });
             }, [interactions.handleTreeViewportMeasure]);
             return <>{sourceKind === 'session' ? <SessionListRow session={session} rowViewModel={createSessionItemRowViewModel({ session })}
-                serverId={scope.serverId} selected={false} isFirst isLast variant="default" compact={false}
+                serverId={scope.serverId} selected={false} variant="default" compact={false}
                 sessionKey={sessionKey} treeRowId={rowId} groupKey="group" reorderEnabled organizeMode={false}
                 onDragStart={interactions.handleDragStart} onDropResult={interactions.handleTreeDropResult}
                 onDragCancel={interactions.handleDragCancel} resolveDropResult={interactions.resolveDropResult}
@@ -322,7 +325,7 @@ describe('SessionListRow real web gesture', () => {
             <InjectedAuthProvider credentials={{ token: 'test-token' }}>
                 <SessionListRow session={session} rowViewModel={createSessionItemRowViewModel({ session })}
                     onOpened={onOpened}
-                    selected={false} isFirst isLast variant="default" compact={false}
+                    selected={false} variant="default" compact={false}
                     sessionKey="sess_pointer" treeRowId="sess_pointer" groupKey="group" reorderEnabled organizeMode={false}
                     onDragStart={onDragStart} onDropResult={onDropResult} onDragCancel={onDragCancel} resolveDropResult={resolveDropResult}
                     onTogglePinnedSessionKey={null} onSetTagsSessionKey={null} onNativeContextMenuOpenChangeSessionKey={null}

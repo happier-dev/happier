@@ -12,6 +12,7 @@ import { QualifiedConnectedAccountGroupRefSchema, QualifiedConnectedAccountServi
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { profileDefaults } from '@/sync/domains/profiles/profile';
 import { resolveConnectedServiceCollapseKey } from '@/sync/domains/connectedServices/resolveConnectedServiceCollapseKey';
+import { collapsedGroupsState, replaceCollapsedGroupKeys } from '@/sync/domains/state/disclosureUiState';
 import type { UseQualifiedConnectedAccountGroupsResult } from './useQualifiedConnectedAccountGroups';
 import { PROFILE_TRANSFER_ROUTE_V1 } from '@happier-dev/protocol/profiles/profileTransferV1';
 import { AccountSettingsV2HistoryListResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
@@ -449,7 +450,7 @@ describe('pool deletion through its shared Action owner', () => {
         home.answer(serverId, `POST ${presentationPath}`, { body: { status: 'updated', revision: 5, cursor: 5 } });
         home.answer(serverId, `POST ${acknowledgementsPath}`, { body: { status: 'updated', revision: 6, cursor: 6 } });
         const { storage } = await import('@/sync/domains/state/storage');
-        const originalLocalKeys = storage.getState().localSettings.collapsedGroupKeysV1;
+        const originalLocalKeys = collapsedGroupsState.readAll();
         const scope = { serverId, accountId };
         const targetMemberKey = resolveConnectedServiceCollapseKey({ scope, service, profileId: 'work', groupId: ref.groupId });
         const keptKeys = {
@@ -458,8 +459,7 @@ describe('pool deletion through its shared Action owner', () => {
             [resolveConnectedServiceCollapseKey({ scope: { ...scope, accountId: 'another-owner' }, service, profileId: 'work', groupId: ref.groupId })]: false,
             [resolveConnectedServiceCollapseKey({ scope, service: { pluginId: 'custom.safe-profile', localId: service.localId }, profileId: 'work', groupId: ref.groupId })]: false,
         };
-        storage.setState({ localSettings: { ...storage.getState().localSettings,
-            collapsedGroupKeysV1: { ...originalLocalKeys, ...keptKeys, [targetMemberKey]: false } } });
+        replaceCollapsedGroupKeys({ ...originalLocalKeys, ...keptKeys, [targetMemberKey]: false });
         const { useQualifiedConnectedAccountGroups } = await import('./useQualifiedConnectedAccountGroups');
         let unmount: (() => Promise<void>) | undefined;
         let pending: ReturnType<UseQualifiedConnectedAccountGroupsResult['delete']> | undefined;
@@ -495,7 +495,7 @@ describe('pool deletion through its shared Action owner', () => {
             });
             expect(rendered.getCurrent().groups).toHaveLength(1);
             expect(home.requestsFor(presentationPath).filter(record => record.input !== null)).toEqual([]);
-            expect(storage.getState().localSettings.collapsedGroupKeysV1[targetMemberKey]).toBe(false);
+            expect(collapsedGroupsState.read(targetMemberKey)).toBe(false);
             let result: Awaited<ReturnType<UseQualifiedConnectedAccountGroupsResult['delete']>> = false;
             await act(async () => { deletion.resolve(); if (pending) result = await pending; });
             if (retireAfterDelete) {
@@ -504,7 +504,7 @@ describe('pool deletion through its shared Action owner', () => {
                 expect(result).toEqual({ applied: true,
                     metadataCleanup: { status: 'cleanup-pending', reason: 'connected_metadata_cleanup_pending' } });
                 expect(home.requestsFor(presentationPath).filter(record => record.input !== null)).toEqual([]);
-                expect(storage.getState().localSettings.collapsedGroupKeysV1[targetMemberKey]).toBe(false);
+                expect(collapsedGroupsState.read(targetMemberKey)).toBe(false);
                 return;
             }
             if (consumedScreen) {
@@ -522,7 +522,7 @@ describe('pool deletion through its shared Action owner', () => {
             } else expect(result).toEqual({ applied: true, metadataCleanup: partialAcknowledgements
                 ? { status: 'cleanup-pending', reason: 'connected_metadata_cleanup_pending' } : { status: 'complete' } });
             expect(rendered.getCurrent().groups).toEqual([]);
-            expect(storage.getState().localSettings.collapsedGroupKeysV1).toEqual({ ...originalLocalKeys, ...keptKeys });
+            expect(collapsedGroupsState.readAll()).toEqual({ ...originalLocalKeys, ...keptKeys });
             expect(home.requestsFor(presentationPath).map(record => record.input)).toContainEqual({ expectedRevision: 4,
                 content: { t: 'plain', v: { v: 1, entries: [retainedAccountLabel] } } });
             if (partialAcknowledgements) {
@@ -540,7 +540,7 @@ describe('pool deletion through its shared Action owner', () => {
             await act(async () => { deletion.resolve(); await pending?.catch(() => false); });
             await unmount?.();
             controller?.dispose();
-            storage.setState({ localSettings: { ...storage.getState().localSettings, collapsedGroupKeysV1: originalLocalKeys } });
+            replaceCollapsedGroupKeys(originalLocalKeys);
             await home.reset();
         }
     }

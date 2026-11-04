@@ -1,10 +1,8 @@
-import type { SessionListScopeV1 } from '@happier-dev/protocol';
-import {
-    listSessionPresentationStatesForWorkStatusFilterV1,
-    SESSION_WORK_STATUS_FILTERS_V1,
-    type SessionWorkStatusFilterV1,
-} from '@happier-dev/protocol/sessions/awareness/presentationV1';
+import type { SessionListScopeV1 } from '@happier-dev/protocol/sessions/listing/query';
+import type { SessionWorkStatusFilterV1 } from '@happier-dev/protocol/sessions/awareness/presentationV1';
 import type { QualifiedProjectKeyV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import type { ProjectPickerOption } from '@/components/projects/useProjectPickerOptions';
+import type { QualifiedSessionSectionV1 } from '@happier-dev/protocol/sessions/organization/folders';
 import type {
     SelectionListOption,
     SelectionListSelection,
@@ -65,10 +63,10 @@ export type SessionListFilterEditorLabels = Readonly<{
     projectIsNot: string;
 }>;
 
-export type SessionListFilterProjectOption = QualifiedProjectKeyV1 & Readonly<{
-    label: string;
-    disabled?: boolean;
-}>;
+export type SessionListFilterProjectOption = ProjectPickerOption;
+
+export type SessionListFilterAgentOption = Readonly<{ agentTargetKey: string; label: string; disabled?: boolean }>;
+export type SessionListFilterSectionOption = QualifiedSessionSectionV1 & Readonly<{ label: string; disabled?: boolean }>;
 
 export function readSessionListFilterStatusLabel(
     choice: SessionWorkStatusFilterV1,
@@ -92,13 +90,7 @@ function projectKey(project: QualifiedProjectKeyV1): string {
     return buildSessionListFilterProjectOptionId(project);
 }
 
-/** A choice is selected when the filter holds every presentation state of its Work status. */
-function isStatusChoiceSelected(filters: SessionListViewFilters, choice: SessionWorkStatusFilterV1): boolean {
-    const selected = new Set(filters.statuses ?? []);
-    return listSessionPresentationStatesForWorkStatusFilterV1(choice).every((state) => selected.has(state));
-}
-
-/** Project and status describe Sessions; a Runs-only view has neither fact. */
+/** Project describes Sessions; Runs have their own canonical work Status. */
 function offersSessionFacets(filters: SessionListViewFilters, fixedShow: SessionListViewFilters['show'] | undefined): boolean {
     return (fixedShow ?? filters.show) !== 'runs';
 }
@@ -225,9 +217,6 @@ function selectedIds(
     for (const tag of filters.tagIds) {
         selected.add(buildSessionListFilterTagOptionId(tag));
     }
-    for (const choice of SESSION_WORK_STATUS_FILTERS_V1) {
-        if (isStatusChoiceSelected(filters, choice)) selected.add(`status:${choice}`);
-    }
     const excluding = (filters.projects?.include.length ?? 0) === 0 && (filters.projects?.exclude.length ?? 0) > 0;
     if (filters.projects) selected.add(excluding ? 'project-mode:exclude' : 'project-mode:include');
     for (const project of excluding ? filters.projects!.exclude : filters.projects?.include ?? []) {
@@ -320,10 +309,6 @@ export function buildSessionListFilterEditorModel(input: Readonly<{
             disabled: tag.disabled,
         }));
     const sessionFacets = offersSessionFacets(input.filters, input.fixedShow);
-    const statusOptions: SelectionListOption[] = SESSION_WORK_STATUS_FILTERS_V1.map((choice) => ({
-        id: `status:${choice}`,
-        label: readSessionListFilterStatusLabel(choice, input.labels),
-    }));
     const excludingProjects = (input.filters.projects?.include.length ?? 0) === 0
         && (input.filters.projects?.exclude.length ?? 0) > 0;
     const chosenProjects = excludingProjects ? input.filters.projects!.exclude : input.filters.projects?.include ?? [];
@@ -386,12 +371,6 @@ export function buildSessionListFilterEditorModel(input: Readonly<{
                     options: [
                         { id: 'coordinator:only', label: input.labels.onlyCoordinators, subtitle: input.labels.onlyCoordinatorsDescription },
                     ],
-                }] : []),
-                ...(sessionFacets ? [{
-                    kind: 'static' as const,
-                    id: 'status',
-                    title: input.labels.status,
-                    options: statusOptions,
                 }] : []),
                 ...(sessionFacets && projectOptions.length > 0 ? [{
                     kind: 'static' as const,
@@ -551,16 +530,6 @@ export function reduceSessionListFilterEditorSelection(
     if (optionId === 'source:all') return { ...filters, source: 'all' };
     if (optionId === 'source:persisted') return { ...filters, source: 'persisted' };
     if (optionId === 'source:direct') return { ...filters, source: 'direct' };
-    if (optionId.startsWith('status:')) {
-        const choice = SESSION_WORK_STATUS_FILTERS_V1.find((candidate) => `status:${candidate}` === optionId);
-        if (!choice) return filters;
-        const states = listSessionPresentationStatesForWorkStatusFilterV1(choice);
-        const { statuses: current = [], ...rest } = filters;
-        const next = isStatusChoiceSelected(filters, choice)
-            ? current.filter((state) => !states.includes(state))
-            : [...new Set([...current, ...states])];
-        return next.length > 0 ? { ...rest, statuses: next } : rest;
-    }
     if (optionId === 'project-mode:include' || optionId === 'project-mode:exclude') {
         if (!filters.projects) return filters;
         const chosen = [...filters.projects.include, ...filters.projects.exclude];

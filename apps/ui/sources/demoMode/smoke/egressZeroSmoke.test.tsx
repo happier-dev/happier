@@ -554,7 +554,7 @@ describe('demo mode egress-zero smoke', () => {
                             summary: { sessionsReady: true, sessionCount },
                             visibleSessionListIndex: activeIndex,
                             hasHiddenInactiveSessions: false,
-                            folderFocus: null,
+
                             folderFeatureEnabledServerIds: [],
                             showLoading: false,
                             showEmptyState: sessionCount === 0,

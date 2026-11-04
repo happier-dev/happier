@@ -9,7 +9,7 @@ import {
 } from '../../domains/machines/machineDisplayRenderable';
 import type { Settings } from '../../domains/settings/settings';
 import type { SessionListRenderableSession } from '../../domains/session/listing/sessionListRenderable';
-import { usesProjectGroupingInSessionList } from '../../domains/session/listing/resolveSessionListGroupingModes';
+import { usesProjectGroupingInSessionList } from '../../domains/session/listing/resolveSessionListGroupingMode';
 import type { SessionListIndexItem } from '../../domains/sessionList/sessionListIndex';
 import { resolveMachineSessionListIndexImpact } from './machineSessionListIndexImpact';
 import { normalizeNonEmptyString } from '@/utils/strings/normalizeNonEmptyString';
@@ -482,9 +482,7 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                         previousMachineDisplays: state.machineDisplayById ?? {},
                         nextMachineDisplays: mergedMachineDisplays,
                         usesProjectGrouping: usesProjectGroupingInSessionList({
-                            activeGroupingV1: state.settings.sessionListActiveGroupingV1,
-                            inactiveGroupingV1: state.settings.sessionListInactiveGroupingV1,
-                            sectionModeV1: state.settings.sessionListSectionModeV1,
+                            layoutV1: state.settings.sessionListLayoutV1,
                         }),
                     });
                     if (machineImpact.needsSessionListIndexRebuild) {
@@ -501,9 +499,7 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                         sessionRecords: state.sessions,
                         machines: mergedMachineDisplays,
                         machineRecords: mergedMachines,
-                        activeGroupingV1: state.settings.sessionListActiveGroupingV1,
-                        inactiveGroupingV1: state.settings.sessionListInactiveGroupingV1,
-                        sectionModeV1: state.settings.sessionListSectionModeV1,
+                        layoutV1: state.settings.sessionListLayoutV1,
                         getProjectForSession: state.getProjectForSession,
                         previousIndex: previousActiveIndex,
                     })
@@ -587,9 +583,7 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                         sessionRecords: state.sessions,
                         machines: nextMachineDisplays,
                         machineRecords: state.machines,
-                        activeGroupingV1: state.settings.sessionListActiveGroupingV1,
-                        inactiveGroupingV1: state.settings.sessionListInactiveGroupingV1,
-                        sectionModeV1: state.settings.sessionListSectionModeV1,
+                        layoutV1: state.settings.sessionListLayoutV1,
                         getProjectForSession: state.getProjectForSession,
                         previousIndex: previousActiveIndex,
                     })

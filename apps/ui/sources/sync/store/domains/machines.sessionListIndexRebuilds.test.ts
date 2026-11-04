@@ -105,8 +105,7 @@ async function seedActiveServerSessionListIndex(initialState: any) {
         sessionRecords: initialState.sessions,
         machines: initialState.machineDisplayById,
         machineRecords: initialState.machines,
-        activeGroupingV1: initialState.settings.sessionListActiveGroupingV1,
-        inactiveGroupingV1: initialState.settings.sessionListInactiveGroupingV1,
+        layoutV1: initialState.settings.sessionListLayoutV1,
         getProjectForSession: initialState.getProjectForSession,
         previousIndex: null,
     });
@@ -196,8 +195,7 @@ describe('machines domain: sessionListIndex rebuild gating', () => {
         const initialState = {
             sessions: {},
             settings: {
-                sessionListActiveGroupingV1: 'date' as const,
-                sessionListInactiveGroupingV1: 'date' as const,
+                sessionListLayoutV1: 'recent_activity' as const,
             },
             sessionListIndexByServerId: {},
             sessionListRowsByServerId: {},
@@ -277,8 +275,7 @@ describe('machines domain: sessionListIndex rebuild gating', () => {
         const initialState = {
             sessions: {},
             settings: {
-                sessionListActiveGroupingV1: 'date' as const,
-                sessionListInactiveGroupingV1: 'date' as const,
+                sessionListLayoutV1: 'recent_activity' as const,
             },
             sessionListIndexByServerId: {},
             sessionListRowsByServerId: {},
@@ -327,8 +324,7 @@ describe('machines domain: sessionListIndex rebuild gating', () => {
         const initialState = {
             sessions: {},
             settings: {
-                sessionListActiveGroupingV1: 'date' as const,
-                sessionListInactiveGroupingV1: 'date' as const,
+                sessionListLayoutV1: 'recent_activity' as const,
             },
             sessionListIndexByServerId: {},
             sessionListRowsByServerId: {},
@@ -454,8 +450,7 @@ describe('machines domain: sessionListIndex rebuild gating', () => {
         const initialState = {
             sessions: {},
             settings: {
-                sessionListActiveGroupingV1: 'date' as const,
-                sessionListInactiveGroupingV1: 'date' as const,
+                sessionListLayoutV1: 'recent_activity' as const,
             },
             sessionListIndexByServerId: {},
             sessionListRowsByServerId: {},
@@ -521,8 +516,7 @@ describe('machines domain: sessionListIndex rebuild gating', () => {
                 },
             },
             settings: {
-                sessionListActiveGroupingV1: 'project' as const,
-                sessionListInactiveGroupingV1: 'project' as const,
+                sessionListLayoutV1: 'projects' as const,
             },
             sessionListRowsByServerId: {
                 server_a: {
@@ -614,8 +608,7 @@ describe('machines domain: sessionListIndex rebuild gating', () => {
         const initialState = {
             sessions: {},
             settings: {
-                sessionListActiveGroupingV1: 'project' as const,
-                sessionListInactiveGroupingV1: 'date' as const,
+                sessionListLayoutV1: 'projects' as const,
             },
             sessionListRowsByServerId: {
                 server_a: {
@@ -689,8 +682,7 @@ describe('machines domain: sessionListIndex rebuild gating', () => {
         const initialState = {
             sessions: {},
             settings: {
-                sessionListActiveGroupingV1: 'project' as const,
-                sessionListInactiveGroupingV1: 'date' as const,
+                sessionListLayoutV1: 'projects' as const,
             },
             sessionListRowsByServerId: {
                 srv_server_a: {
@@ -770,8 +762,7 @@ describe('machines domain: sessionListIndex rebuild gating', () => {
                 },
             },
             settings: {
-                sessionListActiveGroupingV1: 'project' as const,
-                sessionListInactiveGroupingV1: 'project' as const,
+                sessionListLayoutV1: 'projects' as const,
             },
             sessionListRowsByServerId: {
                 server_a: {
@@ -863,8 +854,7 @@ describe('machines domain: sessionListIndex rebuild gating', () => {
         const initialState = {
             sessions: {},
             settings: {
-                sessionListActiveGroupingV1: 'project' as const,
-                sessionListInactiveGroupingV1: 'project' as const,
+                sessionListLayoutV1: 'projects' as const,
             },
             sessionListRowsByServerId: {
                 server_a: {
@@ -949,8 +939,7 @@ describe('machines domain: sessionListIndex rebuild gating', () => {
         const initialState = {
             sessions: {},
             settings: {
-                sessionListActiveGroupingV1: 'project' as const,
-                sessionListInactiveGroupingV1: 'project' as const,
+                sessionListLayoutV1: 'projects' as const,
             },
             sessionListRowsByServerId: {
                 server_a: {
@@ -1073,8 +1062,7 @@ describe('machines domain: sessionListIndex rebuild gating', () => {
                 },
             },
             settings: {
-                sessionListActiveGroupingV1: 'project' as const,
-                sessionListInactiveGroupingV1: 'project' as const,
+                sessionListLayoutV1: 'projects' as const,
             },
             sessionListRowsByServerId: {
                 server_a: {
@@ -1205,8 +1193,7 @@ describe('machines domain: sessionListIndex rebuild gating', () => {
         const initialState = {
             sessions: {},
             settings: {
-                sessionListActiveGroupingV1: 'date' as const,
-                sessionListInactiveGroupingV1: 'date' as const,
+                sessionListLayoutV1: 'recent_activity' as const,
             },
             sessionListIndexByServerId: {},
             sessionListRowsByServerId: {},
@@ -1280,8 +1267,7 @@ describe('machines domain: sessionListIndex rebuild gating', () => {
         const initialState = {
             sessions: {},
             settings: {
-                sessionListActiveGroupingV1: 'date' as const,
-                sessionListInactiveGroupingV1: 'date' as const,
+                sessionListLayoutV1: 'recent_activity' as const,
             },
             sessionListIndexByServerId: {},
             sessionListRowsByServerId: {},
@@ -1328,8 +1314,7 @@ describe('machines domain: sessionListIndex rebuild gating', () => {
             const initialState = {
                 sessions: {},
                 settings: {
-                    sessionListActiveGroupingV1: 'date' as const,
-                    sessionListInactiveGroupingV1: 'date' as const,
+                    sessionListLayoutV1: 'recent_activity' as const,
                 },
                 sessionListIndexByServerId: {},
                 sessionListRowsByServerId: {},

@@ -73,7 +73,7 @@ describe('Personalize mounted visit', () => {
         ['conversation', { transcriptLayout: 'linear', thinking: 'hidden' }],
         ['tools', { toolChrome: 'cards', toolDetail: 'full', toolTap: 'open' }],
         ['work', { listLayout: 'recent_activity', listDensity: 'cozy' }],
-        ['attention', { attention: 'global' }],
+        ['attention', { attention: 'top' }],
         ['notifications', { notifyNeedsYou: false, notifyFinished: false, notifyPreview: false }],
     ] satisfies readonly (readonly [PersonalizeStepId, Partial<PersonalizeChoices>])[])
     ('admits the %s choices before advancing or marking the step saved', async (step, patch) => {

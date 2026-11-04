@@ -48,6 +48,8 @@ export type SettingOperationContext = Readonly<{
     /** Device effects use the answering client's captured Settings owner, never global storage. */
     readLocalSettings?: () => LocalSettings;
     writeLocalSettings?: (delta: Partial<LocalSettings>) => void;
+    /** Alias to a control published by this client's current mounted surface. */
+    openMountedControl?: (anchor: string) => Promise<boolean>;
     services?: SettingsMutationServices;
 }>;
 export type SettingOperationResult = Readonly<{
@@ -135,14 +137,21 @@ export type SettingStorageBinding = Readonly<{
     | Readonly<{
         scope: 'local';
         kind: 'localOwner';
-        read: (local: LocalSettings) => unknown;
+        /** Compatibility state owners preserve the reset intent of their former local field. */
+        resetValue?: SettingValue;
+        /** Device state keyed to an Account cannot be discovered as usable before that authority is captured. */
+        requiresAccountScope?: true;
+        read: (local: LocalSettings, context?: Readonly<{ accountScope?: ServerAccountScope; readSettings?: () => Promise<Settings> }>) => unknown;
         parse: (value: unknown) => Readonly<{ success: true; value: SettingValue }> | Readonly<{ success: false }>;
         /**
          * Writes through the device setting's owner, which may apply more than storage (the running
          * theme and status bar) or keep sibling fields of a nested record.
          */
         commit: (local: LocalSettings, value: SettingValue, writeLocal: (delta: Partial<LocalSettings>) => void,
-            context?: Readonly<{ signal?: AbortSignal; isCurrent(): boolean; readLocalSettings?: () => LocalSettings }>) =>
+            context?: Readonly<{ signal?: AbortSignal; isCurrent(): boolean; readLocalSettings?: () => LocalSettings;
+                accountScope?: ServerAccountScope; readSettings?: () => Promise<Settings>;
+                /** Compound device owners persist their account-owned facts through the admitted CAS owner. */
+                mutateSettings?: (mutate: SettingOwnerMutation) => Promise<void> }>) =>
             void | typeof SETTING_VALUE_UNAVAILABLE | Promise<void | typeof SETTING_VALUE_UNAVAILABLE>;
     }>
 );

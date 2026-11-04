@@ -7,11 +7,6 @@
  * resolver, overlay, and commit modules import. Pure type file: no behaviour.
  *
  * `../dev` port note (Lane G):
- * - `../dev` resolves folder-sort behaviour at COMMIT time via
- *   `SessionListGroupOrderChildKind` (`applyGroupOrderUpdate.ts`), not in
- *   `resolveSessionListInstruction`. There is no `SessionListFolderSortMode`
- *   type here and the snapshot carries NO `folderSortMode`: the commit reads the
- *   live `sessionListFolderSortModeV1` instead.
  * - `../dev`'s `TreeInstruction` has no `move-to-root.placement`. Root placement
  *   is derived from the visual `edge`, so `SessionListDragIntent` carries no
  *   `rootPlacement` field.
@@ -230,6 +225,12 @@ export type SessionListDragIntent = Readonly<{
     /** Snapshot signature, for diagnostics only — never used for commit logic. */
     sourceSnapshotSignature: string;
 }>;
+
+/** Section filing is independent of whether its destination currently has visible geometry. */
+export type SessionListFolderAssignmentDestination = Readonly<{ kind: 'folder-assignment'; folderId: string | null }>;
+
+export type SessionListSpaceMembershipDestination = Readonly<{ kind: 'space-membership' }>
+    & Omit<import('@happier-dev/protocol/actions').SessionSpaceMembershipSetInputV1, 'sessionId'>;
 
 /**
  * Reason a drag commit was a no-op.

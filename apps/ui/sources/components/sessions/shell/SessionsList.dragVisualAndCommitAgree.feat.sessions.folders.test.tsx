@@ -2,20 +2,16 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { TreeDropResult, WindowBounds } from '@/components/ui/treeDragDrop';
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
-import type { SessionFolderWorkspaceRefV1, SessionFoldersV1 } from '@/sync/domains/session/folders';
+import type { SessionFolderWorkspaceRefV1 } from '@/sync/domains/session/folders';
+import type { SessionSection } from '@/sync/domains/session/organization/sections';
 
 import { applySessionListTreeDropOperation } from './commit/applySessionListTreeDropOperation';
 import { buildSessionListDragSource } from './drop-resolution/buildSessionListDragSource';
 import { buildSessionListTreeRows } from './drop-resolution/buildSessionListTreeRows';
 import { resolveSessionListInstruction } from './drop-resolution/resolveSessionListInstruction';
 import { treeRowId } from './drop-resolution/treeRowId';
-import { buildSessionListFolderOrderItemKey } from '@/sync/domains/session/listing/sessionListOrderingStateV1';
 import { sessionAddressKey } from '@/sync/domains/session/sessionAddress';
-import { buildSessionFolderGroupKey } from '@/sync/domains/session/folders/sessionListFolders';
-
-function folderOrderKey(folderId: string): string {
-    return buildSessionListFolderOrderItemKey({ serverId: 'server-a', folderId })!;
-}
+import { buildSessionSectionGroupKey } from '@/sync/domains/session/organization/sections';
 
 function sessionOrderKey(sessionId: string): string {
     return sessionAddressKey({ serverId: 'server-a', sessionId });
@@ -36,12 +32,11 @@ const workspaceB: SessionFolderWorkspaceRefV1 = {
     rootPath: '/repo/b',
 };
 const projectAGroupKey = 'project-a';
-const projectBGroupKey = 'project-b';
-const rootAGroupKey = buildSessionFolderGroupKey({ serverId: 'server-a', workspace: workspaceA, folderId: null });
-const folderAGroupKey = buildSessionFolderGroupKey({ serverId: 'server-a', workspace: workspaceA, folderId: 'folder-a' });
-const childAGroupKey = buildSessionFolderGroupKey({ serverId: 'server-a', workspace: workspaceA, folderId: 'child-a' });
-const folderBGroupKey = buildSessionFolderGroupKey({ serverId: 'server-a', workspace: workspaceA, folderId: 'folder-b' });
-const folderCGroupKey = buildSessionFolderGroupKey({ serverId: 'server-a', workspace: workspaceB, folderId: 'folder-c' });
+const rootAGroupKey = projectAGroupKey;
+const folderAGroupKey = buildSessionSectionGroupKey({ serverId: 'server-a', sectionId: 'folder-a' });
+const childAGroupKey = buildSessionSectionGroupKey({ serverId: 'server-a', sectionId: 'child-a' });
+const folderBGroupKey = buildSessionSectionGroupKey({ serverId: 'server-a', sectionId: 'folder-b' });
+const folderCGroupKey = buildSessionSectionGroupKey({ serverId: 'server-a', sectionId: 'folder-c' });
 
 function bounds(y: number): WindowBounds {
     return { x: 0, y, width: 320, height: 40 };
@@ -100,26 +95,20 @@ function sessionItem(params: Readonly<{
 function items(): SessionListIndexItem[] {
     return [
         projectHeader(projectAGroupKey, workspaceA),
+        sessionItem({ id: 'root-a', groupKey: rootAGroupKey, folderId: null, depth: 0, workspace: workspaceA }),
         folderHeader({ id: 'folder-a', groupKey: folderAGroupKey, depth: 0, workspace: workspaceA }),
         sessionItem({ id: 'inside-a', groupKey: folderAGroupKey, folderId: 'folder-a', depth: 1, workspace: workspaceA }),
-        folderHeader({ id: 'child-a', groupKey: childAGroupKey, depth: 1, workspace: workspaceA }),
+        folderHeader({ id: 'child-a', groupKey: childAGroupKey, depth: 0, workspace: workspaceA }),
         folderHeader({ id: 'folder-b', groupKey: folderBGroupKey, depth: 0, workspace: workspaceA }),
-        sessionItem({ id: 'root-a', groupKey: rootAGroupKey, folderId: null, depth: 0, workspace: workspaceA }),
-        projectHeader(projectBGroupKey, workspaceB),
         folderHeader({ id: 'folder-c', groupKey: folderCGroupKey, depth: 0, workspace: workspaceB }),
     ];
 }
 
-function folders(): SessionFoldersV1 {
-    return {
-        v: 1,
-        folders: [
-            { id: 'folder-a', workspace: workspaceA, parentId: null, name: 'A', createdAt: 1, updatedAt: 1, sortKey: '000001' },
-            { id: 'child-a', workspace: workspaceA, parentId: 'folder-a', name: 'A child', createdAt: 2, updatedAt: 2, sortKey: '000001' },
-            { id: 'folder-b', workspace: workspaceA, parentId: null, name: 'B', createdAt: 3, updatedAt: 3, sortKey: '000002' },
-            { id: 'folder-c', workspace: workspaceB, parentId: null, name: 'C', createdAt: 4, updatedAt: 4, sortKey: '000001' },
-        ],
-    };
+function sections(): readonly SessionSection[] {
+    return ['folder-a', 'child-a', 'folder-b', 'folder-c'].map((sectionId, index) => ({
+        address: { serverId: 'server-a', sectionId },
+        display: { status: 'available', value: { name: sectionId, icon: null } }, sortKey: String(index),
+    }));
 }
 
 function buildTree() {
@@ -127,13 +116,12 @@ function buildTree() {
         items: items(),
         rowBoundsById: new Map([
             [treeRowId.workspaceRoot(projectAGroupKey), bounds(0)],
-            [treeRowId.folder('server-a', 'folder-a'), bounds(40)],
-            [treeRowId.session('server-a', 'inside-a'), bounds(80)],
-            [treeRowId.folder('server-a', 'child-a'), bounds(120)],
-            [treeRowId.folder('server-a', 'folder-b'), bounds(160)],
-            [treeRowId.session('server-a', 'root-a'), bounds(200)],
-            [treeRowId.workspaceRoot(projectBGroupKey), bounds(300)],
-            [treeRowId.folder('server-a', 'folder-c'), bounds(340)],
+            [treeRowId.session('server-a', 'root-a'), bounds(40)],
+            [treeRowId.folder('server-a', 'folder-a'), bounds(160)],
+            [treeRowId.session('server-a', 'inside-a'), bounds(200)],
+            [treeRowId.folder('server-a', 'child-a'), bounds(240)],
+            [treeRowId.folder('server-a', 'folder-b'), bounds(280)],
+            [treeRowId.folder('server-a', 'folder-c'), bounds(360)],
         ]),
         dropZoneBounds: [
             {
@@ -144,12 +132,12 @@ function buildTree() {
             {
                 containerId: treeRowId.workspaceRoot(projectAGroupKey),
                 role: 'root-after-last',
-                bounds: { x: 0, y: 244, width: 320, height: 16 },
+                bounds: { x: 0, y: 84, width: 320, height: 16 },
             },
             {
                 containerId: treeRowId.folder('server-a', 'folder-b'),
                 role: 'container-body',
-                bounds: { x: 0, y: 164, width: 320, height: 24 },
+                bounds: { x: 0, y: 284, width: 320, height: 24 },
             },
         ],
     });
@@ -186,49 +174,35 @@ describe('SessionsList drag result consistency', () => {
         {
             name: 'session into sibling folder',
             sourceRowId: treeRowId.session('server-a', 'inside-a'),
-            y: 180,
+            y: 300,
             expectedAssignment: { serverId: 'server-a', sessionId: 'inside-a', folderId: 'folder-b' },
             expectedOrder: { [folderBGroupKey]: [sessionOrderKey('inside-a')] },
         },
         {
             name: 'session out to workspace root',
             sourceRowId: treeRowId.session('server-a', 'inside-a'),
-            y: 250,
+            y: 90,
             expectedAssignment: { serverId: 'server-a', sessionId: 'inside-a', folderId: null },
             expectedOrder: { [rootAGroupKey]: [sessionOrderKey('root-a'), sessionOrderKey('inside-a')] },
         },
         {
-            name: 'session out to exact mixed workspace root position',
-            sourceRowId: treeRowId.session('server-a', 'inside-a'),
-            y: 250,
-            sessionListFolderSortModeV1: 'mixed' as const,
-            expectedAssignment: { serverId: 'server-a', sessionId: 'inside-a', folderId: null },
-            expectedOrder: { [rootAGroupKey]: [folderOrderKey('folder-a'), folderOrderKey('folder-b'), sessionOrderKey('root-a'), sessionOrderKey('inside-a')] },
-        },
-        {
-            name: 'folder around root sessions',
+            name: 'Section header before another Section',
             sourceRowId: treeRowId.folder('server-a', 'folder-b'),
-            y: 204,
-            expectedOrder: { [rootAGroupKey]: [folderOrderKey('folder-b'), folderOrderKey('folder-a')] },
+            y: 162,
+            expectedSectionOrder: { serverId: 'server-a', sectionId: 'folder-b', beforeSectionId: 'folder-a' },
         },
         {
-            name: 'folder around root sessions in exact mixed position',
+            name: 'refused Section header around an ordinary Project Session',
             sourceRowId: treeRowId.folder('server-a', 'folder-b'),
-            y: 204,
-            sessionListFolderSortModeV1: 'mixed' as const,
-            expectedOrder: { [rootAGroupKey]: [folderOrderKey('folder-a'), folderOrderKey('folder-b'), sessionOrderKey('root-a')] },
-        },
-        {
-            name: 'blocked descendant folder target',
-            sourceRowId: treeRowId.folder('server-a', 'folder-a'),
-            y: 140,
+            y: 44,
             expectedBlocked: true,
         },
         {
-            name: 'blocked cross-workspace target',
+            name: 'same-Home Section across machines',
             sourceRowId: treeRowId.session('server-a', 'inside-a'),
-            y: 360,
-            expectedBlocked: true,
+            y: 380,
+            expectedAssignment: { serverId: 'server-a', sessionId: 'inside-a', folderId: 'folder-c' },
+            expectedOrder: { [folderCGroupKey]: [sessionOrderKey('inside-a')] },
         },
     ])('uses one result for $name', async (scenario) => {
         const tree = buildTree();
@@ -243,7 +217,7 @@ describe('SessionsList drag result consistency', () => {
         expectVisualToMatchInstruction(result);
 
         const setSessionFolderAssignment = vi.fn(async () => undefined);
-        const setSessionFoldersV1 = vi.fn();
+        const reorderSessionSection = vi.fn(async () => undefined);
         const setSessionListGroupOrderV1 = vi.fn();
 
         const applied = await applySessionListTreeDropOperation({
@@ -251,11 +225,10 @@ describe('SessionsList drag result consistency', () => {
             source,
             result,
             context: {
-                sessionFoldersV1: folders(),
+                sessionSections: sections(),
                 sessionListGroupOrderV1: {},
-                sessionListFolderSortModeV1: scenario.sessionListFolderSortModeV1,
-                now: () => 100,
-                setSessionFoldersV1,
+                sessionListLayoutV1: 'projects',
+                reorderSessionSection,
                 setSessionListGroupOrderV1,
                 setSessionFolderAssignment,
             },
@@ -264,7 +237,7 @@ describe('SessionsList drag result consistency', () => {
         if (scenario.expectedBlocked) {
             expect(applied.ok).toBe(false);
             expect(setSessionFolderAssignment).not.toHaveBeenCalled();
-            expect(setSessionFoldersV1).not.toHaveBeenCalled();
+            expect(reorderSessionSection).not.toHaveBeenCalled();
             expect(setSessionListGroupOrderV1).not.toHaveBeenCalled();
             return;
         }
@@ -275,6 +248,11 @@ describe('SessionsList drag result consistency', () => {
         }
         if (scenario.expectedOrder) {
             expect(setSessionListGroupOrderV1).toHaveBeenCalledWith(scenario.expectedOrder);
+        }
+        if (scenario.expectedSectionOrder) {
+            expect(reorderSessionSection).toHaveBeenCalledWith(scenario.expectedSectionOrder);
+            expect(setSessionListGroupOrderV1).not.toHaveBeenCalled();
+            expect(setSessionFolderAssignment).not.toHaveBeenCalled();
         }
     });
 });

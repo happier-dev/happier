@@ -5,10 +5,43 @@ import { SESSION_LIST_PAGE_MAX_LIMIT } from '../listing/query.js';
 import { projectSessionListFilterAfterHomeQueryV1, projectSessionListFilterHomeQueriesV1 } from './sessionListFilterQueryV1.js';
 import { canSessionListFilterIncludeRunsV1, matchSessionBotFilterV1, matchSessionProjectFilterV1, matchSessionListFilterV1, normalizeSessionListFilterV1, readSessionListStartedByV1, SessionListFilterV1Schema } from './sessionListFilterV1.js';
 import { buildBackendTargetKeyV2 } from '../../backends/targets/backendTargetRefV2.js';
+import { listSessionPresentationStatesForWorkStatusFilterV1 } from '../awareness/presentationV1.js';
 
 const CODEX_TARGET = buildBackendTargetKeyV2({ kind: 'backend', backendId: 'codex' });
 
 describe('SessionListFilterV1', () => {
+    it('applies complete existing Work choices to canonical Run presentation without rewriting raw state selections', () => {
+        const base = normalizeSessionListFilterV1({ homeServerIds: ['home'], scope: 'all_accessible' });
+        const run = { serverId: 'home', kind: 'run' as const, startedBy: 'you' as const, status: 'running' as const };
+        const working = { ...base, statuses: listSessionPresentationStatesForWorkStatusFilterV1('working') };
+        expect(matchSessionListFilterV1(working, { ...run, workStatus: { bucket: 'working', tone: 'neutral' } })).toBe('match');
+        expect(matchSessionListFilterV1(working, run)).toBe('unavailable');
+        expect(matchSessionListFilterV1({ ...base, statuses: ['thinking'] },
+            { ...run, workStatus: { bucket: 'working', tone: 'neutral' } })).toBe('miss');
+        const needsYou = listSessionPresentationStatesForWorkStatusFilterV1('needs_you');
+        expect(matchSessionListFilterV1({ ...base, statuses: needsYou },
+            { ...run, workStatus: { bucket: 'needs_you', tone: 'attention' } })).toBe('match');
+        expect(matchSessionListFilterV1({ ...base, excludedStatuses: needsYou },
+            { ...run, workStatus: { bucket: 'needs_you', tone: 'attention' } })).toBe('miss');
+        expect(matchSessionListFilterV1({ ...base, statuses: ['failed'] },
+            { ...run, status: 'dispatch_failed', workStatus: { bucket: 'finished', tone: 'neutral' } })).toBe('match');
+    });
+    it('matches canonical Session and Run presentation states without treating Status as Session-only', () => {
+        const base = normalizeSessionListFilterV1({ homeServerIds: ['home'], scope: 'all_accessible' });
+        const failing = SessionListFilterV1Schema.parse({ ...base, statuses: ['failed'] });
+        const run = { serverId: 'home', kind: 'run' as const, startedBy: 'you' as const };
+        expect(canSessionListFilterIncludeRunsV1(failing)).toBe(true);
+        expect(matchSessionListFilterV1(failing, { ...run, status: 'failed' })).toBe('match');
+        expect(matchSessionListFilterV1(failing, run)).toBe('unavailable');
+        const running = SessionListFilterV1Schema.parse({ ...base, statuses: ['running', 'stopping'] });
+        expect(matchSessionListFilterV1(running, { ...run, status: 'running' })).toBe('match');
+        expect(matchSessionListFilterV1(running, { ...run, status: 'stopping' })).toBe('match');
+        expect(matchSessionListFilterV1(running, { ...run, status: 'disconnected' })).toBe('miss');
+        const excluded = SessionListFilterV1Schema.parse({ ...base, excludedStatuses: ['failed'] });
+        expect(matchSessionListFilterV1(excluded, { ...run, status: 'failed' })).toBe('miss');
+        expect(matchSessionListFilterV1(excluded, run)).toBe('unavailable');
+        expect(SessionListFilterV1Schema.safeParse({ ...base, statuses: ['invented_state'] }).success).toBe(false);
+    });
     it('does not turn an explicit empty Home selection into a structural-query proof', () => {
         const filter = normalizeSessionListFilterV1({ homeServerIds: [], scope: 'all_accessible', startedBy: ['you'] });
         const local = projectSessionListFilterAfterHomeQueryV1(filter, 'home');
@@ -74,6 +107,20 @@ describe('SessionListFilterV1', () => {
             expect(SessionListFilterV1Schema.safeParse({ ...filter, updated }).success).toBe(false);
         }
     });
+    it('qualifies accepted Project preselection by Home while retaining canonical local evaluation for unpublished identities', () => {
+        const filter = normalizeSessionListFilterV1({ homeServerIds: ['a', 'b', 'c'], scope: 'all_accessible', projects: {
+            include: [{ serverId: 'a', projectKey: 'payments' }, { serverId: 'b', projectKey: 'other' }],
+            exclude: [{ serverId: 'a', projectKey: 'excluded' }],
+        } });
+        const options = { storage: 'active' as const, includeInactive: true, mountedHomeServerIds: ['a', 'b', 'c'] };
+        const queries = projectSessionListFilterHomeQueriesV1(filter, { ...options, projectFacet: 'query' });
+        expect(queries.map(({ serverId, query }) => [serverId, query.projectKeys])).toEqual([
+            ['a', { include: ['payments'], exclude: ['excluded'] }], ['b', { include: ['other'], exclude: [] }],
+        ]);
+        expect(projectSessionListFilterAfterHomeQueryV1(filter, 'a').projects).toEqual(filter.projects);
+        expect(projectSessionListFilterHomeQueriesV1(filter, options).every(({ query }) => !('projectKeys' in query))).toBe(true);
+    });
+
     it('lets exhaustive previews omit attention promotion while preserving the structural corpus and transport page bound', () => {
         const filter = normalizeSessionListFilterV1({ homeServerIds: ['home'], scope: 'all_accessible',
             projects: { include: [{ serverId: 'home', projectKey: 'private-project' }], exclude: [] } });
@@ -275,17 +322,17 @@ describe('SessionListFilterV1', () => {
         expect(SessionListFilterV1Schema.safeParse({ ...filters, source: 'unknown' }).success).toBe(false);
     });
 
-    it('treats Project and status as Session facts, so they select no Runs instead of an unavailable Run corpus', () => {
+    it('treats Project as a Session fact without excluding Runs from a Status selection', () => {
         const filter = normalizeSessionListFilterV1({ scope: 'all_accessible', homeServerIds: ['home'], startedBy: ['you', 'agents', 'triggers'], show: 'both' });
         const run = { serverId: 'home', kind: 'run' as const, startedBy: 'you' as const, attentionRequired: false };
         expect(canSessionListFilterIncludeRunsV1(filter)).toBe(true);
         expect(matchSessionListFilterV1(filter, run)).toBe('match');
         const failing = { ...filter, statuses: ['failed' as const] };
         const inPayments = { ...filter, projects: { include: [{ serverId: 'home', projectKey: 'payments' }], exclude: [] } };
-        for (const sessionOnly of [failing, inPayments]) {
-            expect(canSessionListFilterIncludeRunsV1(sessionOnly)).toBe(false);
-            expect(matchSessionListFilterV1(sessionOnly, run)).toBe('miss');
-        }
+        expect(canSessionListFilterIncludeRunsV1(failing)).toBe(true);
+        expect(matchSessionListFilterV1(failing, run)).toBe('unavailable');
+        expect(canSessionListFilterIncludeRunsV1(inPayments)).toBe(false);
+        expect(matchSessionListFilterV1(inPayments, run)).toBe('miss');
         // An emptied facet narrows nothing and keeps Runs in the corpus.
         expect(canSessionListFilterIncludeRunsV1({ ...filter, statuses: [], projects: { include: [], exclude: [] } })).toBe(true);
     });

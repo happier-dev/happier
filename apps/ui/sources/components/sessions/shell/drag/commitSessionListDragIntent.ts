@@ -30,25 +30,16 @@
  * `move-to-root` (or an edge-degraded reorder) therefore reconstructs a
  * `move-to-root` instruction PLUS a `{ kind: 'line', edge }` visual, which
  * `resolveSessionListTreeDropDestination` / `applySessionListTreeDropOperation`
- * read to resolve the container edge. Folder-sort behaviour is handled inside
- * `applyGroupOrderUpdate` via `SessionListGroupOrderChildKind`, so no
- * `resolveSessionListFolderSortModeDropResult` rewrite happens here.
+ * read to resolve the container edge. Session sibling order and Section record
+ * order retain their separate canonical writers.
  */
 
 import type { TreeDropResult, TreeInstruction } from '@/components/ui/treeDragDrop';
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
-import type { SessionFoldersV1 } from '@/sync/domains/session/folders';
-import { buildSessionFolderWorkspaceRefKey } from '@/sync/domains/session/folders';
-import {
-    normalizeSessionListFolderSortModeV1,
-    normalizeSessionListOrderingModeV1,
-    resolveEffectiveSessionListFolderSortMode,
-    type SessionListOrderingModeV1,
-    type SessionListOrderingSectionMode,
-} from '@/sync/domains/session/listing/sessionListOrderingRules';
+import type { SessionSection } from '@/sync/domains/session/organization/sections';
+import type { SessionSpaceMembershipTargetV1 } from '@happier-dev/protocol/actions';
 import {
     isSessionListSessionSiblingReorder,
-    normalizeSessionListSectionModeV1,
     resolveSessionListSessionRowDragPolicy,
 } from '@/sync/domains/session/listing/sessionListLayout';
 
@@ -60,10 +51,12 @@ import type {
 import {
     applySessionListTreeDropOperation,
     resolveSessionListTreeDropDestination,
+    resolveSessionListSectionBeforeId,
+    readSessionListSectionOrderIds,
     type ApplySessionListTreeDropOperationContext,
     type SessionListTreeDropDestination,
 } from '../commit/applySessionListTreeDropOperation';
-import { buildSessionListGroupOrderAfterTreeDrop, collectDirectChildOrderKeys, resolveSessionListGroupOrderChildKind } from '../commit/applyGroupOrderUpdate';
+import { buildSessionListGroupOrderAfterTreeDrop, collectDirectChildOrderKeys } from '../commit/applyGroupOrderUpdate';
 import { buildSessionWorkspaceOrderAfterTreeDrop } from '../commit/applyWorkspaceOrderUpdate';
 import { buildSessionListDragSource } from '../drop-resolution/buildSessionListDragSource';
 import { buildSessionListTreeRows } from '../drop-resolution/buildSessionListTreeRows';
@@ -75,10 +68,10 @@ import type {
     SessionListTreeModel,
     SessionListTreeRowMetadata,
 } from '../drop-resolution/sessionListTreeTypes';
+import { canMoveSessionListSourceToContainer, resolveSessionListDestinationFolderId } from '../drop-resolution/sessionListDestinationScope';
 
 type SessionListGroupOrderV1 = Readonly<Record<string, ReadonlyArray<string> | undefined>>;
 type SessionWorkspaceOrderV1 = Readonly<Record<string, ReadonlyArray<string> | undefined>>;
-type SessionListFolderSortModeV1 = 'foldersFirst' | 'mixed';
 type SessionListSessionIndexItem = Extract<SessionListIndexItem, { type: 'session' }>;
 
 function isSessionListSessionIndexItem(item: SessionListIndexItem): item is SessionListSessionIndexItem {
@@ -106,23 +99,24 @@ export type CommitSessionListDragIntentContext = Readonly<{
     }>;
     /** Mounted list's existing indexed projection; reused only for the exact current item array. */
     latestTree?: SessionListTreeModel;
-    sessionFoldersV1: SessionFoldersV1;
+    sessionSections?: readonly SessionSection[];
+    /** Admitted catalog targets from the list's canonical Spaces binding. */
+    spaceMembershipTargets?: readonly (SessionSpaceMembershipTargetV1 & Readonly<{ name: string }>)[];
+    /** Explicit Move transfers membership from the Space currently being viewed. */
+    spaceMembershipSourceSpaceId?: string;
     sessionListGroupOrderV1: SessionListGroupOrderV1;
     sessionWorkspaceOrderV1?: SessionWorkspaceOrderV1;
-    sessionListFolderSortModeV1?: SessionListFolderSortModeV1;
-    sessionListOrderingModeV1?: SessionListOrderingModeV1;
-    sessionListSectionModeV1?: SessionListOrderingSectionMode;
+    sessionListLayoutV1?: 'projects' | 'recent_activity';
     manualSessionOrderingEnabled?: boolean;
     isFolderOrganizationEnabled?: (serverId: string | null) => boolean;
-    now: () => number;
-    setSessionFoldersV1: (next: SessionFoldersV1) => Promise<void>;
     setSessionListGroupOrderV1: (next: Record<string, string[]>) => Promise<void>;
     setSessionWorkspaceOrderV1?: (next: Record<string, string[]>) => Promise<void>;
-    setSessionFolderAssignment: (assignment: Readonly<{
+    setSessionFolderAssignment?: (assignment: Readonly<{
         serverId: string;
         sessionId: string;
         folderId: string | null;
     }>) => Promise<void>;
+    reorderSessionSection?: (input: Readonly<{ serverId: string; sectionId: string; beforeSectionId: string | null }>) => Promise<void>;
     /**
      * Puts the dragged Session under the target Session (`manager`, R-03). The owner re-checks the
      * drop against the latest Sessions, asks the server, and says a refusal itself. Omitted, a drop
@@ -140,50 +134,13 @@ function noOp(reason: SessionListDragCommitNoOpReason): Readonly<{ ok: false; re
 }
 
 /**
- * Re-derives the descendant set of a folder source from the LATEST tree, so a
- * cycle check uses the current parent/child links rather than the frozen ones.
- */
-function collectLatestDescendantRowIds(
-    tree: SessionListTreeModel,
-    sourceRowId: string,
-): Set<string> {
-    const descendants = new Set<string>([sourceRowId]);
-    let changed = true;
-    while (changed) {
-        changed = false;
-        for (const metadata of tree.rowMetadataById.values()) {
-            if (!metadata.parentRowId || descendants.has(metadata.rowId)) continue;
-            if (descendants.has(metadata.parentRowId)) {
-                descendants.add(metadata.rowId);
-                changed = true;
-            }
-        }
-    }
-    return descendants;
-}
-
-/**
- * True when source and destination container no longer share a compatible
- * scope. Sessions/folders may only move within their own workspace root; a
- * workspace-root may only move inside its own workspace-order container.
+ * The same Home/Section/Project scope decision used by pointer admission.
  */
 function isScopeMismatch(params: Readonly<{
     source: SessionListTreeRowMetadata;
     container: SessionListTreeContainerMetadata;
 }>): boolean {
-    const { source, container } = params;
-    if (source.kind === 'workspace-root') {
-        return container.kind !== 'workspace-order' || container.containerId !== source.containerId;
-    }
-    if (container.kind !== 'children') return true;
-    if (container.rootId !== source.rootId) return true;
-    const sourceWorkspace = source.workspace;
-    const containerWorkspace = container.workspace;
-    if (sourceWorkspace && containerWorkspace) {
-        return buildSessionFolderWorkspaceRefKey(sourceWorkspace)
-            !== buildSessionFolderWorkspaceRefKey(containerWorkspace);
-    }
-    return false;
+    return !canMoveSessionListSourceToContainer(params.source, params.container);
 }
 
 /**
@@ -283,6 +240,7 @@ function buildDestinationOrder(params: Readonly<{
     destination: SessionListTreeDropDestination;
 }>): Record<string, string[]> | null {
     const { tree, source, context, destination } = params;
+    if (source.metadata.kind === 'folder') return null;
     const placement = {
         tree,
         movedRowId: source.metadata.rowId,
@@ -295,19 +253,19 @@ function buildDestinationOrder(params: Readonly<{
         : buildSessionListGroupOrderAfterTreeDrop({
             ...placement,
             currentMap: context.sessionListGroupOrderV1,
-            childKind: resolveSessionListGroupOrderChildKind(
-                source.metadata.kind === 'folder' ? 'folder' : 'session',
-                resolveEffectiveFolderSortModeForDragContext(context),
-            ),
         });
 }
 
 /** Equivalent before/after edges share one destination; unrelated order entries do not enter it. */
 function organizationDestinationKey(params: Readonly<{
+    tree: SessionListTreeModel;
     source: SessionListTreeDragSource;
     destination: SessionListTreeDropDestination;
     nextOrder: Readonly<Record<string, readonly string[]>> | null;
+    context: CommitSessionListDragIntentContext;
 }>): string | null {
+    if (params.source.metadata.kind === 'folder') return JSON.stringify(['section-order', params.source.metadata.serverId,
+        resolveSessionListSectionBeforeId(params)]);
     const keys = params.nextOrder?.[params.destination.container.groupKey];
     const movedKey = params.source.metadata.orderKey;
     const index = movedKey && keys ? keys.indexOf(movedKey) : -1;
@@ -325,8 +283,14 @@ function isNoChangeCommit(params: Readonly<{
     nextOrder: Readonly<Record<string, readonly string[]>> | null;
 }>): boolean {
     const { tree, source, context, destination, nextOrder } = params;
+    if (source.metadata.kind === 'folder' && destination.container.destinationKind === 'section-order') {
+        const siblings = readSessionListSectionOrderIds(params);
+        const index = source.metadata.folderId ? siblings.indexOf(source.metadata.folderId) : -1;
+        return source.metadata.containerId === destination.container.containerId && index >= 0
+            && (siblings[index + 1] ?? null) === resolveSessionListSectionBeforeId(params);
+    }
     const folderAssignmentChanges = source.metadata.kind === 'session'
-        && (source.metadata.folderId ?? null) !== destination.container.folderId;
+        && (source.metadata.folderId ?? null) !== resolveSessionListDestinationFolderId(source.metadata, destination.container);
     if (folderAssignmentChanges) return false;
     if (source.metadata.containerId !== destination.container.containerId) return false;
     if (!nextOrder) return false;
@@ -335,26 +299,13 @@ function isNoChangeCommit(params: Readonly<{
         return isOrderMapScopeUnchanged({ currentMap: context.sessionWorkspaceOrderV1 ?? {}, next: nextOrder });
     }
 
-    const childKind = resolveSessionListGroupOrderChildKind(
-        source.metadata.kind === 'folder' ? 'folder' : 'session',
-        resolveEffectiveFolderSortModeForDragContext(context),
-    );
     return isOrderMapScopeUnchanged({
         // An absent explicit map still has the list's real rendered order. Materializing that
         // unchanged order is not a move (including root-edge pointer drops at the own place).
         currentMap: { ...context.sessionListGroupOrderV1,
             [destination.container.groupKey]: context.sessionListGroupOrderV1[destination.container.groupKey]
-                ?? collectDirectChildOrderKeys(tree, destination.container.containerId, childKind) },
+                ?? collectDirectChildOrderKeys(tree, destination.container.containerId) },
         next: nextOrder,
-    });
-}
-
-function resolveEffectiveFolderSortModeForDragContext(
-    context: CommitSessionListDragIntentContext,
-): SessionListFolderSortModeV1 {
-    return resolveEffectiveSessionListFolderSortMode({
-        orderingMode: normalizeSessionListOrderingModeV1(context.sessionListOrderingModeV1),
-        folderSortMode: normalizeSessionListFolderSortModeV1(context.sessionListFolderSortModeV1),
     });
 }
 
@@ -381,18 +332,16 @@ function isSessionSiblingReorderBlockedByOrderingMode(params: Readonly<{
     if (source.metadata.kind !== 'session') return false;
     if (!isSessionListSessionSiblingReorder({
         sourceFolderId: source.metadata.folderId,
-        destinationFolderId: destination.container.folderId,
+        destinationFolderId: resolveSessionListDestinationFolderId(source.metadata, destination.container),
     })) return false;
 
     const item = source.metadata.item;
     if (!isSessionListSessionIndexItem(item)) return false;
-    const sectionMode = normalizeSessionListSectionModeV1(context.sessionListSectionModeV1);
     return !resolveSessionListSessionRowDragPolicy({
         manualSessionOrderingEnabled: context.manualSessionOrderingEnabled !== false,
         folderContainmentEnabled: false,
         item,
-        sectionModeV1: sectionMode,
-        orderingModeV1: normalizeSessionListOrderingModeV1(context.sessionListOrderingModeV1),
+        layoutV1: context.sessionListLayoutV1 ?? 'projects',
     }).canReorderSiblings;
 }
 
@@ -461,15 +410,9 @@ export function resolveSessionListDragIntent(params: Readonly<{
     // An unanchored root destination names containment, not "append to this order".
     // Pointer, staged moves and the same-pane chooser share this no-change verdict.
     if (intent.instructionKind === 'move-to-root' && intent.edge === null
-        && sourceMetadata.containerId === container.containerId) return noOp('no-change');
-
-    // Folder-move cycle guard against the LATEST descendant set.
-    if (sourceMetadata.kind === 'folder') {
-        const descendants = collectLatestDescendantRowIds(tree, sourceMetadata.rowId);
-        if (descendants.has(container.containerId) || (container.parentRowId && descendants.has(container.parentRowId))) {
-            return noOp('descendant-cycle');
-        }
-    }
+        && sourceMetadata.containerId === container.containerId
+        && (sourceMetadata.kind !== 'session' || container.destinationKind === 'pinned'
+            || sourceMetadata.folderId === container.folderId)) return noOp('no-change');
 
     // Rebuild the result against the latest tree (with safe edge degrade).
     const rebasedResult = resolveLatestResult({ intent, tree, container });
@@ -484,6 +427,10 @@ export function resolveSessionListDragIntent(params: Readonly<{
         source,
         result,
     });
+    if (source.metadata.kind === 'session' && destination?.target?.item.type === 'session'
+        && destination.target.item.supplementalAttention === true
+        && isSessionListSessionSiblingReorder({ sourceFolderId: source.metadata.folderId,
+            destinationFolderId: resolveSessionListDestinationFolderId(source.metadata, destination.container) })) return noOp('blocked-intent');
     if (destination && isSessionSiblingReorderBlockedByOrderingMode({ source, context, destination })) {
         return noOp('date-ordering-mode');
     }
@@ -492,10 +439,11 @@ export function resolveSessionListDragIntent(params: Readonly<{
         return noOp('no-change');
     }
     if (context.isFolderOrganizationEnabled?.(source.metadata.serverId) === false && (source.metadata.kind === 'folder'
-        || (source.metadata.kind === 'session' && source.metadata.folderId !== destination?.container.folderId))) {
+        || (source.metadata.kind === 'session' && destination
+            && source.metadata.folderId !== resolveSessionListDestinationFolderId(source.metadata, destination.container)))) {
         return noOp('feature-disabled');
     }
-    const destinationKey = destination ? organizationDestinationKey({ source, destination, nextOrder }) : null;
+    const destinationKey = destination ? organizationDestinationKey({ tree, source, destination, nextOrder, context }) : null;
     return { ok: true, effect: 'organization', destinationKey, tree, source, result };
 }
 
@@ -512,19 +460,16 @@ export async function commitSessionListDragIntent(params: Readonly<{
     const { tree, source, result } = admission;
 
     const applyContext: ApplySessionListTreeDropOperationContext = {
-        sessionFoldersV1: context.sessionFoldersV1,
+        sessionSections: context.sessionSections,
         sessionListGroupOrderV1: context.sessionListGroupOrderV1,
         sessionWorkspaceOrderV1: context.sessionWorkspaceOrderV1,
-        sessionListFolderSortModeV1: context.sessionListFolderSortModeV1,
-        sessionListOrderingModeV1: context.sessionListOrderingModeV1,
-        sessionListSectionModeV1: context.sessionListSectionModeV1,
+        sessionListLayoutV1: context.sessionListLayoutV1,
         manualSessionOrderingEnabled: context.manualSessionOrderingEnabled,
         isFolderOrganizationEnabled: context.isFolderOrganizationEnabled,
-        now: context.now,
-        setSessionFoldersV1: context.setSessionFoldersV1,
         setSessionListGroupOrderV1: context.setSessionListGroupOrderV1,
         setSessionWorkspaceOrderV1: context.setSessionWorkspaceOrderV1,
         setSessionFolderAssignment: context.setSessionFolderAssignment,
+        reorderSessionSection: context.reorderSessionSection,
     };
 
     const applied = await applySessionListTreeDropOperation({

@@ -3,7 +3,7 @@ import { resolveSessionArchiveAddress } from '@/sync/domains/session/listing/ses
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { runTasksWithLimit } from '@/sync/runtime/orchestration/runTasksWithLimit';
 import { resolveSessionListItemOrganizationEligibility } from '@/sync/domains/sessionList/sessionListIndex';
-import { normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
+import { normalizeSessionAddress, sessionAddressKey } from '@/sync/domains/session/sessionAddress';
 
 import {
     createSessionBulkActionProgressTracker,
@@ -497,35 +497,42 @@ async function executeMoveToFolderAction(params: Readonly<{
     targets: readonly SessionBulkActionTarget[];
     context: SessionBulkActionExecutionContext;
 }>): Promise<SessionBulkActionExecutionResult> {
+    const seen = new Set<string>();
+    const targets = params.targets.filter(target => {
+        const address = normalizeSessionAddress(target.serverId, target.sessionId);
+        const key = address ? sessionAddressKey(address) : target.key;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+    });
     if (!isFoldersFeatureEnabled(params.context)) {
         return skipAll({
             actionId: SESSION_BULK_ACTION_IDS.moveToFolder,
-            targets: params.targets,
+            targets,
             reasonCode: 'feature_disabled',
             reason: 'Session folders are disabled',
         });
     }
 
-    if (!params.action.destinationWorkspace) {
+    if (!params.action.destinationServerId?.trim()) {
         return skipAll({
             actionId: SESSION_BULK_ACTION_IDS.moveToFolder,
-            targets: params.targets,
+            targets,
             reasonCode: 'folder_destination_scope_unavailable',
             reason: 'The destination folder scope is unavailable',
         });
     }
 
     const eligibilityByTarget = new Map(
-        params.targets.map((target) => [
+        targets.map((target) => [
             target,
             resolveSessionListItemOrganizationEligibility({
                 type: 'session',
                 sessionId: target.sessionId,
                 serverId: target.serverId ?? undefined,
-                workspace: target.workspace ?? undefined,
             }, {
                 foldersFeatureEnabled: true,
-                destinationWorkspace: params.action.destinationWorkspace,
+                destinationServerId: params.action.destinationServerId,
             }),
         ] as const),
     );
@@ -537,7 +544,7 @@ async function executeMoveToFolderAction(params: Readonly<{
 
     return executeNetworkTargets({
         actionId: SESSION_BULK_ACTION_IDS.moveToFolder,
-        targets: params.targets,
+        targets,
         context: params.context,
         runTarget: async (target) => {
             const eligibility = eligibilityByTarget.get(target);
@@ -548,7 +555,7 @@ async function executeMoveToFolderAction(params: Readonly<{
                         ? 'folder_destination_scope_mismatch'
                         : 'folder_move_unavailable',
                     reason: destinationScopeMismatch
-                        ? 'Session belongs to a different workspace'
+                        ? 'Session belongs to a different Home'
                         : 'Session cannot be moved to this folder',
                 });
             }

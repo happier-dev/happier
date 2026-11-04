@@ -15,11 +15,11 @@ import {
 } from './sessionBulkActionExecution';
 import { buildSessionBulkActionResultSummary } from './sessionActionResultMessages';
 
-const workspaceA: SessionFolderWorkspaceRefV1 = {
+const workspaceA = {
     t: 'workspaceRef',
     serverId: 'server-a',
     workspaceRefId: 'workspace-a',
-};
+} satisfies SessionFolderWorkspaceRefV1;
 
 const workspaceB: SessionFolderWorkspaceRefV1 = {
     t: 'workspaceRef',
@@ -43,6 +43,25 @@ function target(input: Partial<SessionBulkActionTarget> & Pick<SessionBulkAction
 }
 
 describe('executeSessionBulkAction', () => {
+    it('moves unique selected entities across projects in one Home while retaining partial outcomes', async () => {
+        const setSessionFolderAssignment = vi.fn(async ({ target: entry }: { target: SessionBulkActionTarget }) => {
+            if (entry.sessionId === 'failed') throw new Error('permission_denied');
+        });
+        const result = await executeSessionBulkAction({
+            action: { id: SESSION_BULK_ACTION_IDS.moveToFolder, folderId: 'launch', destinationServerId: 'server-a' },
+            targets: [target({ key: 'base', sessionId: 'same', canMoveToFolder: true, workspace: workspaceA }),
+                target({ key: 'mirror', sessionId: 'same', canMoveToFolder: true, workspace: workspaceA }),
+                target({ key: 'other-project', sessionId: 'other', canMoveToFolder: true, workspace: workspaceB }),
+                target({ key: 'failed', sessionId: 'failed', canMoveToFolder: true }),
+                target({ key: 'foreign', serverId: 'server-b', sessionId: 'foreign', canMoveToFolder: true })],
+            context: { foldersFeatureDecision: { state: 'enabled' }, setSessionFolderAssignment },
+        });
+        expect(setSessionFolderAssignment.mock.calls.map(([entry]) => entry.target.sessionId)).toEqual(['same', 'other', 'failed']);
+        expect(result.succeeded.map(entry => entry.target.sessionId)).toEqual(['same', 'other']);
+        expect(result.failed.map(entry => entry.target.sessionId)).toEqual(['failed']);
+        expect(result.skipped.map(entry => entry.target.sessionId)).toEqual(['foreign']);
+    });
+
     it('uses the caller archive failure message for an inactive target with an owned timeout code', async () => {
         const result = await executeSessionBulkAction({
             action: { id: SESSION_BULK_ACTION_IDS.archive },
@@ -76,7 +95,7 @@ describe('executeSessionBulkAction', () => {
             {
                 id: SESSION_BULK_ACTION_IDS.moveToFolder,
                 folderId: 'folder-a',
-                destinationWorkspace: workspaceA,
+                destinationServerId: workspaceA.serverId,
             },
         ];
 
@@ -280,7 +299,7 @@ describe('executeSessionBulkAction', () => {
             action: {
                 id: SESSION_BULK_ACTION_IDS.moveToFolder,
                 folderId: 'folder-a',
-                destinationWorkspace: workspaceA,
+                destinationServerId: workspaceA.serverId,
             },
             targets: [
                 target({ key: 'server-a:s1', sessionId: 's1' }),
@@ -307,7 +326,7 @@ describe('executeSessionBulkAction', () => {
             action: {
                 id: SESSION_BULK_ACTION_IDS.moveToFolder,
                 folderId: 'folder-a',
-                destinationWorkspace: workspaceA,
+                destinationServerId: workspaceA.serverId,
             },
             targets: [
                 target({ key: 'server-a:s1', sessionId: 's1', canMoveToFolder: true, workspace: workspaceA }),
@@ -338,7 +357,7 @@ describe('executeSessionBulkAction', () => {
             action: {
                 id: SESSION_BULK_ACTION_IDS.moveToFolder,
                 folderId: 'folder-a',
-                destinationWorkspace: workspaceA,
+                destinationServerId: workspaceA.serverId,
             },
             targets: [
                 target({
@@ -366,18 +385,18 @@ describe('executeSessionBulkAction', () => {
         ]);
     });
 
-    it('preflights every target against the destination workspace before starting bulk folder writes', async () => {
+    it('preflights every target against the destination Home before starting bulk section writes', async () => {
         const setSessionFolderAssignment = vi.fn(async () => undefined);
 
         const result = await executeSessionBulkAction({
             action: {
                 id: SESSION_BULK_ACTION_IDS.moveToFolder,
                 folderId: 'folder-a',
-                destinationWorkspace: workspaceA,
+                destinationServerId: workspaceA.serverId,
             },
             targets: [
                 target({ key: 'server-a:same-1', sessionId: 'same-1', canMoveToFolder: true, workspace: workspaceA }),
-                target({ key: 'server-a:different', sessionId: 'different', canMoveToFolder: true, workspace: workspaceB }),
+                target({ key: 'server-b:different', sessionId: 'different', serverId: 'server-b', canMoveToFolder: true, workspace: workspaceB }),
                 target({ key: 'server-a:same-2', sessionId: 'same-2', canMoveToFolder: true, workspace: workspaceA }),
             ],
             context: {
@@ -400,7 +419,7 @@ describe('executeSessionBulkAction', () => {
             'server-a:same-2',
         ]);
         expect(result.skipped.map((entry) => [entry.target.key, entry.reasonCode])).toEqual([
-            ['server-a:different', 'folder_destination_scope_mismatch'],
+            ['server-b:different', 'folder_destination_scope_mismatch'],
         ]);
     });
 

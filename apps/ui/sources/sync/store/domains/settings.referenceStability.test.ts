@@ -211,13 +211,13 @@ describe('createSettingsDomain settings projection reference stability', () => {
             ordinarySessionListMembershipByServerId: { 'server-other': [] },
             sessionListIndexByServerId: { 'server-other': [] },
         });
-        const originalGrouping = api.getState().settings.sessionListInactiveGroupingV1;
-        api.getState().applySettingsLocal({ sessionListInactiveGroupingV1: originalGrouping === 'project' ? 'date' : 'project' });
+        const originalLayout = api.getState().settings.sessionListLayoutV1;
+        api.getState().applySettingsLocal({ sessionListLayoutV1: originalLayout === 'projects' ? 'recent_activity' : 'projects' });
         const previousIndexes = api.getState().sessionListIndexByServerId;
 
-        api.getState().applySettingsLocal({ sessionListInactiveGroupingV1: originalGrouping });
+        api.getState().applySettingsLocal({ sessionListLayoutV1: originalLayout });
 
-        expect(api.getState().settings.sessionListInactiveGroupingV1).toBe(originalGrouping);
+        expect(api.getState().settings.sessionListLayoutV1).toBe(originalLayout);
         expect(api.getState().sessionListIndexByServerId).toBe(previousIndexes);
     });
 

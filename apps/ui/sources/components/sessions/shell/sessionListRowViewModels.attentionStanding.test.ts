@@ -41,7 +41,6 @@ function buildRow(item: SessionIndexItem, attentionStandingPolicy?: Parameters<t
         rowRenderableByKey: new Map([[key, createRenderableSession(item.sessionId)]]),
         relativeNowMs: 1_000,
         runtimeNowMs: 1_000,
-        hasMultipleMachines: false,
         pinnedSessionKeys: new Set(),
         sessionTags: {},
         selectedSessionId: null,

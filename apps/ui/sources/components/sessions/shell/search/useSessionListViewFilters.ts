@@ -1,4 +1,7 @@
 import * as React from 'react';
+import type { SessionListFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { toStoredSessionListFilter } from './storedSessionListFilter';
 
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { serverAccountScopeListKey } from '@/sync/domains/scope/serverAccountScope';
@@ -29,6 +32,11 @@ type RetainedEntry = {
     /** Exact authenticated Home/Account lifetimes currently contributing to this view. */
     accountIdByServerId: Map<string, string>;
     defaults: SessionListViewFilterDefaultsInput;
+    /** Captured independently of catalog hydration so cold drafts cannot cross Accounts. */
+    spaceSettingsAccountScopeKey?: string | null;
+    savedSpace?: UseSessionListViewFiltersInput['savedSpace'];
+    savedLens?: SessionListViewFilters;
+    showCoordinatorsRequest: 0 | 1;
 };
 
 function sameHomeSelection(a: readonly string[], b: readonly string[]): boolean {
@@ -56,10 +64,6 @@ function retentionKey(contextKey: string): string {
     return contextKey.trim();
 }
 
-function withCoordinatorsOnly(defaults: SessionListViewFilterDefaultsInput): SessionListViewFilterDefaultsInput {
-    return { ...defaults, coordinator: 'coordinator' };
-}
-
 function getOrCreateEntry(
     contextKey: string,
     defaults: SessionListViewFilterDefaultsInput,
@@ -68,17 +72,15 @@ function getOrCreateEntry(
     const key = retentionKey(contextKey);
     const existing = retainedFiltersByKey.get(key);
     if (existing) return existing;
-    const filters = createSessionListViewFilterDefaults(
-        key === GLOBAL_SESSION_LIST_CONTEXT_KEY && coordinatorsOnlyPending
-            ? withCoordinatorsOnly(defaults)
-            : defaults,
-    );
+    const showCoordinatorsRequest = key === GLOBAL_SESSION_LIST_CONTEXT_KEY && coordinatorsOnlyPending ? 1 : 0;
+    const filters = createSessionListViewFilterDefaults(defaults);
     if (key === GLOBAL_SESSION_LIST_CONTEXT_KEY) coordinatorsOnlyPending = false;
     const entry: RetainedEntry = {
         filters,
         defaultHomeServerIds: filters.homeServerIds,
         accountIdByServerId: new Map(),
         defaults,
+        showCoordinatorsRequest,
     };
     retainedFiltersByKey.set(key, entry);
     return entry;
@@ -88,6 +90,7 @@ function resetRetainedEntry(entry: RetainedEntry, defaults: SessionListViewFilte
     const filters = createSessionListViewFilterDefaults(defaults);
     entry.filters = filters;
     entry.defaultHomeServerIds = filters.homeServerIds;
+    entry.savedLens = undefined;
 }
 
 function removeAuthoritativelyDeletedHomes(
@@ -115,6 +118,8 @@ function retireHomeAccountContribution(
     if (!entry.accountIdByServerId.delete(serverId)) return;
     if (entry.accountIdByServerId.size === 0) {
         resetRetainedEntry(entry, defaults);
+        entry.savedSpace = undefined;
+        entry.showCoordinatorsRequest = 0;
         return;
     }
     removeAuthoritativelyDeletedHomes(entry, entry.filters, [serverId]);
@@ -167,6 +172,8 @@ export function retireSessionListViewFilterCredentialContributions(serverIdRaw: 
         if (!entry.accountIdByServerId.delete(serverId)) continue;
         if (entry.accountIdByServerId.size === 0) {
             resetRetainedEntry(entry, entry.defaults);
+            entry.savedSpace = undefined;
+            entry.showCoordinatorsRequest = 0;
         } else {
             removeAuthoritativelyDeletedHomes(entry, entry.filters, [serverId]);
         }
@@ -193,13 +200,14 @@ export function buildSessionListViewCredentialScopeKey(
  * coordinators, whether it is mounted now or mounts later. The caller navigates to the list.
  * Resetting also clears any other facet, so the list is never left narrowed two ways.
  */
-export function showOnlyCoordinatorsInSessionList(): void {
-    const entry = retainedFiltersByKey.get(GLOBAL_SESSION_LIST_CONTEXT_KEY);
+export function showOnlyCoordinatorsInSessionList(contextKey = GLOBAL_SESSION_LIST_CONTEXT_KEY): void {
+    const entry = retainedFiltersByKey.get(retentionKey(contextKey));
     if (!entry) {
-        coordinatorsOnlyPending = true;
+        if (contextKey === GLOBAL_SESSION_LIST_CONTEXT_KEY) coordinatorsOnlyPending = true;
         return;
     }
-    resetRetainedEntry(entry, withCoordinatorsOnly(entry.defaults));
+    // The current draft remains untouched until the Settings selection is accepted.
+    entry.showCoordinatorsRequest = 1;
     for (const listener of retainedFilterListeners) listener();
 }
 
@@ -217,6 +225,8 @@ export type UseSessionListViewFiltersInput = Readonly<{
     /** Fixed destination semantics, independent of its retention key or catalog. */
     viewContext?: SessionListViewContext;
     fixedShow?: SessionListViewFilters['show'];
+    /** Archived destinations cannot be narrowed by the active inactive-visibility preference. */
+    fixedIncludeInactive?: true;
     /** Existing exact-Home credential owner projection for every contributing Home. */
     accountScopeResolutions: ReadonlyMap<string, ServerCredentialAccountScopeResolution>;
     /**
@@ -227,17 +237,29 @@ export type UseSessionListViewFiltersInput = Readonly<{
     followDefaultHomeSelection?: boolean;
     /** Complete current Home-profile scope from the authoritative local registry. */
     authoritativeHomeServerIds?: readonly string[];
+    /** Admitted definition from the captured settings authority, never local Find text. */
+    /** null explicitly suspends Spaces; undefined retains an unavailable catalog's current draft. */
+    savedSpace?: Readonly<{ accountScopeKey: string; id: string; filter: SessionListFilterV1 }> | null;
+    /** Captured settings authority even while its definitions are loading or locked. */
+    spaceSettingsAccountScopeKey?: string | null;
 }>;
 
 export function useSessionListViewFilters(input: UseSessionListViewFiltersInput): Readonly<{
     filters: SessionListViewFilters;
+    savedLens: SessionListViewFilters | null;
+    refinements: SessionListViewFilters;
     updateFilters: React.Dispatch<React.SetStateAction<SessionListViewFilters>>;
     setSearchQuery: React.Dispatch<React.SetStateAction<string>>;
     /** Applies only identities an owning producer has explicitly proved deleted. */
     removeAuthoritativelyDeletedSelections: (deleted: SessionListFilterDeletedSelections) => void;
     resetFilters: () => void;
+    showCoordinatorsRequest: 0 | 1;
+    acknowledgeShowCoordinatorsRequest: () => void;
 }> {
-    const defaults = input.fixedShow ? { ...input.defaults, show: input.fixedShow } : input.defaults;
+    const defaults = { ...input.defaults,
+        ...(input.fixedShow ? { show: input.fixedShow } : {}),
+        ...(input.fixedIncludeInactive ? { includeInactive: true } : {}),
+    };
     const contextKey = input.contextKey.trim();
     const key = retentionKey(contextKey);
     const retained = React.useMemo(
@@ -245,6 +267,46 @@ export function useSessionListViewFilters(input: UseSessionListViewFiltersInput)
         [contextKey],
     );
     retained.defaults = defaults;
+    reconcileAccountScopeResolutions(
+        retained,
+        input.accountScopeResolutions,
+        input.authoritativeHomeServerIds,
+        defaults,
+    );
+    const savedSpace = input.savedSpace;
+    const authorityKey = input.spaceSettingsAccountScopeKey !== undefined
+        ? input.spaceSettingsAccountScopeKey : savedSpace?.accountScopeKey;
+    if (retained.spaceSettingsAccountScopeKey !== undefined && authorityKey !== undefined
+        && retained.spaceSettingsAccountScopeKey !== authorityKey) {
+        resetRetainedEntry(retained, defaults);
+        retained.savedSpace = undefined;
+        retained.showCoordinatorsRequest = 0;
+    }
+    if (authorityKey !== undefined) retained.spaceSettingsAccountScopeKey = authorityKey;
+    if (savedSpace === null && retained.savedSpace) {
+        resetRetainedEntry(retained, defaults);
+        retained.savedSpace = undefined;
+    }
+    if (savedSpace && (
+        retained.savedSpace?.accountScopeKey !== savedSpace.accountScopeKey
+        || retained.savedSpace.id !== savedSpace.id
+    )) {
+        retained.filters = normalizeSessionListViewFilters({ ...savedSpace.filter, searchQuery: '' }, input.viewContext, input.fixedShow, input.fixedIncludeInactive);
+        retained.defaultHomeServerIds = retained.filters.homeServerIds;
+    } else if (savedSpace && retained.savedSpace && savedSpace.filter !== retained.savedSpace.filter) {
+        const previousSavedFilter = normalizeSessionListViewFilters({ ...retained.savedSpace.filter, searchQuery: '' }, input.viewContext, input.fixedShow, input.fixedIncludeInactive);
+        const nextSavedFilter = normalizeSessionListViewFilters({ ...savedSpace.filter, searchQuery: '' }, input.viewContext, input.fixedShow, input.fixedIncludeInactive);
+        if (!sameStrictJsonValue(nextSavedFilter, previousSavedFilter)
+            && sameStrictJsonValue(toStoredSessionListFilter(retained.filters), toStoredSessionListFilter(previousSavedFilter))) {
+            retained.filters = { ...nextSavedFilter, searchQuery: retained.filters.searchQuery };
+        }
+    }
+    if (savedSpace) {
+        const baseline = normalizeSessionListViewFilters({ ...savedSpace.filter, searchQuery: '' }, input.viewContext, input.fixedShow, input.fixedIncludeInactive);
+        if (!sameStrictJsonValue(retained.savedLens, baseline)) retained.savedLens = baseline;
+    }
+    // A settings echo may update the saved baseline; it must not overwrite this context's draft.
+    if (savedSpace) retained.savedSpace = savedSpace;
     const [state, setState] = React.useState<Readonly<{
         key: string;
         filters: SessionListViewFilters;
@@ -256,13 +318,6 @@ export function useSessionListViewFilters(input: UseSessionListViewFiltersInput)
         retainedFilterListeners.add(followRetained);
         return () => { retainedFilterListeners.delete(followRetained); };
     }, []);
-
-    reconcileAccountScopeResolutions(
-        retained,
-        input.accountScopeResolutions,
-        input.authoritativeHomeServerIds,
-        defaults,
-    );
 
     let currentState = state;
     if (state.key === key && state.filters !== retained.filters) {
@@ -313,11 +368,11 @@ export function useSessionListViewFilters(input: UseSessionListViewFiltersInput)
             const requested = typeof value === 'function'
                 ? (value as (previous: SessionListViewFilters) => SessionListViewFilters)(currentFilters)
                 : value;
-            const filters = normalizeSessionListViewFilters(requested, input.viewContext, input.fixedShow);
+            const filters = normalizeSessionListViewFilters(requested, input.viewContext, input.fixedShow, input.fixedIncludeInactive);
             retained.filters = filters;
             return { key, filters };
         });
-    }, [input.fixedShow, input.viewContext, key, retained]);
+    }, [input.fixedIncludeInactive, input.fixedShow, input.viewContext, key, retained]);
 
     const setSearchQuery = React.useCallback<React.Dispatch<React.SetStateAction<string>>>((value) => {
         updateFilters((current) => ({
@@ -338,21 +393,50 @@ export function useSessionListViewFilters(input: UseSessionListViewFiltersInput)
         });
     }, [input.viewContext, key, retained]);
 
-    const latestDefaults = React.useRef(defaults);
-    latestDefaults.current = defaults;
+    const latestInput = React.useRef(input);
+    latestInput.current = input;
     const resetFilters = React.useCallback(() => {
-        const defaults = createSessionListViewFilterDefaults(latestDefaults.current);
+        const latest = latestInput.current;
+        const savedSpace = latest.savedSpace ?? retained.savedSpace;
+        const defaults = savedSpace
+            ? normalizeSessionListViewFilters({ ...savedSpace.filter, searchQuery: '' }, latest.viewContext, latest.fixedShow, latest.fixedIncludeInactive)
+            : normalizeSessionListViewFilters(createSessionListViewFilterDefaults(latest.defaults), latest.viewContext, latest.fixedShow, latest.fixedIncludeInactive);
         // Clearing re-enters default-following: the restored selection becomes the
         // new baseline, so Homes mounting after this point join again.
         retained.defaultHomeServerIds = defaults.homeServerIds;
         updateFilters(defaults);
     }, [retained, updateFilters]);
 
+    const acknowledgeShowCoordinatorsRequest = React.useCallback(() => {
+        retained.showCoordinatorsRequest = 0;
+        for (const listener of retainedFilterListeners) listener();
+    }, [retained]);
+    const showCoordinatorsRequest = retained.showCoordinatorsRequest;
+    const savedLens = retained.savedLens ?? null;
+    const refinements = React.useMemo(() => {
+        if (!savedLens) return currentState.filters;
+        // Unchanged saved clauses belong inside membership's OR. Only deliberate
+        // temporary edits narrow that union; fixed surface context is reapplied.
+        const changed = Object.fromEntries(Object.entries(currentState.filters)
+            .filter(([field, value]) => !sameStrictJsonValue(value, savedLens[field as keyof SessionListViewFilters])));
+        return normalizeSessionListViewFilters({ ...createSessionListViewFilterDefaults({
+            scope: 'all_accessible', show: 'both', startedBy: ['you', 'triggers', 'agents'],
+            homeServerIds: createSessionListViewFilterDefaults(defaults).homeServerIds,
+            includeInactive: currentState.filters.includeInactive,
+        }), ...changed }, input.viewContext, input.fixedShow, input.fixedIncludeInactive);
+    }, [currentState.filters, input.fixedIncludeInactive, input.fixedShow, input.viewContext, savedLens,
+        // The retained defaults are normalized by the existing owner on each render.
+        JSON.stringify(defaults.homeServerIds)]);
+
     return React.useMemo(() => ({
         filters: currentState.filters,
+        savedLens,
+        refinements,
         updateFilters,
         setSearchQuery,
         removeAuthoritativelyDeletedSelections,
         resetFilters,
-    }), [currentState.filters, removeAuthoritativelyDeletedSelections, resetFilters, setSearchQuery, updateFilters]);
+        showCoordinatorsRequest,
+        acknowledgeShowCoordinatorsRequest,
+    }), [acknowledgeShowCoordinatorsRequest, currentState.filters, refinements, savedLens, removeAuthoritativelyDeletedSelections, resetFilters, setSearchQuery, showCoordinatorsRequest, updateFilters]);
 }

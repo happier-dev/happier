@@ -1,16 +1,18 @@
 import * as React from 'react';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import type { WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 
 import {
     listBuiltinWorkflowReferenceOptions,
     useWorkflowLibraryReferenceOptions,
+    useWorkflowReferenceTitles,
 } from '@/components/workflows/presentation/workflowReferenceOptions';
 import { callWorkflowAction } from '@/sync/domains/workflows/callWorkflowAction';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { useWorkflowAccountLifetime } from '../workflowAccountScope';
 export { useWorkflowReferenceDefinition as useTriggerWorkflowDefinition } from '@/components/workflows/presentation/useWorkflowReferenceDefinition';
 
-import { NOTIFY_ME_ACTION_ID } from './sessionTriggerForm';
+import { NOTIFY_ME_ACTION_ID, readTriggerThen } from './sessionTriggerForm';
 import type { TriggerWorkflowOption } from './TriggerPopover';
 
 /** Keep going until done has one attach, the Goal control (04 §5.5, S16c); no trigger picker offers it. */
@@ -21,23 +23,26 @@ const KEEP_GOING_REF = 'builtin:keep-going';
  * library), from the existing reference owners: the built-in catalog the Run-a-workflow step lists
  * and the Account's definition list. Rows read a workflow's name through the same resolver.
  */
-export function useTriggerThenOptions(options?: Readonly<{ libraryEnabled?: boolean; accountLifetime?: ServerAccountScopeLifetime | null }>): Readonly<{
+export function useTriggerThenOptions(options?: Readonly<{ libraryEnabled?: boolean; accountLifetime?: ServerAccountScopeLifetime | null;
+    sets?: readonly WorkflowTriggerSetV1[] }>): Readonly<{
     workflowOptions: readonly TriggerWorkflowOption[];
     resolveWorkflowTitle: (ref: string) => string | null;
 }> {
     const libraryEnabled = options?.libraryEnabled ?? true;
     const libraryOptions = useWorkflowLibraryReferenceOptions({ enabled: libraryEnabled,
         ...(options?.accountLifetime === undefined ? {} : { accountLifetime: options.accountLifetime }) });
+    const references = React.useMemo(() => (options?.sets ?? []).flatMap(set => {
+        if (!set.target) return [];
+        const then = readTriggerThen(set.target);
+        return then.kind === 'runWorkflow' && then.ref !== null ? [then.ref] : [];
+    }), [options?.sets]);
+    const resolveWorkflowTitle = useWorkflowReferenceTitles(references, true, options?.accountLifetime);
     const workflowOptions = React.useMemo((): readonly TriggerWorkflowOption[] => [
-        ...listBuiltinWorkflowReferenceOptions()
+        ...(libraryEnabled ? listBuiltinWorkflowReferenceOptions() : [])
             .filter((option) => option.ref !== KEEP_GOING_REF)
             .map((option) => ({ ref: option.ref, title: option.title })),
         ...libraryOptions,
-    ], [libraryOptions]);
-    const resolveWorkflowTitle = React.useCallback((ref: string) => {
-        if (ref === KEEP_GOING_REF) return listBuiltinWorkflowReferenceOptions().find((option) => option.ref === ref)?.title ?? null;
-        return workflowOptions.find((option) => option.ref === ref)?.title ?? null;
-    }, [workflowOptions]);
+    ], [libraryEnabled, libraryOptions]);
     return { workflowOptions, resolveWorkflowTitle };
 }
 

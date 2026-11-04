@@ -28,6 +28,46 @@ vi.mock('@/components/ui/avatar/Avatar', () => ({ Avatar: 'Avatar' }));
 
 describe('SessionListIdentity', () => {
     afterEach(() => standardCleanup());
+    it('uses canonical Auto admission and preserves all authored identity choices', async () => {
+        const { normalizeSessionListIdentityDisplay } = await import('./SessionListIdentity');
+        for (const value of ['auto', 'agentLogo', 'project', 'projectWithAgent', 'agentWithTrailingProject', 'avatar', 'none']) {
+            expect(normalizeSessionListIdentityDisplay(value)).toBe(value);
+        }
+        expect(normalizeSessionListIdentityDisplay(undefined)).toBe('auto');
+        expect(normalizeSessionListIdentityDisplay('unrecognized')).toBe('auto');
+    });
+    it('leads with the Project favicon, with the Agent as a cut-out badge only when chosen (lab clctx:marks)', async () => {
+        const { SessionListIdentity } = await import('./SessionListIdentity');
+        const session = createSessionFixture({
+            metadata: { path: '/repo', machineId: 'machine-a', flavor: 'codex' } as ReturnType<typeof createSessionFixture>['metadata'],
+        });
+        const favicon = { status: 'found' as const, uri: 'data:image/png;base64,AAAA', relativePath: 'favicon.png' };
+        const render = (display: 'project' | 'projectWithAgent', projectFavicon: typeof favicon | null) => renderScreen(
+            <SessionListIdentity session={session} display={display} projectFavicon={projectFavicon}
+                serverId="server-a" color="currentColor" avatarSize={28} agentLogoSize={16} connected={true} testID="identity" />,
+        );
+
+        const both = await render('projectWithAgent', favicon);
+        expect(both.tree.root.findByProps({ testID: 'identity-project-favicon' }).props.source).toEqual({ uri: favicon.uri });
+        const badge = both.tree.root.findByType(SessionAgentCatalogIdentityIcon).props;
+        expect(badge).toMatchObject({ agentId: 'codex', machineId: 'machine-a', serverId: 'server-a' });
+        expect(badge.size).toBeLessThan(16);
+        await both.unmount();
+
+        // No favicon: the folder fallback keeps the slot and the badge, never a blank glyph.
+        const fallback = await render('projectWithAgent', null);
+        expect(fallback.tree.root.findAllByProps({ testID: 'identity-project-favicon' })).toHaveLength(0);
+        expect(fallback.tree.root.findAllByProps({ testID: 'identity-project-fallback' }).length).toBeGreaterThan(0);
+        expect(fallback.tree.root.findAllByType(SessionAgentCatalogIdentityIcon)).toHaveLength(1);
+        await fallback.unmount();
+
+        // Project alone: the favicon leads and the Agent stays in accessible detail only.
+        const project = await render('project', favicon);
+        expect(project.tree.root.findAllByProps({ testID: 'identity-project-favicon' }).length).toBeGreaterThan(0);
+        expect(project.tree.root.findAllByType(SessionAgentCatalogIdentityIcon)).toHaveLength(0);
+        await project.unmount();
+    });
+
     it('projects the selected provider logo with the exact Home context', async () => {
         const { SessionListIdentity } = await import('./SessionListIdentity');
         const session = createSessionFixture({

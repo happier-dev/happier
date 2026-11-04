@@ -9,110 +9,50 @@ import {
     resolveSessionListSessionRowDragPolicy,
     projectSessionListIndexForLayout,
 } from './sessionListLayout';
-import { resolveSessionListGroupingModes } from './resolveSessionListGroupingModes';
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 import type { SessionListRenderableSession } from './sessionListRenderable';
 
 describe('session list layout projection', () => {
+    it('retains custom Section bands while projecting only unfiled Sessions into Recent days', () => {
+        const source: SessionListIndexItem[] = [
+            { type: 'header', headerKind: 'folder', title: 'Launch', folderId: 'launch', groupKey: 'section-launch' },
+            { type: 'session', serverId: 'home-a', sessionId: 'filed', folderId: 'launch', groupKey: 'section-launch', groupKind: 'folder' },
+            { type: 'header', headerKind: 'project', title: 'Project', groupKey: 'project-a' },
+            { type: 'session', serverId: 'home-a', sessionId: 'unfiled', groupKey: 'project-a', groupKind: 'project' },
+            { type: 'session', serverId: 'home-a', sessionId: 'root', folderId: null, groupKey: 'legacy-root', groupKind: 'folder' },
+            { type: 'header', headerKind: 'folder', title: 'Empty', folderId: 'empty', groupKey: 'section-empty' },
+        ];
+        const projected = projectSessionListIndexForLayout({ source, choice: 'recent_activity', nowMs: 1_000_000,
+            resolveSessionRow: (_serverId, sessionId) => ({ id: sessionId, active: true, createdAt: 100, meaningfulActivityAt: 200 } as SessionListRenderableSession) });
+        expect(projected[0]).toBe(source[0]);
+        expect(projected[1]).toBe(source[1]);
+        expect(projected).toContain(source[5]);
+        expect(projected.flatMap(item => item.type === 'session' && item.groupKind === 'date' ? [item.sessionId] : []).sort()).toEqual(['root', 'unfiled']);
+    });
     it('projects missing current settings to Projects', () => {
         expect(normalizeSessionListSectionModeV1(undefined)).toBe('single');
         expect(resolveSessionListLayoutChoice({})).toBe('projects');
     });
 
-    it('derives all three choices from the incumbent settings', () => {
-        expect(resolveSessionListLayoutChoice({
-            sessionListSectionModeV1: 'single',
-            sessionListActiveGroupingV1: 'project',
-        })).toBe('projects');
-        expect(resolveSessionListLayoutChoice({
-            sessionListSectionModeV1: 'single',
-            sessionListActiveGroupingV1: 'date',
-        })).toBe('recent_activity');
-        expect(resolveSessionListLayoutChoice({
-            sessionListSectionModeV1: 'activity',
-            sessionListActiveGroupingV1: 'date',
-        })).toBe('active_inactive');
+    it('reads the scalar layout and writes only that preference', () => {
+        expect(resolveSessionListLayoutChoice({ sessionListLayoutV1: 'recent_activity' })).toBe('recent_activity');
+        expect(resolveSessionListLayoutSettingsDelta('projects')).toEqual({ sessionListLayoutV1: 'projects' });
+        expect(resolveSessionListLayoutSettingsDelta('recent_activity')).toEqual({ sessionListLayoutV1: 'recent_activity' });
     });
 
-    it('lets a transient route intent select the layout without changing stored settings', () => {
-        const savedProjects = {
-            sessionListSectionModeV1: 'single' as const,
-            sessionListActiveGroupingV1: 'project' as const,
-        };
-
-        expect(resolveSessionListLayoutChoice(savedProjects, 'recent_activity')).toBe('recent_activity');
-        expect(resolveSessionListLayoutChoice(savedProjects, null)).toBe('projects');
-        expect(resolveSessionListLayoutChoice(savedProjects)).toBe('projects');
-        expect(savedProjects).toEqual({
-            sessionListSectionModeV1: 'single',
-            sessionListActiveGroupingV1: 'project',
-        });
+    it('lets visit intent override Projects without writing the saved choice', () => {
+        const saved = { sessionListLayoutV1: 'projects' } as const;
+        expect(resolveSessionListLayoutChoice(saved, 'recent_activity')).toBe('recent_activity');
+        expect(resolveSessionListLayoutChoice(saved, null)).toBe('projects');
+        expect(saved.sessionListLayoutV1).toBe('projects');
     });
 
-    it('returns one atomic delta while preserving dormant preferences', () => {
-        const current = {
-            sessionListSectionModeV1: 'activity' as const,
-            sessionListActiveGroupingV1: 'date' as const,
-            sessionListInactiveGroupingV1: 'project' as const,
-            sessionListOrderingModeV1: 'created' as const,
-        };
-
-        expect(resolveSessionListLayoutSettingsDelta('projects', current)).toEqual({
-            sessionListSectionModeV1: 'single',
-            sessionListActiveGroupingV1: 'project',
-        });
-        expect(resolveSessionListLayoutSettingsDelta('recent_activity', current)).toEqual({
-            sessionListSectionModeV1: 'single',
-            sessionListActiveGroupingV1: 'date',
-        });
-        expect(resolveSessionListLayoutSettingsDelta('active_inactive', current)).toEqual({
-            sessionListSectionModeV1: 'activity',
-        });
-    });
-
-    it('resolves grouping from the canonical enums only and ignores the released legacy inactive-project Boolean', () => {
-        expect(resolveSessionListGroupingModes({ inactiveGroupingV1: 'project' }).inactiveGrouping).toBe('project');
-        expect(resolveSessionListGroupingModes({ inactiveGroupingV1: 'date' }).inactiveGrouping).toBe('date');
-        expect(resolveSessionListGroupingModes({}).inactiveGrouping).toBe('date');
-
-        // The released Protocol schema and its compatibility migration keep the
-        // predecessor `groupInactiveSessionsByProject` Boolean, but the runtime
-        // grouping decision consumes only the canonical current enum.
-        const predecessorShape = {
-            groupInactiveSessionsByProject: true,
-        } as unknown as Parameters<typeof resolveSessionListGroupingModes>[0];
-        expect(resolveSessionListGroupingModes(predecessorShape).inactiveGrouping).toBe('date');
-    });
-
-    it('presents Recent activity as one flat cross-Home timeline with row badges', () => {
+    it('keeps section placement available in both layouts with one flat Recent timeline', () => {
         expect(resolveSessionListLayoutPresentation('recent_activity', 'grouped')).toBe('flat-with-badge');
-        expect(resolveSessionListLayoutPresentation('recent_activity', 'flat-with-badge')).toBe('flat-with-badge');
-        expect(resolveSessionListLayoutPresentation('projects', 'grouped')).toBe('grouped');
-        expect(resolveSessionListLayoutPresentation('active_inactive', 'flat-with-badge')).toBe('flat-with-badge');
-    });
-
-    it('disables project and folder presentation for Recent activity', () => {
-        expect(resolveSessionListLayoutApplicability({
-            choice: 'recent_activity',
-            inactiveGroupingV1: 'project',
-            folderViewModeV1: 'tree',
-            foldersFeatureEnabled: true,
-        })).toEqual({
-            usesProjectGrouping: false,
-            usesFolderTreePresentation: false,
-            showsAdvancedSectionGrouping: false,
-        });
-        expect(resolveSessionListLayoutApplicability({
-            choice: 'active_inactive',
-            activeGroupingV1: 'date',
-            inactiveGroupingV1: 'project',
-            folderViewModeV1: 'tree',
-            foldersFeatureEnabled: true,
-        })).toEqual({
-            usesProjectGrouping: true,
-            usesFolderTreePresentation: true,
-            showsAdvancedSectionGrouping: true,
-        });
+        expect(resolveSessionListLayoutApplicability({ choice: 'recent_activity', foldersFeatureEnabled: true }))
+            .toEqual({ usesProjectGrouping: false, usesFolderTreePresentation: true, showsAdvancedSectionGrouping: false });
+        expect(resolveSessionListLayoutApplicability({ choice: 'projects', foldersFeatureEnabled: true }))
+            .toEqual({ usesProjectGrouping: true, usesFolderTreePresentation: true, showsAdvancedSectionGrouping: false });
     });
 
     it('advertises only drag operations the effective group policy can commit', () => {
@@ -120,8 +60,7 @@ describe('session list layout projection', () => {
             manualSessionOrderingEnabled: true,
             folderContainmentEnabled: false,
             item: { section: 'active', groupKind: 'date' },
-            sectionModeV1: 'activity',
-            orderingModeV1: 'custom',
+            layoutV1: 'projects',
         })).toEqual({
             canReorderSiblings: false,
             canMoveBetweenFolders: false,
@@ -133,8 +72,7 @@ describe('session list layout projection', () => {
             manualSessionOrderingEnabled: true,
             folderContainmentEnabled: true,
             item: { section: 'active', groupKind: 'date' },
-            sectionModeV1: 'activity',
-            orderingModeV1: 'custom',
+            layoutV1: 'projects',
         })).toEqual({
             canReorderSiblings: false,
             canMoveBetweenFolders: true,
@@ -146,8 +84,7 @@ describe('session list layout projection', () => {
             manualSessionOrderingEnabled: false,
             folderContainmentEnabled: false,
             item: { section: 'active', groupKind: 'project' },
-            sectionModeV1: 'single',
-            orderingModeV1: 'custom',
+            layoutV1: 'projects',
         })).toEqual({
             canReorderSiblings: false,
             canMoveBetweenFolders: false,
@@ -161,8 +98,7 @@ describe('session list layout projection', () => {
             folderContainmentEnabled: false,
             putUnderEnabled: true,
             item: { section: 'active', groupKind: 'project' },
-            sectionModeV1: 'single',
-            orderingModeV1: 'updated',
+            layoutV1: 'recent_activity',
         })).toEqual({
             canReorderSiblings: false,
             canMoveBetweenFolders: false,

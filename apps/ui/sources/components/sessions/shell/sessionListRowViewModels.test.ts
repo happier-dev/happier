@@ -1,5 +1,5 @@
 import { NO_TEAM_GROUP_CAPABILITIES_V1 } from '@happier-dev/protocol/teams';
-import { projectLegacySessionAccessCapabilitiesV1 } from '@happier-dev/protocol';
+import { projectLegacySessionAccessCapabilitiesV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 import { applyTeamGroupProjection } from '@/sync/store/teams/teamsSnapshots';
 import { describe, expect, it } from 'vitest';
 
@@ -8,6 +8,9 @@ import { SESSION_OPTIMISTIC_PENDING_THINKING_MS } from '@/sync/domains/session/a
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { buildSessionListServerScopedRowKey } from '@/sync/domains/session/listing/sessionListKeyNormalization';
 import { t } from '@/text';
+import { projectGroupIdentityKey } from '@/sync/domains/workspaces/projectGroupDisplay';
+import { nestSessionListReports } from '@/sync/domains/session/listing/nestSessionListReports';
+import { sessionTagKey } from './sessionTagUtils';
 import { buildSessionListRowViewModel, buildSessionListRowViewModels, resolveSessionListRowViewModelAdjacency, readSessionListRowRefreshAtMs } from './sessionListRowViewModels';
 
 function createRenderableSession(id: string): SessionListRenderableSession {
@@ -48,6 +51,94 @@ function rowKey(item: Pick<SessionListSessionIndexItem, 'serverId' | 'sessionId'
 }
 
 describe('buildSessionListRowViewModels', () => {
+    it('binds the P5 row context: a group implies its Project and baseline, a shelf names them (U5)', () => {
+        const project = { serverId: 'home', projectKey: 'pk-happier' };
+        const baseline = { id: 'ref-main', serverId: 'home', machineId: 'machine-a', rootPath: '/repo/happier', label: 'happier', createdAtMs: 1 };
+        const grouped = { type: 'session', sessionId: 'ctx-row', serverId: 'home', groupKey: 'project:happier', groupKind: 'project', projectKey: project } satisfies SessionListIndexItem;
+        const shelf = { ...grouped, groupKey: 'attention', groupKind: 'attention' as const, occurrenceRole: 'needsYou' as const };
+        const onDevbox = { ...grouped, sessionId: 'ctx-devbox' };
+        const report = { ...grouped, sessionId: 'ctx-report' };
+        const base = createRenderableSession('ctx-row');
+        const session = { ...base, metadata: { ...base.metadata!, path: '/repo/happier-fix', workspaceId: 'ref-fix', branch: 'fix-remount' } };
+        const devboxBase = createRenderableSession('ctx-devbox');
+        const devbox = { ...devboxBase, metadata: { ...devboxBase.metadata!, machineId: 'machine-b', path: '/repo/happier', workspaceId: 'ref-devbox', branch: null } };
+        const reportSession = { ...session, id: report.sessionId, manager: { sessionId: grouped.sessionId } };
+        const rowRenderableByKey = new Map<string, SessionListRenderableSession>([
+            [rowKey(grouped), session], [rowKey(report), reportSession], [rowKey(onDevbox), devbox],
+        ]);
+        const rowContext = {
+            enabled: true,
+            identityDisplay: 'auto' as const,
+            projectDisplayByKey: new Map([[projectGroupIdentityKey(project), { project, baseline, title: 'happier', hasCustomLabel: false }]]),
+            groupProjectByGroupKey: new Map([['project:happier', project]]),
+        };
+        const input = {
+            listItems: nestSessionListReports([shelf, grouped, report, onDevbox],
+                (serverId, sessionId) => rowRenderableByKey.get(sessionTagKey(serverId ?? '', sessionId)) ?? null),
+            reachableSessionDisplayById: new Map(),
+            reachableSessionDisplayByKey: new Map([[sessionTagKey('home', 'ctx-devbox'), { machineId: 'machine-b', machineLabel: 'devbox', workspaceSubtitle: '', workspaceSubtitleEllipsizeMode: 'head' as const }]]),
+            rowRenderableByKey,
+            relativeNowMs: 1_000, runtimeNowMs: 1_000,
+            pinnedSessionKeys: new Set<string>(), sessionTags: {}, selectedSessionId: null,
+            showServerBadge: false, showPinnedServerBadge: false, rowContext,
+        };
+        const [inShelf, inGroup, underLead, elsewhere] = buildSessionListRowViewModels(input);
+        // Inside its own Project group: the Agent leads, the Project is implied, the worktree's branch speaks.
+        expect(inGroup?.rowContext).toMatchObject({ leadingMark: 'agent', project: null,
+            checkout: { kind: 'branch', label: 'fix-remount' } });
+        // The shelf copy names its Project (no favicon is held yet, so the folder mark and name stand in).
+        expect(inShelf?.rowContext).toMatchObject({ leadingMark: 'projectWithAgent',
+            project: { label: 'happier', yieldsToFavicon: true }, checkout: { kind: 'branch', label: 'fix-remount' } });
+        const faviconSource = { serverId: 'home', machineId: 'machine-a', workspacePath: '/repo/happier' };
+        expect(inShelf?.rowContext).toHaveProperty('projectFaviconSource', faviconSource);
+        expect(inGroup?.rowContext).toHaveProperty('projectFaviconSource', faviconSource);
+        // Neither a different row Machine/checkout nor its shelf placement elects a favicon source.
+        expect(elsewhere?.rowContext).toHaveProperty('projectFaviconSource', faviconSource);
+        // Rows never name a Machine, including in their optional path subtitle or accessibility label.
+        expect(elsewhere?.rowContext).toMatchObject({ checkout: null });
+        expect(elsewhere?.subtitleOverride ?? '').not.toContain('devbox');
+        expect(elsewhere?.rowContext?.accessibleLabel).not.toContain('devbox');
+        // A displayed lead supplies its actual Machine and checkout even away from the baseline.
+        expect(underLead?.rowContext).toMatchObject({ checkout: null });
+        // Turning optional context off hides it visually but keeps it for assistive technology.
+        const [, quiet] = buildSessionListRowViewModels({ ...input, rowContext: { ...rowContext, enabled: false } });
+        expect(quiet?.rowContext).toMatchObject({ project: null, checkout: null });
+        expect(quiet?.rowContext?.accessibleLabel).toContain('fix-remount');
+        expect(quiet?.rowContext).toHaveProperty('projectFaviconSource', faviconSource);
+        const withoutBaseline = buildSessionListRowViewModels({ ...input, rowContext: { ...rowContext,
+            projectDisplayByKey: new Map([[projectGroupIdentityKey(project), {
+                project, baseline: null, title: 'happier', hasCustomLabel: true,
+            }]]),
+        } });
+        expect(withoutBaseline[0]?.rowContext).toHaveProperty('projectFaviconSource', null);
+        expect(withoutBaseline[1]?.rowContext).toHaveProperty('projectFaviconSource', null);
+        expect(withoutBaseline[0]).not.toBe(inShelf);
+        const otherProject = { serverId: 'other-home', projectKey: 'other-project' };
+        const underOtherProject = buildSessionListRowViewModels({ ...input, rowContext: { ...rowContext,
+            groupProjectByGroupKey: new Map([['project:happier', otherProject]]),
+            projectDisplayByKey: new Map([...rowContext.projectDisplayByKey,
+                [projectGroupIdentityKey(otherProject), { project: otherProject,
+                    baseline: { ...baseline, serverId: 'other-home', machineId: 'foreign-machine', rootPath: '/foreign' },
+                    title: 'other', hasCustomLabel: false }]]),
+        } });
+        expect(underOtherProject[1]?.rowContext).toHaveProperty('projectFaviconSource', faviconSource);
+    });
+
+    it('retains independent mirror models and paints unqualified selection on both copies', () => {
+        const base = { type: 'session', sessionId: 'mirrored-model', serverId: 'home', groupKey: 'project' } satisfies SessionListIndexItem;
+        const shelf = { ...base, groupKey: 'attention', occurrenceRole: 'needsYou' as const };
+        const input = { listItems: [shelf, base], reachableSessionDisplayById: new Map(),
+            rowRenderableByKey: new Map([[rowKey(base), createRenderableSession(base.sessionId)]]),
+            relativeNowMs: 1_000, runtimeNowMs: 1_000,
+            pinnedSessionKeys: new Set<string>(), sessionTags: {}, selectedSessionId: base.sessionId,
+            showServerBadge: false, showPinnedServerBadge: false };
+        const first = buildSessionListRowViewModels(input);
+        expect(first.map(model => model?.selected)).toEqual([true, true]);
+        const second = buildSessionListRowViewModels(input);
+        expect(second[0]).toBe(first[0]);
+        expect(second[1]).toBe(first[1]);
+    });
+
     it('selects row-local age, runtime, reminder and stale Home deadlines', () => {
         const now = 1_800_000_000_000;
         const old = { ...createRenderableSession('deadline'), presence: 0, createdAt: now - 2 * 86_400_000 };
@@ -68,7 +159,7 @@ describe('buildSessionListRowViewModels', () => {
         const session = createRenderableSession(item.sessionId);
         const base = {
             listItems: [item], reachableSessionDisplayById: new Map(),
-            rowRenderableByKey: new Map([[sessionKey, session]]), hasMultipleMachines: false,
+            rowRenderableByKey: new Map([[sessionKey, session]]),
             pinnedSessionKeys: new Set<string>(), selectedSessionId: null,
             showServerBadge: false, showPinnedServerBadge: false,
         };
@@ -102,7 +193,7 @@ describe('buildSessionListRowViewModels', () => {
             audienceContext: { kind: 'group' as const, teamId: 'team', groupId: 'group' },
         } };
         const input = { listItems: [item], reachableSessionDisplayById: new Map(),
-            rowRenderableByKey: new Map([[rowKey(item), session]]), hasMultipleMachines: false,
+            rowRenderableByKey: new Map([[rowKey(item), session]]),
             pinnedSessionKeys: new Set<string>(), sessionTags: {}, selectedSessionId: null,
             showServerBadge: false, showPinnedServerBadge: false,
             audienceScopes: new Map([[scope.serverId, scope]]) };
@@ -124,7 +215,7 @@ describe('buildSessionListRowViewModels', () => {
         const [row] = buildSessionListRowViewModels({
             listItems: [item], reachableSessionDisplayById: new Map(),
             rowRenderableByKey: new Map([[rowKey(item), session]]), relativeNowMs: 1_000, runtimeNowMs: 1_000,
-            hasMultipleMachines: false, pinnedSessionKeys: new Set(), sessionTags: {}, selectedSessionId: null,
+            pinnedSessionKeys: new Set(), sessionTags: {}, selectedSessionId: null,
             showServerBadge: false, showPinnedServerBadge: false,
         });
         expect(row?.sessionStatus?.state).toBe('background_active');
@@ -163,7 +254,6 @@ describe('buildSessionListRowViewModels', () => {
             rowRenderableByKey: new Map([[rowKey(item), session]]),
             relativeNowMs: 1_000,
             runtimeNowMs: 1_000,
-            hasMultipleMachines: false,
             pinnedSessionKeys: new Set(),
             sessionTags: {},
             selectedSessionId: null,
@@ -189,24 +279,15 @@ describe('buildSessionListRowViewModels', () => {
             groupKey: 'group-a',
             groupKind: 'date',
         } satisfies SessionListIndexItem;
-        const draft = {
-            listed: true,
-            text: 'Continue this message',
-            preview: 'Continue this message',
-            status: 'clean' as const,
-            conflict: null,
-            updatedAt: 500,
-        };
+        const draft = { hasPreview: true };
 
         const row = buildSessionListRowViewModel({
             item,
-            adjacency: resolveSessionListRowViewModelAdjacency([item], 0),
             unscopedSelectionIsUnique: false,
             reachableSessionDisplayById: new Map(),
             rowRenderableByKey: new Map([[rowKey(item), createRenderableSession(item.sessionId)]]),
             relativeNowMs: 1000,
             runtimeNowMs: 1000,
-            hasMultipleMachines: false,
             pinnedSessionKeys: new Set(),
             sessionTags: {},
             selectedSessionId: null,
@@ -241,7 +322,6 @@ describe('buildSessionListRowViewModels', () => {
             ]),
             relativeNowMs: 1000,
             runtimeNowMs: 1000,
-            hasMultipleMachines: false,
             pinnedSessionKeys: new Set(),
             sessionTags: {},
             selectedSessionId: 'sess_selected_current',
@@ -332,7 +412,6 @@ describe('buildSessionListRowViewModels', () => {
             ]),
             relativeNowMs: 1000,
             runtimeNowMs: 1000,
-            hasMultipleMachines: false,
             pinnedSessionKeys: new Set(),
             sessionTags: {},
             selectedSessionId: 'shared-session',
@@ -360,7 +439,6 @@ describe('buildSessionListRowViewModels', () => {
             rowRenderableByKey: new Map([[rowKey(item), session]]),
             relativeNowMs: 1000,
             runtimeNowMs: 1000,
-            hasMultipleMachines: false,
             pinnedSessionKeys: new Set(),
             sessionTags: {},
             selectedSessionId: null,
@@ -378,7 +456,6 @@ describe('buildSessionListRowViewModels', () => {
             rowRenderableByKey: new Map([[rowKey(item), equivalentSession]]),
             relativeNowMs: 1000,
             runtimeNowMs: 1000,
-            hasMultipleMachines: false,
             pinnedSessionKeys: new Set(),
             sessionTags: {},
             selectedSessionId: null,
@@ -397,7 +474,7 @@ describe('buildSessionListRowViewModels', () => {
         const sessions = listItems.map((item) => createRenderableSession(item.sessionId));
         const input = {
             listItems, reachableSessionDisplayById: new Map(),
-            relativeNowMs: 1_000, runtimeNowMs: 1_000, hasMultipleMachines: false,
+            relativeNowMs: 1_000, runtimeNowMs: 1_000,
             pinnedSessionKeys: new Set<string>(), sessionTags: {}, selectedSessionId: null,
             showServerBadge: false, showPinnedServerBadge: false,
         };
@@ -416,7 +493,7 @@ describe('buildSessionListRowViewModels', () => {
         expect(second.filter((row, index) => row === first[index])).toHaveLength(199);
     });
 
-    it('derives the canonical working text for working rows', async () => {
+    it('preserves canonical working state and pulse without row-local animation policy', async () => {
         const { t } = await import('@/text');
         const item = {
             type: 'session',
@@ -427,7 +504,7 @@ describe('buildSessionListRowViewModels', () => {
             groupKind: 'date',
         } satisfies SessionListIndexItem;
         const session = createRenderableSession(item.sessionId);
-        const rows = buildSessionListRowViewModels({
+        const input = {
             listItems: [item],
             reachableSessionDisplayById: new Map(),
             rowRenderableByKey: new Map([[rowKey(item), {
@@ -438,16 +515,16 @@ describe('buildSessionListRowViewModels', () => {
             }]]),
             relativeNowMs: 1000,
             runtimeNowMs: 1000,
-            hasMultipleMachines: false,
             pinnedSessionKeys: new Set(),
             sessionTags: {},
             selectedSessionId: null,
             showServerBadge: false,
             showPinnedServerBadge: false,
+        } satisfies Parameters<typeof buildSessionListRowViewModels>[0];
+        const rows = buildSessionListRowViewModels(input);
+        expect(rows[0]?.sessionStatus).toMatchObject({
+            state: 'thinking', isPulsing: true, statusText: t('status.working'),
         });
-
-        expect(rows[0]?.sessionStatus?.state).toBe('thinking');
-        expect(rows[0]?.sessionStatus?.statusText).toBe(t('status.working'));
     });
 
     it('uses the optimistic pending first-turn expiration for list-row freshness refreshes', () => {
@@ -473,8 +550,6 @@ describe('buildSessionListRowViewModels', () => {
             }]]),
             relativeNowMs: nowMs,
             runtimeNowMs: nowMs,
-            workingTextMode: 'static',
-            hasMultipleMachines: false,
             pinnedSessionKeys: new Set(),
             sessionTags: {},
             selectedSessionId: null,
@@ -542,8 +617,6 @@ describe('buildSessionListRowViewModels', () => {
             }]]),
             relativeNowMs: 1_000,
             runtimeNowMs: 1_000,
-            workingTextMode: 'static',
-            hasMultipleMachines: false,
             pinnedSessionKeys: new Set(),
             sessionTags: {},
             selectedSessionId: null,
@@ -578,8 +651,6 @@ describe('buildSessionListRowViewModels', () => {
             rowRenderableByKey: new Map([[rowKey(item), rows[0]!.session!]]),
             relativeNowMs: 1_101,
             runtimeNowMs: 1_101,
-            workingTextMode: 'static',
-            hasMultipleMachines: false,
             pinnedSessionKeys: new Set(),
             sessionTags: {},
             selectedSessionId: null,
@@ -626,7 +697,6 @@ describe('buildSessionListRowViewModels', () => {
             rowRenderableByKey: new Map([[rowKey(item), malformedSession]]),
             relativeNowMs: 1_000,
             runtimeNowMs: 1_000,
-            hasMultipleMachines: false,
             pinnedSessionKeys: new Set(),
             sessionTags: {},
             selectedSessionId: null,

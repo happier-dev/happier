@@ -23,7 +23,6 @@ import { useSessionCockpitBottomChromeHeight } from '@/components/workspaceCockp
 import { useOptionalSafeAreaInsets } from '@/hooks/ui/useOptionalSafeAreaInsets';
 import { Modal } from '@/modal';
 import { t } from '@/text';
-import type { SessionFolderWorkspaceRefV1 } from '@/sync/domains/session/folders';
 import {
     useOptionalSessionListSelectionActions,
     useOptionalSessionListSelectionState,
@@ -33,7 +32,13 @@ import { Icon } from '@/components/ui/icons/Icon';
 
 type MoveFolderSelection = Readonly<{
     folderId: string | null;
-    destinationWorkspace: SessionFolderWorkspaceRefV1;
+    destinationServerId: string;
+    executionContext?: Pick<SessionBulkActionExecutionContext, 'setSessionFolderAssignment'>;
+}>;
+
+type PreparedBulkAction = Readonly<{
+    request: SessionBulkActionRequest;
+    executionContext?: Pick<SessionBulkActionExecutionContext, 'setSessionFolderAssignment'>;
 }>;
 
 export type SessionListSelectionActionBarHostProps = Readonly<{
@@ -48,8 +53,7 @@ type RunningActionState = Readonly<{
     progress: SessionBulkActionProgressSnapshot;
 }>;
 
-type ConfirmActionState = Readonly<{
-    request: SessionBulkActionRequest;
+type ConfirmActionState = PreparedBulkAction & Readonly<{
     descriptor: SessionBulkActionDescriptor;
     targets: readonly SessionBulkActionTarget[];
 }>;
@@ -223,6 +227,7 @@ export function SessionListSelectionActionBarHost(props: SessionListSelectionAct
     const executeAction = React.useCallback(async (
         action: SessionBulkActionRequest,
         targetSnapshot: readonly SessionBulkActionTarget[] = selectedTargets,
+        executionContext?: PreparedBulkAction['executionContext'],
     ) => {
         if (!selectionActions) return;
         setConfirmAction(null);
@@ -239,6 +244,7 @@ export function SessionListSelectionActionBarHost(props: SessionListSelectionAct
                 targets,
                 context: {
                     ...(props.bulkActionContext ?? {}),
+                    ...executionContext,
                     cancelSignal: {
                         isCancelled: () => cancelStateRef.current?.cancelled === true,
                     },
@@ -267,7 +273,7 @@ export function SessionListSelectionActionBarHost(props: SessionListSelectionAct
         }
     }, [applyRemainingSelection, props.bulkActionContext, selectedTargets, selectionActions]);
 
-    const resolveActionRequest = React.useCallback(async (actionId: SessionBulkActionId): Promise<SessionBulkActionRequest | null> => {
+    const resolveActionRequest = React.useCallback(async (actionId: SessionBulkActionId): Promise<PreparedBulkAction | null> => {
         switch (actionId) {
             case SESSION_BULK_ACTION_IDS.tagsAdd:
             case SESSION_BULK_ACTION_IDS.tagsRemove:
@@ -286,28 +292,31 @@ export function SessionListSelectionActionBarHost(props: SessionListSelectionAct
                     },
                 );
                 const tags = parsePromptTags(prompted);
-                return tags ? { id: actionId, tags } : null;
+                return tags ? { request: { id: actionId, tags } } : null;
             }
             case SESSION_BULK_ACTION_IDS.moveToFolder: {
                 const selectedTarget = await props.onRequestMoveToFolder?.(selectedTargets);
                 return selectedTarget
                     ? {
-                        id: SESSION_BULK_ACTION_IDS.moveToFolder,
-                        folderId: selectedTarget.folderId,
-                        destinationWorkspace: selectedTarget.destinationWorkspace,
+                        request: { id: SESSION_BULK_ACTION_IDS.moveToFolder,
+                            folderId: selectedTarget.folderId,
+                            destinationServerId: selectedTarget.destinationServerId },
+                        executionContext: selectedTarget.executionContext,
                     }
                     : null;
             }
-            default:
-                return simpleBulkActionRequest(actionId);
+            default: {
+                const request = simpleBulkActionRequest(actionId);
+                return request ? { request } : null;
+            }
         }
     }, [props.onRequestMoveToFolder, selectedTargets]);
 
     const handleActionPress = React.useCallback(async (descriptor: SessionBulkActionDescriptor) => {
         if (runningAction) return;
-        let request: SessionBulkActionRequest | null;
+        let prepared: PreparedBulkAction | null;
         try {
-            request = await resolveActionRequest(descriptor.id);
+            prepared = await resolveActionRequest(descriptor.id);
         } catch (error) {
             const failedResult = buildFailureResult({
                 actionId: descriptor.id,
@@ -318,17 +327,17 @@ export function SessionListSelectionActionBarHost(props: SessionListSelectionAct
             applyRemainingSelection(failedResult);
             return;
         }
-        if (!request) return;
+        if (!prepared) return;
         if (descriptor.requiresConfirmation) {
             setResult(null);
             setConfirmAction({
-                request,
+                ...prepared,
                 descriptor,
                 targets: [...selectedTargets],
             });
             return;
         }
-        await executeAction(request);
+        await executeAction(prepared.request, selectedTargets, prepared.executionContext);
     }, [applyRemainingSelection, executeAction, resolveActionRequest, runningAction, selectedTargets]);
 
     const handleCancelRunningAction = React.useCallback(() => {
@@ -405,7 +414,7 @@ export function SessionListSelectionActionBarHost(props: SessionListSelectionAct
                         label: confirmDescriptor.title,
                         accessibilityLabel: t('sessionsList.selectionConfirmA11yLabel', { action: confirmDescriptor.title }),
                         emphasis: confirmDescriptor.destructive ? 'destructive' : 'primary',
-                        onPress: () => executeAction(confirmAction.request, confirmAction.targets),
+                        onPress: () => executeAction(confirmAction.request, confirmAction.targets, confirmAction.executionContext),
                     }],
                     dismiss: {
                         label: t('common.cancel'),

@@ -163,6 +163,20 @@ export const sessionListStyles = StyleSheet.create((theme) => ({
         flexShrink: 0,
         marginLeft: theme.space.s8,
     },
+    /**
+     * A section's quiet line at the rows' title edge (calm ruling 2026-11-01): an empty section's "Drag sessions
+     * here", or the members this view does not draw (another space, archived). No outline at rest.
+     */
+    sectionQuietHint: {
+        minHeight: HAPPIER_COLLECTION_LIST_METRICS.rowMinHeight,
+        justifyContent: 'center' as const,
+        paddingLeft: HAPPIER_COLLECTION_LIST_METRICS.contentInset
+            + HAPPIER_COLLECTION_LIST_METRICS.rowGlyphBox + HAPPIER_COLLECTION_LIST_METRICS.rowGlyphGap,
+        paddingRight: theme.space.s10,
+    },
+    sectionDropHintText: {
+        color: theme.colors.text.tertiary,
+    },
     groupHeaderActionButton: {
         width: 18,
         height: 14,

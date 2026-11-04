@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
 import type { CollectionEntityKindV1 } from '@happier-dev/protocol/collections/spaces/collectionSpacesV1';
+import { useCollectionSavedViewsSelection } from '@happier-dev/plugin-ui/components';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { collectionSpacesManageHref } from '@/components/settings/session/collectionSpaceSettings';
@@ -16,22 +17,25 @@ import { t } from '@/text';
 import { resolveCollectionSpaceIconName, type CollectionSpacesStripItem } from './CollectionSpacesStrip';
 import { CollectionTitleButton } from './CollectionTitleButton';
 
-const SPACE_ITEM_PREFIX = 'space:';
 const FILTER_ITEM = 'filter';
 const SAVE_AS_ITEM = 'save-as';
 const SAVE_CHANGES_ITEM = 'save-changes';
 const EDIT_ITEM = 'edit';
 const MANAGE_ITEM = 'manage';
+const SHOW_SPACES_ITEM = 'show-spaces';
 
 type ShortcutId = keyof React.ContextType<typeof KeyboardShortcutLabelsContext>;
 
 /**
  * A saved-space list's title (Sessions, Workflows, Discussions — R9): it names the selected space and its
  * chevron opens one menu (lab `clfilter`, title chevron ruling): every space with its shortcut, then
- * Filter…, Save as space… or Edit space…, and Manage spaces (that entity's Settings → Spaces page).
+ * Filter…, Save as space… or Edit space…, then Show spaces (this list's switch) and Manage spaces (that
+ * entity's Settings → Spaces page). With spaces off the menu keeps Filter… and the way back.
  */
 export const CollectionSpaceTitle = React.memo(function CollectionSpaceTitle(
   props: Readonly<{
+    /** Stable Account catalog authority, shared with the public saved-view picker. */
+    scope: string | object;
     /** `<prefix>-title`, `<prefix>-menu:<space id>`, `<prefix>-menu-filter`, … */
     testIDPrefix: string;
     /** Whose spaces Manage spaces opens. */
@@ -45,6 +49,9 @@ export const CollectionSpaceTitle = React.memo(function CollectionSpaceTitle(
     /** The list's Filter… shortcut, when it has one. */
     filterShortcutId?: ShortcutId;
     selectedSpaceId: string;
+    /** This list's effective switch; null until the Account's settings are known (no switch is offered). */
+    spacesEnabled: boolean | null;
+    onSetSpacesEnabled: (next: boolean) => void;
     modified: boolean;
     onSelectSpace: (spaceId: string) => void;
     onOpenFilter: () => void;
@@ -54,30 +61,35 @@ export const CollectionSpaceTitle = React.memo(function CollectionSpaceTitle(
   }>,
 ) {
   const { theme } = useUnistyles();
-  const [open, setOpen] = React.useState(false);
+  const admittedItems = React.useMemo(() => props.spaces.map((space) => ({ id: space.id, label: space.name })), [props.spaces]);
+  const selectSpace = React.useCallback((id: string | null) => {
+    if (id !== null) props.onSelectSpace(id);
+  }, [props.onSelectSpace]);
+  const selection = useCollectionSavedViewsSelection({
+    scope: props.scope, items: admittedItems, selectedId: props.selectedSpaceId,
+    labels: { title: t('sessionsList.spacesTitle') }, onSelect: selectSpace,
+  });
   const router = useRouter();
   const shortcutLabels = React.useContext(KeyboardShortcutLabelsContext);
   const iconColor = theme.colors.text.secondary;
   const items = React.useMemo<readonly DropdownMenuItem[]>(
     () => [
-      ...props.spaces.map((space, index): DropdownMenuItem => ({
-        id: SPACE_ITEM_PREFIX + space.id,
-        testID: `${props.testIDPrefix}-menu:${space.id}`,
-        title: space.name,
-        icon: (
-          <Icon
-            name={resolveCollectionSpaceIconName(space.icon)}
-            size={ICON_SIZE.sm}
-            color={iconColor}
-          />
-        ),
-        shortcut:
-          props.spaceShortcutPrefix !== undefined && index < 9
-            ? shortcutLabels[`${props.spaceShortcutPrefix}${index + 1}` as ShortcutId]
-            : undefined,
-        checked: space.id === props.selectedSpaceId,
-        category: 'spaces',
-      })),
+      ...selection.items.map((item, index): DropdownMenuItem => {
+        // This adapter adds host icon/shortcut presentation to the public selection model.
+        const space = props.spaces[index]!;
+        return {
+          id: item.id,
+          testID: `${props.testIDPrefix}-menu:${space.id}`,
+          title: item.label,
+          icon: <Icon name={resolveCollectionSpaceIconName(space.icon)} size={ICON_SIZE.sm} color={iconColor} />,
+          shortcut:
+            props.spaceShortcutPrefix !== undefined && index < 9
+              ? shortcutLabels[`${props.spaceShortcutPrefix}${index + 1}` as ShortcutId]
+              : undefined,
+          checked: selection.radioGroups.some((group) => group.selectedId === item.id),
+          category: 'spaces',
+        };
+      }),
       {
         id: FILTER_ITEM,
         testID: `${props.testIDPrefix}-menu-filter`,
@@ -88,7 +100,7 @@ export const CollectionSpaceTitle = React.memo(function CollectionSpaceTitle(
         shortcut: props.filterShortcutId ? shortcutLabels[props.filterShortcutId] : undefined,
         category: 'actions',
       },
-      ...(props.modified
+      ...(!props.spacesEnabled ? [] : props.modified
         ? [
             {
               id: SAVE_CHANGES_ITEM,
@@ -111,18 +123,27 @@ export const CollectionSpaceTitle = React.memo(function CollectionSpaceTitle(
               category: 'actions',
             },
           ]),
-      {
+      ...(props.spacesEnabled === null ? [] : [{
+        id: SHOW_SPACES_ITEM,
+        testID: `${props.testIDPrefix}-menu-show-spaces`,
+        title: t('sessionsList.spacesShow'),
+        checked: props.spacesEnabled,
+        category: 'settings',
+      }]),
+      ...(props.spacesEnabled ? [{
         id: MANAGE_ITEM,
         testID: `${props.testIDPrefix}-menu-manage`,
         title: t('sessionsList.spacesManage'),
-        category: 'actions',
-      },
+        category: 'settings',
+      }] : []),
     ],
     [
       iconColor,
       props.filterShortcutId,
       props.modified,
-      props.selectedSpaceId,
+      props.spacesEnabled,
+      selection.items,
+      selection.radioGroups,
       props.spaceShortcutPrefix,
       props.spaces,
       props.testIDPrefix,
@@ -131,22 +152,22 @@ export const CollectionSpaceTitle = React.memo(function CollectionSpaceTitle(
   );
   const handleSelect = React.useCallback(
     (itemId: string) => {
-      setOpen(false);
-      if (itemId.startsWith(SPACE_ITEM_PREFIX))
-        props.onSelectSpace(itemId.slice(SPACE_ITEM_PREFIX.length));
-      else if (itemId === FILTER_ITEM) props.onOpenFilter();
+      if (selection.selectItem(itemId)) return;
+      selection.onOpenChange(false);
+      if (itemId === FILTER_ITEM) props.onOpenFilter();
       else if (itemId === SAVE_AS_ITEM) props.onSaveAs();
       else if (itemId === SAVE_CHANGES_ITEM) props.onSaveChanges();
       else if (itemId === EDIT_ITEM) props.onEdit();
+      else if (itemId === SHOW_SPACES_ITEM) props.onSetSpacesEnabled(!props.spacesEnabled);
       else if (itemId === MANAGE_ITEM)
         router.push(collectionSpacesManageHref(props.entityKind));
     },
-    [props, router],
+    [props, router, selection.onOpenChange, selection.selectItem],
   );
   return (
     <DropdownMenu
-      open={open}
-      onOpenChange={setOpen}
+      open={selection.open}
+      onOpenChange={selection.onOpenChange}
       items={items}
       onSelect={handleSelect}
       variant="slim"
@@ -166,7 +187,7 @@ export const CollectionSpaceTitle = React.memo(function CollectionSpaceTitle(
           accessibilityLabel={t('sessionsList.spacesTitleMenu', {
             name: props.label,
           })}
-          expanded={open}
+          expanded={selection.open}
           hasPopup="menu"
           onPress={toggle}
           {...(props.titleScale ? { scale: props.titleScale } : {})}

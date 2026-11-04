@@ -66,6 +66,8 @@ export function useWorkflowLibrarySpaceHeader(
       spaces: libraryView.spaces,
       selectedSpaceId: libraryView.selectedSpaceId,
       selectedSpace: libraryView.selectedSpace,
+      activeSpace: libraryView.activeSpace,
+      spacesEnabled: libraryView.spacesEnabled,
       spacesReady: libraryView.spacesReady,
       spaceSettingsScope: libraryView.spaceSettingsScope,
       filters: libraryView.filters,

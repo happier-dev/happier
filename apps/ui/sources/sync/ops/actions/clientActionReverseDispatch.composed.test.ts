@@ -827,9 +827,9 @@ describe('admitted app Actions and daemon-to-app continuations', () => {
   it('routes driver Library Actions through the mounted client registration and strict receiver', async () => {
     const { ClientActionReverseRuntime } = await import('@/components/appShell/runtime/ClientActionReverseRuntime');
     const { useWorkflowLibraryView } = await import('@/components/workflows/library/useWorkflowLibraryView');
-    const rows: Parameters<typeof useWorkflowLibraryView>[0] = [];
+    const { getBuiltinWorkflowCatalogV1 } = await import('@happier-dev/protocol/workflows/builtins/catalog');
     function LibraryOwner() {
-      useWorkflowLibraryView(rows, null, true);
+      useWorkflowLibraryView(true);
       return null;
     }
     const machine = createMachineFixture({ id: 'driver-machine', activeAt: Date.now(), storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER });
@@ -865,8 +865,9 @@ describe('admitted app Actions and daemon-to-app continuations', () => {
       },
     }));
     const caller = createActionExecutor({ clientActionExecute: reverse } as unknown as ActionExecutorDeps);
+    // This Account-level MCP driver has no Session view or Session fixture.
     const context = { surface: 'mcp' as const, authority: 'account_automation' as const,
-      defaultSessionId: 'driver-session', defaultSessionMachineId: machine.id };
+      defaultSessionId: 'cli-global', defaultSessionMachineId: machine.id };
     const library = await renderScreen(React.createElement(LibraryOwner));
     // A mounted Library alone cannot answer a driver: its client transport must be bound.
     expect(await caller.execute('workflow.library.view.get', {}, context))
@@ -876,8 +877,12 @@ describe('admitted app Actions and daemon-to-app continuations', () => {
     const runtime = await renderScreen(React.createElement(ClientActionReverseRuntime));
     expect(await caller.execute('home.runtime.get', { force: true }, context))
       .toMatchObject({ ok: true, result: { status: 'ready' } });
-    expect(await caller.execute('workflow.library.view.get', {}, context)).toEqual({ ok: true,
-      result: ScopeActionOutputSchemas['workflow.library.view.get'].parse({ view: 'all', searchQuery: '', offeredViews: ['all'], visibleKeys: [] }) });
+    const libraryRead = await caller.execute('workflow.library.view.get', {}, context);
+    expect(libraryRead.ok).toBe(true);
+    if (!libraryRead.ok) throw new Error(libraryRead.errorCode);
+    // Validate the complete actual DTO, not a hand-built retired fixture shape.
+    expect(ScopeActionOutputSchemas['workflow.library.view.get'].parse(libraryRead.result)).toMatchObject({
+      view: 'all', searchQuery: '', offeredViews: ['all'], visibleKeys: getBuiltinWorkflowCatalogV1().map(entry => entry.id) });
     await act(async () => {
       expect(await caller.execute('workflow.library.view.set', { searchQuery: 'QA-FIN35c' }, context))
         .toEqual({ ok: true, result: { ok: true } });

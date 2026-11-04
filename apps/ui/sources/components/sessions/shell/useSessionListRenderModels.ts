@@ -4,6 +4,8 @@ import * as React from 'react';
 
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
+import type { ProjectOrganizationRow } from '@/sync/domains/workspaces/projectAccountRows';
+import type { SessionOrganizationListViewState } from '@/sync/domains/session/organization/viewState';
 import type { WorkspaceDisplayEllipsizeMode } from '@/sync/domains/workspaces/workspaceDisplayPresentation';
 import type { WorkspacePathDisplayModeV1 } from '@/sync/domains/workspaces/workspaceDisplayPresentation';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
@@ -29,10 +31,10 @@ import {
     useSessionListRuntimeNowMs,
     useSessionListRuntimeWake,
 } from '@/hooks/session/sessionListRuntimeClock';
-import type { SessionWorkingTextMode } from '@/utils/sessions/sessionUtils';
 import { normalizeSessionListShellState } from './normalizeSessionListShellState';
 import {
     filterSessionListItemsForHeaderControls,
+    projectSessionListItemsForHeaderControls,
     hasActiveSessionListHeaderFilters,
     type SessionListHeaderFilterInput,
 } from './sessionListFilters';
@@ -74,6 +76,8 @@ const EMPTY_SESSION_LIST_RENDER_MODELS = {
     projectHeaderViewModelState: {
         projectHeaderViewModelByGroupKey: new Map<string, SessionListProjectHeaderViewModel>(),
         scopeHintByLegacyWorkspaceKey: new Map<string, WorkspaceScopeBase>(),
+        projectDisplayByKey: new Map(),
+        groupProjectByGroupKey: new Map(),
     },
     rowViewModels: [] as ReadonlyArray<SessionListRowViewModel | null>,
     rowRenderableByKey: EMPTY_SESSION_LIST_ROW_RENDERABLES_BY_KEY,
@@ -286,7 +290,10 @@ export function useSessionListRenderModels(input: Readonly<{
     collapsedGroupKeys: Readonly<Record<string, boolean>>;
     machineDisplayById?: Readonly<Record<string, MachineDisplayRenderable>>;
     workspaceLabels: Readonly<Record<string, string>>;
+    workspaceRefsServerId?: string;
+    legacyWorkspaceLabelDisplayStatesByKey?: SessionOrganizationListViewState['labelDisplayStatesByKey'];
     workspaceRefs: ReadonlyArray<WorkspaceRefV1>;
+    projectOrganizations?: readonly ProjectOrganizationRow[];
     workspacePathDisplayModeV1?: WorkspacePathDisplayModeV1 | null;
     pinnedKeySet: ReadonlySet<string>;
     sessionTags: Readonly<Record<string, string[]>>;
@@ -300,8 +307,6 @@ export function useSessionListRenderModels(input: Readonly<{
     selectedSessionServerId?: string | null;
     showServerBadge: boolean;
     showPinnedServerBadge: boolean;
-    workingIndicatorMode?: 'spinner' | 'pulse' | null;
-    workingTextMode?: SessionWorkingTextMode | null;
     identityDisplay?: 'avatar' | 'agentLogo' | 'none' | null;
     activeColorMode?: 'activityAndAttention' | 'attentionOnly' | 'allActive' | null;
     hideInactiveSessions?: boolean | null;
@@ -341,9 +346,32 @@ export function useSessionListRenderModels(input: Readonly<{
             },
         );
     }, [headerFiltersActive, input.collapsedGroupKeys, input.paneState.visibleSessionListIndex]);
+    const selectionScopeProjection = React.useMemo(() => {
+        const items = input.paneState.visibleSessionListIndex ?? [];
+        return input.headerFilters ? projectSessionListItemsForHeaderControls(items, input.headerFilters)
+            : { items: items as Array<SessionListIndexItem>, matchedEntityIds: EMPTY_PINNED_KEY_SET };
+    }, [input.headerFilters, input.paneState.visibleSessionListIndex]);
+    const selectionScopeListItems = selectionScopeProjection.items;
+    const filterResult = React.useMemo(() => {
+        const result = input.paneState.filterResult;
+        const ordinary = input.paneState.filterMatchedEntityIds;
+        if (!result || !ordinary || !headerFiltersActive) return result;
+        const supplement = input.paneState.filterAttentionSupplementEntityIds;
+        let matchedCount = 0;
+        let attentionSupplementCount = 0;
+        for (const id of selectionScopeProjection.matchedEntityIds) {
+            if (ordinary.has(id)) matchedCount += 1;
+            if (supplement?.has(id)) attentionSupplementCount += 1;
+        }
+        const nextSupplementCount = supplement ? attentionSupplementCount : result.attentionSupplementCount;
+        return result.matchedCount === matchedCount && result.attentionSupplementCount === nextSupplementCount
+            ? result : { ...result, matchedCount, attentionSupplementCount: nextSupplementCount };
+    }, [headerFiltersActive, input.paneState.filterResult, input.paneState.filterMatchedEntityIds,
+        input.paneState.filterAttentionSupplementEntityIds, selectionScopeProjection.matchedEntityIds]);
     const filteredListItems = React.useMemo(() => {
         if (!visibleListItems || !input.headerFilters) return visibleListItems;
-        const filtered = filterSessionListItemsForHeaderControls(visibleListItems, input.headerFilters);
+        const filtered = visibleListItems === input.paneState.visibleSessionListIndex
+            ? selectionScopeListItems : filterSessionListItemsForHeaderControls(visibleListItems, input.headerFilters);
         const otherMatches = input.searchOtherMatches;
         if (!otherMatches || otherMatches.matches.length === 0) return filtered;
         const outsideMatches = resolveSessionListSearchOutsideMatches({
@@ -360,14 +388,8 @@ export function useSessionListRenderModels(input: Readonly<{
             resolveSessionRow: otherMatches.resolveSessionRow,
             resolveRunOriginSession: otherMatches.resolveRunOriginSession,
         });
-    }, [input.headerFilters, input.searchOtherMatches, visibleListItems]);
+    }, [input.headerFilters, input.searchOtherMatches, input.paneState.visibleSessionListIndex, selectionScopeListItems, visibleListItems]);
     const listItems = (filteredListItems ?? []) as Array<SessionListIndexItem>;
-    const selectionScopeListItems = React.useMemo(() => {
-        const items = input.paneState.visibleSessionListIndex;
-        if (!items || items.length === 0) return [] as Array<SessionListIndexItem>;
-        if (!input.headerFilters) return items as Array<SessionListIndexItem>;
-        return filterSessionListItemsForHeaderControls(items, input.headerFilters);
-    }, [input.headerFilters, input.paneState.visibleSessionListIndex]);
     const audienceAddresses = React.useMemo(() => selectionScopeListItems.flatMap((item) => {
         if (item.type !== 'session') return [];
         const address = normalizeSessionAddress(item.serverId, item.sessionId);
@@ -497,7 +519,10 @@ export function useSessionListRenderModels(input: Readonly<{
             const projectHeaderViewModelState = buildSessionListProjectHeaderViewModels({
                 listItems,
                 machinesById: machines,
+                projectOrganizations: input.projectOrganizations,
                 workspaceLabels: normalizedShellState.workspaceLabels,
+                workspaceRefsServerId: input.workspaceRefsServerId,
+                legacyWorkspaceLabelDisplayStatesByKey: input.legacyWorkspaceLabelDisplayStatesByKey,
                 workspaceRefs: normalizedShellState.workspaceRefs,
                 workspacePathDisplayModeV1: input.workspacePathDisplayModeV1,
             });
@@ -505,7 +530,8 @@ export function useSessionListRenderModels(input: Readonly<{
             previousPresentation = { sessionReachabilitySummary, projectHeaderViewModelState };
             return previousPresentation;
         };
-    }, [input.machineDisplayById, input.workspacePathDisplayModeV1, listItems, normalizedShellState.workspaceLabels,
+    }, [input.machineDisplayById, input.workspacePathDisplayModeV1, input.projectOrganizations,
+        input.workspaceRefsServerId, input.legacyWorkspaceLabelDisplayStatesByKey, normalizedShellState.workspaceLabels, listItems,
         normalizedShellState.workspaceRefs, reachabilityRenderablesByKey]);
     const { sessionReachabilitySummary, projectHeaderViewModelState } = useMachineDisplayById(selectMachinePresentation);
 
@@ -529,14 +555,11 @@ export function useSessionListRenderModels(input: Readonly<{
                 rowRenderableByKey,
                 relativeNowMs,
                 runtimeNowMs,
-                workingIndicatorMode: input.workingIndicatorMode === 'pulse' ? 'pulse' : 'spinner',
-                workingTextMode: input.workingTextMode === 'static' ? 'static' : 'animated',
                 identityDisplay: input.identityDisplay === 'agentLogo' || input.identityDisplay === 'none' ? input.identityDisplay : 'avatar',
                 activeColorMode: input.activeColorMode === 'attentionOnly' || input.activeColorMode === 'allActive'
                     ? input.activeColorMode
                     : 'activityAndAttention',
                 hideInactiveSessions: input.hideInactiveSessions === true,
-                hasMultipleMachines: sessionReachabilitySummary.hasMultipleMachines,
                 pinnedSessionKeys: pinnedKeySet,
                 sessionTags: normalizedShellState.sessionTags,
                 selectedSessionId: input.selectedSessionId,
@@ -558,8 +581,6 @@ export function useSessionListRenderModels(input: Readonly<{
         input.activeColorMode,
         input.hideInactiveSessions,
         input.identityDisplay,
-        input.workingTextMode,
-        input.workingIndicatorMode,
         deriveRowViewModels,
         audience,
         listItems,
@@ -569,7 +590,6 @@ export function useSessionListRenderModels(input: Readonly<{
         runtimeNowMs,
         sessionReachabilitySummary.displayByKey,
         sessionReachabilitySummary.displayById,
-        sessionReachabilitySummary.hasMultipleMachines,
     ]);
     const selectionScopeRowViewModels = React.useMemo(() => {
         if (!deriveRowViewModels) {
@@ -586,14 +606,11 @@ export function useSessionListRenderModels(input: Readonly<{
             rowRenderableByKey: selectionScopeRowRenderableByKey,
             relativeNowMs,
             runtimeNowMs,
-            workingIndicatorMode: input.workingIndicatorMode === 'pulse' ? 'pulse' : 'spinner',
-            workingTextMode: input.workingTextMode === 'static' ? 'static' : 'animated',
             identityDisplay: input.identityDisplay === 'agentLogo' || input.identityDisplay === 'none' ? input.identityDisplay : 'avatar',
             activeColorMode: input.activeColorMode === 'attentionOnly' || input.activeColorMode === 'allActive'
                 ? input.activeColorMode
                 : 'activityAndAttention',
             hideInactiveSessions: input.hideInactiveSessions === true,
-            hasMultipleMachines: sessionReachabilitySummary.hasMultipleMachines,
             pinnedSessionKeys: pinnedKeySet,
             sessionTags: normalizedShellState.sessionTags,
             selectedSessionId: input.selectedSessionId,
@@ -613,8 +630,6 @@ export function useSessionListRenderModels(input: Readonly<{
         input.selectedSessionServerId,
         input.showPinnedServerBadge,
         input.showServerBadge,
-        input.workingTextMode,
-        input.workingIndicatorMode,
         deriveRowViewModels,
         audience,
         normalizedShellState.sessionTags,
@@ -625,7 +640,6 @@ export function useSessionListRenderModels(input: Readonly<{
         selectionScopeRowRenderableByKey,
         sessionReachabilitySummary.displayById,
         sessionReachabilitySummary.displayByKey,
-        sessionReachabilitySummary.hasMultipleMachines,
     ]);
 
     const nextRuntimeFreshnessAtMs = React.useMemo(() => {
@@ -642,11 +656,12 @@ export function useSessionListRenderModels(input: Readonly<{
 
     return React.useMemo(() => {
         if (listItems.length === 0 && selectionScopeListItems.length === 0) {
-            return { ...EMPTY_SESSION_LIST_RENDER_MODELS, audience };
+            return { ...EMPTY_SESSION_LIST_RENDER_MODELS, audience, filterResult };
         }
 
         return {
             audience,
+            filterResult,
             listItems,
             selectionScopeListItems,
             reachableSessionDisplayById: sessionReachabilitySummary.displayById,
@@ -659,6 +674,7 @@ export function useSessionListRenderModels(input: Readonly<{
         };
     }, [
         audience,
+        filterResult,
         listItems,
         projectHeaderViewModelState,
         rowViewModels,

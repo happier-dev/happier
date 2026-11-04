@@ -30,7 +30,6 @@ vi.mock('@/components/ui/forms/dropdown/ContextMenu', () => ({
 vi.mock('@/components/ui/avatar/Avatar', () => ({ Avatar: 'Avatar' }));
 vi.mock('@/agents/registry/AgentIcon', () => ({ AgentIcon: 'AgentIcon' }));
 vi.mock('@/hooks/session/useNavigateToSession', () => ({ useNavigateToSession: () => vi.fn() }));
-vi.mock('@/utils/platform/responsive', () => ({ useIsTablet: () => false }));
 vi.mock('@/hooks/ui/useHappyAction', () => ({ useHappyAction: (fn: unknown) => [false, fn] }));
 vi.mock('expo-clipboard', () => ({ setStringAsync: vi.fn(async () => undefined) }));
 
@@ -78,7 +77,9 @@ describe('SessionItem existing-session draft presentation', () => {
         confirmDeleteDraft.mockClear();
     });
 
-    it('gives the joined session sheet one Elements backdrop only when its backing is visible', async () => {
+    // Rows lie flat on the column's plane (P4-R4, calm-shell REPORT "Flat rows on the plane, with no group
+    // cards or shadows"; lab `clflat`): a standalone row draws no card sheet or backdrop over any backing.
+    it('lays a standalone session row flat on the plane, with no card backdrop over any backing', async () => {
         const { AppShellMaterialFrame } = await import('@/components/navigation/shell/AppShellMaterialFrame');
         const { GlassMaterialSettingsProvider } = await import('@/components/ui/glass/useGlassMaterialSettings');
         const { GlassRuntimeEnvironmentProvider } = await import('@/components/ui/glass/glassRuntimeEnvironment');
@@ -101,7 +102,8 @@ describe('SessionItem existing-session draft presentation', () => {
             && typeof flattenTestStyle(node.props.style).backdropFilter === 'string'
             && flattenTestStyle(node.props.style).backdropFilter !== 'none'
             && String(flattenTestStyle(node.props.style).backgroundColor).includes('--happier-glass-card-background-color'));
-        expect(backdrops()).toHaveLength(1);
+        expect(screen.findByTestId('session-list-item-session-glass-row')).toBeTruthy();
+        expect(backdrops()).toHaveLength(0);
         const container = screen.root.findAll(node => typeof node.props.onPointerEnter === 'function')[0]!;
         expect(StyleSheet.flatten(container.props.style).opacity).toBeUndefined();
         await screen.update(scene('none'));
@@ -114,18 +116,12 @@ describe('SessionItem existing-session draft presentation', () => {
         const rowViewModel = createSessionItemRowViewModel({
             session,
             overrides: {
-                draft: {
-                    listed: true,
-                    text: 'Fix the flaky release test',
-                    preview: 'Fix the flaky release test',
-                    status: 'clean',
-                    conflict: null,
-                    updatedAt: 10,
-                },
+                draft: { hasPreview: true },
             },
         });
+        const draftPreview = { live: true, subscribe: () => () => undefined, getPreview: () => 'Fix the flaky release test' };
         const screen = await renderScreen(
-            <SessionItem session={session} rowViewModel={rowViewModel} onDeleteDraft={onDeleteDraft} />,
+            <SessionItem session={session} rowViewModel={rowViewModel} onDeleteDraft={onDeleteDraft} draftPreview={draftPreview} />,
         );
 
         expect(screen.findByTestId('session-list-draft-indicator:session-draft-row')?.props.accessibilityLabel)

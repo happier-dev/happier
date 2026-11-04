@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { areServerAccountScopesEqual, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import type { CurrentUiContextMountedEnrichment, CurrentUiContextMountedCommand } from './currentUiContextModel';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { useOptionalCurrentUiContextReader } from './CurrentUiContextProvider';
@@ -9,6 +9,7 @@ export type CurrentUiContextLocalCommand = Readonly<{
     key: string;
     title: string;
     description?: string;
+    setting?: Extract<CurrentUiContextMountedCommand, { kind: 'hostLocal' }>['setting'];
     invoke(): boolean | void | Promise<boolean | void>;
 }>;
 
@@ -90,19 +91,23 @@ export function useCurrentUiContextLocalCommandDefinitions(
         key: string;
         title: string;
         description?: string;
+        setting?: CurrentUiContextLocalCommand['setting'];
         command: CurrentUiContextMountedCommand;
         lifetime: { mounted: boolean };
     }>;
     const previous = React.useRef<Readonly<{ isCurrent: () => boolean; contextKey?: string; rows: readonly Definition[] }> | null>(null);
-    const definitionKey = JSON.stringify(commands.map(({ key, title, description }) => ({ key, title, description })));
+    const definitionKey = JSON.stringify(commands.map(({ key, title, description, setting }) => ({ key, title, description, setting })));
     const definitions = React.useMemo(() => {
         const prior = previous.current?.isCurrent === isCurrent && previous.current.contextKey === contextKey ? previous.current.rows : [];
-        const rows = commands.map(({ key, title, description }) => {
-            const kept = prior.find(row => row.key === key && row.title === title && row.description === description);
+        const rows = commands.map(({ key, title, description, setting }) => {
+            const kept = prior.find(row => row.key === key && row.title === title && row.description === description
+                && (row.setting === setting || row.setting?.anchor === setting?.anchor && areServerAccountScopesEqual(row.setting?.scope, setting?.scope)));
             if (kept) return kept;
             const lifetime = { mounted: false };
-            return { key, title, lifetime, ...(description === undefined ? {} : { description }), command: {
+            return { key, title, lifetime, ...(description === undefined ? {} : { description }),
+                ...(setting === undefined ? {} : { setting }), command: {
                 kind: 'hostLocal' as const,
+                ...(setting === undefined ? {} : { setting }),
                 invoke: async ({ signal }: Readonly<{ signal: AbortSignal }>) => {
                     const current = latest.current.find(candidate => candidate.key === key);
                     if (signal.aborted || !lifetime.mounted || !isCurrent() || !current) {
@@ -123,14 +128,14 @@ export function useCurrentUiContextLocalCommandDefinitions(
     return definitions.rows;
 }
 
-export function useCurrentUiContextLocalCommands(commands: readonly CurrentUiContextLocalCommand[]): Readonly<{
+export function useCurrentUiContextLocalCommands(commands: readonly CurrentUiContextLocalCommand[], options?: Readonly<{ contextKey?: string }>): Readonly<{
     invoke(key: string): Promise<boolean>;
 }> {
     const composition = React.useContext(CompositionContext);
     const reader = useOptionalCurrentUiContextReader();
     const { execute } = useMountedActionExecution(composition?.authority?.scope);
     const isCurrent = React.useCallback(() => composition?.isCurrent() === true, [composition]);
-    const definitions = useCurrentUiContextLocalCommandDefinitions(commands, isCurrent);
+    const definitions = useCurrentUiContextLocalCommandDefinitions(commands, isCurrent, options?.contextKey);
     React.useLayoutEffect(() => {
         return composition?.register(definitions, definitions);
     }, [composition, definitions]);

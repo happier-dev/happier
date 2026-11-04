@@ -36,19 +36,20 @@ describe('Text metric scaling ownership', () => {
         settings.fontScale = 1;
         const { Platform } = await import('react-native');
         Object.defineProperty(Platform, 'OS', { configurable: true, value: platform });
-        const { SessionListRowTitle, SessionListRowSubtitle } = await import('@/components/sessions/shell/row/SessionListRowPresentation');
+        const { CollectionRowTitle, CollectionRowLine } = await import('@/components/ui/lists/collection/CollectionRowContent');
         const { resolveHappierTypeScale } = await import('@happier-dev/plugin-ui/presentation/typeScale');
         const cases = [
-            { density: 'default', title: 'label', subtitle: 'meta' },
-            { density: 'compact', title: 'label', subtitle: 'micro' },
-            { density: 'minimal', title: 'meta', subtitle: 'micro' },
-            { density: 'minimal', readableNativePhoneMinimal: true, title: 'heading', subtitle: 'meta' },
+            { density: 'detailed', title: 'label', subtitle: 'meta' },
+            { density: 'comfortable', title: 'label', subtitle: 'micro' },
+            // The compact row's title is the navigation rows' body step (lab `clflat`).
+            { density: 'compact', title: 'body', subtitle: 'micro' },
+            { density: 'compact', touchCompact: true, title: 'heading', subtitle: 'meta' },
         ] as const;
         for (const entry of cases) {
-            const readableNativePhoneMinimal = 'readableNativePhoneMinimal' in entry;
+            const touchCompact = 'touchCompact' in entry;
             const screen = await renderScreen(<>
-                <SessionListRowTitle testID="session-title" density={entry.density} readableNativePhoneMinimal={readableNativePhoneMinimal}>Session</SessionListRowTitle>
-                <SessionListRowSubtitle testID="session-subtitle" density={entry.density} readableNativePhoneMinimal={readableNativePhoneMinimal}>Status</SessionListRowSubtitle>
+                <CollectionRowTitle testID="session-title" density={entry.density} touchCompact={touchCompact}>Session</CollectionRowTitle>
+                <CollectionRowLine testID="session-subtitle" density={entry.density} touchCompact={touchCompact}>Status</CollectionRowLine>
             </>);
             for (const [id, role] of [['session-title', entry.title], ['session-subtitle', entry.subtitle]] as const) {
                 const { weight: _weight, ...expected } = resolveHappierTypeScale(role, platform);

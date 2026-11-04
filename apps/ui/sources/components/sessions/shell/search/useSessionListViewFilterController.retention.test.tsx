@@ -87,7 +87,6 @@ function paneState() {
             { type: 'session', serverId: 'home-b', sessionId: 'session-b' },
         ],
         hasHiddenInactiveSessions: false,
-        folderFocus: null,
         folderFeatureEnabledServerIds: [],
         showLoading: false,
         showEmptyState: false,

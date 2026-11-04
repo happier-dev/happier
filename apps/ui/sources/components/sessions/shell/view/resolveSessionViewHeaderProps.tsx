@@ -53,7 +53,8 @@ import {
     resolveExternalSessionIdentityPresentation,
 } from '../../presentation/externalSessionIdentityPresentation';
 import type { ExternalSessionRuntimePresentation } from '../../presentation/externalSessionRuntimePresentation';
-import { SessionRowAttentionIndicator } from '../row/SessionRowAttentionIndicator';
+import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
+import { WorkStatusGlyph } from '@/components/work/status/WorkStatusGlyph';
 import { Icon } from '@/components/ui/icons/Icon';
 import { ActionOperationActivityButton } from '@/components/inbox/actionOperations/ActionOperationActivityButton';
 import { resolveSessionCompanionHeaderPlacement } from '@/components/sessions/companion/sessionCompanionHeaderPlacement';
@@ -583,19 +584,12 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
                             gap: 3,
                         }}
                     >
-                        <SessionRowAttentionIndicator
-                            indicator={input.externalSessionRuntime.externalAgent.indicator}
-                            sessionId={`${input.sessionId}-header-external`}
-                            attentionState={
-                                input.externalSessionRuntime.externalAgent.indicator === 'working'
-                                    ? 'working'
-                                    : input.externalSessionRuntime.externalAgent.indicator === 'action'
-                                        ? 'action_required'
-                                        : input.externalSessionRuntime.externalAgent.indicator === 'ready'
-                                            ? 'ready'
-                                            : 'quiet'
-                            }
-                            workingMode="spinner"
+                        <WorkStatusGlyph
+                            status={resolveWorkStatusTone({ kind: 'external_agent', facts: {
+                                externalAgent: input.externalSessionRuntime.externalAgent,
+                                word: t(input.externalSessionRuntime.externalAgent.labelKey),
+                            } })}
+                            testIDSuffix={`${input.sessionId}-header-external`}
                         />
                         <HeaderChipLabel>
                             <Text

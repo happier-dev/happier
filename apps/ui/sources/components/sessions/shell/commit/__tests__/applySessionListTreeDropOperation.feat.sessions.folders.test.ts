@@ -3,21 +3,16 @@ import { describe, expect, it, vi } from 'vitest';
 import type { WindowBounds } from '@/components/ui/treeDragDrop';
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 import { PINNED_GROUP_KEY_V1 } from '@/sync/domains/session/listing/sessionListOrderingStateV1';
-import type { SessionFolderWorkspaceRefV1, SessionFoldersV1 } from '@/sync/domains/session/folders';
+import type { SessionFolderWorkspaceRefV1 } from '@/sync/domains/session/folders';
 
 import { applySessionListTreeDropOperation } from '../applySessionListTreeDropOperation';
 import { buildSessionListTreeRows } from '../../drop-resolution/buildSessionListTreeRows';
 import { resolveSessionListInstruction } from '../../drop-resolution/resolveSessionListInstruction';
 import { buildSessionListDragSource } from '../../drop-resolution/buildSessionListDragSource';
 import { treeRowId } from '../../drop-resolution/treeRowId';
-import { buildSessionListFolderOrderItemKey } from '@/sync/domains/session/listing/sessionListOrderingStateV1';
 import { sessionAddressKey } from '@/sync/domains/session/sessionAddress';
-import { buildSessionFolderGroupKey } from '@/sync/domains/session/folders/sessionListFolders';
+import { buildSessionSectionGroupKey } from '@/sync/domains/session/organization/sections';
 import { buildSessionWorkspaceOrderItemKey, buildSessionWorkspaceOrderScopeKey } from '@/sync/domains/session/listing/sessionWorkspaceOrderStateV1';
-
-function folderOrderKey(folderId: string): string {
-    return buildSessionListFolderOrderItemKey({ serverId: 'server-a', folderId })!;
-}
 
 function sessionOrderKey(sessionId: string): string {
     return sessionAddressKey({ serverId: 'server-a', sessionId });
@@ -38,10 +33,10 @@ const workspaceB: SessionFolderWorkspaceRefV1 = {
 };
 const projectGroupKey = 'project-a';
 const projectBGroupKey = 'project-b';
-const rootFolderGroupKey = buildSessionFolderGroupKey({ serverId: 'server-a', workspace: workspaceA, folderId: null });
-const folderAGroupKey = buildSessionFolderGroupKey({ serverId: 'server-a', workspace: workspaceA, folderId: 'folder-a' });
-const childAGroupKey = buildSessionFolderGroupKey({ serverId: 'server-a', workspace: workspaceA, folderId: 'child-a' });
-const folderBGroupKey = buildSessionFolderGroupKey({ serverId: 'server-a', workspace: workspaceA, folderId: 'folder-b' });
+const rootFolderGroupKey = projectGroupKey;
+const folderAGroupKey = buildSessionSectionGroupKey({ serverId: 'server-a', sectionId: 'folder-a' });
+const childAGroupKey = buildSessionSectionGroupKey({ serverId: 'server-a', sectionId: 'child-a' });
+const folderBGroupKey = buildSessionSectionGroupKey({ serverId: 'server-a', sectionId: 'folder-b' });
 
 function bounds(y: number): WindowBounds {
     return { x: 0, y, width: 320, height: 40 };
@@ -108,17 +103,6 @@ function rootSessionItems(): SessionListIndexItem[] {
         sessionItem({ id: 'root-a', groupKey: rootFolderGroupKey, folderId: null, depth: 0 }),
         sessionItem({ id: 'root-b', groupKey: rootFolderGroupKey, folderId: null, depth: 0 }),
     ];
-}
-
-function folders(): SessionFoldersV1 {
-    return {
-        v: 1,
-        folders: [
-            { id: 'folder-a', workspace: workspaceA, parentId: null, name: 'A', createdAt: 1, updatedAt: 1, sortKey: '000001' },
-            { id: 'child-a', workspace: workspaceA, parentId: 'folder-a', name: 'A child', createdAt: 2, updatedAt: 2, sortKey: '000001' },
-            { id: 'folder-b', workspace: workspaceA, parentId: null, name: 'B', createdAt: 3, updatedAt: 3, sortKey: '000002' },
-        ],
-    };
 }
 
 function buildTree() {
@@ -234,11 +218,8 @@ describe('applySessionListTreeDropOperation', () => {
             source,
             result,
             context: {
-                sessionFoldersV1: folders(),
                 sessionListGroupOrderV1: { [rootFolderGroupKey]: [sessionOrderKey('root-a'), sessionOrderKey('root-b')] },
-                sessionListOrderingModeV1: 'updated',
-                now: () => 100,
-                setSessionFoldersV1: vi.fn(),
+                sessionListLayoutV1: 'recent_activity',
                 setSessionListGroupOrderV1,
                 setSessionFolderAssignment,
             },
@@ -264,10 +245,7 @@ describe('applySessionListTreeDropOperation', () => {
             source,
             result,
             context: {
-                sessionFoldersV1: folders(),
                 sessionListGroupOrderV1: {},
-                now: () => 100,
-                setSessionFoldersV1: vi.fn(),
                 setSessionListGroupOrderV1,
                 setSessionFolderAssignment: vi.fn(async (params) => {
                     expect(params).toEqual({
@@ -299,11 +277,8 @@ describe('applySessionListTreeDropOperation', () => {
             source,
             result,
             context: {
-                sessionFoldersV1: folders(),
                 sessionListGroupOrderV1: {},
                 isFolderOrganizationEnabled: () => false,
-                now: () => 100,
-                setSessionFoldersV1: vi.fn(),
                 setSessionListGroupOrderV1,
                 setSessionFolderAssignment,
             },
@@ -329,10 +304,7 @@ describe('applySessionListTreeDropOperation', () => {
             source,
             result,
             context: {
-                sessionFoldersV1: folders(),
                 sessionListGroupOrderV1: {},
-                now: () => 100,
-                setSessionFoldersV1: vi.fn(),
                 setSessionListGroupOrderV1,
                 setSessionFolderAssignment,
             },
@@ -348,40 +320,7 @@ describe('applySessionListTreeDropOperation', () => {
         });
     });
 
-    it('moves a session out to exact mixed sibling position when mixed folder sort is selected', async () => {
-        const { tree, source, result } = resolveDrop({
-            sourceRowId: treeRowId.session('server-a', 'inside-a'),
-            y: 250,
-        });
-        const setSessionFolderAssignment = vi.fn(async () => undefined);
-        const setSessionListGroupOrderV1 = vi.fn();
-
-        await applySessionListTreeDropOperation({
-            tree,
-            source,
-            result,
-            context: {
-                sessionFoldersV1: folders(),
-                sessionListGroupOrderV1: {},
-                sessionListFolderSortModeV1: 'mixed',
-                now: () => 100,
-                setSessionFoldersV1: vi.fn(),
-                setSessionListGroupOrderV1,
-                setSessionFolderAssignment,
-            },
-        });
-
-        expect(setSessionFolderAssignment).toHaveBeenCalledWith({
-            serverId: 'server-a',
-            sessionId: 'inside-a',
-            folderId: null,
-        });
-        expect(setSessionListGroupOrderV1).toHaveBeenCalledWith({
-            [rootFolderGroupKey]: [folderOrderKey('folder-a'), folderOrderKey('folder-b'), sessionOrderKey('root-a'), sessionOrderKey('inside-a')],
-        });
-    });
-
-    it('moves a root session before a root folder when mixed folder sort is selected', async () => {
+    it('refuses putting Session rows into section header order', async () => {
         const tree = buildTree();
         const source = buildSessionListDragSource({ tree, sourceRowId: treeRowId.session('server-a', 'root-a') });
         const result = resolveSessionListInstruction({
@@ -397,20 +336,14 @@ describe('applySessionListTreeDropOperation', () => {
             source,
             result,
             context: {
-                sessionFoldersV1: folders(),
                 sessionListGroupOrderV1: {},
-                sessionListFolderSortModeV1: 'mixed',
-                now: () => 100,
-                setSessionFoldersV1: vi.fn(),
                 setSessionListGroupOrderV1,
                 setSessionFolderAssignment: vi.fn(async () => undefined),
             },
         });
 
-        expect(applied).toEqual({ ok: true });
-        expect(setSessionListGroupOrderV1).toHaveBeenCalledWith({
-            [rootFolderGroupKey]: [sessionOrderKey('root-a'), folderOrderKey('folder-a'), folderOrderKey('folder-b')],
-        });
+        expect(applied.ok).toBe(false);
+        expect(setSessionListGroupOrderV1).not.toHaveBeenCalled();
     });
 
     it('commits pinned session reordering to the pinned group order without folder assignment', async () => {
@@ -430,10 +363,7 @@ describe('applySessionListTreeDropOperation', () => {
             source,
             result,
             context: {
-                sessionFoldersV1: folders(),
                 sessionListGroupOrderV1: {},
-                now: () => 100,
-                setSessionFoldersV1: vi.fn(),
                 setSessionListGroupOrderV1,
                 setSessionFolderAssignment,
             },
@@ -445,104 +375,63 @@ describe('applySessionListTreeDropOperation', () => {
         });
     });
 
-    it('moves a folder within the root folder band by default', async () => {
+    it('reorders section records without writing mixed order', async () => {
         const tree = buildTree();
         const source = buildSessionListDragSource({ tree, sourceRowId: treeRowId.folder('server-a', 'folder-b') });
         const result = resolveSessionListInstruction({
             tree,
             source,
-            pointer: { x: 160, y: 204 },
+            pointer: { x: 160, y: 42 },
             foldersFeatureEnabled: true,
         });
-        const setSessionFoldersV1 = vi.fn();
         const setSessionListGroupOrderV1 = vi.fn();
+        const reorderSessionSection = vi.fn(async () => {});
 
         const applied = await applySessionListTreeDropOperation({
             tree,
             source,
             result,
             context: {
-                sessionFoldersV1: folders(),
                 sessionListGroupOrderV1: {},
-                now: () => 100,
-                setSessionFoldersV1,
                 setSessionListGroupOrderV1,
+                reorderSessionSection,
                 setSessionFolderAssignment: vi.fn(async () => undefined),
             },
         });
 
         expect(applied).toEqual({ ok: true });
-        expect(setSessionFoldersV1).not.toHaveBeenCalled();
-        expect(setSessionListGroupOrderV1).toHaveBeenCalledWith({
-            [rootFolderGroupKey]: [folderOrderKey('folder-b'), folderOrderKey('folder-a')],
-        });
+        expect(reorderSessionSection).toHaveBeenCalledWith({ serverId: 'server-a', sectionId: 'folder-b', beforeSectionId: 'folder-a' });
+        expect(setSessionListGroupOrderV1).not.toHaveBeenCalled();
     });
 
-    it('moves a folder around root sessions when mixed folder sort is selected', async () => {
+    it('keeps section record reorder available in Recent', async () => {
         const tree = buildTree();
         const source = buildSessionListDragSource({ tree, sourceRowId: treeRowId.folder('server-a', 'folder-b') });
         const result = resolveSessionListInstruction({
             tree,
             source,
-            pointer: { x: 160, y: 204 },
+            pointer: { x: 160, y: 42 },
             foldersFeatureEnabled: true,
         });
-        const setSessionFoldersV1 = vi.fn();
         const setSessionListGroupOrderV1 = vi.fn();
+        const reorderSessionSection = vi.fn(async () => {});
 
         const applied = await applySessionListTreeDropOperation({
             tree,
             source,
             result,
             context: {
-                sessionFoldersV1: folders(),
                 sessionListGroupOrderV1: {},
-                sessionListFolderSortModeV1: 'mixed',
-                now: () => 100,
-                setSessionFoldersV1,
+                sessionListLayoutV1: 'recent_activity',
                 setSessionListGroupOrderV1,
+                reorderSessionSection,
                 setSessionFolderAssignment: vi.fn(async () => undefined),
             },
         });
 
         expect(applied).toEqual({ ok: true });
-        expect(setSessionFoldersV1).not.toHaveBeenCalled();
-        expect(setSessionListGroupOrderV1).toHaveBeenCalledWith({
-            [rootFolderGroupKey]: [folderOrderKey('folder-a'), folderOrderKey('folder-b'), sessionOrderKey('root-a')],
-        });
-    });
-
-    it('uses folders-first structural order for folder moves when date ordering makes mixed dormant', async () => {
-        const tree = buildTree();
-        const source = buildSessionListDragSource({ tree, sourceRowId: treeRowId.folder('server-a', 'folder-b') });
-        const result = resolveSessionListInstruction({
-            tree,
-            source,
-            pointer: { x: 160, y: 204 },
-            foldersFeatureEnabled: true,
-        });
-        const setSessionListGroupOrderV1 = vi.fn();
-
-        const applied = await applySessionListTreeDropOperation({
-            tree,
-            source,
-            result,
-            context: {
-                sessionFoldersV1: folders(),
-                sessionListGroupOrderV1: {},
-                sessionListFolderSortModeV1: 'mixed',
-                sessionListOrderingModeV1: 'updated',
-                now: () => 100,
-                setSessionFoldersV1: vi.fn(),
-                setSessionListGroupOrderV1,
-                setSessionFolderAssignment: vi.fn(async () => undefined),
-            },
-        });
-
-        expect(applied).toEqual({ ok: true });
-        expect(setSessionListGroupOrderV1).toHaveBeenCalledWith({
-            [rootFolderGroupKey]: [folderOrderKey('folder-b'), folderOrderKey('folder-a')],
-        });
+        expect(reorderSessionSection).toHaveBeenCalledWith({ serverId: 'server-a', sectionId: 'folder-b', beforeSectionId: 'folder-a' });
+        expect(setSessionListGroupOrderV1).not.toHaveBeenCalled();
     });
 
     it('does not commit blocked instructions', async () => {
@@ -556,7 +445,6 @@ describe('applySessionListTreeDropOperation', () => {
         });
         expect(result.instruction.kind).toBe('blocked');
 
-        const setSessionFoldersV1 = vi.fn();
         const setSessionListGroupOrderV1 = vi.fn();
         const setSessionFolderAssignment = vi.fn(async () => undefined);
 
@@ -565,17 +453,13 @@ describe('applySessionListTreeDropOperation', () => {
             source,
             result,
             context: {
-                sessionFoldersV1: folders(),
                 sessionListGroupOrderV1: {},
-                now: () => 100,
-                setSessionFoldersV1,
                 setSessionListGroupOrderV1,
                 setSessionFolderAssignment,
             },
         });
 
         expect(applied.ok).toBe(false);
-        expect(setSessionFoldersV1).not.toHaveBeenCalled();
         expect(setSessionListGroupOrderV1).not.toHaveBeenCalled();
         expect(setSessionFolderAssignment).not.toHaveBeenCalled();
     });
@@ -596,11 +480,8 @@ describe('applySessionListTreeDropOperation', () => {
             source,
             result,
             context: {
-                sessionFoldersV1: folders(),
                 sessionListGroupOrderV1: {},
                 sessionWorkspaceOrderV1: {},
-                now: () => 100,
-                setSessionFoldersV1: vi.fn(),
                 setSessionListGroupOrderV1: vi.fn(),
                 setSessionWorkspaceOrderV1,
                 setSessionFolderAssignment: vi.fn(async () => undefined),

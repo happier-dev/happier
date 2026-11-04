@@ -7,7 +7,7 @@ vi.mock('@/modal', () => ({ Modal: interaction }));
 
 describe('Session workspace header enrollment boundary', () => {
   it('does not offer a ref rename as an implicit enrollment of an unaccepted Session folder', async () => {
-    const actions = useSessionListWorkspaceHeaderActions({ workspaceRefs: [], collapsedGroupKeys: {}, setCollapsedGroupKeys: () => {} });
+    const actions = useSessionListWorkspaceHeaderActions({ projectOrganizations: [], toggleCollapsedGroup: () => {} });
     await actions.handleRenameWorkspace({ legacyWorkspaceKey: 'legacy', currentLabel: 'Folder',
       scopeHint: { serverId: 'home', machineId: 'machine', rootPath: '/unaccepted/nested' } });
     expect(interaction.prompt).not.toHaveBeenCalled();

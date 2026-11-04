@@ -2,9 +2,15 @@ import React from 'react';
 import 'fake-indexeddb/auto';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createWorkBoardV1, normalizeSessionListFilterV1, WorkflowRunListRequestV1Schema,
-    WorkflowRunRecipientCensusResponseV1Schema, materializeWorkflowAcceptedSnapshotV1,
-    sealWorkflowAcceptedSnapshotStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1, AutomationRunCauseSchema } from '@happier-dev/protocol';
+import { createWorkBoardV1} from '@happier-dev/protocol/boards/workBoardV1';
+import { normalizeSessionListFilterV1} from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
+import { WorkflowRunListRequestV1Schema} from '@happier-dev/protocol/workflows/actionsV1';
+import {
+    WorkflowRunRecipientCensusResponseV1Schema} from '@happier-dev/protocol/workflows/workflowRunKeyV1';
+import { materializeWorkflowAcceptedSnapshotV1} from '@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1';
+import {
+    sealWorkflowAcceptedSnapshotStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1} from '@happier-dev/protocol/workflows/workflowStoredContentV1';
+import { AutomationRunCauseSchema } from '@happier-dev/protocol/automations/run-cause';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit';
@@ -95,7 +101,7 @@ beforeEach(async () => {
     storage.setState({
         profileScope: { serverId, accountId: 'account-a' },
         settings: { ...settingsDefaults, experiments: true, featureToggles: { automations: true },
-            sessionListSectionModeV1: 'single', sessionListOrderingModeV1: 'updated' },
+            sessionListLayoutV1: 'recent_activity' },
         sessionListIndexByServerId: { [serverId]: null },
         sessionListRowsByServerId: {},
         workflowRunListWindows: {},
@@ -170,8 +176,9 @@ function runFixture(overrides: Parameters<typeof createWorkflowRunSummaryFixture
 describe('the mounted unified list feed', () => {
     it('pages full private Runs for the mounted Session list across the Machines journey', async () => {
         const { Dimensions } = await import('react-native');
-        // The OS viewport fits ten of the canonical smallest (34px) Session rows.
-        vi.spyOn(Dimensions, 'get').mockReturnValue({ width: 1200, height: 340, scale: 1, fontScale: 1 });
+        const { HAPPIER_COLLECTION_ROW_METRICS } = await import('@happier-dev/plugin-ui/presentation');
+        // Exercise a ten-row viewport using the same metric as the Run window owner.
+        vi.spyOn(Dimensions, 'get').mockReturnValue({ width: 1200, height: 10 * HAPPIER_COLLECTION_ROW_METRICS.height.compact, scale: 1, fontScale: 1 });
         const runs = Array.from({ length: 37 }, (_, index) => runFixture({
             id: `viewport-run-${String(index).padStart(2, '0')}`,
             createdAt: new Date(Date.UTC(2026, 8, 8) - index * 1000).toISOString(),
@@ -204,6 +211,8 @@ describe('the mounted unified list feed', () => {
             useVisibleSessionListPaneState('all', { pathname, workFilter: filter('both') }),
         { initialProps: { pathname: '/' } });
         await flushHookEffects();
+        console.info('Workflow viewport transfer', { corpusRows: runs.length,
+            unpagedBytes: Buffer.byteLength(JSON.stringify(bodyFor(runs))), initial: transfers[0] });
         expect(transfers.map(page => page.rows)).toEqual([10]);
         expect(hook.getCurrent().workflowRunWindow?.rows).toHaveLength(10);
         for (const pathname of ['/machines', '/machines/all', '/machines/machine-1']) {

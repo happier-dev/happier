@@ -15,7 +15,6 @@ const sessionListPaneState = vi.hoisted(() => ({
     visibleIndex: [
         { type: 'session', sessionId: 'session-1', serverId: 's1', serverName: 'Server 1' },
     ],
-    folderFocus: null as null | { folderId: string },
     summary: {
         sessionsReady: true,
         sessionCount: 1,
@@ -53,8 +52,8 @@ vi.mock('./useVisibleSessionListViewState', () => ({
         });
         return {
         visibleSessionListIndex: sessionListPaneState.visibleIndex,
+        filterResult: { matchedCount: sessionListPaneState.visibleIndex.length, coverage: 'complete' },
         hasHiddenInactiveSessions: sessionListPaneState.hasHiddenInactiveSessions,
-        folderFocus: sessionListPaneState.folderFocus,
         query: sessionListPaneState.query,
         };
     },
@@ -75,7 +74,6 @@ describe('useVisibleSessionListPaneState', () => {
         sessionListPaneState.visibleIndex = [
             { type: 'session', sessionId: 'session-1', serverId: 's1', serverName: 'Server 1' },
         ];
-        sessionListPaneState.folderFocus = null;
         sessionListPaneState.summary = {
             sessionsReady: true,
             sessionCount: 1,
@@ -89,7 +87,7 @@ describe('useVisibleSessionListPaneState', () => {
         const hook = await renderHook(() => useVisibleSessionListPaneState('direct'));
         await flushHookEffects();
 
-        expect(hook.getCurrent()).toEqual({
+        expect(hook.getCurrent()).toMatchObject({
             summary: {
                 sessionsReady: true,
                 sessionCount: 1,
@@ -101,7 +99,8 @@ describe('useVisibleSessionListPaneState', () => {
                 }),
             ]),
             hasHiddenInactiveSessions: false,
-            folderFocus: null,
+            filterResult: { matchedCount: 1, coverage: 'complete' },
+
             showLoading: false,
             showEmptyState: false,
             query: undefined,
@@ -160,11 +159,13 @@ describe('useVisibleSessionListPaneState', () => {
                     requestedQueryKey: 'query', appliedQueryKey: 'query', addresses: [],
                     nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false,
                     phase: 'ready', freshnessAt: 1, failureReason: null, failureCode: null,
+                    homeObservation: { phase: 'ready', lastSuccessAt: 1 },
                 },
                 'home-b': {
                     requestedQueryKey: 'query', appliedQueryKey: null, addresses: [],
                     nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false,
                     phase: 'offline', freshnessAt: null, failureReason: null, failureCode: null,
+                    homeObservation: { phase: 'offline', lastSuccessAt: null },
                 },
             },
             coverageComplete: false,
@@ -185,6 +186,7 @@ describe('useVisibleSessionListPaneState', () => {
         });
         expect(hook.getCurrent().showLoading).toBe(false);
         expect(hook.getCurrent().showEmptyState).toBe(false);
+        expect(hook.getCurrent().filterResult).toEqual({ matchedCount: 0, coverage: 'partial' });
     });
 
     it('keeps initial query loading inside the mounted canonical list surface', async () => {
@@ -196,6 +198,7 @@ describe('useVisibleSessionListPaneState', () => {
                     requestedQueryKey: 'query', appliedQueryKey: null, addresses: [],
                     nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false,
                     phase: 'loading', freshnessAt: null, failureReason: null, failureCode: null,
+                    homeObservation: { phase: 'loading', lastSuccessAt: null },
                 },
             },
             coverageComplete: false,
@@ -211,6 +214,7 @@ describe('useVisibleSessionListPaneState', () => {
 
         expect(hook.getCurrent().queryPresentation).toEqual({ kind: 'initial_loading' });
         expect(hook.getCurrent().summary).toEqual({ sessionsReady: false, sessionCount: 0 });
+        expect(hook.getCurrent().filterResult).toEqual({ matchedCount: 0, coverage: 'unavailable' });
         expect(hook.getCurrent().showLoading).toBe(false);
         expect(hook.getCurrent().showEmptyState).toBe(false);
     });

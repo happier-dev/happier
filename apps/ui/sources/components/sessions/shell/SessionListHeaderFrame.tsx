@@ -1,5 +1,5 @@
 import React from 'react';
-import { View } from 'react-native';
+import { View, type LayoutChangeEvent } from 'react-native';
 
 import type { TreeDropMeasurableRef } from '@/components/ui/treeDragDrop';
 
@@ -11,6 +11,7 @@ export const SessionListHeaderFrame = React.memo(function SessionListHeaderFrame
     treeRowId: string;
     onRegisterTreeRowBounds: RegisterSessionListTreeRowBounds;
     onUnregisterTreeRowBounds: UnregisterSessionListTreeRowBounds;
+    onLayout?: (event: LayoutChangeEvent) => void;
 }>) {
     const wrapperRef = React.useRef<View>(null);
     React.useEffect(() => {
@@ -23,7 +24,10 @@ export const SessionListHeaderFrame = React.memo(function SessionListHeaderFrame
             ref={wrapperRef}
             collapsable={false}
             style={{ position: 'relative' }}
-            onLayout={() => props.onRegisterTreeRowBounds(props.treeRowId, wrapperRef.current)}
+            onLayout={(event) => {
+                props.onRegisterTreeRowBounds(props.treeRowId, wrapperRef.current);
+                props.onLayout?.(event);
+            }}
         >
             {props.children}
         </View>

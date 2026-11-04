@@ -72,6 +72,7 @@ export const SETTINGS_ROUTES = {
     sessionProviderLimits: '/settings/session/provider-limits',
     sessionResume: '/settings/session/resume',
     sessionRuntime: '/settings/session/runtime',
+    sessionSpaces: '/settings/session/spaces',
     transcript: '/settings/session/transcript',
     transcriptAdvanced: '/settings/session/transcript/advanced',
     permissions: '/settings/session/permissions',

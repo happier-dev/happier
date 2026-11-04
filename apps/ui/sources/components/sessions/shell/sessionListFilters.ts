@@ -1,4 +1,4 @@
-import { buildSessionListIndexNodeId, type SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
+import { buildSessionListIndexEntityId, buildSessionListIndexNodeId, type SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 import type { QualifiedTagAddress } from './search/sessionListViewFilters';
 
 import { sessionTagKey } from './sessionTagUtils';
@@ -188,11 +188,20 @@ export function hasActiveSessionListHeaderFilters(input: Pick<SessionListHeaderF
     return input.searchQuery.trim().length > 0 || input.selectedTagIds.length > 0;
 }
 
-export function filterSessionListItemsForHeaderControls(
+export type SessionListHeaderFilterProjection = Readonly<{
+    items: SessionListIndexItem[];
+    matchedEntityIds: ReadonlySet<string>;
+}>;
+
+function buildSessionListHeaderFilterProjection(items: SessionListIndexItem[], matchedEntityIds?: ReadonlySet<string>): SessionListHeaderFilterProjection {
+    return { items, matchedEntityIds: matchedEntityIds ?? new Set(items.flatMap(item => item.type === 'header' ? [] : [buildSessionListIndexEntityId(item)])) };
+}
+
+export function projectSessionListItemsForHeaderControls(
     items: ReadonlyArray<SessionListIndexItem>,
     input: SessionListHeaderFilterInput,
-): SessionListIndexItem[] {
-    if (!hasActiveSessionListHeaderFilters(input)) return items as SessionListIndexItem[];
+): SessionListHeaderFilterProjection {
+    if (!hasActiveSessionListHeaderFilters(input)) return buildSessionListHeaderFilterProjection(items as SessionListIndexItem[]);
 
     const searchTokens = normalizeSearchTokens(input.searchQuery);
     const normalizedQuery = input.searchQuery.trim().toLocaleLowerCase();
@@ -203,6 +212,7 @@ export function filterSessionListItemsForHeaderControls(
 
     // Keep the exact ancestor chain of a search hit, so a matching step never becomes a root.
     const selected = new Set<SessionListIndexItem>();
+    const matchedEntityIds = new Set<string>();
     const ancestors: Exclude<SessionListIndexItem, { type: 'header' }>[] = [];
     for (const item of items) {
         if (item.type === 'header') { ancestors.length = 0; continue; }
@@ -216,6 +226,7 @@ export function filterSessionListItemsForHeaderControls(
             item.type === 'workflow_run' ? input.searchableTextByWorkflowRunKey ?? {} : input.searchableTextBySessionKey,
             item.type === 'workflow_run' ? undefined : input.primarySearchableTextBySessionKey,
             item.type === 'workflow_run' ? undefined : input.memoryMatchedSessionKeys) !== null) {
+            matchedEntityIds.add(buildSessionListIndexEntityId(item));
             selected.add(item);
             ancestors.forEach((ancestor) => selected.add(ancestor));
         }
@@ -255,5 +266,12 @@ export function filterSessionListItemsForHeaderControls(
 
     // No header is preserved for an empty result: the stable search chrome owns the
     // field's lifetime, and the list-level no-results message reports the outcome.
-    return rankContiguousSessionRuns(result, input, normalizedQuery, searchTokens);
+    return buildSessionListHeaderFilterProjection(rankContiguousSessionRuns(result, input, normalizedQuery, searchTokens), matchedEntityIds);
+}
+
+export function filterSessionListItemsForHeaderControls(
+    items: ReadonlyArray<SessionListIndexItem>,
+    input: SessionListHeaderFilterInput,
+): SessionListIndexItem[] {
+    return projectSessionListItemsForHeaderControls(items, input).items;
 }

@@ -3,7 +3,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
-import { storage } from '@/sync/domains/state/storage';
+import { storage } from '@/sync/domains/state/storageStore';
 
 import {
     SessionListLayoutIntentProvider,
@@ -12,8 +12,7 @@ import {
 } from './sessionListLayoutIntent';
 
 const SAVED_PROJECTS_LAYOUT = {
-    sessionListSectionModeV1: 'single',
-    sessionListActiveGroupingV1: 'project',
+    sessionListLayoutV1: 'projects',
 } as const;
 
 function RecentHost(props: React.PropsWithChildren) {
@@ -42,8 +41,8 @@ describe('SessionListLayoutIntentProvider', () => {
     });
 
     afterEach(() => {
-        storage.setState({ settings: previousSettings } as never);
         standardCleanup();
+        storage.setState({ settings: previousSettings } as never);
     });
 
     it('opens a visit in the host layout and yields it to an explicit choice', async () => {
@@ -52,7 +51,7 @@ describe('SessionListLayoutIntentProvider', () => {
         // Opening /session/recent presents Recent activity even though the Account
         // stores Projects — the intent is a visit initial, never a settings write.
         expect(host.getCurrent().choice).toBe('recent_activity');
-        expect(storage.getState().settings.sessionListActiveGroupingV1).toBe('project');
+        expect(storage.getState().settings.sessionListLayoutV1).toBe('projects');
 
         // The one explicit-layout writer retires the intent, so the choice the person
         // just made renders here and now rather than only after leaving the route.
@@ -62,6 +61,15 @@ describe('SessionListLayoutIntentProvider', () => {
         await flushHookEffects();
 
         expect(host.getCurrent().choice).toBe('projects');
-        expect(storage.getState().settings.sessionListActiveGroupingV1).toBe('project');
+        expect(storage.getState().settings.sessionListLayoutV1).toBe('projects');
+    });
+
+    it('updates mounted consumers from the single stored preference', async () => {
+        const host = await renderHook(useLayoutHostConsumer);
+        expect(host.getCurrent().choice).toBe('projects');
+        await act(async () => {
+            storage.setState({ settings: { ...storage.getState().settings, sessionListLayoutV1: 'recent_activity' } });
+        });
+        expect(host.getCurrent().choice).toBe('recent_activity');
     });
 });

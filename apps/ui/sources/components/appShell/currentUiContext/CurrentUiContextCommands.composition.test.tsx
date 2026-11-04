@@ -1,3 +1,4 @@
+import { useCollectionFilterSettingsCommand } from '@/components/settings/session/useCollectionFilterSettingsCommand';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -15,7 +16,7 @@ import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentat
 import { captureActiveServerAccountScopeLifetime, retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { getStorage } from '@/sync/domains/state/storage';
-import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { CurrentUiContextProvider, useOptionalCurrentUiContextReader, usePublishCurrentUiContext, type CurrentUiContextReader } from './CurrentUiContextProvider';
 import { createCurrentUiContextVoiceToolPort } from './currentUiContextVoiceToolPort';
 import { executeCurrentUiContextAction, registerCurrentUiContextActionPort } from './currentUiContextActionRuntime';
@@ -260,5 +261,51 @@ describe('mounted current-context descendant commands', () => {
         await screen.update(tree(false));
         await act(async () => { retireActiveServerAccountScopeLifetime(); expect(await intents.get('first')!('details')).toBe(false); });
         expect(changes).toEqual(['first', 'updated']);
+    });
+    it.each(['sessionWork', 'workflow', 'discussion'] as const)('opens only the current %s filter through its Settings declaration and retires prior contexts', async entityKind => {
+        home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://filter-settings.test', accountId: 'account-a' }],
+            route: request => request.path === '/v1/kv/bulk' ? Response.json({ values: [] }) : undefined });
+        const server = home.homes.a!;
+        publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
+        const authority = captureActiveServerAccountScopeLifetime();
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const credentials = (await TokenStorage.getCredentialsForServerUrl(server.serverUrl))!;
+        const anchor = `${entityKind === 'sessionWork' ? 'session' : entityKind}.list.filters`;
+        // The mounted app has applied its Account baseline before Settings admission.
+        getStorage().getState().applySettingsForScope(authority!.scope, getStorage().getState().settings, 1);
+        function Filters(props: Readonly<{ contextKey: string; accountScope: ServerAccountScope }>) {
+            useCollectionFilterSettingsCommand({ entityKind, enabled: true, contextKey: props.contextKey,
+                accountScope: props.accountScope,
+                openFilter: () => { changes.push(props.contextKey); } });
+            return null;
+        }
+        const tree = (contextKey: string | null, accountScope = authority!.scope) => <InjectedAuthProvider credentials={credentials}>
+            <MainAppTabStateProvider><AppPaneProvider><CurrentUiContextProvider>
+                <PluginSurfaceFocusEligibilityProvider active currentUiContextActive>
+                    <CurrentUiContextCommandsProvider authority={authority}>
+                        <Publication />{contextKey ? <Filters contextKey={contextKey} accountScope={accountScope} /> : null}
+                    </CurrentUiContextCommandsProvider>
+                </PluginSurfaceFocusEligibilityProvider>
+            </CurrentUiContextProvider></AppPaneProvider></MainAppTabStateProvider>
+        </InjectedAuthProvider>;
+        const screen = await renderScreen(tree('team-a:active'));
+        const oldCommand = reader!.readCurrentUiContext()!.commands.find(command => command.title === t('sessionsList.filtersTitle'))!;
+        const executor = (await import('@/sync/ops/actions/defaultActionExecutor')).createDefaultActionExecutor();
+        const invoke = () => executor.execute('settings.invoke', { anchor }, { surface: 'agent', authority: 'account_automation', serverId: server.id });
+        await act(async () => { const result = await invoke(); expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { anchor, status: 'interaction_opened' } }); });
+        expect(changes).toEqual(['team-a:active']);
+        await screen.update(tree('team-b:archived'));
+        expect(await executor.execute('ui.current_context.command.invoke', { commandId: oldCommand.id }, { surface: 'agent' })).toMatchObject({ ok: false });
+        await act(async () => { expect(await invoke()).toMatchObject({ ok: true, result: { status: 'interaction_opened' } }); });
+        expect(changes).toEqual(['team-a:active', 'team-b:archived']);
+        await screen.update(tree('other-account:active', { serverId: server.id, accountId: 'other-account' }));
+        expect(await invoke()).toMatchObject({ ok: true, result: { status: 'unavailable', reason: 'current_ui_command_unavailable' } });
+        expect(changes).toHaveLength(2);
+        const otherAnchor = entityKind === 'workflow' ? 'discussion.list.filters' : 'workflow.list.filters';
+        expect(await executor.execute('settings.invoke', { anchor: otherAnchor }, { surface: 'agent', serverId: server.id }))
+            .toMatchObject({ ok: true, result: { status: 'unavailable', reason: 'current_ui_command_unavailable' } });
+        await screen.update(tree(null));
+        expect(await invoke()).toMatchObject({ ok: true, result: { status: 'unavailable', reason: 'current_ui_command_unavailable' } });
+        expect(changes).toHaveLength(2);
     });
 });

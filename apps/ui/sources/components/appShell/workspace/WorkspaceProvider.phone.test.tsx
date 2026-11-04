@@ -18,6 +18,7 @@ import { createSessionListRenderableSessionFixture } from '@/dev/testkit/fixture
 import { buildSessionNavigationCursor } from '@/sync/domains/session/navigation/sessionNavigationCursor';
 import { clearSessionNavigationCursor, publishSessionNavigationCursor } from '@/sync/domains/session/navigation/sessionNavigationCursorStore';
 import { buildServerScopedSessionKey } from '@/sync/domains/session/navigation/sessionNavigationOrder';
+import { sessionMruState } from '@/sync/domains/session/navigation/recentSessions';
 import { useSessionSwitcher, type SessionSwitcher } from '@/components/navigation/mobile/chrome/lateralSwipe/useSessionSwitcher';
 import { readSessionAllTabs } from '@/components/sessions/shell/useSessionAllTabsOpener';
 import { SessionSwitcherBand } from '@/components/navigation/mobile/chrome/lateralSwipe/SessionSwitcherBand';
@@ -207,8 +208,8 @@ describe('workspace owner on a phone', () => {
         const before = storage.getState();
         restoreStorage = () => storage.setState(before);
         const entries = ['A', 'B', 'C'].map(id => ({ type: 'session', serverId: 'home-a', sessionId: id }));
+        sessionMruState.set('order', mru);
         storage.setState({ settings: { ...before.settings, sessionSwitcherDragUpSource: up, sessionCockpitSwipeSource: side },
-            localSettings: { ...before.localSettings, sessionMruOrderV1: mru },
             sessionListRowsByServerId: { 'home-a': Object.fromEntries(['A', 'B', 'C'].map(id => [id, createSessionListRenderableSessionFixture({ id })])) } });
         publishSessionNavigationCursor(buildSessionNavigationCursor({ identity: { origin: 'session-list', sourceScopeKey: 'home-a', storageKind: 'all' }, items: entries, nowMs: 0 })!);
         const screen = await renderScreen(<InjectedAuthProvider credentials={null}><WorkspaceProvider enabled={false} phone catalog={catalog}>

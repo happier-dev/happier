@@ -1,4 +1,4 @@
-import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
+import type { SessionListIndexItem, SessionListOccurrenceRole } from '@/sync/domains/sessionList/sessionListIndex';
 import { sessionAddressKey } from '@/sync/domains/session/sessionAddress';
 import { normalizeSessionListKeyParts, type NormalizedSessionListKeyParts } from '@/sync/domains/session/listing/sessionListKeyNormalization';
 
@@ -8,13 +8,18 @@ export const treeRowId = Object.freeze({
         serverId.trim(),
         folderId.trim(),
     ]),
-    session: (serverId: string, sessionId: string, keyParts?: NormalizedSessionListKeyParts) => JSON.stringify([
+    session: (serverId: string, sessionId: string, keyParts?: NormalizedSessionListKeyParts, occurrenceRole: SessionListOccurrenceRole = 'base') => JSON.stringify([
         'session',
         normalizeSessionListKeyParts(serverId, sessionId, keyParts).sessionKey
             ?? sessionAddressKey({ serverId: serverId.trim(), sessionId: sessionId.trim() }),
+        ...(occurrenceRole === 'base' ? [] : [occurrenceRole]),
     ]),
     workspaceRoot: (workspaceKey: string) => JSON.stringify(['workspace-root', workspaceKey.trim()]),
 });
+
+export function buildSessionListDragSourceId(scope: Readonly<{ serverId: string; accountId: string }>, sourceRowId: string): string {
+    return `session-list-source:${scope.serverId}:${scope.accountId}:${sourceRowId}`;
+}
 
 function readTreeRowTuple(rowId: string): readonly unknown[] | null {
     try {
@@ -35,7 +40,8 @@ export function isFolderTreeRowId(rowId: string): boolean {
 
 export function isSessionTreeRowId(rowId: string): boolean {
     const tuple = readTreeRowTuple(rowId);
-    return tuple?.length === 2 && tuple[0] === 'session' && typeof tuple[1] === 'string';
+    return Boolean(tuple && (tuple.length === 2 || (tuple.length === 3 && (tuple[2] === 'needsYou' || tuple[2] === 'working')))
+        && tuple[0] === 'session' && typeof tuple[1] === 'string');
 }
 
 export function isWorkspaceRootTreeRowId(rowId: string): boolean {

@@ -1,7 +1,9 @@
+import { normalizeSessionListFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 import 'fake-indexeddb/auto';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { AccountSettingsV2GetResponseSchema, CurrentCursorResponseSchema } from '@happier-dev/protocol';
+import { AccountSettingsV2GetResponseSchema} from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
+import { CurrentCursorResponseSchema } from '@happier-dev/protocol/changes';
 import { SessionListQueryV1Schema, type SessionListQueryV1 } from '@happier-dev/protocol/sessions/listing/query';
 import { SessionListQueryResponseV1Schema } from '@happier-dev/protocol/sessions/listing/response';
 import { encodeV2SessionListCursorV1 } from '@happier-dev/protocol/sessions/control/contract';
@@ -66,7 +68,8 @@ describe('ordinary list presentation for the opened Bots roster', () => {
                     await queryGate;
                     const lastPage = query.cursor === nextCursor;
                     return Response.json(SessionListQueryResponseV1Schema.parse({
-                        sessions: [], nextCursor: lastPage ? null : nextCursor, hasNext: !lastPage,
+                        sessions: [],
+                        nextCursor: lastPage ? null : nextCursor, hasNext: !lastPage,
                         attentionNextCursor: null, attentionHasNext: false,
                         ...(lastPage ? { metadataUpgradeRequiredCount: 1 } : {}),
                     }));
@@ -117,9 +120,18 @@ describe('ordinary list presentation for the opened Bots roster', () => {
         expect(renderedSessionIds(roster.getCurrent().visibleSessionListIndex).sort()).toEqual(['active-bot', 'inactive-bot']);
         expect(storage.getState().settings.hideInactiveSessions).toBe(true);
         expect(renderedSessionIds(ordinary.getCurrent().visibleSessionListIndex).sort()).toEqual(['active-bot', 'ordinary']);
+        const explicitOptions = { workFilter: normalizeSessionListFilterV1({ includeInactive: true }) };
+        let explicitRenders = 0;
+        const explicit = await renderHook(() => {
+            explicitRenders += 1;
+            return useVisibleSessionListPaneState('all', explicitOptions);
+        });
+        expect(renderedSessionIds(explicit.getCurrent().visibleSessionListIndex).sort()).toEqual(['active-bot', 'inactive-bot', 'ordinary']);
         const settledRenders = renders;
+        const settledExplicitRenders = explicitRenders;
         await act(async () => storage.getState().applySettingsLocal({ hideInactiveSessions: false }));
         expect(renders - settledRenders).toBe(0);
+        expect(explicitRenders - settledExplicitRenders).toBe(0);
         expect(renderedSessionIds(ordinary.getCurrent().visibleSessionListIndex).sort()).toEqual(['active-bot', 'inactive-bot', 'ordinary']);
         const serverId = resolveServerProfileScopeIdForIdentifier(connection!.home.id);
         await act(async () => {
@@ -130,6 +142,8 @@ describe('ordinary list presentation for the opened Bots roster', () => {
         });
         expect(renderedSessionIds(roster.getCurrent().visibleSessionListIndex)).toContain('new-bot');
         expect(renders).toBeGreaterThan(settledRenders);
+        expect(renderedSessionIds(explicit.getCurrent().visibleSessionListIndex)).toContain('new-bot');
+        expect(explicitRenders).toBeGreaterThan(settledExplicitRenders);
     });
 
     it('keeps the ordinary query cursor and truthful incomplete metadata coverage without publishing roster membership', async () => {

@@ -18,9 +18,13 @@ import { useViewportClass } from '@/utils/platform/useViewportClass';
 import { HomeReachabilityGate, useActiveHomeUnavailable } from '@/components/navigation/connectionStatus/HomeReachabilityGate';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useWorkflowsDestinationAccess } from '@/components/workflows/gating/workflowsDestinationAccess';
-import { AccountTriggersSection } from '@/components/workflows/triggers/AccountTriggersSection';
+import { AccountTriggersSection, useAccountWorkflowEditor } from '@/components/workflows/triggers/AccountTriggersSection';
+import { AccountWorkflowRowAnchor, formatAccountWorkflowLine, isAccountWorkflowOff, isAccountWorkflowReviewRequired,
+    type AccountWorkflowLibraryRow } from '@/components/workflows/library/AccountWorkflowRowAnchor';
+import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
+import { readSessionRouteServerId } from '@/hooks/session/sessionRouteServerScope';
 import type { WorkflowLibraryDefinition } from '@/components/workflows/library/workflowLibraryReads';
-import type { WorkflowLibraryRunSummary } from '@/components/workflows/library/useWorkflowLibrarySummaries';
+import type { WorkflowAutomationRunSummary, WorkflowLibraryRunSummary } from '@/components/workflows/library/useWorkflowLibrarySummaries';
 import { useWorkflowLibraryView, type WorkflowLibraryViewController } from '@/components/workflows/library/useWorkflowLibraryView';
 import { useWorkflowLibrarySpaceHeader } from '@/components/workflows/library/useWorkflowLibrarySpaceHeader';
 import { hasWorkingWorkflowLibraryRun } from '@/components/workflows/library/workflowRunStrip';
@@ -33,7 +37,7 @@ import { formatWorkflowDefinitionContentUnavailableReason, formatWorkflowDefinit
 import { WorkflowsColumnActions } from './WorkflowsColumnActions';
 import { WorkflowsColumnOwnsCreationContext } from './workflowsColumnCreation';
 import { WorkflowPurposeGlyph } from '../presentation/WorkflowPurposeGlyph';
-import { WorkStatusGlyph } from '@/components/work/status/WorkStatusGlyph';
+import { WorkStatusRowMark } from '@/components/work/status/WorkStatusRowMark';
 import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
 
 type WorkflowsColumnView = 'definitions' | 'runs';
@@ -129,9 +133,9 @@ const WorkflowsColumnList = React.memo(function WorkflowsColumnList(props: Reado
     pathname: string;
 }>) {
     const presented = useLayoutPresentationActive();
-    const libraryView = useWorkflowLibraryView(presented);
-    const header = useWorkflowLibrarySpaceHeader(libraryView, 'workflows-column-space');
     const definitions = props.view === 'definitions';
+    const libraryView = useWorkflowLibraryView(presented && definitions);
+    const header = useWorkflowLibrarySpaceHeader(libraryView, 'workflows-column-space');
     const { theme } = useUnistyles();
     const viewSwitch = <SegmentedTabBar<WorkflowsColumnView>
         testIDPrefix="workflows-column:view"
@@ -169,44 +173,49 @@ const WorkflowsColumnDefinitions = React.memo(function WorkflowsColumnDefinition
 }>) {
     const router = useRouter();
     const pathname = usePathname();
+    const params = useGlobalSearchParams<{ trigger?: string; serverId?: string | string[] }>();
     const selectedDefinitionId = readOpenDefinition(pathname);
     const homeUnavailable = useActiveHomeUnavailable();
-    const { library, summaries, isVisible } = props.libraryView;
+    const { library, isVisible, visibleLibraryRows, accountWorkflows } = props.libraryView;
+    // One Library (Q7): saved workflows and the Account's step-holding triggers, in the owner's one
+    // order and count. An Account Workflow opens its settings popover where it stands.
+    const accountEditor = useAccountWorkflowEditor({ read: accountWorkflows });
     const split = React.useMemo(() => ({
-        library: props.libraryView.split.library.filter((definition) => isVisible(definition.definitionId)),
         sharedWithYou: props.libraryView.split.sharedWithYou.filter((definition) => isVisible(definition.definitionId)),
         fromPlugins: props.libraryView.split.fromPlugins.filter((plugin) => isVisible(plugin.workflow)),
     }), [isVisible, props.libraryView.split]);
-    const firstLoad = library.status === 'loading' && library.definitions.length === 0;
-    const libraryFailed = library.status === 'failed' && library.definitions.length === 0 && !homeUnavailable;
+    const empty = visibleLibraryRows.length === 0;
+    const firstLoad = empty && (library.status === 'loading' || accountWorkflows.status === 'loading');
+    const libraryFailed = empty && !firstLoad && library.status === 'failed' && !homeUnavailable;
+    // The Account half failed while saved workflows show: said once, under the rows, so they never move.
+    const accountFailed = accountWorkflows.status === 'failed' && !libraryFailed && !homeUnavailable;
     return <>
         {homeUnavailable ? <View style={styles.freshness}><HomeReachabilityGate variant="line">{null}</HomeReachabilityGate></View> : null}
         <CollectionListGroupLabel testID="workflows-column:group:library" title={t('workflows.destination.sections.library')} countPlacement="title"
-            {...(split.library.length > 0 ? { count: split.library.length } : {})} first />
+            {...(visibleLibraryRows.length > 0 ? { count: visibleLibraryRows.length } : {})} first />
         {firstLoad ? <CollectionSkeletonRows count={3} /> : null}
         {libraryFailed ? <View style={collectionListStyles.stateLine}><SurfaceStateCard testID="workflows-column:library:failed" size="line" kind="error"
             title={t('workflows.loadFailedTitle')} reason={t('workflows.loadFailedBody')} action={{ label: t('workflows.retry'), onPress: library.retry, testID: 'workflows-column:library:failed:retry' }}
             accessibilitySemantics="alert" /></View> : null}
-        {library.status === 'loaded' && split.library.length === 0 ? <EmptyState testID="workflows-column:library:empty"
+        {empty && !firstLoad && !libraryFailed && !accountFailed ? <EmptyState testID="workflows-column:library:empty"
             layout="line" title={t('workflows.destination.libraryEmpty')} /> : null}
-        {split.library.map((definition) => {
-            const life = readDefinitionLife(summaries?.get(definition.definitionId));
-            const title = formatWorkflowDefinitionLibraryTitle(definition);
-            return <CollectionNavigationRow key={definition.definitionId}
-                href={`/workflows/${encodeURIComponent(definition.definitionId)}`} testID={`workflows-column:library:${definition.definitionId}`}
-                title={title} icon={<Icon name="tree-structure" />} selected={selectedDefinitionId === definition.definitionId}
-                {...(definitionSubtitle(definition) === null ? {} : { subtitle: definitionSubtitle(definition)! })}
-                {...(life.kind === 'needsYou' || life.kind === 'running' ? {
-                    status: <WorkStatusGlyph testIDSuffix={`workflow-definition-${definition.definitionId}`}
-                        status={resolveWorkStatusTone({ kind: 'workflow', facts: {
-                            word: t(life.kind === 'needsYou' ? 'workflows.destination.sections.needsYou' : 'workflows.destination.sections.running'),
-                            needsYouCount: life.kind === 'needsYou' ? 1 : 0, hasActiveRun: life.kind === 'running' } })} />,
-                    accessibilityLabel: `${title}, ${t(life.kind === 'needsYou' ? 'workflows.destination.sections.needsYou' : 'workflows.destination.sections.running')}`,
-                } : {})}
-                {...(life.kind === 'rested' ? { detail: life.age } : {})}
-                onPress={() => router.push(`/workflows/${encodeURIComponent(definition.definitionId)}` as never)} />;
-        })}
-        <AccountTriggersSection />
+        {visibleLibraryRows.map((row) => 'definition' in row ? (
+            <ColumnDefinitionRow key={row.key} definition={row.definition} summary={row.lastRunSummary}
+                selected={selectedDefinitionId === row.definition.definitionId}
+                onPress={() => router.push(row.openTarget.href as never)} />
+        ) : (
+            <AccountWorkflowRowAnchor key={row.key} row={row} editor={accountEditor} deepLink={params.trigger === row.accountTrigger.automationId}>
+                {(open) => <ColumnAccountWorkflowRow row={row} onPress={open} />}
+            </AccountWorkflowRowAnchor>
+        ))}
+        {accountFailed ? <View style={styles.stale}>
+            <SurfaceFreshnessLine testID="workflows-column:library:account-failed" tone="warning"
+                reason={t('workflows.triggers.section.accountLoadFailed')}
+                action={{ label: t('workflows.triggers.popover.tryAgain'), onPress: accountWorkflows.retry }} />
+        </View> : null}
+        {accountEditor.popover}
+        {/* A retained link to another Home's trigger keeps that Home's own list and editor. */}
+        {readSessionRouteServerId(params) ? <AccountTriggersSection /> : null}
         {split.sharedWithYou.length > 0 ? <>
             <CollectionListGroupLabel testID="workflows-column:group:sharedWithYou" title={t('workflows.destination.sections.sharedWithYou')} countPlacement="title"
                 count={split.sharedWithYou.length} />
@@ -237,8 +246,62 @@ function readDefinitionLife(summary: WorkflowLibraryRunSummary | undefined):
     if (summary === undefined) return { kind: 'quiet' };
     if (summary.needsYouRunId !== null) return { kind: 'needsYou' };
     if (hasWorkingWorkflowLibraryRun(summary)) return { kind: 'running' };
-    const createdAt = summary.lastRun === null ? Number.NaN : Date.parse(summary.lastRun.createdAt);
-    return Number.isFinite(createdAt) ? { kind: 'rested', age: formatRelativeTimeShort(createdAt, Date.now()) } : { kind: 'quiet' };
+    const startedAt = summary.lastRun === null ? Number.NaN : Date.parse(summary.lastRun.startedAt);
+    return Number.isFinite(startedAt) ? { kind: 'rested', age: formatRelativeTimeShort(startedAt, Date.now()) } : { kind: 'quiet' };
+}
+
+/** A saved workflow's Library row: its name, what makes it run by itself, and how its runs stand. */
+function ColumnDefinitionRow(props: Readonly<{ definition: WorkflowLibraryDefinition; summary: WorkflowLibraryRunSummary | undefined;
+    selected: boolean; onPress: () => void }>) {
+    const { definition } = props;
+    const life = readDefinitionLife(props.summary);
+    const title = formatWorkflowDefinitionLibraryTitle(definition);
+    const subtitle = definitionSubtitle(definition);
+    return <CollectionNavigationRow
+        href={`/workflows/${encodeURIComponent(definition.definitionId)}`} testID={`workflows-column:library:${definition.definitionId}`}
+        title={title} icon={<Icon name="tree-structure" />} selected={props.selected}
+        {...(subtitle === null ? {} : { subtitle })}
+        {...lifeProps(life, title, `workflow-definition-${definition.definitionId}`)}
+        onPress={props.onPress} />;
+}
+
+/**
+ * An Account Workflow's Library row (Q7): the same row as a saved workflow's, its trigger as the quiet
+ * line. Turned off it rests dimmed; its settings (and Turn on) are one press away.
+ */
+function ColumnAccountWorkflowRow(props: Readonly<{ row: AccountWorkflowLibraryRow; onPress: () => void }>) {
+    const { row } = props;
+    const reviewRequired = isAccountWorkflowReviewRequired(row);
+    const life: ReturnType<typeof readDefinitionLife> = reviewRequired ? { kind: 'needsYou' } : readAccountWorkflowLife(row.lastRunSummary);
+    const line = formatAccountWorkflowLine(row);
+    return <CollectionNavigationRow testID={`workflows-column:library:${row.key}`}
+        title={row.name} icon={<Icon name="tree-structure" />} selected={false}
+        {...(line === null ? {} : { subtitle: line })}
+        dimmed={isAccountWorkflowOff(row) && !reviewRequired}
+        {...lifeProps(life, row.name, `workflow-account-${row.accountTrigger.automationId}`, reviewRequired ? line ?? undefined : undefined)}
+        onPress={props.onPress} />;
+}
+
+function lifeProps(life: ReturnType<typeof readDefinitionLife>, title: string, testIDSuffix: string, word?: string) {
+    if (life.kind === 'rested') return { detail: life.age };
+    if (life.kind === 'quiet') return {};
+    const state = word ?? t(life.kind === 'needsYou' ? 'workflows.destination.sections.needsYou' : 'workflows.destination.sections.running');
+    return {
+        status: <WorkStatusRowMark testIDSuffix={testIDSuffix}
+            status={resolveWorkStatusTone({ kind: 'workflow', facts: {
+                word: state, needsYouCount: life.kind === 'needsYou' ? 1 : 0, hasActiveRun: life.kind === 'running' } })} />,
+        accessibilityLabel: `${title}, ${state}`,
+    };
+}
+
+/** The same three answers from an Account Workflow's one last run. */
+function readAccountWorkflowLife(summary: WorkflowAutomationRunSummary | undefined): ReturnType<typeof readDefinitionLife> {
+    const lastRun = summary?.lastRun ?? null;
+    if (lastRun === null) return { kind: 'quiet' };
+    if (lastRun.attentionRequired || lastRun.invocationAttentionRequired) return { kind: 'needsYou' };
+    if (hasWorkingWorkflowLibraryRun({ recent: [{ ...lastRun, runId: lastRun.id }] })) return { kind: 'running' };
+    const startedAt = Date.parse(lastRun.startedAt);
+    return Number.isFinite(startedAt) ? { kind: 'rested', age: formatRelativeTimeShort(startedAt, Date.now()) } : { kind: 'quiet' };
 }
 
 /**
@@ -285,5 +348,7 @@ const styles = StyleSheet.create((theme) => ({
     viewBandLead: { flex: 1, minWidth: 0 },
     headerActions: { flexDirection: 'row', alignItems: 'center', gap: 2 },
     freshness: { paddingHorizontal: HAPPIER_COLLECTION_LIST_METRICS.rowInset, paddingBottom: HAPPIER_COLLECTION_LIST_METRICS.groupLabelFirstPaddingTop },
+    // The column's row inset, so the line's edges sit on the rows' edges.
+    stale: { paddingHorizontal: HAPPIER_COLLECTION_LIST_METRICS.rowInset, paddingTop: theme.space.s4 },
     // A column section's state is the one in-list state line, on the rows' content edge.
 }));

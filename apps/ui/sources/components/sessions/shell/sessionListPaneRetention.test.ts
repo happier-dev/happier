@@ -13,7 +13,6 @@ function paneState(sessionCount: number) {
         summary: { sessionsReady: true, sessionCount },
         visibleSessionListIndex: [],
         hasHiddenInactiveSessions: false,
-        folderFocus: null,
         folderFeatureEnabledServerIds: [],
         showLoading: false,
         showEmptyState: false,

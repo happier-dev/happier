@@ -11,13 +11,12 @@ import {
     type UseSessionInlineDragResolvedDrop,
     type UseSessionInlineDragResolveDropResultEvent,
 } from './useSessionInlineDrag';
-import { isTouchPrimaryPointer } from '@/components/ui/interactiveTargetSize';
 import { isSecondaryEntityRowControl } from '@/components/ui/treeDragDrop/useEntityDragDomBinding';
 import { useEntityDragDropRuntime } from '@/components/ui/treeDragDrop/entityDragDropHooks';
 import { EntityDropSettledFeedback, type EntityDropSettledMatch } from '@/components/ui/treeDragDrop/ui/EntityDropSettledFeedback';
 import type { EntityDragItemV1 } from '@happier-dev/protocol/plugins/ui';
 import { SESSION_LIST_SHEET_INSET_PX } from './sessionListStyles';
-import { SESSION_LIST_ROW_CORNER_RADIUS } from './resolveSessionListDensityViewState';
+import { SESSION_LIST_ROW_SELECTION_RADIUS } from './resolveSessionListDensityViewState';
 import { useSessionListStagedMoveKeyHandler } from './keyboardMove/SessionListStagedMoveDock';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
 import type { TreeDropOverlaySharedValues } from '@/components/ui/treeDragDrop';
@@ -25,6 +24,7 @@ import type {
     RegisterSessionListTreeRowBounds,
     UnregisterSessionListTreeRowBounds,
 } from './SessionListHeaderFrame';
+import { useHappierTouchPrimaryPointer } from '@happier-dev/plugin-ui/environment';
 
 export type SessionListRowProps = Readonly<
     Omit<SessionItemProps, 'onTogglePinned' | 'onSetTags' | 'onNativeContextMenuOpenChange'> & {
@@ -89,8 +89,8 @@ export const SessionListRow = React.memo(function SessionListRow(props: SessionL
 
     const handleNativeContextMenuOpenChange = React.useCallback((next: boolean) => {
         if (!sessionKey || !onNativeContextMenuOpenChangeSessionKey) return;
-        onNativeContextMenuOpenChangeSessionKey(sessionKey, next);
-    }, [onNativeContextMenuOpenChangeSessionKey, sessionKey]);
+        onNativeContextMenuOpenChangeSessionKey(treeRowId, next);
+    }, [onNativeContextMenuOpenChangeSessionKey, sessionKey, treeRowId]);
 
     const handleTogglePinned = React.useCallback(() => {
         if (!sessionKey || !onTogglePinnedSessionKey) return;
@@ -109,8 +109,8 @@ export const SessionListRow = React.memo(function SessionListRow(props: SessionL
             cellWrapper.style.zIndex = '9999';
             cellWrapper.style.overflow = 'visible';
         }
-        return onDragStart(nextSessionKey);
-    }, [getCellWrapper, handleNativeContextMenuOpenChange, onDragStart]);
+        return onDragStart(nextSessionKey, treeRowId);
+    }, [getCellWrapper, handleNativeContextMenuOpenChange, onDragStart, treeRowId]);
 
     const handleInlineDropResult = React.useCallback((event: UseSessionInlineDragDropResultEvent) => {
         const cellWrapper = getCellWrapper();
@@ -122,12 +122,13 @@ export const SessionListRow = React.memo(function SessionListRow(props: SessionL
     }, [getCellWrapper, onDropResult]);
 
     // E1/K1: the whole desktop row is the one source; a phone row lifts only through its Organize grip.
-    const touchPrimary = isTouchPrimaryPointer();
+    const touchPrimary = useHappierTouchPrimaryPointer(Platform.OS);
     const inlineDragEnabled = reorderEnabled && (!touchPrimary || organizeMode);
 
     const { gesture, animatedStyle, dragSourceRef } = useSessionInlineDrag({
         enabled: inlineDragEnabled,
         sessionKey,
+        sourceRowId: treeRowId,
         groupKey,
         onDragStart: handleInlineDragStart,
         onDropResult: handleInlineDropResult,
@@ -161,10 +162,10 @@ export const SessionListRow = React.memo(function SessionListRow(props: SessionL
         if (event.defaultPrevented || isSecondaryEntityRowControl(event.nativeEvent, event.currentTarget)) return;
         if (event.altKey || event.metaKey || event.ctrlKey || event.shiftKey) return;
         const label = getSessionName(itemSessionRef.current, itemServerId);
-        if (!stagedMoveKeyHandler({ sessionKey, label, key: event.key, repeat: event.repeat })) return;
+        if (!stagedMoveKeyHandler({ sessionKey: treeRowId, label, key: event.key, repeat: event.repeat })) return;
         event.preventDefault?.();
         event.stopPropagation?.();
-    }, [itemServerId, reorderEnabled, sessionKey, stagedMoveKeyHandler]);
+    }, [itemServerId, reorderEnabled, sessionKey, stagedMoveKeyHandler, treeRowId]);
     const webKeyProps = Platform.OS === 'web' && stagedMoveKeyHandler && reorderEnabled
         ? ({ onKeyDownCapture: handleStagedMoveKeyDownCapture } as Record<string, unknown>)
         : null;
@@ -242,7 +243,7 @@ export const SessionListRow = React.memo(function SessionListRow(props: SessionL
     );
 });
 
-const ROW_FLASH_STYLE = { left: SESSION_LIST_SHEET_INSET_PX, right: SESSION_LIST_SHEET_INSET_PX, borderRadius: SESSION_LIST_ROW_CORNER_RADIUS } as const;
+const ROW_FLASH_STYLE = { left: SESSION_LIST_SHEET_INSET_PX, right: SESSION_LIST_SHEET_INSET_PX, borderRadius: SESSION_LIST_ROW_SELECTION_RADIUS } as const;
 const ROW_LINE_STYLE = { paddingHorizontal: SESSION_LIST_SHEET_INSET_PX } as const;
 
 function SessionListRowSettledFeedback(props: React.PropsWithChildren<Readonly<{ sessionId: string; serverId: string | null; testID: string }>>) {

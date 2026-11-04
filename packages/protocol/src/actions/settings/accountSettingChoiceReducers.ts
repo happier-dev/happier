@@ -2,9 +2,7 @@ import type { AccountSettings } from '../../account/settings/accountSettings.js'
 import type { UsagePacingTargetsV1 } from '../../account/settings/usagePacingPreferencesV1.js';
 import { SESSION_PROVIDER_USAGE_GAUGE_WINDOW_MODES } from '../../account/settings/accountSettings.js';
 type ScmRemoteConfirmPolicy = AccountSettings['scmRemoteConfirmPolicy'];
-type SessionListSettingsDelta = Partial<Pick<AccountSettings, 'sessionListSectionModeV1' | 'sessionListActiveGroupingV1'
-    | 'sessionListInactiveGroupingV1' | 'sessionListAttentionPromotionModeV1' | 'sessionListWorkingPlacementModeV1'
-    | 'sessionListOrderingModeV1' | 'sessionFolderViewModeV1' | 'sessionListFolderSortModeV1'>>;
+type SessionListSettingsDelta = Partial<Pick<AccountSettings, 'sessionListLayoutV1' | 'sessionListAttentionPlacementV1'>>;
 
 export const THINKING_DISPLAY_CHOICES = ['inline_summary', 'inline_full', 'tool', 'hidden'] as const;
 export type ThinkingDisplayChoice = typeof THINKING_DISPLAY_CHOICES[number];
@@ -117,16 +115,13 @@ export function resolveQuotaGaugeWindowModes(
     return [...new Set(modes)];
 }
 
-export const SESSION_LIST_LAYOUT_CHOICES = ['projects', 'recent_activity', 'active_inactive'] as const;
+export const SESSION_LIST_LAYOUT_CHOICES = ['projects', 'recent_activity'] as const;
 export type SessionListLayoutChoice = typeof SESSION_LIST_LAYOUT_CHOICES[number];
 export type SessionListGroupingMode = 'project' | 'date';
 export type SessionListSectionMode = 'activity' | 'single';
 
 export type SessionListLayoutSettings = Readonly<{
-    sessionListSectionModeV1?: unknown;
-    sessionListActiveGroupingV1?: unknown;
-    sessionListInactiveGroupingV1?: unknown;
-    sessionListOrderingModeV1?: unknown;
+    sessionListLayoutV1?: unknown;
 }>;
 
 export function normalizeSessionListSectionModeV1(value: unknown): SessionListSectionMode {
@@ -152,65 +147,30 @@ export function resolveSessionListLayoutChoice(
     if (transientIntent) {
         return transientIntent;
     }
-    if (normalizeSessionListSectionModeV1(settings.sessionListSectionModeV1) === 'activity') {
-        return 'active_inactive';
-    }
-    return normalizeSessionListGroupingModeV1(settings.sessionListActiveGroupingV1) === 'date'
-        ? 'recent_activity'
-        : 'projects';
+    return settings.sessionListLayoutV1 === 'recent_activity' ? 'recent_activity' : 'projects';
 }
 
 export function resolveSessionListLayoutSettingsDelta(
     choice: SessionListLayoutChoice,
-    _currentSettings: SessionListLayoutSettings,
+    _currentSettings?: SessionListLayoutSettings,
 ): SessionListSettingsDelta {
-    if (choice === 'projects') {
-        return {
-            sessionListSectionModeV1: 'single',
-            sessionListActiveGroupingV1: 'project',
-        };
-    }
-    if (choice === 'recent_activity') {
-        return {
-            sessionListSectionModeV1: 'single',
-            sessionListActiveGroupingV1: 'date',
-        };
-    }
-    return { sessionListSectionModeV1: 'activity' };
+    return { sessionListLayoutV1: choice };
 }
 
 export function resolveSessionListViewOptionSelectionDelta(
     itemId: string,
-    currentSettings: Readonly<{ sessionListOrderingModeV1?: unknown }>,
+    currentSettings: SessionListLayoutSettings,
 ): SessionListSettingsDelta | null {
     if (itemId.startsWith('layout:')) {
         const choice = itemId.slice('layout:'.length);
-        if (choice === 'projects' || choice === 'recent_activity' || choice === 'active_inactive') {
+        if (choice === 'projects' || choice === 'recent_activity') {
             return resolveSessionListLayoutSettingsDelta(choice, currentSettings);
         }
         return null;
     }
-    if (itemId === 'grouping:active:project') return { sessionListActiveGroupingV1: 'project' };
-    if (itemId === 'grouping:active:date') return { sessionListActiveGroupingV1: 'date' };
-    if (itemId === 'grouping:inactive:project') return { sessionListInactiveGroupingV1: 'project' };
-    if (itemId === 'grouping:inactive:date') return { sessionListInactiveGroupingV1: 'date' };
-    if (itemId === 'attention:off') return { sessionListAttentionPromotionModeV1: 'off' };
-    if (itemId === 'attention:global') return { sessionListAttentionPromotionModeV1: 'global' };
-    if (itemId === 'attention:withinGroups') return { sessionListAttentionPromotionModeV1: 'withinGroups' };
-    if (itemId === 'working:off') return { sessionListWorkingPlacementModeV1: 'off' };
-    if (itemId === 'working:global') return { sessionListWorkingPlacementModeV1: 'global' };
-    if (itemId === 'working:withinGroups') return { sessionListWorkingPlacementModeV1: 'withinGroups' };
-    if (itemId === 'ordering:custom') return { sessionListOrderingModeV1: 'custom' };
-    if (itemId === 'ordering:updated') return { sessionListOrderingModeV1: 'updated' };
-    if (itemId === 'ordering:created') return { sessionListOrderingModeV1: 'created' };
-    if (itemId === 'folderDisplay:off') return { sessionFolderViewModeV1: 'off' };
-    if (itemId === 'folderDisplay:tree') return { sessionFolderViewModeV1: 'tree' };
-    if (itemId === 'folderSort:foldersFirst') return { sessionListFolderSortModeV1: 'foldersFirst' };
-    if (itemId === 'folderSort:mixed' && normalizeSessionListOrderingModeV1(
-        currentSettings.sessionListOrderingModeV1,
-    ) === 'custom') {
-        return { sessionListFolderSortModeV1: 'mixed' };
-    }
+    if (itemId === 'attention:both') return { sessionListAttentionPlacementV1: 'both' };
+    if (itemId === 'attention:top') return { sessionListAttentionPlacementV1: 'top' };
+    if (itemId === 'attention:inPlace') return { sessionListAttentionPlacementV1: 'inPlace' };
     return null;
 }
 

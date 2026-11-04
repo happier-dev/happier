@@ -10,7 +10,7 @@ import { BUILT_IN_SETTINGS_DECLARATIONS_V1, readBuiltInSettingDeclarationV1,
 
 describe('background-work attention Settings declaration', () => {
   it('reads, writes and resets the preference through its portable account owner', () => {
-    const declaration = readBuiltInSettingDeclarationV1('session.backgroundWorkAttention');
+    const declaration = readBuiltInSettingDeclarationV1('session.list.backgroundWorkAttention');
     expect(declaration).toMatchObject({ pageId: 'session', sectionId: 'session.activitySignals',
       storage: { scope: 'account', key: 'sessionListBackgroundWorkAttentionModeV1', access: 'read_write' } });
     if (!declaration) throw new Error('Background-work attention setting unavailable');

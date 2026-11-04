@@ -9,7 +9,7 @@ import {
 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 
 import type { AutomationDefinitionRun } from '@/sync/domains/automations/automationTypes';
-import type { WorkflowRunAutomationSummariesResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
+import type { WorkflowRunSourceSummariesResultV1, WorkflowRunAutomationSummariesResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
 
 /**
  * Workflow Run fixtures for both transports, built by parsing the canonical
@@ -55,6 +55,16 @@ export function createWorkflowRunSummaryFixture(overrides: SummaryOverrides = {}
         updatedAt: '2026-09-08T10:00:00.000Z',
         ...rest,
     });
+}
+
+type RecentRunSummary = WorkflowRunSourceSummariesResultV1['summaries'][number]['recent'][number];
+
+/** The summary-only projection carries the same admitted attention facts as a full Run row. */
+export function createWorkflowRunRecentSummaryFixture(overrides: Partial<RecentRunSummary> = {}): RecentRunSummary {
+    const run = createWorkflowRunSummaryFixture();
+    return { runId: run.id, state: run.state, workflowCustodyState: null,
+        attentionRequired: run.attentionRequired, failureUnseen: run.failureUnseen,
+        invocationAttentionRequired: run.invocationAttentionRequired, ...overrides };
 }
 
 type AutomationLastRunSummary = NonNullable<WorkflowRunAutomationSummariesResultV1['automationSummaries'][number]['lastRun']>;

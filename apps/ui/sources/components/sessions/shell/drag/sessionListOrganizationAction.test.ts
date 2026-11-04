@@ -48,7 +48,7 @@ describe('Project custom order through the mounted drop writer and list reader',
         const readOrder = () => buildSessionOrganizationListViewStateForServers({ serverIds: [serverId],
             projectionsByServerId: buildSessionOrganizationProjections([serverId], id => readSessionOrganizationProjectionCached(getStorage().getState(), id)) }).sessionListGroupOrderV1;
         const readList = () => computeVisibleSessionListIndex({ source, resolveSessionRow: (_serverId, sessionId) => rows[sessionId] ?? null,
-            hideInactiveSessions: false, pinnedSessionKeysV1: [], sessionListOrderingModeV1: 'custom', sessionListSectionModeV1: 'single',
+            hideInactiveSessions: false, pinnedSessionKeysV1: [], sessionListLayoutChoice: 'projects',
             sessionListGroupOrderV1: normalizeSessionListGroupOrderV1ForIndexSource({ source, pinnedSessionKeysV1: [], sessionListGroupOrderV1: readOrder() }),
             presentation: { enabled: false, presentation: 'flat-with-badge' } }) ?? [];
         const mutationScope: SessionOrganizationMutationScope = {
@@ -61,8 +61,7 @@ describe('Project custom order through the mounted drop writer and list reader',
             },
         };
         const context = (): CommitSessionListDragIntentContext => ({ scope, latestItems: readList(),
-            sessionFoldersV1: { v: 1, folders: [] }, sessionListGroupOrderV1: readOrder(), sessionListOrderingModeV1: 'custom', sessionListSectionModeV1: 'single', now: () => 1,
-            setSessionFoldersV1: async () => { throw new Error('Reorder must not edit folders'); },
+            sessionListGroupOrderV1: readOrder(), sessionListLayoutV1: 'projects',
             setSessionFolderAssignment: async () => { throw new Error('Reorder must not move a session'); },
             setSessionListGroupOrderV1: next => writeSessionOrganizationGroupOrder({ scope: mutationScope, next, orderItemAddressByItemKey: addresses }),
         });
@@ -138,9 +137,8 @@ describe('mounted Session organization rail projection', () => {
         const context: CommitSessionListDragIntentContext = {
             scope: { serverId, accountId: 'account' }, latestItems: [],
             pinnedOrganization: { items: pinnedItems, railSessionRowIds: [treeRowId.session(serverId, 'first'), treeRowId.session(serverId, 'last')] },
-            sessionFoldersV1: { v: 1, folders: [] }, sessionListGroupOrderV1: { [PINNED_GROUP_KEY_V1]: ids.map(key) },
-            manualSessionOrderingEnabled: true, sessionListOrderingModeV1: 'custom', now: () => 1,
-            setSessionFoldersV1: async () => { throw new Error('rail_must_not_change_folders'); },
+            sessionListGroupOrderV1: { [PINNED_GROUP_KEY_V1]: ids.map(key) },
+            manualSessionOrderingEnabled: true, sessionListLayoutV1: 'projects',
             setSessionFolderAssignment: async () => { throw new Error('rail_must_not_assign_folders'); },
             setSessionListGroupOrderV1: async next => {
                 await writeSessionOrganizationGroupOrder({ scope: mutationScope, next, orderItemAddressByItemKey: addresses });

@@ -39,11 +39,11 @@ export const personalizeLabels = {
         ? t('settingsSession.toolRendering.activityFeed.tapAction.openTitle')
         : t('settingsSession.toolRendering.activityFeed.tapAction.expandTitle'),
     listLayout: (value: SessionListLayoutChoice) => value === 'projects' ? t('settingsSession.sessionList.layoutProjectsTitle')
-        : value === 'recent_activity' ? t('settingsSession.sessionList.layoutRecentActivityTitle') : t('settingsSession.sessionList.layoutActiveInactiveTitle'),
+        : t('settingsSession.sessionList.layoutRecentActivityTitle'),
     listDensity: (value: ListDensityChoice) => value === 'detailed' ? t('settingsAppearance.sessionListDensity.detailed')
         : value === 'cozy' ? t('settingsAppearance.sessionListDensity.cozy') : t('settingsAppearance.sessionListDensity.narrow'),
-    attention: (value: AttentionPlacementChoice) => value === 'off' ? t('settingsSession.sessionList.placementInPlaceTitle')
-        : value === 'withinGroups' ? t('settingsSession.sessionList.placementWithinGroupsTitle') : t('settingsSession.sessionList.placementAtTopTitle'),
+    attention: (value: AttentionPlacementChoice) => value === 'inPlace' ? t('settingsSession.sessionList.placementInPlaceTitle')
+        : value === 'both' ? t('settingsSession.sessionList.placementBothTitle') : t('settingsSession.sessionList.placementAtTopTitle'),
     style: (value: StartingStyleId) => value === 'activity' ? t('personalize.styleActivity')
         : value === 'conversation' ? t('personalize.styleConversation') : t('personalize.styleDetail'),
 };

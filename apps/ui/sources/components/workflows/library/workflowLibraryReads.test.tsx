@@ -36,6 +36,8 @@ const { ScheduledWorkflowRows } = await import('../triggers/ScheduledWorkflowSec
 const { projectScheduledWorkflowRows } = await import('../triggers/scheduledWorkflowRows');
 const { listBuiltinWorkflowReferenceOptions, useWorkflowReferenceTitles } = await import('../presentation/workflowReferenceOptions');
 const { useWorkflowDefinitionLibrary, useWorkflowRunWindow, resetWorkflowLibraryReadsForTests } = await import('./workflowLibraryReads');
+const { useWorkflowLibraryView } = await import('./useWorkflowLibraryView');
+const { useAccountWorkflowEditor } = await import('../triggers/AccountTriggersSection');
 const { clearDaemonMergedProjectionCacheForTests } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
 const route = '/v3/automations/runs/workflow-storage';
 const definitionId = '00000000-0000-4000-8000-000000000001';
@@ -810,5 +812,103 @@ describe('Automation attention through real HTTP and the shared Run store', () =
         await act(async () => { accountId = 'account-b'; await home.switchAccount(serverId, accountId); storage.setState({ profileScope: { serverId, accountId } }); });
         await waitLoaded(hook); await act(async () => pending.resolve());
         expect(hook.getCurrent().rows).toEqual([]); expect(storage.getState().workflowRunsById['foreign-late']).toBeUndefined();
+    });
+
+    it.each([[1, 1], [3, 4]])('joins %i definitions and %i Account Workflows with batch reads and one search', async (definitionCount, triggerCount) => {
+        const [{ AutomationDefinitionDetailSchema}, { AutomationStoredWorkflowDefinitionRecipeV2Schema}] = await Promise.all([import('@happier-dev/protocol/automations/automationApiV3'), import('@happier-dev/protocol/automations/automationWorkflowRecipeV2')]);
+        const { createWorkflowAutomationLastRunSummaryFixture } = await import('@/dev/testkit/fixtures/workflowRunFixtures');
+        await storage.getState().activateSettingsScope({ serverId, accountId });
+        storage.setState({ settingsVersion: 1 });
+        const { resolveCollectionSpacesV1 } = await import('@happier-dev/protocol/collections/spaces/collectionSpacesV1');
+        const { writeCollectionSpaceSelectionV1 } = await import('@/sync/domains/session/listing/sessionListSpaces');
+        const defaultSpace = resolveCollectionSpacesV1(storage.getState().settings.collectionSpacesV1, 'workflow')[0]!;
+        expect(await writeCollectionSpaceSelectionV1({ scope: { serverId, accountId }, entityKind: 'workflow', spaceId: defaultSpace.id,
+            isCurrent: () => true, readSettings: () => storage.getState().settings })).toEqual({ ok: true });
+        const ids = Array.from({ length: definitionCount }, (_, index) => `00000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`);
+        for (const [index, id] of ids.entries()) {
+            await saved(id, `Saved ${index}`);
+            const stored = home.artifacts(serverId).read(id)!;
+            home.artifacts(serverId).replaceStoredRow({ ...stored, updatedAt: 10 + index });
+        }
+        const triggers = Array.from({ length: triggerCount }, (_, index) => AutomationDefinitionDetailSchema.parse({
+            id: index === 0 ? ids[0] : `inline-${index}`, name: `Account workflow ${index}`, description: null,
+            enabled: true, workflowDefinitionId: null, scopeSessionId: null, templateVersion: 1,
+            targetType: null, existingSessionId: null, lastRunAt: null, createdAt: 1, updatedAt: 20 + index,
+            assignments: [{ machineId: 'machine-one', enabled: true, priority: 0, updatedAt: 1 }], triggers: [],
+            executionRecipe: AutomationStoredWorkflowDefinitionRecipeV2Schema.parse({ v: 2, templateVersion: 1,
+                workflow: { t: 'plain', v: { workspace: { directory: '/repo' }, executionTarget: { kind: 'session' }, inlineDefinition: content } }, triggerEvidence: null }),
+        }));
+        home.answer(serverId, 'POST /v3/automations/query', { select: input => ({ body: {
+            automations: input && typeof input === 'object' && 'scope' in input && input.scope === 'account_inline' ? triggers : [], nextCursor: null,
+        } }) });
+        const lastRun = createWorkflowAutomationLastRunSummaryFixture({ id: 'account-last-run', state: 'running',
+            attentionRequired: true, invocationAttentionRequired: true });
+        home.answer(serverId, route, { select: input => {
+            const request = input && typeof input === 'object' && 'request' in input ? input.request : null;
+            if (request && typeof request === 'object' && 'automationIds' in request && Array.isArray(request.automationIds)) return { body: {
+                automationSummaries: request.automationIds.map(automationId => ({ automationId, lastRun })), remainingAutomationIds: [],
+            } };
+            return { body: { summaries: ids.map(sourceArtifactId => ({ sourceArtifactId, lastRun: null, recent: [], needsYouCount: 0, needsYouRunId: null })), remainingSourceArtifactIds: [] } };
+        } });
+        const readStart = home.requests.length;
+        const hook = await renderHook(() => {
+            const view = useWorkflowLibraryView(true);
+            // The next renderer consumes this same read; mounting its incumbent editor must not
+            // create another membership/options read or one read per Workflow row.
+            const editor = useAccountWorkflowEditor({ read: view.accountWorkflows });
+            return { ...view, editor };
+        });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().libraryRows).toHaveLength(definitionCount + triggerCount));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().libraryRows[0]?.lastRunSummary?.lastRun).toMatchObject({ id: 'account-last-run' }));
+        const rows = hook.getCurrent().libraryRows;
+        expect(rows.map(row => row.name)).toEqual([
+            ...[...triggers].reverse().map(row => row.name), ...[...ids].reverse().map((_id, index) => `Saved ${definitionCount - index - 1}`),
+        ]);
+        expect(new Set(rows.map(row => row.key)).size).toBe(rows.length);
+        expect(rows[0]).toMatchObject({ triggerSummary: expect.any(String), openTarget: { kind: 'accountTrigger', automationId: triggers.at(-1)!.id } });
+        expect(rows.at(-1)?.openTarget).toEqual({ kind: 'definition', definitionId: ids[0], href: `/workflows/${ids[0]}` });
+        expect(hook.getCurrent().libraryCount).toBe(definitionCount + triggerCount);
+        expect(hook.getCurrent().editor.popover).toBeNull();
+        const inventories = () => home.requests.filter(request => request.path.startsWith('/v1/artifacts?') || request.path.startsWith('/v3/automations?') || request.path === '/v3/automations/query');
+        expect(artifactInventoryReads()).toHaveLength(1);
+        expect(inventories()).toHaveLength(3); // One definition page, its existing enrichment, and the selected Account-inline page.
+        expect(home.requestsFor(route)).toHaveLength(2); // Existing source and Automation summary batches, never per row.
+        const recordReads = home.requests.slice(readStart).filter(request => request.path.startsWith('/v1/artifacts') || request.path.startsWith('/v3/automations'));
+        expect(recordReads).toHaveLength(6); // Also count the existing body batch, so N singleton detail reads cannot hide.
+        expect(recordReads.filter(request => request.path === '/v1/artifacts/read')).toHaveLength(1);
+        const before = home.requests.length;
+        await act(async () => hook.getCurrent().setView('running'));
+        expect(hook.getCurrent().visibleLibraryRows).toHaveLength(triggerCount);
+        await act(async () => hook.getCurrent().setView('all'));
+        await act(async () => hook.getCurrent().setSearchQuery('Account workflow'));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().visibleLibraryRows).toHaveLength(triggerCount));
+        await act(async () => hook.getCurrent().setSearchQuery('Saved'));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().visibleLibraryRows).toHaveLength(definitionCount));
+        expect(home.requests.length).toBe(before);
+        const accountRow = rows.find(row => 'accountTrigger' in row);
+        if (!accountRow || !('accountTrigger' in accountRow)) throw new Error('Expected the admitted Account Workflow');
+        await act(async () => storage.getState().upsertWorkflowTriggerSet({ queryKey: 'account_inline', set: {
+            ...accountRow.accountTrigger, name: 'Updated Account Workflow', revision: accountRow.accountTrigger.revision + 1,
+        } }));
+        expect(hook.getCurrent().libraryRows.find(row => row.key === accountRow.key)?.name).toBe('Updated Account Workflow');
+        const unchangedDefinition = rows.find(row => 'definition' in row)!;
+        expect(hook.getCurrent().libraryRows.find(row => row.key === unchangedDefinition.key)).toBe(unchangedDefinition);
+        expect(home.requests.length).toBe(before);
+        const { getPreferredLanguage, setPreferredLanguageFromSettings, preloadTranslations } = await import('@/text/i18n');
+        const { formatTriggerSetSummary } = await import('../triggers/formatTriggerSummary');
+        const language = getPreferredLanguage();
+        const alternate = language === 'fr' ? 'en' : 'fr';
+        const beforeLanguage = hook.getCurrent().libraryRows.find(row => row.key === accountRow.key)!.triggerSummary;
+        await preloadTranslations(alternate);
+        try {
+            await act(async () => setPreferredLanguageFromSettings(alternate));
+            expect(formatTriggerSetSummary([])).not.toBe(beforeLanguage);
+            expect(hook.getCurrent().libraryRows.find(row => row.key === accountRow.key)!.triggerSummary).toBe(formatTriggerSetSummary([]));
+            expect(home.requests.length).toBe(before);
+        } finally {
+            await act(async () => setPreferredLanguageFromSettings(language));
+        }
+        await act(async () => { await hook.getCurrent().editor.open(accountRow.openTarget, { current: null }); });
+        expect(hook.getCurrent().editor.popover).not.toBeNull();
     });
 });

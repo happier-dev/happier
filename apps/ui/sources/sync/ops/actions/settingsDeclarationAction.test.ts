@@ -1,3 +1,4 @@
+import { SESSION_SETTINGS } from '@/components/settings/session/sessionSettings';
 // Enter through the mounted catalog consumer, matching App-shell evaluation:
 // a cold owner-first import can observe the catalog mid-initialization.
 import '@/components/settings/catalog/runtime/useResolvedSettingsPageCatalog';
@@ -100,6 +101,27 @@ import { publishLocalDaemonStatus, readLocalDaemonSharedState } from '@/componen
 import type { LocalDaemonStatusData } from '@/components/settings/machines/localControl/useLocalDaemonControl';
 
 describe('personal list Settings approval defaults', () => {
+    it('shares the opt-in status words preference through safe agent Actions and the Account writer', async () => {
+        const owner = createOwner();
+        const executor = throughActionExecutor(owner.action, () => owner.account().actionsSettingsV1);
+        const context = { surface: 'agent', authority: 'account_automation' } as const;
+        const anchor = 'session.list.statusWords';
+        expect(await executor.execute('settings.get', { anchor }, context))
+            .toEqual({ ok: true, result: { anchor, value: false } });
+        expect(SESSION_SETTINGS.settings.statusWords).toMatchObject({ anchor,
+            storage: { scope: 'account', key: 'sessionListStatusWords', access: 'read_write' } });
+        expect(await executor.execute('settings.set', { anchor, value: true }, context))
+            .toMatchObject({ ok: true, result: { value: true } });
+        expect(owner.account()).toHaveProperty('sessionListStatusWords', true);
+        expect(await executor.execute('settings.set', { anchor, value: 'true' }, context))
+            .toMatchObject({ ok: false, errorCode: 'invalid_setting_value' });
+        expect(await executor.execute('settings.get', { anchor }, context))
+            .toEqual({ ok: true, result: { anchor, value: true } });
+        expect(await executor.execute('settings.reset', { anchor }, context))
+            .toMatchObject({ ok: true, result: { value: false } });
+        expect(owner.account()).toHaveProperty('sessionListStatusWords', false);
+    })
+
     it.each([
         ['agents.idleCompaction', 'sessionIdleCompactionEnabledByTargetKey', false],
         ['agents.idleCompaction.minContextTokens', 'sessionIdleCompactionMinContextTokensByTargetKey', 0],
@@ -2523,7 +2545,7 @@ describe('declared settings owner', () => {
         if (!('items' in discovered) || !discovered.items) throw new Error('Discovery failed');
         const byAnchor = new Map(discovered.items.map((item) => [item.anchor, item]));
         for (const anchor of [
-            'appearance.themeMode', 'transcript.displayMode', 'session.layout', 'session.attentionPromotion', 'session.backgroundWorkAttention',
+            'appearance.themeMode', 'transcript.displayMode', 'session.list.layout', 'session.list.attentionPlacement', 'session.list.backgroundWorkAttention',
             'notifications.localEnabled', 'notifications.ready', 'notifications.readyPreview', 'notifications.requestPreview',
             'notifications.localPermissionRequests', 'notifications.localUserActions', 'notifications.foregroundBehavior',
         ]) {
@@ -2571,26 +2593,26 @@ describe('declared settings owner', () => {
             .toEqual({ anchor: 'transcript.displayMode', value: 'tool' });
 
         // Session list layout: the layout owner's delta, never a raw section key.
-        expect(await owner.action({ actionId: 'settings.set', input: { anchor: 'session.layout', value: 'recent_activity' } }))
-            .toEqual({ anchor: 'session.layout', value: 'recent_activity' });
-        expect(owner.account()).toMatchObject({ sessionListSectionModeV1: 'single', sessionListActiveGroupingV1: 'date' });
-        await owner.action({ actionId: 'settings.set', input: { anchor: 'session.layout', value: 'active_inactive' } });
-        expect(await owner.action({ actionId: 'settings.get', input: { anchor: 'session.layout' } }))
-            .toEqual({ anchor: 'session.layout', value: 'active_inactive' });
-        expect(await owner.action({ actionId: 'settings.set', input: { anchor: 'session.layout', value: 'date' } }))
+        expect(await owner.action({ actionId: 'settings.set', input: { anchor: 'session.list.layout', value: 'recent_activity' } }))
+            .toEqual({ anchor: 'session.list.layout', value: 'recent_activity' });
+        expect(owner.account()).toHaveProperty('sessionListLayoutV1', 'recent_activity');
+        await owner.action({ actionId: 'settings.set', input: { anchor: 'session.list.layout', value: 'projects' } });
+        expect(await owner.action({ actionId: 'settings.get', input: { anchor: 'session.list.layout' } }))
+            .toEqual({ anchor: 'session.list.layout', value: 'projects' });
+        expect(await owner.action({ actionId: 'settings.set', input: { anchor: 'session.list.layout', value: 'date' } }))
             .toMatchObject({ ok: false, errorCode: 'invalid_setting_value' });
 
         // Attention placement in the sessions list.
-        expect(await owner.action({ actionId: 'settings.set', input: { anchor: 'session.attentionPromotion', value: 'withinGroups' } }))
-            .toEqual({ anchor: 'session.attentionPromotion', value: 'withinGroups' });
-        expect(owner.account().sessionListAttentionPromotionModeV1).toBe('withinGroups');
+        expect(await owner.action({ actionId: 'settings.set', input: { anchor: 'session.list.attentionPlacement', value: 'inPlace' } }))
+            .toEqual({ anchor: 'session.list.attentionPlacement', value: 'inPlace' });
+        expect(owner.account().sessionListAttentionPlacementV1).toBe('inPlace');
 
         for (const value of ['keepWorkingUnread', 'showUnread', 'keepWorking']) {
-            expect(await owner.action({ actionId: 'settings.set', input: { anchor: 'session.backgroundWorkAttention', value } }))
-                .toEqual({ anchor: 'session.backgroundWorkAttention', value });
+            expect(await owner.action({ actionId: 'settings.set', input: { anchor: 'session.list.backgroundWorkAttention', value } }))
+                .toEqual({ anchor: 'session.list.backgroundWorkAttention', value });
             expect(owner.account()).toHaveProperty('sessionListBackgroundWorkAttentionModeV1', value);
-            expect(await owner.action({ actionId: 'settings.get', input: { anchor: 'session.backgroundWorkAttention' } }))
-                .toEqual({ anchor: 'session.backgroundWorkAttention', value });
+            expect(await owner.action({ actionId: 'settings.get', input: { anchor: 'session.list.backgroundWorkAttention' } }))
+                .toEqual({ anchor: 'session.list.backgroundWorkAttention', value });
         }
 
         // This device's notifications keep every sibling field of their nested record.

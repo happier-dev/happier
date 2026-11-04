@@ -22,14 +22,11 @@ export * from './providerStateSharingMutations.js';
 import { THINKING_DISPLAY_CHOICES, isThinkingDisplayChoice, resolveThinkingDisplayChoice, resolveThinkingDisplayChoiceDelta,
     normalizeScmRemoteConfirmPolicy, shouldConfirmRemoteOperation, setRemoteConfirmationForKind,
     resolveQuotaGaugeWindowModes, isQuotaGaugeWindowMode, type ConnectedServiceQuotaGaugeWindowMode, readUsagePersonalPaceTarget, setUsagePersonalPaceTarget,
-    SESSION_LIST_LAYOUT_CHOICES, resolveSessionListLayoutChoice, resolveSessionListLayoutSettingsDelta,
-    resolveSessionListViewOptionSelectionDelta, resolveEffectiveSessionListFolderSortMode } from './accountSettingChoiceReducers.js';
+} from './accountSettingChoiceReducers.js';
 
 type CoupledSettings = Pick<AccountSettings, 'codingPromptBehaviorV1' | 'usageLimitRecoverySettingsV1' | 'usagePacingTargetsV1'
     | 'scmRemoteConfirmPolicy' | 'attentionDeliveryPolicyV1' | 'sessionThinkingDisplayMode' | 'sessionThinkingInlinePresentation'
     | 'newSessionWizardSectionPresentationV1' | 'sessionProviderUsageGaugeWindowModes' | 'sessionProviderUsageGaugeWindowMode'
-    | 'sessionListSectionModeV1' | 'sessionListActiveGroupingV1' | 'sessionListInactiveGroupingV1'
-    | 'sessionListOrderingModeV1' | 'sessionFolderViewModeV1' | 'sessionListFolderSortModeV1' | 'sessionListWorkingPlacementModeV1'
     | 'peerMediationPreferencesV1' | 'favoriteProfiles' | 'experiments' | 'featureToggles'
     | 'glassBlurEnabled' | 'glassBlurIntensity' | 'glassTintIntensity' | 'glassSurfaceMaterials' | 'scmCommitMessageGeneratorBackendId'
     | 'machineRetentionDefaultsV1' | 'connectedServicesProviderStateSharingSettingsV1'
@@ -447,20 +444,6 @@ export const gaugeWindowStorage: PortableAccountSettingBindingV1 = { ...owner,
         return parsed.success && (parsed.data === null || isGaugeWindowModes(parsed.data)) ? { sessionProviderUsageGaugeWindowModes: parsed.data } : null;
     },
 };
-export const sessionListLayoutStorageBinding: PortableAccountSettingBindingV1 = { ...owner, allowedValues: SESSION_LIST_LAYOUT_CHOICES,
-    read: resolveSessionListLayoutChoice,
-    parse: value => typeof value === 'string' && SESSION_LIST_LAYOUT_CHOICES.some(choice => choice === value) ? { success: true, value } : { success: false },
-    mutate: (settings, value) => value === 'projects' || value === 'recent_activity' || value === 'active_inactive' ? resolveSessionListLayoutSettingsDelta(value, settings) : null,
-};
-type ListChoiceKey = 'sessionListOrderingModeV1' | 'sessionFolderViewModeV1' | 'sessionListFolderSortModeV1' | 'sessionListActiveGroupingV1' | 'sessionListInactiveGroupingV1' | 'sessionListWorkingPlacementModeV1';
-export function listChoiceStorage(key: ListChoiceKey, prefix: string): PortableAccountSettingBindingV1 { return { ...owner,
-    read: settings => key === 'sessionListFolderSortModeV1' ? resolveEffectiveSessionListFolderSortMode({ orderingMode: settings.sessionListOrderingModeV1, folderSortMode: settings.sessionListFolderSortModeV1 }) : settings[key],
-    parse: value => {
-        const parsed = ACCOUNT_SETTING_DEFINITIONS[key].parseMutationValue(value);
-        return parsed.success && typeof parsed.data === 'string' ? { success: true, value: parsed.data } : { success: false };
-    },
-    mutate: (settings, value) => typeof value === 'string' ? resolveSessionListViewOptionSelectionDelta(`${prefix}:${value}`, settings) : null,
-}; }
 
 export function readPortableAccountSettingBindingV1(declaration: Readonly<{
     storage?: Readonly<{ owner?: string; options?: unknown; key?: string }>;
@@ -504,7 +487,6 @@ export function readPortableAccountSettingBindingV1(declaration: Readonly<{
         case 'personalPaceTargetStorage': return personalPaceTargetStorage;
         case 'thinkingDisplayStorageBinding': return thinkingDisplayStorageBinding;
         case 'gaugeWindowStorage': return gaugeWindowStorage;
-        case 'sessionListLayoutStorageBinding': return sessionListLayoutStorageBinding;
         case 'accountNotificationStorageBinding': {
             const id = (['ready', 'permission_request', 'user_action_request', 'follow_update', 'connected_service_account_switch',
                 'connected_service_quota_blocked', 'connected_service_quota_recovered', 'pushEnabled', 'mutePhoneWhenComputerFocused',
@@ -518,10 +500,6 @@ export function readPortableAccountSettingBindingV1(declaration: Readonly<{
         case 'presentationStorage': {
             const section = (['profiles', 'backends', 'models', 'machines', 'paths', 'permissions'] as const).find(key => key === args[0]);
             return section ? presentationStorage(section) : null;
-        }
-        case 'listChoiceStorage': {
-            const key = (['sessionListOrderingModeV1', 'sessionFolderViewModeV1', 'sessionListFolderSortModeV1', 'sessionListActiveGroupingV1', 'sessionListInactiveGroupingV1', 'sessionListWorkingPlacementModeV1'] as const).find(key => key === args[0]);
-            return key && typeof args[1] === 'string' ? listChoiceStorage(key, args[1]) : null;
         }
         default: return null;
     }

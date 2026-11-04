@@ -122,7 +122,6 @@ describe('mounted Session list organization writer bridge', () => {
                 isFolderOrganizationEnabled: () => true, now: () => 1,
                 setSessionListGroupOrderV1: next => writers.setSessionListGroupOrderV1(next, scope),
                 setSessionWorkspaceOrderV1: next => writers.setSessionWorkspaceOrderV1(next, scope),
-                setSessionFoldersV1: next => writers.setSessionFoldersV1(next, scope),
                 setSessionFolderAssignment: input => writeSessionOrganizationFolderAssignment({ scope, sessionId: input.sessionId, folderId: input.folderId }),
             }))), [writers.setSessionListGroupOrderV1, writers.setSessionWorkspaceOrderV1, writers.setSessionFoldersV1]);
         });

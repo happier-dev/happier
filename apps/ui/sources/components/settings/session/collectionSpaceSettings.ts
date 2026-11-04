@@ -1,9 +1,10 @@
+import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { CollectionSpaceSelectionValueV1Schema, getDefaultCollectionSpaceIdV1, reduceCollectionSpacesV1, resolveCollectionSpacesV1, resolveCollectionSpaceSelectionV1,
     type CollectionEntityKindV1, type CollectionSpacesV1 } from '@happier-dev/protocol/collections/spaces/collectionSpacesV1';
 import { accountSettingsScopeKeySuffix } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { builtInSettingUiDeclaration, SETTING_VALUE_UNAVAILABLE,
     type SettingDeclaration, type SettingOperationContext, type SettingsPageDeclaration, type SettingRef } from '@/components/settings/catalog/settingDeclarations';
-import { writeCollectionSpaceSelectionV1 } from '@/sync/domains/session/listing/sessionListSpaces';
+import { readCollectionSpaceId, readCollectionSpaceSelection, writeCollectionSpaceSelectionV1 } from '@/sync/domains/session/listing/sessionListSpaces';
 import { readBuiltInSettingDeclarationV1 } from '@happier-dev/protocol/actions/settings/settingsDeclarations';
 import { readCollectionSpaceDefaultV1 } from './collectionSpaceDefaults';
 
@@ -16,9 +17,6 @@ export async function invokeCollectionSpaceSetting(entityKind: CollectionEntityK
     if (operation?.kind !== 'collection_space' || operation.entityKind !== entityKind) return { status: 'unavailable' as const, reason: 'space_entity_mismatch' };
     const mutation = operation.mutation;
     const changesSelection = mutation.op === 'create' || mutation.op === 'delete';
-    if (changesSelection && (!context.readLocalSettings || !context.writeLocalSettings)) {
-        return { status: 'unavailable' as const, reason: 'setting_not_bound' };
-    }
     const defaultId = getDefaultCollectionSpaceIdV1(entityKind);
     const needsDefault = mutation.op === 'resetDefault' || (mutation.op === 'edit' || mutation.op === 'associateTag') && mutation.spaceId === defaultId
         || mutation.op === 'reorder' && (mutation.spaceId === defaultId || mutation.beforeSpaceId === defaultId);
@@ -40,17 +38,15 @@ export async function invokeCollectionSpaceSetting(entityKind: CollectionEntityK
         if (error instanceof SpaceMutationRejected) return { status: 'unavailable' as const, reason };
         throw error;
     }
-    if (changesSelection && accepted && context.isCurrent() && context.readLocalSettings && context.writeLocalSettings) {
-        const local = context.readLocalSettings();
-        const selectedId = local.collectionSpaceV1.byAccountScope[accountSettingsScopeKeySuffix(context.accountScope)]?.[entityKind]?.spaceId;
+    if (changesSelection && accepted && context.isCurrent()) {
+        const selectedId = readCollectionSpaceId(accountSettingsScopeKeySuffix(context.accountScope), entityKind);
         const nextId = mutation.op === 'create' ? mutation.space.id
             : mutation.op === 'delete' && selectedId === mutation.spaceId ? defaultId : undefined;
         if (nextId !== undefined) {
             // Definition acceptance is the navigation boundary. Never select before CAS or on another device.
             const catalog = accepted;
             await writeCollectionSpaceSelectionV1({ scope: context.accountScope, entityKind, spaceId: nextId,
-                isCurrent: context.isCurrent, readSettings: () => ({ collectionSpacesV1: catalog }),
-                readLocalSettings: context.readLocalSettings, writeLocalSettings: context.writeLocalSettings });
+                isCurrent: context.isCurrent, readSettings: () => ({ collectionSpacesV1: catalog }) });
         }
     }
     return accepted ? { status: 'completed' as const, value: accepted as CollectionSpacesV1 & import('@/components/settings/catalog/settingDeclarations').SettingValue }
@@ -59,22 +55,22 @@ export async function invokeCollectionSpaceSetting(entityKind: CollectionEntityK
 
 function selectedSpaceDeclaration(entityKind: CollectionEntityKindV1): SettingDeclaration {
     return { storage: { scope: 'local', kind: 'localOwner', access: 'read_write', requiresAccountScope: true,
-        read: async (local, context) => {
+        read: async (_local, context) => {
             if (!context?.accountScope) return SETTING_VALUE_UNAVAILABLE;
             const settings = await context.readSettings?.();
-            return { spaceId: resolveCollectionSpaceSelectionV1(local.collectionSpaceV1, accountSettingsScopeKeySuffix(context.accountScope),
+            const scopeKey = accountSettingsScopeKeySuffix(context.accountScope);
+            return { spaceId: resolveCollectionSpaceSelectionV1(readCollectionSpaceSelection(scopeKey, entityKind), scopeKey,
                 entityKind, settings ? resolveCollectionSpacesV1(settings.collectionSpacesV1, entityKind) : [], { authoritative: Boolean(settings) }) };
         },
         parse: value => {
             const parsed = CollectionSpaceSelectionValueV1Schema.safeParse(value);
             return parsed.success ? { success: true, value: parsed.data } : { success: false };
         },
-        commit: async (local, value, write, context) => {
+        commit: async (_local, value, _write, context) => {
             const selection = CollectionSpaceSelectionValueV1Schema.parse(value);
             if (!context?.accountScope || !context.isCurrent() || !context.readSettings) return SETTING_VALUE_UNAVAILABLE;
             const result = await writeCollectionSpaceSelectionV1({ scope: context.accountScope, entityKind, spaceId: selection.spaceId,
-                isCurrent: context.isCurrent, readSettings: context.readSettings,
-                readLocalSettings: context.readLocalSettings ?? (() => local), writeLocalSettings: write });
+                isCurrent: context.isCurrent, readSettings: context.readSettings });
             if (!result.ok) return SETTING_VALUE_UNAVAILABLE;
         },
     } };
@@ -85,28 +81,44 @@ function definitionsDeclaration(entityKind: CollectionEntityKindV1): SettingDecl
 }
 
 /** Header/settings compositions consume these same refs; no second persistence or Action registry. */
-export function collectionSpaceSettingRefs(entityKind: CollectionEntityKindV1): Readonly<{ spaces: SettingRef; selectedSpace: SettingRef }> {
+export function collectionSpaceSettingRefs(entityKind: CollectionEntityKindV1): Readonly<{
+    spaces: SettingRef; selectedSpace: SettingRef; enabled: SettingRef; masterEnabled: SettingRef; filters: SettingRef;
+}> {
     const prefix = entityKind === 'sessionWork' ? 'session' : entityKind;
     const ref = (suffix: string, declaration: SettingDeclaration): SettingRef => {
         const anchor = `${prefix}.list.${suffix}`;
         const metadata = readBuiltInSettingDeclarationV1(anchor)!;
         return { ...builtInSettingUiDeclaration(anchor), ...declaration, anchor, sectionId: metadata.sectionId };
     };
-    return { spaces: ref('spaces', definitionsDeclaration(entityKind)), selectedSpace: ref('selectedSpace', selectedSpaceDeclaration(entityKind)) };
+    const filters = ref('filters', { operation: { kind: 'invoke', requiresHumanInteraction: false, requiresApproval: false,
+        invoke: async context => context.isCurrent() && await context.openMountedControl?.(`${prefix}.list.filters`)
+            ? { status: 'interaction_opened' } : { status: 'unavailable', reason: 'current_ui_command_unavailable' } } });
+    return { filters, spaces: ref('spaces', definitionsDeclaration(entityKind)), selectedSpace: ref('selectedSpace', selectedSpaceDeclaration(entityKind)),
+        enabled: ref('spacesEnabled', {}), masterEnabled: { ...builtInSettingUiDeclaration('spaces.enabled'),
+            anchor: 'spaces.enabled', sectionId: readBuiltInSettingDeclarationV1('spaces.enabled')!.sectionId } };
 }
-export const COLLECTION_SPACE_SETTINGS: readonly SettingsPageDeclaration[] = (['sessionWork', 'workflow', 'discussion'] as const).map(entityKind => {
+export const COLLECTION_SPACE_SETTINGS: readonly SettingsPageDeclaration[] = (['sessionWork', 'workflow', 'discussion'] as const).flatMap(entityKind => {
     const settings = collectionSpaceSettingRefs(entityKind);
+    const pageSettings = { spaces: settings.spaces, selectedSpace: settings.selectedSpace, enabled: settings.enabled,
+        ...(entityKind === 'sessionWork' ? { masterEnabled: settings.masterEnabled } : {}) };
     const sectionId = settings.spaces.sectionId;
     // Manage spaces is the rows' home: search and the title menu open that entity's page at the same anchors.
     const subpage = { id: 'spaces', route: collectionSpacesManageHref(entityKind), anchors: 'page' as const,
         titleKey: entityKind === 'sessionWork' ? 'sessionsList.spacesManageSessions' as const
             : entityKind === 'workflow' ? 'sessionsList.spacesManageWorkflows' as const : 'sessionsList.spacesManageDiscussions' as const };
-    return { pageId: entityKind === 'sessionWork' ? 'session' : 'settings', subpage, sections: {
-        list: { titleKey: 'sessionsList.spacesTitle', settings },
-    }, sectionRefs: { list: { id: sectionId, settingAnchors: [settings.spaces.anchor, settings.selectedSpace.anchor] } }, settings };
+    const pageId = entityKind === 'sessionWork' ? 'session' as const : 'settings' as const;
+    return [{ pageId, subpage, sections: {
+        list: { titleKey: 'sessionsList.spacesTitle', settings: pageSettings },
+    }, sectionRefs: { list: { id: sectionId, settingAnchors: [settings.spaces.anchor, settings.selectedSpace.anchor,
+        settings.enabled.anchor, ...(entityKind === 'sessionWork' ? [settings.masterEnabled.anchor] : [])] } },
+        settings: pageSettings },
+    { pageId, subpage: { id: 'filters', route: entityKind === 'sessionWork' ? '/' : entityKind === 'workflow' ? '/workflows' : '/discussions',
+        titleKey: entityKind === 'sessionWork' ? 'sessionsList.filtersTitle' : entityKind === 'workflow' ? 'workflows.title' : 'session.collaboration.discussion.title', anchors: 'page' },
+        sections: { list: { settings: { filters: settings.filters } } },
+        sectionRefs: { list: { id: sectionId, settingAnchors: [settings.filters.anchor] } }, settings: { filters: settings.filters } }];
 });
 
 /** Manage spaces for one entity (Settings → Sessions → Spaces); every list's title menu opens it. */
-export function collectionSpacesManageHref(entityKind: CollectionEntityKindV1): `/settings/session/spaces?entity=${CollectionEntityKindV1}` {
-    return `/settings/session/spaces?entity=${entityKind}`;
+export function collectionSpacesManageHref(entityKind: CollectionEntityKindV1): `${typeof SETTINGS_ROUTES.sessionSpaces}?entity=${CollectionEntityKindV1}` {
+    return `${SETTINGS_ROUTES.sessionSpaces}?entity=${entityKind}`;
 }

@@ -133,9 +133,7 @@ type MessagesDomainDependencies = {
     machineDisplayById: Record<string, import('../../domains/machines/machineDisplayRenderable').MachineDisplayRenderable>;
     profile: { id?: string | null } | null;
     settings: {
-        sessionListActiveGroupingV1?: 'project' | 'date';
-        sessionListInactiveGroupingV1?: 'project' | 'date';
-        sessionListSectionModeV1?: 'activity' | 'single';
+        sessionListLayoutV1?: 'projects' | 'recent_activity';
     };
     getProjectForSession?: (sessionId: string) => import('../../runtime/orchestration/projectManager').Project | null;
     sessionPending: Record<string, SessionPending>;
@@ -889,9 +887,7 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                     if (nextRenderable !== previousRenderable) {
                         const renderableChangeImpact = resolveSessionListRenderableChangeImpact(previousRenderable, nextRenderable, {
                             sessionListIndexSettings: {
-                                activeGroupingV1: state.settings.sessionListActiveGroupingV1,
-                                inactiveGroupingV1: state.settings.sessionListInactiveGroupingV1,
-                                sectionModeV1: state.settings.sessionListSectionModeV1,
+                                layoutV1: state.settings.sessionListLayoutV1,
                             },
                         });
                         needsSessionListIndexRebuild = needsSessionListIndexRebuild || renderableChangeImpact.needsSessionListIndexRebuild;

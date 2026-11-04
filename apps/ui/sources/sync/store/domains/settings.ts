@@ -131,9 +131,7 @@ function rebuildSessionListIndexesForSettingsChange(
             sessionRecords: state.sessions,
             machines: state.machineDisplayById,
             machineRecords: state.machines,
-            activeGroupingV1: nextSettings.sessionListActiveGroupingV1,
-            inactiveGroupingV1: nextSettings.sessionListInactiveGroupingV1,
-            sectionModeV1: nextSettings.sessionListSectionModeV1,
+            layoutV1: nextSettings.sessionListLayoutV1,
             getProjectForSession: state.getProjectForSession,
             previousIndex: previousActiveIndex,
         });
@@ -150,9 +148,7 @@ function rebuildSessionListIndexesForSettingsChange(
         const nextIndex = buildSessionListIndexWithServerScope({
             sessions: readOrdinaryRowsForServer(state, serverId),
             machines: buildMachineDisplaysByIdFromMachineList(state.machineListByServerId?.[serverId]),
-            activeGroupingV1: nextSettings.sessionListActiveGroupingV1,
-            inactiveGroupingV1: nextSettings.sessionListInactiveGroupingV1,
-            sectionModeV1: nextSettings.sessionListSectionModeV1,
+            layoutV1: nextSettings.sessionListLayoutV1,
             serverScope: {
                 serverId,
                 serverName: entry?.serverName ?? undefined,

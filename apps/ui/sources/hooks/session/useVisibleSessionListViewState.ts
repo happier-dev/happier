@@ -1,6 +1,7 @@
 import * as React from 'react';
+import { useCollapsedGroupKeys } from '@/sync/domains/state/disclosureUiState';
+import { buildSessionListCollapseKey, readSessionListCollapsedGroups } from '@/sync/domains/session/listing/sessionListCollapseState';
 import { normalizeSessionListBackgroundWorkAttentionMode, type SessionListBackgroundWorkAttentionMode } from '@/sync/domains/session/listing/sessionListBackgroundWorkAttention';
-import { usePathname } from 'expo-router';
 import { canSessionListFilterIncludeRunsV1, normalizeSessionListFilterV1, type SessionListFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { useWorkflowRunWindow, type WorkflowRunWindow } from '@/components/workflows/library/workflowLibraryReads';
@@ -9,21 +10,19 @@ import { areServerProfileIdentifiersEquivalent, captureServerProfileScopeResolve
 import { resolveWorkflowRunUnavailableHomes } from '@/sync/domains/session/listing/sessionListWorkFilter';
 
 import {
-    useLocalSetting,
     useSessionListRowsByServerId,
     useSessionOrganizationProjections,
     useSetting,
     useSettingsSelector,
     useActiveServerAccountScope,
 } from '@/sync/domains/state/storage';
-import { computeVisibleSessionListIndex } from '@/sync/domains/session/listing/computeVisibleSessionListIndex';
-import { normalizeSessionListWorkingPlacementMode } from '@/sync/domains/session/listing/sessionListAttentionPlacement';
+import { computeVisibleSessionListIndex, computeVisibleSessionListProjection, type SessionListWorkMembershipProjection, type VisibleSessionListProjection } from '@/sync/domains/session/listing/computeVisibleSessionListIndex';
+import type { EntityListFilterResultV1 } from '@happier-dev/protocol/collections/filter/entityListFilterV1';
+import { buildSessionListQueryKey } from '@/sync/domains/session/listing/sessionListQueryKey';
 import {
     isSessionListWorkingPlacementReason,
-    type SessionListRetainedAttentionPlacement,
 } from '@/sync/domains/session/listing/sessionListAttentionPlacementTypes';
 import { normalizeSessionListKeyParts } from '@/sync/domains/session/listing/sessionListKeyNormalization';
-import { resolveSelectedSessionIdForList } from '@/sync/domains/session/listing/resolveSelectedSessionIdForList';
 import { normalizeSessionListGroupOrderV1ForIndexSource } from '@/sync/domains/session/listing/sessionListOrderingStateV1';
 import {
     normalizeSessionWorkspaceOrderV1ForSource,
@@ -32,16 +31,7 @@ import {
 import { filterSessionListIndexByStorageKind } from '@/sync/domains/session/listing/filterSessionListIndexByStorageKind';
 import type { SessionListStorageFilter } from '@/sync/domains/session/sessionStorageKind';
 import { areSessionListIndexItemsEqual, buildSessionListIndexNodeId, type SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
-import {
-    resolveFolderAwareSessionListSourceForLayout,
-    resolveSessionFolderFocusScope,
-    selectAvailableSessionFolders,
-    compareSessionFolderWorkspaceRefs,
-    type SessionFolderFocusScope,
-    type FolderAwareSessionListIndexResult,
-    type SessionFolderList,
-    type SessionListFocusedFolderV1,
-} from '@/sync/domains/session/folders';
+import { projectSessionSectionListIndex, type SessionSection } from '@/sync/domains/session/organization/sections';
 import {
     resolveNextSessionAttentionReminderWakeAtMs,
     type SessionAttentionStandingPolicy,
@@ -49,10 +39,6 @@ import {
 import { buildSessionOrganizationListViewStateForServers } from '@/sync/domains/session/organization/viewState';
 import { resolveSessionListOrganizationServerIds } from '@/sync/domains/session/organization/sessionListOrganizationServerIds';
 import { useSessionAttentionStandingInputs } from './useSessionAttentionStandingInputs';
-import {
-    useFocusedSessionAddress,
-    useFocusedSessionId,
-} from '@/sync/domains/session/sessionSurfaceVisibility';
 import {
     useVisibleSessionListSourceState,
     type VisibleSessionListSourceStateOptions,
@@ -66,7 +52,6 @@ import {
 } from '@/components/sessions/presentation/externalSessionRuntimePresentation';
 import { readExternalSessionLink } from '@/sync/domains/session/external/readExternalSessionLink';
 import {
-    normalizeSessionListSectionModeV1,
     type SessionListLayoutChoice,
 } from '@/sync/domains/session/listing/sessionListLayout';
 import { useSessionListLayoutChoice } from './sessionListLayoutIntent';
@@ -75,16 +60,23 @@ import { areSessionListGroupOrderMapsEqual } from '@/sync/domains/session/listin
 import { areSessionWorkspaceOrderMapsEqual } from '@/sync/domains/session/listing/sessionWorkspaceOrderStateV1';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 import { useProjectAccountWorkspaceRefs } from '@/sync/domains/workspaces/projectAccountRows';
+import { projectSessionListAcceptedProjects } from '@/sync/domains/session/listing/sessionListProjectProjection';
 import { useServerCredentialAccountScopeBindings } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import type { resolveSessionListQueryPresentation } from '@/sync/domains/session/listing/sessionListIndexPresentation';
 
 type SessionListGroupOrderV1 = Readonly<Record<string, ReadonlyArray<string> | undefined>>;
 type PinnedSessionKeysV1 = ReadonlyArray<string>;
+const UNAVAILABLE_FILTER_RESULT: EntityListFilterResultV1 = Object.freeze({ matchedCount: 0, coverage: 'unavailable' });
+const EMPTY_FILTER_ENTITY_IDS: ReadonlySet<string> = new Set();
+const EMPTY_COLLAPSE_KEYS: readonly string[] = [];
 
 export type VisibleSessionListViewState = Readonly<{
     visibleSessionListIndex: ReadonlyArray<SessionListIndexItem> | null;
+    filterResult: EntityListFilterResultV1;
+    conditionValueCounts?: VisibleSessionListProjection['conditionValueCounts'];
+    filterMatchedEntityIds: ReadonlySet<string>;
+    filterAttentionSupplementEntityIds: ReadonlySet<string>;
     hasHiddenInactiveSessions: boolean;
-    folderFocus: SessionFolderFocusScope | null;
     folderFeatureEnabledServerIds: ReadonlyArray<string>;
     query?: ReturnType<typeof useVisibleSessionListSourceState>['query'];
     workflowRunWindow?: WorkflowRunWindow;
@@ -92,6 +84,7 @@ export type VisibleSessionListViewState = Readonly<{
 }>;
 
 export type VisibleSessionListViewStateOptions = Readonly<{
+    collapseContextKey?: string;
     pathname?: string;
     retainedPathname?: string | null;
     retainedVisibleSessionListIndex?: ReadonlyArray<SessionListIndexItem> | null;
@@ -100,28 +93,24 @@ export type VisibleSessionListViewStateOptions = Readonly<{
     emptyQuerySelectionComplete?: boolean;
     corpusStorage?: 'active' | 'archived';
     workFilter?: SessionListFilterV1;
+    spaceMembership?: Parameters<typeof computeVisibleSessionListProjection>[0]['spaceMembership'];
+    conditionValueCountRequest?: Parameters<typeof computeVisibleSessionListProjection>[0]['conditionValueCountRequest'];
     botsRoster?: true;
+    attentionInteractionHeld?: boolean;
+    supplementalNeedsYouSessionKeys?: ReadonlySet<string>;
+    includeNeedsYouEverywhere?: boolean;
+    fixedTeam?: Parameters<typeof computeVisibleSessionListProjection>[0]['fixedTeam'];
 }>;
 
-function buildFolderAwareSessionListIndex(params: Readonly<{
+function buildSectionSessionListIndex(params: Readonly<{
     source: ReadonlyArray<SessionListIndexItem>;
-    collapsedGroupKeysV1: Readonly<Record<string, boolean>>;
-    sessionFoldersFeatureEnabled: boolean;
-    sessionListLayoutChoice: SessionListLayoutChoice;
-    folderFocusInput: SessionListFocusedFolderV1;
-    sessionFoldersV1: SessionFolderList;
-    sessionFolderViewModeV1: unknown;
+    sessionSections: readonly SessionSection[];
     sessionFolderAssignmentsBySessionKey: Readonly<Record<string, string | null>>;
-}>): FolderAwareSessionListIndexResult {
-    return resolveFolderAwareSessionListSourceForLayout({
+}>) {
+    return projectSessionSectionListIndex({
         source: params.source,
-        layoutChoice: params.sessionListLayoutChoice,
-        foldersFeatureEnabled: params.sessionFoldersFeatureEnabled,
-        folderViewModeV1: params.sessionFolderViewModeV1,
-        folders: params.sessionFoldersV1,
+        sections: params.sessionSections,
         assignmentsBySessionKey: params.sessionFolderAssignmentsBySessionKey,
-        collapsedGroupKeys: params.collapsedGroupKeysV1,
-        focusedFolder: params.folderFocusInput,
     });
 }
 
@@ -185,43 +174,19 @@ function resolveSessionRowFromState(
     return readSessionListRowForServerId(sessionRowStateByServerId, normalizedServerId, normalizedSessionId, resolveScopeId);
 }
 
-/** Hold only the opened row; ordering survives while its status remains live. */
-function resolveRetainedAttentionPlacements(params: Readonly<{
-    previousVisibleIndex: ReadonlyArray<SessionListIndexItem> | null | undefined;
-    activeSessionId: string | null;
-    activeSessionServerId: string | null;
-}>): ReadonlyArray<SessionListRetainedAttentionPlacement> {
-    const activeSessionId = String(params.activeSessionId ?? '').trim();
-    if (!activeSessionId) return [];
-    if (!params.previousVisibleIndex) return [];
-    const matchingItems = params.previousVisibleIndex.filter((item): item is Extract<SessionListIndexItem, { type: 'session' }> => (
-        item.type === 'session'
-        && item.sessionId === activeSessionId
-        && (!params.activeSessionServerId || item.serverId === params.activeSessionServerId)
-    ));
-    if (!params.activeSessionServerId && matchingItems.length !== 1) return [];
-    for (const item of matchingItems) {
-        if (item.groupKind !== 'attention' && !item.attentionPlacementReason) continue;
-        // Standing is the user's own instruction, so removing it must take effect
-        // immediately. Retention exists to stop a row the user is READING from
-        // sliding away under them; retaining a standing row would instead pin it
-        // in the band until they navigate elsewhere.
-        if (item.attentionPlacementReason === 'standing') continue;
-        const key = normalizeSessionListKeyParts(item.serverId, item.sessionId, item.keyParts).sessionKey;
-        const ordering = item.attentionPlacementOrdering ?? (item.attentionPlacementReason
-            ? { reason: item.attentionPlacementReason, timestamp: 0 } : null);
-        return key && ordering ? [{ key, ...ordering }] : [];
-    }
-    return [];
-}
-
-type VisibleSessionListProjectionInputs = Omit<Parameters<typeof buildVisibleSessionListIndex>[0], 'nowMs'>;
+type VisibleSessionListProjectionInputs = Omit<Parameters<typeof buildVisibleSessionListIndex>[0], 'nowMs' | 'previousPresentedIndex' | 'previousMembership'>;
 
 type RetainedVisibleSessionListProjection = Readonly<{
     inputs: VisibleSessionListProjectionInputs;
+    collapseContextKey: string | undefined;
     validUntilMs: number | null;
     dataActive: boolean;
     hasHiddenInactiveSessions: boolean;
+    filterResult: EntityListFilterResultV1;
+    conditionValueCounts?: VisibleSessionListProjection['conditionValueCounts'];
+    filterMatchedEntityIds: ReadonlySet<string>;
+    filterAttentionSupplementEntityIds: ReadonlySet<string>;
+    membership: SessionListWorkMembershipProjection;
 }>;
 
 // The retained pane already owns the last rendered projection while the phone list is hidden.
@@ -238,10 +203,33 @@ function areStringListsEqual(left: ReadonlyArray<string>, right: ReadonlyArray<s
     return left.every((value, index) => value === right[index]);
 }
 
-function areSetsEqual(left: ReadonlySet<string> | null, right: ReadonlySet<string> | null): boolean {
+function areSectionQueryProofsEqual(left: ReadonlyMap<string, readonly string[]> | undefined,
+    right: ReadonlyMap<string, readonly string[]> | undefined): boolean {
+    if (left === right) return true;
+    if (!left || !right || left.size !== right.size) return false;
+    for (const [home, ids] of left) {
+        const other = right.get(home);
+        if (!other || !areStringListsEqual(ids, other)) return false;
+    }
+    return true;
+}
+
+function areSetsEqual(left: ReadonlySet<string> | null | undefined, right: ReadonlySet<string> | null | undefined): boolean {
     if (left === right) return true;
     if (!left || !right || left.size !== right.size) return false;
     for (const value of left) if (!right.has(value)) return false;
+    return true;
+}
+
+function areViewerAccountScopesEqual(
+    left: ReadonlyMap<string, string> | undefined,
+    right: ReadonlyMap<string, string> | undefined,
+): boolean {
+    if (left === right) return true;
+    if (!left || !right || left.size !== right.size) return false;
+    for (const [serverId, accountId] of left) {
+        if (right.get(serverId) !== accountId) return false;
+    }
     return true;
 }
 
@@ -308,87 +296,51 @@ function areAttentionStandingPoliciesEqual(
     return true;
 }
 
-function areFolderFocusInputsEqual(
-    left: SessionListFocusedFolderV1,
-    right: SessionListFocusedFolderV1,
-): boolean {
-    if (left === right) return true;
-    if (!left || !right) return false;
-    return left.serverId === right.serverId
-        && left.folderId === right.folderId
-        && left.renderWorkspaceKey === right.renderWorkspaceKey
-        && compareSessionFolderWorkspaceRefs(left.workspace, right.workspace);
-}
-
-function areSessionFolderListsEqual(left: SessionFolderList, right: SessionFolderList): boolean {
-    if (left === right) return true;
-    if (left.folders.length !== right.folders.length) return false;
-    return left.folders.every((folder, index) => {
-        const candidate = right.folders[index];
-        if (!candidate) return false;
-        const sameWorkspace = folder.workspace === candidate.workspace
-            || (!!folder.workspace && !!candidate.workspace
-                && compareSessionFolderWorkspaceRefs(folder.workspace, candidate.workspace));
-        const sameDisplayState = folder.displayState === candidate.displayState
-            || (
-                folder.displayState?.status === candidate.displayState?.status
-                && (folder.displayState?.status !== 'locked'
-                    || (candidate.displayState?.status === 'locked'
-                        && folder.displayState.reason === candidate.displayState.reason))
-                && (folder.displayState?.status !== 'available'
-                    || (candidate.displayState?.status === 'available'
-                        && folder.displayState.value === candidate.displayState.value))
-            );
-        return folder.id === candidate.id
-            && folder.serverId === candidate.serverId
-            && folder.name === candidate.name
-            && folder.parentId === candidate.parentId
-            && (folder.sortKey ?? null) === (candidate.sortKey ?? null)
-            && sameWorkspace
-            && sameDisplayState;
-    });
-}
-
 function areVisibleSessionListProjectionInputsEqual(
     left: VisibleSessionListProjectionInputs,
     right: VisibleSessionListProjectionInputs,
 ): boolean {
-    const leftGroupOrder = left.sessionListOrderingModeV1 === 'custom'
+    const leftGroupOrder = left.sessionListLayoutChoice === 'projects'
         ? left.normalizedGroupOrder
         : left.sessionListGroupOrderV1;
-    const rightGroupOrder = right.sessionListOrderingModeV1 === 'custom'
+    const rightGroupOrder = right.sessionListLayoutChoice === 'projects'
         ? right.normalizedGroupOrder
         : right.sessionListGroupOrderV1;
-    const leftWorkspaceOrder = left.sessionListOrderingModeV1 === 'custom'
+    const leftWorkspaceOrder = left.sessionListLayoutChoice === 'projects'
         ? left.normalizedWorkspaceOrder
         : left.sessionWorkspaceOrderV1;
-    const rightWorkspaceOrder = right.sessionListOrderingModeV1 === 'custom'
+    const rightWorkspaceOrder = right.sessionListLayoutChoice === 'projects'
         ? right.normalizedWorkspaceOrder
         : right.sessionWorkspaceOrderV1;
     return areSessionListIndexesEqual(left.source, right.source)
+        && areSessionListIndexesEqual(left.attentionSource ?? [], right.attentionSource ?? [])
+        && left.includeNeedsYouEverywhere === right.includeNeedsYouEverywhere
+        && left.fixedTeam?.serverId === right.fixedTeam?.serverId && left.fixedTeam?.teamId === right.fixedTeam?.teamId
+        && areSetsEqual(left.fixedTeamQueryServerIds, right.fixedTeamQueryServerIds)
+        && left.groupCoverage === right.groupCoverage
         && sameStrictJsonValue(left.workFilter, right.workFilter)
+        && sameStrictJsonValue(left.spaceMembership, right.spaceMembership)
+        && sameStrictJsonValue(left.sessionTagIdsBySessionKey, right.sessionTagIdsBySessionKey)
+        && sameStrictJsonValue(left.conditionValueCountRequest, right.conditionValueCountRequest)
+        && areSectionQueryProofsEqual(left.querySectionIdsByServerId, right.querySectionIdsByServerId)
         && left.workspaceRefs === right.workspaceRefs
-        && (left.viewerAccountIdByServerId === right.viewerAccountIdByServerId
-            || (left.viewerAccountIdByServerId !== undefined && right.viewerAccountIdByServerId !== undefined
-                && left.viewerAccountIdByServerId.size === right.viewerAccountIdByServerId.size
-                && [...left.viewerAccountIdByServerId].every(([serverId, accountId]) => right.viewerAccountIdByServerId?.get(serverId) === accountId)))
+        && areViewerAccountScopesEqual(left.viewerAccountIdByServerId, right.viewerAccountIdByServerId)
         && left.workflowRuns.length === right.workflowRuns.length
         && left.workflowRuns.every((run, index) => run.serverId === right.workflowRuns[index]?.serverId
             && run.summary === right.workflowRuns[index]?.summary)
         && left.workflowRunUnderSessionId === right.workflowRunUnderSessionId
         && areSessionListRowSourcesEqual(left.sessionRowStateByServerId, right.sessionRowStateByServerId, right.source)
+        && areSessionListRowSourcesEqual(left.sessionRowStateByServerId, right.sessionRowStateByServerId, right.attentionSource ?? [])
         && left.hideInactiveSessions === right.hideInactiveSessions
         && areSetsEqual(left.serverFilteredInactiveServerIds, right.serverFilteredInactiveServerIds)
         && left.corpusStorage === right.corpusStorage
         && areStringListsEqual(left.pinnedSessionKeysV1, right.pinnedSessionKeysV1)
-        && left.sessionListOrderingModeV1 === right.sessionListOrderingModeV1
-        && left.sessionListSectionModeV1 === right.sessionListSectionModeV1
         && left.sessionListLayoutChoice === right.sessionListLayoutChoice
-        && left.sessionListAttentionPromotionModeV1 === right.sessionListAttentionPromotionModeV1
+        && left.attentionInteractionHeld === right.attentionInteractionHeld
+        && areSetsEqual(left.supplementalNeedsYouSessionKeys, right.supplementalNeedsYouSessionKeys)
+        && left.sessionListAttentionPlacementV1 === right.sessionListAttentionPlacementV1
         && areAttentionStandingPoliciesEqual(left.sessionAttentionStandingPolicy, right.sessionAttentionStandingPolicy)
-        && left.sessionListWorkingPlacementModeV1 === right.sessionListWorkingPlacementModeV1
         && left.backgroundWorkAttentionMode === right.backgroundWorkAttentionMode
-        && left.sessionListFolderSortModeV1 === right.sessionListFolderSortModeV1
         && areSessionListGroupOrderMapsEqual(leftGroupOrder, rightGroupOrder)
         && areSessionWorkspaceOrderMapsEqual(leftWorkspaceOrder, rightWorkspaceOrder)
         && areScalarRecordsEqual(left.collapsedGroupKeysV1, right.collapsedGroupKeysV1)
@@ -397,15 +349,8 @@ function areVisibleSessionListProjectionInputsEqual(
         && left.selection.presentation === right.selection.presentation
         && areStringListsEqual(left.selection.allowedServerIds, right.selection.allowedServerIds)
         && left.storageFilter === right.storageFilter
-        && areFolderFocusInputsEqual(left.folderFocusInput, right.folderFocusInput)
-        && areSessionFolderListsEqual(left.sessionFoldersV1, right.sessionFoldersV1)
-        && left.sessionFolderViewModeV1 === right.sessionFolderViewModeV1
+        && sameStrictJsonValue(left.sessionSections, right.sessionSections)
         && areScalarRecordsEqual(left.sessionFolderAssignmentsBySessionKey, right.sessionFolderAssignmentsBySessionKey)
-        && left.retainAttentionPlacements.length === right.retainAttentionPlacements.length
-        && left.retainAttentionPlacements.every((placement, index) => {
-            const other = right.retainAttentionPlacements[index];
-            return placement.key === other?.key && placement.reason === other.reason && placement.timestamp === other.timestamp;
-        })
         && areStringListsEqual(left.retainWorkingSessionKeys, right.retainWorkingSessionKeys);
 }
 
@@ -428,7 +373,20 @@ function resolveRetainedWorkingSessionKeys(
 
 function buildVisibleSessionListIndex(params: Readonly<{
     source: ReadonlyArray<SessionListIndexItem>;
+    attentionSource?: readonly SessionListIndexItem[] | null;
+    includeNeedsYouEverywhere?: boolean;
+    fixedTeam?: Parameters<typeof computeVisibleSessionListProjection>[0]['fixedTeam'];
+    fixedTeamQueryServerIds?: ReadonlySet<string>;
+    previousPresentedIndex?: ReadonlyArray<SessionListIndexItem> | null;
+    attentionInteractionHeld?: boolean;
+    supplementalNeedsYouSessionKeys?: ReadonlySet<string>;
     workFilter: SessionListFilterV1;
+    spaceMembership?: Parameters<typeof computeVisibleSessionListProjection>[0]['spaceMembership'];
+    sessionTagIdsBySessionKey?: Readonly<Record<string, readonly string[]>>;
+    conditionValueCountRequest?: Parameters<typeof computeVisibleSessionListProjection>[0]['conditionValueCountRequest'];
+    previousMembership?: SessionListWorkMembershipProjection;
+    groupCoverage?: Parameters<typeof computeVisibleSessionListProjection>[0]['groupCoverage'];
+    querySectionIdsByServerId?: ReadonlyMap<string, readonly string[]>;
     workspaceRefs?: Parameters<typeof computeVisibleSessionListIndex>[0]['workspaceRefs'];
     viewerAccountIdByServerId?: ReadonlyMap<string, string>;
     workflowRuns: NonNullable<Parameters<typeof computeVisibleSessionListIndex>[0]['workflowRuns']>;
@@ -438,15 +396,10 @@ function buildVisibleSessionListIndex(params: Readonly<{
     serverFilteredInactiveServerIds: ReadonlySet<string> | null;
     corpusStorage: 'active' | 'archived';
     pinnedSessionKeysV1: PinnedSessionKeysV1;
-    sessionListOrderingModeV1: 'custom' | 'created' | 'updated';
-    sessionListSectionModeV1: 'activity' | 'single';
     sessionListLayoutChoice: SessionListLayoutChoice;
-    sessionListAttentionPromotionModeV1: 'off' | 'global' | 'withinGroups';
+    sessionListAttentionPlacementV1: 'both' | 'top' | 'inPlace';
     sessionAttentionStandingPolicy: SessionAttentionStandingPolicy;
-    sessionListWorkingPlacementModeV1: 'off' | 'global' | 'withinGroups';
     backgroundWorkAttentionMode: SessionListBackgroundWorkAttentionMode;
-    sessionListFolderSortModeV1: 'foldersFirst' | 'mixed';
-    activeSessionId: string | null;
     normalizedGroupOrder: SessionListGroupOrderV1;
     sessionListGroupOrderV1: SessionListGroupOrderV1;
     normalizedWorkspaceOrder: SessionWorkspaceOrderV1;
@@ -455,15 +408,11 @@ function buildVisibleSessionListIndex(params: Readonly<{
     sessionFoldersFeatureEnabled: boolean;
     selection: ReturnType<typeof useVisibleSessionListSourceState>['selection'];
     storageFilter: SessionListStorageFilter;
-    folderFocusInput: SessionListFocusedFolderV1;
-    sessionFoldersV1: SessionFolderList;
-    sessionFolderViewModeV1: unknown;
+    sessionSections: readonly SessionSection[];
     sessionFolderAssignmentsBySessionKey: Readonly<Record<string, string | null>>;
-    retainAttentionPlacements: ReadonlyArray<SessionListRetainedAttentionPlacement>;
     retainWorkingSessionKeys: ReadonlyArray<string>;
     nowMs: number;
-}>): ReadonlyArray<SessionListIndexItem> | null {
-    const folderAwareSource = buildFolderAwareSessionListIndex(params);
+}>): VisibleSessionListProjection {
     const resolveScopeId = captureServerProfileScopeResolver();
     const resolveSessionRow = (
         serverId: string | null | undefined,
@@ -474,11 +423,32 @@ function buildVisibleSessionListIndex(params: Readonly<{
         sessionId,
         resolveScopeId,
     );
-    const visible = computeVisibleSessionListIndex({
-        source: folderAwareSource.items,
-        folderFocus: folderAwareSource.folderFocus,
+    const projectSource = projectSessionListAcceptedProjects({
+        source: params.source, workspaceRefs: params.workspaceRefs,
+        censusServerId: params.selection.activeServerId ?? '', resolveSessionRow,
+        viewerAccountId: params.viewerAccountIdByServerId?.get(resolveScopeId(params.selection.activeServerId ?? '') || params.selection.activeServerId || ''),
+        layoutV1: params.sessionListLayoutChoice, previousIndex: params.previousPresentedIndex,
+    });
+    const sectionSource = buildSectionSessionListIndex({ ...params, source: projectSource });
+    const projection = computeVisibleSessionListProjection({
+        source: sectionSource.items,
+        attentionSource: params.attentionSource,
+        includeNeedsYouEverywhere: params.includeNeedsYouEverywhere,
+        fixedTeam: params.fixedTeam,
+        fixedTeamQueryServerIds: params.fixedTeamQueryServerIds,
+        previousPresentedIndex: params.previousPresentedIndex,
+        attentionInteractionHeld: params.attentionInteractionHeld === true && params.previousPresentedIndex != null,
+        supplementalNeedsYouSessionKeys: params.supplementalNeedsYouSessionKeys,
         workFilter: params.workFilter,
+        spaceMembership: params.spaceMembership,
+        sessionTagIdsBySessionKey: params.sessionTagIdsBySessionKey,
+        conditionValueCountRequest: params.conditionValueCountRequest,
+        previousMembership: params.previousMembership,
+        groupCoverage: params.groupCoverage,
+        sessionFolderAssignmentsBySessionKey: params.sessionFolderAssignmentsBySessionKey,
+        querySectionIdsByServerId: params.querySectionIdsByServerId,
         workspaceRefs: params.workspaceRefs,
+        workspaceRefsServerId: params.selection.activeServerId ?? undefined,
         viewerAccountIdByServerId: params.viewerAccountIdByServerId,
         workflowRuns: params.workflowRuns,
         workflowRunUnderSessionId: params.workflowRunUnderSessionId,
@@ -487,24 +457,21 @@ function buildVisibleSessionListIndex(params: Readonly<{
         serverFilteredInactiveServerIds: params.serverFilteredInactiveServerIds,
         corpusStorage: params.corpusStorage,
         pinnedSessionKeysV1: params.pinnedSessionKeysV1,
-        sessionListGroupOrderV1: params.sessionListOrderingModeV1 === 'custom'
+        sessionListGroupOrderV1: params.sessionListLayoutChoice === 'projects'
             ? params.normalizedGroupOrder
             : params.sessionListGroupOrderV1,
-        sessionWorkspaceOrderV1: params.sessionListOrderingModeV1 === 'custom'
+        sessionWorkspaceOrderV1: params.sessionListLayoutChoice === 'projects'
             ? params.normalizedWorkspaceOrder
             : params.sessionWorkspaceOrderV1,
-        sessionListOrderingModeV1: params.sessionListOrderingModeV1,
-        sessionListSectionModeV1: params.sessionListSectionModeV1,
         sessionListLayoutChoice: params.sessionListLayoutChoice,
-        sessionListFolderSortModeV1: params.sessionListFolderSortModeV1,
+        sessionListAttentionPlacementV1: params.sessionListAttentionPlacementV1,
         attentionPlacement: {
-            mode: params.sessionListAttentionPromotionModeV1,
-            retainPlacements: params.retainAttentionPlacements,
+            mode: 'global',
             standingPolicy: params.sessionAttentionStandingPolicy,
         },
         backgroundWorkAttentionMode: params.backgroundWorkAttentionMode,
         workingPlacement: {
-            mode: params.sessionListWorkingPlacementModeV1,
+            mode: 'global',
             retainSessionKeys: params.retainWorkingSessionKeys,
         },
         presentation: {
@@ -515,27 +482,23 @@ function buildVisibleSessionListIndex(params: Readonly<{
         storageFilterApplied: params.storageFilter !== 'all',
         nowMs: params.nowMs,
     });
-    if (!visible || params.storageFilter === 'all') return visible;
-    return filterSessionListIndexByStorageKind(visible, params.storageFilter, resolveSessionRow);
+    if (!projection.items || params.storageFilter === 'all') return projection;
+    return { ...projection, items: filterSessionListIndexByStorageKind(projection.items, params.storageFilter, resolveSessionRow) };
 }
 
 export function useVisibleSessionListViewState(
     storageFilter: SessionListStorageFilter = 'all',
     options: VisibleSessionListViewStateOptions = {},
 ): VisibleSessionListViewState {
-    const pathname = usePathname();
-    const effectivePathname = options.pathname ?? pathname;
-    const focusedSessionId = useFocusedSessionId();
-    const focusedSessionAddress = useFocusedSessionAddress();
     const previousVisibleSessionListIndexRef = React.useRef<ReadonlyArray<SessionListIndexItem> | null>(null);
     const queryHomes = React.useMemo(() => options.botsRoster === true
         ? options.queryHomes?.map(home => ({ ...home, query: { ...home.query, bot: 'bot' as const, includeInactive: true }, queryMembership: 'rowOnly' as const }))
         : options.queryHomes, [options.botsRoster, options.queryHomes]);
-    const { selection, source, query } = useVisibleSessionListSourceState({
-        agentTargetDemand: options.sessionListSurfaceDataActive !== false && Boolean(options.workFilter?.agents
-            && options.workFilter.agents.include.length + options.workFilter.agents.exclude.length > 0),
+    const { selection, source, ordinarySourceIndex, query } = useVisibleSessionListSourceState({
         queryHomes,
         emptyQuerySelectionComplete: options.emptyQuerySelectionComplete,
+        agentTargetDemand: options.sessionListSurfaceDataActive !== false && [options.workFilter, options.spaceMembership?.filter]
+            .some(filter => Boolean(filter?.agents && filter.agents.include.length + filter.agents.exclude.length > 0)),
     });
     const surfaceDataActive = options.sessionListSurfaceDataActive !== false;
     const activeAccountScope = useActiveServerAccountScope();
@@ -547,14 +510,27 @@ export function useVisibleSessionListViewState(
         ...options.workFilter,
         ...(options.botsRoster === true ? { show: 'sessions', bot: 'bot' } : {}),
     }), [options.botsRoster, options.workFilter, selection.activeServerId, selection.allowedServerIds]);
-    const workspaceRefs = useProjectAccountWorkspaceRefs((workFilter.projects?.include.length ?? 0) + (workFilter.projects?.exclude.length ?? 0) > 0);
+    const hasVisibleKeylessRows = surfaceDataActive && Boolean(activeAccountScope && source?.some(item => item.type === 'session'
+        && !item.projectKey && areServerProfileIdentifiersEquivalent(item.serverId, activeAccountScope.serverId)));
+    const workspaceRefs = useProjectAccountWorkspaceRefs(surfaceDataActive && (hasVisibleKeylessRows
+        || [workFilter, options.spaceMembership?.filter].some(filter => Boolean(filter?.projects
+            && filter.projects.include.length + filter.projects.exclude.length > 0))));
     const viewerBindings = useServerCredentialAccountScopeBindings(surfaceDataActive ? workFilter.homeServerIds : []);
     const viewerAccountIdByServerId = React.useMemo(() => new Map([...viewerBindings]
         .filter(([, binding]) => binding.isCurrent()).map(([serverId, binding]) => [serverId, binding.accountId] as const)), [viewerBindings]);
+    const attentionSource = React.useMemo(() => options.includeNeedsYouEverywhere === true && surfaceDataActive
+        ? ordinarySourceIndex?.filter(item => item.type === 'session' && (() => {
+            const home = resolveServerProfileScopeIdForIdentifier(item.serverId) || item.serverId || '';
+            // Captured Home → Account authority fences this already-held corpus before
+            // the membership owner can classify it; query proof is never borrowed.
+            return viewerBindings.get(home)?.isCurrent() === true;
+        })()) ?? [] : [], [options.includeNeedsYouEverywhere, ordinarySourceIndex, surfaceDataActive, viewerBindings]);
     const runServerId = activeAccountScope
         ? resolveServerProfileScopeIdForIdentifier(activeAccountScope.serverId)
         : null;
-    const includesWorkflowRuns = canSessionListFilterIncludeRunsV1(workFilter);
+    const includesWorkflowRuns = canSessionListFilterIncludeRunsV1(workFilter)
+        && options.spaceMembership?.membership.mode !== 'manual_only'
+        && (!options.spaceMembership || canSessionListFilterIncludeRunsV1(options.spaceMembership.filter));
     const workflowRunsEnabled = surfaceDataActive
         && options.corpusStorage !== 'archived'
         && includesWorkflowRuns
@@ -562,9 +538,10 @@ export function useVisibleSessionListViewState(
         && runServerId !== null
         && areServerProfileIdentifiersEquivalent(runServerId, selection.activeServerId)
         && workFilter.homeServerIds.some((serverId) => areServerProfileIdentifiersEquivalent(serverId, runServerId));
-    const workflowWindow = useWorkflowRunWindow(workFilter.underSessionId ? `under:${workFilter.underSessionId}` : 'all', { enabled: workflowRunsEnabled });
+    const workflowRunUnderSessionId = workFilter.underSessionId ?? options.spaceMembership?.filter.underSessionId;
+    const workflowWindow = useWorkflowRunWindow(workflowRunUnderSessionId ? `under:${workflowRunUnderSessionId}` : 'all', { enabled: workflowRunsEnabled });
     const workflowRunWindow = workflowRunsEnabled ? workflowWindow : undefined;
-    const workflowRunUnavailableHomes = React.useMemo(() => {
+    const resolveRunUnavailableHomes = (runFactsUnavailable: boolean) => {
         if (!surfaceDataActive || options.corpusStorage === 'archived' || !includesWorkflowRuns) return undefined;
         const mountedHomes = selection.allowedServerIds.length > 0 ? selection.allowedServerIds
             : selection.activeServerId ? [selection.activeServerId] : [];
@@ -572,25 +549,44 @@ export function useVisibleSessionListViewState(
             selectedHomeServerIds: workFilter.homeServerIds,
             mountedHomeServerIds: mountedHomes,
             servedHomeServerId: workflowRunsEnabled ? runServerId : null,
-            filter: workFilter,
-            runs: workflowWindow.rows.map(row => row.summary),
-            runUnderSessionId: workflowRunsEnabled ? workFilter.underSessionId : undefined,
+            filter: options.spaceMembership?.filter ?? workFilter,
+            runFactsUnavailable: runFactsUnavailable || workflowWindow.rows.some(row => row.summary === null),
+            runUnderSessionId: workflowRunsEnabled ? workflowRunUnderSessionId : undefined,
             viewerAccountId: runServerId ? viewerAccountIdByServerId.get(runServerId) : undefined,
         });
-    }, [options.corpusStorage, runServerId, selection.activeServerId, selection.allowedServerIds,
-        surfaceDataActive, viewerAccountIdByServerId, workFilter, workflowWindow.rows, includesWorkflowRuns, workflowRunsEnabled]);
+    };
     const workflowRuns = React.useMemo<VisibleSessionListProjectionInputs['workflowRuns']>(() => {
         if (!workflowRunsEnabled || !runServerId) return [];
         return workflowWindow.rows.flatMap((row) => row.summary ? [{ serverId: runServerId, summary: row.summary }] : []);
     }, [runServerId, workflowRunsEnabled, workflowWindow.rows]);
     const hideInactiveSessions = useSettingsSelector(React.useCallback(settings => (
-        options.botsRoster === true ? false : settings.hideInactiveSessions === true
-    ), [options.botsRoster]));
+        options.botsRoster === true || options.corpusStorage === 'archived' ? false
+            : workFilter.includeInactive === undefined ? settings.hideInactiveSessions === true : !workFilter.includeInactive
+    ), [options.botsRoster, options.corpusStorage, workFilter.includeInactive]), ['hideInactiveSessions']);
     // Every Home whose membership was applied by the strict query already answered
     // `includeInactive` server-side, so an inactive row it returned is one the
     // server's attention predicate deliberately admitted. Homes still served by the
     // released GET adapter are absent here and keep the incumbent client rule.
     const queryStatesByServerId = query.statesByServerId;
+    const { querySectionIdsByServerId, fixedTeamQueryServerIds } = React.useMemo(() => {
+        const proof = new Map<string, readonly string[]>();
+        const teamProof = new Set<string>();
+        if (!query.active) return { querySectionIdsByServerId: proof, fixedTeamQueryServerIds: teamProof };
+        for (const home of queryHomes ?? []) {
+            const homeId = resolveServerProfileScopeIdForIdentifier(home.serverId) || home.serverId;
+            const state = queryStatesByServerId[homeId] ?? queryStatesByServerId[home.serverId];
+            if (state?.appliedSourceKind === 'query'
+                && state.appliedQueryKey === buildSessionListQueryKey(home.serverId, home.query)) {
+                if (home.query.folderIds !== undefined) proof.set(homeId, home.query.folderIds);
+                const team = options.fixedTeam;
+                if (team && viewerBindings.get(homeId)?.isCurrent() === true
+                    && areServerProfileIdentifiersEquivalent(team.serverId, home.serverId)
+                    && home.query.audiences.length > 0 && home.query.audiences.every(audience => audience.kind !== 'outside_teams'
+                        && audience.teamId === team.teamId)) teamProof.add(homeId);
+            }
+        }
+        return { querySectionIdsByServerId: proof, fixedTeamQueryServerIds: teamProof };
+    }, [query.active, queryHomes, queryStatesByServerId, options.fixedTeam, viewerBindings]);
     const serverFilteredInactiveServerIds = React.useMemo(() => {
         if (!query.active) return null;
         const serverIds = new Set<string>();
@@ -601,22 +597,13 @@ export function useVisibleSessionListViewState(
         }
         return serverIds.size > 0 ? serverIds : null;
     }, [queryHomes, query.active, queryStatesByServerId]);
-    const sessionListOrderingModeV1 = useSetting('sessionListOrderingModeV1') as
-        | 'custom'
-        | 'created'
-        | 'updated';
-    const sessionListSectionModeV1 = normalizeSessionListSectionModeV1(useSetting('sessionListSectionModeV1'));
     const sessionListLayoutChoice = useSessionListLayoutChoice();
-    const sessionListFolderSortModeV1 = useSetting('sessionListFolderSortModeV1') === 'mixed'
-        ? 'mixed'
-        : 'foldersFirst';
-    const sessionListWorkingPlacementModeV1 = normalizeSessionListWorkingPlacementMode(
-        useSetting('sessionListWorkingPlacementModeV1'),
-    );
-    const sessionFolderViewModeV1 = useSetting('sessionFolderViewModeV1');
     const backgroundWorkAttentionMode = normalizeSessionListBackgroundWorkAttentionMode(useSetting('sessionListBackgroundWorkAttentionModeV1'));
-    const collapsedGroupKeysV1 = (useLocalSetting('collapsedGroupKeysV1') ?? {}) as Readonly<Record<string, boolean>>;
-    const folderFocusInput = useLocalSetting('sessionListFocusedFolderV1') as SessionListFocusedFolderV1;
+    const storedCollapsedGroupKeysV1 = useCollapsedGroupKeys(options.collapseContextKey === undefined
+        ? EMPTY_COLLAPSE_KEYS : buildSessionListCollapseKey(options.collapseContextKey, ''));
+    const collapsedGroupKeysV1 = React.useMemo(() => options.collapseContextKey === undefined
+        ? {} : readSessionListCollapsedGroups(storedCollapsedGroupKeysV1, options.collapseContextKey),
+    [options.collapseContextKey, storedCollapsedGroupKeysV1]);
     const organizationServerIds = React.useMemo(() => resolveSessionListOrganizationServerIds({
         queryHomeServerIds: options.queryHomes?.map((home) => home.serverId),
         allowedServerIds: selection.allowedServerIds,
@@ -624,7 +611,7 @@ export function useVisibleSessionListViewState(
     }), [options.queryHomes, selection.activeServerId, selection.allowedServerIds]);
     const organizationProjectionsByServerId = useSessionOrganizationProjections(organizationServerIds);
     const folderFeatureSupportByServerId = useSessionListFeatureHomeSupportByServerId(
-        'sessions.folders',
+        'sessions',
         organizationServerIds,
         true,
     );
@@ -647,59 +634,38 @@ export function useVisibleSessionListViewState(
     const attentionStanding = useSessionAttentionStandingInputs(
         organizationListViewState.attentionStandingOverridesBySessionKey,
     );
-    const sessionListAttentionPromotionModeV1 = attentionStanding.placementMode;
+    // The Bot roster supplies its own activity ordering and counts qualified entities, not column mirrors.
+    const sessionListAttentionPlacementV1 = options.botsRoster === true ? 'inPlace' : attentionStanding.placementMode;
     const sessionAttentionStandingPolicy = attentionStanding.policy;
     const pinnedSessionKeysV1 = organizationListViewState.pinnedSessionKeysV1 as PinnedSessionKeysV1;
     const sessionListGroupOrderV1 = organizationListViewState.sessionListGroupOrderV1;
     const sessionWorkspaceOrderV1 = organizationListViewState.sessionWorkspaceOrderV1;
-    const sessionFoldersV1 = folderOrganizationListViewState.sessionFoldersV1;
+    const sessionSections = folderOrganizationListViewState.sections;
     const sessionFolderAssignmentsBySessionKey = folderOrganizationListViewState.sessionFolderAssignmentsBySessionKey;
     const previousVisibleSessionListIndexForRetention = resolvePreviousVisibleSessionListIndexForRetention(
         previousVisibleSessionListIndexRef.current,
         options.retainedVisibleSessionListIndex,
     );
-    // A retained root pane still represents its foreground route on subsequent projections.
-    // Its owner updates retainedPathname when navigation leaves that Session.
-    const selectedSessionPathname = effectivePathname === '/'
-        ? options.retainedPathname ?? effectivePathname
-        : effectivePathname;
-    const activeSessionId = React.useMemo(() => resolveSelectedSessionIdForList({
-        selectable: true,
-        pathname: selectedSessionPathname,
-        focusedSessionId,
-    }), [selectedSessionPathname, focusedSessionId]);
-    const activeSessionServerId = focusedSessionAddress?.sessionId === activeSessionId
-        ? focusedSessionAddress.serverId
-        : null;
-
     const normalizedGroupOrder = React.useMemo(() => {
         if (!source) return sessionListGroupOrderV1;
-        if (sessionListOrderingModeV1 !== 'custom') return sessionListGroupOrderV1;
-        const folderAwareSource = buildFolderAwareSessionListIndex({
+        if (sessionListLayoutChoice !== 'projects') return sessionListGroupOrderV1;
+        const sectionSource = buildSectionSessionListIndex({
             source,
-            collapsedGroupKeysV1,
-            sessionFoldersFeatureEnabled,
-            sessionListLayoutChoice,
-            folderFocusInput,
-            sessionFoldersV1,
-            sessionFolderViewModeV1,
+            sessionSections,
             sessionFolderAssignmentsBySessionKey,
         }).items;
         return normalizeSessionListGroupOrderV1ForIndexSource({
-            source: folderAwareSource,
+            source: sectionSource,
             pinnedSessionKeysV1,
             sessionListGroupOrderV1,
         });
     }, [
         collapsedGroupKeysV1,
-        folderFocusInput,
         pinnedSessionKeysV1,
         sessionFolderAssignmentsBySessionKey,
-        sessionFolderViewModeV1,
         sessionFoldersFeatureEnabled,
-        sessionFoldersV1,
+        sessionSections,
         sessionListGroupOrderV1,
-        sessionListOrderingModeV1,
         sessionListLayoutChoice,
         source,
         storageFilter,
@@ -707,12 +673,14 @@ export function useVisibleSessionListViewState(
 
     const normalizedWorkspaceOrder = React.useMemo(() => {
         if (!source) return sessionWorkspaceOrderV1;
-        if (sessionListOrderingModeV1 !== 'custom') return sessionWorkspaceOrderV1;
+        if (sessionListLayoutChoice !== 'projects') return sessionWorkspaceOrderV1;
         return normalizeSessionWorkspaceOrderV1ForSource({
             source,
             sessionWorkspaceOrderV1,
+            workspaceRefs,
+            workspaceRefsServerId: selection.activeServerId ?? undefined,
         });
-    }, [sessionListOrderingModeV1, sessionWorkspaceOrderV1, source]);
+    }, [sessionListLayoutChoice, sessionWorkspaceOrderV1, source, workspaceRefs, selection.activeServerId]);
 
     // Shared session-list runtime clock: placement and per-row working
     // indicators must derive freshness from the same timestamp in the same
@@ -720,27 +688,44 @@ export function useVisibleSessionListViewState(
     // contributes the earliest freshness expiry of the visible rows as its
     // wake horizon so the index recomputes exactly when placement can change
     // without a store update.
-    const runtimeNowMs = useSessionListRuntimeNowMs(surfaceDataActive);
+    const runtimeWakeToken = React.useMemo<object>(() => ({}), []);
+    const runtimeNowMs = useSessionListRuntimeNowMs(surfaceDataActive, undefined, runtimeWakeToken);
+
+    // Source availability is known before membership. Fact unavailability joins
+    // the same owner after projection, rather than creating a cyclic input.
+    const sourceUnavailableRunHomes = resolveRunUnavailableHomes(false);
+    const groupCoverage = (workFilter.show === 'runs' || query.coverageComplete)
+        && (!includesWorkflowRuns || options.corpusStorage === 'archived'
+            || (workflowRunWindow?.status === 'loaded' && !workflowRunWindow.hasMore
+                && !workflowRunWindow.loadingMore && (sourceUnavailableRunHomes?.length ?? 0) === 0))
+        ? 'complete' as const : 'partial' as const;
+
 
     const projectionInputs = React.useMemo<Omit<VisibleSessionListProjectionInputs, 'sessionRowStateByServerId'>>(() => ({
         source: source ?? [],
+        attentionSource,
+        includeNeedsYouEverywhere: options.includeNeedsYouEverywhere === true,
+        fixedTeam: options.fixedTeam,
+        fixedTeamQueryServerIds,
+        attentionInteractionHeld: options.attentionInteractionHeld === true,
+        supplementalNeedsYouSessionKeys: options.supplementalNeedsYouSessionKeys,
         workFilter,
+        spaceMembership: options.spaceMembership,
+        sessionTagIdsBySessionKey: organizationListViewState.sessionTagIdsBySessionKey,
+        conditionValueCountRequest: surfaceDataActive ? options.conditionValueCountRequest : undefined,
+        groupCoverage,
+        querySectionIdsByServerId,
         workspaceRefs,
         viewerAccountIdByServerId,
         workflowRuns,
-        workflowRunUnderSessionId: workflowRunsEnabled ? workFilter.underSessionId : undefined,
-        activeSessionId,
+        workflowRunUnderSessionId: workflowRunsEnabled ? workflowRunUnderSessionId : undefined,
         hideInactiveSessions: hideInactiveSessions === true,
         serverFilteredInactiveServerIds,
         corpusStorage: options.corpusStorage ?? 'active',
         pinnedSessionKeysV1,
-        sessionListOrderingModeV1,
-        sessionListSectionModeV1,
         sessionListLayoutChoice,
-        sessionListFolderSortModeV1,
-        sessionListAttentionPromotionModeV1,
+        sessionListAttentionPlacementV1,
         sessionAttentionStandingPolicy,
-        sessionListWorkingPlacementModeV1,
         backgroundWorkAttentionMode,
         normalizedGroupOrder,
         sessionListGroupOrderV1,
@@ -750,46 +735,44 @@ export function useVisibleSessionListViewState(
         sessionFoldersFeatureEnabled,
         selection,
         storageFilter,
-        folderFocusInput,
-        sessionFoldersV1,
-        sessionFolderViewModeV1,
+        sessionSections,
         sessionFolderAssignmentsBySessionKey,
-        retainAttentionPlacements: resolveRetainedAttentionPlacements({
-            previousVisibleIndex: previousVisibleSessionListIndexForRetention,
-            activeSessionId,
-            activeSessionServerId,
-        }),
         retainWorkingSessionKeys: resolveRetainedWorkingSessionKeys(previousVisibleSessionListIndexForRetention),
     }), [
-        activeSessionId,
-        activeSessionServerId,
         collapsedGroupKeysV1,
-        folderFocusInput,
         hideInactiveSessions,
         normalizedGroupOrder,
         normalizedWorkspaceOrder,
         options.corpusStorage,
+        options.spaceMembership,
+        organizationListViewState.sessionTagIdsBySessionKey,
+        workflowRunUnderSessionId,
+        options.attentionInteractionHeld,
+        options.supplementalNeedsYouSessionKeys,
+        options.includeNeedsYouEverywhere,
+        options.fixedTeam,
+        fixedTeamQueryServerIds,
+        attentionSource,
         pinnedSessionKeysV1,
         previousVisibleSessionListIndexForRetention,
         selection,
         serverFilteredInactiveServerIds,
         sessionAttentionStandingPolicy,
         sessionFolderAssignmentsBySessionKey,
-        sessionFolderViewModeV1,
         sessionFoldersFeatureEnabled,
-        sessionFoldersV1,
-        sessionListAttentionPromotionModeV1,
-        sessionListFolderSortModeV1,
+        sessionSections,
         sessionListGroupOrderV1,
         sessionListLayoutChoice,
-        sessionListOrderingModeV1,
-        sessionListSectionModeV1,
-        sessionListWorkingPlacementModeV1,
+        sessionListAttentionPlacementV1,
         backgroundWorkAttentionMode,
         sessionWorkspaceOrderV1,
         source,
         storageFilter,
         workFilter,
+        options.conditionValueCountRequest,
+        surfaceDataActive,
+        groupCoverage,
+        querySectionIdsByServerId,
         workspaceRefs,
         viewerAccountIdByServerId,
         workflowRuns,
@@ -808,6 +791,7 @@ export function useVisibleSessionListViewState(
             if (
                 previousIndex
                 && cachedProjection
+                && cachedProjection.collapseContextKey === options.collapseContextKey
                 && cachedProjection.dataActive === surfaceDataActive
                 && (cachedProjection.validUntilMs === null || runtimeNowMs < cachedProjection.validUntilMs)
                 && areVisibleSessionListProjectionInputsEqual(cachedProjection.inputs, inputs)
@@ -819,12 +803,44 @@ export function useVisibleSessionListViewState(
                     visibleSessionListIndex: previousIndex,
                     nextRuntimeFreshnessAtMs: cachedProjection.validUntilMs,
                     hasHiddenInactiveSessions: cachedProjection.hasHiddenInactiveSessions,
+                    filterResult: cachedProjection.filterResult,
+                    conditionValueCounts: cachedProjection.conditionValueCounts,
+                    filterMatchedEntityIds: cachedProjection.filterMatchedEntityIds,
+                    filterAttentionSupplementEntityIds: cachedProjection.filterAttentionSupplementEntityIds,
+                    runFactsUnavailable: cachedProjection.membership.runFactsUnavailable,
                 };
             }
-            const visibleSessionListIndex = !source && (!workflowRunWindow || workflowRunWindow.status === 'loading')
-                ? source
-                : reuseStableVisibleSessionListIndex(previousIndex,
-                    buildVisibleSessionListIndex({ ...inputs, nowMs: runtimeNowMs }));
+            const projection = !source && (!workflowRunWindow || workflowRunWindow.status === 'loading')
+                ? null : buildVisibleSessionListIndex({
+                        ...inputs,
+                        previousMembership: cachedProjection?.membership,
+                        // Explicit scope/view changes seed a new presentation. Row
+                        // updates and interaction changes retain the mounted order.
+                        previousPresentedIndex: cachedProjection
+                            && cachedProjection.collapseContextKey === options.collapseContextKey
+                            && cachedProjection.inputs.sessionListLayoutChoice === inputs.sessionListLayoutChoice
+                            && cachedProjection.inputs.sessionListAttentionPlacementV1 === inputs.sessionListAttentionPlacementV1
+                            && cachedProjection.inputs.corpusStorage === inputs.corpusStorage
+                            && cachedProjection.inputs.storageFilter === inputs.storageFilter
+                            && areViewerAccountScopesEqual(cachedProjection.inputs.viewerAccountIdByServerId, inputs.viewerAccountIdByServerId)
+                            && sameStrictJsonValue(cachedProjection.inputs.workFilter, inputs.workFilter)
+                            && sameStrictJsonValue(cachedProjection.inputs.spaceMembership, inputs.spaceMembership)
+                            ? previousIndex : undefined,
+                        nowMs: runtimeNowMs,
+                    });
+            const visibleSessionListIndex = projection
+                ? reuseStableVisibleSessionListIndex(previousIndex, projection.items) : source;
+            const nextFilterResult = projection?.filterResult ?? UNAVAILABLE_FILTER_RESULT;
+            const filterResult = cachedProjection?.filterResult.matchedCount === nextFilterResult.matchedCount
+                && cachedProjection.filterResult.coverage === nextFilterResult.coverage
+                && cachedProjection.filterResult.attentionSupplementCount === nextFilterResult.attentionSupplementCount
+                ? cachedProjection.filterResult : nextFilterResult;
+            const retainEntityIds = (next: ReadonlySet<string>, previous?: ReadonlySet<string>) => previous
+                && previous.size === next.size && [...next].every(id => previous.has(id)) ? previous : next;
+            const filterMatchedEntityIds = retainEntityIds(projection?.matchedEntityIds ?? EMPTY_FILTER_ENTITY_IDS,
+                cachedProjection?.filterMatchedEntityIds);
+            const filterAttentionSupplementEntityIds = retainEntityIds(projection?.attentionSupplementEntityIds ?? EMPTY_FILTER_ENTITY_IDS,
+                cachedProjection?.filterAttentionSupplementEntityIds);
             const resolveScopeId = captureServerProfileScopeResolver();
             let nextAtMs = surfaceDataActive && visibleSessionListIndex
                 ? resolveNextSessionAttentionReminderWakeAtMs(sessionAttentionStandingPolicy, runtimeNowMs) : null;
@@ -849,49 +865,50 @@ export function useVisibleSessionListViewState(
             }
             const hasHiddenInactiveSessions = Boolean(source && hideInactiveSessions
                 && countSessionItems(visibleSessionListIndex) === 0
-                && countSessionItems(buildVisibleSessionListIndex({ ...inputs, hideInactiveSessions: false, nowMs: runtimeNowMs })) > 0);
-            if (visibleSessionListIndex) {
+                && countSessionItems(buildVisibleSessionListIndex({ ...inputs, hideInactiveSessions: false,
+                    previousMembership: projection?.membership, nowMs: runtimeNowMs }).items) > 0);
+            if (visibleSessionListIndex && projection) {
                 retainedVisibleSessionListProjections.set(visibleSessionListIndex, {
                     inputs,
+                    collapseContextKey: options.collapseContextKey,
                     validUntilMs: nextAtMs,
                     dataActive: surfaceDataActive,
                     hasHiddenInactiveSessions,
+                    filterResult,
+                    conditionValueCounts: projection.conditionValueCounts,
+                    filterMatchedEntityIds,
+                    filterAttentionSupplementEntityIds,
+                    membership: projection.membership,
                 });
             }
             previousIndex = visibleSessionListIndex;
-            return { visibleSessionListIndex, nextRuntimeFreshnessAtMs: nextAtMs, hasHiddenInactiveSessions };
+            return { visibleSessionListIndex, nextRuntimeFreshnessAtMs: nextAtMs, hasHiddenInactiveSessions, filterResult,
+                conditionValueCounts: projection?.conditionValueCounts,
+                filterMatchedEntityIds, filterAttentionSupplementEntityIds,
+                runFactsUnavailable: projection?.membership.runFactsUnavailable ?? false };
         };
     }, [previousVisibleSessionListIndexForRetention, projectionInputs, runtimeNowMs, source, workflowRunWindow?.status,
-        surfaceDataActive, sessionAttentionStandingPolicy, hideInactiveSessions]);
-    const { visibleSessionListIndex, nextRuntimeFreshnessAtMs, hasHiddenInactiveSessions } = useSessionListRowsByServerId(undefined, selectProjection);
+        surfaceDataActive, sessionAttentionStandingPolicy, hideInactiveSessions, options.collapseContextKey]);
+    const { visibleSessionListIndex, nextRuntimeFreshnessAtMs, hasHiddenInactiveSessions, filterResult, conditionValueCounts, filterMatchedEntityIds, filterAttentionSupplementEntityIds, runFactsUnavailable } = useSessionListRowsByServerId(undefined, selectProjection);
+    const workflowRunUnavailableHomes = React.useMemo(() => resolveRunUnavailableHomes(runFactsUnavailable),
+        [options.corpusStorage, runServerId, selection.activeServerId, selection.allowedServerIds,
+            surfaceDataActive, viewerAccountIdByServerId, workFilter, workflowWindow.rows, includesWorkflowRuns,
+            workflowRunsEnabled, runFactsUnavailable]);
     React.useEffect(() => {
         previousVisibleSessionListIndexRef.current = visibleSessionListIndex;
     }, [visibleSessionListIndex]);
-    useSessionListRuntimeWake(nextRuntimeFreshnessAtMs, surfaceDataActive);
-
-    // The focus scope stays visible in every layout so the reader can always see and
-    // clear the narrowing that is hiding rows, including in Recent activity where the
-    // folder tree itself is suppressed.
-    const folderFocus = React.useMemo(() => {
-        if (!sessionFoldersFeatureEnabled || sessionFolderViewModeV1 !== 'tree') return null;
-        return resolveSessionFolderFocusScope(
-            selectAvailableSessionFolders(sessionFoldersV1),
-            folderFocusInput,
-        );
-    }, [
-        folderFocusInput,
-        sessionFoldersFeatureEnabled,
-        sessionFolderViewModeV1,
-        sessionFoldersV1,
-    ]);
+    useSessionListRuntimeWake(nextRuntimeFreshnessAtMs, surfaceDataActive, undefined, runtimeWakeToken);
 
     return React.useMemo(() => ({
         visibleSessionListIndex,
+        filterResult,
+        conditionValueCounts,
+        filterMatchedEntityIds,
+        filterAttentionSupplementEntityIds,
         hasHiddenInactiveSessions,
-        folderFocus,
         folderFeatureEnabledServerIds,
         query,
         workflowRunWindow,
         workflowRunUnavailableHomes,
-    }), [folderFeatureEnabledServerIds, folderFocus, hasHiddenInactiveSessions, query, visibleSessionListIndex, workflowRunWindow, workflowRunUnavailableHomes]);
+    }), [conditionValueCounts, filterResult, filterMatchedEntityIds, filterAttentionSupplementEntityIds, folderFeatureEnabledServerIds, hasHiddenInactiveSessions, query, visibleSessionListIndex, workflowRunWindow, workflowRunUnavailableHomes]);
 }

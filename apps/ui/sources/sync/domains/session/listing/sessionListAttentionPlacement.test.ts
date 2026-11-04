@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
+import { createSessionViewerFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 import type { SessionListRenderableSession } from './sessionListRenderable';
 import { sessionAddressKey } from '../sessionAddress';
 import {
-    applySessionListAttentionPlacementWithinGroups,
-    applySessionListWorkingPlacementWithinGroups,
     buildSessionListAttentionPlacement,
+    buildSessionListGlobalPlacements,
     buildSessionListWorkingPlacement,
 } from './sessionListAttentionPlacement';
 
@@ -20,7 +20,8 @@ function createRow(overrides: Partial<SessionListRenderableSession> = {}): Sessi
         activeAt: 0,
         metadataVersion: 1,
         agentStateVersion: 1,
-        metadata: null,
+        encryptionMode: 'plain',
+        metadata: { path: '/repo' },
         thinking: false,
         thinkingAt: 0,
         presence: 'online',
@@ -30,16 +31,138 @@ function createRow(overrides: Partial<SessionListRenderableSession> = {}): Sessi
     };
 }
 
-describe('applySessionListWorkingPlacementWithinGroups', () => {
+describe('canonical attention occurrences', () => {
+    const nowMs = 1_000_000;
+    const sourceFor = (...ids: string[]): SessionListIndexItem[] => ids.map(sessionId => ({
+        type: 'session', serverId: 'server-a', sessionId, groupKey: 'project-a', groupKind: 'project',
+    }));
+    const ids = (items: readonly SessionListIndexItem[] | undefined) => items?.flatMap(item => item.type === 'session' ? [item.sessionId] : []);
+    const key = (sessionId: string) => sessionAddressKey({ serverId: 'server-a', sessionId });
+    const rows = new Map<string, SessionListRenderableSession>();
+
+    it('keeps failed updates outside Needs you and retains a simultaneous admitted approval', () => {
+        rows.clear();
+        const source = sourceFor('failure');
+        const failed = createRow({ id: 'failure', latestTurnStatus: 'failed', active: true, hasUnreadMessages: true });
+        rows.set('failure', failed);
+        expect(build(source, 'both')?.attentionItems ?? []).toEqual([]);
+
+        rows.set('failure', { ...failed, viewer: createSessionViewerFixture({ attention: {
+            needsAttention: true, reasons: ['failed'], primary: 'failed', presentation: 'full',
+        } }) });
+        expect(build(source, 'both')?.attentionItems ?? []).toEqual([]);
+
+        rows.set('failure', { ...failed, viewer: createSessionViewerFixture({ attention: {
+            needsAttention: true, reasons: ['failed', 'permission_required'], primary: 'failed', presentation: 'full',
+        } }) });
+        const admitted = build(source, 'both')?.attentionItems.filter(item => item.type === 'session');
+        expect(admitted).toEqual([expect.objectContaining({ sessionId: 'failure', attentionPlacementReason: 'permission_required' })]);
+    });
+    function attention(id: string, pending = false) {
+        rows.set(id, createRow({ id, latestTurnStatus: undefined, hasUnreadMessages: !pending,
+            hasPendingPermissionRequests: pending, pendingRequestObservedAt: pending ? nowMs : null,
+            viewer: createSessionViewerFixture({ attention: {
+                needsAttention: true,
+                reasons: [pending ? 'permission_required' : 'user_action_required'],
+                primary: pending ? 'permission_required' : 'user_action_required', presentation: 'full',
+            } }),
+        }));
+    }
+    function build(source: readonly SessionListIndexItem[], placement: 'both' | 'top' | 'inPlace', previousPresentedIndex?: readonly SessionListIndexItem[], holdMembership = false) {
+        return buildSessionListGlobalPlacements({ source, placement, previousPresentedIndex, holdMembership,
+            attentionOptions: { mode: 'global' }, workingOptions: { mode: 'global' }, nowMs,
+            resolveSessionRow: (_server, id) => rows.get(id) ?? null });
+    }
+
+    it('mirrors in Both, suppresses only childless Top bases, and has no shelf In place', () => {
+        rows.clear(); attention('lead'); attention('child');
+        const source = sourceFor('lead', 'child');
+        source[0] = { ...source[0]!, type: 'session', sessionId: 'lead', reportsParent: true };
+        source[1] = { ...source[1]!, type: 'session', sessionId: 'child', reportsDepth: 1,
+            reportsParentContext: { serverId: 'home', project: null, machineId: 'lead-machine', workspaceId: 'lead-checkout' } };
+        expect(ids(build(source, 'both')?.remainder)).toEqual(['lead', 'child']);
+        expect(ids(build(source, 'top')?.remainder)).toEqual(['lead']);
+        expect(build(source, 'both')?.attentionItems[1]).toMatchObject({ occurrenceRole: 'needsYou' });
+        expect(build(source, 'both')?.attentionItems.filter(item => item.type === 'session'))
+            .toEqual(expect.arrayContaining([expect.objectContaining({ sessionId: 'child', reportsParentContext: undefined })]));
+        expect(build(source, 'inPlace')).toBeNull();
+    });
+
+    it('appends arrivals without severity ranking and retains the presented order on subsequent changes', () => {
+        rows.clear(); attention('first'); attention('urgent', true); attention('new');
+        const first = build(sourceFor('first', 'urgent'), 'both')!;
+        expect(ids(first.attentionItems)).toEqual(['first', 'urgent']);
+        const next = build(sourceFor('new', 'urgent', 'first'), 'both', first.attentionItems)!;
+        expect(ids(next.attentionItems)).toEqual(['first', 'urgent', 'new']);
+    });
+
+    it('keeps placement facts identical when request activity changes without changing eligibility', () => {
+        rows.clear(); attention('steady');
+        const source = sourceFor('steady');
+        const first = build(source, 'both')!;
+        rows.set('steady', { ...rows.get('steady')!, pendingRequestObservedAt: nowMs });
+        const next = build(source, 'both', first.attentionItems)!;
+        expect(next.attentionItems).toEqual(first.attentionItems);
+    });
+
+    it('holds membership with live facts, reconciles on release, and removes revoked rows immediately', () => {
+        rows.clear(); attention('old'); attention('arriving', true);
+        const initial = build(sourceFor('old'), 'both')!;
+        rows.set('old', createRow({ id: 'old', latestTurnStatus: undefined }));
+        const held = build(sourceFor('arriving', 'old'), 'both', initial.attentionItems, true)!;
+        expect(ids(held.attentionItems)).toEqual(['old']);
+        const heldRow = held.attentionItems.find(item => item.type === 'session');
+        expect(heldRow?.type === 'session' ? heldRow.attentionPlacementReason : null).toBeUndefined();
+        expect(ids(build(sourceFor('arriving', 'old'), 'both', held.attentionItems)?.attentionItems)).toEqual(['arriving']);
+        expect(build(sourceFor('arriving'), 'both', initial.attentionItems, true)).toBeNull();
+    });
+
+    it.each(['both', 'top'] as const)('does not leak the first outside shortcut into a held %s base', placement => {
+        rows.clear(); attention('outside', true);
+        rows.set('inside', createRow({ id: 'inside', latestTurnStatus: undefined }));
+        const result = buildSessionListGlobalPlacements({
+            source: sourceFor('inside', 'outside'), placement,
+            previousPresentedIndex: sourceFor('inside'), holdMembership: true,
+            supplementalNeedsYouSessionKeys: new Set([key('outside')]),
+            attentionOptions: { mode: 'global' }, workingOptions: { mode: 'global' }, nowMs,
+            resolveSessionRow: (_server, id) => rows.get(id) ?? null,
+        });
+        expect(result?.attentionItems).toEqual([]);
+        expect(result?.attentionEligibleCount).toBe(1);
+        expect(ids(result?.remainder)).toEqual(['inside']);
+    });
+
+    it('keeps a held Working occurrence while its permission glyph changes, then moves it on release', () => {
+        rows.clear(); rows.set('work', createRow({ id: 'work', latestTurnStatus: 'in_progress', activeAt: nowMs, thinking: true }));
+        const initial = build(sourceFor('work'), 'both')!;
+        attention('work', true);
+        const held = build(sourceFor('work'), 'both', initial.workingItems, true)!;
+        expect(ids(held.workingItems)).toEqual(['work']);
+        expect(ids(held.attentionItems)).toEqual([]);
+        expect(ids(build(sourceFor('work'), 'both', held.workingItems)?.attentionItems)).toEqual(['work']);
+    });
+
+    it('resolves each admitted row once without reading private project or detail data at scale', () => {
+        const source = sourceFor(...Array.from({ length: 1_000 }, (_, index) => `session-${index}`));
+        let reads = 0;
+        buildSessionListGlobalPlacements({ source, placement: 'both', attentionOptions: { mode: 'global' },
+            workingOptions: { mode: 'global' }, nowMs, resolveSessionRow: (_server, id) => {
+                reads += 1; return createRow({ id, latestTurnStatus: undefined, hasUnreadMessages: key(id) === key('session-0') });
+            } });
+        expect(reads).toBe(1_000);
+    });
+});
+
+describe('working eligibility', () => {
     it('places completed background activity at the front of its group', () => {
         const nowMs = 1_000_000;
         const source = [
             { type: 'session', serverId: 'server-a', sessionId: 'fresh-runtime', groupKey: 'project-a', groupKind: 'project' },
         ] satisfies ReadonlyArray<SessionListIndexItem>;
 
-        const result = applySessionListWorkingPlacementWithinGroups({
+        const result = buildSessionListWorkingPlacement({
             source,
-            options: { mode: 'withinGroups' },
+            options: { mode: 'global' },
             nowMs,
             resolveSessionRow: () => createRow({
                 id: 'fresh-runtime',
@@ -51,7 +174,7 @@ describe('applySessionListWorkingPlacementWithinGroups', () => {
             }),
         });
 
-        expect(result).toEqual([
+        expect(result?.workingItems.filter(item => item.type === 'session')).toEqual([
             expect.objectContaining({
                 type: 'session',
                 sessionId: 'fresh-runtime',
@@ -67,9 +190,9 @@ describe('applySessionListWorkingPlacementWithinGroups', () => {
             { type: 'session', serverId: 'server-a', sessionId: 'stale-runtime', groupKey: 'project-a', groupKind: 'project' },
         ] satisfies ReadonlyArray<SessionListIndexItem>;
 
-        const result = applySessionListWorkingPlacementWithinGroups({
+        const result = buildSessionListWorkingPlacement({
             source,
-            options: { mode: 'withinGroups' },
+            options: { mode: 'global' },
             nowMs,
             resolveSessionRow: () => createRow({
                 id: 'stale-runtime',
@@ -83,7 +206,7 @@ describe('applySessionListWorkingPlacementWithinGroups', () => {
             }),
         });
 
-        expect(result).toEqual([
+        expect(result?.workingItems.filter(item => item.type === 'session')).toEqual([
             expect.objectContaining({
                 type: 'session',
                 sessionId: 'stale-runtime',
@@ -102,9 +225,9 @@ describe('applySessionListWorkingPlacementWithinGroups', () => {
             { type: 'session', serverId: 'server-a', sessionId: 'inactive-runtime', groupKey: 'project-a', groupKind: 'project' },
         ] satisfies ReadonlyArray<SessionListIndexItem>;
 
-        const result = applySessionListWorkingPlacementWithinGroups({
+        const result = buildSessionListWorkingPlacement({
             source,
-            options: { mode: 'withinGroups' },
+            options: { mode: 'global' },
             nowMs,
             resolveSessionRow: () => createRow({
                 id: 'inactive-runtime',
@@ -115,7 +238,7 @@ describe('applySessionListWorkingPlacementWithinGroups', () => {
             }),
         });
 
-        expect(result).toBe(source);
+        expect(result).toBeNull();
     });
 });
 
@@ -157,7 +280,7 @@ describe('buildSessionListWorkingPlacement', () => {
 
 });
 
-describe('unread attention placement', () => {
+describe('canonical Needs-you admission', () => {
     const nowMs = 1_000_000;
 
     function createSource(sessionIds: ReadonlyArray<string>): ReadonlyArray<SessionListIndexItem> {
@@ -170,7 +293,7 @@ describe('unread attention placement', () => {
         })) satisfies ReadonlyArray<SessionListIndexItem>;
     }
 
-    it('promotes unread activity that never produced a terminal turn', () => {
+    it('keeps unread activity in Updates rather than inventing a Needs-you request', () => {
         const source = createSource(['unread-provider-activity']);
 
         const result = buildSessionListAttentionPlacement({
@@ -188,19 +311,7 @@ describe('unread attention placement', () => {
             }),
         });
 
-        expect(result).toMatchObject({
-            promotedCount: 1,
-            attentionItems: [
-                expect.objectContaining({ type: 'header', headerKind: 'attention' }),
-                expect.objectContaining({
-                    type: 'session',
-                    sessionId: 'unread-provider-activity',
-                    groupKind: 'attention',
-                    attentionPlacementReason: 'unread',
-                }),
-            ],
-            remainder: [],
-        });
+        expect(result).toBeNull();
     });
 
     it('does not promote a released shared-recipient row from the owner legacy cursor', () => {
@@ -229,47 +340,6 @@ describe('unread attention placement', () => {
         expect(result).toBeNull();
     });
 
-    it('marks unread activity within its own group without moving it out', () => {
-        const source = createSource(['read-neighbour', 'unread-provider-activity']);
-
-        const result = applySessionListAttentionPlacementWithinGroups({
-            source,
-            options: { mode: 'withinGroups' },
-            nowMs,
-            resolveSessionRow: (_serverId, sessionId) => createRow({
-                id: sessionId,
-                latestTurnStatus: undefined,
-                latestTurnStatusObservedAt: undefined,
-                seq: 12,
-                lastViewedSessionSeq: 12,
-                hasUnreadMessages: sessionId === 'unread-provider-activity',
-                meaningfulActivityAt: nowMs - 5_000,
-            }),
-        });
-
-        expect(result.map((item) => (item.type === 'session'
-            ? {
-                sessionId: item.sessionId,
-                groupKey: item.groupKey,
-                attentionPlacementReason: item.attentionPlacementReason ?? null,
-                keepVisibleWhenInactive: item.keepVisibleWhenInactive ?? false,
-            }
-            : item))).toEqual([
-            {
-                sessionId: 'unread-provider-activity',
-                groupKey: 'project-a',
-                attentionPlacementReason: 'unread',
-                keepVisibleWhenInactive: true,
-            },
-            {
-                sessionId: 'read-neighbour',
-                groupKey: 'project-a',
-                attentionPlacementReason: null,
-                keepVisibleWhenInactive: false,
-            },
-        ]);
-    });
-
     it('keeps an unread background session working by default', () => {
         const source = createSource(['working-and-unread']);
         const resolveSessionRow = () => createRow({
@@ -282,7 +352,7 @@ describe('unread attention placement', () => {
         expect(buildSessionListWorkingPlacement({ source, options: { mode: 'global' }, nowMs, resolveSessionRow })?.promotedCount).toBe(1);
     });
 
-    it('keeps ready precedence for a row that is both ready and unread', () => {
+    it('does not promote completed unread work as a Needs-you request', () => {
         const source = createSource(['ready-and-unread']);
 
         const result = buildSessionListAttentionPlacement({
@@ -301,10 +371,7 @@ describe('unread attention placement', () => {
             }),
         });
 
-        expect(result?.attentionItems[1]).toEqual(expect.objectContaining({
-            sessionId: 'ready-and-unread',
-            attentionPlacementReason: 'ready',
-        }));
+        expect(result).toBeNull();
     });
 
     it('configures unread completion placement without claiming continuing work is ready', () => {
@@ -326,9 +393,8 @@ describe('unread attention placement', () => {
         for (const backgroundWorkAttentionMode of ['keepWorking', 'keepWorkingUnread', 'showUnread'] as const) {
             const params = { source, options: { mode: 'global' as const }, nowMs, resolveSessionRow: () => row, backgroundWorkAttentionMode };
             const attention = buildSessionListAttentionPlacement(params);
-            expect(attention?.attentionItems[1]?.type === 'session' ? attention.attentionItems[1].attentionPlacementReason : null)
-                .toBe(backgroundWorkAttentionMode === 'showUnread' ? 'unread' : null);
-            expect(buildSessionListWorkingPlacement(params)?.promotedCount ?? 0).toBe(backgroundWorkAttentionMode === 'showUnread' ? 0 : 1);
+            expect(attention).toBeNull();
+            expect(buildSessionListWorkingPlacement(params)?.promotedCount ?? 0).toBe(1);
         }
 
         const read = { ...row, lastViewedSessionSeq: 9 };
@@ -349,13 +415,13 @@ describe('unread attention placement', () => {
             runtimeActivityState: 'active', runtimeActivityActiveCount: 1,
         });
         const params = { source, options: { mode: 'global' as const }, nowMs, resolveSessionRow: () => row };
-        expect(buildSessionListAttentionPlacement(params)?.attentionItems[1]).toMatchObject({ attentionPlacementReason: 'unread' });
+        expect(buildSessionListAttentionPlacement(params)).toBeNull();
         expect(buildSessionListWorkingPlacement(params)).toBeNull();
     });
 
     it('configures background placement using authoritative modern unread facts', () => {
         const source = createSource(['modern-unread-background']);
-        const viewer = (needsAttention: boolean) => ({
+        const viewer = (needsAttention: boolean) => createSessionViewerFixture({
             latestFailureSeq: null,
             readState: { state: 'tracking' as const, lastViewedSessionSeq: 0, unreadSince: 100 },
             relevance: { relevant: true, reasons: ['followed_by_me' as const] },
@@ -377,9 +443,8 @@ describe('unread attention placement', () => {
         for (const backgroundWorkAttentionMode of ['keepWorking', 'keepWorkingUnread', 'showUnread'] as const) {
             const params = { source, options: { mode: 'global' as const }, nowMs, resolveSessionRow: () => row(true), backgroundWorkAttentionMode };
             const attention = buildSessionListAttentionPlacement(params);
-            expect(attention?.attentionItems[1]?.type === 'session' ? attention.attentionItems[1].attentionPlacementReason : null)
-                .toBe(backgroundWorkAttentionMode === 'showUnread' ? 'unread' : null);
-            expect(buildSessionListWorkingPlacement(params)?.promotedCount ?? 0).toBe(backgroundWorkAttentionMode === 'showUnread' ? 0 : 1);
+            expect(attention).toBeNull();
+            expect(buildSessionListWorkingPlacement(params)?.promotedCount ?? 0).toBe(1);
         }
         expect(buildSessionListAttentionPlacement({
             source, options: { mode: 'global' }, nowMs, resolveSessionRow: () => row(false),
@@ -397,31 +462,35 @@ describe('unread attention placement', () => {
             runtimeActivityActiveCount: backgroundActive ? 1 : 0,
             runtimeActivityObservedAt: nowMs - 1_000,
             runtimeActivityRevision: 1,
-            viewer: {
+            viewer: createSessionViewerFixture({
                 latestFailureSeq: null,
                 readState: { state: 'tracking', lastViewedSessionSeq: 1, unreadSince: null },
                 relevance: { relevant: true, reasons: ['followed_by_me'] },
                 follow: { follows: true, notificationLevel: 'none' },
                 notification: { level: 'none', source: 'preference' },
                 attention: { needsAttention: true, reasons: ['manual'], primary: 'manual', presentation: 'full' },
-            },
+            }),
         });
 
         expect(buildSessionListAttentionPlacement({
-            source, options: { mode: 'global' }, nowMs, resolveSessionRow: () => row(true),
+            source, options: { mode: 'global', standingPolicy: {
+                defaultStanding: false, overridesBySessionKey: { [sessionAddressKey({ serverId: 'server-a', sessionId: 'modern-standing-background' })]: true },
+            } }, nowMs, resolveSessionRow: () => row(true),
         })).toBeNull();
         expect(buildSessionListWorkingPlacement({
             source, options: { mode: 'global' }, nowMs, resolveSessionRow: () => row(true),
         })?.promotedCount).toBe(1);
         expect(buildSessionListAttentionPlacement({
-            source, options: { mode: 'global' }, nowMs, resolveSessionRow: () => row(false),
+            source, options: { mode: 'global', standingPolicy: {
+                defaultStanding: false, overridesBySessionKey: { [sessionAddressKey({ serverId: 'server-a', sessionId: 'modern-standing-background' })]: true },
+            } }, nowMs, resolveSessionRow: () => row(false),
         })?.attentionItems[1]).toEqual(expect.objectContaining({
             sessionId: 'modern-standing-background',
             attentionPlacementReason: 'standing',
         }));
     });
 
-    it('orders unread below every explicit attention signal', () => {
+    it('does not admit an unread update alongside a blocked delivery', () => {
         const source = createSource(['recently-unread', 'older-blocked']);
 
         const result = buildSessionListAttentionPlacement({
@@ -451,11 +520,10 @@ describe('unread attention placement', () => {
         expect(result?.attentionItems.map((item) => (item.type === 'session' ? item.sessionId : item.type === 'header' ? item.headerKind : `run:${item.runId}`))).toEqual([
             'attention',
             'older-blocked',
-            'recently-unread',
         ]);
     });
 
-    it('orders operational attention with the canonical failed then permission then action precedence', () => {
+    it('keeps operational attention in traversal order regardless of severity', () => {
         const source = createSource(['action', 'permission', 'failed']);
         const result = buildSessionListAttentionPlacement({
             source,
@@ -478,10 +546,10 @@ describe('unread attention placement', () => {
 
         expect(result?.attentionItems.map((item) => (
             item.type === 'session' ? item.sessionId : item.type === 'header' ? item.headerKind : `run:${item.runId}`
-        ))).toEqual(['attention', 'failed', 'permission', 'action']);
+        ))).toEqual(['attention', 'action', 'permission']);
     });
 
-    it('orders two unread rows by their activity time, not their source order', () => {
+    it('does not promote unread Updates regardless of activity time', () => {
         const source = createSource(['older-unread', 'newer-unread']);
 
         const result = buildSessionListAttentionPlacement({
@@ -499,11 +567,7 @@ describe('unread attention placement', () => {
             }),
         });
 
-        expect(result?.attentionItems.map((item) => (item.type === 'session' ? item.sessionId : item.type === 'header' ? item.headerKind : `run:${item.runId}`))).toEqual([
-            'attention',
-            'newer-unread',
-            'older-unread',
-        ]);
+        expect(result).toBeNull();
     });
 
     it('uses the canonical viewer decision instead of promoting a modern quiet row from raw facts', () => {
@@ -518,14 +582,14 @@ describe('unread attention placement', () => {
                 lastViewedSessionSeq: 0,
                 hasUnreadMessages: true,
                 pendingBlockedCount: 1,
-                viewer: {
+                viewer: createSessionViewerFixture({
                     latestFailureSeq: null,
                     readState: { state: 'not_started' },
                     relevance: { relevant: false, reasons: [] },
                     follow: { follows: false, notificationLevel: null },
                     notification: { level: 'none', source: 'none' },
                     attention: { needsAttention: false, reasons: [], primary: null, presentation: 'full' },
-                },
+                }),
             }),
         });
 
@@ -552,7 +616,7 @@ describe('unread attention placement', () => {
         expect(result).toBeNull();
     });
 
-    it('orders modern unread rows by stable viewer unreadSince instead of changing activity time', () => {
+    it('does not promote modern unread Updates regardless of unreadSince', () => {
         const source = createSource(['older-entry-new-activity', 'newer-entry-old-activity']);
         const result = buildSessionListAttentionPlacement({
             source,
@@ -561,7 +625,7 @@ describe('unread attention placement', () => {
             resolveSessionRow: (_serverId, sessionId) => createRow({
                 id: sessionId,
                 meaningfulActivityAt: sessionId === 'older-entry-new-activity' ? nowMs - 100 : nowMs - 500_000,
-                viewer: {
+                viewer: createSessionViewerFixture({
                     latestFailureSeq: null,
                     readState: {
                         state: 'tracking',
@@ -572,18 +636,14 @@ describe('unread attention placement', () => {
                     follow: { follows: true, notificationLevel: 'none' },
                     notification: { level: 'none', source: 'preference' },
                     attention: { needsAttention: true, reasons: ['unread'], primary: 'unread', presentation: 'full' },
-                },
+                }),
             }),
         });
 
-        expect(result?.attentionItems.map((item) => (item.type === 'session' ? item.sessionId : item.type === 'header' ? item.headerKind : `run:${item.runId}`))).toEqual([
-            'attention',
-            'newer-entry-old-activity',
-            'older-entry-new-activity',
-        ]);
+        expect(result).toBeNull();
     });
 
-    it('places a mention above plain unread in the attention lane instead of flattening it', () => {
+    it('keeps mentions and plain unread in Updates rather than Needs you', () => {
         const source = createSource(['mentions-me', 'merely-unread']);
         const result = buildSessionListAttentionPlacement({
             source,
@@ -591,7 +651,7 @@ describe('unread attention placement', () => {
             nowMs,
             resolveSessionRow: (_serverId, sessionId) => createRow({
                 id: sessionId,
-                viewer: {
+                viewer: createSessionViewerFixture({
                     latestFailureSeq: null,
                     readState: { state: 'tracking', lastViewedSessionSeq: 0, unreadSince: 100 },
                     relevance: { relevant: true, reasons: ['followed_by_me'] },
@@ -600,93 +660,11 @@ describe('unread attention placement', () => {
                     attention: sessionId === 'mentions-me'
                         ? { needsAttention: true, reasons: ['mentioned'], primary: 'mentioned', presentation: 'full' }
                         : { needsAttention: true, reasons: ['unread'], primary: 'unread', presentation: 'full' },
-                },
+                }),
             }),
         });
 
-        expect(result?.attentionItems.map((item) => (
-            item.type === 'session' ? item.attentionPlacementReason : item.type === 'header' ? item.headerKind : `run:${item.runId}`
-        ))).toEqual(['attention', 'mentioned', 'unread']);
+        expect(result).toBeNull();
     });
 
-    it('holds the read selected row with the neutral reason instead of replaying the one it resolved', () => {
-        const source = createSource(['selected-now-read']);
-
-        const result = buildSessionListAttentionPlacement({
-            source,
-            options: {
-                mode: 'global',
-                retainPlacements: [{ key: sessionAddressKey({ serverId: 'server-a', sessionId: 'selected-now-read' }), reason: 'unread', timestamp: 0 }],
-            },
-            nowMs,
-            resolveSessionRow: () => createRow({
-                id: 'selected-now-read',
-                latestTurnStatus: undefined,
-                latestTurnStatusObservedAt: undefined,
-                seq: 12,
-                lastViewedSessionSeq: 12,
-                hasUnreadMessages: false,
-                meaningfulActivityAt: nowMs - 5_000,
-            }),
-        });
-
-        // The row keeps its place in the band, but a reason it no longer earns
-        // must not come back with it: `attentionPlacementReason` is what the row
-        // renders its permission and action affordances from.
-        expect(result?.attentionItems[1]).toEqual(expect.objectContaining({
-            sessionId: 'selected-now-read',
-            attentionPlacementReason: 'ready',
-        }));
-    });
-
-    // Standing is the band's FLOOR and must not pre-empt retention. Retention
-    // relied on an opened row having no live reason left; the floor supplies
-    // one, so without this the kept row drops to the bottom of the band under
-    // the reader instead of holding its place until they navigate away.
-    it('holds a kept read row with the neutral reason instead of dropping it to the standing floor', () => {
-        const source = createSource(['selected-now-read']);
-        const standingPolicy = {
-            defaultStanding: false,
-            overridesBySessionKey: {
-                [sessionAddressKey({ serverId: 'server-a', sessionId: 'selected-now-read' })]: true,
-            },
-        };
-        const resolveRow = () => createRow({
-            id: 'selected-now-read',
-            latestTurnStatus: undefined,
-            latestTurnStatusObservedAt: undefined,
-            seq: 12,
-            lastViewedSessionSeq: 12,
-            hasUnreadMessages: false,
-            meaningfulActivityAt: nowMs - 5_000,
-        });
-
-        const retained = buildSessionListAttentionPlacement({
-            source,
-            options: {
-                mode: 'global',
-                standingPolicy,
-                retainPlacements: [{ key: sessionAddressKey({ serverId: 'server-a', sessionId: 'selected-now-read' }), reason: 'unread', timestamp: 0 }],
-            },
-            nowMs,
-            resolveSessionRow: resolveRow,
-        });
-        expect(retained?.attentionItems[1]).toEqual(expect.objectContaining({
-            sessionId: 'selected-now-read',
-            attentionPlacementReason: 'ready',
-        }));
-
-        // Navigating away releases retention, and only then does the floor take
-        // over and sort the row behind every earned reason.
-        const released = buildSessionListAttentionPlacement({
-            source,
-            options: { mode: 'global', standingPolicy },
-            nowMs,
-            resolveSessionRow: resolveRow,
-        });
-        expect(released?.attentionItems[1]).toEqual(expect.objectContaining({
-            sessionId: 'selected-now-read',
-            attentionPlacementReason: 'standing',
-        }));
-    });
 });

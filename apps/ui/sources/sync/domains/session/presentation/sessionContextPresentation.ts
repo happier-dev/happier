@@ -1,8 +1,10 @@
 import type {
-    SessionAwarenessProjectionV1,
-    SessionEffectiveAccessV1,
+    SessionAwarenessProjectionV1} from '@happier-dev/protocol/sessions/awareness/projectionV1';
+import type {
+    SessionEffectiveAccessV1} from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
+import type {
     SessionViewerProjectionV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/personal/viewer';
 import { isSessionAwarenessContentReadableV1 } from '@happier-dev/protocol/sessions/awareness/availability';
 import { teamDirectoryQueryKeyV1 } from '@happier-dev/protocol/teams';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
@@ -10,7 +12,10 @@ import { getTeamSnapshot, getTeamsDirectorySnapshot, readTeamGroup } from '@/syn
 import { resolveSessionAwarenessContentLabel } from '@/sync/domains/session/awareness/sessionAwarenessContentLabels';
 import type { ServerProfile } from '@/sync/domains/server/serverProfiles';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
-import type { SessionListHomeObservation } from '@/sync/domains/session/listing/sessionListHomeObservation';
+import type {
+    SessionListHomeObservation,
+    SessionListHomeObservationByServerId,
+} from '@/sync/domains/session/listing/sessionListHomeObservation';
 import { formatSessionPath } from '@/utils/sessions/formatPathRelativeToHome';
 import { formatShortRelativeTimeAt, readShortRelativeTimeRefreshAtMs } from '@/utils/time/formatShortRelativeTime';
 import { t } from '@/text';
@@ -270,6 +275,41 @@ export function readSessionHomeLastUpdatedRefreshAtMs(
     nowMs: number,
 ): number | null {
     return readSessionHomeLastUpdatedLabelRefreshAtMs(resolveFreshness(observation), nowMs);
+}
+
+/**
+ * Whether two observations of one Home present the same. The success time is shown only for a
+ * stale or offline Home, so a current Home advancing it on every refetch presents nothing new.
+ */
+export function areSessionHomeObservationsPresentedEqually(
+    left: SessionListHomeObservation | null | undefined,
+    right: SessionListHomeObservation | null | undefined,
+): boolean {
+    if (left === right) return true;
+    const previous = resolveFreshness(left);
+    const next = resolveFreshness(right);
+    return previous.state === next.state && readSessionHomeLastUpdatedAt(previous) === readSessionHomeLastUpdatedAt(next);
+}
+
+/**
+ * Keeps each Home's previous observation while it presents the same, and the previous map when
+ * every Home does, so surfaces that redraw on identity (virtualized rows) skip clock-only refetches.
+ */
+export function retainPresentedSessionHomeObservations(
+    previous: SessionListHomeObservationByServerId,
+    next: SessionListHomeObservationByServerId,
+): SessionListHomeObservationByServerId {
+    if (previous === next) return previous;
+    const retained: Record<string, SessionListHomeObservation | null | undefined> = {};
+    let changed = Object.keys(previous).length !== Object.keys(next).length;
+    for (const serverId in next) {
+        if (!Object.prototype.hasOwnProperty.call(next, serverId)) continue;
+        const kept = Object.prototype.hasOwnProperty.call(previous, serverId)
+            && areSessionHomeObservationsPresentedEqually(previous[serverId], next[serverId]);
+        retained[serverId] = kept ? previous[serverId] : next[serverId];
+        if (!kept) changed = true;
+    }
+    return changed ? retained : previous;
 }
 
 function readSessionHomeLastUpdatedAt(

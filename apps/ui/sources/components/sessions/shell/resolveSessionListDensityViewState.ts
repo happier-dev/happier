@@ -1,65 +1,66 @@
 import { Platform } from 'react-native';
-import { HAPPIER_SPACE_STEPS } from '@happier-dev/plugin-ui/environment';
-import { resolveHappierTypeScale } from '@happier-dev/plugin-ui/presentation/typeScale';
 import {
-    SESSION_LIST_ROW_HEIGHT_COMPACT,
-    SESSION_LIST_ROW_HEIGHT_DEFAULT,
-    SESSION_LIST_ROW_HEIGHT_MINIMAL,
-    SESSION_LIST_ROW_HEIGHT_MINIMAL_NATIVE_PHONE,
-} from './sessionListRowHeights';
-import { VIEWPORT_CLASS_MIN_EDGE_BREAKPOINTS_PX } from '@/utils/platform/viewportClass';
+    HAPPIER_COLLECTION_LIST_METRICS,
+    HAPPIER_COLLECTION_ROW_METRICS,
+    resolveHappierCollectionRowHeight,
+    resolveHappierCollectionRowIdentityMetrics,
+    resolveHappierCollectionRowLineMetrics,
+    resolveHappierCollectionRowTitleMetrics,
+    type HappierCollectionRowDensity,
+} from '@happier-dev/plugin-ui/presentation';
+import { shouldUseTouchCompactRow } from '@/components/ui/lists/collection/CollectionRowContent';
 
+/**
+ * The Session list's density adapter over the shared work-row metrics (`HAPPIER_COLLECTION_ROW_METRICS`, the one
+ * geometry owner). The Account preference (`narrow | cozy | detailed`) maps once to a row density here; rows,
+ * previews and the shell's width floor read the shared values through it.
+ */
 export type SessionListRowPlatform = 'ios' | 'android' | 'web' | 'windows' | 'macos';
 export type SessionListRowDensity = 'default' | 'compact' | 'minimal';
 
-export const SESSION_LIST_ROW_CORNER_RADIUS = 12;
-/**
- * A row's own fill inside the column — the open session inside its group's sheet, and a navigation
- * row's hover — rounded tighter than the sheet so the sheet's paper shows around it.
- */
-export const SESSION_LIST_ROW_SELECTION_RADIUS = 8;
+const COLLECTION_ROW_DENSITY: Readonly<Record<SessionListRowDensity, HappierCollectionRowDensity>> = Object.freeze({
+    default: 'detailed',
+    compact: 'comfortable',
+    minimal: 'compact',
+});
 
-const SESSION_LIST_ROW_TITLE_TYPE_ROLES = {
-    default: 'label',
-    compact: 'label',
-    minimal: 'meta',
-    // One rhythm with the phone launcher rows above it; the row keeps the native touch floor.
-    minimalNativePhone: 'heading',
-} as const;
-
-const SESSION_LIST_ROW_STATUS_TYPE_ROLES = {
-    default: 'meta',
-    compact: 'micro',
-    minimal: 'micro',
-} as const;
-
-function resolveRoleTextMetrics(role: Parameters<typeof resolveHappierTypeScale>[0]) {
-    const { weight: _weight, ...metrics } = resolveHappierTypeScale(role, Platform.OS);
-    return metrics;
+/** The shared row density a Session list density draws at. */
+export function resolveCollectionRowDensity(density: SessionListRowDensity): HappierCollectionRowDensity {
+    return COLLECTION_ROW_DENSITY[density];
 }
+
+/**
+ * A row's own fill on the column's plane (the open session, the pointer's hover): the list anatomy's row
+ * radius, so Session rows and every other navigation row take one shape. Rows draw no sheet around them.
+ */
+export const SESSION_LIST_ROW_SELECTION_RADIUS = HAPPIER_COLLECTION_LIST_METRICS.rowRadius;
 
 export function resolveSessionListRowStatusTextMetrics(density: SessionListRowDensity) {
-    return resolveRoleTextMetrics(SESSION_LIST_ROW_STATUS_TYPE_ROLES[density]);
+    return resolveHappierCollectionRowLineMetrics(COLLECTION_ROW_DENSITY[density], Platform.OS);
 }
 
-export const SESSION_LIST_ROW_IDENTITY_METRICS = {
-    default: { slotSize: 48, agentLogoSize: 37 },
-    compact: { slotSize: 30, agentLogoSize: 23 },
-    minimal: { slotSize: 18, agentLogoSize: 14 },
-    minimalNativePhone: { slotSize: 20, agentLogoSize: 16 },
-} as const;
+const identityOf = (metrics: Readonly<{ slotSize: number; markSize: number }>) =>
+    Object.freeze({ slotSize: metrics.slotSize, agentLogoSize: metrics.markSize });
+export const SESSION_LIST_ROW_IDENTITY_METRICS = Object.freeze({
+    default: identityOf(HAPPIER_COLLECTION_ROW_METRICS.identity.detailed),
+    compact: identityOf(HAPPIER_COLLECTION_ROW_METRICS.identity.comfortable),
+    minimal: identityOf(HAPPIER_COLLECTION_ROW_METRICS.identity.compact),
+    minimalNativePhone: identityOf(HAPPIER_COLLECTION_ROW_METRICS.identity.touchCompact),
+});
 
 /** Fixed horizontal anatomy shared by row paint and the shell's content-derived width floor. */
-export const SESSION_LIST_ROW_WIDTH_METRICS = {
-    borderPx: 2,
-    default: { paddingPx: 15, contentMarginPx: 14, trailingMaxShare: 0.4 },
-    compact: { paddingPx: HAPPIER_SPACE_STEPS.s12, contentMarginPx: HAPPIER_SPACE_STEPS.s12, trailingMaxShare: 0.4 },
-    minimal: { paddingPx: HAPPIER_SPACE_STEPS.s8, contentMarginPx: HAPPIER_SPACE_STEPS.s8, trailingMaxShare: 0.4 },
-    trailingMarginPx: HAPPIER_SPACE_STEPS.s8,
+const R = HAPPIER_COLLECTION_ROW_METRICS;
+export const SESSION_LIST_ROW_WIDTH_METRICS = Object.freeze({
+    // Rows lie flat on the column's plane: no sheet edge, so the content padding alone reaches the text edge.
+    borderPx: 0,
+    default: Object.freeze({ paddingPx: R.padding.detailed, contentMarginPx: R.contentGap.detailed, trailingMaxShare: R.trailingMaxShare }),
+    compact: Object.freeze({ paddingPx: R.padding.comfortable, contentMarginPx: R.contentGap.comfortable, trailingMaxShare: R.trailingMaxShare }),
+    minimal: Object.freeze({ paddingPx: R.padding.compact, contentMarginPx: R.contentGap.compact, trailingMaxShare: R.trailingMaxShare }),
+    trailingMarginPx: R.trailingGap,
     // A status mark remains distinguishable when its word yields to the title.
-    trailingMinPx: HAPPIER_SPACE_STEPS.s16,
+    trailingMinPx: R.trailingMinPx,
     titleMinCharacters: 16,
-} as const;
+});
 
 /** The shared list `Item` density a session-list row of this density uses (Drafts, Scheduled). */
 export function resolveSessionListItemDensity(density: SessionListRowDensity): 'comfortable' | 'compact' | 'tight' {
@@ -70,20 +71,14 @@ export function resolveSessionListRowTitleTextMetrics(params: Readonly<{
     density: SessionListRowDensity;
     readableNativePhoneMinimal: boolean;
 }>) {
-    const role = params.density === 'minimal' && params.readableNativePhoneMinimal
-        ? SESSION_LIST_ROW_TITLE_TYPE_ROLES.minimalNativePhone
-        : SESSION_LIST_ROW_TITLE_TYPE_ROLES[params.density];
-    return resolveRoleTextMetrics(role);
+    return resolveHappierCollectionRowTitleMetrics(COLLECTION_ROW_DENSITY[params.density], Platform.OS, params.readableNativePhoneMinimal);
 }
 
 export function resolveSessionListRowIdentityMetrics(params: Readonly<{
     density: SessionListRowDensity;
     readableNativePhoneMinimal: boolean;
 }>): Readonly<{ slotSize: number; agentLogoSize: number }> {
-    if (params.density === 'minimal' && params.readableNativePhoneMinimal) {
-        return SESSION_LIST_ROW_IDENTITY_METRICS.minimalNativePhone;
-    }
-    return SESSION_LIST_ROW_IDENTITY_METRICS[params.density];
+    return identityOf(resolveHappierCollectionRowIdentityMetrics(COLLECTION_ROW_DENSITY[params.density], params.readableNativePhoneMinimal));
 }
 
 export type SessionListDensityViewState = Readonly<{
@@ -110,37 +105,32 @@ function scaleRowHeight(height: number, uiFontScale: number | undefined): number
 const SESSION_LIST_DENSITY_VIEW_STATE_DEFAULT: SessionListDensityViewState = Object.freeze({
     compact: false,
     compactMinimal: false,
-    rowHeight: SESSION_LIST_ROW_HEIGHT_DEFAULT,
+    rowHeight: resolveHappierCollectionRowHeight('detailed'),
 });
 
 const SESSION_LIST_DENSITY_VIEW_STATE_COMPACT: SessionListDensityViewState = Object.freeze({
     compact: true,
     compactMinimal: false,
-    rowHeight: SESSION_LIST_ROW_HEIGHT_COMPACT,
+    rowHeight: resolveHappierCollectionRowHeight('comfortable'),
 });
 
 const SESSION_LIST_DENSITY_VIEW_STATE_MINIMAL: SessionListDensityViewState = Object.freeze({
     compact: true,
     compactMinimal: true,
-    rowHeight: SESSION_LIST_ROW_HEIGHT_MINIMAL,
+    rowHeight: resolveHappierCollectionRowHeight('compact'),
 });
 
 const SESSION_LIST_DENSITY_VIEW_STATE_MINIMAL_NATIVE_PHONE: SessionListDensityViewState = Object.freeze({
     compact: true,
     compactMinimal: true,
-    rowHeight: SESSION_LIST_ROW_HEIGHT_MINIMAL_NATIVE_PHONE,
+    rowHeight: resolveHappierCollectionRowHeight('compact', true),
 });
 
+/** A narrow row on a phone-width window is the readable touch row (the shared rule, `shouldUseTouchCompactRow`). */
 export function shouldUseReadablePhoneMinimalSessionRow(
     options: ResolveSessionListDensityViewStateOptions | null | undefined,
 ): boolean {
-    return Boolean(
-        options
-        && !options.isTablet
-        && (options.platform === 'ios' || options.platform === 'android'
-            || (options.platform === 'web' && options.windowWidth !== undefined
-                && options.windowWidth < VIEWPORT_CLASS_MIN_EDGE_BREAKPOINTS_PX.tabletMin)),
-    );
+    return Boolean(options && shouldUseTouchCompactRow(options));
 }
 
 export function resolveSessionListDensityViewState(

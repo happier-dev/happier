@@ -133,17 +133,15 @@ describe('localSettingsParse', () => {
         expect(localSettingsParse({ sessionListFocusedFolderV1: { ...stored, workspace: { ...stored.workspace, rootPath: undefined } } }).sessionListFocusedFolderV1).toBeNull();
     });
 
-    it('keeps collapsed session-list group state local', () => {
-        expect(localSettingsParse(null).collapsedGroupKeysV1).toEqual({});
-        expect(localSettingsParse({
-            collapsedGroupKeysV1: {
-                group_a: true,
-                group_b: false,
-            },
-        }).collapsedGroupKeysV1).toEqual({
-            group_a: true,
-            group_b: false,
-        });
+    it('keeps interaction memory out of the current preference projection', () => {
+        const selection = { v: 1, byAccountScope: { 'home/account': { sessionWork: { spaceId: 'my-work' }, workflow: { spaceId: 'flows' } } } };
+        const restored = localSettingsParse({ collectionSpaceV1: selection, collapsedGroupKeysV1: { group_a: true },
+            sessionInfoExpandedSectionsV1: { memory: true },
+            sidebarCollapsed: true });
+        for (const key of ['collectionSpaceV1', 'collapsedGroupKeysV1', 'sessionInfoExpandedSectionsV1']) {
+            expect(restored).not.toHaveProperty(key);
+        }
+        expect(restored.sidebarCollapsed).toBe(true);
     });
 
     it('defaults the loading indicator to the wave, and degrades an unknown style id without resetting other local settings', () => {
@@ -344,16 +342,6 @@ describe('localSettingsParse', () => {
         });
 
         expect(applied.brandHeroSeenAt).toBe(1_789_000_000_000);
-    });
-
-    it('applies collapsed session-list group state through local settings', () => {
-        const applied = applyLocalSettings(localSettingsDefaults, {
-            collapsedGroupKeysV1: {
-                group_a: true,
-            },
-        });
-
-        expect(applied.collapsedGroupKeysV1).toEqual({ group_a: true });
     });
 
     it('falls back to null for malformed mobile brand hero dismissal timestamps', () => {
@@ -700,12 +688,12 @@ describe('localSettingsParse', () => {
         expect(parsed).not.toHaveProperty('keyboardShortcutOverridesV1');
     });
 
-    it('parses session MRU order as a local string list without accepting malformed entries', () => {
+    it('keeps navigation history outside the local preference projection', () => {
         const parsed = localSettingsParse({
             sessionMruOrderV1: ['server-a:sess-2', '', 123, ' server-a:sess-1 '],
         });
 
-        expect(parsed.sessionMruOrderV1).toEqual(['server-a:sess-2', 'server-a:sess-1']);
+        expect(parsed).not.toHaveProperty('sessionMruOrderV1');
     });
 
     it('accepts explicit attention device overrides and preserves a disabled quiet-hours override', () => {

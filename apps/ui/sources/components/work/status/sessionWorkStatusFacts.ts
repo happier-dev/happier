@@ -14,6 +14,7 @@ import { listSessionListPresentationPendingRequests, type SessionListPresentatio
 import { t } from '@/text';
 
 import type { WorkStatusInput } from './resolveWorkStatusTone';
+import { createCollectionSessionRequestIdentity } from '@/components/ui/lists/collection/collectionRequestRef';
 
 export type SessionWorkStatusFacts = Extract<WorkStatusInput, { kind: 'session' }>['facts'];
 
@@ -93,6 +94,8 @@ export function sessionWorkStatusFactsFromStatus(
         viewer,
         attentionType: attention.type,
         ...(request ? { currentRequest: request } : {}),
+        currentRequestRef: request ? createCollectionSessionRequestIdentity(request)
+            : requestReason && 'currentRequestRef' in session ? session.currentRequestRef ?? null : null,
         ...(requestFollowEvent ? { requestFollowEvent } : {}),
         archiving: status.state === 'archiving',
         word: status.state === 'archiving' ? status.statusText

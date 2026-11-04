@@ -2,27 +2,20 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { SessionListSample, type SessionListSampleGroup, type SessionListSampleRow } from '@/components/settings/session/SessionListPreview';
+import { SessionListSample } from '@/components/settings/session/SessionListPreview';
+import { buildSessionListArrangementSample } from '@/components/settings/session/sessionListArrangementSample';
 import { SessionComposerSample, SessionTranscriptSample } from '@/components/settings/session/SessionSettingPreviews';
 import { APP_RAIL_WIDTH_PX, APP_SHELL_TITLE_STRIP_HEIGHT_PX } from '@/components/navigation/shell/appRail/appRailMetrics';
 import { GlassPresetPreview } from '@/components/settings/appearance/GlassAppearanceControls';
 import { GlassSurface } from '@/components/ui/glass/GlassSurface';
 import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
-import {
-    applySessionListAttentionPlacementWithinGroups,
-    buildSessionListAttentionPlacement,
-} from '@/sync/domains/session/listing/sessionListAttentionPlacement';
-import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
-import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
-import type { SessionPersonalAttentionReasonV1 } from '@happier-dev/protocol';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { shadowLevelStyle } from '@/shadowElevation';
-import type { SessionListLayoutChoice } from '@/sync/domains/session/listing/sessionListLayout';
 import { t } from '@/text';
 
-import type { AttentionPlacementChoice, PersonalizeChoices, PersonalizePageId } from './personalizeFlowModel';
+import type { PersonalizeChoices, PersonalizePageId } from './personalizeFlowModel';
 
 /** The region a step changes, ringed on the stage. */
 export type PersonalizeStageFocus = 'none' | 'window' | 'sessions' | 'transcript' | 'notifications';
@@ -33,90 +26,6 @@ export function resolvePersonalizeStageFocus(page: PersonalizePageId): Personali
     if (page === 'notifications') return 'notifications';
     // Look changes the whole app (which already repaints); the style and the summary change nothing.
     return 'none';
-}
-
-type SampleKey = 'reconnect' | 'craft' | 'review' | 'pricing' | 'docs';
-
-function sampleRow(key: SampleKey): SessionListSampleRow {
-    switch (key) {
-        case 'reconnect': return { id: 'personalize-reconnect', title: t('personalize.sampleSessionReconnect'), project: '~/happier', status: { label: t('personalize.sampleWorking'), tone: 'neutral' } };
-        case 'craft': return { id: 'personalize-craft', title: t('personalize.sampleSessionCraft'), project: '~/happier', status: { label: t('personalize.sampleNeedsYou'), tone: 'attention' } };
-        case 'review': return { id: 'personalize-review', title: t('personalize.sampleSessionReview'), project: '~/happier', status: { label: t('personalize.sampleNeedsYou'), tone: 'attention' } };
-        case 'pricing': return { id: 'personalize-pricing', title: t('personalize.sampleSessionPricing'), project: '~/website', status: { label: t('personalize.sampleReady'), tone: 'attention' } };
-        case 'docs': return { id: 'personalize-docs', title: t('personalize.sampleSessionDocs'), project: '~/website' };
-    }
-}
-
-const SAMPLE_NOW_MS = 1_000_000;
-
-function sampleSession(key: SampleKey, primary: SessionPersonalAttentionReasonV1 | null, patch: Partial<SessionListRenderableSession> = {}): SessionListRenderableSession {
-    return {
-        id: `personalize-${key}`,
-        seq: 2,
-        createdAt: 1,
-        updatedAt: SAMPLE_NOW_MS,
-        active: true,
-        activeAt: SAMPLE_NOW_MS,
-        metadataVersion: 1,
-        agentStateVersion: 1,
-        metadata: null,
-        thinking: false,
-        thinkingAt: 0,
-        presence: 'online',
-        viewer: {
-            latestFailureSeq: null,
-            readState: { state: 'tracking', lastViewedSessionSeq: primary === 'ready_after_read' ? 1 : 2, unreadSince: null },
-            relevance: { relevant: true, reasons: ['followed_by_me'] },
-            follow: { follows: true, notificationLevel: 'none' },
-            notification: { level: 'none', source: 'preference' },
-            attention: { needsAttention: primary !== null, reasons: primary ? [primary] : [], primary, presentation: 'full' },
-        },
-        ...patch,
-    };
-}
-
-// Static viewer/runtime facts, shaped exactly like the live listing owner's inputs.
-const SAMPLE_SESSIONS: Readonly<Record<SampleKey, SessionListRenderableSession>> = {
-    reconnect: sampleSession('reconnect', null, { thinking: true, thinkingAt: SAMPLE_NOW_MS, latestTurnStatus: 'in_progress', latestTurnStatusObservedAt: SAMPLE_NOW_MS }),
-    craft: sampleSession('craft', 'permission_required', { hasPendingPermissionRequests: true, pendingRequestObservedAt: SAMPLE_NOW_MS }),
-    review: sampleSession('review', 'user_action_required', { hasPendingUserActionRequests: true, pendingRequestObservedAt: SAMPLE_NOW_MS }),
-    pricing: sampleSession('pricing', 'ready_after_read', { latestTurnStatus: 'completed', latestTurnStatusObservedAt: SAMPLE_NOW_MS, lastTurnCompletedAt: SAMPLE_NOW_MS }),
-    docs: sampleSession('docs', null, { active: false }),
-};
-
-/** Static group fixtures consume the live owner's reason classification and ordering. */
-export function buildPersonalizeListSample(layout: SessionListLayoutChoice, attention: AttentionPlacementChoice): SessionListSampleGroup[] {
-    const groups: Array<{ heading: string; keys: SampleKey[] }> = layout === 'projects'
-        ? [{ heading: '~/happier', keys: ['reconnect', 'craft', 'review'] }, { heading: '~/website', keys: ['pricing', 'docs'] }]
-        : layout === 'recent_activity'
-            ? [{ heading: t('sessionHistory.today'), keys: ['reconnect', 'review', 'pricing'] }, { heading: t('sessionHistory.yesterday'), keys: ['craft', 'docs'] }]
-            : [{ heading: t('common.active'), keys: ['reconnect', 'review', 'pricing'] }, { heading: t('common.inactive'), keys: ['craft', 'docs'] }];
-    const rows = new Map(groups.flatMap(group => group.keys.map(key => [SAMPLE_SESSIONS[key].id, { session: SAMPLE_SESSIONS[key], row: sampleRow(key) }] as const)));
-    const source: SessionListIndexItem[] = groups.flatMap((group, index): SessionListIndexItem[] => {
-        const groupKey = `personalize-group-${index}`;
-        const groupKind: 'project' | 'date' | 'active' = layout === 'projects' ? 'project' : layout === 'recent_activity' ? 'date' : 'active';
-        return [
-            { type: 'header' as const, title: group.heading, groupKey },
-            ...group.keys.map(key => ({ type: 'session' as const, serverId: 'personalize-sample-home', sessionId: SAMPLE_SESSIONS[key].id, groupKey, groupKind })),
-        ];
-    });
-    const params = {
-        source,
-        options: { mode: attention },
-        resolveSessionRow: (_serverId: string | null | undefined, id: string) => rows.get(id)?.session ?? null,
-        nowMs: SAMPLE_NOW_MS,
-    };
-    const global = buildSessionListAttentionPlacement(params);
-    const arranged = global ? [...global.attentionItems, ...global.remainder] : applySessionListAttentionPlacementWithinGroups(params);
-    const result: Array<{ heading: string; rows: SessionListSampleRow[] }> = [];
-    for (const item of arranged) {
-        if (item.type === 'header') result.push({ heading: item.title, rows: [] });
-        else if (item.type === 'session') {
-            const row = rows.get(item.sessionId)?.row;
-            if (row) result.at(-1)?.rows.push(row);
-        }
-    }
-    return result.filter(group => group.rows.length > 0);
 }
 
 const SIDEBAR_WIDTH = 248;
@@ -140,7 +49,7 @@ export const PersonalizeStage = React.memo(function PersonalizeStage(props: Read
     const { theme } = useUnistyles();
     const { draft, focus } = props;
     const groups = React.useMemo(
-        () => buildPersonalizeListSample(draft.listLayout, draft.attention),
+        () => buildSessionListArrangementSample(draft.listLayout, draft.attention),
         [draft.attention, draft.listLayout],
     );
     const ring = { borderColor: theme.colors.state.active.foreground };

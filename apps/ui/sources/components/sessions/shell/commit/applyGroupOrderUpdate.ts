@@ -2,37 +2,18 @@ import type { SessionListTreeModel } from '../drop-resolution/sessionListTreeTyp
 import { buildOrderMapAfterMove } from './orderMapUpdate';
 
 type GroupOrderMap = Readonly<Record<string, ReadonlyArray<string> | undefined>>;
-export type SessionListGroupOrderChildKind = 'sessionsOnly' | 'foldersOnly' | 'mixed';
-
-export function resolveSessionListGroupOrderChildKind(
-    sourceKind: 'session' | 'folder', folderSortMode: 'foldersFirst' | 'mixed' | undefined,
-): SessionListGroupOrderChildKind {
-    if (folderSortMode === 'mixed') return 'mixed';
-    return sourceKind === 'session' ? 'sessionsOnly' : 'foldersOnly';
-}
-
-function shouldIncludeOrderKey(
-    kind: SessionListGroupOrderChildKind,
-    rowKind: string,
-): boolean {
-    if (kind === 'mixed') return true;
-    if (kind === 'sessionsOnly') return rowKind === 'session';
-    return rowKind === 'folder';
-}
-
 export function collectDirectChildOrderKeys(
     tree: SessionListTreeModel,
     containerId: string,
-    childKind: SessionListGroupOrderChildKind,
 ): string[] {
-    const keys: string[] = [];
+    const keys = new Set<string>();
     for (const metadata of tree.rowMetadataById.values()) {
         if (metadata.containerId !== containerId) continue;
-        if (metadata.kind === 'workspace-root') continue;
-        if (!shouldIncludeOrderKey(childKind, metadata.kind)) continue;
-        if (metadata.orderKey) keys.push(metadata.orderKey);
+        if (metadata.kind !== 'session') continue;
+        if (metadata.item.type === 'session' && metadata.item.supplementalAttention) continue;
+        if (metadata.orderKey) keys.add(metadata.orderKey);
     }
-    return keys;
+    return [...keys];
 }
 
 export function buildSessionListGroupOrderAfterTreeDrop(params: Readonly<{
@@ -42,29 +23,31 @@ export function buildSessionListGroupOrderAfterTreeDrop(params: Readonly<{
     containerId: string;
     beforeRowId?: string | null;
     afterRowId?: string | null;
-    childKind?: SessionListGroupOrderChildKind;
 }>): Record<string, string[]> | null {
     const moved = params.tree.rowMetadataById.get(params.movedRowId);
     const container = params.tree.containerMetadataById.get(params.containerId);
-    if (!moved?.orderKey || !container?.groupKey) return null;
-    const childKind = params.childKind ?? 'mixed';
+    if (moved?.kind !== 'session' || !moved.orderKey || !container?.groupKey) return null;
+    if (moved.item.type === 'session' && moved.item.supplementalAttention) return null;
+    for (const rowId of [params.beforeRowId, params.afterRowId]) {
+        const anchor = rowId ? params.tree.rowMetadataById.get(rowId)?.item : null;
+        if (anchor?.type === 'session' && anchor.supplementalAttention) return null;
+    }
 
     const beforeKey = params.beforeRowId
         ? (() => {
             const before = params.tree.rowMetadataById.get(params.beforeRowId);
-            return before && shouldIncludeOrderKey(childKind, before.kind) ? before.orderKey : null;
+            return before?.kind === 'session' && before.item.type === 'session' && !before.item.supplementalAttention ? before.orderKey : null;
         })()
         : null;
     const afterKey = params.afterRowId
         ? (() => {
             const after = params.tree.rowMetadataById.get(params.afterRowId);
-            return after && shouldIncludeOrderKey(childKind, after.kind) ? after.orderKey : null;
+            return after?.kind === 'session' && after.item.type === 'session' && !after.item.supplementalAttention ? after.orderKey : null;
         })()
         : null;
 
-    const directChildKeys = collectDirectChildOrderKeys(params.tree, params.containerId, childKind);
-    const allowedKeys = new Set([...directChildKeys, moved.orderKey]);
-    const nextMap = buildOrderMapAfterMove({
+    const directChildKeys = collectDirectChildOrderKeys(params.tree, params.containerId);
+    return buildOrderMapAfterMove({
         currentMap: params.currentMap,
         scopeKey: container.groupKey,
         movedKey: moved.orderKey,
@@ -72,10 +55,6 @@ export function buildSessionListGroupOrderAfterTreeDrop(params: Readonly<{
         beforeKey,
         afterKey,
     });
-    return {
-        ...nextMap,
-        [container.groupKey]: (nextMap[container.groupKey] ?? []).filter((key) => allowedKeys.has(key)),
-    };
 }
 
 export async function applyGroupOrderUpdate(params: Readonly<{
@@ -85,7 +64,6 @@ export async function applyGroupOrderUpdate(params: Readonly<{
     containerId: string;
     beforeRowId?: string | null;
     afterRowId?: string | null;
-    childKind?: SessionListGroupOrderChildKind;
     setSessionListGroupOrderV1: (next: Record<string, string[]>) => Promise<void>;
 }>): Promise<boolean> {
     const next = buildSessionListGroupOrderAfterTreeDrop(params);

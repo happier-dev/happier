@@ -12,7 +12,7 @@ import { GlassEffectiveStateLine, GlassPresetPreview } from '@/components/settin
 import { ThemeModePreview } from '@/components/settings/appearance/ThemeModePreview';
 import { buildSettingHref } from '@/components/settings/catalog/settingDeclarations';
 import { useTauriNotificationPermissionDiagnostics } from '@/components/settings/notifications/useTauriNotificationPermissionDiagnostics';
-import { SessionListDensityPreview, SessionListLayoutPreview, SessionListSample } from '@/components/settings/session/SessionListPreview';
+import { SessionListDensityPreview, SessionListLayoutPreview } from '@/components/settings/session/SessionListPreview';
 import { ToolStylePreview, TranscriptLayoutPreview } from '@/components/settings/session/SessionSettingPreviews';
 import { THINKING_DISPLAY_CHOICES } from '@/components/settings/session/thinkingDisplayChoice';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -32,7 +32,7 @@ import { Modal } from '@/modal';
 import { t } from '@/text';
 import { desktopHostKind } from '@/utils/platform/desktopHost';
 
-import { buildPersonalizeListSample, PersonalizeStage } from './PersonalizeStage';
+import { PersonalizeStage } from './PersonalizeStage';
 import {
     PERSONALIZE_STEPS,
     STARTING_STYLES,
@@ -55,7 +55,7 @@ import {
 import type { PersonalizeFlow } from './usePersonalizeFlow';
 
 const GLASS_PRESETS: readonly GlassPreset[] = ['solid', 'auto', 'everywhere'];
-const ATTENTION_CHOICES: readonly AttentionPlacementChoice[] = ['off', 'withinGroups', 'global'];
+const ATTENTION_CHOICES: readonly AttentionPlacementChoice[] = ['both', 'top', 'inPlace'];
 
 /** A choice's section: its label, where the choice applies, and what it means. */
 function ChoiceSection(props: Readonly<{
@@ -358,7 +358,7 @@ function WorkStep(props: Readonly<{ flow: PersonalizeFlow; testID: string }>) {
                     options={SESSION_LIST_LAYOUT_CHOICES.map((layout) => ({
                         id: layout,
                         title: personalizeLabels.listLayout(layout),
-                        preview: <SessionListLayoutPreview layout={`layout:${layout}`} />,
+                        preview: <SessionListLayoutPreview layout={layout} attention={flow.draft.attention} />,
                     }))}
                 />
             </ChoiceSection>
@@ -396,13 +396,7 @@ function AttentionStep(props: Readonly<{ flow: PersonalizeFlow; testID: string }
                     options={ATTENTION_CHOICES.map((placement) => ({
                         id: placement,
                         title: personalizeLabels.attention(placement),
-                        preview: (
-                            <View style={styles.listMiniatureViewport} pointerEvents="none">
-                                <View style={styles.listMiniatureCanvas}>
-                                    <SessionListSample density="narrow" groups={buildPersonalizeListSample(flow.draft.listLayout, placement)} width={280} />
-                                </View>
-                            </View>
-                        ),
+                        preview: <SessionListLayoutPreview layout={flow.draft.listLayout} attention={placement} />,
                     }))}
                 />
             </ChoiceSection>
@@ -603,16 +597,6 @@ const styles = StyleSheet.create((theme) => ({
         width: STAGE_CANVAS.width,
         height: STAGE_CANVAS.height,
         transformOrigin: 'top left',
-    },
-    listMiniatureViewport: {
-        flex: 1,
-        overflow: 'hidden',
-    },
-    listMiniatureCanvas: {
-        width: 280,
-        transform: [{ scale: 0.5 }],
-        transformOrigin: 'top left',
-        paddingTop: theme.space.s8,
     },
     permission: {
         flexDirection: 'row',

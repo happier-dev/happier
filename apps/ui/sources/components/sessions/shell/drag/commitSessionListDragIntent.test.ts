@@ -1,22 +1,30 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
+import { sessionAddressKey } from '@/sync/domains/session/sessionAddress';
 import type { SessionFolderWorkspaceRefV1, SessionFoldersV1 } from '@/sync/domains/session/folders';
 
 import { commitSessionListDragIntent, resolveSessionListDragIntent } from './commitSessionListDragIntent';
 import { createSessionListOrganizationActionAdapter, invokeSessionListOrganizationAction,
     registerMountedSessionListOrganizationAction } from './sessionListOrganizationAction';
-import { listSessionListEntityDropDestinations, readSessionListFolderAssignmentDestination, resolveSessionListFolderAssignmentDrop, resolveSessionListEntityDrop } from './resolveSessionListEntityDrop';
+import { listSessionListEntityDropDestinations, readSessionListFolderAssignmentDestination, resolveSessionListFolderAssignmentDrop,
+    readSessionListSpaceMembershipDestination, resolveSessionListSpaceMembershipDrop, resolveSessionListEntityDrop } from './resolveSessionListEntityDrop';
 import { buildSessionListIndexWithServerScope } from '@/sync/store/sessionListIndex/buildSessionListIndexWithServerScope';
-import { buildSessionFolderAssignmentKey, resolveFolderAwareSessionListSourceForLayout } from '@/sync/domains/session/folders';
+import { buildSessionFolderAssignmentKey } from '@/sync/domains/session/folders';
+import { buildSessionSectionGroupKey, projectSessionSectionListIndex } from '@/sync/domains/session/organization/sections';
 import { projectSessionListIndexForLayout } from '@/sync/domains/session/listing/sessionListLayout';
-import { createSessionFixture } from '@/dev/testkit';
+import { createSessionFixture, createSessionListRenderableSessionFixture } from '@/dev/testkit';
 import { resolvePutUnderEligibility } from '@/components/sessions/work/putUnderCandidates';
 import { createSessionManagerEligibilitySnapshot } from '@/sync/ops/relations/sessionManagerEligibility';
-import { createActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol';
+import { createActionExecutor} from '@happier-dev/protocol/actions/actionExecutor';
+import { type ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import type { SessionListDragIntent } from './_types';
 import { resolveWorkspaceRootTreeRowId, treeRowId } from '../drop-resolution/treeRowId';
 import { buildSessionListTreeRows } from '../drop-resolution/buildSessionListTreeRows';
+import { buildSessionListDragSource } from '../drop-resolution/buildSessionListDragSource';
+import { resolveSessionListInstruction } from '../drop-resolution/resolveSessionListInstruction';
+import { beginSessionListStagedMove, stepSessionListStagedMove, resolveSessionListStagedMoveResult } from '../keyboardMove/sessionListStagedMove';
+import { buildSessionListDragIntent } from './sessionListDragIntent';
 import { buildSessionWorkspaceOrderAfterTreeDrop } from '../commit/applyWorkspaceOrderUpdate';
 import {
     buildSessionProjectGroupingIdentity,
@@ -34,8 +42,8 @@ const workspaceA: SessionFolderWorkspaceRefV1 = {
 };
 
 const projectGroupKey = 'project-a';
-const folderAGroupKey = 'folder:server-a:workspaceScope:server-a:machine-a:/repo/a:folder-a';
-const folderBGroupKey = 'folder:server-a:workspaceScope:server-a:machine-a:/repo/a:folder-b';
+const folderAGroupKey = buildSessionSectionGroupKey({ serverId: 'server-a', sectionId: 'folder-a' });
+const folderBGroupKey = buildSessionSectionGroupKey({ serverId: 'server-a', sectionId: 'folder-b' });
 
 function projectHeader(): Extract<SessionListIndexItem, { type: 'header' }> {
     return {
@@ -114,7 +122,6 @@ it('refuses an unanchored root drop into the source current place without an ord
 function makeContext(overrides?: Partial<Parameters<typeof commitSessionListDragIntent>[0]['context']>) {
     const sessions = Object.fromEntries((overrides?.latestItems ?? items()).flatMap(item => item.type === 'session'
         ? [[item.sessionId, createSessionFixture({ id: item.sessionId, serverId: item.serverId })] as const] : []));
-    const setSessionFoldersV1 = vi.fn();
     const setSessionListGroupOrderV1 = vi.fn();
     const setSessionWorkspaceOrderV1 = vi.fn();
     const setSessionFolderAssignment = vi.fn(
@@ -123,11 +130,10 @@ function makeContext(overrides?: Partial<Parameters<typeof commitSessionListDrag
     return {
         context: {
             latestItems: items(),
-            sessionFoldersV1: folders(),
+            sessionSections: folders().folders.map(folder => ({ address: { serverId: 'server-a', sectionId: folder.id },
+                display: { status: 'available' as const, value: { name: folder.name, icon: null } }, sortKey: folder.sortKey ?? null })),
             sessionListGroupOrderV1: {},
             sessionWorkspaceOrderV1: {},
-            now: () => 100,
-            setSessionFoldersV1,
             setSessionListGroupOrderV1,
             setSessionWorkspaceOrderV1,
             setSessionFolderAssignment,
@@ -140,9 +146,227 @@ function makeContext(overrides?: Partial<Parameters<typeof commitSessionListDrag
             },
             ...overrides,
         },
-        spies: { setSessionFoldersV1, setSessionListGroupOrderV1, setSessionWorkspaceOrderV1, setSessionFolderAssignment },
+        spies: { setSessionListGroupOrderV1, setSessionWorkspaceOrderV1, setSessionFolderAssignment },
     };
 }
+
+describe('Account section destinations', () => {
+    it('preserves filing during pin reordering and applies Recent ordering to filed pins too', async () => {
+        const { context, spies } = makeContext({ isFolderOrganizationEnabled: () => false, latestItems: [
+            { type: 'header', headerKind: 'pinned', title: 'Pinned', groupKey: 'pinned', serverId: 'server-a' },
+            { ...sessionItem('first-pin', 'pinned', null, 0), groupKind: 'pinned' },
+            { ...sessionItem('filed-pin', 'pinned', 'launch', 0), groupKind: 'pinned' },
+        ] });
+        const tree = buildSessionListTreeRows({ items: context.latestItems });
+        const source = tree.rowMetadataById.get(treeRowId.session('server-a', 'filed-pin'))!;
+        const intent: SessionListDragIntent = { sourceRowId: source.rowId, sourceKind: 'leaf', instructionKind: 'reorder-before',
+            targetRowId: treeRowId.session('server-a', 'first-pin'), containerId: source.containerId,
+            parentRowId: null, depth: 0, edge: 'top', sourceSnapshotSignature: '' };
+        expect(await commitSessionListDragIntent({ intent, context: { ...context, sessionListLayoutV1: 'recent_activity' } }))
+            .toEqual({ ok: false, reason: 'date-ordering-mode' });
+        expect(await commitSessionListDragIntent({ intent, context })).toEqual({ ok: true });
+        expect(spies.setSessionFolderAssignment).not.toHaveBeenCalled();
+        expect(spies.setSessionListGroupOrderV1).toHaveBeenCalledTimes(1);
+    });
+
+    it('refuses an incidental attention Session as a durable sibling-order anchor', () => {
+        const { context } = makeContext({ latestItems: items().map(item => item.type === 'session' && item.sessionId === 'root-a'
+            ? { ...item, supplementalAttention: true } : item) });
+        expect(resolveSessionListDragIntent({ context, intent: {
+            sourceRowId: treeRowId.session('server-a', 'root-b'), sourceKind: 'leaf', instructionKind: 'reorder-before',
+            targetRowId: treeRowId.session('server-a', 'root-a'), containerId: treeRowId.workspaceRoot(projectGroupKey),
+            parentRowId: null, depth: 0, edge: 'top', sourceSnapshotSignature: '',
+        } })).toEqual({ ok: false, reason: 'blocked-intent' });
+    });
+
+    it('admits a shelf-origin drop by its real Session address and refuses an unrelated carried Session', () => {
+        const base = sessionItem('root-a', projectGroupKey, null, 0);
+        const shelf = { ...base, groupKind: 'attention' as const, groupKey: 'attention', occurrenceRole: 'needsYou' as const };
+        const scope = { serverId: 'server-a', accountId: 'account' };
+        const { context } = makeContext({ scope, putSessionUnder: async () => 'applied', latestItems: [
+            { type: 'header', title: 'Attention', headerKind: 'attention', groupKey: 'attention' }, shelf, ...items(),
+        ] });
+        const sourceRowId = treeRowId.session(scope.serverId, 'root-a', undefined, 'needsYou');
+        const intent: SessionListDragIntent = { sourceRowId, sourceKind: 'leaf', instructionKind: 'nest-into',
+            targetRowId: treeRowId.session(scope.serverId, 'root-b'), containerId: null, parentRowId: null,
+            depth: 1, edge: null, sourceSnapshotSignature: '' };
+        const resolve = (sessionId: string) => resolveSessionListEntityDrop({
+            item: { kind: 'session', scope, address: { serverId: scope.serverId, sessionId } }, intent, context,
+            preview: () => ({ verb: 'Move', target: 'Lead', consequence: 'Reports to Lead' }),
+            reason: code => ({ code, message: code }),
+        });
+        expect(resolve('root-a')).toMatchObject({ status: 'allowed', effect: {
+            actionId: 'session.manager.set', input: { sessionId: 'root-a', managerSessionId: 'root-b' },
+        } });
+        expect(resolve('inside-a')).toMatchObject({ status: 'refused' });
+    });
+
+    const section = { ...folderHeader('launch', 'section-launch', 0), workspace: undefined };
+    const otherProject = { ...projectHeader(), groupKey: 'project-b', workspaceKey: 'project-b',
+        workspace: { ...workspaceA, machineId: 'other-machine', rootPath: '/other' } };
+    function sectionIntent(sourceId = 'root-a'): SessionListDragIntent {
+        return { sourceRowId: treeRowId.session('server-a', sourceId), sourceKind: 'leaf',
+            instructionKind: 'nest-into', targetRowId: treeRowId.folder('server-a', 'launch'),
+            containerId: treeRowId.folder('server-a', 'launch'), parentRowId: null,
+            depth: 1, edge: null, sourceSnapshotSignature: '' };
+    }
+
+    it('admits a section before any Project and moves same-Home Sessions across machines once', async () => {
+        const { context, spies } = makeContext({ latestItems: [section, projectHeader(),
+            sessionItem('root-a', projectGroupKey, null, 0), otherProject,
+            { ...sessionItem('other', 'project-b', null, 0), workspace: otherProject.workspace }] });
+        expect(await commitSessionListDragIntent({ intent: sectionIntent('other'), context })).toEqual({ ok: true });
+        expect(spies.setSessionFolderAssignment.mock.calls).toEqual([[{ serverId: 'server-a', sessionId: 'other', folderId: 'launch' }]]);
+    });
+
+    it('refuses a section from another Home even when its local id matches', async () => {
+        const { context, spies } = makeContext({ latestItems: [
+            { ...section, serverId: 'server-b' }, projectHeader(), sessionItem('root-a', projectGroupKey, null, 0),
+        ] });
+        const intent = { ...sectionIntent(), targetRowId: treeRowId.folder('server-b', 'launch'),
+            containerId: treeRowId.folder('server-b', 'launch') };
+        expect(await commitSessionListDragIntent({ intent, context })).toEqual({ ok: false, reason: 'scope-mismatch' });
+        expect(spies.setSessionFolderAssignment).not.toHaveBeenCalled();
+    });
+
+    it('returns to its own Project and refuses another Project without a membership write', async () => {
+        const { context, spies } = makeContext({ latestItems: [section,
+            sessionItem('filed', 'section-launch', 'launch', 1), projectHeader(), otherProject] });
+        const intent: SessionListDragIntent = { ...sectionIntent('filed'), instructionKind: 'move-to-root',
+            targetRowId: null, containerId: treeRowId.workspaceRoot('project-b'), depth: 0 };
+        expect(await commitSessionListDragIntent({ intent, context })).toEqual({ ok: false, reason: 'scope-mismatch' });
+        expect(spies.setSessionFolderAssignment).not.toHaveBeenCalled();
+        expect(await commitSessionListDragIntent({ intent: { ...intent, containerId: treeRowId.workspaceRoot(projectGroupKey) }, context })).toEqual({ ok: true });
+        expect(spies.setSessionFolderAssignment.mock.calls).toEqual([[{ serverId: 'server-a', sessionId: 'filed', folderId: null }]]);
+        expect(spies.setSessionListGroupOrderV1).toHaveBeenCalledWith({ [projectGroupKey]: [
+            sessionAddressKey({ serverId: 'server-a', sessionId: 'filed' }),
+        ] });
+    });
+
+    it('returns a filed Session through the real accepted-Project producer across checkouts', () => {
+        const source = buildSessionListIndexWithServerScope({ sessions: {
+            filed: createSessionListRenderableSessionFixture({ id: 'filed', createdAt: 3, projectKey: 'accepted-project',
+                metadata: { machineId: 'machine-a', path: '/repo/a' } }),
+            checkout: createSessionListRenderableSessionFixture({ id: 'checkout', createdAt: 2, projectKey: 'accepted-project',
+                metadata: { machineId: 'other-machine', path: '/other' } }),
+            foreign: createSessionListRenderableSessionFixture({ id: 'foreign', createdAt: 1, projectKey: 'other-project',
+                metadata: { machineId: 'machine-a', path: '/repo/a' } }),
+        }, machines: {}, layoutV1: 'projects', serverScope: { serverId: 'server-a' } });
+        const filed = source.find((item): item is Extract<SessionListIndexItem, { type: 'session' }> => item.type === 'session' && item.sessionId === 'filed');
+        const ownProject = source.find((item): item is Extract<SessionListIndexItem, { type: 'header' }> => item.type === 'header'
+            && item.headerKind === 'project' && item.projectKey?.projectKey === 'accepted-project');
+        const foreignProject = source.find((item): item is Extract<SessionListIndexItem, { type: 'header' }> => item.type === 'header'
+            && item.headerKind === 'project' && item.projectKey?.projectKey === 'other-project');
+        if (!filed || !ownProject || !foreignProject) throw new Error('Expected the accepted Project producer to preserve qualified identity');
+        const scope = { serverId: 'server-a', accountId: 'account' };
+        const { context, spies } = makeContext({ scope, latestItems: [section,
+            { ...filed, folderId: 'launch', groupKind: 'folder', groupKey: 'section-launch' },
+            ...source.filter(item => item !== filed)] });
+        const resolve = (project: typeof ownProject) => resolveSessionListEntityDrop({
+            item: { kind: 'session', scope, address: { serverId: 'server-a', sessionId: 'filed' } },
+            intent: { ...sectionIntent('filed'), instructionKind: 'move-to-root', targetRowId: null,
+                containerId: resolveWorkspaceRootTreeRowId(project), depth: 0 }, context,
+            preview: () => ({ verb: 'Return', target: 'Project' }), reason: code => ({ code, message: code }),
+        });
+        expect(resolve(ownProject)).toMatchObject({ status: 'allowed', effect: {
+            actionId: 'session.section.set', input: { sessionId: 'filed', sectionId: null },
+        } });
+        expect(resolve(foreignProject)).toMatchObject({ status: 'refused', reason: { code: 'scope-mismatch' } });
+        expect(spies.setSessionFolderAssignment).not.toHaveBeenCalled();
+    });
+
+    it('uses accepted Project identity across checkouts and refuses another Project at the same path', () => {
+        const scope = { serverId: 'server-a', accountId: 'account' };
+        const projectKey = { serverId: 'server-a', projectKey: 'accepted-project' };
+        const { context, spies } = makeContext({ scope, latestItems: [section,
+            { ...sessionItem('filed', 'section-launch', 'launch', 1), projectKey },
+            { ...projectHeader(), projectKey, workspace: otherProject.workspace },
+            { ...otherProject, workspace: workspaceA, projectKey: { ...projectKey, projectKey: 'other-project' } },
+            { ...projectHeader(), groupKey: 'foreign-key-home', workspaceKey: 'foreign-key-home',
+                projectKey: { ...projectKey, serverId: 'server-b' } },
+        ] });
+        const intent: SessionListDragIntent = { ...sectionIntent('filed'), instructionKind: 'move-to-root',
+            targetRowId: null, containerId: treeRowId.workspaceRoot(projectGroupKey), depth: 0 };
+        const input = { item: { kind: 'session', scope, address: { serverId: 'server-a', sessionId: 'filed' } } as const,
+            intent, context, preview: () => ({ verb: 'Return', target: 'Project' }), reason: (code: string) => ({ code, message: code }) };
+        expect(resolveSessionListEntityDrop(input)).toMatchObject({ status: 'allowed', effect: {
+            actionId: 'session.section.set', input: { sessionId: 'filed', sectionId: null },
+        } });
+        expect(resolveSessionListEntityDrop({ ...input, intent: { ...intent, containerId: treeRowId.workspaceRoot('project-b') } }))
+            .toMatchObject({ status: 'refused', reason: { code: 'scope-mismatch' } });
+        expect(resolveSessionListEntityDrop({ ...input, intent: { ...intent, containerId: treeRowId.workspaceRoot('foreign-key-home') } }))
+            .toMatchObject({ status: 'refused', reason: { code: 'scope-mismatch' } });
+        expect(spies.setSessionFolderAssignment).not.toHaveBeenCalled();
+    });
+
+    it('orders section records without writing a mixed session/folder order', async () => {
+        const reorderSessionSection = vi.fn(async () => {});
+        const { context, spies } = makeContext({ latestItems: [section,
+            { ...section, folderId: 'next', groupKey: 'section-next' }], reorderSessionSection });
+        const tree = buildSessionListTreeRows({ items: context.latestItems });
+        const source = tree.rowMetadataById.get(treeRowId.folder('server-a', 'next'))!;
+        expect(await commitSessionListDragIntent({ context, intent: {
+            ...sectionIntent(), sourceRowId: source.rowId, sourceKind: 'container',
+            instructionKind: 'reorder-before', targetRowId: treeRowId.folder('server-a', 'launch'),
+            containerId: source.containerId, depth: 0, edge: 'top',
+        } })).toEqual({ ok: true });
+        expect(reorderSessionSection.mock.calls).toEqual([[{ serverId: 'server-a', sectionId: 'next', beforeSectionId: 'launch' }]]);
+        expect(spies.setSessionListGroupOrderV1).not.toHaveBeenCalled();
+    });
+
+    it('resolves a Section after-edge against full canonical order, including hidden Sections', async () => {
+        const reorderSessionSection = vi.fn(async () => {});
+        const { context } = makeContext({ latestItems: [section,
+            { ...section, folderId: 'moved', groupKey: 'section-moved' }], reorderSessionSection,
+            sessionSections: ['moved', 'launch', 'hidden'].map((sectionId, index) => ({
+                address: { serverId: 'server-a', sectionId },
+                display: { status: 'available', value: { name: sectionId, icon: null } }, sortKey: String(index),
+            })),
+        });
+        const tree = buildSessionListTreeRows({ items: context.latestItems });
+        const source = tree.rowMetadataById.get(treeRowId.folder('server-a', 'moved'))!;
+        expect(await commitSessionListDragIntent({ context, intent: {
+            ...sectionIntent(), sourceRowId: source.rowId, sourceKind: 'container',
+            instructionKind: 'reorder-after', targetRowId: treeRowId.folder('server-a', 'launch'),
+            containerId: source.containerId, depth: 0, edge: 'bottom',
+        } })).toEqual({ ok: true });
+        expect(reorderSessionSection.mock.calls).toEqual([[{ serverId: 'server-a', sectionId: 'moved', beforeSectionId: 'hidden' }]]);
+    });
+
+    it('admits the same section through pointer and staged keyboard movement', async () => {
+        const latestItems = [section, projectHeader(), sessionItem('root-a', projectGroupKey, null, 0)];
+        const tree = buildSessionListTreeRows({ items: latestItems, rowBoundsById: new Map([
+            [treeRowId.folder('server-a', 'launch'), { x: 0, y: 0, width: 320, height: 40 }],
+            [treeRowId.session('server-a', 'root-a'), { x: 0, y: 80, width: 320, height: 40 }],
+        ]) });
+        const source = buildSessionListDragSource({ tree, sourceRowId: treeRowId.session('server-a', 'root-a') });
+        const pointerResult = resolveSessionListInstruction({ tree, source, pointer: { x: 160, y: 20 }, foldersFeatureEnabled: true });
+        const state = stepSessionListStagedMove({ tree, source, state: beginSessionListStagedMove({ tree, source }), intent: 'in' });
+        const keyboardResult = resolveSessionListStagedMoveResult({ tree, source, state });
+        expect(keyboardResult).toMatchObject({ instruction: { kind: 'nest-into' } });
+        if (!keyboardResult || !('instruction' in keyboardResult)) throw new Error('Expected a tree placement');
+        expect(pointerResult.instruction.kind).toBe('nest-into');
+        for (const result of [pointerResult, keyboardResult]) {
+            const { context, spies } = makeContext({ latestItems });
+            const intent = buildSessionListDragIntent({ result, sourceRowId: source.id, sourceKind: 'leaf', snapshotSignature: '' });
+            expect(await commitSessionListDragIntent({ intent, context })).toEqual({ ok: true });
+            expect(spies.setSessionFolderAssignment.mock.calls).toEqual([[{ serverId: 'server-a', sessionId: 'root-a', folderId: 'launch' }]]);
+        }
+    });
+
+    it('offers an off-window Account section to the move sheet and revalidates its removal', () => {
+        const scope = { serverId: 'server-a', accountId: 'account' };
+        const { context } = makeContext({ scope, isFolderOrganizationEnabled: () => true,
+            latestItems: [{ ...sessionItem('root-a', 'recent', null, 0), workspace: undefined }] });
+        const item = { kind: 'session', scope, address: { serverId: 'server-a', sessionId: 'root-a' } } as const;
+        const input = { item, folderId: 'folder-a', context, preview: () => ({ verb: 'Move', target: 'Launch' }),
+            reason: (code: string) => ({ code, message: code }) };
+        expect(resolveSessionListFolderAssignmentDrop(input)).toMatchObject({ status: 'allowed', effect: {
+            actionId: 'session.section.set', input: { sessionId: 'root-a', sectionId: 'folder-a' },
+        } });
+        expect(resolveSessionListFolderAssignmentDrop({ ...input, context: { ...context, sessionSections: [] } }).status).toBe('refused');
+    });
+});
 
 describe('admitted session-list destination identity', () => {
     function destinationKey(intent: SessionListDragIntent, context: Parameters<typeof resolveSessionListDragIntent>[0]['context']) {
@@ -193,36 +417,29 @@ describe('admitted session-list destination identity', () => {
     });
 
     it('shares nesting and anchored placement keys for the same effective folder position', async () => {
-        const { context, spies } = makeContext({ latestItems: [
+        const { context } = makeContext({ latestItems: [
             projectHeader(), folderHeader('folder-b', folderBGroupKey, 0),
             folderHeader('folder-a', folderAGroupKey, 0), sessionItem('inside-a', folderAGroupKey, 'folder-a', 1),
             sessionItem('root-a', projectGroupKey, null, 0),
         ] });
         const tree = buildSessionListTreeRows({ items: context.latestItems });
         const folderA = tree.rowMetadataById.get(treeRowId.folder('server-a', 'folder-a'))!;
-        const sourceRowId = treeRowId.folder('server-a', 'folder-b');
+        const sourceRowId = treeRowId.session('server-a', 'root-a');
         const nest: SessionListDragIntent = {
-            sourceRowId, sourceKind: 'container', instructionKind: 'nest-into', targetRowId: folderA.rowId,
+            sourceRowId, sourceKind: 'leaf', instructionKind: 'nest-into', targetRowId: folderA.rowId,
             containerId: folderA.childContainerId, parentRowId: folderA.rowId, depth: 1,
             edge: null, sourceSnapshotSignature: '',
         };
         const placement: SessionListDragIntent = { ...nest, instructionKind: 'reorder-before',
             targetRowId: treeRowId.session('server-a', 'inside-a'), edge: 'top' };
         expect(destinationKey(placement, context)).toBe(destinationKey(nest, context));
-        const anchored = makeContext({ latestItems: context.latestItems });
-        expect(await commitSessionListDragIntent({ intent: nest, context })).toEqual({ ok: true });
-        expect(await commitSessionListDragIntent({ intent: placement, context: anchored.context })).toEqual({ ok: true });
-        expect(spies.setSessionFoldersV1).toHaveBeenCalledOnce();
-        expect(spies.setSessionListGroupOrderV1).toHaveBeenCalledOnce();
-        expect(anchored.spies.setSessionFoldersV1.mock.calls).toEqual(spies.setSessionFoldersV1.mock.calls);
-        expect(anchored.spies.setSessionListGroupOrderV1.mock.calls).toEqual(spies.setSessionListGroupOrderV1.mock.calls);
         const sessionNest = { ...nest, sourceRowId: treeRowId.session('server-a', 'root-a'), sourceKind: 'leaf' as const };
         const firstSlot = destinationKey(sessionNest, context);
         expect(destinationKey({ ...sessionNest, instructionKind: 'reorder-before',
             targetRowId: treeRowId.session('server-a', 'inside-a'), edge: 'top' }, context)).toBe(firstSlot);
         expect(destinationKey({ ...sessionNest, instructionKind: 'reorder-after',
             targetRowId: treeRowId.session('server-a', 'inside-a'), edge: 'bottom' }, context)).not.toBe(firstSlot);
-        const folderB = tree.rowMetadataById.get(sourceRowId)!;
+        const folderB = tree.rowMetadataById.get(treeRowId.folder('server-a', 'folder-b'))!;
         expect(destinationKey({ ...sessionNest, targetRowId: folderB.rowId, containerId: folderB.childContainerId,
             parentRowId: folderB.rowId }, context)).not.toBe(firstSlot);
     });
@@ -261,15 +478,49 @@ describe('admitted session-list destination identity', () => {
 });
 
 describe('session list chooser destinations independent of folder presentation', () => {
-    it.each(['project', 'date'] as const)('keeps folder assignment available through the real %s producer and Recent activity projection', grouping => {
+    it('offers Space membership independently of hierarchy and preserves exact catalog scope', () => {
+        const scope = { serverId: 'server-a', accountId: 'account' };
+        const spaceSettingsTarget = { serverId: 'catalog-home', accountId: 'catalog-account' };
+        const { context } = makeContext({ scope, latestItems: [sessionItem('root-a', projectGroupKey, null, 0)] });
+        const configured = { ...context, spaceMembershipTargets: [{ spaceId: 'space-b', spaceSettingsTarget, name: 'Space B' }] };
+        const item = { kind: 'session', scope, address: { serverId: 'server-a', sessionId: 'root-a' } } as const;
+        const destinations = listSessionListEntityDropDestinations({ item, context: configured,
+            preview: intent => ({ verb: 'Move', target: JSON.stringify(intent) }), folderPreview: name => ({ verb: 'Move', target: name ?? 'Project' }) });
+        expect(destinations).toContainEqual(expect.objectContaining({ destination: {
+            kind: 'space-membership', operation: 'add', spaceId: 'space-b', spaceSettingsTarget,
+        } }));
+        const withSource = listSessionListEntityDropDestinations({ item,
+            context: { ...configured, spaceMembershipSourceSpaceId: 'space-a' },
+            preview: intent => ({ verb: 'Move', target: JSON.stringify(intent) }), folderPreview: name => ({ verb: 'Move', target: name ?? 'Project' }) });
+        expect(withSource).toContainEqual(expect.objectContaining({ destination: {
+            kind: 'space-membership', operation: 'move', sourceSpaceId: 'space-a', spaceId: 'space-b', spaceSettingsTarget,
+        } }));
+        const destination = destinations.find(entry => readSessionListSpaceMembershipDestination(entry.destination, item.address.sessionId))!.destination;
+        const input = readSessionListSpaceMembershipDestination(destination, item.address.sessionId);
+        expect(input).not.toBeNull();
+        if (!input) throw new Error('Expected a semantic membership destination');
+        const resolve = (current = configured) => resolveSessionListSpaceMembershipDrop({ item, input, context: current,
+            preview: name => ({ verb: name, target: name }), reason: code => ({ code, message: code }) });
+        expect(resolve()).toMatchObject({ status: 'allowed', effect: {
+            actionId: 'session.space_membership.set', input: { sessionId: 'root-a', operation: 'add', spaceId: 'space-b', spaceSettingsTarget },
+        } });
+        expect(resolve({ ...configured, spaceMembershipTargets: [] }).status).toBe('refused');
+        expect(resolve({ ...configured, spaceMembershipTargets: [{ ...configured.spaceMembershipTargets[0]!,
+            spaceSettingsTarget: { ...spaceSettingsTarget, accountId: 'foreign' } }] }).status).toBe('refused');
+        expect(listSessionListEntityDropDestinations({ item, context,
+            preview: intent => ({ verb: 'Move', target: JSON.stringify(intent) }), folderPreview: name => ({ verb: 'Move', target: name ?? 'Project' }) })
+            .some(entry => readSessionListSpaceMembershipDestination(entry.destination, item.address.sessionId) !== null)).toBe(false);
+    });
+
+    it.each(['projects', 'recent_activity'] as const)('keeps folder assignment available through the real %s producer and Recent activity projection', layoutV1 => {
         const session = createSessionFixture({ id: 'root-a', metadata: { machineId: 'machine-a', path: '/repo/a', host: 'a' } });
         const source = buildSessionListIndexWithServerScope({ sessions: { 'root-a': session }, machines: {},
-            activeGroupingV1: grouping, inactiveGroupingV1: grouping, serverScope: { serverId: 'server-a' } });
-        const assigned = resolveFolderAwareSessionListSourceForLayout({ source, layoutChoice: 'recent_activity',
-            foldersFeatureEnabled: true, folderViewModeV1: 'off',
-            folders: { v: 1, folders: folders().folders.map(folder => ({ ...folder, serverId: 'server-a' })) },
+            layoutV1, serverScope: { serverId: 'server-a' } });
+        const assigned = projectSessionSectionListIndex({ source,
+            sections: folders().folders.map(folder => ({ address: { serverId: 'server-a', sectionId: folder.id },
+                display: { status: 'available', value: { name: folder.name, icon: null } }, sortKey: folder.sortKey ?? null })),
             assignmentsBySessionKey: { [buildSessionFolderAssignmentKey('server-a', 'root-a')]: 'folder-a' },
-            collapsedGroupKeys: {}, focusedFolder: null });
+        });
         const recent = projectSessionListIndexForLayout({ source: assigned.items, choice: 'recent_activity',
             resolveSessionRow: () => session, nowMs: 100 });
         const row = recent.find(item => item.type === 'session');
@@ -303,7 +554,7 @@ describe('session list chooser destinations independent of folder presentation',
             folderId, context: current, preview: () => ({ verb: 'Move', target: 'Folder' }),
             reason: code => ({ code, message: code }) });
         expect(resolve('folder-a')).toEqual(expect.objectContaining({ status: 'allowed', effect: expect.objectContaining({
-            actionId: 'session.folder.set', input: { sessionId: 'root-a', folderId: 'folder-a' },
+            actionId: 'session.section.set', input: { sessionId: 'root-a', sectionId: 'folder-a' },
         }) }));
         expect(resolve(null).status).toBe('refused');
         expect(resolve('removed-folder').status).toBe('refused');
@@ -365,7 +616,6 @@ describe('commitSessionListDragIntent — putting a Session under a lead', () =>
         expect(putSessionUnder).toHaveBeenCalledWith({ serverId: 'server-a', sessionId: 'root-b', managerSessionId: 'root-a' });
         expect(spies.setSessionListGroupOrderV1).not.toHaveBeenCalled();
         expect(spies.setSessionFolderAssignment).not.toHaveBeenCalled();
-        expect(spies.setSessionFoldersV1).not.toHaveBeenCalled();
     });
 
     it('no-ops when the lead left the list, the drop is no longer eligible, or the server refused', async () => {
@@ -565,8 +815,7 @@ describe('commitSessionListDragIntent', () => {
         const { context, spies } = makeContext();
         const dateModeContext = {
             ...context,
-            sessionListOrderingModeV1: 'updated' as const,
-            sessionListSectionModeV1: 'activity' as const,
+            sessionListLayoutV1: 'recent_activity' as const,
         };
 
         const result = await commitSessionListDragIntent({ intent, context: dateModeContext });
@@ -589,7 +838,7 @@ describe('commitSessionListDragIntent', () => {
             sourceSnapshotSignature: 'sig',
         };
         const { context, spies } = makeContext({
-            sessionListOrderingModeV1: 'custom',
+            sessionListLayoutV1: 'projects',
             manualSessionOrderingEnabled: false,
         });
 
@@ -657,7 +906,6 @@ describe('commitSessionListDragIntent', () => {
 
         expect(result).toEqual({ ok: false, reason: 'blocked-intent' });
         expect(spies.setSessionListGroupOrderV1).not.toHaveBeenCalled();
-        expect(spies.setSessionFoldersV1).not.toHaveBeenCalled();
     });
 
     it('degrades a reorder whose target row vanished to a safe container-edge move', async () => {
@@ -688,7 +936,7 @@ describe('commitSessionListDragIntent', () => {
         expect(result.ok).toBe(true);
     });
 
-    it('no-ops folder moves that would create a cycle against the latest tree', async () => {
+    it('refuses nesting section definitions, including imported parent/child records', async () => {
         // folder-b nested under folder-a in the latest tree; moving folder-a into
         // folder-b would cycle.
         const latestItems: SessionListIndexItem[] = [
@@ -696,13 +944,6 @@ describe('commitSessionListDragIntent', () => {
             folderHeader('folder-a', folderAGroupKey, 0),
             folderHeader('folder-b', folderBGroupKey, 1),
         ];
-        const cyclicFolders: SessionFoldersV1 = {
-            v: 1,
-            folders: [
-                { id: 'folder-a', workspace: workspaceA, parentId: null, name: 'A', createdAt: 1, updatedAt: 1, sortKey: '000001' },
-                { id: 'folder-b', workspace: workspaceA, parentId: 'folder-a', name: 'B', createdAt: 2, updatedAt: 2, sortKey: '000001' },
-            ],
-        };
         const intent: SessionListDragIntent = {
             sourceRowId: treeRowId.folder('server-a', 'folder-a'),
             sourceKind: 'container',
@@ -714,12 +955,11 @@ describe('commitSessionListDragIntent', () => {
             edge: null,
             sourceSnapshotSignature: 'sig',
         };
-        const { context, spies } = makeContext({ latestItems, sessionFoldersV1: cyclicFolders });
+        const { context, spies } = makeContext({ latestItems });
 
         const result = await commitSessionListDragIntent({ intent, context });
 
-        expect(result).toEqual({ ok: false, reason: 'descendant-cycle' });
-        expect(spies.setSessionFoldersV1).not.toHaveBeenCalled();
+        expect(result).toEqual({ ok: false, reason: 'scope-mismatch' });
     });
 
     it('commits a move-to-root intent rebased onto the latest tree', async () => {

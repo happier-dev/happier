@@ -11,6 +11,8 @@ export type OpenSessionListMoveSheetParams = Readonly<{
     runtime: EntityDragDropRuntime;
     prepareSource: () => SessionListMoveSheetSource | null;
     composerOnly?: boolean;
+    /** Limits the sheet to the destinations one operation offers (a list's own Move to section). */
+    includeDestination?: (destination: Readonly<{ targetId: string; destination?: unknown }>) => boolean;
 }>;
 export type UseSessionListMoveSheetResult = Readonly<{ openMoveSheet: (params: OpenSessionListMoveSheetParams) => Promise<EntityDropOutcomeV1 | null> }>;
 
@@ -37,7 +39,7 @@ export function useSessionListMoveSheet(): UseSessionListMoveSheetResult {
                 modalId = Modal.show({ component: SessionListMoveSheet,
                     chrome: { kind: 'card', title: params.composerOnly ? t('entityDragDrop.composer.mentionInComposer') : t('sessionsList.moveSheetTitle', { item: params.sourceLabel }) },
                     closeOnBackdrop: true, onRequestClose: () => settle(null),
-                    props: { sourceLabel: params.sourceLabel, runtime: params.runtime, sourceId, composerOnly: params.composerOnly, onComplete: settle, onCancel: () => settle(null) },
+                    props: { sourceLabel: params.sourceLabel, runtime: params.runtime, sourceId, composerOnly: params.composerOnly, includeDestination: params.includeDestination, onComplete: settle, onCancel: () => settle(null) },
                 });
             });
         } catch (error) {

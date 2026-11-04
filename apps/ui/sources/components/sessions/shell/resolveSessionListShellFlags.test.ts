@@ -9,7 +9,6 @@ describe('resolveSessionListShellFlags', () => {
             selectionEnabled: true,
             selectionPresentation: 'flat-with-badge' as const,
             isTablet: true,
-            sessionListOrderingModeV1: 'custom' as const,
             sessionListLayoutChoice: 'projects' as const,
             usesProjectGrouping: true,
             usesFolderTreePresentation: false,
@@ -30,13 +29,12 @@ describe('resolveSessionListShellFlags', () => {
         });
     });
 
-    it('shows badges only when multi-server selection makes them relevant and enables reorder only for custom mode', () => {
+    it('shows badges only when multi-server selection makes them relevant and enables reorder only for Projects', () => {
         expect(resolveSessionListShellFlags({
             selectedServerCount: 2,
             selectionEnabled: true,
             selectionPresentation: 'flat-with-badge',
             isTablet: true,
-            sessionListOrderingModeV1: 'custom',
             sessionListLayoutChoice: 'projects',
             usesProjectGrouping: true,
             usesFolderTreePresentation: false,
@@ -51,15 +49,14 @@ describe('resolveSessionListShellFlags', () => {
         });
     });
 
-    it('suppresses server badges for single-server or grouped views and disables reorder outside custom mode', () => {
+    it('suppresses server badges for single-server or grouped views and disables reorder outside Projects', () => {
         expect(resolveSessionListShellFlags({
             selectedServerCount: 1,
             selectionEnabled: true,
             selectionPresentation: 'grouped',
             isTablet: false,
-            sessionListOrderingModeV1: 'updated',
-            sessionListLayoutChoice: 'projects',
-            usesProjectGrouping: true,
+            sessionListLayoutChoice: 'recent_activity',
+            usesProjectGrouping: false,
             usesFolderTreePresentation: false,
             hasAnySessionFolderInAccount: false,
         })).toEqual({
@@ -78,7 +75,6 @@ describe('resolveSessionListShellFlags', () => {
             selectionEnabled: true,
             selectionPresentation: 'grouped',
             isTablet: false,
-            sessionListOrderingModeV1: 'updated',
             sessionListLayoutChoice: 'recent_activity',
             usesProjectGrouping: false,
             usesFolderTreePresentation: false,
@@ -93,7 +89,6 @@ describe('resolveSessionListShellFlags', () => {
             selectionEnabled: true,
             selectionPresentation: 'grouped',
             isTablet: false,
-            sessionListOrderingModeV1: 'updated',
             sessionListLayoutChoice: 'projects',
             usesProjectGrouping: true,
             usesFolderTreePresentation: false,
@@ -106,7 +101,6 @@ describe('resolveSessionListShellFlags', () => {
             selectionEnabled: true,
             selectionPresentation: 'grouped',
             isTablet: false,
-            sessionListOrderingModeV1: 'updated',
             sessionListLayoutChoice: 'recent_activity',
             usesProjectGrouping: false,
             usesFolderTreePresentation: false,
@@ -120,8 +114,7 @@ describe('resolveSessionListShellFlags', () => {
             selectionEnabled: false,
             selectionPresentation: 'grouped',
             isTablet: false,
-            sessionListOrderingModeV1: 'custom',
-            sessionListLayoutChoice: 'projects',
+            sessionListLayoutChoice: 'recent_activity',
             usesProjectGrouping: false,
             usesFolderTreePresentation: false,
             hasAnySessionFolderInAccount: true,
@@ -141,9 +134,8 @@ describe('resolveSessionListShellFlags', () => {
             selectionEnabled: false,
             selectionPresentation: 'grouped',
             isTablet: false,
-            sessionListOrderingModeV1: 'updated',
-            sessionListLayoutChoice: 'projects',
-            usesProjectGrouping: true,
+            sessionListLayoutChoice: 'recent_activity',
+            usesProjectGrouping: false,
             usesFolderTreePresentation: true,
             hasAnySessionFolderInAccount: true,
         })).toEqual({
@@ -160,9 +152,8 @@ describe('resolveSessionListShellFlags', () => {
             selectionEnabled: false,
             selectionPresentation: 'grouped',
             isTablet: false,
-            sessionListOrderingModeV1: 'updated',
-            sessionListLayoutChoice: 'projects',
-            usesProjectGrouping: true,
+            sessionListLayoutChoice: 'recent_activity',
+            usesProjectGrouping: false,
             usesFolderTreePresentation: true,
             hasAnySessionFolderInAccount: false,
         }).canDragSessionRows).toBe(false);
@@ -172,9 +163,8 @@ describe('resolveSessionListShellFlags', () => {
             selectionEnabled: false,
             selectionPresentation: 'grouped',
             isTablet: false,
-            sessionListOrderingModeV1: 'updated',
-            sessionListLayoutChoice: 'projects',
-            usesProjectGrouping: true,
+            sessionListLayoutChoice: 'recent_activity',
+            usesProjectGrouping: false,
             usesFolderTreePresentation: false,
             hasAnySessionFolderInAccount: true,
         }).canDragSessionRows).toBe(false);

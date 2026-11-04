@@ -13,7 +13,6 @@ import type { SessionListVirtualizedNode } from './sessionListVirtualizedContent
 vi.mock('react-native', async () => vi.importActual('react-native-web'));
 vi.mock('./sessionListChrome', () => ({
   SessionsListHeader: () => null,
-  SessionFolderFocusBreadcrumbs: () => null,
 }));
 vi.mock('./NewSessionDraftsSection', () => ({
   NewSessionDraftsSection: () => null,
@@ -304,9 +303,6 @@ describe('session list web window while row and header heights change', () => {
             )}
             rowExtraData={params.phase}
             onStopScrollEventPropagationOnWeb={() => {}}
-            folderFocus={null}
-            onClearFolderFocus={() => {}}
-            onSelectFolderBreadcrumb={() => {}}
             showDrafts={false}
             showReminders={false}
             scheduledSection={<div data-row-height={params.scheduledHeight} />}

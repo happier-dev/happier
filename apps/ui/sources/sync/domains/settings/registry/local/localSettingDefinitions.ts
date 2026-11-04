@@ -21,10 +21,6 @@ import {
 import { SessionListFocusedFolderV1Schema } from '@/sync/domains/session/folders/types';
 import { MachineStorageViewMapSchema } from './machineStorageViewSetting';
 
-const SessionMruOrderSchema = z.catch(z.pipe(z.array(z.unknown()), z.transform((values) => values
-        .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
-        .map((value) => value.trim()))), []);
-
 const localSettingInputs = {
     filesTrackAgentEdits: {
         schema: z.catch(z.boolean(), false),
@@ -55,14 +51,7 @@ const localSettingInputs = {
         default: false,
         description: 'Enable developer menu in settings',
         storageScope: 'local',
-    },
-    sessionMruOrderV1: {
-        schema: SessionMruOrderSchema,
-        default: [],
-        description: 'Local most-recently-used session navigation order',
-        storageScope: 'local',
-    },
-    sessionListFocusedFolderV1: {
+    },    sessionListFocusedFolderV1: {
         schema: SessionListFocusedFolderV1Schema,
         default: null,
         description: 'Focused session folder navigation state for the local session list',
@@ -137,14 +126,7 @@ const localSettingInputs = {
         default: {},
         description: 'Whether the Plugins Installed and Browse views show a grid or a list on this device',
         storageScope: 'local',
-    },
-    collapsedGroupKeysV1: {
-        schema: z._default(z.record(z.string(), z.boolean()), {}),
-        default: {},
-        description: 'Collapsed state for session list groups on this device',
-        storageScope: 'local',
-    },
-    homesReconcileAcknowledgedHomeIds: {
+    },    homesReconcileAcknowledgedHomeIds: {
         schema: z.catch(z.array(z.string().check(z.minLength(1))), []),
         default: [],
         description: 'Homes whose "Your Homes are connected" choice this device has settled (Keep both / Use …)',

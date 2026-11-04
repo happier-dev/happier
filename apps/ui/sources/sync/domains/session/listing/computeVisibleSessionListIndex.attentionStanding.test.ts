@@ -46,7 +46,6 @@ function computeWithStanding(standingPolicy: SessionAttentionStandingPolicy): Re
         hideInactiveSessions: true,
         pinnedSessionKeysV1: [],
         sessionListGroupOrderV1: {},
-        sessionListOrderingModeV1: 'updated',
         attentionPlacement: { mode: 'global', standingPolicy },
         presentation: { enabled: false, presentation: 'grouped' },
         nowMs: NOW_MS,
@@ -54,7 +53,7 @@ function computeWithStanding(standingPolicy: SessionAttentionStandingPolicy): Re
 }
 
 describe('computeVisibleSessionListIndex attention standing under hide-inactive', () => {
-    it.each(['global', 'withinGroups'] as const)('preserves the position of an opened due reminder in %s placement until leaving', (mode) => {
+    it.each(['both', 'top'] as const)('holds a settled reminder in %s placement only while list interaction is held', (placement) => {
         const key = buildSessionOrganizationSessionKey('server-a', 'reminded');
         const source = [
             { type: 'header', headerKind: 'project', title: 'Repo', serverId: 'server-a', groupKey: GROUP_KEY },
@@ -63,9 +62,8 @@ describe('computeVisibleSessionListIndex attention standing under hide-inactive'
                 groupKey: GROUP_KEY, groupKind: 'project' as const,
             })),
         ] satisfies SessionListIndexItem[];
-        const compute = (standingPolicy: SessionAttentionStandingPolicy, retainPlacements?: ReadonlyArray<{
-            key: string; reason: 'standing'; timestamp: number;
-        }>) => computeVisibleSessionListIndex({
+        const compute = (standingPolicy: SessionAttentionStandingPolicy, previousPresentedIndex?: ReadonlyArray<SessionListIndexItem> | null,
+            attentionInteractionHeld = false) => computeVisibleSessionListIndex({
             source,
             resolveSessionRow: (_serverId, sessionId) => ({
                 ...makeInactiveReadRow(sessionId),
@@ -74,8 +72,10 @@ describe('computeVisibleSessionListIndex attention standing under hide-inactive'
             hideInactiveSessions: false,
             pinnedSessionKeysV1: [],
             sessionListGroupOrderV1: {},
-            sessionListOrderingModeV1: 'custom',
-            attentionPlacement: { mode, standingPolicy, retainPlacements },
+            attentionPlacement: { mode: 'global', standingPolicy },
+            sessionListAttentionPlacementV1: placement,
+            previousPresentedIndex,
+            attentionInteractionHeld,
             presentation: { enabled: false, presentation: 'grouped' },
             nowMs: NOW_MS,
         });
@@ -86,12 +86,13 @@ describe('computeVisibleSessionListIndex attention standing under hide-inactive'
             [key]: { standing: false, remindAt: 1, updatedAt: 1 },
         } });
         const positions = (items: ReadonlyArray<SessionListIndexItem> | null) => items?.filter((item) => item.type === 'session')
-            .map((item) => `${item.sessionId}:${item.attentionPlacementReason ? 'attention' : 'normal'}`);
-        const retained = compute(afterPolicy, [{ key, reason: 'standing', timestamp: 0 }]);
+            .map((item) => `${item.sessionId}:${item.occurrenceRole === 'needsYou' ? 'attention' : 'normal'}`);
+        // P5-R04 retains presented membership, while settled live facts still update.
+        const retained = compute(afterPolicy, before, true);
         expect(positions(retained)).toEqual(positions(before));
-        expect(retained?.find((item) => item.type === 'session' && item.sessionId === 'reminded'))
-            .toHaveProperty('attentionPlacementReason', 'ready');
-        expect(positions(compute(afterPolicy))).not.toEqual(positions(before));
+        expect(retained?.find((item) => item.type === 'session' && item.sessionId === 'reminded'
+            && item.occurrenceRole === 'needsYou')).not.toHaveProperty('attentionPlacementReason');
+        expect(positions(compute(afterPolicy, retained))).not.toEqual(positions(before));
     });
 
     it('keeps an explicitly kept inactive session visible in the band', () => {

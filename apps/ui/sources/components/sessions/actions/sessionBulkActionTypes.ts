@@ -42,7 +42,7 @@ export type SessionBulkActionRequest =
     | Readonly<{
         id: typeof SESSION_BULK_ACTION_IDS.moveToFolder;
         folderId: string | null;
-        destinationWorkspace: SessionFolderWorkspaceRefV1;
+        destinationServerId: string;
     }>;
 
 export type SessionBulkReadState = 'read' | 'unread';

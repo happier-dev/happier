@@ -40,6 +40,7 @@ function TestAuth({ children }: React.PropsWithChildren) {
 const executeMock = vi.hoisted(() => vi.fn());
 const routerPush = vi.hoisted(() => vi.fn());
 const routeState = vi.hoisted(() => ({ pathname: '/workflows', params: {} as Record<string, string> }));
+let automationDefinitionResponse: ((url: URL, init?: RequestInit) => Promise<Response | undefined>) | null = null;
 
 // Fixture replies are serialized below the real Action owner by the canonical HTTP boundary.
 vi.mock('expo-router', async () => {
@@ -99,9 +100,16 @@ beforeEach(async () => {
     await runtime.upsertAndActivateServer({ serverUrl: 'http://unified-column.test', scope: 'tab' });
     answerLists();
     // Restore the real Account through its credential and HTTP owners.
-    boundary = await installWorkflowActionHttpBoundary({ accountId: () => 'account-a', fixtureResponse: (actionId, input) => executeMock(actionId, input) });
+    boundary = await installWorkflowActionHttpBoundary({ accountId: () => 'account-a', fixtureResponse: (actionId, input) => executeMock(actionId, input),
+        automationDefinitions: async (url, init) => automationDefinitionResponse?.(url, init) });
     const { restoreConnectionToActiveServer } = await import('@/sync/runtime/orchestration/connectionManager');
     await restoreConnectionToActiveServer(boundary.credentials);
+    // Transport restoration does not await the initial cursor/settings acquisition or the
+    // endpoint-online resume. Settle those real producers before measuring visible demand;
+    // otherwise their snapshot wake races the column and adds an unrelated refresh.
+    const { sync } = await import('@/sync/sync');
+    expect(await sync.awaitBootstrapForegroundAcquisition()).toBe(true);
+    await sync.resumeSync('server-reachable');
     expect(storage.getState().profileScope).toEqual({ serverId: boundary.serverId, accountId: 'account-a' });
     const { settingsDefaults } = await import('@/sync/domains/settings/settings');
     // The signed-in Account's settings are applied, so the saved-space binding is authoritative (R9).
@@ -124,6 +132,7 @@ afterEach(async () => {
     boundary = undefined;
     singleton?.dispose();
     singleton = undefined;
+    automationDefinitionResponse = null;
     executeMock.mockReset();
     routerPush.mockReset();
     storage.setState(previousStorageState);
@@ -269,7 +278,7 @@ describe('WorkflowsColumn', () => {
             access: 'owner', triggers: [], nextRunAt: null });
         const fiveDaysAgo = new Date(Date.now() - 5 * 86_400_000).toISOString();
         const lastRun = (runId: string, state: WorkflowRunStateV1, attentionRequired = false) => ({
-            ...recent({ runId, state, attentionRequired, invocationAttentionRequired: attentionRequired }), createdAt: fiveDaysAgo, finishedAt: null });
+            ...recent({ runId, state, attentionRequired, invocationAttentionRequired: attentionRequired }), createdAt: fiveDaysAgo, startedAt: fiveDaysAgo, finishedAt: null });
         executeMock.mockImplementation((actionId: string, input: Record<string, unknown>) => {
             if (actionId === 'workflow.definition.list') return Promise.resolve({ ok: true, result: { definitions: [
                 definition('waits', 'Prepare the release'), definition('works', 'Review each file'),
@@ -587,6 +596,70 @@ describe('WorkflowsColumn', () => {
         }
     });
 
+
+    it('lists saved and Account Workflows as one Library and opens each at its own target (Q7)', async () => {
+        const [{ AutomationDefinitionDetailSchema, AutomationDefinitionListResponseSchema }, { AutomationStoredWorkflowDefinitionRecipeV2Schema },
+            { createWorkflowDefinitionFixture }] = await Promise.all([import('@happier-dev/protocol/automations/automationApiV3'),
+            import('@happier-dev/protocol/automations/automationWorkflowRecipeV2'), import('@/dev/testkit/fixtures/workflowRunFixtures')]);
+        const definitionId = '10000000-0000-4000-8000-000000000071';
+        const inlineDefinition = createWorkflowDefinitionFixture({
+            defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.test', localId: 'test' } } },
+            blocks: [{ kind: 'step', id: 'first', document: { text: 'Morning digest', references: [], attachments: [] },
+                input: [], result: { kind: 'text' } }],
+        });
+        const detail = AutomationDefinitionDetailSchema.parse({ id: 'digest', name: 'Morning digest', description: null, enabled: true,
+            workflowDefinitionId: null, scopeSessionId: null, targetType: null, existingSessionId: null,
+            templateVersion: 1, lastRunAt: null, createdAt: 1, updatedAt: 5,
+            assignments: [{ machineId: 'm1', enabled: true, priority: 0, updatedAt: 1 }],
+            executionRecipe: AutomationStoredWorkflowDefinitionRecipeV2Schema.parse({ v: 2, templateVersion: 1,
+                workflow: { t: 'plain', v: { workspace: { directory: '/repo' }, executionTarget: { kind: 'session' }, inlineDefinition } },
+                triggerEvidence: null }),
+            triggers: [{ id: 't1', revision: 1, enabled: true, createdAt: 1, updatedAt: 1, kind: 'schedule',
+                triggerDefinitionEnvelope: null, nextRunAt: null,
+                schedule: { kind: 'cron', scheduleExpr: '0 9 * * *', everyMs: null, timezone: null } }],
+        });
+        const { executionRecipe: _privateRecipe, triggers, ...listItem } = detail;
+        const list = AutomationDefinitionListResponseSchema.parse({ automations: [{ ...listItem,
+            triggers: triggers.map(({ triggerDefinitionEnvelope: _privateEnvelope, ...trigger }) => trigger) }], nextCursor: null });
+        automationDefinitionResponse = async (url, init) => {
+            if (url.pathname === '/v3/automations/query' && init?.method === 'POST') {
+                const { AutomationDefinitionDetailsRequestSchema } = await import('@happier-dev/protocol/automations/automationApiV3');
+                const query = AutomationDefinitionDetailsRequestSchema.parse(JSON.parse(String(init.body)));
+                return Response.json({ automations: query.scope === 'account_inline' ? [detail] : [], nextCursor: null });
+            }
+            return url.pathname === '/v3/automations' ? Response.json(list)
+                : url.pathname === '/v3/automations/digest' ? Response.json(detail) : undefined;
+        };
+        const answer = executeMock.getMockImplementation()!;
+        executeMock.mockImplementation((actionId: string, input: Record<string, unknown>) => {
+            if (actionId === 'workflow.definition.list') return Promise.resolve({ ok: true, result: { definitions: [{
+                kind: 'workflow-definition.v1', definitionId, metadata: { title: 'Release notes' }, updatedAt: 1,
+                revision: { headerVersion: 1, bodyVersion: 1 }, contentStatus: 'available', stepCount: 1,
+                ownerAccountId: 'account-a', access: 'owner', triggers: [], nextRunAt: null,
+            }] } });
+            return answer(actionId, input);
+        });
+        const screen = await renderScreen(<WorkflowsColumn />, { wrapper: TestAuth,
+            createNodeMock: () => ({ measureInWindow: (receive: (x: number, y: number, width: number, height: number) => void) => receive(40, 40, 120, 40) }) });
+        await vi.waitFor(() => expect(screen.findByTestId('workflows-column:library:account-trigger:digest')).not.toBeNull());
+        await vi.waitFor(() => expect(screen.findByTestId(`workflows-column:library:${definitionId}`)).not.toBeNull());
+        // One list: one heading counting both kinds, no separate trigger group, the owner's one order.
+        expect(screen.findByTestId('workflows-column:group:triggers')).toBeNull();
+        expect(screen.findAll(node => node.props?.testID === 'workflows-column:group:library' && 'count' in node.props)[0]?.props.count).toBe(2);
+        const libraryRows = screen.findAll(node => typeof node.props?.testID === 'string' && typeof node.props.onPress === 'function'
+            && /^workflows-column:library:/.test(node.props.testID) && node.props.title !== undefined).map(node => node.props.testID as string);
+        expect([...new Set(libraryRows)]).toEqual(['workflows-column:library:account-trigger:digest', `workflows-column:library:${definitionId}`]);
+        // The Account Workflow's trigger is its quiet line; it carries no switch of its own.
+        expect(screen.findAll(node => node.props?.testID === 'workflows-column:library:account-trigger:digest' && 'subtitle' in node.props)[0]
+            ?.props.subtitle).toBe('workflows.triggers.summary.everyDayAt(time=9:00 AM)');
+        expect(screen.findByTestId('workflows-column:trigger:digest-switch')).toBeNull();
+        // A saved workflow opens its editor; an Account Workflow opens its settings where it stands.
+        await screen.pressByTestIdAsync(`workflows-column:library:${definitionId}`);
+        expect(routerPush).toHaveBeenCalledWith(createWorkflowDefinitionRoute(definitionId));
+        await screen.pressByTestIdAsync('workflows-column:library:account-trigger:digest');
+        await vi.waitFor(() => expect(screen.findByTestId('workflows-column-trigger-popover')).not.toBeNull());
+        expect(routerPush).toHaveBeenCalledTimes(1);
+    });
 });
 // Third-party rendering boundary; the collection does not render Markdown.
 vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () => ({ splitStreamingRevealTextParts: () => [] }));

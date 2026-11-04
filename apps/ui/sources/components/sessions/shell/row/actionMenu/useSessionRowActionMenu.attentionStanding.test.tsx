@@ -42,7 +42,7 @@ function renderRowMenu(params: Readonly<{
         activeTags: [],
         knownTags: [],
         tagsEnabled: false,
-        isNativeMobile: false,
+        touchPrimaryPointer: false,
         setContextMenuOpen: () => undefined,
         openTagsMenuFromContext: () => undefined,
         reminder: params.reminder,

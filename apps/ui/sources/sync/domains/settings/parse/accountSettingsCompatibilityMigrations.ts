@@ -140,10 +140,6 @@ export function applyAccountSettingsCompatibilityMigrations<TSettings extends Re
         next.preferredLanguage = 'zh-Hans';
     }
 
-    if (!('sessionListInactiveGroupingV1' in input) && ('groupInactiveSessionsByProject' in input) && next.groupInactiveSessionsByProject === true) {
-        next.sessionListInactiveGroupingV1 = 'project';
-    }
-
     if (next.sessionListDensity === 'compact') {
         next.sessionListDensity = 'cozy';
     }
@@ -160,10 +156,6 @@ export function applyAccountSettingsCompatibilityMigrations<TSettings extends Re
                 ? (legacyMinimal?.success && legacyMinimal.data ? 'narrow' : 'cozy')
                 : 'detailed';
         }
-    }
-
-    if (!('sessionListIdentityDisplay' in input) && next.sessionListDensity !== 'narrow') {
-        next.sessionListIdentityDisplay = 'avatar';
     }
 
     Object.assign(next, normalizeAccountSettingsServerSelection(next));

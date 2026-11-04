@@ -7,13 +7,13 @@ import type { SettingRef } from '@/components/settings/catalog/settingDeclaratio
 const choiceSettings = new Map<string, SettingRef>([
     ['layout', SESSION_SETTINGS.settings.layout],
     ['attention', SESSION_SETTINGS.settings.attentionPromotion],
-    ['working', SESSION_SETTINGS.settings.workingPlacement],
-    ['ordering', SESSION_SETTINGS.settings.ordering],
-    ['folderDisplay', SESSION_SETTINGS.settings.folderView],
-    ['folderSort', SESSION_SETTINGS.settings.folderSort],
-    ['grouping:active', SESSION_SETTINGS.settings.activeGrouping],
-    ['grouping:inactive', SESSION_SETTINGS.settings.inactiveGrouping],
+    ['identity', SESSION_SETTINGS.settings.identityDisplay],
+    ['density', SESSION_SETTINGS.settings.listDensity],
+    ['rowContext', SESSION_SETTINGS.settings.rowContext],
+    ['statusWords', SESSION_SETTINGS.settings.statusWords],
 ]);
+/** Switch choices carry their boolean; every other choice is its declared value. */
+const BOOLEAN_CHOICES = new Set(['rowContext', 'statusWords']);
 
 /** The list menu and Settings submit the same declared choice; its owner rebases coupled fields. */
 export function useSessionListViewOptionWriter() {
@@ -21,6 +21,9 @@ export function useSessionListViewOptionWriter() {
     return React.useCallback((itemId: string): Promise<boolean> => {
         const separator = itemId.lastIndexOf(':');
         const setting = choiceSettings.get(itemId.slice(0, separator));
-        return setting ? setSetting(setting, itemId.slice(separator + 1)) : Promise.resolve(false);
+        const key = itemId.slice(0, separator);
+        const raw = itemId.slice(separator + 1);
+        const value = BOOLEAN_CHOICES.has(key) ? raw === 'true' : raw;
+        return setting ? setSetting(setting, value) : Promise.resolve(false);
     }, [setSetting]);
 }

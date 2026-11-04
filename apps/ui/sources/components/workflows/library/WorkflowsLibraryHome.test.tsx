@@ -17,6 +17,7 @@ import { ModalProvider, useModal } from '@/modal/ModalProvider';
 import { installWorkflowActionHttpBoundary } from '@/dev/testkit/fixtures/workflowActionHttpBoundary';
 import { installShippedNativeFrameScheduler } from '@/dev/testkit/legend/shippedNativeLegendRuntime';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { createWorkflowRunRecentSummaryFixture as recent } from '@/dev/testkit/fixtures/workflowRunFixtures';
 
 const execute = vi.hoisted(() => vi.fn());
 const routerPush = vi.hoisted(() => vi.fn());
@@ -38,7 +39,7 @@ vi.mock('socket.io-client', async (importOriginal) => {
 // Native Alert is the platform boundary. The real manager owns confirmation
 // settlement and the real provider retains any custom modal custody.
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative'))
-    .createReactNativeNativeMock({ platformOS: 'ios' }, { Alert: { alert: nativeAlert }, Dimensions: { get: () => windowSize } }));
+    .createReactNativeNativeMock({ platformOS: 'ios' }, { Alert: { alert: nativeAlert }, Dimensions: { get: () => windowSize }, useWindowDimensions: () => windowSize }));
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({ pathname: '/workflows', router: { push: routerPush } }).module);
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
@@ -75,6 +76,7 @@ let previous = storage.getState();
 let previousAppliedSnapshot = getAppliedActiveServerSnapshot();
 let previousRuntimeAvailable = isAppliedActiveServerRuntimeAvailable();
 let singleton: Awaited<ReturnType<typeof loadSyncSingletonForTests>> | undefined;
+let fixtureHome = 0;
 beforeEach(async () => {
     installShippedNativeFrameScheduler();
     nativeAlert.mockReset();
@@ -86,17 +88,31 @@ beforeEach(async () => {
     singleton = await loadSyncSingletonForTests();
     const runtime = await import('@/sync/domains/server/serverRuntime');
     appliedSnapshot = runtime.getActiveServerSnapshot;
-    const home = await runtime.upsertAndActivateServer({ serverUrl: 'http://listsum.test', name: 'Library' });
+    // Each HTTP fixture is a distinct Home: admitted Account/collection state
+    // lives beyond a React store restore and must not alias the next fixture.
+    const home = await runtime.upsertAndActivateServer({ serverUrl: `http://listsum-${++fixtureHome}.test`, name: 'Library' });
     httpBoundary = await installWorkflowActionHttpBoundary({
         fixtureResponse: (actionId, input) => execute(actionId, input),
         automationDefinitions: async (url, init) => automationDefinitionResponse?.(url, init) });
     const { restoreConnectionToActiveServer } = await import('@/sync/runtime/orchestration/connectionManager');
     await restoreConnectionToActiveServer(httpBoundary.credentials);
+    // Core acquisition owns readiness and applies Account settings. Settle it before
+    // controlled settings/Library fixtures, so its initial wake cannot race the scenario.
+    const { sync } = await import('@/sync/sync');
+    expect(await sync.awaitBootstrapForegroundAcquisition()).toBe(true);
+    await sync.resumeSync('server-reachable');
     publishAppliedActiveServerSnapshot(appliedSnapshot());
     const { settingsDefaults } = await import('@/sync/domains/settings/settings');
     storage.setState({ profileScope: { serverId: home.id, accountId: 'account-a' },
+        settingsScope: { serverId: home.id, accountId: 'account-a' }, settingsVersion: 1,
         settings: { ...settingsDefaults, experiments: true, featureToggles: { automations: true } },
         workflowRunListWindows: {}, workflowRunsById: {} });
+    const { resolveCollectionSpacesV1 } = await import('@happier-dev/protocol/collections/spaces/collectionSpacesV1');
+    const { writeCollectionSpaceSelectionV1 } = await import('@/sync/domains/session/listing/sessionListSpaces');
+    const defaultSpace = resolveCollectionSpacesV1(storage.getState().settings.collectionSpacesV1, 'workflow')[0]!;
+    expect(await writeCollectionSpaceSelectionV1({ scope: { serverId: home.id, accountId: 'account-a' },
+        entityKind: 'workflow', spaceId: defaultSpace.id, isCurrent: () => true,
+        readSettings: () => storage.getState().settings })).toEqual({ ok: true });
     httpBoundary.prime();
 });
 afterEach(async () => {
@@ -114,6 +130,7 @@ afterEach(async () => {
     singleton?.dispose();
     singleton = undefined;
     automationDefinitionResponse = null;
+    windowSize.width = 800;
     storage.setState(previous);
     publishAppliedActiveServerSnapshot(previousAppliedSnapshot, previousRuntimeAvailable);
 });
@@ -152,6 +169,8 @@ describe('workflow library page anatomy', () => {
             const state = navigation().state;
             return state.tabs[state.groups[state.focusedGroupId].activeTabId];
         };
+        // Workspace hydration admits navigation independently of the mounted controls.
+        await vi.waitFor(() => expect(navigation().active).toBe(true));
         const library = activeTab();
         const enter = async () => {
             if (entrance === 'column') {
@@ -520,7 +539,7 @@ describe('workflow library page anatomy', () => {
             return { ok: false, errorCode: 'unexpected', error: 'unexpected' };
         });
         const screen = await renderScreen(<DestinationInstanceHost tabId="workflows" ref={{ kind: 'workflows', params: {} }}
-            pathname="/workflows" focused visible phone navigation={{ push: routerPush, replace: () => {}, back: () => {} }}>
+            pathname="/workflows" focused visible phone navigation={{ push: routerPush, pushRetainingCurrent: routerPush, replace: () => {}, back: () => {} }}>
             <WorkflowsDestinationIndex />
         </DestinationInstanceHost>, { wrapper: Wrapper });
         await act(async () => { await Promise.resolve(); await Promise.resolve(); });
@@ -530,13 +549,13 @@ describe('workflow library page anatomy', () => {
         // One overflow: the title bar carries no page-actions `⋯` of raw buttons beside the column's own.
         expect(screen.findHostByTestId('page-header-actions.trigger')).toBeNull();
         expect(screen.findHostByTestId('workflows-home:new')).toBeNull();
-        // Creation is the column's "+" menu: the lab `nav-N1m` rows (title, subtitle, mark), New workflow first.
+        // Q7/FIN naming: one New workflow entry retains each existing start as an option.
         const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
         const addMenu = screen.findAllByType(DropdownMenu).find((menu) => menu.props.testID === 'workflows-column:add:menu')!;
         expect(addMenu).toBeDefined();
-        expect(addMenu.props.items.map((item: { id: string }) => item.id)).toEqual(['new', 'agent', 'trigger', 'example', 'import']);
-        expect(addMenu.props.items.every((item: { subtitle?: string; icon?: unknown }) => Boolean(item.subtitle) && item.icon !== undefined)).toBe(true);
-        await act(async () => { addMenu.props.onSelect('new'); });
+        expect(addMenu.props.items.map((item: { id: string }) => item.id)).toEqual(['new']);
+        expect(addMenu.props.items[0].submenu.items.map((item: { id: string }) => item.id)).toEqual(['blank', 'trigger', 'agent', 'example', 'import']);
+        await act(async () => { addMenu.props.onSelect('blank'); });
         expect(routerPush).toHaveBeenCalledWith('/workflows/new');
     });
     it('gives a phone-sized web window the same one way to add when no navigation bar shows the title (lab P1)', async () => {
@@ -564,7 +583,8 @@ describe('workflow library page anatomy', () => {
             expect(screen.findHostByTestId('workflows-home:agent')).toBeNull();
             const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
             const addMenu = screen.findAllByType(DropdownMenu).find((menu) => menu.props.testID === 'workflows-column:add:menu');
-            expect(addMenu?.props.items.map((item: { id: string }) => item.id)).toEqual(['new', 'agent', 'trigger', 'example', 'import']);
+            expect(addMenu?.props.items.map((item: { id: string }) => item.id)).toEqual(['new']);
+            expect(addMenu?.props.items[0].submenu.items.map((item: { id: string }) => item.id)).toEqual(['blank', 'trigger', 'agent', 'example', 'import']);
         } finally {
             windowSize.width = 800;
         }
@@ -606,14 +626,16 @@ describe('workflow library page anatomy', () => {
             createNodeMock: () => ({ measureInWindow: (receive: (x: number, y: number, width: number, height: number) => void) => receive(40, 40, 120, 40) }),
         });
         await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-        expect(screen.findByTestId('workflows-home:firstVisit')).not.toBeNull();
+        expect(screen.findByTestId('workflows-home:firstVisit')).toBeNull();
         expect(screen.findByTestId('workflow-builtins:builtin:plan-with-a-panel')).not.toBeNull();
         expect(screen.findByTestId('workflows-column:view:runs')).not.toBeNull();
-        expect(screen.findByTestId('workflows-column:trigger:digest')).not.toBeNull();
+        expect(screen.findByTestId('workflows-home:row:account-trigger:digest')).not.toBeNull();
         await vi.waitFor(() => {
             expect(screen.getTextContent()).toContain('workflows.triggers.summary.everyDayAt(time=9:00 AM)');
         });
-        expect(screen.findHostByTestId('workflows-column:trigger:digest-switch')).not.toBeNull();
+        expect(screen.findByTestId('workflows-column:trigger:digest-switch')).toBeNull();
+        await screen.pressByTestIdAsync('workflows-home:row:account-trigger:digest');
+        await vi.waitFor(() => expect(screen.findByTestId('workflows-column-trigger-popover')).not.toBeNull());
         expect(screen.findByTestId('workflows-column:add')).toBeNull();
         await screen.pressByTestIdAsync('workflows-column:more');
         await act(async () => { await new Promise<void>(resolve => setTimeout(resolve, 0)); });
@@ -634,9 +656,9 @@ describe('workflow library page anatomy', () => {
             return { ok: false, errorCode: 'unexpected', error: 'unexpected' };
         });
         const screen = await renderScreen(<WorkflowsLibraryHome />, { wrapper: Wrapper });
-        expect(execute.mock.calls.filter(([actionId]) => actionId === 'workflow.run.list')).toHaveLength(1);
-        expect(screen.findByTestId('workflows-home:firstVisit') !== null).toBe(!hasHistory);
-        if (hasHistory) expect(screen.findByTestId('workflows-home:empty')).not.toBeNull();
+        await vi.waitFor(() => expect(execute.mock.calls.filter(([actionId]) => actionId === 'workflow.run.list')).toHaveLength(1));
+        await vi.waitFor(() => expect(screen.findByTestId('workflows-home:firstVisit') !== null).toBe(!hasHistory));
+        if (hasHistory) await vi.waitFor(() => expect(screen.findByTestId('workflows-home:empty')).not.toBeNull());
     });
     it('lays saved rows on one page sheet like the sections below, and marks built-ins by purpose with their step count', async () => {
         execute.mockImplementation(async (actionId: string) => {
@@ -648,7 +670,7 @@ describe('workflow library page anatomy', () => {
             return { ok: false, errorCode: 'unexpected', error: 'unexpected' };
         });
         const screen = await renderScreen(<WorkflowsLibraryHome />, { wrapper: Wrapper });
-        await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+        await vi.waitFor(() => expect(screen.findHostByTestId('workflows-home:row:10000000-0000-4000-8000-000000000007')).not.toBeNull());
         // A populated library needs summaries, not a history-window read just to rule out first visit.
         expect(execute.mock.calls.filter(([actionId]) => actionId === 'workflow.run.list')).toHaveLength(0);
         // A sheet's hairline sits between its rows and never after the group's last one.
@@ -661,7 +683,7 @@ describe('workflow library page anatomy', () => {
         const plan = screen.tree.findHostByTestId('workflow-builtins:builtin:plan-with-a-panel');
         expect(plan).not.toBeNull();
         const planCopy = plan!.findAll((node) => typeof node.props.children === 'string').map((node) => node.props.children).join('\n').replace(/\u00a0/g, ' ');
-        const { getBuiltinWorkflowCatalogV1 } = await import('@happier-dev/protocol');
+        const { getBuiltinWorkflowCatalogV1} = await import('@happier-dev/protocol/workflows/builtins/catalog');
         const { countWorkflowStepsV1 } = await import('@happier-dev/protocol/workflows/workflowDefinitionEditV1');
         const planEntry = getBuiltinWorkflowCatalogV1().find((entry) => entry.id === 'builtin:plan-with-a-panel')!;
         expect(planCopy).toContain(t('workflows.examples.stepCount', { count: countWorkflowStepsV1(planEntry.definition.blocks) }));
@@ -698,32 +720,42 @@ describe('workflow library summaries and filter', () => {
                 triggers: index === 0 ? [{ kind: 'schedule', schedule: { kind: 'interval', everyMs: 3_600_000, scheduleExpr: null, timezone: null } }] : [],
             })) } };
             if (actionId === 'workflow.run.summaries') return { ok: true, result: { remainingSourceArtifactIds: [], summaries: ids.map((sourceArtifactId, index) => ({
-                sourceArtifactId, recent: [{ runId: `run-${index}`, state: index === 0 ? 'succeeded' : 'running' }],
+                sourceArtifactId, recent: [recent({ runId: `run-${index}`, state: index === 0 ? 'succeeded' : 'running' })],
                 lastRun: null, needsYouCount: 0, needsYouRunId: null,
             })) } };
             return { ok: false, errorCode: 'unexpected', error: 'unexpected' };
         });
         const screen = await renderScreen(<WorkflowsLibraryHome />, { wrapper: Wrapper });
-        await vi.waitFor(() => expect(screen.findHostByTestId('workflows-home:filter:running')).not.toBeNull());
+        const { getBuiltinWorkflowCatalogV1 } = await import('@happier-dev/protocol/workflows/builtins/catalog');
+        const builtinIds = getBuiltinWorkflowCatalogV1().map(entry => entry.id);
+        await vi.waitFor(async () => expect(await action.execute('workflow.library.view.get', {}, context)).toMatchObject({ ok: true,
+            result: { offeredViews: ['all', 'triggered', 'running'] } }));
+        // Built-ins are filter rows like the others (R8-7); the home has no view pills of its own.
+        expect(screen.findAll(node => /^workflows-home:filter:/.test(String(node.props?.testID ?? '')))).toHaveLength(0);
         expect(await action.execute('workflow.library.view.get', {}, context)).toMatchObject({ ok: true,
-            result: { view: 'all', searchQuery: '', offeredViews: ['all', 'triggered', 'running'], visibleKeys: ids } });
+            result: { view: 'all', searchQuery: '', offeredViews: ['all', 'triggered', 'running'], visibleKeys: [...ids, ...builtinIds] } });
         const { invokeScopeAction } = await import('@/sync/ops/actions/scopeActionFamily');
         expect(await invokeScopeAction('workflow.library.view.get', {}, { ...context, runtimeAccountId: 'account-b' }))
             .toMatchObject({ ok: false, errorCode: 'client_surface_unavailable' });
         expect(await invokeScopeAction('workflow.library.view.set', { searchQuery: 'foreign' }, { serverId: 'another-home' }))
             .toMatchObject({ ok: false, errorCode: 'client_surface_unavailable' });
         await act(async () => {
-            expect(await action.execute('workflow.library.view.set', { view: 'triggered' }, context)).toEqual({ ok: true, result: { ok: true } });
+            expect(await action.execute('workflow.library.view.set', { filters: { view: 'triggered' } }, context)).toEqual({ ok: true, result: { ok: true } });
         });
         expect(screen.findHostByTestId(`workflows-home:row:${ids[0]}`)).not.toBeNull();
         expect(screen.findHostByTestId(`workflows-home:row:${ids[1]}`)).toBeNull();
         await act(async () => {
-            expect(await action.execute('workflow.library.view.set', { view: 'running', searchQuery: '  DEPENDENCY  ' }, context)).toEqual({ ok: true, result: { ok: true } });
+            expect(await action.execute('workflow.library.view.set', { filters: { view: 'running' }, searchQuery: '  DEPENDENCY  ' }, context)).toEqual({ ok: true, result: { ok: true } });
         });
         expect(screen.findHostByTestId(`workflows-home:row:${ids[0]}`)).toBeNull();
         expect(screen.findHostByTestId(`workflows-home:row:${ids[1]}`)).not.toBeNull();
         expect(screen.findHostByTestId('workflows-home:search')!.props.value).toBe('  DEPENDENCY  ');
-        await screen.pressByTestIdAsync('workflows-home:filter:all');
+        expect(await action.execute('workflow.library.view.set', { filters: { extensions: {
+            'test.retired/stage': { kind: 'boolean', value: true },
+        } } }, context)).toMatchObject({ ok: false, errorCode: 'client_control_unavailable' });
+        expect(await action.execute('workflow.library.view.get', {}, context)).toMatchObject({ ok: true,
+            result: { filters: { view: 'running' }, visibleKeys: [ids[1]] } });
+        await act(async () => { await action.execute('workflow.library.view.set', { filters: { view: 'all' } }, context); });
         expect(await action.execute('workflow.library.view.get', {}, context)).toMatchObject({ ok: true,
             result: { view: 'all', searchQuery: '  DEPENDENCY  ', visibleKeys: [ids[1]] } });
         await act(async () => {
@@ -738,10 +770,12 @@ describe('workflow library summaries and filter', () => {
             ? { ok: true, result: { definitions: [] } } : { ok: true, result: { runs: [], metadataByRunId: {} } });
         (await import('./workflowLibraryReads')).resetWorkflowLibraryReadsForTests();
         await renderScreen(<WorkflowsLibraryHome />, { wrapper: Wrapper });
-        expect(await action.execute('workflow.library.view.set', { view: 'running', searchQuery: 'atomic' }, context))
-            .toMatchObject({ ok: false, errorCode: 'client_control_unavailable' });
+        await act(async () => {
+            expect(await action.execute('workflow.library.view.set', { filters: { view: 'running' }, searchQuery: 'atomic' }, context))
+                .toEqual({ ok: true, result: { ok: true } });
+        });
         expect(await action.execute('workflow.library.view.get', {}, context)).toMatchObject({ ok: true,
-            result: { view: 'all', searchQuery: '', offeredViews: ['all'], visibleKeys: [] } });
+            result: { view: 'running', filters: { view: 'running' }, searchQuery: 'atomic', offeredViews: ['all'], visibleKeys: [] } });
     });
 
     it('retires Library Actions on retained destination blur and Account lifetime replacement', async () => {
@@ -755,7 +789,12 @@ describe('workflow library summaries and filter', () => {
             pathname="/workflows" focused={focused} visible={focused} navigation={{ push: routerPush, replace: () => {}, back: () => {} }}>
             <WorkflowsLibraryHome />
         </DestinationInstanceHost>;
-        const screen = await renderScreen(destination(true), { wrapper: Wrapper });
+        const screen = await renderScreen(destination(false), { wrapper: Wrapper });
+        expect(execute.mock.calls.filter(([actionId]) => actionId === 'workflow.definition.list'
+            || actionId === 'workflow.run.summaries')).toHaveLength(0);
+        await screen.update(destination(true));
+        await vi.waitFor(() => expect(execute.mock.calls.filter(([actionId]) => actionId === 'workflow.definition.list'))
+            .toHaveLength(1));
         await act(async () => { await action.execute('workflow.library.view.set', { searchQuery: 'retained' }, context); });
         await screen.update(destination(false));
         expect(await action.execute('workflow.library.view.get', {}, context))
@@ -789,20 +828,23 @@ describe('workflow library summaries and filter', () => {
             if (actionId === 'workflow.definition.list') return { ok: true, result: { definitions: [
                 row('10000000-0000-4000-8000-000000000011', 'Release notes'), row('10000000-0000-4000-8000-000000000012', 'Dependency review')] } };
             if (actionId === 'workflow.run.summaries') return { ok: true, result: { remainingSourceArtifactIds: [], summaries: [
-                { sourceArtifactId: '10000000-0000-4000-8000-000000000011', recent: [{ runId: 'run-live', state: 'running' }],
-                    lastRun: { runId: 'run-live', state: 'running', createdAt: '2026-10-11T08:00:00.000Z', finishedAt: null }, needsYouCount: 1, needsYouRunId: 'run-live' },
-                { sourceArtifactId: '10000000-0000-4000-8000-000000000012', recent: [{ runId: 'run-done', state: inactiveState }],
-                    lastRun: { runId: 'run-done', state: inactiveState, createdAt: '2026-10-10T08:00:00.000Z', finishedAt: inactiveState === 'succeeded' ? '2026-10-10T08:05:00.000Z' : null }, needsYouCount: 0, needsYouRunId: null },
+                { sourceArtifactId: '10000000-0000-4000-8000-000000000011', recent: [recent({ runId: 'run-live', state: 'running', attentionRequired: true, invocationAttentionRequired: true })],
+                    lastRun: { ...recent({ runId: 'run-live', state: 'running', attentionRequired: true, invocationAttentionRequired: true }), createdAt: '2026-10-11T08:00:00.000Z', startedAt: '2026-10-11T08:00:00.000Z', finishedAt: null }, needsYouCount: 1, needsYouRunId: 'run-live' },
+                { sourceArtifactId: '10000000-0000-4000-8000-000000000012', recent: [recent({ runId: 'run-done', state: inactiveState })],
+                    lastRun: { ...recent({ runId: 'run-done', state: inactiveState }), createdAt: '2026-10-10T08:00:00.000Z', startedAt: '2026-10-10T08:00:00.000Z', finishedAt: inactiveState === 'succeeded' ? '2026-10-10T08:05:00.000Z' : null }, needsYouCount: 0, needsYouRunId: null },
             ] } };
             if (actionId === 'workflow.run.list') return { ok: true, result: { runs: [], metadataByRunId: {} } };
             return { ok: false, errorCode: 'unexpected', error: 'unexpected' };
         });
         const screen = await renderScreen(<WorkflowsLibraryHome />, { wrapper: Wrapper });
         await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-        await vi.waitFor(() => expect(screen.tree.findHostByTestId('workflows-home:filter:running')).not.toBeNull());
+        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+        const action = createDefaultActionExecutor();
+        const context = { surface: 'agent' as const, serverId: storage.getState().profileScope!.serverId };
         // No saved workflow has a trigger, so that view stays away; Running is offered on its own.
-        expect(screen.tree.findHostByTestId('workflows-home:filter:triggered')).toBeNull();
-        await screen.tree.pressByTestIdAsync('workflows-home:filter:running');
+        await vi.waitFor(async () => expect(await action.execute('workflow.library.view.get', {}, context)).toMatchObject({ ok: true,
+            result: { offeredViews: ['all', 'running'] } }));
+        await act(async () => { await action.execute('workflow.library.view.set', { filters: { view: 'running' } }, context); });
         expect(screen.tree.findHostByTestId('workflows-home:row:10000000-0000-4000-8000-000000000011')).not.toBeNull();
         expect(screen.tree.findHostByTestId('workflows-home:row:10000000-0000-4000-8000-000000000012')).toBeNull();
         await screen.pressByTestIdAsync('workflows-home:row:10000000-0000-4000-8000-000000000011:needsYou');
@@ -818,7 +860,7 @@ describe('workflow library summaries and filter', () => {
                 metadata: { title: 'Release notes' }, ownerAccountId: 'account-a', access: 'owner', contentStatus: 'available',
                 stepCount: 2, triggers: [], nextRunAt: null }] } };
             if (actionId === 'workflow.run.summaries') return { ok: true, result: { remainingSourceArtifactIds: [], summaries: [{
-                sourceArtifactId: id, recent: [{ runId: 'run-1', state: 'succeeded' }], lastRun: null, needsYouCount: 0, needsYouRunId: null }] } };
+                sourceArtifactId: id, recent: [recent({ runId: 'run-1', state: 'succeeded' })], lastRun: null, needsYouCount: 0, needsYouRunId: null }] } };
             if (actionId === 'workflow.run.list') return { ok: true, result: { runs: [], metadataByRunId: {} } };
             return { ok: false, errorCode: 'unexpected', error: 'unexpected' };
         });
@@ -826,7 +868,8 @@ describe('workflow library summaries and filter', () => {
             // No NavigationTitleChromeProvider: a fresh narrow load without phone chrome is still a phone-sized window.
             const screen = await renderScreen(<WorkflowsLibraryHome />, { wrapper: Wrapper });
             await vi.waitFor(() => expect(screen.findHostByTestId(`workflows-home:row:${id}`)).not.toBeNull());
-            expect(screen.findHostByTestId(`workflows-home:row:${id}:strip`) !== null).toBe(showsStrip);
+            // Definition and summary transport reads settle separately; the row may paint first.
+            await vi.waitFor(() => expect(screen.findHostByTestId(`workflows-home:row:${id}:strip`) !== null).toBe(showsStrip));
         } finally {
             windowSize.width = 800;
         }
@@ -862,7 +905,14 @@ describe('workflow library summaries and filter', () => {
         await act(async () => { await Promise.resolve(); await Promise.resolve(); });
         const { formatTriggerSetSummary } = await import('../triggers/formatTriggerSummary');
         const { t } = await import('@/text');
-        expect(screen.tree.findHostByTestId('workflows-home:filter:triggered')).not.toBeNull();
+        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+        const action = createDefaultActionExecutor();
+        const context = { surface: 'agent' as const, serverId: storage.getState().profileScope!.serverId };
+        const setView = async (view: 'all' | 'triggered') => {
+            await act(async () => { await action.execute('workflow.library.view.set', { filters: { view } }, context); });
+        };
+        await vi.waitFor(async () => expect(await action.execute('workflow.library.view.get', {}, context)).toMatchObject({ ok: true,
+            result: { offeredViews: ['all', 'triggered'] } }));
         const manual = screen.tree.findHostByTestId('workflows-home:row:10000000-0000-4000-8000-000000000003');
         expect(manual).not.toBeNull();
         const copy = manual!.findAll((node) => typeof node.props.children === 'string').map((node) => node.props.children).join('\n');
@@ -887,14 +937,54 @@ describe('workflow library summaries and filter', () => {
             await act(async () => { overflow!.props.onSecondaryAction('run'); });
         }
         expect(routerPush).not.toHaveBeenCalled();
-        await screen.tree.pressByTestIdAsync('workflows-home:filter:triggered');
+        await setView('triggered');
         expect(screen.tree.findHostByTestId('workflows-home:row:10000000-0000-4000-8000-000000000003')).toBeNull();
         expect(screen.tree.findHostByTestId('workflows-home:row:10000000-0000-4000-8000-000000000004')).not.toBeNull();
-        await screen.tree.pressByTestIdAsync('workflows-home:filter:all');
+        await setView('all');
         expect(screen.tree.findHostByTestId('workflows-home:row:10000000-0000-4000-8000-000000000003')).not.toBeNull();
-        await screen.tree.pressByTestIdAsync('workflows-home:filter:triggered');
+        await setView('triggered');
         await act(async () => { await deleteWithConsent('10000000-0000-4000-8000-000000000004'); });
-        expect(screen.tree.findHostByTestId('workflows-home:filter:triggered')).toBeNull();
-        expect(screen.tree.findHostByTestId('workflows-home:row:10000000-0000-4000-8000-000000000003')).not.toBeNull();
+        expect(await action.execute('workflow.library.view.get', {}, context)).toMatchObject({ ok: true, result: { offeredViews: ['all'] } });
+        expect(screen.tree.findHostByTestId('workflows-home:row:10000000-0000-4000-8000-000000000003')).toBeNull();
+    });
+
+    it('binds the Account catalog and device Workflow selection to the mounted filter without a second read', async () => {
+        const { CollectionSpacesV1Schema } = await import('@happier-dev/protocol/collections/spaces/collectionSpacesV1');
+        const scope = storage.getState().profileScope!;
+        const catalog = CollectionSpacesV1Schema.parse({ v: 1, spaces: [{ entityKind: 'workflow', id: 'scheduled', name: 'Scheduled releases',
+            icon: { kind: 'icon', name: 'list' }, filter: { view: 'triggered' }, includeNeedsYouEverywhere: false }] });
+        const ids = ['10000000-0000-4000-8000-000000000061', '10000000-0000-4000-8000-000000000062'];
+        execute.mockImplementation(async (actionId: string) => {
+            if (actionId === 'workflow.definition.list') return { ok: true, result: { definitions: ids.map((definitionId, index) => ({
+                kind: 'workflow-definition.v1', definitionId, revision: { headerVersion: 1, bodyVersion: 1 },
+                metadata: { title: index === 0 ? 'Scheduled release' : 'Manual release' }, ownerAccountId: 'account-a', access: 'owner',
+                contentStatus: 'available', stepCount: 1, nextRunAt: null,
+                triggers: index === 0 ? [{ kind: 'schedule', schedule: { kind: 'interval', everyMs: 3_600_000, scheduleExpr: null, timezone: null } }] : [],
+            })) } };
+            if (actionId === 'workflow.run.summaries') return { ok: true, result: { summaries: [], remainingSourceArtifactIds: [] } };
+            return { ok: false, errorCode: 'unexpected', error: 'unexpected' };
+        });
+        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+        const action = createDefaultActionExecutor();
+        const context = { surface: 'agent' as const, serverId: scope.serverId, expectedAccountId: scope.accountId };
+        await act(async () => {
+            expect(await action.execute('settings.invoke', { anchor: 'workflow.list.spaces', input: {
+                kind: 'collection_space', entityKind: 'workflow', mutation: { op: 'create', space: catalog.spaces[0] },
+            } }, context)).toMatchObject({ ok: true, result: { status: 'completed' } });
+            expect(await action.execute('settings.set', { anchor: 'workflow.list.selectedSpace', value: { spaceId: 'scheduled' } }, context))
+                .toMatchObject({ ok: true });
+        });
+        const screen = await renderScreen(<WorkflowsLibraryHome />, { wrapper: Wrapper });
+        await vi.waitFor(() => expect(screen.findHostByTestId(`workflows-home:row:${ids[0]}`)).not.toBeNull());
+        expect(await action.execute('workflow.library.view.get', {}, { surface: 'agent', serverId: scope.serverId }))
+            .toMatchObject({ ok: true, result: { selectedSpaceId: 'scheduled', filters: { view: 'triggered' } } });
+        expect(screen.findHostByTestId(`workflows-home:row:${ids[1]}`)).toBeNull();
+        const readCount = execute.mock.calls.filter(call => call[0] === 'workflow.definition.list').length;
+        await act(async () => {
+            expect(await action.execute('settings.set', { anchor: 'workflow.list.selectedSpace', value: { spaceId: 'all-workflows' } }, context))
+                .toMatchObject({ ok: true });
+        });
+        expect(screen.findHostByTestId(`workflows-home:row:${ids[1]}`)).not.toBeNull();
+        expect(execute.mock.calls.filter(call => call[0] === 'workflow.definition.list')).toHaveLength(readCount);
     });
 });

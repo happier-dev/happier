@@ -21,7 +21,6 @@ import {
 let hasUnreadMessagesValue = false;
 let platformOs: 'ios' | 'android' | 'web' = 'web';
 let windowDimensions = { width: 1024, height: 768, scale: 1, fontScale: 1 };
-let workingIndicatorStyle: 'spinner' | 'pulse' = 'spinner';
 let sessionListIdentityDisplay: 'avatar' | 'agentLogo' | 'none' = 'avatar';
 let sessionListActiveColorMode: 'activityAndAttention' | 'attentionOnly' | 'allActive' = 'activityAndAttention';
 
@@ -39,10 +38,6 @@ vi.mock('@expo/vector-icons', () => ({
     Octicons: 'Octicons',
 }));
 
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: (props: any) => React.createElement('Text', props, props.children),
-    TextInput: 'TextInput',
-}));
 
 installSessionShellCommonModuleMocks({
     text: async () => {
@@ -72,11 +67,14 @@ vi.doUnmock('@/agents/registry/registryUiBehavior');
 const nativeBoundary = await import('react-native');
 Object.defineProperty(nativeBoundary.Platform, 'OS', { configurable: true, get: () => platformOs });
 vi.spyOn(nativeBoundary, 'useWindowDimensions').mockImplementation(() => windowDimensions);
-// Device presentation reads the window geometry from Dimensions, so the same boundary drives both.
 vi.spyOn(nativeBoundary.Dimensions, 'get').mockImplementation(() => windowDimensions);
 const { lightTheme } = await import('@/theme');
 const { renderScreen: renderCanonicalScreen } = await import('@/dev/testkit/render/renderScreen');
 const storageModule = await import('@/sync/domains/state/storage');
+const { Avatar } = await import('@/components/ui/avatar/Avatar');
+const { AgentIcon } = await import('@/agents/registry/AgentIcon');
+const { SessionAgentCatalogIdentityIcon } = await import('@/components/sessions/presentation/SessionAgentCatalogIdentityIcon');
+const { StatusDot } = await import('@/components/ui/status/StatusDot');
 const { SessionItem: ArchiveProgressSessionItem } = await import('./SessionItem');
 const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
 function renderScreen(...args: Parameters<typeof renderCanonicalScreen>) {
@@ -87,36 +85,13 @@ const useSessionSpy = vi.spyOn(storageModule, 'useSession');
 const useSessionListRenderableWithServerScopeSpy = vi.spyOn(storageModule, 'useSessionListRenderableWithServerScope');
 let previousStorageState: ReturnType<typeof storageModule.storage.getState>;
 
-vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
-    DropdownMenu: (props: any) => React.createElement('DropdownMenu', props),
-}));
-
-vi.mock('@/components/ui/avatar/Avatar', () => ({
-    Avatar: (props: any) => React.createElement('Avatar', props),
-}));
-
-vi.mock('@/agents/registry/AgentIcon', () => ({
-    AgentIcon: (props: any) => React.createElement('AgentIcon', props),
-}));
-
-vi.mock('@/components/sessions/presentation/SessionAgentCatalogIdentityIcon', () => ({
-    SessionAgentCatalogIdentityIcon: (props: Record<string, unknown>) =>
-        React.createElement('SessionAgentCatalogIdentityIcon', props),
-}));
-
-vi.mock('@/components/ui/status/StatusDot', () => ({
-    StatusDot: 'StatusDot',
-}));
 
 
-vi.mock('./sessionPinIcons', () => ({
-    PinIcon: (props: Record<string, unknown>) => React.createElement('PinIcon', props),
-    PinSlashIcon: (props: Record<string, unknown>) => React.createElement('PinSlashIcon', props),
-}));
 
-vi.mock('./sessionTagIcons', () => ({
-    TagIcon: (props: Record<string, unknown>) => React.createElement('TagIcon', props),
-}));
+
+
+
+
 
 type MockSessionStatus = SessionStatus;
 let projectStatus: typeof import('@/utils/sessions/sessionUtils').getSessionStatus;
@@ -185,16 +160,6 @@ function createSession(
     });
 }
 
-function findRowContentStyle(screen: Awaited<ReturnType<typeof renderScreen>>, sessionId: string): Record<string, unknown> {
-    const row = screen.findByTestId(`session-list-item-${sessionId}`);
-    const children = row?.children ?? [];
-    const content = children.find((child: unknown) => {
-        if (!child || typeof child !== 'object' || !('props' in child)) return false;
-        const style = flattenStyle((child as { props: { style?: unknown } }).props.style);
-        return style.flex === 1;
-    }) as { props: { style?: unknown } } | undefined;
-    return flattenStyle(content?.props.style);
-}
 
 function findSessionTitleText(screen: Awaited<ReturnType<typeof renderScreen>>, title: string) {
     return screen.findAllByType('Text').find((node) => node.props.children === title);
@@ -221,7 +186,6 @@ async function importSessionItem() {
                 : mockSessionStatus,
             hasUnreadMessages: hasUnreadMessagesValue,
             activityTimeLabel: '1m',
-            workingIndicatorMode: workingIndicatorStyle,
             identityDisplay: sessionListIdentityDisplay,
             activeColorMode: sessionListActiveColorMode,
         }),
@@ -243,7 +207,6 @@ describe('SessionItem activity time', () => {
         previousStorageState = storageModule.storage.getState();
         projectStatus = (await import('@/utils/sessions/sessionUtils')).getSessionStatus;
         hasUnreadMessagesValue = false;
-        workingIndicatorStyle = 'spinner';
         sessionListIdentityDisplay = 'avatar';
         sessionListActiveColorMode = 'activityAndAttention';
         platformOs = 'web';
@@ -267,7 +230,7 @@ describe('SessionItem activity time', () => {
         const rowViewModel = createSessionItemRowViewModel({ session, serverId: 'server_a',
             overrides: { sessionStatus: projectStatus(session, Date.now()) } });
         const screen = await renderScreen(<ArchiveProgressSessionItem session={session} rowViewModel={rowViewModel}
-            serverId="server_a" pinned={false} selected={false} isFirst isLast isSingle
+            serverId="server_a" pinned={false} selected={false}
             variant="default" compact={false} />);
         const textBefore = screen.getTextContent();
         let operation: ReturnType<typeof storageModule.storage.getState>['sessionArchiveOperations'][string][string] | null = null;
@@ -287,9 +250,6 @@ describe('SessionItem activity time', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                isFirst={true}
-                isLast={true}
-                isSingle={true}
                 variant="default"
                 compact={false}
             />,
@@ -309,9 +269,6 @@ describe('SessionItem activity time', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                isFirst={true}
-                isLast={true}
-                isSingle={true}
                 variant="default"
                 compact={false}
             />,
@@ -344,9 +301,6 @@ describe('SessionItem activity time', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                isFirst={true}
-                isLast={true}
-                isSingle={true}
                 variant="default"
                 compact={false}
             />,
@@ -367,18 +321,15 @@ describe('SessionItem activity time', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                isFirst={true}
-                isLast={true}
-                isSingle={true}
                 variant="default"
                 compact={false}
             />,
         );
 
-        expect(screen.findByType('Avatar' as any)?.props).toMatchObject({
+        expect(screen.findByType(Avatar)?.props).toMatchObject({
             hasUnreadMessages: false,
         });
-        expect(screen.findByType('Avatar' as any)?.props.unreadBadgeTestID).toBeUndefined();
+        expect(screen.findByType(Avatar)?.props.unreadBadgeTestID).toBeUndefined();
     });
 
     it('renders a stable minimal unread attention indicator instead of an avatar badge', async () => {
@@ -394,13 +345,13 @@ describe('SessionItem activity time', () => {
 
         const screen = await renderScreen(
             <SessionItem
-                session={createSession('sess_unread_minimal')}
+                session={{ ...createSession('sess_unread_minimal'), seq: 2, viewer: createSessionViewerFixture({
+                    readState: { state: 'tracking', lastViewedSessionSeq: 1, unreadSince: null },
+                    attention: { needsAttention: true, reasons: ['unread'], primary: 'unread', presentation: 'full' },
+                }) }}
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                isFirst={true}
-                isLast={true}
-                isSingle={true}
                 variant="default"
                 compact={true}
                 compactMinimal={true}
@@ -408,7 +359,7 @@ describe('SessionItem activity time', () => {
         );
 
         expect(screen.findByTestId('session-list-attention-indicator-sess_unread_minimal-trailing-unread')).toBeTruthy();
-        expect(screen.findByType('Avatar' as any)?.props.hasUnreadMessages).toBe(false);
+        expect(screen.findByType(Avatar)?.props.hasUnreadMessages).toBe(false);
     });
 
     it('shows ready-for-review status text for non-minimal completed unread turns', async () => {
@@ -432,21 +383,22 @@ describe('SessionItem activity time', () => {
                     latestReadyEventSeq: 10,
                     lastViewedSessionSeq: 9,
                     seq: 10,
+                    viewer: createSessionViewerFixture({
+                        readState: { state: 'tracking', lastViewedSessionSeq: 9, unreadSince: null },
+                        attention: { needsAttention: true, reasons: ['ready_after_read'], primary: 'ready_after_read', presentation: 'full' },
+                    }),
                 } as SessionListRenderableSession}
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                isFirst={true}
-                isLast={true}
-                isSingle={true}
                 variant="default"
                 secondaryLineMode="path"
                 compact={false}
             />,
         );
 
-        expect(screen.getTextContent()).toContain('status.readyForReview');
-        expect(screen.findByTestId('session-list-status-subtitle-sess_ready_for_review-ready')).toBeTruthy();
+        expect(screen.getTextContent()).toContain('workStatus.buckets.finished');
+        expect(screen.findByTestId('session-list-status-subtitle-sess_ready_for_review-finished_unseen')).toBeTruthy();
     });
 
     it('shows failed status text before stale working text when the primary turn failed', async () => {
@@ -462,7 +414,6 @@ describe('SessionItem activity time', () => {
                     latestTurnStatus: 'failed',
                     latestTurnStatusObservedAt: 1_100,
                     seq: 11,
-                    // A failed turn speaks while its committed failure anchor is beyond this viewer's cursor.
                     viewer: createSessionViewerFixture({
                         latestFailureSeq: 11,
                         readState: { state: 'tracking', lastViewedSessionSeq: 10, unreadSince: null },
@@ -472,9 +423,6 @@ describe('SessionItem activity time', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                isFirst={true}
-                isLast={true}
-                isSingle={true}
                 variant="default"
                 secondaryLineMode="status"
                 compact={false}
@@ -550,9 +498,6 @@ describe('SessionItem activity time', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                isFirst={true}
-                isLast={true}
-                isSingle={true}
                 variant="default"
                 secondaryLineMode="path"
                 compact={false}
@@ -567,7 +512,7 @@ describe('SessionItem activity time', () => {
         expect(screen.findByTestId(
             `session-list-attention-indicator-sess_external_status-secondary-${indicator}`,
         )).toBeNull();
-        expect(screen.findByType('Avatar' as any)?.props.monochrome).toBe(true);
+        expect(screen.findByType(Avatar)?.props.monochrome).toBe(true);
     });
 
     it('keeps retained working placement from replacing a quiet canonical status', async () => {
@@ -587,9 +532,6 @@ describe('SessionItem activity time', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                isFirst
-                isLast
-                isSingle
                 variant="default"
                 secondaryLineMode="status"
                 compact={false}
@@ -634,9 +576,6 @@ describe('SessionItem activity time', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                isFirst
-                isLast
-                isSingle
                 variant="default"
                 secondaryLineMode="status"
                 compact={false}
@@ -673,15 +612,12 @@ describe('SessionItem activity time', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                isFirst={true}
-                isLast={true}
-                isSingle={true}
                 variant="default"
                 compact={false}
             />,
         );
 
-        expect(screen.findByType('Avatar' as any)?.props.monochrome).toBe(true);
+        expect(screen.findByType(Avatar)?.props.monochrome).toBe(true);
     });
 
     it('uses a tighter fixed row height and readable title metrics in very compact web rows', async () => {
@@ -694,9 +630,6 @@ describe('SessionItem activity time', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                isFirst={true}
-                isLast={true}
-                isSingle={true}
                 variant="default"
                 compact={true}
                 compactMinimal={true}
@@ -704,15 +637,16 @@ describe('SessionItem activity time', () => {
         );
 
         const rowStyle = findRowGeometryStyle(screen, 'sess_compact_title');
-        expect(rowStyle.height).toBe(34);
+        // The shared compact work row (lab `clflat`): 32 tall, its title on the navigation rows' body step.
+        expect(rowStyle.height).toBe(32);
 
         const title = screen.findAllByType('Text').find((node) => node.props.children === 'Session');
         const titleStyle = flattenStyle(title?.props.style);
-        expect(titleStyle.fontSize).toBe(12);
-        expect(titleStyle.lineHeight).toBe(16);
+        expect(titleStyle.fontSize).toBe(13);
+        expect(titleStyle.lineHeight).toBe(18);
     });
 
-    it('renders an 18px micro avatar in very compact web rows with title spacing', async () => {
+    it('renders a 16px micro avatar in very compact web rows', async () => {
         platformOs = 'web';
         const SessionItem = await importSessionItem();
 
@@ -722,20 +656,16 @@ describe('SessionItem activity time', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                isFirst={true}
-                isLast={true}
-                isSingle={true}
                 variant="default"
                 compact={true}
                 compactMinimal={true}
             />,
         );
 
-        expect(screen.findByType('Avatar' as any)?.props).toMatchObject({
+        expect(screen.findByType(Avatar)?.props).toMatchObject({
             id: 'sess_compact_avatar_web',
-            size: 18,
+            size: 16,
         });
-        expect(findRowContentStyle(screen, 'sess_compact_avatar_web').marginLeft).toBe(8);
     });
 
     it('preserves session identity and an accessible touch area in compact native phone rows', async () => {
@@ -749,18 +679,17 @@ describe('SessionItem activity time', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                isFirst={true}
-                isLast={true}
-                isSingle={true}
                 variant="default"
                 compact={true}
                 compactMinimal={true}
             />,
         );
 
-        expect(screen.findByType('Avatar')?.props.id).toBe('sess_compact_avatar_phone');
+        expect(screen.findByType(Avatar)?.props.id).toBe('sess_compact_avatar_phone');
         const rowStyle = findRowGeometryStyle(screen, 'sess_compact_avatar_phone');
-        expect(rowStyle.height).toBeGreaterThanOrEqual(44);
+        // The full-width row is its own hit area: it keeps the readable phone height (DESIGN.md → touch
+        // targets are hit areas, not drawn sizes), never the 44 pt finger target.
+        expect(rowStyle.height).toBe(36);
     });
 
     it('renders the selected agent logo in the same narrow identity slot', async () => {
@@ -773,23 +702,19 @@ describe('SessionItem activity time', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                isFirst={true}
-                isLast={true}
-                isSingle={true}
                 variant="default"
                 compact={true}
                 compactMinimal={true}
             />,
         );
 
-        expect(screen.findAllByType('Avatar' as any)).toHaveLength(0);
-        expect(screen.findByType('SessionAgentCatalogIdentityIcon' as any)?.props).toMatchObject({
+        expect(screen.findAllByType(Avatar)).toHaveLength(0);
+        expect(screen.findByType(SessionAgentCatalogIdentityIcon)?.props).toMatchObject({
             agentId: 'claude',
-            size: 14,
+            size: 15,
             serverId: 'server_a',
             testID: 'session-list-agent-logo-sess_agent_logo_narrow',
         });
-        expect(findRowContentStyle(screen, 'sess_agent_logo_narrow').marginLeft).toBe(8);
     });
 
     it('keeps an external Agent identity and its exact Session scope in agent-logo mode', async () => {
@@ -811,21 +736,18 @@ describe('SessionItem activity time', () => {
                 serverId="server_external"
                 pinned={false}
                 selected={false}
-                isFirst={true}
-                isLast={true}
-                isSingle={true}
                 variant="default"
                 compact={true}
                 compactMinimal={true}
             />,
         );
 
-        expect(screen.findAllByType('AgentIcon' as any)).toHaveLength(0);
-        expect(screen.findByType('SessionAgentCatalogIdentityIcon' as any)?.props).toMatchObject({
+        expect(screen.findAllByType(AgentIcon)).toHaveLength(0);
+        expect(screen.findByType(SessionAgentCatalogIdentityIcon)?.props).toMatchObject({
             agentId: 'acme.plugin/ultracode',
             machineId: 'machine_external',
             serverId: 'server_external',
-            size: 14,
+            size: 15,
             testID: 'session-list-agent-logo-sess_external_agent_logo',
         });
     });
@@ -849,9 +771,6 @@ describe('SessionItem activity time', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                isFirst={true}
-                isLast={true}
-                isSingle={true}
                 variant="default"
                 compact={true}
                 compactMinimal={true}
@@ -860,7 +779,7 @@ describe('SessionItem activity time', () => {
 
         const titleStyle = flattenStyle(findSessionTitleText(screen, 'Session')?.props.style);
         expect(titleStyle.color).toBe(lightTheme.colors.text.secondary);
-        expect(screen.findByType('SessionAgentCatalogIdentityIcon' as any)?.props.color).toBe(titleStyle.color);
+        expect(screen.findByType(SessionAgentCatalogIdentityIcon)?.props.color).toBe(titleStyle.color);
     });
 
     it('can use the active title color for all active connected session rows', async () => {
@@ -883,9 +802,6 @@ describe('SessionItem activity time', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                isFirst={true}
-                isLast={true}
-                isSingle={true}
                 variant="default"
                 compact={true}
                 compactMinimal={true}
@@ -894,7 +810,7 @@ describe('SessionItem activity time', () => {
 
         const titleStyle = flattenStyle(findSessionTitleText(screen, 'Session')?.props.style);
         expect(titleStyle.color).toBe(lightTheme.colors.text.primary);
-        expect(screen.findByType('SessionAgentCatalogIdentityIcon' as any)?.props.color).toBe(titleStyle.color);
+        expect(screen.findByType(SessionAgentCatalogIdentityIcon)?.props.color).toBe(titleStyle.color);
     });
 
     it('can keep working rows secondary when only attention rows use active color', async () => {
@@ -917,9 +833,6 @@ describe('SessionItem activity time', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                isFirst={true}
-                isLast={true}
-                isSingle={true}
                 variant="default"
                 compact={true}
                 compactMinimal={true}
@@ -928,7 +841,7 @@ describe('SessionItem activity time', () => {
 
         const titleStyle = flattenStyle(findSessionTitleText(screen, 'Session')?.props.style);
         expect(titleStyle.color).toBe(lightTheme.colors.text.secondary);
-        expect(screen.findByType('SessionAgentCatalogIdentityIcon' as any)?.props.color).toBe(titleStyle.color);
+        expect(screen.findByType(SessionAgentCatalogIdentityIcon)?.props.color).toBe(titleStyle.color);
     });
 
     it('hides the session list identity slot across row densities when identity display is none', async () => {
@@ -941,16 +854,13 @@ describe('SessionItem activity time', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                isFirst={true}
-                isLast={true}
-                isSingle={true}
                 variant="default"
                 compact={false}
             />,
         );
-        expect(detailed.findAllByType('Avatar' as any)).toHaveLength(0);
-        expect(detailed.findAllByType('AgentIcon' as any)).toHaveLength(0);
-        expect(detailed.findAllByType('SessionAgentCatalogIdentityIcon' as any)).toHaveLength(0);
+        expect(detailed.findAllByType(Avatar)).toHaveLength(0);
+        expect(detailed.findAllByType(AgentIcon)).toHaveLength(0);
+        expect(detailed.findAllByType(SessionAgentCatalogIdentityIcon)).toHaveLength(0);
 
         standardCleanup();
 
@@ -960,18 +870,14 @@ describe('SessionItem activity time', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                isFirst={true}
-                isLast={true}
-                isSingle={true}
                 variant="default"
                 compact={true}
                 compactMinimal={true}
             />,
         );
-        expect(narrow.findAllByType('Avatar' as any)).toHaveLength(0);
-        expect(narrow.findAllByType('AgentIcon' as any)).toHaveLength(0);
-        expect(narrow.findAllByType('SessionAgentCatalogIdentityIcon' as any)).toHaveLength(0);
-        expect(findRowContentStyle(narrow, 'sess_identity_none_narrow').marginLeft).toBe(0);
+        expect(narrow.findAllByType(Avatar)).toHaveLength(0);
+        expect(narrow.findAllByType(AgentIcon)).toHaveLength(0);
+        expect(narrow.findAllByType(SessionAgentCatalogIdentityIcon)).toHaveLength(0);
     });
 
     it('replaces trailing time with a spinner in very compact mode when the session is working', async () => {
@@ -993,9 +899,6 @@ describe('SessionItem activity time', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                isFirst={true}
-                isLast={true}
-                isSingle={true}
                 variant="default"
                 compact={true}
                 compactMinimal={true}
@@ -1007,7 +910,7 @@ describe('SessionItem activity time', () => {
         expect(spinner).toBeTruthy();
         const spinnerStyle = flattenStyle(spinner?.props.style);
         expect(spinnerStyle.animationName).toBeUndefined();
-        expect(screen.findAllByType('StatusDot')).toHaveLength(0);
+        expect(screen.findAllByType(StatusDot)).toHaveLength(0);
         expect(screen.getTextContent()).not.toContain('Working on it');
         expect(screen.getTextContent()).not.toContain('1m');
     });
@@ -1031,9 +934,6 @@ describe('SessionItem activity time', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                isFirst={true}
-                isLast={true}
-                isSingle={true}
                 variant="default"
                 compact={false}
                 secondaryLineMode="status"
@@ -1042,15 +942,14 @@ describe('SessionItem activity time', () => {
         expect(screen.findByTestId('session-list-status-pill-sess_status_plain')).toBeNull();
         const spinner = screen.findByTestId('session-row-attention-indicator-spinner-sess_status_plain-secondary');
         expect(spinner).toBeTruthy();
-        expect(screen.findAllByType('StatusDot')).toHaveLength(0);
+        expect(screen.findAllByType(StatusDot)).toHaveLength(0);
         const statusText = screen.findAllByType('Text').find((node) => node.props.children === 'Working on it');
         const flat = flattenStyle(statusText?.props.style);
         expect(flat.fontSize).toBe(12);
         expect(flat.lineHeight).toBe(16);
     });
 
-    it('renders session status with the configured pulsing dot and text', async () => {
-        workingIndicatorStyle = 'pulse';
+    it('keeps the shared working arc still when row attention animation is disabled', async () => {
         mockSessionStatus = createStatusFixture({
             state: 'thinking',
             isConnected: true,
@@ -1069,9 +968,6 @@ describe('SessionItem activity time', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                isFirst={true}
-                isLast={true}
-                isSingle={true}
                 variant="default"
                 compact={false}
                 secondaryLineMode="status"
@@ -1079,15 +975,16 @@ describe('SessionItem activity time', () => {
             />,
         );
 
-        const dots = screen.findAllByType('StatusDot');
-        expect(dots).toHaveLength(1);
-        expect(dots[0]?.props.testID).toBe('session-row-attention-indicator-dot-sess_status_plain_dot-secondary');
-        expect(dots[0]?.props.isPulsing).toBe(true);
-        expect(dots[0]?.props.animationEnabled).toBe(false);
+        expect(screen.findAllByType(StatusDot)).toHaveLength(0);
         // Imported here, not at the top: an eager import would load the row's platform-dependent
         // modules before each test picks its platform.
         const { ActivitySpinner } = await import('@/components/ui/feedback/ActivitySpinner');
-        expect(screen.findAllByType(ActivitySpinner)).toHaveLength(0);
+        const spinners = screen.findAllByType(ActivitySpinner);
+        expect(spinners).toHaveLength(1);
+        expect(spinners[0]?.props).toMatchObject({
+            testID: 'session-row-attention-indicator-spinner-sess_status_plain_dot-secondary',
+            animationEnabled: false,
+        });
     });
 
     it.each([
@@ -1113,7 +1010,7 @@ describe('SessionItem activity time', () => {
             pendingRequestObservedAt: state === 'permission_required' || state === 'action_required' ? now : null,
             latestTurnStatusObservedAt: state === 'error' ? now : undefined,
         });
-        mockSessionStatus = projectStatus(session, now, { workingTextMode: 'static' });
+        mockSessionStatus = projectStatus(session, now);
         const SessionItem = await importSessionItem();
         const screen = await renderScreen(
             <SessionItem
@@ -1121,9 +1018,6 @@ describe('SessionItem activity time', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                isFirst
-                isLast
-                isSingle
                 variant="default"
                 compact
                 compactMinimal
@@ -1135,7 +1029,9 @@ describe('SessionItem activity time', () => {
         const row = screen.findByTestId(`session-list-item-${sessionId}`);
         expect(row?.props.accessibilityRole).toBe('button');
         expect(row?.props.accessibilityLabel).toContain(`Accessible ${state}`);
-        expect(row?.props.accessibilityLabel).toContain(mockSessionStatus.statusText);
+        const expectedStatusWord = state === 'permission_required' ? 'workStatus.words.permission'
+            : state === 'action_required' ? 'workStatus.words.question' : mockSessionStatus.statusText;
+        expect(row?.props.accessibilityLabel).toContain(expectedStatusWord);
         expect(row?.props.accessibilityState).toMatchObject({ selected: false, busy });
         expect(screen.tree.root.findAll((node) => (
             // A host element's node type is its tag string; components never stringify to it.
@@ -1171,9 +1067,6 @@ describe('SessionItem activity time', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                isFirst={true}
-                isLast={true}
-                isSingle={true}
                 variant="default"
                 compact={true}
                 compactMinimal={true}
@@ -1181,7 +1074,7 @@ describe('SessionItem activity time', () => {
         );
 
         expect(screen.getTextContent()).not.toContain('online');
-        expect(screen.findAllByType('StatusDot')).toHaveLength(0);
+        expect(screen.findAllByType(StatusDot)).toHaveLength(0);
         expect(screen.getTextContent()).toContain('1m');
     });
 
@@ -1204,9 +1097,6 @@ describe('SessionItem activity time', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={true}
-                isFirst={true}
-                isLast={true}
-                isSingle={true}
                 variant="default"
                 compact={false}
             />,
@@ -1227,9 +1117,6 @@ describe('SessionItem activity time', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                isFirst={true}
-                isLast={true}
-                isSingle={true}
                 variant="default"
                 compact={false}
             />,
@@ -1249,6 +1136,7 @@ describe('SessionItem activity time', () => {
                 session={createSession('stale_prop_session')}
                 rowViewModel={{
                     groupKey: 'group:model',
+                    rowContext: null,
                     guardState: null,
                     sessionKey: 'server_a:sess_model_backed',
                     session: rowSession,
@@ -1271,13 +1159,9 @@ describe('SessionItem activity time', () => {
                     nextRuntimeFreshnessAtMs: null,
                     hasUnreadMessages: true,
                     activityTimeLabel: '7m',
-                    workingIndicatorMode: 'pulse',
                     identityDisplay: 'avatar',
                     activeColorMode: 'attentionOnly',
                     hideInactiveSessions: true,
-                    isFirst: true,
-                    isLast: true,
-                    isSingle: true,
                     subtitleOverride: 'Model subtitle',
                     subtitleEllipsizeMode: 'head',
                     pinned: false,
@@ -1295,9 +1179,6 @@ describe('SessionItem activity time', () => {
                 serverName="Server A"
                 pinned={false}
                 selected={false}
-                isFirst={false}
-                isLast={false}
-                isSingle={false}
                 variant="default"
                 compact={false}
             />,
@@ -1307,8 +1188,8 @@ describe('SessionItem activity time', () => {
         expect(screen.findByTestId('session-list-item-sess_model_backed')?.props.accessibilityState).toMatchObject({
             selected: true,
         });
-        expect(screen.findByType('Avatar' as any)?.props.hasUnreadMessages).toBe(false);
-        expect(screen.findByType('Avatar' as any)?.props.unreadBadgeTestID).toBeUndefined();
+        expect(screen.findByType(Avatar)?.props.hasUnreadMessages).toBe(false);
+        expect(screen.findByType(Avatar)?.props.unreadBadgeTestID).toBeUndefined();
         expect(screen.getTextContent()).toContain('7m');
     });
 
@@ -1340,16 +1221,13 @@ describe('SessionItem activity time', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                isFirst={true}
-                isLast={true}
-                isSingle={true}
                 variant="default"
                 secondaryLineMode="status"
                 compact={false}
             />,
         );
 
-        expect(screen.getTextContent()).toContain('status.permissionRequired');
+        expect(screen.getTextContent()).toContain('workStatus.words.permission');
     });
 
     it('uses overlaid permission state when the row view model session is stale', async () => {
@@ -1389,18 +1267,16 @@ describe('SessionItem activity time', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                isFirst={true}
-                isLast={true}
-                isSingle={true}
                 variant="default"
                 secondaryLineMode="status"
                 compact={false}
             />,
         );
 
-        expect(screen.getTextContent()).toContain('status.permissionRequired');
+        expect(screen.getTextContent()).toContain('workStatus.words.permission');
+        // The overlaid state names the status line; a request nobody routed to this viewer stays calm (no mark).
         expect(screen.findByTestId(
-            'session-list-attention-indicator-sess_row_model_overlay_permission-secondary-permission_required',
+            'session-list-status-subtitle-sess_row_model_overlay_permission-permission_required',
         )).toBeTruthy();
     });
 
@@ -1423,6 +1299,11 @@ describe('SessionItem activity time', () => {
             ...(scenario === 'failed' ? {
                 latestTurnStatus: 'failed' as const,
                 latestTurnStatusObservedAt: now,
+                viewer: createSessionViewerFixture({
+                    latestFailureSeq: 1,
+                    readState: { state: 'tracking', lastViewedSessionSeq: 0, unreadSince: null },
+                    attention: { needsAttention: true, reasons: ['failed'], primary: 'failed', presentation: 'full' },
+                }),
             } : scenario === 'stale' ? { activeAt: 1 }
                 : scenario === 'locked' ? {
                     encryptionMode: 'e2ee' as const,
@@ -1439,17 +1320,19 @@ describe('SessionItem activity time', () => {
                 session: rowSession,
                 overrides: { sessionStatus: getSessionStatus(rowSession, now), secondaryLineMode: 'status' },
             })}
-            serverId="server_a" pinned={false} selected={false} isFirst isLast isSingle
+            serverId="server_a" pinned={false} selected={false}
             variant="default" secondaryLineMode="path" subtitleOverride="~/private-path" compact={false}
         />);
         if (scenario !== 'failed') {
-            expect(screen.getTextContent()).toContain(getSessionStatus(providedSession, now).statusText);
+            const expectedStatusWord = scenario === 'stale' ? 'workStatus.words.permission'
+                : getSessionStatus(providedSession, now).statusText;
+            expect(screen.getTextContent()).toContain(expectedStatusWord);
         }
         if (scenario === 'failed') {
             expect(screen.findByTestId('session-list-attention-indicator-sess_projection-secondary-failed')).toBeTruthy();
             expect(screen.findByTestId('session-list-attention-indicator-sess_projection-secondary-permission_required')).toBeNull();
         }
-        expect(screen.findAllByType('StatusDot').every((dot) => dot.props.animationEnabled === false)).toBe(true);
+        expect(screen.findAllByType(StatusDot).every((dot) => dot.props.animationEnabled === false)).toBe(true);
         const spinner = screen.findByTestId('session-row-attention-indicator-spinner-sess_projection-secondary');
         if (spinner) expect(flattenStyle(spinner.props.style).animationName).toBeUndefined();
     });
@@ -1464,7 +1347,7 @@ describe('SessionItem activity time', () => {
             rowViewModel={createSessionItemRowViewModel({ session, overrides: {
                 sessionStatus: getSessionStatus(session, Date.now()), subtitleOverride: '/private/retained/path', secondaryLineMode: 'path',
             } })}
-            serverId="server_a" pinned={false} selected={false} isFirst isLast isSingle variant="default" compact={false}
+            serverId="server_a" pinned={false} selected={false} variant="default" compact={false}
         />);
         // A legitimately retained title names the same Session as its detail header;
         // unreadable content still cannot disclose the private path.
@@ -1497,7 +1380,7 @@ describe('SessionItem activity time', () => {
             rowViewModel={createSessionItemRowViewModel({ session, overrides: {
                 sessionStatus: getSessionStatus(session, now), secondaryLineMode: 'path',
             } })}
-            serverId="server_a" pinned={false} selected={false} isFirst isLast isSingle
+            serverId="server_a" pinned={false} selected={false}
             variant="default" secondaryLineMode="path" compact={false}
         />);
         expect(screen.getTextContent()).toContain(expectedStatusKey);
@@ -1516,6 +1399,7 @@ describe('SessionItem activity time', () => {
             } },
         };
         const { getSessionStatus } = await import('@/utils/sessions/sessionUtils');
+        expect(getSessionStatus(session, now).awareness.currentWork?.title).toBe('Review migration');
         const SessionItem = await importSessionItem();
         const screen = await renderScreen(<SessionItem
             session={session}
@@ -1523,7 +1407,7 @@ describe('SessionItem activity time', () => {
                 session,
                 overrides: { sessionStatus: getSessionStatus(session, now), secondaryLineMode: 'status' },
             })}
-            serverId="server_a" pinned={false} selected={false} isFirst isLast isSingle
+            serverId="server_a" pinned={false} selected={false}
             variant="default" secondaryLineMode="status" compact={false}
         />);
         expect(screen.getTextContent()).toContain('Review migration');
@@ -1567,9 +1451,6 @@ describe('SessionItem activity time', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                isFirst={true}
-                isLast={true}
-                isSingle={true}
                 variant="default"
                 secondaryLineMode="status"
                 compact={false}
@@ -1619,9 +1500,6 @@ describe('SessionItem activity time', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                isFirst={true}
-                isLast={true}
-                isSingle={true}
                 variant="default"
                 secondaryLineMode="status"
                 compact={false}
@@ -1724,9 +1602,6 @@ describe('SessionItem activity time', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                isFirst={true}
-                isLast={true}
-                isSingle={true}
                 variant="default"
                 compact={false}
             />,
@@ -1776,9 +1651,6 @@ describe('SessionItem activity time', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                isFirst={true}
-                isLast={true}
-                isSingle={true}
                 variant="default"
                 compact={false}
             />,
@@ -1794,7 +1666,6 @@ describe('SessionItem activity time', () => {
     });
 
     it('shows the working indicator instead of only path and time in date-grouped rows', async () => {
-        workingIndicatorStyle = 'spinner';
         mockSessionStatus = createStatusFixture({
             ...defaultSessionStatus,
         });
@@ -1813,9 +1684,6 @@ describe('SessionItem activity time', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                isFirst={true}
-                isLast={true}
-                isSingle={true}
                 variant="default"
                 compact={false}
             />,

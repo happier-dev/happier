@@ -47,6 +47,8 @@ import { t } from '@/text';
 import { HappyError } from '@/utils/errors/errors';
 
 import { buildSessionRowMoreMenuItems } from './buildSessionRowActionMenuItems';
+import { readSessionSectionMoveMenuChoice } from '@/components/sessions/organization/sessionSectionMoveMenu';
+import type { SessionRowSectionMove, SessionRowSpaceMembership } from '../../useSessionListRowMoveActionHandlers';
 import { Icon } from '@/components/ui/icons/Icon';
 import { sessionClearAttentionReminderWithServerScope, sessionSetAttentionReminderWithServerScope } from '@/sync/ops/sessionOrganization';
 import { buildSessionTagsMenuContent } from '@/components/sessions/organization/SessionTagsMenuContent';
@@ -147,15 +149,24 @@ export function useSessionRowActionMenu(params: Readonly<{
     flightOriginRef?: React.RefObject<View | null>;
     onOpen?: () => void;
     onMoveToFolder?: () => void;
+    /** Move to section's choices and chooser; the choices are read only while a menu is open. */
+    sectionMove?: SessionRowSectionMove;
+    spaceMembership?: SessionRowSpaceMembership;
+    menuOpen?: boolean;
     selectionModeAvailable?: boolean;
     selectionModeActive?: boolean;
     onEnterSelectionMode?: () => void;
-    isNativeMobile: boolean;
+    touchPrimaryPointer: boolean;
     setContextMenuOpen: (open: boolean) => void;
     openTagsMenuFromContext: () => void;
     reminder?: SessionReminderPresentation | null;
 }>): SessionRowActionMenuState {
     const target = params.target;
+    const spaceMembershipMenu = React.useMemo(
+        () => params.menuOpen && params.surface !== 'botsRoster' ? params.spaceMembership?.readMenu(params.iconColor) ?? null : null,
+        [params.iconColor, params.menuOpen, params.spaceMembership, params.surface],
+    );
+
     const archivePending = useSessionArchivePending(normalizeSessionAddress(target.serverId, target.sessionId));
     const [reminderPresets] = useSettingMutable('sessionReminderPresetsV1');
     const applyReminderPresetIntent = useApplySessionReminderPresetIntent();
@@ -299,7 +310,7 @@ export function useSessionRowActionMenu(params: Readonly<{
 
     const moreMenuItems = React.useMemo(() => {
         const selectItem = (
-            !params.isNativeMobile
+            !params.touchPrimaryPointer
             && params.selectionModeAvailable === true
             && params.selectionModeActive !== true
             && typeof params.onEnterSelectionMode === 'function'
@@ -315,13 +326,15 @@ export function useSessionRowActionMenu(params: Readonly<{
         }
         return buildSessionRowMoreMenuItems({
             target,
-            archivePending,
+        archivePending,
             iconColor: params.iconColor,
             leadingItems: [
                 ...selectItem,
                 ...(params.leadingMenuItems ?? []),
             ],
             canMoveToFolder: typeof params.onMoveToFolder === 'function',
+            sectionMoveItems: params.menuOpen ? params.sectionMove?.readMenuItems(params.iconColor) ?? null : null,
+            spaceMembershipMenu,
             reminderPresets,
             reminder: params.reminder,
             reminderNowMs: Date.now(),
@@ -329,10 +342,12 @@ export function useSessionRowActionMenu(params: Readonly<{
     }, [
         archivePending,
         params.iconColor,
-        params.isNativeMobile,
+        params.touchPrimaryPointer,
         params.leadingMenuItems,
         params.onEnterSelectionMode,
         params.onMoveToFolder,
+        params.sectionMove,
+        params.menuOpen,
         params.selectionModeActive,
         params.selectionModeAvailable,
         params.surface,
@@ -342,6 +357,12 @@ export function useSessionRowActionMenu(params: Readonly<{
     ]);
 
     const handleMoreMenuSelect = React.useCallback(async (itemId: string) => {
+        const membershipChoice = spaceMembershipMenu?.choices.get(itemId);
+        if (membershipChoice) {
+            spaceMembershipMenu?.choose(membershipChoice);
+            return;
+        }
+
         if (isSessionReminderMenuItemId(itemId)) {
             await handleSessionReminderMenuSelection({
                 itemId,
@@ -372,6 +393,11 @@ export function useSessionRowActionMenu(params: Readonly<{
         }
         if (itemId === SESSION_ROW_ACTION_OPEN_ID) {
             params.onOpen?.();
+            return;
+        }
+        const sectionChoice = readSessionSectionMoveMenuChoice(itemId);
+        if (sectionChoice) {
+            params.sectionMove?.choose(sectionChoice);
             return;
         }
         if (await params.onSelectLeadingMenuItem?.(itemId)) {
@@ -443,6 +469,8 @@ export function useSessionRowActionMenu(params: Readonly<{
                 return;
         }
     }, [
+        spaceMembershipMenu,
+        params.sectionMove,
         confirmArchiveSession,
         performStopMutation,
         handleAttentionStandingAction,
@@ -462,7 +490,7 @@ export function useSessionRowActionMenu(params: Readonly<{
     ]);
 
     const contextMenuItems = React.useMemo((): DropdownMenuItem[] => {
-        if (!params.isNativeMobile) return [];
+        if (!params.touchPrimaryPointer) return [];
         const items: DropdownMenuItem[] = [];
         if (params.selectionModeAvailable === true && typeof params.onEnterSelectionMode === 'function') {
             items.push({
@@ -492,7 +520,7 @@ export function useSessionRowActionMenu(params: Readonly<{
     }, [
         moreMenuItems,
         params.iconColor,
-        params.isNativeMobile,
+        params.touchPrimaryPointer,
         params.onEnterSelectionMode,
         params.onSetTags,
         params.onTogglePinned,

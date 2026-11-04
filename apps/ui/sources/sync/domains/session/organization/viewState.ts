@@ -10,6 +10,7 @@ import {
 import {
     buildSessionListFolderOrderItemKey,
     PINNED_GROUP_KEY_V1,
+    normalizeSessionOrganizationGroupOrder,
 } from '@/sync/domains/session/listing/sessionListOrderingStateV1';
 import {
     buildSessionWorkspaceOrderItemKey,
@@ -17,8 +18,8 @@ import {
     readSessionWorkspaceOrderScopeServerId,
     type SessionWorkspaceOrderV1,
 } from '@/sync/domains/session/listing/sessionWorkspaceOrderStateV1';
-import type { ReorderSessionOrganizationRequest } from '@happier-dev/protocol';
-import type { SessionAttentionStanding } from '@happier-dev/protocol';
+import type { ReorderSessionOrganizationRequest } from '@happier-dev/protocol/sessions/organization/mutations';
+import type { SessionAttentionStanding } from '@happier-dev/protocol/sessions/organization/standings';
 import { sessionAddressKey } from '../sessionAddress';
 
 import type {
@@ -28,8 +29,11 @@ import type {
 } from './types';
 import { sessionFolderAddressKey } from '../folders/assignmentKeys';
 import { normalizeSessionFolderWorkspaceRef } from '../folders/workspaceRefs';
-import { buildSessionOrganizationTagLabelById } from './tagLabels';
-import { projectSessionOrganizationSections, projectSessionSectionMembership, type SessionSection } from './sections';
+import { buildSessionOrganizationTagLabelById, readSessionOrganizationSpaceMembership } from './tagLabels';
+import { projectSessionOrganizationSections, projectSessionSectionMembership, buildSessionSectionGroupKey,
+    readLegacySessionFolderGroupScope, readSessionSectionGroupAddress, type SessionSection } from './sections';
+import { serializeSessionListGroupOrderScope, serializeSessionWorkspaceOrderKey } from '../listing/sessionWorkspaceOrderKeys';
+import { readSessionOrganizationDisplayRecord as readDisplayRecord } from './displayRecord';
 
 type HumanDisplayState =
     | Readonly<{ status: 'available'; value: string }>
@@ -57,6 +61,7 @@ export type SessionOrganizationListViewState = Readonly<{
     pinnedSessionKeysV1: readonly string[];
     sessionFoldersV1: SessionFolderList;
     sessionFolderAssignmentsBySessionKey: Record<string, string | null>;
+    sessionTagIdsBySessionKey: Readonly<Record<string, readonly string[]>>;
     sessionTagsV1: Record<string, readonly SessionOrganizationListTag[]>;
     /**
      * Per-session standing overrides, keyed the way every other session-keyed slice here is, so a
@@ -86,37 +91,6 @@ export type SessionOrganizationListViewState = Readonly<{
 
 function buildServerSessionKey(serverId: string, sessionId: string): string {
     return sessionAddressKey({ serverId: serverId.trim(), sessionId: String(sessionId ?? '').trim() });
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return !!value && typeof value === 'object' && !Array.isArray(value);
-}
-
-function readPlainDisplayRecord(value: unknown): Record<string, unknown> | null {
-    if (!isRecord(value) || value.t !== 'plain' || !isRecord(value.v)) return null;
-    return value.v;
-}
-
-function readDisplayRecord(
-    displayState: SessionOrganizationDisplayState,
-    display: unknown,
-): Record<string, unknown> | null {
-    if (displayState.status !== 'available') return null;
-    return isRecord(displayState.value)
-        ? displayState.value
-        : readPlainDisplayRecord(display);
-}
-
-function readFolderName(
-    displayState: SessionOrganizationDisplayState,
-    display: unknown,
-): string | null {
-    const record = readDisplayRecord(displayState, display);
-    // The canonical value is `{ name, workspace }`; a bare name is an Action caller's shorthand for the same folder.
-    const bare = displayState.status === 'available' && typeof displayState.value === 'string' ? displayState.value
-        : isRecord(display) && display.t === 'plain' && typeof display.v === 'string' ? display.v : null;
-    const name = typeof record?.name === 'string' ? record.name.trim() : (bare ?? '').trim();
-    return name || null;
 }
 
 function readLabel(
@@ -252,9 +226,18 @@ export function buildSessionOrganizationReorderRequestFromGroupOrder(params: Rea
     const serverId = params.serverId.trim();
     const legacyScopeKey = params.scopeKey.trim();
     if (!serverId || !legacyScopeKey) return null;
-    const scopeKind = legacyScopeKey === PINNED_GROUP_KEY_V1 ? 'pinned' : 'group';
-    const scopeKey = scopeKind === 'pinned' ? 'pins' : legacyScopeKey;
     const allowedServerIds = buildAllowedServerIdSet(serverId, params.serverIdAliases);
+    const legacyFolderScope = readLegacySessionFolderGroupScope(legacyScopeKey);
+    const sectionScope = readSessionSectionGroupAddress(legacyScopeKey);
+    // Retired workspace-root wrappers are read-only. Never replay their private path-bearing scope.
+    if (legacyFolderScope && (legacyFolderScope.sectionId === null || !allowedServerIds.has(legacyFolderScope.serverId))) return null;
+    if (sectionScope && !allowedServerIds.has(sectionScope.serverId)) return null;
+    const sectionId = sectionScope?.sectionId ?? legacyFolderScope?.sectionId;
+    const scopeKind = legacyScopeKey === PINNED_GROUP_KEY_V1 ? 'pinned' : 'group';
+    const scopeKey = scopeKind === 'pinned' ? 'pins'
+        : sectionId ? buildSessionSectionGroupKey({ serverId, sectionId })
+            : serializeSessionListGroupOrderScope(legacyScopeKey, serverId, params.serverIdAliases);
+    if (!scopeKey) return null;
     const entries: ReorderSessionOrganizationRequest['entries'] = [];
     const seen = new Set<string>();
     for (const rawItemKey of params.itemKeys) {
@@ -302,9 +285,10 @@ export function buildSessionOrganizationReorderRequestFromWorkspaceOrder(params:
     const seen = new Set<string>();
     for (const rawItemKey of params.itemKeys) {
         const raw = typeof rawItemKey === 'string' ? rawItemKey : '';
-        const itemKey = params.legacyServerScopedScopeKey === true
+        const candidate = params.legacyServerScopedScopeKey === true
             ? stripWorkspaceItemKey(raw)
             : buildSessionWorkspaceOrderItemKey(raw);
+        const itemKey = candidate ? serializeSessionWorkspaceOrderKey(candidate, serverId, params.serverIdAliases) : null;
         if (!itemKey || seen.has(itemKey)) continue;
         seen.add(itemKey);
         entries.push({
@@ -490,6 +474,7 @@ export function buildSessionOrganizationListViewState(params: Readonly<{
             pinnedSessionKeysV1: [],
             sessionFoldersV1: { v: 1, folders: [] },
             sessionFolderAssignmentsBySessionKey: {},
+            sessionTagIdsBySessionKey: {},
             sessionTagsV1: {},
             attentionStandingOverridesBySessionKey: {},
             sessionListGroupOrderV1: {},
@@ -526,10 +511,12 @@ export function buildSessionOrganizationListViewState(params: Readonly<{
         status: 'locked',
         reason: 'content_unreadable',
     } as const;
+    const sessionTagIdsBySessionKey = Object.fromEntries(Object.entries(projection.tagAssignmentsBySessionId)
+        .map(([sessionId, tagIds]) => [mintSessionItemKey(sessionId), tagIds]));
     const sessionTagDisplayStatesBySessionKey = Object.fromEntries(
         Object.entries(projection.tagAssignmentsBySessionId).map(([sessionId, tagIds]) => [
             mintSessionItemKey(sessionId),
-            tagIds.map((tagId) => {
+            tagIds.filter(tagId => !readSessionOrganizationSpaceMembership(projection.tagsById[tagId])).map((tagId) => {
                 const tag = projection.tagsById[tagId];
                 const label = tagLabelsById[tagId];
                 return {
@@ -558,18 +545,20 @@ export function buildSessionOrganizationListViewState(params: Readonly<{
     );
 
     const sections = projectSessionOrganizationSections(serverId, projection);
+    const sectionsById = new Map(sections.map(section => [section.address.sectionId, section]));
     const folderDisplayStatesByFolderKey: Record<string, HumanDisplayState> = {};
     const folders = Object.values(projection.foldersById)
         .filter((folder) => folder.archivedAt == null)
         .map((folder) => {
-            const name = readFolderName(folder.displayState, folder.display);
+            const section = sectionsById.get(folder.folderId)!;
+            const name = section.display.status === 'available' ? section.display.value.name : null;
             const workspace = readWorkspaceRef(folder.displayState, folder.display);
             mintFolderItemKey(folder.folderId);
             const folderKey = sessionFolderAddressKey({ serverId, folderId: folder.folderId });
             folderDisplayStatesByFolderKey[folderKey] = name
                 ? { status: 'available', value: name }
-                : folder.displayState.status === 'locked'
-                    ? folder.displayState
+                : section.display.status === 'locked'
+                    ? section.display
                     : lockedUnreadable;
             return {
                 id: folder.folderId,
@@ -601,12 +590,11 @@ export function buildSessionOrganizationListViewState(params: Readonly<{
                 appendOrderedValue(sessionWorkspaceOrderV1, normalizeWorkspaceScopeKey(serverId, entry.scopeKey), itemKey);
                 continue;
             }
+            if (entry.itemKind === 'folder') continue;
             const scopeKey = entry.scopeKind === 'pinned' ? PINNED_GROUP_KEY_V1 : entry.scopeKey.trim();
             const itemKey = entry.itemKind === 'session'
                 ? mintSessionItemKey(entry.itemKey)
-                : entry.itemKind === 'folder'
-                    ? mintFolderItemKey(entry.itemKey)
-                    : entry.itemKey.trim();
+                : entry.itemKey.trim();
             if (scopeKey && itemKey) {
                 appendOrderedValue(sessionListGroupOrderV1, scopeKey, itemKey);
             }
@@ -634,9 +622,10 @@ export function buildSessionOrganizationListViewState(params: Readonly<{
         pinnedSessionKeysV1,
         sessionFoldersV1: { v: 1, folders },
         sessionFolderAssignmentsBySessionKey,
+        sessionTagIdsBySessionKey,
         sessionTagsV1,
         attentionStandingOverridesBySessionKey,
-        sessionListGroupOrderV1,
+        sessionListGroupOrderV1: normalizeSessionOrganizationGroupOrder([], sessionListGroupOrderV1),
         sessionWorkspaceOrderV1,
         workspaceLabelsV1,
         folderDisplayStatesByFolderKey,
@@ -687,6 +676,7 @@ export function buildSessionOrganizationListViewStateForServers(params: Readonly
             {},
             ...states.map((state) => state.sessionFolderAssignmentsBySessionKey),
         ),
+        sessionTagIdsBySessionKey: Object.assign({}, ...states.map(state => state.sessionTagIdsBySessionKey)),
         sessionTagsV1: Object.assign({}, ...states.map((state) => state.sessionTagsV1)),
         attentionStandingOverridesBySessionKey: Object.assign(
             {},

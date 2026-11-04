@@ -5,8 +5,13 @@ import { useSessionListSelectionState } from '@/hooks/session/useSessionListSele
 import { listServerProfiles, resolveServerProfileScopeId } from '@/sync/domains/server/serverProfiles';
 import { listServerProfileScopeIds } from '@/sync/domains/server/selection/serverSelectionProfileScopeIds';
 import { useServerCredentialAccountScopeResolutions } from '@/sync/domains/scope/useServerCredentialAccountScopes';
-import { useSettingMutable } from '@/sync/domains/state/storage';
+import { useSetting } from '@/sync/domains/state/storage';
 import { useServerProfilesGeneration } from '@/hooks/server/useServerProfilesGeneration';
+import { type AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
+import { type CollectionSpaceV1 } from '@happier-dev/protocol/collections/spaces/collectionSpacesV1';
+import { useCollectionSpaceBinding } from '@/components/ui/lists/collection/useCollectionSpaceBinding';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { t } from '@/text';
 
 import {
     useSessionListQueryHomeSupportByServerId,
@@ -20,6 +25,7 @@ import {
     isSessionListEmptyQuerySelectionComplete,
     resolveSessionListFilterOrdinaryPageAdapter,
     resolveSessionListViewContextDefaults,
+    normalizeSessionListViewFilters,
     shouldUseSessionListFilterQuerySource,
     type SessionListViewContext,
     type SessionListViewFilters,
@@ -28,6 +34,8 @@ import {
     buildSessionListViewCredentialScopeKey,
     useSessionListViewFilters,
 } from './useSessionListViewFilters';
+import { toStoredSessionListFilter } from './storedSessionListFilter';
+import type { SessionListSpaceMembership } from '@/sync/domains/session/listing/sessionListWorkFilter';
 
 export type SessionListCorpusStorage = 'active' | 'archived';
 export type SessionListCorpusPresentation = 'semantic_query' | 'legacy_owner_or_direct';
@@ -57,19 +65,20 @@ export function buildSessionListFilterHomeOptions(
 
 export type SessionListViewFilterController = Readonly<{
     filters: SessionListViewFilters;
+    displayFilters: SessionListViewFilters;
+    spaceMembership?: SessionListSpaceMembership;
     defaultFilters: SessionListViewFilters;
+    contextDefaultFilters: SessionListViewFilters;
     updateFilters: React.Dispatch<React.SetStateAction<SessionListViewFilters>>;
     setSearchQuery: React.Dispatch<React.SetStateAction<string>>;
     removeAuthoritativelyDeletedSelections: ReturnType<typeof useSessionListViewFilters>['removeAuthoritativelyDeletedSelections'];
     resetFilters(): void;
+    showCoordinatorsRequest: 0 | 1;
+    acknowledgeShowCoordinatorsRequest(): void;
     includeInactive: boolean;
     corpusStorage: SessionListCorpusStorage;
     setIncludeInactive(includeInactive: boolean): void;
-    /**
-     * Writes the Source facet through the device-local `sessionsListStorageFilter`
-     * preference that seeds it, so the choice survives a restart instead of living
-     * only in this surface's retained view state.
-     */
+    /** Edits this retained filter; Settings alone changes the device default. */
     setSource(source: SessionListViewFilters['source']): void;
     queryEnabled: boolean;
     corpusPresentation: SessionListCorpusPresentation;
@@ -93,6 +102,17 @@ export type SessionListViewFilterController = Readonly<{
     fixedHomeServerIds?: ReadonlySet<string>;
     fixedAudienceKeys?: ReadonlySet<string>;
     fixedShow?: SessionListViewFilters['show'];
+    spaces: readonly CollectionSpaceV1<'sessionWork'>[];
+    selectedSpaceId: string;
+    selectedSpace: CollectionSpaceV1<'sessionWork'> | null;
+    activeSpace: CollectionSpaceV1<'sessionWork'> | null;
+    spacesEnabled: boolean;
+    spacesReady: boolean;
+    spaceSettingsScope: AccountSettingsScope | null;
+    includeNeedsYouEverywhere: boolean;
+    isSpaceModified: boolean;
+    /** When unavailable, the pane retains the mounted list and its recovery controls. */
+    filterControlsRequired?: boolean;
 }>;
 
 /**
@@ -107,8 +127,8 @@ export function useSessionListViewFilterController(
     fixedShow?: SessionListViewFilters['show'],
 ): SessionListViewFilterController {
     const selection = useSessionListSelectionState();
-    const [hideInactiveSessions, setHideInactiveSessions] = useSettingMutable('hideInactiveSessions');
-    const { externalSessionsEnabled, storageKind, setStorageKind } = useSessionListStorageKind();
+    const hideInactiveSessions = useSetting('hideInactiveSessions');
+    const { externalSessionsEnabled, storageKind } = useSessionListStorageKind();
     // Source has one device-local owner, so this controller seeds it rather than
     // taking a per-surface default: mount order can no longer decide which default
     // the shared global context gets. With no Home exposing external Sessions the
@@ -131,15 +151,22 @@ export function useSessionListViewFilterController(
             ...(selection.activeServerId ? [selection.activeServerId] : []),
         ])];
     }, [selection.activeServerId, serverProfilesGeneration]);
-    const baseContext = resolveSessionListViewContextDefaults(
-        viewContext,
-        mountedHomeServerIds,
-        defaultSource,
-    );
-    const context = fixedShow ? {
-        contextKey: `${baseContext.contextKey}:show:${fixedShow}`,
-        defaults: { ...baseContext.defaults, show: fixedShow },
-    } : baseContext;
+    const teamServerId = viewContext.kind === 'team' ? viewContext.team.serverId : undefined;
+    const teamId = viewContext.kind === 'team' ? viewContext.team.teamId : undefined;
+    const context = React.useMemo(() => {
+        const base = resolveSessionListViewContextDefaults(viewContext, mountedHomeServerIds, defaultSource);
+        return fixedShow ? { contextKey: `${base.contextKey}:show:${fixedShow}`, defaults: { ...base.defaults, show: fixedShow } } : base;
+    }, [defaultSource, fixedShow, mountedHomeServerIds, teamId, teamServerId, viewContext.kind]);
+    const defaultSpaceName = t('sessionsList.filtersMyWork');
+    const defaultSpaceFilter = React.useMemo(() => toStoredSessionListFilter(context.defaults), [context.defaults]);
+    const { spaces, selectedSpaceId, selectedSpace, activeSpace, spacesEnabled, spacesReady, spaceSettingsScope, spaceAccountScopeKey, admittedSpaces, savedSpace }
+        = useCollectionSpaceBinding('sessionWork', { defaultName: defaultSpaceName, defaultFilter: defaultSpaceFilter });
+    const contextDefaultFilters = React.useMemo(() => normalizeSessionListViewFilters(context.defaults, viewContext, fixedShow,
+        corpusStorage === 'archived' ? true : undefined), [context.defaults, corpusStorage, fixedShow, teamId, teamServerId, viewContext.kind]);
+    const defaultFilters = React.useMemo(() => activeSpace
+        ? normalizeSessionListViewFilters({ ...activeSpace.filter, searchQuery: '' }, viewContext, fixedShow, corpusStorage === 'archived' ? true : undefined)
+        : contextDefaultFilters, [activeSpace, contextDefaultFilters, corpusStorage, fixedShow, teamId, teamServerId, viewContext.kind]);
+    const retainedContextKey = corpusStorage === 'archived' ? `${context.contextKey}:archived` : context.contextKey;
     const credentialServerIds = React.useMemo(() => viewContext.kind === 'team'
         ? [viewContext.team.serverId]
         : authoritativeHomeServerIds,
@@ -149,24 +176,35 @@ export function useSessionListViewFilterController(
         ? [viewContext.team.serverId]
         : mountedHomeServerIds;
     const retentionScopeKey = buildSessionListViewCredentialScopeKey(
-        context.contextKey,
+        retainedContextKey,
         accountScopeResolutions,
         participatingServerIds,
     );
     const retained = useSessionListViewFilters({
-        contextKey: context.contextKey,
-        defaults: context.defaults,
+        contextKey: retainedContextKey,
+        defaults: contextDefaultFilters,
         viewContext,
         fixedShow,
+        fixedIncludeInactive: corpusStorage === 'archived' ? true : undefined,
         accountScopeResolutions,
         // Global Homes mount asynchronously; a Team context is fixed to its Home.
-        followDefaultHomeSelection: viewContext.kind === 'global',
+        followDefaultHomeSelection: viewContext.kind === 'global'
+            && (!activeSpace || activeSpace.id === 'my-work' && !admittedSpaces.spaces.some(space => space.id === 'my-work')),
         authoritativeHomeServerIds,
+        savedSpace: spacesReady ? savedSpace ?? null : undefined,
+        spaceSettingsAccountScopeKey: spaceSettingsScope ? spaceAccountScopeKey : null,
     });
     // Archived Sessions are inactive by definition, so the active list's
     // `Hide inactive sessions` preference cannot narrow this corpus: applying it
     // would make the archived destination authoritatively empty.
-    const includeInactive = corpusStorage === 'archived' ? true : hideInactiveSessions !== true;
+    const includeInactive = corpusStorage === 'archived'
+        ? true
+        : retained.filters.includeInactive ?? (hideInactiveSessions !== true);
+    const spaceMembership = React.useMemo<SessionListSpaceMembership | undefined>(() => activeSpace?.membership
+        ? { filter: activeSpace.filter, membership: activeSpace.membership } : undefined, [activeSpace]);
+    const displayFilters = spaceMembership ? retained.refinements : retained.filters;
+    const viewerAccountIdByServerId = React.useMemo(() => new Map([...accountScopeResolutions].flatMap(([serverId, resolution]) =>
+        resolution.kind === 'bound' ? [[serverId, resolution.scope.accountId] as const] : [])), [accountScopeResolutions]);
     // Admission is decided per exact Home. One capable Home mounts the filtered
     // corpus for the whole surface; the remaining Homes contribute their own
     // truthful loading, disabled, unsupported or offline state instead of
@@ -178,8 +216,8 @@ export function useSessionListViewFilterController(
     // not of the current selection, and deriving it from the post-facet set would
     // make the tag facet's own meaning depend on itself.
     const selectedHomeServerIds = React.useMemo(
-        () => mountedHomeServerIds.filter((serverId) => retained.filters.homeServerIds.includes(serverId)),
-        [mountedHomeServerIds, retained.filters.homeServerIds],
+        () => mountedHomeServerIds.filter((serverId) => displayFilters.homeServerIds.includes(serverId)),
+        [mountedHomeServerIds, displayFilters.homeServerIds],
     );
     const homeSupportByServerId = useSessionListQueryHomeSupportByServerId(selectedHomeServerIds, true);
     const followingSupportByServerId = useSessionListFeatureHomeSupportByServerId(
@@ -196,7 +234,7 @@ export function useSessionListViewFilterController(
     const followingAvailable = resolveSelectedHomeFeatureAvailability(selectedHomeServerIds, followingSupportByServerId);
     const sourceAvailable = resolveSelectedHomeFeatureAvailability(selectedHomeServerIds, sourceSupportByServerId);
     const queryHomes = React.useMemo(
-        () => buildSessionListFilterQueryHomes(retained.filters, {
+        () => buildSessionListFilterQueryHomes(displayFilters, {
             storage: corpusStorage,
             // Completed step Sessions still belong beneath their Run. The query
             // keeps them available; the list's canonical activity projection
@@ -206,20 +244,23 @@ export function useSessionListViewFilterController(
             // No selected Home can express tags structurally, so the released GET
             // adapter serves the corpus and the qualified tag selection narrows its
             // loaded rows locally instead of producing an unanswerable request.
-            tagFacet: queryEnabled ? 'query' : 'local',
+            tagFacet: queryEnabled || spaceMembership ? 'query' : 'local',
+            sectionFacet: queryEnabled || spaceMembership ? 'query' : 'local',
+            spaceMembership,
+            viewerAccountIdByServerId,
         }).map((home) => ({
             ...home,
-            ordinaryAdapter: resolveSessionListFilterOrdinaryPageAdapter(retained.filters, home.query),
+            ordinaryAdapter: resolveSessionListFilterOrdinaryPageAdapter(displayFilters, home.query),
         })),
-        [corpusStorage, includeInactive, mountedHomeServerIds, queryEnabled, retained.filters],
+        [corpusStorage, includeInactive, mountedHomeServerIds, queryEnabled, retained.filters.show, displayFilters, spaceMembership, viewerAccountIdByServerId],
     );
-    const useQuerySource = shouldUseSessionListFilterQuerySource(retained.filters, {
+    const useQuerySource = Boolean(spaceMembership) || shouldUseSessionListFilterQuerySource(displayFilters, {
         mountedHomeServerIds,
         queryEnabled,
         hasOrdinaryAdapter: queryHomes.some((home) => home.ordinaryAdapter !== null),
     });
     const pagingHomes = useQuerySource ? queryHomes : undefined;
-    const corpusPresentation: SessionListCorpusPresentation = queryEnabled
+    const corpusPresentation: SessionListCorpusPresentation = queryEnabled || spaceMembership
         ? 'semantic_query'
         : 'legacy_owner_or_direct';
     const emptyQuerySelectionComplete = isSessionListEmptyQuerySelectionComplete({
@@ -246,19 +287,36 @@ export function useSessionListViewFilterController(
             : undefined,
         [viewContext],
     );
+    const updateFilters = retained.updateFilters;
     const setIncludeInactive = React.useCallback((value: boolean) => {
         if (corpusStorage === 'archived') return;
-        setHideInactiveSessions(!value);
-    }, [corpusStorage, setHideInactiveSessions]);
-    const updateFilters = retained.updateFilters;
+        updateFilters(current => current.includeInactive === value ? current : { ...current, includeInactive: value });
+    }, [corpusStorage, updateFilters]);
     const setSource = React.useCallback((source: SessionListViewFilters['source']) => {
-        setStorageKind(source);
         updateFilters((current) => (current.source === source ? current : { ...current, source }));
-    }, [setStorageKind, updateFilters]);
+    }, [updateFilters]);
 
     return React.useMemo(() => ({
         ...retained,
-        defaultFilters: context.defaults,
+        displayFilters,
+        spaceMembership,
+        defaultFilters,
+        contextDefaultFilters,
+        spaces,
+        selectedSpaceId,
+        selectedSpace,
+        activeSpace,
+        spacesEnabled,
+        spacesReady,
+        spaceSettingsScope,
+        includeNeedsYouEverywhere: activeSpace?.includeNeedsYouEverywhere ?? false,
+        isSpaceModified: !sameStrictJsonValue(toStoredSessionListFilter(retained.filters), toStoredSessionListFilter(defaultFilters)),
+        // All accessible broadens the default corpus; other edits still need
+        // their controls when empty, including conditions stored in a Space.
+        filterControlsRequired: corpusStorage === 'archived' || retained.filters.searchQuery.trim().length > 0
+            || !sameStrictJsonValue({ ...retained.filters, searchQuery: '',
+                scope: retained.filters.scope === 'all_accessible' ? contextDefaultFilters.scope : retained.filters.scope,
+            }, contextDefaultFilters),
         includeInactive,
         corpusStorage,
         setIncludeInactive,
@@ -279,6 +337,15 @@ export function useSessionListViewFilterController(
         fixedShow,
     }), [
         context.defaults,
+        defaultFilters,
+        contextDefaultFilters,
+        spaces,
+        selectedSpaceId,
+        selectedSpace,
+        activeSpace,
+        spacesEnabled,
+        spacesReady,
+        spaceSettingsScope,
         context.contextKey,
         corpusStorage,
         fixedAudienceKeys,
@@ -293,6 +360,8 @@ export function useSessionListViewFilterController(
         corpusPresentation,
         queryHomes,
         retained,
+        displayFilters,
+        spaceMembership,
         retentionScopeKey,
         setIncludeInactive,
         setSource,

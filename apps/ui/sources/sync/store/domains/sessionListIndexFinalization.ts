@@ -13,20 +13,20 @@ import { getActiveServerSnapshot } from '../../domains/server/serverRuntime';
 import { syncPerformanceTelemetry } from '../../runtime/syncPerformanceTelemetry';
 import { buildActiveServerSessionListIndex } from '../sessionListIndex/buildSessionListIndexWithServerScope';
 import { isUserFacingSession } from '@/sync/domains/session/listing/isUserFacingSession';
+import { publishSessionRelations, type SessionRelationsByServerId } from './sessionRelations';
 
 export type SessionListIndexFinalizationState = Readonly<{
     sessions: Record<string, Session>;
     sessionListRenderableDelta?: SessionListRenderableDelta;
     sessionListRowsByServerId: Readonly<Record<string, Readonly<Record<string, SessionListRenderableSession>>>>;
+    sessionRelationsByServerId?: SessionRelationsByServerId;
     ordinarySessionListMembershipByServerId?: Readonly<Record<string, readonly string[] | undefined>>;
     sessionListIndexByServerId: Readonly<Record<string, SessionListIndexItem[] | null | undefined>>;
     machines: Record<string, Machine>;
     machineDisplayById: Record<string, MachineDisplayRenderable>;
     profile?: { id?: string | null } | null;
     settings?: {
-        sessionListActiveGroupingV1?: 'project' | 'date';
-        sessionListInactiveGroupingV1?: 'project' | 'date';
-        sessionListSectionModeV1?: 'activity' | 'single';
+        sessionListLayoutV1?: 'projects' | 'recent_activity';
     } | null;
     getProjectForSession?: (sessionId: string) => import('../../runtime/orchestration/projectManager').Project | null;
 }>;
@@ -41,6 +41,7 @@ export type SessionListRenderableDelta = Readonly<{
     revision: number;
     changedSessionIds: readonly string[];
     removedSessionIds: readonly string[];
+    hydratedSessionIds?: readonly string[];
     rebuiltSessionListIndex: boolean;
     /** Ephemeral exact-Home membership facts from the writer; absent means a full read is required. */
     ordinaryMembershipChanges?: readonly OrdinarySessionMembershipChange[];
@@ -55,6 +56,7 @@ export type OrdinarySessionMembershipChange = Readonly<{
 type SessionListRenderableDeltaPublication = Readonly<{
     changedSessionIds: readonly string[];
     removedSessionIds: readonly string[];
+    hydratedSessionIds?: readonly string[];
     ordinaryMembershipChanges?: readonly OrdinarySessionMembershipChange[];
 }>;
 
@@ -130,6 +132,7 @@ function buildNextSessionListRenderableDelta(input: Readonly<{
     previous: SessionListRenderableDelta | undefined;
     changedSessionIds: readonly string[];
     removedSessionIds: readonly string[];
+    hydratedSessionIds?: readonly string[];
     rebuiltSessionListIndex: boolean;
     ordinaryMembershipChanges?: readonly OrdinarySessionMembershipChange[];
 }>): SessionListRenderableDelta {
@@ -137,6 +140,12 @@ function buildNextSessionListRenderableDelta(input: Readonly<{
         revision: (input.previous?.revision ?? 0) + 1,
         changedSessionIds: input.changedSessionIds,
         removedSessionIds: input.removedSessionIds,
+        ...(() => {
+            // Only hydrations the row lists do not already name; an empty list is omitted.
+            const changed = new Set(input.changedSessionIds);
+            const hydrated = input.hydratedSessionIds?.filter(sessionId => !changed.has(sessionId)) ?? [];
+            return hydrated.length > 0 ? { hydratedSessionIds: hydrated } : {};
+        })(),
         rebuiltSessionListIndex: input.rebuiltSessionListIndex,
         ...(input.ordinaryMembershipChanges ? { ordinaryMembershipChanges: input.ordinaryMembershipChanges } : {}),
     };
@@ -171,9 +180,7 @@ export function finalizeSessionListIndexUpdate<S extends SessionListIndexFinaliz
                 sessionRecords: nextStateBase.sessions,
                 machines: nextStateBase.machineDisplayById,
                 machineRecords: Object.keys(nextStateBase.machines).length > 0 ? nextStateBase.machines : undefined,
-                activeGroupingV1: settings.sessionListActiveGroupingV1,
-                inactiveGroupingV1: settings.sessionListInactiveGroupingV1,
-                sectionModeV1: settings.sessionListSectionModeV1,
+                layoutV1: settings.sessionListLayoutV1,
                 getProjectForSession: nextStateBase.getProjectForSession,
                 previousIndex: previousActiveIndex,
             }),
@@ -218,11 +225,15 @@ export function finalizeSessionListRenderablePublication<S extends SessionListIn
     const extraFields = telemetry?.fields?.() ?? {};
     const nextState = {
         ...nextStateBase,
+        sessionRelationsByServerId: publishSessionRelations(state, nextStateBase, renderableDelta
+            ? [...renderableDelta.changedSessionIds, ...renderableDelta.removedSessionIds, ...(renderableDelta.hydratedSessionIds ?? [])]
+            : undefined),
         ...(renderableDelta ? {
             sessionListRenderableDelta: buildNextSessionListRenderableDelta({
                 previous: state.sessionListRenderableDelta,
                 changedSessionIds: renderableDelta.changedSessionIds,
                 removedSessionIds: renderableDelta.removedSessionIds,
+                hydratedSessionIds: renderableDelta.hydratedSessionIds,
                 rebuiltSessionListIndex: didSessionListIndexChange,
                 ordinaryMembershipChanges: renderableDelta.ordinaryMembershipChanges
                     ?? (state.ordinarySessionListMembershipByServerId === nextStateBase.ordinarySessionListMembershipByServerId ? [] : undefined),

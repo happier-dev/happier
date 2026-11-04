@@ -4,7 +4,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 
 import { useActivityOverviewSummary } from '@/activity/source/useActivityOverview';
-import { SessionRowAttentionIndicator } from '@/components/sessions/shell/row/SessionRowAttentionIndicator';
+import { WorkStatusGlyph } from '@/components/work/status/WorkStatusGlyph';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 
@@ -39,20 +39,18 @@ export function HubStatusLineView(props: Readonly<{
             {idle && props.isDataReady !== false ? <Text style={styles.text} numberOfLines={1}>{t('homeIndex.nothingRunning')}</Text> : null}
             {working > 0 ? (
                 <View testID="home-hub.status.working" style={styles.fact}>
-                    <SessionRowAttentionIndicator
-                        indicator="working"
-                        sessionId="home-status"
-                        attentionState="working"
+                    <WorkStatusGlyph
+                        status={{ state: 'thinking', bucket: 'working', tone: 'neutral', word: '', attentionType: null, glyph: 'refresh' }}
+                        testIDSuffix="home-status"
                     />
                     <Text style={styles.text}>{t('homeIndex.sessionsWorking', { count: working })}</Text>
                 </View>
             ) : null}
             {needsYou > 0 ? (
                 <View testID="home-hub.status.needsYou" style={styles.fact}>
-                    <SessionRowAttentionIndicator
-                        indicator="permission"
-                        sessionId="home-status"
-                        attentionState="permission_required"
+                    <WorkStatusGlyph
+                        status={{ state: 'needs_you', bucket: 'needs_you', tone: 'attention', word: '', attentionType: null, glyph: 'attention' }}
+                        testIDSuffix="home-status"
                         animationEnabled={false}
                     />
                     <Text style={styles.text}>{t('homeIndex.sessionsNeedYou', { count: needsYou })}</Text>

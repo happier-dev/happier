@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
     buildServerScopedSessionKey,
     buildVisibleSessionNavigationEntries,
+    findVisibleSessionNavigationEntryByScope,
     moveSessionMruEntryToFront,
     resolveSessionMruNavigation,
     resolveVisibleSessionEdgeNavigation,
@@ -36,9 +37,43 @@ const session = (id: string, serverId?: string): SessionItem => ({
 });
 
 describe('session navigation order helpers', () => {
+    it('steps through every rendered occurrence while retaining entity addresses', () => {
+        const entries = buildVisibleSessionNavigationEntries([
+            { ...session('alpha', 'server-a'), occurrenceRole: 'needsYou' },
+            session('beta', 'server-a'),
+            session('alpha', 'server-a'),
+            session('gamma', 'server-a'),
+        ]);
+        const step = (cursorOccurrenceKey: string | null, direction: 'previous' | 'next' = 'next') => resolveVisibleSessionNavigation({
+            visibleEntries: entries,
+            activeSessionKey: entries[0].sessionKey,
+            cursorOccurrenceKey,
+            direction,
+        });
+        const base = step(entries[1].occurrenceKey ?? null);
+        expect(base).toBe(entries[2]);
+        expect(step(base?.occurrenceKey ?? null)).toBe(entries[3]);
+        expect(step(base?.occurrenceKey ?? null, 'previous')).toBe(entries[1]);
+        expect(entries[0].sessionKey).toBe(entries[2].sessionKey);
+        expect(entries[0].occurrenceKey).not.toBe(entries[2].occurrenceKey);
+        expect(findVisibleSessionNavigationEntryByScope(entries, 'alpha', null)).toBe(entries[0]);
+    });
+
     it('builds server-scoped keys without treating blank server ids as scope', () => {
         expect(buildServerScopedSessionKey(' sess-a ', ' server-a ')).toBe(buildServerScopedSessionKey('sess-a', 'server-a'));
         expect(buildServerScopedSessionKey(' sess-a ', '   ')).toBe('sess-a');
+    });
+
+    it('resumes from the active entity when the previously focused occurrence disappears', () => {
+        const entries = buildVisibleSessionNavigationEntries([
+            session('alpha', 'server-a'), session('beta', 'server-a'), session('gamma', 'server-a'),
+        ]);
+        expect(resolveVisibleSessionNavigation({
+            visibleEntries: entries,
+            activeSessionKey: entries[1].sessionKey,
+            cursorOccurrenceKey: 'departed-shelf-copy',
+            direction: 'next',
+        })).toBe(entries[2]);
     });
 
     it('builds visible navigation entries from session rows only', () => {
@@ -50,7 +85,7 @@ describe('session navigation order helpers', () => {
             session('alpha', 'server-b'),
         ];
 
-        expect(buildVisibleSessionNavigationEntries(items)).toEqual([
+        expect(buildVisibleSessionNavigationEntries(items)).toMatchObject([
             { index: 1, sessionId: 'alpha', sessionKey: buildServerScopedSessionKey('alpha', 'server-a'), serverId: 'server-a' },
             { index: 3, sessionId: 'beta', sessionKey: buildServerScopedSessionKey('beta', 'server-a'), serverId: 'server-a' },
             { index: 4, sessionId: 'alpha', sessionKey: buildServerScopedSessionKey('alpha', 'server-b'), serverId: 'server-b' },
@@ -67,14 +102,14 @@ describe('session navigation order helpers', () => {
         expect(resolveVisibleSessionNavigation({
             visibleEntries,
             activeSessionKey: buildServerScopedSessionKey('beta', 'server-a'),
-            cursorSessionKey: null,
+            cursorOccurrenceKey: null,
             direction: 'next',
         })?.sessionKey).toBe(buildServerScopedSessionKey('gamma', 'server-a'));
 
         expect(resolveVisibleSessionNavigation({
             visibleEntries,
             activeSessionKey: buildServerScopedSessionKey('beta', 'server-a'),
-            cursorSessionKey: null,
+            cursorOccurrenceKey: null,
             direction: 'previous',
         })?.sessionKey).toBe(buildServerScopedSessionKey('alpha', 'server-a'));
     });
@@ -89,13 +124,13 @@ describe('session navigation order helpers', () => {
         const first = resolveVisibleSessionNavigation({
             visibleEntries,
             activeSessionKey: buildServerScopedSessionKey('alpha', 'server-a'),
-            cursorSessionKey: null,
+            cursorOccurrenceKey: null,
             direction: 'next',
         });
         const second = resolveVisibleSessionNavigation({
             visibleEntries,
             activeSessionKey: buildServerScopedSessionKey('alpha', 'server-a'),
-            cursorSessionKey: first?.sessionKey ?? null,
+            cursorOccurrenceKey: first?.occurrenceKey ?? null,
             direction: 'next',
         });
 
@@ -182,6 +217,7 @@ describe('session navigation order helpers', () => {
 
     it('reads an unambiguous legacy MRU key by comparing it with known addresses', () => {
         const knownSessionEntries = buildVisibleSessionNavigationEntries([
+            { ...session('alpha', 'https://home.example'), occurrenceRole: 'needsYou' },
             session('alpha', 'https://home.example'),
             session('beta', 'https://other.example'),
         ]);

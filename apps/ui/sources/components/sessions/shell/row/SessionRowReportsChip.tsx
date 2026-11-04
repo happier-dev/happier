@@ -62,6 +62,7 @@ export function hasSessionRowReportsChip(reports: Session['managedSessions'] | u
 
 export const SessionRowReportsChip = React.memo((props: Readonly<{
     sessionId: string;
+    occurrenceId?: string;
     reports: NonNullable<Session['managedSessions']>;
     /** Its reports are folded under the row: say how many, quietly, and keep any needs-you dot. */
     collapsed?: boolean;
@@ -75,7 +76,7 @@ export const SessionRowReportsChip = React.memo((props: Readonly<{
     if (props.collapsed && liveReports > 0) {
         return (
             <View
-                testID={`session-row-reports-chip:${props.sessionId}`}
+                testID={`session-row-reports-chip:${props.occurrenceId ?? props.sessionId}`}
                 accessible
                 accessibilityLabel={needsYou > 0
                     ? t('sessionWork.list.reportsNeedYou', { count: needsYou })
@@ -90,7 +91,7 @@ export const SessionRowReportsChip = React.memo((props: Readonly<{
     if (needsYou > 0) {
         return (
             <View
-                testID={`session-row-reports-chip:${props.sessionId}`}
+                testID={`session-row-reports-chip:${props.occurrenceId ?? props.sessionId}`}
                 accessible
                 accessibilityLabel={t('sessionWork.list.reportsNeedYou', { count: needsYou })}
                 style={styles.chip}
@@ -102,7 +103,7 @@ export const SessionRowReportsChip = React.memo((props: Readonly<{
     }
     if (status.count <= 0) return null;
     return (
-        <View testID={`session-row-reports-chip:${props.sessionId}`} style={styles.chip}>
+        <View testID={`session-row-reports-chip:${props.occurrenceId ?? props.sessionId}`} style={styles.chip}>
             <Text numberOfLines={1} style={styles.working}>{status.bucket === 'working'
                 ? t('sessionWork.list.reportsWorking', { count: status.count })
                 : `${status.count} · ${t('status.offline')}`}</Text>
@@ -117,6 +118,7 @@ export const SessionRowReportsChip = React.memo((props: Readonly<{
  */
 export const SessionRowReportsDisclosure = React.memo(function SessionRowReportsDisclosure(props: Readonly<{
     sessionId: string;
+    occurrenceId?: string;
     nodeId: string;
     name: string;
     count: number;
@@ -129,7 +131,7 @@ export const SessionRowReportsDisclosure = React.memo(function SessionRowReports
     const toggle = React.useCallback(() => onSetCollapsed(nodeId, !collapsed), [collapsed, nodeId, onSetCollapsed]);
     return (
         <HappierPressable
-            testID={`session-row-reports-disclosure:${props.sessionId}`}
+            testID={`session-row-reports-disclosure:${props.occurrenceId ?? props.sessionId}`}
             accessibilityRole="button"
             expanded={!collapsed}
             accessibilityLabel={collapsed

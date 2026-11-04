@@ -3,6 +3,7 @@ import { accountSettingsParse } from '../../account/settings/accountSettings.js'
 import { readPortableAccountSettingBindingV1, scmBackendDefaultDiffStorage, scmGitRoutingStorage } from './accountSettingBindings.js';
 import { prepareDefaultProviderStateSharingChangeV1, readProviderStateSharingRiskAgentIdsV1 } from './providerStateSharingMutations.js';
 import { resolveUiFeatureToggleEnabled } from './featurePreferenceMutations.js';
+import { readBuiltInSettingDeclarationV1, buildBuiltInAccountSettingMutationV1, parseBuiltInAccountSettingValueV1 } from './settingsDeclarations.js';
 
 function binding(owner: string, ...options: string[]) {
     const result = readPortableAccountSettingBindingV1({ storage: { owner, options } });
@@ -11,6 +12,20 @@ function binding(owner: string, ...options: string[]) {
 }
 
 describe('portable coupled Account setting mutations', () => {
+    it('writes one scalar layout and rejects the retired third layout', () => {
+        const settings = accountSettingsParse({ sessionListLayoutV1: 'projects' });
+        const declaration = readBuiltInSettingDeclarationV1('session.list.layout');
+        expect(declaration).toBeDefined();
+        if (!declaration) throw new Error('The canonical layout Action declaration must be present');
+        expect(parseBuiltInAccountSettingValueV1(declaration, 'active_inactive')).toEqual({ success: false });
+        expect(buildBuiltInAccountSettingMutationV1(declaration, settings, 'active_inactive')).toBeNull();
+        const delta = buildBuiltInAccountSettingMutationV1(declaration, settings, 'recent_activity');
+        expect(delta).toEqual({ sessionListLayoutV1: 'recent_activity' });
+        expect(accountSettingsParse({ ...settings, ...delta }).sessionListLayoutV1).toBe('recent_activity');
+        for (const anchor of ['session.layout', 'session.ordering', 'session.folderView', 'session.activeGrouping', 'session.attentionPromotion']) {
+            expect(readBuiltInSettingDeclarationV1(anchor)).toBeNull();
+        }
+    });
     it.each(['collapsed', 'expanded'] as const)('rebases one %s tool detail choice and clears only its named override', kind => {
         const owner = binding('toolDetailOverrideStorage', kind);
         const key = kind === 'collapsed' ? 'toolViewDetailLevelByToolName' : 'toolViewExpandedDetailLevelByToolName';
@@ -235,11 +250,14 @@ describe('portable coupled Account setting mutations', () => {
         expect(binding('presentationStorage', 'models').mutate(settings, 'auto')).toEqual({ newSessionWizardSectionPresentationV1: { machines: 'dropdown' } });
         expect(binding('thinkingDisplayStorageBinding').parse('inline').success).toBe(false);
     });
-    it('preserves the inactive grouping and rejects a mixed folder sort in date ordering', () => {
+    it('replaces predecessor grouping intent and retires its mutation bindings', () => {
         const settings = accountSettingsParse({ sessionListOrderingModeV1: 'updated', sessionListInactiveGroupingV1: 'date' });
-        expect(binding('sessionListLayoutStorageBinding').mutate(settings, 'projects')).toEqual({ sessionListSectionModeV1: 'single', sessionListActiveGroupingV1: 'project' });
-        expect(binding('listChoiceStorage', 'sessionListFolderSortModeV1', 'folderSort').mutate(settings, 'mixed')).toBeNull();
-        expect(binding('listChoiceStorage', 'sessionListOrderingModeV1', 'ordering').parse('unknown').success).toBe(false);
+        const declaration = readBuiltInSettingDeclarationV1('session.list.layout');
+        expect(declaration).not.toBeNull();
+        if (!declaration) throw new Error('Missing canonical layout declaration');
+        expect(buildBuiltInAccountSettingMutationV1(declaration, settings, 'projects')).toEqual({ sessionListLayoutV1: 'projects' });
+        expect(readPortableAccountSettingBindingV1({ storage: { owner: 'sessionListLayoutStorageBinding' } })).toBeNull();
+        expect(readPortableAccountSettingBindingV1({ storage: { owner: 'listChoiceStorage', options: ['sessionListFolderSortModeV1', 'folderSort'] } })).toBeNull();
     });
     it('normalizes gauge choice without rewriting the predecessor field', () => {
         const settings = accountSettingsParse({ sessionProviderUsageGaugeWindowMode: 'weekly' });

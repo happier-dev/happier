@@ -76,7 +76,7 @@ export interface ProfileDomainSlice {
 }
 
 export interface SessionsDomainSlice extends Pick<SessionsDomain,
-    'sessionArchiveOperations' | 'beginSessionArchive' | 'finishSessionArchive' | 'clearSessionArchiveOperations'> {
+    'sessionArchiveOperations' | 'beginSessionArchive' | 'finishSessionArchive' | 'clearSessionArchiveOperations' | 'sessionRelationsByServerId'> {
     sessions: Record<string, Session>;
     projectAuthoringSessions: ProjectAuthoringSessionInputs;
     /**

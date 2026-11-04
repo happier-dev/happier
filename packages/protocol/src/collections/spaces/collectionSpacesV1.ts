@@ -10,6 +10,8 @@ import type { CollectionFilterMapV1 } from '../filter/entityListFilterV1.js';
 import { getUnsupportedEntityFilterFieldsV1 } from '../filter/fieldRegistryV1.js';
 export type { CollectionFilterMapV1 } from '../filter/entityListFilterV1.js';
 
+export { COLLECTION_SPACE_ENABLEMENT_SETTING_KEYS_V1, CollectionSpacesEnabledV1Schema } from './collectionSpaceEnablementV1.js';
+
 /** V1 persisted identities and mutation envelopes are closed; settings owns byte bounds and sealing. */
 export const CollectionEntityKindV1Schema = lazyZodSchema(() => z.enum(['sessionWork', 'workflow', 'discussion']));
 export type CollectionEntityKindV1 = keyof CollectionFilterMapV1;

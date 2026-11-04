@@ -67,7 +67,6 @@ vi.mock('@legendapp/list/react-native', async () => {
 
 vi.mock('./sessionListChrome', () => ({
     SessionsListHeader: () => React.createElement('SessionsListHeader'),
-    SessionFolderFocusBreadcrumbs: () => React.createElement('SessionFolderFocusBreadcrumbs'),
 }));
 vi.mock('@/components/ui/lists/Item', () => ({
     Item: (props: any) => React.createElement('Item', props, props.title),
@@ -104,9 +103,6 @@ function buildVirtualizedContentProps(props: Partial<React.ComponentProps<any>> 
         renderItem: ({ item }: any) => React.createElement('Row', { testID: `row:${item.id}` }),
         rowExtraData: null,
         onStopScrollEventPropagationOnWeb: vi.fn(),
-        folderFocus: null,
-        onClearFolderFocus: vi.fn(),
-        onSelectFolderBreadcrumb: vi.fn(),
         ...props,
     };
 }

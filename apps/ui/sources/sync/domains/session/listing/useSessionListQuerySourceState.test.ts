@@ -215,9 +215,7 @@ describe('buildSessionListQueryHomeIndex', () => {
             addresses: [{ serverId: 'home-a', sessionId: 'pending-session' }],
             rowsBySessionId: {},
             machines: {},
-            activeGroupingV1: 'project',
-            inactiveGroupingV1: 'project',
-            sectionModeV1: 'single',
+            layoutV1: 'projects',
             serverId: 'home-a',
             serverName: 'Home A',
         });

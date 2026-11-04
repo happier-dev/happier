@@ -1,15 +1,18 @@
 import * as React from 'react';
+import { useSessionListAttentionActivity } from './useSessionListAttentionInteraction';
 import { Platform } from 'react-native';
+import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
+import { captureSessionListPlacementFlight } from './sessionListLayoutFlight';
 import { useSharedValue } from 'react-native-reanimated';
 
 import {
     measureWindowBounds,
+    measureTreeContentBounds,
     TREE_DROP_OVERLAY_KIND_NONE,
     useEntityDragDropRuntime,
     useEntityDropDomBinding,
     useTreeDropAutoscroll,
     useTreeDropRegistry,
-    windowBoundsToContentBounds,
     resolveTreeDropVisualGeometry,
     type TreeContentRow,
     type TreeDropMeasurableRef,
@@ -21,16 +24,11 @@ import {
 } from '@/components/ui/treeDragDrop';
 import { putSessionUnderLead } from '@/components/sessions/work/putSessionUnderLead';
 import { sessionAddressKey } from '@/sync/domains/session/sessionAddress';
-import type { SessionFoldersV1 } from '@/sync/domains/session/folders';
+import type { SessionSection } from '@/sync/domains/session/organization/sections';
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 import { resolveSessionListSessionRowDragPolicy } from '@/sync/domains/session/listing/sessionListLayout';
-import type {
-    SessionListOrderingModeV1,
-    SessionListOrderingSectionMode,
-} from '@/sync/domains/session/listing/sessionListOrderingRules';
 import {
     type SessionOrganizationMutationScope,
-    writeSessionOrganizationFolderAssignment,
 } from '@/sync/ops/sessionOrganization';
 
 import { buildSessionListDragIntent } from './drag/sessionListDragIntent';
@@ -42,6 +40,7 @@ import type { SessionListDragSnapshot } from './drag/_types';
 import { buildSessionListDragSource } from './drop-resolution/buildSessionListDragSource';
 import { buildSessionListTreeRows } from './drop-resolution/buildSessionListTreeRows';
 import { treeRowId } from './drop-resolution/treeRowId';
+import { SESSION_LIST_SUPPORTING_SECTIONS_NODE } from './sessionListVirtualizedNodes';
 import {
     buildSessionListKeyboardMoveResult,
     type SessionListKeyboardMoveDirection,
@@ -80,22 +79,20 @@ type SessionFolderAssignableSessionItem = Readonly<{
     serverId?: string;
 }>;
 
-type SessionListFolderSortModeV1 = 'foldersFirst' | 'mixed';
-
 export type UseSessionListRowInteractionsInput = Readonly<{
+    presentationScopeKey?: string;
     folderActionsEnabled: boolean;
     isFolderActionsEnabledForServerId: (serverId: string | null | undefined) => boolean;
-    sessionFoldersV1: SessionFoldersV1;
+    sessionSections: readonly SessionSection[];
+    spaceMembershipTargets?: SessionListBaseCommitContext['spaceMembershipTargets'];
+    spaceMembershipSourceSpaceId?: SessionListBaseCommitContext['spaceMembershipSourceSpaceId'];
     listItems: ReadonlyArray<SessionListIndexItem> | null;
     currentGroupOrderMap: Readonly<Record<string, ReadonlyArray<string> | undefined>>;
     currentWorkspaceOrderMap: Readonly<Record<string, ReadonlyArray<string> | undefined>>;
-    sessionListFolderSortModeV1?: SessionListFolderSortModeV1;
-    sessionListOrderingModeV1: SessionListOrderingModeV1;
-    sessionListSectionModeV1: SessionListOrderingSectionMode;
+    sessionListLayoutV1: 'projects' | 'recent_activity';
     manualSessionOrderingEnabled: boolean;
     setSessionListGroupOrderV1: (value: Record<string, string[]>, scope: SessionOrganizationMutationScope) => Promise<void>;
     setSessionWorkspaceOrderV1: (value: Record<string, string[]>, scope: SessionOrganizationMutationScope) => Promise<void>;
-    setSessionFoldersV1: (value: SessionFoldersV1, scope: SessionOrganizationMutationScope) => Promise<void>;
     pinnedKeySet: ReadonlySet<string>;
     sessionTags: Readonly<Record<string, string[]>>;
     setSessionPinForKey: (sessionKey: string, pinned: boolean) => void;
@@ -105,6 +102,8 @@ export type UseSessionListRowInteractionsInput = Readonly<{
 }>;
 
 export function useSessionListRowInteractions(input: UseSessionListRowInteractionsInput) {
+    const setAttentionGestureHeld = useSessionListAttentionActivity();
+    const reducedMotion = useReducedMotionPreference();
     const [draggingSessionKey, setDraggingSessionKey] = React.useState<string | null>(null);
     const [activeDragSnapshot, setActiveDragSnapshot] = React.useState<SessionListDragSnapshot | null>(null);
     const [nativeContextMenuSessionKey, setNativeContextMenuSessionKey] = React.useState<string | null>(null);
@@ -174,20 +173,18 @@ export function useSessionListRowInteractions(input: UseSessionListRowInteractio
     groupOrderRef.current = input.currentGroupOrderMap;
     const workspaceOrderRef = React.useRef(input.currentWorkspaceOrderMap);
     workspaceOrderRef.current = input.currentWorkspaceOrderMap;
-    const sessionFoldersV1Ref = React.useRef(input.sessionFoldersV1);
-    sessionFoldersV1Ref.current = input.sessionFoldersV1;
-    const folderSortModeRef = React.useRef(input.sessionListFolderSortModeV1);
-    folderSortModeRef.current = input.sessionListFolderSortModeV1;
-    const sessionListOrderingModeV1Ref = React.useRef(input.sessionListOrderingModeV1);
-    sessionListOrderingModeV1Ref.current = input.sessionListOrderingModeV1;
-    const sessionListSectionModeV1Ref = React.useRef(input.sessionListSectionModeV1);
-    sessionListSectionModeV1Ref.current = input.sessionListSectionModeV1;
+    const sectionsRef = React.useRef(input.sessionSections);
+    sectionsRef.current = input.sessionSections;
+    const spaceMembershipTargetsRef = React.useRef(input.spaceMembershipTargets);
+    spaceMembershipTargetsRef.current = input.spaceMembershipTargets;
+    const spaceMembershipSourceSpaceIdRef = React.useRef(input.spaceMembershipSourceSpaceId);
+    spaceMembershipSourceSpaceIdRef.current = input.spaceMembershipSourceSpaceId;
+    const layoutRef = React.useRef(input.sessionListLayoutV1);
+    layoutRef.current = input.sessionListLayoutV1;
     const manualSessionOrderingEnabledRef = React.useRef(input.manualSessionOrderingEnabled);
     manualSessionOrderingEnabledRef.current = input.manualSessionOrderingEnabled;
     const isFolderActionsEnabledForServerIdRef = React.useRef(input.isFolderActionsEnabledForServerId);
     isFolderActionsEnabledForServerIdRef.current = input.isFolderActionsEnabledForServerId;
-    const setSessionFoldersV1Ref = React.useRef(input.setSessionFoldersV1);
-    setSessionFoldersV1Ref.current = input.setSessionFoldersV1;
     const setSessionListGroupOrderV1Ref = React.useRef(input.setSessionListGroupOrderV1);
     setSessionListGroupOrderV1Ref.current = input.setSessionListGroupOrderV1;
     const setSessionWorkspaceOrderV1Ref = React.useRef(input.setSessionWorkspaceOrderV1);
@@ -223,11 +220,12 @@ export function useSessionListRowInteractions(input: UseSessionListRowInteractio
         if (!ref) return;
         const snapshot = activeDragSnapshotRef.current;
         if (!snapshot) return;
-        const topologyRow = snapshot.topology.rows.find((row) => row.rowId === rowId);
+        // This presentation cell owns measured space, but never entity topology or an Action.
+        const topologyRow = rowId === SESSION_LIST_SUPPORTING_SECTIONS_NODE.id
+            ? { rowId, parentRowId: null, containerId: rowId, depth: 0, kind: 'leaf' as const }
+            : snapshot.topology.rows.find((row) => row.rowId === rowId);
         if (!topologyRow) return;
-        void measureWindowBounds(ref).then((windowBounds) => {
-            if (!windowBounds) return;
-            const contentBounds = windowBoundsToContentBounds(windowBounds, readViewportMetrics());
+        void measureTreeContentBounds(ref, readViewportMetrics).then((contentBounds) => {
             if (!contentBounds) return;
             if (activeDragSnapshotRef.current !== snapshot) return;
             const row: TreeContentRow = {
@@ -281,14 +279,23 @@ export function useSessionListRowInteractions(input: UseSessionListRowInteractio
         }
     }, [registerRowContentGeometry]);
 
-    const handleTreeScroll = React.useCallback((event: { nativeEvent?: { contentOffset?: { y?: number } } }) => {
+    const handleTreeScroll = React.useCallback((event: { nativeEvent?: {
+        contentOffset?: { y?: number };
+        contentSize?: { height?: number };
+    } }) => {
         const nextOffset = Number(event.nativeEvent?.contentOffset?.y ?? 0);
         if (!Number.isFinite(nextOffset)) return;
         scrollOffsetYRef.current = nextOffset;
         autoscrollScrollOffsetY.value = nextOffset;
+        // The web virtualizer emits content size with scroll events, not the
+        // native-only onContentSizeChange callback.
+        const contentHeight = event.nativeEvent?.contentSize?.height;
+        if (typeof contentHeight === 'number' && Number.isFinite(contentHeight)) {
+            autoscrollContentHeight.value = Math.max(0, contentHeight);
+        }
         // Scrolling under a still pointer changes the place beneath it.
         if (activeDragSnapshotRef.current) entityDragRuntime.refresh();
-    }, [autoscrollScrollOffsetY, entityDragRuntime]);
+    }, [autoscrollContentHeight, autoscrollScrollOffsetY, entityDragRuntime]);
 
     const handleTreeContentSizeChange = React.useCallback((_width: number, height: number) => {
         if (!Number.isFinite(height)) return;
@@ -305,8 +312,9 @@ export function useSessionListRowInteractions(input: UseSessionListRowInteractio
 
     const handleTreeViewportMeasure = React.useCallback((ref: TreeDropMeasurableRef | null) => {
         attachTreeDrop(ref);
-        void measureWindowBounds(ref).then((bounds) => {
-            if (!bounds) return;
+        // Publish viewport metrics on the measurement clock as well, before
+        // a same-turn row measurement can convert against the previous viewport.
+        void measureWindowBounds(ref, (bounds) => {
             viewportBoundsRef.current = bounds;
             viewportWindowYRef.current = bounds.y;
             viewportWindowXRef.current = bounds.x;
@@ -324,26 +332,19 @@ export function useSessionListRowInteractions(input: UseSessionListRowInteractio
         return {
             latestItems: listItemsRef.current,
             latestTree: latestTreeRef.current,
-            sessionFoldersV1: sessionFoldersV1Ref.current,
+            sessionSections: sectionsRef.current,
+            spaceMembershipTargets: spaceMembershipTargetsRef.current,
+            spaceMembershipSourceSpaceId: spaceMembershipSourceSpaceIdRef.current,
             sessionListGroupOrderV1: groupOrderRef.current,
             sessionWorkspaceOrderV1: workspaceOrderRef.current,
-            sessionListFolderSortModeV1: folderSortModeRef.current,
-            sessionListOrderingModeV1: sessionListOrderingModeV1Ref.current,
-            sessionListSectionModeV1: sessionListSectionModeV1Ref.current,
+            sessionListLayoutV1: layoutRef.current,
             manualSessionOrderingEnabled: manualSessionOrderingEnabledRef.current,
             isFolderOrganizationEnabled: (serverId) => isFolderActionsEnabledForServerIdRef.current(serverId),
-            now: () => Date.now(),
-            setSessionFoldersV1: async next => {
-                await setSessionFoldersV1Ref.current(next, requireCapturedScope());
-            },
             setSessionListGroupOrderV1: async next => {
                 await setSessionListGroupOrderV1Ref.current(next, requireCapturedScope());
             },
             setSessionWorkspaceOrderV1: async next => {
                 await setSessionWorkspaceOrderV1Ref.current(next, requireCapturedScope());
-            },
-            setSessionFolderAssignment: async assignment => {
-                await writeSessionOrganizationFolderAssignment({ scope: requireCapturedScope(), sessionId: assignment.sessionId, folderId: assignment.folderId });
             },
             putSessionUnder: putSessionUnderLead,
         };
@@ -359,8 +360,7 @@ export function useSessionListRowInteractions(input: UseSessionListRowInteractio
                     manualSessionOrderingEnabled: manualSessionOrderingEnabledRef.current,
                     folderContainmentEnabled: false,
                     item: sourceItem,
-                    sectionModeV1: sessionListSectionModeV1Ref.current,
-                    orderingModeV1: sessionListOrderingModeV1Ref.current,
+                    layoutV1: layoutRef.current,
                 }).canReorderSiblings;
             return resolveSessionListDragPointer({
                 snapshot,
@@ -378,6 +378,7 @@ export function useSessionListRowInteractions(input: UseSessionListRowInteractio
     }, [dropGeometryRegistry, readViewportMetrics]);
 
     const entityDragDrop = useSessionListEntityDragDrop({
+        presentationScopeKey: JSON.stringify([input.presentationScopeKey ?? null, input.sessionListLayoutV1]),
         resolvePointerGeometry,
         getCommitContext: buildBaseCommitContext,
         getListBounds: () => viewportBoundsRef.current,
@@ -426,6 +427,11 @@ export function useSessionListRowInteractions(input: UseSessionListRowInteractio
                 dropZones: [...content.dropZones, ...implicit], viewport });
         },
         onKeyboardGeometry: geometry => writeSessionListDropOverlayGeometry(dropOverlayShared, geometry),
+        onCarryDispatched: () => {
+            // The committed placement glides (P5 §6): the rows are captured where the frozen drag list shows them.
+            if (Platform.OS === 'web' && !reducedMotion) captureSessionListPlacementFlight();
+            clearDragState();
+        },
         onCarryRetired: clearDragState,
     });
 
@@ -463,13 +469,13 @@ export function useSessionListRowInteractions(input: UseSessionListRowInteractio
         }
     }, [clearDragState]);
 
-    const handleDragStart = React.useCallback((sessionKey: string) => {
+    const handleDragStart = React.useCallback((sessionKey: string, sourceRowId?: string) => {
         let snapshot: SessionListDragSnapshot;
         try {
             snapshot = buildSessionListDragSnapshot({
                 items: listItemsRef.current,
                 viewItems: listItemsRef.current,
-                sessionDragKey: sessionKey,
+                sessionDragKey: sourceRowId ?? sessionKey,
                 foldersFeatureEnabled: input.folderActionsEnabled,
             });
         } catch {
@@ -511,14 +517,16 @@ export function useSessionListRowInteractions(input: UseSessionListRowInteractio
 
     const handleNativeListScrollInteractionStart = React.useCallback(() => {
         if (Platform.OS !== 'ios' && Platform.OS !== 'android') return;
+        setAttentionGestureHeld(true);
         nativeListScrollInteractionActiveRef.current = true;
         setNativeContextMenuSessionKey(null);
-    }, []);
+    }, [setAttentionGestureHeld]);
 
     const handleNativeListScrollInteractionEnd = React.useCallback(() => {
         if (Platform.OS !== 'ios' && Platform.OS !== 'android') return;
+        setAttentionGestureHeld(false);
         nativeListScrollInteractionActiveRef.current = false;
-    }, []);
+    }, [setAttentionGestureHeld]);
 
     const handleNativeContextMenuOpenChangeSessionKey = React.useCallback((sessionKey: string, next: boolean) => {
         if (next && nativeListScrollInteractionActiveRef.current) return;
@@ -534,7 +542,7 @@ export function useSessionListRowInteractions(input: UseSessionListRowInteractio
 
     const performTreeResult = React.useCallback(async (sourceRowId: string, result: ReturnType<typeof buildSessionListKeyboardMoveResult>) => {
         const source = prepareTreeRowSource(sourceRowId);
-        const scope = entityDragDrop.scope;
+        const scope = source?.scope;
         const targetId = entityDragDrop.targetId;
         if (!source || !scope || !targetId) { source?.dispose(); return false; }
         try {
@@ -546,7 +554,7 @@ export function useSessionListRowInteractions(input: UseSessionListRowInteractio
             const outcome = await entityDragRuntime.perform(source.sourceId, targetId, destination, 'chooser');
             return outcome?.status === 'applied';
         } finally { source.dispose(); }
-    }, [entityDragDrop.scope, entityDragDrop.targetId, entityDragRuntime, prepareTreeRowSource]);
+    }, [entityDragDrop.targetId, entityDragRuntime, prepareTreeRowSource]);
 
     const applyKeyboardMove = React.useCallback((sourceRowId: string, direction: SessionListKeyboardMoveDirection) => {
         try {
@@ -558,14 +566,15 @@ export function useSessionListRowInteractions(input: UseSessionListRowInteractio
     }, [performTreeResult]);
 
     const moveToFolder = React.useCallback((serverId: string, sessionId: string, folderId: string | null) => {
-        const sourceRowId = treeRowId.session(serverId, sessionId);
-        const source = latestTreeRef.current.rowMetadataById.get(sourceRowId);
-        if (!source) return Promise.resolve(false);
-        const target = folderId ? treeRowId.folder(serverId, folderId) : source.rootId;
-        return performTreeResult(sourceRowId, { instruction: folderId
-            ? { kind: 'nest-into', targetId: target, containerId: target, parentId: target, depth: 1 }
-            : { kind: 'move-to-root', containerId: target, rootId: target, depth: 0 }, visual: { kind: 'none' } });
-    }, [performTreeResult]);
+        const row = latestTreeRef.current.rowMetadataById.get(treeRowId.session(serverId, sessionId))
+            ?? [...latestTreeRef.current.rowMetadataById.values()].find(candidate => candidate.kind === 'session'
+                && candidate.serverId === serverId && candidate.sessionId === sessionId);
+        const source = row ? prepareTreeRowSource(row.rowId) : null;
+        const targetId = entityDragDrop.targetId;
+        if (!source || !targetId) { source?.dispose(); return Promise.resolve(false); }
+        return entityDragRuntime.perform(source.sourceId, targetId, { kind: 'folder-assignment', folderId }, 'chooser')
+            .then(outcome => outcome?.status === 'applied').finally(() => source.dispose());
+    }, [entityDragDrop.targetId, entityDragRuntime, prepareTreeRowSource]);
 
     React.useEffect(() => {
         const update = () => {

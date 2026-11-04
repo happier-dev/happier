@@ -4,10 +4,18 @@ import { buildOrderMapAfterMove } from './orderMapUpdate';
 type WorkspaceOrderMap = Readonly<Record<string, ReadonlyArray<string> | undefined>>;
 
 function collectWorkspaceOrderKeys(tree: SessionListTreeModel, containerId: string): string[] {
+    const supplementalGroups = new Set<string | undefined>();
+    const ordinaryGroups = new Set<string | undefined>();
+    for (const item of tree.items) {
+        if (item.type === 'header') continue;
+        (item.type === 'session' && item.supplementalAttention ? supplementalGroups : ordinaryGroups).add(item.groupKey);
+    }
     const keys: string[] = [];
     for (const metadata of tree.rowMetadataById.values()) {
         if (metadata.containerId !== containerId) continue;
         if (metadata.kind !== 'workspace-root') continue;
+        const groupKey = metadata.item.groupKey;
+        if (supplementalGroups.has(groupKey) && !ordinaryGroups.has(groupKey)) continue;
         if (metadata.orderKey) keys.push(metadata.orderKey);
     }
     return keys;
@@ -25,6 +33,9 @@ export function buildSessionWorkspaceOrderAfterTreeDrop(params: Readonly<{
     const container = params.tree.containerMetadataById.get(params.containerId);
     if (moved?.kind !== 'workspace-root' || !moved.orderKey) return null;
     if (container?.kind !== 'workspace-order' || !container.groupKey) return null;
+    const directWorkspaceKeys = collectWorkspaceOrderKeys(params.tree, params.containerId);
+    if (!directWorkspaceKeys.includes(moved.orderKey)) return null;
+    const ordinaryWorkspaceKeys = new Set(directWorkspaceKeys);
 
     const beforeKey = params.beforeRowId
         ? params.tree.rowMetadataById.get(params.beforeRowId)?.orderKey ?? null
@@ -32,8 +43,8 @@ export function buildSessionWorkspaceOrderAfterTreeDrop(params: Readonly<{
     const afterKey = params.afterRowId
         ? params.tree.rowMetadataById.get(params.afterRowId)?.orderKey ?? null
         : null;
+    if ((beforeKey && !ordinaryWorkspaceKeys.has(beforeKey)) || (afterKey && !ordinaryWorkspaceKeys.has(afterKey))) return null;
 
-    const directWorkspaceKeys = collectWorkspaceOrderKeys(params.tree, params.containerId);
     return buildOrderMapAfterMove({
         currentMap: params.currentMap,
         scopeKey: container.groupKey,

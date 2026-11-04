@@ -1,3 +1,4 @@
+import { NEEDS_YOU_HIGHLIGHTS } from '@/components/ui/lists/collection/collectionRowNeedsYouHighlight';
 import { z } from 'zod/mini';
 
 import { SessionCompanionPreferencesV1Schema } from '@/components/sessions/companion/state/sessionCompanionPreference';
@@ -42,6 +43,12 @@ export const LAYOUT_LOCAL_SETTING_DEFINITIONS = {
     rightPanelPlacement: {
         schema: z.catch(z.enum(['canvas', 'sheet']), 'canvas'), default: 'canvas',
         description: 'Right panel position on this device', storageScope: 'local',
+    },
+    // How a session that needs you stands out in the list (owner ruling 2026-11-01): Dot (the amber dot alone),
+    // Accent, Glint, Shimmer or Pulse. A device preference, like the pane geometry around it.
+    sessionListNeedsYouHighlight: {
+        schema: z.catch(z.enum(NEEDS_YOU_HIGHLIGHTS), 'dot'), default: 'dot',
+        description: 'How sessions that need you stand out in the session list on this device', storageScope: 'local',
     },
     sessionColumnWidthPx: {
         schema: z.number(), default: DEFAULT_SESSION_WIDTH_PX,
@@ -327,23 +334,4 @@ export const LAYOUT_LOCAL_SETTING_DEFINITIONS = {
             identityScope: 'device_user',
             serializeCurrent: objectKeyCount,
         },
-    },
-    /**
-     * Which Session Info sections are open on this device, for every Session (P2 §5). Absent
-     * Instructions reads open, every other absent key closed; written only on a real disclosure change.
-     */
-    sessionInfoExpandedSectionsV1: {
-        schema: z.catch(z.object({
-            instructions: z.optional(z.boolean()),
-            memory: z.optional(z.boolean()),
-            context: z.optional(z.boolean()),
-            voice: z.optional(z.boolean()),
-            roles: z.optional(z.boolean()),
-            notes: z.optional(z.boolean()),
-            about: z.optional(z.boolean()),
-        }), {}),
-        default: {},
-        description: 'Which Session Info sections are open on this device',
-        storageScope: 'local',
-    },
-} as const;
+    },} as const;

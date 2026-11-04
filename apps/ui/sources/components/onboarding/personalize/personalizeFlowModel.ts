@@ -34,7 +34,7 @@ export type ThemeModeChoice = 'adaptive' | 'light' | 'dark';
 export type ToolChromeChoice = 'activity_feed' | 'cards';
 export type ToolDetailChoice = Settings['toolViewDetailLevelDefault'];
 export type ListDensityChoice = 'detailed' | 'cozy' | 'narrow';
-export type AttentionPlacementChoice = 'off' | 'withinGroups' | 'global';
+export type AttentionPlacementChoice = Settings['sessionListAttentionPlacementV1'];
 
 export type PersonalizeChoices = Readonly<{
     theme: ThemeModeChoice;
@@ -77,7 +77,7 @@ export function readPersonalizeChoices(account: Settings, local: Pick<LocalSetti
         toolTap: account.toolViewTapAction === 'open' ? 'open' : 'expand',
         listLayout: resolveSessionListLayoutChoice(account),
         listDensity: account.sessionListDensity,
-        attention: account.sessionListAttentionPromotionModeV1,
+        attention: account.sessionListAttentionPlacementV1,
         notifyNeedsYou: notificationsOn && read('permissionRequests') && read('userActions'),
         notifyFinished: notificationsOn && read('ready'),
         notifyPreview: read('readyPreview') && read('requestPreview'),
@@ -92,9 +92,9 @@ export type PersonalizeSettingWrite = Readonly<
     | { anchor: 'transcript.timelineChrome'; value: ToolChromeChoice }
     | { anchor: 'transcript.defaultToolDetailLevel'; value: ToolDetailChoice }
     | { anchor: 'transcript.cardTapAction'; value: PersonalizeChoices['toolTap'] }
-    | { anchor: 'session.layout'; value: SessionListLayoutChoice }
-    | { anchor: 'session.listDensity'; value: ListDensityChoice }
-    | { anchor: 'session.attentionPromotion'; value: AttentionPlacementChoice }
+    | { anchor: 'session.list.layout'; value: SessionListLayoutChoice }
+    | { anchor: 'session.list.density'; value: ListDensityChoice }
+    | { anchor: 'session.list.attentionPlacement'; value: AttentionPlacementChoice }
     | { anchor: 'notifications.localPermissionRequests' | 'notifications.localUserActions'
         | 'notifications.ready' | 'notifications.readyPreview' | 'notifications.requestPreview'
         | 'notifications.localEnabled'; value: boolean }
@@ -135,12 +135,12 @@ export function resolvePersonalizeStepWrite(
             ] };
         case 'work':
             return { ...NO_WRITE, settings: [
-                ...(draft.listLayout !== current.listLayout ? [{ anchor: 'session.layout' as const, value: draft.listLayout }] : []),
-                ...(draft.listDensity !== current.listDensity ? [{ anchor: 'session.listDensity' as const, value: draft.listDensity }] : []),
+                ...(draft.listLayout !== current.listLayout ? [{ anchor: 'session.list.layout' as const, value: draft.listLayout }] : []),
+                ...(draft.listDensity !== current.listDensity ? [{ anchor: 'session.list.density' as const, value: draft.listDensity }] : []),
             ] };
         case 'attention':
             return { ...NO_WRITE, settings: draft.attention !== current.attention
-                ? [{ anchor: 'session.attentionPromotion', value: draft.attention }] : [] };
+                ? [{ anchor: 'session.list.attentionPlacement', value: draft.attention }] : [] };
         case 'notifications':
             return resolveNotificationsWrite(draft, current, local);
     }

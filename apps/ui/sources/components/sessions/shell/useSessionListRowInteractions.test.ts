@@ -1,10 +1,12 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { AUTHORING_MEMORY_ROUTE_V1 } from '@happier-dev/protocol';
+import { AUTHORING_MEMORY_ROUTE_V1 } from '@happier-dev/protocol/account/authoringMemory';
+import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
-import { buildSessionFolderGroupKey, DEFAULT_SESSION_FOLDERS_V1 } from '@/sync/domains/session/folders';
+import { buildSessionSectionGroupKey, projectSessionSectionListIndex } from '@/sync/domains/session/organization/sections';
 import { sessionAddressKey } from '@/sync/domains/session/sessionAddress';
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 import type { UseSessionListRowInteractionsInput } from './useSessionListRowInteractions';
@@ -12,7 +14,7 @@ import { treeRowId } from './drop-resolution/treeRowId';
 import { useEntityDragDomBinding } from '@/components/ui/treeDragDrop/useEntityDragDomBinding';
 import { buildSessionWorkspaceOrderItemKey, buildSessionWorkspaceOrderScopeKey } from '@/sync/domains/session/listing/sessionWorkspaceOrderStateV1';
 import type { UseSessionInlineDragResolvedDrop } from './useSessionInlineDrag';
-import { getStorage } from '@/sync/domains/state/storage';
+import { getStorage, useSessionOrganizationProjections } from '@/sync/domains/state/storage';
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
@@ -21,12 +23,23 @@ import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/feature
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { profileDefaults } from '@/sync/domains/profiles/profile';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { buildSessionOrganizationListViewStateForServers } from '@/sync/domains/session/organization/viewState';
+import { buildSessionOrganizationServerKey } from '@/sync/domains/session/organization/keys';
+import { useFrozenSessionListItemsDuringDrag } from './drag/useFrozenSessionListItemsDuringDrag';
+import { SESSION_LIST_SUPPORTING_SECTIONS_NODE } from './sessionListVirtualizedNodes';
 
 // This suite statically imports the mounted Sync consumer; install its external transport first.
 vi.mock('socket.io-client', async importOriginal =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 
 installDisconnectedServerSocketBoundary();
+
+// Metro's deferred import is the external loader boundary; retain real Action policy/approval.
+vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async importOriginal => {
+    const original = await importOriginal<typeof import('@/sync/ops/actions/frontDoorRuntimeActionExecutor')>();
+    const { createFrontDoorActionExecuteForVitest } = await import('@/dev/testkit/harness/frontDoorActionExecutorBoundary');
+    return { ...original, createFrontDoorActionExecute: createFrontDoorActionExecuteForVitest(original) };
+});
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -77,7 +90,8 @@ describe('useSessionListRowInteractions', () => {
             home.answer(homeId, path, { body: await response.json() });
         }
         connection = await restoreServerAccountForTest({ serverUrl: MUTATION_SCOPE.serverUrl,
-            serverIdentityId: ACTIVE_SCOPE.serverId, accountId: ACTIVE_SCOPE.accountId, request: home.request });
+            serverIdentityId: ACTIVE_SCOPE.serverId, accountId: ACTIVE_SCOPE.accountId, request: home.request,
+            additionalRequestOrigins: ['https://server-b.example.test'] });
         await waitForHomeGovernance(() => {
             expect(getStorage().getState().profileScope).toEqual(ACTIVE_SCOPE);
             expect(getStorage().getState().isDataReady).toBe(true);
@@ -142,16 +156,14 @@ describe('useSessionListRowInteractions', () => {
         return {
             folderActionsEnabled: true,
             isFolderActionsEnabledForServerId: () => true,
-            sessionFoldersV1: DEFAULT_SESSION_FOLDERS_V1,
+            sessionSections: [],
             listItems,
             currentGroupOrderMap: {},
             currentWorkspaceOrderMap: {},
-            sessionListOrderingModeV1: 'custom',
-            sessionListSectionModeV1: 'activity',
+            sessionListLayoutV1: 'projects',
             manualSessionOrderingEnabled: true,
             setSessionListGroupOrderV1: vi.fn(async () => {}),
             setSessionWorkspaceOrderV1: vi.fn(async () => {}),
-            setSessionFoldersV1: vi.fn(async () => {}),
             pinnedKeySet: new Set(),
             setSessionPinForKey: vi.fn(),
             sessionTags: {},
@@ -160,9 +172,186 @@ describe('useSessionListRowInteractions', () => {
         };
     }
 
-    function renderInteractions(overrides: Partial<UseSessionListRowInteractionsInput> = {}) {
-        return renderHook(() => useSessionListRowInteractions(buildInteractionsInput(overrides)));
+    async function renderInteractions(overrides: Partial<UseSessionListRowInteractionsInput> = {}) {
+        return renderMutableInteractions(buildInteractionsInput(overrides));
     }
+
+    async function renderMutableInteractions(value: UseSessionListRowInteractionsInput) {
+        const hook = await renderHook((next: UseSessionListRowInteractionsInput) => useSessionListRowInteractions(next), { initialProps: value });
+        const tree = (await import('./drop-resolution/buildSessionListTreeRows')).buildSessionListTreeRows({ items: value.listItems ?? [] });
+        const rowsByHome = new Map([...tree.rowMetadataById.values()].filter(row => row.serverId).map(row => [row.serverId, row]));
+        for (const sourceRow of rowsByHome.values()) await waitForHomeGovernance(() => {
+                const source = hook.getCurrent().prepareTreeRowSource(sourceRow.rowId);
+                expect(source).not.toBeNull();
+                source?.dispose();
+            });
+        return hook;
+    }
+
+    it.each([
+        { inputKind: 'pointer', status: 200, direction: 'file' },
+        { inputKind: 'keyboard', status: 200, direction: 'file' },
+        { inputKind: 'pointer', status: 500, direction: 'file' },
+        { inputKind: 'pointer', status: 200, direction: 'unfile' },
+        { inputKind: 'chooser', status: 200, direction: 'unfile' },
+    ] as const)('publishes Section membership and row placement in one commit after a $inputKind $direction drop ($status)', async ({ inputKind, status, direction }) => {
+        const serverId = ACTIVE_SCOPE.serverId;
+        const sectionId = 'payments';
+        const sourceRowId = treeRowId.session(serverId, 's1');
+        const sectionRowId = treeRowId.folder(serverId, sectionId);
+        const sectionKey = buildSessionOrganizationServerKey(serverId, sectionId);
+        const destination = direction === 'file' ? sectionId : null;
+        const committedMembers = direction === 'file' ? 1 : 0;
+        getStorage().getState().applySessionOrganizationSnapshot(serverId, {
+            schemaVersion: 1, version: 1, pins: [], folders: [{
+                folderId: sectionId, folderKey: sectionId, parentFolderId: null, parentFolderKey: null,
+                sortKey: 'a0', archivedAt: null, createdAt: 1, updatedAt: 1,
+                display: { t: 'plain', v: { name: 'Payments', icon: null } },
+                displayState: { status: 'available', value: { name: 'Payments', icon: null } },
+            }], folderAssignments: direction === 'file' ? [] : [{ sessionId: 's1', folderId: sectionId }],
+            tags: [], tagAssignments: [], orderEntries: [], labels: [],
+        }, { includeAllFolderAssignments: true });
+        let answer = () => {};
+        const response = new Promise<void>(resolve => { answer = resolve; });
+        home.answer(serverId, folderAssignmentPath, { respondAfter: response, status,
+            body: status === 200 ? { sessionId: 's1', folderId: destination } : { error: 'rejected' } });
+        const commits: { members: number; filed: boolean; present: boolean }[] = [];
+        const hook = await renderHook(() => {
+            const projections = useSessionOrganizationProjections([serverId]);
+            const organization = buildSessionOrganizationListViewStateForServers({ serverIds: [serverId], projectionsByServerId: projections });
+            const live = projectSessionSectionListIndex({ source: listItems, sections: organization.sections,
+                assignmentsBySessionKey: organization.sessionFolderAssignmentsBySessionKey }).items;
+            const interactions = useSessionListRowInteractions(buildInteractionsInput({ listItems: live, sessionSections: organization.sections }));
+            const presented = useFrozenSessionListItemsDuringDrag({ activeSnapshot: interactions.activeDragSnapshot, liveViewItems: live });
+            const sectionIndex = presented.viewItems.findIndex(item => item.type === 'header' && item.folderId === sectionId);
+            const sourceIndex = presented.viewItems.findIndex(item => item.type === 'session' && item.sessionId === 's1');
+            const members = organization.sectionMemberSessionKeysBySectionKey[sectionKey]?.length ?? 0;
+            const filed = sourceIndex === sectionIndex + 1;
+            React.useLayoutEffect(() => { commits.push({ members, filed, present: sourceIndex >= 0 }); });
+            return { interactions, members, filed };
+        });
+        let completion: Promise<void> | undefined;
+        try {
+            await waitForHomeGovernance(() => {
+                const source = hook.getCurrent().interactions.prepareTreeRowSource(sourceRowId);
+                expect(source).not.toBeNull();
+                source?.dispose();
+            });
+            await act(async () => {
+                const current = hook.getCurrent().interactions;
+                current.handleTreeViewportMeasure({ measureInWindow: callback => callback(0, 0, 300, 600) });
+                current.registerTreeRowBounds(sectionRowId, { measureInWindow: callback => callback(0, 100, 300, 40) });
+                current.registerTreeRowBounds(treeRowId.workspaceRoot('project-a'), { measureInWindow: callback => callback(0, 180, 300, 40) });
+                current.registerTreeRowBounds(sourceRowId, { measureInWindow: callback => callback(0, 230, 300, 40) });
+                if (inputKind === 'pointer') current.handleDragStart(SESSION_ONE_KEY);
+                else if (inputKind === 'keyboard') current.stagedMove.handleRowKey({ sessionKey: sourceRowId, label: 'One', key: ' ' });
+            });
+            if (inputKind !== 'chooser') expect(hook.getCurrent().interactions.activeDragSnapshot).not.toBeNull();
+            commits.length = 0;
+            act(() => {
+                const current = hook.getCurrent().interactions;
+                if (inputKind === 'pointer') {
+                    const resolved = current.resolveDropResult({ sessionKey: SESSION_ONE_KEY, groupKey: 'project-a',
+                        pointer: { x: 10, y: direction === 'file' ? 120 : 200 } });
+                    expect(current.entityDragDrop.runtime.getSnapshot().admission?.status).toBe('allowed');
+                    completion = current.handleTreeDropResult({ sessionKey: SESSION_ONE_KEY, groupKey: 'project-a', result: resolved.result });
+                } else if (inputKind === 'keyboard') {
+                    current.entityDragDrop.runtime.choose(current.entityDragDrop.targetId, { kind: 'folder-assignment', folderId: destination });
+                    expect(current.entityDragDrop.runtime.getSnapshot().admission?.status).toBe('allowed');
+                    current.stagedMove.handleRowKey({ sessionKey: sourceRowId, label: 'One', key: 'Enter' });
+                } else completion = current.moveToFolder(serverId, 's1', destination).then(() => {});
+            });
+            await waitForHomeGovernance(() => expect(hook.getCurrent().members).toBe(committedMembers));
+            expect(hook.getCurrent().interactions.entityDragDrop.runtime.getSnapshot().phase).toBe('pending');
+            expect(commits.some(commit => commit.members === committedMembers)).toBe(true);
+            expect(commits.every(commit => commit.present && commit.filed === (commit.members === 1)), JSON.stringify(commits)).toBe(true);
+            await act(async () => { answer(); await completion; });
+            await waitForHomeGovernance(() => expect(hook.getCurrent().interactions.entityDragDrop.runtime.getSnapshot().phase).not.toBe('pending'));
+            const finalMembers = status === 200 ? committedMembers : 1 - committedMembers;
+            expect(hook.getCurrent()).toMatchObject({ members: finalMembers, filed: finalMembers === 1 });
+            expect(commits.every(commit => commit.present && commit.filed === (commit.members === 1)), JSON.stringify(commits)).toBe(true);
+        } finally {
+            answer();
+            await completion;
+            await hook.unmount();
+        }
+    });
+
+    it('files a Home-B Session under its own Section while Home-A remains focused', async () => {
+        const serverId = 'srv_server_b';
+        const accountId = 'account-b';
+        const serverUrl = 'https://server-b.example.test';
+        const homeB = await home.addHome({ name: 'Other Drag Home', serverUrl, serverIdentityId: serverId, accountId, active: false });
+        for (const path of ['/v2/sessions', '/v2/sessions/active', '/v2/session-organization']) {
+            const response = createEmptyAccountBootstrapHttpResponse(path);
+            if (!response) throw new Error('Session bootstrap fixture unavailable');
+            home.answer(homeB, path, { body: await response.json() });
+        }
+        const path = '/v2/session-organization/folder-assignments/other';
+        home.answer(homeB, path, { body: { sessionId: 'other', folderId: 'section-b' } });
+        const hook = await renderInteractions({ listItems: [...listItems,
+            { type: 'header', headerKind: 'project', title: 'Other Project', groupKey: 'project-b', workspaceKey: 'project-b', serverId },
+            { type: 'session', sessionId: 'other', serverId, groupKey: 'project-b', groupKind: 'project', folderId: null },
+        ], sessionSections: [{ address: { serverId, sectionId: 'section-b' },
+            display: { status: 'available', value: { name: 'B Section', icon: null } }, sortKey: null },
+            { address: { serverId: ACTIVE_SCOPE.serverId, sectionId: 'section-a' },
+                display: { status: 'available', value: { name: 'A Section', icon: null } }, sortKey: null }] });
+        try {
+            await waitForHomeGovernance(() => {
+                const source = hook.getCurrent().prepareTreeRowSource(treeRowId.session(serverId, 'other'));
+                expect(source).not.toBeNull();
+                if (!source) return;
+                expect(hook.getCurrent().entityDragDrop.runtime.getDestinations(source.sourceId)).toEqual(expect.arrayContaining([
+                    expect.objectContaining({ admission: expect.objectContaining({ status: 'allowed', effect: expect.objectContaining({
+                        actionId: 'session.section.set', input: { sessionId: 'other', sectionId: 'section-b' },
+                    }) }) }),
+                ]));
+                source.dispose();
+            });
+            home.requests.length = 0;
+            await act(async () => {
+                expect(await hook.getCurrent().moveToFolder(serverId, 'other', 'section-a')).toBe(false);
+            });
+            expect(home.requests.filter(request => request.path === path)).toEqual([]);
+            await act(async () => {
+                expect(await hook.getCurrent().moveToFolder(serverId, 'other', 'section-b')).toBe(true);
+            });
+            expect(home.requests.filter(request => request.path === path)).toEqual([expect.objectContaining({
+                serverUrl, token: createAccountTokenForTests(accountId), input: { folderId: 'section-b' },
+            })]);
+            expect(getStorage().getState().profileScope).toEqual(ACTIVE_SCOPE);
+        } finally {
+            await hook.unmount();
+        }
+    });
+
+    it('retires a captured Home-B approval only when that source Account retires', async () => {
+        const serverId = 'srv_server_b';
+        const homeB = await home.addHome({ name: 'Captured Drag Home', serverUrl: 'https://server-b.example.test',
+            serverIdentityId: serverId, accountId: 'account-b', active: false });
+        await home.requireUiApproval(homeB, 'session.section.set');
+        const { useServerCredentialAccountScopeBindings } = await import('@/sync/domains/scope/useServerCredentialAccountScopes');
+        const { useMountedActionExecution } = await import('@/components/approvals/useMountedActionExecution');
+        const hook = await renderHook(() => ({
+            bindings: useServerCredentialAccountScopeBindings([serverId]), actions: useMountedActionExecution(null),
+        }));
+        try {
+            await waitForHomeGovernance(() => expect(hook.getCurrent().bindings.get(serverId)?.isCurrent()).toBe(true));
+            const captured = hook.getCurrent().bindings.get(serverId)!;
+            let result: Promise<ActionExecuteResult> | undefined;
+            act(() => { result = hook.getCurrent().actions.executeCaptured(captured, 'session.section.set',
+                { sessionId: 'other', sectionId: 'section-b' }); });
+            await waitForHomeGovernance(() => expect(hook.getCurrent().actions.approval.approvalId).not.toBeNull());
+            const artifactId = hook.getCurrent().actions.approval.approvalId;
+            await act(async () => { await home.switchAccount(ACTIVE_SCOPE.serverId, 'replacement-a'); });
+            expect(captured.isCurrent()).toBe(true);
+            expect(hook.getCurrent().actions.approval.approvalId).toBe(artifactId);
+            await act(async () => { await home.switchAccount(serverId, 'replacement-b'); });
+            expect(await result!).toMatchObject({ ok: false, errorCode: 'action_account_scope_changed' });
+            await waitForHomeGovernance(() => expect(hook.getCurrent().actions.approval.approvalId).toBeNull());
+            expect(home.requests.filter(request => request.path === '/v2/session-organization/folder-assignments/other')).toEqual([]);
+        } finally { await hook.unmount(); }
+    });
 
     it.each(['browser', 'keyboard'] as const)('reorders workspaces through the %s boundary with folders disabled', async inputKind => {
         getStorage().setState({ profileScope: ACTIVE_SCOPE });
@@ -259,7 +448,7 @@ describe('useSessionListRowInteractions', () => {
     it('scrolls an offscreen staged destination into view even for a row taller than the viewport and hides a refused step', async () => {
         const scrollToOffset = vi.fn();
         const initialInput = buildInteractionsInput({ listItems: twoSessionListItems, scrollToOffset });
-        const hook = await renderHook((input: UseSessionListRowInteractionsInput) => useSessionListRowInteractions(input), { initialProps: initialInput });
+        const hook = await renderMutableInteractions(initialInput);
         const sessionKey = sessionAddressKey({ serverId: ACTIVE_SCOPE.serverId, sessionId: 's2' });
         try {
             await act(async () => {
@@ -274,7 +463,7 @@ describe('useSessionListRowInteractions', () => {
             await act(async () => { hook.getCurrent().handleTreeScroll({ nativeEvent: { contentOffset: { y: 900 } } }); });
             expect(hook.getCurrent().dropOverlayShared.overlayVisible.value).toBe(1);
             expect(hook.getCurrent().dropOverlayShared.overlayTop.value).toBe(99);
-            await hook.rerender({ ...initialInput, sessionListOrderingModeV1: 'created' });
+            await hook.rerender({ ...initialInput, sessionListLayoutV1: 'recent_activity' });
             expect(hook.getCurrent().dropOverlayShared.overlayVisible.value).toBe(0);
             act(() => { hook.getCurrent().stagedMove.cancel(); });
             expect(initialInput.setSessionListGroupOrderV1).not.toHaveBeenCalled();
@@ -283,8 +472,8 @@ describe('useSessionListRowInteractions', () => {
 
     it('reports ordering refusals and the relation verdict for list-only Session rows', async () => {
         getStorage().setState({ sessions: {} });
-        const initialInput = buildInteractionsInput({ listItems: twoSessionListItems, sessionListOrderingModeV1: 'created' });
-        const hook = await renderHook((input: UseSessionListRowInteractionsInput) => useSessionListRowInteractions(input), { initialProps: initialInput });
+        const initialInput = buildInteractionsInput({ listItems: twoSessionListItems, sessionListLayoutV1: 'recent_activity' });
+        const hook = await renderMutableInteractions(initialInput);
         const sessionKey = sessionAddressKey({ serverId: ACTIVE_SCOPE.serverId, sessionId: 's2' });
         try {
             await act(async () => {
@@ -302,7 +491,7 @@ describe('useSessionListRowInteractions', () => {
             expect(initialInput.setSessionListGroupOrderV1).not.toHaveBeenCalled();
             expect(folderAssignmentRequests()).toEqual([]);
             act(() => hook.getCurrent().handleDragCancel());
-            await hook.rerender({ ...initialInput, sessionListOrderingModeV1: 'custom' });
+            await hook.rerender({ ...initialInput, sessionListLayoutV1: 'projects' });
             await act(async () => { hook.getCurrent().handleDragStart(sessionKey); });
             act(() => { hook.getCurrent().resolveDropResult({ sessionKey, groupKey: 'project-a', pointer: { x: 10, y: 120 } }); });
             expect(hook.getCurrent().entityDragDrop.runtime.getSnapshot().admission).toMatchObject({ status: 'refused', reason: { code: 'unavailable' }, preview: { target: 's1' } });
@@ -315,7 +504,7 @@ describe('useSessionListRowInteractions', () => {
 
     it('releases over the dragged row own position without a refusal outcome or organization write', async () => {
         const initialInput = buildInteractionsInput({ listItems: twoSessionListItems });
-        const hook = await renderHook((input: UseSessionListRowInteractionsInput) => useSessionListRowInteractions(input), { initialProps: initialInput });
+        const hook = await renderMutableInteractions(initialInput);
         const sessionKey = sessionAddressKey({ serverId: ACTIVE_SCOPE.serverId, sessionId: 's2' });
         try {
             await act(async () => {
@@ -332,7 +521,6 @@ describe('useSessionListRowInteractions', () => {
             expect(outcome).toBeNull();
             expect(initialInput.setSessionListGroupOrderV1).not.toHaveBeenCalled();
             expect(initialInput.setSessionWorkspaceOrderV1).not.toHaveBeenCalled();
-            expect(initialInput.setSessionFoldersV1).not.toHaveBeenCalled();
             expect(folderAssignmentRequests()).toEqual([]);
         } finally {
             act(() => hook.getCurrent().handleDragCancel());
@@ -362,19 +550,18 @@ describe('useSessionListRowInteractions', () => {
         const sessions = Object.fromEntries(['s1', 's2'].map(id => [id, createSessionFixture({ id, serverId })]));
         getStorage().setState({ profileScope: { serverId, accountId: ACTIVE_SCOPE.accountId }, sessions } as never);
         const currentWorkspace = { ...workspace, serverId };
-        const folderGroupKey = buildSessionFolderGroupKey({ serverId, workspace: currentWorkspace, folderId: 'folder-a' });
+        const folderGroupKey = buildSessionSectionGroupKey({ serverId, sectionId: 'folder-a' });
         const items = twoSessionListItems.flatMap<SessionListIndexItem>(item => {
             if (item.type === 'session') return [{ ...item, serverId, workspace: currentWorkspace,
-                ...(containerKind === 'folder' ? { folderId: 'folder-a', folderDepth: 1, groupKey: folderGroupKey } : {}) }];
+                ...(containerKind === 'folder' ? { folderId: 'folder-a', folderDepth: 1, groupKey: folderGroupKey, groupKind: 'folder' as const } : {}) }];
             const header = { ...item, serverId, workspace: currentWorkspace };
             return containerKind === 'folder' ? [header, {
                 type: 'header', title: 'Folder A', headerKind: 'folder', folderId: 'folder-a', folderDepth: 0,
                 groupKey: folderGroupKey, workspace: currentWorkspace, serverId,
             }] : [header];
         });
-        const hook = await renderInteractions({ listItems: items, sessionFoldersV1: containerKind === 'folder'
-            ? { v: 1, folders: [{ id: 'folder-a', name: 'Folder A', workspace: currentWorkspace,
-                parentId: null, createdAt: 1, updatedAt: 1 }] } : DEFAULT_SESSION_FOLDERS_V1 });
+        const hook = await renderInteractions({ listItems: items, sessionSections: containerKind === 'folder'
+            ? [{ address: { serverId, sectionId: 'folder-a' }, display: { status: 'available', value: { name: 'Folder A', icon: null } }, sortKey: null }] : [] });
         const sessionKey = sessionAddressKey({ serverId, sessionId: 's2' });
         const groupKey = containerKind === 'folder' ? folderGroupKey : 'project-a';
         try {
@@ -405,6 +592,81 @@ describe('useSessionListRowInteractions', () => {
             act(() => hook.getCurrent().handleDragCancel());
             await hook.unmount();
             await account.dispose();
+        }
+    });
+
+    it('keeps measured supporting sections out of implicit drop zones without measuring on pointer moves', async () => {
+        const hook = await renderInteractions({ listItems: twoSessionListItems });
+        const sessionKey = sessionAddressKey({ serverId: ACTIVE_SCOPE.serverId, sessionId: 's2' });
+        const measureSupport = vi.fn((callback: (x: number, y: number, width: number, height: number) => void) => callback(0, 40, 300, 120));
+        try {
+            await act(async () => {
+                hook.getCurrent().handleTreeViewportMeasure({ measureInWindow: callback => callback(0, 0, 300, 300) });
+                hook.getCurrent().registerTreeRowBounds(treeRowId.workspaceRoot('project-a'), { measureInWindow: callback => callback(0, 0, 300, 40) });
+                hook.getCurrent().registerTreeRowBounds(SESSION_LIST_SUPPORTING_SECTIONS_NODE.id, { measureInWindow: measureSupport });
+                hook.getCurrent().registerTreeRowBounds(treeRowId.session(ACTIVE_SCOPE.serverId, 's1'), { measureInWindow: callback => callback(0, 160, 300, 40) });
+                hook.getCurrent().registerTreeRowBounds(treeRowId.session(ACTIVE_SCOPE.serverId, 's2'), { measureInWindow: callback => callback(0, 220, 300, 40) });
+                hook.getCurrent().handleDragStart(sessionKey);
+            });
+            const measurements = measureSupport.mock.calls.length;
+            for (let index = 0; index < 10; index++) {
+                let resolved: UseSessionInlineDragResolvedDrop | undefined;
+                act(() => { resolved = hook.getCurrent().resolveDropResult({ sessionKey, groupKey: 'project-a', pointer: { x: 10, y: 140 } }); });
+                expect(resolved!.geometry).toEqual({ kind: 'none' });
+                expect(resolved!.result.visual).toEqual({ kind: 'none' });
+                expect(resolved!.result.instruction.kind).toBe('idle');
+            }
+            expect(measurements).toBeGreaterThan(0);
+            expect(measureSupport).toHaveBeenCalledTimes(measurements);
+            // Retiring the presentation cell restores the genuine root-before-first gap.
+            act(() => hook.getCurrent().unregisterTreeRowBounds(SESSION_LIST_SUPPORTING_SECTIONS_NODE.id));
+            let gap: UseSessionInlineDragResolvedDrop | undefined;
+            act(() => { gap = hook.getCurrent().resolveDropResult({ sessionKey, groupKey: 'project-a', pointer: { x: 10, y: 140 } }); });
+            expect(gap!.geometry.kind).toBe('line');
+        } finally {
+            act(() => hook.getCurrent().handleDragCancel());
+            await hook.unmount();
+        }
+    });
+
+    it('keeps the Payments header under the pointer when scroll changes before measured rows publish', async () => {
+        const folderId = 'payments';
+        const folder: Extract<SessionListIndexItem, { type: 'header' }> = {
+            type: 'header', title: 'Payments', headerKind: 'folder', folderId, folderDepth: 0,
+            groupKey: buildSessionSectionGroupKey({ serverId: ACTIVE_SCOPE.serverId, sectionId: folderId }),
+            serverId: ACTIVE_SCOPE.serverId, workspace,
+        };
+        const hook = await renderInteractions({ listItems: [folder, ...twoSessionListItems],
+            sessionSections: [{ address: { serverId: ACTIVE_SCOPE.serverId, sectionId: folderId },
+                display: { status: 'available', value: { name: 'Payments', icon: null } }, sortKey: null }] });
+        const sessionKey = sessionAddressKey({ serverId: ACTIVE_SCOPE.serverId, sessionId: 's2' });
+        let offset = 200;
+        const row = (contentY: number) => ({ getBoundingClientRectFn: () => ({ x: 0, y: 100 + contentY - offset, width: 300, height: 40 }) });
+        try {
+            await act(async () => {
+                hook.getCurrent().handleTreeViewportMeasure({ getBoundingClientRectFn: () => ({ x: 0, y: 100, width: 300, height: 600 }) });
+                hook.getCurrent().handleTreeScroll({ nativeEvent: { contentOffset: { y: offset } } });
+            });
+            await act(async () => {
+                hook.getCurrent().registerTreeRowBounds(treeRowId.folder(ACTIVE_SCOPE.serverId, folderId), row(400));
+                hook.getCurrent().registerTreeRowBounds(treeRowId.workspaceRoot('project-a'), row(560));
+                hook.getCurrent().registerTreeRowBounds(treeRowId.session(ACTIVE_SCOPE.serverId, 's1'), row(620));
+                hook.getCurrent().registerTreeRowBounds(treeRowId.session(ACTIVE_SCOPE.serverId, 's2'), row(680));
+                hook.getCurrent().handleDragStart(sessionKey);
+                // A DOM measurement is synchronous, but its Promise publishes in a later microtask.
+                // Scrolling during that interval must not convert the old window bounds with a new offset.
+                offset = 0;
+                hook.getCurrent().handleTreeScroll({ nativeEvent: { contentOffset: { y: offset } } });
+            });
+            let resolved: UseSessionInlineDragResolvedDrop | undefined;
+            act(() => { resolved = hook.getCurrent().resolveDropResult({ sessionKey, groupKey: 'project-a', pointer: { x: 10, y: 520 } }); });
+            expect(hook.getCurrent().entityDragDrop.runtime.getSnapshot().admission).toMatchObject({ status: 'allowed',
+                effect: { actionId: 'session.section.set', input: { sessionId: 's2', sectionId: folderId } } });
+            expect(resolved!.geometry).toMatchObject({ kind: 'outline',
+                targetId: treeRowId.folder(ACTIVE_SCOPE.serverId, folderId), geometry: { top: 400, height: 40 } });
+        } finally {
+            act(() => hook.getCurrent().handleDragCancel());
+            await hook.unmount();
         }
     });
 
@@ -448,10 +710,7 @@ describe('useSessionListRowInteractions', () => {
             workspace: { ...workspace, serverId: scope.serverId } }));
         const setOrder = vi.fn(async (_next: Record<string, string[]>) => {});
         const initialInput = buildInteractionsInput({ listItems: nativeItems, setSessionListGroupOrderV1: setOrder });
-        const hook = await renderHook(
-            (input: UseSessionListRowInteractionsInput) => useSessionListRowInteractions(input),
-            { initialProps: initialInput },
-        );
+        const hook = await renderMutableInteractions(initialInput);
         const sessionKey = sessionAddressKey({ serverId: scope.serverId, sessionId: 's2' });
         let finishMeasurement = () => {};
         const { runtime } = hook.getCurrent().entityDragDrop;
@@ -517,10 +776,7 @@ describe('useSessionListRowInteractions', () => {
             return Reflect.get(target, property, receiver);
         } });
         const initialInput = buildInteractionsInput({ listItems: measuredItems });
-        const hook = await renderHook(
-            (input: UseSessionListRowInteractionsInput) => useSessionListRowInteractions(input),
-            { initialProps: initialInput },
-        );
+        const hook = await renderMutableInteractions(initialInput);
         const { runtime } = hook.getCurrent().entityDragDrop;
         const retire = runtime.registerSource({ id: 'linear-chooser', scope: ACTIVE_SCOPE, isCurrent: () => true,
             getItem: () => ({ kind: 'session', scope: ACTIVE_SCOPE, address: { serverId: ACTIVE_SCOPE.serverId, sessionId: 's1' } }) });
@@ -535,7 +791,7 @@ describe('useSessionListRowInteractions', () => {
                 .toBeLessThanOrEqual(items.length * 2);
             await hook.rerender({ ...initialInput, listItems: items.map(item => ({ ...item })) });
             expect(runtime.getDestinations('linear-chooser')).toEqual(destinations);
-            await hook.rerender({ ...initialInput, listItems: items.slice(0, -1), sessionListOrderingModeV1: 'created' });
+            await hook.rerender({ ...initialInput, listItems: items.slice(0, -1), sessionListLayoutV1: 'recent_activity' });
             const refreshed = runtime.getDestinations('linear-chooser');
             expect(refreshed).not.toEqual(expect.arrayContaining([
                 expect.objectContaining({ destination: expect.objectContaining({ targetRowId: treeRowId.session('srv_server_a', 's128') }) }),
@@ -552,10 +808,9 @@ describe('useSessionListRowInteractions', () => {
 
     it('prepares a semantic Session source and folder destinations without tree headers', async () => {
         const initialInput = buildInteractionsInput({ listItems: listItems.filter(item => item.type === 'session'),
-            sessionFoldersV1: { v: 1, folders: [{ id: 'hidden-folder', name: 'Hidden', workspace,
-                parentId: null, createdAt: 1, updatedAt: 1 }] } });
-        const hook = await renderHook((input: UseSessionListRowInteractionsInput) => useSessionListRowInteractions(input),
-            { initialProps: initialInput });
+            sessionSections: [{ address: { serverId: ACTIVE_SCOPE.serverId, sectionId: 'hidden-folder' },
+                display: { status: 'available', value: { name: 'Hidden', icon: null } }, sortKey: null }] });
+        const hook = await renderMutableInteractions(initialInput);
         let source: Readonly<{ sourceId: string; dispose: () => void }> | null;
         try {
             source = hook.getCurrent().prepareTreeRowSource(treeRowId.session('srv_server_a', 's1'));
@@ -576,10 +831,7 @@ describe('useSessionListRowInteractions', () => {
 
     it('offers current semantic destinations through the mounted list, retaining denied relation targets', async () => {
         const initialInput = buildInteractionsInput({ listItems: twoSessionListItems });
-        const hook = await renderHook(
-            (input: UseSessionListRowInteractionsInput) => useSessionListRowInteractions(input),
-            { initialProps: initialInput },
-        );
+        const hook = await renderMutableInteractions(initialInput);
         const { runtime, targetId } = hook.getCurrent().entityDragDrop;
         const retire = runtime.registerSource({ id: 'chooser-session', scope: ACTIVE_SCOPE, isCurrent: () => true,
             getItem: () => ({ kind: 'session', scope: ACTIVE_SCOPE, address: { serverId: ACTIVE_SCOPE.serverId, sessionId: 's1' } }) });
@@ -615,15 +867,16 @@ describe('useSessionListRowInteractions', () => {
             const previousRelation = relationTargets()[0]!;
             const folderItems: SessionListIndexItem[] = [...latestItems, { type: 'header', title: 'Folder A',
                 headerKind: 'folder', folderId: 'folder-a', folderDepth: 0,
-                groupKey: buildSessionFolderGroupKey({ serverId: 'srv_server_a', workspace, folderId: 'folder-a' }),
+                groupKey: buildSessionSectionGroupKey({ serverId: 'srv_server_a', sectionId: 'folder-a' }),
                 workspace, serverId: 'srv_server_a' }];
-            await hook.rerender({ ...initialInput, listItems: folderItems, sessionListOrderingModeV1: 'created',
-                sessionFoldersV1: { v: 1, folders: [{ id: 'folder-a', name: 'Folder A', workspace,
-                    parentId: null, createdAt: 1, updatedAt: 1 }] } });
+            await hook.rerender({ ...initialInput, listItems: folderItems, sessionListLayoutV1: 'recent_activity',
+                sessionSections: [{ address: { serverId: ACTIVE_SCOPE.serverId, sectionId: 'folder-a' },
+                    display: { status: 'available', value: { name: 'Folder A', icon: null } }, sortKey: null }],
+            });
             const destinations = runtime.getDestinations('chooser-session');
             expect(destinations).toEqual(expect.arrayContaining([
                 expect.objectContaining({ destination: { kind: 'folder-assignment', folderId: 'folder-a' },
-                    admission: expect.objectContaining({ status: 'allowed', effect: expect.objectContaining({ actionId: 'session.folder.set' }) }) }),
+                    admission: expect.objectContaining({ status: 'allowed', effect: expect.objectContaining({ actionId: 'session.section.set' }) }) }),
                 expect.objectContaining({ destination: expect.objectContaining({ instructionKind: 'reorder-after' }),
                     admission: expect.objectContaining({ status: 'refused', reason: expect.objectContaining({ code: 'date-ordering-mode' }) }) }),
             ]));
@@ -638,14 +891,13 @@ describe('useSessionListRowInteractions', () => {
             expect(await runtime.perform('chooser-session', targetId!, previousRelation.destination))
                 .toMatchObject({ status: 'refused', reason: { code: 'target-missing' } });
             expect(initialInput.setSessionListGroupOrderV1).not.toHaveBeenCalled();
-            expect(initialInput.setSessionFoldersV1).not.toHaveBeenCalled();
         } finally {
             retire();
             await hook.unmount();
         }
     });
 
-    it('answers session.organization.move from the mounted list and persists under the projection server id', async () => {
+    it('uses the Section Action for mounted membership and refuses a generic move policy bypass', async () => {
         home.requests.length = 0;
         const folderItems: SessionListIndexItem[] = [
             listItems[0]!,
@@ -655,7 +907,7 @@ describe('useSessionListRowInteractions', () => {
                 headerKind: 'folder',
                 folderId: 'folder-a',
                 folderDepth: 0,
-                groupKey: buildSessionFolderGroupKey({ serverId: ACTIVE_SCOPE.serverId, workspace, folderId: 'folder-a' }),
+                groupKey: buildSessionSectionGroupKey({ serverId: ACTIVE_SCOPE.serverId, sectionId: 'folder-a' }),
                 workspace,
                 serverId: 'srv_server_a',
             },
@@ -663,17 +915,8 @@ describe('useSessionListRowInteractions', () => {
         ];
         const hook = await renderInteractions({
             listItems: folderItems,
-            sessionFoldersV1: {
-                v: 1,
-                folders: [{
-                    id: 'folder-a',
-                    workspace,
-                    parentId: null,
-                    name: 'Folder A',
-                    createdAt: 1,
-                    updatedAt: 1,
-                }],
-            },
+            sessionSections: [{ address: { serverId: ACTIVE_SCOPE.serverId, sectionId: 'folder-a' },
+                display: { status: 'available', value: { name: 'Folder A', icon: null } }, sortKey: null }],
         });
 
         let output: unknown;
@@ -690,7 +933,11 @@ describe('useSessionListRowInteractions', () => {
                 edge: null,
             } });
         });
-        expect(output).toEqual({ status: 'applied' });
+        expect(output).toEqual({ status: 'refused', reason: 'unsupported_operation' });
+        expect(folderAssignmentRequests()).toEqual([]);
+        await act(async () => {
+            expect(await hook.getCurrent().moveToFolder(ACTIVE_SCOPE.serverId, 's1', 'folder-a')).toBe(true);
+        });
 
         expect(folderAssignmentRequests()).toEqual([expect.objectContaining({
             token: MUTATION_SCOPE.credentials.token, serverUrl: MUTATION_SCOPE.serverUrl,
@@ -712,7 +959,7 @@ describe('useSessionListRowInteractions', () => {
                 headerKind: 'folder',
                 folderId: 'folder-a',
                 folderDepth: 0,
-                groupKey: buildSessionFolderGroupKey({ serverId: ACTIVE_SCOPE.serverId, workspace, folderId: 'folder-a' }),
+                groupKey: buildSessionSectionGroupKey({ serverId: ACTIVE_SCOPE.serverId, sectionId: 'folder-a' }),
                 workspace,
                 serverId: 'srv_server_a',
             },
@@ -721,10 +968,8 @@ describe('useSessionListRowInteractions', () => {
         const hook = await renderInteractions({
             listItems: folderItems,
             isFolderActionsEnabledForServerId: (serverId) => serverId === 'srv_server_b',
-            sessionFoldersV1: {
-                v: 1,
-                folders: [{ id: 'folder-a', workspace, parentId: null, name: 'Folder A', createdAt: 1, updatedAt: 1 }],
-            },
+            sessionSections: [{ address: { serverId: ACTIVE_SCOPE.serverId, sectionId: 'folder-a' },
+                display: { status: 'available', value: { name: 'Folder A', icon: null } }, sortKey: null }],
         });
 
         let output: unknown;
@@ -795,8 +1040,7 @@ describe('useSessionListRowInteractions', () => {
         const setSessionListGroupOrderV1 = vi.fn(async () => {});
         const dateModeInput = {
             listItems: twoSessionListItems,
-            sessionListOrderingModeV1: 'updated' as const,
-            sessionListSectionModeV1: 'activity' as const,
+            sessionListLayoutV1: 'recent_activity' as const,
             setSessionListGroupOrderV1,
         };
         const hook = await renderInteractions(dateModeInput);
@@ -851,7 +1095,7 @@ describe('useSessionListRowInteractions', () => {
                 headerKind: 'folder',
                 folderId: 'folder-a',
                 folderDepth: 0,
-                groupKey: buildSessionFolderGroupKey({ serverId: ACTIVE_SCOPE.serverId, workspace, folderId: 'folder-a' }),
+                groupKey: buildSessionSectionGroupKey({ serverId: ACTIVE_SCOPE.serverId, sectionId: 'folder-a' }),
                 workspace,
                 serverId: 'srv_server_a',
             },
@@ -859,17 +1103,8 @@ describe('useSessionListRowInteractions', () => {
         ];
         const hook = await renderInteractions({
             listItems: folderItems,
-            sessionFoldersV1: {
-                v: 1,
-                folders: [{
-                    id: 'folder-a',
-                    workspace,
-                    parentId: null,
-                    name: 'Folder A',
-                    createdAt: 1,
-                    updatedAt: 1,
-                }],
-            },
+            sessionSections: [{ address: { serverId: ACTIVE_SCOPE.serverId, sectionId: 'folder-a' },
+                display: { status: 'available', value: { name: 'Folder A', icon: null } }, sortKey: null }],
         });
 
         await act(async () => {

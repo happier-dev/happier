@@ -13,6 +13,7 @@ export type SessionListMoveSheetProps = Readonly<{
     onComplete?: (outcome: EntityDropOutcomeV1 | null) => void;
     onCancel: () => void;
     composerOnly?: boolean;
+    includeDestination?: (destination: Readonly<{ targetId: string; destination?: unknown }>) => boolean;
 }>;
 
 /** The mounted Session source offers every current applicable destination, with its owner's reason. */
@@ -35,7 +36,9 @@ export function SessionListMoveSheet(props: SessionListMoveSheetProps): React.Re
         retire();
         return props.runtime.subscribe(retire);
     }, [onOpenChange, props.runtime, props.sourceId]);
-    const destinations = props.composerOnly ? chooser.destinations.filter(isComposerEntityDropDestination) : chooser.destinations;
+    const destinations = props.composerOnly ? chooser.destinations.filter(isComposerEntityDropDestination)
+        : props.includeDestination ? chooser.destinations.filter(props.includeDestination)
+            : chooser.destinations;
     const sections = resolveHappierDropChooserSections({
         options: destinations.map((destination, index) => ({
             id: String(index), label: destination.label ?? (destination.admission.status === 'allowed'

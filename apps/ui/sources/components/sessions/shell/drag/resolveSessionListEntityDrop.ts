@@ -1,9 +1,12 @@
 import { entityDragScopesEqualV1, type EntityDragItemV1, type EntityDropAdmissionV1,
     type EntityDropPreviewV1, type EntityDropReasonV1 } from '@happier-dev/protocol/plugins/ui';
 import { SetSessionFolderAssignmentRequestSchema } from '@happier-dev/protocol/sessions/organization/mutations';
-import { buildSessionFolderMoveTargets } from '@/sync/domains/session/folders';
 import { resolveSessionListItemOrganizationEligibility } from '@/sync/domains/sessionList/sessionListIndex';
+import { resolveSessionSectionChoiceLabels } from '@/sync/domains/session/organization/sections';
+import { t } from '@/text';
 import { SessionOrganizationMoveInputSchema } from '@happier-dev/protocol/actions/sessionOrganizationMoveAction';
+import { SessionSpaceMembershipSetInputV1Schema, type SessionSpaceMembershipSetInputV1 } from '@happier-dev/protocol/actions';
+import { areAccountSettingsScopesEqual } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { resolveSessionListDragIntent, resolveSessionListDragTree, type CommitSessionListDragIntentContext,
     type SessionListDragAdmission } from './commitSessionListDragIntent';
 import type { SessionListDragIntent } from './_types';
@@ -11,6 +14,8 @@ import { treeRowId } from '../drop-resolution/treeRowId';
 import type { SessionListTreeRowMetadata } from '../drop-resolution/sessionListTreeTypes';
 import type { EntityDropSemanticDestination, TreeDropResult } from '@/components/ui/treeDragDrop';
 import { buildSessionListDragIntent } from './sessionListDragIntent';
+import { resolveSessionListSectionBeforeId, resolveSessionListTreeDropDestination } from '../commit/applySessionListTreeDropOperation';
+import { resolveSessionListDestinationFolderId } from '../drop-resolution/sessionListDestinationScope';
 
 function sourceRowIdForItem(item: EntityDragItemV1): string | null {
     return item.kind === 'session' ? treeRowId.session(item.address.serverId, item.address.sessionId)
@@ -24,16 +29,51 @@ export function readSessionListFolderAssignmentDestination(value: unknown): Read
     return parsed.success ? parsed.data : null;
 }
 
+export function readSessionListSpaceMembershipDestination(value: unknown, sessionId: string): SessionSpaceMembershipSetInputV1 | null {
+    if (!value || typeof value !== 'object' || !('kind' in value) || value.kind !== 'space-membership') return null;
+    const { kind: _kind, ...input } = value;
+    const parsed = SessionSpaceMembershipSetInputV1Schema.safeParse({ ...input, sessionId });
+    return parsed.success ? parsed.data : null;
+}
+
+/** Semantic Space filing keeps hierarchy untouched and executes the shared membership Action. */
+export function resolveSessionListSpaceMembershipDrop(params: Readonly<{
+    item: EntityDragItemV1;
+    input: SessionSpaceMembershipSetInputV1;
+    context: CommitSessionListDragIntentContext;
+    preview: (spaceName: string, operation: SessionSpaceMembershipSetInputV1['operation']) => EntityDropPreviewV1;
+    reason: (code: string) => EntityDropReasonV1;
+}>): EntityDropAdmissionV1 {
+    const refuse = (code: string): EntityDropAdmissionV1 => ({ status: 'refused', reason: params.reason(code) });
+    if (!params.context.scope || !entityDragScopesEqualV1(params.item.scope, params.context.scope)) return refuse('scope-mismatch');
+    if (params.item.kind !== 'session' || params.item.address.serverId !== params.item.scope.serverId
+        || params.item.address.sessionId !== params.input.sessionId) return refuse('unsupported-item');
+    if (!params.context.latestItems.some(item => item.type === 'session' && item.serverId === params.item.scope.serverId
+        && item.sessionId === params.input.sessionId)) return refuse('source-missing');
+    const target = params.context.spaceMembershipTargets?.find(candidate => candidate.spaceId === params.input.spaceId
+        && areAccountSettingsScopesEqual(candidate.spaceSettingsTarget, params.input.spaceSettingsTarget));
+    if (!target) return refuse('unavailable');
+    return { status: 'allowed', effect: { actionId: 'session.space_membership.set', input: params.input,
+        preview: params.preview(target.name, params.input.operation) } };
+}
+
 function folderAssignmentTargets(item: EntityDragItemV1, context: CommitSessionListDragIntentContext) {
     if (item.kind !== 'session' || item.address.serverId !== item.scope.serverId || !context.scope || !entityDragScopesEqualV1(item.scope, context.scope)) return [];
     const source = context.latestItems.find(candidate => candidate.type === 'session'
         && candidate.serverId === item.address.serverId && candidate.sessionId === item.address.sessionId);
-    if (!source || source.type !== 'session' || !source.workspace
+    if (!source || source.type !== 'session'
         || !resolveSessionListItemOrganizationEligibility(source, {
             foldersFeatureEnabled: context.isFolderOrganizationEnabled?.(source.serverId ?? null) === true,
         }).canUseSessionFolders) return [];
-    return buildSessionFolderMoveTargets({ folders: context.sessionFoldersV1, workspace: source.workspace,
-        currentFolderIds: [source.folderId ?? null], workspaceRootTitle: '' });
+    const sections = (context.sessionSections ?? []).filter(section => section.address.serverId === item.scope.serverId
+        && section.display.status === 'available');
+    // The same names Move to section shows: plain unless two sections share one.
+    const labels = resolveSessionSectionChoiceLabels(sections, { unavailableLabel: t('common.unavailable') });
+    return [{ id: 'session-section-project', folderId: null, title: '', depth: 0,
+        disabled: (source.folderId ?? null) === null },
+    ...sections.map(section => ({ id: section.address.sectionId, folderId: section.address.sectionId,
+        title: labels.get(section.address.sectionId) ?? section.address.sectionId,
+        depth: 0, disabled: source.folderId === section.address.sectionId }))];
 }
 
 /** Session assignment is semantic inventory; it does not add invisible tree geometry. */
@@ -61,6 +101,7 @@ export function listSessionListEntityDropDestinations(params: Readonly<{
     context: CommitSessionListDragIntentContext;
     preview: (intent: SessionListDragIntent, target: SessionListTreeRowMetadata | null) => EntityDropPreviewV1;
     folderPreview: (folderName: string | null) => EntityDropPreviewV1;
+    spacePreview?: (spaceName: string, operation: SessionSpaceMembershipSetInputV1['operation']) => EntityDropPreviewV1;
 }>): readonly EntityDropSemanticDestination[] {
     const { item, context } = params;
     if (!context.scope || !entityDragScopesEqualV1(item.scope, context.scope)) return [];
@@ -68,9 +109,24 @@ export function listSessionListEntityDropDestinations(params: Readonly<{
         destination: { kind: 'folder-assignment', folderId: target.folderId },
         label: params.folderPreview(target.folderId === null ? null : target.title).verb,
     }));
+    if (item.kind === 'session' && item.address.serverId === item.scope.serverId) {
+        for (const target of context.spaceMembershipTargets ?? []) {
+            destinations.push({ destination: { kind: 'space-membership', operation: 'add',
+                spaceId: target.spaceId, spaceSettingsTarget: target.spaceSettingsTarget },
+            label: params.spacePreview?.(target.name, 'add').verb ?? target.name });
+            const sourceSpaceId = context.spaceMembershipSourceSpaceId;
+            if (sourceSpaceId && sourceSpaceId !== target.spaceId) {
+                destinations.push({ destination: { kind: 'space-membership', operation: 'move', sourceSpaceId,
+                    spaceId: target.spaceId, spaceSettingsTarget: target.spaceSettingsTarget },
+                label: params.spacePreview?.(target.name, 'move').verb ?? target.name });
+            }
+        }
+    }
     const tree = resolveSessionListDragTree(context);
     const sourceRowId = sourceRowIdForItem(item);
-    const source = sourceRowId ? tree.rowMetadataById.get(sourceRowId) : null;
+    const source = (sourceRowId ? tree.rowMetadataById.get(sourceRowId) : null)
+        ?? (item.kind === 'session' ? [...tree.rowMetadataById.values()].find(row => row.kind === 'session'
+            && row.serverId === item.address.serverId && row.sessionId === item.address.sessionId) : null);
     if (!source || source.serverId !== item.scope.serverId) return destinations;
     const append = (result: TreeDropResult, target: SessionListTreeRowMetadata | null) => {
         const intent = buildSessionListDragIntent({ result, sourceRowId: source.rowId,
@@ -82,7 +138,7 @@ export function listSessionListEntityDropDestinations(params: Readonly<{
         if (target.rowId === source.rowId || target.serverId !== item.scope.serverId) continue;
         const sameOrganization = source.kind === 'workspace-root'
             ? target.kind === 'workspace-root' && target.containerId === source.containerId
-            : target.kind !== 'workspace-root' && target.rootId === source.rootId;
+            : target.kind !== 'workspace-root';
         if (sameOrganization) {
             for (const edge of ['top', 'bottom'] as const) {
                 append({ instruction: { kind: edge === 'top' ? 'reorder-before' : 'reorder-after',
@@ -91,8 +147,7 @@ export function listSessionListEntityDropDestinations(params: Readonly<{
                     visual: { kind: 'line', targetId: target.rowId, edge, depth: target.folderDepth } }, target);
             }
         }
-        if ((source.kind === 'folder' && target.kind === 'folder' && target.rootId === source.rootId)
-            || (source.kind === 'session' && target.kind === 'session')) {
+        if (source.kind === 'session' && (target.kind === 'folder' || target.kind === 'session' || target.kind === 'workspace-root')) {
             append({ instruction: { kind: 'nest-into', targetId: target.rowId,
                 containerId: target.childContainerId ?? target.containerId,
                 parentId: target.rowId, depth: target.folderDepth + 1 },
@@ -122,11 +177,13 @@ export function resolveSessionListEntityDrop(params: Readonly<{
         return { status: 'refused', reason, ...(preview ? { preview } : {}) };
     };
     if (!context.scope || !entityDragScopesEqualV1(item.scope, context.scope)) return refuse('scope-mismatch');
+    const tree = resolveSessionListDragTree(context);
     const sourceRowId = sourceRowIdForItem(item);
-    if (!sourceRowId || params.intent.sourceRowId !== sourceRowId) return refuse('unsupported-item');
+    const source = tree.rowMetadataById.get(params.intent.sourceRowId);
+    if (!sourceRowId || (params.intent.sourceRowId !== sourceRowId && !(item.kind === 'session'
+        && source?.kind === 'session' && source.serverId === item.address.serverId && source.sessionId === item.address.sessionId))) return refuse('unsupported-item');
     if (params.intent.instructionKind === 'blocked') return refuse(params.intent.blockedReason ?? 'blocked-intent');
     const intent = { ...params.intent, scope: item.scope };
-    const tree = resolveSessionListDragTree(context);
     const currentContext = { ...context, latestTree: tree };
     const admission = resolveSessionListDragIntent({ intent, context: currentContext });
     if (!admission.ok) return refuse(admission.relationReason ?? admission.reason,
@@ -136,6 +193,19 @@ export function resolveSessionListEntityDrop(params: Readonly<{
         return { status: 'allowed', effect: { actionId: 'session.manager.set', input: {
             sessionId: admission.source.sessionId!, managerSessionId: admission.lead.sessionId!,
             expectedManagerSessionId: admission.expectedManagerSessionId,
+        }, preview: params.preview(admission) } };
+    }
+    const destination = resolveSessionListTreeDropDestination(admission);
+    if (!destination) return refuse('unavailable');
+    if (admission.source.metadata.kind === 'folder') {
+        return { status: 'allowed', effect: { actionId: 'session.sections.reorder', input: {
+            sectionId: admission.source.metadata.folderId!, beforeSectionId: resolveSessionListSectionBeforeId({ ...admission, destination, context }),
+        }, preview: params.preview(admission) } };
+    }
+    const destinationFolderId = resolveSessionListDestinationFolderId(admission.source.metadata, destination.container);
+    if (admission.source.metadata.kind === 'session' && admission.source.metadata.folderId !== destinationFolderId) {
+        return { status: 'allowed', effect: { actionId: 'session.section.set', input: {
+            sessionId: admission.source.metadata.sessionId!, sectionId: destinationFolderId,
         }, preview: params.preview(admission) } };
     }
     const { sourceSnapshotSignature: _signature, ...semanticInput } = intent;

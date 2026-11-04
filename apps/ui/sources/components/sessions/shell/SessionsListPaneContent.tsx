@@ -9,9 +9,16 @@ import {
 import { ExternalSessionsEmptyState } from '@/components/sessions/shell/ExternalSessionsEmptyState';
 import { HiddenInactiveSessionsEmptyState } from '@/components/sessions/shell/HiddenInactiveSessionsEmptyState';
 import { SessionsListViewWithFilterController } from '@/components/sessions/shell/SessionsList';
+import {
+    SessionListAttentionInteractionContext,
+    useSessionListAttentionInteractionHeld,
+    useSessionListAttentionInteractionOwner,
+} from './useSessionListAttentionInteraction';
 import { SessionsListEmptyState } from '@/components/sessions/shell/SessionsListEmptyState';
 import { useSessionGettingStartedGuidanceBaseModel } from '@/components/sessions/guidance/useSessionGettingStartedGuidanceBaseModel';
 import { useVisibleSessionListPaneState, type VisibleSessionListPaneState } from '@/hooks/session/useVisibleSessionListPaneState';
+import { useSessionListLayoutChoice } from '@/hooks/session/sessionListLayoutIntent';
+import { buildSessionListCollapseContextKey } from '@/sync/domains/session/listing/sessionListCollapseState';
 import { resolveSessionsListEmptyStateKind } from './resolveSessionsListEmptyStateKind';
 import { SessionListSkeletonRows } from './SessionListSkeletonRows';
 import { HomeReachabilityGate } from '@/components/navigation/connectionStatus/HomeReachabilityGate';
@@ -68,7 +75,6 @@ const EMPTY_SESSIONS_LIST_PANE_STATE: VisibleSessionListPaneState = {
     },
     visibleSessionListIndex: null,
     hasHiddenInactiveSessions: false,
-    folderFocus: null,
     folderFeatureEnabledServerIds: [],
     showLoading: true,
     showEmptyState: false,
@@ -105,14 +111,21 @@ function ActiveSessionsListPaneStateSubscriber(props: SessionsListPaneContentPro
     filterController: SessionListViewFilterController;
     onPaneState: (paneState: VisibleSessionListPaneState) => void;
 }>) {
+    const attentionInteraction = React.useContext(SessionListAttentionInteractionContext);
+    const attentionInteractionHeld = useSessionListAttentionInteractionHeld(attentionInteraction);
+    const layout = useSessionListLayoutChoice();
     const sessionListPaneState = useVisibleSessionListPaneState(props.storageKind, {
+        collapseContextKey: buildSessionListCollapseContextKey(props.filterController, layout),
         pathname: props.pathname,
         retainedPathname: props.retainedPathname,
         retainedVisibleSessionListIndex: props.retainedVisibleSessionListIndex,
         sessionListSurfaceDataActive: true,
+        attentionInteractionHeld: props.surfaceOwnership.interactive && attentionInteractionHeld,
         queryHomes: props.filterController.pagingHomes,
         emptyQuerySelectionComplete: props.filterController.emptyQuerySelectionComplete,
-        workFilter: props.filterController.filters,
+        workFilter: props.filterController.displayFilters,
+        spaceMembership: props.filterController.spaceMembership,
+        filterControlsRequired: props.filterController.filterControlsRequired,
     });
 
     const onPaneState = props.onPaneState;
@@ -206,8 +219,9 @@ const SessionsListPaneContentView = React.memo(function SessionsListPaneContentV
 });
 
 export const SessionsListPaneContent = React.memo((props: SessionsListPaneContentProps) => {
+    const attentionInteraction = useSessionListAttentionInteractionOwner();
     const filterController = useSessionListViewFilterController('active');
-    const storageKind = filterController.sourceAvailable ? filterController.filters.source : 'persisted';
+    const storageKind = filterController.sourceAvailable ? filterController.displayFilters.source : 'persisted';
     const surfaceOwnership = normalizeSessionListSurfaceOwnership(props.surfaceOwnership);
     const sessionListSurfaceDataActive = props.sessionListSurfaceDataActive ?? surfaceOwnership.dataActive;
     const sourceScopeKey = filterController.retentionScopeKey;
@@ -266,28 +280,32 @@ export const SessionsListPaneContent = React.memo((props: SessionsListPaneConten
 
     if (sessionListSurfaceDataActive) {
         return (
-            <ActiveSessionsListPaneStateSubscriber
-                {...props}
-                storageKind={storageKind}
-                retainedPathname={retainedPaneState?.surfaceRoutePathname ?? null}
-                retainedVisibleSessionListIndex={retainedPaneState?.paneState.visibleSessionListIndex ?? null}
-                surfaceOwnership={surfaceOwnership}
-                filterController={filterController}
-                onPaneState={handlePaneState}
-            />
+            <SessionListAttentionInteractionContext.Provider value={attentionInteraction}>
+                <ActiveSessionsListPaneStateSubscriber
+                    {...props}
+                    storageKind={storageKind}
+                    retainedPathname={retainedPaneState?.surfaceRoutePathname ?? null}
+                    retainedVisibleSessionListIndex={retainedPaneState?.paneState.visibleSessionListIndex ?? null}
+                    surfaceOwnership={surfaceOwnership}
+                    filterController={filterController}
+                    onPaneState={handlePaneState}
+                />
+            </SessionListAttentionInteractionContext.Provider>
         );
     }
 
     return (
-        <SessionsListPaneContentView
-            {...props}
-            storageKind={storageKind}
-            sessionListPaneState={getRetainablePaneState(
-                readRetainedSessionListPaneState(retentionIdentity) ?? retainedPaneStateRef.current,
-                retentionIdentity,
-            )}
-            surfaceOwnership={surfaceOwnership}
-            filterController={filterController}
-        />
+        <SessionListAttentionInteractionContext.Provider value={attentionInteraction}>
+            <SessionsListPaneContentView
+                {...props}
+                storageKind={storageKind}
+                sessionListPaneState={getRetainablePaneState(
+                    readRetainedSessionListPaneState(retentionIdentity) ?? retainedPaneStateRef.current,
+                    retentionIdentity,
+                )}
+                surfaceOwnership={surfaceOwnership}
+                filterController={filterController}
+            />
+        </SessionListAttentionInteractionContext.Provider>
     );
 });

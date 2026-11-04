@@ -46,6 +46,7 @@ import { readProjectAtmosphereSetting, mutateProjectAtmosphereSetting } from '@/
 import { atmospherePresentation, DEFAULT_HOME_ATMOSPHERE } from '@happier-dev/protocol/account/settings/accountSettings';
 import { MachineStorageViewSettingKeySchema, MachineStorageViewSettingChangeSchema,
     readMachineStorageViewSetting, buildMachineStorageViewSettingMutation } from '@/sync/domains/settings/registry/local/machineStorageViewSetting';
+import { invokeCurrentUiContextSettingCommand } from '@/components/appShell/currentUiContext/currentUiContextActionRuntime';
 
 type SettingsDeclarationOwner = Readonly<{
     host: SettingsHost;
@@ -79,7 +80,9 @@ function refuse(errorCode: string) {
     return { ok: false as const, errorCode, error: errorCode };
 }
 
-class RejectedSettingMutation extends Error {}
+class RejectedSettingMutation extends Error {
+    constructor(readonly errorCode = 'setting_not_bound') { super(errorCode); }
+}
 type SettingsDeclarationActionResult = z.output<(typeof SettingsDeclarationActionOutputSchemasV1)[SettingsDeclarationActionIdV1]>
     | ActionPolicySetResult
     | ReturnType<typeof refuse> | ActionApprovalRequestCreatedResult;
@@ -138,6 +141,8 @@ export function createSettingsDeclarationAction(owner: SettingsDeclarationOwner)
                 && !owner.setClientEncryptionRequirement ? 'not_bound'
             : sensitive ? 'sensitive'
             : !ref.storage ? 'not_bound'
+            : ref.storage.scope === 'local' && 'kind' in ref.storage && ref.storage.kind === 'localOwner'
+                && ref.storage.requiresAccountScope && !owner.accountScope ? 'not_bound'
             : ref.storage.scope === 'local' && 'kind' in ref.storage && ref.storage.kind === 'atmospherePictureLibrary'
                 && !owner.mutationServices?.readAtmospherePictureLibrary ? 'unsupported_host'
             : !ownerSurfaceAllowed ? 'not_bound'
@@ -480,6 +485,8 @@ export function createSettingsDeclarationAction(owner: SettingsDeclarationOwner)
                         if (!reset.success) return refuse('setting_reset_unsupported');
                         resetValue = reset.value;
                     }
+                } else if (binding.scope === 'local' && 'kind' in binding && binding.kind === 'localOwner' && binding.resetValue !== undefined) {
+                    resetValue = binding.resetValue;
                 } else if (binding.scope === 'local' && 'key' in binding) {
                     const storedValue = LOCAL_SETTING_ARTIFACTS.defaults[binding.key];
                     const reset = SettingsDeclarationValueV1Schema.safeParse(binding.invertBoolean && typeof storedValue === 'boolean' ? !storedValue : storedValue);
@@ -510,6 +517,8 @@ export function createSettingsDeclarationAction(owner: SettingsDeclarationOwner)
             const operationInput = SettingsDeclarationActionInputSchemasV1['settings.invoke'].parse(input);
             const result = await ref.operation.invoke({ signal: context?.signal, input: operationInput.input, target, isCurrent,
                 accountScope: owner.accountScope,
+                openMountedControl: anchor => invokeCurrentUiContextSettingCommand({ anchor, accountScope: owner.accountScope,
+                    context: context ?? { surface: 'ui' } }),
                 services: owner.mutationServices,
                 isFeatureEnabled: owner.isFeatureEnabled,
                 readSettings: owner.readAccountSettings,
@@ -703,10 +712,31 @@ export function createSettingsDeclarationAction(owner: SettingsDeclarationOwner)
                 if (binding.kind === 'localOwner') {
                     throwIfAborted(context?.signal);
                     if (!isCurrent()) return refuse('setting_not_bound');
-                    if (binding.read(owner.readLocalSettings()) === SETTING_VALUE_UNAVAILABLE) return refuse('setting_value_unavailable');
-                    const committed = await binding.commit(owner.readLocalSettings(), parsedValue.value, owner.writeLocalSettings, {
+                    if (await binding.read(owner.readLocalSettings(), { accountScope: owner.accountScope, readSettings: owner.readAccountSettings }) === SETTING_VALUE_UNAVAILABLE) return refuse('setting_value_unavailable');
+                    let committed: void | typeof SETTING_VALUE_UNAVAILABLE;
+                    try {
+                        committed = await binding.commit(owner.readLocalSettings(), parsedValue.value, owner.writeLocalSettings, {
                         signal: context?.signal, isCurrent, readLocalSettings: owner.readLocalSettings,
-                    });
+                        accountScope: owner.accountScope, readSettings: owner.readAccountSettings,
+                        mutateSettings: async (mutate) => {
+                            if (!owner.accountScope) throw new RejectedSettingMutation();
+                            const result = await owner.mutateAccountSettings(raw => {
+                                throwIfAborted(context?.signal);
+                                if (!isCurrent()) throw new RejectedSettingMutation();
+                                const settings = settingsParse(raw);
+                                const delta = mutate(settings);
+                                if (!delta) throw new RejectedSettingMutation('invalid_setting_value');
+                                return { ...raw, ...normalizeVoiceSettingsLocalDelta(delta, settings) };
+                            }, { signal: context?.signal });
+                            if (result && result.status !== 'applied') throw new RejectedSettingMutation(result.status === 'invalid'
+                                ? 'account_settings_mutation_invalid' : result.status === 'conflict'
+                                    ? 'account_settings_mutation_conflict' : 'account_settings_mutation_outcome_unknown');
+                        },
+                        });
+                    } catch (error) {
+                        if (error instanceof RejectedSettingMutation) return refuse(error.errorCode);
+                        throw error;
+                    }
                     throwIfAborted(context?.signal);
                     if (!isCurrent()) return refuse('setting_not_bound');
                     if (committed === SETTING_VALUE_UNAVAILABLE) return refuse('setting_value_unavailable');
@@ -759,7 +789,7 @@ export function createSettingsDeclarationAction(owner: SettingsDeclarationOwner)
             return output.success ? output.data : refuse('invalid_action_output');
         }
         const current = !('key' in binding)
-            ? binding.kind === 'localOwner' ? binding.read(owner.readLocalSettings()) : binding.read(await owner.readAccountSettings())
+            ? binding.kind === 'localOwner' ? await binding.read(owner.readLocalSettings(), { accountScope: owner.accountScope, readSettings: owner.readAccountSettings }) : binding.read(await owner.readAccountSettings())
             : binding.scope === 'account'
             ? (await owner.readAccountSettings())[binding.key]
             : owner.readLocalSettings()[binding.key];

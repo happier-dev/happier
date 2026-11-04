@@ -1,20 +1,10 @@
-import type { SessionFoldersV1 } from '@/sync/domains/session/folders';
-import {
-    normalizeSessionListOrderingModeV1,
-    normalizeSessionListFolderSortModeV1,
-    resolveEffectiveSessionListFolderSortMode,
-    type SessionListOrderingModeV1,
-    type SessionListOrderingSectionMode,
-} from '@/sync/domains/session/listing/sessionListOrderingRules';
 import {
     isSessionListSessionSiblingReorder,
-    normalizeSessionListSectionModeV1,
     resolveSessionListSessionRowDragPolicy,
 } from '@/sync/domains/session/listing/sessionListLayout';
 
 import { applyFolderAssignmentChange } from './applyFolderAssignmentChange';
-import { applyFolderTreeMove } from './applyFolderTreeMove';
-import { applyGroupOrderUpdate, resolveSessionListGroupOrderChildKind } from './applyGroupOrderUpdate';
+import { applyGroupOrderUpdate } from './applyGroupOrderUpdate';
 import { applyWorkspaceOrderUpdate } from './applyWorkspaceOrderUpdate';
 import type {
     SessionListTreeContainerMetadata,
@@ -23,16 +13,16 @@ import type {
     SessionListTreeModel,
     SessionListTreeRowMetadata,
 } from '../drop-resolution/sessionListTreeTypes';
+import { canMoveSessionListSourceToContainer, resolveSessionListDestinationFolderId } from '../drop-resolution/sessionListDestinationScope';
+import type { SessionSection } from '@/sync/domains/session/organization/sections';
 
 type SessionListGroupOrderV1 = Readonly<Record<string, ReadonlyArray<string> | undefined>>;
 type SessionWorkspaceOrderV1 = Readonly<Record<string, ReadonlyArray<string> | undefined>>;
-type SessionListFolderSortModeV1 = 'foldersFirst' | 'mixed';
 
 type SessionListTreeDropOperationKind =
     | 'sessionSiblingReorder'
     | 'sessionContainerContainmentMove'
     | 'folderSiblingReorder'
-    | 'folderNestingMove'
     | 'workspaceStructuralReorder'
     | 'invalid'
     | 'noop';
@@ -44,19 +34,16 @@ type SetSessionFolderAssignment = (assignment: Readonly<{
 }>) => Promise<void>;
 
 export type ApplySessionListTreeDropOperationContext = Readonly<{
-    sessionFoldersV1: SessionFoldersV1;
+    sessionSections?: readonly SessionSection[];
     sessionListGroupOrderV1: SessionListGroupOrderV1;
     sessionWorkspaceOrderV1?: SessionWorkspaceOrderV1;
-    sessionListFolderSortModeV1?: SessionListFolderSortModeV1;
-    sessionListOrderingModeV1?: SessionListOrderingModeV1;
-    sessionListSectionModeV1?: SessionListOrderingSectionMode;
+    sessionListLayoutV1?: 'projects' | 'recent_activity';
     manualSessionOrderingEnabled?: boolean;
     isFolderOrganizationEnabled?: (serverId: string | null) => boolean;
-    now: () => number;
-    setSessionFoldersV1: (next: SessionFoldersV1) => Promise<void>;
     setSessionListGroupOrderV1: (next: Record<string, string[]>) => Promise<void>;
     setSessionWorkspaceOrderV1?: (next: Record<string, string[]>) => Promise<void>;
-    setSessionFolderAssignment: SetSessionFolderAssignment;
+    setSessionFolderAssignment?: SetSessionFolderAssignment;
+    reorderSessionSection?: (input: Readonly<{ serverId: string; sectionId: string; beforeSectionId: string | null }>) => Promise<void>;
 }>;
 
 export type ApplySessionListTreeDropOperationResult = Readonly<{
@@ -166,33 +153,23 @@ function resolveDestination(params: Readonly<{
     };
 }
 
-function resolveCurrentParentFolderId(params: Readonly<{
-    tree: SessionListTreeModel;
-    source: SessionListTreeDragSource;
-}>): string | null {
-    return params.tree.containerMetadataById.get(params.source.metadata.containerId)?.folderId ?? null;
-}
-
 function canReorderSessionSourceSiblings(params: Readonly<{
     source: SessionListTreeDragSource;
     context: ApplySessionListTreeDropOperationContext;
 }>): boolean {
     const item = params.source.metadata.item;
-    const sectionMode = normalizeSessionListSectionModeV1(params.context.sessionListSectionModeV1);
     if (item.type !== 'session') return false;
     return resolveSessionListSessionRowDragPolicy({
         manualSessionOrderingEnabled: params.context.manualSessionOrderingEnabled !== false,
         folderContainmentEnabled: false,
         item,
-        sectionModeV1: sectionMode,
-        orderingModeV1: normalizeSessionListOrderingModeV1(params.context.sessionListOrderingModeV1),
+        layoutV1: params.context.sessionListLayoutV1 ?? 'projects',
     }).canReorderSiblings;
 }
 
 function classifyDropOperation(params: Readonly<{
     source: SessionListTreeDragSource;
     destination: Destination | null;
-    currentParentFolderId?: string | null;
 }>): SessionListTreeDropOperationKind {
     const { source, destination } = params;
     if (!destination) return 'invalid';
@@ -200,31 +177,16 @@ function classifyDropOperation(params: Readonly<{
     if (source.metadata.kind === 'session') {
         return isSessionListSessionSiblingReorder({
             sourceFolderId: source.metadata.folderId,
-            destinationFolderId: destination.container.folderId,
+            destinationFolderId: resolveSessionListDestinationFolderId(source.metadata, destination.container),
         })
             ? 'sessionSiblingReorder'
             : 'sessionContainerContainmentMove';
     }
 
-    if (source.metadata.kind === 'folder') {
-        const currentParentFolderId = params.currentParentFolderId ?? null;
-        const destinationParentFolderId = destination.container.folderId;
-        if (currentParentFolderId !== destinationParentFolderId) return 'folderNestingMove';
-        if (destination.beforeRowId || destination.afterRowId) return 'folderSiblingReorder';
-        return 'noop';
-    }
+    if (source.metadata.kind === 'folder') return destination.container.destinationKind === 'section-order' ? 'folderSiblingReorder' : 'invalid';
 
     if (source.metadata.kind === 'workspace-root') return 'workspaceStructuralReorder';
     return 'invalid';
-}
-
-function resolveEffectiveFolderSortModeForDropContext(
-    context: ApplySessionListTreeDropOperationContext,
-): SessionListFolderSortModeV1 {
-    return resolveEffectiveSessionListFolderSortMode({
-        orderingMode: normalizeSessionListOrderingModeV1(context.sessionListOrderingModeV1),
-        folderSortMode: normalizeSessionListFolderSortModeV1(context.sessionListFolderSortModeV1),
-    });
 }
 
 async function applySessionDrop(params: Readonly<{
@@ -239,8 +201,10 @@ async function applySessionDrop(params: Readonly<{
     const sessionId = source.metadata.sessionId;
     if (!serverId || !sessionId) return false;
 
-    const destinationFolderId = destination.container.folderId;
-    if ((source.metadata.folderId ?? null) !== destinationFolderId) {
+    const destinationFolderId = resolveSessionListDestinationFolderId(source.metadata, destination.container);
+    const assignmentChanged = (source.metadata.folderId ?? null) !== destinationFolderId;
+    if (assignmentChanged) {
+        if (!context.setSessionFolderAssignment) return false;
         await applyFolderAssignmentChange({
             serverId,
             sessionId,
@@ -251,20 +215,50 @@ async function applySessionDrop(params: Readonly<{
 
     if (!params.writeGroupOrder) return true;
 
-    return applyGroupOrderUpdate({
+    const orderChanged = await applyGroupOrderUpdate({
         tree: params.tree,
         currentMap: context.sessionListGroupOrderV1,
         movedRowId: source.metadata.rowId,
         containerId: destination.container.containerId,
         beforeRowId: destination.beforeRowId,
         afterRowId: destination.afterRowId,
-        childKind: resolveSessionListGroupOrderChildKind('session', resolveEffectiveFolderSortModeForDropContext(context)),
         setSessionListGroupOrderV1: context.setSessionListGroupOrderV1,
     });
+    return assignmentChanged || orderChanged;
 }
 
 function resolveFolderSiblingTargetId(target: SessionListTreeRowMetadata | null): string | null {
     return target?.kind === 'folder' ? target.folderId : null;
+}
+
+/** Canonical definitions include filtered-out Sections; geometry is only an internal fallback. */
+export function readSessionListSectionOrderIds(params: Readonly<{
+    tree: SessionListTreeModel;
+    source: SessionListTreeDragSource;
+    context?: Pick<ApplySessionListTreeDropOperationContext, 'sessionSections'>;
+}>): string[] {
+    if (params.context?.sessionSections) return params.context.sessionSections
+        .filter(section => section.address.serverId === params.source.metadata.serverId)
+        .map(section => section.address.sectionId);
+    return [...params.tree.rowMetadataById.values()].filter(row => row.kind === 'folder'
+        && row.serverId === params.source.metadata.serverId && row.containerId === params.source.metadata.containerId)
+        .sort((left, right) => left.itemIndex - right.itemIndex).flatMap(row => row.folderId ? [row.folderId] : []);
+}
+
+/** Convert either edge to the existing reorder Action's single before-section operand. */
+export function resolveSessionListSectionBeforeId(params: Readonly<{
+    tree: SessionListTreeModel;
+    source: SessionListTreeDragSource;
+    destination: SessionListTreeDropDestination;
+    context?: Pick<ApplySessionListTreeDropOperationContext, 'sessionSections'>;
+}>): string | null {
+    const { source, destination } = params;
+    if (destination.beforeRowId) return resolveFolderSiblingTargetId(destination.target);
+    if (!destination.afterRowId) return null;
+    const siblings = readSessionListSectionOrderIds(params).filter(sectionId => sectionId !== source.metadata.folderId);
+    const targetId = resolveFolderSiblingTargetId(destination.target);
+    const index = targetId ? siblings.indexOf(targetId) : -1;
+    return index < 0 ? null : siblings[index + 1] ?? null;
 }
 
 async function applyFolderDrop(params: Readonly<{
@@ -278,46 +272,14 @@ async function applyFolderDrop(params: Readonly<{
     const serverId = source.metadata.serverId;
     if (!folderId || !serverId) return false;
 
-    const currentParentFolderId = resolveCurrentParentFolderId({
-        tree: params.tree,
-        source,
-    });
-    const destinationParentFolderId = destination.container.folderId;
-    const beforeFolderId = destination.beforeRowId
-        ? resolveFolderSiblingTargetId(destination.target)
-        : null;
-    const afterFolderId = destination.afterRowId
-        ? resolveFolderSiblingTargetId(destination.target)
-        : null;
-    const shouldMoveFolderTree = currentParentFolderId !== destinationParentFolderId
-        || Boolean(beforeFolderId)
-        || Boolean(afterFolderId);
-
-    if (shouldMoveFolderTree) {
-        await applyFolderTreeMove({
-            current: context.sessionFoldersV1,
-            serverId,
-            folderId,
-            parentId: destinationParentFolderId,
-            beforeFolderId,
-            afterFolderId,
-            now: context.now(),
-            setSessionFoldersV1: context.setSessionFoldersV1,
-        });
+    if (destination.container.destinationKind === 'section-order') {
+        if (!context.reorderSessionSection) return false;
+        await context.reorderSessionSection({ serverId, sectionId: folderId,
+            beforeSectionId: resolveSessionListSectionBeforeId(params) });
+        return true;
     }
 
-    const orderUpdated = await applyGroupOrderUpdate({
-        tree: params.tree,
-        currentMap: context.sessionListGroupOrderV1,
-        movedRowId: source.metadata.rowId,
-        containerId: destination.container.containerId,
-        beforeRowId: destination.beforeRowId,
-        afterRowId: destination.afterRowId,
-        childKind: resolveSessionListGroupOrderChildKind('folder', resolveEffectiveFolderSortModeForDropContext(context)),
-        setSessionListGroupOrderV1: context.setSessionListGroupOrderV1,
-    });
-
-    return shouldMoveFolderTree || orderUpdated;
+    return false;
 }
 
 async function applyWorkspaceDrop(params: Readonly<{
@@ -356,18 +318,16 @@ export async function applySessionListTreeDropOperation(params: Readonly<{
             reason: params.result.instruction.kind,
         };
     }
+    if (!canMoveSessionListSourceToContainer(params.source.metadata, destination.container)) {
+        return { ok: false, reason: 'scope-mismatch' };
+    }
 
-    const currentParentFolderId = params.source.metadata.kind === 'folder'
-        ? resolveCurrentParentFolderId({ tree: params.tree, source: params.source })
-        : null;
     const operationKind = classifyDropOperation({
         source: params.source,
         destination,
-        currentParentFolderId,
     });
     const requiresFolderOrganization = operationKind === 'sessionContainerContainmentMove'
-        || operationKind === 'folderSiblingReorder'
-        || operationKind === 'folderNestingMove';
+        || operationKind === 'folderSiblingReorder';
     if (
         requiresFolderOrganization
         && params.context.isFolderOrganizationEnabled?.(params.source.metadata.serverId) === false

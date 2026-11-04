@@ -1,9 +1,11 @@
 import {
-    projectSessionAwarenessV1,
+    projectSessionAwarenessV1} from '@happier-dev/protocol/sessions/awareness/projectV1';
+import {
     type ProjectSessionAwarenessV1Input,
-    type SessionContentAvailabilityInputV1,
+    type SessionContentAvailabilityInputV1} from '@happier-dev/protocol/sessions/awareness/inputV1';
+import {
     type SessionViewerProjectionV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/personal/viewer';
 import { afterEach, describe, expect, it } from 'vitest';
 import { NO_TEAM_GROUP_CAPABILITIES_V1 } from '@happier-dev/protocol/teams';
 import { applyTeamGroupProjection, resetTeamsSnapshotsForTests } from '@/sync/store/teams/teamsSnapshots';
@@ -15,6 +17,7 @@ import {
     resolveSessionContextLine,
     readSessionHomeLastUpdatedRefreshAtMs,
     readSessionHomeLastUpdatedLabelRefreshAtMs,
+    retainPresentedSessionHomeObservations,
 } from './sessionContextPresentation';
 
 function makeAwareness(params: Readonly<{
@@ -56,6 +59,19 @@ const VIEWER_SHARED_DIRECTLY: SessionViewerProjectionV1 = {
 };
 
 describe('sessionContextPresentation', () => {
+    it('retains a current Home across success-clock refetches and republishes once its time is shown', () => {
+        const current = { 'home-a': { phase: 'ready', lastSuccessAt: 1_000 } } as const;
+        const refetched = retainPresentedSessionHomeObservations(current, { 'home-a': { phase: 'ready', lastSuccessAt: 9_000 } });
+        expect(refetched).toBe(current);
+
+        const offline = { 'home-a': { phase: 'offline', lastSuccessAt: 9_000 } } as const;
+        expect(retainPresentedSessionHomeObservations(refetched, offline)).toEqual(offline);
+        const offlineAdvanced = { 'home-a': { phase: 'offline', lastSuccessAt: 12_000 } } as const;
+        expect(retainPresentedSessionHomeObservations(offline, offlineAdvanced)).toEqual(offlineAdvanced);
+        expect(retainPresentedSessionHomeObservations(offline, { ...offline, 'home-b': { phase: 'ready', lastSuccessAt: 1 } }))
+            .toEqual({ ...offline, 'home-b': { phase: 'ready', lastSuccessAt: 1 } });
+    });
+
     it('schedules stale Home age changes without adding a freshness expiry to a reachable Home', () => {
         expect(readSessionHomeLastUpdatedRefreshAtMs({ phase: 'offline', lastSuccessAt: 1_000 }, 91_000)).toBe(121_000);
         expect(readSessionHomeLastUpdatedRefreshAtMs({ phase: 'error', lastSuccessAt: 1_000 }, 91_000)).toBe(121_000);

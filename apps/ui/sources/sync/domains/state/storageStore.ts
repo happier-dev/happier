@@ -24,6 +24,7 @@ import { registerStorageStateReader, registerStorageStateSubscribe, registerStor
 import { syncPerformanceTelemetry } from '../../runtime/syncPerformanceTelemetry';
 import { observeStoragePerformance } from '../../store/storagePerformance';
 import { readStorageState, scopeStorageSubscriptions } from './scopedStorage';
+import { publishSessionRelations } from '../../store/domains/sessionRelations';
 
 export type { KnownEntitlements } from '../../store/types';
 export type { SessionListViewItem } from '../session/listing/sessionListViewData';
@@ -72,6 +73,19 @@ export const storage = observeStoragePerformance(scopeStorageSubscriptions(creat
         ...realtimeDomain,
     };
 })), syncPerformanceTelemetry);
+
+// Direct whole-snapshot writes (restore, reset and scoped snapshots) admit relationship inputs
+// through the same Session/list producer. Ordinary domain writes use their exact ingress delta.
+const setSnapshot = storage.setState;
+storage.setState = (partial: StorageState | Partial<StorageState> | ((state: StorageState) => StorageState | Partial<StorageState>), replace?: boolean) => {
+    setSnapshot(state => {
+        const update = typeof partial === 'function' ? partial(state) : partial;
+        if (update === state) return state;
+        const snapshot = replace ? update as StorageState : { ...state, ...update };
+        const sessionRelationsByServerId = publishSessionRelations(state, snapshot);
+        return sessionRelationsByServerId === snapshot.sessionRelationsByServerId ? snapshot : { ...snapshot, sessionRelationsByServerId };
+    }, true);
+};
 
 registerStorageStateReader(() => storage.getState());
 registerStorageStateSubscribe((listener) => storage.subscribe(listener));

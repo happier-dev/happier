@@ -1,5 +1,8 @@
 import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
+import { ACCOUNT_SETTING_DEFINITIONS, SessionListIdentityDisplaySchema, type SessionListIdentityDisplay } from '@happier-dev/protocol/account/settings/accountSettings';
+import type { WorkspaceFavicon } from '@/sync/ops/workspaceFavicon';
+import { resolveSessionListProjectMarkBadgeGeometry, SessionListProjectMark } from './SessionListProjectMark';
 
 import { Avatar } from '@/components/ui/avatar/Avatar';
 import { useSetting } from '@/sync/domains/state/storage';
@@ -12,10 +15,11 @@ import { getSessionAvatarId } from '@/utils/sessions/sessionUtils';
 
 import { SessionAgentCatalogIdentityIcon } from '../presentation/SessionAgentCatalogIdentityIcon';
 
-export type SessionListIdentityDisplay = 'avatar' | 'agentLogo' | 'none';
+export type { SessionListIdentityDisplay } from '@happier-dev/protocol/account/settings/accountSettings';
 
 export function normalizeSessionListIdentityDisplay(value: unknown): SessionListIdentityDisplay {
-    return value === 'agentLogo' || value === 'none' ? value : 'avatar';
+    const parsed = SessionListIdentityDisplaySchema.safeParse(value);
+    return parsed.success ? parsed.data : ACCOUNT_SETTING_DEFINITIONS.sessionListIdentityDisplay.default;
 }
 
 /** The single reader/normalizer for the person's Session-list identity preference. */
@@ -30,7 +34,10 @@ export function useSessionListIdentityDisplay(): SessionListIdentityDisplay {
 export const SessionListIdentity = React.memo(function SessionListIdentity(props: Readonly<{
     session: Session | SessionListRenderableSession;
     presentationSource?: SessionListPresentationSource;
-    display: SessionListIdentityDisplay;
+    /** A resolved row mark (`project`/`projectWithAgent` come from the list's row context). */
+    display: SessionListIdentityDisplay | 'project' | 'projectWithAgent';
+    /** The row Project's favicon, observed from the shared resource; null keeps the folder fallback. */
+    projectFavicon?: WorkspaceFavicon | null;
     serverId: string | null;
     color: string;
     avatarSize: number;
@@ -59,6 +66,20 @@ export const SessionListIdentity = React.memo(function SessionListIdentity(props
                 hasUnreadMessages={false}
             />
         );
+    }
+
+    if (props.display === 'project' || props.display === 'projectWithAgent') {
+        const badge = props.display === 'projectWithAgent' ? (
+            <SessionAgentCatalogIdentityIcon
+                agentId={agentId ?? ''}
+                machineId={machineId ?? null}
+                serverId={props.serverId}
+                color={theme.colors.text.secondary}
+                size={resolveSessionListProjectMarkBadgeGeometry(props.agentLogoSize).badge}
+                testID={props.testID ? `${props.testID}-agent-badge` : undefined}
+            />
+        ) : null;
+        return <SessionListProjectMark favicon={props.projectFavicon ?? null} size={props.agentLogoSize} badge={badge} testID={props.testID} />;
     }
 
     return (

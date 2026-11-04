@@ -398,7 +398,6 @@ function createPaneState() {
         summary: { sessionsReady: true, sessionCount: mockVisibleSessionListViewData.filter((item) => item.type === 'session').length },
         visibleSessionListIndex: buildSessionListIndexFromViewData(mockVisibleSessionListViewData),
         hasHiddenInactiveSessions: false,
-        folderFocus: null,
         folderFeatureEnabledServerIds: [],
         showLoading: false,
         showEmptyState: false,

@@ -594,7 +594,7 @@ function selectCurrentSummaryProjection(
     if (!incoming.summary) return stored;
     if (!stored.summary) return incoming;
     let incomingSummary = incoming.summary;
-    for (const key of ['where', 'startedBy', 'heldStep', 'heldCount', 'stepProgress', 'stepProgressCurrentness'] as const) {
+    for (const key of ['where', 'startedBy', 'sourceSavedBy', 'heldStep', 'heldCount', 'stepProgress', 'stepProgressCurrentness'] as const) {
         if (incomingSummary[key] === undefined && stored.summary[key] !== undefined) {
             incomingSummary = { ...incomingSummary, [key]: stored.summary[key] };
         }
@@ -624,7 +624,7 @@ function selectCurrentSummaryProjection(
     // Private list projections are opened by the authorized list host, including
     // progress which can advance without a parent control revision. Omission by
     // a control operation preserves the observation; explicit unreadability clears it.
-    for (const key of ['where', 'startedBy', 'heldStep', 'heldCount'] as const) {
+    for (const key of ['where', 'startedBy', 'sourceSavedBy', 'heldStep', 'heldCount'] as const) {
         const value = incomingSummary[key];
         if (parentCurrent && value !== undefined && (summary[key] === undefined || !sameStrictJsonValue(summary[key], value))) {
             summary = { ...summary, [key]: value };

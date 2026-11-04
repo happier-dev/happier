@@ -326,6 +326,7 @@ function DiscussionsListReady(props: Readonly<{
         testIDPrefix: 'discussions-column-space',
         defaultName: t('sessionsList.spacesAllDiscussions'),
         view: { spaces: view.spaces, selectedSpaceId: view.selectedSpaceId, selectedSpace: view.selectedSpace,
+            activeSpace: view.activeSpace, spacesEnabled: view.spacesEnabled,
             spacesReady: view.spacesReady, spaceSettingsScope: view.spaceSettingsScope, filters, setFilters },
         registry: discussionListFilterFieldsV1,
         bindings: conditionBindings,

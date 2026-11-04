@@ -860,10 +860,10 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
 
         const { get, domain } = createHarness({
             settings: {
-                sessionListSectionModeV1: 'activity',
-                sessionListInactiveGroupingV1: 'date',
+                sessionListLayoutV1: 'recent_activity',
             },
         });
+        expect(get().settings.sessionListLayoutV1).toBe('recent_activity');
 
         applyOrdinarySnapshot(domain, [
             currentSession({

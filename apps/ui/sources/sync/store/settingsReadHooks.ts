@@ -37,6 +37,11 @@ export function useSettingsVersion(): number | null {
   return getStorage()((state) => state.settingsVersion);
 }
 
+/** Readiness consumers do not need every accepted Account settings revision. */
+export function useSettingsReady(): boolean {
+  return getStorage()((state) => state.settingsVersion !== null);
+}
+
 export function useSetting<K extends keyof Settings>(name: K): Settings[K] {
   return getStorage()(useShallow((state) => state.settings?.[name] ?? settingsDefaults[name]));
 }

@@ -14,6 +14,7 @@ import {
 import type { AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import type { CapturedAccountSettingsRequest } from './accountSettingsRequest';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { collapsedGroupsState, removeCollapsedGroupKey, replaceCollapsedGroupKeys } from '@/sync/domains/state/disclosureUiState';
 import { classifyAccountStorageReadFailure, resolveAccountStorageContext } from '@/sync/encryption/accountStorageContext';
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
 import { readAccountSettingsBaseline } from '@/sync/engine/settings/accountSettingsBaseline';
@@ -185,16 +186,15 @@ function disclosureKey(context: ConnectedMetadataAccountContext, subject: Qualif
         ...(subject.kind === 'group-member' ? { groupId: subject.group.groupId } : {}) });
 }
 async function persistDisclosure(context: ConnectedMetadataAccountContext, entries: readonly ConnectedDisclosureEntryV1[]): Promise<void> {
-    const { storage } = await import('@/sync/domains/state/storageStore');
     context.assertCurrent();
-    let keys = { ...storage.getState().localSettings.collapsedGroupKeysV1 };
+    let keys = { ...collapsedGroupsState.readAll() };
     for (const entry of entries) {
         const key = disclosureKey(context, entry.subject);
         // An existing device choice wins over an Account-source import.
         if (!Object.hasOwn(keys, key)) keys = setConnectedServiceItemCollapsed(keys, key, entry.collapsed, entry.subject.kind === 'group-member');
     }
     // The incumbent owner synchronously persists through MMKV before returning.
-    storage.getState().applyLocalSettings({ collapsedGroupKeysV1: keys }, { source: 'ui' });
+    replaceCollapsedGroupKeys(keys);
 }
 export async function readConnectedMetadataCatalogInContext(context: ConnectedMetadataAccountContext, signal?: AbortSignal,
     publication?: Publication, maintenance = true): Promise<ConnectedMetadataCatalogV1> {
@@ -371,11 +371,8 @@ export async function cleanupConnectedMetadataInContext(context: ConnectedMetada
         if (!prepared || prepared.subjectKey !== connectedEntitySubjectKeyV1(subject)) {
             throw new ConnectedMetadataRowOperationError('connected_metadata_cleanup_not_prepared');
         }
-        const { storage } = await import('@/sync/domains/state/storageStore');
         context.assertCurrent();
-        const keys = { ...storage.getState().localSettings.collapsedGroupKeysV1 };
-        for (const key of prepared.disclosureKeys) delete keys[key];
-        storage.getState().applyLocalSettings({ collapsedGroupKeysV1: keys }, { source: 'ui' });
+        for (const key of prepared.disclosureKeys) removeCollapsedGroupKey(key);
         if (prepared.source) {
             const source = prepared.source;
             if (JSON.stringify(source.raw) !== JSON.stringify(source.originalRaw)) {
@@ -403,11 +400,9 @@ export async function setConnectedDisclosureInContext(context: ConnectedMetadata
             throw new ConnectedMetadataRowOperationError('connected_metadata_subject_not_owned');
         }
     }
-    const { storage } = await import('@/sync/domains/state/storageStore');
     context.assertCurrent();
     const key = disclosureKey(context, input.subject);
-    let keys = { ...storage.getState().localSettings.collapsedGroupKeysV1 };
-    if (input.collapsed === null) delete keys[key];
-    else keys = setConnectedServiceItemCollapsed(keys, key, input.collapsed, input.subject.kind === 'group-member');
-    storage.getState().applyLocalSettings({ collapsedGroupKeysV1: keys }, { source: 'ui' });
+    const next = input.collapsed === null ? {} : setConnectedServiceItemCollapsed({}, key, input.collapsed, input.subject.kind === 'group-member');
+    if (Object.hasOwn(next, key)) collapsedGroupsState.set(key, next[key]);
+    else removeCollapsedGroupKey(key);
 }

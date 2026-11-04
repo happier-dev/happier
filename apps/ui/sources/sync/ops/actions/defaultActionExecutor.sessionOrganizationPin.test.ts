@@ -99,7 +99,7 @@ describe('default UI session.organization.pin.set transport', () => {
         const bot = createSessionListRenderableSessionFixture({ id: 'bot', metadata: { path: '/project', bot: { kind: 'bot' } } });
         const rowMenu = await renderHook(() => useSessionRowActionMenu({
             target: createSessionActionTarget({ session: bot, serverId }), sessionName: 'Bot', hideInactiveSessions: false,
-            iconColor: '#000', activeTags: [], knownTags: [], tagsEnabled: false, isNativeMobile: false,
+            iconColor: '#000', activeTags: [], knownTags: [], tagsEnabled: false, touchPrimaryPointer: false,
             setContextMenuOpen() {}, openTagsMenuFromContext() {},
         }));
         const outcome = await rowMenu.getCurrent().handleMoreMenuSelect('ui.session.rail.pin')

@@ -96,8 +96,8 @@ function NewSessionTriggersPopover(props: InitialTriggersProps & Readonly<{
                     : current.map((value, index) => index === editing ? entry : value));
             }}
             {...(original ? {
-                onToggleEnabled: async (enabled: boolean) => props.onInitialTriggersChange((current) => current.map((entry, index) =>
-                    index === editing ? { ...entry, trigger: { ...entry.trigger, enabled } } : entry)),
+                onToggleEnabled: { enabled: original.trigger.enabled, onPress: () => props.onInitialTriggersChange((current) => current.map((entry, index) =>
+                    index === editing ? { ...entry, trigger: { ...entry.trigger, enabled: !original.trigger.enabled } } : entry)) },
                 onDelete: async () => props.onInitialTriggersChange((current) => current.filter((_, index) => index !== editing)),
             } : {})} />;
     }

@@ -6,8 +6,30 @@ import { resolveSessionAddressFromLocalState } from '@/sync/domains/session/reso
 
 let execute: ReturnType<typeof createFrontDoorActionExecute> | null = null;
 
-/** Personal pin intent always crosses the shared Action admission and captured Account writer. */
+/** Personal organization intent crosses shared Action admission and the captured Account writer. */
 export const sessionOrganizationActions = {
+    setSection(sessionId: string, sectionId: string | null, options: Readonly<{
+        serverId: string;
+        expectedAccountId: string;
+    }>) {
+        const address = normalizeSessionAddress(options.serverId, sessionId);
+        if (!address) return Promise.resolve({ ok: false as const, errorCode: 'session_not_selected', error: 'Session Home is unavailable or ambiguous' });
+        execute ??= createFrontDoorActionExecute();
+        return execute('session.section.set', { sessionId: address.sessionId, sectionId }, {
+            surface: 'ui', serverId: address.serverId, expectedAccountId: options.expectedAccountId,
+        });
+    },
+    /** Section definitions (create, rename/icon, remove) through the same Action admission as agents. */
+    editSection(actionId: 'session.sections.create' | 'session.sections.update' | 'session.sections.delete',
+        input: Readonly<Record<string, unknown>>, options: Readonly<{ serverId: string; expectedAccountId: string }>) {
+        execute ??= createFrontDoorActionExecute();
+        return execute(actionId, input, { surface: 'ui', serverId: options.serverId, expectedAccountId: options.expectedAccountId });
+    },
+    /** Archives a section's exact membership; each member keeps its own archive policy. */
+    archiveSection(sectionId: string, options: Readonly<{ serverId: string; expectedAccountId: string }>) {
+        execute ??= createFrontDoorActionExecute();
+        return execute('session.sections.archive', { sectionId }, { surface: 'ui', serverId: options.serverId, expectedAccountId: options.expectedAccountId });
+    },
     setPin(sessionId: string, pinned: boolean, options?: Readonly<{
         serverId?: string | null;
         surface?: SetSessionPinRequest['surface'];

@@ -163,13 +163,12 @@ export function buildSessionOrganizationProjectionFromLegacyTestSettings(
     };
 }
 
-/** Enroll the fixture through the store's canonical snapshot publisher and selectors. */
-export async function applySessionOrganizationLegacyTestSettings(
+/** The same source snapshot serves the HTTP boundary and the store publisher. */
+export function buildSessionOrganizationSnapshotFromLegacyTestSettings(
     fixture: LegacySessionOrganizationProjectionFixture,
-): Promise<void> {
+) {
     const projection = buildSessionOrganizationProjectionFromLegacyTestSettings(fixture);
-    const { storage } = await import('@/sync/domains/state/storageStore');
-    storage.getState().applySessionOrganizationSnapshot(fixture.serverId, SessionOrganizationSnapshotSchema.parse({
+    return SessionOrganizationSnapshotSchema.parse({
         schemaVersion: projection.schemaVersion,
         version: projection.version,
         pins: Object.values(projection.pinsBySessionId),
@@ -187,5 +186,13 @@ export async function applySessionOrganizationLegacyTestSettings(
         })),
         orderEntries: Object.values(projection.orderEntriesByScopeKey).flat(),
         labels: Object.values(projection.labelsByLabelKey).map(({ displayState: _displayState, ...label }) => label),
-    }));
+    });
+}
+
+/** Enroll the fixture through the store's canonical snapshot publisher and selectors. */
+export async function applySessionOrganizationLegacyTestSettings(
+    fixture: LegacySessionOrganizationProjectionFixture,
+): Promise<void> {
+    const { storage } = await import('@/sync/domains/state/storageStore');
+    storage.getState().applySessionOrganizationSnapshot(fixture.serverId, buildSessionOrganizationSnapshotFromLegacyTestSettings(fixture));
 }

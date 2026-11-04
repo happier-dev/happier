@@ -131,7 +131,7 @@ describe('SessionListFilterEditor panel', () => {
     it('names the space in the Sessions title and marks Runs narrowing in the Runs summary control', async () => {
         const defaults = createSessionListViewFilterDefaults({ homeServerIds: ['home-a'] });
         const controller: SessionListViewFilterController = {
-            filters: defaults, defaultFilters: defaults, contextDefaultFilters: defaults, updateFilters: vi.fn(), setSearchQuery: vi.fn(),
+            filters: defaults, displayFilters: defaults, defaultFilters: defaults, contextDefaultFilters: defaults, updateFilters: vi.fn(), setSearchQuery: vi.fn(),
             removeAuthoritativelyDeletedSelections: vi.fn(), resetFilters: vi.fn(), includeInactive: true,
             showCoordinatorsRequest: 0, acknowledgeShowCoordinatorsRequest: vi.fn(),
             corpusStorage: 'active', setIncludeInactive: vi.fn(), setSource: vi.fn(), queryEnabled: true,
@@ -139,6 +139,7 @@ describe('SessionListFilterEditor panel', () => {
             sourceAvailable: true, homeOptions: [{ serverId: 'home-a', label: 'Home A' }],
             viewContext: { kind: 'global' }, viewContextKey: 'global', retentionScopeKey: 'home-a',
             spaces: [], selectedSpaceId: 'my-work', selectedSpace: null, spacesReady: false,
+            activeSpace: null, spacesEnabled: false,
             spaceSettingsScope: null, includeNeedsYouEverywhere: false, isSpaceModified: false,
         };
         const chrome = createSessionListSpaceChromeFixture();
@@ -293,7 +294,8 @@ describe('SessionListFilterEditor panel', () => {
         expect(screen.getTextContent()).toContain('5');
     });
 
-    it('keeps Clear and Done at the canonical touch-target size', async () => {
+    it('reaches the touch target from Clear and Done without enlarging what they draw', async () => {
+        vi.stubGlobal('navigator', { maxTouchPoints: 1 });
         const screen = await renderScreen(<SessionListFilterEditor {...editorProps({ onDone: vi.fn() })} />);
         const flatten = (style: unknown): Record<string, unknown> => (
             typeof style === 'function'
@@ -302,9 +304,16 @@ describe('SessionListFilterEditor panel', () => {
                 ? style.reduce<Record<string, unknown>>((result, value) => ({ ...result, ...flatten(value) }), {})
                 : (style as Record<string, unknown> | null) ?? {}
         );
-        const clear = flatten(screen.findByTestId('collection-filter-clear')?.props.style);
-        expect(Number(clear.minHeight ?? 0)).toBeGreaterThanOrEqual(44);
-        expect(flatten(screen.findByTestId('collection-filter-done')?.props.style).minHeight).toBe(44);
+        // A touch target is a hit area, not a drawn size (DESIGN.md): drawn height plus the invisible frame's reach.
+        const reach = (testID: string) => {
+            const control = screen.findByTestId(testID)!;
+            const frame = control.findAll((node) => (node.props as { dataSet?: { happierHitArea?: string } }).dataSet?.happierHitArea === 'true')[0];
+            const edges = flatten(frame?.props.style);
+            return { drawn: Number(flatten(control.props.style).minHeight ?? 0), reached: Number(flatten(control.props.style).minHeight ?? 0) - Number(edges.top ?? 0) - Number(edges.bottom ?? 0) };
+        };
+        expect(reach('collection-filter-clear').drawn).toBe(24);
+        expect(reach('collection-filter-clear').reached).toBeGreaterThanOrEqual(44);
+        expect(reach('collection-filter-done').reached).toBeGreaterThanOrEqual(44);
     });
 });
 

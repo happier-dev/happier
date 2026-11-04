@@ -120,11 +120,13 @@ describe('Session settings previews', () => {
             const screen = await renderScreen(kind === 'density'
                 ? <SessionListDensityPreview density="detailed" />
                 : <SessionListLayoutPreview layout="layout:projects" />);
-            const english = t('settingsSessionPages.preview.userMessage');
+            // Density draws placeholder rows; the layout preview draws the arrangement's sample sessions.
+            const probeKey = kind === 'density' ? 'settingsSessionPages.preview.userMessage' : 'personalize.sampleSessionReconnect';
+            const english = t(probeKey);
             expect(screen.getTextContent()).toContain(english);
             await act(async () => { store.getState().applySettingsLocal({ preferredLanguage: 'fr' }); });
             await vi.waitFor(() => expect(getPreferredLanguage()).toBe('fr'));
-            const french = t('settingsSessionPages.preview.userMessage');
+            const french = t(probeKey);
             expect(french).not.toBe(english);
             await vi.waitFor(() => expect(screen.getTextContent()).toContain(french));
             expect(screen.getTextContent()).not.toContain(english);
@@ -167,13 +169,14 @@ describe('Session settings previews', () => {
             const text = () => screen.findAllByType('Text')[0];
             const detailedSize = StyleSheet.flatten(text().props.style).fontSize;
             expect(detailedSize).toBeGreaterThan(0);
-            expect(screen.getTextContent()).toContain('~/website');
+            expect(screen.getTextContent()).toContain('website');
 
             await screen.update(<>
                 <SessionListDensityPreview density="narrow" />
-                <SessionListLayoutPreview layout="layout:active_inactive" />
+                <SessionListLayoutPreview layout="layout:recent_activity" />
             </>);
-            expect(screen.getTextContent()).not.toContain('~/website');
+            expect(screen.getTextContent()).not.toContain('website');
+            expect(screen.getTextContent()).toContain((await import('@/text')).t('sessionHistory.today'));
             const originalSize = StyleSheet.flatten(text().props.style).fontSize;
             expect(originalSize).toBeGreaterThan(0);
             expect(originalSize).toBeLessThan(detailedSize);
@@ -200,7 +203,6 @@ describe('Session settings previews', () => {
                 <listPreviews.SessionListDensityPreview density="narrow" />
                 <listPreviews.SessionListLayoutPreview layout="layout:projects" />
                 <listPreviews.SessionListLayoutPreview layout="layout:recent_activity" />
-                <listPreviews.SessionListLayoutPreview layout="layout:active_inactive" />
                 <previews.TranscriptLayoutPreview layout="linear" />
                 <previews.TranscriptLayoutPreview layout="turns" />
                 <previews.ThinkingDisplayPreview mode="inline_summary" inlineChrome="plain" />
@@ -209,7 +211,7 @@ describe('Session settings previews', () => {
                 <previews.ThinkingDisplayPreview mode="hidden" inlineChrome="plain" />
                 <previews.ToolStylePreview style="cards" />
                 <previews.ToolStylePreview style="activity_feed" />
-                <previews.ComposerActionBarPreview layout="collapsed" />
+                <previews.ComposerActionBarPreview layout="auto" />
                 <previews.ComposerChipDensityPreview density="icons" />
                 <previews.EmbeddedChatPreview />
             </>,

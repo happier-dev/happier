@@ -1,35 +1,9 @@
 import type { SessionListRenderableSession } from './sessionListRenderable';
 import { didSessionListRenderableStructuralFieldsChange } from './sessionListRenderable';
 import { resolveSessionListRenderableMeaningfulActivityAt } from './sessionListRenderableSorting';
-import {
-    resolveSessionListGroupingModes,
-    type SessionListGroupingMode,
-    type SessionListSectionMode,
-} from './resolveSessionListGroupingModes';
-
 export type SessionListIndexRebuildSettings = Readonly<{
-    activeGroupingV1?: SessionListGroupingMode;
-    inactiveGroupingV1?: SessionListGroupingMode;
-    sectionModeV1?: SessionListSectionMode;
+    layoutV1?: 'projects' | 'recent_activity';
 }>;
-
-function doesSessionMeaningfulActivityAffectSessionListIndex(
-    session: SessionListRenderableSession,
-    settings: SessionListIndexRebuildSettings | null | undefined,
-): boolean {
-    if (!settings) {
-        return false;
-    }
-
-    const groupingModes = resolveSessionListGroupingModes(settings);
-    if (groupingModes.sectionMode === 'single') {
-        return groupingModes.activeGrouping === 'date';
-    }
-
-    return session.active
-        ? groupingModes.activeGrouping === 'date'
-        : groupingModes.inactiveGrouping === 'date';
-}
 
 export function shouldRebuildSessionListIndexForRenderableChange(
     previous: SessionListRenderableSession | undefined,
@@ -47,10 +21,7 @@ export function shouldRebuildSessionListIndexForRenderableChange(
         return false;
     }
 
-    return (
-        doesSessionMeaningfulActivityAffectSessionListIndex(previous, settings)
-        || doesSessionMeaningfulActivityAffectSessionListIndex(next, settings)
-    );
+    return settings?.layoutV1 === 'recent_activity';
 }
 
 export function shouldRebuildSessionListIndexForRowStateChange(

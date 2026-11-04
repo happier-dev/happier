@@ -1,4 +1,4 @@
-export const SESSION_LIST_PLACEMENT_MODE_VALUES = ['off', 'global', 'withinGroups'] as const;
+export const SESSION_LIST_PLACEMENT_MODE_VALUES = ['off', 'global'] as const;
 
 export type SessionListPlacementMode = typeof SESSION_LIST_PLACEMENT_MODE_VALUES[number];
 
@@ -25,13 +25,6 @@ export type SessionListAttentionPlacementReason =
     | 'standing'
     | 'reminder';
 
-/** Ordering survives acknowledgement without replaying the resolved status on the row. */
-export type SessionListAttentionPlacementOrdering = Readonly<{
-    reason: SessionListAttentionPlacementReason;
-    timestamp: number;
-}>;
-export type SessionListRetainedAttentionPlacement = SessionListAttentionPlacementOrdering & Readonly<{ key: string }>;
-
 /**
  * Item-level projection of a 'working' placement: 'working' means live
  * foreground working signals, and 'working-retained' means the session
@@ -53,5 +46,5 @@ export function normalizeSessionListWorkingPlacementMode(value: unknown): Sessio
 }
 
 export function normalizeSessionListPlacementMode(value: unknown): SessionListPlacementMode {
-    return value === 'global' || value === 'withinGroups' ? value : 'off';
+    return value === 'global' ? 'global' : 'off';
 }

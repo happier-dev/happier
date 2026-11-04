@@ -101,8 +101,7 @@ describe('buildSessionListViewData (project grouping)', () => {
         };
 
         const list = buildSessionListViewData(sessions, machines, {
-            activeGroupingV1: 'project',
-            inactiveGroupingV1: 'project',
+            layoutV1: 'projects',
         });
 
         const projectHeaders = list.filter(isProjectHeader);
@@ -153,8 +152,7 @@ describe('buildSessionListViewData (project grouping)', () => {
         };
 
         const list = buildSessionListViewData(sessions, machines, {
-            activeGroupingV1: 'project',
-            inactiveGroupingV1: 'project',
+            layoutV1: 'projects',
         });
 
         const projectHeaders = list.filter((item): item is Extract<typeof item, { type: 'header' }> =>
@@ -195,8 +193,7 @@ describe('buildSessionListViewData (project grouping)', () => {
         };
 
         const list = buildSessionListViewData(sessions, machines, {
-            activeGroupingV1: 'project',
-            inactiveGroupingV1: 'project',
+            layoutV1: 'projects',
         });
 
         const headers = list.filter(isProjectHeader);
@@ -238,8 +235,7 @@ describe('buildSessionListViewData (project grouping)', () => {
         };
 
         const list = buildSessionListViewData(sessions, machines, {
-            activeGroupingV1: 'project',
-            inactiveGroupingV1: 'project',
+            layoutV1: 'projects',
             serverScope: { serverId: 's' },
         });
 

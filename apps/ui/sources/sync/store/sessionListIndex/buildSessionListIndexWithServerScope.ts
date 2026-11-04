@@ -54,9 +54,7 @@ type BuildSessionListIndexWithServerScopeParams = Readonly<{
     sessionRecords?: Record<string, Session>;
     machines: Record<string, MachineDisplayRenderable>;
     machineRecords?: Record<string, Machine>;
-    activeGroupingV1?: 'project' | 'date';
-    inactiveGroupingV1?: 'project' | 'date';
-    sectionModeV1?: 'activity' | 'single';
+    layoutV1?: 'projects' | 'recent_activity';
     getProjectForSession?: (sessionId: string, serverId?: string | null) => ProjectLookupResult;
     previousIndex?: ReadonlyArray<SessionListIndexItem> | null;
     serverScope: Readonly<{
@@ -90,9 +88,7 @@ export function buildSessionListIndexWithServerScope(
         reachableSessions,
         params.machines,
         {
-            activeGroupingV1: params.activeGroupingV1,
-            inactiveGroupingV1: params.inactiveGroupingV1,
-            sectionModeV1: params.sectionModeV1,
+            layoutV1: params.layoutV1,
             sessionTargetState: params.sessionRecords && params.machineRecords
                 ? {
                     sessions: params.sessionRecords,

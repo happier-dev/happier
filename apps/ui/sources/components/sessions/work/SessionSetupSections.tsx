@@ -16,7 +16,7 @@ import { SessionWritesHereSection } from '@/components/workflows/triggers/Sessio
 import { useSessionViewShellSession } from '@/components/sessions/shell/sessionViewStableSession';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
-import { storage, useActiveServerAccountScope, useLocalSetting } from '@/sync/domains/state/storage';
+import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { t } from '@/text';
 
@@ -29,8 +29,8 @@ import { SessionVoiceSection } from './voice/SessionVoiceSection';
 import {
   WorkSectionPlacementProvider,
   WorkSectionSetupDisclosureProvider,
-  type WorkSectionSetupDisclosure,
 } from './WorkSection';
+import { useSessionSetupDisclosure } from './useSessionSetupDisclosure';
 
 /** Where `/session/[id]/triggers` brings the person: the Triggers section of the Session's Info page. */
 export const SESSION_SETUP_TRIGGERS_ANCHOR_ID = 'session-setup-triggers';
@@ -104,29 +104,6 @@ export const SessionSetupSections = React.memo(function SessionSetupSections(
     </ItemGroup>
   );
 });
-
-type SessionSetupSectionKey = keyof NonNullable<ReturnType<typeof useSessionSetupExpandedSections>>;
-
-function useSessionSetupExpandedSections() {
-  return useLocalSetting('sessionInfoExpandedSectionsV1');
-}
-
-/**
- * Which Setup rows are open, remembered on this device for every Session (lab csinfo I2):
- * Instructions starts open, the rest closed. Written only when the person opens or closes a row.
- */
-function useSessionSetupDisclosure(): WorkSectionSetupDisclosure {
-  const remembered = useSessionSetupExpandedSections();
-  return React.useMemo(() => ({
-    isExpanded: (key: string) => remembered[key as SessionSetupSectionKey] ?? key === 'instructions',
-    setExpanded: (key: string, expanded: boolean) => {
-      const current = storage.getState().localSettings.sessionInfoExpandedSectionsV1;
-      storage.getState().applyLocalSettings({
-        sessionInfoExpandedSectionsV1: { ...current, [key]: expanded },
-      });
-    },
-  }), [remembered]);
-}
 
 /**
  * Habits (lab csinfo I2): what starts from this session, then what writes into it, as one section,

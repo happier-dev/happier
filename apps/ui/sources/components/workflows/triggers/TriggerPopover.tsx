@@ -102,6 +102,7 @@ type TriggerPopoverBaseProps = Readonly<{
     /** A retained manual Automation has no firing definition; saving must not invent one, and Delete removes the whole set. */
     manual?: boolean;
     onRunNow?: () => Promise<void>;
+    onToggleEnabled?: Readonly<{ enabled: boolean; onPress: () => void }>;
     onHistory?: () => void;
     /** A new trigger's starting When (the "When this turn finishes…" entry binds it to that turn). */
     initialWhen?: TriggerWhenValue;
@@ -463,6 +464,9 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
                                             }}
                                         />
                                     ) : null}
+                                    {props.onToggleEnabled ? <RoundButton size="small" display="inverted" testID={`${props.testID}-toggle`}
+                                        title={t(props.onToggleEnabled.enabled ? 'workflows.triggers.popover.turnOff' : 'workflows.triggers.popover.turnOn')}
+                                        disabled={pending} onPress={props.onToggleEnabled.onPress} /> : null}
                                     {props.onDelete ? (
                                         <View style={styles.footEnd}>
                                             <RoundButton size="small" display="destructive"

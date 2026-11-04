@@ -7,6 +7,7 @@ import type { SessionListQueryHomeState } from './sessionListQueryController';
 
 import { normalizeTrimmedStringArrayWithSharedEmpty } from './normalizeTrimmedStringArrayWithSharedEmpty';
 import { normalizeTrimmedString } from './normalizeTrimmedString';
+import { buildSessionListIndexNodeId } from '@/sync/domains/sessionList/sessionListIndexIdentity';
 
 type ApplySessionListPresentationParams = Readonly<{
     enabled: boolean;
@@ -409,6 +410,38 @@ export function resolveVisibleSessionListIndexSummary(
 
 function stripSyntheticServerHeaders(data: ReadonlyArray<SessionListIndexItem>): SessionListIndexItem[] {
     return data.filter((item) => !(item.type === 'header' && item.headerKind === 'server'));
+}
+
+/** Restore admitted Home/primary bands after group moves without changing logical collapse keys. */
+export function restoreSessionListContextHeaders(
+    ordered: SessionListIndexItem[],
+    presented: readonly SessionListIndexItem[],
+): SessionListIndexItem[] {
+    const headers = new Map<string, Extract<SessionListIndexItem, { type: 'header' }>>();
+    const sessions = new Map<string, Extract<SessionListIndexItem, { type: 'header' }>>();
+    for (const item of presented) {
+        if (item.type !== 'header' || !item.serverId) continue;
+        if (item.headerKind === 'server' && !headers.has(item.serverId)) headers.set(item.serverId, item);
+        if (item.headerKind === 'sessions' && !sessions.has(item.serverId)) sessions.set(item.serverId, item);
+    }
+    if (headers.size === 0 && sessions.size === 0) return ordered;
+    const seenHomes = new Set<string>();
+    const output: SessionListIndexItem[] = [];
+    let previousHome: string | undefined;
+    for (const item of ordered) {
+        if (item.type === 'header' && (item.headerKind === 'server' || item.headerKind === 'sessions')) continue;
+        const home = item.serverId;
+        if (home && home !== previousHome) {
+            const presentationAnchorGroupKey = item.groupKey ?? buildSessionListIndexNodeId(item);
+            for (const header of [headers.get(home), sessions.get(home)]) {
+                if (header) output.push(seenHomes.has(home) ? { ...header, presentationAnchorGroupKey } : header);
+            }
+            seenHomes.add(home);
+            previousHome = home;
+        }
+        output.push(item);
+    }
+    return output;
 }
 
 type VisibleServerCoverage = Readonly<{

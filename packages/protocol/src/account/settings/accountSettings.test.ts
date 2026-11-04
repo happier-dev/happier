@@ -28,6 +28,45 @@ import { MAX_PLUGIN_IDENTIFIER_BYTES } from '../../plugins/pluginId.js';
 import { AccountSettingsPersistedObjectSchema } from './accountSettingsPersistedObject.js';
 import { readRetainedConnectedAccountCatalogRecordV1 } from '../../connect/connectedAccountCatalogV1.js';
 
+describe('recording Session-list privacy preference', () => {
+  it('defaults retained settings to no hidden tags and retains deliberate Home-local choices', () => {
+    expect(accountSettingsParse({}).sessionListHiddenTagIdsWhileRecording).toEqual({});
+    expect(accountSettingsParse({ sessionListHiddenTagIdsWhileRecording: { home: ['private'] } })
+      .sessionListHiddenTagIdsWhileRecording).toEqual({ home: ['private'] });
+  });
+});
+
+describe('Session list scalar preference ingress', () => {
+  it('defaults to Projects, mirrored attention, context and automatic identity', () => {
+    expect(accountSettingsParse({})).toMatchObject({ sessionListLayoutV1: 'projects',
+      sessionListAttentionPlacementV1: 'both', sessionListRowContextV1: true, sessionListIdentityDisplay: 'auto' });
+  });
+  it.each([
+    [{ sessionListSectionModeV1: 'single', sessionListActiveGroupingV1: 'date' }, 'recent_activity'],
+    [{ sessionListSectionModeV1: 'activity', sessionListActiveGroupingV1: 'date' }, 'projects'],
+    [{ sessionListLayoutV1: 'projects', sessionListSectionModeV1: 'single', sessionListActiveGroupingV1: 'date' }, 'projects'],
+  ])('translates the predecessor layout once before defaults: %j', (raw, expected) => {
+    expect(accountSettingsParse(raw)).toHaveProperty('sessionListLayoutV1', expected);
+  });
+  it.each([
+    [{}, 'both'],
+    [{ sessionListAttentionPromotionModeV1: 'off', sessionListWorkingPlacementModeV1: 'off' }, 'inPlace'],
+    [{ sessionListAttentionPromotionModeV1: 'global', sessionListWorkingPlacementModeV1: 'global' }, 'top'],
+    [{ sessionListAttentionPromotionModeV1: 'global' }, 'both'],
+    [{ sessionListAttentionPromotionModeV1: 'withinGroups', sessionListWorkingPlacementModeV1: 'off' }, 'both'],
+    [{ sessionListAttentionPlacementV1: 'inPlace', sessionListAttentionPromotionModeV1: 'global', sessionListWorkingPlacementModeV1: 'global' }, 'inPlace'],
+  ])('preserves authored placement intent without injecting a missing pair: %j', (raw, expected) => {
+    expect(accountSettingsParse(raw)).toHaveProperty('sessionListAttentionPlacementV1', expected);
+  });
+  it('preserves authored identity and refuses new mutations of retired preferences', () => {
+    for (const identity of ['avatar', 'agentLogo', 'none', 'project', 'projectWithAgent', 'agentWithTrailingProject']) {
+      expect(accountSettingsParse({ sessionListIdentityDisplay: identity })).toHaveProperty('sessionListIdentityDisplay', identity);
+    }
+    expect(Object.hasOwn(ACCOUNT_SETTING_DEFINITIONS, 'sessionListSectionModeV1')).toBe(false);
+    expect(accountSettingsParse({ sessionListSectionModeV1: 'single' })).not.toHaveProperty('sessionListSectionModeV1');
+  });
+});
+
 describe('background-work attention preference', () => {
   it('defaults retained Accounts to working status and admits each explicit presentation choice', () => {
     expect(accountSettingsParse({})).toHaveProperty('sessionListBackgroundWorkAttentionModeV1', 'keepWorking');
@@ -474,8 +513,8 @@ describe('accountSettings', () => {
   });
 
   it('defaults an omitted session-list layout to the single Projects view', () => {
-    expect(accountSettingsParse({}).sessionListSectionModeV1).toBe('single');
-    expect(accountSettingsParse({ sessionListSectionModeV1: 'activity' }).sessionListSectionModeV1).toBe('activity');
+    expect(accountSettingsParse({}).sessionListLayoutV1).toBe('projects');
+    expect(accountSettingsParse({ sessionListSectionModeV1: 'activity' }).sessionListLayoutV1).toBe('projects');
   });
 
   it('defaults Happier run instructions on while retaining an explicit opt-out', () => {

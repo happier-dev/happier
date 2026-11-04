@@ -49,8 +49,7 @@ describe('shouldRebuildSessionListIndexForRowStateChange', () => {
         };
 
         expect(shouldRebuildSessionListIndexForRowStateChange(previous, next, {
-            inactiveGroupingV1: 'date',
-            sectionModeV1: 'activity',
+            layoutV1: 'recent_activity',
         })).toBe(true);
     });
 
@@ -63,7 +62,7 @@ describe('shouldRebuildSessionListIndexForRowStateChange', () => {
         };
 
         expect(shouldRebuildSessionListIndexForRowStateChange(previous, next, {
-            inactiveGroupingV1: 'date',
+            layoutV1: 'recent_activity',
         })).toBe(false);
     });
 
@@ -76,7 +75,7 @@ describe('shouldRebuildSessionListIndexForRowStateChange', () => {
         };
 
         expect(shouldRebuildSessionListIndexForRowStateChange(previous, next, {
-            inactiveGroupingV1: 'project',
+            layoutV1: 'projects',
         })).toBe(false);
     });
 

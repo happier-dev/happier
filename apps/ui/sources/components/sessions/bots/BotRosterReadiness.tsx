@@ -6,7 +6,7 @@ import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
 import { presentSessionReadiness } from '@/components/sessions/model/sessionReadinessPresentation';
 import { useSessionReadiness } from '@/components/sessions/model/useSessionReadiness';
 import { SessionReadinessChecklist } from '@/components/sessions/readiness/SessionReadinessChecklist';
-import { SessionListCompactRowFooter } from '@/components/sessions/shell/row/SessionListRowPresentation';
+import { CollectionRowFooter } from '@/components/ui/lists/collection/CollectionRowContent';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { Text } from '@/components/ui/text/Text';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
@@ -29,13 +29,12 @@ export const BotRosterReadiness = React.memo(function BotRosterReadiness(props: 
   const bindings = useServerCredentialAccountScopeBindings(serverIds);
   const binding = bindings.get(props.serverId) ?? null;
   if (!binding) return null;
-  return <BotRosterReadinessLine accountLifetime={binding} sessionId={props.sessionId} separator={props.separator} />;
+  return <BotRosterReadinessLine accountLifetime={binding} sessionId={props.sessionId} />;
 });
 
 function BotRosterReadinessLine(props: Readonly<{
   accountLifetime: ServerAccountScopeLifetime;
   sessionId: string;
-  separator: boolean;
 }>) {
   const [demanded, setDemanded] = React.useState(false);
   const state = useSessionReadiness({ accountLifetime: props.accountLifetime, sessionId: props.sessionId, enabled: demanded });
@@ -54,7 +53,7 @@ function BotRosterReadinessLine(props: Readonly<{
   const failed = demanded && !state.readiness && !state.loading && state.unavailableReason !== null;
   const offerCheck = !demanded || failed;
   return (
-    <SessionListCompactRowFooter separator={props.separator} testID={`bots-roster.readiness:${props.sessionId}`}>
+    <CollectionRowFooter testID={`bots-roster.readiness:${props.sessionId}`}>
       <View style={styles.line} accessibilityLiveRegion="polite">
         <Text
           variant="meta"
@@ -81,7 +80,7 @@ function BotRosterReadinessLine(props: Readonly<{
           testID={`bots-roster.readiness-checklist:${props.sessionId}`}
         />
       ) : null}
-    </SessionListCompactRowFooter>
+    </CollectionRowFooter>
   );
 }
 

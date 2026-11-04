@@ -159,7 +159,6 @@ describe('historical shares withheld by the Home', () => {
                 summary: { sessionsReady: true, sessionCount: 0 },
                 visibleSessionListIndex: [],
                 hasHiddenInactiveSessions: false,
-                folderFocus: null,
                 folderFeatureEnabledServerIds: [],
                 showLoading: false,
                 showEmptyState: false,

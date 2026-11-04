@@ -2,6 +2,11 @@ import { describe, expect, it, vi } from 'vitest';
 import type { Machine, Session } from '@/sync/domains/state/storageTypes';
 import { t } from '@/text';
 import { buildSessionListViewData, type SessionListViewItem } from './sessionListViewData';
+import * as projectResolution from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { buildSessionListRenderableFromSession } from './sessionListRenderable';
+import { computeVisibleSessionListProjection } from './computeVisibleSessionListIndex';
+import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 
 type SessionListViewHeader = Extract<SessionListViewItem, { type: 'header' }>;
 
@@ -61,10 +66,41 @@ function makeMachine(partial: Partial<Machine> & Pick<Machine, 'id'>): Machine {
 }
 
 describe('buildSessionListViewData', () => {
+    it('constructs no Project resolvers for unchanged admitted rows and one for a changed census', () => {
+        const sessions = Object.fromEntries(Array.from({ length: 1_001 }, (_, index) => {
+            const row = buildSessionListRenderableFromSession(createSessionFixture({ id: `s-${index}`, serverId: 'home',
+                projectKey: 'project', metadata: { path: '/repo', machineId: 'machine', host: 'work' } }));
+            return [row.id, row];
+        }));
+        const source: SessionListIndexItem[] = Object.values(sessions).map(row => ({ type: 'session', serverId: 'home', sessionId: row.id }));
+        const workspaceRefs = [{ id: 'workspace', serverId: 'home', machineId: 'machine', rootPath: '/repo', projectKey: 'project',
+            createdAtMs: 0, label: null, lastOpenedAtMs: null }];
+        const params = { source, resolveSessionRow: (_home: string | null | undefined, id: string) => sessions[id] ?? null,
+            workspaceRefs, workflowRuns: [], hideInactiveSessions: false, pinnedSessionKeysV1: [], sessionListGroupOrderV1: {},
+            presentation: { enabled: false, presentation: 'grouped' as const }, nowMs: 1_000 };
+        const first = computeVisibleSessionListProjection(params);
+        // Transparent cost observation: the real constructor and all domain logic still run.
+        const constructions = vi.spyOn(projectResolution, 'createSessionProjectKeyResolverV1');
+        try {
+            const repeated = computeVisibleSessionListProjection({ ...params, previousMembership: first.membership });
+            const rows = buildSessionListViewData(sessions, {}, { layoutV1: 'projects', workspaceRefs,
+                serverScope: { serverId: 'home' }, sessionProjectKeyResolver: repeated.membership.projectKeyResolver });
+            expect(rows.filter(row => row.type === 'session')).toHaveLength(1_001);
+            expect(constructions).toHaveBeenCalledTimes(0);
+
+            const changedRefs = [{ ...workspaceRefs[0]!, rootPath: '/moved' }];
+            const changed = computeVisibleSessionListProjection({ ...params, workspaceRefs: changedRefs, previousMembership: repeated.membership });
+            buildSessionListViewData(sessions, {}, { layoutV1: 'projects', workspaceRefs: changedRefs,
+                serverScope: { serverId: 'home' }, sessionProjectKeyResolver: changed.membership.projectKeyResolver });
+            expect(constructions).toHaveBeenCalledTimes(1);
+        } finally {
+            constructions.mockRestore();
+        }
+    });
     it('reuses a shared empty array when there are no visible sessions', () => {
         const valuesSpy = vi.spyOn(Object, 'values');
         const first = buildSessionListViewData({}, {}, {});
-        const second = buildSessionListViewData({}, {}, { activeGroupingV1: 'date' });
+        const second = buildSessionListViewData({}, {}, { layoutV1: 'recent_activity' });
 
         expect(first).toBe(second);
         expect(first).toEqual([]);
@@ -153,7 +189,7 @@ describe('buildSessionListViewData', () => {
         }
     });
 
-    it('groups inactive date rows by meaningful activity instead of technical updates', () => {
+    it('groups Recent date rows by meaningful activity instead of technical updates', () => {
         vi.useFakeTimers();
         vi.setSystemTime(new Date(2026, 4, 17, 18, 0));
         const technicalUpdateToday = new Date(2026, 4, 17, 14, 0).getTime();
@@ -183,8 +219,7 @@ describe('buildSessionListViewData', () => {
                     metadata: { host: 'm1', platform: 'darwin', happyCliVersion: '0.0.0', happyHomeDir: '/h', homeDir: '/home/u' },
                 }),
             }, {
-                inactiveGroupingV1: 'date',
-                sectionModeV1: 'activity',
+                layoutV1: 'recent_activity',
             });
 
             const summary = data.map((item) => {
@@ -193,7 +228,7 @@ describe('buildSessionListViewData', () => {
             });
 
             expect(summary).toEqual([
-                'header:Inactive',
+                'header:Sessions',
                 'header:Today',
                 'session:actualToday',
                 'header:Yesterday',
@@ -266,9 +301,7 @@ describe('buildSessionListViewData', () => {
         };
 
         const data = buildSessionListViewData(sessions, { [machine.id]: machine }, {
-            activeGroupingV1: 'project',
-            inactiveGroupingV1: 'date',
-            sectionModeV1: 'single',
+            layoutV1: 'projects',
         });
 
         const summary = data.map((item) => {
@@ -282,11 +315,11 @@ describe('buildSessionListViewData', () => {
 
         expect(summary).toEqual([
             'header:sessions:Sessions',
+            'header:project:~/repoB',
+            'session:other:inactive:project:no-path',
             'header:project:~/repoA',
             'session:active:active:project:no-path',
             'session:inactive:inactive:project:no-path',
-            'header:project:~/repoB',
-            'session:other:inactive:project:no-path',
         ]);
     });
 
@@ -330,7 +363,7 @@ describe('buildSessionListViewData', () => {
             };
 
             const first = buildSessionListViewData(sessions, { [machine.id]: machine }, {});
-            const second = buildSessionListViewData(sessions, { [machine.id]: machine }, { activeGroupingV1: 'date' });
+            const second = buildSessionListViewData(sessions, { [machine.id]: machine }, { layoutV1: 'recent_activity' });
 
             expect(first).toBe(second);
             expect(first).toEqual([]);
@@ -340,7 +373,7 @@ describe('buildSessionListViewData', () => {
         }
     });
 
-    it('groups inactive sessions by machine+path when enabled', () => {
+    it('groups unassociated active and inactive Sessions together by machine and path', () => {
         const machineA = makeMachine({ id: 'm1', metadata: { host: 'm1', platform: 'darwin', happyCliVersion: '0.0.0', happyHomeDir: '/h', homeDir: '/home/u' } });
         const machineB = makeMachine({ id: 'm2', metadata: { host: 'm2', platform: 'darwin', happyCliVersion: '0.0.0', happyHomeDir: '/h', homeDir: '/home/u' } });
 
@@ -378,8 +411,7 @@ describe('buildSessionListViewData', () => {
         };
 
         const data = buildSessionListViewData(sessions, machines, {
-            inactiveGroupingV1: 'project',
-            sectionModeV1: 'activity',
+            layoutV1: 'projects',
         });
 
         const summary = data.map((item) => {
@@ -392,15 +424,13 @@ describe('buildSessionListViewData', () => {
         });
 
         expect(summary).toEqual([
-            'header:active:Active',
-            'header:project:~/repoA',
-            'session:active:active:no-path',
-            'header:inactive:Inactive',
-            'header:project:~/repoB',
-            'session:b1:inactive:no-path',
+            'header:sessions:Sessions',
             'header:project:~/repoA',
             'session:a2:inactive:no-path',
             'session:a1:inactive:no-path',
+            'session:active:active:no-path',
+            'header:project:~/repoB',
+            'session:b1:inactive:no-path',
         ]);
     });
 
@@ -595,7 +625,7 @@ describe('buildSessionListViewData', () => {
             sessions,
             { [machine.id]: machine },
             {
-                activeGroupingV1: 'project',
+                layoutV1: 'projects',
                 serverScope: { serverId: 'server-1' },
                 sessionTargetState: {
                     sessions,
@@ -667,70 +697,8 @@ describe('buildSessionListViewData', () => {
         }
     });
 
-    it('groups inactive sessions by meaningful activity date while grouping active sessions by project', () => {
-        vi.useFakeTimers();
-        vi.setSystemTime(new Date(2026, 1, 17, 12, 0, 0));
 
-        try {
-            const machine = makeMachine({
-                id: 'm1',
-                metadata: { host: 'm1', platform: 'darwin', happyCliVersion: '0.0.0', happyHomeDir: '/h', homeDir: '/home/u' },
-            });
-
-            const sessions: Record<string, Session> = {
-                act1: makeSession({
-                    id: 'act1',
-                    active: true,
-                    createdAt: new Date(2026, 1, 17, 8, 0, 0).getTime(),
-                    updatedAt: new Date(2026, 1, 17, 8, 0, 0).getTime(),
-                    metadata: { machineId: 'm1', path: '/home/u/repoA', homeDir: '/home/u', host: 'm1', version: '0.0.0', flavor: 'claude' },
-                }),
-                act2: makeSession({
-                    id: 'act2',
-                    active: true,
-                    createdAt: new Date(2026, 1, 17, 9, 0, 0).getTime(),
-                    updatedAt: new Date(2026, 1, 17, 9, 0, 0).getTime(),
-                    metadata: { machineId: 'm1', path: '/home/u/repoB', homeDir: '/home/u', host: 'm1', version: '0.0.0', flavor: 'claude' },
-                }),
-                in1: makeSession({
-                    id: 'in1',
-                    createdAt: new Date(2026, 1, 16, 7, 0, 0).getTime(),
-                    updatedAt: new Date(2026, 1, 17, 7, 0, 0).getTime(),
-                    metadata: { machineId: 'm1', path: '/home/u/repoC', homeDir: '/home/u', host: 'm1', version: '0.0.0', flavor: 'claude' },
-                }),
-            };
-
-            const data = buildSessionListViewData(sessions, { [machine.id]: machine }, {
-                activeGroupingV1: 'project',
-                inactiveGroupingV1: 'date',
-                sectionModeV1: 'activity',
-            });
-
-            const summary = data.map((item) => {
-                switch (item.type) {
-                    case 'header':
-                        return `header:${item.headerKind ?? 'unknown'}:${item.title}`;
-                    case 'session':
-                        return `session:${item.session.id}:${item.section ?? 'unknown'}:${item.variant ?? 'default'}`;
-                }
-            });
-
-            expect(summary).toEqual([
-                'header:active:Active',
-                'header:project:~/repoB',
-                'session:act2:active:no-path',
-                'header:project:~/repoA',
-                'session:act1:active:no-path',
-                'header:inactive:Inactive',
-                'header:date:Yesterday',
-                'session:in1:inactive:default',
-            ]);
-        } finally {
-            vi.useRealTimers();
-        }
-    });
-
-    it('uses the same project group key across active and inactive sections for the same workspace', () => {
+    it('uses one project group for active and inactive Sessions in the same workspace', () => {
         const machine = makeMachine({
             id: 'm1',
             metadata: { host: 'm1', platform: 'darwin', happyCliVersion: '0.0.0', happyHomeDir: '/h', homeDir: '/home/u' },
@@ -751,8 +719,7 @@ describe('buildSessionListViewData', () => {
                 metadata: { machineId: 'm1', path: '/home/u/repo', homeDir: '/home/u', host: 'm1', version: '0.0.0', flavor: 'claude' },
             }),
         }, { [machine.id]: machine }, {
-            inactiveGroupingV1: 'project',
-            sectionModeV1: 'activity',
+            layoutV1: 'projects',
         });
 
         const projectGroupKeys = data.flatMap((item) => (
@@ -761,12 +728,12 @@ describe('buildSessionListViewData', () => {
                 : []
         ));
 
-        expect(projectGroupKeys).toHaveLength(2);
+        expect(projectGroupKeys).toHaveLength(1);
         expect(new Set(projectGroupKeys).size).toBe(1);
         expect(projectGroupKeys[0]).toMatch(/^\[/);
     });
 
-    it('keeps delimiter-adversarial Machine and path tuples as independent project groups', () => {
+    it('keeps exact delimiter-adversarial groups while retaining the accepted predecessor order encoding', () => {
         const machineA = makeMachine({ id: 'm', metadata: { host: 'a', platform: 'darwin', happyCliVersion: '0.0.0', happyHomeDir: '/h', homeDir: '/' } });
         const machineB = makeMachine({ id: 'm:/repo', metadata: { host: 'b', platform: 'darwin', happyCliVersion: '0.0.0', happyHomeDir: '/h', homeDir: '/' } });
         const data = buildSessionListViewData({
@@ -779,18 +746,19 @@ describe('buildSessionListViewData', () => {
                 metadata: { machineId: 'm:/repo', path: 'x', host: 'b', version: '0.0.0', flavor: 'claude' },
             }),
         }, { [machineA.id]: machineA, [machineB.id]: machineB }, {
-            sectionModeV1: 'single',
-            activeGroupingV1: 'project',
+            layoutV1: 'projects',
             serverScope: { serverId: 'home-a' },
         });
 
         const headers = data.filter(isProjectHeader);
         expect(headers).toHaveLength(2);
         expect(new Set(headers.map((item) => item.groupKey)).size).toBe(2);
-        expect(new Set(headers.map((item) => item.workspaceKey)).size).toBe(2);
+        // R9-3.2 retains the predecessor FNV serialization, including its ambiguous inputs.
+        expect(new Set(headers.map((item) => item.workspaceKey)).size).toBe(1);
+        expect(headers.every((item) => /^wl_[0-9a-f]{8}$/.test(item.workspaceKey ?? ''))).toBe(true);
     });
 
-    it('keeps the confirmed legacy FNV collision pair as independent collapse and order targets', () => {
+    it('keeps exact groups distinct without changing the accepted FNV collision serialization', () => {
         const machineA = makeMachine({ id: 'm29645', metadata: { host: 'a', platform: 'darwin', happyCliVersion: '0.0.0', happyHomeDir: '/h', homeDir: '/' } });
         const machineB = makeMachine({ id: 'm41845', metadata: { host: 'b', platform: 'darwin', happyCliVersion: '0.0.0', happyHomeDir: '/h', homeDir: '/' } });
         const data = buildSessionListViewData({
@@ -803,18 +771,18 @@ describe('buildSessionListViewData', () => {
                 metadata: { machineId: 'm41845', path: '/repo', homeDir: '/', host: 'b', version: '0.0.0', flavor: 'claude' },
             }),
         }, { [machineA.id]: machineA, [machineB.id]: machineB }, {
-            sectionModeV1: 'single',
-            activeGroupingV1: 'project',
+            layoutV1: 'projects',
             serverScope: { serverId: 'home-a' },
         });
 
         const headers = data.filter(isProjectHeader);
         expect(headers).toHaveLength(2);
         expect(new Set(headers.map((item) => item.groupKey)).size).toBe(2);
-        expect(new Set(headers.map((item) => item.workspaceKey)).size).toBe(2);
+        expect(new Set(headers.map((item) => item.workspaceKey)).size).toBe(1);
+        expect(headers.every((item) => /^wl_[0-9a-f]{8}$/.test(item.workspaceKey ?? ''))).toBe(true);
     });
 
-    it('includes exact Home identity in project collapse and persisted workspace-order keys', () => {
+    it('includes exact Home identity in project collapse keys', () => {
         const machine = makeMachine({ id: 'm1', metadata: { host: 'a', platform: 'darwin', happyCliVersion: '0.0.0', happyHomeDir: '/h', homeDir: '/' } });
         const buildForHome = (serverId: string) => buildSessionListViewData({
             session: makeSession({
@@ -822,18 +790,16 @@ describe('buildSessionListViewData', () => {
                 metadata: { machineId: 'm1', path: '/repo', homeDir: '/', host: 'a', version: '0.0.0', flavor: 'claude' },
             }),
         }, { [machine.id]: machine }, {
-            sectionModeV1: 'single',
-            activeGroupingV1: 'project',
+            layoutV1: 'projects',
             serverScope: { serverId },
         }).find(isProjectHeader);
 
         const homeA = buildForHome('home-a');
         const homeB = buildForHome('home-b');
         expect(homeA?.groupKey).not.toBe(homeB?.groupKey);
-        expect(homeA?.workspaceKey).not.toBe(homeB?.workspaceKey);
     });
 
-    it('admits directly shared sessions into the same base layout without an ownership partition', () => {
+    it('admits directly shared active and inactive Sessions into Recent without an ownership partition', () => {
         vi.useFakeTimers();
         vi.setSystemTime(new Date(2026, 1, 17, 12, 0, 0));
 
@@ -875,7 +841,7 @@ describe('buildSessionListViewData', () => {
             };
 
             const data = buildSessionListViewData(sessions, { [machine.id]: machine }, {
-                sectionModeV1: 'activity',
+                layoutV1: 'recent_activity',
             });
 
             const summary = data.map((item) => {
@@ -888,12 +854,10 @@ describe('buildSessionListViewData', () => {
             });
 
             expect(summary).toEqual([
-                'header:active:Active',
-                'header:project:~/shared-active',
-                'session:sharedActive:active:project',
-                'header:project:~/own-active',
-                'session:ownActive:active:project',
-                'header:inactive:Inactive',
+                'header:sessions:Sessions',
+                'header:date:Today',
+                'session:sharedActive:active:date',
+                'session:ownActive:active:date',
                 'header:date:Yesterday',
                 'session:sharedInactive:inactive:date',
                 'session:ownInactive:inactive:date',
@@ -927,8 +891,7 @@ describe('buildSessionListViewData', () => {
         };
 
         const data = buildSessionListViewData(sessions, { [machine.id]: machine }, {
-            sectionModeV1: 'single',
-            activeGroupingV1: 'project',
+            layoutV1: 'projects',
         });
 
         expect(data.map((item) => item.type === 'header'

@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { SessionListHeaderItem } from './sessionListHeaderItem';
-import { FolderGroupHeader, ProjectGroupHeader } from './sessionListChrome';
+import { SessionSectionHeader, ProjectGroupHeader } from './sessionListChrome';
 import { SessionListOrganizeModeProvider, useSessionListOrganizeMode } from './organize/SessionListOrganizeMode';
 import { useSessionListRowMoveActionHandlers } from './useSessionListRowMoveActionHandlers';
 import { treeRowId } from './drop-resolution/treeRowId';
@@ -73,7 +73,7 @@ describe('SessionListHeaderItem Organize source', () => {
                     <SessionListHeaderItem item={item} collapsedKeys={{}} projectHeaderViewModelByGroupKey={new Map()}
                         hasMultipleMachines={false} onOpenProject={vi.fn()} onCreateSessionFromWorkspaceScope={vi.fn()}
                         onAddFolderToWorkspace={vi.fn()} onRenameWorkspace={vi.fn()} onResetWorkspaceName={vi.fn()}
-                        onToggleCollapse={onPress} onFocusFolder={onPress}
+                        onToggleCollapse={onPress}
                         overlayShared={{ overlayVisible: { value: 0 }, overlayKind: { value: 0 }, overlayTop: { value: 0 },
                             overlayHeight: { value: 0 }, overlayLeft: { value: 0 }, overlayRight: { value: 0 }, overlayDepth: { value: 0 } }}
                         resolveDropResult={() => ({ result: { instruction: { kind: 'idle' }, visual: { kind: 'none' } }, geometry: { kind: 'none' } })}
@@ -82,7 +82,7 @@ describe('SessionListHeaderItem Organize source', () => {
             </InjectedAuthProvider>,
         );
         expect(screen.root.findAllByType(EntityDragGrip)).toHaveLength(organize ? 1 : 0);
-        const header = screen.root.find(matchesComponent(headerKind === 'folder' ? FolderGroupHeader : ProjectGroupHeader));
+        const header = screen.root.find(matchesComponent(headerKind === 'folder' ? SessionSectionHeader : ProjectGroupHeader));
         let wholeHeaderGesture = false;
         for (let ancestor = header.parent; ancestor; ancestor = ancestor.parent) {
             if (String(ancestor.type) === 'GestureDetector') wholeHeaderGesture = true;
@@ -100,6 +100,9 @@ describe('SessionListHeaderItem Organize source', () => {
             const getRowMoveActionHandlers = useSessionListRowMoveActionHandlers({
                 openMoveSheetForTreeRow: async () => {},
                 moveTreeRowToWorkspaceRoot: () => {},
+                readSectionMoveMenuItems: () => null,
+                moveTreeRowToSection: () => {},
+                readSpaceMembershipMenu: () => null,
                 moveTreeRowByKeyboard: (rowId, label, direction) => { writes.push({ rowId, label, direction }); },
             });
             return <InjectedAuthProvider credentials={{ token: 'test-token' }}>
@@ -116,7 +119,7 @@ describe('SessionListHeaderItem Organize source', () => {
             </InjectedAuthProvider>;
         }
         const screen = await renderScreen(<Header title="Planning" />);
-        const findHeader = () => screen.root.find(matchesComponent(headerKind === 'folder' ? FolderGroupHeader : ProjectGroupHeader));
+        const findHeader = () => screen.root.find(matchesComponent(headerKind === 'folder' ? SessionSectionHeader : ProjectGroupHeader));
         const first = findHeader().props;
         expect(typeof first.onMoveUp).toBe('function');
         const menuItems = screen.root.find(matchesComponent(DropdownMenu)).props.items;

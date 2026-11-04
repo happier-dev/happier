@@ -27,7 +27,6 @@ installSessionShellCommonModuleMocks({
 
 vi.mock('./sessionListChrome', () => ({
     SessionsListHeader: () => React.createElement('SessionsListHeader'),
-    SessionFolderFocusBreadcrumbs: () => React.createElement('SessionFolderFocusBreadcrumbs'),
 }));
 vi.mock('./NewSessionDraftsSection', () => ({
     NewSessionDraftsSection: (props: Record<string, unknown>) => React.createElement('NewSessionDraftsSection', {
@@ -66,9 +65,6 @@ describe('SessionListVirtualizedContent filtered no-results state', () => {
             renderItem: ({ item }: any) => React.createElement('Row', { testID: `row:${item.id}` }),
             rowExtraData: null,
             onStopScrollEventPropagationOnWeb: vi.fn(),
-            folderFocus: null,
-            onClearFolderFocus: vi.fn(),
-            onSelectFolderBreadcrumb: vi.fn(),
             filteredNoResultsMessage: 'directSessions.browseNoSearchResults',
         }));
 
@@ -88,9 +84,6 @@ describe('SessionListVirtualizedContent filtered no-results state', () => {
             renderItem: () => null,
             rowExtraData: null,
             onStopScrollEventPropagationOnWeb: vi.fn(),
-            folderFocus: null,
-            onClearFolderFocus: vi.fn(),
-            onSelectFolderBreadcrumb: vi.fn(),
             showDrafts: false,
         }));
 
@@ -119,9 +112,6 @@ describe('SessionListVirtualizedContent filtered no-results state', () => {
             renderItem: () => null,
             rowExtraData: null,
             onStopScrollEventPropagationOnWeb: vi.fn(),
-            folderFocus: null,
-            onClearFolderFocus: vi.fn(),
-            onSelectFolderBreadcrumb: vi.fn(),
             filteredNoResultsMessage: 'directSessions.browseNoSearchResults',
             viewContext: {
                 kind: 'team',

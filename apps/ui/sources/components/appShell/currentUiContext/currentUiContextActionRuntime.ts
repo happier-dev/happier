@@ -1,3 +1,4 @@
+import { areServerAccountScopesEqual, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { PluginActionSurfaceV2Schema } from '@happier-dev/protocol/plugins/actions/v2';
 import { PluginJsonValueV2Schema } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
 import { PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE } from '@happier-dev/protocol/plugins/actions/invocation';
@@ -48,7 +49,7 @@ export function listCurrentUiContextContributedActionDefinitions(
 }
 
 /** Typed host Actions resolve through the incumbent current record, never a second mount registry. */
-export function readCurrentUiContextActionReader(context: Pick<ActionExecutorContext, 'surface' | 'signal'>): CurrentUiContextReader | null {
+export function readCurrentUiContextActionReader(context: Pick<ActionExecutorContext, 'surface' | 'signal'>): CurrentUiContextVoiceToolPort | null {
     const surface = PluginActionSurfaceV2Schema.safeParse(context.surface);
     return surface.success && surface.data !== 'plugin' && !context.signal?.aborted
         ? mountedPortFactory?.(surface.data) ?? null : null;
@@ -124,4 +125,23 @@ export async function executeCurrentUiContextContributedAction(
         : outcome.errorCode ?? (outcome.code === 'denied' ? 'permission_denied' : 'contributed_action_unavailable');
     return { ok: false as const, errorCode, error: errorCode,
         ...(outcome.actionHandlerInvocation ? { details: { actionHandlerInvocation: outcome.actionHandlerInvocation } } : {}) };
+}
+
+/** A declared Settings operation borrows its exact current command; no focus or retained-controller fallback. */
+export async function invokeCurrentUiContextSettingCommand(input: Readonly<{
+    anchor: string;
+    accountScope?: ServerAccountScope;
+    context: ActionExecutorContext;
+}>): Promise<boolean> {
+    const port = readCurrentUiContextActionReader(input.context);
+    if (!port || !input.accountScope) return false;
+    const descriptor = port.readCurrentUiContext()?.commands.find(candidate => {
+        const record = port.resolveCurrentUiCommand(candidate.id);
+        const command = record?.command;
+        return record && !record.retirementSignal.aborted && command?.kind === 'hostLocal'
+            && command.setting?.anchor === input.anchor
+            && areServerAccountScopesEqual(command.setting.scope, input.accountScope);
+    });
+    if (!descriptor) return false;
+    return (await port.invokeCurrentUiCommand?.({ commandId: descriptor.id, signal: input.context.signal }))?.ok === true;
 }

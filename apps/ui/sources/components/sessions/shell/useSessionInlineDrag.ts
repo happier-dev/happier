@@ -7,8 +7,7 @@ import { ENTITY_DRAG_ACTIVATION_DISTANCE_PX } from '@/components/ui/treeDragDrop
 import { HAPPIER_CARRIED_SOURCE_OPACITY } from '@happier-dev/plugin-ui/presentation';
 import { useEntityDragDropRuntime } from '@/components/ui/treeDragDrop/entityDragDropHooks';
 import { sessionAddressKey } from '@/sync/domains/session/sessionAddress';
-import { treeRowId } from './drop-resolution/treeRowId';
-import { isTouchPrimaryPointer } from '@/components/ui/interactiveTargetSize';
+import { buildSessionListDragSourceId, treeRowId } from './drop-resolution/treeRowId';
 import { useEntityDragDomBinding, isSecondaryEntityRowControl, type EntityDragDomCarry } from '@/components/ui/treeDragDrop/useEntityDragDomBinding';
 import type { SessionListTreeDropResult } from './drop-resolution/sessionListTreeTypes';
 
@@ -21,6 +20,7 @@ import {
     type TreeDropVisualGeometry,
     type WindowPointer,
 } from '@/components/ui/treeDragDrop';
+import { useHappierTouchPrimaryPointer } from '@happier-dev/plugin-ui/environment';
 
 export type UseSessionInlineDragResolvedDrop = Readonly<{
     result: SessionListTreeDropResult;
@@ -52,10 +52,11 @@ export type UseSessionInlineDragCancelEvent = Readonly<{
     groupKey: string;
 }>;
 
-export type UseSessionInlineDragStart = (sessionKey: string) => EntityDragDomCarry | null | void;
+export type UseSessionInlineDragStart = (sessionKey: string, sourceRowId?: string) => EntityDragDomCarry | null | void;
 
 export type UseSessionInlineDragParams = Readonly<{
     sessionKey: string | null;
+    sourceRowId?: string;
     groupKey: string;
     enabled?: boolean;
     onDragStart: UseSessionInlineDragStart;
@@ -124,6 +125,7 @@ export function useSessionInlineDrag(params: UseSessionInlineDragParams): UseSes
         if (snapshot.phase !== 'carrying' && snapshot.phase !== 'pending' && !returning) return false;
         const item = snapshot.item;
         if (!item) return false;
+        if (params.sourceRowId) return snapshot.sourceId === buildSessionListDragSourceId(item.scope, params.sourceRowId);
         const key = item.kind === 'session' ? sessionAddressKey(item.address)
             : item.kind === 'session-folder' ? treeRowId.folder(item.scope.serverId, item.folderId)
                 : item.kind === 'session-workspace' ? treeRowId.workspaceRoot(item.workspaceId) : null;
@@ -132,7 +134,8 @@ export function useSessionInlineDrag(params: UseSessionInlineDragParams): UseSes
     const didEnd = useSharedValue(false);
     const didStartDrag = useSharedValue(false);
 
-    const desktopPointer = Platform.OS === 'web' && !isTouchPrimaryPointer();
+    const touchPrimaryPointer = useHappierTouchPrimaryPointer(Platform.OS);
+    const desktopPointer = Platform.OS === 'web' && !touchPrimaryPointer;
     const dragSourceRef = useEntityDragDomBinding({
         runtime,
         enabled: desktopPointer && enabled && sessionKey !== null,

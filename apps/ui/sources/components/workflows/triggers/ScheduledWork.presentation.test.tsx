@@ -198,7 +198,7 @@ it.each(variants)('captures D6 source surfaces beside their existing Work-row re
         lastRunsByAutomationId: { daily: createWorkflowRunSummaryFixture({ state: 'succeeded' }) },
         resolveWorkflowTitle: () => null, formatAge: () => 'yesterday' });
     const noop = () => {};
-    const row = <WorkflowRunItemBody kind="workflow_run" runId={run.id} serverId={home.id} isSingle />;
+    const row = <WorkflowRunItemBody kind="workflow_run" runId={run.id} serverId={home.id} />;
     const workRow = <WorkflowRunItemBody kind="workflow_run" runId={run.id} serverId={home.id} presentation="work"
         destinationSessionId="destination" />;
     const event = DaemonContributionRegistryProjectionAutomationEligibleEventV1Schema.parse({ event: {

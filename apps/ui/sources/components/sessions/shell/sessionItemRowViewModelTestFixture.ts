@@ -70,13 +70,9 @@ export function createSessionItemRowViewModel(
         nextRuntimeFreshnessAtMs: null,
         hasUnreadMessages: false,
         activityTimeLabel: '',
-        workingIndicatorMode: 'spinner',
         identityDisplay: 'avatar',
         activeColorMode: 'activityAndAttention',
         hideInactiveSessions: false,
-        isFirst: true,
-        isLast: true,
-        isSingle: true,
         subtitleOverride: null,
         subtitleEllipsizeMode: 'head',
         pinned: false,
@@ -91,6 +87,7 @@ export function createSessionItemRowViewModel(
         attentionStandingEnabled: false,
         draft: null,
         guardState: null,
+        rowContext: null,
         ...input.overrides,
     };
 }
@@ -105,8 +102,6 @@ export function createModelBackedSessionItemTestComponent(
             rowViewModelOverrides,
             ...itemProps
         } = props;
-        const isFirst = itemProps.isFirst === true;
-        const isLast = itemProps.isLast === true;
         const defaultOverrides = options.resolveRowViewModelOverrides?.(props)
             ?? options.defaultRowViewModelOverrides
             ?? {};
@@ -117,9 +112,6 @@ export function createModelBackedSessionItemTestComponent(
                 session: itemProps.session,
                 serverId: itemProps.serverId,
                 overrides: {
-                    isFirst,
-                    isLast,
-                    isSingle: itemProps.isSingle ?? (isFirst && isLast),
                     subtitleOverride: itemProps.subtitleOverride ?? null,
                     subtitleEllipsizeMode: itemProps.subtitleEllipsizeMode ?? 'head',
                     pinned: itemProps.pinned === true,

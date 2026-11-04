@@ -55,12 +55,10 @@ describe('buildAccountSettingsSnapshot', () => {
             agentInputChipDensity: 'icons',
             useEnhancedSessionWizard: true,
             hideInactiveSessions: true,
-            groupInactiveSessionsByProject: true,
             showFlavorIcons: false,
             avatarStyle: 'gradient',
-            sessionListActiveGroupingV1: 'date',
-            sessionListInactiveGroupingV1: 'project',
-            sessionListSectionModeV1: 'single',
+            sessionListLayoutV1: 'recent_activity',
+            sessionListAttentionPlacementV1: 'top',
             useMachinePickerSearch: true,
             usePathPickerSearch: true,
         });
@@ -79,12 +77,14 @@ describe('buildAccountSettingsSnapshot', () => {
         expect(snapshot.properties.acct_setting__agentInputChipDensity).toBe('icons');
         expect(snapshot.properties.acct_setting__useEnhancedSessionWizard).toBe(true);
         expect(snapshot.properties.acct_setting__hideInactiveSessions).toBe(true);
-        expect(snapshot.properties.acct_setting__groupInactiveSessionsByProject).toBe(true);
+        expect(snapshot.properties).not.toHaveProperty('acct_setting__groupInactiveSessionsByProject');
         expect(snapshot.properties.acct_setting__showFlavorIcons).toBe(false);
         expect(snapshot.properties.acct_setting__avatarStyle).toBe('gradient');
-        expect(snapshot.properties.acct_setting__sessionListActiveGroupingV1).toBe('date');
-        expect(snapshot.properties.acct_setting__sessionListInactiveGroupingV1).toBe('project');
-        expect(snapshot.properties.acct_setting__sessionListSectionModeV1).toBe('single');
+        expect(snapshot.properties.acct_setting__sessionListLayoutV1).toBe('recent_activity');
+        expect(snapshot.properties.acct_setting__sessionListAttentionPlacementV1).toBe('top');
+        for (const key of ['sessionListActiveGroupingV1', 'sessionListInactiveGroupingV1', 'sessionListSectionModeV1']) {
+            expect(snapshot.properties).not.toHaveProperty(`acct_setting__${key}`);
+        }
         expect(snapshot.properties.acct_setting__useMachinePickerSearch).toBe(true);
         expect(snapshot.properties.acct_setting__usePathPickerSearch).toBe(true);
     });

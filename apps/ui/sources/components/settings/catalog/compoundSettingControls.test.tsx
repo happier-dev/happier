@@ -121,9 +121,9 @@ describe('compound Settings controls through declared Action ingress', () => {
             expect(account.artifacts.list()).toHaveLength(1);
         } finally { standardCleanup(); await account.dispose(); }
     });
-    it('admits list layout before yielding its visit intent and preserves ordering', async () => {
-        const account = await createSecretSettingsTestHarness({ settings: settingsParse({ sessionListSectionModeV1: 'single',
-            sessionListActiveGroupingV1: 'project', sessionListOrderingModeV1: 'created',
+    it('admits list layout before yielding its visit intent and preserves unrelated list preferences', async () => {
+        const account = await createSecretSettingsTestHarness({ settings: settingsParse({ sessionListLayoutV1: 'projects',
+            hideInactiveSessions: true,
             actionsSettingsV1: { v: 1, actions: { 'settings.set': { disabledSurfaces: ['ui'] } } },
         }) });
         let layout: string | undefined;
@@ -132,24 +132,24 @@ describe('compound Settings controls through declared Action ingress', () => {
             const screen = await renderSettingsView(<SessionListLayoutIntentProvider choice="recent_activity"><Probe /></SessionListLayoutIntentProvider>);
             const choose = (value: string) => screen.findAll(node => typeof node.props.onSelect === 'function'
                 && node.props.items?.some((item: { id: string }) => item.id === 'layout:projects'))[0]!.props.onSelect(value);
-            await act(async () => { choose('layout:active_inactive'); });
-            expect(account.persistedSettings.sessionListSectionModeV1).toBe('single');
+            await act(async () => { choose('layout:projects'); });
+            expect(account.persistedSettings.sessionListLayoutV1).toBe('projects');
             expect(layout).toBe('recent_activity');
             expect(account.settingsWrites).toEqual([]);
             await act(async () => { account.replaceSettings(settingsParse({ ...account.persistedSettings,
                 actionsSettingsV1: { v: 1, actions: { 'settings.set': { approvalRequiredSurfaces: ['ui'] } } },
             })); });
-            await act(async () => { choose('layout:active_inactive'); });
+            await act(async () => { choose('layout:projects'); });
             await vi.waitFor(() => expect(account.artifacts.list()).toHaveLength(1));
             expect(layout).toBe('recent_activity');
             await decideApprovalAsInbox(account.scope.serverId, account.artifacts.list()[0]!.id, 'approve');
-            await vi.waitFor(() => expect(layout).toBe('active_inactive'));
+            await vi.waitFor(() => expect(layout).toBe('projects'));
             await act(async () => { account.replaceSettings(settingsParse({ ...account.persistedSettings,
                 actionsSettingsV1: { v: 1, approvalWaivedSurfaces: { 'settings.set': ['ui'] } },
             })); });
-            await act(async () => { choose('layout:projects'); });
-            await vi.waitFor(() => expect(layout).toBe('projects'));
-            expect(account.persistedSettings.sessionListOrderingModeV1).toBe('created');
+            await act(async () => { choose('layout:recent_activity'); });
+            await vi.waitFor(() => expect(layout).toBe('recent_activity'));
+            expect(account.persistedSettings.hideInactiveSessions).toBe(true);
             expect(account.artifacts.list()).toHaveLength(1);
         } finally { standardCleanup(); await account.dispose(); }
     });

@@ -1,6 +1,8 @@
+import * as React from 'react';
 import { Platform } from 'react-native';
 
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
+import { buildSessionListIndexNodeId } from '@/sync/domains/sessionList/sessionListIndexIdentity';
 import type { TreeDropOverlaySharedValues } from '@/components/ui/treeDragDrop';
 
 import type { SessionListRowViewModel } from './sessionListRowViewModels';
@@ -18,6 +20,7 @@ import type {
 } from './SessionListHeaderFrame';
 import type { SessionItemProps } from './SessionItem';
 import { useSessionListOrganizeMode } from './organize/SessionListOrganizeMode';
+import { SessionListAttentionInteractionContext } from './useSessionListAttentionInteraction';
 
 type SessionListSessionItemProps = Readonly<{
     item: Extract<SessionListIndexItem, { type: 'session' }>;
@@ -34,6 +37,7 @@ type SessionListSessionItemProps = Readonly<{
     onSetTagsSessionKey: ((sessionKey: string, newTags: string[]) => void) | null;
     onNativeContextMenuOpenChangeSessionKey: ((sessionKey: string, next: boolean) => void) | null;
     draggingSessionKey: string | null;
+    draggingTreeRowId?: string | null;
     nativeContextMenuSessionKey: string | null;
     overlayShared: TreeDropOverlaySharedValues;
     onRegisterTreeRowBounds: RegisterSessionListTreeRowBounds;
@@ -47,10 +51,13 @@ type SessionListSessionItemProps = Readonly<{
     agentSwitchingEnabled?: boolean;
     forkActionContext?: SessionItemProps['forkActionContext'];
     onMoveToFolder?: () => void;
+    sectionMove?: SessionItemProps['sectionMove'];
+    spaceMembership?: SessionItemProps['spaceMembership'];
     onMoveToWorkspaceRoot?: () => void;
     onMoveUp?: () => void;
     onMoveDown?: () => void;
     onDeleteDraft?: () => void | Promise<void>;
+    draftPreview?: SessionItemProps['draftPreview'];
     onSetReportsCollapsed?: SessionItemProps['onSetReportsCollapsed'];
     measurementTarget?: SessionListRowProps['measurementTarget'];
 }>;
@@ -58,6 +65,7 @@ type SessionListSessionItemProps = Readonly<{
 export function SessionListSessionItem(props: SessionListSessionItemProps) {
     const { rowViewModel } = props;
     const organize = useSessionListOrganizeMode();
+    const attentionInteraction = React.useContext(SessionListAttentionInteractionContext);
     if (!rowViewModel) {
         return null;
     }
@@ -70,10 +78,11 @@ export function SessionListSessionItem(props: SessionListSessionItemProps) {
 
     const sessionKey = rowViewModel.sessionKey;
     const isNativeMobile = Platform.OS === 'ios' || Platform.OS === 'android';
-    const nativeContextMenuOpen = isNativeMobile && sessionKey != null && props.nativeContextMenuSessionKey === sessionKey;
+    const nativeContextMenuOpen = isNativeMobile && sessionKey != null && props.nativeContextMenuSessionKey === props.treeRowId;
 
     return (
         <SessionListRow
+            onOpened={attentionInteraction?.releaseKeyboard}
             sessionKey={sessionKey}
             treeRowId={props.treeRowId}
             groupKey={rowViewModel.groupKey}
@@ -88,7 +97,9 @@ export function SessionListSessionItem(props: SessionListSessionItemProps) {
             onSetTagsSessionKey={sessionKey ? props.onSetTagsSessionKey : null}
             onNativeContextMenuOpenChangeSessionKey={isNativeMobile && sessionKey ? props.onNativeContextMenuOpenChangeSessionKey : null}
             isDragActive={props.draggingSessionKey != null}
-            isBeingDragged={sessionKey != null && sessionKey === props.draggingSessionKey}
+            isBeingDragged={props.draggingTreeRowId != null
+                ? props.treeRowId === props.draggingTreeRowId
+                : sessionKey != null && sessionKey === props.draggingSessionKey}
             overlayShared={props.overlayShared}
             onRegisterTreeRowBounds={props.onRegisterTreeRowBounds}
             onUnregisterTreeRowBounds={props.onUnregisterTreeRowBounds}
@@ -97,6 +108,8 @@ export function SessionListSessionItem(props: SessionListSessionItemProps) {
             agentSwitchingEnabled={props.agentSwitchingEnabled}
             session={session}
             selectionKey={sessionKey}
+            occurrenceId={buildSessionListIndexNodeId(props.item)}
+            inAttentionShelf={props.item.occurrenceRole === 'needsYou'}
             subtitleOverride={rowViewModel.subtitleOverride}
             subtitleEllipsizeMode={rowViewModel.subtitleEllipsizeMode}
             serverId={props.item.serverId}
@@ -108,11 +121,7 @@ export function SessionListSessionItem(props: SessionListSessionItemProps) {
             allKnownTags={props.allKnownTags}
             tagsEnabled={props.tagsEnabled}
             selected={rowViewModel.selected}
-            isFirst={rowViewModel.isFirst}
-            isLast={rowViewModel.isLast}
-            isSingle={rowViewModel.isSingle}
             variant={props.item.variant}
-            folderDepth={props.item.folderDepth}
             reportsDepth={props.item.reportsDepth}
             reportsDisclosure={props.item.reportsParent ? (props.item.reportsCollapsed ? 'collapsed' : 'expanded') : undefined}
             onSetReportsCollapsed={props.item.reportsParent ? props.onSetReportsCollapsed : undefined}
@@ -122,10 +131,13 @@ export function SessionListSessionItem(props: SessionListSessionItemProps) {
             rowAttentionAnimationEnabled={props.rowAttentionAnimationEnabled}
             forkActionContext={props.forkActionContext}
             onMoveToFolder={props.onMoveToFolder}
+            sectionMove={props.sectionMove}
+            spaceMembership={props.spaceMembership}
             onMoveToWorkspaceRoot={props.onMoveToWorkspaceRoot}
             onMoveUp={props.onMoveUp}
             onMoveDown={props.onMoveDown}
             onDeleteDraft={props.onDeleteDraft}
+            draftPreview={props.draftPreview}
             {...(isNativeMobile && sessionKey != null ? { nativeContextMenuOpen } : null)}
         />
     );

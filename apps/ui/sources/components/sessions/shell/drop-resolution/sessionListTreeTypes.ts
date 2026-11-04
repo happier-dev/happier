@@ -7,6 +7,7 @@ import type {
 } from '@/components/ui/treeDragDrop';
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 import type { SessionFolderWorkspaceRefV1 } from '@/sync/domains/session/folders';
+import type { QualifiedProjectKeyV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 
 export type SessionListTreeRowKind = 'workspace-root' | 'folder' | 'session';
 
@@ -50,6 +51,9 @@ export type SessionListTreeContainerMetadata = Readonly<{
     folderId: string | null;
     depth: number;
     workspace: SessionFolderWorkspaceRefV1 | null;
+    serverId?: string | null;
+    destinationKind?: 'project' | 'section' | 'section-order' | 'pinned' | 'other';
+    projectKey?: QualifiedProjectKeyV1 | null;
 }>;
 
 export type SessionListTreeModel = Readonly<{

@@ -93,7 +93,6 @@ async function renderRow(params: Readonly<{
         rowRenderableByKey: new Map([[rowKey, session]]),
         relativeNowMs: 1_000,
         runtimeNowMs: 1_000,
-        hasMultipleMachines: false,
         pinnedSessionKeys: new Set(),
         sessionTags: {},
         selectedSessionId: null,
@@ -113,9 +112,6 @@ async function renderRow(params: Readonly<{
                 serverId={SERVER_ID}
                 currentUserId="u1"
                 selected={false}
-                isFirst
-                isLast
-                isSingle
                 variant="default"
                 compact={false}
             />

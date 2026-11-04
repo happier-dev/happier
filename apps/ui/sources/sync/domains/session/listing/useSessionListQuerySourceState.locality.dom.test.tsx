@@ -3,7 +3,7 @@ import * as React from 'react';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { SessionListQueryV1 } from '@happier-dev/protocol';
+import type { SessionListQueryV1 } from '@happier-dev/protocol/sessions/listing/query';
 
 import { createSessionListQuerySourceHarness, waitForSessionListQueryState, type SessionListQuerySourceHarness } from '@/dev/testkit/harness/sessionListQuerySourceHarness';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
@@ -49,6 +49,32 @@ async function writeMetadata(serverId: string, sessionId: string, version: numbe
 }
 
 describe('session list query source: subscription locality', () => {
+    it('does no index renders when a Session row write leaves every Home index unchanged', async () => {
+        // The list pane subscriber redrew on every message and agent-state write on the Account.
+        const serverId = boundary.serverIds[0]!;
+        const homes = [{ serverId, query: QUERY }];
+        let renders = 0;
+        const state: { current: SessionListQuerySourceState | null } = { current: null };
+        function Host() {
+            state.current = useSessionListQuerySourceState({ enabled: true, homes });
+            renders += 1;
+            return null;
+        }
+        const screen = await mount(<Host />);
+        try {
+            await waitForSessionListQueryState(() => expect(state.current?.statesByServerId[serverId]?.phase).toBe('ready'));
+            const settled = { renders, result: state.current };
+            const row = buildSessionListRenderableFromSession(createSessionFixture({ id: 'unlisted-writer', serverId }));
+            for (let seq = 1; seq <= 3; seq++) {
+                await act(async () => storage.setState((current) => ({ sessionListRowsByServerId: {
+                    ...current.sessionListRowsByServerId,
+                    [serverId]: { ...current.sessionListRowsByServerId[serverId], [row.id]: { ...row, seq } },
+                } })));
+            }
+            expect(renders - settled.renders).toBe(0);
+            expect(state.current).toBe(settled.result);
+        } finally { await screen.unmount(); }
+    });
     it('does not re-render a disabled source (the home and summary paths) when session rows or Machines change', async () => {
         const serverId = boundary.serverIds[0]!;
         const row = buildSessionListRenderableFromSession(createSessionFixture({ id: 'idle-row', metadataVersion: 1 }));

@@ -1,143 +1,51 @@
 import { t } from '@/text';
-import {
-    resolveSessionListLayoutApplicability,
-    type SessionListLayoutChoice,
-    type SessionListLayoutSettings,
-} from '@/sync/domains/session/listing/sessionListLayout';
-import {
-    normalizeSessionListAttentionPlacementMode,
-    normalizeSessionListWorkingPlacementMode,
-} from '@/sync/domains/session/listing/sessionListAttentionPlacement';
-import {
-    normalizeSessionListFolderSortModeV1,
-    normalizeSessionListOrderingModeV1,
-    resolveEffectiveSessionListFolderSortMode,
-} from '@/sync/domains/session/listing/sessionListOrderingRules';
+import type { AccountSettings } from '@happier-dev/protocol/account/settings/accountSettings';
+import type { SessionListLayoutChoice, SessionListLayoutSettings } from '@/sync/domains/session/listing/sessionListLayout';
 
-export type SessionListViewOptionDescriptor = Readonly<{
-    id: string;
-    title: string;
-    subtitle?: string;
-    disabled?: boolean;
-}>;
+export type SessionListViewOptionDescriptor = Readonly<{ id: string; title: string; subtitle?: string; disabled?: boolean }>;
 
-type SessionListViewOptionsSettings = SessionListLayoutSettings & Readonly<{
-    sessionListAttentionPromotionModeV1?: unknown;
-    sessionListWorkingPlacementModeV1?: unknown;
-    sessionFolderViewModeV1?: unknown;
-    sessionListFolderSortModeV1?: unknown;
-    foldersFeatureEnabled?: boolean;
-}>;
-
-const layoutItems = (): ReadonlyArray<SessionListViewOptionDescriptor & { id: `layout:${SessionListLayoutChoice}` }> => [
-    { id: 'layout:projects', title: t('settingsSession.sessionList.layoutProjectsTitle') },
-    { id: 'layout:recent_activity', title: t('settingsSession.sessionList.layoutRecentActivityTitle') },
-    { id: 'layout:active_inactive', title: t('settingsSession.sessionList.layoutActiveInactiveTitle') },
-];
-
-const groupingItems = (section: 'active' | 'inactive'): ReadonlyArray<SessionListViewOptionDescriptor> => [
-    {
-        id: `grouping:${section}:project`,
-        title: t('settingsFeatures.sessionListGrouping.projectTitle'),
-        subtitle: t('settingsFeatures.sessionListGrouping.projectSubtitle'),
-    },
-    {
-        id: `grouping:${section}:date`,
-        title: t('settingsFeatures.sessionListGrouping.dateTitle'),
-        subtitle: t('settingsFeatures.sessionListGrouping.dateSubtitle'),
-    },
-];
-
-const attentionItems = (): ReadonlyArray<SessionListViewOptionDescriptor> => [
-    { id: 'attention:off', title: t('settingsSession.sessionList.placementInPlaceTitle') },
-    { id: 'attention:global', title: t('settingsSession.sessionList.placementAtTopTitle') },
-    { id: 'attention:withinGroups', title: t('settingsSession.sessionList.placementWithinGroupsTitle') },
-];
-
-const workingItems = (): ReadonlyArray<SessionListViewOptionDescriptor> => [
-    { id: 'working:off', title: t('settingsSession.sessionList.placementInPlaceTitle') },
-    { id: 'working:global', title: t('settingsSession.sessionList.placementAtTopTitle') },
-    { id: 'working:withinGroups', title: t('settingsSession.sessionList.placementWithinGroupsTitle') },
-];
-
-const orderingItems = (): ReadonlyArray<SessionListViewOptionDescriptor> => [
-    { id: 'ordering:custom', title: t('settingsSession.sessionList.orderingOptions.custom') },
-    { id: 'ordering:updated', title: t('settingsSession.sessionList.orderingOptions.updated') },
-    { id: 'ordering:created', title: t('settingsSession.sessionList.orderingOptions.created') },
-];
-
-const folderDisplayItems = (): ReadonlyArray<SessionListViewOptionDescriptor> => [
-    { id: 'folderDisplay:off', title: t('settingsSession.sessionList.folderDisplayOffTitle') },
-    { id: 'folderDisplay:tree', title: t('settingsSession.sessionList.folderTreeView') },
-];
-
-/**
- * Builds View options from the layout that is actually rendering.
- *
- * `effectiveLayout` comes from the one effective-layout reader
- * (`useSessionListLayoutChoice`), so the checkmark, the applicability of the
- * dependent controls and the rows can never disagree.
- */
+/** Both hosts consume the effective layout, including a transient Recent visit intent. */
 export function resolveSessionListViewOptionsPresentation(
-    settings: SessionListViewOptionsSettings,
+    settings: SessionListLayoutSettings & Readonly<{ sessionListAttentionPlacementV1?: unknown }>,
     effectiveLayout: SessionListLayoutChoice,
 ) {
-    const selectedLayout = effectiveLayout;
-    const applicability = resolveSessionListLayoutApplicability({
-        choice: selectedLayout,
-        activeGroupingV1: settings.sessionListActiveGroupingV1,
-        inactiveGroupingV1: settings.sessionListInactiveGroupingV1,
-        folderViewModeV1: settings.sessionFolderViewModeV1,
-        foldersFeatureEnabled: settings.foldersFeatureEnabled,
-    });
-    const selectedOrdering = normalizeSessionListOrderingModeV1(settings.sessionListOrderingModeV1);
-    const isDateOrdering = selectedOrdering !== 'custom';
+    const selectedAttentionPlacement: AccountSettings['sessionListAttentionPlacementV1'] = settings.sessionListAttentionPlacementV1 === 'top' ? 'top'
+        : settings.sessionListAttentionPlacementV1 === 'inPlace' ? 'inPlace' : 'both';
     return {
-        selectedLayout,
-        layoutItems: layoutItems(),
-        showSectionGrouping: applicability.showsAdvancedSectionGrouping,
-        activeGroupingItems: groupingItems('active'),
-        inactiveGroupingItems: groupingItems('inactive'),
-        selectedActiveGroupingId: settings.sessionListActiveGroupingV1 === 'date'
-            ? 'grouping:active:date'
-            : 'grouping:active:project',
-        selectedInactiveGroupingId: settings.sessionListInactiveGroupingV1 === 'project'
-            ? 'grouping:inactive:project'
-            : 'grouping:inactive:date',
-        selectedAttentionPlacement: normalizeSessionListAttentionPlacementMode(
-            settings.sessionListAttentionPromotionModeV1,
-        ),
-        attentionItems: attentionItems(),
-        selectedWorkingPlacement: normalizeSessionListWorkingPlacementMode(
-            settings.sessionListWorkingPlacementModeV1,
-        ),
-        workingItems: workingItems(),
-        showProjectOrdering: applicability.usesProjectGrouping,
-        selectedOrdering,
-        orderingItems: orderingItems(),
-        showFolderOptions: applicability.usesProjectGrouping && settings.foldersFeatureEnabled === true,
-        selectedFolderDisplay: settings.sessionFolderViewModeV1 === 'tree' ? 'tree' : 'off',
-        folderDisplayItems: folderDisplayItems(),
-        selectedFolderSort: resolveEffectiveSessionListFolderSortMode({
-            orderingMode: selectedOrdering,
-            folderSortMode: normalizeSessionListFolderSortModeV1(settings.sessionListFolderSortModeV1),
-        }),
-        folderSortItems: [
-            {
-                id: 'folderSort:foldersFirst',
-                title: t('settingsSession.sessionList.folderSortModeFoldersFirstTitle'),
-                subtitle: t('settingsSession.sessionList.folderSortModeFoldersFirstSubtitle'),
-            },
-            {
-                id: 'folderSort:mixed',
-                title: t('settingsSession.sessionList.folderSortModeMixedTitle'),
-                subtitle: isDateOrdering
-                    ? t('settingsSession.sessionList.folderSortModeMixedDisabledInDateModeSubtitle')
-                    : t('settingsSession.sessionList.folderSortModeMixedSubtitle'),
-                disabled: isDateOrdering,
-            },
-        ] satisfies ReadonlyArray<SessionListViewOptionDescriptor>,
+        selectedLayout: effectiveLayout,
+        layoutItems: [
+            { id: 'layout:projects', title: t('settingsSession.sessionList.layoutProjectsTitle') },
+            { id: 'layout:recent_activity', title: t('settingsSession.sessionList.layoutRecentActivityTitle') },
+        ] satisfies readonly SessionListViewOptionDescriptor[],
+        selectedAttentionPlacement,
+        attentionItems: [
+            { id: 'attention:both', title: t('settingsSession.sessionList.placementBothTitle') },
+            { id: 'attention:top', title: t('settingsSession.sessionList.placementAtTopTitle') },
+            { id: 'attention:inPlace', title: t('settingsSession.sessionList.placementInPlaceTitle') },
+        ] satisfies readonly SessionListViewOptionDescriptor[],
     };
+}
+
+/** The leading mark's choices (lab `clctx:menu`), in the lab's order; Avatar and None stay available. */
+export function resolveSessionListIdentityItems(): readonly SessionListViewOptionDescriptor[] {
+    return [
+        { id: 'identity:auto', title: t('settingsSession.sessionList.identityDisplayAutoTitle') },
+        { id: 'identity:agentLogo', title: t('settingsSession.sessionList.identityDisplayAgentLogoTitle') },
+        { id: 'identity:project', title: t('settingsSession.sessionList.identityDisplayProjectTitle') },
+        { id: 'identity:projectWithAgent', title: t('settingsSession.sessionList.identityDisplayProjectWithAgentTitle') },
+        { id: 'identity:agentWithTrailingProject', title: t('settingsSession.sessionList.identityDisplayAgentWithTrailingProjectTitle') },
+        { id: 'identity:avatar', title: t('settingsSession.sessionList.identityDisplayAvatarTitle') },
+        { id: 'identity:none', title: t('settingsSession.sessionList.identityDisplayNoneTitle') },
+    ];
+}
+
+/** Row density, from the roomiest to the most compact. */
+export function resolveSessionListDensityItems(): readonly SessionListViewOptionDescriptor[] {
+    return [
+        { id: 'density:detailed', title: t('settingsAppearance.sessionListDensity.detailed') },
+        { id: 'density:cozy', title: t('settingsAppearance.sessionListDensity.cozy') },
+        { id: 'density:narrow', title: t('settingsAppearance.sessionListDensity.narrow') },
+    ];
 }
 
 export { resolveSessionListViewOptionSelectionDelta } from '@happier-dev/protocol/actions/settings/accountSettingChoiceReducers';

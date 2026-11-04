@@ -50,9 +50,10 @@ import {
     retrySessionListQueryHome,
 } from './sessionListQueryRuntime';
 import { buildSessionListQueryKey } from './sessionListQueryKey';
-import { resolveSessionListHomeKey } from './sessionListRowStateLookup';
+import { resolveSessionListHomeKey, type SessionListRowStateByServerId } from './sessionListRowStateLookup';
 import { subscribeSessionListQueryHomeInvalidation } from './sessionListQueryInvalidation';
 import { isSessionListQueryHomeCoverageComplete } from './sessionListHomeObservation';
+import { createSessionListRowSelection, type SessionListRowPredicate } from './sessionListRowSelection';
 
 export type SessionListQueryHomeInput = Readonly<{
     serverId: string;
@@ -272,9 +273,7 @@ export function buildSessionListQueryHomeIndex(input: Readonly<{
     addresses: readonly SessionAddress[];
     rowsBySessionId: Readonly<Record<string, SessionListRenderableSession | undefined>> | null | undefined;
     machines: ReturnType<typeof buildMachineDisplaysByIdFromMachineList>;
-    activeGroupingV1?: 'project' | 'date';
-    inactiveGroupingV1?: 'project' | 'date';
-    sectionModeV1?: 'activity' | 'single';
+    layoutV1?: 'projects' | 'recent_activity';
     serverId: string;
     serverName: string | null;
     /** The last index built for this Home: unchanged items (and the array itself) are reused. */
@@ -288,9 +287,7 @@ export function buildSessionListQueryHomeIndex(input: Readonly<{
     const index = buildSessionListIndexWithServerScope({
         sessions: rows,
         machines: input.machines,
-        activeGroupingV1: input.activeGroupingV1,
-        inactiveGroupingV1: input.inactiveGroupingV1,
-        sectionModeV1: input.sectionModeV1,
+        layoutV1: input.layoutV1,
         previousIndex: input.previousIndex ?? null,
         serverScope: {
             serverId: input.serverId,
@@ -697,27 +694,38 @@ const NO_SERVER_IDS: readonly string[] = Object.freeze([]);
  * list and every summary computed from it keep their identity. Row content is rendered by each row
  * from its own subscription, not from this index.
  */
-export function useSessionListQuerySourceState(input: SessionListQueryInput): SessionListQuerySourceState {
+export function useSessionListQuerySourceState(input: SessionListQueryInput & Readonly<{
+    /** Narrow a secondary surface's row demand without changing its admitted corpus or coverage. */
+    rowPredicate?: SessionListRowPredicate;
+}>): SessionListQuerySourceState {
     const layer = useSessionListQueryHomeStatesLayer(input);
     const homeServerIds = React.useMemo(
         () => (input.enabled ? layer.homes.map((home) => home.serverId) : NO_SERVER_IDS),
         [input.enabled, layer.homes],
     );
-    const rowsByServerId = useSessionListRowsByServerId(homeServerIds);
+    const selectRows = React.useMemo(() => createSessionListRowSelection(input.rowPredicate), [input.rowPredicate]);
+    const selectCoverage = React.useCallback((rows: SessionListRowStateByServerId) => input.rowPredicate !== undefined
+        && layer.coverageComplete && layer.homes.every(home => isSessionListQueryHomeCoverageComplete({
+            state: layer.statesByServerId[home.serverId], requestedQueryKey: home.queryKey, query: home.query,
+            bot: home.query.bot, rowsBySessionId: rows[home.serverId],
+        })), [input.rowPredicate, layer.coverageComplete, layer.homes, layer.statesByServerId]);
+    // Project filtering cannot certify unknown Bot metadata in a different Project as complete.
+    const selectedCoverageComplete = useSessionListRowsByServerId(input.rowPredicate ? homeServerIds : NO_SERVER_IDS, selectCoverage);
     useSessionListAgentTargetDemand(homeServerIds, input.enabled && input.agentTargetDemand === true);
     const machineListsByServerId = useMachineListByServerId(input.enabled);
-    const activeGroupingV1 = useSetting('sessionListActiveGroupingV1');
-    const inactiveGroupingV1 = useSetting('sessionListInactiveGroupingV1');
-    const sectionModeV1 = useSetting('sessionListSectionModeV1');
+    const layoutV1 = useSetting('sessionListLayoutV1');
     const previousRef = React.useRef<Readonly<{
         byServerId: Readonly<Record<string, ReadonlyArray<SessionListIndexItem> | null | undefined>>;
         source: ReadonlyArray<SessionListIndexItem> | null;
         result: SessionListQuerySourceState | null;
     }>>({ byServerId: {}, source: null, result: null });
 
-    const result = React.useMemo(() => {
+    // The indexes are built at the row subscription, so a row write that leaves every Home's index
+    // structurally equal (a message, an agent-state write) notifies no consumer at all.
+    const selectResult = React.useMemo(() => (selectedRows: SessionListRowStateByServerId): SessionListQuerySourceState => {
+        const rowsByServerId = selectRows(selectedRows);
         const previous = previousRef.current;
-        const coverageComplete = layer.coverageComplete && layer.homes.every((home) => (
+        const coverageComplete = input.rowPredicate ? selectedCoverageComplete : layer.coverageComplete && layer.homes.every((home) => (
             isSessionListQueryHomeCoverageComplete({
                 state: layer.statesByServerId[home.serverId],
                 requestedQueryKey: home.queryKey,
@@ -777,7 +785,7 @@ export function useSessionListQuerySourceState(input: SessionListQueryInput): Se
             }
             // Retained rows show only what this device still holds; a retained id with
             // no row (retired meanwhile) is not a loading placeholder.
-            const addresses = membership.retained
+            const addresses = membership.retained || input.rowPredicate
                 ? membership.addresses.filter((address) => Boolean(homeRows?.[address.sessionId]))
                 : membership.addresses;
             if (membership.retained && addresses.length === 0 && membership.addresses.length > 0) {
@@ -790,9 +798,7 @@ export function useSessionListQuerySourceState(input: SessionListQueryInput): Se
                 addresses,
                 rowsBySessionId: rowsByServerId[home.serverId],
                 machines: buildMachineDisplaysByIdFromMachineList(machineListsByServerId[home.serverId]),
-                activeGroupingV1,
-                inactiveGroupingV1,
-                sectionModeV1,
+                layoutV1,
                 serverId: home.serverId,
                 serverName: resolveHomeDisplayLabel(getServerProfileById(home.serverId), home.serverId),
                 previousIndex: Array.isArray(previousIndex) ? previousIndex : null,
@@ -835,7 +841,8 @@ export function useSessionListQuerySourceState(input: SessionListQueryInput): Se
             refresh: layer.refresh,
             retry: layer.retry,
         };
-    }, [activeGroupingV1, inactiveGroupingV1, input.enabled, layer, machineListsByServerId, rowsByServerId, sectionModeV1]);
+    }, [layoutV1, input.enabled, input.rowPredicate, layer, machineListsByServerId, selectRows, selectedCoverageComplete]);
+    const result = useSessionListRowsByServerId(homeServerIds, selectResult);
     React.useLayoutEffect(() => {
         previousRef.current = { byServerId: result.byServerId, source: result.source, result };
     }, [result]);

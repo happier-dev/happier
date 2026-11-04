@@ -1,3 +1,4 @@
+import { CollectionSpacesEnabledV1Schema } from '../../collections/spaces/collectionSpaceEnablementV1.js';
 import { DeploymentCreationDefaultsV1Schema } from '../../projects/deploymentCreationDefaultsV1.js';
 import { MAX_IDLE_COMPACTION_CACHE_WINDOW_MS } from './idleCompactionPreferences.js';
 export { MAX_IDLE_COMPACTION_CACHE_WINDOW_MS, resolveIdleCompactionPreference, type IdleCompactionPreference } from './idleCompactionPreferences.js';
@@ -24,6 +25,7 @@ import { BotFaceStyleSchema } from '../../sessions/identity/sessionBotFaceV1.js'
 
 export const BotMotionSchema = z.enum(['lively', 'reactions', 'still']);
 export type BotMotion = z.infer<typeof BotMotionSchema>;
+
 
 import {
   DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1,
@@ -503,6 +505,7 @@ const RETIRED_ACCOUNT_SETTINGS_ROOT_KEY_SET = new Set<string>(RETIRED_ACCOUNT_SE
 
 export function isRetiredAccountSettingsRootKey(key: string): boolean {
   if (RETIRED_ACCOUNT_SETTINGS_ROOT_KEY_SET.has(key)) return true;
+  if (RETIRED_SESSION_LIST_SETTING_KEYS.has(key)) return true;
   if (key.startsWith('multiServer')) return true;
   return key.startsWith('activeServerTarget') && (key.endsWith('Kind') || key.endsWith('Id'));
 }
@@ -735,6 +738,11 @@ function accountPolicy<TSchema extends z.core.$ZodType>(schema: TSchema, default
         maximumSerializedValueBytes,
     });
 }
+
+export const SessionListIdentityDisplaySchema = z.enum([
+    'auto', 'agentLogo', 'project', 'projectWithAgent', 'agentWithTrailingProject', 'avatar', 'none',
+]);
+export type SessionListIdentityDisplay = z.infer<typeof SessionListIdentityDisplaySchema>;
 function accountLegacy<TSchema extends z.core.$ZodType>(schema: TSchema, defaultValue: z.input<TSchema>, semanticDomain: string, maximumSerializedValueBytes = 64 * 1024, recoverMalformed = true) {
     return accountCatalogDefinition(schema, defaultValue, {
         semanticDomain,
@@ -906,20 +914,20 @@ const ACCOUNT_CORE_CATALOG_DEFINITIONS = {
     agentInputActionBarLayout: accountPreference(z.enum(['auto', 'wrap', 'scroll', 'collapsed']), 'auto', 'composer presentation'),
     agentInputChipDensity: accountPreference(z.enum(['auto', 'labels', 'icons']), 'auto', 'composer presentation'),
     sessionListDensity: accountPreference((<I extends z.core.$ZodType, O extends z.core.$ZodType>(input: I, output: O) => new z.ZodMiniPipe({ type: 'pipe', in: input, out: output }) as z.ZodMiniPipe<I, O>)(z.transform((raw): unknown => raw === 'compact' ? 'cozy' : raw), z.enum(['detailed', 'cozy', 'narrow'])), 'narrow', 'session list presentation'),
-    sessionListIdentityDisplay: accountPreference(z.enum(['avatar', 'agentLogo', 'none']), 'agentLogo', 'session list presentation'),
-    sessionListStatusWords: accountPreference(z.boolean(), false, 'work status presentation'),
     collectionSpacesV1: accountPreference(CollectionSpacesV1Schema, { v: 1, spaces: [] }, 'collection saved filters', ACCOUNT_SETTINGS_MAX_DOCUMENT_BYTES),
+    collectionSpacesEnabled: accountPreference(CollectionSpacesEnabledV1Schema, true, 'collection spaces enablement'),
+    sessionSpacesEnabled: accountPreference(CollectionSpacesEnabledV1Schema, true, 'collection spaces enablement'),
+    workflowSpacesEnabled: accountPreference(CollectionSpacesEnabledV1Schema, true, 'collection spaces enablement'),
+    discussionSpacesEnabled: accountPreference(CollectionSpacesEnabledV1Schema, true, 'collection spaces enablement'),
+    sessionListLayoutV1: accountPreference(z.enum(['projects', 'recent_activity']), 'projects', 'session list presentation'),
+    sessionListAttentionPlacementV1: accountPreference(z.enum(['both', 'top', 'inPlace']), 'both', 'session list presentation'),
+    sessionListStatusWords: accountPreference(z.boolean(), false, 'work status presentation'),
+    sessionListRowContextV1: accountPreference(z.boolean(), true, 'session list presentation'),
+    sessionListIdentityDisplay: accountPreference(SessionListIdentityDisplaySchema, 'auto', 'session list presentation'),
     sessionHeaderIdentityDisplay: accountPreference(z.enum(['avatar', 'agentLogo', 'none']), 'avatar', 'session header presentation'),
-    sessionListOrderingModeV1: accountPreference(z.enum(['custom', 'created', 'updated']), 'custom', 'session list presentation'),
-    sessionListFolderSortModeV1: accountPreference(z.enum(['foldersFirst', 'mixed']), 'foldersFirst', 'session list presentation'),
-    sessionListAttentionPromotionModeV1: accountPreference(z.enum(['off', 'global', 'withinGroups']), 'off', 'session list presentation'),
     sessionListBackgroundWorkAttentionModeV1: accountPreference(z.enum(SESSION_LIST_BACKGROUND_WORK_ATTENTION_MODE_VALUES), 'keepWorking', 'session list presentation'),
     sessionListAttentionStandingDefaultV1: accountPreference(z.boolean(), false, 'session list presentation'),
-    sessionListWorkingPlacementModeV1: accountPreference(z.enum(['off', 'global', 'withinGroups']), 'off', 'session list presentation'),
-    sessionListSeparateBackgroundWorkV1: accountPreference(z.boolean(), false, 'session list presentation'),
-    sessionFolderViewModeV1: accountPreference(z.enum(['off', 'tree']), 'off', 'session list presentation'),
     sessionListNarrowWorkingIndicatorStyle: accountPreference(z.enum(['spinner', 'pulse']), 'spinner', 'session list presentation'),
-    workspacePathDisplayModeV1: accountPreference(z.enum(['name', 'path']), 'name', 'session list presentation'),
     workspaceFaviconsEnabled: accountPreference(z.boolean(), true, 'session list presentation'),
     workspaceMachineSubtitlesEnabled: accountPreference(z.boolean(), true, 'session list presentation'),
     showFlavorIcons: accountPreference(z.boolean(), true, 'application chrome'),
@@ -927,10 +935,6 @@ const ACCOUNT_CORE_CATALOG_DEFINITIONS = {
     botFaceStyle: accountPreference(BotFaceStyleSchema, 'dither', 'Bot face presentation'),
     botMotion: accountPreference(BotMotionSchema, 'lively', 'Bot motion presentation'),
     hideInactiveSessions: accountPreference(z.boolean(), false, 'session list presentation'),
-    groupInactiveSessionsByProject: accountPreference(z.boolean(), false, 'session list presentation'),
-    sessionListActiveGroupingV1: accountPreference(z.enum(['project', 'date']), 'project', 'session list presentation'),
-    sessionListInactiveGroupingV1: accountPreference(z.enum(['project', 'date']), 'date', 'session list presentation'),
-    sessionListSectionModeV1: accountPreference(z.enum(['activity', 'single']), 'single', 'session list presentation'),
     sessionListActiveColorModeV1: accountPreference(z.enum(['activityAndAttention', 'attentionOnly', 'allActive']), 'activityAndAttention', 'session list presentation'),
     sessionMessageSendMode: accountPolicy(z.enum(['agent_queue', 'interrupt', 'server_pending']), 'server_pending', 'message delivery'),
     sessionBusySteerSendPolicy: accountPolicy(z.enum(['steer_immediately', 'server_pending']), 'steer_immediately', 'message delivery'),
@@ -971,6 +975,8 @@ const ACCOUNT_DISPLAY_CATALOG_DEFINITIONS = {
     attachmentsUploadsVcsIgnoreWritesEnabled: accountPreference(z.boolean(), true, 'attachment uploads'),
     attachmentsUploadsMaxFileBytes: accountPolicy(z.number().check(z.int(), z.minimum(1), z.maximum(MAX_ATTACHMENT_UPLOAD_FILE_BYTES_V1)), DEFAULT_ATTACHMENT_UPLOAD_MAX_FILE_BYTES_V1, 'attachment uploads'),
     sessionTagsEnabled: accountPreference(z.boolean(), true, 'session list presentation'),
+    // Tag ids belong to a Home; identical ids on another Home do not inherit this choice.
+    sessionListHiddenTagIdsWhileRecording: accountPreference(z.record(z.string(), z.array(z.string())), {}, 'session list presentation'),
     sessionListWorkingStatusAnimatedTextEnabled: accountPreference(z.boolean(), true, 'session list presentation'),
     mobileWorkspaceExperienceV1: accountPreference(z.enum(['classic', 'cockpit']), 'cockpit', 'mobile workspace presentation'),
     workspaceTabsSyncEnabled: accountPreference(z.boolean(), true, 'workspace open tabs'),
@@ -1035,9 +1041,38 @@ const PRIVATE_CATALOG_SETTINGS_SOURCE_KEYS = new Set([
     'connectedServicesCollapsedItemKeysV1', 'connectedServicesDefaultAuthPoolAdoptionDismissedByKey', 'dismissedCLIWarnings',
 ]);
 
+// Read provenance: 0.2 Account core/display-setting definitions (including its
+// unsuffixed background-work key). These inputs never enter effective settings
+// or new mutations; only the ingress below may translate authored intent.
+const RETIRED_SESSION_LIST_SETTING_KEYS = new Set([
+    'sessionListSectionModeV1', 'sessionListActiveGroupingV1', 'sessionListInactiveGroupingV1',
+    'sessionListOrderingModeV1', 'sessionListAttentionPromotionModeV1', 'sessionListWorkingPlacementModeV1',
+    'sessionFolderViewModeV1', 'sessionListFolderSortModeV1', 'groupInactiveSessionsByProject',
+    'sessionListSeparateBackgroundWorkV1', 'sessionListSeparateBackgroundWork',
+    'workspacePathDisplayModeV1',
+]);
+
+function projectSessionListPreferenceIngress(raw: Record<string, unknown>): Record<string, unknown> {
+    const next = { ...raw };
+    if (raw.sessionListLayoutV1 !== 'projects' && raw.sessionListLayoutV1 !== 'recent_activity') {
+        next.sessionListLayoutV1 = raw.sessionListSectionModeV1 === 'single'
+            && raw.sessionListActiveGroupingV1 === 'date' ? 'recent_activity' : 'projects';
+    }
+    if (raw.sessionListAttentionPlacementV1 !== 'both' && raw.sessionListAttentionPlacementV1 !== 'top'
+        && raw.sessionListAttentionPlacementV1 !== 'inPlace') {
+        const attention = raw.sessionListAttentionPromotionModeV1;
+        const working = raw.sessionListWorkingPlacementModeV1;
+        next.sessionListAttentionPlacementV1 = attention === 'off' && working === 'off' ? 'inPlace'
+            : attention === 'global' && working === 'global' ? 'top' : 'both';
+    }
+    for (const key of RETIRED_SESSION_LIST_SETTING_KEYS) delete next[key];
+    return next;
+}
+
 /** Pending/input deltas cannot author raw carriers; captured baselines are preserved separately. */
 export function isAccountSettingsReadOnlySourceKeyV1(key: string): boolean {
     return Object.hasOwn(RETAINED_ACCOUNT_SETTINGS_ENTITY_SOURCES, key)
+        || RETIRED_SESSION_LIST_SETTING_KEYS.has(key)
         || PRIVATE_CATALOG_SETTINGS_SOURCE_KEYS.has(key)
         || key === 'inferenceOpenAIKey'
         || LEGACY_AUTHORING_MEMORY_SETTINGS_KEYS.some(sourceKey => sourceKey === key);
@@ -1438,7 +1473,7 @@ export const AccountSettingsSchema = lazyZodSchema(() => classicZ.pipe(z.transfo
     if (!raw || typeof raw !== 'object' || Array.isArray(raw))
         return {};
     const effective = backfillClaudeUnifiedTerminalResponseLocations(
-        backfillLegacyTargetKeyedAccountSettings(raw as Record<string, unknown>),
+        backfillLegacyTargetKeyedAccountSettings(projectSessionListPreferenceIngress(raw as Record<string, unknown>)),
     );
     // Effective readers no longer own these values. Raw persisted baselines must
     // retain them until the destination-first reserved-row importer commits.

@@ -5,11 +5,17 @@ import Animated from 'react-native-reanimated';
 
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 import { t } from '@/text';
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { SessionListFirstGroupContext } from './SessionListGroup';
+import { SessionSectionDraftField } from '@/components/sessions/organization/SessionSectionDraftField';
+import { useSessionSectionDraftController } from '@/components/sessions/organization/useSessionSectionDraft';
 import type { TreeDropOverlaySharedValues } from '@/components/ui/treeDragDrop';
 
 import type { useSessionListRowMoveActionHandlers } from './useSessionListRowMoveActionHandlers';
 import type { SessionListProjectHeaderViewModel } from './sessionListProjectHeaderViewModels';
-import { CollapsibleSectionHeader, FolderGroupHeader, ProjectGroupHeader } from './sessionListChrome';
+import { CollapsibleSectionHeader, ProjectGroupHeader, SessionSectionHeader } from './sessionListChrome';
+import type { IconName } from '@/components/ui/icons/Icon';
+import { useWorkspaceFaviconSourceReachable } from './useWorkspaceFavicon';
 import type { RegisterSessionFolderDropTarget } from './useSessionListViewState';
 import {
     SessionListHeaderFrame,
@@ -31,16 +37,19 @@ import {
     type UseSessionInlineDragResolveDropResultEvent,
 } from './useSessionInlineDrag';
 import { useSessionListOrganizeMode } from './organize/SessionListOrganizeMode';
-import { isTouchPrimaryPointer } from '@/components/ui/interactiveTargetSize';
 import { EntityDragGrip } from '@/components/ui/treeDragDrop/ui/EntityReleasePreview';
 import { resolveWorkspaceRootTreeRowId, treeRowId } from './drop-resolution/treeRowId';
 import { STAGE_SPOTLIGHT_TARGET_IDS } from '@/components/onboarding/tour/stage/stageSpotlightTargetIds';
 import {
     useSpotlightTarget,
 } from '@/components/onboarding/tour/stage/useSpotlightTarget';
+import { Platform } from 'react-native';
+import { useHappierTouchPrimaryPointer } from '@happier-dev/plugin-ui/environment';
 
 type SessionListHeaderItemProps = Readonly<{
     item: Extract<SessionListIndexItem, { type: 'header' }>;
+    /** The column's first group sits closer to the header. */
+    first?: boolean;
     collapsedKeys: Readonly<Record<string, boolean>>;
     projectHeaderViewModelByGroupKey: ReadonlyMap<string, SessionListProjectHeaderViewModel>;
     hasMultipleMachines: boolean;
@@ -57,11 +66,13 @@ type SessionListHeaderItemProps = Readonly<{
         scopeHint: Readonly<{ serverId: string; machineId: string; rootPath: string }> | null;
     }>) => void;
     onToggleCollapse: (collapseKey: string) => void;
-    onFocusFolder?: (item: Extract<SessionListIndexItem, { type: 'header' }>) => void;
-    onCreateSessionFromFolder?: (item: Extract<SessionListIndexItem, { type: 'header' }>) => void;
-    onAddSubfolder?: (item: Extract<SessionListIndexItem, { type: 'header' }>) => void | Promise<void>;
-    onRenameFolder?: (item: Extract<SessionListIndexItem, { type: 'header' }>) => void | Promise<void>;
-    onDeleteFolder?: (item: Extract<SessionListIndexItem, { type: 'header' }>) => void | Promise<void>;
+    /** A section's own facts: its chosen icon and complete membership count (absent while unproven). */
+    sectionFactsByGroupKey?: ReadonlyMap<string, SessionSectionHeaderFacts>;
+    onCreateSessionInSection?: (item: Extract<SessionListIndexItem, { type: 'header' }>) => void;
+    onRenameSection?: (item: Extract<SessionListIndexItem, { type: 'header' }>) => void | Promise<void>;
+    onChangeSectionIcon?: (item: Extract<SessionListIndexItem, { type: 'header' }>, icon: IconName) => void | Promise<void>;
+    onRemoveSection?: (item: Extract<SessionListIndexItem, { type: 'header' }>) => void | Promise<void>;
+    onArchiveSection?: (item: Extract<SessionListIndexItem, { type: 'header' }>) => void | Promise<void>;
     getRowMoveActionHandlers?: ReturnType<typeof useSessionListRowMoveActionHandlers>;
     onRegisterSessionFolderDropTarget?: RegisterSessionFolderDropTarget;
     workspaceFaviconsEnabled?: boolean;
@@ -78,7 +89,42 @@ type SessionListHeaderItemProps = Readonly<{
     onFolderDropResult?: (event: UseSessionInlineDragDropResultEvent) => void;
 }>;
 
+export type SessionSectionHeaderFacts = Readonly<{ icon: string | null; memberCount?: number; hasRowsInView?: boolean }>;
+
+/**
+ * A group header, and the inline New section field when the list is naming one where it will land
+ * (lab `clsections:custom`). The fragment keeps one shape, so opening the field never remounts a header.
+ */
 export const SessionListHeaderItem = React.memo((props: SessionListHeaderItemProps) => {
+    const draftController = useSessionSectionDraftController();
+    const anchor = draftController?.draft ? draftController.anchor : null;
+    const placement = anchor && anchor.groupKey === props.item.groupKey ? anchor.placement : null;
+    const field = placement && draftController?.draft ? (
+        <SessionSectionDraftField key={draftController.draft.key} draft={draftController.draft}
+            onSubmit={draftController.submit} onCancel={draftController.cancel} />
+    ) : null;
+    return (
+        <>
+            {placement === 'before' ? field : null}
+            <SessionListGroupHeaderItem {...props} />
+            {placement === 'after' ? field : null}
+        </>
+    );
+});
+
+const SessionListGroupHeaderItem = React.memo((rawProps: SessionListHeaderItemProps) => {
+    // The list's first group label opens the column only when nothing leads it (Scheduled, Drafts).
+    const opensColumn = React.useContext(SessionListFirstGroupContext);
+    const props = rawProps.first === true && !opensColumn ? { ...rawProps, first: false } : rawProps;
+    const router = useRouter();
+    const openNeedsYou = React.useCallback(() => {
+        router.push({ pathname: '/inbox', params: { view: 'needs_you' } } as never);
+    }, [router]);
+    // The accepted baseline from the header VM (explicit null = none), and its Machine's reachability (P5 U5).
+    const headerViewModel = props.item.headerKind === 'project'
+        ? props.projectHeaderViewModelByGroupKey.get(props.item.groupKey ?? '') : undefined;
+    const faviconSource = headerViewModel ? headerViewModel.scopeHint : undefined;
+    const faviconSourceReachable = useWorkspaceFaviconSourceReachable(faviconSource, props.workspaceFaviconsEnabled === true);
     const stageSpotlightRef = React.useRef<View>(null);
     const stageSpotlightProps = useSpotlightTarget(
         stageSpotlightRef,
@@ -86,6 +132,24 @@ export const SessionListHeaderItem = React.memo((props: SessionListHeaderItemPro
             ? STAGE_SPOTLIGHT_TARGET_IDS.attentionGroup
             : null,
     );
+
+    const headerViewState = props.item.headerKind === 'folder' ? null : resolveSessionListHeaderViewState({
+        item: props.item,
+        collapsedKeys: props.collapsedKeys,
+        projectHeaderViewModelByGroupKey: props.projectHeaderViewModelByGroupKey,
+        translateServerHeader: (server) => t('sessionsList.serverHeader', { server }),
+    });
+    // Callback identity belongs to this mounted header. Global function-id caches
+    // keep the outgoing list's closures alive after its column has been removed.
+    const headerActionHandlers = React.useMemo(() => resolveSessionListHeaderActionHandlers({
+        headerViewState,
+        onOpenProject: props.onOpenProject,
+        onCreateSessionFromWorkspaceScope: props.onCreateSessionFromWorkspaceScope,
+        onRenameWorkspace: props.onRenameWorkspace,
+        onResetWorkspaceName: props.onResetWorkspaceName,
+        onToggleCollapse: props.onToggleCollapse,
+    }), [headerViewState, props.onOpenProject, props.onCreateSessionFromWorkspaceScope,
+        props.onRenameWorkspace, props.onResetWorkspaceName, props.onToggleCollapse]);
 
     if (props.item.headerKind === 'folder') {
         const collapseKey = props.item.groupKey ?? `folder:${props.item.folderId ?? props.item.title}`;
@@ -96,22 +160,27 @@ export const SessionListHeaderItem = React.memo((props: SessionListHeaderItemPro
         const moveActionHandlers = rowId ? props.getRowMoveActionHandlers?.({
             sourceRowId: rowId, sourceLabel: props.item.title,
         }) : undefined;
+        const sectionFacts = props.sectionFactsByGroupKey?.get(props.item.groupKey ?? '');
         const folderHeader = (
-            <FolderGroupHeader
+            <SessionSectionHeader
                 title={props.item.title}
-                depth={props.item.folderDepth ?? 0}
+                icon={sectionFacts?.icon ?? null}
+                memberCount={sectionFacts?.memberCount}
+                hasRowsInView={sectionFacts?.hasRowsInView}
                 collapsed={props.collapsedKeys[collapseKey] === true}
-                onPress={() => props.onFocusFolder?.(props.item)}
                 onToggleCollapse={() => props.onToggleCollapse(collapseKey)}
-                onNewSession={() => props.onCreateSessionFromFolder?.(props.item)}
-                onAddSubfolder={() => props.onAddSubfolder?.(props.item)}
-                onRename={() => props.onRenameFolder?.(props.item)}
-                onDelete={() => props.onDeleteFolder?.(props.item)}
+                onNewSession={props.newSessionEnabled !== false && props.onCreateSessionInSection
+                    ? () => props.onCreateSessionInSection?.(props.item) : undefined}
+                onRename={() => props.onRenameSection?.(props.item)}
+                onChangeIcon={(icon) => props.onChangeSectionIcon?.(props.item, icon)}
+                onRemove={() => props.onRemoveSection?.(props.item)}
+                onArchiveAll={props.onArchiveSection ? () => props.onArchiveSection?.(props.item) : undefined}
                 onMove={moveActionHandlers?.onMoveToFolder}
                 onMoveToWorkspaceRoot={moveActionHandlers?.onMoveToWorkspaceRoot}
                 onMoveUp={moveActionHandlers?.onMoveUp}
                 onMoveDown={moveActionHandlers?.onMoveDown}
                 item={props.item}
+                first={props.first}
                 onRegisterDropTarget={props.onRegisterSessionFolderDropTarget}
             />
         );
@@ -145,35 +214,24 @@ export const SessionListHeaderItem = React.memo((props: SessionListHeaderItemPro
         );
     }
 
-    const headerViewState = resolveSessionListHeaderViewState({
-        item: props.item,
-        collapsedKeys: props.collapsedKeys,
-        projectHeaderViewModelByGroupKey: props.projectHeaderViewModelByGroupKey,
-        translateServerHeader: (server) => t('sessionsList.serverHeader', { server }),
-    });
-    const headerActionHandlers = resolveSessionListHeaderActionHandlers({
-        headerViewState,
-        onOpenProject: props.onOpenProject,
-        onCreateSessionFromWorkspaceScope: props.onCreateSessionFromWorkspaceScope,
-        onRenameWorkspace: props.onRenameWorkspace,
-        onResetWorkspaceName: props.onResetWorkspaceName,
-        onToggleCollapse: props.onToggleCollapse,
-    });
-
     if (!headerViewState || !headerActionHandlers) {
         return null;
     }
 
     if (headerViewState.kind === 'project') {
         const rowId = resolveWorkspaceRootTreeRowId(props.item, headerViewState.displayTitle);
+        const projectHeaderViewModel = props.projectHeaderViewModelByGroupKey.get(props.item.groupKey ?? '');
         const moveActionHandlers = props.getRowMoveActionHandlers?.({
             sourceRowId: rowId, sourceLabel: headerViewState.displayTitle,
         });
         const projectHeader = (
             <ProjectGroupHeader
                 item={props.item}
-                machineSubtitle={props.projectHeaderViewModelByGroupKey.get(props.item.groupKey ?? '')?.machineSubtitle}
+                faviconSource={faviconSource}
+                faviconSourceReachable={faviconSourceReachable}
+                machineSubtitle={projectHeaderViewModel?.machineSubtitle}
                 hasMultipleMachines={props.hasMultipleMachines}
+
                 displayTitle={headerViewState.displayTitle}
                 hasCustomLabel={headerViewState.hasCustomLabel}
                 canOpenProject={Boolean(headerViewState.workspaceRefId)}
@@ -187,6 +245,7 @@ export const SessionListHeaderItem = React.memo((props: SessionListHeaderItemPro
                 onReset={headerActionHandlers.onReset}
                 onMoveUp={moveActionHandlers?.onMoveUp}
                 onMoveDown={moveActionHandlers?.onMoveDown}
+                first={props.first}
                 collapsed={headerViewState.collapsed}
                 onToggleCollapse={headerActionHandlers.onToggleCollapse}
                 onRegisterDropTarget={props.onRegisterSessionFolderDropTarget}
@@ -231,7 +290,12 @@ export const SessionListHeaderItem = React.memo((props: SessionListHeaderItemPro
             title={headerViewState.title}
             collapsed={headerViewState.collapsed}
             onPress={headerActionHandlers.onToggleCollapse}
-            isPrimaryHeader={isPrimaryHeader}
+            // Needs you opens the Inbox's Needs you view (R8); its chevron alone folds the group.
+            onOpen={props.item.headerKind === 'attention' ? openNeedsYou : undefined}
+            headerKind={props.item.headerKind}
+            rollup={props.item.rollup}
+            count={props.item.headerKind === 'attention' || props.item.headerKind === 'working' ? props.item.eligibleCount : undefined}
+            first={props.first}
             testID={headerTestIdKey ? `session-list-header:${headerTestIdKey}` : undefined}
             rootMeasurement={props.item.headerKind === 'attention' ? {
                 active: stageSpotlightProps.active,
@@ -258,7 +322,7 @@ const DraggableFolderHeaderFrame = React.memo(function DraggableFolderHeaderFram
 }>) {
     // Desktop headers carry themselves; a phone header carries only in Organize mode (K1).
     const organize = useSessionListOrganizeMode();
-    const touchPrimary = isTouchPrimaryPointer();
+    const touchPrimary = useHappierTouchPrimaryPointer(Platform.OS);
     const enabled = Boolean(props.onDropResult) && (!touchPrimary || organize.active);
     const { gesture, animatedStyle, dragSourceRef } = useSessionInlineDrag({
         enabled,

@@ -7,10 +7,24 @@ import {
     buildSessionListSelectionScopeKey,
     buildSessionListSelectionScopeKeyForView,
     readSessionListSelectionKeysFromVisibleEntries,
+    readSessionListSelectionRowsFromVisibleEntries,
 } from './sessionListSelectionKeys';
 import { createSessionListViewFilterDefaults } from '../search/sessionListViewFilters';
 
 describe('sessionListSelectionKeys', () => {
+    it('keeps rendered occurrence order separate from unique selected entities', () => {
+        const entries = buildVisibleSessionNavigationEntries([
+            { type: 'session', serverId: 'server-a', sessionId: 'alpha', occurrenceRole: 'needsYou' },
+            { type: 'session', serverId: 'server-a', sessionId: 'beta' },
+            { type: 'session', serverId: 'server-a', sessionId: 'alpha' },
+        ]);
+        const rows = readSessionListSelectionRowsFromVisibleEntries(entries);
+        expect(rows.visibleOrderedKeys).toEqual(entries.map((entry) => entry.occurrenceKey));
+        expect(rows.entityKeysByOccurrenceKey.get(rows.visibleOrderedKeys[0]))
+            .toBe(rows.entityKeysByOccurrenceKey.get(rows.visibleOrderedKeys[2]));
+        expect(readSessionListSelectionKeysFromVisibleEntries(entries)).toEqual(entries.slice(0, 2).map((entry) => entry.sessionKey));
+    });
+
     it('uses server-scoped session keys so duplicate session ids do not collide', () => {
         expect(buildSessionListSelectionKey({ sessionId: 'alpha', serverId: 'server-a' }))
             .toBe(JSON.stringify(['server-a', 'alpha']));
@@ -49,7 +63,6 @@ describe('sessionListSelectionKeys', () => {
                 eligibleTagIds: [{ serverId: 'server-a', tagId: 'urgent' }],
             },
             storageKind: 'active',
-            focusedFolderId: null,
             includeInactive: true,
         };
 
@@ -80,38 +93,35 @@ describe('sessionListSelectionKeys', () => {
         }));
     });
 
-    it('keeps presentation narrowing outside the canonical filter signature', () => {
+    it('ignores retired folder focus while preserving storage and inactive selection scope', () => {
         const left = buildSessionListSelectionScopeKey({
             storageKind: 'active',
             filterSignature: 'semantic-query',
-            focusedFolderId: 'folder-a',
+            ...{ focusedFolderId: 'folder-a' },
             includeInactive: false,
         });
         const right = buildSessionListSelectionScopeKey({
             storageKind: 'active',
             filterSignature: 'semantic-query',
-            focusedFolderId: 'folder-a',
             includeInactive: false,
         });
 
         expect(left).toBe(right);
-        expect(left).toContain('folder-a');
+        expect(left).not.toContain('folder-a');
         expect(left).not.toBe(buildSessionListSelectionScopeKey({
             storageKind: 'archived',
             filterSignature: 'semantic-query',
-            focusedFolderId: 'folder-a',
+            includeInactive: false,
+        }));
+        expect(left).toBe(buildSessionListSelectionScopeKey({
+            storageKind: 'active',
+            filterSignature: 'semantic-query',
+            ...{ focusedFolderId: 'folder-b' },
             includeInactive: false,
         }));
         expect(left).not.toBe(buildSessionListSelectionScopeKey({
             storageKind: 'active',
             filterSignature: 'semantic-query',
-            focusedFolderId: 'folder-b',
-            includeInactive: false,
-        }));
-        expect(left).not.toBe(buildSessionListSelectionScopeKey({
-            storageKind: 'active',
-            filterSignature: 'semantic-query',
-            focusedFolderId: 'folder-a',
             includeInactive: true,
         }));
     });

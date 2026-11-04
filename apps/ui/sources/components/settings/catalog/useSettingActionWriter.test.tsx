@@ -568,7 +568,7 @@ describe('declared setting Action writer', () => {
         function Probe() { apply = useApplySettings(); return null; }
         try {
             const screen = await renderScreen(<Probe />);
-            await act(async () => { await apply!({ useProfiles: true, sessionListSectionModeV1: 'activity',
+            await act(async () => { await apply!({ useProfiles: true, sessionListLayoutV1: 'recent_activity',
                 usageCoachPreferencesV1: settingsParse({ usageCoachPreferencesV1: { modelSuggestion: 'off' } }).usageCoachPreferencesV1,
                 sessionUsageGaugeLabels: true }); });
             await act(async () => { await vi.waitFor(() => expect(account.persistedSettings).toMatchObject({

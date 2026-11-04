@@ -16,7 +16,6 @@ import {
 } from '@/sync/domains/sessionList/sessionListIndex';
 import { applySessionOrganizationLegacyTestSettings } from './sessionOrganizationProjectionTestFixture';
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
-import { buildSessionFolderGroupKey } from '@/sync/domains/session/folders';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -86,11 +85,7 @@ const searchRuntime = { open: openUniversalSearchSpy, buildCommands: () => [] };
 
 let pinnedSessionKeysV1: string[] = [];
 let sessionListGroupOrderV1: Record<string, string[]> = {};
-let sessionListOrderingModeV1: Settings['sessionListOrderingModeV1'] = 'custom';
-let sessionListFolderSortModeV1: Settings['sessionListFolderSortModeV1'] = 'foldersFirst';
-let sessionListSectionModeV1: 'activity' | 'single' = 'activity';
-let sessionListActiveGroupingV1: 'project' | 'date' = 'project';
-let sessionListInactiveGroupingV1: 'project' | 'date' = 'date';
+let sessionListLayoutV1: Settings['sessionListLayoutV1'] = 'projects';
 let hideInactiveSessions = false;
 let sessionTagsV1: Record<string, string[]> = {};
 const workspaceA = {
@@ -143,7 +138,6 @@ installSessionShellCommonModuleMocks({
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
             Dimensions: { get: () => ({ width: 390, height: 844, scale: 1, fontScale: 1 }) },
-            useWindowDimensions: () => ({ width: 390, height: 844, scale: 1, fontScale: 1 }),
             Platform: {
                 OS: 'web',
             },
@@ -241,7 +235,7 @@ const paneState = {
     summary: { sessionsReady: true, sessionCount: 2 },
     visibleSessionListIndex: mockVisibleSessionListIndex,
     hasHiddenInactiveSessions: false,
-    folderFocus: null,
+
     folderFeatureEnabledServerIds: ['srv_server_a'],
     showLoading: false,
     showEmptyState: false,
@@ -256,8 +250,7 @@ function SessionsList(props: React.ComponentProps<typeof SessionsListView>) {
 async function renderSessionsList() {
     storage.getState().applySettingsLocal({
         sessionListDensity: 'detailed', sessionTagsEnabled: true,
-        sessionListOrderingModeV1, sessionListFolderSortModeV1, sessionListSectionModeV1,
-        sessionListActiveGroupingV1, sessionListInactiveGroupingV1, hideInactiveSessions,
+        sessionListLayoutV1, hideInactiveSessions,
     });
     await applySessionOrganizationLegacyTestSettings({
         serverId: 'srv_server_a', pinnedSessionKeysV1, sessionListGroupOrderV1, sessionFoldersV1, sessionTagsV1,
@@ -272,6 +265,14 @@ describe('SessionsList (inline reorder)', () => {
         await (await import('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage')).prepareSessionDraftPersistenceStorage();
         await home.reset();
         homeA = await home.addHome({ name: 'Server A', serverUrl: 'https://server-a.example.test', serverIdentityId: 'srv_server_a', accountId: 'u1' });
+        const { createAccountSettingsHttpBoundary } = await import('@/dev/testkit/harness/actionHomesHttpHarness');
+        const accountSettings = createAccountSettingsHttpBoundary({ serverUrl: 'https://server-a.example.test',
+            initialAccounts: [{ accountId: 'u1', snapshot: { content: null, version: 0 } }] });
+        home.answer(homeA, '/v2/account/settings', { select: async (_input, request) => {
+            const response = accountSettings.handle(request.url, request.init);
+            if (!response) throw new Error('Expected the Account settings HTTP boundary');
+            return { status: response.status, body: await response.json() };
+        } });
         const { loadSyncSingletonForTests } = await import('@/dev/testkit/harness/syncSingletonLoader');
         await loadSyncSingletonForTests();
         await (await import('@/sync/runtime/orchestration/connectionManager')).restoreConnectionToActiveServer({ token: createAccountTokenForTests('u1') });
@@ -296,11 +297,7 @@ describe('SessionsList (inline reorder)', () => {
             features: { sessions: { enabled: true, folders: { enabled: true } } },
         }) } });
         mockVisibleSessionListIndex = defaultVisibleSessionListIndex;
-        sessionListOrderingModeV1 = 'custom';
-        sessionListFolderSortModeV1 = 'foldersFirst';
-        sessionListSectionModeV1 = 'activity';
-        sessionListActiveGroupingV1 = 'project';
-        sessionListInactiveGroupingV1 = 'date';
+        sessionListLayoutV1 = 'projects';
         hideInactiveSessions = false;
         pinnedSessionKeysV1 = [];
         sessionListGroupOrderV1 = {};
@@ -346,8 +343,8 @@ describe('SessionsList (inline reorder)', () => {
         expect(items[0].props.isBeingDragged).toBe(false);
     });
 
-    it('keeps the carry source available when sibling ordering is date-based', async () => {
-        sessionListOrderingModeV1 = 'created';
+    it('keeps the carry source available in Recent activity', async () => {
+        sessionListLayoutV1 = 'recent_activity';
 
         const screen = await renderSessionsList();
 
@@ -357,24 +354,18 @@ describe('SessionsList (inline reorder)', () => {
     });
 
     it('keeps Recent activity rows available for carry while preserving custom project ordering', async () => {
-        sessionListSectionModeV1 = 'single';
-        sessionListActiveGroupingV1 = 'date';
-        sessionListOrderingModeV1 = 'custom';
+        sessionListLayoutV1 = 'recent_activity';
 
         const screen = await renderSessionsList();
 
-        const rowBoundaries = screen.findAll((node) => (
-            typeof node.props?.dragEnabled === 'boolean'
-            && node.props?.item?.type === 'session'
-            && Array.isArray(node.props?.items)
-        ));
+        const rowBoundaries = screen.findAll((node) => String(node.type) === 'SessionItem');
         expect(rowBoundaries).toHaveLength(2);
         expect(rowBoundaries[0].props.dragEnabled).toBe(true);
-        expect(sessionListOrderingModeV1).toBe('custom');
+        expect(storage.getState().settings.sessionListLayoutV1).toBe('recent_activity');
     });
 
-    it('keeps drag-end persistence disabled when ordering mode is not custom', async () => {
-        sessionListOrderingModeV1 = 'updated';
+    it('does not write organization order when mounting Recent activity', async () => {
+        sessionListLayoutV1 = 'recent_activity';
         sessionListGroupOrderV1 = {};
         sessionTagsV1 = {};
 
@@ -385,14 +376,14 @@ describe('SessionsList (inline reorder)', () => {
         expect(storage.getState().sessionOrganizationOrderEntriesByScopeKey).toEqual({});
     });
 
-    it('preserves carry availability when ordering mode returns to custom', async () => {
-        sessionListOrderingModeV1 = 'updated';
+    it('preserves carry availability when returning to Projects', async () => {
+        sessionListLayoutV1 = 'recent_activity';
 
         const screen = await renderSessionsList();
         const disabledItems = screen.findAll((node) => String(node.type) === 'SessionItem');
         expect(disabledItems[0].props.dragEnabled).toBe(true);
 
-        sessionListOrderingModeV1 = 'custom';
+        sessionListLayoutV1 = 'projects';
         const updatedScreen = await renderSessionsList();
 
         const reorderedItems = updatedScreen.findAll((node) => String(node.type) === 'SessionItem');
@@ -407,79 +398,45 @@ describe('SessionsList (inline reorder)', () => {
         const menuProps = [...dropdownMenuCaptures].reverse().find((captured) => {
             const items = captured.items ?? [];
             return items.some((item) => item?.id === 'layout:projects')
-                && items.some((item) => item?.id === 'layout:recent_activity')
-                && items.some((item) => item?.id === 'layout:active_inactive');
+                && items.some((item) => item?.id === 'layout:recent_activity');
         });
         expect(menuProps).toBeTruthy();
         expect(menuProps?.showCategoryTitles).toBe(true);
-        expect(menuProps?.items?.map((item) => item.id)).toEqual([
+        expect(menuProps?.items?.filter((item) => item.id?.startsWith('layout:') || item.id?.startsWith('attention:')).map((item) => item.id)).toEqual([
             'layout:projects',
             'layout:recent_activity',
-            'layout:active_inactive',
-            'activeGrouping',
-            'inactiveGrouping',
-            'attentionPlacement',
-            'workingPlacement',
-            'ordering:custom',
-            'ordering:updated',
-            'ordering:created',
-            'folderDisplay',
-            'folderSort',
+            'attention:both',
+            'attention:top',
+            'attention:inPlace',
         ]);
-        expect(menuProps?.items?.some((item) => item.id === 'hideInactiveSessions')).toBe(false);
-        expect(menuProps?.items?.find((item) => item.id === 'activeGrouping')?.submenu?.items?.map((item) => item.id)).toEqual([
-            'grouping:active:project',
-            'grouping:active:date',
-        ]);
-        expect(menuProps?.items?.find((item) => item.id === 'attentionPlacement')?.submenu?.items?.map((item) => item.id)).toEqual([
-            'attention:off',
-            'attention:global',
-            'attention:withinGroups',
-        ]);
-
-        await act(async () => menuProps?.onSelect?.('ordering:created'));
-        expect(storage.getState().settings.sessionListOrderingModeV1).toBe('created');
-        await act(async () => menuProps?.onSelect?.('folderSort:mixed'));
-        expect(storage.getState().settings.sessionListFolderSortModeV1).toBe('mixed');
-        await act(async () => menuProps?.onSelect?.('grouping:active:date'));
-        expect(storage.getState().settings.sessionListActiveGroupingV1).toBe('date');
+        expect(menuProps?.items?.some((item) => ['hideInactiveSessions', 'activeGrouping', 'inactiveGrouping', 'folderDisplay', 'folderSort'].includes(item.id ?? '')
+            || item.id?.startsWith('ordering:') || item.id?.startsWith('working:'))).toBe(false);
+        await act(async () => menuProps?.onSelect?.('attention:top'));
+        expect(storage.getState().settings.sessionListAttentionPlacementV1).toBe('top');
         const layoutTransitions: unknown[] = [];
         const unsubscribe = storage.subscribe((state, previous) => {
-            if (state.settings.sessionListSectionModeV1 !== previous.settings.sessionListSectionModeV1
-                || state.settings.sessionListActiveGroupingV1 !== previous.settings.sessionListActiveGroupingV1) {
-                layoutTransitions.push([state.settings.sessionListSectionModeV1, state.settings.sessionListActiveGroupingV1]);
+            if (state.settings.sessionListLayoutV1 !== previous.settings.sessionListLayoutV1) {
+                layoutTransitions.push(state.settings.sessionListLayoutV1);
             }
         });
         const sessionReadsBefore = home.requests.filter(request => /^\/v[12]\/sessions(?:\?|$)/.test(request.path)).length;
-        await act(async () => menuProps?.onSelect?.('layout:projects'));
+        await act(async () => menuProps?.onSelect?.('layout:recent_activity'));
         unsubscribe();
-        expect(layoutTransitions).toEqual([['single', 'project']]);
+        expect(layoutTransitions).toEqual(['recent_activity']);
         expect(home.requests.filter(request => /^\/v[12]\/sessions(?:\?|$)/.test(request.path))).toHaveLength(sessionReadsBefore);
-        await act(async () => menuProps?.onSelect?.('grouping:inactive:project'));
-        expect(storage.getState().settings.sessionListInactiveGroupingV1).toBe('project');
     });
 
-    it('uses folders-first as the effective folder sort mode while preserving mixed as a dormant date-mode preference', async () => {
-        sessionListOrderingModeV1 = 'updated';
-        sessionListFolderSortModeV1 = 'mixed';
-
+    it('refuses retired view option choices without writing settings', async () => {
         await renderSessionsList();
 
         const menuProps = [...dropdownMenuCaptures].reverse().find((captured) => {
             const items = captured.items ?? [];
             return items.some((item) => item?.id === 'layout:projects');
         });
-        const folderSortItems = menuProps?.items?.find((item) => item?.id === 'folderSort')?.submenu?.items;
-        const foldersFirstItem = folderSortItems?.find((item) => item?.id === 'folderSort:foldersFirst');
-        const mixedFolderSortItem = folderSortItems?.find((item) => item?.id === 'folderSort:mixed');
-
-        expect((foldersFirstItem as { rightElement?: unknown } | undefined)?.rightElement).toBeTruthy();
-        expect((mixedFolderSortItem as { rightElement?: unknown } | undefined)?.rightElement).toBeFalsy();
-        expect(mixedFolderSortItem?.disabled).toBe(true);
-        expect(mixedFolderSortItem?.subtitle).toBe('settingsSession.sessionList.folderSortModeMixedDisabledInDateModeSubtitle');
-
         const settingsBeforeSelection = storage.getState().settings;
-        await act(async () => menuProps?.onSelect?.('folderSort:mixed'));
+        for (const id of ['folderSort:mixed', 'ordering:created', 'grouping:active:date', 'layout:active_inactive']) {
+            await act(async () => menuProps?.onSelect?.(id));
+        }
         expect(storage.getState().settings).toBe(settingsBeforeSelection);
     });
 

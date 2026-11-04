@@ -6,6 +6,9 @@ import {
     SESSION_ACTION_MARK_READ_ID,
     SESSION_ACTION_MARK_UNREAD_ID,
     SESSION_ACTION_MOVE_TO_FOLDER_ID,
+    SESSION_ACTION_PUT_UNDER_ID,
+    SESSION_ACTION_ARCHIVE_ID,
+    SESSION_ACTION_UNARCHIVE_ID,
     SESSION_ACTION_RAIL_PIN_ID,
     SESSION_ACTION_RAIL_UNPIN_ID,
     SESSION_ACTION_RENAME_ID,
@@ -102,6 +105,14 @@ function buildBotsRosterRowMenuItems(params: SessionRowMoreMenuBuildParams): Dro
     return items;
 }
 
+/** Move to section files the row, so it sits with the other filing items (lab `clsections:menu`): before Put under…, never after Archive. */
+function placeMoveToSection(items: readonly DropdownMenuItem[], move: DropdownMenuItem | null): DropdownMenuItem[] {
+    if (!move) return [...items];
+    const anchor = [SESSION_ACTION_PUT_UNDER_ID, SESSION_ACTION_ARCHIVE_ID, SESSION_ACTION_UNARCHIVE_ID]
+        .map((id) => items.findIndex((item) => item.id === id)).find((index) => index >= 0) ?? items.length;
+    return [...items.slice(0, anchor), move, ...items.slice(anchor)];
+}
+
 export function buildSessionRowMoreMenuItems(params: SessionRowMoreMenuBuildParams): DropdownMenuItem[] {
     if (params.surface === 'botsRoster') return buildBotsRosterRowMenuItems(params);
     const selectItems = (params.leadingItems ?? []).filter((item) => item.id === SESSION_ROW_ACTION_SELECT_ID);
@@ -125,6 +136,11 @@ export function buildSessionRowMoreMenuItems(params: SessionRowMoreMenuBuildPara
                 title: t('sessionsList.moveToFolder'),
                 icon: <Icon name="folder" size={16} color={params.iconColor} />,
                 disabled: false,
+                ...(params.sectionMoveItems?.length ? { submenu: {
+                    items: params.sectionMoveItems,
+                    showCategoryTitles: true,
+                    separateCategories: true,
+                } } : {}),
             };
             continue;
         }
@@ -160,7 +176,7 @@ export function buildSessionRowMoreMenuItems(params: SessionRowMoreMenuBuildPara
             params.target.reminderAction.canSchedule,
         )] : []),
         ...contextualItems,
-        ...remainingItems,
-        ...(moveToFolderItem ? [moveToFolderItem] : []),
+        ...(params.spaceMembershipMenu?.items ?? []),
+        ...placeMoveToSection(remainingItems, moveToFolderItem),
     ];
 }

@@ -948,7 +948,7 @@ describe('UI testkit mock factories', () => {
         const snapshot = mock.storage.getState();
         expect(snapshot).toMatchObject(state);
         expect(snapshot.sessions).toEqual({});
-        expect(snapshot.localSettings.sessionMruOrderV1).toEqual([]);
+        expect(snapshot.localSettings).not.toHaveProperty('sessionMruOrderV1');
         expect(mock.getStorage().getState()).toBe(snapshot);
         expect(mock.storage((value) => value)).toBe(snapshot);
         expect(mock.storage.subscribe).toBeTypeOf('function');

@@ -15,7 +15,10 @@ export { buildQualifiedAudienceSelectionKey, buildQualifiedTagAddressKey };
 export type { QualifiedAudienceSelection, QualifiedTagAddress };
 import type {
     SessionListQueryV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/listing/query';
+import { sessionListMembershipFilterFromQuery } from '@happier-dev/protocol/sessions/listing/query';
+import type { SessionListSpaceMembership } from '@/sync/domains/session/listing/sessionListWorkFilter';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { buildSessionListQueryKey } from '@/sync/domains/session/listing/sessionListQueryKey';
 import { projectSessionListFilterHomeQueriesV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterQueryV1';
 import {
@@ -73,9 +76,10 @@ function normalizeId(raw: unknown): string {
 export function createSessionListViewFilterDefaults(
     input: SessionListViewFilterDefaultsInput = {},
 ): SessionListViewFilters {
+    const { searchQuery, ...selection } = input;
     return {
-        ...normalizeSessionListFilterV1(input),
-        searchQuery: input.searchQuery ?? '',
+        ...normalizeSessionListFilterV1(selection),
+        searchQuery: searchQuery ?? '',
     };
 }
 
@@ -189,8 +193,13 @@ export function normalizeSessionListViewFilters(
     input: SessionListViewFilters,
     viewContext?: SessionListViewContext,
     fixedShow?: SessionListViewFilters['show'],
+    fixedIncludeInactive?: true,
 ): SessionListViewFilters {
-    const filters = createSessionListViewFilterDefaults(fixedShow ? { ...input, show: fixedShow } : input);
+    const filters = createSessionListViewFilterDefaults({
+        ...input,
+        ...(fixedShow ? { show: fixedShow } : {}),
+        ...(fixedIncludeInactive ? { includeInactive: true } : {}),
+    });
     if (viewContext?.kind !== 'team') return filters;
     const team = createTeamAddress(viewContext.team.serverId, viewContext.team.teamId);
     if (!team) return filters;
@@ -265,6 +274,8 @@ export function buildSessionListFilterQueryHomes(
     options: Readonly<{
         storage: SessionListQueryV1['storage'];
         includeInactive: boolean;
+        /** Exhaustive readers already visit attention rows in the ordinary corpus. */
+        includeAttention?: boolean;
         /** Homes currently mounted by the canonical Home-selection owner. */
         mountedHomeServerIds: readonly string[];
         /** Page policy for this surface. Absent means the Home's released default. */
@@ -276,11 +287,28 @@ export function buildSessionListFilterQueryHomes(
          * narrowed by the same qualified selection on the client.
          */
         tagFacet?: 'query' | 'local';
+        /** Where the Project predicate is applied; `query` asks the Home for the Project's Sessions only. */
+        projectFacet?: 'query' | 'local';
+        /** Ordinary GET adapters do not prove Section membership before paging. */
+        sectionFacet?: 'query' | 'local';
+        spaceMembership?: SessionListSpaceMembership;
+        viewerAccountIdByServerId?: ReadonlyMap<string, string>;
     }>,
 ): SessionListFilterQueryHome[] {
-    return projectSessionListFilterHomeQueriesV1(filters, options).map(({ serverId, query }) => ({
-        serverId, queryKey: buildSessionListQueryKey(serverId, query), query,
-    }));
+    const space = options.spaceMembership;
+    const smartHomes = new Map(space?.membership.mode === 'filter_or_manual' && space.filter.show !== 'runs'
+        ? projectSessionListFilterHomeQueriesV1(space.filter, { ...options, tagFacet: 'query', sectionFacet: 'query', projectFacet: 'query' })
+            .map(home => [home.serverId, home.query] as const) : []);
+    return projectSessionListFilterHomeQueriesV1(filters, options).map(({ serverId, query: outer }) => {
+        const smart = smartHomes.get(serverId);
+        const query = !space ? outer : { ...outer, membership: {
+            mode: space.membership.mode,
+            tagIds: space.membership.tags.filter(tag => areServerProfileIdentifiersEquivalent(tag.serverId, serverId)
+                && tag.accountId === options.viewerAccountIdByServerId?.get(serverId)).map(tag => tag.tagId),
+            ...(smart ? { filter: sessionListMembershipFilterFromQuery(smart) } : {}),
+        } };
+        return { serverId, queryKey: buildSessionListQueryKey(serverId, query), query };
+    });
 }
 
 /**
@@ -387,7 +415,9 @@ export function buildSessionListSelectionScopeSignature(
         ))
         .map(buildQualifiedTagAddressKey)
         .sort();
+    const { searchQuery: _searchQuery, ...selection } = filters;
     return JSON.stringify({
+        ...selection,
         show: filters.show,
         startedBy: [...filters.startedBy].sort(),
         scope: filters.scope,

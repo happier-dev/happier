@@ -810,7 +810,7 @@ describe('generated OpenAI conversation Actions through the lifecycle owner', ()
                 let menu: ReturnType<typeof useSessionRowActionMenu> | null = null;
                 function MenuCapture() {
                     menu = useSessionRowActionMenu({ target, sessionName: 'Bot', hideInactiveSessions: false,
-                        iconColor: '#000', activeTags: [], knownTags: [], tagsEnabled: false, isNativeMobile: true,
+                        iconColor: '#000', activeTags: [], knownTags: [], tagsEnabled: false, touchPrimaryPointer: true,
                         setContextMenuOpen() {}, openTagsMenuFromContext() {} });
                     return null;
                 }

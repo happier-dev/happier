@@ -9,7 +9,8 @@ import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
 import { glassPresetMaterials } from '@/components/ui/glass/glassMaterial';
 import { GlassRuntimeEnvironmentProvider } from '@/components/ui/glass/glassRuntimeEnvironment';
 import { readPersonalizeChoices } from './personalizeFlowModel';
-import { PersonalizeStage, buildPersonalizeListSample } from './PersonalizeStage';
+import { PersonalizeStage } from './PersonalizeStage';
+import { buildSessionListArrangementSample } from '@/components/settings/session/sessionListArrangementSample';
 import { SessionTranscriptSample, ThinkingDisplayPreview } from '@/components/settings/session/SessionSettingPreviews';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
@@ -123,14 +124,10 @@ describe('Personalize stage material', () => {
 });
 
 describe('Personalize attention sample', () => {
-    it('uses session facts and reason priority, independent of sample names', async () => {
-        // A permission on the craft sample must outrank an action and a ready result;
-        // the old review/pricing classifier excludes it solely because of its name.
-        const groups = buildPersonalizeListSample('projects', 'global');
-        expect(groups[0].rows.map(row => row.id)).toEqual(['personalize-craft', 'personalize-review', 'personalize-pricing']);
-        const within = buildPersonalizeListSample('projects', 'withinGroups');
-        expect(within[0].rows.map(row => row.id)).toEqual(['personalize-craft', 'personalize-review', 'personalize-reconnect']);
-        const off = buildPersonalizeListSample('projects', 'off');
-        expect(off[0].rows.map(row => row.id)).toEqual(['personalize-reconnect', 'personalize-craft', 'personalize-review']);
+    it('uses the canonical mirror, Top and In-place behavior without store or RPC demand', () => {
+        const count = (placement: 'both' | 'top' | 'inPlace', id: string) => buildSessionListArrangementSample('projects', placement).flatMap(group => group.rows).filter(row => row.id === id).length;
+        expect(count('both', 'personalize-craft')).toBe(2);
+        expect(count('top', 'personalize-craft')).toBe(1);
+        expect(count('inPlace', 'personalize-craft')).toBe(1);
     });
 });

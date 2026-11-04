@@ -1,7 +1,10 @@
 import * as React from 'react';
-import type { SessionListScopeV1 } from '@happier-dev/protocol';
+import type { SessionListScopeV1 } from '@happier-dev/protocol/sessions/listing/query';
+import type { EntityListFilterResultV1 } from '@happier-dev/protocol/collections/filter/entityListFilterV1';
+import type { CollectionConditionValueCountRequest, CollectionConditionValueCounts } from '@happier-dev/plugin-ui/components';
 
 import { t } from '@/text';
+import { accountSettingsScopeKeySuffix } from '@/sync/domains/settings/scope/accountSettingsScope';
 import type { SelectionListFilter } from '@/components/ui/selectionList';
 import type { SessionOrganizationProjection } from '@/sync/domains/session/organization/types';
 
@@ -13,6 +16,15 @@ import { SessionListFilterEditorControl } from './SessionListFilterEditorControl
 import type { SessionListFilterEditorProps } from './SessionListFilterEditor';
 import type { SessionListViewFilterController } from './useSessionListViewFilterController';
 import { registerSessionListScopeActionOwner } from '@/sync/ops/actions/scopeActionFamily';
+import type { SessionListSpaceChrome } from './useSessionListSpaceChrome';
+import { buildCollectionConditionEditorLabels } from '@/components/ui/lists/collection/CollectionConditionEditor';
+import { CollectionSpaceTitle } from '@/components/ui/lists/collection/CollectionSpaceTitle';
+import { useSetCollectionSpacesEnabled } from '@/components/ui/lists/collection/useSetCollectionSpacesEnabled';
+import { useSessionListSpaceKeyboardCommands } from '@/keyboard/sessionListSpaces';
+import { useCollectionFilterSettingsCommand } from '@/components/settings/session/useCollectionFilterSettingsCommand';
+import { collectionSpaceSettingRefs } from '@/components/settings/session/collectionSpaceSettings';
+import { SettingAnchor } from '@/components/settings/shell/SettingRow';
+import type { SessionListConditionCopy } from './sessionListConditionFields';
 
 /** The collapsed control's name for a scope ("My work"). Shared with any surface that edits a Sessions filter. */
 export function readSessionListScopeLabel(scope: SessionListScopeV1): string {
@@ -98,6 +110,47 @@ export function buildSessionListFilterEditorLabels(): SessionListFilterEditorPro
         archived: t('sessionsList.filtersArchived'),
         moreTags: (count: number) => t('sessionsList.filtersMoreTags', { count }),
         resultCount: (count: number) => t('sessionsList.filtersResultCount', { count }),
+        conditions: buildSessionListConditionLabels(),
+    };
+}
+
+/** The condition list's words, shared by every surface that edits a Sessions filter. */
+export function buildSessionListConditionLabels(): SessionListConditionCopy {
+    const { count, ...editor } = buildCollectionConditionEditorLabels();
+    return {
+        ...editor,
+        resultCount: count,
+        waitingOnYou: t('sessionsList.conditionWaitingOnYou'),
+        onlyCoordinators: t('sessionsList.filtersOnlyCoordinators'),
+        inactiveHidden: t('sessionsList.conditionInactiveHidden'),
+        inactiveShown: t('sessionsList.conditionInactiveShown'),
+        groups: {
+            work: t('sessionsList.conditionGroupWork'),
+            people: t('sessionsList.conditionGroupPeople'),
+            kind: t('sessionsList.conditionGroupKind'),
+        },
+        fields: {
+            scope: t('sessionsList.conditionWhose'),
+            projects: t('sessionsList.filtersProject'),
+            statuses: t('sessionsList.filtersStatus'),
+            attention: t('sessionsList.conditionNeedsMe'),
+            tagIds: t('sessionsList.filtersTags'),
+            startedBy: t('sessionsList.filtersStartedBy'),
+            audiences: t('sessionsList.filtersSharedWith'),
+            homeServerIds: t('sessionsList.conditionHome'),
+            show: t('sessionsList.conditionSessionsAndRuns'),
+            coordinator: t('sessionsList.conditionCoordinators'),
+            includeInactive: t('sessionsList.filtersInactive'),
+            source: t('sessionsList.filtersSource'),
+            underSessionId: t('sessionsList.conditionUnder'),
+            bot: t('sessionsList.conditionBot'),
+            machines: t('sessionsList.conditionMachine'),
+            agents: t('sessionsList.conditionAgent'),
+            owners: t('sessionsList.conditionOwner'),
+            sections: t('sessionsList.conditionSection'),
+            branches: t('sessionsList.conditionBranch'),
+            updated: t('sessionsList.conditionUpdated'),
+        },
     };
 }
 
@@ -146,16 +199,39 @@ export function buildSessionListActiveFilterChips(
 }
 
 export const SessionListFilterControl = React.memo(function SessionListFilterControl(props: Readonly<{
+    conditionValueCounts?: CollectionConditionValueCounts;
+    onConditionValueCountRequest?: (request: CollectionConditionValueCountRequest | null) => void;
     controller: SessionListViewFilterController;
     organizationProjectionsByServerId: Readonly<Record<string, SessionOrganizationProjection>>;
     /** Opens the archived list; the active corpus passes it so Archived sits in the scope menu. */
     onOpenArchived?: () => void;
-    /** Sessions the list shows for the current choices, counted from the list's own rows. */
-    resultCount?: number;
+    /** Distinct matched work and source coverage from the canonical visible projection. */
+    filterResult?: EntityListFilterResultV1;
+    keyboardEnabled?: boolean;
+    /** The column's one space chrome owner: navigation, the editor's open state and anchor, the save form. */
+    spaceChrome: SessionListSpaceChrome;
 }>) {
-    const { controller } = props;
-    const controllerRef = React.useRef(controller);
-    React.useLayoutEffect(() => { controllerRef.current = controller; });
+    const { controller, spaceChrome } = props;
+    const spaceNavigation = spaceChrome.navigation;
+    const setSpacesEnabled = useSetCollectionSpacesEnabled('sessionWork');
+    const titleMode = controller.fixedShow !== 'runs';
+    const { setFilterOpen } = spaceChrome;
+    const openFilter = React.useCallback(() => setFilterOpen(true), [setFilterOpen]);
+    useSessionListSpaceKeyboardCommands({
+        enabled: props.keyboardEnabled !== false,
+        selectOrdinal: spaceNavigation.selectOrdinal,
+        ...(titleMode ? { openFilter } : {}),
+    });
+    useCollectionFilterSettingsCommand({
+        entityKind: 'sessionWork',
+        accountScope: controller.spaceSettingsScope,
+        enabled: props.keyboardEnabled !== false && titleMode,
+        contextKey: `${controller.retentionScopeKey}:${controller.viewContextKey}:${controller.corpusStorage}`,
+        openFilter,
+    });
+    const actionController = { ...controller, coverage: props.filterResult?.coverage ?? 'unavailable' as const };
+    const controllerRef = React.useRef(actionController);
+    React.useLayoutEffect(() => { controllerRef.current = actionController; });
     React.useEffect(() => registerSessionListScopeActionOwner(() => controllerRef.current),
         [controller.corpusStorage, controller.viewContextKey, controller.retentionScopeKey]);
     const audienceOptions = React.useMemo(
@@ -201,12 +277,17 @@ export const SessionListFilterControl = React.memo(function SessionListFilterCon
         ? `${scopedLabel} · ${t('sessionsList.filtersScopeNeedsMe')}`
         : scopedLabel;
 
-    return (
+    const editorControl = (
         <SessionListFilterEditorControl
+            keyboardEnabled={props.keyboardEnabled}
+            {...(titleMode ? { controlled: { open: spaceChrome.filterOpen, onOpenChange: setFilterOpen, anchorRef: spaceChrome.anchorRef } } : {})}
             label={controller.fixedShow === 'runs' ? readSessionListWorkFilterSummary(controller) ?? labels.runs : controlLabel}
             presentation={controller.fixedShow === 'runs' ? 'summary' : 'title'}
             active={active}
             editor={{
+                conditionValueCounts: props.conditionValueCounts,
+                onConditionValueCountRequest: props.onConditionValueCountRequest,
+                result: props.filterResult,
                 filters: controller.filters,
                 includeInactive: controller.includeInactive,
                 inactiveVisibilityAvailable: controller.corpusStorage === 'active',
@@ -227,8 +308,42 @@ export const SessionListFilterControl = React.memo(function SessionListFilterCon
                 setSource: controller.setSource,
                 resetFilters: controller.resetFilters,
                 onOpenArchived: props.onOpenArchived,
-                resultCount: props.resultCount,
+                resultCount: props.filterResult?.coverage === 'complete' ? props.filterResult.matchedCount : undefined,
+                baseFilters: controller.contextDefaultFilters,
+                baseIncludeInactive: controller.contextDefaultFilters.includeInactive ?? true,
+                ...(titleMode ? { onSaveAsSpace: spaceChrome.openSaveAs } : {}),
             }}
         />
+    );
+    if (!titleMode) return editorControl;
+    // Until the Account's spaces are admitted the title names the corpus it shows (truthfully legacy when it is).
+    const spaceLabel = controller.activeSpace?.name ?? corpusLabel;
+    const titleLabel = controller.viewContext.kind === 'team'
+        ? `${spaceLabel} · ${controller.viewContext.teamDisplayName?.trim() || controller.viewContext.team.teamId}`
+        : spaceLabel;
+    return (
+        <>
+            <SettingAnchor setting={collectionSpaceSettingRefs('sessionWork').filters}>
+            <CollectionSpaceTitle
+                scope={controller.spaceSettingsScope ? accountSettingsScopeKeySuffix(controller.spaceSettingsScope) : 'sessionWork'}
+                testIDPrefix="session-list-space"
+                entityKind="sessionWork"
+                spaceShortcutPrefix="sessionList.space.select"
+                filterShortcutId="sessionList.filter.open"
+                label={titleLabel}
+                spaces={controller.spacesEnabled ? controller.spaces : []}
+                selectedSpaceId={controller.selectedSpaceId}
+                spacesEnabled={controller.spacesReady ? controller.spacesEnabled : null}
+                onSetSpacesEnabled={setSpacesEnabled}
+                modified={controller.isSpaceModified}
+                onSelectSpace={(spaceId) => { void spaceNavigation.selectSpace(spaceId); }}
+                onOpenFilter={openFilter}
+                onSaveAs={spaceChrome.openSaveAs}
+                onSaveChanges={spaceChrome.saveChanges}
+                onEdit={spaceChrome.openEdit}
+            />
+            </SettingAnchor>
+            {editorControl}
+        </>
     );
 });

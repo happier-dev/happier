@@ -1,11 +1,30 @@
 import type { Session } from '@/sync/domains/state/storageTypes';
-import { readSessionManagerSessionIdV1 } from '@happier-dev/protocol/sessions/follow/sessionManagerV1';
 import { areServerProfileIdentifiersEquivalent, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 
 import { readSessionListRowsForServerId, type SessionListRowStateByServerId } from '@/sync/domains/session/listing/sessionListRowStateLookup';
-import { readSessionPresentationRecord, readSessionPresentationInputRelations, type SessionRelationRecord } from '@/sync/domains/session/listing/sessionListRenderableSessionProjection';
+import type { SessionRelationRecord } from '@/sync/domains/session/listing/sessionListRenderableSessionProjection';
+import { readSessionRelationFact, type SessionRelationFact } from '@/sync/store/domains/sessionRelations';
 
 const EMPTY_SESSIONS: readonly SessionRelationRecord[] = Object.freeze([]);
+
+/** Read current admitted display/base records only for the requested relationship member. */
+export function readSessionRelationRecord(
+    sessions: Readonly<Record<string, Session>>,
+    sessionId: string,
+    serverId: string | null,
+    rowsByServerId?: SessionListRowStateByServerId,
+): SessionRelationRecord | undefined {
+    if (!serverId?.trim()) return undefined;
+    const operationServerId = resolveServerProfileScopeIdForIdentifier(serverId);
+    const candidate = sessions[sessionId];
+    const base = candidate?.serverId && areServerProfileIdentifiersEquivalent(candidate.serverId, operationServerId) ? candidate : undefined;
+    const row = readSessionListRowsForServerId(rowsByServerId, operationServerId)?.[sessionId];
+    return row ? { record: row, baseSession: base, serverId: operationServerId } : base;
+}
+
+export function readSessionRelationFacts(records: Readonly<Record<string, SessionRelationRecord>>): Readonly<Record<string, SessionRelationFact>> {
+    return Object.fromEntries(Object.entries(records).map(([id, input]) => [id, readSessionRelationFact(input)]));
+}
 
 /** Relationship readers need the qualified list too: opening a transcript is not membership. */
 export function selectSessionRelationRecords(
@@ -26,11 +45,6 @@ export function selectSessionRelationRecords(
     return records;
 }
 
-function normalizeId(value: string | null | undefined): string | null {
-    const trimmed = value?.trim();
-    return trimmed ? trimmed : null;
-}
-
 /**
  * The Sessions in this Session's `manager` subtree, as the store holds them.
  *
@@ -44,30 +58,50 @@ export function selectSessionReportSubtree(
     rowsByServerId?: SessionListRowStateByServerId,
 ): readonly SessionRelationRecord[] {
     if (!serverId?.trim()) return EMPTY_SESSIONS;
-    let childrenByLead: Map<string, SessionRelationRecord[]> | null = null;
-    for (const session of Object.values(selectSessionRelationRecords(sessions, serverId, rowsByServerId))) {
-        const lead = normalizeId(readSessionManagerSessionIdV1(readSessionPresentationInputRelations(session)));
+    const records = selectSessionRelationRecords(sessions, serverId, rowsByServerId);
+    return selectSessionReportIds(readSessionRelationFacts(records), managerSessionId).map(id => records[id]!);
+}
+
+/** Topology consumes only the Session/list producer's compact relationship facts. */
+export function selectSessionReportIds(
+    relations: Readonly<Record<string, SessionRelationFact>>,
+    managerSessionId: string,
+): readonly string[] {
+    let childrenByLead: Map<string, string[]> | null = null;
+    for (const [id, relation] of Object.entries(relations)) {
+        const lead = relation.managerSessionId;
         if (!lead) continue;
         childrenByLead ??= new Map();
         const siblings = childrenByLead.get(lead);
-        if (siblings) siblings.push(session);
-        else childrenByLead.set(lead, [session]);
+        if (siblings) siblings.push(id);
+        else childrenByLead.set(lead, [id]);
     }
-    if (!childrenByLead) return EMPTY_SESSIONS;
-    const subtree: SessionRelationRecord[] = [];
+    if (!childrenByLead) return [];
+    const subtree: string[] = [];
     const visited = new Set<string>([managerSessionId]);
     const queue = [managerSessionId];
     while (queue.length > 0) {
         const lead = queue.shift() as string;
         for (const child of childrenByLead.get(lead) ?? []) {
-            const record = readSessionPresentationRecord(child);
-            if (visited.has(record.id)) continue;
-            visited.add(record.id);
+            if (visited.has(child)) continue;
+            visited.add(child);
             subtree.push(child);
-            queue.push(record.id);
+            queue.push(child);
         }
     }
     // Siblings read oldest first, the order the lead started them in.
-    subtree.sort((a, b) => readSessionPresentationRecord(a).createdAt - readSessionPresentationRecord(b).createdAt);
-    return subtree.length === 0 ? EMPTY_SESSIONS : subtree;
+    subtree.sort((a, b) => relations[a]!.createdAt - relations[b]!.createdAt);
+    return subtree;
+}
+
+export function selectSessionAncestorIds(relations: Readonly<Record<string, SessionRelationFact>>, sessionId: string): readonly string[] {
+    const ancestors: string[] = [];
+    const visited = new Set([sessionId]);
+    let leadId = relations[sessionId]?.managerSessionId;
+    while (leadId && !visited.has(leadId) && relations[leadId]) {
+        visited.add(leadId);
+        ancestors.unshift(leadId);
+        leadId = relations[leadId]?.managerSessionId;
+    }
+    return ancestors;
 }

@@ -650,9 +650,7 @@ function updateConcurrentMachineListCache(input: {
             const index = buildSessionListIndexWithServerScope({
                 sessions: compactSessionListRowsForViewData(rows),
                 machines: buildMachineDisplaysByIdFromMachineList(nextMachineListByServerId?.[serverId]),
-                activeGroupingV1: state.settings.sessionListActiveGroupingV1,
-                inactiveGroupingV1: state.settings.sessionListInactiveGroupingV1,
-                sectionModeV1: state.settings.sessionListSectionModeV1,
+                layoutV1: state.settings.sessionListLayoutV1,
                 serverScope: {
                     serverId,
                     serverName,

@@ -20,9 +20,7 @@ type HarnessState = MessagesDomain & {
     machineDisplayById: Record<string, never>;
     profile: { id?: string | null } | null;
     settings: {
-        sessionListActiveGroupingV1?: 'project' | 'date';
-        sessionListInactiveGroupingV1?: 'project' | 'date';
-        sessionListSectionModeV1?: 'activity' | 'single';
+        sessionListLayoutV1?: 'projects' | 'recent_activity';
     };
     getProjectForSession?: (sessionId: string) => null;
 };
@@ -122,7 +120,7 @@ async function createHarness() {
         const next = typeof updater === 'function' ? updater(state) : updater;
         state = replace ? (next as HarnessState) : { ...state, ...next };
     };
-    const domain = createMessagesDomain({ get, set });
+    const domain = createMessagesDomain<HarnessState>({ get, set });
     state = {
         ...domain,
         sessions: { s1: createSession() },
@@ -135,9 +133,7 @@ async function createHarness() {
         machineDisplayById: {},
         profile: null,
         settings: {
-            sessionListActiveGroupingV1: 'project',
-            sessionListInactiveGroupingV1: 'date',
-            sessionListSectionModeV1: 'activity',
+            sessionListLayoutV1: 'projects',
         },
     };
 

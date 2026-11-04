@@ -19,7 +19,7 @@ import { AutomationTriggerIdSchema} from '@happier-dev/protocol/automations/auto
 import {
     type AutomationTriggerDefinitionInput} from '@happier-dev/protocol/automations/automationTriggerDefinition';
 import { AutomationSourceSelectorIdV1Schema } from '@happier-dev/protocol/automations/automationEventJsonBoundsV1';
-import { createDeferred, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createDeferred, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, createAccountTokenForTests, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
@@ -53,7 +53,9 @@ const { ModalProvider } = await import('@/modal');
 const { WebAlertModal } = await import('@/modal/components/WebAlertModal');
 const { TriggerRunsOnRow } = await import('./TriggerRunsOnRow');
 
-const { AccountTriggersSection, NewAccountTriggerPopover } = await import('./AccountTriggersSection');
+const { AccountTriggersSection, NewAccountTriggerPopover, useAccountWorkflowEditor } = await import('./AccountTriggersSection');
+const { useWorkflowLibraryView, workflowLibraryRowTitle } = await import('../library/useWorkflowLibraryView');
+const { formatTriggerSetSummary } = await import('./formatTriggerSummary');
 const { TriggerPopover } = await import('./TriggerPopover');
 const { buildTriggerDefinition } = await import('./sessionTriggerForm');
 const project = { machineId: 'm1', directory: '/repo' };
@@ -247,7 +249,10 @@ function serve(set: ReturnType<typeof fixture>) {
     }
 }
 function writes() { return mutations.filter(value => value.input.removedTriggers.length === 0).map(value => value.input); }
-function listRequests() { return home.requests.filter(request => request.path.startsWith('/v3/automations?')); }
+function listRequests() {
+    return home.requests.filter(request => (request.method === 'GET' && request.path.startsWith('/v3/automations?'))
+        || (request.method === 'POST' && request.path === '/v3/automations/query'));
+}
 function writtenContext(input: ReturnType<typeof AutomationDefinitionReconcileRequestSchema.parse>) {
     if (input.executionRecipe?.workflow.t !== 'plain') throw new Error('Expected a canonical plain recipe');
     return input.executionRecipe.workflow.v;
@@ -710,5 +715,95 @@ describe('Account trigger editing', () => {
         await act(async () => { await retarget; });
         expect(writes()[0]).toMatchObject({ expectedTemplateVersion: 1,
             workflowDefinitionId: '11111111-1111-4111-8111-111111111111', triggers: [], removedTriggers: [] });
+    });
+
+    it('demands workflow options only while the trigger picker is open', async () => {
+        serve(fixture());
+        const screen = await renderAccountScreen(<AccountTriggersSection />);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('workflows-column:trigger:digest')).not.toBeNull());
+        const workflowReads = () => home.requests.filter(request => request.method === 'GET'
+            && request.path.startsWith('/v1/artifacts?') && request.path.includes('workflow-definition'));
+        expect(workflowReads()).toHaveLength(0);
+        await screen.pressByTestIdAsync('workflows-column:trigger:digest');
+        await waitForHomeGovernance(() => expect(workflowReads().length).toBeGreaterThan(0));
+        expect(screen.findAllByType(TriggerPopover)).toHaveLength(1);
+    });
+
+    it('keeps Library coverage partial until Account Workflows are read, then counts their membership', async () => {
+        const read = createDeferred<void>();
+        listReply = async () => { await read.promise; return listRows(); };
+        const library = await renderHook(() => useWorkflowLibraryView(true));
+        await waitForHomeGovernance(() => expect(library.getCurrent().library.status).toBe('loaded'));
+        expect(library.getCurrent().accountWorkflows.status).toBe('loading');
+        expect(library.getCurrent().libraryCoverage).toBe('partial');
+        serve(fixture());
+        await act(async () => read.resolve());
+        await waitForHomeGovernance(() => expect(library.getCurrent().libraryCoverage).toBe('complete'));
+        expect(library.getCurrent().accountWorkflows.status).toBe('ready');
+        expect(library.getCurrent().libraryCount).toBe(1);
+        expect(library.getCurrent().libraryRows).toMatchObject([{ group: 'library', accountTrigger: { automationId: 'digest' } }]);
+    });
+
+    it('reports an empty Library only after the Account Workflow read settles empty', async () => {
+        const read = createDeferred<void>();
+        listReply = async () => { await read.promise; return listRows(); };
+        const library = await renderHook(() => useWorkflowLibraryView(true));
+        await waitForHomeGovernance(() => expect(library.getCurrent().library.status).toBe('loaded'));
+        expect(library.getCurrent().accountWorkflows.status).toBe('loading');
+        expect(library.getCurrent().libraryCoverage).toBe('partial');
+        await act(async () => read.resolve());
+        await waitForHomeGovernance(() => expect(library.getCurrent().libraryCoverage).toBe('complete'));
+        expect(library.getCurrent().accountWorkflows.status).toBe('ready');
+        expect(library.getCurrent().libraryCount).toBe(0);
+        expect(library.getCurrent().libraryRows).toEqual([]);
+    });
+
+    it('leads an Account Library Workflow with its name, keeps its trigger as metadata and opens its existing settings', async () => {
+        const set = fixture();
+        serve(set);
+        const library = await renderHook(() => {
+            const view = useWorkflowLibraryView(true);
+            return { ...view, editor: useAccountWorkflowEditor({ read: view.accountWorkflows }) };
+        });
+        await waitForHomeGovernance(() => expect(library.getCurrent().libraryCoverage).toBe('complete'));
+        const row = library.getCurrent().libraryRows[0]!;
+        expect(library.getCurrent().libraryCount).toBe(1);
+        expect(row).toMatchObject({ group: 'library', name: 'Morning digest', accountTrigger: { automationId: 'digest' },
+            triggerSummary: formatTriggerSetSummary(set.triggers),
+            openTarget: { kind: 'accountTrigger', automationId: 'digest', triggerId: 't1' } });
+        expect(workflowLibraryRowTitle(row)).toBe('Morning digest');
+        expect(library.getCurrent().editor.popover).toBeNull();
+        const target = row.openTarget;
+        if (target.kind !== 'accountTrigger') throw new Error('Expected the Account Workflow settings target');
+        await act(async () => library.getCurrent().editor.open(target, { current: null }));
+        const popover = library.getCurrent().editor.popover;
+        if (popover === null) throw new Error('Expected the existing Account Workflow settings editor');
+        const screen = await renderAccountScreen(popover);
+        expect(screen.findByTestId('workflows-column-trigger-popover-prompt')?.props.value).toBe('Morning digest');
+        expect(screen.findByType(TriggerPopover).props.initial).toMatchObject({ when: { kind: 'schedule' } });
+        expect(mutations).toEqual([]);
+    });
+
+    it('turns a Library Workflow off from its settings through the selected trigger and closes them (Q7: no row switch)', async () => {
+        const set = fixture(false, [trigger('t1'), trigger('t2', 19)]); serve(set);
+        const library = await renderHook(() => {
+            const view = useWorkflowLibraryView(true);
+            return { ...view, editor: useAccountWorkflowEditor({ read: view.accountWorkflows }) };
+        });
+        await waitForHomeGovernance(() => expect(library.getCurrent().libraryCoverage).toBe('complete'));
+        const row = library.getCurrent().libraryRows[0]!;
+        if (!('accountTrigger' in row)) throw new Error('Expected the Account Workflow row');
+        expect(row.triggerOpenTargets.map(target => target.triggerId)).toEqual(['t1', 't2']);
+        await act(async () => library.getCurrent().editor.open(row.triggerOpenTargets[1]!, { current: null }));
+        const popover = library.getCurrent().editor.popover;
+        if (popover === null) throw new Error('Expected the Account Workflow settings editor');
+        const screen = await renderAccountScreen(popover);
+        await screen.pressByTestIdAsync('workflows-column-trigger-popover-toggle');
+        await waitForHomeGovernance(() => expect(writes()).toHaveLength(1));
+        expect(writes()).toMatchObject([{ expectedTemplateVersion: 1, triggers: [
+            { kind: 'existing', triggerId: 't1', expectedRevision: 1 },
+            { kind: 'existing', triggerId: 't2', expectedRevision: 1, enabled: false },
+        ] }]);
+        expect(library.getCurrent().editor.popover).toBeNull();
     });
 });

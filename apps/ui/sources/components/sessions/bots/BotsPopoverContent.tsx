@@ -17,11 +17,12 @@ import {
 import { SessionItem } from '@/components/sessions/shell/SessionItem';
 import { useSessionListIdentityDisplay } from '@/components/sessions/shell/SessionListIdentity';
 import { filterCollapsedSessionListItems } from '@/components/sessions/shell/filterCollapsedSessionListItems';
-import { selectSessionReportSubtree } from '@/components/sessions/work/reportSubtree';
+import { readSessionRelationRecord, selectSessionReportIds } from '@/components/sessions/work/reportSubtree';
+import { resolveSessionListHomeKey } from '@/sync/domains/session/listing/sessionListRowStateLookup';
+import { EMPTY_SESSION_RELATION_FACTS } from '@/sync/store/domains/sessionRelations';
 import { nestSessionListReports } from '@/sync/domains/session/listing/nestSessionListReports';
 import {
   buildSessionListRowViewModel,
-  resolveSessionListRowViewModelAdjacency,
   type SessionListRowViewModel,
 } from '@/components/sessions/shell/sessionListRowViewModels';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -40,12 +41,13 @@ import { useSessionListSelectionState } from '@/hooks/session/useSessionListSele
 import { useVisibleSessionListPaneState } from '@/hooks/session/useVisibleSessionListPaneState';
 import { resolveSessionListRenderableMeaningfulActivityAt } from '@/sync/domains/session/listing/sessionListRenderableSorting';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
-import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
+import { getServerProfileById, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { useHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
 import { useServerProfilesGeneration } from '@/hooks/server/useServerProfilesGeneration';
 import { useSessionListQueryHomeSupportByServerId, useSessionListQuerySourceState } from '@/sync/domains/session/listing/useSessionListQuerySourceState';
 import { buildSessionListIndexNodeId, type SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
-import { storage, useLocalSetting, useSessionListRowRenderablesForItems } from '@/sync/domains/state/storage';
+import { storage, useSessionListRowRenderablesForItems } from '@/sync/domains/state/storage';
+import { collapsedGroupsState, useCollapsedGroupKeys } from '@/sync/domains/state/disclosureUiState';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { readSessionPresentationRecord, readSessionPresentationServerId, readSessionPresentationInputDisplay,
   readSessionPresentationInputRelations, type SessionRelationRecord } from '@/sync/domains/session/listing/sessionListRenderableSessionProjection';
@@ -70,7 +72,6 @@ type SessionIndexItem = Extract<SessionListIndexItem, { type: 'session' }>;
 const NO_REACHABLE_DISPLAY = new Map();
 const NO_PINNED_KEYS: ReadonlySet<string> = new Set();
 const NO_TAGS: Record<string, string[]> = {};
-const NO_COLLAPSED_GROUPS: Readonly<Record<string, boolean>> = {};
 /** The plus beside the invite's New bot, on the small button's text. */
 const EMPTY_ACTION_GLYPH_SIZE_PX = 14;
 
@@ -129,10 +130,10 @@ function useRosterRows(items: readonly SessionIndexItem[]) {
   // The rows draw the identity the person chose for the Sessions list, not a roster-only mark.
   const identityDisplay = useSessionListIdentityDisplay();
   return React.useMemo(() => items.map((item, index) => buildSessionListRowViewModel({
-    item, adjacency: resolveSessionListRowViewModelAdjacency(items, index),
+    item,
     unscopedSelectionIsUnique: false, reachableSessionDisplayById: NO_REACHABLE_DISPLAY,
     rowRenderableByKey: renderables, relativeNowMs, runtimeNowMs,
-    workingTextMode: 'static', identityDisplay, hasMultipleMachines: false,
+    identityDisplay,
     pinnedSessionKeys: NO_PINNED_KEYS, sessionTags: NO_TAGS, selectedSessionId: null,
     showServerBadge: false, showPinnedServerBadge: false,
   })), [identityDisplay, items, relativeNowMs, renderables, runtimeNowMs]);
@@ -182,12 +183,8 @@ export function BotsPopoverContent(
 ) {
   const { theme } = useUnistyles();
   const styles = stylesheet;
-  const collapsedPreference = useLocalSetting('collapsedGroupKeysV1');
-  const collapsed = collapsedPreference ?? NO_COLLAPSED_GROUPS;
-  const collapsedRef = React.useRef(collapsed);
-  collapsedRef.current = collapsed;
   const setCollapsed = React.useCallback((nodeId: string, value: boolean) => {
-    storage.getState().applyLocalSettings({ collapsedGroupKeysV1: { ...collapsedRef.current, [nodeId]: value } }, { source: 'ui' });
+    collapsedGroupsState.set(nodeId, value);
   }, []);
   const queryHomes = useBotsRosterQueryHomes();
   const pane = useVisibleSessionListPaneState('all', {
@@ -216,25 +213,50 @@ export function BotsPopoverContent(
       botRows: order.map(({ index }) => listedBotRows[index]!),
     };
   }, [listedBotItems, listedBotRows]);
-  const selectDescendants = React.useMemo(() => {
-    let previous: Pick<ReturnType<typeof storage.getState>, 'sessions' | 'sessionListRowsByServerId'> | null = null;
-    let records: Record<string, SessionRelationRecord> = {};
-    return (state: ReturnType<typeof storage.getState>) => {
-      // Store notifications also carry unrelated settings and transcript updates. Only
-      // relationship inputs can change these rows; useShallow alone skips renders, not scans.
-      if (previous?.sessions === state.sessions && previous.sessionListRowsByServerId === state.sessionListRowsByServerId) return records;
-      previous = { sessions: state.sessions, sessionListRowsByServerId: state.sessionListRowsByServerId };
-      records = {};
-      for (const item of botItems) {
-        if (collapsed[buildSessionListIndexNodeId(item)] !== false) continue;
-        for (const session of selectSessionReportSubtree(state.sessions, item.sessionId, item.serverId ?? null, state.sessionListRowsByServerId)) {
-          records[buildSessionListIndexNodeId({ type: 'session', serverId: item.serverId, sessionId: readSessionPresentationRecord(session).id })] = session;
-        }
-      }
-      return records;
-    };
-  }, [botItems, collapsed]);
-  const descendants = storage(useShallow(selectDescendants));
+  const botDisclosureKeys = React.useMemo(() => botItems.map(buildSessionListIndexNodeId), [botItems]);
+  const rootCollapsed = useCollapsedGroupKeys(botDisclosureKeys);
+  // Activity and titles may reorder/repaint Bots without changing expanded topology demand.
+  // Select only primitive addresses, in identity order, before reading relationship facts.
+  const expandedAddresses = useShallow((items: readonly SessionIndexItem[]) => items
+    .filter(item => rootCollapsed[buildSessionListIndexNodeId(item)] === false)
+    .map(item => ({ item, key: buildSessionListIndexNodeId(item) }))
+    .sort((a, b) => a.key.localeCompare(b.key))
+    .flatMap(({ item }) => [item.serverId ?? '', item.sessionId]))(botItems);
+  const expandedBots = React.useMemo(() => {
+    const items: SessionIndexItem[] = [];
+    for (let index = 0; index < expandedAddresses.length; index += 2) {
+      items.push({ type: 'session', serverId: expandedAddresses[index] || undefined, sessionId: expandedAddresses[index + 1]! });
+    }
+    return items;
+  }, [expandedAddresses]);
+  const relationInputs = storage(useShallow(state => expandedBots.map(item => {
+    const key = resolveSessionListHomeKey(state.sessionRelationsByServerId, item.serverId);
+    return key ? state.sessionRelationsByServerId[key] ?? EMPTY_SESSION_RELATION_FACTS : EMPTY_SESSION_RELATION_FACTS;
+  })));
+  const descendantItems = React.useMemo(() => expandedBots.flatMap((item, index) =>
+    selectSessionReportIds(relationInputs[index]!, item.sessionId).map(sessionId => ({
+      type: 'session' as const, serverId: item.serverId, sessionId,
+    }))), [expandedBots, relationInputs]);
+  // Exact current rows and hydrated bases remain separate from the topology memo.
+  const descendantInputs = storage(useShallow(state => descendantItems.flatMap(item => {
+    const input = readSessionRelationRecord(state.sessions, item.sessionId, item.serverId ?? null, state.sessionListRowsByServerId);
+    return input ? [readSessionPresentationRecord(input), 'record' in input ? input.baseSession : undefined] : [undefined, undefined];
+  })));
+  const descendants = React.useMemo(() => {
+    const records: Record<string, SessionRelationRecord> = {};
+    descendantItems.forEach((item, index) => {
+      const record = descendantInputs[index * 2];
+      if (!record) return;
+      const base = descendantInputs[index * 2 + 1];
+      records[buildSessionListIndexNodeId(item)] = { record,
+        serverId: item.serverId ? resolveServerProfileScopeIdForIdentifier(item.serverId) : undefined,
+        baseSession: base && 'agentState' in base ? base : undefined };
+    });
+    return records;
+  }, [descendantInputs, descendantItems]);
+  const descendantDisclosureKeys = React.useMemo(() => Object.keys(descendants), [descendants]);
+  const descendantCollapsed = useCollapsedGroupKeys(descendantDisclosureKeys);
+  const collapsed = React.useMemo(() => ({ ...rootCollapsed, ...descendantCollapsed }), [rootCollapsed, descendantCollapsed]);
   const items = React.useMemo(() => {
     const byHome = new Map<string, Map<string, SessionIndexItem>>();
     const records = new Map<string, NonNullable<ReturnType<Parameters<typeof nestSessionListReports>[1]>>>();
@@ -479,7 +501,6 @@ export function BotsPopoverContent(
               serverId={items[index]!.serverId ?? undefined}
               compact
               embedded
-              embeddedIsLast={isLast || readinessServerId !== null}
               showTalkAction
               quietWhenOffline
               actionMenuSurface="botsRoster"

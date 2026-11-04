@@ -101,6 +101,7 @@ import {
     saveWarmSessionCacheForState,
 } from './sessionListIndexFinalization';
 import { resolveSessionListRenderableChangeImpact } from './sessionListRenderableChange';
+import { EMPTY_SESSION_RELATIONS, type SessionRelationsByServerId } from './sessionRelations';
 import { persistSessionModelData } from './sessionModelPersistence';
 import { persistSessionPermissionData } from './sessionPermissionPersistence';
 import { resolveSessionInputModes } from './resolveSessionInputModes';
@@ -240,18 +241,14 @@ type BeginScmOperationResult = import('../../runtime/orchestration/projectManage
 type ProjectScmSnapshotError = import('../../runtime/orchestration/projectManager').ProjectScmSnapshotError;
 
 type SessionListIndexSettingsSource = Readonly<{
-    sessionListActiveGroupingV1?: 'project' | 'date';
-    sessionListInactiveGroupingV1?: 'project' | 'date';
-    sessionListSectionModeV1?: 'activity' | 'single';
+    sessionListLayoutV1?: 'projects' | 'recent_activity';
 }>;
 
 function resolveSessionListIndexRebuildSettings(
     settings: SessionListIndexSettingsSource,
 ): SessionListIndexRebuildSettings {
     return {
-        activeGroupingV1: settings.sessionListActiveGroupingV1,
-        inactiveGroupingV1: settings.sessionListInactiveGroupingV1,
-        sectionModeV1: settings.sessionListSectionModeV1,
+        layoutV1: settings.sessionListLayoutV1,
     };
 }
 
@@ -358,6 +355,7 @@ export type SessionsDomain = {
     sessionListRenderableDelta: import('./sessionListIndexFinalization').SessionListRenderableDelta;
     /** Canonical qualified rows. Presence here does not imply ordinary-list membership. */
     sessionListRowsByServerId: Readonly<Record<string, Readonly<Record<string, SessionListRenderableSession>>>>;
+    sessionRelationsByServerId: SessionRelationsByServerId;
     ordinarySessionListMembershipByServerId: Readonly<Record<string, readonly string[] | undefined>>;
     archivedSessionListMembershipByServerId: Readonly<Record<string, readonly string[] | undefined>>;
     sessionListIndexByServerId: Readonly<Record<string, SessionListIndexItem[] | null | undefined>>;
@@ -543,9 +541,7 @@ type SessionsDomainDependencies = {
     profile: { id: string };
     // Keep resilient: older settings payloads (or partial boot states) may not yet include this key.
     settings: {
-        sessionListActiveGroupingV1?: 'project' | 'date';
-        sessionListInactiveGroupingV1?: 'project' | 'date';
-        sessionListSectionModeV1?: 'activity' | 'single';
+        sessionListLayoutV1?: 'projects' | 'recent_activity';
     };
 };
 
@@ -987,6 +983,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             rebuiltSessionListIndex: false,
         },
         sessionListRowsByServerId: {},
+        sessionRelationsByServerId: EMPTY_SESSION_RELATIONS,
         ordinarySessionListMembershipByServerId: {},
         archivedSessionListMembershipByServerId: {},
         sessionListIndexByServerId: {},
@@ -1758,9 +1755,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 const nextIndex = buildSessionListIndexWithServerScope({
                     sessions: ordinaryRows,
                     machines: resolveSessionListMachineDisplaysForServer(state, serverId),
-                    activeGroupingV1: sessionListIndexSettings.activeGroupingV1,
-                    inactiveGroupingV1: sessionListIndexSettings.inactiveGroupingV1,
-                    sectionModeV1: sessionListIndexSettings.sectionModeV1,
+                    layoutV1: sessionListIndexSettings.layoutV1,
                     previousIndex,
                     serverScope: {
                         serverId,
@@ -1845,6 +1840,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 {
                     changedSessionIds: Array.from(changedRenderableSessionIds),
                     removedSessionIds: [],
+                    hydratedSessionIds: sessions.map(session => session.id),
                 },
             );
             }),
@@ -2025,9 +2021,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                     return buildSessionListIndexWithServerScope({
                         sessions: ordinaryRows,
                         machines: resolveSessionListMachineDisplaysForServer(state, serverId),
-                        activeGroupingV1: settings.activeGroupingV1,
-                        inactiveGroupingV1: settings.inactiveGroupingV1,
-                        sectionModeV1: settings.sectionModeV1,
+                        layoutV1: settings.layoutV1,
                         previousIndex: previousIndex ?? null,
                         serverScope: {
                             serverId,
@@ -2243,9 +2237,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                             return row ? [[sessionId, row] as const] : [];
                         })),
                         machines: resolveSessionListMachineDisplaysForServer(state, serverId),
-                        activeGroupingV1: settings.activeGroupingV1,
-                        inactiveGroupingV1: settings.inactiveGroupingV1,
-                        sectionModeV1: settings.sectionModeV1,
+                        layoutV1: settings.layoutV1,
                         previousIndex: state.sessionListIndexByServerId[serverId] ?? null,
                         serverScope: {
                             serverId,
@@ -2375,9 +2367,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             const nextIndex = buildSessionListIndexWithServerScope({
                 sessions: ordinaryRows,
                 machines: resolveSessionListMachineDisplaysForServer(state, serverId),
-                activeGroupingV1: settings.activeGroupingV1,
-                inactiveGroupingV1: settings.inactiveGroupingV1,
-                sectionModeV1: settings.sectionModeV1,
+                layoutV1: settings.layoutV1,
                 previousIndex: previousIndexKey ? state.sessionListIndexByServerId[previousIndexKey] ?? null : null,
                 serverScope: {
                     serverId,
@@ -2461,9 +2451,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             const nextIndex = buildSessionListIndexWithServerScope({
                 sessions: ordinaryRows,
                 machines: resolveSessionListMachineDisplaysForServer(state, serverId),
-                activeGroupingV1: settings.activeGroupingV1,
-                inactiveGroupingV1: settings.inactiveGroupingV1,
-                sectionModeV1: settings.sectionModeV1,
+                layoutV1: settings.layoutV1,
                 previousIndex: previousIndexKey ? state.sessionListIndexByServerId[previousIndexKey] ?? null : null,
                 serverScope: {
                     serverId,
@@ -3469,9 +3457,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                     remainingIndexByServerId[serverId] = buildSessionListIndexWithServerScope({
                         sessions: ordinaryRows,
                         machines: resolveSessionListMachineDisplaysForServer(state, serverId),
-                        activeGroupingV1: indexSettings.activeGroupingV1,
-                        inactiveGroupingV1: indexSettings.inactiveGroupingV1,
-                        sectionModeV1: indexSettings.sectionModeV1,
+                        layoutV1: indexSettings.layoutV1,
                         previousIndex: state.sessionListIndexByServerId[serverId] ?? null,
                         serverScope: { serverId, serverName: resolveHomeDisplayLabel(getServerProfileById(serverId), serverId) },
                     });

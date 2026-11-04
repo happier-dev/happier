@@ -1,24 +1,34 @@
-import type { MachineDisplayRenderable } from '../machines/machineDisplayRenderable';
+import { areMachineDisplaySemanticsEqual, type MachineDisplayRenderable } from '../machines/machineDisplayRenderable';
 import type { SessionListViewItem } from '../session/listing/sessionListViewData';
+import type { QualifiedProjectKeyV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import type { SessionListFallbackGroupDisplay } from '../workspaces/projectGroupDisplay';
+import type { CollectionGroupRollup } from '@happier-dev/plugin-ui/components';
 import { getSessionStorageKind, type SessionStorageKind } from '../session/sessionStorageKind';
-import {
-    compareSessionFolderWorkspaceRefs,
-    type SessionFolderWorkspaceRefV1,
-} from '../session/folders';
+import type { SessionFolderWorkspaceRefV1 } from '../session/folders/types';
 import type {
     SessionListAttentionPlacementReason,
-    SessionListAttentionPlacementOrdering,
     SessionListWorkingPlacementReason,
 } from '../session/listing/sessionListAttentionPlacementTypes';
 import { normalizeSessionListKeyParts, type NormalizedSessionListKeyParts } from '../session/listing/sessionListKeyNormalization';
+import { areSessionListRowParentContextsEqual, type SessionListRowParentContextFacts } from '../session/listing/sessionListRowContext';
+
+import { buildSessionListIndexNodeId, type SessionListOccurrenceRole } from './sessionListIndexIdentity';
+export { buildSessionListIndexEntityId, buildSessionListIndexNodeId, isSessionListShortcutOccurrence, type SessionListOccurrenceRole } from './sessionListIndexIdentity';
 
 export type SessionListIndexItem =
     | Readonly<{
         type: 'header';
         title: string;
+        /** Current unique eligibility may differ from presented membership during a hold. */
+        eligibleCount?: number;
+        /** Admitted subject rollup before any local disclosure hides its members. */
+        rollup?: CollectionGroupRollup;
         headerKind?: 'date' | 'server' | 'active' | 'inactive' | 'sessions' | 'project' | 'pinned' | 'loading' | 'folder' | 'attention' | 'working';
         groupKey?: string;
+        /** Distinguishes a repeated presentation header without changing its logical group. */
+        presentationAnchorGroupKey?: string;
         workspaceKey?: string;
+        projectKey?: QualifiedProjectKeyV1;
         seedSessionId?: string | null;
         workspaceScopeHint?: Readonly<{ serverId: string; machineId: string; rootPath: string }> | null;
         serverId?: string;
@@ -43,6 +53,13 @@ export type SessionListIndexItem =
     | Readonly<{
         type: 'session';
         sessionId: string;
+        projectKey?: QualifiedProjectKeyV1;
+        /** Exact fallback display survives filing without becoming an accepted Project association. */
+        fallbackGroupDisplay?: SessionListFallbackGroupDisplay;
+        /** One entity can have its base row and one flat attention shortcut. */
+        occurrenceRole?: SessionListOccurrenceRole;
+        /** Admitted outside-space attention, retained only by the mounted presentation hold. */
+        supplementalAttention?: true;
         /** Prepared by the index producer; survives non-address row updates. */
         keyParts?: NormalizedSessionListKeyParts;
         storageKind?: SessionStorageKind;
@@ -54,7 +71,6 @@ export type SessionListIndexItem =
         archivedAt?: number | null;
         keepVisibleWhenInactive?: boolean;
         attentionPlacementReason?: SessionListAttentionPlacementReason;
-        attentionPlacementOrdering?: SessionListAttentionPlacementOrdering;
         workingPlacementReason?: SessionListWorkingPlacementReason;
         serverId?: string;
         serverName?: string;
@@ -65,6 +81,8 @@ export type SessionListIndexItem =
          * report drawn under its lead. Absent for a row drawn at its own level.
          */
         reportsDepth?: number;
+        /** Admitted facts of the visible Session lead; never the child's execution workspace. */
+        reportsParentContext?: SessionListRowParentContextFacts;
         /** Presentation default from the admitted parent identity; local disclosure wins. */
         reportsDefaultCollapsed?: true;
         /** The row leads reports nested under it in this list, so it carries their disclosure. */
@@ -117,26 +135,8 @@ export type SessionListItemOrganizationEligibility = Readonly<{
 
 export type ResolveSessionListItemOrganizationEligibilityOptions = Readonly<{
     foldersFeatureEnabled: boolean;
-    destinationWorkspace?: SessionFolderWorkspaceRefV1 | null;
+    destinationServerId?: string | null;
 }>;
-
-function areMachineDisplayRenderablesEqual(
-    previous: MachineDisplayRenderable | null | undefined,
-    next: MachineDisplayRenderable | null | undefined,
-): boolean {
-    if (previous === next) return true;
-    if (!previous || !next) return previous === next;
-
-    return previous.id === next.id
-        && previous.updatedAt === next.updatedAt
-        && previous.active === next.active
-        && previous.activeAt === next.activeAt
-        && (previous.revokedAt ?? null) === (next.revokedAt ?? null)
-        && previous.metadataVersion === next.metadataVersion
-        && (previous.metadata?.displayName ?? null) === (next.metadata?.displayName ?? null)
-        && (previous.metadata?.host ?? null) === (next.metadata?.host ?? null)
-        && (previous.metadata?.homeDir ?? null) === (next.metadata?.homeDir ?? null);
-}
 
 function areWorkspaceRefsEqual(
     previous: SessionFolderWorkspaceRefV1 | null | undefined,
@@ -178,6 +178,8 @@ export function areSessionListIndexItemsEqual(
     if (previous.type === 'session') {
         if (next.type !== 'session') return false;
         return previous.sessionId === next.sessionId
+            && (previous.occurrenceRole ?? 'base') === (next.occurrenceRole ?? 'base')
+            && previous.supplementalAttention === next.supplementalAttention
             && (previous.storageKind ?? 'persisted') === (next.storageKind ?? 'persisted')
             && previous.section === next.section
             && previous.groupKey === next.groupKey
@@ -187,8 +189,6 @@ export function areSessionListIndexItemsEqual(
             && (previous.archivedAt ?? null) === (next.archivedAt ?? null)
             && (previous.keepVisibleWhenInactive === true) === (next.keepVisibleWhenInactive === true)
             && (previous.attentionPlacementReason ?? null) === (next.attentionPlacementReason ?? null)
-            && previous.attentionPlacementOrdering?.reason === next.attentionPlacementOrdering?.reason
-            && previous.attentionPlacementOrdering?.timestamp === next.attentionPlacementOrdering?.timestamp
             && (previous.workingPlacementReason ?? null) === (next.workingPlacementReason ?? null)
             && previous.serverId === next.serverId
             && previous.serverName === next.serverName
@@ -196,9 +196,14 @@ export function areSessionListIndexItemsEqual(
             && (previous.folderDepth ?? null) === (next.folderDepth ?? null)
             && (previous.reportsDepth ?? 0) === (next.reportsDepth ?? 0)
             && (previous.reportsParent === true) === (next.reportsParent === true)
+            && areSessionListRowParentContextsEqual(previous.reportsParentContext, next.reportsParentContext)
             && (previous.reportsCollapsed === true) === (next.reportsCollapsed === true)
             && (previous.contextualSearchSourceMachineId ?? null) === (next.contextualSearchSourceMachineId ?? null)
             && (previous.contextualSearchReasons ?? []).join('\u0001') === (next.contextualSearchReasons ?? []).join('\u0001')
+            && previous.projectKey?.serverId === next.projectKey?.serverId
+            && previous.projectKey?.projectKey === next.projectKey?.projectKey
+            && previous.fallbackGroupDisplay?.groupKey === next.fallbackGroupDisplay?.groupKey
+            && previous.fallbackGroupDisplay?.title === next.fallbackGroupDisplay?.title
             && areWorkspaceRefsEqual(previous.workspace ?? null, next.workspace ?? null);
     }
 
@@ -207,9 +212,14 @@ export function areSessionListIndexItemsEqual(
     const nextHint = next.workspaceScopeHint ?? null;
 
     return previous.title === next.title
+        && previous.eligibleCount === next.eligibleCount
+        && areSessionListGroupRollupsEqual(previous.rollup, next.rollup)
         && previous.headerKind === next.headerKind
         && previous.groupKey === next.groupKey
+        && previous.presentationAnchorGroupKey === next.presentationAnchorGroupKey
         && previous.workspaceKey === next.workspaceKey
+        && previous.projectKey?.serverId === next.projectKey?.serverId
+        && previous.projectKey?.projectKey === next.projectKey?.projectKey
         && (previous.seedSessionId ?? null) === (next.seedSessionId ?? null)
         && previous.serverId === next.serverId
         && previous.serverName === next.serverName
@@ -222,49 +232,7 @@ export function areSessionListIndexItemsEqual(
         && (previousHint?.machineId ?? null) === (nextHint?.machineId ?? null)
         && (previousHint?.rootPath ?? null) === (nextHint?.rootPath ?? null)
         && areWorkspaceRefsEqual(previous.workspace ?? null, next.workspace ?? null)
-        && areMachineDisplayRenderablesEqual(previous.machine ?? null, next.machine ?? null);
-}
-
-function buildSessionListIndexHeaderNodeId(item: Extract<SessionListIndexItem, { type: 'header' }>): string {
-    const headerKind = String(item.headerKind ?? '').trim() || 'header';
-    const groupKey = String(item.groupKey ?? '').trim();
-    const serverId = String(item.serverId ?? '').trim();
-    const workspaceKey = String(item.workspaceKey ?? '').trim();
-    const folderId = String(item.folderId ?? '').trim();
-    const machineId = String(item.machine?.id ?? '').trim();
-    const workspaceScopeHint = item.workspaceScopeHint ?? null;
-    const hintServerId = String(workspaceScopeHint?.serverId ?? '').trim();
-    const hintMachineId = String(workspaceScopeHint?.machineId ?? '').trim();
-    const hintRootPath = String(workspaceScopeHint?.rootPath ?? '').trim();
-
-    // Header ids are React keys and collapsed-state keys, and every component here is
-    // caller-supplied text — a Home URL, a workspace key, a filesystem root — that can
-    // contain any delimiter. The tuple is serialized the way the Session address owner
-    // already does it, so two different headers can never alias into one id.
-    if (groupKey) return `header:${JSON.stringify([headerKind, groupKey, folderId])}`;
-
-    return `header:${JSON.stringify([
-        headerKind,
-        serverId,
-        workspaceKey,
-        folderId,
-        machineId,
-        hintServerId,
-        hintMachineId,
-        hintRootPath,
-    ])}`;
-}
-
-export function buildSessionListIndexNodeId(item: SessionListIndexItem): string {
-    if (item.type === 'header') {
-        return buildSessionListIndexHeaderNodeId(item);
-    }
-
-    const serverId = String(item.serverId ?? '').trim();
-    if (item.type === 'workflow_run') return `workflow_run:${JSON.stringify([serverId, item.runId])}`;
-    const sessionId = String(item.sessionId ?? '').trim();
-    if (serverId && sessionId) return `session:${normalizeSessionListKeyParts(serverId, sessionId, item.keyParts).sessionKey}`;
-    return `session:${sessionId}`;
+        && areMachineDisplaySemanticsEqual(previous.machine ?? null, next.machine ?? null);
 }
 
 export function resolveSessionListItemOrganizationEligibility(
@@ -294,7 +262,7 @@ export function resolveSessionListItemOrganizationEligibility(
     }
 
     const storageKind = item.storageKind ?? 'persisted';
-    if (!item.serverId || !item.workspace) {
+    if (!item.serverId?.trim()) {
         return {
             canUseSessionFolders: false,
             foldersFeatureEnabled,
@@ -304,8 +272,8 @@ export function resolveSessionListItemOrganizationEligibility(
     }
 
     if (
-        options.destinationWorkspace
-        && !compareSessionFolderWorkspaceRefs(item.workspace, options.destinationWorkspace)
+        options.destinationServerId
+        && item.serverId !== options.destinationServerId
     ) {
         return {
             canUseSessionFolders: false,
@@ -331,7 +299,7 @@ export function buildSessionListIndexFromViewData(
         return null;
     }
 
-    const previousSessionsByHome = new Map<string, Map<string, Extract<SessionListIndexItem, { type: 'session' }>>>();
+    const previousSessionsByHome = new Map<string, Map<SessionListOccurrenceRole, Map<string, Extract<SessionListIndexItem, { type: 'session' }>>>>();
     const previousByKey = Array.isArray(previousIndex)
         ? (() => {
             const map = new Map<string, SessionListIndexItem>();
@@ -340,8 +308,11 @@ export function buildSessionListIndexFromViewData(
                 if (item.type === 'session') {
                     const serverId = String(item.serverId ?? '').trim();
                     const sessionId = String(item.sessionId ?? '').trim();
-                    let bySession = previousSessionsByHome.get(serverId);
-                    if (!bySession) previousSessionsByHome.set(serverId, bySession = new Map());
+                    let byRole = previousSessionsByHome.get(serverId);
+                    if (!byRole) previousSessionsByHome.set(serverId, byRole = new Map());
+                    const role = item.occurrenceRole ?? 'base';
+                    let bySession = byRole.get(role);
+                    if (!bySession) byRole.set(role, bySession = new Map());
                     bySession.set(sessionId, item);
                 } else map.set(buildSessionListIndexNodeId(item), item);
             }
@@ -355,9 +326,12 @@ export function buildSessionListIndexFromViewData(
             const nextItem: SessionListIndexItem = {
                 type: 'header',
                 title: item.title,
+                eligibleCount: item.eligibleCount,
                 headerKind: item.headerKind,
                 groupKey: item.groupKey,
+                presentationAnchorGroupKey: item.presentationAnchorGroupKey,
                 workspaceKey: item.workspaceKey,
+                projectKey: item.projectKey,
                 seedSessionId: item.seedSessionId ?? null,
                 workspaceScopeHint: item.workspaceScopeHint ?? null,
                 serverId: item.serverId,
@@ -379,11 +353,15 @@ export function buildSessionListIndexFromViewData(
 
         const serverId = String(item.serverId ?? '').trim();
         const sessionId = String(item.session.id ?? '').trim();
-        const previousItem = previousSessionsByHome.get(serverId)?.get(sessionId);
+        const previousItem = previousSessionsByHome.get(serverId)?.get(item.occurrenceRole ?? 'base')?.get(sessionId);
         const keyParts = normalizeSessionListKeyParts(serverId, sessionId, previousItem?.keyParts);
         const nextItem: SessionListIndexItem = {
             type: 'session',
             sessionId: item.session.id,
+            projectKey: item.projectKey,
+            occurrenceRole: item.occurrenceRole,
+            fallbackGroupDisplay: item.fallbackGroupDisplay,
+            supplementalAttention: item.supplementalAttention,
             keyParts,
             storageKind: getSessionStorageKind(item.session),
             section: item.section,
@@ -421,4 +399,13 @@ export function buildSessionListIndexFromViewData(
     }
 
     return next;
+}
+
+export function areSessionListGroupRollupsEqual(left: CollectionGroupRollup | undefined, right: CollectionGroupRollup | undefined): boolean {
+    if (left === right) return true;
+    if (!left || !right || left.coverage !== right.coverage || left.needsYouCount !== right.needsYouCount) return false;
+    const a = left.status;
+    const b = right.status;
+    return a === b || Boolean(a && b && a.state === b.state && a.bucket === b.bucket && a.tone === b.tone
+        && a.attentionType === b.attentionType && a.word === b.word && a.glyph === b.glyph);
 }

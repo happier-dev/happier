@@ -2,10 +2,6 @@ import * as React from 'react';
 
 import { useSetting } from '@/sync/store/settingsReadHooks';
 import {
-    normalizeSessionListAttentionPlacementMode,
-    type SessionListAttentionPlacementMode,
-} from '@/sync/domains/session/listing/sessionListAttentionPlacementTypes';
-import {
     resolveSessionAttentionStandingPolicy,
     type SessionAttentionIntentRecord,
     type SessionAttentionStandingPolicy,
@@ -13,7 +9,7 @@ import {
 
 export type SessionAttentionStandingInputs = Readonly<{
     /** Where the attention band puts a placed session, or `off` when there is no band at all. */
-    placementMode: SessionListAttentionPlacementMode;
+    placementMode: 'both' | 'top' | 'inPlace';
     /**
      * Whether the per-session Keep in Needs attention action means anything yet. With the band off
      * there is nothing for a kept session to be held in, so the action stays hidden.
@@ -30,7 +26,7 @@ export type SessionAttentionStandingInputs = Readonly<{
 export function useSessionAttentionStandingInputs(
     overridesBySessionKey: Readonly<Record<string, boolean | SessionAttentionIntentRecord>>,
 ): SessionAttentionStandingInputs {
-    const placementMode = normalizeSessionListAttentionPlacementMode(useSetting('sessionListAttentionPromotionModeV1'));
+    const placementMode = useSetting('sessionListAttentionPlacementV1');
     const defaultStanding = useSetting('sessionListAttentionStandingDefaultV1') === true;
     // Resolved by content, not rebuilt per render: the overrides record arrives fresh from every
     // organization projection build, and consumers compare the policy by identity.
@@ -41,7 +37,7 @@ export function useSessionAttentionStandingInputs(
 
     return React.useMemo<SessionAttentionStandingInputs>(() => ({
         placementMode,
-        actionEnabled: placementMode !== 'off',
+        actionEnabled: placementMode !== 'inPlace',
         policy,
     }), [placementMode, policy]);
 }

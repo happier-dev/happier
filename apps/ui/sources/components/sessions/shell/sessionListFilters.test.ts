@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildSessionListIndexNodeId, type SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
+import { buildSessionListIndexEntityId, buildSessionListIndexNodeId, type SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 import { sessionAddressKey } from '@/sync/domains/session/sessionAddress';
 
-import { filterSessionListItemsForHeaderControls } from './sessionListFilters';
+import { filterSessionListItemsForHeaderControls, projectSessionListItemsForHeaderControls } from './sessionListFilters';
 
 const activeHeader: Extract<SessionListIndexItem, { type: 'header' }> = {
     type: 'header',
@@ -40,6 +40,17 @@ function key(sessionId: string): string {
 }
 
 describe('filterSessionListItemsForHeaderControls', () => {
+    it('reports distinct direct Find hits without counting retained ancestors or attention copies', () => {
+        const parent = sessionItem('parent');
+        const child = { ...sessionItem('child'), reportsDepth: 1 };
+        const mirror = { ...sessionItem('child'), occurrenceRole: 'needsYou' as const, groupKey: 'attention' };
+        const items = [activeHeader, parent, child, { ...activeHeader, groupKey: 'attention', headerKind: 'attention' as const }, mirror];
+        const projection = projectSessionListItemsForHeaderControls(items, {
+            searchQuery: 'invoice', selectedTagIds: [], searchableTextBySessionKey: { [key('child')]: 'repair invoice' },
+        });
+        expect(projection.items).toEqual(items);
+        expect([...projection.matchedEntityIds]).toEqual([buildSessionListIndexEntityId(child)]);
+    });
     it('keeps a matching reports tree in parent order instead of ranking a child above its parent', () => {
         const items = [activeHeader, sessionItem('lead'), { ...sessionItem('step'), reportsDepth: 1 }];
         expect(filterSessionListItemsForHeaderControls(items, {

@@ -3,6 +3,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { SessionSectionResultV1Schema } from '@happier-dev/protocol/actions/sessionSections';
 import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 
@@ -114,16 +115,9 @@ import { SessionAuthoringOpenResultV1Schema } from '@happier-dev/protocol/plugin
 import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { sessionTagKey } from '@/components/sessions/shell/sessionTagUtils';
 import { openSessionFolderSelection } from '@/components/sessions/organization/SessionFolderSelection';
-import {
-  buildSessionFolderWorkspaceTargets,
-  normalizeSessionFolderWorkspaceRef,
-  normalizeSessionFolders,
-  type SessionFolderWorkspaceRefV1,
-  type SessionFolderMoveTarget,
-} from '@/sync/domains/session/folders';
+import { useSessionSectionChoiceLabels } from '@/sync/domains/session/organization/useSessionSectionChoiceLabels';
 import {
   requireSessionOrganizationMutationScope,
-  writeSessionOrganizationFolderAssignment,
   writeSessionOrganizationTagLabels,
   type SessionOrganizationMutationScope,
 } from '@/sync/ops/sessionOrganization';
@@ -217,63 +211,6 @@ export const SessionInfoBody = React.memo(function SessionInfoBody(
 // the locked Session surface's privacy boundary.
 function isSessionInfoContentUnavailable(session: Session): boolean {
   return !isSessionContentReadable(readSessionContentAvailability(session));
-}
-
-function resolveSessionInfoWorkspaceRef(
-  session: Session,
-  serverId: string | null,
-): SessionFolderWorkspaceRefV1 | null {
-  const metadata = isSessionInfoContentUnavailable(session)
-    ? null
-    : readSessionOwnerMetadataView(session);
-  if (!metadata || typeof metadata !== 'object') return null;
-  const record = metadata as Record<string, unknown>;
-  // A no-folder session lives in its machine's Chats scope for session folders.
-  if (readSessionDirectoryKind(metadata) === 'managed') {
-    return normalizeSessionFolderWorkspaceRef({
-      t: 'managedSessions',
-      serverId,
-      machineId: typeof record.machineId === 'string' ? record.machineId : null,
-    });
-  }
-  const rootPath = typeof record.path === 'string' ? record.path : null;
-  if (!rootPath) return null;
-  return normalizeSessionFolderWorkspaceRef({
-    t: 'workspaceScope',
-    serverId,
-    machineId: typeof record.machineId === 'string' ? record.machineId : null,
-    rootPath,
-  });
-}
-
-function buildSessionInfoMoveTargets(
-  params: Readonly<{
-    sessionFolders: unknown;
-    workspace: SessionFolderWorkspaceRefV1 | null;
-  }>,
-): SessionFolderMoveTarget[] {
-  if (!params.workspace) return [];
-  const normalized = normalizeSessionFolders(params.sessionFolders);
-  const targets: SessionFolderMoveTarget[] = [
-    {
-      id: 'session-info-move-folder:root',
-      folderId: null,
-      title: t('sessionsList.moveToWorkspaceRoot'),
-      depth: 0,
-      disabled: false,
-    },
-  ];
-  targets.push(
-    ...buildSessionFolderWorkspaceTargets({
-      folders: normalized,
-      workspace: params.workspace,
-    }).map<SessionFolderMoveTarget>((folder) => ({
-      ...folder,
-      id: `session-info-move-folder:${folder.folderId}`,
-      disabled: false,
-    })),
-  );
-  return targets;
 }
 
 function SessionInfoContent({
@@ -657,7 +594,6 @@ function SessionInfoContent({
   );
   const pinnedSessionKeysV1 = organizationListViewState.pinnedSessionKeysV1;
   const sessionTagsV1 = organizationListViewState.sessionTagsV1;
-  const sessionFoldersV1 = organizationListViewState.sessionFoldersV1;
   const sessionSettingsKey = sessionTagKey(sessionServerId, session.id);
   const isPinnedSession = pinnedSessionKeysV1.includes(sessionSettingsKey);
   const isArchivedSession = session.archivedAt != null;
@@ -831,15 +767,6 @@ function SessionInfoContent({
     () => resolveSessionAttentionStandingActionId(sessionActionTarget),
     [sessionActionTarget],
   );
-  const moveTargets = React.useMemo(
-    () =>
-      buildSessionInfoMoveTargets({
-        sessionFolders: sessionFoldersV1,
-        workspace: resolveSessionInfoWorkspaceRef(session, sessionServerId),
-      }),
-    [sessionServerId, session, sessionFoldersV1],
-  );
-
   const handleReadStateAction = React.useCallback(async () => {
     if (!readStateActionId) return;
     await executeSessionAction({
@@ -967,38 +894,44 @@ function SessionInfoContent({
     ],
   );
 
+  // The Section this Session sits in now, named as the chooser names it; none reads "None".
+  const currentSectionFolderId =
+    organizationListViewState.sessionFolderAssignmentsBySessionKey[sessionSettingsKey] ?? null;
+  const sectionChoiceLabels = useSessionSectionChoiceLabels(
+    organizationListViewState.sections, sessionServerId, t('common.unavailable'),
+  );
+  const currentSectionTitle = currentSectionFolderId
+    ? sectionChoiceLabels.get(currentSectionFolderId) ?? t('common.unavailable')
+    : null;
   const handleMoveToFolder = React.useCallback(async () => {
-    if (!sessionFoldersEnabled || moveTargets.length === 0) return;
-    const selectedTarget = await openSessionFolderSelection({
+    if (!sessionFoldersEnabled) return;
+    // This mounted executor retains the Session's Home+Account before the picker awaits.
+    const selected = await openSessionFolderSelection({
       sourceLabel: sessionName,
-      targets: moveTargets,
-    });
-    if (!selectedTarget) return;
-    const folderId = selectedTarget.folderId;
-    await executeSessionAction({
-      actionId: SESSION_ACTION_MOVE_TO_FOLDER_ID,
-      target: sessionActionTarget,
-      input: { folderId },
-      context: {
-        operations: {
-          moveToFolder: async (_target, input) => {
-            const scope =
-              await getSessionOrganizationMutationScopeOrThrow(sessionServerId);
-            await writeSessionOrganizationFolderAssignment({
-              scope,
-              sessionId: session.id,
-              folderId: input?.folderId ?? null,
-            });
-          },
-        },
+      serverId: sessionServerId,
+      sections: organizationListViewState.sections,
+      value: currentSectionFolderId ? { serverId: sessionServerId, sectionId: currentSectionFolderId } : null,
+      onCreate: async () => {
+        const name = await Modal.prompt(t('sessionsList.newSection'), undefined, {
+          placeholder: t('sessionsList.sectionNamePlaceholder'), confirmText: t('common.create'),
+        });
+        if (!name?.trim()) return null;
+        const created = SessionSectionResultV1Schema.parse(await sessionActions.executeValue(
+          'session.sections.create', { name: name.trim() },
+        ));
+        return { serverId: sessionServerId, sectionId: created.section.sectionId };
       },
     });
+    if (selected === undefined) return;
+    await sessionActions.executeValue('session.section.set', {
+      sessionId: session.id, sectionId: selected?.sectionId ?? null,
+    });
   }, [
-    getSessionOrganizationMutationScopeOrThrow,
-    moveTargets,
+    currentSectionFolderId,
+    organizationListViewState.sections,
     sessionServerId,
     session.id,
-    sessionActionTarget,
+    sessionActions.executeValue,
     sessionFoldersEnabled,
     sessionName,
   ]);
@@ -1250,7 +1183,6 @@ function SessionInfoContent({
   const showPin = !isArchivedSession && Boolean(pinInfoItemProps);
   const showFolder =
     sessionFoldersEnabled &&
-    moveTargets.length > 0 &&
     Boolean(moveToFolderInfoItemProps);
   const retentionSummary = useSessionRetentionSummary(
     contentUnavailable ? null : sessionServerId,
@@ -1396,8 +1328,10 @@ function SessionInfoContent({
           {showFolder && moveToFolderInfoItemProps ? (
             <Item
               {...moveToFolderInfoItemProps}
+              title={t('sessionPages.info.section')}
               icon={<Icon name="folder" />}
               subtitle={undefined}
+              detail={currentSectionTitle ?? t('sessionPages.info.sectionNone')}
               onPress={performMoveToFolder}
               loading={movingToFolder}
             />

@@ -4,7 +4,5 @@ export function resolveSessionListIndexSettingsImpact(
     previousSettings: Settings,
     nextSettings: Settings,
 ): boolean {
-    return nextSettings.sessionListActiveGroupingV1 !== previousSettings.sessionListActiveGroupingV1
-        || nextSettings.sessionListInactiveGroupingV1 !== previousSettings.sessionListInactiveGroupingV1
-        || nextSettings.sessionListSectionModeV1 !== previousSettings.sessionListSectionModeV1;
+    return nextSettings.sessionListLayoutV1 !== previousSettings.sessionListLayoutV1;
 }

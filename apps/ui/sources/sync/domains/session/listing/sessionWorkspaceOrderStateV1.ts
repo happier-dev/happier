@@ -1,6 +1,11 @@
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 
 import type { SessionListViewItem } from './sessionListViewData';
+import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { createSessionProjectKeyResolverV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import { workspaceRefResolutionContextV1 } from '@/sync/domains/workspaces/workspaceRefs';
+import { projectGroupIdentityKey } from '@/sync/domains/workspaces/projectGroupDisplay';
+import { buildSessionWorkspaceFallbackOrderKey, readSessionWorkspaceFallbackIdentity, serializeSessionWorkspaceOrderKey } from './sessionWorkspaceOrderKeys';
 
 const UNKNOWN_SERVER_KEY = '__unknown_server__';
 
@@ -104,7 +109,7 @@ function reorderBlocksByKeys(blocks: ReadonlyArray<WorkspaceBlock>, keys: Readon
         }
     }
     const unordered = blocks.filter((block) => !used.has(block));
-    return [...unordered, ...out];
+    return [...out, ...unordered];
 }
 
 function applyWorkspaceOrderForRun(
@@ -172,32 +177,112 @@ export function applySessionWorkspaceOrderV1ToIndex(
 export function normalizeSessionWorkspaceOrderV1ForSource(params: Readonly<{
     source: ReadonlyArray<SessionListIndexItem | SessionListViewItem>;
     sessionWorkspaceOrderV1: SessionWorkspaceOrderV1;
+    workspaceRefs?: readonly WorkspaceRefV1[];
+    workspaceRefsServerId?: string;
 }>): Record<string, string[]> {
-    const allowedKeysByScope = new Map<string, Set<string>>();
+    const context = workspaceRefResolutionContextV1();
+    const resolveProject = createSessionProjectKeyResolverV1(params.workspaceRefs, context);
+    const censusHome = params.workspaceRefsServerId ? context.normalizeServerId(params.workspaceRefsServerId) : null;
+    const acceptedTuples = new Map<string, string | null>();
+    const predecessorKeys = new Map<string, Readonly<{ tuple: string; project: string }> | null>();
     for (const item of params.source) {
-        if (item.type !== 'header') continue;
-        const identity = resolveWorkspaceOrderIdentity(item);
-        if (!identity) continue;
-        const bucket = allowedKeysByScope.get(identity.scopeKey) ?? new Set<string>();
-        bucket.add(identity.itemKey);
-        allowedKeysByScope.set(identity.scopeKey, bucket);
+        if (item.type !== 'session' || !item.projectKey || item.workspace?.t !== 'workspaceScope' || !item.serverId || !item.workspace.serverId) continue;
+        const home = context.normalizeServerId(item.serverId);
+        if (!home || context.normalizeServerId(item.workspace.serverId) !== home
+            || context.normalizeServerId(item.projectKey.serverId) !== home) continue;
+        // The base producer already canonicalized this execution tuple. No private census or
+        // replacement-inventory guess is needed to read its admitted public Project relation.
+        const identity = [home, item.workspace.machineId, item.workspace.rootPath] as const;
+        const tuple = JSON.stringify(identity);
+        const project = projectGroupIdentityKey(item.projectKey);
+        const previousTuple = acceptedTuples.get(tuple);
+        acceptedTuples.set(tuple, previousTuple === undefined || previousTuple === project ? project : null);
+        const predecessor = JSON.stringify([home, buildSessionWorkspaceFallbackOrderKey(identity)]);
+        const previous = predecessorKeys.get(predecessor);
+        // Actual 0.2 hashes can collide: even two tuples for one Project cannot elect a winner.
+        predecessorKeys.set(predecessor, previous === undefined
+            || previous?.tuple === tuple && previous.project === project ? { tuple, project } : null);
     }
-
     const out: Record<string, string[]> = {};
     for (const [scopeKeyRaw, keysRaw] of Object.entries(params.sessionWorkspaceOrderV1 ?? {})) {
         const scopeKey = typeof scopeKeyRaw === 'string' ? scopeKeyRaw.trim() : '';
         if (!scopeKey) continue;
-        const normalizedKeys = dedupePreserveOrder(Array.isArray(keysRaw) ? keysRaw : []);
-        const allowedKeys = allowedKeysByScope.get(scopeKey);
-        const filtered = allowedKeys
-            ? normalizedKeys.filter((key) => allowedKeys.has(key))
-            : normalizedKeys;
+        const serverId = readSessionWorkspaceOrderScopeServerId(scopeKey);
+        const normalizedKeys = Array.isArray(keysRaw) ? keysRaw : [];
+        const filtered = dedupePreserveOrder(normalizedKeys.map(key => {
+            if (!serverId) return key;
+            const home = context.normalizeServerId(serverId);
+            const predecessor = predecessorKeys.get(JSON.stringify([home, key]));
+            if (predecessor) return predecessor.project;
+            const identity = readSessionWorkspaceFallbackIdentity(key);
+            if (identity?.[0]) {
+                const tuple = JSON.stringify([context.normalizeServerId(identity[0]), identity[1], identity[2]]);
+                if (context.normalizeServerId(identity[0]) === home && acceptedTuples.has(tuple)) {
+                    return acceptedTuples.get(tuple) ?? serializeSessionWorkspaceOrderKey(key, serverId) ?? key;
+                }
+            }
+            if (params.workspaceRefs && censusHome && context.normalizeServerId(serverId) === censusHome
+                && identity?.[0] && context.normalizeServerId(identity[0]) === censusHome) {
+                const resolved = resolveProject({ machineId: identity[1], path: identity[2] }, serverId);
+                if (resolved.kind === 'resolved') return projectGroupIdentityKey(resolved.projectKey);
+            }
+            return serializeSessionWorkspaceOrderKey(key, serverId) ?? key;
+        }));
         if (filtered.length > 0) {
             out[scopeKey] = filtered;
         }
     }
 
     return out;
+}
+
+/** Previous presentation orders existing groups; newly admitted groups append without a write. */
+export function retainSessionProjectGroupOrder(
+    source: ReadonlyArray<SessionListIndexItem>,
+    previous: ReadonlyArray<SessionListIndexItem> | null | undefined,
+): SessionListIndexItem[] {
+    if (!previous) return source as SessionListIndexItem[];
+    const order: Record<string, string[]> = {};
+    for (const item of previous) {
+        const identity = item.type === 'header' ? resolveWorkspaceOrderIdentity(item) : null;
+        if (identity) (order[identity.scopeKey] ??= []).push(identity.itemKey);
+    }
+    return applySessionWorkspaceOrderV1ToIndex(source, order);
+}
+
+/** Complete the canonical Session creation seed after Runs have supplied their groups. */
+export function completeSessionProjectGroupOrder(params: Readonly<{
+    source: ReadonlyArray<SessionListIndexItem>;
+    creationSeed: ReadonlyArray<SessionListIndexItem>;
+    previousPresentedIndex?: ReadonlyArray<SessionListIndexItem> | null;
+    savedOrder: SessionWorkspaceOrderV1;
+}>): SessionListIndexItem[] {
+    const seed: Record<string, string[]> = {};
+    const known = new Map<string, Set<string>>();
+    for (const item of params.creationSeed) {
+        const identity = item.type === 'header' ? resolveWorkspaceOrderIdentity(item) : null;
+        if (!identity) continue;
+        const keys = known.get(identity.scopeKey) ?? new Set<string>();
+        if (!keys.has(identity.itemKey)) (seed[identity.scopeKey] ??= []).push(identity.itemKey);
+        keys.add(identity.itemKey);
+        known.set(identity.scopeKey, keys);
+    }
+    const unknown = new Map<string, Map<string, string>>();
+    for (const item of params.source) {
+        const identity = item.type === 'header' ? resolveWorkspaceOrderIdentity(item) : null;
+        if (!identity || known.get(identity.scopeKey)?.has(identity.itemKey)) continue;
+        const groups = unknown.get(identity.scopeKey) ?? new Map<string, string>();
+        groups.set(identity.itemKey, item.type === 'header' ? item.groupKey ?? identity.itemKey : identity.itemKey);
+        unknown.set(identity.scopeKey, groups);
+    }
+    for (const [scopeKey, groups] of unknown) {
+        // Run-only groups have no admitted Session-created seed. Their qualified identity
+        // breaks ties after known groups; Run/ref timestamps never become a second clock.
+        (seed[scopeKey] ??= []).push(...[...groups].sort((left, right) => left[1].localeCompare(right[1])).map(([key]) => key));
+    }
+    const seeded = applySessionWorkspaceOrderV1ToIndex(params.source, seed);
+    const retained = retainSessionProjectGroupOrder(seeded, params.previousPresentedIndex);
+    return applySessionWorkspaceOrderV1ToIndex(retained, params.savedOrder);
 }
 
 export function areSessionWorkspaceOrderMapsEqual(

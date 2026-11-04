@@ -18,7 +18,7 @@ import { t } from '@/text';
 import { sessionListStyles } from '../shell/sessionListStyles';
 import { resolveSessionSectionIcon } from './sessionSectionIcons';
 import type { SessionSectionDraft } from './useSessionSectionDraft';
-import { isHappierTouchPrimaryPointer } from '@happier-dev/plugin-ui/environment';
+import { useHappierTouchPrimaryPointer } from '@happier-dev/plugin-ui/environment';
 
 const M = HAPPIER_COLLECTION_LIST_METRICS;
 
@@ -77,7 +77,7 @@ export function SessionSectionDraftField(
   const reducedMotion = useReducedMotionPreference();
   const [name, setName] = React.useState(props.draft.name);
   const creating = props.draft.phase === 'creating';
-  const touchPrimary = isHappierTouchPrimaryPointer(Platform.OS);
+  const touchPrimary = useHappierTouchPrimaryPointer(Platform.OS);
   const height = useSharedValue(0);
   const inputRef = React.useRef<React.ElementRef<typeof TextInput> | null>(null);
   const [measured, setMeasured] = React.useState<number | null>(null);
@@ -162,7 +162,7 @@ export function SessionSectionDraftField(
           </Text>
         </View>
         <View
-          style={sessionListStyles.sectionDropHint}
+          style={sessionListStyles.sectionQuietHint}
         >
           <Text
             variant="meta"

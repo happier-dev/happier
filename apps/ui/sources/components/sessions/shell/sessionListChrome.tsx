@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Pressable, Platform, Image as ReactNativeImage, type StyleProp, type ViewProps, type ViewStyle } from 'react-native';
+import { View, Platform, Image as ReactNativeImage, type StyleProp, type ViewProps, type ViewStyle } from 'react-native';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useSettingMutable } from '@/sync/domains/state/storage';
 import { useUnistyles } from 'react-native-unistyles';
@@ -8,6 +8,7 @@ import { useIsTablet } from '@/utils/platform/responsive';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
+import { Modal } from '@/modal';
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 import {
     resolveDurableWorkspaceRefForSessionListHeader,
@@ -48,8 +49,21 @@ import { WorkStatusRollup } from '@/components/work/status/WorkStatusRollup';
 import { SESSION_SECTION_ICON_CHOICES, resolveSessionSectionIcon } from '@/components/sessions/organization/sessionSectionIcons';
 import { useSessionSectionDraftController } from '@/components/sessions/organization/useSessionSectionDraft';
 import { resolveSessionSectionDisplayTitle } from '@/sync/domains/session/organization/sections';
-import { isHappierTouchPrimaryPointer } from '@happier-dev/plugin-ui/environment';
+import { HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE, useHappierTouchPrimaryPointer } from '@happier-dev/plugin-ui/environment';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
+
+/**
+ * A group header's actions are small glyph buttons (`groupHeaderActionButton`) a gap apart, each its own
+ * target (siblings, never nested in the label). Their hit areas reach the 24 floor (a finger's target
+ * under a touch pointer). The menu is the row's first action: it takes the free space before it and
+ * leaves the gap to the "+" with it; the "+" ends at the column edge, where the pane's resize handle
+ * takes over, so it reaches no further right.
+ */
+const GROUP_ACTION_HIT_TARGET = HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE;
+function groupActionHitReach(gapPx: number): Readonly<{ menu: { left: number; right: number }; create: { left: number; right: number } }> {
+    return { menu: { left: GROUP_ACTION_HIT_TARGET, right: 0 }, create: { left: gapPx, right: 0 } };
+}
 
 export function stopPressEventPropagation(event: unknown): void {
     if (!event || typeof event !== 'object' || !('stopPropagation' in event)) {
@@ -417,6 +431,7 @@ export const ProjectGroupHeader = React.memo(function ProjectGroupHeader(props: 
         : { scopeKind: 'main_selection' });
     const actionIconColor = theme.colors.text.secondary;
     const canCreateSession = newSessionEnabled && newSessionTarget !== null;
+    const actionReach = groupActionHitReach(theme.space.s4);
     const faviconSource = props.faviconSource !== undefined ? props.faviconSource : item.workspaceScopeHint ?? null;
     const favicon = useWorkspaceFavicon({
         enabled: workspaceFaviconsEnabled,
@@ -494,24 +509,27 @@ export const ProjectGroupHeader = React.memo(function ProjectGroupHeader(props: 
                     showCategoryTitles={false}
                     popoverPortalWebTarget="body"
                     trigger={({ toggle }) => (
-                        <Pressable
+                        <HappierPressable
                             style={styles.groupHeaderActionButton}
+                            hitTarget={GROUP_ACTION_HIT_TARGET}
+                            hitReach={actionReach.menu}
                             onPress={(event) => {
                                 stopPressEventPropagation(event);
                                 toggle();
                             }}
                             accessibilityRole="button"
                             accessibilityLabel={t('common.moreActions')}
-                            hitSlop={8}
                         >
                             <Icon name="dots-three" size={14} color={actionIconColor} />
-                        </Pressable>
+                        </HappierPressable>
                     )}
                 />
             ) : null}
             {canCreateSession ? (
-                <Pressable
+                <HappierPressable
                     style={styles.groupHeaderActionButton}
+                    hitTarget={GROUP_ACTION_HIT_TARGET}
+                    hitReach={actionReach.create}
                     onPress={(event) => {
                         stopPressEventPropagation(event);
                         onCreateSession();
@@ -520,10 +538,9 @@ export const ProjectGroupHeader = React.memo(function ProjectGroupHeader(props: 
                     accessibilityLabel={newSessionTarget && 'kind' in newSessionTarget && newSessionTarget.kind === 'managed'
                         ? t('newSession.title')
                         : t('machine.launchNewSessionInDirectory')}
-                    hitSlop={8}
                 >
                     <Icon name="plus" size={14} color={actionIconColor} />
-                </Pressable>
+                </HappierPressable>
             ) : null}
         </>
     );
@@ -532,7 +549,6 @@ export const ProjectGroupHeader = React.memo(function ProjectGroupHeader(props: 
             <CollectionListGroupLabel
                 testID={headerTestId}
                 title={displayTitle}
-                // The machine sits on the label's line, quiet like a count, only when groups span machines.
                 detail={workspaceMachineSubtitlesEnabled && hasMultipleMachines && machineSubtitle ? machineSubtitle : undefined}
                 first={props.first}
                 rollup={<WorkStatusRollup rollup={props.item.rollup} testID={`${headerTestId}:rollup`} />}
@@ -656,6 +672,7 @@ export const SessionSectionHeader = React.memo(function SessionSectionHeader(pro
     const displayTitle = props.item.displayState?.status === 'locked'
         ? resolveSessionSectionDisplayTitle(props.item.displayState) : props.title;
     const actionsDisabled = props.disabled || displayLocked;
+    const actionReach = groupActionHitReach(theme.space.s4);
     const iconColor = actionsDisabled ? theme.colors.text.tertiary : theme.colors.text.secondary;
     // Archive all works by the section's id, so a locked name does not stop it; a proven-empty section has nothing to archive.
     const archiveDisabled = props.disabled === true || props.memberCount === 0;
@@ -768,7 +785,7 @@ export const SessionSectionHeader = React.memo(function SessionSectionHeader(pro
     }, [actionsDisabled, props]);
     const sectionKey = props.item.folderId ?? props.title;
     const headerTestId = `session-folder-header-${sectionKey}`;
-    const touchPrimary = isHappierTouchPrimaryPointer(Platform.OS);
+    const touchPrimary = useHappierTouchPrimaryPointer(Platform.OS);
     return (
         <View ref={dropRegistration.ref} onLayout={dropRegistration.onLayout} collapsable={false}>
             <CollectionListGroupLabel
@@ -803,35 +820,37 @@ export const SessionSectionHeader = React.memo(function SessionSectionHeader(pro
                             separateCategories
                             popoverPortalWebTarget="body"
                             trigger={({ toggle }) => (
-                                <Pressable
+                                <HappierPressable
                                     testID={`session-folder-menu-trigger-${sectionKey}`}
                                     style={styles.groupHeaderActionButton}
+                                    hitTarget={GROUP_ACTION_HIT_TARGET}
+                                    hitReach={actionReach.menu}
                                     onPress={(event) => {
                                         stopPressEventPropagation(event);
                                         toggle();
                                     }}
                                     accessibilityRole="button"
                                     accessibilityLabel={t('common.moreActions')}
-                                    hitSlop={8}
                                 >
                                     <Icon name="dots-three" size={14} color={theme.colors.text.secondary} />
-                                </Pressable>
+                                </HappierPressable>
                             )}
                         />
                         {props.onNewSession && !actionsDisabled ? (
-                            <Pressable
+                            <HappierPressable
                                 testID={`session-folder-new-session-${sectionKey}`}
                                 style={styles.groupHeaderActionButton}
+                                hitTarget={GROUP_ACTION_HIT_TARGET}
+                                hitReach={actionReach.create}
                                 onPress={(event) => {
                                     stopPressEventPropagation(event);
                                     props.onNewSession?.();
                                 }}
                                 accessibilityRole="button"
                                 accessibilityLabel={t('sessionsList.sectionNewSessionHere')}
-                                hitSlop={8}
                             >
                                 <Icon name="plus" size={14} color={theme.colors.text.secondary} />
-                            </Pressable>
+                            </HappierPressable>
                         ) : null}
                     </>
                 )}
@@ -839,7 +858,7 @@ export const SessionSectionHeader = React.memo(function SessionSectionHeader(pro
             {props.memberCount === 0 && !props.collapsed && !displayLocked ? (
                 // Under a finger the place is a destination you move to (Organize, the move sheet); the hint
                 // is a note, not a control, so it keeps the list row's own height.
-                <View style={styles.sectionDropHint}
+                <View style={styles.sectionQuietHint}
                     testID={`${headerTestId}:drop-hint`}>
                     <Text variant="meta" style={styles.sectionDropHintText} numberOfLines={1}>
                         {touchPrimary ? t('sessionsList.sectionDropHintTouch') : t('sessionsList.sectionDropHint')}
@@ -847,7 +866,7 @@ export const SessionSectionHeader = React.memo(function SessionSectionHeader(pro
                 </View>
             ) : null}
             {(props.memberCount ?? 0) > 0 && props.hasRowsInView === false && !props.collapsed && !displayLocked ? (
-                <View style={styles.sectionOutsideHint} testID={`${headerTestId}:outside-view`}>
+                <View style={styles.sectionQuietHint} testID={`${headerTestId}:outside-view`}>
                     <Text variant="meta" style={styles.sectionDropHintText} numberOfLines={1}>
                         {t('sessionsList.sectionMembersOutsideView', { count: props.memberCount ?? 0 })}
                     </Text>

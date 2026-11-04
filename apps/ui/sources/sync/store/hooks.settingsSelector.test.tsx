@@ -7,6 +7,7 @@ import { getPersistenceStorage } from '@/sync/domains/state/persistenceStorage';
 import { storage } from '@/sync/domains/state/storageStore';
 import { settingsDefaults, type Settings } from '@/sync/domains/settings/settings';
 import { useSettingsSelector } from './hooks';
+import { useSetting } from './settingsReadHooks';
 import { useSessionListQuerySourceState } from '@/sync/domains/session/listing/useSessionListQuerySourceState';
 
 beforeEach(async () => {
@@ -50,8 +51,34 @@ it('keeps the mounted Session list source stable for unrelated Account settings'
     expect(commits - before).toBe(0);
     expect(hook.getCurrent()).toBe(source);
     await act(async () => {
-        storage.getState().applySettingsLocal({ sessionListActiveGroupingV1: 'date' });
+        storage.getState().applySettingsLocal({ sessionListLayoutV1: 'recent_activity' });
     });
     expect(commits - before).toBe(1);
+    await hook.unmount();
+});
+
+it('shares status words with work columns without rerendering them for unrelated publications', async () => {
+    let commits = 0;
+    const hook = await renderHook(() => {
+        React.useLayoutEffect(() => { commits++; });
+        return useSetting('sessionListStatusWords');
+    });
+    expect(hook.getCurrent()).toBe(false);
+    const before = commits;
+    await act(async () => {
+        storage.setState({ machines: { ...storage.getState().machines } });
+        storage.getState().applySettingsLocal({ showLineNumbers: !storage.getState().settings.showLineNumbers });
+    });
+    expect(commits - before).toBe(0);
+    await act(async () => {
+        storage.getState().applySettingsLocal({ sessionListStatusWords: true });
+    });
+    expect(hook.getCurrent()).toBe(true);
+    expect(commits - before).toBe(1);
+    await act(async () => {
+        storage.getState().applySettingsLocal({ sessionListStatusWords: false });
+    });
+    expect(hook.getCurrent()).toBe(false);
+    expect(commits - before).toBe(2);
     await hook.unmount();
 });

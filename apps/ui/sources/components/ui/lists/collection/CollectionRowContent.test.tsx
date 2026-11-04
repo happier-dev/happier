@@ -66,6 +66,6 @@ describe('CollectionRowContent', () => {
         expect((await rowFill({ selected: true })).backgroundColor)
             .toBe(happierMaterialInnerBackgroundColor(theme.colors.surface.elevated, theme.colors.surface.selected, 'sidebar', true));
         expect((await rowFill({ hovered: true })).backgroundColor)
-            .toBe(happierMaterialInnerBackgroundColor(theme.colors.surface.pressed, theme.colors.surface.selected, 'sidebar', true));
+            .toBe(happierMaterialInnerBackgroundColor(theme.colors.surface.hover, theme.colors.surface.selected, 'sidebar', true));
     });
 });

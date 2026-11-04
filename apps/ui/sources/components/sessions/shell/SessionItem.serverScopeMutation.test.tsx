@@ -268,7 +268,7 @@ describe('SessionItem server-scoped mutations', () => {
         const screen = await renderScreen(<SessionItem
             session={createSessionFixture({ id: 'sess_direct_stop', active: true })}
             serverId="server_a" serverName="Server A" showServerBadge={true}
-            selected={false} isFirst={true} isLast={true} isSingle={true}
+            selected={false}
             variant="default" compact={false}
         />);
         const menu = screen.root.findAll(node => String(node.type) === 'ContextMenu').find(node =>
@@ -331,9 +331,6 @@ describe('SessionItem server-scoped mutations', () => {
                 serverName="Server A"
                 showServerBadge={true}
                 selected={false}
-                isFirst={true}
-                isLast={true}
-                isSingle={true}
                 variant="default"
                 compact={false}
             />,
@@ -386,9 +383,6 @@ describe('SessionItem server-scoped mutations', () => {
                 serverName="Server B"
                 showServerBadge={true}
                 selected={false}
-                isFirst={true}
-                isLast={true}
-                isSingle={true}
                 variant="default"
                 compact={false}
             />,
@@ -442,9 +436,6 @@ describe('SessionItem server-scoped mutations', () => {
                 serverName="Server B"
                 showServerBadge={true}
                 selected={false}
-                isFirst={true}
-                isLast={true}
-                isSingle={true}
                 variant="default"
                 compact={false}
             />,
@@ -497,9 +488,6 @@ describe('SessionItem server-scoped mutations', () => {
                 serverName="Server C"
                 showServerBadge={true}
                 selected={false}
-                isFirst={true}
-                isLast={true}
-                isSingle={true}
                 variant="default"
                 compact={false}
             />,
@@ -553,9 +541,6 @@ describe('SessionItem server-scoped mutations', () => {
                 serverName="Server D"
                 showServerBadge={true}
                 selected={false}
-                isFirst={true}
-                isLast={true}
-                isSingle={true}
                 variant="default"
                 compact={false}
             />,
@@ -610,9 +595,6 @@ describe('SessionItem server-scoped mutations', () => {
                 serverName="Server D"
                 showServerBadge={true}
                 selected={false}
-                isFirst={true}
-                isLast={true}
-                isSingle={true}
                 variant="default"
                 compact={false}
                 pinned={true}
@@ -665,9 +647,6 @@ describe('SessionItem server-scoped mutations', () => {
                 serverName="Server Read"
                 showServerBadge={true}
                 selected={false}
-                isFirst={true}
-                isLast={true}
-                isSingle={true}
                 variant="default"
                 compact={false}
             />,
@@ -715,9 +694,6 @@ describe('SessionItem server-scoped mutations', () => {
                 serverName="Server Raw"
                 showServerBadge={true}
                 selected={false}
-                isFirst={true}
-                isLast={true}
-                isSingle={true}
                 variant="default"
                 compact={false}
             />,
@@ -759,9 +735,6 @@ describe('SessionItem server-scoped mutations', () => {
                 serverName="Server Folder"
                 showServerBadge={true}
                 selected={false}
-                isFirst={true}
-                isLast={true}
-                isSingle={true}
                 variant="default"
                 compact={false}
                 onMoveToFolder={onMoveToFolder}
@@ -832,9 +805,6 @@ describe('SessionItem server-scoped mutations', () => {
                 serverName="Server Archived"
                 showServerBadge={true}
                 selected={false}
-                isFirst={true}
-                isLast={true}
-                isSingle={true}
                 variant="default"
                 compact={false}
             />,

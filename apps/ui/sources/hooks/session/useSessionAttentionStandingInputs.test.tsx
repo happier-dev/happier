@@ -13,7 +13,7 @@ describe('useSessionAttentionStandingInputs', () => {
     beforeEach(() => {
         previousState = storage.getState();
         storage.setState({ settings: { ...previousState.settings,
-            sessionListAttentionPromotionModeV1: 'global', sessionListAttentionStandingDefaultV1: false } });
+            sessionListAttentionPlacementV1: 'both', sessionListAttentionStandingDefaultV1: false } });
     });
     afterEach(() => {
         standardCleanup();
@@ -65,10 +65,10 @@ describe('useSessionAttentionStandingInputs', () => {
     });
 
     it('hides the action while the attention band is off', async () => {
-        storage.setState({ settings: { ...storage.getState().settings, sessionListAttentionPromotionModeV1: 'off' } });
+        storage.setState({ settings: { ...storage.getState().settings, sessionListAttentionPlacementV1: 'inPlace' } });
         const hook = await renderHook(() => useSessionAttentionStandingInputs(overridesBySessionKey));
 
         expect(hook.getCurrent()?.actionEnabled).toBe(false);
-        expect(hook.getCurrent()?.placementMode).toBe('off');
+        expect(hook.getCurrent()?.placementMode).toBe('inPlace');
     });
 });

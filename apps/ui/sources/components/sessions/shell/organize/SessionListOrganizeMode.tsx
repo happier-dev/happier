@@ -1,6 +1,7 @@
 import * as React from 'react';
 
 import { isTouchPrimaryPointer } from '@/components/ui/interactiveTargetSize';
+import { useSessionListAttentionActivity } from '../useSessionListAttentionInteraction';
 
 /**
  * Phone "Organize list" mode (DnD lab K1): the one intentional moment a phone list drags. Rows show
@@ -27,8 +28,15 @@ const SessionListOrganizeModeContext = React.createContext<SessionListOrganizeMo
 export function SessionListOrganizeModeProvider(props: React.PropsWithChildren): React.ReactElement {
     const available = isTouchPrimaryPointer();
     const [active, setActive] = React.useState(false);
-    const enter = React.useCallback(() => setActive(true), []);
-    const exit = React.useCallback(() => setActive(false), []);
+    const setAttentionHeld = useSessionListAttentionActivity();
+    const enter = React.useCallback(() => {
+        setAttentionHeld(true);
+        setActive(true);
+    }, [setAttentionHeld]);
+    const exit = React.useCallback(() => {
+        setAttentionHeld(false);
+        setActive(false);
+    }, [setAttentionHeld]);
     const value = React.useMemo<SessionListOrganizeMode>(
         () => (available ? { available, active, enter, exit } : INERT),
         [active, available, enter, exit],

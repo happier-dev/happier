@@ -9,7 +9,7 @@ import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
 import { storage } from '@/sync/domains/state/storage';
 import { setReducedMotionPreferenceOverride } from '@/hooks/ui/useReducedMotionPreference';
 import type { PersonalizeFlow } from './usePersonalizeFlow';
-import { WorkspaceNavigationContext, type WorkspaceNavigationContextValue } from '@/components/appShell/workspace/WorkspaceNavigationContext';
+import { WorkspaceNavigationProvider, type WorkspaceNavigationContextValue } from '@/components/appShell/workspace/WorkspaceNavigationContext';
 import { createWorkspaceState } from '@/components/appShell/workspace/workspaceState';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -109,7 +109,7 @@ function workspace(phone: boolean): WorkspaceNavigationContextValue {
 }
 
 function route(phone: boolean) {
-    return <WorkspaceNavigationContext.Provider value={workspace(phone)}><PersonalizeRouteScreen /></WorkspaceNavigationContext.Provider>;
+    return <WorkspaceNavigationProvider value={workspace(phone)}><PersonalizeRouteScreen /></WorkspaceNavigationProvider>;
 }
 
 afterEach(async () => { standardCleanup();
@@ -184,7 +184,7 @@ describe('Personalize responsive route', () => {
             const item = usePersonalizeSetupItem({ hidden: new Set(), onDismiss: () => {} });
             return item?.renderTile({ open: () => {} }) ?? null;
         }
-        const card = await renderScreen(<WorkspaceNavigationContext.Provider value={workspace(true)}><CardProbe /></WorkspaceNavigationContext.Provider>);
+        const card = await renderScreen(<WorkspaceNavigationProvider value={workspace(true)}><CardProbe /></WorkspaceNavigationProvider>);
         await card.pressByTestIdAsync('hub-setup.personalize.action');
         const config = vi.mocked(Modal.show).mock.calls.at(-1)![0];
         const Content = config.component;
@@ -280,7 +280,7 @@ describe('Personalize responsive route', () => {
             growsInPlace = Boolean(item?.renderPanel);
             return item?.renderTile({ open: () => { throw new Error('Phone card must not expand inline'); } }) ?? null;
         }
-        const card = await renderScreen(<WorkspaceNavigationContext.Provider value={workspace(true)}><CardProbe /></WorkspaceNavigationContext.Provider>);
+        const card = await renderScreen(<WorkspaceNavigationProvider value={workspace(true)}><CardProbe /></WorkspaceNavigationProvider>);
         expect(growsInPlace).toBe(false);
         await act(async () => { card.pressByTestId('hub-setup.personalize.action'); });
         expect(Modal.show).toHaveBeenCalledWith(expect.objectContaining({

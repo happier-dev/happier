@@ -140,9 +140,6 @@ describe('SessionItem loading identity', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                isFirst={true}
-                isLast={true}
-                isSingle={true}
                 variant="default"
                 compact={compact}
             />,
@@ -177,7 +174,7 @@ describe('SessionItem loading identity', () => {
             listItems: [item],
             reachableSessionDisplayById: new Map(),
             rowRenderableByKey: new Map([[sessionAddressKey({ serverId: 'server_a', sessionId: session.id }), session]]),
-            hasMultipleMachines: false, pinnedSessionKeys: new Set(), sessionTags: {}, selectedSessionId: null,
+            pinnedSessionKeys: new Set(), sessionTags: {}, selectedSessionId: null,
             showServerBadge: false, showPinnedServerBadge: false,
         });
         expect(rowViewModel?.isIdentityLoading).toBe(true);
@@ -190,9 +187,6 @@ describe('SessionItem loading identity', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                isFirst={true}
-                isLast={true}
-                isSingle={true}
                 variant="default"
                 compact={false}
                 rowAttentionAnimationEnabled={rowAttentionAnimationEnabled}
@@ -219,9 +213,6 @@ describe('SessionItem loading identity', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                isFirst={true}
-                isLast={true}
-                isSingle={true}
                 variant="default"
                 compact={false}
             />,
@@ -243,9 +234,6 @@ describe('SessionItem loading identity', () => {
                 serverId="server_a"
                 pinned={false}
                 selected={false}
-                isFirst={true}
-                isLast={true}
-                isSingle={true}
                 variant="default"
                 compact={false}
             />,

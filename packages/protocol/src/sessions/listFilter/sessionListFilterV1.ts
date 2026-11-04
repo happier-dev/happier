@@ -3,7 +3,9 @@ import { z } from 'zod/mini';
 import { readSessionBotV1 } from '../identity/sessionBotV1.js';
 import { deriveSessionCoordinatorV1, type SessionCoordinatorFactsV1 } from '../follow/sessionCoordinatorV1.js';
 import { QualifiedProjectKeyV1Schema, type QualifiedProjectKeyV1, type WorkspaceRefV1 } from '../../workspaces/workspaceRefV1.js';
-import { SessionAwarenessPresentationStateV1Schema, type SessionAwarenessPresentationStateV1 } from '../awareness/presentationV1.js';
+import { SessionAwarenessPresentationStateV1Schema, SESSION_WORK_STATUS_FILTERS_V1,
+    listSessionPresentationStatesForWorkStatusFilterV1, readWorkStatusFilterV1,
+    type readSessionAwarenessWorkStatusV1 } from '../awareness/presentationV1.js';
 import { resolveSessionProjectKeyV1, type WorkspaceRefResolutionContextV1 } from '../../workspaces/workspaceRefResolutionV1.js';
 import type { SessionAwarenessOriginV1 } from '../awareness/projectionV1.js';
 import { defineStoredReadProjection } from '../../json/storedReadSchema.js';
@@ -17,6 +19,8 @@ import { defineEntityFilterFieldV1, defineEntityFilterUnknownFieldsV1, getUnsupp
 import { createPluginListFilterFieldRegistryV1, type AdmittedPluginListFilterFieldV1 } from '../../collections/filter/pluginListFilterFieldV1.js';
 import { QualifiedSessionSectionV1Schema, type QualifiedSessionSectionV1 } from '../organization/folders.js';
 import { BackendTargetKeyV2Schema, parseBackendTargetKeyV2 } from '../../backends/targets/backendTargetRefV2.js';
+import { WorkflowRunStateV1Schema } from '../../workflows/workflowRunStateV1.js';
+import { createEntityFilterConditionCodecV1 } from '../../collections/filter/fieldConditionsV1.js';
 
 import {
     SessionAttentionFilterV1Schema,
@@ -37,6 +41,12 @@ export type QualifiedAccountV1 = Readonly<{ serverId: string; accountId: string 
 export const SessionListShowV1Schema = lazyZodSchema(() => z.enum(['sessions', 'runs', 'both']));
 export const SessionListStartedByV1Schema = lazyZodSchema(() => z.enum(['you', 'triggers', 'agents']));
 
+/** Closed state identities emitted by the canonical Session/Run Work presenter; no status conversion lives here. */
+export const SessionListStatusV1Schema = lazyZodSchema(() => z.union([
+    SessionAwarenessPresentationStateV1Schema, WorkflowRunStateV1Schema, z.literal('stopping'),
+]));
+export type SessionListStatusV1 = z.infer<typeof SessionListStatusV1Schema>;
+
 /** Serializable selection shared by the Sessions list and inline Board filters. */
 export type SessionListFilterV1 = Readonly<{
     show: z.infer<typeof SessionListShowV1Schema>;
@@ -46,8 +56,8 @@ export type SessionListFilterV1 = Readonly<{
     bot?: SessionBotFilterV1;
     coordinator?: 'coordinator';
     projects?: Readonly<{ include: readonly QualifiedProjectKeyV1[]; exclude: readonly QualifiedProjectKeyV1[] }>;
-    statuses?: readonly SessionAwarenessPresentationStateV1[];
-    excludedStatuses?: readonly SessionAwarenessPresentationStateV1[];
+    statuses?: readonly SessionListStatusV1[];
+    excludedStatuses?: readonly SessionListStatusV1[];
     machines?: SetSelectionV1<QualifiedMachineV1>;
     agents?: SetSelectionV1<string>;
     sections?: SetSelectionV1<QualifiedSessionSectionV1>;
@@ -66,8 +76,8 @@ export type SessionListFilterV1 = Readonly<{
 export type SessionListFilterDefaultsInputV1 = Partial<SessionListFilterV1>;
 
 /**
- * Session identity/relations, Project and status cannot select Runs (a Run's destination is not its owner Session's
- * Project or status); consumers need no Run reader for a known-empty kind.
+ * Session identity/relations and Project cannot select Runs (a Run's destination is not its owner Session's
+ * Project); Status instead consumes each kind's canonical Work presentation state.
  */
 export function canSessionListFilterIncludeRunsV1(
     filter: Pick<SessionListFilterV1, 'show' | 'bot' | 'coordinator' | 'projects' | 'statuses'> & Partial<SessionListFilterV1>,
@@ -115,7 +125,9 @@ export type SessionListFilterFactsV1 = SessionCoordinatorFactsV1 & Readonly<{
     /** When presentation metadata differs, only the opened owner view may establish Project identity. */
     projectMetadata?: unknown;
     projectKey?: string | null;
-    status?: SessionAwarenessPresentationStateV1;
+    status?: SessionListStatusV1;
+    /** The same canonical presenter result as status, never a Run-to-Session state conversion. */
+    workStatus?: Readonly<Pick<ReturnType<typeof readSessionAwarenessWorkStatusV1>, 'bucket' | 'tone'>>;
     audiences?: readonly SessionAudienceSelectionV1[];
     tagIds?: readonly string[];
     source?: 'persisted' | 'direct';
@@ -145,7 +157,7 @@ function sameHome(facts: SessionListFilterFactsV1, serverId: string): boolean {
 function sessionField<K extends keyof SessionListFilterV1>(
     id: K, kind: 'set' | 'boolean' | 'time' | 'domain',
     match: (selection: NonNullable<SessionListFilterV1[K]>, facts: SessionListFilterFactsV1) => SessionListFilterMatchV1,
-    options: Readonly<{ listOnly?: boolean; sessionOnly?: boolean; active?(value: NonNullable<SessionListFilterV1[K]>): boolean }> = {},
+    options: Readonly<{ listOnly?: boolean; sessionOnly?: boolean; selectionEncoding?: 'set'; active?(value: NonNullable<SessionListFilterV1[K]>): boolean }> = {},
 ) {
     return defineEntityFilterFieldV1<SessionListFilterV1, SessionListFilterFactsV1, NonNullable<SessionListFilterV1[K]>>({
         id, kind, evaluators: options.listOnly ? ['list'] : ['list', 'daemonRule'],
@@ -153,11 +165,55 @@ function sessionField<K extends keyof SessionListFilterV1>(
             const value = filter[id];
             return value == null || options.active && !options.active(value) ? undefined : value;
         },
-        replaceSelection: (filter, value) => ({ ...filter, [id]: value ?? normalizeSessionListFilterV1()[id] }),
+        replaceSelection: (filter, value) => normalizeSessionListFilterV1({ ...filter, [id]: value ?? normalizeSessionListFilterV1()[id] }),
+        conditions: createEntityFilterConditionCodecV1({
+            encoding: options.selectionEncoding ?? (kind === 'set' ? 'values' : kind === 'time' ? 'time' : 'value'),
+            operator: id === 'excludedStatuses' ? 'is_not' : 'is',
+            // The dynamic key selects the same member of the canonical shape and Filter type.
+            parseValue: value => SessionListFilterFieldsV1Schema.shape[id].parse(value) as NonNullable<SessionListFilterV1[K]>,
+            valueOptions: () => {
+                switch (id) {
+                    case 'show': return Object.values(SessionListShowV1Schema._zod.def.entries);
+                    case 'startedBy': return Object.values(SessionListStartedByV1Schema._zod.def.entries);
+                    case 'scope': return Object.values(SessionListScopeV1Schema._zod.def.entries);
+                    case 'attention': return Object.values(SessionAttentionFilterV1Schema._zod.def.entries);
+                    case 'source': return Object.values(SessionListFilterFieldsV1Schema.shape.source._zod.def.entries);
+                    case 'bot': return Object.values(SessionBotFilterV1Schema._zod.def.entries);
+                    case 'coordinator': return ['coordinator'];
+                    case 'includeInactive': return [true, false];
+                    case 'statuses': case 'excludedStatuses': return [...new Set([
+                        ...Object.values(SessionAwarenessPresentationStateV1Schema._zod.def.entries),
+                        ...Object.values(WorkflowRunStateV1Schema._zod.def.entries), 'stopping',
+                    ])];
+                    default: return [];
+                }
+            },
+            valueGroups: () => id === 'statuses' || id === 'excludedStatuses'
+                ? SESSION_WORK_STATUS_FILTERS_V1.map(value => ({ value,
+                    values: listSessionPresentationStatesForWorkStatusFilterV1(value) })) : [],
+        }),
         match, ...(options.sessionOnly ? { appliesTo: (facts: SessionListFilterFactsV1) => facts.kind === 'session' } : {}),
     });
 }
 const selectedSet = <T>(selection: SetSelectionV1<T>) => selection.include.length + selection.exclude.length > 0;
+
+function matchSessionListStatusV1(
+    values: readonly SessionListStatusV1[], facts: SessionListFilterFactsV1,
+): SessionListFilterMatchV1 {
+    if (facts.status === undefined) return 'unavailable';
+    if (values.includes(facts.status)) return 'match';
+    if (facts.kind !== 'run') return 'miss';
+    // Existing editor choices store the full Session-state projection of a Work category.
+    // Only that complete projection has cross-kind meaning; an exact raw-state subset stays exact.
+    let missingWorkStatus = false;
+    for (const choice of SESSION_WORK_STATUS_FILTERS_V1) {
+        const states = listSessionPresentationStatesForWorkStatusFilterV1(choice);
+        if (!states.length || !states.every(state => values.includes(state))) continue;
+        if (!facts.workStatus) missingWorkStatus = true;
+        else if (readWorkStatusFilterV1({ ...facts.workStatus, state: facts.status }) === choice) return 'match';
+    }
+    return missingWorkStatus ? 'unavailable' : 'miss';
+}
 
 /** The semantic field owner for editor availability, list membership and daemon admission. */
 const builtInSessionWorkFilterFields: EntityFilterRegistryV1<SessionListFilterV1, SessionListFilterFactsV1> = [
@@ -170,8 +226,11 @@ const builtInSessionWorkFilterFields: EntityFilterRegistryV1<SessionListFilterV1
     sessionField('source', 'domain', (value, facts) => known(facts.source === undefined ? undefined : value === facts.source), { active: value => value !== 'all' }),
     sessionField('bot', 'domain', (value, facts) => matchSessionBotFilterV1(facts.metadata, value), { sessionOnly: true }),
     sessionField('coordinator', 'domain', (_value, facts) => known(deriveSessionCoordinatorV1(facts)), { sessionOnly: true }),
-    sessionField('statuses', 'set', (values, facts) => known(facts.status === undefined ? undefined : values.includes(facts.status)), { active: values => values.length > 0, sessionOnly: true }),
-    sessionField('excludedStatuses', 'set', (values, facts) => known(facts.status === undefined ? undefined : !values.includes(facts.status)), { active: values => values.length > 0, sessionOnly: true }),
+    sessionField('statuses', 'set', matchSessionListStatusV1, { active: values => values.length > 0 }),
+    sessionField('excludedStatuses', 'set', (values, facts) => {
+        const result = matchSessionListStatusV1(values, facts);
+        return result === 'unavailable' ? result : known(result === 'miss');
+    }, { active: values => values.length > 0 }),
     sessionField('audiences', 'set', (values, facts) => known(facts.audiences === undefined ? undefined : values.some(selection => sameHome(facts, selection.serverId)
         && facts.audiences!.some(audience => selection.kind === 'outside_teams' ? audience.kind === 'outside_teams'
             : audience.kind !== 'outside_teams' && audience.teamId === selection.teamId
@@ -179,15 +238,15 @@ const builtInSessionWorkFilterFields: EntityFilterRegistryV1<SessionListFilterV1
     sessionField('tagIds', 'set', (values, facts) => known(facts.tagIds === undefined ? undefined : values.some(tag => sameHome(facts, tag.serverId) && facts.tagIds!.includes(tag.tagId))), { active: values => values.length > 0 }),
     sessionField('projects', 'set', (value, facts) => matchEntityFilterSetV1(value, project => matchSessionProjectFilterV1(
         Object.hasOwn(facts, 'projectMetadata') ? facts.projectMetadata : facts.metadata, facts.serverId, project, facts.workspaceRefs,
-        { ...facts.workspaceContext, projectKey: facts.projectKey })), { active: selectedSet, sessionOnly: true }),
+        { ...facts.workspaceContext, projectKey: facts.projectKey })), { active: selectedSet, sessionOnly: true, selectionEncoding: 'set' }),
     sessionField('machines', 'set', (value, facts) => matchEntityFilterSetV1(value, machine => !sameHome(facts, machine.serverId) ? 'miss' : known(facts.machine === undefined ? undefined
-        : facts.machine !== null && sameHome(facts, facts.machine.serverId) && machine.machineId === facts.machine.machineId)), { active: selectedSet, sessionOnly: true }),
-    sessionField('agents', 'set', (value, facts) => matchEntityFilterSetV1(value, agent => known(facts.agent === undefined ? undefined : facts.agent === agent)), { active: selectedSet, sessionOnly: true }),
+        : facts.machine !== null && sameHome(facts, facts.machine.serverId) && machine.machineId === facts.machine.machineId)), { active: selectedSet, sessionOnly: true, selectionEncoding: 'set' }),
+    sessionField('agents', 'set', (value, facts) => matchEntityFilterSetV1(value, agent => known(facts.agent === undefined ? undefined : facts.agent === agent)), { active: selectedSet, sessionOnly: true, selectionEncoding: 'set' }),
     sessionField('owners', 'set', (value, facts) => matchEntityFilterSetV1(value, owner => !sameHome(facts, owner.serverId) ? 'miss' : known(facts.owner === undefined ? undefined
-        : sameHome(facts, facts.owner.serverId) && owner.accountId === facts.owner.accountId)), { active: selectedSet }),
+        : sameHome(facts, facts.owner.serverId) && owner.accountId === facts.owner.accountId)), { active: selectedSet, selectionEncoding: 'set' }),
     sessionField('sections', 'set', (value, facts) => matchEntityFilterSetV1(value, section => !sameHome(facts, section.serverId) ? 'miss' : known(facts.section === undefined ? undefined
-        : facts.section !== null && sameHome(facts, facts.section.serverId) && section.sectionId === facts.section.sectionId)), { active: selectedSet, sessionOnly: true }),
-    sessionField('branches', 'set', (value, facts) => matchEntityFilterSetV1(value, branch => known(facts.branch === undefined ? undefined : facts.branch === branch)), { active: selectedSet, sessionOnly: true, listOnly: true }),
+        : facts.section !== null && sameHome(facts, facts.section.serverId) && section.sectionId === facts.section.sectionId)), { active: selectedSet, sessionOnly: true, selectionEncoding: 'set' }),
+    sessionField('branches', 'set', (value, facts) => matchEntityFilterSetV1(value, branch => known(facts.branch === undefined ? undefined : facts.branch === branch)), { active: selectedSet, sessionOnly: true, listOnly: true, selectionEncoding: 'set' }),
     sessionField('updated', 'time', (value, facts) => matchEntityFilterTimeV1(value, facts.updatedAt)),
     // Structural admission owns inactive filtering; this record only carries the explicit query override.
     sessionField('includeInactive', 'boolean', () => 'match', { listOnly: true }),
@@ -365,8 +424,8 @@ export const SessionListFilterFieldsV1Schema = lazyZodSchema(() => z.strictObjec
     bot: z.optional(SessionBotFilterV1Schema),
     coordinator: z.optional(z.literal('coordinator')),
     projects: z.optional(z.strictObject({ include: z.array(QualifiedProjectKeyV1Schema), exclude: z.array(QualifiedProjectKeyV1Schema) })),
-    statuses: z.optional(z.array(SessionAwarenessPresentationStateV1Schema)),
-    excludedStatuses: z.optional(z.array(SessionAwarenessPresentationStateV1Schema)),
+    statuses: z.optional(z.array(SessionListStatusV1Schema)),
+    excludedStatuses: z.optional(z.array(SessionListStatusV1Schema)),
     machines: z.optional(z.strictObject({ include: z.array(z.strictObject({ serverId: SelectionIdSchema, machineId: SelectionIdSchema })), exclude: z.array(z.strictObject({ serverId: SelectionIdSchema, machineId: SelectionIdSchema })) })),
     agents: z.optional(z.strictObject({ include: z.array(AgentTargetKeySchema), exclude: z.array(AgentTargetKeySchema) })),
     sections: z.optional(z.strictObject({ include: z.array(QualifiedSessionSectionV1Schema), exclude: z.array(QualifiedSessionSectionV1Schema) })),

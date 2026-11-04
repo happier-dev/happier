@@ -6,6 +6,8 @@ import { createSessionItemRowViewModel } from './sessionItemRowViewModelTestFixt
 import { SessionListStagedMoveProvider } from './keyboardMove/SessionListStagedMoveDock';
 import { SessionListRow } from './sessionListRow';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
+import { sessionAddressKey } from '@/sync/domains/session/sessionAddress';
+import { treeRowId } from './drop-resolution/treeRowId';
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -41,13 +43,15 @@ describe('SessionListRow keyboard carry', () => {
     afterEach(standardCleanup);
     it('lets nested row controls keep Space and Enter while the primary row can stage a move', async () => {
         const session = createSessionFixture({ id: 'sess_keyboard', serverId: 'server_a' });
+        const sourceRowId = treeRowId.session('server_a', session.id, undefined, 'needsYou');
+        const entityKey = sessionAddressKey({ serverId: 'server_a', sessionId: session.id });
         const handleRowKey = vi.fn(() => true);
         const screen = await renderScreen(
             <InjectedAuthProvider credentials={{ token: 'test-token' }}>
             <SessionListStagedMoveProvider handleRowKey={handleRowKey}>
                 <SessionListRow session={session} rowViewModel={createSessionItemRowViewModel({ session })}
-                    selected={false} isFirst isLast variant="default" compact={false}
-                    sessionKey="sess_keyboard" treeRowId="sess_keyboard" groupKey="group" reorderEnabled organizeMode={false}
+                    selected={false} variant="default" compact={false}
+                    sessionKey={entityKey} treeRowId={sourceRowId} groupKey="group" reorderEnabled organizeMode={false}
                     onDragStart={vi.fn()} onDropResult={vi.fn()}
                     resolveDropResult={() => ({ result: { instruction: { kind: 'idle' }, visual: { kind: 'none' } }, geometry: { kind: 'none' } })}
                     onTogglePinnedSessionKey={null} onSetTagsSessionKey={null} onNativeContextMenuOpenChangeSessionKey={null}
@@ -76,7 +80,7 @@ describe('SessionListRow keyboard carry', () => {
         }
         const event = { key: ' ', nativeEvent: { target: primary }, currentTarget, preventDefault: vi.fn(), stopPropagation: vi.fn() };
         row.props.onKeyDownCapture(event);
-        expect(handleRowKey).toHaveBeenCalledWith(expect.objectContaining({ sessionKey: 'sess_keyboard', key: ' ' }));
+        expect(handleRowKey).toHaveBeenCalledWith(expect.objectContaining({ sessionKey: sourceRowId, key: ' ' }));
         expect(event.preventDefault).toHaveBeenCalled();
     });
 });

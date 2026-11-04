@@ -14,6 +14,7 @@ import { usePhoneWorkspaceTabs } from '@/components/appShell/workspace/usePhoneW
 import { announceAccessibilityMessage } from '@/components/ui/accessibility/announceAccessibilityMessage';
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 import { useSessionNavigationCursor } from '@/sync/domains/session/navigation/sessionNavigationCursorStore';
+import { readSessionMruOrder } from '@/sync/domains/session/navigation/recentSessions';
 import {
     buildServerScopedSessionKey,
     moveSessionMruEntryToFront,
@@ -83,9 +84,7 @@ export function useSessionSwitcher(params: Readonly<{ sessionId: string | null; 
 
     const prepare = React.useCallback((): SessionSwitcherPrepared => {
         const { sessionId, serverId, cursor: order, phoneTabs: tabs, draftScope: scope } = latest.current;
-        const state = storage.getState() as unknown as Parameters<typeof readSessionSwitcherRows>[0]['state'] & {
-            localSettings?: { sessionMruOrderV1?: unknown };
-        };
+        const state = storage.getState() as unknown as Parameters<typeof readSessionSwitcherRows>[0]['state'];
         const cursorEntries = order?.entries ?? [];
         // The current session's key in the shape every other key has: the captured list's entry when
         // it is there (a route opened without a serverId still anchors), else this Home's address.
@@ -112,9 +111,7 @@ export function useSessionSwitcher(params: Readonly<{ sessionId: string | null; 
             ...tabAddresses,
             ...(currentAddress ? [currentAddress] : []),
         ]);
-        const mru = Array.isArray(state.localSettings?.sessionMruOrderV1)
-            ? (state.localSettings?.sessionMruOrderV1 as unknown[]).filter((key): key is string => typeof key === 'string')
-            : [];
+        const mru = readSessionMruOrder();
         const normalizedMru = moveSessionMruEntryToFront({ order: mru, activeSessionKey: null, maxEntries: mru.length,
             knownSessionEntries: Array.from(addressByKey, ([sessionKey, address], index) => ({ index, sessionKey, ...address })) });
         const pool = resolveSessionSwitcherRecentPool({ currentKey, mruSessionKeys: normalizedMru, openTabs });

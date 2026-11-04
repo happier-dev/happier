@@ -12,9 +12,8 @@ const DEMO_WORLD_SETTINGS_KEYS = [
     'featureToggles',
     'hideInactiveSessions',
     'sessionListDensity',
-    'sessionListSectionModeV1',
-    'sessionListAttentionPromotionModeV1',
-    'sessionListWorkingPlacementModeV1',
+    'sessionListLayoutV1',
+    'sessionListAttentionPlacementV1',
     'connectedServicesDefaultProfileByServiceId',
     'connectedServicesDefaultAuthByAgentIdV1',
     'scmCommitStrategy',
@@ -39,9 +38,8 @@ export function buildDemoSettings(): DemoWorldSettings {
         },
         hideInactiveSessions: false,
         sessionListDensity: 'narrow',
-        sessionListSectionModeV1: 'single',
-        sessionListAttentionPromotionModeV1: 'global',
-        sessionListWorkingPlacementModeV1: 'global',
+        sessionListLayoutV1: 'projects',
+        sessionListAttentionPlacementV1: 'both',
         ...buildDemoConnectedServicesSettings(),
         // A9 source control: a workspace someone has actually configured — live Git
         // staging, a confirmation before anything leaves the machine, generated

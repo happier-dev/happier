@@ -1,14 +1,15 @@
+import { resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
 import { describe, expect, it } from 'vitest';
-import { normalizeSessionListFilterV1 } from '@happier-dev/protocol';
+import { normalizeSessionListFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 import { createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { computeVisibleSessionListIndex as computeSessionListIndex } from './computeVisibleSessionListIndex';
 import type { SessionListRenderableSession } from './sessionListRenderable';
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 import { buildSessionListProjectHeaderViewModels } from '@/components/sessions/shell/sessionListProjectHeaderViewModels';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
-import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createSessionFixture, createSessionViewerFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { buildSessionProjectGroupingIdentity, resolveSessionProjectGroupingKeyParts, sessionProjectGroupingIdentityKey } from './sessionListProjectGroupingKeys';
 import { parseDecryptedSessionMetadata } from '@/sync/engine/sessions/parsePlainSessionPayload';
-import { resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
 import { buildSessionListRowFilterFacts, buildWorkflowRunFilterFacts, matchSessionListRowLocalFilter, resolveWorkflowRunUnavailableHomes } from './sessionListWorkFilter';
 import { matchSessionListFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 
@@ -19,15 +20,18 @@ function computeVisibleSessionListIndex(input: Parameters<typeof computeSessionL
 }
 
 const workspace = { t: 'workspaceScope', serverId: 'home', machineId: 'machine-1', rootPath: '/repo' } as const;
+const projectGroupKey = sessionProjectGroupingIdentityKey(buildSessionProjectGroupingIdentity('home',
+    resolveSessionProjectGroupingKeyParts({ machineId: 'machine-1', path: '/repo' })));
 const source: SessionListIndexItem[] = [
-    { type: 'header', headerKind: 'project', title: 'repo', groupKey: 'repo', serverId: 'home', workspace,
+    { type: 'header', headerKind: 'project', title: 'repo', groupKey: projectGroupKey, serverId: 'home', workspace,
         workspaceScopeHint: { serverId: 'home', machineId: 'machine-1', rootPath: '/repo' } },
-    { type: 'session', sessionId: 'lead', serverId: 'home', groupKey: 'repo', groupKind: 'project', workspace },
-    { type: 'session', sessionId: 'step', serverId: 'home', groupKey: 'repo', groupKind: 'project', workspace },
+    { type: 'session', sessionId: 'lead', serverId: 'home', groupKey: projectGroupKey, groupKind: 'project', workspace },
+    { type: 'session', sessionId: 'step', serverId: 'home', groupKey: projectGroupKey, groupKind: 'project', workspace },
 ];
 const resolveSessionRow = (_serverId: string | null | undefined, sessionId: string): SessionListRenderableSession => ({
     id: sessionId, seq: 0, createdAt: 1, updatedAt: 1, active: true, activeAt: 1,
     metadataVersion: 0, agentStateVersion: 0, thinking: false, thinkingAt: 0,
+    encryptionMode: 'plain',
     metadata: { machineId: 'machine-1', path: '/repo' },
     ...(sessionId === 'step' ? { origin: { kind: 'run_step', runId: 'manual' } } : {}),
 });
@@ -139,13 +143,13 @@ describe('computeVisibleSessionListIndex workflow Runs', () => {
     });
     it('applies the canonical project exclusion and status to list rows without admitting locked facts', () => {
         const row = { ...resolveSessionRow('home', 'lead'), encryptionMode: 'plain' as const, encryptedContentAvailability: 'ready' as const,
-            presence: 'online' as const, latestTurnStatus: 'failed' as const, latestTurnStatusObservedAt: 1000, origin: { kind: 'none' as const } };
-        const rows = { lead: { ...row, metadata: { path: '/repo', projectId: 'payments' } }, step: { ...row, id: 'step', metadata: { path: '/repo', workspaceId: 'checkout-other' } } };
+            presence: 'online' as const, latestTurnStatus: 'failed' as const, latestTurnStatusObservedAt: 1000, origin: { kind: 'none' as const },
+            viewer: createSessionViewerFixture({ attention: { needsAttention: true, reasons: ['failed'], primary: 'failed', presentation: 'full' } }) };
+        const rows = { lead: { ...row, projectKey: 'payments' }, step: { ...row, id: 'step', projectKey: 'other' } };
         const result = computeVisibleSessionListIndex({ source, resolveSessionRow: (_server, id) => rows[id as keyof typeof rows] ?? null,
             hideInactiveSessions: false, pinnedSessionKeysV1: [], sessionListGroupOrderV1: {}, nowMs: 1000,
             presentation: { enabled: false, presentation: 'grouped' },
             workFilter: normalizeSessionListFilterV1({ homeServerIds: ['home'], statuses: ['failed'], projects: { include: [], exclude: [{ serverId: 'home', projectKey: 'payments' }] } }),
-            workspaceRefs: [{ id: 'checkout-other', serverId: 'home', projectKey: 'other', machineId: 'machine-1', rootPath: '/repo', createdAtMs: 1 }],
         })!;
         expect(result.filter(item => item.type === 'session').map(item => item.sessionId)).toEqual(['step']);
     });
@@ -181,6 +185,10 @@ describe('computeVisibleSessionListIndex workflow Runs', () => {
 
     });
     it('groups Runs without a Session corpus by their accepted project and uses its canonical workspace name', () => {
+        const workspaceRefs = [{
+            id: 'project-happier', serverId: 'home', machineId: 'machine-1', rootPath: '/repo/happier',
+            label: 'Happier workspace', createdAtMs: 1, lastOpenedAtMs: null,
+        }];
         const runs = [
             { ...summary('release', 'user'), where: { machineId: 'machine-1', directory: '/repo/happier', workspaceRefId: 'project-happier' } },
             { ...summary('payments-review', 'user'), where: { machineId: 'machine-1', directory: '/repo/payments' } },
@@ -189,15 +197,18 @@ describe('computeVisibleSessionListIndex workflow Runs', () => {
             hideInactiveSessions: false, pinnedSessionKeysV1: [], sessionListGroupOrderV1: {},
             sessionListLayoutChoice: 'projects', presentation: { enabled: false, presentation: 'grouped' },
             workFilter: normalizeSessionListFilterV1({ show: 'runs', homeServerIds: ['home'] }),
+            // P5's canonical Project resolver consumes only this Home's admitted census.
+            workspaceRefsServerId: 'home', workspaceRefs,
             workflowRuns: runs.map(run => ({ serverId: 'home', summary: run })),
         })!;
         const headers = rows.filter(item => item.type === 'header' && item.headerKind === 'project');
         expect(headers).toHaveLength(2);
-        const models = buildSessionListProjectHeaderViewModels({ listItems: rows, workspaceLabels: undefined, workspaceRefs: [{
-            id: 'project-happier', serverId: 'home', machineId: 'machine-1', rootPath: '/repo/happier',
-            label: 'Happier workspace', createdAtMs: 1, lastOpenedAtMs: null,
-        }] }).projectHeaderViewModelByGroupKey;
-        expect(headers.map(header => models.get(header.groupKey!)?.displayTitle)).toEqual(['Happier workspace', 'payments']);
+        const models = buildSessionListProjectHeaderViewModels({ listItems: rows, workspaceLabels: undefined, workspaceRefs,
+            workspaceRefsServerId: 'home' }).projectHeaderViewModelByGroupKey;
+        expect(Object.fromEntries(rows.filter(item => item.type === 'workflow_run').map(item =>
+            [item.runId, models.get(item.groupKey!)?.displayTitle]))).toEqual({
+            release: 'Happier workspace', 'payments-review': 'payments',
+        });
         expect(rows.filter(item => item.type === 'workflow_run').map(item => item.groupKey))
             .toEqual(headers.map(header => header.groupKey));
     });
@@ -223,7 +234,7 @@ describe('computeVisibleSessionListIndex workflow Runs', () => {
                 item.type === 'session' ? item.sessionId : item.runId)).toEqual(expected);
         }
     });
-    it.each(['projects', 'active_inactive', 'recent_activity'] as const)('preserves incumbent attention placement in the mixed %s projection', (sessionListLayoutChoice) => {
+    it.each(['projects', 'recent_activity'] as const)('preserves incumbent attention placement in the mixed %s projection', (sessionListLayoutChoice) => {
         const params = {
             source: source.slice(0, 2),
             resolveSessionRow: (serverId: string | null | undefined, sessionId: string) => ({
@@ -236,6 +247,7 @@ describe('computeVisibleSessionListIndex workflow Runs', () => {
             }),
             hideInactiveSessions: false, pinnedSessionKeysV1: [], sessionListGroupOrderV1: {},
             sessionListLayoutChoice,
+            sessionListAttentionPlacementV1: 'top' as const,
             attentionPlacement: { mode: 'global' as const },
             presentation: { enabled: false, presentation: 'grouped' as const },
             nowMs: 1_000,
@@ -255,7 +267,7 @@ describe('computeVisibleSessionListIndex workflow Runs', () => {
         expect(withRun).toEqual(expect.arrayContaining([expect.objectContaining({ type: 'workflow_run', runId: 'manual' })]));
     });
 
-    it.each(['active_inactive', 'recent_activity'] as const)('keeps working and pinned bands ahead of ordinary Runs in %s', (sessionListLayoutChoice) => {
+    it.each(['projects', 'recent_activity'] as const)('keeps working and pinned bands ahead of ordinary Runs in %s', (sessionListLayoutChoice) => {
         const params = {
             source: [...source.slice(0, 2), { ...source[1], sessionId: 'pinned' } as SessionListIndexItem],
             resolveSessionRow: (serverId: string | null | undefined, sessionId: string) => ({
@@ -266,7 +278,7 @@ describe('computeVisibleSessionListIndex workflow Runs', () => {
                 latestTurnStatusObservedAt: 1_000,
             }),
             hideInactiveSessions: false, pinnedSessionKeysV1: ['home:pinned'], sessionListGroupOrderV1: {},
-            sessionListLayoutChoice, workingPlacement: { mode: 'global' as const },
+            sessionListLayoutChoice, sessionListAttentionPlacementV1: 'top' as const, workingPlacement: { mode: 'global' as const },
             presentation: { enabled: false, presentation: 'grouped' as const }, nowMs: 1_000,
         };
         const incumbent = computeVisibleSessionListIndex(params)!;
@@ -282,7 +294,7 @@ describe('computeVisibleSessionListIndex workflow Runs', () => {
         const rows = compute().filter((item) => item.type !== 'header');
         expect(rows.map((item) => item.type === 'session' ? item.sessionId : item.runId)).toEqual(['lead', 'manual', 'step', 'needs-you']);
         expect(rows.find((item) => item.type === 'session' && item.sessionId === 'step')?.reportsDepth).toBe(1);
-        expect(rows.filter((item) => item.type === 'workflow_run').every((item) => item.groupKey === 'repo')).toBe(true);
+        expect(rows.filter((item) => item.type === 'workflow_run').every((item) => item.groupKey === projectGroupKey)).toBe(true);
     });
 
     it('retains an unresolved Session in the canonical Recent loading tail when Runs arrive', () => {
@@ -300,10 +312,10 @@ describe('computeVisibleSessionListIndex workflow Runs', () => {
         ]);
     });
 
-    it('Runs-only keeps their nested step Sessions, and an empty starter selection still keeps attention Runs', () => {
+    it('Runs-only keeps their nested step Sessions, and an empty starter selection admits no Runs', () => {
         const rows = compute('runs').filter((item) => item.type !== 'header');
         expect(rows.map((item) => item.type === 'session' ? item.sessionId : item.runId)).toEqual(['manual', 'step', 'needs-you']);
-        expect(compute('runs', []).filter((item) => item.type !== 'header').map((item) => item.type)).toEqual(['workflow_run']);
+        expect(compute('runs', []).filter((item) => item.type !== 'header')).toEqual([]);
     });
 
     it('Runs-only drops Session folders and projects that hold no Run (Workflows › Runs is not the Sessions tree)', () => {
@@ -367,10 +379,10 @@ describe('computeVisibleSessionListIndex workflow Runs', () => {
             .toEqual([['manual', 0], ['step', 1]]);
     });
 
-    it('puts nonterminal and completed Runs in the existing active and inactive sections', () => {
+    it('retains terminal Run activity facts in Projects without retired active and inactive headings', () => {
         const rows = computeVisibleSessionListIndex({
             source: [], resolveSessionRow, hideInactiveSessions: false, pinnedSessionKeysV1: [], sessionListGroupOrderV1: {},
-            sessionListLayoutChoice: 'active_inactive',
+            sessionListLayoutChoice: 'projects',
             presentation: { enabled: false, presentation: 'grouped' },
             workFilter: normalizeSessionListFilterV1({ show: 'runs', homeServerIds: ['home'] }),
             workflowRuns: [{ serverId: 'home', summary: { ...summary('running', 'user'), state: 'running' } },
@@ -379,7 +391,7 @@ describe('computeVisibleSessionListIndex workflow Runs', () => {
         expect(rows.filter((item) => item.type === 'workflow_run').map((item) => [item.runId, item.section]))
             .toEqual([['running', 'active'], ['done', 'inactive']]);
         expect(rows.filter((item) => item.type === 'header' && ['active', 'inactive'].includes(item.headerKind ?? ''))
-            .map((item) => item.type === 'header' ? item.headerKind : null)).toEqual(['active', 'inactive']);
+            .map((item) => item.type === 'header' ? item.headerKind : null)).toEqual([]);
     });
 
     it('moves step Sessions under their run across groups, and nests only explicitly agent-started Runs under an origin', () => {
@@ -397,10 +409,10 @@ describe('computeVisibleSessionListIndex workflow Runs', () => {
         })!.filter((item) => item.type !== 'header');
         expect(rows.map((item) => [item.type === 'session' ? item.sessionId : item.runId, item.reportsDepth ?? 0]))
             .toEqual([['lead', 0], ['agent', 1], ['manual', 0], ['step', 1]]);
-        expect(rows.find((item) => item.type === 'session' && item.sessionId === 'step')?.groupKey).toBe('repo');
+        expect(rows.find((item) => item.type === 'session' && item.sessionId === 'step')?.groupKey).toBe(projectGroupKey);
     });
 
-    it('does not invent independent folder membership for a Run in a focused Session folder', () => {
+    it('ignores retired folder focus for manual and agent-started Runs', () => {
         const folder = { id: 'f', name: 'Focused', parentId: null, workspace, createdAt: 1, updatedAt: 1 };
         const runs = [summary('manual', 'user'),
             { ...summary('agent', 'agent'), origin: { kind: 'direct' as const, originSessionId: 'lead' } },
@@ -408,11 +420,11 @@ describe('computeVisibleSessionListIndex workflow Runs', () => {
         const rows = computeVisibleSessionListIndex({ source: source.slice(0, 2), resolveSessionRow,
             hideInactiveSessions: false, pinnedSessionKeysV1: [], sessionListGroupOrderV1: {},
             presentation: { enabled: false, presentation: 'grouped' },
-            folderFocus: { folder, folderIds: new Set(['f']), breadcrumbs: [folder] },
+            ...{ folderFocus: { folder, folderIds: new Set(['f']), breadcrumbs: [folder] } },
             workFilter: normalizeSessionListFilterV1({ startedBy: ['you', 'agents'], homeServerIds: ['home'] }),
             workflowRuns: runs.map((run) => ({ serverId: 'home', summary: run })),
         })!.filter((item) => item.type !== 'header');
         expect(rows.map((item) => [item.type === 'session' ? item.sessionId : item.runId, item.reportsDepth ?? 0]))
-            .toEqual([['lead', 0], ['agent', 1]]);
+            .toEqual([['lead', 0], ['agent', 1], ['manual', 0], ['absent-origin', 0]]);
     });
 });

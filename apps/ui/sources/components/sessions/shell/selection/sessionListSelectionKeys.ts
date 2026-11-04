@@ -13,7 +13,6 @@ export type SessionListSelectionKeyInput = Readonly<{
 export type SessionListSelectionScopeKeyInput = Readonly<{
     filterSignature: string;
     storageKind: string;
-    focusedFolderId?: string | null;
     includeInactive: boolean;
 }>;
 
@@ -21,7 +20,6 @@ export type SessionListSelectionScopeForViewInput = Readonly<{
     filters: SessionListViewFilters;
     eligibility: SessionListSelectionScopeEligibility;
     storageKind: string;
-    focusedFolderId?: string | null;
     includeInactive: boolean;
 }>;
 
@@ -36,14 +34,23 @@ export function buildSessionListSelectionKey(input: SessionListSelectionKeyInput
 export function readSessionListSelectionKeysFromVisibleEntries(
     entries: readonly VisibleSessionNavigationEntry[],
 ): string[] {
-    return entries.map((entry) => entry.sessionKey);
+    return [...new Set(entries.map((entry) => entry.sessionKey))];
+}
+
+export function readSessionListSelectionRowsFromVisibleEntries(entries: readonly VisibleSessionNavigationEntry[]): Readonly<{
+    visibleOrderedKeys: readonly string[];
+    entityKeysByOccurrenceKey: ReadonlyMap<string, string>;
+}> {
+    return {
+        visibleOrderedKeys: entries.map((entry) => entry.occurrenceKey ?? entry.sessionKey),
+        entityKeysByOccurrenceKey: new Map(entries.map((entry) => [entry.occurrenceKey ?? entry.sessionKey, entry.sessionKey])),
+    };
 }
 
 export function buildSessionListSelectionScopeKey(input: SessionListSelectionScopeKeyInput): string {
     return JSON.stringify({
         filterSignature: input.filterSignature,
         storageKind: normalizeScopePart(input.storageKind),
-        focusedFolderId: normalizeScopePart(input.focusedFolderId) || null,
         includeInactive: input.includeInactive,
     });
 }
@@ -54,7 +61,6 @@ export function buildSessionListSelectionScopeKeyForView(
     return buildSessionListSelectionScopeKey({
         filterSignature: buildSessionListSelectionScopeSignature(input.filters, input.eligibility),
         storageKind: input.storageKind,
-        focusedFolderId: input.focusedFolderId,
         includeInactive: input.includeInactive,
     });
 }

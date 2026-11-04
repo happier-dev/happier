@@ -144,7 +144,7 @@ describe('buildSessionListReachabilitySummary', () => {
             ...sessionB, metadataLayoutVersion: 1, ownerMetadataView: null,
         }))).toBe(t('status.unknown'));
         const groupedRows = buildSessionListViewData({ [sessionB.id]: rowB }, { [machineB.id]: machineB }, {
-            activeGroupingV1: 'project', inactiveGroupingV1: 'project',
+            layoutV1: 'projects',
             serverScope: { serverId: homeB.id }, sessionTargetState: storage.getState(),
         });
         expect.soft(groupedRows.find((item) => item.type === 'header' && item.headerKind === 'project'))
@@ -153,7 +153,7 @@ describe('buildSessionListReachabilitySummary', () => {
             sessions: { [sessionB.id]: rowB }, sessionRecords: storage.getState().sessions,
             machines: { [machineB.id]: machineB }, machineRecords: { [machineB.id]: machineB },
             getProjectForSession: storage.getState().getProjectForSession,
-            activeGroupingV1: 'project', inactiveGroupingV1: 'project', serverScope: { serverId: homeB.id },
+            layoutV1: 'projects', serverScope: { serverId: homeB.id },
         });
         expect.soft(index.find((item) => item.type === 'header' && item.headerKind === 'project'))
             .toMatchObject({ title: '/repo-b' });

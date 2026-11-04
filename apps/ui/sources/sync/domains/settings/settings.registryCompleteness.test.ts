@@ -135,7 +135,7 @@ describe('settings registry completeness', () => {
         });
     });
 
-    it('owns keyboard shortcut preferences as account-synced settings while keeping session MRU local-only', async () => {
+    it('owns keyboard shortcut preferences without declaring device navigation history as settings', async () => {
         const { ACCOUNT_SETTING_ARTIFACTS } = await import('./settings');
         const { LOCAL_SETTING_ARTIFACTS } = await import('./registry/local/localSettingDefinitions');
         const syncedKeys = [
@@ -152,7 +152,7 @@ describe('settings registry completeness', () => {
             expect(LOCAL_SETTING_ARTIFACTS.definitions).not.toHaveProperty(key);
             expect(LOCAL_SETTING_ARTIFACTS.defaults).not.toHaveProperty(key);
         }
-        expect(LOCAL_SETTING_ARTIFACTS.definitions.sessionMruOrderV1.storageScope).toBe('local');
+        expect(LOCAL_SETTING_ARTIFACTS.definitions).not.toHaveProperty('sessionMruOrderV1');
         expect(ACCOUNT_SETTING_ARTIFACTS.definitions).not.toHaveProperty('sessionMruOrderV1');
     });
 

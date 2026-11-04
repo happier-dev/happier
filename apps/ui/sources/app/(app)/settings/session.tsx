@@ -1,6 +1,7 @@
 import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
 import { SettingAnchor, SettingSection } from '@/components/settings/shell/SettingRow';
 import { SESSION_SETTINGS } from '@/components/settings/session/sessionSettings';
+import { CollectionSpacesSettingsSection } from '@/components/settings/session/CollectionSpacesSettingsView';
 import { SelectionTiles } from '@/components/ui/forms/SelectionTiles';
 import { SessionListDensityPreview, SessionListLayoutPreview } from '@/components/settings/session/SessionListPreview';
 import React from 'react';
@@ -22,14 +23,19 @@ import { useDeviceType } from '@/utils/platform/responsive';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { SessionGestureSettingsRows } from '@/components/settings/session/SessionGestureSettingsRows';
 import {
+    resolveSessionListIdentityItems,
     resolveSessionListViewOptionsPresentation,
 } from '@/components/sessions/shell/sessionListViewOptionsPresentation';
 import { useSessionListViewOptionWriter } from '@/components/sessions/shell/useSessionListViewOptionWriter';
 import { useSettingActionFeedback } from '@/components/settings/shell/useSettingActionFeedback';
 import { normalizeSessionListBackgroundWorkAttentionMode } from '@/sync/domains/session/listing/sessionListBackgroundWorkAttention';
-import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useSessionListLayoutChoice } from '@/hooks/session/sessionListLayoutIntent';
 import { Icon } from '@/components/ui/icons/Icon';
+
+// View tiles are half the sheet and show a readable list; placement and density tiles are a third of it.
+const LAYOUT_PREVIEW_ASPECT_RATIO = 1.7;
+const ATTENTION_PREVIEW_ASPECT_RATIO = 1.5;
+const DENSITY_PREVIEW_ASPECT_RATIO = 1.9;
 
 export const WorkspaceRouteBody = React.memo(function SessionSettingsScreen() {
     const preferredLanguage = useSettingsSelector(getPreferredLanguage);
@@ -47,45 +53,30 @@ export const WorkspaceRouteBody = React.memo(function SessionSettingsScreen() {
     const deviceType = useDeviceType();
     const panelsSupported = Platform.OS === 'web' || deviceType === 'tablet';
     const [sessionListDensity, setSessionListDensity] = useSettingMutable('sessionListDensity');
-    const [sessionListIdentityDisplay, setSessionListIdentityDisplay] = useSettingMutable('sessionListIdentityDisplay');
+    const [sessionListIdentityDisplay] = useSettingMutable('sessionListIdentityDisplay');
+    const [sessionListRowContextV1] = useSettingMutable('sessionListRowContextV1');
+    const [sessionListStatusWords] = useSettingMutable('sessionListStatusWords');
     const [sessionHeaderIdentityDisplay, setSessionHeaderIdentityDisplay] = useSettingMutable('sessionHeaderIdentityDisplay');
     const [sessionListActiveColorMode, setSessionListActiveColorMode] = useSettingMutable('sessionListActiveColorModeV1');
-    const [sessionListAttentionPromotionMode] = useSettingMutable('sessionListAttentionPromotionModeV1');
+    const [sessionListAttentionPlacement] = useSettingMutable('sessionListAttentionPlacementV1');
     const [sessionListBackgroundWorkAttentionMode] = useSettingMutable('sessionListBackgroundWorkAttentionModeV1');
     const [sessionReminderAutoClearOnOpen, setSessionReminderAutoClearOnOpen] = useSettingMutable('sessionReminderAutoClearOnOpen');
     const [sessionListAttentionStandingDefault, setSessionListAttentionStandingDefault] = useSettingMutable('sessionListAttentionStandingDefaultV1');
-    const [sessionListWorkingPlacementMode] = useSettingMutable('sessionListWorkingPlacementModeV1');
-    const [sessionListOrderingModeV1] = useSettingMutable('sessionListOrderingModeV1');
-    const [sessionListFolderSortModeV1] = useSettingMutable('sessionListFolderSortModeV1');
-    const [sessionFolderViewModeV1] = useSettingMutable('sessionFolderViewModeV1');
-    const [sessionListNarrowWorkingIndicatorStyle, setSessionListNarrowWorkingIndicatorStyle] = useSettingMutable('sessionListNarrowWorkingIndicatorStyle');
-    const [sessionListWorkingStatusAnimatedTextEnabled, setSessionListWorkingStatusAnimatedTextEnabled] = useSettingMutable('sessionListWorkingStatusAnimatedTextEnabled');
     const [workspaceFaviconsEnabled, setWorkspaceFaviconsEnabled] = useSettingMutable('workspaceFaviconsEnabled');
     const [workspaceMachineSubtitlesEnabled, setWorkspaceMachineSubtitlesEnabled] = useSettingMutable('workspaceMachineSubtitlesEnabled');
     const [hideInactiveSessions, setHideInactiveSessions] = useSettingMutable('hideInactiveSessions');
-    const [sessionListActiveGroupingV1] = useSettingMutable('sessionListActiveGroupingV1');
-    const [sessionListInactiveGroupingV1] = useSettingMutable('sessionListInactiveGroupingV1');
-    const [sessionListSectionModeV1] = useSettingMutable('sessionListSectionModeV1');
     const applySessionListViewOption = useSessionListViewOptionWriter();
     // Account settings intentionally describe the currently selected Home set;
     // exact Session/Team/list-row surfaces scope their own admission separately.
-    const sessionFoldersFeatureEnabled = useFeatureEnabled('sessions.folders', { scopeKind: 'main_selection' });
     const [mobileWorkspaceExperience, setMobileWorkspaceExperience] = useSettingMutable('mobileWorkspaceExperienceV1');
     const [workspaceTabsSyncEnabled, setWorkspaceTabsSyncEnabled] = useSettingMutable('workspaceTabsSyncEnabled');
     const [sessionsRightPaneDefaultOpen, setSessionsRightPaneDefaultOpen] = useLocalSettingMutable('sessionsRightPaneDefaultOpen');
     const [uiMultiPanePanelsEnabled] = useLocalSettingMutable('uiMultiPanePanelsEnabled');
 
-    const [openGroupingMenu, setOpenGroupingMenu] = React.useState<null | 'active' | 'inactive'>(null);
     const [openSessionListIdentityDisplayMenu, setOpenSessionListIdentityDisplayMenu] = React.useState(false);
     const [openSessionHeaderIdentityDisplayMenu, setOpenSessionHeaderIdentityDisplayMenu] = React.useState(false);
     const [openSessionListActiveColorModeMenu, setOpenSessionListActiveColorModeMenu] = React.useState(false);
-    const [openSessionListAttentionPromotionModeMenu, setOpenSessionListAttentionPromotionModeMenu] = React.useState(false);
     const [openSessionListBackgroundWorkAttentionModeMenu, setOpenSessionListBackgroundWorkAttentionModeMenu] = React.useState(false);
-    const [openSessionListWorkingPlacementModeMenu, setOpenSessionListWorkingPlacementModeMenu] = React.useState(false);
-    const [openSessionListOrderingModeMenu, setOpenSessionListOrderingModeMenu] = React.useState(false);
-    const [openSessionFolderDisplayMenu, setOpenSessionFolderDisplayMenu] = React.useState(false);
-    const [openSessionListFolderSortModeMenu, setOpenSessionListFolderSortModeMenu] = React.useState(false);
-    const [openWorkingIndicatorMenu, setOpenWorkingIndicatorMenu] = React.useState(false);
     const [openTitleUpdatesModeMenu, setOpenTitleUpdatesModeMenu] = React.useState(false);
     const rememberProjectSelectionsEnabled = rememberLastProjectSessionSelections !== false;
     const rememberEngineSelectionsEnabled = rememberLastEngineSelections !== false;
@@ -128,15 +119,7 @@ export const WorkspaceRouteBody = React.memo(function SessionSettingsScreen() {
     // goes through the one effective-layout reader rather than re-deriving it.
     const sessionListLayoutChoice = useSessionListLayoutChoice();
     const sessionListViewOptions = resolveSessionListViewOptionsPresentation({
-        sessionListSectionModeV1,
-        sessionListActiveGroupingV1,
-        sessionListInactiveGroupingV1,
-        sessionListOrderingModeV1,
-        sessionListAttentionPromotionModeV1: sessionListAttentionPromotionMode,
-        sessionListWorkingPlacementModeV1: sessionListWorkingPlacementMode,
-        sessionFolderViewModeV1,
-        sessionListFolderSortModeV1,
-        foldersFeatureEnabled: sessionFoldersFeatureEnabled,
+        sessionListAttentionPlacementV1: sessionListAttentionPlacement,
     }, sessionListLayoutChoice);
     const sessionListDensityItems = React.useMemo(() => [
         {
@@ -156,33 +139,16 @@ export const WorkspaceRouteBody = React.memo(function SessionSettingsScreen() {
         },
     ], [preferredLanguage]);
 
+    const sessionListPreviewDensity = sessionListDensity === 'detailed' || sessionListDensity === 'cozy' ? sessionListDensity : 'narrow';
     const handleSessionListDensitySelect = React.useCallback((itemId: string) => {
         if (itemId !== 'detailed' && itemId !== 'cozy' && itemId !== 'narrow') return;
         setSessionListDensity(itemId);
     }, [setSessionListDensity]);
 
-    const sessionListIdentityDisplayItems = React.useMemo(() => [
-        {
-            id: 'avatar',
-            title: t('settingsSession.sessionList.identityDisplayAvatarTitle'),
-            subtitle: t('settingsSession.sessionList.identityDisplayAvatarSubtitle'),
-        },
-        {
-            id: 'agentLogo',
-            title: t('settingsSession.sessionList.identityDisplayAgentLogoTitle'),
-            subtitle: t('settingsSession.sessionList.identityDisplayAgentLogoSubtitle'),
-        },
-        {
-            id: 'none',
-            title: t('settingsSession.sessionList.identityDisplayNoneTitle'),
-            subtitle: t('settingsSession.sessionList.identityDisplayNoneSubtitle'),
-        },
-    ], [preferredLanguage]);
-
-    const normalizedSessionListIdentityDisplay =
-        sessionListIdentityDisplay === 'agentLogo' || sessionListIdentityDisplay === 'none'
-            ? sessionListIdentityDisplay
-            : 'avatar';
+    // The list's View menu and this page offer the same leading-mark choices from one owner.
+    const sessionListIdentityItems = React.useMemo(() => resolveSessionListIdentityItems(), [preferredLanguage]);
+    const selectedSessionListIdentity = sessionListIdentityItems.find((item) => item.id === `identity:${sessionListIdentityDisplay}`)?.id
+        ?? sessionListIdentityItems[0]!.id;
     const sessionHeaderIdentityDisplayItems = React.useMemo(() => [
         {
             id: 'avatar',
@@ -209,11 +175,6 @@ export const WorkspaceRouteBody = React.memo(function SessionSettingsScreen() {
         if (itemId !== 'avatar' && itemId !== 'agentLogo' && itemId !== 'none') return;
         setSessionHeaderIdentityDisplay(itemId);
     }, [setSessionHeaderIdentityDisplay]);
-
-    const handleSessionListIdentityDisplaySelect = React.useCallback((itemId: string) => {
-        if (itemId !== 'avatar' && itemId !== 'agentLogo' && itemId !== 'none') return;
-        setSessionListIdentityDisplay(itemId);
-    }, [setSessionListIdentityDisplay]);
 
     const sessionListActiveColorModeItems = React.useMemo(() => [
         {
@@ -246,10 +207,7 @@ export const WorkspaceRouteBody = React.memo(function SessionSettingsScreen() {
     // Standing only reaches the list through the attention placement lane, so with
     // "Sessions needing attention" left in normal position this switch would change
     // nothing. Lock it and name the prerequisite instead of letting it lie.
-    const sessionListAttentionStandingUnavailable = normalizedSessionListAttentionPromotionMode === 'off';
-    const handleSessionListAttentionPromotionModeSelect = React.useCallback((itemId: string) => {
-        applySessionListViewOption(itemId);
-    }, [applySessionListViewOption]);
+    const sessionListAttentionStandingUnavailable = normalizedSessionListAttentionPromotionMode === 'inPlace';
 
     const normalizedSessionListBackgroundWorkAttentionMode = normalizeSessionListBackgroundWorkAttentionMode(sessionListBackgroundWorkAttentionMode);
     const sessionListBackgroundWorkAttentionModeItems = React.useMemo(() => [
@@ -273,122 +231,38 @@ export const WorkspaceRouteBody = React.memo(function SessionSettingsScreen() {
         void setSetting(SESSION_SETTINGS.settings.backgroundWorkAttention, normalizeSessionListBackgroundWorkAttentionMode(itemId));
     }, [setSetting]);
 
-    const sessionListWorkingPlacementModeItems = sessionListViewOptions.workingItems;
-    const normalizedSessionListWorkingPlacementMode = sessionListViewOptions.selectedWorkingPlacement;
-    const handleSessionListWorkingPlacementModeSelect = React.useCallback((itemId: string) => {
-        applySessionListViewOption(itemId);
-    }, [applySessionListViewOption]);
-
-    const normalizedSessionListOrderingMode = sessionListViewOptions.selectedOrdering;
-    const sessionListOrderingModeItems = sessionListViewOptions.orderingItems;
-
-    const handleSessionListOrderingModeSelect = React.useCallback((itemId: string) => {
-        applySessionListViewOption(itemId);
-    }, [applySessionListViewOption]);
-
-    const effectiveSessionListFolderSortMode = sessionListViewOptions.selectedFolderSort;
-    const sessionListFolderSortModeItems = sessionListViewOptions.folderSortItems;
-
-    const handleSessionListFolderSortModeSelect = React.useCallback((itemId: string) => {
-        applySessionListViewOption(itemId);
-    }, [applySessionListViewOption]);
-
-    const workingIndicatorStyle = sessionListNarrowWorkingIndicatorStyle === 'pulse' ? 'pulse' : 'spinner';
-    const workingIndicatorItems = React.useMemo(() => [
-        {
-            id: 'spinner',
-            title: t('settingsSession.sessionList.workingIndicatorSpinnerTitle'),
-            subtitle: t('settingsSession.sessionList.workingIndicatorSpinnerSubtitle'),
-        },
-        {
-            id: 'pulse',
-            title: t('settingsSession.sessionList.workingIndicatorPulseTitle'),
-            subtitle: t('settingsSession.sessionList.workingIndicatorPulseSubtitle'),
-        },
-    ], [preferredLanguage]);
-
-    const handleWorkingIndicatorSelect = React.useCallback((itemId: string) => {
-        if (itemId !== 'spinner' && itemId !== 'pulse') return;
-        setSessionListNarrowWorkingIndicatorStyle(itemId);
-    }, [setSessionListNarrowWorkingIndicatorStyle]);
-
     return (
         <ItemList ref={popoverBoundaryRef} style={{ paddingTop: 0 }}>
             <SettingsPageHeader description={t('settingsSession.pageDescription')} />
-            <SettingSection section={SESSION_SETTINGS.sectionRefs.launchDefaults}>
-                <ItemGroup
-                    title={t('settingsSession.rootGroups.launchDefaults.title')}
-                    description={t('settingsSession.rootGroups.launchDefaults.footer')}
-                >
-                    <SettingAnchor setting={SESSION_SETTINGS.settings.startWith}>
-                        <SegmentedChoiceItem<'composer' | 'wizard'>
-                            testID="settings-new-session-wizard-mode"
-                            testIDPrefix="settings-session-startWith"
-                            title={t(SESSION_SETTINGS.settings.startWith.titleKey)}
-                            subtitle={t('settingsSession.sessionCreation.startWithDescription')}
-                            subtitleLines={0}
-                            options={[
-                                { id: 'composer', label: t('settingsSession.sessionCreation.startWithComposer') },
-                                { id: 'wizard', label: t('settingsSession.sessionCreation.startWithWizard') },
-                            ]}
-                            value={useEnhancedSessionWizard ? 'wizard' : 'composer'}
-                            onChange={(next) => setUseEnhancedSessionWizard(next === 'wizard')}
-                        />
-                    </SettingAnchor>
-                    {useEnhancedSessionWizard ? (
-                        <SettingAnchor setting={SESSION_SETTINGS.settings.wizardDisposition}>
-                            <Item
-                                title={t(SESSION_SETTINGS.settings.wizardDisposition.titleKey)}
-                                icon={<Icon name="grid-four" />}
-                                subtitle={t('settingsSession.sessionCreation.wizardDispositionSubtitle')}
-                                onPress={() => router.push('/settings/session/new-session-wizard')}
-                            />
-                        </SettingAnchor>
-                    ) : null}
-                    <SettingAnchor setting={SESSION_SETTINGS.settings.rememberProjectSelections}>
-                        <Item
-                            title={t(SESSION_SETTINGS.settings.rememberProjectSelections.titleKey)}
-                            subtitle={t(
-                                rememberProjectSelectionsEnabled
-                                    ? 'settingsSession.sessionCreation.rememberLastProjectSelectionsEnabledSubtitle'
-                                    : 'settingsSession.sessionCreation.rememberLastProjectSelectionsDisabledSubtitle',
-                            )}
-                            rightElement={
-                                <Switch
-                                    value={rememberProjectSelectionsEnabled}
-                                    onValueChange={(next) => setRememberLastProjectSessionSelections(Boolean(next) as any)}
-                                />
-                            }
-                            showChevron={false}
-                            onPress={() => setRememberLastProjectSessionSelections((!rememberProjectSelectionsEnabled) as any)}
-                        />
-                    </SettingAnchor>
-                    <SettingAnchor setting={SESSION_SETTINGS.settings.rememberEngineSelections}>
-                        <Item
-                            title={t(SESSION_SETTINGS.settings.rememberEngineSelections.titleKey)}
-                            subtitle={t(
-                                rememberEngineSelectionsEnabled
-                                    ? 'settingsSession.sessionCreation.rememberLastEngineSelectionsEnabledSubtitle'
-                                    : 'settingsSession.sessionCreation.rememberLastEngineSelectionsDisabledSubtitle',
-                            )}
-                            rightElement={
-                                <Switch
-                                    value={rememberEngineSelectionsEnabled}
-                                    onValueChange={(next) => setRememberLastEngineSelections(Boolean(next) as any)}
-                                />
-                            }
-                            showChevron={false}
-                            onPress={() => setRememberLastEngineSelections((!rememberEngineSelectionsEnabled) as any)}
-                        />
-                    </SettingAnchor>
-                </ItemGroup>
-            </SettingSection>
-
+            {/* The list's own arrangement leads (lab cllayout/clctx): view and density, row details, spaces; new-session defaults follow. */}
             <SettingSection section={SESSION_SETTINGS.sectionRefs.listOrganization}>
                 <ItemGroup
                     title={t('settingsSession.rootGroups.listOrganization.title')}
                     description={t('settingsSession.rootGroups.listOrganization.footer')}
                 >
+                    <SettingAnchor setting={SESSION_SETTINGS.settings.layout}>
+                        <Item
+                            testID="settings-session-sessionListLayout"
+                            title={t(SESSION_SETTINGS.settings.layout.titleKey)}
+                            accessoryLayout="stacked"
+                            showChevron={false}
+                            rightElement={<SelectionTiles
+                                variant="visual"
+                                tileSizing="fill"
+                                previewAspectRatio={LAYOUT_PREVIEW_ASPECT_RATIO}
+                                accessibilityLabel={t(SESSION_SETTINGS.settings.layout.titleKey)}
+                                testIdPrefix="settings-session-sessionListLayout"
+                                value={`layout:${sessionListViewOptions.selectedLayout}`}
+                                onChange={(next) => { if (next) applySessionListViewOption(next); }}
+                                options={sessionListViewOptions.layoutItems.map((item) => ({
+                                    id: item.id,
+                                    title: item.title,
+                                    subtitle: t(item.id === 'layout:recent_activity' ? 'settingsSession.sessionList.layoutRecentActivitySubtitle' : 'settingsSession.sessionList.layoutProjectsSubtitle'),
+                                    preview: <SessionListLayoutPreview layout={item.id} attention={normalizedSessionListAttentionPromotionMode} density={sessionListPreviewDensity} />,
+                                }))}
+                            />}
+                        />
+                    </SettingAnchor>
                     <SettingAnchor setting={SESSION_SETTINGS.settings.listDensity}>
                         <Item
                             testID="settings-session-sessionListDensity"
@@ -399,6 +273,8 @@ export const WorkspaceRouteBody = React.memo(function SessionSettingsScreen() {
                             rightElement={
                                 <SelectionTiles
                                     variant="visual"
+                                    tileSizing="fill"
+                                    previewAspectRatio={DENSITY_PREVIEW_ASPECT_RATIO}
                                     accessibilityLabel={t('settingsAppearance.sessionListDensity.title')}
                                     testIdPrefix="settings-session-sessionListDensity"
                                     value={sessionListDensity}
@@ -412,144 +288,6 @@ export const WorkspaceRouteBody = React.memo(function SessionSettingsScreen() {
                             }
                         />
                     </SettingAnchor>
-                    {sessionListViewOptions.showProjectOrdering ? (
-                        <SettingAnchor setting={SESSION_SETTINGS.settings.ordering}>
-                            <DropdownMenu
-                                open={openSessionListOrderingModeMenu}
-                                onOpenChange={setOpenSessionListOrderingModeMenu}
-                                variant="selectable"
-                                search={false}
-                                selectedId={`ordering:${normalizedSessionListOrderingMode}`}
-                                showCategoryTitles={false}
-                                matchTriggerWidth={true}
-                                connectToTrigger={true}
-                                rowKind="item"
-                                popoverBoundaryRef={popoverBoundaryRef}
-                                itemTrigger={{
-                                    title: t(SESSION_SETTINGS.settings.ordering.titleKey),
-                                    subtitle: t('settingsSession.sessionList.orderingSubtitle'),
-                                    showSelectedSubtitle: false,
-                                    itemProps: { testID: 'settings-session-sessionListOrderingMode-trigger' },
-                                }}
-                                items={sessionListOrderingModeItems}
-                                onSelect={handleSessionListOrderingModeSelect}
-                            />
-                        </SettingAnchor>
-                    ) : null}
-                    {sessionListViewOptions.showFolderOptions ? (
-                        <SettingAnchor setting={SESSION_SETTINGS.settings.folderView}>
-                            <DropdownMenu
-                                open={openSessionFolderDisplayMenu}
-                                onOpenChange={setOpenSessionFolderDisplayMenu}
-                                variant="selectable"
-                                search={false}
-                                selectedId={`folderDisplay:${sessionListViewOptions.selectedFolderDisplay}`}
-                                showCategoryTitles={false}
-                                matchTriggerWidth={true}
-                                connectToTrigger={true}
-                                rowKind="item"
-                                popoverBoundaryRef={popoverBoundaryRef}
-                                itemTrigger={{
-                                    title: t(SESSION_SETTINGS.settings.folderView.titleKey),
-                                    showSelectedSubtitle: false,
-                                    itemProps: { testID: 'settings-session-sessionFolderViewMode-trigger' },
-                                }}
-                                items={sessionListViewOptions.folderDisplayItems}
-                                onSelect={applySessionListViewOption}
-                            />
-                        </SettingAnchor>
-                    ) : null}
-                    {sessionListViewOptions.showFolderOptions ? (
-                        <SettingAnchor setting={SESSION_SETTINGS.settings.folderSort}>
-                            <DropdownMenu
-                                open={openSessionListFolderSortModeMenu}
-                                onOpenChange={setOpenSessionListFolderSortModeMenu}
-                                variant="selectable"
-                                search={false}
-                                selectedId={`folderSort:${effectiveSessionListFolderSortMode}`}
-                                showCategoryTitles={false}
-                                matchTriggerWidth={true}
-                                connectToTrigger={true}
-                                rowKind="item"
-                                popoverBoundaryRef={popoverBoundaryRef}
-                                itemTrigger={{
-                                    title: t(SESSION_SETTINGS.settings.folderSort.titleKey),
-                                    subtitle: t('settingsSession.sessionList.folderSortModeSubtitle'),
-                                    showSelectedSubtitle: false,
-                                    itemProps: { testID: 'settings-session-sessionListFolderSortMode-trigger' },
-                                }}
-                                items={sessionListFolderSortModeItems}
-                                onSelect={handleSessionListFolderSortModeSelect}
-                            />
-                        </SettingAnchor>
-                    ) : null}
-                    <SettingAnchor setting={SESSION_SETTINGS.settings.layout}>
-                        <Item
-                            testID="settings-session-sessionListLayout"
-                            title={t(SESSION_SETTINGS.settings.layout.titleKey)}
-                            subtitle={t('settingsSession.sessionList.layoutSubtitle')}
-                            accessoryLayout="stacked"
-                            showChevron={false}
-                            rightElement={<SelectionTiles
-                                variant="visual"
-                                accessibilityLabel={t(SESSION_SETTINGS.settings.layout.titleKey)}
-                                testIdPrefix="settings-session-sessionListLayout"
-                                value={`layout:${sessionListViewOptions.selectedLayout}`}
-                                onChange={(next) => { if (next) applySessionListViewOption(next); }}
-                                options={sessionListViewOptions.layoutItems.map((item) => ({
-                                    id: item.id,
-                                    title: item.title,
-                                    preview: <SessionListLayoutPreview layout={item.id} />,
-                                }))}
-                            />}
-                        />
-                    </SettingAnchor>
-                    {sessionListViewOptions.showSectionGrouping ? (
-                        <SettingAnchor setting={SESSION_SETTINGS.settings.activeGrouping}>
-                            <DropdownMenu
-                                open={openGroupingMenu === 'active'}
-                                onOpenChange={(next) => setOpenGroupingMenu(next ? 'active' : null)}
-                                variant="selectable"
-                                search={false}
-                                selectedId={sessionListViewOptions.selectedActiveGroupingId}
-                                showCategoryTitles={false}
-                                matchTriggerWidth={true}
-                                connectToTrigger={true}
-                                rowKind="item"
-                                popoverBoundaryRef={popoverBoundaryRef}
-                                itemTrigger={{
-                                    title: t(SESSION_SETTINGS.settings.activeGrouping.titleKey),
-                                    subtitle: t('settingsFeatures.sessionListActiveGroupingSubtitle'),
-                                    showSelectedSubtitle: false,
-                                }}
-                                items={sessionListViewOptions.activeGroupingItems}
-                                onSelect={applySessionListViewOption}
-                            />
-                        </SettingAnchor>
-                    ) : null}
-                    {sessionListViewOptions.showSectionGrouping ? (
-                        <SettingAnchor setting={SESSION_SETTINGS.settings.inactiveGrouping}>
-                            <DropdownMenu
-                                open={openGroupingMenu === 'inactive'}
-                                onOpenChange={(next) => setOpenGroupingMenu(next ? 'inactive' : null)}
-                                variant="selectable"
-                                search={false}
-                                selectedId={sessionListViewOptions.selectedInactiveGroupingId}
-                                showCategoryTitles={false}
-                                matchTriggerWidth={true}
-                                connectToTrigger={true}
-                                rowKind="item"
-                                popoverBoundaryRef={popoverBoundaryRef}
-                                itemTrigger={{
-                                    title: t(SESSION_SETTINGS.settings.inactiveGrouping.titleKey),
-                                    subtitle: t('settingsFeatures.sessionListInactiveGroupingSubtitle'),
-                                    showSelectedSubtitle: false,
-                                }}
-                                items={sessionListViewOptions.inactiveGroupingItems}
-                                onSelect={applySessionListViewOption}
-                            />
-                        </SettingAnchor>
-                    ) : null}
                     <SettingAnchor setting={SESSION_SETTINGS.settings.hideInactive}>
                         <Item
                             title={t(SESSION_SETTINGS.settings.hideInactive.titleKey)}
@@ -589,13 +327,27 @@ export const WorkspaceRouteBody = React.memo(function SessionSettingsScreen() {
                         onPress={() => setSessionTagsEnabled(!sessionTagsEnabled)}
                     />
                 </SettingAnchor>
+                <SettingAnchor setting={SESSION_SETTINGS.settings.rowContext}>
+                    <Item
+                        testID="settings-session-rowContext-item"
+                        title={t(SESSION_SETTINGS.settings.rowContext.titleKey)}
+                        subtitle={t('settingsSession.sessionList.rowContextSubtitle')}
+                        rightElement={<Switch
+                            testID="settings-session-rowContext-toggle"
+                            value={sessionListRowContextV1 !== false}
+                            onValueChange={(next) => { void applySessionListViewOption(`rowContext:${Boolean(next)}`); }}
+                        />}
+                        showChevron={false}
+                        onPress={() => { void applySessionListViewOption(`rowContext:${sessionListRowContextV1 === false}`); }}
+                    />
+                </SettingAnchor>
                 <SettingAnchor setting={SESSION_SETTINGS.settings.identityDisplay}>
                     <DropdownMenu
                         open={openSessionListIdentityDisplayMenu}
                         onOpenChange={setOpenSessionListIdentityDisplayMenu}
                         variant="selectable"
                         search={false}
-                        selectedId={normalizedSessionListIdentityDisplay}
+                        selectedId={selectedSessionListIdentity}
                         showCategoryTitles={false}
                         matchTriggerWidth={true}
                         connectToTrigger={true}
@@ -607,8 +359,8 @@ export const WorkspaceRouteBody = React.memo(function SessionSettingsScreen() {
                             showSelectedSubtitle: false,
                             itemProps: { testID: 'settings-session-sessionListIdentityDisplay-trigger' },
                         }}
-                        items={sessionListIdentityDisplayItems}
-                        onSelect={handleSessionListIdentityDisplaySelect}
+                        items={sessionListIdentityItems}
+                        onSelect={applySessionListViewOption}
                     />
                 </SettingAnchor>
                 <SettingAnchor setting={SESSION_SETTINGS.settings.headerIdentityDisplay}>
@@ -693,48 +445,121 @@ export const WorkspaceRouteBody = React.memo(function SessionSettingsScreen() {
                 </SettingAnchor>
             </ItemGroup>
 
+            <CollectionSpacesSettingsSection entityKind="sessionWork" />
+
+            <SettingSection section={SESSION_SETTINGS.sectionRefs.launchDefaults}>
+                <ItemGroup
+                    title={t('settingsSession.rootGroups.launchDefaults.title')}
+                    description={t('settingsSession.rootGroups.launchDefaults.footer')}
+                >
+                    <SettingAnchor setting={SESSION_SETTINGS.settings.startWith}>
+                        <SegmentedChoiceItem<'composer' | 'wizard'>
+                            testID="settings-new-session-wizard-mode"
+                            testIDPrefix="settings-session-startWith"
+                            title={t(SESSION_SETTINGS.settings.startWith.titleKey)}
+                            subtitle={t('settingsSession.sessionCreation.startWithDescription')}
+                            subtitleLines={0}
+                            options={[
+                                { id: 'composer', label: t('settingsSession.sessionCreation.startWithComposer') },
+                                { id: 'wizard', label: t('settingsSession.sessionCreation.startWithWizard') },
+                            ]}
+                            value={useEnhancedSessionWizard ? 'wizard' : 'composer'}
+                            onChange={(next) => setUseEnhancedSessionWizard(next === 'wizard')}
+                        />
+                    </SettingAnchor>
+                    {useEnhancedSessionWizard ? (
+                        <SettingAnchor setting={SESSION_SETTINGS.settings.wizardDisposition}>
+                            <Item
+                                title={t(SESSION_SETTINGS.settings.wizardDisposition.titleKey)}
+                                icon={<Icon name="grid-four" />}
+                                subtitle={t('settingsSession.sessionCreation.wizardDispositionSubtitle')}
+                                onPress={() => router.push('/settings/session/new-session-wizard')}
+                            />
+                        </SettingAnchor>
+                    ) : null}
+                    <SettingAnchor setting={SESSION_SETTINGS.settings.rememberProjectSelections}>
+                        <Item
+                            title={t(SESSION_SETTINGS.settings.rememberProjectSelections.titleKey)}
+                            subtitle={t(
+                                rememberProjectSelectionsEnabled
+                                    ? 'settingsSession.sessionCreation.rememberLastProjectSelectionsEnabledSubtitle'
+                                    : 'settingsSession.sessionCreation.rememberLastProjectSelectionsDisabledSubtitle',
+                            )}
+                            rightElement={
+                                <Switch
+                                    value={rememberProjectSelectionsEnabled}
+                                    onValueChange={(next) => setRememberLastProjectSessionSelections(Boolean(next) as any)}
+                                />
+                            }
+                            showChevron={false}
+                            onPress={() => setRememberLastProjectSessionSelections((!rememberProjectSelectionsEnabled) as any)}
+                        />
+                    </SettingAnchor>
+                    <SettingAnchor setting={SESSION_SETTINGS.settings.rememberEngineSelections}>
+                        <Item
+                            title={t(SESSION_SETTINGS.settings.rememberEngineSelections.titleKey)}
+                            subtitle={t(
+                                rememberEngineSelectionsEnabled
+                                    ? 'settingsSession.sessionCreation.rememberLastEngineSelectionsEnabledSubtitle'
+                                    : 'settingsSession.sessionCreation.rememberLastEngineSelectionsDisabledSubtitle',
+                            )}
+                            rightElement={
+                                <Switch
+                                    value={rememberEngineSelectionsEnabled}
+                                    onValueChange={(next) => setRememberLastEngineSelections(Boolean(next) as any)}
+                                />
+                            }
+                            showChevron={false}
+                            onPress={() => setRememberLastEngineSelections((!rememberEngineSelectionsEnabled) as any)}
+                        />
+                    </SettingAnchor>
+                </ItemGroup>
+            </SettingSection>
+
+
             <ItemGroup
                 title={t('settingsSession.rootGroups.activitySignals.title')}
                 description={t('settingsSession.rootGroups.activitySignals.footer')}
             >
-                <SettingAnchor setting={SESSION_SETTINGS.settings.workingStatusAnimatedText}>
+                <SettingAnchor setting={SESSION_SETTINGS.settings.statusWords}>
                     <Item
-                        testID="settings-session-workingStatusAnimatedText-item"
-                        title={t(SESSION_SETTINGS.settings.workingStatusAnimatedText.titleKey)}
-                        subtitle={sessionListWorkingStatusAnimatedTextEnabled !== false
-                            ? t('settingsSession.sessionList.workingStatusAnimatedTextEnabledSubtitle')
-                            : t('settingsSession.sessionList.workingStatusAnimatedTextDisabledSubtitle')}
-                        rightElement={
-                            <Switch
-                                testID="settings-session-workingStatusAnimatedText-toggle"
-                                value={sessionListWorkingStatusAnimatedTextEnabled !== false}
-                                onValueChange={(next) => setSessionListWorkingStatusAnimatedTextEnabled(Boolean(next))}
-                            />
-                        }
+                        testID="settings-session-statusWords-item"
+                        title={t(SESSION_SETTINGS.settings.statusWords.titleKey)}
+                        subtitle={t('settingsSession.sessionList.statusWordsSubtitle')}
+                        rightElement={<Switch
+                            testID="settings-session-statusWords-toggle"
+                            value={sessionListStatusWords === true}
+                            onValueChange={(next) => { void applySessionListViewOption(`statusWords:${Boolean(next)}`); }}
+                        />}
                         showChevron={false}
-                        onPress={() => setSessionListWorkingStatusAnimatedTextEnabled(sessionListWorkingStatusAnimatedTextEnabled === false)}
+                        onPress={() => { void applySessionListViewOption(`statusWords:${sessionListStatusWords !== true}`); }}
                     />
                 </SettingAnchor>
                 <SettingAnchor setting={SESSION_SETTINGS.settings.attentionPromotion}>
-                    <DropdownMenu
-                        open={openSessionListAttentionPromotionModeMenu}
-                        onOpenChange={setOpenSessionListAttentionPromotionModeMenu}
-                        variant="selectable"
-                        search={false}
-                        selectedId={`attention:${normalizedSessionListAttentionPromotionMode}`}
-                        showCategoryTitles={false}
-                        matchTriggerWidth={true}
-                        connectToTrigger={true}
-                        rowKind="item"
-                        popoverBoundaryRef={popoverBoundaryRef}
-                        itemTrigger={{
-                            title: t(SESSION_SETTINGS.settings.attentionPromotion.titleKey),
-                            subtitle: t('settingsSession.sessionList.attentionPromotionModeSubtitle'),
-                            showSelectedSubtitle: false,
-                            itemProps: { testID: 'settings-session-attentionPromotionMode-trigger' },
-                        }}
-                        items={sessionListAttentionPromotionModeItems}
-                        onSelect={handleSessionListAttentionPromotionModeSelect}
+                    <Item
+                        testID="settings-session-attentionPromotionMode"
+                        title={t('settingsSession.sessionList.attentionPlacementTitle')}
+                        subtitle={t('settingsSession.sessionList.attentionPromotionModeSubtitle')}
+                        accessoryLayout="stacked"
+                        showChevron={false}
+                        rightElement={<SelectionTiles
+                            variant="visual"
+                            tileSizing="fill"
+                            previewAspectRatio={ATTENTION_PREVIEW_ASPECT_RATIO}
+                            accessibilityLabel={t('settingsSession.sessionList.attentionPlacementTitle')}
+                            testIdPrefix="settings-session-attentionPromotionMode"
+                            value={`attention:${normalizedSessionListAttentionPromotionMode}`}
+                            onChange={(next) => { if (next) applySessionListViewOption(next); }}
+                            options={sessionListAttentionPromotionModeItems.map((item) => ({
+                                id: item.id,
+                                title: item.title,
+                                preview: <SessionListLayoutPreview
+                                    layout={sessionListViewOptions.selectedLayout}
+                                    attention={item.id === 'attention:top' ? 'top' : item.id === 'attention:inPlace' ? 'inPlace' : 'both'}
+                                    density={sessionListPreviewDensity}
+                                />,
+                            }))}
+                        />}
                     />
                 </SettingAnchor>
                 <SettingAnchor setting={SESSION_SETTINGS.settings.backgroundWorkAttention}>
@@ -795,52 +620,6 @@ export const WorkspaceRouteBody = React.memo(function SessionSettingsScreen() {
                         disabled={sessionListAttentionStandingUnavailable}
                         showChevron={false}
                         onPress={() => setSessionListAttentionStandingDefault(sessionListAttentionStandingDefault !== true)}
-                    />
-                </SettingAnchor>
-                <SettingAnchor setting={SESSION_SETTINGS.settings.workingPlacement}>
-                    <DropdownMenu
-                        open={openSessionListWorkingPlacementModeMenu}
-                        onOpenChange={setOpenSessionListWorkingPlacementModeMenu}
-                        variant="selectable"
-                        search={false}
-                        selectedId={`working:${normalizedSessionListWorkingPlacementMode}`}
-                        showCategoryTitles={false}
-                        matchTriggerWidth={true}
-                        connectToTrigger={true}
-                        rowKind="item"
-                        popoverBoundaryRef={popoverBoundaryRef}
-                        itemTrigger={{
-                            title: t(SESSION_SETTINGS.settings.workingPlacement.titleKey),
-                            subtitle: t('settingsSession.sessionList.workingPlacementModeSubtitle'),
-                            showSelectedSubtitle: false,
-                            itemProps: { testID: 'settings-session-workingPlacementMode-trigger' },
-                        }}
-                        items={sessionListWorkingPlacementModeItems}
-                        onSelect={handleSessionListWorkingPlacementModeSelect}
-                    />
-                </SettingAnchor>
-                <SettingAnchor setting={SESSION_SETTINGS.settings.workingIndicator}>
-                    <DropdownMenu
-                        open={openWorkingIndicatorMenu}
-                        onOpenChange={setOpenWorkingIndicatorMenu}
-                        variant="selectable"
-                        search={false}
-                        selectedId={workingIndicatorStyle}
-                        showCategoryTitles={false}
-                        matchTriggerWidth={true}
-                        connectToTrigger={true}
-                        rowKind="item"
-                        popoverBoundaryRef={popoverBoundaryRef}
-                        itemTrigger={{
-                            title: t(SESSION_SETTINGS.settings.workingIndicator.titleKey),
-                            subtitle: workingIndicatorStyle === 'pulse'
-                                ? t('settingsSession.sessionList.workingIndicatorPulseSelectedSubtitle')
-                                : t('settingsSession.sessionList.workingIndicatorSpinnerSelectedSubtitle'),
-                            showSelectedSubtitle: false,
-                            itemProps: { testID: 'settings-session-workingIndicator-trigger' },
-                        }}
-                        items={workingIndicatorItems}
-                        onSelect={handleWorkingIndicatorSelect}
                     />
                 </SettingAnchor>
             </ItemGroup>

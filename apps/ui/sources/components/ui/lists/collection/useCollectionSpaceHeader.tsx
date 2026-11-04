@@ -18,6 +18,7 @@ import {
 
 import { useViewportClass } from '@/utils/platform/useViewportClass';
 import { t } from '@/text';
+import { accountSettingsScopeKeySuffix, type AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
 
 import {
   collectionConditionValueWords,
@@ -28,6 +29,7 @@ import { CollectionSpaceSwipeTitle, CollectionSpaceSwipeZone, useCollectionSpace
 import { CollectionSpaceTitle } from './CollectionSpaceTitle';
 import { neighbourCollectionSpaceId } from './collectionSpaceSwipe';
 import { useCollectionSpaceEditing } from './useCollectionSpaceEditing';
+import { useSetCollectionSpacesEnabled } from './useSetCollectionSpacesEnabled';
 
 /** What a mounted entity list hands its header: the space binding and its own typed filter writer. */
 export type CollectionSpaceHeaderView<K extends CollectionEntityKindV1> =
@@ -35,8 +37,10 @@ export type CollectionSpaceHeaderView<K extends CollectionEntityKindV1> =
     spaces: readonly CollectionSpaceV1<K>[];
     selectedSpaceId: string;
     selectedSpace: CollectionSpaceV1<K> | null;
+    activeSpace: CollectionSpaceV1<K> | null;
+    spacesEnabled: boolean;
     spacesReady: boolean;
-    spaceSettingsScope: Readonly<{ serverId: string }> | null;
+    spaceSettingsScope: AccountSettingsScope | null;
     filters: CollectionFilterMapV1[K];
     /** Replaces the list's transient filter through the entity's own admission; false when refused. */
     setFilters: (filters: CollectionFilterMapV1[K]) => boolean;
@@ -70,7 +74,7 @@ export function useCollectionSpaceHeader<
   const { view, registry, bindings, testIDPrefix } = input;
   const phone = useViewportClass() === 'compact';
   const anchorRef = React.useRef<View | null>(null);
-  const savedFilter = view.selectedSpace?.filter ?? null;
+  const savedFilter = view.activeSpace?.filter ?? null;
   const openSaveAsRef = React.useRef<() => void>(() => {});
   const conditions = useCollectionConditionHeader({
     testIDPrefix,
@@ -104,7 +108,7 @@ export function useCollectionSpaceHeader<
     testIDPrefix,
     serverId: view.spaceSettingsScope?.serverId ?? null,
     spaces: view.spaces,
-    selectedSpace: view.selectedSpace,
+    selectedSpace: view.activeSpace,
     currentFilter: view.filters,
     suggestion,
     summary,
@@ -123,6 +127,7 @@ export function useCollectionSpaceHeader<
   const setFilters = view.setFilters;
   const select = React.useCallback(
     (spaceId: string) => {
+      if (!view.spacesEnabled) return;
       if (spaceId === view.selectedSpaceId) {
         // Choosing the space you are in returns to it, dropping conditions added on top.
         if (savedFilter !== null) setFilters(savedFilter);
@@ -130,26 +135,26 @@ export function useCollectionSpaceHeader<
       }
       void selectSpace(spaceId);
     },
-    [savedFilter, selectSpace, setFilters, view.selectedSpaceId],
+    [savedFilter, selectSpace, setFilters, view.selectedSpaceId, view.spacesEnabled],
   );
-
   // Phone title/strip swipe (lab `clspaces:swipe`): pages through this entity's spaces in their order.
   const swipeTarget = (direction: -1 | 1) =>
-    view.spacesReady
+    view.spacesEnabled
       ? neighbourCollectionSpaceId(view.spaces, view.selectedSpaceId, direction)
       : null;
   const onSwipeCommit = (direction: -1 | 1) => {
     const spaceId = swipeTarget(direction);
-    if (spaceId !== null) void selectSpace(spaceId);
+    if (spaceId !== null) select(spaceId);
   };
   const swipeTrack = useCollectionSpaceSwipeTrack();
+  const setSpacesEnabled = useSetCollectionSpacesEnabled(input.entityKind);
   const spaceName = (direction: -1 | 1) => {
     const id = swipeTarget(direction);
     return id === null ? null : view.spaces.find((space) => space.id === id)?.name ?? null;
   };
   const swipeProps = {
     track: swipeTrack,
-    enabled: phone && view.spacesReady && view.spaces.length > 1,
+    enabled: phone && view.spacesEnabled && view.spaces.length > 1,
     canPrevious: swipeTarget(-1) !== null,
     canNext: swipeTarget(1) !== null,
     onCommit: onSwipeCommit,
@@ -159,19 +164,24 @@ export function useCollectionSpaceHeader<
     savedFilter !== null &&
     !sameStrictJsonValue(view.filters as JsonValue, savedFilter as JsonValue);
   const label =
-    view.spacesReady && view.selectedSpace
-      ? view.selectedSpace.name
+    view.activeSpace
+      ? view.activeSpace.name
       : input.defaultName;
   const titleControl = (
     <CollectionSpaceSwipeZone testID={`${testIDPrefix}-title-swipe`} {...swipeProps}>
     <CollectionSpaceSwipeTitle track={swipeTrack} previousLabel={spaceName(-1)} nextLabel={spaceName(1)}>
     <CollectionSpaceTitle
+      scope={view.spaceSettingsScope ? accountSettingsScopeKeySuffix(view.spaceSettingsScope) : input.entityKind}
       testIDPrefix={testIDPrefix}
       entityKind={input.entityKind}
+      spaceShortcutPrefix="sessionList.space.select"
+      filterShortcutId="sessionList.filter.open"
       label={label}
       {...(input.titleScale ? { titleScale: input.titleScale } : {})}
-      spaces={view.spaces}
+      spaces={view.spacesEnabled ? view.spaces : []}
       selectedSpaceId={view.selectedSpaceId}
+      spacesEnabled={view.spacesReady ? view.spacesEnabled : null}
+      onSetSpacesEnabled={setSpacesEnabled}
       modified={modified}
       onSelectSpace={select}
       onOpenFilter={conditions.openEditor}
@@ -193,7 +203,7 @@ export function useCollectionSpaceHeader<
   );
   const strip = (
     <View ref={anchorRef} collapsable={false}>
-      {view.spacesReady ? (
+      {view.spacesEnabled ? (
         <CollectionSpaceSwipeZone testID={`${testIDPrefix}-strip-swipe`} {...swipeProps}>
         <CollectionSpacesStrip
           testIDPrefix={`${testIDPrefix}-strip`}

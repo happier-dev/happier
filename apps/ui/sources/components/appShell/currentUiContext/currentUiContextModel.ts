@@ -7,7 +7,7 @@ import type { ParameterFreeRouteProjection } from '@/track/parameterFreeRoutePro
 import type { CurrentUiContextVoiceInvocationOutcome } from './currentUiContextVoiceToolPort';
 import type { AccountHomeContinuationInputV1 } from '@happier-dev/protocol/actions';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
-import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import type { PluginMachineExecutionOriginV1 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import type { PluginExecutionOriginContextualSelection } from '@happier-dev/protocol/actions/pluginExecutionOriginActionFamily';
 import type { VoiceDictationActionResult, VoiceDictationOperation } from '@happier-dev/protocol/actions/voiceConversationActionFamily';
@@ -29,6 +29,8 @@ export type CurrentUiNavigation = CurrentUiContextSnapshotV1['navigation'];
 /** Trusted host-local state only; outward effects retain their ordinary Action owner. */
 export type CurrentUiContextHostCommand = Readonly<{
     kind: 'hostLocal';
+    /** Host-private Settings alias of this exact mounted command, never serialized. */
+    setting?: Readonly<{ anchor: string; scope: ServerAccountScope }>;
     /** Host-private Settings cancellation target; the public snapshot keeps only the opaque command id. */
     voiceModelCancellation?: Readonly<{
         packId: string;

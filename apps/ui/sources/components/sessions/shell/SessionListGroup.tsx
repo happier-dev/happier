@@ -2,25 +2,35 @@ import * as React from 'react';
 import { Platform, useWindowDimensions, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
+import {
+  HAPPIER_COLLECTION_LIST_ROW_STYLE,
+  HappierItemGroupSelectionContext,
+  resolveHappierCollectionListRowPadding,
+} from '@happier-dev/plugin-ui/presentation';
+
 import { Item } from '@/components/ui/lists/Item';
-import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { CollectionListGroupLabel } from '@/components/ui/lists/collection/CollectionList';
 import { useIsTablet } from '@/utils/platform/responsive';
-import { Eyebrow } from '@/components/ui/text/Eyebrow';
-import { Text } from '@/components/ui/text/Text';
 
 import {
   resolveSessionListDensityViewState,
   resolveSessionListItemDensity,
   resolveSessionListRowIdentityMetrics,
   resolveSessionListRowTitleTextMetrics,
-  SESSION_LIST_ROW_CORNER_RADIUS,
   type SessionListRowDensity,
 } from './resolveSessionListDensityViewState';
-import { sessionListStyles } from './sessionListStyles';
 
 /**
- * A titled group of the session list that is not a project group (Drafts, Scheduled): the same
- * sentence-case label and quiet count as a project group, then one sheet on the column's sheet edge.
+ * Whether a group label here opens the column: the first group sits just under the column's header, every
+ * later one keeps the full group gap above it (lab `clspace`). The list provides it where its leading content
+ * (Scheduled, Drafts, the virtualized groups) decides which group comes first.
+ */
+export const SessionListFirstGroupContext = React.createContext(false);
+
+/**
+ * A titled group of the session list that is not a project group (Drafts, Scheduled): the column's shared
+ * group label ("Drafts 3") over flat rows on the plane (lab `clflat`), no sheet. Its rows take
+ * {@link SESSION_LIST_GROUP_ROW_PROPS}, the navigation rows' gutter, shape and text edge.
  */
 export const SessionListGroup = React.memo(function SessionListGroup(
   props: Readonly<{
@@ -29,48 +39,47 @@ export const SessionListGroup = React.memo(function SessionListGroup(
     countTestID?: string;
     title: string;
     count: number;
-    /** Rows the sheet counts for selection when its children are not plain items. */
+    /** Rows the group counts for selection when its children are not plain items. */
     selectableItemCountOverride?: number;
     children: React.ReactNode;
-    /** Below the sheet: a group-level state line (a failed read). */
+    /** Below the rows: a group-level state line (a failed read). */
     footer?: React.ReactNode;
+    /** The column's first group sits closer to the header. */
+    first?: boolean;
   }>,
 ) {
-  const headerStyles = sessionListStyles;
+  const firstGroup = React.useContext(SessionListFirstGroupContext);
+  const selection = React.useMemo(() => ({
+    selectableItemCount: props.selectableItemCountOverride ?? React.Children.count(props.children),
+  }), [props.children, props.selectableItemCountOverride]);
   return (
     <View testID={props.testID} style={stylesheet.section}>
-      <View
-        testID={props.headerTestID}
-        style={headerStyles.groupHeaderSection}
-        accessibilityRole="header"
-        accessibilityLabel={`${props.title}, ${props.count}`}
-      >
-        <View style={stylesheet.headerTitleRow}>
-          <Eyebrow style={headerStyles.groupHeaderTitle} numberOfLines={1}>
-            {props.title}
-          </Eyebrow>
-          {props.count > 0 ? (
-            <Text
-              testID={props.countTestID}
-              style={headerStyles.groupHeaderCount}
-            >
-              {props.count}
-            </Text>
-          ) : null}
-        </View>
+      <View testID={props.headerTestID} accessibilityLabel={`${props.title}, ${props.count}`}>
+        <CollectionListGroupLabel
+          title={props.title}
+          count={props.count > 0 ? props.count : undefined}
+          countPlacement="title"
+          countTestID={props.countTestID}
+          first={props.first ?? firstGroup}
+        />
       </View>
       {React.Children.count(props.children) > 0 ? (
-        <ItemGroup
-          style={headerStyles.groupSheetUnderLabel}
-          containerStyle={[stylesheet.group, headerStyles.groupSheetInset]}
-          selectableItemCountOverride={props.selectableItemCountOverride}
-        >
+        <HappierItemGroupSelectionContext.Provider value={selection}>
           {props.children}
-        </ItemGroup>
+        </HappierItemGroupSelectionContext.Provider>
       ) : null}
       {props.footer}
     </View>
   );
+});
+
+/** A flat group row's press shape and text edge: the navigation rows' (`CollectionNavigationRow`). */
+export const SESSION_LIST_GROUP_ROW_PROPS: Readonly<{
+  pressableStyle: typeof HAPPIER_COLLECTION_LIST_ROW_STYLE;
+  style: ReturnType<typeof resolveHappierCollectionListRowPadding>;
+}> = Object.freeze({
+  pressableStyle: HAPPIER_COLLECTION_LIST_ROW_STYLE,
+  style: resolveHappierCollectionListRowPadding(0),
 });
 
 /** One geometry for every row of a session-list group's sheet: its rows and its "Show …" row. */
@@ -110,12 +119,14 @@ export const SessionListGroupMoreRow = React.memo(function SessionListGroupMoreR
       testID={props.testID}
       title={props.title}
       density={itemDensity}
-      style={{ height: densityViewState.rowHeight, minHeight: densityViewState.rowHeight, paddingVertical: 0 }}
+      pressableStyle={SESSION_LIST_GROUP_ROW_PROPS.pressableStyle}
+      style={[SESSION_LIST_GROUP_ROW_PROPS.style, { height: densityViewState.rowHeight, minHeight: densityViewState.rowHeight, paddingVertical: 0 }]}
       titleStyle={[titleTextMetrics, { color: theme.colors.text.secondary }]}
       // Minimal rows lead with the agent mark; an empty slot of its size keeps this title on theirs.
       leftElement={props.density === 'minimal' ? (
-        <View style={{ width: identityMetrics.agentLogoSize, height: identityMetrics.agentLogoSize }} />
+        <View style={{ width: identityMetrics.slotSize, height: identityMetrics.slotSize }} />
       ) : undefined}
+      iconBoxSize={props.density === 'minimal' ? identityMetrics.slotSize : undefined}
       showChevron={false}
       onPress={props.onPress}
     />
@@ -123,8 +134,6 @@ export const SessionListGroupMoreRow = React.memo(function SessionListGroupMoreR
 });
 
 const stylesheet = StyleSheet.create(() => ({
-  // The next group's label brings its own top padding (`SESSION_LIST_COLUMN_METRICS`).
+  // The next group's label brings its own gap above it (the shared list metrics).
   section: { width: '100%' },
-  group: { borderRadius: SESSION_LIST_ROW_CORNER_RADIUS },
-  headerTitleRow: { flexDirection: 'row', alignItems: 'baseline', gap: 6 },
 }));

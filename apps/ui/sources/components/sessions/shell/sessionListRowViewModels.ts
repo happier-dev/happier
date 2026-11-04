@@ -1,9 +1,11 @@
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { readSessionRuntimeObservation } from '@/sync/domains/session/sessionRuntimeObservation';
 import type { SessionListHomeObservation, SessionListHomeObservationByServerId } from '@/sync/domains/session/listing/sessionListHomeObservation';
 import type {
     SessionListContextualSearchReason,
     SessionListIndexItem,
 } from '@/sync/domains/sessionList/sessionListIndex';
+import { buildSessionListIndexNodeId } from '@/sync/domains/sessionList/sessionListIndexIdentity';
 import { resolveSessionListSecondaryLineMode } from '@/sync/domains/session/listing/deriveSessionListActivity';
 import {
     areSessionListRenderablesEqual,
@@ -13,6 +15,7 @@ import { resolveSessionListRenderableMeaningfulActivityAt } from '@/sync/domains
 import type { SessionListGuardState } from '@/sync/domains/session/listing/sessionListRenderable';
 import {
     readSessionRuntimePresentationFreshnessExpirations,
+    SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS,
 } from '@/sync/domains/session/attention/runtimePresentation';
 import { buildSessionListServerScopedRowKey } from '@/sync/domains/session/listing/sessionListKeyNormalization';
 import {
@@ -27,13 +30,17 @@ import {
     type SessionReminderPresentation,
 } from '@/sync/domains/session/organization/attentionStanding';
 import type { WorkspaceDisplayEllipsizeMode } from '@/sync/domains/workspaces/workspaceDisplayPresentation';
-import { getSessionName, getSessionStatus, isUntitledSessionName, type SessionStatus, type SessionWorkingTextMode } from '@/utils/sessions/sessionUtils';
+import { getSessionName, getSessionStatus, isUntitledSessionName, type SessionStatus } from '@/utils/sessions/sessionUtils';
 import { formatShortRelativeTimeAt, readShortRelativeTimeRefreshAtMs } from '@/utils/time/formatShortRelativeTime';
 import { LruMap } from '@/utils/cache/lruMap';
 import { t } from '@/text';
-import type { ExistingSessionDraftProjection } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
+import type { SessionListRowDraft } from './useSessionListRowExistingDraft';
 
 import { getTagsForSession, sessionTagKey } from './sessionTagUtils';
+import { resolveSessionListRowContext, type SessionListRowContextFacts, type SessionListRowParentContextFacts } from '@/sync/domains/session/listing/sessionListRowContext';
+import { projectGroupIdentityKey, readSessionListProjectDisplay, type ProjectGroupDisplay } from '@/sync/domains/workspaces/projectGroupDisplay';
+import type { QualifiedProjectKeyV1, WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import type { SessionListIdentityDisplay } from '@happier-dev/protocol/account/settings/accountSettings';
 import { readSessionListShellCacheMaxEntriesFromEnv } from './sessionListShellCacheConfig';
 import {
     readExternalAgentObservationPresentationInput,
@@ -98,13 +105,9 @@ export type SessionListRowViewModel = Readonly<{
     nextRuntimeFreshnessAtMs: number | null;
     hasUnreadMessages: boolean;
     activityTimeLabel: string;
-    workingIndicatorMode: 'spinner' | 'pulse';
     identityDisplay: 'avatar' | 'agentLogo' | 'none';
     activeColorMode: 'activityAndAttention' | 'attentionOnly' | 'allActive';
     hideInactiveSessions: boolean;
-    isFirst: boolean;
-    isLast: boolean;
-    isSingle: boolean;
     subtitleOverride: string | null;
     subtitleEllipsizeMode: WorkspaceDisplayEllipsizeMode;
     pinned: boolean;
@@ -135,10 +138,75 @@ export type SessionListRowViewModel = Readonly<{
     reminder: SessionReminderPresentation | null;
     /** Whether the Keep / Remove action means anything at all (attention band on). */
     attentionStandingEnabled: boolean;
-    draft: ExistingSessionDraftProjection | null;
+    draft: SessionListRowDraft | null;
     /** A guard stop is coming ("Stops in 4:52") or the guard stopped this session (plan 50 G3-2). */
     guardState: SessionListGuardState | null;
+    rowContext: SessionListRowContextPresentation | null;
 }>;
+
+/** P5 row context (lab `clctx`): what the row says about where it runs, beyond its group. */
+export type SessionListRowContextPresentation = Readonly<{
+    leadingMark: 'agent' | 'project' | 'projectWithAgent' | 'avatar' | 'none';
+    projectPlacement: 'none' | 'context' | 'trailing';
+    /** Shown Project name; `yieldsToFavicon` when only a missing favicon puts it on screen. */
+    project: Readonly<{ label: string; yieldsToFavicon: boolean }> | null;
+    /** The row Project's fixed accepted baseline; mirrors observe the existing favicon resource. */
+    projectFaviconSource: Readonly<{ serverId: string; machineId: string; workspacePath: string }> | null;
+    checkout: Readonly<{ kind: 'branch' | 'path'; label: string }> | null;
+    /** Project and checkout for assistive technology, even when visual context is off. */
+    accessibleLabel: string;
+    statusWords: boolean;
+}>;
+
+/** Inputs the shared Project display index and the person's View choices supply for every row. */
+export type SessionListRowContextInput = Readonly<{
+    enabled: boolean;
+    identityDisplay: SessionListIdentityDisplay;
+    projectDisplayByKey: ReadonlyMap<string, ProjectGroupDisplay>;
+    groupProjectByGroupKey: ReadonlyMap<string, QualifiedProjectKeyV1>;
+    /** The Account's `session.list.statusWords` choice: a state word beside the status glyph. */
+    statusWords?: boolean;
+    /** The device's favicon preference; off leaves every row Project mark on its fallback. */
+    faviconsEnabled?: boolean;
+}>;
+
+/** Only the facts this occurrence consumes may cross its mounted row boundary. */
+export type SessionListSelectedRowContextInput = Readonly<{
+    rowContextEnabled: boolean;
+    rowContextIdentityDisplay: SessionListIdentityDisplay;
+    rowContextGroupServerId: string | null;
+    rowContextGroupProjectKey: string | null;
+    rowContextGroupFallbackKey: string | null;
+    rowContextBaseline: WorkspaceRefV1 | null;
+    rowContextProjectTitle: string | null;
+    rowContextProjectFaviconServerId: string | null;
+    rowContextProjectFaviconMachineId: string | null;
+    rowContextProjectFaviconWorkspacePath: string | null;
+    rowContextStatusWords: boolean;
+}>;
+
+export function selectSessionListRowContextInput(
+    item: Extract<SessionListIndexItem, { type: 'session' }>,
+    context: SessionListRowContextInput,
+): SessionListSelectedRowContextInput {
+    const groupKey = String(item.groupKey ?? '').trim();
+    const groupProject = context.groupProjectByGroupKey.get(groupKey) ?? null;
+    const projectDisplay = readSessionListProjectDisplay(item, context.projectDisplayByKey);
+    const projectBaseline = context.faviconsEnabled === false ? undefined : projectDisplay?.baseline;
+    return {
+        rowContextEnabled: context.enabled,
+        rowContextIdentityDisplay: context.identityDisplay,
+        rowContextGroupServerId: groupProject?.serverId ?? null,
+        rowContextGroupProjectKey: groupProject?.projectKey ?? null,
+        rowContextGroupFallbackKey: item.groupKind === 'project' ? groupKey : null,
+        rowContextBaseline: groupProject ? context.projectDisplayByKey.get(projectGroupIdentityKey(groupProject))?.baseline ?? null : null,
+        rowContextProjectTitle: projectDisplay?.title ?? null,
+        rowContextProjectFaviconServerId: projectBaseline?.serverId ?? null,
+        rowContextProjectFaviconMachineId: projectBaseline?.machineId ?? null,
+        rowContextProjectFaviconWorkspacePath: projectBaseline?.rootPath ?? null,
+        rowContextStatusWords: context.statusWords === true,
+    };
+}
 
 export type SessionListRowViewModelAdjacency = Readonly<{
     isFirst: boolean;
@@ -160,7 +228,6 @@ const SESSION_LIST_ROW_VIEW_MODEL_CACHE = new LruMap<string, RowViewModelCacheEn
 
 export type BuildSessionListRowViewModelInput = Readonly<{
     item: Extract<SessionListIndexItem, { type: 'session' }>;
-    adjacency: SessionListRowViewModelAdjacency;
     unscopedSelectionIsUnique: boolean;
     reachableSessionDisplay?: SessionReachableDisplay;
     reachableSessionDisplayById?: ReadonlyMap<string, SessionReachableDisplay>;
@@ -171,12 +238,9 @@ export type BuildSessionListRowViewModelInput = Readonly<{
     homeObservations?: SessionListHomeObservationByServerId;
     relativeNowMs?: number;
     runtimeNowMs?: number;
-    workingIndicatorMode?: 'spinner' | 'pulse';
-    workingTextMode?: SessionWorkingTextMode;
-    identityDisplay?: 'avatar' | 'agentLogo' | 'none';
+    identityDisplay?: SessionListIdentityDisplay;
     activeColorMode?: 'activityAndAttention' | 'attentionOnly' | 'allActive';
     hideInactiveSessions?: boolean;
-    hasMultipleMachines: boolean;
     pinnedSessionKeys: ReadonlySet<string>;
     sessionTags: Record<string, string[]>;
     selectedSessionId: string | null;
@@ -185,8 +249,76 @@ export type BuildSessionListRowViewModelInput = Readonly<{
     showPinnedServerBadge: boolean;
     attentionStandingEnabled?: boolean;
     attentionStandingPolicy?: SessionAttentionStandingPolicy;
-    existingDraft?: ExistingSessionDraftProjection | null;
+    existingDraft?: SessionListRowDraft | null;
+    rowContext?: SessionListSelectedRowContextInput;
 }>;
+
+function readRowContextFacts(item: Extract<SessionListIndexItem, { type: 'session' }>,
+    session: SessionListRenderableSession | null): SessionListRowContextFacts {
+    const metadata = session?.metadata;
+    return {
+        serverId: typeof item.serverId === 'string' && item.serverId ? item.serverId : null,
+        project: item.projectKey ?? null,
+        fallbackGroupKey: item.projectKey ? null : item.fallbackGroupDisplay?.groupKey ?? null,
+        machineId: metadata?.machineId ?? null,
+        workspaceId: metadata?.workspaceId ?? null,
+        path: metadata?.path ?? null,
+        ...(metadata && 'branch' in metadata ? { branch: metadata.branch ?? null } : {}),
+    };
+}
+
+function basenameOf(path: string): string {
+    const parts = path.split(/[\\/]/u).filter(Boolean);
+    return parts[parts.length - 1] ?? path;
+}
+
+function buildRowContextPresentation(input: Readonly<{
+    context: SessionListSelectedRowContextInput;
+    facts: SessionListRowContextFacts;
+    parent: SessionListRowParentContextFacts | null;
+}>): SessionListRowContextPresentation {
+    const groupProject = input.context.rowContextGroupServerId && input.context.rowContextGroupProjectKey
+        ? { serverId: input.context.rowContextGroupServerId, projectKey: input.context.rowContextGroupProjectKey } : null;
+    const baseline = input.context.rowContextBaseline;
+    const shared = { facts: input.facts, groupProject, groupFallbackKey: input.context.rowContextGroupFallbackKey,
+        baseline, parent: input.parent, identityDisplay: input.context.rowContextIdentityDisplay };
+    const resolved = resolveSessionListRowContext({ ...shared, enabled: input.context.rowContextEnabled });
+    const withFavicon = resolveSessionListRowContext({ ...shared, enabled: input.context.rowContextEnabled, hasProjectFavicon: true });
+    const projectTitle = input.context.rowContextProjectTitle;
+    const branch = input.facts.branch;
+    const inOwnGroup = (groupProject !== null && input.facts.project !== null
+        && projectGroupIdentityKey(groupProject) === projectGroupIdentityKey(input.facts.project))
+        || Boolean(!input.facts.project && input.facts.fallbackGroupKey
+            && input.facts.fallbackGroupKey === input.context.rowContextGroupFallbackKey);
+    // A known branch names the checkout. An unknown one keeps an honest folder suffix only where the
+    // group's admitted baseline proves this row sits in another checkout; detached (null) says nothing.
+    const checkout = typeof branch === 'string' && branch
+        ? { kind: 'branch' as const, label: branch }
+        : branch === undefined && inOwnGroup && baseline && input.facts.workspaceId && input.facts.path
+            && basenameOf(input.facts.path) !== basenameOf(baseline.rootPath)
+            ? { kind: 'path' as const, label: basenameOf(input.facts.path) }
+            : null;
+    const accessibleLabel = [
+        (input.facts.project || input.facts.fallbackGroupKey) && !inOwnGroup ? projectTitle : null,
+        checkout?.label ?? null,
+    ].filter((part): part is string => Boolean(part)).join(', ');
+    return {
+        leadingMark: resolved.identity.leadingMark,
+        projectPlacement: resolved.identity.projectPlacement,
+        project: resolved.identity.showProjectName && projectTitle
+            ? { label: projectTitle, yieldsToFavicon: !withFavicon.identity.showProjectName }
+            : null,
+        projectFaviconSource: input.context.rowContextProjectFaviconServerId
+            && input.context.rowContextProjectFaviconMachineId && input.context.rowContextProjectFaviconWorkspacePath
+            ? { serverId: input.context.rowContextProjectFaviconServerId,
+                machineId: input.context.rowContextProjectFaviconMachineId,
+                workspacePath: input.context.rowContextProjectFaviconWorkspacePath }
+            : null,
+        checkout: resolved.showCheckout ? checkout : null,
+        accessibleLabel,
+        statusWords: input.context.rowContextStatusWords,
+    };
+}
 
 /** Row-local deadline selection on the existing shared clock, not a per-row timer. */
 export function readSessionListRowRefreshAtMs(input: Readonly<{
@@ -224,10 +356,7 @@ export function buildSessionListRowViewModel(input: BuildSessionListRowViewModel
         ?? input.reachableSessionDisplayById?.get(sessionId);
     const workspaceSubtitle = reachableDisplay?.workspaceSubtitle ?? '';
     const subtitleEllipsizeMode = reachableDisplay?.workspaceSubtitleEllipsizeMode ?? 'head';
-    const machineLabel = reachableDisplay?.machineLabel ?? '';
-    const workspaceLabel = input.hasMultipleMachines
-        ? (machineLabel && workspaceSubtitle ? `${machineLabel} · ${workspaceSubtitle}` : machineLabel || workspaceSubtitle)
-        : workspaceSubtitle;
+    const workspaceLabel = workspaceSubtitle;
     const session = rowKey ? input.rowRenderableByKey?.get(rowKey) ?? null : null;
     const relativeNowMs = normalizeClockNow(input.relativeNowMs);
     const runtimeNowMs = normalizeClockNow(input.runtimeNowMs);
@@ -238,7 +367,6 @@ export function buildSessionListRowViewModel(input: BuildSessionListRowViewModel
     const sessionStatus = session
         ? getSessionStatus(session, runtimeNowMs, {
             vibingIndex: resolveStableVibingIndex(sessionKey ?? sessionId),
-            workingTextMode: input.workingTextMode ?? 'animated',
         })
         : null;
     const sessionMetadata = session?.metadata;
@@ -304,13 +432,9 @@ export function buildSessionListRowViewModel(input: BuildSessionListRowViewModel
         ),
         hasUnreadMessages: session?.hasUnreadMessages === true,
         activityTimeLabel,
-        workingIndicatorMode: input.workingIndicatorMode === 'pulse' ? 'pulse' : 'spinner',
         identityDisplay: input.identityDisplay === 'agentLogo' || input.identityDisplay === 'none' ? input.identityDisplay : 'avatar',
         activeColorMode: normalizeActiveColorMode(input.activeColorMode),
         hideInactiveSessions: input.hideInactiveSessions === true,
-        isFirst: input.adjacency.isFirst,
-        isLast: input.adjacency.isLast,
-        isSingle: input.adjacency.isSingle,
         subtitleOverride: contextualSearchSubtitle
             ?? (item.groupKind === 'project' && item.variant === 'no-path' ? null : (subtitle || null)),
         subtitleEllipsizeMode,
@@ -335,9 +459,14 @@ export function buildSessionListRowViewModel(input: BuildSessionListRowViewModel
         draft: input.existingDraft ?? null,
         // A stopped session that is working again (it woke on a message) shows its working state instead.
         guardState: session?.guardState?.kind === 'stopped' && session.active ? null : session?.guardState ?? null,
+        rowContext: input.rowContext ? buildRowContextPresentation({
+            context: input.rowContext,
+            facts: readRowContextFacts(item, session),
+            parent: item.reportsParentContext ?? null,
+        }) : null,
     };
     const signature = buildRowViewModelSignature(rowViewModel);
-    const cacheKey = sessionKey ?? `session:${sessionId}`;
+    const cacheKey = buildSessionListIndexNodeId(item);
     const cached = SESSION_LIST_ROW_VIEW_MODEL_CACHE.get(cacheKey);
     if (
         cached?.signature === signature
@@ -390,13 +519,16 @@ export function resolveSessionListUnscopedSelectionIsUnique(
     selectedSessionId: string | null,
 ): boolean {
     if (!selectedSessionId) return false;
-    let matches = 0;
+    let matchingServerId: string | undefined;
+    let found = false;
     for (const candidate of listItems) {
         if (candidate.type !== 'session' || candidate.sessionId !== selectedSessionId) continue;
-        matches += 1;
-        if (matches > 1) return false;
+        const serverId = String(candidate.serverId ?? '').trim();
+        if (found && matchingServerId !== serverId) return false;
+        matchingServerId = serverId;
+        found = true;
     }
-    return matches === 1;
+    return found;
 }
 
 export function buildSessionListRowViewModels(input: Readonly<{
@@ -409,12 +541,9 @@ export function buildSessionListRowViewModels(input: Readonly<{
     homeObservations?: SessionListHomeObservationByServerId;
     relativeNowMs?: number;
     runtimeNowMs?: number;
-    workingIndicatorMode?: 'spinner' | 'pulse';
-    workingTextMode?: SessionWorkingTextMode;
     identityDisplay?: 'avatar' | 'agentLogo' | 'none';
     activeColorMode?: 'activityAndAttention' | 'attentionOnly' | 'allActive';
     hideInactiveSessions?: boolean;
-    hasMultipleMachines: boolean;
     pinnedSessionKeys: ReadonlySet<string>;
     sessionTags: Record<string, string[]>;
     selectedSessionId: string | null;
@@ -423,20 +552,19 @@ export function buildSessionListRowViewModels(input: Readonly<{
     showPinnedServerBadge: boolean;
     attentionStandingEnabled?: boolean;
     attentionStandingPolicy?: SessionAttentionStandingPolicy;
+    rowContext?: SessionListRowContextInput;
 }>): ReadonlyArray<SessionListRowViewModel | null> {
     if (input.listItems.length === 0) {
         return EMPTY_SESSION_LIST_ROW_VIEW_MODELS;
     }
 
-    const next = input.listItems.map((item, index) => {
-        if (item.type !== 'session') {
-            return null;
-        }
+    const next = input.listItems.map((item) => {
+        if (item.type !== 'session') return null;
 
         return buildSessionListRowViewModel({
             ...input,
             item,
-            adjacency: resolveSessionListRowViewModelAdjacency(input.listItems, index),
+            rowContext: input.rowContext ? selectSessionListRowContextInput(item, input.rowContext) : undefined,
             unscopedSelectionIsUnique: !String(input.selectedSessionServerId ?? '').trim()
                 && input.selectedSessionId === item.sessionId
                 && resolveSessionListUnscopedSelectionIsUnique(input.listItems, input.selectedSessionId),
@@ -463,13 +591,9 @@ function buildRowViewModelSignature(viewModel: SessionListRowViewModel): string 
         viewModel.nextRuntimeFreshnessAtMs ?? '',
         viewModel.hasUnreadMessages ? '1' : '0',
         viewModel.activityTimeLabel,
-        viewModel.workingIndicatorMode,
         viewModel.identityDisplay,
         viewModel.activeColorMode,
         viewModel.hideInactiveSessions ? '1' : '0',
-        viewModel.isFirst ? '1' : '0',
-        viewModel.isLast ? '1' : '0',
-        viewModel.isSingle ? '1' : '0',
         viewModel.subtitleOverride ?? '',
         viewModel.subtitleEllipsizeMode,
         viewModel.pinned ? '1' : '0',
@@ -483,11 +607,11 @@ function buildRowViewModelSignature(viewModel: SessionListRowViewModel): string 
         viewModel.reminder?.state ?? '',
         viewModel.reminder?.remindAt ?? '',
         viewModel.attentionStandingEnabled ? '1' : '0',
-        viewModel.draft?.updatedAt ?? '',
-        viewModel.draft?.preview ?? '',
-        viewModel.draft?.status ?? '',
+        viewModel.draft ? '1' : '0',
+        viewModel.draft?.hasPreview ? '1' : '0',
         viewModel.guardState?.kind ?? '',
         viewModel.guardState?.kind === 'stopping' ? viewModel.guardState.stopAt : '',
+        viewModel.rowContext,
     ]);
 }
 
@@ -529,9 +653,12 @@ function resolveRowIdentityLoading(input: Readonly<{
 }
 
 function resolveNextRuntimeFreshnessAtMs(session: SessionListRenderableSession, nowMs: number): number | null {
+    session = readSessionRuntimeObservation(session);
     if (session.presence !== 'online') return null;
 
     const expirations = readSessionRuntimePresentationFreshnessExpirations({
+        id: session.id,
+        serverId: session.serverId,
         active: session.active,
         activeAt: session.activeAt,
         presence: session.presence,
@@ -550,6 +677,8 @@ function resolveNextRuntimeFreshnessAtMs(session: SessionListRenderableSession, 
         pendingRequestObservedAt: session.pendingRequestObservedAt ?? null,
     }, nowMs);
 
-    if (expirations.length === 0) return null;
-    return Math.min(...expirations);
+    const staleAtMs = session.activeAt + SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS + 1;
+    const deadlines = [...expirations, ...(session.active && staleAtMs > nowMs ? [staleAtMs] : [])];
+    if (deadlines.length === 0) return null;
+    return Math.min(...deadlines);
 }

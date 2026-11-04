@@ -103,7 +103,7 @@ describe('machine inventory reference stability through the real store', () => {
             sessions: { s1: createSessionFixture({ id: 's1', metadata }) },
             sessionListRowsByServerId: { [serverId]: { s1: createSessionListRenderableSessionFixture({ id: 's1', metadata }) } },
             ordinarySessionListMembershipByServerId: { [serverId]: ['s1'] },
-            settings: { ...settingsDefaults, sessionListActiveGroupingV1: 'project', sessionListInactiveGroupingV1: 'project' },
+            settings: { ...settingsDefaults, sessionListLayoutV1: 'projects' },
         });
         const initial = machine('one');
         store.getState().applyMachines([initial], true, options);

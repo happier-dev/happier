@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
+import { createSessionViewerFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 import type { SessionAttentionStandingPolicy } from '@/sync/domains/session/organization/attentionStanding';
 import { sessionAddressKey } from '@/sync/domains/session/sessionAddress';
-import type { SessionViewerProjectionV1 } from '@happier-dev/protocol';
+import type { SessionViewerProjectionV1 } from '@happier-dev/protocol/sessions/personal/viewer';
 
 import {
-    applySessionListAttentionPlacementWithinGroups,
     buildSessionListAttentionPlacement,
     buildSessionListWorkingPlacement,
 } from './sessionListAttentionPlacement';
@@ -19,7 +19,7 @@ function sessionKey(sessionId: string): string {
 }
 
 function viewer(overrides: Partial<SessionViewerProjectionV1> = {}): SessionViewerProjectionV1 {
-    return {
+    return createSessionViewerFixture({
         latestFailureSeq: null,
         readState: { state: 'not_started' },
         relevance: { relevant: false, reasons: [] },
@@ -27,7 +27,7 @@ function viewer(overrides: Partial<SessionViewerProjectionV1> = {}): SessionView
         follow: { follows: false, notificationLevel: null },
         notification: { level: 'none', source: 'none' },
         ...overrides,
-    };
+    });
 }
 
 function createRow(overrides: Partial<SessionListRenderableSession> = {}): SessionListRenderableSession {
@@ -40,7 +40,8 @@ function createRow(overrides: Partial<SessionListRenderableSession> = {}): Sessi
         activeAt: 0,
         metadataVersion: 1,
         agentStateVersion: 1,
-        metadata: null,
+        encryptionMode: 'plain',
+        metadata: { path: '/repo' },
         thinking: false,
         thinkingAt: 0,
         presence: 0,
@@ -127,7 +128,7 @@ describe('attention standing placement', () => {
         })).toBeNull();
     });
 
-    it('never replaces an earned attention reason', () => {
+    it('never replaces an admitted permission reason with the standing floor', () => {
         const result = buildSessionListAttentionPlacement({
             source: createSource(['unread-and-kept']),
             options: {
@@ -137,6 +138,7 @@ describe('attention standing placement', () => {
             nowMs: NOW_MS,
             resolveSessionRow: () => createRow({
                 id: 'unread-and-kept',
+                viewer: viewer({ attention: { needsAttention: true, reasons: ['permission_required'], primary: 'permission_required', presentation: 'full' } }),
                 hasUnreadMessages: true,
                 seq: 12,
                 lastViewedSessionSeq: 12,
@@ -148,7 +150,7 @@ describe('attention standing placement', () => {
 
         expect(result?.attentionItems[1]).toEqual(expect.objectContaining({
             sessionId: 'unread-and-kept',
-            attentionPlacementReason: 'unread',
+            attentionPlacementReason: 'permission_required',
         }));
     });
 
@@ -180,7 +182,7 @@ describe('attention standing placement', () => {
         })).toMatchObject({ promotedCount: 1 });
     });
 
-    it('sorts standing behind every earned reason', () => {
+    it('keeps standing and earned entries in the admitted traversal order', () => {
         const result = buildSessionListAttentionPlacement({
             source: createSource(['kept', 'unread']),
             options: {
@@ -201,7 +203,7 @@ describe('attention standing placement', () => {
                         latestFailureSeq: null,
                         readState: { state: 'tracking', lastViewedSessionSeq: 11, unreadSince: NOW_MS - 900_000 },
                         relevance: { relevant: true, reasons: ['followed_by_me'] },
-                        attention: { needsAttention: true, reasons: ['unread'], primary: 'unread', presentation: 'full' },
+                        attention: { needsAttention: true, reasons: ['permission_required'], primary: 'permission_required', presentation: 'full' },
                         follow: { follows: true, notificationLevel: 'none' },
                         notification: { level: 'none', source: 'preference' },
                     }),
@@ -216,8 +218,8 @@ describe('attention standing placement', () => {
 
         expect(result?.attentionItems.map((item) => (item.type === 'session' ? item.sessionId : item.type === 'header' ? item.headerKind : `run:${item.runId}`))).toEqual([
             'attention',
-            'unread',
             'kept',
+            'unread',
         ]);
     });
 
@@ -237,30 +239,15 @@ describe('attention standing placement', () => {
             .not.toBe(true);
     });
 
-    it('keeps the same floor and exemption rule within groups', () => {
-        const [item] = applySessionListAttentionPlacementWithinGroups({
-            source: createSource(['kept']),
-            options: {
-                mode: 'withinGroups',
-                standingPolicy: policy({ defaultStanding: true }),
-            },
-            nowMs: NOW_MS,
-            resolveSessionRow: () => createRow({ id: 'kept' }),
-        });
-
-        expect(item).toEqual(expect.objectContaining({ attentionPlacementReason: 'standing' }));
-        expect(item && item.type === 'session' ? item.keepVisibleWhenInactive : null).not.toBe(true);
-    });
-
-    it('keeps a due reminder actionable for an untracked viewer despite an explicit standing removal', () => {
-        const result = buildSessionListAttentionPlacement({
+    it('keeps the viewer\'s due reminder actionable despite an explicit standing removal', () => {
+        const build = (reminder: SessionAttentionStandingPolicy['overridesBySessionKey'][string]) => buildSessionListAttentionPlacement({
             source: createSource(['reminder']),
             options: {
                 mode: 'global',
-                standingPolicy: policy({
+                standingPolicy: {
                     defaultStanding: true,
-                    overridesBySessionKey: { [sessionKey('reminder')]: false },
-                }),
+                    overridesBySessionKey: { [sessionKey('reminder')]: reminder },
+                },
             },
             nowMs: NOW_MS,
             resolveSessionRow: () => createRow({
@@ -276,9 +263,10 @@ describe('attention standing placement', () => {
             }),
         });
 
-        expect(result?.attentionItems[1]).toEqual(expect.objectContaining({
+        expect(build(false)).toBeNull();
+        expect(build({ standing: false, remindAt: NOW_MS - 1, updatedAt: NOW_MS - 1_000 })?.attentionItems[1]).toEqual(expect.objectContaining({
             sessionId: 'reminder',
-            attentionPlacementReason: 'standing',
+            attentionPlacementReason: 'reminder',
         }));
     });
 

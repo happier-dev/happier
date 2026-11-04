@@ -12,6 +12,7 @@ import { reduceSessionListFilterEditorSelection } from './sessionListFilterEdito
 
 import {
     clearSessionListViewFilterRetentionForTests,
+    type UseSessionListViewFiltersInput,
     removeAuthoritativelyDeletedSessionListTagsForAccount,
     showOnlyCoordinatorsInSessionList,
     retireSessionListViewFilterCredentialContributions,
@@ -30,6 +31,112 @@ afterEach(() => {
 });
 
 describe('useSessionListViewFilters', () => {
+    it('keeps the saved lens separate from temporary narrowing and resets that narrowing', async () => {
+        const defaults = resolveSessionListViewContextDefaults({ kind: 'global' }, ['home-a'], 'all').defaults;
+        const savedSpace = { accountScopeKey: 'account-a', id: 'smart', filter: { ...defaults, source: 'persisted' as const } };
+        const hook = await renderHook(() => useSessionListViewFilters({ contextKey: 'global', defaults, savedSpace,
+            accountScopeResolutions: boundAccountScopes({ serverId: 'home-a', accountId: 'account-a' }) }));
+        expect(hook.getCurrent().refinements.source).toBe('all');
+        await act(async () => hook.getCurrent().updateFilters(current => ({ ...current, source: 'direct' })));
+        expect(hook.getCurrent().refinements.source).toBe('direct');
+        expect(hook.getCurrent().savedLens?.source).toBe('persisted');
+        await act(async () => hook.getCurrent().resetFilters());
+        expect(hook.getCurrent().filters.source).toBe('persisted');
+        expect(hook.getCurrent().refinements.source).toBe('all');
+    });
+    it.each([false, true])('defers Show coordinators until a cold catalog can accept selection (requested before mount: %s)', async beforeMount => {
+        if (beforeMount) showOnlyCoordinatorsInSessionList();
+        const hook = await renderHook(() => useSessionListViewFilters({ contextKey: 'global',
+            defaults: { homeServerIds: ['home-a'] }, spaceSettingsAccountScopeKey: 'account-a',
+            accountScopeResolutions: boundAccountScopes({ serverId: 'home-a', accountId: 'account-a' }),
+        }));
+        await act(async () => hook.getCurrent().setSearchQuery('pending catalog draft'));
+        if (!beforeMount) await act(async () => showOnlyCoordinatorsInSessionList());
+        expect(hook.getCurrent().showCoordinatorsRequest).toBe(1);
+        expect(hook.getCurrent().filters).toMatchObject({ searchQuery: 'pending catalog draft' });
+        expect(hook.getCurrent().filters.coordinator).toBeUndefined();
+    });
+
+    it('carries Show coordinators as one pending default-space/editor intent without modifying a saved definition', async () => {
+        const defaults = resolveSessionListViewContextDefaults({ kind: 'global' }, ['home-a'], 'all').defaults;
+        const saved = { accountScopeKey: 'account-a', id: 'saved', filter: { ...defaults, source: 'direct' as const } };
+        const hook = await renderHook(() => useSessionListViewFilters({ contextKey: 'global', defaults,
+            savedSpace: saved, accountScopeResolutions: boundAccountScopes({ serverId: 'home-a', accountId: 'account-a' }) }));
+        expect(hook.getCurrent().showCoordinatorsRequest).toBe(0);
+        await act(async () => showOnlyCoordinatorsInSessionList());
+        expect(hook.getCurrent().showCoordinatorsRequest).toBeGreaterThan(0);
+        expect(saved.filter.source).toBe('direct');
+        expect(hook.getCurrent().filters).toMatchObject({ source: 'direct' });
+        expect(hook.getCurrent().filters.coordinator).toBeUndefined();
+        await act(async () => hook.getCurrent().acknowledgeShowCoordinatorsRequest());
+        expect(hook.getCurrent().showCoordinatorsRequest).toBe(0);
+    });
+    it('retains one draft per authority/context and resets to the selected saved definition', async () => {
+        const defaults = resolveSessionListViewContextDefaults({ kind: 'global' }, ['home-a'], 'all').defaults;
+        const first = { accountScopeKey: 'account-a', id: 'first', filter: { ...defaults, source: 'persisted' as const } };
+        const second = { accountScopeKey: 'account-a', id: 'second', filter: { ...defaults, source: 'direct' as const } };
+        const input: UseSessionListViewFiltersInput = {
+            contextKey: 'global', defaults,
+            accountScopeResolutions: boundAccountScopes({ serverId: 'home-a', accountId: 'account-a' }),
+            savedSpace: first,
+        };
+        const hook = await renderHook((value: UseSessionListViewFiltersInput) => useSessionListViewFilters(value), { initialProps: input });
+        expect(hook.getCurrent().filters.source).toBe('persisted');
+        await act(async () => hook.getCurrent().updateFilters(current => ({ ...current, source: 'all', searchQuery: 'local find' })));
+        expect((await hook.rerender(input)).filters).toMatchObject({ source: 'all', searchQuery: 'local find' });
+        await act(async () => hook.getCurrent().resetFilters());
+        expect(hook.getCurrent().filters).toMatchObject({ source: 'persisted', searchQuery: '' });
+        await act(async () => hook.getCurrent().setSearchQuery('discard on explicit space switch'));
+        expect((await hook.rerender({ ...input, savedSpace: second })).filters).toMatchObject({ source: 'direct', searchQuery: '' });
+        expect((await hook.rerender({ ...input, savedSpace: first })).filters).toMatchObject({ source: 'persisted', searchQuery: '' });
+        await act(async () => hook.getCurrent().setSearchQuery('private a'));
+        expect((await hook.rerender({ ...input, savedSpace: { ...first, accountScopeKey: 'account-b' } })).filters.searchQuery).toBe('');
+    });
+
+    it('preserves the selected draft while its settings definition is temporarily unavailable', async () => {
+        const defaults = resolveSessionListViewContextDefaults({ kind: 'global' }, ['home-a'], 'all').defaults;
+        const savedSpace = { accountScopeKey: 'account-a', id: 'saved', filter: { ...defaults, source: 'direct' as const } };
+        const input: UseSessionListViewFiltersInput = { contextKey: 'global', defaults, savedSpace,
+            accountScopeResolutions: boundAccountScopes({ serverId: 'home-a', accountId: 'account-a' }) };
+        const hook = await renderHook((value: UseSessionListViewFiltersInput) => useSessionListViewFilters(value), { initialProps: input });
+        await act(async () => hook.getCurrent().setSearchQuery('keep local Find'));
+        expect((await hook.rerender({ ...input, savedSpace: undefined })).filters).toMatchObject({
+            source: 'direct', searchQuery: 'keep local Find',
+        });
+        expect((await hook.rerender(input)).filters.searchQuery).toBe('keep local Find');
+        expect((await hook.rerender({ ...input, savedSpace: undefined, spaceSettingsAccountScopeKey: 'account-b' })).filters)
+            .toMatchObject({ source: 'all', searchQuery: '' });
+    });
+
+    it('restores each authority selection without leaking a discarded draft on A to B to A navigation', async () => {
+        const defaults = resolveSessionListViewContextDefaults({ kind: 'global' }, ['home-a', 'home-b'], 'all').defaults;
+        const first = { accountScopeKey: 'account-a', id: 'selected-a', filter: { ...defaults, source: 'direct' as const } };
+        const second = { accountScopeKey: 'account-b', id: 'selected-b', filter: { ...defaults, source: 'persisted' as const } };
+        const input: UseSessionListViewFiltersInput = { contextKey: 'global', defaults, savedSpace: first,
+            spaceSettingsAccountScopeKey: first.accountScopeKey, accountScopeResolutions: boundAccountScopes(
+                { serverId: 'home-a', accountId: 'account-a' }, { serverId: 'home-b', accountId: 'account-b' }) };
+        const hook = await renderHook((value: UseSessionListViewFiltersInput) => useSessionListViewFilters(value), { initialProps: input });
+        await act(async () => hook.getCurrent().updateFilters(current => ({ ...current, source: 'all', searchQuery: 'private A Find' })));
+        expect((await hook.rerender({ ...input, savedSpace: second, spaceSettingsAccountScopeKey: second.accountScopeKey })).filters)
+            .toMatchObject({ source: 'persisted', searchQuery: '' });
+        expect((await hook.rerender(input)).filters).toMatchObject({ source: 'direct', searchQuery: '' });
+    });
+
+    it('intersects selected spaces with fixed Team and Runs constraints', async () => {
+        const viewContext = { kind: 'team' as const, team: { serverId: 'home-a', teamId: 'team-a' } };
+        const context = resolveSessionListViewContextDefaults(viewContext, ['home-a'], 'all');
+        const hook = await renderHook(() => useSessionListViewFilters({
+            ...context, viewContext, fixedShow: 'runs',
+            accountScopeResolutions: boundAccountScopes({ serverId: 'home-a', accountId: 'account-a' }),
+            savedSpace: { accountScopeKey: 'account-a', id: 'saved', filter: {
+                ...context.defaults, show: 'sessions', audiences: [{ serverId: 'home-a', kind: 'team', teamId: 'other-team' }],
+            } },
+        }));
+        expect(hook.getCurrent().filters).toMatchObject({
+            show: 'runs', audiences: [{ serverId: 'home-a', kind: 'team', teamId: 'team-a' }],
+        });
+    });
+
     it('enforces the fixed Show on writes and reset while retaining starter choices across remount', async () => {
         const input = {
             contextKey: 'global:show:runs',
@@ -537,32 +644,22 @@ describe('useSessionListViewFilters', () => {
         });
     });
 
-    it('shows only coordinators in the retained global list, mounted or not, and keeps following the mounted Homes', async () => {
-        const input = (homeServerIds: readonly string[]) => ({
+    it.each(['authority-b', null])('retires pre-catalog drafts when settings authority becomes %s', async (nextAuthority) => {
+        const hook = await renderHook((authority: string | null) => useSessionListViewFilters({
             contextKey: 'global',
-            accountScopeResolutions: boundAccountScopes({ serverId: 'home-a', accountId: 'account-a' }),
-            followDefaultHomeSelection: true,
-            defaults: { homeServerIds },
-        });
-        // Asked before the list ever mounted: the first mount opens already narrowed.
-        showOnlyCoordinatorsInSessionList();
-        const hook = await renderHook(
-            (homeServerIds: readonly string[]) => useSessionListViewFilters(input(homeServerIds)),
-            { initialProps: ['home-a'] },
-        );
-        expect(hook.getCurrent().filters.coordinator).toBe('coordinator');
+            accountScopeResolutions: boundAccountScopes(
+                { serverId: 'home-a', accountId: 'account-a' },
+                { serverId: 'home-b', accountId: 'account-b' },
+            ),
+            defaults: { homeServerIds: ['home-a', 'home-b'] },
+            spaceSettingsAccountScopeKey: authority,
+        }), { initialProps: 'authority-a' as string | null });
+        await act(async () => hook.getCurrent().setSearchQuery('private pending catalog'));
 
-        // Asked while the list is mounted and narrowed some other way: only the coordinator facet remains.
-        await act(async () => hook.getCurrent().updateFilters((current) => ({
-            ...current, coordinator: undefined, scope: 'assigned_to_me', attention: 'needs_my_attention',
-        })));
-        expect(hook.getCurrent().filters.coordinator).toBeUndefined();
-        await act(async () => showOnlyCoordinatorsInSessionList());
-        expect(hook.getCurrent().filters).toMatchObject({
-            coordinator: 'coordinator', scope: 'my_work', attention: 'any', homeServerIds: ['home-a'],
-        });
-        const refreshed = await hook.rerender(['home-a', 'home-b']);
-        expect(refreshed.filters.homeServerIds).toEqual(['home-a', 'home-b']);
-        expect(refreshed.filters.coordinator).toBe('coordinator');
+        expect((await hook.rerender('authority-a')).filters.searchQuery).toBe('private pending catalog');
+        expect((await hook.rerender(nextAuthority)).filters.searchQuery).toBe('');
+        expect((await hook.rerender('authority-a')).filters.searchQuery).toBe('');
     });
+
+
 });

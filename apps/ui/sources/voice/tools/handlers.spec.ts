@@ -558,7 +558,6 @@ function retainVoiceSessionReferenceCorpus(input: Readonly<{
       visibleSessionListIndex: [],
       hasHiddenInactiveSessions: false,
       folderFeatureEnabledServerIds: [],
-      folderFocus: null,
       showLoading: false,
       showEmptyState: false,
       query: {
@@ -592,7 +591,6 @@ function retainOrdinaryVoiceSessionReferenceCorpus(input: Readonly<{
       visibleSessionListIndex: [],
       hasHiddenInactiveSessions: false,
       folderFeatureEnabledServerIds: [],
-      folderFocus: null,
       showLoading: false,
       showEmptyState: false,
       query: {

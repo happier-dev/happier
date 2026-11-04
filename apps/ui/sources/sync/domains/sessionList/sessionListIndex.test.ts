@@ -9,9 +9,11 @@ import type { SessionListRenderableSession } from '../session/listing/sessionLis
 import type { SessionListViewItem } from '../session/listing/sessionListViewData';
 import {
     buildSessionListIndexFromViewData,
+    areSessionListIndexItemsEqual,
     buildSessionListIndexNodeId,
     resolveSessionListItemOrganizationEligibility,
 } from './sessionListIndex';
+import type { MachineDisplayRenderable } from '../machines/machineDisplayRenderable';
 
 function makeRenderable(id: string): SessionListRenderableSession {
     return {
@@ -34,6 +36,44 @@ function makeRenderable(id: string): SessionListRenderableSession {
 }
 
 describe('buildSessionListIndexFromViewData', () => {
+    it('preserves fallback display no-ops and invalidates only the row whose admitted display changed', () => {
+        const fallbackGroupDisplay = { groupKey: JSON.stringify(['home', 'machine', '/home/person']), title: 'Home folder' };
+        const filed: Extract<SessionListViewItem, { type: 'session' }> = {
+            type: 'session', session: makeRenderable('filed'), serverId: 'home', groupKind: 'folder', fallbackGroupDisplay,
+        };
+        const items: SessionListViewItem[] = [
+            filed,
+            { type: 'session', session: makeRenderable('unrelated'), serverId: 'home' },
+        ];
+        const first = buildSessionListIndexFromViewData(items)!;
+        const same = buildSessionListIndexFromViewData([{ ...filed, fallbackGroupDisplay: { ...fallbackGroupDisplay } }, items[1]!], first)!;
+        expect(same).toBe(first);
+        const renamed = buildSessionListIndexFromViewData([{ ...filed, fallbackGroupDisplay: { ...fallbackGroupDisplay, title: 'Other folder' } }, items[1]!], first)!;
+        expect(renamed[0]).not.toBe(first[0]);
+        expect(renamed[1]).toBe(first[1]);
+        const moved = buildSessionListIndexFromViewData([{ ...filed, fallbackGroupDisplay: { ...fallbackGroupDisplay, groupKey: 'other-exact-group' } }, items[1]!], first)!;
+        expect(moved[0]).not.toBe(first[0]);
+        expect(moved[1]).toBe(first[1]);
+    });
+
+    it('keeps mirror identities distinct and reuses each occurrence independently', () => {
+        const session = makeRenderable('one');
+        const items = [
+            { type: 'session' as const, session, serverId: 'home', occurrenceRole: 'needsYou' as const },
+            { type: 'session' as const, session, serverId: 'home', occurrenceRole: 'base' as const },
+        ];
+        const first = buildSessionListIndexFromViewData(items)!;
+        expect(new Set(first.map(buildSessionListIndexNodeId)).size).toBe(2);
+        expect(buildSessionListIndexFromViewData(items, first)).toBe(first);
+        expect(buildSessionListIndexFromViewData([...items].reverse(), first)).toEqual([...first].reverse());
+        const changed = buildSessionListIndexFromViewData([
+            { ...items[0], pinned: true }, items[1],
+        ], first)!;
+        expect(changed[0]).not.toBe(first[0]);
+        expect(changed[1]).toBe(first[1]);
+        expect(changed.map(item => item.type === 'session' && item.sessionId)).toEqual(['one', 'one']);
+    });
+
     it('publishes address keys once and reuses them for unchanged reads and reordered rows', () => {
         const items: SessionListViewItem[] = ['one', 'two'].map(id => ({
             type: 'session', session: makeRenderable(id), serverId: 'home',
@@ -347,7 +387,7 @@ describe('resolveSessionListItemOrganizationEligibility', () => {
         });
     });
 
-    it('fails closed for session rows without a durable workspace or server scope', () => {
+    it('fails closed for session rows without a Home scope', () => {
         expect(resolveSessionListItemOrganizationEligibility({
             type: 'session',
             sessionId: 'unscoped-session',
@@ -360,31 +400,46 @@ describe('resolveSessionListItemOrganizationEligibility', () => {
         });
     });
 
-    it('admits only folder destinations in the session workspace scope', () => {
+    it('admits Account sections without a workspace and refuses a foreign Home', () => {
         const item = {
             type: 'session' as const,
             sessionId: 'mixed-view-session',
             serverId: 'server-a',
             storageKind: 'direct' as const,
-            workspace,
         };
 
         expect(resolveSessionListItemOrganizationEligibility(item, {
             foldersFeatureEnabled: true,
-            destinationWorkspace: workspace,
+            destinationServerId: 'server-a',
         })).toMatchObject({
             canUseSessionFolders: true,
             reason: 'eligible',
         });
         expect(resolveSessionListItemOrganizationEligibility(item, {
             foldersFeatureEnabled: true,
-            destinationWorkspace: {
-                ...workspace,
-                rootPath: '/other-repo',
-            },
+            destinationServerId: 'server-b',
         })).toMatchObject({
             canUseSessionFolders: false,
             reason: 'destination-scope-mismatch',
         });
+    });
+});
+
+describe('areSessionListIndexItemsEqual machine presence clocks', () => {
+    const machine: MachineDisplayRenderable = {
+        id: 'machine-a', updatedAt: 10, active: true, activeAt: 10, metadataVersion: 1,
+        metadata: { displayName: 'Studio', host: 'studio', homeDir: '/home/a' },
+    };
+    const header = (value: MachineDisplayRenderable) => ({
+        type: 'header' as const, title: 'Project', headerKind: 'project' as const, groupKey: 'g', machine: value,
+    });
+
+    it('keeps a header equal when only heartbeat clocks of its machine advance', () => {
+        expect(areSessionListIndexItemsEqual(header(machine), header({ ...machine, updatedAt: 20, activeAt: 20 }))).toBe(true);
+    });
+
+    it('still changes a header when a displayed machine fact changes', () => {
+        expect(areSessionListIndexItemsEqual(header(machine), header({ ...machine, active: false }))).toBe(false);
+        expect(areSessionListIndexItemsEqual(header(machine), header({ ...machine, metadata: { ...machine.metadata, platform: 'darwin' } }))).toBe(false);
     });
 });

@@ -105,13 +105,14 @@ async function renderConversations(options: Readonly<{
     const settingsScope = { serverId: activeServerId, accountId: activeProfile ? 'active-account' : credentials.accountId };
     storage.setState(() => ({ profileScope: settingsScope, settingsScope, settingsVersion: 1 }));
     if (options.savedFilter) {
-        const { CollectionSpacesV1Schema, CollectionSpaceSelectionV1Schema, selectCollectionSpaceV1 } = await import('@happier-dev/protocol/collections/spaces/collectionSpacesV1');
-        const { accountSettingsScopeKeySuffix } = await import('@/sync/domains/settings/scope/accountSettingsScope');
+        const { CollectionSpacesV1Schema } = await import('@happier-dev/protocol/collections/spaces/collectionSpacesV1');
+        const { writeCollectionSpaceSelectionV1 } = await import('@/sync/domains/session/listing/sessionListSpaces');
         storage.setState(current => ({ settings: { ...current.settings,
             collectionSpacesV1: CollectionSpacesV1Schema.parse({ v: 1, spaces: [{ entityKind: 'discussion', id: 'review', name: 'Review',
                 icon: { kind: 'icon', name: 'list' }, filter: options.savedFilter, includeNeedsYouEverywhere: false }] }),
-        }, localSettings: { ...current.localSettings, collectionSpaceV1: CollectionSpaceSelectionV1Schema.parse(
-            selectCollectionSpaceV1(current.localSettings.collectionSpaceV1, accountSettingsScopeKeySuffix(settingsScope), 'discussion', 'review')) } }));
+        } }));
+        expect(await writeCollectionSpaceSelectionV1({ scope: settingsScope, entityKind: 'discussion', spaceId: 'review',
+            isCurrent: () => true, readSettings: () => storage.getState().settings })).toEqual({ ok: true });
     }
 
     const screen = await renderScreen(

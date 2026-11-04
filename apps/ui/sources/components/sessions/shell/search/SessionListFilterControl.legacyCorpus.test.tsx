@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { t } from '@/text';
 
+import { createSessionListSpaceChromeFixture } from './sessionListSpaceChromeTestFixture';
 import { createSessionListViewFilterDefaults } from './sessionListViewFilters';
 import type { SessionListViewFilterController } from './useSessionListViewFilterController';
 
@@ -28,10 +29,12 @@ function controller(
     return {
         filters,
         defaultFilters: filters,
+        contextDefaultFilters: filters,
         updateFilters: vi.fn(),
         setSearchQuery: vi.fn(),
         removeAuthoritativelyDeletedSelections: vi.fn(),
         resetFilters: vi.fn(),
+        showCoordinatorsRequest: 0, acknowledgeShowCoordinatorsRequest: vi.fn(),
         includeInactive: true,
         corpusStorage: 'active',
         setIncludeInactive: vi.fn(),
@@ -46,7 +49,11 @@ function controller(
         viewContext: { kind: 'global' },
         viewContextKey: 'global',
         retentionScopeKey: 'global:home-a',
+        spaces: [], selectedSpaceId: 'my-work', selectedSpace: null, spacesReady: false,
+        activeSpace: null, spacesEnabled: false,
+        spaceSettingsScope: null, includeNeedsYouEverywhere: false, isSpaceModified: false,
         ...overrides,
+        displayFilters: overrides.displayFilters ?? overrides.filters ?? filters,
     };
 }
 
@@ -54,7 +61,7 @@ describe('SessionListFilterControl legacy corpus presentation', () => {
     it('labels the released owner/direct corpus truthfully and exposes no semantic query scopes', async () => {
         const { SessionListFilterControl } = await import('./SessionListFilterControl');
         await renderScreen(
-            <SessionListFilterControl
+            <SessionListFilterControl spaceChrome={createSessionListSpaceChromeFixture()}
                 controller={controller()}
                 organizationProjectionsByServerId={{}}
             />,
@@ -73,7 +80,7 @@ describe('SessionListFilterControl legacy corpus presentation', () => {
     it('retains My work and semantic query scopes when exact filtered listing is available', async () => {
         const { SessionListFilterControl } = await import('./SessionListFilterControl');
         await renderScreen(
-            <SessionListFilterControl
+            <SessionListFilterControl spaceChrome={createSessionListSpaceChromeFixture()}
                 controller={controller({ queryEnabled: true, corpusPresentation: 'semantic_query' })}
                 organizationProjectionsByServerId={{}}
             />,
@@ -91,7 +98,7 @@ describe('SessionListFilterControl legacy corpus presentation', () => {
         const { SessionListFilterControl } = await import('./SessionListFilterControl');
         const base = createSessionListViewFilterDefaults({ homeServerIds: ['home-a'] });
         await renderScreen(
-            <SessionListFilterControl
+            <SessionListFilterControl spaceChrome={createSessionListSpaceChromeFixture()}
                 controller={controller({
                     queryEnabled: true,
                     corpusPresentation: 'semantic_query',
@@ -113,7 +120,7 @@ describe('SessionListFilterControl legacy corpus presentation', () => {
         const openArchived = vi.fn();
         const base = createSessionListViewFilterDefaults({ homeServerIds: ['home-a'] });
         await renderScreen(
-            <SessionListFilterControl
+            <SessionListFilterControl spaceChrome={createSessionListSpaceChromeFixture()}
                 controller={controller({
                     queryEnabled: true,
                     corpusPresentation: 'semantic_query',
@@ -138,7 +145,7 @@ describe('SessionListFilterControl legacy corpus presentation', () => {
     it('marks the inactive preference unavailable for the archived corpus', async () => {
         const { SessionListFilterControl } = await import('./SessionListFilterControl');
         await renderScreen(
-            <SessionListFilterControl
+            <SessionListFilterControl spaceChrome={createSessionListSpaceChromeFixture()}
                 controller={controller({ corpusStorage: 'archived' })}
                 organizationProjectionsByServerId={{}}
             />,

@@ -12,6 +12,7 @@ import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
 import { buildServerScopedSessionKey, moveSessionMruEntryToFront } from '@/sync/domains/session/navigation/sessionNavigationOrder';
 import { resolveSessionSwitcherRecentPool } from '@/sync/domains/session/navigation/sessionSwitcherOrder';
+import { readSessionMruOrder } from '@/sync/domains/session/navigation/recentSessions';
 import { storage } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -66,7 +67,7 @@ export function readSessionAllTabs(params: Readonly<{
         tabId: tab.id,
         sessionKey: tab.session ? buildServerScopedSessionKey(tab.session.sessionId, tab.session.serverId) : null,
     }));
-    const mru = state.localSettings.sessionMruOrderV1;
+    const mru = readSessionMruOrder();
     const extra = [
         ...(session.serverId ? [{ sessionId: session.sessionId, serverId: session.serverId }] : []),
         ...tabs.flatMap(tab => tab.session?.serverId ? [{ sessionId: tab.session.sessionId, serverId: tab.session.serverId }] : []),

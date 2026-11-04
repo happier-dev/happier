@@ -2,7 +2,6 @@ import * as React from 'react';
 
 import { useSetting } from '@/sync/store/settingsReadHooks';
 import {
-    normalizeSessionListSectionModeV1,
     resolveSessionListLayoutChoice,
     type SessionListLayoutChoice,
 } from '@/sync/domains/session/listing/sessionListLayout';
@@ -71,11 +70,9 @@ export function useYieldSessionListLayoutIntent(): () => void {
  * preference cannot disagree between them.
  */
 export function useSessionListLayoutChoice(): SessionListLayoutChoice {
-    const sessionListSectionModeV1 = normalizeSessionListSectionModeV1(useSetting('sessionListSectionModeV1'));
-    const sessionListActiveGroupingV1 = useSetting('sessionListActiveGroupingV1');
+    const sessionListLayoutV1 = useSetting('sessionListLayoutV1');
     const transientIntent = useSessionListLayoutIntent();
     return resolveSessionListLayoutChoice({
-        sessionListSectionModeV1,
-        sessionListActiveGroupingV1,
+        sessionListLayoutV1,
     }, transientIntent);
 }

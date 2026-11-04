@@ -7,6 +7,7 @@ export {
   useSettings,
   useSettingsSelector,
   useSettingsVersion,
+  useSettingsReady,
   useSetting,
   useLocalSettings,
   useLocalSetting,
@@ -1172,9 +1173,7 @@ export function useSessionListIndexByServerId(
       return state.machineListByServerId[key] ?? state.machineDisplayById;
     });
   }));
-  const activeGroupingV1 = useSetting('sessionListActiveGroupingV1');
-  const inactiveGroupingV1 = useSetting('sessionListInactiveGroupingV1');
-  const sectionModeV1 = useSetting('sessionListSectionModeV1');
+  const layoutV1 = useSetting('sessionListLayoutV1');
   return React.useMemo(() => {
     if (retained.length === 0) return source;
     const resolveScopeId = captureServerProfileScopeResolver();
@@ -1207,14 +1206,14 @@ export function useSessionListIndexByServerId(
       result[serverId] = buildSessionListIndexWithServerScope({
         sessions: candidates,
         machines: resolveSessionListMachineDisplaysForServer(state, machineKey),
-        activeGroupingV1, inactiveGroupingV1, sectionModeV1, previousIndex,
+        layoutV1, previousIndex,
         serverScope: { serverId, serverName: resolveHomeDisplayLabel(getServerProfileById(serverId), serverId) },
       });
     }
     return result;
     // Raw index changes own ordinary structural invalidation. Retained rows and
     // Home machine inputs add only the missing pending candidates above.
-  }, [source, retained, retainedRows, retainedMachines, activeGroupingV1, inactiveGroupingV1, sectionModeV1]);
+  }, [source, retained, retainedRows, retainedMachines, layoutV1]);
 }
 
 export function useSessionFolderAssignment(serverId: string | null | undefined, sessionId: string): string | null {

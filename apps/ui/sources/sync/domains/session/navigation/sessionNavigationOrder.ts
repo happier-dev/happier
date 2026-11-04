@@ -14,6 +14,7 @@
  */
 
 import { normalizeSessionListKeyParts, type NormalizedSessionListKeyParts } from '../listing/sessionListKeyNormalization';
+import { buildSessionListIndexNodeId, type SessionListOccurrenceRole } from '../../sessionList/sessionListIndexIdentity';
 
 export type SessionNavigationDirection = 'previous' | 'next';
 
@@ -21,6 +22,8 @@ export type VisibleSessionNavigationEntry = Readonly<{
     index: number;
     sessionId: string;
     sessionKey: string;
+    occurrenceKey?: string;
+    occurrenceRole?: SessionListOccurrenceRole;
     serverId?: string;
 }>;
 
@@ -35,6 +38,7 @@ export type SessionListLikeItem = Readonly<{
     sessionId?: unknown;
     serverId?: unknown;
     keyParts?: NormalizedSessionListKeyParts;
+    occurrenceRole?: SessionListOccurrenceRole;
 }>;
 
 const DEFAULT_SESSION_MRU_MAX_ENTRIES = 50;
@@ -68,7 +72,7 @@ function resolveKnownMruEntry(
     const currentEntry = knownSessionEntries.find((entry) => entry.sessionKey === key);
     if (currentEntry) return currentEntry;
     const legacyMatches = knownSessionEntries.filter((entry) => buildLegacySessionMruKey(entry) === key);
-    return legacyMatches.length === 1 ? legacyMatches[0] : null;
+    return new Set(legacyMatches.map((entry) => entry.sessionKey)).size === 1 ? legacyMatches[0] ?? null : null;
 }
 
 export function buildVisibleSessionNavigationEntries(
@@ -86,6 +90,8 @@ export function buildVisibleSessionNavigationEntries(
             index,
             sessionId,
             sessionKey: buildServerScopedSessionKey(sessionId, serverId, item.keyParts),
+            occurrenceKey: buildSessionListIndexNodeId({ type: 'session', sessionId, serverId, keyParts: item.keyParts, occurrenceRole: item.occurrenceRole }),
+            ...(item.occurrenceRole ? { occurrenceRole: item.occurrenceRole } : null),
             ...(serverId ? { serverId } : null),
         });
     });
@@ -112,21 +118,25 @@ export function findVisibleSessionNavigationEntryByScope(
         return scoped ?? null;
     }
     const matches = entries.filter((entry) => entry.sessionId === normalizedSessionId);
-    return matches.length === 1 ? matches[0] : null;
+    return new Set(matches.map((entry) => entry.sessionKey)).size === 1 ? matches[0] ?? null : null;
 }
 
 export function resolveVisibleSessionNavigation(params: Readonly<{
     visibleEntries: readonly VisibleSessionNavigationEntry[];
     activeSessionKey: string | null;
-    cursorSessionKey: string | null;
+    cursorOccurrenceKey: string | null;
     direction: SessionNavigationDirection;
 }>): VisibleSessionNavigationEntry | null {
-    const { visibleEntries, activeSessionKey, cursorSessionKey, direction } = params;
+    const { visibleEntries, activeSessionKey, direction } = params;
     if (visibleEntries.length === 0) return null;
 
-    const anchorKey = cursorSessionKey ?? activeSessionKey;
-    const anchorIndex = anchorKey
-        ? visibleEntries.findIndex((entry) => entry.sessionKey === anchorKey)
+    const cursorIndex = params.cursorOccurrenceKey
+        ? visibleEntries.findIndex((entry) => entry.occurrenceKey === params.cursorOccurrenceKey)
+        : -1;
+    const anchorIndex = cursorIndex >= 0
+        ? cursorIndex
+        : activeSessionKey
+        ? visibleEntries.findIndex((entry) => entry.sessionKey === activeSessionKey)
         : -1;
 
     if (anchorIndex < 0) {

@@ -38,6 +38,11 @@ export type WorkStatusBucket = HappierWorkStatusBucket;
 export type WorkStatusTone = HappierWorkStatusTone;
 export type WorkStatusPresentation = HappierWorkStatusPresentation;
 
+/** Attention placement and navigation use the same admitted actionable item type. */
+export function isWorkStatusNeedsYou(status: WorkStatusPresentation): boolean {
+    return status.bucket === 'needs_you' && status.attentionType !== null && inboxItemViewV1(status.attentionType) === 'needs_you';
+}
+
 /** The `StatusPill` variant for a tone, where a surface states its word as a badge (ring and tint: `workStatusTreatment`). */
 export const WORK_STATUS_PILL_VARIANT = HAPPIER_WORK_STATUS_SEMANTIC_TONE satisfies Record<WorkStatusTone, StatusPillVariant>;
 
@@ -130,6 +135,7 @@ export type WorkStatusInput =
         attentionType?: InboxItemAttentionTypeV1 | null;
         requestFollowEvent?: Extract<import('@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1').FollowEventV1, { kind: 'needs_you' }>;
         currentRequest?: import('@/sync/domains/session/pending/listPendingSessionRequests').SessionPendingRequest;
+        currentRequestRef?: import('@/components/ui/lists/collection/collectionRequestRef').CollectionSessionRequestIdentity | null;
         /** Settlement is supplied by the Session owner, not inferred from a word. */
         settled?: boolean;
     }> }>

@@ -8,7 +8,6 @@ import { normalizeSessionListKeyParts } from './sessionListKeyNormalization';
 import {
     buildSessionListSessionOrderingKey,
     compareSessionListSessionOrderingKeys,
-    normalizeSessionListOrderingModeV1,
     readSessionListMeaningfulActivityAt,
     resolveEffectiveSessionListOrderingModeForGroup,
     type SessionListSessionOrderingKey,
@@ -38,21 +37,10 @@ export function resolveSessionListLayoutApplicability(params: Readonly<{
     usesFolderTreePresentation: boolean;
     showsAdvancedSectionGrouping: boolean;
 }> {
-    const usesProjectGrouping = params.choice === 'projects'
-        || (
-            params.choice === 'active_inactive'
-            && (
-                normalizeSessionListGroupingModeV1(params.activeGroupingV1) === 'project'
-                || normalizeSessionListGroupingModeV1(params.inactiveGroupingV1) === 'project'
-            )
-        );
     return {
-        usesProjectGrouping,
-        usesFolderTreePresentation:
-            usesProjectGrouping
-            && params.foldersFeatureEnabled === true
-            && params.folderViewModeV1 === 'tree',
-        showsAdvancedSectionGrouping: params.choice === 'active_inactive',
+        usesProjectGrouping: params.choice === 'projects',
+        usesFolderTreePresentation: params.foldersFeatureEnabled === true,
+        showsAdvancedSectionGrouping: false,
     };
 }
 
@@ -77,14 +65,14 @@ export function resolveSessionListSessionRowDragPolicy(params: Readonly<{
     manualSessionOrderingEnabled: boolean;
     folderContainmentEnabled: boolean;
     putUnderEnabled?: boolean;
-    item: Pick<Extract<SessionListIndexItem, { type: 'session' }>, 'section' | 'groupKind'>;
-    sectionModeV1: SessionListSectionMode;
-    orderingModeV1: 'custom' | 'created' | 'updated';
+    item: Pick<Extract<SessionListIndexItem, { type: 'session' }>, 'section' | 'groupKind' | 'supplementalAttention'>;
+    layoutV1: SessionListLayoutChoice;
 }>): SessionListSessionRowDragPolicy {
     const canReorderSiblings = params.manualSessionOrderingEnabled
+        && params.item.supplementalAttention !== true
         && resolveEffectiveSessionListOrderingModeForGroup({
             groupKind: params.item.groupKind,
-            userOrderingMode: normalizeSessionListOrderingModeV1(params.orderingModeV1),
+            userOrderingMode: params.layoutV1 === 'recent_activity' ? 'updated' : 'custom',
         }) === 'custom';
     const canMoveBetweenFolders = params.folderContainmentEnabled;
     const canPutUnder = params.putUnderEnabled === true;
@@ -115,6 +103,9 @@ function projectRecentActivitySessionItem(params: Readonly<{
     return {
         type: 'session',
         sessionId: item.sessionId,
+        ...(item.projectKey ? { projectKey: item.projectKey } : {}),
+        ...(item.occurrenceRole ? { occurrenceRole: item.occurrenceRole } : {}),
+        ...(item.supplementalAttention ? { supplementalAttention: true } : {}),
         ...(item.keyParts ? { keyParts: item.keyParts } : {}),
         ...(item.serverId ? { serverId: item.serverId } : {}),
         ...(item.serverName ? { serverName: item.serverName } : {}),
@@ -135,7 +126,7 @@ function projectRecentActivitySessionItem(params: Readonly<{
 }
 
 /**
- * Rebuilds the qualified corpus as one cross-Home chronological timeline.
+ * Keeps custom Section bands ahead of one cross-Home unfiled timeline.
  *
  * Membership is decided by the caller's index, never by row hydration: a qualified
  * address whose renderable has not landed yet keeps its membership in one localized
@@ -153,6 +144,7 @@ export function projectSessionListIndexForLayout(params: Readonly<{
         return params.source;
     }
 
+    const result: SessionListIndexItem[] = [];
     const entries: Array<{
         item: Extract<SessionListIndexItem, { type: 'session' }>;
         row: SessionListRenderableSession;
@@ -161,6 +153,10 @@ export function projectSessionListIndexForLayout(params: Readonly<{
     const unresolved: Array<Extract<SessionListIndexItem, { type: 'session' }>> = [];
     const seen = new Set<string>();
     for (const item of params.source) {
+        if (item.type === 'header' && item.headerKind === 'folder') {
+            result.push(item);
+            continue;
+        }
         if (item.type !== 'session') continue;
         const key = normalizeSessionListKeyParts(item.serverId, item.sessionId, item.keyParts).sessionKey
             || normalizeTrimmedString(item.sessionId);
@@ -171,6 +167,10 @@ export function projectSessionListIndexForLayout(params: Readonly<{
             unresolved.push(item);
             continue;
         }
+        if (item.groupKind === 'folder' && item.folderId != null) {
+            result.push(item);
+            continue;
+        }
         // Derived once per qualified member, like the incumbent index sort's key
         // cache. Building it inside the comparator instead would rebuild the same
         // key O(n log n) times over a corpus this projection is expected to hold.
@@ -178,7 +178,6 @@ export function projectSessionListIndexForLayout(params: Readonly<{
     }
     entries.sort((a, b) => compareSessionListSessionOrderingKeys(a.orderingKey, b.orderingKey, 'updated'));
 
-    const result: SessionListIndexItem[] = [];
     for (const group of buildSessionListDateGroups({
         items: entries,
         readMeaningfulActivityAt: (entry) => readSessionListMeaningfulActivityAt(entry.row),

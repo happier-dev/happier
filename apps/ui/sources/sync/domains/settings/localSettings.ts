@@ -46,6 +46,10 @@ export const RETIRED_DESKTOP_OVERLAY_SETTING_KEYS = [
 ] as const;
 
 const deprecatedLocalSettingKeys = [
+    'sessionMruOrderV1',
+    'collapsedGroupKeysV1',
+    'sessionInfoExpandedSectionsV1',
+    'collectionSpaceV1',
     'widgetViewerInputSelectionsV1',
     'uiSurfaceExecutableApprovalsV1',
     'editorFocusModeEnabled',

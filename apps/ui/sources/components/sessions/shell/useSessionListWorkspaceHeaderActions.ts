@@ -1,14 +1,15 @@
 import { Modal } from '@/modal';
-import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
-import { findWorkspaceRefByScope } from '@/sync/domains/workspaces/workspaceRefs';
-import { updateProjectWorkspace } from '@/sync/ops/actions/projectWorkspaceActions';
+import type { ProjectOrganizationRow } from '@/sync/domains/workspaces/projectAccountRows';
+import { projectGroupIdentityKey, readProjectGroupIdentityKey } from '@/sync/domains/workspaces/projectGroupDisplay';
+import { updateProjectOrganization } from '@/sync/ops/actions/projectWorkspaceActions';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { t } from '@/text';
 
 export function useSessionListWorkspaceHeaderActions(input: Readonly<{
-    workspaceRefs: ReadonlyArray<WorkspaceRefV1>;
-    collapsedGroupKeys: Readonly<Record<string, boolean>>;
-    setCollapsedGroupKeys: (value: Record<string, boolean>) => void;
+    /** Undefined means the opened Account's complete organization census is unavailable. */
+    projectOrganizations?: readonly ProjectOrganizationRow[];
+    toggleCollapsedGroup: (groupKey: string) => void;
 }>) {
     return {
         handleRenameWorkspace: async (params: Readonly<{
@@ -16,11 +17,11 @@ export function useSessionListWorkspaceHeaderActions(input: Readonly<{
             scopeHint: Readonly<{ serverId: string; machineId: string; rootPath: string }> | null;
             currentLabel: string;
         }>) => {
-            if (!params.scopeHint) return;
-            const currentRef = findWorkspaceRefByScope(input.workspaceRefs, params.scopeHint);
-            if (!currentRef) { Modal.alert(t('common.error'), t('common.saveError')); return; }
+            const projectRef = readProjectGroupIdentityKey(params.legacyWorkspaceKey);
+            if (!projectRef || !input.projectOrganizations) { Modal.alert(t('common.error'), t('common.saveError')); return; }
+            const current = input.projectOrganizations.find(row => projectGroupIdentityKey(row.key) === projectGroupIdentityKey(projectRef));
             const lifetime = captureActiveServerAccountScopeLifetime();
-            if (!lifetime?.isCurrent()) return;
+            if (!lifetime?.isCurrent() || !areServerProfileIdentifiersEquivalent(projectRef.serverId, lifetime.scope.serverId)) return;
             const newName = await Modal.prompt(
                 t('sessionsList.renameWorkspacePromptTitle'),
                 undefined,
@@ -32,12 +33,12 @@ export function useSessionListWorkspaceHeaderActions(input: Readonly<{
                 },
             );
             if (newName !== null && newName.trim()) {
-                if ((currentRef?.label ?? null) === newName.trim()) {
+                if (current?.value.label === newName.trim()) {
                     return;
                 }
-                const result = await updateProjectWorkspace({
-                    serverId: currentRef.serverId,
-                    workspaceId: currentRef.id,
+                const result = await updateProjectOrganization({
+                    projectRef,
+                    expectedRevision: current?.revision ?? 'absent',
                     label: newName.trim(),
                 }, lifetime);
                 if (!result.ok) Modal.alert(t('common.error'), t('common.saveError'));
@@ -47,25 +48,20 @@ export function useSessionListWorkspaceHeaderActions(input: Readonly<{
             legacyWorkspaceKey: string;
             scopeHint: Readonly<{ serverId: string; machineId: string; rootPath: string }> | null;
         }>) => {
-            if (!params.scopeHint) return;
-            const currentRef = findWorkspaceRefByScope(input.workspaceRefs, params.scopeHint);
-            if ((currentRef?.label ?? null) === null) {
+            const projectRef = readProjectGroupIdentityKey(params.legacyWorkspaceKey);
+            if (!projectRef || !input.projectOrganizations) { Modal.alert(t('common.error'), t('common.saveError')); return; }
+            const current = input.projectOrganizations.find(row => projectGroupIdentityKey(row.key) === projectGroupIdentityKey(projectRef));
+            if (!current?.value.label) {
                 return;
             }
-            const result = await updateProjectWorkspace({
-                serverId: params.scopeHint.serverId,
-                workspaceId: currentRef!.id,
+            const lifetime = captureActiveServerAccountScopeLifetime();
+            const result = await updateProjectOrganization({
+                projectRef,
+                expectedRevision: current.revision,
                 label: null,
-            });
+            }, lifetime);
             if (!result.ok) Modal.alert(t('common.error'), t('common.saveError'));
         },
-        handleToggleCollapse: (collapseKey: string) => {
-            const current = input.collapsedGroupKeys;
-            if (current[collapseKey]) {
-                input.setCollapsedGroupKeys({ ...current, [collapseKey]: false });
-                return;
-            }
-            input.setCollapsedGroupKeys({ ...current, [collapseKey]: true });
-        },
+        handleToggleCollapse: input.toggleCollapsedGroup,
     };
 }

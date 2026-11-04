@@ -16,6 +16,7 @@ import { areServerAccountScopesEqual, serverAccountScopeKeySuffix } from '@/sync
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { readSessionRouteServerId } from '@/hooks/session/sessionRouteServerScope';
+import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { WorkflowAccountLifetimeProvider } from '../workflowAccountScope';
 import { useGlobalSearchParams } from '@/components/appShell/workspace/destinationRoute';
@@ -73,23 +74,22 @@ export const AccountTriggersSection = React.memo(function AccountTriggersSection
 });
 
 function AccountTriggersContent(props: Readonly<{ first?: boolean; accountLifetime?: ServerAccountScopeLifetime | null }>) {
-    const { sets, status, retry: refresh } = useWorkflowTriggerSets(ACCOUNT_TRIGGER_QUERY, props.accountLifetime);
-    const captureLifetime = () => props.accountLifetime === undefined ? captureActiveServerAccountScopeLifetime() : props.accountLifetime;
+    const read = useWorkflowTriggerSets(ACCOUNT_TRIGGER_QUERY, props.accountLifetime);
+    return <AccountTriggersReadContent {...props} read={read} />;
+}
+
+/** Library rows open the incumbent settings popover, including retained-template review. No list read. */
+export function useAccountWorkflowEditor(props: Readonly<{ accountLifetime?: ServerAccountScopeLifetime | null;
+    read: ReturnType<typeof useWorkflowTriggerSets> }>) {
+    const { sets, retry: refresh } = props.read;
+    const captureLifetime = () => props.accountLifetime === undefined
+        ? captureActiveServerAccountScopeLifetime() : props.accountLifetime;
     const actionOptions = props.accountLifetime === undefined ? {} : { accountLifetime: props.accountLifetime };
-    const params = useGlobalSearchParams<{ trigger?: string }>();
-    const thenOptions = useTriggerThenOptions(actionOptions);
-    const openTriggerAsWorkflow = useOpenTriggerAsWorkflow(props.accountLifetime);
-    const activeMachines = useAllMachines();
-    const addressedMachines = useMachineListForServer(props.accountLifetime?.scope.serverId ?? '');
-    const machines = props.accountLifetime === undefined ? activeMachines : addressedMachines ?? [];
-    const rows = React.useMemo(
-        () => projectAccountTriggerRows({ sets, resolveWorkflowTitle: thenOptions.resolveWorkflowTitle,
-            resolveMachineTitle: (id) => getMachineDisplayName(machines.find((machine) => machine.id === id) ?? { id, absence: 'unlisted' }) }),
-        [sets, thenOptions.resolveWorkflowTitle, machines],
-    );
     const [open, setOpen] = React.useState<Readonly<{ set: WorkflowTriggerSetV1; triggerId: AccountTriggerRow['triggerId']; anchor: React.RefObject<View | null> }> | null>(null);
+    const thenOptions = useTriggerThenOptions({ ...actionOptions, libraryEnabled: open !== null, sets });
+    const openTriggerAsWorkflow = useOpenTriggerAsWorkflow(props.accountLifetime);
     const [pending, setPending] = React.useState<ReadonlySet<string>>(() => new Set());
-    const alertUnavailable = (row: AccountTriggerRow, set: WorkflowTriggerSetV1, title: string, message: string) => {
+    const alertUnavailable = (row: Pick<AccountTriggerRow, 'automationId' | 'triggerId'>, set: WorkflowTriggerSetV1, title: string, message: string) => {
         const triggerId = row.triggerId;
         const lifetime = captureLifetime();
         void Modal.alert(title, message, triggerId === null ? undefined : [
@@ -105,7 +105,7 @@ function AccountTriggersContent(props: Readonly<{ first?: boolean; accountLifeti
             } },
         ]);
     };
-    const openRow = async (row: AccountTriggerRow, anchor: React.RefObject<View | null>) => {
+    const openRow = useEventCallback(async (row: Pick<AccountTriggerRow, 'automationId' | 'triggerId'> & Partial<Pick<AccountTriggerRow, 'legacy'>>, anchor: React.RefObject<View | null>) => {
         const set = sets.find((candidate) => candidate.automationId === row.automationId);
         if (!set) return;
         if (set.legacy?.lockedReason === 'review_required') {
@@ -132,8 +132,8 @@ function AccountTriggersContent(props: Readonly<{ first?: boolean; accountLifeti
             return;
         }
         setOpen({ set, triggerId: row.triggerId, anchor });
-    };
-    const toggle = async (row: AccountTriggerRow, next: boolean) => {
+    });
+    const toggle = useEventCallback(async (row: Pick<AccountTriggerRow, 'automationId' | 'triggerId'>, next: boolean) => {
         const set = sets.find((candidate) => candidate.automationId === row.automationId);
         if (!set || pending.has(set.automationId) || set.legacy?.lockedReason === 'review_required') return;
         setPending((current) => new Set(current).add(set.automationId));
@@ -151,7 +151,44 @@ function AccountTriggersContent(props: Readonly<{ first?: boolean; accountLifeti
         } finally {
             setPending((current) => { const next = new Set(current); next.delete(set.automationId); return next; });
         }
-    };
+    });
+    const openTrigger = open?.triggerId == null ? undefined : open.set.triggers.find((trigger) => trigger.id === open.triggerId);
+    const openEnabled = open !== null && open.set.enabled && openTrigger?.enabled !== false;
+    const popover = open === null ? null : (
+        <AccountTriggerPopover
+            key={`${open.set.automationId}:${open.triggerId ?? 'manual'}`}
+            set={open.set}
+            triggerId={open.triggerId}
+            anchorRef={open.anchor}
+            workflowOptions={thenOptions.workflowOptions}
+            {...actionOptions}
+            onRequestClose={() => setOpen(null)}
+            onWritten={refresh}
+            {...(open.set.legacy?.lockedReason === 'review_required' ? {} : { onToggleEnabled: { enabled: openEnabled, onPress: () => {
+                setOpen(null);
+                void toggle({ automationId: open.set.automationId, triggerId: open.triggerId }, !openEnabled);
+            } } })}
+            onSaveAsWorkflow={(target) => openTriggerAsWorkflow(target, {
+                scope: 'account', automationId: open.set.automationId,
+                ...(open.triggerId === null ? {} : { triggerId: open.triggerId }), expectedRevision: open.set.revision,
+            })}
+        />
+    );
+    return React.useMemo(() => ({ pending, open: openRow, toggle, popover, resolveWorkflowTitle: thenOptions.resolveWorkflowTitle }),
+        [pending, openRow, toggle, popover, thenOptions.resolveWorkflowTitle]);
+}
+
+function AccountTriggersReadContent(props: Readonly<{ first?: boolean; accountLifetime?: ServerAccountScopeLifetime | null;
+    read: ReturnType<typeof useWorkflowTriggerSets> }>) {
+    const { sets, status, retry: refresh } = props.read;
+    const { pending, open: openRow, toggle, popover, resolveWorkflowTitle } = useAccountWorkflowEditor(props);
+    const activeMachines = useAllMachines();
+    const addressedMachines = useMachineListForServer(props.accountLifetime?.scope.serverId ?? '');
+    const machines = props.accountLifetime === undefined ? activeMachines : addressedMachines ?? [];
+    const rows = React.useMemo(() => projectAccountTriggerRows({ sets, resolveWorkflowTitle,
+        resolveMachineTitle: (id) => getMachineDisplayName(machines.find((machine) => machine.id === id) ?? { id, absence: 'unlisted' }) }),
+        [sets, resolveWorkflowTitle, machines]);
+    const params = useGlobalSearchParams<{ trigger?: string }>();
     if (rows.length === 0 && status === 'ready') return null;
     // Between other sections, a section whose existence is not yet known draws nothing: a "Triggers ·
     // Loading…" inserted after the column drew, then removed for an Account with none, pushed the
@@ -193,24 +230,7 @@ function AccountTriggersContent(props: Readonly<{ first?: boolean; accountLifeti
                         action={{ label: t('workflows.triggers.popover.tryAgain'), onPress: refresh }} />
                 </View>
             ) : null}
-            {open === null ? null : (
-                <AccountTriggerPopover
-                    key={`${open.set.automationId}:${open.triggerId ?? 'manual'}`}
-                    set={open.set}
-                    triggerId={open.triggerId}
-                    anchorRef={open.anchor}
-                    workflowOptions={thenOptions.workflowOptions}
-                    {...actionOptions}
-                    onRequestClose={() => setOpen(null)}
-                    onWritten={refresh}
-                    onSaveAsWorkflow={(target) => openTriggerAsWorkflow(target, {
-                        scope: 'account',
-                        automationId: open.set.automationId,
-                        ...(open.triggerId === null ? {} : { triggerId: open.triggerId }),
-                        expectedRevision: open.set.revision,
-                    })}
-                />
-            )}
+            {popover}
         </>
     );
 }
@@ -265,6 +285,7 @@ function AccountTriggerPopover(props: Readonly<{
     workflowOptions: ReturnType<typeof useTriggerThenOptions>['workflowOptions'];
     onRequestClose: () => void;
     onWritten: () => void;
+    onToggleEnabled?: React.ComponentProps<typeof TriggerPopover>['onToggleEnabled'];
     onSaveAsWorkflow?: (target: TriggerTargetV1) => void;
     initialEventSeed?: PluginUiOpenAutomationEventRequestV1;
     initialEventEditSeed?: PluginEventAutomationEditSeed;
@@ -311,6 +332,7 @@ function AccountTriggerPopover(props: Readonly<{
                     description={t('workflows.triggers.editor.runsOnAccountDescription')} />
             </>}
             onRunNow={!needsReview && triggerId === null ? async () => { await runNow.runNow(set.automationId, 'newSession'); } : undefined}
+            onToggleEnabled={props.onToggleEnabled}
             onSaveAsWorkflow={needsReview ? undefined : props.onSaveAsWorkflow}
             onSubmit={async (value, write) => {
                 if (write.observationOnly && write.trigger !== null && triggerId !== null) {

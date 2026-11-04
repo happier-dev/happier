@@ -16,7 +16,7 @@ import {
     sortSessionListRenderableSessionsNewestFirstIfNeeded,
     sortSessionListRenderableSessionsNewestUpdatedFirstIfNeeded,
 } from './sessionListRenderableSorting';
-import { resolveSessionListGroupingModes, type SessionListSectionMode } from './resolveSessionListGroupingModes';
+import { resolveSessionListGroupingMode } from './resolveSessionListGroupingMode';
 import { t } from '@/text';
 import {
     resolveDisplayMachineTargetForSessionFromState,
@@ -30,15 +30,23 @@ import {
 } from '@/sync/domains/session/resolveWorkspaceTargetForSessionFromState';
 import { buildSessionListDateGroups } from './sessionListDateGroups';
 import { getMachineDisplayName, resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
+import type { SessionListOccurrenceRole } from '../../sessionList/sessionListIndex';
 import type { QualifiedProjectKeyV1, WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { createSessionProjectKeyResolverV1, resolveSessionProjectKeyV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import { workspaceRefResolutionContextV1 } from '@/sync/domains/workspaces/workspaceRefs';
 import { buildProjectGroupDisplayIndex, projectGroupIdentityKey, type SessionListFallbackGroupDisplay } from '@/sync/domains/workspaces/projectGroupDisplay';
+import { resolveWorkspaceDisplayPresentation } from '@/sync/domains/workspaces/workspaceDisplayPresentation';
+import { buildSessionWorkspaceFallbackOrderKey, readSessionWorkspaceFallbackIdentity } from './sessionWorkspaceOrderKeys';
+import { admitProjectWorkspaceCensusForSubject } from '@/sync/domains/workspaces/projectWorkspaceCensusAdmission';
 
 export type SessionListViewItem =
     | {
         type: 'header';
         title: string;
+        eligibleCount?: number;
         headerKind?: 'date' | 'server' | 'active' | 'inactive' | 'sessions' | 'project' | 'pinned' | 'loading' | 'folder';
         groupKey?: string;
+        presentationAnchorGroupKey?: string;
         workspaceKey?: string;
         projectKey?: QualifiedProjectKeyV1;
         seedSessionId?: string | null;
@@ -57,6 +65,8 @@ export type SessionListViewItem =
         session: SessionListRenderableSession;
         projectKey?: QualifiedProjectKeyV1;
         fallbackGroupDisplay?: SessionListFallbackGroupDisplay;
+        occurrenceRole?: SessionListOccurrenceRole;
+        supplementalAttention?: true;
         section?: 'active' | 'inactive';
         groupKey?: string;
         groupKind?: 'active' | 'date' | 'project' | 'pinned' | 'loading' | 'folder';
@@ -70,9 +80,11 @@ export type SessionListViewItem =
     };
 
 export interface BuildSessionListViewDataOptions {
-    activeGroupingV1?: 'project' | 'date';
-    inactiveGroupingV1?: 'project' | 'date';
-    sectionModeV1?: SessionListSectionMode;
+    layoutV1?: 'projects' | 'recent_activity';
+    workspaceRefs?: readonly WorkspaceRefV1[];
+    workspaceRefsServerId?: string;
+    viewerAccountId?: string;
+    sessionProjectKeyResolver?: ReturnType<typeof createSessionProjectKeyResolverV1>;
     /**
      * Optional state snapshot used to resolve reachable machine targets when session metadata is stale
      * and to derive canonical workspace scope hints for grouped project headers.
@@ -105,12 +117,15 @@ function makeUnknownMachine(id: string): MachineDisplayRenderable {
 
 type ProjectGroup = {
     key: string;
+    projectKey?: QualifiedProjectKeyV1;
+    baseline?: WorkspaceRefV1 | null;
     /** The group title: the folder, or "Chats" for the machine's no-folder sessions. */
     displayPath: string;
     bucket: 'path' | 'managed';
     machine: MachineDisplayRenderable;
-    latestCreatedAt: number;
+    earliestCreatedAt: number;
     sessions: SessionListRenderableSession[];
+    workspacesBySessionId: Map<string, SessionFolderWorkspaceRefV1>;
 };
 
 type SessionListHeaderItem = Extract<SessionListViewItem, { type: 'header' }>;
@@ -186,10 +201,18 @@ function groupSessionsByProject(params: Readonly<{
     sessions: ReadonlyArray<SessionListRenderableSession>;
     machines: Record<string, MachineDisplayRenderable>;
     serverId: string | null;
+    workspaceRefs?: readonly WorkspaceRefV1[];
+    workspaceRefsServerId?: string;
+    viewerAccountId?: string;
+    sessionProjectKeyResolver?: ReturnType<typeof createSessionProjectKeyResolverV1>;
     sessionTargetState?: SessionMachineTargetState;
 }>): ProjectGroup[] {
     const groups = new Map<string, ProjectGroup>();
     const sessionTargetState = params.sessionTargetState;
+    const resolveProjectKey = params.sessionProjectKeyResolver
+        ?? createSessionProjectKeyResolverV1(params.workspaceRefs, workspaceRefResolutionContextV1());
+
+    const displayByProject = buildProjectGroupDisplayIndex(params.workspaceRefs ?? []);
 
     for (const session of params.sessions) {
         const sessionTargetDisplay = sessionTargetState
@@ -216,10 +239,24 @@ function groupSessionsByProject(params: Readonly<{
             machine?.metadata ?? null,
             displayPath,
         );
-        const key = sessionProjectGroupingIdentityKey(buildSessionProjectGroupingIdentity(
+        const census = admitProjectWorkspaceCensusForSubject({
+            subject: { kind: 'session', ownerAccountId: session.ownerAccountId, access: session.access, accessLevel: session.accessLevel },
+            rowServerId: params.serverId ?? '', censusServerId: params.workspaceRefsServerId,
+            viewerAccountId: params.viewerAccountId, workspaceRefs: params.workspaceRefs, sessionProjectKeyResolver: resolveProjectKey,
+        });
+        const resolution = census.sessionProjectKeyResolver
+            ? census.sessionProjectKeyResolver(session.metadata, params.serverId ?? '', session.projectKey)
+            : resolveSessionProjectKeyV1(session.metadata, params.serverId ?? '', undefined,
+                { ...workspaceRefResolutionContextV1(), projectKey: session.projectKey });
+        const project = resolution.kind === 'resolved' ? resolution.projectKey : undefined;
+        const key = project ? projectGroupIdentityKey(project) : sessionProjectGroupingIdentityKey(buildSessionProjectGroupingIdentity(
             params.serverId,
             groupingParts,
         ));
+        const projectDisplay = project ? displayByProject.get(key) : undefined;
+        const workspace = normalizeSessionFolderWorkspaceRef(groupingParts.bucket === 'managed'
+            ? { t: 'managedSessions', serverId: params.serverId, machineId: groupingParts.machineId }
+            : { t: 'workspaceScope', serverId: params.serverId, machineId: groupingParts.machineId, rootPath: groupingParts.pathKey });
 
         const existing = groups.get(key);
         if (!existing) {
@@ -228,25 +265,29 @@ function groupSessionsByProject(params: Readonly<{
                 : makeUnknownMachine('unknown');
             groups.set(key, {
                 key,
-                displayPath: groupingParts.bucket === 'managed'
+                ...(project ? { projectKey: project, baseline: projectDisplay?.baseline ?? null } : {}),
+                displayPath: project ? projectDisplay?.title ?? t('common.loading') : groupingParts.bucket === 'managed'
                     ? t('session.folderless.chats')
                     : groupingParts.pathKey ? formatSessionPath(groupingParts.pathKey, groupingParts.homeDir ?? undefined) : '',
-                bucket: groupingParts.bucket,
-                machine: displayMachine,
-                latestCreatedAt: session.createdAt,
+                bucket: project ? 'path' : groupingParts.bucket,
+                machine: project ? projectDisplay?.baseline
+                    ? params.machines[projectDisplay.baseline.machineId] ?? makeUnknownMachine(projectDisplay.baseline.machineId)
+                    : makeUnknownMachine('unknown') : displayMachine,
+                earliestCreatedAt: session.createdAt,
                 sessions: [session],
+                workspacesBySessionId: new Map(workspace ? [[session.id, workspace]] : []),
             });
         } else {
             existing.sessions.push(session);
-            existing.latestCreatedAt = Math.max(existing.latestCreatedAt, session.createdAt);
+            existing.earliestCreatedAt = Math.min(existing.earliestCreatedAt, session.createdAt);
+            if (workspace) existing.workspacesBySessionId.set(session.id, workspace);
         }
     }
 
     const sortedGroups = Array.from(groups.values());
     if (sortedGroups.length > 1) {
         sortedGroups.sort((a, b) => {
-            if (b.latestCreatedAt !== a.latestCreatedAt) return b.latestCreatedAt - a.latestCreatedAt;
-            if (a.displayPath !== b.displayPath) return a.displayPath.localeCompare(b.displayPath);
+            if (a.earliestCreatedAt !== b.earliestCreatedAt) return a.earliestCreatedAt - b.earliestCreatedAt;
             return a.key.localeCompare(b.key);
         });
     }
@@ -282,7 +323,8 @@ function pushProjectGroupsToList(params: Readonly<{
     for (const group of params.groups) {
         const hasGroupHeader = Boolean(group.displayPath);
         const groupKey = group.key;
-        const workspaceKey = group.key;
+        const fallbackIdentity = readSessionWorkspaceFallbackIdentity(group.key);
+        const workspaceKey = fallbackIdentity ? buildSessionWorkspaceFallbackOrderKey(fallbackIdentity) : group.key;
 
         const variant: 'default' | 'no-path' = hasGroupHeader ? 'no-path' : 'default';
         const workspace = resolveFolderWorkspaceForProjectGroup({ group, machines: params.machines,
@@ -296,6 +338,7 @@ function pushProjectGroupsToList(params: Readonly<{
                 headerKind: 'project',
                 groupKey,
                 workspaceKey,
+                ...(group.projectKey ? { projectKey: group.projectKey } : {}),
                 seedSessionId: group.sessions[0]?.id ?? null,
                 workspaceScopeHint: resolveWorkspaceScopeHintForGroup({
                     group,
@@ -309,11 +352,19 @@ function pushProjectGroupsToList(params: Readonly<{
                 subtitle: machineNames.get(group.machine.id) ?? getMachineDisplayName(group.machine),
             },
             sessions: group.sessions,
-            workspacesBySessionId: new Map(workspace ? group.sessions.map(session => [session.id, workspace]) : []),
+            workspacesBySessionId: group.workspacesBySessionId,
+            fallbackGroupDisplay: resolveFallbackGroupDisplay(group),
             variant,
             serverScopeMeta: params.serverScopeMeta,
         });
     }
+}
+
+function resolveFallbackGroupDisplay(group: ProjectGroup): SessionListFallbackGroupDisplay | undefined {
+    if (group.projectKey || !group.displayPath) return undefined;
+    return { groupKey: group.key, title: resolveWorkspaceDisplayPresentation({
+        scope: null, workspaceRefs: [], fallbackPathLabel: group.displayPath,
+    }).displayTitle };
 }
 
 function resolveWorkspaceScopeHintForGroup(params: Readonly<{
@@ -323,6 +374,10 @@ function resolveWorkspaceScopeHintForGroup(params: Readonly<{
     sessionTargetState?: WorkspaceTargetForSessionState;
 }>): SessionListHeaderItem['workspaceScopeHint'] {
     const serverId = normalizeTrimmedString(params.serverId);
+    if (params.group.projectKey) {
+        const baseline = params.group.baseline;
+        return baseline ? { serverId: baseline.serverId, machineId: baseline.machineId, rootPath: baseline.rootPath } : null;
+    }
     // Chats are not a workspace: a private folder never becomes a project or a scope.
     if (!serverId || params.group.bucket === 'managed') {
         return null;
@@ -389,6 +444,9 @@ function pushSessionGroupEntriesToList(params: Readonly<{
     header: Omit<SessionListHeaderItem, 'type'>;
     sessions: ReadonlyArray<SessionListRenderableSession>;
     workspacesBySessionId: ReadonlyMap<string, SessionFolderWorkspaceRefV1>;
+    projectKeysBySessionId?: ReadonlyMap<string, QualifiedProjectKeyV1>;
+    fallbackGroupDisplay?: SessionListFallbackGroupDisplay;
+    fallbackGroupDisplaysBySessionId?: ReadonlyMap<string, SessionListFallbackGroupDisplay>;
     section: SessionListSectionScope;
     groupKind: SessionListGroupSessionKind;
     serverScopeMeta: ServerScopeMeta;
@@ -404,6 +462,10 @@ function pushSessionGroupEntriesToList(params: Readonly<{
         params.listData.push({
             type: 'session',
             session,
+            ...((params.fallbackGroupDisplay ?? params.fallbackGroupDisplaysBySessionId?.get(session.id))
+                ? { fallbackGroupDisplay: params.fallbackGroupDisplay ?? params.fallbackGroupDisplaysBySessionId?.get(session.id) } : {}),
+            ...((params.header.projectKey ?? params.projectKeysBySessionId?.get(session.id))
+                ? { projectKey: params.header.projectKey ?? params.projectKeysBySessionId?.get(session.id) } : {}),
             ...(params.workspacesBySessionId.has(session.id) ? { workspace: params.workspacesBySessionId.get(session.id) } : {}),
             section: resolveSectionForSession(params.section, session),
             groupKey: params.header.groupKey,
@@ -441,6 +503,10 @@ function pushSessionSectionToList(params: Readonly<{
     projectServerId: string | null;
     serverScopeMeta: ServerScopeMeta;
     sessionTargetState?: SessionMachineTargetState;
+    workspaceRefs?: readonly WorkspaceRefV1[];
+    workspaceRefsServerId?: string;
+    viewerAccountId?: string;
+    sessionProjectKeyResolver?: ReturnType<typeof createSessionProjectKeyResolverV1>;
 }>): void {
     if (params.sessions.length === 0) {
         return;
@@ -459,7 +525,9 @@ function pushSessionSectionToList(params: Readonly<{
     });
 
     const projectGroups = groupSessionsByProject({ sessions: params.sessions, machines: params.machines,
-        serverId: params.projectServerId, sessionTargetState: params.sessionTargetState });
+        serverId: params.projectServerId, sessionTargetState: params.sessionTargetState, workspaceRefs: params.workspaceRefs,
+        workspaceRefsServerId: params.workspaceRefsServerId, viewerAccountId: params.viewerAccountId,
+        sessionProjectKeyResolver: params.sessionProjectKeyResolver });
     if (params.grouping === 'project') {
         pushProjectGroupsToList({
             listData: params.listData,
@@ -473,10 +541,13 @@ function pushSessionSectionToList(params: Readonly<{
     }
 
     const workspacesBySessionId = new Map<string, SessionFolderWorkspaceRefV1>();
+    const projectKeysBySessionId = new Map<string, QualifiedProjectKeyV1>();
+    const fallbackGroupDisplaysBySessionId = new Map<string, SessionListFallbackGroupDisplay>();
     for (const group of projectGroups) {
-        const workspace = resolveFolderWorkspaceForProjectGroup({ group, machines: params.machines,
-            serverId: params.serverScopeMeta.serverId, sessionTargetState: params.sessionTargetState });
-        if (workspace) for (const session of group.sessions) workspacesBySessionId.set(session.id, workspace);
+        for (const [id, workspace] of group.workspacesBySessionId) workspacesBySessionId.set(id, workspace);
+        if (group.projectKey) for (const session of group.sessions) projectKeysBySessionId.set(session.id, group.projectKey);
+        const fallbackDisplay = resolveFallbackGroupDisplay(group);
+        if (fallbackDisplay) for (const session of group.sessions) fallbackGroupDisplaysBySessionId.set(session.id, fallbackDisplay);
     }
     const dateGroupedSessions = sortSessionListRenderableSessionsNewestUpdatedFirstIfNeeded([...params.sessions]);
     for (const group of buildSessionListDateGroups({
@@ -495,6 +566,8 @@ function pushSessionSectionToList(params: Readonly<{
             },
             sessions: group.items,
             workspacesBySessionId,
+            projectKeysBySessionId,
+            fallbackGroupDisplaysBySessionId,
             serverScopeMeta: params.serverScopeMeta,
         });
     }
@@ -514,9 +587,7 @@ export function buildSessionListViewData(
             serverName: normalizedServerScope.serverName ?? undefined,
         }
         : {};
-    let activeSessions: SessionListRenderableSession[] | null = null;
-    let inactiveSessions: SessionListRenderableSession[] | null = null;
-    let visibleSessionCount = 0;
+    const visibleSessions: SessionListRenderableSession[] = [];
 
     for (const sessionIdRaw in sessions) {
         if (!Object.prototype.hasOwnProperty.call(sessions, sessionIdRaw)) {
@@ -528,74 +599,32 @@ export function buildSessionListViewData(
         if (!isUserFacingSession(session)) {
             continue;
         }
-        visibleSessionCount += 1;
-        if (session.active) {
-            activeSessions ??= [];
-            activeSessions.push(session);
-        } else {
-            inactiveSessions ??= [];
-            inactiveSessions.push(session);
-        }
+        visibleSessions.push(session);
     }
 
-    if (visibleSessionCount === 0) {
+    if (visibleSessions.length === 0) {
         return EMPTY_SESSION_LIST_VIEW_DATA;
     }
-
-    activeSessions ??= [];
-    inactiveSessions ??= [];
-
-    sortSessionListRenderableSessionsNewestFirstIfNeeded(activeSessions);
-    sortSessionListRenderableSessionsNewestFirstIfNeeded(inactiveSessions);
 
     const listData: SessionListViewItem[] = [];
 
     const serverKey = normalizeSessionListKeyParts(normalizedServerScope?.serverId).serverKey;
-    const groupingModes = resolveSessionListGroupingModes({
-        activeGroupingV1: options.activeGroupingV1,
-        inactiveGroupingV1: options.inactiveGroupingV1,
-        sectionModeV1: options.sectionModeV1,
-    });
-
-    if (groupingModes.sectionMode === 'single') {
-        const sessions = [...activeSessions, ...inactiveSessions];
-        sortSessionListRenderableSessionsNewestFirstIfNeeded(sessions);
-        pushSessionSectionToList({
-            listData,
-            sessions,
-            section: 'sessions',
-            grouping: groupingModes.activeGrouping,
-            machines,
-            serverKey,
-            projectServerId: normalizedServerScope?.serverId ?? null,
-            serverScopeMeta,
-            sessionTargetState: options.sessionTargetState,
-        });
-        return listData.length === 0 ? EMPTY_SESSION_LIST_VIEW_DATA : listData;
-    }
-
+    const grouping = resolveSessionListGroupingMode({ layoutV1: options.layoutV1 });
+    sortSessionListRenderableSessionsNewestFirstIfNeeded(visibleSessions);
     pushSessionSectionToList({
         listData,
-        sessions: activeSessions,
-        section: 'active',
-        grouping: groupingModes.activeGrouping,
+        sessions: visibleSessions,
+        section: 'sessions',
+        grouping,
         machines,
         serverKey,
         projectServerId: normalizedServerScope?.serverId ?? null,
         serverScopeMeta,
         sessionTargetState: options.sessionTargetState,
-    });
-
-    pushSessionSectionToList({
-        listData,
-        sessions: inactiveSessions,
-        section: 'inactive',
-        grouping: groupingModes.inactiveGrouping,
-        machines,
-        serverKey,
-        projectServerId: normalizedServerScope?.serverId ?? null,
-        serverScopeMeta,
-        sessionTargetState: options.sessionTargetState,
+        workspaceRefs: options.workspaceRefs,
+        workspaceRefsServerId: options.workspaceRefsServerId,
+        viewerAccountId: options.viewerAccountId,
+        sessionProjectKeyResolver: options.sessionProjectKeyResolver,
     });
 
     return listData.length === 0 ? EMPTY_SESSION_LIST_VIEW_DATA : listData;

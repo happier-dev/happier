@@ -50,7 +50,7 @@ export const WorkflowsDestinationIndex = React.memo(function WorkflowsDestinatio
     const close = () => router.setParams({ authoringSessionId: undefined, authoringServerId: undefined });
     const content = !columnVisible && (access.kind === 'workflows' || access.kind === 'triggersOnly')
         ? <WorkflowsColumn surface="page" {...(access.kind === 'workflows'
-            ? { definitionsContent: <WorkflowsLibraryHome includeAccountTriggers /> } : {})} />
+            ? { definitionsContent: <WorkflowsLibraryHome /> } : {})} />
         : <WorkflowsGate surface="destination"><WorkflowsLibraryHome /></WorkflowsGate>;
     const main = <>{params.automationUnavailable === '1' ? <SurfaceStateCard testID="retired-automation-unavailable"
         size="line" kind="unavailable" title={t('workflows.triggers.legacy.notAvailable')} /> : null}

@@ -24,7 +24,6 @@ export function resolveSessionListShellFlags(params: Readonly<{
     selectionEnabled: boolean;
     selectionPresentation: ServerSelectionPresentation;
     isTablet: boolean;
-    sessionListOrderingModeV1: 'custom' | 'created' | 'updated';
     sessionListLayoutChoice: SessionListLayoutChoice;
     usesProjectGrouping: boolean;
     usesFolderTreePresentation: boolean;
@@ -35,7 +34,6 @@ export function resolveSessionListShellFlags(params: Readonly<{
         params.selectionEnabled ? '1' : '0',
         params.selectionPresentation,
         params.isTablet ? '1' : '0',
-        params.sessionListOrderingModeV1,
         params.sessionListLayoutChoice,
         params.usesProjectGrouping ? '1' : '0',
         params.usesFolderTreePresentation ? '1' : '0',
@@ -47,7 +45,7 @@ export function resolveSessionListShellFlags(params: Readonly<{
     }
     const selectable = params.isTablet;
     const canReorderSessions = params.usesProjectGrouping
-        && params.sessionListOrderingModeV1 === 'custom';
+        && params.sessionListLayoutChoice === 'projects';
     const canMoveSessionRowsBetweenFolders = params.usesFolderTreePresentation
         && params.hasAnySessionFolderInAccount;
     const canDragSessionRows = canReorderSessions || canMoveSessionRowsBetweenFolders;

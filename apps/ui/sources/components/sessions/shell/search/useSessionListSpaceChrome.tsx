@@ -24,7 +24,7 @@ import {
   resolveSessionListBaseConditionFields,
 } from './sessionListConditionFields';
 import { toStoredSessionListFilter } from './storedSessionListFilter';
-import { useSessionListFilterProjectOptions } from './useSessionListFilterProjectOptions';
+import { useProjectPickerOptions } from '@/components/projects/useProjectPickerOptions';
 import { buildSessionListFilterSectionOptions } from './useSessionListFilterLocalOptions';
 import { useSessionListSpaceNavigation } from './useSessionListSpaceNavigation';
 import type { SessionListViewFilterController } from './useSessionListViewFilterController';
@@ -47,7 +47,7 @@ export function useSessionListConditionTokens(
   >,
   baseFilters: SessionListViewFilterController['filters'],
 ): readonly SessionListConditionToken[] {
-  const projects = useSessionListFilterProjectOptions();
+  const projects = useProjectPickerOptions();
   return React.useMemo(() => {
     const labels = buildSessionListFilterEditorLabels();
     const baseIncludeInactive = baseFilters.includeInactive ?? true;
@@ -160,7 +160,7 @@ export function useSessionListSpaceChrome(
     testIDPrefix: 'session-list-space',
     serverId: controller.spaceSettingsScope?.serverId ?? null,
     spaces: controller.spaces,
-    selectedSpace: controller.selectedSpace,
+    selectedSpace: controller.activeSpace,
     currentFilter: storedFilter,
     suggestion,
     summary,
@@ -201,7 +201,7 @@ export function useSessionListSpaceChrome(
     [controller.spaces, shortcutLabels],
   );
   const strip = React.useMemo(() =>
-    controller.fixedShow === 'runs' || !controller.spacesReady ? null : (
+    controller.fixedShow === 'runs' || !controller.spacesEnabled ? null : (
       <CollectionSpacesStrip
         testIDPrefix="session-list-spaces"
         accessibilityLabel={t('sessionsList.spacesTitle')}
@@ -214,7 +214,7 @@ export function useSessionListSpaceChrome(
         onAdd={openSaveAs}
         reorder={stripReorder}
       />
-    ), [controller.fixedShow, controller.spacesReady, controller.selectedSpaceId, stripItems, navigation, openSaveAs, stripReorder]);
+    ), [controller.fixedShow, controller.spacesEnabled, controller.selectedSpaceId, stripItems, navigation, openSaveAs, stripReorder]);
 
   const conditionTokens = React.useMemo(() => tokens.map((token) => ({
     id: token.fieldId,
@@ -234,13 +234,13 @@ export function useSessionListSpaceChrome(
   const selectedIndex = controller.spaces.findIndex((space) => space.id === controller.selectedSpaceId);
   const spaceCount = controller.spaces.length;
   const selectRelative = navigation.selectRelative;
-  const spaceSwipe = React.useMemo(() => controller.fixedShow === 'runs' || !controller.spacesReady ? undefined : {
+  const spaceSwipe = React.useMemo(() => controller.fixedShow === 'runs' || !controller.spacesEnabled ? undefined : {
     canPrevious: selectedIndex > 0,
     canNext: selectedIndex >= 0 && selectedIndex < spaceCount - 1,
     previousLabel: selectedIndex > 0 ? controller.spaces[selectedIndex - 1]?.name ?? null : null,
     nextLabel: selectedIndex >= 0 ? controller.spaces[selectedIndex + 1]?.name ?? null : null,
     onCommit: (direction: -1 | 1) => { selectRelative(direction); },
-  }, [controller.fixedShow, controller.spaces, controller.spacesReady, selectRelative, selectedIndex, spaceCount]);
+  }, [controller.fixedShow, controller.spaces, controller.spacesEnabled, selectRelative, selectedIndex, spaceCount]);
 
   return React.useMemo(() => ({
     navigation,

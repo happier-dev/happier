@@ -11,6 +11,7 @@ type CollectionSpaceDraftState<K extends CollectionEntityKindV1> = Readonly<{
     savedFilter: CollectionFilterMapV1[K];
     selectedSpaceId: string;
     bound: boolean;
+    spacesEnabled: boolean;
     searchQuery: string;
 }>;
 
@@ -60,17 +61,19 @@ export function useCollectionSpaceFilter<K extends CollectionEntityKindV1>(entit
         defaultName: input.defaultName, defaultFilter });
     const initial = (): CollectionSpaceDraftState<K> => ({ lifetime, filters: binding.savedSpace?.filter ?? defaultFilter,
         savedFilter: binding.savedSpace?.filter ?? defaultFilter, selectedSpaceId: binding.selectedSpaceId,
-        bound: binding.spacesReady && binding.selectedSpace !== null, searchQuery: '' });
+        bound: binding.spacesReady, spacesEnabled: binding.spacesEnabled, searchQuery: '' });
     const [localState, setLocalState] = React.useState(initial);
     const sharedState = React.useSyncExternalStore(draft?.subscribe ?? subscribeNothing, draft?.get ?? readNothing, draft?.get ?? readNothing);
     const state = draft ? sharedState ?? initial() : localState;
     let current = state;
-    const selected = binding.spacesReady ? binding.selectedSpace : null;
-    if (state.lifetime !== lifetime || selected && (!state.bound || selected.id !== state.selectedSpaceId
+    const selected = binding.activeSpace;
+    const enablementChanged = binding.spacesReady && state.spacesEnabled !== binding.spacesEnabled;
+    if (state.lifetime !== lifetime || binding.spacesReady && !state.bound || enablementChanged || selected && (selected.id !== state.selectedSpaceId
         || !sameStrictJsonValue(selected.filter, state.savedFilter))) {
-        const changedSpace = state.lifetime !== lifetime || !state.bound || selected?.id !== state.selectedSpaceId;
+        const changedSpace = state.lifetime !== lifetime || enablementChanged || !state.bound || selected?.id !== state.selectedSpaceId;
         const savedFilter = selected?.filter ?? defaultFilter;
-        current = { lifetime, savedFilter, selectedSpaceId: binding.selectedSpaceId, bound: selected !== null,
+        current = { lifetime, savedFilter, selectedSpaceId: binding.selectedSpaceId, bound: binding.spacesReady,
+            spacesEnabled: binding.spacesEnabled,
             filters: changedSpace || sameStrictJsonValue(state.filters, state.savedFilter) ? savedFilter : state.filters,
             searchQuery: changedSpace ? '' : state.searchQuery };
         if (!draft) setLocalState(current);

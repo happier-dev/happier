@@ -75,16 +75,14 @@ describe('settings', () => {
             expect(settingsParse({})).toEqual(parsedSettingsDefaults);
         });
 
-        it('defaults session list presentation to narrow agent logos with activity-and-attention active color', () => {
+        it('defaults session list presentation to narrow automatic marks with mirrored attention', () => {
             const settings = settingsParse({});
             expect((settings as any).sessionListDensity).toBe('narrow');
-            expect((settings as any).sessionListIdentityDisplay).toBe('agentLogo');
-            expect((settings as any).sessionListOrderingModeV1).toBe('custom');
-            expect((settings as any).sessionListFolderSortModeV1).toBe('foldersFirst');
-            expect((settings as any).sessionListAttentionPromotionModeV1).toBe('off');
-            expect((settings as any).sessionListAttentionStandingDefaultV1).toBe(false);
-            expect((settings as any).sessionListWorkingPlacementModeV1).toBe('off');
-            expect((settings as any).sessionListSeparateBackgroundWorkV1).toBe(false);
+            expect(settings.sessionListIdentityDisplay).toBe('auto');
+            expect(settings.sessionListLayoutV1).toBe('projects');
+            expect(settings.sessionListAttentionPlacementV1).toBe('both');
+            expect(settings.sessionListRowContextV1).toBe(true);
+            expect(settings.sessionListAttentionStandingDefaultV1).toBe(false);
             expect(settings).not.toHaveProperty('compactSessionView');
             expect(settings).not.toHaveProperty('compactSessionViewMinimal');
             expect((settings as any).sessionListActiveColorModeV1).toBe('activityAndAttention');
@@ -142,7 +140,7 @@ describe('settings', () => {
         it('includes session folder preferences by default without exposing migrated folder definitions', () => {
             const settings = settingsParse({});
             expect(settings).not.toHaveProperty('sessionFoldersV1');
-            expect((settings as any).sessionFolderViewModeV1).toBe('off');
+            expect(settings).not.toHaveProperty('sessionFolderViewModeV1');
         });
 
         it('excludes transferred promptRegistrySourcesV1 from the effective preference facade', () => {
@@ -399,26 +397,26 @@ describe('settings', () => {
             } as any).sessionListDensity).toBe('detailed');
         });
 
-        it('migrates missing session identity display to avatar for non-narrow session lists', () => {
+        it('defaults a missing identity to Auto independently of density', () => {
             expect(settingsParse({
                 compactSessionView: true,
                 compactSessionViewMinimal: false,
-            } as any).sessionListIdentityDisplay).toBe('avatar');
+            } as any).sessionListIdentityDisplay).toBe('auto');
 
             expect(settingsParse({
                 compactSessionView: false,
-            } as any).sessionListIdentityDisplay).toBe('avatar');
+            } as any).sessionListIdentityDisplay).toBe('auto');
 
             expect(settingsParse({
                 sessionListDensity: 'cozy',
-            } as any).sessionListIdentityDisplay).toBe('avatar');
+            } as any).sessionListIdentityDisplay).toBe('auto');
         });
 
         it('preserves narrow and explicit session identity display during identity migration', () => {
             expect(settingsParse({
                 compactSessionView: true,
                 compactSessionViewMinimal: true,
-            } as any).sessionListIdentityDisplay).toBe('agentLogo');
+            } as any).sessionListIdentityDisplay).toBe('auto');
 
             expect(settingsParse({
                 sessionListDensity: 'detailed',
@@ -783,35 +781,11 @@ describe('settings', () => {
             expect((parsed as any).sessionBusySteerSendPolicy).toBe('server_pending');
         });
 
-        it('migrates legacy groupInactiveSessionsByProject into sessionListInactiveGroupingV1 when missing', () => {
-            const parsed = settingsParse({
-                groupInactiveSessionsByProject: true,
-            } as any);
-
-            expect((parsed as any).sessionListInactiveGroupingV1).toBe('project');
-        });
-
-        it('keeps the canonical inactive grouping when the legacy Boolean contradicts it', () => {
-            const parsed = settingsParse({
-                groupInactiveSessionsByProject: true,
-                sessionListInactiveGroupingV1: 'date',
-            } as any);
-
-            expect((parsed as any).sessionListInactiveGroupingV1).toBe('date');
-        });
-
-        it('defaults the session list section mode to the single Projects layout', () => {
-            const parsed = settingsParse({});
-
-            expect((parsed as any).sessionListSectionModeV1).toBe('single');
-        });
-
-        it('parses the unified session list section mode', () => {
-            const parsed = settingsParse({
-                sessionListSectionModeV1: 'single',
-            } as any);
-
-            expect((parsed as any).sessionListSectionModeV1).toBe('single');
+        it('translates predecessor layouts at Protocol ingress and removes old runtime keys', () => {
+            const parsed = settingsParse({ sessionListSectionModeV1: 'single', sessionListActiveGroupingV1: 'date', groupInactiveSessionsByProject: true });
+            expect(parsed.sessionListLayoutV1).toBe('recent_activity');
+            expect(parsed).not.toHaveProperty('sessionListSectionModeV1');
+            expect(parsed).not.toHaveProperty('groupInactiveSessionsByProject');
         });
 
         it('parses the session list active color mode setting', () => {
@@ -822,15 +796,9 @@ describe('settings', () => {
             expect((parsed as any).sessionListActiveColorModeV1).toBe('attentionOnly');
         });
 
-        it('parses the session list attention promotion mode setting', () => {
-            const parsed = settingsParse({
-                sessionListAttentionPromotionModeV1: 'withinGroups',
-            } as any);
-
-            expect((parsed as any).sessionListAttentionPromotionModeV1).toBe('withinGroups');
-            expect((settingsParse({
-                sessionListAttentionPromotionModeV1: 'invalid',
-            } as any) as any).sessionListAttentionPromotionModeV1).toBe('off');
+        it('preserves canonical placement over authored predecessor pairs', () => {
+            expect(settingsParse({ sessionListAttentionPlacementV1: 'inPlace', sessionListAttentionPromotionModeV1: 'global', sessionListWorkingPlacementModeV1: 'global' }).sessionListAttentionPlacementV1).toBe('inPlace');
+            expect(settingsParse({ sessionListAttentionPromotionModeV1: 'global', sessionListWorkingPlacementModeV1: 'global' }).sessionListAttentionPlacementV1).toBe('top');
         });
 
         it('parses the session list attention standing default setting', () => {
@@ -842,25 +810,6 @@ describe('settings', () => {
             } as any) as any).sessionListAttentionStandingDefaultV1).toBe(false);
         });
 
-        it('parses the session list working placement mode setting', () => {
-            const parsed = settingsParse({
-                sessionListWorkingPlacementModeV1: 'global',
-            } as any);
-
-            expect((parsed as any).sessionListWorkingPlacementModeV1).toBe('global');
-            expect((settingsParse({
-                sessionListWorkingPlacementModeV1: 'invalid',
-            } as any) as any).sessionListWorkingPlacementModeV1).toBe('off');
-        });
-
-        it('parses the session list separate background work setting', () => {
-            expect((settingsParse({
-                sessionListSeparateBackgroundWorkV1: true,
-            } as any) as any).sessionListSeparateBackgroundWorkV1).toBe(true);
-            expect((settingsParse({
-                sessionListSeparateBackgroundWorkV1: 'true',
-            } as any) as any).sessionListSeparateBackgroundWorkV1).toBe(false);
-        });
 
         it('parses new-session persistence defaults', () => {
             const codexTargetKey = resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'codex' });
@@ -1328,8 +1277,9 @@ describe('settings', () => {
             expect(settingsDefaults).not.toHaveProperty('pinnedSessionKeysV1');
             expect(settingsDefaults).not.toHaveProperty('sessionFoldersV1');
             expect(settingsDefaults).not.toHaveProperty('sessionListGroupOrderV1');
-            expect((settingsDefaults as any).sessionListOrderingModeV1).toBe('custom');
-            expect((settingsDefaults as any).sessionListFolderSortModeV1).toBe('foldersFirst');
+            expect(settingsDefaults.sessionListLayoutV1).toBe('projects');
+            expect(settingsDefaults).not.toHaveProperty('sessionListOrderingModeV1');
+            expect(settingsDefaults).not.toHaveProperty('sessionListFolderSortModeV1');
             expect((settingsDefaults as any).notificationsSettingsV1).toEqual({
                 v: 1,
                 pushEnabled: true,

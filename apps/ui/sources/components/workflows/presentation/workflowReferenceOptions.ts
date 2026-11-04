@@ -16,6 +16,17 @@ import { useMachineReachabilityRevision } from '@/sync/domains/machines/reachabi
 import { t } from '@/text';
 import { formatWorkflowDefinitionContentUnavailableReason, formatWorkflowDefinitionLibraryTitle } from './workflowProblemPresentation';
 import { areServerAccountScopesEqual, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { useWorkflowAccountLifetime } from '../workflowAccountScope';
+import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
+import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
+import { isArtifactOnlyHomeAccountChange, subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+
+function workflowReferenceHeaderTitle(header: DecryptedArtifact['rawHeader'] | null | undefined): string | null {
+    if (header?.kind !== 'workflow-definition.v1') return null;
+    const metadata = WorkflowDefinitionArtifactHeaderV1ReadSchema.shape.metadata.safeParse(header.metadata);
+    return formatWorkflowDefinitionLibraryTitle({ metadata: metadata.success ? metadata.data : null });
+}
 
 /** A workflow a Run a workflow step can name, as the picker and the block both present it. */
 export type WorkflowReferenceOption = Readonly<{
@@ -34,11 +45,13 @@ export function listBuiltinWorkflowReferenceOptions(): readonly WorkflowReferenc
 
 /**
  * Names for already-admitted references, not an options/catalog demand. The trigger reader has
- * resolved its targets before publishing rows; saved headers and plugin contributions are already
- * in their canonical stores. Missing/revoked/locked facts stay missing rather than starting reads.
+ * resolved its targets before publishing rows. Active-Account headers and plugin contributions use
+ * admitted stores; addressed saved references read only their exact headers without listing options.
  */
-export function useWorkflowReferenceTitles(refs: readonly string[], enabled = true): (ref: string) => string | null {
-    const lifetime = useActiveServerAccountScopeLifetime();
+export function useWorkflowReferenceTitles(refs: readonly string[], enabled = true, accountLifetime?: ServerAccountScopeLifetime | null): (ref: string) => string | null {
+    accountLifetime = useWorkflowAccountLifetime(accountLifetime);
+    const activeLifetime = useActiveServerAccountScopeLifetime();
+    const lifetime = accountLifetime === undefined ? activeLifetime : accountLifetime;
     const language = useSetting('preferredLanguage');
     const requested = React.useMemo(() => refs.map(ref => ({ ref, parsed: parseWorkflowDefinitionRefV1(ref) })), [refs]);
     const artifactIds = React.useMemo(() => requested.flatMap(({ parsed }) => parsed?.kind === 'artifact' ? [parsed.artifactId] : []), [requested]);
@@ -49,8 +62,52 @@ export function useWorkflowReferenceTitles(refs: readonly string[], enabled = tr
         return enabled && lifetime?.isCurrent() && areAccountSettingsScopesEqual(state.settingsScope, lifetime.scope)
             && artifact?.isDecrypted && artifact.ownerAccountId && artifact.access ? artifact.rawHeader ?? null : null;
     })));
+    const addressedReadEnabled = enabled && artifactIds.length > 0 && lifetime?.isCurrent() === true
+        && !areServerAccountScopesEqual(activeLifetime?.scope, lifetime.scope);
+    const artifactKey = JSON.stringify(artifactIds);
+    const [addressedRead, setAddressedRead] = React.useState<Readonly<{
+        lifetime: ServerAccountScopeLifetime; artifactKey: string; titles: readonly (string | null)[];
+    }> | null>(null);
+    React.useEffect(() => {
+        if (!addressedReadEnabled || !lifetime) return;
+        const ids = JSON.parse(artifactKey) as string[];
+        const requestedIds = new Set(ids);
+        let controller: AbortController | null = null;
+        const refresh = () => {
+            controller?.abort();
+            const attempt = new AbortController();
+            controller = attempt;
+            void (async () => {
+                const account = await captureLazyActionAccountContext(lifetime.scope.serverId, attempt.signal);
+                try {
+                    if (!lifetime.isCurrent() || account.accountId !== lifetime.scope.accountId) return;
+                    const rows = await account.readArtifactHeaders(ids, { signal: attempt.signal });
+                    if (attempt.signal.aborted || !lifetime.isCurrent()) return;
+                    const titles = rows.map(row => {
+                        const artifact = row.status === 'fulfilled' ? row.value : null;
+                        return workflowReferenceHeaderTitle(artifact?.isDecrypted && artifact.ownerAccountId && artifact.access
+                            ? artifact.rawHeader : null);
+                    });
+                    setAddressedRead(previous => previous?.lifetime === lifetime && previous.artifactKey === artifactKey
+                        && previous.titles.length === titles.length && titles.every((title, index) => title === previous.titles[index])
+                        ? previous : { lifetime, artifactKey, titles });
+                } finally { account.dispose(); }
+            })().catch(() => {});
+        };
+        const retirement = lifetime.onRetire(() => { controller?.abort(); setAddressedRead(null); });
+        const unsubscribe = subscribeHomeAccountChange(event => {
+            if (!areServerProfileIdentifiersEquivalent(event.serverId, lifetime.scope.serverId)
+                || event.workflowDefinitionsAffect === false) return;
+            if (isArtifactOnlyHomeAccountChange(event) && event.entityIds !== undefined
+                && !event.entityIds.some(id => requestedIds.has(id))) return;
+            refresh();
+        }, { serverIds: [lifetime.scope.serverId] });
+        refresh();
+        return () => { controller?.abort(); retirement.dispose(); unsubscribe(); };
+    }, [addressedReadEnabled, artifactKey, lifetime]);
+    const addressedTitles = addressedReadEnabled && addressedRead?.lifetime === lifetime
+        && addressedRead.artifactKey === artifactKey && lifetime?.isCurrent() ? addressedRead.titles : null;
     const machineInputs = useStore(useShallow(state => pluginsEnabled && lifetime?.isCurrent()
-        && areAccountSettingsScopesEqual(state.settingsScope, lifetime.scope)
         ? [state.machines, state.machineListByServerId, state.machineListStatusByServerId] as const : null));
     const reachabilityRevision = useMachineReachabilityRevision(pluginsEnabled);
     const pluginRefs = React.useMemo(() => new Set(requested.flatMap(({ ref, parsed }) => parsed?.kind === 'plugin' ? [ref] : [])), [requested]);
@@ -100,12 +157,8 @@ export function useWorkflowReferenceTitles(refs: readonly string[], enabled = tr
     const titles = React.useMemo(() => {
         const result = new Map(listBuiltinWorkflowReferenceOptions().map(option => [option.ref, option.title]));
         artifactIds.forEach((id, index) => {
-            const header = headers[index];
-            if (header?.kind !== 'workflow-definition.v1') return;
-            // Match the library's unavailable-content display contract: validated metadata remains
-            // useful even when the definition body or its revision cannot be opened.
-            const metadata = WorkflowDefinitionArtifactHeaderV1ReadSchema.shape.metadata.safeParse(header.metadata);
-            result.set(id, formatWorkflowDefinitionLibraryTitle({ metadata: metadata.success ? metadata.data : null }));
+            const title = addressedReadEnabled ? addressedTitles?.[index] ?? null : workflowReferenceHeaderTitle(headers[index]);
+            if (title !== null) result.set(id, title);
         });
         if (pluginsEnabled && lifetime?.isCurrent()) {
             [...pluginRefs].forEach((ref, index) => {
@@ -114,7 +167,7 @@ export function useWorkflowReferenceTitles(refs: readonly string[], enabled = tr
             });
         }
         return result;
-    }, [artifactIds, headers, language, lifetime, pluginTitles, pluginRefs, pluginsEnabled]);
+    }, [addressedReadEnabled, addressedTitles, artifactIds, headers, language, lifetime, pluginTitles, pluginRefs, pluginsEnabled]);
     return React.useCallback(ref => titles.get(ref) ?? null, [titles]);
 }
 

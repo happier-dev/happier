@@ -1,6 +1,7 @@
 import { defineSettingsPage } from '@/components/settings/catalog/settingDeclarations';
+import { sessionListDisclosureBinding } from './sessionListDisclosureBinding';
 
-import { sessionListLayoutStorageBinding, listChoiceStorage, responseOptionsStorage } from '@happier-dev/protocol/actions/settings/accountSettingBindings';
+import { responseOptionsStorage } from '@happier-dev/protocol/actions/settings/accountSettingBindings';
 
 /**
  * The Sessions page's searchable settings. Rows render their labels from these declarations. A row
@@ -27,57 +28,33 @@ export const SESSION_SETTINGS = defineSettingsPage({
         listOrganization: {
             titleKey: 'settingsSession.rootGroups.listOrganization.title',
             settings: {
-                listDensity: {},
-                ordering: {
-                    storage: listChoiceStorage('sessionListOrderingModeV1', 'ordering'),
-
-                },
-                folderView: { storage: listChoiceStorage('sessionFolderViewModeV1', 'folderDisplay') },
-                folderSort: {
-                    storage: listChoiceStorage('sessionListFolderSortModeV1', 'folderSort'),
-
-                },
-                layout: {
-
-                    storage: sessionListLayoutStorageBinding,
-                },
-                activeGrouping: {
-                    storage: listChoiceStorage('sessionListActiveGroupingV1', 'grouping:active'),
-
-                },
-                inactiveGrouping: {
-                    storage: listChoiceStorage('sessionListInactiveGroupingV1', 'grouping:inactive'),
-
-                },
-                hideInactive: {},
+                listDensity: { anchor: 'session.list.density' },
+                layout: { anchor: 'session.list.layout' },
+                attentionPromotion: { anchor: 'session.list.attentionPlacement' },
+                hideInactive: { anchor: 'session.list.hideInactive' },
+                collapsedGroups: { anchor: 'session.list.collapsedGroups', storage: sessionListDisclosureBinding },
                 rightPaneDefaultOpen: {},
             },
         },
         rowDetails: {
             titleKey: 'settingsSession.rootGroups.rowDetails.title',
             settings: {
-                tags: {},
-                identityDisplay: {},
+                tags: { anchor: 'session.list.tags' },
+                rowContext: { anchor: 'session.list.rowContext' },
+                statusWords: { anchor: 'session.list.statusWords' },
+                identityDisplay: { anchor: 'session.list.identity' },
                 headerIdentityDisplay: {},
-                activeColor: {},
-                workspacePathDisplay: {},
-                workspaceFavicons: {},
+                activeColor: { anchor: 'session.list.activeColor' },
+                workspaceFavicons: { anchor: 'session.list.workspaceFavicons' },
                 workspaceMachineSubtitles: {},
             },
         },
         activitySignals: {
             titleKey: 'settingsSession.rootGroups.activitySignals.title',
             settings: {
-                workingStatusAnimatedText: {},
-                attentionPromotion: {},
-                backgroundWorkAttention: {},
+                backgroundWorkAttention: { anchor: 'session.list.backgroundWorkAttention' },
                 reminderAutoClearOnOpen: {},
-                attentionStandingDefault: {},
-                workingPlacement: {
-                    storage: listChoiceStorage('sessionListWorkingPlacementModeV1', 'working'),
-
-                },
-                workingIndicator: {},
+                attentionStandingDefault: { anchor: 'session.list.attentionStandingDefault' },
             },
         },
         mobileLayout: {

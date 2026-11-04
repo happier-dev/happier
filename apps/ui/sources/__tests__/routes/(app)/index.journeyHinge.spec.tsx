@@ -695,8 +695,7 @@ describe('/ (welcome) journey hinge', () => {
         journeyRouteState.enabled = true;
         journeyRouteState.initialBeatId = 'S5';
         storage.getState().applySettingsLocal({
-            sessionListAttentionPromotionModeV1: 'withinGroups',
-            sessionListWorkingPlacementModeV1: 'withinGroups',
+            sessionListAttentionPlacementV1: 'inPlace',
         });
         isAuthenticated = false;
 
@@ -717,8 +716,7 @@ describe('/ (welcome) journey hinge', () => {
         expect(syncSingletonState.applySettings).not.toHaveBeenCalled();
         expect(applyLocalSettingsSpy).not.toHaveBeenCalled();
         expect(storage.getState().settings).toMatchObject({
-            sessionListAttentionPromotionModeV1: 'withinGroups',
-            sessionListWorkingPlacementModeV1: 'withinGroups',
+            sessionListAttentionPlacementV1: 'inPlace',
         });
         expect(setPendingSetupIntentMock).toHaveBeenCalledWith({
             branch: 'thisComputer',

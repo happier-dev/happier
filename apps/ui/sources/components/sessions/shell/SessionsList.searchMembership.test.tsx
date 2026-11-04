@@ -164,7 +164,6 @@ function buildPaneState(
         summary: { sessionsReady: true, sessionCount: 1 },
         visibleSessionListIndex: visibleIndex,
         hasHiddenInactiveSessions: false,
-        folderFocus: null,
         showLoading: false,
         showEmptyState: false,
         query: {

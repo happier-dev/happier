@@ -39,7 +39,7 @@ describe('Personalize choices', () => {
             toolTap: 'expand',
             listLayout: 'projects',
             listDensity: 'narrow',
-            attention: 'off',
+            attention: 'both',
             notifyNeedsYou: true,
             notifyFinished: true,
             notifyPreview: true,
@@ -53,9 +53,9 @@ describe('Personalize choices', () => {
         expect(resolvePersonalizeStepWrite('conversation', { ...choices, transcriptLayout: 'linear', thinking: 'inline_full' }, account, local).settings)
             .toEqual([{ anchor: 'transcript.layoutPicker', value: 'linear' }, { anchor: 'transcript.displayMode', value: 'inline_full' }]);
         expect(resolvePersonalizeStepWrite('work', { ...choices, listLayout: 'recent_activity', listDensity: 'cozy' }, account, local).settings)
-            .toEqual([{ anchor: 'session.layout', value: 'recent_activity' }, { anchor: 'session.listDensity', value: 'cozy' }]);
-        expect(resolvePersonalizeStepWrite('attention', { ...choices, attention: 'withinGroups' }, account, local).settings)
-            .toEqual([{ anchor: 'session.attentionPromotion', value: 'withinGroups' }]);
+            .toEqual([{ anchor: 'session.list.layout', value: 'recent_activity' }, { anchor: 'session.list.density', value: 'cozy' }]);
+        expect(resolvePersonalizeStepWrite('attention', { ...choices, attention: 'top' }, account, local).settings)
+            .toEqual([{ anchor: 'session.list.attentionPlacement', value: 'top' }]);
         expect(resolvePersonalizeStepWrite('tools', { ...choices, toolChrome: 'cards', toolTap: 'open' }, account, local).settings)
             .toEqual([{ anchor: 'transcript.timelineChrome', value: 'cards' }, { anchor: 'transcript.cardTapAction', value: 'open' }]);
 
@@ -95,7 +95,7 @@ describe('Starting styles', () => {
     });
 
     it('pre-fills only the conversation, tools and work choices and lists exactly what changes', () => {
-        const choices = { ...readPersonalizeChoices(account, local), theme: 'dark' as const, attention: 'global' as const, listDensity: 'cozy' as const };
+        const choices = { ...readPersonalizeChoices(account, local), theme: 'dark' as const, attention: 'top' as const, listDensity: 'cozy' as const };
         const detail = applyStartingStyle(choices, 'detail');
         expect(detail).toEqual({ ...choices, transcriptLayout: 'linear', thinking: 'inline_full', toolChrome: 'cards', toolDetail: 'full', listDensity: 'detailed' });
         expect(listStartingStyleChanges(choices, 'detail')).toEqual([

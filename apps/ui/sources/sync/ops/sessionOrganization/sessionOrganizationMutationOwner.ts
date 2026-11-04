@@ -4,6 +4,8 @@ import { readSessionBotV1 } from '@happier-dev/protocol/sessions/identity/sessio
 import { getStorage } from '@/sync/domains/state/storageStore';
 import { readSessionListRowForServerId } from '@/sync/domains/session/listing/sessionListRowStateLookup';
 import { HappyError } from '@/utils/errors/errors';
+import { parseToken } from '@/utils/auth/parseToken';
+import { requireActionSuccess } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import {
     areSessionFolderDefinitionsEqual,
     type SessionFolderV1,
@@ -22,7 +24,7 @@ import {
 import { deleteSessionFolder } from './deleteSessionFolder';
 import { deleteSessionLabel } from './deleteSessionLabel';
 import { reorderSessionOrganization } from './reorderSessionOrganization';
-import { setSessionFolderAssignment } from './setSessionFolderAssignment';
+import { sessionOrganizationActions } from './sessionOrganizationActions';
 import { setSessionPin } from './setSessionPin';
 import { setSessionTagLabels } from './setSessionTagLabels';
 import { upsertSessionFolder } from './upsertSessionFolder';
@@ -197,11 +199,44 @@ export async function writeSessionOrganizationFolderAssignment(params: Readonly<
     sessionId: string;
     folderId: string | null;
 }>): Promise<void> {
-    await setSessionFolderAssignment({
-        ...params.scope,
-        sessionId: params.sessionId,
-        folderId: params.folderId,
+    params.scope.assertCurrent?.();
+    const result = await sessionOrganizationActions.setSection(params.sessionId, params.folderId, {
+        serverId: params.scope.serverId,
+        expectedAccountId: parseToken(params.scope.credentials.token),
     });
+    params.scope.assertCurrent?.();
+    requireActionSuccess(result);
+}
+
+/** Creates, edits or removes a section definition on the scope's captured Home and Account. */
+export async function writeSessionSectionDefinition(params: Readonly<{
+    scope: SessionOrganizationMutationScope;
+    actionId: 'session.sections.create' | 'session.sections.update' | 'session.sections.delete';
+    input: Readonly<Record<string, unknown>>;
+}>): Promise<unknown> {
+    params.scope.assertCurrent?.();
+    const result = await sessionOrganizationActions.editSection(params.actionId, params.input, {
+        serverId: params.scope.serverId,
+        expectedAccountId: parseToken(params.scope.credentials.token),
+    });
+    params.scope.assertCurrent?.();
+    requireActionSuccess(result);
+    return result.result;
+}
+
+/** Archives every Session filed in the section, on the scope's captured Home and Account; returns the per-member result. */
+export async function archiveSessionSection(params: Readonly<{
+    scope: SessionOrganizationMutationScope;
+    sectionId: string;
+}>): Promise<unknown> {
+    params.scope.assertCurrent?.();
+    const result = await sessionOrganizationActions.archiveSection(params.sectionId, {
+        serverId: params.scope.serverId,
+        expectedAccountId: parseToken(params.scope.credentials.token),
+    });
+    params.scope.assertCurrent?.();
+    requireActionSuccess(result);
+    return result.result;
 }
 
 export async function writeSessionOrganizationGroupOrder(params: Readonly<{

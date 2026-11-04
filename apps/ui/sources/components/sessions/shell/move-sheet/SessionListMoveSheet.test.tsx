@@ -42,4 +42,22 @@ describe('SessionListMoveSheet runtime destinations', () => {
         expect(runtime.getSnapshot().outcome).toEqual({ status: 'applied' });
         await screen.unmount();
     });
+    it('limits Move to section to the list\'s own destinations, leaving pane placements out', async () => {
+        const runtime = createEntityDragDropRuntime();
+        const scope = { serverId: 'home', accountId: 'account' };
+        const item = { kind: 'session', scope, address: { serverId: 'home', sessionId: 'session' } } as const;
+        runtime.registerSource({ id: 'source', scope, getItem: () => item, isCurrent: () => true });
+        const allowed = () => ({ status: 'allowed' as const, effect: { actionId: 'session.section.set', input: {}, preview: { verb: 'Move', target: 'Section' } } });
+        runtime.registerTarget({ id: 'pane', scope, acceptedKinds: ['session'], getBounds: () => null,
+            listDestinations: () => [{ destination: { zone: 'center' }, label: 'Open here as a tab' }],
+            resolve: allowed, execute: async () => ({ status: 'applied' }) });
+        runtime.registerTarget({ id: 'session-list', scope, acceptedKinds: ['session'], getBounds: () => null,
+            listDestinations: () => [{ destination: { folderId: 'launch' }, label: 'Launch 0.3' }],
+            resolve: allowed, execute: async () => ({ status: 'applied' }) });
+        const screen = await renderScreen(<SessionListMoveSheet sourceLabel="Session" runtime={runtime} sourceId="source"
+            includeDestination={(entry) => entry.targetId === 'session-list'} onCancel={vi.fn()} />);
+        expect(screen.getTextContent()).toContain('Launch 0.3');
+        expect(screen.getTextContent()).not.toContain('Open here as a tab');
+        await screen.unmount();
+    });
 });

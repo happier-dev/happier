@@ -4,7 +4,7 @@ import {
     createSessionOwnerMetadataV1,
     projectSessionOwnerCompatibilityViewV1,
     projectSessionSharedMetadataV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 
 import { getSessionStorageKind } from './sessionStorageKind';
 

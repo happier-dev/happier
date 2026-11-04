@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-    SESSION_LIST_ROW_HEIGHT_COMPACT,
-    SESSION_LIST_ROW_HEIGHT_DEFAULT,
-    SESSION_LIST_ROW_HEIGHT_MINIMAL,
-    SESSION_LIST_ROW_HEIGHT_MINIMAL_NATIVE_PHONE,
-} from './sessionListRowHeights';
+import { HAPPIER_COLLECTION_ROW_METRICS } from '@happier-dev/plugin-ui/presentation';
+
+const SESSION_LIST_ROW_HEIGHT_DEFAULT = HAPPIER_COLLECTION_ROW_METRICS.height.detailed;
+const SESSION_LIST_ROW_HEIGHT_COMPACT = HAPPIER_COLLECTION_ROW_METRICS.height.comfortable;
+const SESSION_LIST_ROW_HEIGHT_MINIMAL = HAPPIER_COLLECTION_ROW_METRICS.height.compact;
+const SESSION_LIST_ROW_HEIGHT_MINIMAL_NATIVE_PHONE = HAPPIER_COLLECTION_ROW_METRICS.height.touchCompact;
 import { resolveSessionListDensityViewState } from './resolveSessionListDensityViewState';
-import { SessionListRowSubtitle, SessionListRowTitle } from './row/SessionListRowPresentation';
+import { CollectionRowLine as SessionListRowSubtitle, CollectionRowTitle as SessionListRowTitle } from '@/components/ui/lists/collection/CollectionRowContent';
 
 describe('resolveSessionListDensityViewState', () => {
     it('uses the default row height and expanded flags for detailed or unknown density values', () => {
@@ -99,12 +99,12 @@ describe('resolveSessionListDensityViewState', () => {
 
     it('allows long localized row title and context lines to reflow at large text scale', () => {
         const title = SessionListRowTitle({
-            density: 'default',
+            density: 'detailed',
             textScale: 1.3,
             children: 'A long localized session title that must remain readable',
         });
         const subtitle = SessionListRowSubtitle({
-            density: 'default',
+            density: 'detailed',
             textScale: 1.3,
             children: 'Home · Team · Project · a duplicated context label',
         });

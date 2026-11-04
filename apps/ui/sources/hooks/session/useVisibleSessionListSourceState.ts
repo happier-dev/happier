@@ -28,6 +28,7 @@ export type VisibleSessionListSourceState = Readonly<{
     activeIndex: ReadonlyArray<SessionListIndexItem> | null;
     byServerId: Readonly<Record<string, ReadonlyArray<SessionListIndexItem> | null | undefined>>;
     source: ReadonlyArray<SessionListIndexItem> | null;
+    ordinarySourceIndex: ReadonlyArray<SessionListIndexItem> | null;
     query: SessionListQuerySourceState & Readonly<{ active: boolean }>;
 }>;
 
@@ -100,6 +101,7 @@ export function useVisibleSessionListSourceState(
         activeIndex,
         byServerId: effectiveByServerId,
         source,
+        ordinarySourceIndex: ordinarySource,
         query,
     }), [
         activeIndex,
@@ -107,5 +109,6 @@ export function useVisibleSessionListSourceState(
         query,
         selection,
         source,
+        ordinarySource,
     ]);
 }

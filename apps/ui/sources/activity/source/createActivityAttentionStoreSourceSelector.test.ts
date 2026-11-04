@@ -1,3 +1,4 @@
+import { settingsParse } from '@/sync/domains/settings/settings';
 import { projectLegacySessionAccessCapabilitiesV1 } from '@happier-dev/protocol';
 import { describe, expect, it, vi } from 'vitest';
 import * as linkedSessionMetadata from '@happier-dev/protocol/sessions/external/linked-metadata';
@@ -279,7 +280,7 @@ describe('createActivityAttentionStoreSourceSelector', () => {
         expect(observationOnlyChange.concurrentSessionListCacheByServerId['server-b']?.listObservation?.phase).toBe('offline');
     });
 
-    it('projects workspace display settings and invalidates when their result changes', () => {
+    it('projects canonical workspace names and ignores the retired path-display setting', () => {
         const selector = createActivityAttentionStoreSourceSelector();
         const base = storage.getState();
         const workspaceRef = {
@@ -298,37 +299,37 @@ describe('createActivityAttentionStoreSourceSelector', () => {
             ...base,
             profileScope: scope,
             projectAccountRows: projectRows([workspaceRef]),
-            settings: {
+            settings: settingsParse({
                 ...base.settings,
                 workspacePathDisplayModeV1: 'name',
-            },
+            }),
         });
         const same = selector({
             ...base,
             profileScope: scope,
             projectAccountRows: projectRows([{ ...workspaceRef }]),
-            settings: {
+            settings: settingsParse({
                 ...base.settings,
                 workspacePathDisplayModeV1: 'name',
-            },
+            }),
         });
         const renamed = selector({
             ...base,
             profileScope: scope,
             projectAccountRows: projectRows([{ ...workspaceRef, label: 'Happier Core' }]),
-            settings: {
+            settings: settingsParse({
                 ...base.settings,
                 workspacePathDisplayModeV1: 'name',
-            },
+            }),
         });
         const pathMode = selector({
             ...base,
             profileScope: scope,
             projectAccountRows: projectRows([{ ...workspaceRef, label: 'Happier Core' }]),
-            settings: {
+            settings: settingsParse({
                 ...base.settings,
                 workspacePathDisplayModeV1: 'path',
-            },
+            }),
         });
 
         expect(first.workspaceRefsV1).toEqual([workspaceRef]);

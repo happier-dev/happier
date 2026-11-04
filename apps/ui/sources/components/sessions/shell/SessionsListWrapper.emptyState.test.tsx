@@ -137,7 +137,6 @@ vi.mock('@/hooks/session/useVisibleSessionListPaneState', () => ({
                 sessionCount,
             },
             visibleSessionListIndex: data,
-            folderFocus: null,
             hasHiddenInactiveSessions: false,
             showLoading: false,
             showEmptyState: sessionCount === 0,

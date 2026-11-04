@@ -16,10 +16,11 @@ import {
 } from '@/sync/domains/session/listing/sessionListOrderingStateV1';
 import { buildSessionWorkspaceOrderScopeKey } from '@/sync/domains/session/listing/sessionWorkspaceOrderStateV1';
 import { sessionAddressKey } from '../sessionAddress';
-import type { SessionOrganizationProjection } from './types';
+import type { SessionOrganizationProjection, UiSessionOrganizationFolder } from './types';
 import { buildSessionOrganizationProjection } from './projection';
 import { buildSessionOrganizationSessionKey } from './keys';
 import type { SessionOrganizationOrderItemAddress } from './viewState';
+import { resolveSessionSectionChoiceLabel } from './sections';
 import {
     buildSessionFolderWorkspaceTargets,
     selectAvailableSessionFolders,
@@ -487,9 +488,7 @@ describe('buildSessionOrganizationListViewState', () => {
         expect(state.sessionFolderAssignmentsBySessionKey).toEqual({
             [sessionKey]: 'folder-private-id',
         });
-        expect(state.sessionListGroupOrderV1).toEqual({
-            group: [folderKey('server-a', 'folder-private-id')],
-        });
+        expect(state.sessionListGroupOrderV1).toEqual({});
         expect(state.sessionTagsV1).toEqual({
             [sessionKey]: [{
                 tagId: 'tag-private-id',
@@ -704,14 +703,11 @@ describe('multi-Home organization order writes', () => {
             { itemKind: 'folder', serverId: 'home-a', folderId: 'same-folder' },
             { itemKind: 'folder', serverId: 'home-b', folderId: 'same-folder' },
         ]));
-        expect(state.sessionListGroupOrderV1['shared-order']).toHaveLength(2);
+        expect(state.sessionListGroupOrderV1['shared-order']).toBeUndefined();
         expect(partitionSessionOrganizationGroupOrderByServerId({
             next: state.sessionListGroupOrderV1,
             orderItemAddressByItemKey: state.orderItemAddressByItemKey,
-        })).toEqual({
-            'home-a': { 'shared-order': [folderEntries.find(([, address]) => address.serverId === 'home-a')![0]] },
-            'home-b': { 'shared-order': [folderEntries.find(([, address]) => address.serverId === 'home-b')![0]] },
-        });
+        })).toEqual({});
     });
 
     it('never hands one Home a request built from another Home items', () => {
@@ -719,9 +715,7 @@ describe('multi-Home organization order writes', () => {
         const sharedOrder = state.sessionListGroupOrderV1['shared-order'] ?? [];
         expect(sharedOrder).toEqual([
             homeAKey,
-            folderKey('home-a', 'folder-home-a'),
             homeBKey,
-            folderKey('home-b', 'folder-home-b'),
         ]);
 
         const homeARequest = buildSessionOrganizationReorderRequestFromGroupOrder({
@@ -739,11 +733,9 @@ describe('multi-Home organization order writes', () => {
 
         expect(homeARequest?.entries).toEqual([
             { itemKind: 'session', itemKey: 'same-session', sortKey: '00000001' },
-            { itemKind: 'folder', itemKey: 'folder-home-a', sortKey: '00000002' },
         ]);
         expect(homeBRequest?.entries).toEqual([
             { itemKind: 'session', itemKey: 'same-session', sortKey: '00000001' },
-            { itemKind: 'folder', itemKey: 'folder-home-b', sortKey: '00000002' },
         ]);
     });
 
@@ -807,11 +799,11 @@ describe('multi-Home organization order writes', () => {
         })).toEqual({
             'home-a': {
                 [PINNED_GROUP_KEY_V1]: [homeAKey],
-                'shared-order': [homeAKey, folderKey('home-a', 'folder-home-a')],
+                'shared-order': [homeAKey],
             },
             'home-b': {
                 [PINNED_GROUP_KEY_V1]: [homeBKey],
-                'shared-order': [homeBKey, folderKey('home-b', 'folder-home-b')],
+                'shared-order': [homeBKey],
             },
         });
     });
