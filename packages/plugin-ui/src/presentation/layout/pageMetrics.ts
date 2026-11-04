@@ -93,6 +93,13 @@ export const HAPPIER_PAGE_METRICS = Object.freeze({
    * grouped list container padding plus its card margin sum to this.
    */
   sheetInsetPx: 16,
+  /**
+   * A page beside a collection's list keeps this much between the list's edge and its column, so a page wider
+   * than its pane (a `wide` home or account page in a settings detail at 1440) does not hug the list. Store lab
+   * `t-providers` stands its sheets 40 px from the divider: this plus `sheetInsetPx`. A column narrower than the
+   * pane is centred as before and lands where it did.
+   */
+  detailSideInsetPx: 24,
   /** Added to the sheet inset so a heading sits just inside the sheet edge, not flush with it. */
   headingOpticalInsetPx: 2,
   /** From the column's edge to the page title, its purpose line and every section title. */

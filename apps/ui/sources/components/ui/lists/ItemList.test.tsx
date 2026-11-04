@@ -53,6 +53,20 @@ describe('ItemList', () => {
         expect(Number(frameBottom ?? 0) + Number(scrollBottom ?? 0)).toBe(HAPPIER_PAGE_METRICS.pagePaddingBottomPx);
         expect(grouped.findAllByTestId('page-frame')).toHaveLength(0);
     });
+    it('keeps a side of its own beside a collection list, and only there', async () => {
+        const { ItemList } = await import('./ItemList');
+        const { HAPPIER_PAGE_METRICS } = await import('@happier-dev/plugin-ui/presentation');
+        const { renderInCollectionLayout } = await import('@/dev/testkit/render/renderInCollectionLayout');
+        const side = async (mode: 'split' | 'stacked' | null) => {
+            const screen = await renderInCollectionLayout(<ItemList pageColumn="wide"><React.Fragment /></ItemList>, mode);
+            return readSurfaceStyleProperty(screen.findByTestId('page-frame')!.props.style, 'paddingHorizontal');
+        };
+        // A wide page in a settings detail is wider than its pane: beside the rail it must not hug the divider.
+        expect(await side('split')).toBe(HAPPIER_PAGE_METRICS.detailSideInsetPx);
+        // A pushed detail (a phone) and a page alone keep their sheets on the sheet inset.
+        expect(await side('stacked')).toBeUndefined();
+        expect(await side(null)).toBeUndefined();
+    });
     it('keeps page, grouped and static list grounds clear inside their containing material', async () => {
         const { ItemList, ItemListStatic } = await import('./ItemList');
         const authoredStyle = Object.defineProperty({}, 'backgroundColor', { value: '#112233', enumerable: false });

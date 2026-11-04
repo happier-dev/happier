@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { View, type StyleProp, type ViewStyle } from 'react-native';
-import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_PAGE_METRICS, useHappierCollectionLayout } from '@happier-dev/plugin-ui/presentation';
 
 import { useLayoutMaxWidth } from './layout';
 import type { PageColumn } from './contentWidthMode';
@@ -21,6 +21,10 @@ export const PageFrame = React.memo(function PageFrame(props: PageFrameProps) {
     const content = props.content ?? 'free';
     const column = props.column ?? (content === 'column' ? undefined : 'reading');
     const maxWidth = useLayoutMaxWidth(column);
+    // Beside a collection's list (a settings rail) the page keeps a side of its own; alone in a pane, a phone
+    // included, its sheets sit on the sheet inset.
+    const side = useHappierCollectionLayout()?.detailBeside === true && content !== 'column'
+        ? HAPPIER_PAGE_METRICS.detailSideInsetPx : 0;
     const frame = (
         <View
             testID={props.testID}
@@ -28,9 +32,9 @@ export const PageFrame = React.memo(function PageFrame(props: PageFrameProps) {
                 { width: '100%', alignSelf: 'center' },
                 // A section header measures the whole pane before placing Back in its gutter.
                 // The sections cap their inner content through the same named-column context.
-                content === 'sections' ? null : { maxWidth },
+                content === 'sections' ? (side > 0 ? { paddingHorizontal: side } : null) : { maxWidth: maxWidth + 2 * side },
                 content === 'free' ? {
-                    paddingHorizontal: HAPPIER_PAGE_METRICS.sheetInsetPx,
+                    paddingHorizontal: HAPPIER_PAGE_METRICS.sheetInsetPx + side,
                     paddingTop: props.underNativeChrome
                         ? HAPPIER_PAGE_METRICS.pageHeaderUnderChromePaddingTopPx
                         : HAPPIER_PAGE_METRICS.pageHeaderPaddingTopPx,
