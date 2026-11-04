@@ -1,7 +1,4 @@
-export function parseTrailingJsonObject(text: string): unknown | null {
-  const trimmed = text.trim();
-  if (!trimmed) return null;
-
+export function parseJsonWithTrailingCommas(candidate: string): unknown | null {
   const stripTrailingCommas = (candidate: string): string => {
     let inString = false;
     let escaped = false;
@@ -52,21 +49,24 @@ export function parseTrailingJsonObject(text: string): unknown | null {
     return result;
   };
 
-  const parse = (candidate: string): unknown | null => {
-    try {
-      return JSON.parse(candidate);
-    } catch {
-      // fallthrough
-    }
+  try {
+    return JSON.parse(candidate);
+  } catch {
+    // fallthrough
+  }
 
-    if (!candidate.includes(',')) return null;
+  if (!candidate.includes(',')) return null;
 
-    try {
-      return JSON.parse(stripTrailingCommas(candidate));
-    } catch {
-      return null;
-    }
-  };
+  try {
+    return JSON.parse(stripTrailingCommas(candidate));
+  } catch {
+    return null;
+  }
+}
+
+export function parseTrailingJsonObject(text: string): unknown | null {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
 
   const tryParseBalancedTailObject = (): unknown | null => {
     const endIndex = trimmed.lastIndexOf('}');
@@ -107,7 +107,7 @@ export function parseTrailingJsonObject(text: string): unknown | null {
       if (ch === '{') {
         depth -= 1;
         if (depth === 0) {
-          return parse(trimmed.slice(i, endIndex + 1));
+          return parseJsonWithTrailingCommas(trimmed.slice(i, endIndex + 1));
         }
       }
     }
@@ -122,9 +122,9 @@ export function parseTrailingJsonObject(text: string): unknown | null {
   for (let index = trimmed.length - 1; index >= 0; index -= 1) {
     if (trimmed[index] !== '{') continue;
     const candidate = trimmed.slice(index);
-    const parsed = parse(candidate);
+    const parsed = parseJsonWithTrailingCommas(candidate);
     if (parsed !== null) return parsed;
   }
 
-  return parse(trimmed);
+  return parseJsonWithTrailingCommas(trimmed);
 }

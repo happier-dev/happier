@@ -3,11 +3,17 @@ import { z } from 'zod';
 
 import type { ReviewFinding } from '@happier-dev/protocol';
 
-type ParsedCodexNativeReview = {
+import { parseJsonWithTrailingCommas } from '@/agent/executionRuns/profiles/shared/parseTrailingJsonObject';
+
+export type ParsedCodexNativeReview = {
   summary: string;
   overviewMarkdown: string;
   findings: ReviewFinding[];
 };
+
+type ParsedCodexReview =
+  | { format: 'native'; review: ParsedCodexNativeReview }
+  | { format: 'strict-json'; rawText: string };
 
 type FindingDraft = {
   title: string;
@@ -92,7 +98,7 @@ function canStartJsonValue(text: string, start: number): boolean {
 }
 
 function extractJsonSpans(text: string, examples: readonly TextSpan[]): JsonSpan[] {
-  // Keep outer JSON values whole; JSON.parse owns syntax validation.
+  // Keep outer JSON values whole; The shared JSON decoder owns syntax validation.
   const spans: JsonSpan[] = [];
   let exampleIndex = 0;
   for (let start = 0; start < text.length; start += 1) {
@@ -282,29 +288,28 @@ function parseNativeFindings(text: string): {
 }
 
 /**
- * Parses native Codex prose or one validated native JSON review envelope.
+ * Selects one review from Codex prose, native JSON, or Happier JSON output.
  * Explicitly introduced examples remain prose evidence. An unintroduced JSON
  * review candidate cannot safely be distinguished from the actual result, even
  * inside a fence: malformed candidates or competing prose/JSON reviews return
  * null so callers report invalid output instead of claiming a clean review.
  */
-export function parseCodexNativeReviewText(rawText: string): ParsedCodexNativeReview | null {
+export function parseCodexReviewText(rawText: string): ParsedCodexReview | null {
   const overviewMarkdown = rawText.trim();
   if (overviewMarkdown.length === 0) return null;
 
   const prose = parseNativeFindings(overviewMarkdown);
   const textFindings = prose.findings;
   let jsonReview: z.infer<typeof CODEX_JSON_REVIEW_SCHEMA> | null = null;
+  let strictJsonText: string | null = null;
   // Native prose can quote JSON examples that are unrelated to review output.
   // Skip delimited evidence only outside JSON values: an envelope owns all
   // of its strings, while a truncated example cannot consume a later envelope.
   const examples = findQuotedOverviewExamples(prose.textOutsideFindings, prose.overviewEnd);
   for (const span of extractJsonSpans(prose.textOutsideFindings, examples)) {
     if (isInlineOverviewExample(prose.textOutsideFindings, span, prose.overviewEnd)) continue;
-    let json: unknown;
-    try {
-      json = JSON.parse(span.text);
-    } catch {
+    const json = parseJsonWithTrailingCommas(span.text);
+    if (json === null) {
       if (hasReviewFieldText(span.text)) return null;
       continue;
     }
@@ -312,32 +317,51 @@ export function parseCodexNativeReviewText(rawText: string): ParsedCodexNativeRe
       if (containsReviewFields(json)) return null;
       continue;
     }
+    if (jsonReview || strictJsonText || textFindings.length > 0) return null;
+    // A findings object without native Codex envelope fields belongs to the
+    // existing Happier JSON validator. Do not let its trailing-object parser
+    // select a different review from the complete output.
+    const hasNativeEnvelope = [...REVIEW_JSON_FIELDS].some((field) => (
+      field !== 'findings' && Object.prototype.hasOwnProperty.call(json, field)
+    ));
+    if (!hasNativeEnvelope) {
+      strictJsonText = span.text;
+      continue;
+    }
     const parsed = CODEX_JSON_REVIEW_SCHEMA.safeParse(json);
-    if (!parsed.success || jsonReview || textFindings.length > 0) return null;
+    if (!parsed.success) return null;
     jsonReview = parsed.data;
   }
 
+  if (strictJsonText) return { format: 'strict-json', rawText: strictJsonText };
+
   if (jsonReview) {
     return {
-      summary: firstNonEmptyParagraph(jsonReview.overall_explanation),
-      overviewMarkdown: jsonReview.overall_explanation,
-      findings: jsonReview.findings.map((finding) => ({
-        ...toFinding({
-          title: finding.title,
-          filePath: finding.code_location.absolute_file_path,
-          startLine: finding.code_location.line_range.start,
-          endLine: finding.code_location.line_range.end,
-          bodyLines: [finding.body],
-        }),
-        severity: SEVERITY_BY_PRIORITY[finding.priority ?? 2] ?? 'medium',
-        ...(finding.confidence_score !== undefined ? { confidence: finding.confidence_score } : {}),
-      })),
+      format: 'native',
+      review: {
+        summary: firstNonEmptyParagraph(jsonReview.overall_explanation),
+        overviewMarkdown: jsonReview.overall_explanation,
+        findings: jsonReview.findings.map((finding) => ({
+          ...toFinding({
+            title: finding.title,
+            filePath: finding.code_location.absolute_file_path,
+            startLine: finding.code_location.line_range.start,
+            endLine: finding.code_location.line_range.end,
+            bodyLines: [finding.body],
+          }),
+          severity: SEVERITY_BY_PRIORITY[finding.priority ?? 2] ?? 'medium',
+          ...(finding.confidence_score !== undefined ? { confidence: finding.confidence_score } : {}),
+        })),
+      },
     };
   }
 
   return {
-    summary: firstNonEmptyParagraph(overviewMarkdown),
-    overviewMarkdown,
-    findings: textFindings,
+    format: 'native',
+    review: {
+      summary: firstNonEmptyParagraph(overviewMarkdown),
+      overviewMarkdown,
+      findings: textFindings,
+    },
   };
 }

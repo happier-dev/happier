@@ -134,6 +134,7 @@ import {
 import { mapCodexRateLimitResetCreditsToQuotaRecoveryCredits } from '../quota/codexQuotaRecoveryCredits';
 import { fetchCodexRateLimitResetCredits } from '../quota/codexRateLimitResetCreditsClient';
 import { buildCodexNativeReviewFindingsV2Payload } from '@/agent/reviews/normalize/codex/buildCodexNativeReviewFindingsV2Payload';
+import { parseCodexReviewText } from '@/agent/reviews/normalize/codex/parseCodexReviewText';
 import { resolveCodexAppServerNativeReviewRequest } from './reviews/resolveCodexAppServerNativeReviewRequest';
 import { createCodexAppServerSessionTurnTracker } from './turns/codexAppServerSessionTurnTracker';
 import { CodexAppServerHistoryBoundary } from './codexAppServerHistoryBoundary';
@@ -2272,14 +2273,15 @@ export function createCodexAppServerRuntime(params: Readonly<{
 
         const reviewTurnId = latestPendingTurnId ?? pendingTurn?.turnId ?? 'unknown-turn';
         const sessionId = trimSessionId(params.session.sessionId) ?? 'current-session';
-        const payload = buildCodexNativeReviewFindingsV2Payload({
+        const parsed = parseCodexReviewText(reviewText);
+        const payload = parsed?.format === 'native' ? buildCodexNativeReviewFindingsV2Payload({
             runId: `session-review:${sessionId}:${reviewTurnId}`,
             callId: update.itemId,
             backendId: 'codex',
             backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
-            rawText: reviewText,
+            review: parsed.review,
             generatedAtMs: Date.now(),
-        });
+        }) : null;
         if (!payload) {
             if (activeInlineReview) activeInlineReview.outputError = 'Codex review output could not be parsed.';
             return false;

@@ -38,6 +38,25 @@ function parseFindingsPayload(result: ReturnType<typeof normalizeCodex>) {
 }
 
 describe('normalizeReviewOutput codex reviews', () => {
+  it.each([
+    `${JSON.stringify(nativeReview)}\n\n${JSON.stringify({ summary: 'Clean review.', findings: [] })}`,
+    `${JSON.stringify({ summary: 'Clean review.', findings: [] })}\n\n${JSON.stringify(nativeReview)}`,
+    `${JSON.stringify({ summary: 'Clean review.', findings: [] })}\n\n{"findings":[`,
+    `${JSON.stringify({ summary: 'First review.', findings: [] })}\n\n${JSON.stringify({ summary: 'Second review.', findings: [] })}`,
+    JSON.stringify({ nested: { summary: 'Nested review.', findings: [] } }),
+  ])('rejects competing or nested strict reviews instead of hiding findings: %s', (rawText) => {
+    const result = normalizeCodex(rawText);
+    expect(result.status).toBe('failed');
+    expect(result.toolResultOutput).toMatchObject({ error: { code: 'invalid_output' } });
+    expect(result.structuredMeta).toBeUndefined();
+  });
+
+  it('preserves strict JSON with supported trailing commas', () => {
+    const payload = parseFindingsPayload(normalizeCodex('Review result:\n```json\n{"summary":"Clean review.","findings":[],}\n```'));
+    expect(payload.summary).toBe('Clean review.');
+    expect(payload.findings).toEqual([]);
+  });
+
   it('preserves strict JSON output for prompt-based Codex reviews', () => {
     const rawText = JSON.stringify({
       summary: 'Strict review completed.',
