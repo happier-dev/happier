@@ -3576,7 +3576,7 @@ export async function runHostSessionRuntime(
             ref: selection,
           });
           const result = await traceStartupAuthority('model_intent_reconciliation', claimedSession,
-            () => modelTransitionCoordinator!.submit(selection, { source: 'metadata' }));
+            () => modelTransitionCoordinator!.submit(selection, { source: 'metadata', reuseInitialAdmission: true }));
           if (!result.ok) {
             throw new Error(
               `Startup model intent reconciliation failed: ${result.status}${

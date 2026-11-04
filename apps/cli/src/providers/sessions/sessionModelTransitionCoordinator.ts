@@ -86,6 +86,7 @@ type Proposal = {
   committedIntentUpdatedAt?: number;
   selection: ProviderBoundModelRef;
   source: 'command' | 'metadata' | 'prompt';
+  reuseInitialAdmission?: boolean;
   applyTiming?: 'immediate' | 'next_prompt';
   runWithActiveSelection: ((
     transferPromptAdmission: (opts: Readonly<{
@@ -271,6 +272,8 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
     selection: ProviderBoundModelRef,
     context: Readonly<{
       source: Proposal['source'];
+      /** Startup echo of the validated launch handoff; other metadata reauthorizes. */
+      reuseInitialAdmission?: boolean;
       applyTiming?: 'immediate' | 'next_prompt';
       callerInputConstraints?: CallerInputConstraintsV1;
       runWithActiveSelection?: NonNullable<Proposal['runWithActiveSelection']>;
@@ -862,8 +865,18 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
       return;
     }
     let target: AuthorizedSessionModelTransitionTarget;
+    // Startup metadata echoes the Provider already admitted by the launch
+    // handoff. Runtime readback does not make that echo a new admission.
+    const carriesOpenedProviderSelection = proposal.reuseInitialAdmission === true
+      && proposal.source === 'metadata'
+      && activeTarget === params.initialActiveTarget
+      && activeTarget.providerBinding != null
+      && proposal.selection.providerConnectionId !== null
+      && sameSelection(activeTarget.selection, proposal.selection)
+      && proposal.callerInputConstraints === undefined;
     try {
-      target = await params.authorize(proposal.selection, proposal.callerInputConstraints);
+      target = carriesOpenedProviderSelection ? activeTarget
+        : await params.authorize(proposal.selection, proposal.callerInputConstraints);
     } catch (error) {
       if (await settleIfInterruptedBeforeRuntimeEffect(proposal)) return;
       await settleBeforeRuntimeEffect(proposal, failure(
@@ -1920,6 +1933,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
     rawSelection: ProviderBoundModelRef,
     context: Readonly<{
       source: Proposal['source'];
+      reuseInitialAdmission?: boolean;
       applyTiming?: 'immediate' | 'next_prompt';
       callerInputConstraints?: CallerInputConstraintsV1;
       captureBefore?: boolean;
@@ -2017,6 +2031,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
       ...(context.expected ? { expected: context.expected } : {}),
       selection,
       source: context.source,
+      ...(context.reuseInitialAdmission ? { reuseInitialAdmission: true } : {}),
       ...(context.applyTiming ? { applyTiming: context.applyTiming } : {}),
       runWithActiveSelection,
       effectStarted: false,

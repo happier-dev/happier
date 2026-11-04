@@ -1,8 +1,16 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readFile, stat } from 'node:fs/promises';
+import { createServer } from 'node:http';
+import { once } from 'node:events';
 import { join } from 'node:path';
-import { createProviderErrorV1, redactBugReportSensitiveText } from '@happier-dev/protocol';
+import { createProviderErrorV1, redactBugReportSensitiveText, ProviderBoundModelRefSchema, projectAgentSessionProviderBindingV1 } from '@happier-dev/protocol';
 
+import { createAgentRuntimeDaemonServiceAuthorityFixture as createTestAuthority } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceAuthority.testkit';
+import { authorizeCurrentAgentRuntimeDaemonModelTransition } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceAuthorityClient';
+import { createAgentSessionRunnerFactoryBinding } from '@/plugins/runtime/runner/agentSessionRunnerFactoryBinding';
+import { publishAgentRuntimeDaemonServiceAuthority } from '@/daemon/agentRuntime/sessionBridgeAuthorization';
+import { createSessionModelTransitionAuthorizer } from '@/providers/sessions/authorizeSessionModelTransitionTarget';
+import { createSessionModelTransitionCoordinator, type AuthorizedSessionModelTransitionTarget } from '@/providers/sessions/sessionModelTransitionCoordinator';
 import { configuration } from '@/configuration';
 import { consumeProviderBindingLaunchHandoffFromEnvironments } from '@/plugins/runtime/providerBindings/handoff';
 import { createProviderBindingLaunchMaterializationCleanup } from '@/providers/spawn/compose';
@@ -289,6 +297,87 @@ describe('foreground admission composed real Provider authorization seam', () =>
       expect(await readLiveRunnerAgentDaemonServiceAuthorityRetainedGenerationIds({
         happyHomeDir: fixture.home, publicReleaseRing: configuration.publicReleaseRing,
       })).not.toContain(sourceCustody.immutableGenerationId);
+    });
+  });
+
+  it.each([
+    { model: 'same', confirmed: false }, { model: 'same', confirmed: true },
+    { model: 'different', confirmed: false }, { model: 'different', confirmed: true },
+  ] as const)('reconciles an admitted Provider metadata selection without another secret acquisition ($model model, confirmed $confirmed)', async ({ model, confirmed }) => {
+    await withForegroundProviderFixture({}, async fixture => {
+      const admitted = await fixture.prepare({ profileId: undefined });
+      if (!admitted.ok) throw new Error(admitted.error.code);
+      try {
+        const claimed = await admitted.prepared.claim({ canonicalSessionId: 'session-1', httpPort: 40123,
+          foregroundSatisfiedProfileSecretRequirementNames: [] });
+        if (!claimed.ok) throw new Error(claimed.error.code);
+        const handoff = consumeProviderBindingLaunchHandoffFromEnvironments([{ ...claimed.environment }]);
+        if (!handoff?.sessionBindingMetadata.runtimeBindingBasis) throw new Error('Expected an admitted Provider binding');
+        const metadata = handoff.sessionBindingMetadata;
+        const basis = metadata.runtimeBindingBasis!;
+        const selection = ProviderBoundModelRefSchema.parse({ agentTargetKey: basis.agentTargetKey,
+          providerConnectionId: metadata.connectionId, modelId: metadata.model.id });
+        const baseAuthority = await createTestAuthority({ happyHomeDir: fixture.home, runner: {
+          pid: 1234, processStartTimeMs: 1_717_171_717_000,
+          processCommandHash: 'a'.repeat(64), snapshotIdentity: 'snapshot:runner-a',
+        } });
+        const authority = { ...baseAuthority, retainedAgent: createAgentSessionRunnerFactoryBinding({
+          ...baseAuthority.retainedAgent, pluginId: 'happier.agent.codex', agentId: 'codex', localAgentId: 'codex',
+        }) };
+        // The daemon HTTP boundary refuses fresh acquisition; the claimed binding,
+        // coordinator, authorizer, authority reader and response decoder stay real.
+        const requests: string[] = [];
+        const server = createServer((request, response) => {
+          requests.push(request.url ?? '');
+          request.resume();
+          response.writeHead(200, { 'content-type': 'application/json' });
+          response.end(JSON.stringify({ ok: false,
+            error: { code: 'provider_secret_missing', message: 'provider_secret_missing' } }));
+        });
+        server.listen(0, '127.0.0.1');
+        await once(server, 'listening');
+        const address = server.address();
+        if (!address || typeof address === 'string') throw new Error('Expected a daemon HTTP fixture port');
+        await publishAgentRuntimeDaemonServiceAuthority({ ...authority, httpPort: address.port, capability: 'A'.repeat(43) });
+        const initialTarget: AuthorizedSessionModelTransitionTarget = {
+          selection, policy: 'live', sessionBindingMetadata: metadata, runtimeBindingBasis: basis,
+          providerBinding: projectAgentSessionProviderBindingV1({ metadata, materialization: handoff.materialization }),
+          revalidateBeforeEffect: async () => true,
+        };
+        let coordinator: ReturnType<typeof createSessionModelTransitionCoordinator> | undefined;
+        const authorize = createSessionModelTransitionAuthorizer({ sessionId: 'session-1', machineId: 'machine-1',
+          agentId: 'codex', agentTargetKey: selection.agentTargetKey, nativeModelApplyPolicy: 'live',
+          readActiveTarget: () => coordinator?.readActiveTarget() ?? initialTarget,
+          authorizeProviderTarget: (input, signal) => authorizeCurrentAgentRuntimeDaemonModelTransition({
+            authority, requestId: 'metadata-reconciliation', selection: input.selection, signal, timeoutMs: null }),
+        });
+        const effects: string[] = [];
+        coordinator = createSessionModelTransitionCoordinator({ runId: 'run-1', agentTargetKey: selection.agentTargetKey,
+          initialActiveTarget: initialTarget, initialActiveTargetConfirmed: confirmed,
+          readModelSelectionIntent: () => null, isCurrentRun: () => true, checkCurrentPublisherAuthority: async () => true,
+          authorize, publishIntent: async () => { effects.push('intent'); return { accepted: true, updatedAt: 1 }; },
+          applyRuntime: async () => { effects.push('runtime'); return { status: 'applied' }; },
+          publishActive: async () => { effects.push('active'); }, revokeActiveSelectionProof: async () => {},
+          fencePromptAdmission: async () => {}, clearPromptAdmission: async () => {},
+          transferPromptAdmission: async (_epoch, input) => { await input.dispatch(); return { status: 'dispatched', value: undefined }; },
+        });
+        try {
+          const requested = model === 'same' ? selection : { ...selection, modelId: 'different-model' };
+          const result = await coordinator.submit(requested, { source: 'metadata', reuseInitialAdmission: true });
+          expect(result).toMatchObject(model === 'same'
+            ? { ok: true, status: confirmed ? 'already_active' : 'armed', activeSelection: selection }
+            : { ok: false, reason: 'provider_secret_missing' });
+          expect(requests).toHaveLength(model === 'same' ? 0 : 1);
+          expect(effects).toEqual([]);
+          expect(coordinator.readActiveTarget()).toEqual(initialTarget);
+          expect(await coordinator.readAppliedTarget()).toEqual(confirmed
+            ? { status: 'applied', target: initialTarget }
+            : { status: 'unavailable', reason: 'runtime_model_unconfirmed' });
+        } finally {
+          await coordinator.dispose();
+          await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+        }
+      } finally { await admitted.prepared.cleanup(); }
     });
   });
 });
