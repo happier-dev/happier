@@ -1167,6 +1167,16 @@ Optional plugin augmentation retains the notice above; an unavailable selected
 document remains pending. These source contracts require a rebuilt CLI
 closure and fresh runner for loaded-runtime verification.
 
+Artifact source resolution compares its admitted owner Account with the captured
+requester once. Requester admission carries that typed authorship fact into the
+signed template root, including birth and native setup continuations. For the
+requester's own template with an unrestricted credential, the shared HTTP-purpose
+owner admits the signed root and reviewed child role; Artifact grants, Session owner metadata, envelope
+audiences and MCP envelopes retain their domain owners. Templates from another
+author, and plugin or link sources without positive requester-authorship evidence,
+retain the exact template-purpose grammar. Restricted PATs retain that grammar
+regardless of requester authorship. Template content cannot assert authorship.
+
 In current 0.3 development source, the daemon's [admission drain](../apps/cli/src/daemon/lifecycle/admissionDrain.ts) owns fresh-work quiescence. Temporary drain preserves accepted custody, native request-auth and daemon publications; reopening wakes the incumbent Automation claim loop and parked Workflow admission. Fresh turn and managed-process authorization remain closed during drain. An authorized opening or opened Session's fresh-work daemon-service request waits on that same drain under its request cancellation lifetime, then rechecks runner authority before dispatch. A reversible managed activity probe therefore cannot turn its overlap with a first turn into a terminal input refusal. No service effect enters before admission reopens. Plugin handoff retains its own exclusion and publication custody: fresh-work service requests wait for reopening, while refused publication ingress reports `daemon_draining`. Final shutdown uses `daemon_shutting_down`, including for a parked request. Final shutdown closes admission irreversibly and awaits the existing finite-operation owner's actual settlement before disposing native plugin leases, terminals or roots. Unconfirmed Stop retains that custody and keeps observation and explicit repeated Stop reachable; it does not prove settlement. Session-hosted Execution Runs ask that current daemon owner over the scoped control transport before creating a Run; an unavailable admission reply refuses the new start. Retained Run state stays with the [execution registry](../apps/cli/src/daemon/executionRunRegistry.ts), rather than becoming another drain decision or start registry. These source contracts are distinct from loaded-daemon certification.
 
 The private Session-service request lifetime begins before its initial authority lookup and remains active through drain waiting, authority revalidation, dispatch and durable admission. Cancellation retires the waiter, withholds any unaccepted admission and clears its exact marker when cancellation occurs before acceptance is confirmed. The existing request-lifetime and admission owners retain that custody; no separate cancellation timer is added.

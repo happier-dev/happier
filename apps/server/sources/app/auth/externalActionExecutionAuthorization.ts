@@ -389,6 +389,9 @@ async function readBotTemplateHttpPurpose(verified: VerifiedExternalActionExecut
     const child = root === 'template.instantiate' || root === 'template.release' || root === 'template.updates.apply'
         ? verified.reviewedChildAdmission : undefined;
     if (verified.effectActionId !== root && !child) return false;
+    if ((root === 'template.instantiate' || root === 'template.updates.apply')
+        && verified.binding.templateRequesterAuthorship === 'requester'
+        && ('authentication' in verified.binding || !isApiTokenGrantRestrictedV1(verified.binding.grant))) return true;
     // Artifact creation checks persisted Account mode at its physical send boundary.
     // The template root and its reviewed content children use that same codec.
     if (proof.method.toUpperCase() === 'GET' && proof.path === '/v1/account/encryption' && proof.body === undefined) {
@@ -2348,6 +2351,7 @@ function matchesExternalActionAuthorizationBinding(binding: ExternalActionExecut
         || !sameManagedInput(binding.templateRequesterSetupAdmission, supplied.templateRequesterSetupAdmission)
         || !sameManagedInput(binding.templateRequesterInitialAccessAdmission, supplied.templateRequesterInitialAccessAdmission)
         || !sameManagedInput(binding.templateRequesterSetupPlanAdmission, supplied.templateRequesterSetupPlanAdmission)
+        || binding.templateRequesterAuthorship !== supplied.templateRequesterAuthorship
         || !sameManagedInput(binding.templateRequesterBirth, supplied.templateRequesterBirth)
         || !sameManagedInput(binding.handoffAdmission, supplied.handoffAdmission)
         || !sameManagedInput(binding.handoffContinuation, supplied.handoffContinuation)

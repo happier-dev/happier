@@ -1,6 +1,7 @@
 import { MachineServiceLogsResourceContinuationV1Schema, MachineServiceLogsGenerationV1Schema } from '../daemon/machineServiceLogsResource.js';
 import { ActionOperationListActionInputV1Schema, ActionOperationGetActionInputV1Schema } from './specs/actionOperations.js';
 import { SessionInitialAccessDraftV1Schema } from '../sessions/access/sessionInitialAccessDraftV1.js';
+import { BotTemplateRequesterAuthorshipV1Schema } from '../bots/templates/botTemplateV1.js';
 import { projectDeploymentNativeAdmissionV1, DeploymentNativeAdmissionV1Schema, isDeploymentDomainNativeAdmissionV1 } from '../deployments/deploymentCandidatePublicationV1.js';
 import type { ArtifactBodyV1 } from '../artifacts/artifactBinaryV1.js';
 import type { ArtifactRevisionV1 } from '../artifacts/artifactRevisionV1.js';
@@ -1130,6 +1131,8 @@ const externalActionExecutionAuthorizationRoutingShapeV1 = () => ({
     })),
     /** Selected non-content grants needed for requester-local recipient-key preparation. */
     templateRequesterInitialAccessAdmission: z.optional(SessionInitialAccessDraftV1Schema),
+    /** Source resolution decides this once; requester credential admission signs it. */
+    templateRequesterAuthorship: z.optional(BotTemplateRequesterAuthorshipV1Schema),
     /** Exact native Plan derived from the already admitted template update. */
     templateRequesterSetupPlanAdmission: z.optional(z.strictObject({
       parentActionId: z.literal('template.updates.apply'),
@@ -1446,7 +1449,8 @@ type ExternalActionExecutionAuthorizationRequestShapeV1 = {
   templateRequesterInitialAccessAdmission: z.ZodMiniOptional<typeof SessionInitialAccessDraftV1Schema>;
   templateRequesterSetupEnrichment: z.ZodMiniOptional<z.ZodMiniObject<{
     authorization: typeof ExternalActionExecutionAuthorizationV1Schema;
-    planInputDigest: z.ZodMiniString;
+    planInputDigest: z.ZodMiniOptional<z.ZodMiniString>;
+    requesterAuthorship: z.ZodMiniOptional<typeof BotTemplateRequesterAuthorshipV1Schema>;
   }, z.core.$strict>>;
   templateRequesterSetupPlanContinuation: z.ZodMiniOptional<z.ZodMiniObject<{
     authorization: typeof ExternalActionExecutionAuthorizationV1Schema;
@@ -1476,7 +1480,10 @@ function externalActionExecutionAuthorizationRequestSchemaV1(actionId?: 'session
   templateRequesterSetupAdmission: z.optional(z.strictObject({ kind: z.literal('software') })),
   templateRequesterInitialAccessAdmission: z.optional(SessionInitialAccessDraftV1Schema),
   templateRequesterSetupEnrichment: z.optional(z.strictObject({ authorization: ExternalActionExecutionAuthorizationV1Schema,
-    planInputDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)) })),
+    planInputDigest: z.optional(z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u))),
+    requesterAuthorship: z.optional(BotTemplateRequesterAuthorshipV1Schema),
+  }).check(z.refine(value => value.planInputDigest !== undefined || value.requesterAuthorship !== undefined,
+    'Template enrichment needs source authorship or resolved setup.'))),
   templateRequesterSetupPlanContinuation: z.optional(z.strictObject({ authorization: ExternalActionExecutionAuthorizationV1Schema,
     originalActionEnvelope: ExternalActionRequestEnvelopeSchema })),
   sessionActionOrigin: z.optional(SessionActionRpcOriginV1Schema),

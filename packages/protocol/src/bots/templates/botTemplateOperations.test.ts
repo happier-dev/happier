@@ -36,7 +36,7 @@ function fixture(options?: { grant?: () => Promise<void>; signedInLink?: BotTemp
   });
   const executor = createActionExecutor({ botTemplateAction: args => execute(args), prepareBotTemplateRelease: execute.prepareRelease });
   const run = (id: BotTemplateActionIdV1, input: unknown) => executor.execute(id, input,
-    { surface: 'ui', serverId: 'home', authority: 'present_user',
+    { surface: 'ui', serverId: 'home', runtimeAccountId: 'author', authority: 'present_user',
       actionsSettings: normalizeActionsSettingsV1({ v: 1, actions: {} }), presentUserConfirmation: { actionId: id } });
   return { boundary, events, run };
 }
@@ -115,7 +115,10 @@ describe('template Actions through the executor', () => {
     const source = { kind: 'plugin', registryItem: { sourceId: 'npm', itemId: 'helper', version: '1.0.0' }, contributionId: 'template' };
     const result = await f.run('template.preview', { source });
     expect(result).toMatchObject({ ok: true, result: { release } });
-    if (result.ok) expect(result.result).not.toHaveProperty('presentation');
+    if (result.ok) {
+      expect(result.result).not.toHaveProperty('presentation');
+      expect(result.result).not.toHaveProperty('requesterAuthorship');
+    }
     expect(f.boundary.reads).toEqual([]);
   });
   it.each(['Maya Rowan', null, undefined])('previews only admitted owner presentation, without treating carried identity as authorship (%s)', async ownerDisplayName => {
@@ -126,10 +129,22 @@ describe('template Actions through the executor', () => {
       version: '1.2.3', changelog: '' });
     const reads = f.boundary.reads.length;
     const result = await f.run('template.preview', { source: { kind: 'artifact', serverId: 'home', artifactId: releaseId } });
-    expect(result).toMatchObject({ ok: true, result: { release: { version: '1.2.3' },
+    expect(result).toMatchObject({ ok: true, result: { requesterAuthorship: 'requester', release: { version: '1.2.3' },
       presentation: { shared: false, ...(ownerDisplayName === undefined ? {} : { ownerDisplayName }) } } });
     if (result.ok) expect(Reflect.get(result.result as object, 'presentation')).toEqual({ shared: false,
       ...(ownerDisplayName === undefined ? {} : { ownerDisplayName }) });
+    expect(f.boundary.reads.slice(reads)).toEqual([releaseId]);
+  });
+  it('keeps a granted other-author release confined even when its carried identity names the requester', async () => {
+    const f = fixture();
+    await f.run('template.draft', { sourceSessionRef, content: { ...content,
+      identity: { ...content.identity, name: 'author', madeFromName: 'author' } } });
+    await f.run('template.release', { draftArtifactId: draftId, expectedRevision: { headerVersion: 1, bodyVersion: 1 },
+      version: '1.0.0', changelog: '' });
+    f.boundary.rows.set(releaseId, { ...f.boundary.rows.get(releaseId)!, ownerAccountId: 'other', access: 'view' });
+    const reads = f.boundary.reads.length;
+    expect(await f.run('template.preview', { source: { kind: 'artifact', serverId: 'home', artifactId: releaseId } }))
+      .toMatchObject({ ok: true, result: { requesterAuthorship: 'other' } });
     expect(f.boundary.reads.slice(reads)).toEqual([releaseId]);
   });
   it('downloads the exact binary companion without creating recipient content', async () => {

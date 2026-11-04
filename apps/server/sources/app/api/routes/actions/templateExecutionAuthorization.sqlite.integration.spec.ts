@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import tweetnacl from 'tweetnacl';
 import { Server } from 'socket.io';
 import { encodeBase64 } from 'privacy-kit';
+import { encodeBase64 as encodeCanonicalBase64 } from '@happier-dev/protocol/crypto/base64';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { deriveArtifactStoredKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
@@ -15,7 +16,8 @@ import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionRequestEnve
     createExternalActionDaemonDispatchResponseV1, prepareExternalActionResponseEnvelopeV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { verifyExternalActionMachineRpcExecution, readAdmittedTemplateExecutionPrincipal,
-    projectExternalActionBoundPrincipal } from '@/app/auth/externalActionExecutionAuthorization';
+    projectExternalActionBoundPrincipal, verifyTemplateRequesterExecutionAuthorization,
+    verifyTemplateRequesterHttpExecutionRequest } from '@/app/auth/externalActionExecutionAuthorization';
 import { createExternalActionDaemonDispatcher } from '@/app/api/socket/externalActionDispatcher';
 import { db } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
@@ -29,6 +31,8 @@ import { createSignedDiscussionHttpFixture as signedFixture } from './discussion
 import { createAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { registerSessionPatchRoute } from '../session/registerSessionPatchRoute';
 import { projectSessionSharedMetadataV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { createPresentUserSessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication.testkit';
+import { VerifiedEphemeralSessionRunnerPrincipalSchema } from '@happier-dev/protocol/ephemeralRunner/principal';
 
 const content = { v: 1, identity: { name: 'Helper', description: '' }, instructions: { markdown: 'Help.' },
     memoryRules: [], skills: [], needs: { software: [], connectedAccounts: [], mcpServers: [] } };
@@ -46,6 +50,155 @@ describe('signed template parent HTTP purposes', () => {
     }, 300_000);
     afterAll(async () => { await harness?.close(); });
 
+    it.each([
+        { scope: 'restricted', allowedAction: 'template.instantiate', ownStatus: 403 },
+        { scope: 'unrestricted', allowedAction: undefined, ownStatus: 200 },
+    ] as const)('keeps $scope PAT template authorship within its admitted HTTP purposes', async ({ allowedAction, ownStatus }) => {
+        const f = await signedFixture(allowedAction, [], true);
+        try {
+            // Source existence is deliberately irrelevant to the PAT scope boundary.
+            const input = { source: { kind: 'artifact', artifactId: randomUUID() } };
+            const root = await f.mint('template.instantiate', input);
+            const envelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1,
+                requestId: root.binding.requestId, target: root.binding.target, input });
+            const bearer = { authorization: `Bearer ${f.pat.token}` };
+            const userPath = `/v1/user/${encodeURIComponent(f.account.id)}`;
+            expect((await f.app.inject({ method: 'GET', url: userPath, headers: bearer })).statusCode).toBe(403);
+            for (const requesterAuthorship of ['other', 'requester'] as const) {
+                const enriched = await f.app.inject({ method: 'POST',
+                    url: bindExternalActionExecutionAuthorizationHttpPathV1('template.instantiate'), headers: bearer,
+                    payload: { v: 1, machineId: f.machine.id, envelope,
+                        templateRequesterSetupEnrichment: { authorization: root, requesterAuthorship } } });
+                expect(enriched.statusCode).toBe(200);
+                const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(enriched.json());
+                const headers = { ...bearer,
+                    [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
+                    [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: 'template.instantiate',
+                    [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(authorization.binding.target) };
+                const expectedStatus = requesterAuthorship === 'requester' ? ownStatus : 403;
+                expect((await f.app.inject({ method: 'GET', url: userPath, headers })).statusCode).toBe(expectedStatus);
+                expect(await f.verify(authorization, { method: 'GET', path: userPath,
+                    routeInput: { id: f.account.id } }) !== null).toBe(expectedStatus === 200);
+                expect((await f.app.inject({ method: 'GET', url: '/v1/account/encryption', headers })).statusCode).toBe(200);
+                await expect(f.verify(authorization, { method: 'GET', path: '/v1/account/encryption' })).resolves.not.toBeNull();
+            }
+        } finally { await f.app.close(); }
+    });
+
+    it('lets a signed requester author use ordinary Account access while another author stays template-confined', async () => {
+        const f = await signedFixture('template.instantiate', [], true);
+        try {
+            const input = { source: { kind: 'artifact', artifactId: randomUUID() } };
+            const original = await f.mint('template.instantiate', input, true);
+            const envelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: original.binding.requestId,
+                target: original.binding.target, input });
+            const path = bindExternalActionExecutionAuthorizationHttpPathV1('template.instantiate');
+            const enrich = async (requesterAuthorship: 'requester' | 'other', authorization = original) => f.app.inject({
+                method: 'POST', url: path, headers: { authorization: `Bearer ${f.presentUserToken}` },
+                payload: { v: 1, machineId: f.machine.id, envelope,
+                    templateRequesterSetupEnrichment: { authorization, requesterAuthorship } },
+            });
+            const authorResponse = await enrich('requester');
+            expect(authorResponse.statusCode, authorResponse.body).toBe(200);
+            const author = ExternalActionExecutionAuthorizationV1Schema.parse(authorResponse.json());
+            expect(author.binding).toMatchObject({ templateRequesterAuthorship: 'requester' });
+            const otherResponse = await enrich('other');
+            expect(otherResponse.statusCode, otherResponse.body).toBe(200);
+            const other = ExternalActionExecutionAuthorizationV1Schema.parse(otherResponse.json());
+            const userPath = `/v1/user/${encodeURIComponent(f.account.id)}`;
+            const headers = (authorization: typeof author, effectActionId = 'template.instantiate') => ({
+                authorization: `Bearer ${f.presentUserToken}`,
+                [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
+                [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: effectActionId,
+                [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(authorization.binding.target),
+            });
+            await expect(f.verify(author, { method: 'GET', path: userPath, routeInput: { id: f.account.id } })).resolves.not.toBeNull();
+            await expect(f.verify(other, { method: 'GET', path: userPath, routeInput: { id: f.account.id } })).resolves.toBeNull();
+            await expect(verifyTemplateRequesterHttpExecutionRequest({ authorizationToken: author.token,
+                encodedTarget: encodeExternalActionResolvedTargetV1(author.binding.target), effectActionId: 'template.instantiate',
+                method: 'GET', path: userPath, body: undefined, machineSignature: '' },
+                { accountId: f.account.id, authority: 'present_user', tokenEpoch: f.account.tokenEpoch })).resolves.not.toBeNull();
+            const ordinaryGet = await f.app.inject({ method: 'GET', url: userPath,
+                headers: { authorization: `Bearer ${f.presentUserToken}` } });
+            expect(ordinaryGet.statusCode, ordinaryGet.body).toBe(200);
+            const authorGet = await f.app.inject({ method: 'GET', url: userPath, headers: headers(author) });
+            expect(authorGet.statusCode, authorGet.body).toBe(200);
+            expect((await f.app.inject({ method: 'GET', url: userPath, headers: headers(other) })).statusCode).toBe(403);
+            const reviewedChild = { actionId: 'memory.remember', role: 'memory:reviewed', inputDigest: 'a'.repeat(43) };
+            await expect(f.verify(author, { method: 'GET', path: userPath, routeInput: { id: f.account.id }, reviewedChild },
+                'memory.remember')).resolves.not.toBeNull();
+            await expect(f.verify(author, { method: 'GET', path: userPath, routeInput: { id: f.account.id },
+                reviewedChild: { ...reviewedChild, role: 'invalid' } }, 'memory.remember')).resolves.toBeNull();
+            expect((await enrich('other', author)).statusCode).toBe(403);
+            const authentication = createPresentUserSessionAccessAuthentication();
+            await expect(verifyTemplateRequesterExecutionAuthorization({ authorization: author,
+                originalActionEnvelope: envelope, accountId: f.account.id, authentication })).resolves.not.toBeNull();
+            await expect(verifyTemplateRequesterExecutionAuthorization({ authorization: author,
+                originalActionEnvelope: envelope, accountId: randomUUID(), authentication })).resolves.toBeNull();
+            await expect(verifyTemplateRequesterExecutionAuthorization({ authorization: author,
+                originalActionEnvelope: { ...envelope, requestId: randomUUID() },
+                accountId: f.account.id, authentication })).resolves.toBeNull();
+            await expect(verifyTemplateRequesterExecutionAuthorization({ authorization: { ...author,
+                binding: { ...author.binding, templateRequesterAuthorship: 'other' } },
+                originalActionEnvelope: envelope, accountId: f.account.id, authentication })).resolves.toBeNull();
+            await expect(verifyTemplateRequesterExecutionAuthorization({ authorization: author,
+                originalActionEnvelope: envelope, accountId: f.account.id,
+                authentication: { ...authentication, sessionRuntimePrincipal: VerifiedEphemeralSessionRunnerPrincipalSchema.parse({
+                    kind: 'ephemeral_session_runner', authority: 'session_runtime', accountId: f.account.id,
+                    activationId: randomUUID(), sessionId: randomUUID(), machineId: f.machine.id,
+                    installationId: f.machine.installationId, installationPublicKey: encodeCanonicalBase64(f.keyPair.publicKey, 'base64url'), creatorTokenEpoch: 0,
+                }) } })).resolves.toBeNull();
+
+            const sessionId = randomUUID();
+            const sessionRouteTarget = { kind: 'session' as const, sessionId };
+            const ownerPatch = SessionMetadataTuplePatchV1Schema.parse({ mode: 'owner', metadataLayoutVersion: 1,
+                expectedOwnerMetadata: { t: 'plain', v: { v: 1 } }, ownerMetadata: { t: 'plain', v: { v: 1 } },
+                sharedMetadata: { ciphertext: '{}', expectedVersion: 0 }, agentState: { ciphertext: null, expectedVersion: 0 } });
+            const child = (actionId: 'prompt_doc.create' | 'session.instructions.set' | 'memory.remember'
+                | 'skills.create' | 'mcp.servers.create' | 'session.bot.face.set', role: string) => ({
+                actionId, role, inputDigest: computeActionInputApprovalDigestV1(actionId, {}),
+            });
+            const contentWrite = { method: 'POST', path: '/v1/artifacts?extra=1', body: createBody(randomUUID()) };
+            for (const [actionId, role, request] of [
+                ['prompt_doc.create', 'create_instructions', contentWrite],
+                ['session.instructions.set', 'attach_instructions', { method: 'PATCH',
+                    path: `/v2/sessions/${sessionId}?extra=1`, body: ownerPatch, sessionRouteTarget }],
+                ['memory.remember', 'memory:guide', contentWrite],
+                ['skills.create', 'skill:guide', contentWrite],
+                ['mcp.servers.create', 'create_template_mcp', { method: 'POST',
+                    path: `${MCP_SERVER_CATALOG_ROWS_ROUTE_V1}?extra=1`, body: McpServerCatalogRowMutationV1Schema.parse({
+                        expectedRevision: 1, content: { t: 'plain', v: { v: 1, servers: [], bindings: [] } },
+                    }) }],
+            ] as const) {
+                const proof = { ...request, reviewedChild: child(actionId, role) };
+                await expect(f.verify(author, proof, actionId), actionId).resolves.not.toBeNull();
+                await expect(f.verify(other, proof, actionId), actionId).resolves.toBeNull();
+            }
+
+            const updateInput = { sessionRef: { serverId: 'home', sessionId },
+                expectedVersion: '1.1.0', expectedMetadataRevision: 1 };
+            const updateRoot = await f.mint('template.updates.apply', updateInput, true);
+            const updateEnvelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: updateRoot.binding.requestId,
+                target: updateRoot.binding.target, input: updateInput });
+            const updateResponse = await f.app.inject({ method: 'POST',
+                url: bindExternalActionExecutionAuthorizationHttpPathV1('template.updates.apply'),
+                headers: { authorization: `Bearer ${f.presentUserToken}` }, payload: { v: 1, machineId: f.machine.id,
+                    envelope: updateEnvelope, templateRequesterSetupEnrichment: { authorization: updateRoot,
+                        requesterAuthorship: 'requester' } } });
+            expect(updateResponse.statusCode, updateResponse.body).toBe(200);
+            const updateAuthor = ExternalActionExecutionAuthorizationV1Schema.parse(updateResponse.json());
+            await expect(f.verify(updateAuthor, { method: 'PATCH', path: `/v2/sessions/${sessionId}?extra=1`,
+                body: ownerPatch, sessionRouteTarget,
+                reviewedChild: child('session.bot.face.set', 'update_face') }, 'session.bot.face.set'))
+                .resolves.not.toBeNull();
+            const artifactId = randomUUID();
+            const report = { artifactId, copyId: sessionId, acceptedVersion: '1.1.0' };
+            await expect(f.verify(updateAuthor, { method: 'PUT',
+                path: `/v1/artifacts/${artifactId}/access/accepted-version?extra=1`, body: report,
+                routeInput: { id: artifactId, ...report } })).resolves.not.toBeNull();
+        } finally { await f.app.close(); }
+    });
+
     it('keeps template metadata batch reads equivalent to their admitted detail reads', async () => {
         const f = await signedFixture();
         try {
@@ -57,8 +210,8 @@ describe('signed template parent HTTP purposes', () => {
                 const authorization = await f.mint(root, {}, true);
                 await expect(f.verify(authorization, { method: 'GET', path: `/v2/sessions/${sessionId}?accessProjectionVersion=1`,
                     sessionRouteTarget: { kind: 'session', sessionId } })).resolves.not.toBeNull();
-                await expect(f.verify(authorization, { method: 'POST', path: '/v2/sessions/read-batch', body,
-                    routeInput: body })).resolves.not.toBeNull();
+                expect(await f.verify(authorization, { method: 'POST', path: '/v2/sessions/read-batch', body,
+                    routeInput: body }), root).not.toBeNull();
             }
             for (const root of ['template.release', 'template.preview', 'template.export_file'] as const) {
                 const authorization = await f.mint(root, {}, true);

@@ -53,11 +53,13 @@ export async function prepareHostReviewedChildrenV1(params: Readonly<{
   existing?: PreparedCoreAdmission; approvalReplay: boolean; isSameHome: ActionHomeEquivalence;
 }>): Promise<Readonly<{ plan?: HostReviewedChildrenPlanV1; policies?: readonly HostReviewedChildPolicyV1[];
   executeAdmittedAction?: HostReviewedChildrenPreparationV1['executeAdmittedAction'];
+  prepareExecutionContext?: HostReviewedChildrenPreparationV1['prepareExecutionContext'];
   approvalPreview?: HostReviewedChildrenPreparationV1['approvalPreview'];
   admittedReviewedChild?: true;
   reviewRequired: boolean }> | ActionExecuteFailure> {
   const { actionId, context, deps, existing } = params;
   if (existing) return { plan: existing.hostReviewedChildren, policies: existing.hostReviewedChildPolicies,
+    ...(existing.prepareExecutionContext ? { prepareExecutionContext: existing.prepareExecutionContext } : {}),
     ...(existing.executeAdmittedAction ? { executeAdmittedAction: existing.executeAdmittedAction } : {}), reviewRequired: false };
   const reviewedChild = readHostReviewedChildOperationV1(context, actionId, params.input);
   // The exact admitted child consumes its original closed plan, not another preparation or review.
@@ -105,6 +107,7 @@ export async function prepareHostReviewedChildrenV1(params: Readonly<{
   if (retained && !witnessed || params.approvalReplay && plan && !witnessed)
     return { ok: false, errorCode: 'approval_stale', error: 'approval_stale' };
   return { ...(plan ? { plan, policies } : {}),
+    ...(prepared?.prepareExecutionContext ? { prepareExecutionContext: prepared.prepareExecutionContext } : {}),
     ...(prepared?.approvalPreview ? { approvalPreview: prepared.approvalPreview } : {}),
     ...(prepared?.executeAdmittedAction ? { executeAdmittedAction: prepared.executeAdmittedAction } : {}),
     reviewRequired: !witnessed && policies.some(policy => (policy.requiredActionIds?.length ?? 0) > 0) };

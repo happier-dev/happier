@@ -670,9 +670,10 @@ class AuthModule {
         return ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token, binding });
     }
 
-    /** Seal only private setup bytes or the canonical birth of an already admitted template. */
+    /** Seal resolved requester authorship, private setup bytes, or canonical birth on the admitted template root. */
     async deriveExternalActionTemplateAuthorization(original: ExternalActionExecutionAuthorizationV1,
         extension: Readonly<{ planInputDigest?: string;
+            requesterAuthorship?: NonNullable<ExternalActionExecutionAuthorizationBindingV1['templateRequesterAuthorship']>;
             birth?: NonNullable<ExternalActionExecutionAuthorizationBindingV1['templateRequesterBirth']> }>,
     ): Promise<ExternalActionExecutionAuthorizationV1> {
         const root = await this.verifyExternalActionExecutionAuthorization(original.token);
@@ -682,12 +683,15 @@ class AuthModule {
             || extension.planInputDigest && (!root.templateRequesterSetupAdmission || root.admittedMachineRole !== 'manage')
             || root.templateRequesterSetupAdmission?.planInputDigest && extension.planInputDigest
                 && root.templateRequesterSetupAdmission.planInputDigest !== extension.planInputDigest
+            || root.templateRequesterAuthorship && extension.requesterAuthorship
+                && root.templateRequesterAuthorship !== extension.requesterAuthorship
             || root.templateRequesterBirth && extension.birth && !sameStrictJsonValue(root.templateRequesterBirth, extension.birth)) {
             throw new ApiTokenOperationError('invalid_token');
         }
         const binding = ExternalActionExecutionAuthorizationBindingV1Schema.parse({ ...root,
             ...(extension.planInputDigest ? { templateRequesterSetupAdmission: {
                 kind: 'software', planInputDigest: extension.planInputDigest } } : {}),
+            ...(extension.requesterAuthorship ? { templateRequesterAuthorship: extension.requesterAuthorship } : {}),
             ...(extension.birth ? { templateRequesterBirth: extension.birth } : {}) });
         if (!this.externalActionExecutionAuthorizationTokens) throw new Error('Auth module not initialized');
         const token = await this.externalActionExecutionAuthorizationTokens.generator.new({ user: binding.accountId,

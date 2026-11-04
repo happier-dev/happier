@@ -2883,6 +2883,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     const { plan: hostReviewedChildren, policies: childPolicies, approvalPreview: childrenApprovalPreview, executeAdmittedAction: executePreparedChildren,
       admittedReviewedChild: preparedChildAdmission } = childrenPreparation;
     const executeAdmittedAction = preparedHostReviewedChildren?.executeAdmittedAction ?? executePreparedChildren;
+    const prepareExecutionContext = preparedHostReviewedChildren?.prepareExecutionContext ?? childrenPreparation.prepareExecutionContext;
     let admittedReviewedChild = preparedChildAdmission;
     const reviewAdmitted = existingAdmission?.reviewAdmitted === true || nativeReview !== null
       // The private replay owner already admitted and recorded this decision.
@@ -3396,6 +3397,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           ...(observePendingOperation ? { observePendingOperation } : {}),
           ...(childPolicies ? { hostReviewedChildPolicies: childPolicies } : {}),
           ...(executeAdmittedAction ? { executeAdmittedAction } : {}),
+          ...(prepareExecutionContext ? { prepareExecutionContext } : {}),
           semanticInput,
           ...(legacyMetadataLabel ? { legacyMetadataLabel } : {}),
         });
@@ -3409,6 +3411,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         return await observePendingOperation(ctx);
       }
 
+      if (prepareExecutionContext) ctx = await prepareExecutionContext(ctx);
       ctx = { ...ctx, hostReviewedChild: existingAdmission?.context.hostReviewedChild
         ?? (hostReviewedChildren || reviewAdmitted ? createHostReviewedChildPortV1({ actionId,
           input: admittedInput, context: ctx, ...(hostReviewedChildren ? { plan: hostReviewedChildren } : {}),

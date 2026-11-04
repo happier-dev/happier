@@ -567,12 +567,14 @@ export function registerExternalActionRoutes(
                     ? await verifyTemplateRequesterExecutionAuthorization({ authorization: enrichment.authorization,
                         originalActionEnvelope: body.data.envelope, accountId: request.userId,
                         authentication: readSessionAccessAuthenticationFromRequest(request), expectedActionId: actionId.data }) : null;
-                if (!admitted?.binding.templateRequesterSetupAdmission || admitted.binding.admittedMachineRole !== 'manage') {
+                if (!admitted || enrichment.planInputDigest
+                    && (!admitted.binding.templateRequesterSetupAdmission || admitted.binding.admittedMachineRole !== 'manage')) {
                     return sendExternalActionHttpError(reply, 'credential_scope_denied', body.data.envelope.requestId);
                 }
                 try {
                     return reply.send(await auth.deriveExternalActionTemplateAuthorization(enrichment.authorization,
-                        { planInputDigest: enrichment.planInputDigest }));
+                        { ...(enrichment.planInputDigest ? { planInputDigest: enrichment.planInputDigest } : {}),
+                            ...(enrichment.requesterAuthorship ? { requesterAuthorship: enrichment.requesterAuthorship } : {}) }));
                 } catch (error) {
                     if (error instanceof ApiTokenOperationError) return sendExternalActionHttpError(reply, 'credential_scope_denied', body.data.envelope.requestId);
                     throw error;

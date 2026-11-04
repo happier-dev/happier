@@ -82,11 +82,16 @@ export const BotTemplateArtifactPresentationV1Schema = lazyZodSchema(() => z.str
   ownerDisplayName: z.optional(z.nullable(z.string())), shared: z.optional(z.boolean()),
 }));
 export type BotTemplateArtifactPresentationV1 = z.infer<typeof BotTemplateArtifactPresentationV1Schema>;
+/** Source-transport provenance; portable template content cannot establish its author. */
+export const BotTemplateRequesterAuthorshipV1Schema = z.enum(['requester', 'other']);
+export type BotTemplateRequesterAuthorshipV1 = z.infer<typeof BotTemplateRequesterAuthorshipV1Schema>;
 export const BotTemplatePreviewResultV1Schema = lazyZodSchema(() => z.strictObject({ source: BotTemplateReleaseSourceV1Schema,
   release: BotTemplateReleaseV1Schema, revision: z.optional(ArtifactRevisionV1Schema),
+  requesterAuthorship: z.optional(BotTemplateRequesterAuthorshipV1Schema),
   presentation: z.optional(BotTemplateArtifactPresentationV1Schema) }));
 export type BotTemplatePreviewResultV1 = z.infer<typeof BotTemplatePreviewResultV1Schema>;
-export type ResolvedBotTemplateReleaseV1 = Readonly<{ release: BotTemplateReleaseV1; source: BotTemplateReleaseSourceV1 }>;
+export type ResolvedBotTemplateReleaseV1 = Readonly<{ release: BotTemplateReleaseV1; source: BotTemplateReleaseSourceV1;
+  requesterAuthorship?: BotTemplateRequesterAuthorshipV1 }>;
 
 /** Private candidates can replace, omit or generalize copied items. Only portable fields leave this owner. */
 export function projectBotTemplateContentV1(draft: BotTemplateDraftV1): BotTemplateContentV1 {

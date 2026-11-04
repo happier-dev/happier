@@ -8,7 +8,7 @@ import { readSkillFrontmatterV1 } from '../../prompts/library/skills/skillLibrar
 import { decodeBase64 } from '../../crypto/base64.js';
 import { SessionSpawnNewActionInputV2Schema } from '../../sessions/creation/sessionSpawnNewInputV2.js';
 import { readBotTemplateInstanceV1, type BotTemplateInstanceV1 } from './templateInstanceV1.js';
-import { projectBotTemplateArtifactHeaderV1 } from './botTemplateV1.js';
+import { projectBotTemplateArtifactHeaderV1, type BotTemplateRequesterAuthorshipV1 } from './botTemplateV1.js';
 import { BotTemplateInstantiateInputV1Schema, type BotTemplateInstantiateInputV1, type BotTemplatePreviewResultV1 } from './botTemplateActionsV1.js';
 import type { BotTemplateOperationPortV1 } from './botTemplateOperations.js';
 import { prepareBotTemplateSetupV1, applyBotTemplateMcpSetupV1, buildBotTemplateMachineSetupPlanInputV1 } from './templateSetupV1.js';
@@ -28,11 +28,13 @@ export type BotTemplateRecipientPortV1 = BotTemplateAcceptedVersionReporterV1 & 
     context: ActionExecutorContext): Promise<void>;
   updateInstance?(ref: Readonly<{ serverId: string; sessionId: string }>, instance: BotTemplateInstanceV1,
     expectedInstance: BotTemplateInstanceV1, context: ActionExecutorContext): Promise<void>;
-  /** Enrich the admitted requester root with exact resolved setup, without a second policy decision. */
+  /** Enrich the admitted root with source-owned authorship and resolved setup. */
   prepareRequesterAdmission?(request: Readonly<{ input: BotTemplateInstantiateInputV1; context: ActionExecutorContext;
+    requesterAuthorship?: BotTemplateRequesterAuthorshipV1;
     machineSetup?: MachineSetupV1; machineSetupPlanInput?: MachineSetupPlanInputV1 }>): Promise<ActionExecutorContext>;
   /** The owned Session target admits the requester before any base/source/content read. */
   prepareUpdateRequesterAdmission?(request: Readonly<{ input: BotTemplateUpdateApplyInputV1; context: ActionExecutorContext;
+    requesterAuthorship?: BotTemplateRequesterAuthorshipV1;
     executionTarget?: Readonly<{ machineId: string; agentId: string }>;
     machineSetup?: MachineSetupV1; machineSetupPlanInput?: MachineSetupPlanInputV1 }>): Promise<ActionExecutorContext>;
   content?: Pick<ActionExecutorDeps, 'promptDocGet' | 'skillActionExecute' | 'machineSetupPlan'>;
@@ -97,7 +99,11 @@ export async function prepareBotTemplateInstantiationV1(port: BotTemplateOperati
         ...setup.mcp.map(item => ({ action: 'session.capabilities.set' as const, role: `template_mcp:${item.key}` })),
       ] : []),
     ];
+    const prepareRequesterAdmission = recipient.prepareRequesterAdmission;
     return { children, approvalPreview: projectNativeJsonValueForTransport(resolved),
+      ...(prepareRequesterAdmission ? { prepareExecutionContext: (context: ActionExecutorContext) => prepareRequesterAdmission({ input, context,
+        ...(resolved.requesterAuthorship ? { requesterAuthorship: resolved.requesterAuthorship } : {}),
+        ...(setup.machineSetup ? { machineSetup: setup.machineSetup } : {}), ...(machineSetupPlanInput ? { machineSetupPlanInput } : {}) }) } : {}),
       executeAdmittedAction: async ({ context }) => {
         const execute = async (context: ActionExecutorContext): Promise<ActionExecuteResult> => {
         let knownSessionId: string | undefined;
@@ -191,10 +197,8 @@ export async function prepareBotTemplateInstantiationV1(port: BotTemplateOperati
           return { ...refused, ...(knownSessionId ? { details: { sessionId: knownSessionId, resourceIds } } : {}) };
         }
         };
-        const admittedContext = recipient.prepareRequesterAdmission ? await recipient.prepareRequesterAdmission({ input, context,
-          ...(setup.machineSetup ? { machineSetup: setup.machineSetup } : {}), ...(machineSetupPlanInput ? { machineSetupPlanInput } : {}) }) : context;
-        const runOperation = admittedContext.runActionOperation ?? request.context.runActionOperation;
-        return runOperation ? runOperation({ actionId: 'template.instantiate', input, context: admittedContext, execute }) : execute(admittedContext);
+        const runOperation = context.runActionOperation ?? request.context.runActionOperation;
+        return runOperation ? runOperation({ actionId: 'template.instantiate', input, context, execute }) : execute(context);
       } };
   } catch (error) { return failure(error); }
 }

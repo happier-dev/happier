@@ -102,6 +102,7 @@ export function createUiBotTemplateAction(account: LazyActionAccountContext, ope
     return createBotTemplateActionExecuteV1({
         artifacts: account.homeHubArtifactTransport,
         randomId: randomUUID,
+        requesterAccountId: account.accountId,
         isSameServerId: areServerProfileIdentifiersEquivalent,
         resolveInstantiationRelease: delivery?.resolveInstantiationRelease,
         resolvePluginRelease: async (source, context, signal, purpose) => {

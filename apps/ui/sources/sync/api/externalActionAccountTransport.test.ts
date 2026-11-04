@@ -6,6 +6,9 @@ import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/action
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 const { machinePluginUiResourceRead } = await import('@/sync/ops/machineContributionRegistryProjection');
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
+import nacl from 'tweetnacl';
+import { openExternalActionRequesterAccountContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { projectExternalActionHttpError } from '@happier-dev/protocol/actions/externalActionApi';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
@@ -52,6 +55,58 @@ async function execute() {
 }
 
 describe('captured Account Action response decoding', () => {
+    it.each([{ setup: false, substitutedAuthorship: false }, { setup: true, substitutedAuthorship: false },
+        { setup: false, substitutedAuthorship: true }])('enriches the exact requester authorship (setup: $setup, substituted: $substitutedAuthorship)', async ({ setup, substitutedAuthorship }) => {
+        if (!account) throw new Error('Expected captured Account');
+        const { createTemplateRequesterActionAdmissionScope } = await import('./externalActionAccountTransport');
+        const { ManagedMachineActionInputSchemasV1 } = await import('@happier-dev/protocol/machines/managed/actionsV1');
+        const planInput = ManagedMachineActionInputSchemasV1['machines.setup.plan'].parse({
+            homeId: binding.serverIdentityId, machineId: 'machine-1', mode: 'effects', sources: [{ kind: 'direct', setup: {} }] });
+        const planInputDigest = computeActionInputApprovalDigestV1('machines.setup.plan', planInput);
+        const originalActionEnvelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: 'author-only-template',
+            target: binding.target, input: {} });
+        const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'original-template-root', binding: {
+            ...binding, actionId: 'template.instantiate', requestId: originalActionEnvelope.requestId,
+            machineId: 'machine-1', installationId: 'installation-1', custodianAccountId: 'owner', accountEncryptionMode: 'plain',
+            ...(setup ? { admittedMachineRole: 'manage', templateRequesterSetupAdmission: { kind: 'software' } } : {}),
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(originalActionEnvelope),
+        } });
+        const machineKeys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(18));
+        homes.answer(serverId, '/v1/machines/machine-1', { body: { machine: {
+            ...createPlainMachineRowFixture({ id: 'machine-1', accountId: 'owner' }), installationId: 'installation-1',
+            installationPublicKey: Buffer.from(machineKeys.publicKey).toString('base64'),
+        } } });
+        homes.answer(serverId, '/v1/actions/template.instantiate/execution-authorization', { select: body => {
+            const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+            expect(request.templateRequesterSetupEnrichment).toMatchObject({ authorization: root,
+                requesterAuthorship: 'requester', ...(setup ? { planInputDigest } : {}) });
+            if (!setup) expect(request.templateRequesterSetupEnrichment?.planInputDigest).toBeUndefined();
+            return { body: { v: 1, token: 'author-enriched-root', binding: {
+                ...root.binding, templateRequesterAuthorship: substitutedAuthorship ? 'other' : 'requester',
+                ...(setup ? { templateRequesterSetupAdmission: { kind: 'software', planInputDigest } } : {}),
+            } } };
+        } });
+        account.dispose();
+        const scope = createTemplateRequesterActionAdmissionScope();
+        account = await captureLazyActionAccountContext(serverId, undefined, scope.requestAuthorization);
+        const original = await scope.prepareOriginal(account, {}, { surface: 'ui', originalActionEnvelope,
+            externalActionExecutionAuthorization: root });
+        expect(original.ok).toBe(true);
+        if (!original.ok) throw new Error(original.errorCode);
+        if (substitutedAuthorship) {
+            await expect(scope.prepareRequesterAdmission({ context: original.context, requesterAuthorship: 'requester' }))
+                .rejects.toThrow('execution_not_authorized');
+            return;
+        }
+        const enriched = await scope.prepareRequesterAdmission({ context: original.context, requesterAuthorship: 'requester',
+            ...(setup ? { machineSetupPlanInput: planInput } : {}) });
+        expect(enriched.externalActionExecutionAuthorization?.binding.templateRequesterAuthorship).toBe('requester');
+        expect(openExternalActionRequesterAccountContextV1({
+            authorization: JSON.parse(JSON.stringify(enriched.externalActionExecutionAuthorization)),
+            purpose: { kind: 'external_action' }, machineId: 'machine-1', installationId: 'installation-1',
+            serverIdentityId: binding.serverIdentityId, installationPrivateKey: machineKeys.secretKey,
+        })).toEqual({ token: account.credentials.token });
+    });
     it('uses the actual birth proof only for its Session key envelopes and retains the original content root', async () => {
         if (!account) throw new Error('Expected captured Account');
         const { createTemplateRequesterActionAdmissionScope } = await import('./externalActionAccountTransport');

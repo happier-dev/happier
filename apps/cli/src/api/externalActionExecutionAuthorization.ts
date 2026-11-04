@@ -1880,9 +1880,11 @@ export async function prepareOriginalTemplateRequesterAuthorization(input: Reado
     externalActionExecutionAuthorization: prepared.authorization, originalActionEnvelope: prepared.envelope } } : { ok: false, code };
 }
 
-/** Bind resolved private setup bytes to the already admitted root, without another policy admission. */
+/** Bind source-owned authorship and resolved setup to the admitted root without another policy admission. */
 export async function enrichTemplateRequesterSetupAuthorization(input: Readonly<{
-  context: ActionExecutorContext; planInput: MachineSetupPlanInputV1; credentials: StoredCredentials; serverHttpBaseUrl: string;
+  context: ActionExecutorContext; planInput?: MachineSetupPlanInputV1;
+  requesterAuthorship?: import('@happier-dev/protocol/bots/templates/botTemplateV1').BotTemplateRequesterAuthorshipV1;
+  credentials: StoredCredentials; serverHttpBaseUrl: string;
 }>): Promise<ActionExecutorContext | null> {
   const authorization = input.context.externalActionExecutionAuthorization;
   const envelope = ExternalActionRequestEnvelopeSchema.safeParse(input.context.originalActionEnvelope);
@@ -1897,14 +1899,16 @@ export async function enrichTemplateRequesterSetupAuthorization(input: Readonly<
   const installation = await readExternalActionInstalledMachine({ machineId: authorization.binding.machineId,
     serverHttpBaseUrl: input.serverHttpBaseUrl, headers, ...(input.context.signal ? { signal: input.context.signal } : {}) });
   if (installation?.installationId !== authorization.binding.installationId || !installation.installationPublicKey) return null;
-  const planInputDigest = computeActionInputApprovalDigestV1('machines.setup.plan', input.planInput);
+  const planInputDigest = input.planInput ? computeActionInputApprovalDigestV1('machines.setup.plan', input.planInput) : undefined;
   const minted = await mintExternalActionExecutionAuthorization({ actionId: authorization.binding.actionId, envelope: envelope.data,
     machineId: authorization.binding.machineId, pat: input.credentials.token, serverHttpBaseUrl: input.serverHttpBaseUrl,
-    templateRequesterSetupEnrichment: { authorization, planInputDigest },
+    templateRequesterSetupEnrichment: { authorization, ...(planInputDigest ? { planInputDigest } : {}),
+      ...(input.requesterAuthorship ? { requesterAuthorship: input.requesterAuthorship } : {}) },
     ...(input.context.signal ? { signal: input.context.signal } : {}),
   });
   if (!minted.ok || !sameStrictJsonValue(minted.authorization.binding, { ...authorization.binding,
-    templateRequesterSetupAdmission: { kind: 'software', planInputDigest } })) return null;
+    ...(planInputDigest ? { templateRequesterSetupAdmission: { kind: 'software', planInputDigest } } : {}),
+    ...(input.requesterAuthorship ? { templateRequesterAuthorship: input.requesterAuthorship } : {}) })) return null;
   const sealed = sealExternalActionRequesterAccountContextV1({ authorization: minted.authorization,
     credentials: authorization.binding.accountEncryptionMode === 'plain' ? { token: input.credentials.token }
       : encodeStoredCredentials(input.credentials), purpose: { kind: 'external_action' },

@@ -39,6 +39,8 @@ previewTemplateEnvironmentId?: string;
     hostReviewedChildPolicies?: readonly import('./deploymentRoleChild.js').HostReviewedChildPolicyV1[];
     /** The producer's closure retains its exact prepared facts without persisting domain state. */
     executeAdmittedAction?: import('./types.js').HostReviewedChildrenPreparationV1['executeAdmittedAction'];
+    /** Deferred requester enrichment runs after review and before child-port binding. */
+    prepareExecutionContext?: import('./types.js').HostReviewedChildrenPreparationV1['prepareExecutionContext'];
     /** The host continuation already invoked this private admitted dispatch callback. */
     admittedExecutionContinued?: true;
     /** The admitted client request has reached its local effect or presenting realm. */

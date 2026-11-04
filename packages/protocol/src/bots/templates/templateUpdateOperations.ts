@@ -154,12 +154,15 @@ export async function prepareBotTemplateUpdateV1(port: BotTemplateOperationPortV
     if (setup.machineSetup && !requesterContext.serverIdentityId) return fail('server_identity_unavailable');
     const setupTarget = review.executionTarget && requesterContext.serverIdentityId
       ? { homeId: requesterContext.serverIdentityId, machineId: review.executionTarget.machineId } : undefined;
+    const planInput = setup.machineSetup && setupTarget ? buildBotTemplateMachineSetupPlanInputV1(setupTarget, setup.machineSetup) : undefined;
+    if (opened.recipient.prepareUpdateRequesterAdmission && (planInput || review.upstream.requesterAuthorship))
+      requesterContext = await opened.recipient.prepareUpdateRequesterAdmission({ input, context: requesterContext,
+        executionTarget: review.executionTarget,
+        ...(review.upstream.requesterAuthorship ? { requesterAuthorship: review.upstream.requesterAuthorship } : {}),
+        ...(setup.machineSetup ? { machineSetup: setup.machineSetup } : {}),
+        ...(planInput ? { machineSetupPlanInput: planInput } : {}) });
     let setupPlan: ReturnType<typeof MachineSetupPlanResultV1Schema.parse> | undefined;
-    if (setup.machineSetup && setupTarget) {
-      const planInput = buildBotTemplateMachineSetupPlanInputV1(setupTarget, setup.machineSetup);
-      if (opened.recipient.prepareUpdateRequesterAdmission) requesterContext = await opened.recipient.prepareUpdateRequesterAdmission({
-        input, context: requesterContext, executionTarget: review.executionTarget,
-        machineSetup: setup.machineSetup, machineSetupPlanInput: planInput });
+    if (planInput) {
       const plan = port.recipient?.content?.machineSetupPlan ?? fail('unsupported_action');
       const result = await plan({ input: planInput, context: requesterContext, signal: requesterContext.signal });
       const refused = readActionFailureEnvelope(result); if (refused) throw refused;
@@ -186,7 +189,14 @@ export async function prepareBotTemplateUpdateV1(port: BotTemplateOperationPortV
       ...(setupApply ? [{ action: 'machines.setup.apply' as const, role: 'template_setup_apply', input: projectNativeJsonValueForTransport(setupApply) }] : []),
       ...(setup.connectedServices ? [{ action: 'session.connected_services_auth.set' as const, role: 'template_accounts' }] : []),
     ];
-    return { children, approvalPreview: projectNativeJsonValueForTransport({ ...review, ...(setupPlan ? { softwarePlan: setupPlan } : {}) }), executeAdmittedAction: async ({ context }) => {
+    return { children, approvalPreview: projectNativeJsonValueForTransport({ ...review, ...(setupPlan ? { softwarePlan: setupPlan } : {}) }),
+      // Requester preparation owns these routing/authentication fields; current review and cancellation stay with the host.
+      prepareExecutionContext: async context => ({ ...context,
+        externalActionExecutionAuthorization: requesterContext.externalActionExecutionAuthorization,
+        externalActionTarget: requesterContext.externalActionTarget,
+        originalActionEnvelope: requesterContext.originalActionEnvelope,
+        actionRequestId: requesterContext.actionRequestId }),
+      executeAdmittedAction: async ({ context }) => {
       const execute = async (context: ActionExecutorContext): Promise<ActionExecuteResult> => {
         const applied: string[] = []; const kept: string[] = []; const resourceIds: string[] = [];
         const skillIds = { ...review.instance.skillIds, ...input.recovery?.skillIds };

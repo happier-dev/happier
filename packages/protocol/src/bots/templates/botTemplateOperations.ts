@@ -21,6 +21,8 @@ type DraftRef = Readonly<{ serverId: string; artifactId: string }>;
 const signedInLinkInput = (artifactId: string) => ({ artifactId, audience: 'signed_in' as const, preserveExisting: true as const });
 export type BotTemplateOperationPortV1 = Readonly<{
   artifacts: HomeHubArtifactTransportV1;
+  /** Identity of the Account captured by this source transport. */
+  requesterAccountId?: string;
   /** The Session owner-private metadata transport also admits source ownership. */
   readSourceDraftRef(source: SourceRef, context: ActionExecutorContext): Promise<DraftRef | null>;
   writeSourceDraftRef(source: SourceRef, ref: DraftRef, context: ActionExecutorContext): Promise<void>;
@@ -107,7 +109,8 @@ export async function resolveBotTemplateReleaseV1(port: BotTemplateOperationPort
   if (!stored) return failure('artifact_not_found');
   const artifact = readBotTemplateArtifactV1(stored);
   if (!artifact || artifact.state !== 'released') return failure('invalid_request');
-  return { source, release: artifact.release, revision: stored.revision, presentation: {
+  return { source, release: artifact.release, revision: stored.revision,
+    requesterAuthorship: stored.ownerAccountId === (port.requesterAccountId ?? context.runtimeAccountId) ? 'requester' : 'other', presentation: {
     ...(stored.ownerDisplayName === undefined ? {} : { ownerDisplayName: stored.ownerDisplayName }),
     ...(stored.shared === undefined ? {} : { shared: stored.shared }),
   } };

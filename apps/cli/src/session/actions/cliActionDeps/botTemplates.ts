@@ -80,6 +80,7 @@ export function createCliBotTemplateActionDeps(
         update: input => requireStore().update({ ...input, authorizationHeaders }),
       }),
       randomId: randomUUID,
+      requesterAccountId: host.homeAccountId ?? undefined,
       resolvePluginRelease: async (source, _context, _signal, purpose) => {
         const { createCliRegistryHostV1 } = await import('@/registries/createCliRegistryHost');
         const registry = createCliRegistryHostV1({ credentials: params.credentials, port: host.registryPort, signal,
@@ -90,32 +91,37 @@ export function createCliBotTemplateActionDeps(
       isSameServerId: (left, right) => host.isSameActionHomeId(left) && host.isSameActionHomeId(right),
       recipient: { content: host.content,
         prepareRequesterAdmission: async request => {
-          if (!request.machineSetupPlanInput) return request.context;
+          if (!request.machineSetupPlanInput && request.requesterAuthorship === undefined) return request.context;
           const credentials = params.credentials ?? refuse('not_authenticated');
           const projection = request.context.externalActionExecutionAuthorization?.requesterHttpProjection;
           if (!projection) return refuse('execution_not_authorized');
           context = await enrichTemplateRequesterSetupAuthorization({ context: request.context,
-            planInput: request.machineSetupPlanInput, credentials,
+            ...(request.machineSetupPlanInput ? { planInput: request.machineSetupPlanInput } : {}),
+            ...(request.requesterAuthorship ? { requesterAuthorship: request.requesterAuthorship } : {}), credentials,
             serverHttpBaseUrl: params.serverHttpBaseUrl ?? projection.serverHttpBaseUrl }) ?? refuse('execution_not_authorized');
           return context;
         },
         prepareUpdateRequesterAdmission: async request => {
           const credentials = params.credentials ?? refuse('not_authenticated');
-          if (request.machineSetupPlanInput) {
-            const projection = request.context.externalActionExecutionAuthorization?.requesterHttpProjection;
-            if (!projection) return refuse('execution_not_authorized');
-            context = await enrichTemplateRequesterSetupAuthorization({ context: request.context,
-              planInput: request.machineSetupPlanInput, credentials,
-              serverHttpBaseUrl: params.serverHttpBaseUrl ?? projection.serverHttpBaseUrl }) ?? refuse('execution_not_authorized');
-            return context;
+          let preparedContext = request.context;
+          if (!preparedContext.externalActionExecutionAuthorization) {
+            const serverIdentityId = request.context.serverIdentityId ?? refuse('server_scope_mismatch');
+            const serverHttpBaseUrl = params.serverHttpBaseUrl ?? refuse('server_scope_mismatch');
+            const prepared = await prepareOriginalTemplateRequesterAuthorization({ actionId: 'template.updates.apply',
+              input: request.input, context: request.context, executionTarget: request.executionTarget,
+              credentials, serverId: request.context.serverId ?? serverIdentityId, serverIdentityId, serverHttpBaseUrl });
+            preparedContext = prepared.ok ? prepared.context : refuse(prepared.code);
           }
-          if (request.context.externalActionExecutionAuthorization) return context = request.context;
-          const serverIdentityId = request.context.serverIdentityId ?? refuse('server_scope_mismatch');
-          const serverHttpBaseUrl = params.serverHttpBaseUrl ?? refuse('server_scope_mismatch');
-          const prepared = await prepareOriginalTemplateRequesterAuthorization({ actionId: 'template.updates.apply',
-            input: request.input, context: request.context, executionTarget: request.executionTarget,
-            credentials, serverId: request.context.serverId ?? serverIdentityId, serverIdentityId, serverHttpBaseUrl });
-          return context = prepared.ok ? prepared.context : refuse(prepared.code);
+          if (request.machineSetupPlanInput || request.requesterAuthorship !== undefined) {
+            const projection = preparedContext.externalActionExecutionAuthorization?.requesterHttpProjection;
+            if (!projection) return refuse('execution_not_authorized');
+            preparedContext = await enrichTemplateRequesterSetupAuthorization({ context: preparedContext,
+              ...(request.machineSetupPlanInput ? { planInput: request.machineSetupPlanInput } : {}),
+              ...(request.requesterAuthorship ? { requesterAuthorship: request.requesterAuthorship } : {}),
+              credentials, serverHttpBaseUrl: params.serverHttpBaseUrl ?? projection.serverHttpBaseUrl })
+              ?? refuse('execution_not_authorized');
+          }
+          return context = preparedContext;
         },
         reportAcceptedVersion: (input, reportContext) => requireStore().reportTemplateAcceptedVersion(input, reportContext.signal, {
         authorizationHeaders: async request => {
