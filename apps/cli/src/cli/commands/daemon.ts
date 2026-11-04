@@ -787,7 +787,7 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
   }
 
   if (daemonSubcommand === 'status') {
-      if (args.includes('--json')) {
+    if (args.includes('--json')) {
       if (args.includes('--all')) {
         const statuses = await listDaemonStatusesForAllKnownServers();
         const activeRelayUrl = configuration.publicServerUrl || configuration.serverUrl;
@@ -855,7 +855,24 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
       }
       process.exit(0);
     }
-    await runDoctorCommand('daemon');
+
+    const snapshot = await readDaemonStatusSnapshot();
+    if (snapshot.running) {
+      console.log(chalk.green('✓'), 'Daemon running');
+      console.log(definitionList([
+        { label: 'PID', value: String(snapshot.pid ?? '—') },
+        { label: 'CLI Version', value: snapshot.startedWithCliVersion ?? '—' },
+        { label: 'Relay URL', value: configuration.serverUrl },
+        { label: 'Relay profile', value: configuration.activeServerId },
+        ...(snapshot.httpPort ? [{ label: 'HTTP Port', value: String(snapshot.httpPort) }] : []),
+      ], { indent: '  ' }));
+    } else {
+      console.log(chalk.yellow('○'), 'Daemon not running');
+      console.log(definitionList([
+        { label: 'Relay URL', value: configuration.serverUrl },
+        { label: 'Relay profile', value: configuration.activeServerId },
+      ], { indent: '  ' }));
+    }
     process.exit(0);
   }
 
