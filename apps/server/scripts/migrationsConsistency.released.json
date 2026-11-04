@@ -1,6 +1,6 @@
 {
-  "tag": "server-v0.2.12",
-  "commit": "a357c65536ba89669422977d6f7daf9aa0d17e73",
+  "tag": "server-v0.2.20",
+  "commit": "282a8fc3f999df1d104b78daa489317e65d395a6",
   "providers": {
     "postgres": {
       "20250713002718_initial": "afe7b15d5c7580c37fb167a46b53841fe084c16833986be9ac7326a4483e67ff",
@@ -96,7 +96,10 @@
       "20260810200000_expand_session_turn_anchor_projection": "61b449cd41d001b34111f53d67857787490dfc095d2d7caaf94c9efef8ee4920",
       "20260816230000_add_manual_automation_triggers": "04b6ce09ffc355830b3d13d02d97bc1d08c44318514b935284f6cc43517064d2",
       "20260819120000_add_session_attention_standing": "d52698b47e9653195b61fdfee48ba7370e4a010e1e97395ca9d9abb1602f4a3b",
-      "20260902120000_add_pending_activation_authorization": "0b8cd58235e051555ea0e263c76329fe97a758fbd5dcb60c5e8c8232968f8b16"
+      "20260902120000_add_pending_activation_authorization": "0b8cd58235e051555ea0e263c76329fe97a758fbd5dcb60c5e8c8232968f8b16",
+      "20260907190000_add_session_attention_reminder": "403d9b8def226343f9b8513e4a4819c673e1b9f2f991f64262396da4a97ef208",
+      "20261017120000_add_auth_credential_reader_support": "38f485afae621a6d04f6eb97a5a021fde4166d85902b7679fc96e8f957eddaea",
+      "20261026150000_add_session_appearance": "b3330128c07c4898d359697cdf1055f054e3864a2dfcb087410d2800b7862933"
     },
     "mysql": {
       "20260202164738_baseline": "43acc0c69503fb04c0135cddd14cb256d53a2afc6bce02fb8fbbe56d2d393940",
@@ -149,7 +152,10 @@
       "20260810200000_expand_session_turn_anchor_projection": "27205c5b6ebdd75be9b41d66a9db30faffaa355d6cd8afd29817e29905e2c684",
       "20260816230000_add_manual_automation_triggers": "00017d5b436d73d86361ac00c60b8b125eeee280aba5b269fc4fb12b562c9007",
       "20260819120000_add_session_attention_standing": "59fd809b5b6e06f7967c507a4a43f0621123f2a51bc869bf2330d90824a078f2",
-      "20260902120000_add_pending_activation_authorization": "8eee9bbe73b27e7182eb92162f34b5157e8870975e030e46fa9555beee6637d2"
+      "20260902120000_add_pending_activation_authorization": "8eee9bbe73b27e7182eb92162f34b5157e8870975e030e46fa9555beee6637d2",
+      "20260907190000_add_session_attention_reminder": "67ad1551c8eaf56e12da86b0c1d48019b9a10335b809a87c016790c07f01ae95",
+      "20261017120000_add_auth_credential_reader_support": "dcc70a3965fad6661b22f4aaf1a7f77264639daecc1cc3654ddac341a52377ed",
+      "20261026150000_add_session_appearance": "5a54dcab835408281f17c60261ac365456e73dac563cf220deb99031354c9417"
     },
     "sqlite": {
       "20260122190000_baseline": "d0dd6a34526966ce31e7db61bea10f0ef90bfd0a0a8af9eac99dcda07cf99654",
@@ -204,7 +210,10 @@
       "20260810200000_expand_session_turn_anchor_projection": "bdff283cb5b67b496dc4d08567a366f1003b197653171be4dc2a84bc1b1ed833",
       "20260816230000_add_manual_automation_triggers": "023a3b2d63ef4c40007818014b2666f8d4937091009c518920efbf71e59d3e9d",
       "20260819120000_add_session_attention_standing": "4b66804884cad73d8dda8dec35a876d649f4cca8e0be3953e983b22135e6970d",
-      "20260902120000_add_pending_activation_authorization": "0da507ac331cf53aa49fd61590a1f1ecd6689de44a1407931adfb59777e83aaf"
+      "20260902120000_add_pending_activation_authorization": "0da507ac331cf53aa49fd61590a1f1ecd6689de44a1407931adfb59777e83aaf",
+      "20260907190000_add_session_attention_reminder": "50eac4f35ea2b6ccac05857d68158994af51045485a3d7923ce7e230659656ff",
+      "20261017120000_add_auth_credential_reader_support": "38f485afae621a6d04f6eb97a5a021fde4166d85902b7679fc96e8f957eddaea",
+      "20261026150000_add_session_appearance": "df197d72b52201109ec3025d86b03b6cdd34272406793f94788e9c3b7206366d"
     }
   }
 }
