@@ -202,6 +202,96 @@ esac
   assert.match(result.stdout, /12\.14\.0/);
 });
 
+test('AUTO shares one prerequisite and load observation per candidate during a concurrent burst', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-probe-burst-' });
+  const bin = fixture.path('bin');
+  const stack = fixture.path('stack');
+  const config = join(stack, 'dev-targets.json');
+  const probes = fixture.path('probes');
+  const ready = fixture.path('ready');
+  await mkdir(bin);
+  await mkdir(stack);
+  await writeFile(ready, 'ready');
+  await writeFile(config, JSON.stringify({ version: 3,
+    targets: ['first', 'second'].map(name => ({ name, platform: 'posix', ssh: name,
+      repoDir: '/worker/repo', cliHomeDir: '/worker/home' })),
+    commandExecution: { mode: 'auto', includeLocal: false, fallback: 'error' } }));
+  await executable(join(bin, 'node'), `#!/bin/sh\nexec ${process.execPath} "$@"\n`);
+  // Cache reuse is within one observation lifetime. Keep that clock boundary
+  // fixed even when process startup under shared-host load exceeds the TTL.
+  await executable(join(bin, 'date'), '#!/bin/sh\ncase "$*" in +%s) printf "1700000000\\n" ;; *) exec /bin/date "$@" ;; esac\n');
+  await executable(join(bin, 'mutagen'), '#!/bin/sh\n[ "$1" != sync ] || printf "%s|Watching|false|true|1|0/0|0/0|true|1|0/0|0/0|active|7|ok|0|0\\n" "$3"\n');
+  // SSH is the external observation boundary. Keep prerequisite evaluation,
+  // cache freshness, selection and dispatch in the real launcher.
+  await executable(join(bin, 'ssh'), `#!/bin/sh
+case "$*" in
+  *-O\\ check*) exit 1 ;;
+  *getconf*|*command\\ -v*)
+    target=; for argument in "$@"; do case "$argument" in first|second) target=$argument ;; esac; done
+    printf '%s\\n' "$target" >> '${probes}'
+    [ -f '${ready}' ] || exit 1
+    case "$*" in *getconf*) printf '48 0 0.9 100000000 10 0 100000000 100000000 0 0 0 0 0 0 0 linux\\n' ;; esac
+    exit 0 ;;
+  *) printf 'payload-started\\n' ;;
+esac
+`);
+  const invocation = { cwd: repoRoot, env: { ...executionNeutralEnv, HOME: fixture.root,
+    XDG_RUNTIME_DIR: fixture.root, HAPPIER_EXEC_CONFIG_PATH: config,
+    HAPPIER_STACK_STORAGE_DIR: fixture.path('stacks'), PATH: `${bin}:/usr/bin:/bin`, TMPDIR: fixture.root } };
+  const invoke = args => new Promise((resolve, reject) => {
+    const child = spawn('/bin/sh', [launcher, ...args, '--', 'probe-command', 'status'], invocation);
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', value => { stdout += value; });
+    child.stderr.on('data', value => { stderr += value; });
+    child.once('error', reject);
+    child.once('close', status => resolve({ status, stdout, stderr }));
+  });
+  // A5's existing burst contract starts from a completed observation. Its
+  // cached-placement tests deliberately seed the cache before concurrent work;
+  // cold single-flight would require a separate coordination guarantee.
+  const initial = await invoke([]);
+  assert.equal(initial.status, 0, initial.stderr);
+  assert.match(initial.stdout, /payload-started/);
+  const results = await Promise.all(Array.from({ length: 8 }, () => invoke([])));
+  for (const result of results) {
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /payload-started/);
+  }
+  const observations = (await readFile(probes, 'utf8')).trim().split('\n');
+  assert.equal(observations.filter(name => name === 'first').length, 1, 'one candidate observation serves the concurrent AUTO burst');
+  assert.equal(observations.filter(name => name === 'second').length, 1, 'each candidate has one prerequisite/load round trip');
+
+  const firstCache = join(stack, 'dev-target-command-load-native', 'first.cache');
+  for (const retainedFields of [24, 4]) {
+    // Already-parsed launchers write four header fields plus the original
+    // twenty telemetry fields; an older positive may retain only the header.
+    // Derive each old record from the real producer, then reach its reader
+    // through AUTO rather than maintaining a second cache parser in the test.
+    const current = (await readFile(firstCache, 'utf8')).trim().split(/\s+/);
+    await writeFile(firstCache, `${current.slice(0, retainedFields).join(' ')}\n`);
+    const before = (await readFile(probes, 'utf8')).trim().split('\n').length;
+    const refreshed = await invoke([]);
+    assert.equal(refreshed.status, 0, refreshed.stderr);
+    assert.match(refreshed.stdout, /payload-started/);
+    assert.equal((await readFile(probes, 'utf8')).trim().split('\n').length, before + 1,
+      'a metadata-less positive is refreshed without refusing healthy work');
+    const repeated = await invoke([]);
+    assert.equal(repeated.status, 0, repeated.stderr);
+    assert.equal((await readFile(probes, 'utf8')).trim().split('\n').length, before + 1,
+      'the refreshed observation remains reusable');
+  }
+
+  await rm(ready);
+  const unavailable = await invoke(['--target=first']);
+  assert.notEqual(unavailable.status, 0, unavailable.stderr);
+  assert.doesNotMatch(unavailable.stdout, /payload-started/);
+  await writeFile(ready, 'ready');
+  const repaired = await invoke(['--target=first']);
+  assert.equal(repaired.status, 0, repaired.stderr);
+  assert.match(repaired.stdout, /payload-started/, 'explicit recovery bypasses the burst observation');
+});
+
 test('CLI test preflight rejects missing Go before bootstrap and admits the repaired worker', async t => {
   const { root } = await createTempFixture(t, { prefix: 'hstack-cli-go-preflight-' });
   const bin = join(root, 'bin');
@@ -1004,6 +1094,40 @@ test('AUTO cached placement compares load per core before choosing a smaller wor
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /remote:roomy/);
   }
+});
+
+test('runtime daemon placement requires Go evidence while web builds keep their existing prerequisites', { skip: process.platform !== 'linux', timeout: 30000 }, async t => {
+  const fixture = await runtimeAdmissionTransportFixture(t);
+  for (const worker of Object.values(fixture.workers)) await worker.pressure.release();
+  for (const [name, load] of [['starved', '0.1'], ['roomy', '12']]) {
+    await writeFile(fixture.workers[name].sample, `8 ${load} 0.9 22000000 20 0 28000000 28311552 0 0 0 0 0 0 0 linux\n`);
+  }
+  await rm(join(fixture.workers.starved.goRoot, 'LICENSE'));
+  const reads = join(fixture.root, 'go-observations');
+  for (const [components, worker] of [['web', 'starved'], ['daemon', 'roomy']]) {
+    const runtime = startRuntimeController(t, fixture, { FIXTURE_GO_READS: reads }, {
+      target: `${process.platform}-${process.arch}`, components,
+    });
+    await waitForRuntime(() => runtime.stdout.includes('HAPPIER_RUNTIME_BUILD_READY=') || runtime.child.exitCode !== null, () => runtime.stderr);
+    assert.equal(runtime.child.exitCode, null, runtime.stderr);
+    assert.match(runtime.stdout, new RegExp(`"worker":"${worker}"`));
+    if (components === 'web') await assert.rejects(access(reads), { code: 'ENOENT' });
+    else {
+      assert.match(runtime.stderr, /HSTACK_PLACEMENT_EXCLUDED target=starved reason=go-toolchain /);
+      assert.equal((await readFile(reads, 'utf8')).trim().split('\n').length, 2,
+        'one module Go observation per candidate, joined with the existing prerequisite probe');
+    }
+    runtime.child.stdin.write('{"requestPath":"/tmp/runtime-go-request"}\n');
+    assert.equal((await runtime.completion).code, 0, runtime.stderr);
+    assert.match(runtime.stdout, new RegExp(`BODY:${worker}:`));
+  }
+  await writeFile(join(fixture.workers.starved.goRoot, 'LICENSE'), 'Go distribution evidence\n');
+  const repaired = startRuntimeController(t, fixture, {}, { target: `${process.platform}-${process.arch}`, components: 'daemon' });
+  await waitForRuntime(() => repaired.stdout.includes('HAPPIER_RUNTIME_BUILD_READY=') || repaired.child.exitCode !== null, () => repaired.stderr);
+  assert.equal(repaired.child.exitCode, null, repaired.stderr);
+  assert.match(repaired.stdout, /"worker":"starved"/);
+  repaired.child.stdin.write('{"requestPath":"/tmp/runtime-go-repaired"}\n');
+  assert.equal((await repaired.completion).code, 0, repaired.stderr);
 });
 
 test('native runtime control admits web, mixed web and daemon, and all runtime components', { skip: process.platform !== 'linux', timeout: 30000 }, async t => {
@@ -4697,7 +4821,7 @@ test('native launcher exact target fails closed when no target configuration exi
   assert.doesNotMatch(result.stdout, /wrong-local/);
 });
 
-test('native launcher excludes a target with no free repository filesystem space', async () => {
+test('native launcher excludes a target whose disk owner refuses repository writes', async () => {
   const root = await mkdtemp(join(tmpdir(), 'happier-preferred-launcher-full-disk-'));
   const binDir = join(root, 'bin');
   const storageDir = join(root, 'stacks');
@@ -4736,7 +4860,8 @@ test('native launcher excludes a target with no free repository filesystem space
   await executable(join(binDir, 'ssh'), [
     '#!/bin/sh',
     'case "$*" in',
-    '  *getconf*) case "$*" in *mac2-host*) printf "8 0.5 0.8 0 99\\n" ;; *) printf "8 4 0.5 22000000 98\\n" ;; esac ;;',
+    // Disk readiness is decided by worker_disk_budget before telemetry sampling.
+    '  *getconf*) case "$*" in *mac2-host*) exit 76 ;; *) printf "8 4 0.5 22000000 98\\n" ;; esac ;;',
     '  *command\\ -v*) exit 0 ;;',
     '  *-MNf*|*-O\\ exit*) exit 0 ;;',
     '  *mac2-host*) printf "wrong-target:mac2\\n" ;;',
@@ -4758,6 +4883,7 @@ test('native launcher excludes a target with no free repository filesystem space
   });
 
   assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stderr, /mac2 command preflight failed \(disk\)/);
   assert.match(result.stderr, /selected mac /);
   assert.match(result.stdout, /remote:mac:/);
   assert.doesNotMatch(result.stdout, /wrong-target:mac2/);
