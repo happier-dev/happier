@@ -73,7 +73,6 @@ export const HomeAddDraftScreen = React.memo(function HomeAddDraftScreen() {
                 actions={(
                     <RoundButton
                         testID="settings.homes.draft.discard"
-                        size="small"
                         display="inverted"
                         title={t('addFlows.discard')}
                         onPress={leave}

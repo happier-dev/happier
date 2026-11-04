@@ -337,7 +337,7 @@ describe('TeamCredentialsScreen', () => {
                 nextCursor: null,
             },
         });
-        screen.changeTextByTestId('team-credentials-search:input', 'old');
+        screen.changeTextByTestId('team-credentials-search', 'old');
         await vi.waitFor(() => {
             expect(harness.requestsFor(CREDENTIALS_LIST_PATH).at(-1)?.input).toMatchObject({ search: 'old' });
         });
@@ -349,7 +349,7 @@ describe('TeamCredentialsScreen', () => {
                 nextCursor: null,
             },
         });
-        screen.changeTextByTestId('team-credentials-search:input', 'new');
+        screen.changeTextByTestId('team-credentials-search', 'new');
         await waitForTestId(screen, 'team-credentials-row:new-search');
 
         releaseOldSearch();

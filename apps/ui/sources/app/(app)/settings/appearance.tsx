@@ -293,7 +293,6 @@ export const WorkspaceRouteBody = React.memo(function AppearanceSettingsScreen()
                     <SettingAnchor setting={APPEARANCE_SETTINGS.settings.reset}>
                     <RoundButton
                         testID="settings-appearance-reset"
-                        size="small"
                         display="inverted"
                         title={t('common.reset')}
                         leading={<Icon name="arrow-arc-left" size={ICON_SIZE.sm} color={theme.colors.text.secondary} />}

@@ -31,8 +31,8 @@ export type HappierButtonChromeVariant = 'primary' | 'secondary' | 'plain' | 'de
 
 /**
  * `normal` is the page action, drawn at the page control height (`HAPPIER_PAGE_METRICS.controlHeightPx`,
- * the settings lab's `.btn`). `small` is an action inside a dense layout — a row's peek, a card, a detail
- * header — drawn at the lab's small control (`.btn.sm`). Neither is sized by a touch target, on any
+ * the settings lab's `.btn`). `small` is an action inside the content — a row's peek, a card, a section — drawn
+ * at the lab's small control (`.btn.sm`). Neither is sized by a touch target, on any
  * platform: under a finger the shared pressable reaches the target with its hit area, past the drawn
  * button (DESIGN.md → touch targets are hit areas, not drawn sizes).
  */

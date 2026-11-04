@@ -141,7 +141,6 @@ const HomeSettingsPageContent = React.memo(function HomeSettingsPageContent(prop
                             <RoundButton
                                 testID={`settings.homes.home.${primary}`}
                                 disabled={primary === 'switch' && homePolicy.disabled}
-                                size="small"
                                 display={primary === 'switch' ? 'secondary' : undefined}
                                 title={primary === 'switch' ? t('server.homes.switch') : primary === 'signIn' ? t('server.homes.signIn') : t('common.retry')}
                                 onPress={primary === 'switch' ? () => void controller.onSwitchServer(profile) : primary === 'signIn' ? signIn : retry}

@@ -9,7 +9,7 @@ import {
     type HappierPageHeaderTextRender,
 } from '@happier-dev/plugin-ui/presentation';
 
-import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { RoundButton, RoundButtonSizeScope } from '@/components/ui/buttons/RoundButton';
 import { Typography } from '@/constants/Typography';
 import { pageTitleTypography } from '@/components/ui/layout/pageTitleTypography';
 import { useNavigationBackControl } from '@/components/ui/layout/NavigationBackChrome';
@@ -226,7 +226,7 @@ export const PageHeader = React.memo(function PageHeader(props: PageHeaderProps)
             compactPresentation={props.compactPresentation}
             meta={meta}
             leading={props.leading}
-            actions={actions}
+            actions={actions ? <RoundButtonSizeScope size="normal">{actions}</RoundButtonSizeScope> : actions}
             actionsLayout={props.actionsLayout}
             status={props.status}
             renderBack={renderBack}
@@ -246,7 +246,6 @@ function PageHeaderActionButton(props: Readonly<{ action: PageHeaderPrimaryActio
     return (
         <RoundButton
             testID={action.testID}
-            size="small"
             display={props.quiet ? 'inverted' : undefined}
             leading={action.icon ? (
                 <Icon name={action.icon} size={ICON_SIZE.xs} color={props.quiet ? theme.colors.text.primary : theme.colors.button.primary.tint} />

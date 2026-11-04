@@ -74,7 +74,7 @@ import { resolveScmChangePathTag } from '@/scm/scmChangePathTag';
 import { publishActiveReviewFile, useActiveReviewFileRequest } from './activeReviewFile';
 import { DetailsTabHeader, type DetailsTabHeaderMetaFact } from '@/components/appShell/panes/details/header/DetailsTabHeader';
 import { DiffPresentationStyleToggleButton } from '@/components/ui/code/diff/DiffPresentationStyleToggleButton';
-import { ToolbarSelect } from '@/components/ui/forms/ToolbarSelect';
+import { SelectionListFilterChip } from '@/components/ui/selectionList';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { resolveScmDiffAreaLabels, resolveScmDiffAreaVocabulary } from '@/scm/diff/diffAreaLabels';
 import { useChangedFilesReviewFind, type ReviewFindTarget } from './useChangedFilesReviewFind';
@@ -1467,7 +1467,7 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
     const activeIndex = activeReviewPath ? navigationPaths.indexOf(activeReviewPath) : -1;
     const jumpItems = navigationPaths.map((path, index) => ({
         id: path,
-        title: `${index + 1} / ${navigationPaths.length}  ${path.split('/').pop() ?? path}`,
+        label: `${index + 1} / ${navigationPaths.length}  ${path.split('/').pop() ?? path}`,
     }));
     const chromeStyles = changedFilesReviewChromeStyles(theme);
     // With the file list in a rail it never scrolls away, so the jump menu is only for the stream list.
@@ -1496,13 +1496,14 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
                 inline
             />}
             {showJump ? (
-                <ToolbarSelect
-                    testID="scm-review-jump"
-                    label={t('detailsSurface.review.jumpA11y')}
-                    items={jumpItems}
-                    selectedId={activeIndex >= 0 ? navigationPaths[activeIndex] : navigationPaths[0] ?? null}
-                    onSelect={focusFile}
-                />
+                <SelectionListFilterChip filter={{
+                    id: 'scm-review-jump',
+                    testID: 'scm-review-jump',
+                    label: t('detailsSurface.review.jumpA11y'),
+                    options: jumpItems,
+                    selectedId: activeIndex >= 0 ? navigationPaths[activeIndex] : navigationPaths[0] ?? null,
+                    onChange: focusFile,
+                }} />
             ) : null}
             <ChangedFilesReviewNavigation
                 paths={navigationPaths}

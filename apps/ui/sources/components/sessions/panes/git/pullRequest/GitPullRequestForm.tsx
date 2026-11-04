@@ -9,7 +9,7 @@ import { IconButton } from '@/components/ui/buttons/IconButton';
 import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
 import { Switch } from '@/components/ui/forms/Switch';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
-import { ToolbarSelect } from '@/components/ui/forms/ToolbarSelect';
+import { ValueFieldSelect } from '@/components/ui/forms/ValueFieldSelect';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
@@ -193,7 +193,7 @@ export const GitPullRequestForm = React.memo(function GitPullRequestForm(props: 
                     <Text numberOfLines={1} style={styles.branchText}>{head ?? ''}</Text>
                 </View>
                 <Icon name="arrow-right" size={13} color={theme.colors.text.tertiary} />
-                <ToolbarSelect
+                <ValueFieldSelect
                     testID="git-pull-request-form-base"
                     label={t('sessionGitPullRequest.form.base')}
                     items={baseItems}

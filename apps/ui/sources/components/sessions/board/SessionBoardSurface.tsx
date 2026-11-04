@@ -22,7 +22,7 @@ import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import type { ItemAction } from '@/components/ui/lists/itemActions';
 import { SurfaceStateCard, type SurfaceStateAction } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
-import { SearchHeader } from '@/components/ui/forms/SearchHeader';
+import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
 import { Typography } from '@/constants/Typography';
 import type { FocusReturnRef, FocusReturnTarget } from '@/keyboard/focusReturn';
 import { t } from '@/text';
@@ -1360,8 +1360,9 @@ export function SessionBoardSurface(props: SessionBoardSurfaceProps): React.Reac
                 >
                     {/* The sidebar's Open board lives in the pane header, not in a body row. */}
                     {props.host === 'mobileCockpit' && !boardEmpty ? (
-                        <SearchHeader
+                        <CompactSearchField
                             testID={`${testID}-search`}
+                            placement="page"
                             value={mobileQuery}
                             onChangeText={setMobileQuery}
                             placeholder={t('sessionBoard.mobile.searchPlaceholder')}

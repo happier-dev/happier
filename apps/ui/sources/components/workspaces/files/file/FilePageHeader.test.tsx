@@ -1066,8 +1066,9 @@ describe('FilePageHeader', () => {
     expect(
       multipleAreaScreen.findByTestId('file-details-diff-area-menu'),
     ).toBeTruthy();
-    const menus = multipleAreaScreen.findAllByType('DropdownMenu' as any);
-    expect(menus.at(-1)?.props.items.map((item: any) => item.id)).toEqual([
+    const { SelectionListFilterChip } = await import('@/components/ui/selectionList');
+    const chips = multipleAreaScreen.findAllByType(SelectionListFilterChip);
+    expect(chips.at(-1)?.props.filter.options?.map((item: { id: string }) => item.id)).toEqual([
       'pending',
       'included',
       'both',
@@ -1096,13 +1097,12 @@ describe('FilePageHeader', () => {
       onApplySelectedLines: () => {},
       onClearSelection: () => {},
     };
+    const { SelectionListFilterChip } = await import('@/components/ui/selectionList');
     const areaTitles = (screen: Awaited<ReturnType<typeof renderScreen>>) => {
-      const menu = screen
-        .findAllByType('DropdownMenu' as any)
-        .find((node: any) =>
-          (node.props.items ?? []).some((item: any) => item.id === 'pending'),
-        );
-      return (menu?.props.items ?? []).map((item: any) => item.title);
+      const chip = screen
+        .findAllByType(SelectionListFilterChip)
+        .find((node) => node.props.filter.options?.some((item: { id: string }) => item.id === 'pending'));
+      return (chip?.props.filter.options ?? []).map((item: { label: string }) => item.label);
     };
 
     const indexScreen = await renderScreen(

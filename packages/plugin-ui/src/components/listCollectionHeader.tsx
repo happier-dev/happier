@@ -105,7 +105,7 @@ export function useListCollectionSearch(search: ListCollectionSearch | undefined
   }, [enabled, rootRef, target]);
   const tokens = search?.tokens ?? [];
   const control = search === undefined ? null : <HappierTextField
-    label={search.label} placeholder={search.placeholder ?? search.label} value={displayed}
+    appearance="search" label={search.label} placeholder={search.placeholder ?? search.label} value={displayed}
     onChangeText={change} onCompositionChange={composition} onEscape={clear}
     autoCapitalize="none" autoCorrect={false} selection={selection} onSelectionChange={setSelection}
     controlRef={controlRef} leading={<Icon name="search" size="small" tone="muted" />} theme={theme} testID={search.testID}

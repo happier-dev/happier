@@ -93,7 +93,6 @@ export const MachineAddDraftScreen = React.memo(function MachineAddDraftScreen()
                     <>
                         <RoundButton
                             testID="settings.machines.draft.discard"
-                            size="small"
                             display="inverted"
                             title={t('addFlows.discard')}
                             disabled={flow.approval.approvalPending}

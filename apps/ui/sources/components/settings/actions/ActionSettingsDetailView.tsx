@@ -7,7 +7,7 @@ import { formatQualifiedPluginActionId, parseQualifiedPluginActionId } from '@ha
 import { listActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
 import type { ActionSettingsActionId } from '@happier-dev/protocol/actions/actionSettings';
 
-import { SearchHeader } from '@/components/ui/forms/SearchHeader';
+import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -327,7 +327,8 @@ export const ActionSettingsDetailContent = React.memo(function ActionSettingsDet
                 />
             ) : null}
 
-            <SearchHeader
+            <CompactSearchField
+                placement="page"
                 value={searchQuery}
                 onChangeText={setSearchQuery}
                 placeholder={t('settingsActions.detailSearchPlaceholder')}

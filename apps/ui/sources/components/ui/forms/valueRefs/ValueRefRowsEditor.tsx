@@ -16,7 +16,7 @@ import {
   resolveFieldBoxColors,
   FIELD_BOX_METRICS,
 } from '@/components/ui/forms/fieldBox';
-import { ToolbarSelect } from '@/components/ui/forms/ToolbarSelect';
+import { ValueFieldSelect } from '@/components/ui/forms/ValueFieldSelect';
 import { renderDropdownItemTriggerRightElement } from '@/components/ui/forms/dropdown/renderDropdownItemTriggerRightElement';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
@@ -639,7 +639,7 @@ const ValueRefInlineRow = React.memo(function ValueRefInlineRow(
               {typeTitle(type)}
             </Text>
           ) : (
-            <ToolbarSelect
+            <ValueFieldSelect
               testID={`${props.testID}.type`}
               label={t('capabilities.valueRows.typeLabel')}
               items={typeItems}

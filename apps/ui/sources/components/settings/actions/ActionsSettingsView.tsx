@@ -5,7 +5,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { type ActionSettingsActionId, type ActionsSettingsV1 } from '@happier-dev/protocol';
 
-import { SearchHeader } from '@/components/ui/forms/SearchHeader';
+import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
 import { Switch } from '@/components/ui/forms/Switch';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -312,7 +312,8 @@ export const ActionsSettingsView = React.memo(function ActionsSettingsView() {
                             />
                         )}
                     />
-                    <SearchHeader
+                    <CompactSearchField
+                        placement="page"
                         value={searchQuery}
                         onChangeText={setSearchQuery}
                         placeholder={t('settingsActions.searchPlaceholder')}

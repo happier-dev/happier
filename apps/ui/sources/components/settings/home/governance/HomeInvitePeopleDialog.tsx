@@ -290,7 +290,6 @@ export const HomeInvitePeopleButton = React.memo(function HomeInvitePeopleButton
     return (
         <RoundButton
             testID={props.testID}
-            size="small"
             display="secondary"
             title={t('homeGovernance.invite.action')}
             leading={<Icon name="plus" size={ICON_SIZE.xs} color={theme.colors.text.primary} />}

@@ -301,7 +301,7 @@ export const QualifiedAccountDetailView = React.memo(function QualifiedAccountDe
                     />
                     ) : null}
                     {props.onRefresh && status !== 'needs_reauth' ? compact
-                        ? <RoundButton testID={`${testID}:refresh`} size="small" display="inverted" title={t('common.refresh')} leading={<Icon name="arrow-clockwise" size={14} />} loading={props.refreshing} disabled={props.refreshing} onPress={props.onRefresh} />
+                        ? <RoundButton testID={`${testID}:refresh`} display="inverted" title={t('common.refresh')} leading={<Icon name="arrow-clockwise" size={14} />} loading={props.refreshing} disabled={props.refreshing} onPress={props.onRefresh} />
                         : <IconButton testID={`${testID}:refresh`} iconName="arrow-clockwise" variant="plain" accessibilityLabel={t('common.refresh')} disabled={props.refreshing} onPress={props.onRefresh} />
                         : null}
                     {!compact && (rename || onReconnect || onDisconnect || onShareWithTeam) ? <DropdownMenu open={moreOpen} onOpenChange={setMoreOpen} items={[

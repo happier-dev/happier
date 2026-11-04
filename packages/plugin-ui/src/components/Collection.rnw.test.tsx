@@ -4801,6 +4801,14 @@ describe("the search in the caller's header row", () => {
     view.unmount();
   });
 
+  it('draws its search in the one search field, keeping the key hint', () => {
+    const view = mount({ search });
+    view.measure(1440);
+    expect(view.query('search.field')).not.toBeNull();
+    expect(view.query('search:shortcut')).not.toBeNull();
+    view.unmount();
+  });
+
   it('keeps the search in the list pane for a header given as content', () => {
     const view = mount({
       search,

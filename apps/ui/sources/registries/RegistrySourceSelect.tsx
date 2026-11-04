@@ -6,11 +6,7 @@ import {
   type RegistrySourceDescriptorV1,
 } from '@happier-dev/protocol/registries';
 
-import {
-  ToolbarSelect,
-  type ToolbarSelectAction,
-  type ToolbarSelectItem,
-} from '@/components/ui/forms/ToolbarSelect';
+import { SelectionList, SelectionListFilterChip } from '@/components/ui/selectionList';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { t } from '@/text';
 
@@ -40,8 +36,8 @@ export function orderRegistrySourcesForSelect(
 }
 
 /**
- * The registry field select of every Add modal's tools row (P4 I-7): All registries, then each source that lists
- * this kind with its kind as quiet facts, then "Add a registry…" and "Manage registries" under a hairline.
+ * The registry chip of every Add modal's tools row (P4 I-7): All registries, then each source that lists this kind with
+ * its kind as a quiet fact, then "Add a registry…" and "Manage registries" in their own section.
  */
 export function RegistrySourceSelect(
   props: Readonly<{
@@ -64,52 +60,74 @@ export function RegistrySourceSelect(
     ),
     [theme.colors.text.secondary],
   );
-  const items = React.useMemo(
-    (): readonly ToolbarSelectItem[] => [
+  const options = React.useMemo(
+    () => [
       {
         id: 'all',
-        title: t('capabilities.registries.select.all'),
+        label: t('capabilities.registries.select.all'),
         icon: mark('stack'),
       },
       ...orderRegistrySourcesForSelect(sources).map((source) => ({
         id: source.id,
-        title: source.title,
+        label: source.title,
         icon: mark(registryFormatIcon(source)),
-        detail: registrySourceKindLabel(source),
+        subtitle: registrySourceKindLabel(source),
       })),
     ],
     [mark, sources],
   );
-  const actions = React.useMemo(
-    (): readonly ToolbarSelectAction[] => [
+  const operations = React.useMemo(
+    () => [
       {
-        id: 'add',
-        title: t('capabilities.registries.select.addRegistry'),
+        id: REGISTRY_ADD_ID,
+        label: t('capabilities.registries.select.addRegistry'),
         icon: mark('plus'),
-        onPress: () => props.onOpenRegistries('add'),
       },
       {
-        id: 'manage',
-        title: t('capabilities.registries.select.manage'),
+        id: REGISTRY_MANAGE_ID,
+        label: t('capabilities.registries.select.manage'),
         icon: mark('sliders-horizontal'),
-        onPress: () => props.onOpenRegistries('manage'),
       },
     ],
-    [mark, props.onOpenRegistries],
+    [mark],
   );
   // A selected source that went away (removed, turned off) reads as All rather than a stale name.
   const value =
-    props.value === 'all' || items.some((item) => item.id === props.value)
+    props.value === 'all' || options.some((option) => option.id === props.value)
       ? props.value
       : 'all';
+  const selected = options.find((option) => option.id === value) ?? options[0];
   return (
-    <ToolbarSelect
-      testID={props.testID}
-      label={t('capabilities.registries.select.label')}
-      items={items}
-      selectedId={value}
-      onSelect={props.onChange}
-      actions={actions}
-    />
+    <SelectionListFilterChip filter={{
+      id: 'registry-source',
+      testID: props.testID,
+      label: t('capabilities.registries.select.label'),
+      valueLabel: selected?.label ?? '',
+      ...(selected?.icon ? { icon: selected.icon } : {}),
+      renderPopoverContent: ({ close, maxHeight }) => (
+        <SelectionList
+          testID={`${props.testID}.list`}
+          listAccessibilityLabel={t('capabilities.registries.select.label')}
+          onRequestClose={close}
+          maxHeight={maxHeight}
+          disableTransitions
+          rootStep={{ id: 'registry-sources', sections: [
+            { kind: 'static', id: 'sources', options },
+            { kind: 'static', id: 'operations', options: operations },
+          ] }}
+          selectedOptionId={value}
+          onSelect={(id) => {
+            close();
+            // An operation never changes the choice.
+            if (id === REGISTRY_ADD_ID) props.onOpenRegistries('add');
+            else if (id === REGISTRY_MANAGE_ID) props.onOpenRegistries('manage');
+            else props.onChange(id);
+          }}
+        />
+      ),
+    }} />
   );
 }
+
+const REGISTRY_ADD_ID = 'action:add';
+const REGISTRY_MANAGE_ID = 'action:manage';

@@ -73,7 +73,6 @@ export const AddToBoardButton = React.memo(function AddToBoardButton(props: AddT
     return <View ref={props.anchorRef} collapsable={false}>
         <RoundButton
             testID="board-header.add"
-            size="small"
             display="secondary"
             title={t('boards.header.add')}
             leading={<Icon name="plus" size={ICON_SIZE.sm} color={theme.colors.text.primary} />}

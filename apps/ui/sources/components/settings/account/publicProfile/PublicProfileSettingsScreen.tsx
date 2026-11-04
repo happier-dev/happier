@@ -106,7 +106,6 @@ export const PublicProfileSettingsScreen = React.memo(
           live && pageUrl && record?.state === 'published' ? (
             <RoundButton
               testID="settings-public-profile-open"
-              size="small"
               display="secondary"
               title={t('publicIdentity.profile.openPage')}
               onPress={() => {

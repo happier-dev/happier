@@ -14,7 +14,9 @@ await Promise.all([import('@/auth/storage/tokenStorage'), import('@/sync/domains
     import('@/sync/domains/state/storage'), import('@/utils/system/runtimeFetch'),
     import('@/sync/runtime/orchestration/appliedActiveServerRuntime')]);
 const { useRegistrySourcesSlot } = await import('./useRegistrySourcesSlot');
-const { ToolbarSelect } = await import('@/components/ui/forms/ToolbarSelect');
+const { SelectionListFilterChip } = await import('@/components/ui/selectionList');
+const registryChooser = (screen: { findByType: (type: never) => { props: { filter: { renderPopoverContent: (context: { close: () => void; maxHeight: number }) => { props: { rootStep: { sections: ReadonlyArray<{ options: ReadonlyArray<{ id: string; label: string }> }> }; selectedOptionId: string; onSelect: (id: string) => void } } } } } }) =>
+    screen.findByType(SelectionListFilterChip as never).props.filter.renderPopoverContent({ close() {}, maxHeight: 400 }).props;
 
 describe('registry sources shell slot', () => {
     it('opens the requested add draft, selects an already-added registry, returns to the catalog and shares that selection with the select', async () => {
@@ -43,6 +45,6 @@ describe('registry sources shell slot', () => {
         expect(home.read().record.value).toMatchObject({ sources: [expect.objectContaining({ id: sourceId })] });
         phase = 'render selected field';
         const select = await renderScreen(<>{hook.getCurrent().sources.renderSelect({ openRegistries() {} })}</>);
-        await waitForHomeGovernance(() => expect(select.findByType(ToolbarSelect).props.selectedId).toBe(sourceId));
+        await waitForHomeGovernance(() => expect(registryChooser(select).selectedOptionId).toBe(sourceId));
     });
 });

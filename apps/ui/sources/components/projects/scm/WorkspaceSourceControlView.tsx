@@ -7,7 +7,8 @@ import { useUnistyles } from 'react-native-unistyles';
 import { NotSourceControlRepositoryState, SourceControlUnavailableState } from '@/components/workspaces/scm/states';
 import { SourceControlBranchSummary } from '@/components/workspaces/scm/SourceControlBranchSummary';
 import { buildWorkspaceChangedFilesData } from '@/hooks/workspaces/scm/buildWorkspaceChangedFilesData';
-import { Text, TextInput } from '@/components/ui/text/Text';
+import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
+import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { Typography } from '@/constants/Typography';
 import type { ScmFileStatus } from '@/scm/scmStatusFiles';
@@ -275,33 +276,11 @@ export const WorkspaceSourceControlView = React.memo((props: WorkspaceSourceCont
                             />
                         ) : null}
                         <View style={{ paddingHorizontal: theme.space.s16, paddingTop: theme.space.s16 }}>
-                            <View
-                                style={{
-                                    flexDirection: 'row',
-                                    alignItems: 'center',
-                                    backgroundColor: theme.colors.input.background,
-                                    borderRadius: 10,
-                                    paddingHorizontal: theme.space.s12,
-                                    paddingVertical: theme.space.s8,
-                                    borderWidth: 1,
-                                    borderColor: theme.colors.border.default,
-                                }}
-                            >
-                                <Icon name="magnifying-glass" size={16} color={theme.colors.text.secondary} style={{ marginRight: theme.space.s8 }} />
-                                <TextInput
-                                    value={searchQuery}
-                                    onChangeText={setSearchQuery}
-                                    placeholder={t('files.searchPlaceholder')}
-                                    style={{
-                                        flex: 1,
-                                        fontSize: 16,
-                                        ...Typography.default(),
-                                    }}
-                                    placeholderTextColor={theme.colors.input.placeholder}
-                                    autoCapitalize="none"
-                                    autoCorrect={false}
-                                />
-                            </View>
+                            <CompactSearchField
+                                value={searchQuery}
+                                onChangeText={setSearchQuery}
+                                placeholder={t('files.searchPlaceholder')}
+                            />
                         </View>
 
                         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: theme.space.s10, gap: theme.space.s10, paddingHorizontal: theme.space.s16, paddingBottom: theme.space.s12 }}>

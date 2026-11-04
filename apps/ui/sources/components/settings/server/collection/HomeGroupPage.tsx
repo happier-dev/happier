@@ -100,7 +100,6 @@ const ExistingHomeGroupPage = React.memo(function ExistingHomeGroupPage(props: R
                             <RoundButton
                                 testID="settings.homes.group.switch"
                                 disabled={homePolicy.disabled}
-                                size="small"
                                 display="secondary"
                                 title={t('server.homes.switch')}
                                 onPress={() => void controller.onSwitchGroup(group)}

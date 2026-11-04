@@ -111,7 +111,6 @@ export const HubIdentityHeader = React.memo(function HubIdentityHeader() {
             actions={(
                 <RoundButton
                     testID="settings-overview-account"
-                    size="small"
                     display="secondary"
                     title={t('settings.account')}
                     onPress={() => router.push(SETTINGS_ROUTES.account as never)}

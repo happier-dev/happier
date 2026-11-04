@@ -16,8 +16,8 @@ import { SelectionList } from './SelectionList';
 
 /**
  * The filter chip: what a filter is set to, as one compact bordered chip that opens a small popover
- * to change it. The one chip for scopes and filters (the machine scope in page headers uses it too),
- * so every filter looks and behaves the same.
+ * to change it. The one control for what a page or toolbar shows: a project, machine or catalog scope, a filter, a
+ * sort. A form's own value is a field instead (`ValueFieldSelect`).
  */
 export const SelectionListFilterChip = React.memo(function SelectionListFilterChip(props: Readonly<{
     filter: SelectionListFilter;

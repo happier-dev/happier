@@ -93,6 +93,7 @@ export const browserDiagnosticsPanelStyles = StyleSheet.create((theme) => ({
     },
     toolbar: {
         paddingHorizontal: theme.space.s12,
+        gap: theme.space.s8,
     },
     list: {
         // Rows run edge to edge so their hairlines and tints read as one table.
@@ -863,14 +864,16 @@ export function BrowserDiagnosticsFamilyPanelFrame<T>(props: BrowserDiagnosticsF
             {showToolbar ? (
                 <View style={styles.toolbar}>
                     {props.searchPlaceholder ? (
-                        <CompactSearchField
-                            testID={`${props.testID}-${props.familyKey}-search`}
-                            value={query}
-                            onChangeText={setQuery}
-                            placeholder={props.searchPlaceholder}
-                            accessory={filterBar ?? undefined}
-                            accessoryPlacement={narrow ? 'below' : 'beside'}
-                        />
+                        <>
+                            <CompactSearchField
+                                testID={`${props.testID}-${props.familyKey}-search`}
+                                value={query}
+                                onChangeText={setQuery}
+                                placeholder={props.searchPlaceholder}
+                                {...(narrow ? {} : { accessory: filterBar ?? undefined })}
+                            />
+                            {narrow ? filterBar : null}
+                        </>
                     ) : filterBar}
                 </View>
             ) : null}

@@ -17,7 +17,7 @@ import {
 import { useSavedSecretCatalog } from '@/components/secrets/useSavedSecretCatalog';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
-import { ToolbarSelect } from '@/components/ui/forms/ToolbarSelect';
+import { ValueFieldSelect } from '@/components/ui/forms/ValueFieldSelect';
 import { ValueRefRowsEditor } from '@/components/ui/forms/valueRefs/ValueRefRowsEditor';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
@@ -437,7 +437,7 @@ function TextField(
         </Text>
       ) : null}
       {props.field.choices ? (
-        <ToolbarSelect
+        <ValueFieldSelect
           testID={props.testID}
           label={props.field.key}
           items={props.field.choices.map((choice) => ({

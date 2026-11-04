@@ -384,7 +384,6 @@ export const DiagnosisView = React.memo(function DiagnosisView() {
                         <SettingAnchor setting={DIAGNOSIS_SETTINGS.settings.copyReport}>
                             <RoundButton
                                 testID="diagnosis-copy-button"
-                                size="small"
                                 display="inverted"
                                 title={t(DIAGNOSIS_SETTINGS.settings.copyReport.titleKey)}
                                 accessibilityHint={t('diagnosis.actions.copyReportSubtitle')}
@@ -396,7 +395,6 @@ export const DiagnosisView = React.memo(function DiagnosisView() {
                         </SettingAnchor>
                         <RoundButton
                             testID="diagnosis-run-button"
-                            size="small"
                             title={t('diagnosis.actions.run')}
                             accessibilityHint={t('diagnosis.actions.runSubtitle')}
                             loading={running}

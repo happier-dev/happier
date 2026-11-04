@@ -44,7 +44,12 @@ function resolveDisabledPrimaryColors(theme: Readonly<{ colors: Readonly<{
     return resolved;
 }
 
-/** `mini` is the inline action inside a compact capsule (a live call's Retry), not a call to action. */
+/**
+ * Size says where a button stands; `display` says how much it matters. `normal` is the page control height: every
+ * page header action (`PageHeader` scopes it, so they pass no `size`) and every dialog or form action. `small` is inside
+ * the content: a row, a card, a section, a rail. `large` is a hero call to action. `mini` is the inline action inside a
+ * compact capsule (a live call's Retry), not a call to action.
+ */
 export type RoundButtonSize = 'large' | 'normal' | 'small' | 'mini';
 const RoundButtonDefaultSizeContext = React.createContext<Readonly<{
     size: RoundButtonSize;

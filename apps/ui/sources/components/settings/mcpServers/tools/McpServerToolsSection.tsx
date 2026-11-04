@@ -10,7 +10,7 @@ import { resolveMcpToolDecisionV1 } from '@happier-dev/protocol/mcp/servers/tool
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
-import { ToolbarSelect } from '@/components/ui/forms/ToolbarSelect';
+import { ValueFieldSelect } from '@/components/ui/forms/ValueFieldSelect';
 import { resolveViewportClass } from '@/utils/platform/viewportClass';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -455,7 +455,7 @@ const McpToolRow = React.memo(function McpToolRow(props: Readonly<{
                     <McpToolDecisionBadges effect={effect} />
                     {props.dimmed ? null : compact ? (
                         // Phone: the value in a field; the choices (and the way back to the default) in its menu.
-                        <ToolbarSelect
+                        <ValueFieldSelect
                             testID={`${props.testID}:value`}
                             label={title}
                             items={set ? [...tabs.map((tab) => ({ id: tab.id, title: tab.label })), { id: 'inherit', title: t('capabilities.mcp.tools.useDefault', { value: settingLabel(inherited) }) }]

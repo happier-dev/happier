@@ -607,7 +607,13 @@ export function HappierTextField(props: HappierTextFieldProps) {
       }}
       onFocusInput={() => searchInputRef.current?.focus()}
       leading={props.leading}
+      trailing={props.trailing === undefined ? undefined : (
+        <View aria-hidden importantForAccessibility="no-hide-descendants" accessibilityElementsHidden>
+          {props.trailing}
+        </View>
+      )}
     >
+      {props.inline}
       {input}
     </HappierSearchFieldBox>
   );

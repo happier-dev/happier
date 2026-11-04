@@ -5,7 +5,7 @@ import type {
     TeamCredentialResourceSummaryV1,
 } from '@happier-dev/protocol/teams';
 
-import { SearchHeader } from '@/components/ui/forms/SearchHeader';
+import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
@@ -201,8 +201,9 @@ const CredentialsList = React.memo(function CredentialsList(props: Readonly<{
     return (
         <>
             {showSearch ? (
-                <SearchHeader
+                <CompactSearchField
                     testID="team-credentials-search"
+                    placement="page"
                     value={search}
                     onChangeText={setSearch}
                     placeholder={t('teams.directory.searchPlaceholder')}

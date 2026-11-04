@@ -4,7 +4,7 @@ import { Pressable, View } from 'react-native';
 import { useDestinationRouteNavigation as useNavigation } from '@/components/appShell/workspace/destinationInstanceContext';
 import { StyleSheet } from 'react-native-unistyles';
 
-import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { RoundButton, RoundButtonSizeScope } from '@/components/ui/buttons/RoundButton';
 import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
@@ -191,14 +191,13 @@ export function useNavigationHeaderActions(input: Readonly<{
         const options: Record<string, unknown> = {};
         if (primary || actions || trailing) {
             options.headerRight = () => (
-                <View style={stylesheet.actions}>
+                <RoundButtonSizeScope size="normal"><View style={stylesheet.actions}>
                     {routeContextActions?.actions}
                     {actions ? <PageHeaderMenu actions={foldedActions.operations} content={foldedActions.content}
                         openRequested={foldedActions.openRequested} testID="page-header-actions" /> : null}
                     {primary ? (
                         <RoundButton
                             testID={primary.testID}
-                            size="small"
                             title={primary.title}
                             accessibilityLabel={primary.title}
                             disabled={primary.disabled}
@@ -207,7 +206,7 @@ export function useNavigationHeaderActions(input: Readonly<{
                         />
                     ) : null}
                     {trailing}
-                </View>
+                </View></RoundButtonSizeScope>
             );
         }
         if (cancel) {

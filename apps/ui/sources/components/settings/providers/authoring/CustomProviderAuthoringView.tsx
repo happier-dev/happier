@@ -132,7 +132,6 @@ export function CustomProviderAuthoringView(props: Readonly<{
                 actions={model.draftHasProbe && !model.editing ? (
                     <RoundButton
                         testID="settings-provider-authoring-test"
-                        size="small"
                         display="secondary"
                         title={t('settingsProvidersCollection.test')}
                         accessibilityLabel={t('settingsProviders.detail.testConnection')}

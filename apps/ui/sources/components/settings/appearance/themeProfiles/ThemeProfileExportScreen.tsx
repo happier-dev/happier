@@ -77,14 +77,12 @@ export const ThemeProfileExportScreen = React.memo(function ThemeProfileExportSc
                         />
                         <RoundButton
                             testID="settings-theme-profile-export-download"
-                            size="small"
                             display="inverted"
                             title={t('settingsAppearance.themeProfiles.downloadExportJson')}
                             onPress={() => { void download(); }}
                         />
                         <RoundButton
                             testID="settings-theme-profile-export-copy"
-                            size="small"
                             title={t('settingsAppearance.themeProfiles.copyExportJson')}
                             disabled={!json}
                             onPress={() => { void copy(); }}

@@ -14,7 +14,7 @@ import { resolveItemGroupContentHorizontalInsetPx } from '@/components/ui/lists/
 import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
-import { ToolbarSelect } from '@/components/ui/forms/ToolbarSelect';
+import { SelectionListFilterChip } from '@/components/ui/selectionList';
 import { Icon } from '@/components/ui/icons/Icon';
 import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
@@ -537,28 +537,30 @@ function PluginsToolbar(props: Readonly<{
                     </>
                 ) : null}
                 <View style={styles.viewControls}>
-                    {props.installed?.statusFilterUseful ? <ToolbarSelect
-                        testID="settings.plugins.marketplace.installed.statusFilter"
-                        label={t('settingsPlugins.surfaces.statusFilterLabel')}
-                        items={INSTALLED_STATUS_FILTERS.map((status) => ({ id: status, title: installedStatusFilterTitle(status) }))}
-                        selectedId={props.installed.status}
-                        onSelect={(id) => {
+                    {props.installed?.statusFilterUseful ? <SelectionListFilterChip filter={{
+                        id: 'plugins-installed-status',
+                        testID: 'settings.plugins.marketplace.installed.statusFilter',
+                        label: t('settingsPlugins.surfaces.statusFilterLabel'),
+                        options: INSTALLED_STATUS_FILTERS.map((status) => ({ id: status, label: installedStatusFilterTitle(status) })),
+                        selectedId: props.installed.status,
+                        onChange: (id) => {
                             const status = INSTALLED_STATUS_FILTERS.find((candidate) => candidate === id);
                             if (status && props.installed) props.installed.onSelectStatus(status);
-                        }}
-                    /> : null}
+                        },
+                    }} /> : null}
                     {props.discover ? (
                         // This narrows the aggregate query; it never creates a second index.
-                        <ToolbarSelect
-                            testID="settings.plugins.marketplace.sourceFilter"
-                            label={t('settingsPlugins.discoverSourceFilterLabel')}
-                            items={[
-                                { id: DISCOVER_ALL_SOURCES_ID, title: t('settingsPlugins.surfaces.allSources') },
-                                ...props.discover.sources.map((source) => ({ id: source.id, title: source.title })),
-                            ]}
-                            selectedId={props.discover.selectedSourceId ?? DISCOVER_ALL_SOURCES_ID}
-                            onSelect={(id) => props.discover?.onSelectSource(id === DISCOVER_ALL_SOURCES_ID ? null : id)}
-                        />
+                        <SelectionListFilterChip filter={{
+                            id: 'plugins-discover-source',
+                            testID: 'settings.plugins.marketplace.sourceFilter',
+                            label: t('settingsPlugins.discoverSourceFilterLabel'),
+                            options: [
+                                { id: DISCOVER_ALL_SOURCES_ID, label: t('settingsPlugins.surfaces.allSources') },
+                                ...props.discover.sources.map((source) => ({ id: source.id, label: source.title })),
+                            ],
+                            selectedId: props.discover.selectedSourceId ?? DISCOVER_ALL_SOURCES_ID,
+                            onChange: (id) => props.discover?.onSelectSource(id === DISCOVER_ALL_SOURCES_ID ? null : id),
+                        }} />
                     ) : null}
                 <SegmentedTabBar
                     tabs={presentationTabs}

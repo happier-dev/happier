@@ -40,7 +40,7 @@ const SummaryActions = React.memo(function SummaryActions(props: Readonly<{ mode
                 <UpdatesTextButton label={t('updates.action.checkNow')} onPress={model.checkNow} testID="updates.checkNow" />
             ) : null}
             {header.showUpdateAll ? (
-                <RoundButton size="small" title={t('updates.action.updateAll')} onPress={() => void model.updateAll()} testID="updates.updateAll" />
+                <RoundButton title={t('updates.action.updateAll')} onPress={() => void model.updateAll()} testID="updates.updateAll" />
             ) : header.showStop ? (
                 <UpdatesTextButton label={t('updates.action.stopAfterThis')} onPress={model.stopAfterCurrent} testID="updates.stopAfterThis" />
             ) : null}

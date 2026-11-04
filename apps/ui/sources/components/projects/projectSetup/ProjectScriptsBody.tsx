@@ -484,7 +484,7 @@ function DeclaredScripts(
   const phone = useDeviceType() === 'phone';
   const editButton = props.onEdit ? (
     <RoundButton
-      size="small"
+      size="normal"
       display="secondary"
       title={t('projects.scripts.editProjectFile')}
       testID={`${props.testID}.edit`}

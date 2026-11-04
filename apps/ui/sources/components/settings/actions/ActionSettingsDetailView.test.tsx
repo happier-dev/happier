@@ -155,7 +155,7 @@ afterEach(async () => {
 await loadSyncSingletonForTests();
 await import('./ActionSettingsDetailView');
 const { Item } = await import("@/components/ui/lists/Item");
-const { SearchHeader } = await import("@/components/ui/forms/SearchHeader");
+const { CompactSearchField } = await import("@/components/ui/forms/CompactSearchField");
 const { Switch } = await import("@/components/ui/forms/Switch");
 const { DropdownMenu } = await import("@/components/ui/forms/dropdown/DropdownMenu");
 const { SegmentedTabBar } = await import("@/components/ui/navigation/SegmentedTabBar");
@@ -246,9 +246,9 @@ describe('ActionSettingsDetailView', () => {
         });
         // The page opens on the action itself (entity header with its on/off switch); the surface
         // filter sits between the header and the surfaces, outside any section sheet.
-        expect(renderedProps(SearchHeader)).toHaveLength(1);
+        expect(renderedProps(CompactSearchField)).toHaveLength(1);
         const { ItemGroup } = await import('@/components/ui/lists/ItemGroup');
-        expect(screen.findAllByType(ItemGroup).some(group => group.findAllByType(SearchHeader).length > 0)).toBe(false);
+        expect(screen.findAllByType(ItemGroup).some(group => group.findAllByType(CompactSearchField).length > 0)).toBe(false);
         expect(await screen.findByTestId('settings-actions:action:review.start:summary')).toBeTruthy();
         const summarySwitch = renderedProps(Switch).find((switchProps) =>
             switchProps.testID === 'settings-actions:action:review.start:enabled',

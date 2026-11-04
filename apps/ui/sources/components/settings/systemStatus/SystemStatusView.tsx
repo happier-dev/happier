@@ -360,7 +360,6 @@ export const SystemStatusView = React.memo(function SystemStatusView() {
             <SettingAnchor setting={SYSTEM_STATUS_SETTINGS.settings.copyJson}>
               <RoundButton
                 testID="system-status-copy-json"
-                size="small"
                 display="inverted"
                 title={t(SYSTEM_STATUS_SETTINGS.settings.copyJson.titleKey)}
                 accessibilityHint={t('systemStatus.actions.copyJsonSubtitle')}
@@ -371,7 +370,6 @@ export const SystemStatusView = React.memo(function SystemStatusView() {
             </SettingAnchor>
             <RoundButton
               testID="system-status-run-diagnosis"
-              size="small"
               display="secondary"
               title={t('systemStatus.actions.runDiagnosis')}
               accessibilityHint={t('systemStatus.actions.runDiagnosisSubtitle')}

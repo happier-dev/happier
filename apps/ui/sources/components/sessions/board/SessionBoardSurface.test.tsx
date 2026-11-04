@@ -404,7 +404,7 @@ describe('SessionBoardSurface', () => {
         expect(screen.getTextContent()).toContain('Release plan');
         expect(screen.getTextContent()).toContain('Meeting notes');
         await act(async () => {
-            screen.findByTestId('session-board-search:input')?.props.onChangeText?.('meeting');
+            screen.findByTestId('session-board-search')?.props.onChangeText?.('meeting');
         });
         expect(screen.getTextContent()).not.toContain('Release plan');
         expect(screen.getTextContent()).toContain('Meeting notes');

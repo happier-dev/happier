@@ -66,7 +66,7 @@ vi.mock('@/modal', async () => {
     return createModalModuleMock({ spies: { confirm: modalConfirmMock } }).module;
 });
 vi.mock('@/components/ui/feedback/ActivitySpinner', () => ({ ActivitySpinner: 'ActivitySpinner' }));
-vi.mock('@/components/ui/forms/SearchHeader', () => ({ SearchHeader: 'SearchHeader' }));
+vi.mock('@/components/ui/forms/CompactSearchField', () => ({ CompactSearchField: 'CompactSearchField' }));
 vi.mock('@/components/ui/lists/Item', async () => {
     const React = await import('react');
     return { Item: (props: { testID?: string; rightElement?: unknown; pressableRef?: React.Ref<{ focus: () => void }> }) => {

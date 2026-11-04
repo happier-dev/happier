@@ -15,7 +15,7 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
-import { ToolbarSelect } from '@/components/ui/forms/ToolbarSelect';
+import { SelectionListFilterChip } from '@/components/ui/selectionList';
 import { Icon } from '@/components/ui/icons/Icon';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { NavigationBackChromeProvider, useNavigationBackControl } from '@/components/ui/layout/NavigationBackChrome';
@@ -411,7 +411,6 @@ function BrowserHeader(props: Readonly<{
                 actions={phone ? undefined : (
                     <RoundButton
                         testID="artifacts:new"
-                        size="small"
                         title={t('artifacts.browser.newDocument')}
                         leading={<Icon name="plus" size={14} color={theme.colors.button.primary.tint} />}
                         onPress={props.onNewDocument}
@@ -503,16 +502,16 @@ function BrowserToolbar(props: Readonly<{
     const styles = stylesheet;
     const folders = useArtifactFolderCommands();
     // Only kinds that hold something are offered; a kind that empties keeps its choice until changed.
-    const kindItems = React.useMemo(() => [
-        { id: 'all', title: artifactKindFilterLabel('all') },
+    const kindOptions = React.useMemo(() => [
+        { id: 'all', label: artifactKindFilterLabel('all') },
         ...ARTIFACT_BROWSER_KINDS.filter((candidate) => (props.counts.get(candidate) ?? 0) > 0 || candidate === props.kind)
             .map((candidate) => ({
                 id: candidate,
-                title: artifactKindFilterLabel(candidate),
+                label: artifactKindFilterLabel(candidate),
                 icon: <Icon name={ARTIFACT_KIND_ICONS[candidate]} size={16} color={theme.colors.text.secondary} />,
             })),
     ], [props.counts, props.kind, theme.colors.text.secondary]);
-    const sortItems = React.useMemo(() => SORTS.map((candidate) => ({ id: candidate, title: sortLabel(candidate) })), []);
+    const sortOptions = React.useMemo(() => SORTS.map((candidate) => ({ id: candidate, label: sortLabel(candidate) })), []);
     const search = (
         <CompactSearchField
             testID="artifacts:search"
@@ -527,23 +526,23 @@ function BrowserToolbar(props: Readonly<{
             {/* A phone gives the search its own full row (lab A1p); the choices and the view switch share the row below. */}
             {phone ? <View style={styles.phoneSearchRow}>{search}</View> : search}
             <View style={styles.toolbarChoices}>
-                <ToolbarSelect
-                    testID="artifacts:kind"
-                    label={t('artifacts.browser.kindLabel')}
-                    items={kindItems}
-                    selectedId={props.kind}
-                    compact={phone}
-                    onSelect={(id) => props.onKindChange(id === 'all' ? 'all' : ARTIFACT_BROWSER_KINDS.find((candidate) => candidate === id) ?? 'all')}
-                />
+                <SelectionListFilterChip filter={{
+                    id: 'artifacts-kind',
+                    testID: 'artifacts:kind',
+                    label: t('artifacts.browser.kindLabel'),
+                    options: kindOptions,
+                    selectedId: props.kind,
+                    onChange: (id) => props.onKindChange(id === 'all' ? 'all' : ARTIFACT_BROWSER_KINDS.find((candidate) => candidate === id) ?? 'all'),
+                }} />
                 {compactFolders ? null : (
-                    <ToolbarSelect
-                        testID="artifacts:sort"
-                        label={t('artifacts.browser.sort.label')}
-                        items={sortItems}
-                        selectedId={props.sort}
-                        compact={phone}
-                        onSelect={(id) => props.onSortChange(SORTS.find((candidate) => candidate === id) ?? 'updated_desc')}
-                    />
+                    <SelectionListFilterChip filter={{
+                        id: 'artifacts-sort',
+                        testID: 'artifacts:sort',
+                        label: t('artifacts.browser.sort.label'),
+                        options: sortOptions,
+                        selectedId: props.sort,
+                        onChange: (id) => props.onSortChange(SORTS.find((candidate) => candidate === id) ?? 'updated_desc'),
+                    }} />
                 )}
                 <View style={styles.grow} />
                 {compactFolders ? (

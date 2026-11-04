@@ -168,7 +168,7 @@ function ProjectManifestEditorLeaf(
   const actions = (
     <View style={styles.headerActions}>
       <RoundButton
-        size="small"
+        size="normal"
         display="inverted"
         title={t('projects.scripts.editor.discard')}
         testID="project-manifest-editor.discard"
@@ -176,7 +176,7 @@ function ProjectManifestEditorLeaf(
         onPress={discard}
       />
       <RoundButton
-        size="small"
+        size="normal"
         title={snapshot.saving ? t('projects.scripts.editor.saving') : t('projects.scripts.editor.save')}
         testID="project-manifest-editor.save"
         loading={snapshot.saving}

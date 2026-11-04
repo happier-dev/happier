@@ -131,7 +131,6 @@ const ApiTokenDetail = React.memo(function ApiTokenDetail(props: Readonly<{ toke
                 actions={(
                     <RoundButton
                         testID="settings-api-token-edit-access"
-                        size="small"
                         display="secondary"
                         title={t('settingsApiTokens.detail.editAccess')}
                         disabled={busy}

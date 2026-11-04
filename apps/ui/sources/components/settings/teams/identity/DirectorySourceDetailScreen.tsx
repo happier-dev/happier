@@ -3,7 +3,7 @@ import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { AppState, type Pressable } from 'react-native';
 
 import { SettingAnchor, SettingSection, useSettingRevealRequested } from '@/components/settings/shell/SettingRow';
-import { SearchHeader } from '@/components/ui/forms/SearchHeader';
+import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
@@ -200,7 +200,7 @@ const DirectoryGroupMappings = React.memo(function DirectoryGroupMappings(props:
                     rather than as a trailing control of People above it. */}
                 <ItemGroup title={t('identityAdministration.directoryGroups')} surface="none">
                     <SettingAnchor setting={DIRECTORY_SOURCE_SETTINGS.settings.searchGroups}>
-                        <SearchHeader testID="directory-groups-search" value={query} onChangeText={setQuery} placeholder={t(DIRECTORY_SOURCE_SETTINGS.settings.searchGroups.titleKey)} />
+                        <CompactSearchField testID="directory-groups-search" placement="page" value={query} onChangeText={setQuery} placeholder={t(DIRECTORY_SOURCE_SETTINGS.settings.searchGroups.titleKey)} />
                     </SettingAnchor>
                 </ItemGroup>
             </SettingSection>,

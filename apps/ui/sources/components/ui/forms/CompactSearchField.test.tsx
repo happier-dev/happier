@@ -144,6 +144,31 @@ describe('CompactSearchField', () => {
     });
 });
 
+describe('CompactSearchField clearing', () => {
+    it('offers a clear control only while the field holds a query, and clearing empties it', async () => {
+        const { CompactSearchField } = await import('./CompactSearchField');
+        const onChangeText = vi.fn();
+        const screen = await renderScreen(
+            <CompactSearchField testID="search" value="" onChangeText={onChangeText} placeholder="Search" />,
+        );
+        expect(screen.tree.root.findAll((node) => node.props.testID === 'search.clear')).toHaveLength(0);
+
+        await act(async () => {
+            screen.tree.update(<CompactSearchField testID="search" value="term" onChangeText={onChangeText} placeholder="Search" />);
+        });
+        await screen.pressByTestIdAsync('search.clear');
+        expect(onChangeText).toHaveBeenCalledWith('');
+    });
+
+    it('leaves the trailing place to the control the caller put there', async () => {
+        const { CompactSearchField } = await import('./CompactSearchField');
+        const screen = await renderScreen(
+            <CompactSearchField testID="search" value="term" onChangeText={() => {}} placeholder="Search" trailing={<React.Fragment />} />,
+        );
+        expect(screen.tree.root.findAll((node) => node.props.testID === 'search.clear')).toHaveLength(0);
+    });
+});
+
 describe('CompactSearchField placement above a page list', () => {
     it('sits in the page content column, aligned with the sheets, instead of spanning the pane', async () => {
         const { CompactSearchField } = await import('./CompactSearchField');
@@ -170,21 +195,13 @@ describe('CompactSearchField placement above a page list', () => {
         expect(style.paddingHorizontal).toBe(resolveItemGroupContentHorizontalInsetPx());
     });
 
-    it('puts its accessory beside the field, or under it at full width where a phone has no room beside', async () => {
+    it('puts its accessory beside the field', async () => {
         const { CompactSearchField } = await import('./CompactSearchField');
         const { flattenTestStyle } = await import('@/dev/testkit');
-        const accessory = React.createElement('View', { testID: 'select' });
-        const place = async (accessoryPlacement?: 'beside' | 'below') => {
-            const screen = await renderScreen(
-                <CompactSearchField testID="search" value="" onChangeText={() => {}} placeholder="Search" accessory={accessory}
-                    {...(accessoryPlacement ? { accessoryPlacement } : {})} />,
-            );
-            const select = screen.findByTestId('select')!;
-            return flattenTestStyle(select.parent!.props.style);
-        };
-        expect(await place()).toMatchObject({ flexDirection: 'row' });
-        expect(await place('below')).toMatchObject({ alignItems: 'stretch' });
-        expect(await place('below')).not.toHaveProperty('flexDirection', 'row');
+        const screen = await renderScreen(
+            <CompactSearchField testID="search" value="" onChangeText={() => {}} placeholder="Search" accessory={React.createElement('View', { testID: 'select' })} />,
+        );
+        expect(flattenTestStyle(screen.findByTestId('select')!.parent!.props.style)).toMatchObject({ flexDirection: 'row' });
     });
 
     it('adds no column of its own where it is placed inline (a rail or a section row)', async () => {

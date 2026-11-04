@@ -176,7 +176,7 @@ const InboxNoticeDetail = React.memo(function InboxNoticeDetail(props: Readonly<
         descriptionLines={0}
         meta={[...(props.source ? [{ key: 'source', text: props.source }] : []), { key: 'age', text: age }]}
         actions={(
-          <RoundButton testID="inbox.notice.dismiss" size="small" display="inverted" disabled={pending}
+          <RoundButton testID="inbox.notice.dismiss" display="inverted" disabled={pending}
             title={t('inbox.actionOperations.dismiss')} onPress={dismiss} />
         )}
         actionsPlacement="page"

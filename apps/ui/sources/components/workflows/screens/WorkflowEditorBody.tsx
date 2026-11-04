@@ -14,7 +14,7 @@ import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneSco
 import { PaneHeader } from '@/components/appShell/panes/PaneHeader';
 import type { PaneBuiltinAdapter } from '@/components/appShell/panes/types';
 import { IconButton } from '@/components/ui/buttons/IconButton';
-import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { RoundButton, RoundButtonSizeScope } from '@/components/ui/buttons/RoundButton';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { SelectionListFilterChip } from '@/components/ui/selectionList/SelectionListFilterChips';
 import { KeyboardAwareScrollView } from '@/components/ui/keyboardAvoidance/KeyboardAwareScrollView';
@@ -1097,7 +1097,7 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
     );
 
     const duplicateButton = props.onDuplicate === undefined ? null : (
-        <RoundButton testID={`${testIDPrefix}-duplicate`} size="small" display="secondary"
+        <RoundButton testID={`${testIDPrefix}-duplicate`} display="secondary"
             title={t('common.duplicate')} onPress={props.onDuplicate} />
     );
     // 07 "One validity readout": "Ready", or — once a Run or Save has revealed issues — the count that
@@ -1155,7 +1155,6 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
         <View ref={props.runNowAnchorRef} collapsable={false}>
         <RoundButton
             testID={`${testIDPrefix}-run-now`}
-            size="small"
             title={t('workflows.editor.runNow')}
             accessibilityLabel={t('workflows.editor.runNow')}
             {...(runReason === null ? {} : { accessibilityHint: runReason })}
@@ -1231,7 +1230,6 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
                         ) : (
                             <RoundButton
                                 testID={`${testIDPrefix}-edit-with-agent`}
-                                size="small"
                                 display="inverted"
                                 title={t('workflows.authoring.edit')}
                                 leading={<Icon name="sparkle" size={14} color={theme.colors.text.secondary} />}
@@ -1429,7 +1427,7 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
         </KeyboardAwareScrollView>
     );
     const phoneBar = !compactLayout ? null : (
-        <View testID={`${testIDPrefix}-phone-bar`} style={styles.phoneBar}>
+        <RoundButtonSizeScope size="small"><View testID={`${testIDPrefix}-phone-bar`} style={styles.phoneBar}>
             {!documentEditable ? null : <WorkflowAddBlockMenu
                 testID={`${testIDPrefix}-phone-add`}
                 composerScope={props.composerScope}
@@ -1460,14 +1458,13 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
             {onSave === undefined || !documentEditable || (props.saveStatus !== undefined && !['notSaved', 'unsaved', 'failed'].includes(props.saveStatus.kind)) ? null : (
                 <RoundButton
                     testID={`${testIDPrefix}-phone-save`}
-                    size="small"
                     display="secondary"
                     title={t('workflows.page.save')}
                     onPress={submitSave}
                 />
             )}
             {runNowButton}
-        </View>
+        </View></RoundButtonSizeScope>
     );
 
     const flowAdapter: PaneBuiltinAdapter = {

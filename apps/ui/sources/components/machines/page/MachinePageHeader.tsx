@@ -249,7 +249,6 @@ export const MachinePageHeader = React.memo(function MachinePageHeader(props: Re
                     {needsYouAction ? (
                         <RoundButton
                             testID="machine-detail-needs-you-action"
-                            size="small"
                             title={needsYouAction.label}
                             onPress={() => {
                                 if (target.machineId) beginMachinePageTabIntent({ serverId: target.serverId, machineId: target.machineId }, needsYouAction.tab);
@@ -259,7 +258,6 @@ export const MachinePageHeader = React.memo(function MachinePageHeader(props: Re
                     ) : null}
                     <RoundButton
                         testID="machine-detail-start-session"
-                        size="small"
                         // An offline machine keeps the action's place but not its weight: a disabled filled button would be the page's loudest thing.
                         display={needsYouAction || !target.online ? 'secondary' : undefined}
                         title={t('machineDetailPage.startAction')}
@@ -269,7 +267,6 @@ export const MachinePageHeader = React.memo(function MachinePageHeader(props: Re
                     {canOpenTerminal ? (
                         <RoundButton
                             testID="machine-detail-open-terminal"
-                            size="small"
                             display="secondary"
                             title={t('machineDetailPage.openTerminalAction')}
                             leading={<Icon name="terminal" size={16} color={theme.colors.text.primary} />}

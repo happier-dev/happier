@@ -121,7 +121,7 @@ describe('SettingsPageSearch', () => {
         expect(screen.findByTestId('settings-overview-content')).toBeTruthy();
 
         await act(async () => {
-            screen.changeTextByTestId('settings-page-search:input', 'notif');
+            screen.changeTextByTestId('settings-page-search', 'notif');
         });
 
         expect(screen.findByTestId('settings-overview-content')).toBeNull();
@@ -137,7 +137,7 @@ describe('SettingsPageSearch', () => {
         const { SettingsShell } = await import('./SettingsShell');
         const screen = await renderSearch();
         await act(async () => {
-            screen.changeTextByTestId('settings-page-search:input', 'itemDensity');
+            screen.changeTextByTestId('settings-page-search', 'itemDensity');
         });
 
         await screen.pressByTestIdAsync('settings-page-search.result.setting.appearance.density');
@@ -147,21 +147,21 @@ describe('SettingsPageSearch', () => {
         await act(async () => {
             screen.update(<SettingsShell><Item testID="appearance-leaf" title="appearance" /></SettingsShell>);
         });
-        expect(screen.findByTestId('settings-page-search:input')).toBeNull();
+        expect(screen.findByTestId('settings-page-search')).toBeNull();
         expect(screen.findByTestId('appearance-leaf')).toBeTruthy();
         await act(async () => {
             screen.update(<SettingsShell><SettingsPageSearch>
                 <Item testID="settings-overview-content" title="overview" />
             </SettingsPageSearch></SettingsShell>);
         });
-        expect(screen.findByTestId('settings-page-search:input')?.props.value).toBe('itemDensity');
+        expect(screen.findByTestId('settings-page-search')?.props.value).toBe('itemDensity');
         expect(screen.findByTestId('settings-page-search.result.setting.appearance.density')).toBeTruthy();
     });
 
     it('says so when nothing matches', async () => {
         const screen = await renderSearch();
         await act(async () => {
-            screen.changeTextByTestId('settings-page-search:input', 'zzqxv-no-such-setting');
+            screen.changeTextByTestId('settings-page-search', 'zzqxv-no-such-setting');
         });
         expect(screen.findByTestId('settings-page-search.empty')).toBeTruthy();
     });

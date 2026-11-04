@@ -60,7 +60,9 @@ owner, do not create one. Paths are under `apps/ui/sources/` unless stated.
 | Which view of the same content to show (Steps · Flow, list filters, chart lenses) | Segmented view switch; announces tabs | `SegmentedTabBar` (default `role="tablist"`) |
 | One of many, or long labels | Bordered field select | `DropdownMenu` (field trigger on pages) |
 | A value on a scale with steps | Slider with end glyphs | `components/ui/forms/Slider.tsx` |
-| Filter a list inside a rail or popover | Compact bordered search field (the same one as the settings sidebar) | `components/ui/forms/CompactSearchField.tsx` |
+| Search or filter a list, anywhere: a rail, a popover, above a page's list | The one search field (`placement="page"` takes the page's column) | `components/ui/forms/CompactSearchField.tsx` |
+| What a page or toolbar shows: a project, machine or catalog scope, a filter, a sort | Filter chip, in the header or beside the search; never a bordered field | `SelectionListFilterChip` (`components/ui/selectionList`) |
+| A value in a form that lays out its own rows (a value's type, a pull request's base) | Bare bordered field | `components/ui/forms/ValueFieldSelect.tsx` |
 | Something that changes how the app looks | Visual tiles with real previews | `SelectionTiles variant="visual"` |
 | One of a few actions that deserve space | Action tiles | `SelectionTiles variant="action"` |
 | A destination | Summary + chevron | `Item` with `detail` + chevron |
@@ -69,6 +71,10 @@ owner, do not create one. Paths are under `apps/ui/sources/` unless stated.
 | Rare operations on an entity | `⋯` menu | `IconButton` + `Popover` |
 
 Rules that come with the table:
+- Button size says where the button stands, not how much it matters: fill says that. Every button in a page header
+  is the page control height, level with the chips and fields beside it; `PageHeader` decides, so a header action
+  passes no `size`. A button on a toolbar line with chips or fields is that same height. `small` is for inside the
+  content (a row, a card, a section, a rail, a pinned bar). `normal` is also every dialog and form action. `large` is a hero call to action (onboarding, story decks).
 - Visual previews render the real component (session row, avatar, theme window) at static props.
   No subscriptions, no RPCs, no drawn replicas.
 - A slider exists only for a real ordered scale; its steps are the setting's real values.

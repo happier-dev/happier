@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { Platform, View, type StyleProp, type ViewStyle } from 'react-native';
-import { HAPPIER_SEARCH_FIELD_METRICS, HappierSearchFieldBox } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_SEARCH_FIELD_METRICS, HappierPressable, HappierSearchFieldBox } from '@happier-dev/plugin-ui/presentation';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Icon } from '@/components/ui/icons/Icon';
@@ -8,6 +8,7 @@ import { resolveThemeControlEdge } from '@/components/ui/surfaces/themeRaisedEdg
 import { useLayoutMaxWidth } from '@/components/ui/layout/layout';
 import { resolveItemGroupContentHorizontalInsetPx } from '@/components/ui/lists/itemGroupSpacing';
 import { TextInput } from '@/components/ui/text/Text';
+import { t } from '@/text';
 
 /**
  * The compact search field's measures, for every search field that is not a page-wide `SearchHeader`
@@ -24,9 +25,9 @@ type CompactSearchFieldLayoutStyle = Pick<ViewStyle,
 >;
 
 /**
- * The compact bordered search field of navigation rails and collection lists: a paper-coloured well
- * with a hairline, a small magnifying glass and a single-line input. Page-wide search above a long
- * list keeps using `SearchHeader`.
+ * The one search field of the app: a paper-coloured well with a hairline, a small magnifying glass and a
+ * single-line input, in a rail, a collection list or above a page's list. Holding a query it offers to
+ * clear it, unless the caller's own control (a filter, a close) has that place.
  *
  * `placement="page"` is the field above a configuration page's list (People, Teams, Machines…): it
  * takes the page's content column — the same width cap and inset as the sheets below it — so it never
@@ -53,16 +54,9 @@ export const CompactSearchField = React.memo(function CompactSearchField(props: 
      * remaining width, so the pair spans exactly the content column.
      */
     accessory?: React.ReactNode;
-    /** `below` stacks the accessory under the field at the column's full width (a phone, where beside it would squeeze the field). */
-    accessoryPlacement?: 'beside' | 'below';
 } & CompactSearchFieldInputOptions>) {
     const frame = <CompactSearchFieldFrame {...props} />;
-    const field = props.accessory && props.accessoryPlacement === 'below' ? (
-        <View style={compactSearchFieldStyles.accessoryStack}>
-            {frame}
-            {props.accessory}
-        </View>
-    ) : props.accessory ? (
+    const field = props.accessory ? (
         <View style={compactSearchFieldStyles.accessoryRow}>
             <View style={compactSearchFieldStyles.accessoryField}>{frame}</View>
             {props.accessory}
@@ -147,7 +141,16 @@ const CompactSearchFieldFrame = React.memo(function CompactSearchFieldFrame(prop
                 leading={
                     <Icon name="magnifying-glass" size={COMPACT_SEARCH_FIELD_METRICS.iconSizePx} color={theme.colors.text.secondary} />
                 }
-                trailing={props.trailing}
+                trailing={props.trailing ?? (props.value.length > 0 ? (
+                    <HappierPressable
+                        testID={props.testID ? `${props.testID}.clear` : undefined}
+                        onPress={() => props.onChangeText('')}
+                        accessibilityRole="button"
+                        accessibilityLabel={t('common.clearSearch')}
+                    >
+                        <Icon name="x-circle" size={COMPACT_SEARCH_FIELD_METRICS.iconSizePx} color={theme.colors.text.secondary} />
+                    </HappierPressable>
+                ) : null)}
             >
                 <TextInput
                     ref={setInput}
@@ -201,10 +204,6 @@ const compactSearchFieldStyles = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         alignItems: 'center',
         gap: theme.space.s8,
-    },
-    accessoryStack: {
-        gap: theme.space.s8,
-        alignItems: 'stretch',
     },
     accessoryField: {
         flex: 1,

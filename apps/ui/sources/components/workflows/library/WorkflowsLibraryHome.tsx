@@ -217,21 +217,19 @@ export function WorkflowsLibraryHome(): React.ReactElement {
                 <View style={styles.headerActions}>
                     {!columnOwnsCreation ? <><RoundButton
                         testID="workflows-home:import"
-                        size="small"
                         display="inverted"
                         title={t('workflows.destination.import')}
                         leading={<Icon name="download" size={14} color={theme.colors.text.secondary} />}
                         textStyle={{ color: theme.colors.text.secondary }}
                         onPress={importWorkflow}
                     />
-                    <RoundButton testID="workflows-home:agent" size="small" display="secondary"
+                    <RoundButton testID="workflows-home:agent" display="secondary"
                         title={t('workflows.authoring.create')}
                         leading={<Icon name="sparkle" size={14} color={theme.colors.text.primary} />}
                         onPress={createWithAgent} /></> : null}
                     <RoundButton
                         testID="workflows-home:new"
                         controlRef={setCreationRef}
-                        size="small"
                         title={t('workflows.newWorkflow')}
                         leading={<Icon name="plus" size={14} color={theme.colors.button.primary.tint} />}
                         onPress={newWorkflow}

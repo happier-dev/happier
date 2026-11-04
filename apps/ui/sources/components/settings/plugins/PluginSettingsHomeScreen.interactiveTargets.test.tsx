@@ -194,18 +194,18 @@ describe('PluginSettingsHomeScreen segmented controls', () => {
     it('draws Grid | List and the Installed status filter at their dense size', async () => {
         expect(await readSegmentMinimumWidths('settings.plugins.collectionView:grid'))
             .toEqual(['ios: dense', 'android: dense']);
-        expect(await readSegmentMinimumWidths('settings.plugins.marketplace.installed.statusFilter.trigger', 'minHeight'))
+        expect(await readSegmentMinimumWidths('settings.plugins.marketplace.installed.statusFilter', 'minHeight'))
             .toEqual(['ios: dense', 'android: dense']);
     });
 
     it('offers the Installed status filter only when it can narrow the list', async () => {
         mocks.installedPlugins = [{ ...DISABLED_PLUGIN, pluginId: 'on', enabled: true }];
         const healthy = await renderInAppPanes(React.createElement(PluginSettingsHomeScreen));
-        expect(healthy.findByTestId('settings.plugins.marketplace.installed.statusFilter.trigger')).toBeNull();
+        expect(healthy.findByTestId('settings.plugins.marketplace.installed.statusFilter')).toBeNull();
         standardCleanup();
         mocks.installedPlugins = [DISABLED_PLUGIN];
         const mixed = await renderInAppPanes(React.createElement(PluginSettingsHomeScreen));
-        expect(mixed.findByTestId('settings.plugins.marketplace.installed.statusFilter.trigger')).not.toBeNull();
+        expect(mixed.findByTestId('settings.plugins.marketplace.installed.statusFilter')).not.toBeNull();
     });
 
     it('counts installed plugins only once a machine is chosen, never beside "choose a machine"', async () => {

@@ -1,7 +1,6 @@
 import * as React from 'react';
-import { StyleSheet } from 'react-native-unistyles';
 
-import { SearchHeader } from '@/components/ui/forms/SearchHeader';
+import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
 import { t } from '@/text';
 import { useResolvedSettingsPageCatalog } from '@/components/settings/catalog/runtime/useResolvedSettingsPageCatalog';
 import { SettingsSearchResults, useSettingsSearch } from '@/components/settings/shell/SettingsSearchResults';
@@ -24,12 +23,12 @@ export const SettingsPageSearch = React.memo(function SettingsPageSearch(props: 
     });
     return (
         <>
-            <SearchHeader
+            <CompactSearchField
                 testID="settings-page-search"
+                placement="page"
                 value={search.query}
                 onChangeText={search.setQuery}
                 placeholder={t('settingsSearch.placeholder')}
-                containerStyle={styles.field}
             />
             {search.active ? (
                 <SettingsSearchResults
@@ -44,13 +43,3 @@ export const SettingsPageSearch = React.memo(function SettingsPageSearch(props: 
         </>
     );
 });
-
-const styles = StyleSheet.create((theme) => ({
-    // A field on the page itself, not a header bar: no band, no rule under it.
-    field: {
-        backgroundColor: 'transparent',
-        borderBottomWidth: 0,
-        paddingTop: theme.space.s12,
-        paddingBottom: 0,
-    },
-}));

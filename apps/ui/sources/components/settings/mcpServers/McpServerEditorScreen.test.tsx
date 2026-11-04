@@ -1172,9 +1172,9 @@ describe('McpServerEditorScreen', () => {
         await leaveConfig(screen, 'mcp.server.editor.command');
         await screen.pressByTestIdAsync('mcp.server.env.add');
         await act(async () => { screen.changeTextByTestId('mcp.server.env.row.new.name', 'API_KEY'); });
-        const { ToolbarSelect } = await import('@/components/ui/forms/ToolbarSelect');
+        const { ValueFieldSelect } = await import('@/components/ui/forms/ValueFieldSelect');
         await act(async () => {
-            screen.findAllByType(ToolbarSelect).find(node => node.props.testID === 'mcp.server.env.row.new.type')!.props.onSelect('savedSecret');
+            screen.findAllByType(ValueFieldSelect).find(node => node.props.testID === 'mcp.server.env.row.new.type')!.props.onSelect('savedSecret');
         });
         await vi.waitFor(() => expect(screen.findByTestId(`saved-secret:${secretRef}`)).not.toBeNull());
         await screen.pressByTestIdAsync(`saved-secret:${secretRef}`);

@@ -7,7 +7,7 @@ import { IconButton } from '@/components/ui/buttons/IconButton';
 import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
 import { DiffPresentationStyleToggleButton } from '@/components/ui/code/diff/DiffPresentationStyleToggleButton';
 import { useSurfaceStateSize } from '@/components/ui/surfaces/surfaceStateSize';
-import { ToolbarSelect } from '@/components/ui/forms/ToolbarSelect';
+import { SelectionListFilterChip } from '@/components/ui/selectionList';
 import type { PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEntityParts';
 import { FileIcon } from '@/components/ui/media/FileIcon';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
@@ -325,18 +325,19 @@ export function FilePageHeader(props: FilePageHeaderProps) {
         if (hasPendingDelta) ids.push('pending');
         if (hasIncludedDelta) ids.push('included');
         if (hasIncludedDelta && hasPendingDelta) ids.push('both');
-        return ids.map((id) => ({ id, title: resolveScmDiffAreaLabel(id, areaVocabulary) }));
+        return ids.map((id) => ({ id, label: resolveScmDiffAreaLabel(id, areaVocabulary) }));
     }, [hasIncludedDelta, hasPendingDelta, indexStaging]);
     // Which layer of the change to show is a choice only when there are two (a one-option field is noise).
     const controls = isDiffDisplay && areaItems.length > 1 && !editing ? (
         <View testID="file-details-view-controls" style={styles.controls}>
-            <ToolbarSelect
-                testID="file-details-diff-area-menu"
-                label={t('detailsSurface.file.areaLabel')}
-                items={areaItems}
-                selectedId={diffMode}
-                onSelect={(itemId) => { if (itemId === 'pending' || itemId === 'included' || itemId === 'both') onDiffMode(itemId); }}
-            />
+            <SelectionListFilterChip filter={{
+                id: 'file-diff-area',
+                testID: 'file-details-diff-area-menu',
+                label: t('detailsSurface.file.areaLabel'),
+                options: areaItems,
+                selectedId: diffMode,
+                onChange: (itemId) => { if (itemId === 'pending' || itemId === 'included' || itemId === 'both') onDiffMode(itemId); },
+            }} />
         </View>
     ) : undefined;
 

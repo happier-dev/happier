@@ -108,7 +108,6 @@ export const MemoryFactDetail = React.memo(function MemoryFactDetail(
         actions={props.onEdit ? (
           <RoundButton
             testID={`${props.testID}.edit`}
-            size="small"
             display="secondary"
             title={t('common.edit')}
             onPress={props.onEdit}

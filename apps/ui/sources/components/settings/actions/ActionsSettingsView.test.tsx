@@ -177,7 +177,7 @@ afterEach(() => {
 const { ActionsSettingsView } = await import('./ActionsSettingsView');
 const { Item } = await import("@/components/ui/lists/Item");
 const { ItemGroup } = await import("@/components/ui/lists/ItemGroup");
-const { SearchHeader } = await import("@/components/ui/forms/SearchHeader");
+const { CompactSearchField } = await import("@/components/ui/forms/CompactSearchField");
 let renderedScreen: Awaited<ReturnType<typeof renderRealScreen>> | null = null;
 async function renderScreen(...args: Parameters<typeof renderRealScreen>) {
     renderedScreen = await renderRealScreen(...args);
@@ -251,7 +251,7 @@ describe('ActionsSettingsView', () => {
 
     await renderScreen(<ActionsSettingsView />);
 
-    expect(renderedProps(SearchHeader)).toHaveLength(1);
+    expect(renderedProps(CompactSearchField)).toHaveLength(1);
     expect(
       renderedProps(Item).some(
         (item) => item.testID === 'settings-actions:action:review.start',
@@ -370,7 +370,7 @@ describe('ActionsSettingsView', () => {
 
     await renderScreen(<ActionsSettingsView />);
 
-    const searchHeader = renderedProps(SearchHeader)[0];
+    const searchHeader = renderedProps(CompactSearchField)[0];
     expect(typeof searchHeader?.onChangeText).toBe('function');
     await act(async () => {
       (searchHeader?.onChangeText as (value: string) => void)('browser');
@@ -402,7 +402,7 @@ describe('ActionsSettingsView', () => {
 
     await renderScreen(<ActionsSettingsView />);
 
-    const searchHeader = renderedProps(SearchHeader)[0];
+    const searchHeader = renderedProps(CompactSearchField)[0];
     await act(async () => {
       (searchHeader?.onChangeText as (value: string) => void)('browser');
     });

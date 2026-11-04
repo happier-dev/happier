@@ -12,9 +12,6 @@ const routerPush = vi.hoisted(() => vi.fn());
 const routeParams = vi.hoisted(() => ({ current: {} as Record<string, string> }));
 const virtualizedBoundary = vi.hoisted(() => ({ props: null as Record<string, unknown> | null }));
 
-vi.mock('@/components/ui/forms/SearchHeader', () => ({
-    SearchHeader: (props: Record<string, unknown>) => React.createElement('SearchHeader', props),
-}));
 vi.mock('@/components/ui/lists/virtualized', () => ({
     VirtualizedList: (props: Record<string, unknown>) => {
         virtualizedBoundary.props = props;

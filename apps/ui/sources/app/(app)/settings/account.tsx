@@ -261,7 +261,6 @@ export const WorkspaceRouteBody = React.memo(() => {
                 actions={(
                     <RoundButton
                         testID="settings-account-edit-profile"
-                        size="small"
                         display="secondary"
                         title={profile.name ? t('settingsAccount.editProfile') : t('settingsAccount.addName')}
                         accessibilityHint={canSetUsername && !profile.username ? t('friends.username.required') : undefined}
