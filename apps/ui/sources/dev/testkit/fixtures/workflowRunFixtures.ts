@@ -9,6 +9,7 @@ import {
 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 
 import type { AutomationDefinitionRun } from '@/sync/domains/automations/automationTypes';
+import type { WorkflowRunAutomationSummariesResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
 
 /**
  * Workflow Run fixtures for both transports, built by parsing the canonical
@@ -54,6 +55,15 @@ export function createWorkflowRunSummaryFixture(overrides: SummaryOverrides = {}
         updatedAt: '2026-09-08T10:00:00.000Z',
         ...rest,
     });
+}
+
+type AutomationLastRunSummary = NonNullable<WorkflowRunAutomationSummariesResultV1['automationSummaries'][number]['lastRun']>;
+
+export function createWorkflowAutomationLastRunSummaryFixture(overrides: Partial<AutomationLastRunSummary> = {}): AutomationLastRunSummary {
+    const run = createWorkflowRunSummaryFixture();
+    return { id: run.id, state: run.state, workflowCustodyState: null,
+        attentionRequired: run.attentionRequired, failureUnseen: run.failureUnseen,
+        invocationAttentionRequired: run.invocationAttentionRequired, createdAt: run.createdAt, startedAt: run.createdAt, ...overrides };
 }
 
 /** Real accepted-snapshot/key producers for full private Run-list HTTP answers. */

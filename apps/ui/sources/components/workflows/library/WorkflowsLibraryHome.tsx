@@ -131,7 +131,7 @@ export function WorkflowsLibraryHome(props: Readonly<{ includeAccountTriggers?: 
         ...split.fromPlugins.map((plugin) => ({ key: plugin.workflow, group: 'fromPlugins' as const, plugin })),
     ], [split.library, split.sharedWithYou, split.fromPlugins]);
     const summaryIds = React.useMemo(() => rows.flatMap((row) => row.group === 'fromPlugins' ? [] : [row.definition.definitionId]), [rows]);
-    const summaries = useWorkflowLibrarySummaries(summaryIds);
+    const { summaries } = useWorkflowLibrarySummaries(summaryIds);
     const libraryView = useWorkflowLibraryView(rows, summaries, focused);
     const { filter, visibleKeys, needle, searchQuery: query, view: activeView } = libraryView;
     const window = React.useMemo((): HappierCollectionWindow => (library.hasMore ? {

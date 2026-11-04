@@ -179,8 +179,8 @@ function useWorkflowSummaries<T>(requestedIds: readonly string[], selector: Summ
     return React.useSyncExternalStore(selection.owner?.subscribe ?? subscribeInactive, selection.get, selection.get);
 }
 
-export function useWorkflowLibrarySummaries(sourceArtifactIds: readonly string[]): SummaryMap<WorkflowLibraryRunSummary> | null {
-    return useWorkflowSummaries(sourceArtifactIds, SOURCE_SELECTION).summaries;
+export function useWorkflowLibrarySummaries(sourceArtifactIds: readonly string[]): SummaryRead<WorkflowLibraryRunSummary> {
+    return useWorkflowSummaries(sourceArtifactIds, SOURCE_SELECTION);
 }
 
 export function useWorkflowAutomationSummaries(automationIds: readonly string[]): SummaryRead<WorkflowAutomationRunSummary> {

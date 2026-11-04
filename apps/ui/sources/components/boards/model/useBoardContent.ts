@@ -373,7 +373,7 @@ function useBoardFacts(membership: BoardMembership, homes: BoardHomes, enabled =
     const missingRun = runIds.some(id => !runRows.some(row => row.id === id && row.summary !== null));
     const runWindow = useWorkflowRunWindow('all', { enabled: missingRun });
     const library = useWorkflowDefinitionLibrary({ enabled: workflowIds.length > 0 });
-    const summaries = useWorkflowLibrarySummaries(workflowIds);
+    const { summaries } = useWorkflowLibrarySummaries(workflowIds);
     const missingWorkflow = workflowIds.some(id => !library.definitions.some(definition => definition.definitionId === id));
     // These readers already own paging and in-flight sharing. Continue only while the Board's
     // exact ref is absent; a first page is not evidence that a later page cannot supply it.
