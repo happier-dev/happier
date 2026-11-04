@@ -8,7 +8,7 @@ const item = (skillId: string, name = 'sample', updatedAt = 1): SkillLibraryItem
   skillId, name, updatedAt, digest: `sha256:${skillId}`, description: 'A sample skill', disableModelInvocation: false, userInvocable: true,
 });
 const selected = (id: string, enabled = true): CapabilityItemStateV1 => ({
-  kind: 'skill', id, name: 'sample', selected: enabled, selectable: true,
+  kind: 'skill', id, name: 'sample', selected: enabled, reachEnabled: enabled, selectable: true,
   reason: enabled ? 'rule_on' : 'no_rule', decidedBy: null, sessionOverride: null,
 });
 const resolve = (input: Partial<Parameters<typeof resolveSessionSkillPlanV1>[0]> = {}) => SessionSkillPlanV1Schema.parse(resolveSessionSkillPlanV1({

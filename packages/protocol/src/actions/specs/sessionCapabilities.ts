@@ -10,6 +10,8 @@ const identity = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1)))
 export const CapabilityItemStateV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.enum(['mcp_server', 'skill']), id: identity, name: identity, title: z.optional(identity),
   selected: z.boolean(), selectable: z.boolean(),
+  // Older preview producers did not retain the rule baseline beneath Session overrides.
+  reachEnabled: z.optional(z.boolean()),
   reason: z.enum(['rule_on', 'rule_off', 'no_rule', 'session_added', 'session_removed', 'managed_off', 'not_portable', 'agent_unsupported']),
   decidedBy: z.nullable(z.strictObject({ ruleId: identity, target: z.enum(['allMachines', 'machine', 'project', 'workspace']), agentQualified: z.boolean() })),
   sessionOverride: z.nullable(z.enum(['added', 'removed'])),

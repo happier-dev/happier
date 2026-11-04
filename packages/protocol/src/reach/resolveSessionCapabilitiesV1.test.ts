@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { resolveSessionCapabilitiesV1 } from './resolveSessionCapabilitiesV1.js';
 import type { ReachContextV1 } from './resolveReachV1.js';
 import type { McpServersSettingsV1 } from '../mcp/servers/settingsV1.js';
+import { setSessionCapabilitySelectionItemV1 } from './sessionCapabilitySelectionV1.js';
 
 const context: ReachContextV1 = { machineId: 'm', machinePlatform: 'posix', directory: '/repo', projectKey: null, agentId: 'codex' };
 const server = { id: 's', name: 'server', transport: 'stdio' as const, stdio: { command: 'server', args: [] }, env: {}, createdAt: 1, updatedAt: 1 };
@@ -18,10 +19,20 @@ describe('resolveSessionCapabilitiesV1', () => {
   it('resolves MCP and skills through the same session level with exclude winning', () => {
     const result = resolveSessionCapabilitiesV1({ context, mcp: settings, skills: { items: [{ skillId: 'lint', name: 'lint' }], rules: [] }, selection: { mcp: { v: 1, managedServersEnabled: true, forceIncludeServerIds: ['s'], forceExcludeServerIds: [] }, skills: { v: 1, forceIncludeSkillIds: ['lint'], forceExcludeSkillIds: [], excludeNativeSkillNames: ['native'] } }, agentAcceptsUserMcp: true });
     expect(result.mcp.items[0]).toMatchObject({ selected: true, reason: 'session_added', sessionOverride: 'added', decidedBy: { ruleId: 'r' } });
-    expect(result.skills.items).toEqual([{ kind: 'skill', id: 'lint', name: 'lint', selected: true, selectable: true, reason: 'session_added', sessionOverride: 'added', decidedBy: null }]);
+    expect(result.skills.items).toEqual([{ kind: 'skill', id: 'lint', name: 'lint', selected: true, reachEnabled: false, selectable: true, reason: 'session_added', sessionOverride: 'added', decidedBy: null }]);
     expect(result.skills.excludeNativeSkillNames).toEqual(['native']);
     const excluded = resolveSessionCapabilitiesV1({ context, mcp: settings, skills: { items: [{ skillId: 'lint', name: 'lint' }], rules: [] }, selection: { skills: { v: 1, forceIncludeSkillIds: ['lint'], forceExcludeSkillIds: ['lint'], excludeNativeSkillNames: [] } }, agentAcceptsUserMcp: true });
     expect(excluded.skills.items[0]).toMatchObject({ selected: false, reason: 'session_removed', sessionOverride: 'removed' });
+  });
+  it.each([false, true])('retains the rule baseline under Session overrides (rule on: %s)', enabled => {
+    const rules = [{ id: 'default', skillId: 'lint', target: { t: 'allMachines' as const }, enabled, createdAt: 1, updatedAt: 1 }];
+    const input = { context, mcp: settings, skills: { items: [{ skillId: 'lint', name: 'lint' }], rules }, agentAcceptsUserMcp: true };
+    for (const state of ['on', 'off', 'inherit'] as const) {
+      const selection = setSessionCapabilitySelectionItemV1(setSessionCapabilitySelectionItemV1({}, 'skill', 'lint', state), 'mcp_server', 's', state);
+      const result = resolveSessionCapabilitiesV1({ ...input, selection });
+      expect(result.skills.items[0]).toMatchObject({ reachEnabled: enabled, selected: state === 'inherit' ? enabled : state === 'on' });
+      expect(result.mcp.items[0]).toMatchObject({ reachEnabled: false, selected: state === 'on' });
+    }
   });
   it('reports an unsupported Agent even for a session-forced MCP server', () => {
     const result = resolveSessionCapabilitiesV1({ context, mcp: settings, skills: null, selection: { mcp: { v: 1, managedServersEnabled: true, forceIncludeServerIds: ['s'], forceExcludeServerIds: [] } }, agentAcceptsUserMcp: false });

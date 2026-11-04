@@ -8,7 +8,7 @@ import { resolveSkillReachV1 } from '../prompts/library/skills/firstPartySkillsV
 import type { FeatureId } from '../features/catalog.js';
 
 export type CapabilityItemStateV1 = Readonly<{ kind: 'mcp_server' | 'skill'; id: string; name: string; title?: string;
-  selected: boolean; selectable: boolean; reason: CapabilitySelectionReasonV1; decidedBy: ReachDecisionV1['decidedBy']; sessionOverride: 'added' | 'removed' | null }>;
+  selected: boolean; reachEnabled: boolean; selectable: boolean; reason: CapabilitySelectionReasonV1; decidedBy: ReachDecisionV1['decidedBy']; sessionOverride: 'added' | 'removed' | null }>;
 export type CapabilityMcpItemStateV1 = CapabilityItemStateV1 & Readonly<{ source: 'catalog' | 'plugin'; effectiveConfig: McpServerCatalogEntryV1 }>;
 export type ResolveSessionCapabilitiesV1Result = Readonly<{ mcp: Readonly<{ strictMode: boolean; items: readonly CapabilityMcpItemStateV1[] }>;
   skills: Readonly<{ items: readonly CapabilityItemStateV1[]; excludeNativeSkillNames: readonly string[] }> }>;
@@ -34,7 +34,7 @@ export function resolveSessionCapabilitiesV1(input: Readonly<{ context: ReachCon
     const applied = applySessionSelectionV1({ reach, selectable, forceIncluded, forceExcluded, managedEnabled: mcpSelection.managedServersEnabled });
     return { kind: 'mcp_server', id: server.id, name: server.name, ...(server.title ? { title: server.title } : {}),
       ...applied, ...(!input.agentAcceptsUserMcp ? { selected: false, reason: 'agent_unsupported' as const } : {}), selectable,
-      decidedBy: reach.decidedBy, sessionOverride: forceExcluded ? 'removed' : forceIncluded ? 'added' : null,
+      reachEnabled: reach.enabled, decidedBy: reach.decidedBy, sessionOverride: forceExcluded ? 'removed' : forceIncluded ? 'added' : null,
       source, effectiveConfig: source === 'plugin' ? server : resolveMcpServerConfigForContextV1(server, input.context),
     };
   }) }, skills: { items: (input.skills?.items ?? []).map(item => {
@@ -42,7 +42,7 @@ export function resolveSessionCapabilitiesV1(input: Readonly<{ context: ReachCon
     const forceIncluded = skillIncludes.has(item.skillId), forceExcluded = skillExcludes.has(item.skillId);
     return { kind: 'skill', id: item.skillId, name: item.name, ...applySessionSelectionV1({ reach, selectable: reach.available,
       unselectableReason: 'managed_off', forceIncluded, forceExcluded, managedEnabled: true }),
-      selectable: reach.available, decidedBy: reach.decidedBy, sessionOverride: forceExcluded ? 'removed' : forceIncluded ? 'added' : null };
+      reachEnabled: reach.enabled, selectable: reach.available, decidedBy: reach.decidedBy, sessionOverride: forceExcluded ? 'removed' : forceIncluded ? 'added' : null };
   }), excludeNativeSkillNames: skillSelection.excludeNativeSkillNames } };
 }
 
