@@ -1480,17 +1480,19 @@ async function installBusyAdmissionTransport(fixture) {
 
 test('automatic admission reroutes busy workers without an unavailable TTL while pins keep waiting', async (t) => {
   const fixture = await memoryRoutingFixture(t, { availableKiB: 28000000, roomyLoad: 12 });
+  const controller = await isolatedRoutingController(fixture);
   await installBusyAdmissionTransport(fixture);
   for (const payloadExit of [0, 75]) {
-    const result = spawnSync('/bin/sh', [launcher, '--', 'node', '--test', 'focused.test.mjs'], {
+    const result = spawnSync('/bin/sh', [controller, '--', 'node', '--test', 'focused.test.mjs'], {
       ...fixture.invocation, env: { ...fixture.invocation.env, PAYLOAD_EXIT: String(payloadExit) }, timeout: 15_000,
     });
     assert.equal(result.status, payloadExit, result.stderr);
     assert.equal(result.stdout, 'payload:roomy\n');
-    assert.doesNotMatch(result.stderr, /HSTACK_(?:[A-Z_]*_)?BUSY|admission busy before dispatch/);
+    assert.match(result.stderr, /HSTACK_MEMORY_BUSY/,
+      'the waiting person must see the canonical reason for each abandoned preparation');
   }
   assert.deepEqual((await readFile(fixture.invocation.env.DISPATCHES, 'utf8')).trim().split('\n'), ['starved', 'roomy', 'starved', 'roomy']);
-  const pinned = spawnSync('/bin/sh', [launcher, '--target=starved', '--', 'node', '--test', 'focused.test.mjs'], fixture.invocation);
+  const pinned = spawnSync('/bin/sh', [controller, '--target=starved', '--', 'node', '--test', 'focused.test.mjs'], fixture.invocation);
   assert.equal(pinned.status, 0, pinned.stderr);
   assert.equal(pinned.stdout, 'payload:starved\n');
   assert.match(pinned.stderr, /waiting for heavyweight admission on pinned/);
@@ -7748,4 +7750,98 @@ test('AUTO ranks deeply queued demand behind idle capacity before preparation', 
     assert.equal(result.stdout, 'remote:roomy\n');
   }
   assert.deepEqual((await readFile(fixture.invocation.env.DISPATCHES, 'utf8')).trim().split('\n'), ['roomy', 'roomy']);
+});
+
+async function isolatedRoutingController(fixture) {
+  // Controller preparation must inspect its owned workspace, never publish
+  // Protocol exports into the test runner's concurrently changing checkout.
+  const controller = await installNativeAdmissionFixture({ root: join(fixture.root, 'controller'), prepareDependencies: true });
+  const controllerRoot = resolve(controller.launcher, '../../../..');
+  fixture.invocation.cwd = controllerRoot;
+  await writeNativeProjectionFixture(join(fixture.stackDir, 'dev-target-exec-v1.sh'),
+    renderNativeExecutionProjection(fixture.config, { repoRoot: controllerRoot }));
+  return controller.launcher;
+}
+
+test('AUTO publication during preparation waits on its selected worker instead of preparing the pool', { skip: process.platform !== 'linux', timeout: 60_000 }, async t => {
+  const publications = new Map();
+  const releases = [];
+  const connections = new Set();
+  let server, child, exited;
+  // Release publications and the dispatched child before fixture roots retire.
+  t.after(async () => {
+    for (const release of releases) release();
+    if (child?.exitCode === null && child.signalCode === null) child.kill('SIGTERM');
+    await exited;
+    await Promise.all(publications.values());
+    for (const socket of connections) socket.destroy();
+    if (server) await new Promise(done => server.close(done));
+  });
+  const fixture = await runtimeAdmissionTransportFixture(t);
+  const controller = await isolatedRoutingController(fixture);
+  fixture.invocation.env.HAPPIER_WORKSPACE_BUILD_NOTICE_AFTER_MS = '0';
+  for (const [name, worker] of Object.entries(fixture.workers)) {
+    await worker.pressure.release();
+    await writeFile(worker.sample, `8 ${name === 'starved' ? '0.1' : '12'} 0.9 22000000 20 0 28311552 28311552 0 0 0 0 0 0 0 linux 28311552\n`);
+  }
+  const sockets = await createTempFixture(t, { parentDir: '/tmp', prefix: 'hp-' });
+  const address = sockets.path('prepared.sock');
+  server = createServer(socket => {
+    connections.add(socket);
+    socket.on('error', () => {});
+    socket.once('close', () => connections.delete(socket));
+    socket.once('data', data => {
+      const name = data.toString();
+      if (publications.has(name)) { socket.end(); return; }
+      const checkout = resolve(fixture.workers[name].launcher, '../../../..');
+      const publication = withDependencyRefresh({ installDir: checkout, force: true,
+        componentDir: join(checkout, 'apps/stack'),
+        env: { ...fixture.invocation.env, HAPPIER_STACK_SKIP_REFRESH_DEPS: '', HAPPIER_STACK_DISABLE_REFRESH_DEPS: '' },
+      }, async ({ env }) => {
+        // The real publication owner retains mutation custody while the
+        // external, dependency-free installer is held at its completion edge.
+        const installed = spawnSync(join(checkout, '.fixture-pnpm/bin/pnpm'), ['install', '--frozen-lockfile'],
+          { cwd: checkout, env, encoding: 'utf8' });
+        assert.equal(installed.status, 0, installed.stderr);
+        await new Promise(release => { releases.push(release); socket.end(); });
+      });
+      publications.set(name, publication);
+    });
+  });
+  await new Promise(resolveListen => server.listen(address, resolveListen));
+  for (const [name, worker] of Object.entries(fixture.workers)) {
+    const checkout = resolve(worker.launcher, '../../../..');
+    await writeFile(join(checkout, 'focused.test.mjs'),
+      `import test from 'node:test'; test('selected payload', () => console.log('publication-payload:${name}'));\n`);
+    // Interpose at the bootstrap process boundary before its real readiness
+    // check. Dependency readiness belongs there, not to native admission.
+    const bootstrap = join(checkout, 'apps/stack/scripts/utils/dev_targets/remote_dependency_bootstrap.mjs');
+    const original = await readFile(bootstrap, 'utf8');
+    await writeFile(bootstrap, `import { createConnection } from 'node:net';
+await new Promise((done, reject) => {
+  const socket = createConnection(${JSON.stringify(address)});
+  socket.once('connect', () => socket.write(${JSON.stringify(name)}));
+  socket.once('error', reject); socket.once('end', done); socket.resume();
+});
+${original}
+`);
+  }
+  child = spawn('/bin/sh', [controller, '--', 'node', '--test', 'focused.test.mjs'],
+    { ...fixture.invocation, stdio: ['ignore', 'pipe', 'pipe'] });
+  let stdout = '', stderr = '';
+  child.stdout.on('data', value => { stdout += value; });
+  child.stderr.on('data', value => { stderr += value; });
+  exited = new Promise((done, reject) => { child.once('error', reject); child.once('close', done); });
+  await waitForRuntime(() => stderr.includes('waiting for dependency refresh lock') || releases.length === 2, () => stderr);
+  for (const release of releases) release();
+  assert.equal(await exited, 0, stderr);
+  await Promise.all(publications.values());
+  const attempts = (await readFile(fixture.invocation.env.DISPATCHES, 'utf8')).trim().split('\n');
+  t.diagnostic(JSON.stringify({ attempts, publications: publications.size,
+    waits: (stderr.match(/waiting for dependency refresh lock/g) ?? []).length }));
+  assert.deepEqual(attempts, ['starved'], 'one selected preparation joins its writer without preparing a peer');
+  assert.equal(publications.size, 1);
+  assert.match(stderr, /waiting for dependency refresh lock/);
+  assert.equal((stdout.match(/publication-payload:starved/g) ?? []).length, 1);
+  assert.doesNotMatch(stdout, /publication-payload:roomy/);
 });

@@ -2181,22 +2181,12 @@ exec 9<> "$custody_pipe"
 [ "$control_stdin" != 1 ] || exec 5<&0
 [ "$explicit_tty" != 1 ] || exec 4<&0
 run_selected_ssh_with_custody() {
-  # Retain every execution-qualified result for routing. Automatic probes
-  # report transient BUSY internally; only the retained queue is user-facing.
+  # Retain every execution-qualified result for routing and show its native
+  # reason, including refusals that AUTO can recover by choosing another worker.
   # SSH -E contains only SSH errors.
   if [ "$heavyweight_admission_required" -eq 1 ] && [ "$explicit_tty" != 1 ]; then
     exec 9>&-
-    if [ -z "$explicit_target_number" ] && [ "$_selected_available" != busy ]; then
-      awk -v output_log="$admission_error_log" -v busy="HSTACK_ADMISSION_BUSY:$admission_failure_id" '
-        {print >> output_log; fflush(output_log)}
-        $0 == busy {next}
-        $0 == "[preferred-execution] heavyweight admission refused (HSTACK_MEMORY_BUSY)" {next}
-        $0 == "[preferred-execution] heavyweight admission refused (HSTACK_WORKSPACE_RESOURCE_BUSY)" {next}
-        {print; fflush()}
-      ' < "$admission_error_pipe" >&2 &
-    else
-      tee "$admission_error_log" < "$admission_error_pipe" >&2 &
-    fi
+    tee "$admission_error_log" < "$admission_error_pipe" >&2 &
     admission_error_reader=$!
     (run_selected_ssh < "$custody_pipe" 2> "$admission_error_pipe")
     admission_transport_status=$?

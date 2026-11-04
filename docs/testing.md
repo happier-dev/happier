@@ -360,7 +360,10 @@ package/publication leases to `workspace_build_admission.mjs`; the broker
 coordinates capacity with each client's nonblocking resource acquisition.
 Plain and workspace demand share one broker queue. AUTO reroutes pre-dispatch capacity refusals through the eligible
 pool once, then uses the existing candidate ranking to join one healthy worker's
-queue. The read-only host admission sample carries the broker's cached
+queue. Each abandoned attempt keeps the native refusal reason visible in stderr.
+An active dependency publication during preparation waits on the selected worker
+through the refresh owner's completion signal, without preparing the remaining pool.
+The read-only host admission sample carries the broker's cached
 queued class floors across controllers. Heavy AUTO scoring includes that queued
 demand against unreserved memory, using each request's canonical class floor.
 Workers with no headroom retain their existing last-place pressure, scaled by
