@@ -130,6 +130,8 @@ export type ProviderConnectionServiceDeps = Readonly<{
   featureGate: Readonly<{ isEnabled(featureId: 'providers' | 'providers.localDiscovery'): boolean }>;
   loadSnapshot(
     registryProjection?: ProviderConnectionRegistryProjection,
+    secretSelection?: Readonly<{ connectionId?: string }>,
+    signal?: AbortSignal,
   ): Promise<ProviderConnectionServiceSnapshot>;
   updateProviderSettings(
     mutate: (

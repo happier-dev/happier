@@ -1,6 +1,8 @@
 import type { StoredCredentials } from '@/persistence';
 import { isDeepStrictEqual } from 'node:util';
 import { composeProviderSettingsV1, splitProviderSettingsV1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
+import { resolveProviderSecretBindingIdV1 } from '@happier-dev/protocol/providers/settings/operationsV1';
+import { readOwnRecordValue } from '@happier-dev/protocol/providers/ownRecordValue';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import type { ProviderActionRequestV1 } from '@happier-dev/protocol/providers/providerActionsV1';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -18,6 +20,8 @@ import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/act
 import { refreshAccountSettingsForMinimumVersion } from '@/settings/accountSettings/refreshAccountSettingsForMinimumVersion';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { promoteSavedSecretWithProviderConnectionsCatalog } from '@/settings/secrets/hydrateSavedSecretCatalog';
+import { readSavedSecretCatalogForOperation, SavedSecretOperationAdmissionError } from '@/settings/secrets/savedSecretCatalogRead';
+import { createLaunchSecretReferenceOverlayProviderErrorV1 } from '@/settings/secrets/secretReferenceOverlay';
 import { createProviderConnectionRpcAdapter } from './rpcAdapter';
 import { createPublicManagedProviderRuntimeStartOperation } from './publicManagedRuntimeStart';
 import {
@@ -140,7 +144,7 @@ export function createRuntimeProviderConnectionServices(input: Readonly<{
     accountProviderActionExecute: executeAccount,
     machineId: input.machineId,
     featureGate: input.featureGate,
-    loadSnapshot: async (registryProjection) => {
+    loadSnapshot: async (registryProjection, secretSelection, signal) => {
       const current = getActiveAccountSettingsSnapshot();
       let active = current?.scopeKey === resolveAccountSettingsScopeKey(input.credentials)
         ? current
@@ -164,6 +168,35 @@ export function createRuntimeProviderConnectionServices(input: Readonly<{
       }
       active = refreshed;
       const providerRead = readProviderSettingsForCli(active, { purpose: 'display' });
+      if (secretSelection) {
+        const references = providerRead.settings.connections.flatMap(connection => {
+          if (secretSelection.connectionId && connection.id !== secretSelection.connectionId) return [];
+          const bindings = readOwnRecordValue(providerRead.settings.secretBindingsByConnectionId, connection.id);
+          const machineBindings = readOwnRecordValue(bindings?.byMachineId, input.machineId);
+          const slots = new Set([...Object.keys(bindings?.account ?? {}), ...Object.keys(machineBindings ?? {})]);
+          return [...slots].flatMap(slot => {
+            const ref = resolveProviderSecretBindingIdV1(providerRead.settings, connection.id, input.machineId, slot);
+            return ref === null ? [] : [ref];
+          });
+        });
+        try {
+          // Standalone describe is a new acquisition boundary. The
+          // Saved Secret owner opens current Home material; consumers retain
+          // their existing typed missing/unavailable presentation decisions.
+          const admitted = await readSavedSecretCatalogForOperation({
+            expectedScopeKey: resolveAccountSettingsScopeKey(input.credentials),
+            references: [...new Set(references)].map(ref => ({ ref, required: false })),
+            ...(signal ? { signal } : {}),
+          });
+          active = { ...active, savedSecretResources: admitted.savedSecretResources,
+            savedSecretCatalogState: admitted.savedSecretCatalogState };
+        } catch (error) {
+          if (signal?.aborted) throw error;
+          throw createLaunchSecretReferenceOverlayProviderErrorV1(error instanceof SavedSecretOperationAdmissionError
+            ? error.reason : 'reference_unavailable', { machineId: input.machineId,
+              ...(secretSelection.connectionId ? { connectionId: secretSelection.connectionId } : {}) });
+        }
+      }
       const projection = registryProjection ?? await loadRegistryProjection();
       capturedStore.assertCurrent();
       return {

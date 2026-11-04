@@ -63,6 +63,7 @@ export async function describeProviderConnections(
     connectionId?: string;
     registryProjection?: ProviderConnectionRegistryProjection;
     lifetime?: ProviderOperationLifetime;
+    admitSavedSecrets?: boolean;
   }>,
 ): Promise<ProviderConnectionServiceResult<ProviderConnectionDescription>> {
   if (!deps.featureGate.isEnabled('providers')) {
@@ -86,7 +87,9 @@ export async function describeProviderConnections(
   // already-started lifetime and registry projection so their final read never
   // restarts DNS or switches contribution generations.
   const lifetime = input.lifetime ?? createProviderOperationLifetime({});
-  const snapshot = await deps.loadSnapshot(input.registryProjection);
+  const snapshot = await deps.loadSnapshot(input.registryProjection,
+    input.admitSavedSecrets ? { ...(input.connectionId ? { connectionId: input.connectionId } : {}) } : undefined,
+    lifetime.signal);
   const read = { settings: snapshot.providerSettings, diagnostics: snapshot.providerSettingsDiagnostics ?? [] };
   if (read.diagnostics.some((diagnostic) => diagnostic.path === 'providerSettingsV1')) {
     return { status: 'error', error: createProviderErrorV1('provider_settings_invalid', { machineId: input.machineId }) };

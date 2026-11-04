@@ -83,6 +83,7 @@ export function createProviderConnectionService(deps: ProviderConnectionServiceD
         const described = await context.describe({
           machineId: input.machineId,
           lifetime: createProviderOperationLifetime({ signal }),
+          admitSavedSecrets: true,
           ...(input.connectionId ? { connectionId: input.connectionId } : {}),
         });
         if (described.status === 'error' || !input.authoringPreview) return described;
