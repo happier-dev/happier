@@ -1,6 +1,13 @@
 import { vi } from 'vitest';
 
 import type { ApiMachineClient } from '@/api/apiMachine';
+import type { MachineActionDirectTargetTransport } from '@/session/actions/cliActionDeps/types';
+
+/** Installed local Machine RPC boundary beside an in-process Session transport. */
+export function createLocalMachineActionTransportFixture(machineId: string): MachineActionDirectTargetTransport {
+    return { machineId, invoke: async method => { throw new Error(`Unexpected local Machine RPC: ${method}`); } };
+}
+
 
 /** Machine socket subscriptions and shutdown are the bootstrap transport boundary. */
 export function createApiMachineTransportFixture() {
