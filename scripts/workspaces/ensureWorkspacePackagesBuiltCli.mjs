@@ -46,13 +46,15 @@ export async function runWorkspacePackageBuild({
   if (normalizedPackageNames.length === 0 && normalizedComponentDirs.length === 0) {
     throw new Error('Workspace package build requires at least one workspace package name or component.');
   }
+  let targetResult;
   if (prepareConfiguredTargets) {
     const { prepareWorkspacePackageBuildTargets } = await import('./prepareWorkspacePackageBuildTargets.mjs');
-    const targets = await prepareWorkspacePackageBuildTargets({ repoRoot, env,
+    targetResult = await prepareWorkspacePackageBuildTargets({ repoRoot, env,
       packageNames: normalizedPackageNames, componentDirs: normalizedComponentDirs, runDevTargetCommandImpl });
-    if (targets) return targets;
   }
 
+  // Configured replicas do not publish the controller's ignored dist. Prepare
+  // this checkout through the same owner before admitting its local consumers.
   const results = [];
   const preparedPackageNames = new Set();
   const reportPackageResult = async (result) => {
@@ -77,6 +79,7 @@ export async function runWorkspacePackageBuild({
     preparedComponents.push({ componentDir: resolvedComponentDir, pluginFailures: prepared.pluginFailures });
   }
   const result = {
+    ...targetResult,
     ok: results.every((result) => result.ok !== false),
     built: [...new Set(results.flatMap((result) => result.built ?? []))],
     skipped: [...new Set(results.flatMap((result) => result.skipped ?? []))],
@@ -152,7 +155,6 @@ export async function main(argv = process.argv.slice(2)) {
   });
   if (result.preparedTargets) {
     process.stdout.write(`[workspace-build] prepared targets: ${result.preparedTargets.join(', ')}\n`);
-    return;
   }
   const built = result.built.length > 0 ? result.built.join(', ') : 'none (already current)';
   process.stdout.write(`[workspace-build] built: ${built}\n`);

@@ -67,7 +67,7 @@ writeFileSync(join(output, 'index.js'), 'export const value = ' + JSON.stringify
   }
   assert.deepEqual((await runWorkspacePackageBuild(options)).built, [], 'a repeated preparation must reuse current outputs');
 });
-test('a configured workspace build refreshes stale target dist before returning', async (t) => {
+test('a configured workspace build refreshes stale controller and target dist before returning', async (t) => {
   const root = mkdtempSync(join(tmpdir(), 'happier-target-workspace-build-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const native = await installWorkspaceAdmissionProcessFixture(t, root);
@@ -112,14 +112,17 @@ writeFileSync(process.env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR + '/index.js', readF
       return { code: child.status, signal: child.signal };
     },
   };
-  await runWorkspacePackageBuild(options);
-  for (const replica of replicas) {
+  const prepared = await runWorkspacePackageBuild(options);
+  assert.deepEqual(prepared.preparedTargets, ['command-worker', 'runtime-only-worker']);
+  assert.deepEqual(prepared.built, [packageName]);
+  for (const replica of [controller, ...replicas]) {
     const child = spawnSync(process.execPath, ['--input-type=module', '--eval',
       `import { newlyAdded } from ${JSON.stringify(pathToFileURL(join(replica, 'packages/example/dist/index.js')).href)}; process.stdout.write(String(newlyAdded));`],
     { env: { ...process.env, NODE_OPTIONS: '' }, encoding: 'utf8' });
     assert.equal(child.status, 0, child.stderr);
     assert.equal(child.stdout, '2');
   }
+  assert.deepEqual((await runWorkspacePackageBuild(options)).built, [], 'unchanged controller output must be reused');
   await assert.rejects(runWorkspacePackageBuild({ ...options,
     runDevTargetCommandImpl: async () => ({ code: 255, signal: null }),
   }), /command-worker/);

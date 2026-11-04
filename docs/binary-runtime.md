@@ -559,6 +559,14 @@ with internal aliases resolving inside the checked graph rather than reopening
 TypeScript source. Pkgroll remains an npm-publication tool, not a prerequisite
 for native executables or source QA.
 
+Explicit workspace preparation through `ensureWorkspacePackagesBuiltCli.mjs`
+refreshes the controller checkout as well as every configured dev-target replica
+before returning success. Each checkout uses the same package-build currentness
+and publication owner for its own ignored outputs; worker preparation does not
+replace controller preparation. Unchanged outputs are reused. Source-runtime
+resolution continues to use authored workspace exports independently of this
+finite preparation command.
+
 Remaining workspace dist consumers share build-mode selection and compiler
 arguments through `packages/cli-common/workspaceChildBuildEnv.mjs`, including the
 generic package emitter and cli-common's atomic compiler. `source-dev` and
