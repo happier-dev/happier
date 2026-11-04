@@ -25,7 +25,7 @@ describe('Personal Home startup readiness', () => {
     });
   });
 
-  it('reads only a live token-free authenticated Home attestation', async () => {
+  it.each(['setup_required', 'teams_unavailable'])('reads a live authenticated Home attestation with Teams status %s', async (teamsBootstrapStatus) => {
     const root = await mkdtemp(join(tmpdir(), 'happier-home-readiness-'));
     const path = join(root, 'startup-receipt.json');
     try {
@@ -39,7 +39,7 @@ describe('Personal Home startup readiness', () => {
           homeServerIdentityId: 'srv_home_readiness',
           accountCount: 2,
           sessionCount: 3,
-          teamsBootstrapStatus: 'setup_required',
+          teamsBootstrapStatus,
         },
       })}\n`);
 
@@ -48,7 +48,7 @@ describe('Personal Home startup readiness', () => {
         homeServerIdentityId: 'srv_home_readiness',
         accountCount: 2,
         sessionCount: 3,
-        teamsBootstrapStatus: 'setup_required',
+        teamsBootstrapStatus,
       });
       await removePersonalHomeStartupReadiness(path);
       await expect(readPersonalHomeStartupReadiness({ path, timeoutMs: 10 })).rejects.toThrow(

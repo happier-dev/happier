@@ -105,7 +105,7 @@ import { startDaemonHeartbeatLoop } from './lifecycle/heartbeat';
 import { initialMachineMetadata } from './machine/metadata';
 import { createDaemonShutdownController } from './lifecycle/shutdown';
 import { getDaemonAgentInstallJobOwner } from '@/capabilities/installJobs/agentInstallJobOwner';
-import { installDaemonAcpCatalogHydrationObserver, refreshDaemonAcpCatalog, readActiveAcpCatalog } from '@/agent/acp/catalog/hydrateAcpCatalog';
+import { installDaemonAcpCatalogHydrationObserver, readActiveAcpCatalog } from '@/agent/acp/catalog/hydrateAcpCatalog';
 import { sweepRemovedAgentInstalls } from '@/agent/acp/catalog/registry/sweepRemovedAgentInstalls';
 import { isAgentInstallTargetInUse } from '@/agent/acp/catalog/registry/managedAgentInstalls';
 import { createBeforeShutdownDrain } from './lifecycle/createBeforeShutdownDrain';
@@ -118,7 +118,7 @@ import type { AdmittedRequesterSessionBootstrap, RequesterSessionRuntimeContext 
 import { createRequesterSessionRuntimeContextResolver, resolveRequesterSessionBootstrapFromCustody, bindRequesterSessionRuntimeMachineAdmissionCurrentness, listRequesterSessionCredentialBindings, releaseUnretainedRequesterSessionRuntimeContext } from './sessionEncryption/requesterSessionCredentials';
 import { notifyActiveAccountConnectedServicesProjection } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
-import { warmActiveAccountSettingsSnapshotBestEffort } from '@/settings/accountSettings/warmActiveAccountSettingsSnapshot';
+import { warmDaemonAccountCatalogs } from './startup/warmDaemonAccountCatalogs';
 import { readProjectAccountRows } from '@/workspaces/projectAccountRows';
 import { migrateTrackedSessionProcessesOutOfDaemonServiceCgroup } from './platform/linux/migrateTrackedSessionsOutOfDaemonServiceCgroup';
 import { readGuardCeilingCapability, shouldUseSystemdUserSessionResourceGovernor } from './platform/linux/systemdUserResourceGovernor';
@@ -130,6 +130,7 @@ import { waitForInitialCredentials } from './startup/waitForInitialCredentials';
 import { createDaemonEventLoopStallMonitor } from './diagnostics/daemonEventLoopStallMonitor';
 import { ensureDaemonStartupOwnership } from './startup/ensureDaemonStartupOwnership';
 import { startDaemonMachineRegistrationRuntime } from './startup/startDaemonMachineRegistrationRuntime';
+import { settleDaemonOptionalCapability, type DaemonOptionalCapabilityResult } from './startup/optionalCapabilities';
 import { createDaemonCleanupAndShutdown } from './startup/createDaemonCleanupAndShutdown';
 import { releaseDaemonOwnershipAfterFatal } from './lifecycle/cleanupAndShutdown';
 import { type AutomationWorkerHandle } from './automation/automationWorker';
@@ -1612,14 +1613,22 @@ export async function startDaemon(
     if (!daemonLockHandle) {
       throw new Error('Plugin runtime startup requires exclusive daemon ownership');
     }
-    await warmActiveAccountSettingsSnapshotBestEffort({
+    const reportOptionalCapabilityUnavailable = (result: Extract<DaemonOptionalCapabilityResult, { status: 'unavailable' }>) => {
+      if (homeTransportCancellation.signal.aborted) return;
+      logger.warn('[DAEMON RUN] Optional capability unavailable', {
+        status: result.status,
+        capability: result.capability,
+        error: serializeAxiosErrorForLog(result.error),
+      });
+    };
+    const accountCatalogWarmup = warmDaemonAccountCatalogs({
       credentials,
       logger,
+      signal: homeTransportCancellation.signal,
     });
-    const registryUpdateCheck = createCliRegistryUpdateCheck({ credentials, secretSources: daemonSecretSources, signal: homeTransportCancellation.signal });
-    const checkRegistryUpdates = () => startBackgroundRegistryUpdateCheck(registryUpdateCheck);
-    void checkRegistryUpdates()
-      .catch(error => { if (!homeTransportCancellation.signal.aborted) logger.warn('[DAEMON RUN] Registry update check failed', error); });
+    const accountCatalogReadiness = settleDaemonOptionalCapability(
+      'account_catalogs', accountCatalogWarmup, reportOptionalCapabilityUnavailable,
+    );
     releaseAcpCatalogHydrationObserver = installDaemonAcpCatalogHydrationObserver({ credentials,
       onReady: async input => {
         try {
@@ -1631,7 +1640,6 @@ export async function startDaemon(
           if (!input.signal?.aborted) logger.warn('[DAEMON RUN] Removed ACP install cleanup failed', error);
         }
       } });
-    await refreshDaemonAcpCatalog({ credentials, signal: homeTransportCancellation.signal });
     const externalSessionHostOperationOwner =
       createExternalSessionHostOperationOwner();
     if (!homeTarget.homeServerIdentityId && !serverFeaturesSnapshotStore.getSnapshot()) {
@@ -1778,6 +1786,9 @@ const pluginRuntimeOwner = createDaemonPluginRuntimeOwner({
           connectedAccountPurposeBindingRuntime.activatePurposeBindings,
       }),
       providers: providerOperationsSource,
+      // Declaration discovery can overlap warmup; executable plugins still
+      // observe the established Account policy, catalog and lifetime.
+      awaitAccountSettingsReadiness: () => accountCatalogWarmup,
       onInitialRegistryPublished: resolveInitialPluginRegistryPublished,
       awaitInitialRuntimeActivation: async () => {
         await Promise.race([
@@ -1830,21 +1841,17 @@ const pluginRuntimeOwner = createDaemonPluginRuntimeOwner({
       ...(pluginRecoveryRequested ? { startupMode: 'pluginRecovery' as const } : {}),
     });
     pluginChangeService = pluginRuntimeOwner.changeService;
-    const pluginRuntimeInitialization = pluginRuntimeOwner.initialize();
-    void pluginRuntimeInitialization.catch((error) => {
-      if (homeTransportCancellation.signal.aborted) return;
-      requestShutdown(
-        'exception',
-        error instanceof Error ? error.message : String(error),
-      );
-    });
+    const pluginRuntimeInitialization = settleDaemonOptionalCapability(
+      'plugin_runtime', pluginRuntimeOwner.initialize(), reportOptionalCapabilityUnavailable,
+    );
+    await accountCatalogReadiness;
+    const registryUpdateCheck = createCliRegistryUpdateCheck({ credentials, secretSources: daemonSecretSources, signal: homeTransportCancellation.signal });
+    const checkRegistryUpdates = () => startBackgroundRegistryUpdateCheck(registryUpdateCheck);
+    void checkRegistryUpdates()
+      .catch(error => { if (!homeTransportCancellation.signal.aborted) logger.warn('[DAEMON RUN] Registry update check failed', error); });
     await Promise.race([
       initialPluginRegistryPublished,
-      pluginRuntimeInitialization.then(() => {
-        throw new Error(
-          'Plugin runtime initialization completed without publishing its initial registry',
-        );
-      }),
+      pluginRuntimeInitialization,
     ]);
     // Publish the restart fence before any spawn admission can reuse a stale
     // process. Physical retirement waits for machine mutation custody below.
@@ -3309,13 +3316,6 @@ const pluginRuntimeOwner = createDaemonPluginRuntimeOwner({
       });
     };
     daemonServerWorkScheduler = runtimeBootstrap.daemonServerWorkScheduler;
-    await reconcileReattachedConnectedServiceCredentialProjection().catch((error) => {
-      logger.debug(
-        '[DAEMON RUN] Failed to reconcile connected-service credential projection after daemon replacement',
-        { error: serializeAxiosErrorForLog(error) },
-      );
-    });
-
     const machineRegistrationRuntime = startDaemonMachineRegistrationRuntime({
       api,
       credentials,
@@ -4382,6 +4382,11 @@ agentIsolation,
           }
           throw error;
         }
+        void settleDaemonOptionalCapability(
+          'connected_service_reconcile',
+          reconcileReattachedConnectedServiceCredentialProjection(),
+          reportOptionalCapabilityUnavailable,
+        );
       },
       filesystemAccessPolicy,
       takeoverRequested,

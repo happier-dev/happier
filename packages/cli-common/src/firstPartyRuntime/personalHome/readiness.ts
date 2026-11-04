@@ -11,7 +11,7 @@ export type PersonalHomeAuthenticatedReadiness = Readonly<{
    * The server-owned H6 bootstrap outcome. Older startup receipts omit this
    * additive field; current Personal Home servers always publish it.
    */
-  teamsBootstrapStatus?: 'ready' | 'setup_required';
+  teamsBootstrapStatus?: 'ready' | 'setup_required' | 'teams_unavailable';
 }>;
 
 const DEFAULT_READINESS_WAIT_MS = 10_000;
@@ -42,7 +42,8 @@ export function parsePersonalHomeAuthenticatedReadiness(value: unknown): Persona
     || Number(sessionCount) < 0
     || (teamsBootstrapStatus !== undefined
       && teamsBootstrapStatus !== 'ready'
-      && teamsBootstrapStatus !== 'setup_required')
+      && teamsBootstrapStatus !== 'setup_required'
+      && teamsBootstrapStatus !== 'teams_unavailable')
   ) return null;
   return {
     authenticated: true,

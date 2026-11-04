@@ -26,11 +26,10 @@ export async function createPersonalHomeAuthenticatedReadiness(
     defaultTeamName: DEFAULT_PERSONAL_HOME_TEAM_NAME,
     env,
   });
-  // Multiple active Accounts without an owner require explicit operator
-  // selection, but the Home remains authenticated and available so that its
-  // administration surface can perform that recovery. Every other bootstrap
-  // failure prevents readiness publication.
-  if (teamsBootstrap.status !== 'ready' && teamsBootstrap.status !== 'setup_required') {
+  // Optional Teams availability and operator setup do not prevent authenticated
+  // Home readiness. Governance integrity and invalid bootstrap input still do.
+  if (teamsBootstrap.status !== 'ready' && teamsBootstrap.status !== 'setup_required'
+    && teamsBootstrap.status !== 'teams_unavailable') {
     throw new Error(`Personal Home Teams bootstrap failed: ${teamsBootstrap.status}`);
   }
 

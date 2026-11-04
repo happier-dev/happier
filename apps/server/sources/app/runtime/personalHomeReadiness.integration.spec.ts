@@ -154,7 +154,7 @@ describe("Personal Home H6 readiness composition", () => {
         await expect(db.team.count()).resolves.toBe(0);
     });
 
-    it("suppresses readiness when the fixed Personal Home Teams capability becomes unavailable after initialization", async () => {
+    it.each([false, true])("publishes authenticated readiness with Teams disabled (previously initialized: %s)", async (initialized) => {
         await db.account.create({
             data: {
                 id: "personal-home-bootstrap-account",
@@ -164,15 +164,20 @@ describe("Personal Home H6 readiness composition", () => {
             },
         });
 
-        await expect(createPersonalHomeAuthenticatedReadiness(PERSONAL_HOME_ENV)).resolves.toMatchObject({
-            authenticated: true,
-            teamsBootstrapStatus: "ready",
-        });
+        if (initialized) {
+            await expect(createPersonalHomeAuthenticatedReadiness(PERSONAL_HOME_ENV)).resolves.toMatchObject({
+                authenticated: true,
+                teamsBootstrapStatus: "ready",
+            });
+        }
 
         await expect(createPersonalHomeAuthenticatedReadiness({
             ...PERSONAL_HOME_ENV,
             HAPPIER_BUILD_FEATURES_DENY: "teams",
-        })).rejects.toThrow("Personal Home Teams bootstrap failed: teams_unavailable");
+        })).resolves.toMatchObject({
+            authenticated: true,
+            teamsBootstrapStatus: "teams_unavailable",
+        });
     });
 
     it("rejects direct readiness attestation outside the Personal Home runtime purpose", async () => {

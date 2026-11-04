@@ -18,6 +18,14 @@ publishes daemon-local readiness immediately through the existing lifecycle
 lock owner. `daemon status` and `doctor` read that current fact; they need not
 wait for the next heartbeat after registration or disconnect.
 
+In 0.3 development, optional Account catalog or plugin initialization failures
+settle as unavailable diagnostics while the daemon continues to register and
+serve its control listener. Reattached connected-service credential reconciliation
+runs after registration completes and does not hold daemon readiness. Personal Home
+readiness receipts likewise retain authenticated readiness with
+`teamsBootstrapStatus: 'teams_unavailable'` when Teams is disabled; authentication,
+identity and governance integrity failures still prevent readiness.
+
 Bootstrap retry keeps the retained allocation and reuses the acquisition
 driver's shared bootstrap recipe. A durable retry approval with a captured
 Machine target returns to that controller, including from a public approval

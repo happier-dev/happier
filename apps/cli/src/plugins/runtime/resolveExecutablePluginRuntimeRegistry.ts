@@ -1827,6 +1827,8 @@ export async function resolveExecutablePluginRuntimeRegistry(
             & Readonly<{ machineId?: string; serverId?: string; serverIdentityId?: string;
                 savedSecretOperationContext?: import('@/settings/secrets/savedSecretOperationContext').SavedSecretOperationContextV1 }>;
         signal?: AbortSignal;
+        /** Daemon startup joins Account policy/catalog readiness before executable assembly. */
+        awaitAccountSettingsReadiness?: () => Promise<void>;
         readSpawnFailureLimits?: import('@/processes/spawnFailure/classifySpawnFailure').SpawnFailureLimitsReader;
         happyHomeDir?: string;
         contributes?: ResolvedContributionRegistry;
@@ -2348,6 +2350,8 @@ agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').Ho
             },
         },
     };
+    if (params?.awaitAccountSettingsReadiness) await params.awaitAccountSettingsReadiness();
+    params?.signal?.throwIfAborted();
     const activationAssembly = await assemblePluginRuntimeActivation({
         activationParams,
         ...(scopedActivationPluginIds === undefined

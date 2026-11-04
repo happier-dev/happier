@@ -166,6 +166,8 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
     'resolveBindingIntent'
   > & Partial<Pick<ConnectedAccountPurposeBindingOwner, 'activatePurposeBindings'>>;
   providers?: PluginProviderOperationsSource;
+  /** Initial declaration discovery may run before the daemon's Account warmup. */
+  awaitAccountSettingsReadiness?: () => Promise<void>;
   onInitialRegistryPublished?: () => void;
   awaitInitialRuntimeActivation?: () => Promise<void>;
   /** Notifies the daemon projection after a registry is durably current. */
@@ -773,6 +775,9 @@ agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').Ho
         resolveRuntimeRegistry: async () => {
           const registry = await resolveExecutablePluginRuntimeRegistry({
             ...(params.signal ? { signal: params.signal } : {}),
+            ...(params.awaitAccountSettingsReadiness
+              ? { awaitAccountSettingsReadiness: params.awaitAccountSettingsReadiness }
+              : {}),
             readSpawnFailureLimits: params.readSpawnFailureLimits,
             happyHomeDir: params.happyHomeDir,
             ...(params.executeClientAction ? { executeClientAction: params.executeClientAction } : {}),
