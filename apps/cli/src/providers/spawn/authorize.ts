@@ -45,7 +45,7 @@ import {
 import { resolveProviderConnectionForMachine } from '../registry/resolve';
 import { isRemoteProviderGatewayPlacement } from '../managed/gatewayPlacement';
 import { readProviderSettingsForCli } from '../settings/read';
-import { prepareProviderConnectionsCatalogForCli } from '../settings/hydrate';
+import { prepareProviderConnectionsCatalogForCli, refreshProviderConnectionsCatalogForCli } from '../settings/hydrate';
 import { resolveProviderCredentialPlaintext } from './credentials';
 import { revalidateProviderBindingAuthorizationTicket } from './ticket';
 import { createAccountBoundProviderSnapshotReader } from '../lifecycle/currentAccountSettingsSnapshot';
@@ -532,6 +532,8 @@ export async function createRuntimeProviderSpawnAuthorizationAttempt(input: Read
   agentId: string;
   lease: PluginRuntimeRegistryLease;
   getAccountSettingsSnapshot: () => ActiveAccountSettingsSnapshot | null;
+  /** Explicit binding recovery admits against the catalog reviewed since the previous launch. */
+  reobserveProviderCatalog?: boolean;
   subscribeAccountSettingsSnapshot?: (listener: () => void) => () => void;
   localCandidateUrlsByConnectionId?: ResolveProviderSpawnAuthorizationInput['localCandidateUrlsByConnectionId'];
   runtimeModelDescriptor?:
@@ -593,9 +595,9 @@ export async function createRuntimeProviderSpawnAuthorizationAttempt(input: Read
   const initialScopeKey = initialSnapshot.scopeKey;
   let catalog;
   try {
-    catalog = initialSnapshot.providerConnectionsCatalog?.status === 'ready'
+    catalog = !input.reobserveProviderCatalog && initialSnapshot.providerConnectionsCatalog?.status === 'ready'
       ? initialSnapshot.providerConnectionsCatalog
-      : await observePhase('catalog', () => awaitWithinProviderOperation(prepareProviderConnectionsCatalogForCli({ expectedScopeKey: initialScopeKey,
+      : await observePhase('catalog', () => awaitWithinProviderOperation((input.reobserveProviderCatalog ? refreshProviderConnectionsCatalogForCli : prepareProviderConnectionsCatalogForCli)({ expectedScopeKey: initialScopeKey,
           operationContext: input.savedSecretOperationContext }), admissionLifetime));
   } catch (error) {
     if (error instanceof ProviderOperationAbandonedError) {

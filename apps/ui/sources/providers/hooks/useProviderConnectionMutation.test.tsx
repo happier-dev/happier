@@ -133,6 +133,34 @@ describe('useProviderConnectionMutation', () => {
         expect(account.catalogMutations).toHaveLength(0);
     });
 
+    it.each([false, true])('persists a default endpoint edit through the Account Action while a Machine is selected (approval: %s)', async approvalRequired => {
+        if (approvalRequired) await account.home.requireUiApproval(serverId, 'providers.connections.endpoint.set');
+        const endpointTemplateId = customTemplate().endpointTemplates[0]!.id;
+        const connection = createProviderConnectionViewFixture({ connectionId: 'pc_a', revision: 1 });
+        const hook = await renderHook(() => {
+            const mutation = useProviderConnectionMutation({ resolveTarget, serverId, refresh: async () => {} });
+            const actions = useProviderActionClient(serverId);
+            return { ...useProviderEndpointConfiguration({ connection, machineId: 'machine-a', mutation,
+                onChange: () => {} }), ready: actions.ready, describe: actions.describeProviderConnections };
+        });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().ready).toBe(true));
+        const beta = 'http://100.64.35.88:44557/beta';
+        let saving!: Promise<boolean>;
+        await act(async () => { saving = hook.getCurrent().patch({ endpointTemplateId, scope: 'account', baseUrl: beta }); });
+        if (approvalRequired) {
+            const { decideApprovalAsInbox } = await import('@/dev/testkit/harness/approvalInbox');
+            await waitForHomeGovernance(() => expect(account.home.artifacts(serverId).list()).toHaveLength(1));
+            expect(await decideApprovalAsInbox(serverId, account.home.artifacts(serverId).list()[0]!.id, 'approve'))
+                .toMatchObject({ ok: true, result: { status: 'executed' } });
+        }
+        await act(async () => { expect(await saving).toBe(true); });
+        expect(persistedCatalog().connections.find(row => row.id === 'pc_a')).toMatchObject({ revision: 2,
+            endpointOverrides: [{ endpointTemplateId, baseUrl: beta }] });
+        expect(await hook.getCurrent().describe({ serverId, connectionId: 'pc_a' })).toMatchObject({
+            status: 'success', connections: [{ endpoints: [{ accountOverrideBaseUrl: beta, baseUrl: beta }] }],
+        });
+    });
+
     it('edits and resets policy independently through the same Account Action without pinning an inherited address', async () => {
         const endpointTemplateId = customTemplate().endpointTemplates[0]!.id;
         const connection = createProviderConnectionViewFixture({ connectionId: 'pc_a' });

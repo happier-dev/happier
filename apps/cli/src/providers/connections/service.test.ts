@@ -3050,6 +3050,31 @@ describe('provider connection service', () => {
     expect(settings.machineGrants).toHaveLength(0);
   });
 
+  it('authorizes a reconsented machine endpoint and retains a changed default endpoint on reload', async () => {
+    const h = harness({ rowBacked: true });
+    const alpha = 'http://100.64.35.88:44557/alpha';
+    const beta = 'http://100.64.35.88:44557/beta';
+    await h.service.create({ action: 'createCustom', machineId: 'machine-a', connectionId: 'pc_reconsent',
+      template: { v: 1, name: 'Reconsent', endpointTemplates: [{ id: 'responses', protocol: 'openai-responses',
+        baseUrl: alpha, capabilities: { streaming: 'unknown', toolRoundTrips: 'unknown', statefulResponses: 'unknown', reasoningControls: 'unknown' } }],
+      catalog: { source: 'manual', manualModelPolicy: 'allowed' } }, savedSecretId: null, enable: false });
+    const enable = () => h.service.setEnabled({ action: 'setEnabled', machineId: 'machine-a',
+      connectionId: 'pc_reconsent', scope: 'machine', enabled: true });
+    expect(await enable()).toMatchObject({ status: 'success', authorized: true });
+    expect(await h.service.setEndpointOverride({ action: 'setEndpointOverride', machineId: 'machine-a',
+      connectionId: 'pc_reconsent', expectedRevision: 0, scope: 'machine', endpointTemplateId: 'responses', baseUrl: beta }))
+      .toMatchObject({ status: 'success', authorized: false, authorizationError: { code: 'provider_machine_grant_stale' } });
+    expect(await enable()).toMatchObject({ status: 'success', authorized: true });
+    expect(await h.service.describe({ machineId: 'machine-a', connectionId: ProviderConnectionIdSchema.parse('pc_reconsent') }))
+      .toMatchObject({ status: 'success', connections: [{ authorized: true, endpoints: [{ baseUrl: beta }] }] });
+    expect(await h.service.setEndpointOverride({ action: 'setEndpointOverride', machineId: 'machine-a',
+      connectionId: 'pc_reconsent', expectedRevision: 1, scope: 'account', endpointTemplateId: 'responses', baseUrl: beta }))
+      .toMatchObject({ status: 'success' });
+    expect(h.getProviderSettings().connections[0]?.endpointOverrides).toEqual([{ endpointTemplateId: 'responses', baseUrl: beta }]);
+    expect(await h.service.describe({ machineId: 'machine-a', connectionId: ProviderConnectionIdSchema.parse('pc_reconsent') }))
+      .toMatchObject({ status: 'success', connections: [{ authorized: true, endpoints: [{ accountOverrideBaseUrl: beta }] }] });
+  });
+
   it('atomically disables every grant for an effective connection toggle while preserving concurrent settings', async () => {
     const h = harness();
     await h.service.create({

@@ -209,6 +209,7 @@ export async function prepareDaemonProviderLaunch(input: Readonly<{
                 machineId,
                 agentTargetKey,
                 agentId,
+                reobserveProviderCatalog: input.options.providerBindingSecurityChangeConfirmationV1 !== undefined,
                 lease: appliedPluginRuntimeLease,
                 getAccountSettingsSnapshot: input.readAccountSettingsSnapshot ?? (input.accountSettingsSnapshot
                     ? () => input.accountSettingsSnapshot ?? null : getActiveAccountSettingsSnapshot),
