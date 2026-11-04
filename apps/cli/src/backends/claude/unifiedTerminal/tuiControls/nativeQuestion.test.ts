@@ -36,6 +36,31 @@ const focus = (screen: string, from: string, to: string) => screen.replace(`❯ 
 const controls = { isCurrent: () => true, wait: async () => undefined, settleMs: 0, verifyPollIntervalMs: 1, verifyPollTimeoutMs: 2 };
 
 describe('native Claude AskUserQuestion (2.1.304 captures)', () => {
+  it('submits its own freeform answer when typing scrolls the entire question heading out of view', async () => {
+    const initial = readFileSync(new URL('./__fixtures__/claude-2.1.316-question-long-freeform.initial.txt', import.meta.url), 'utf8');
+    const filled = readFileSync(new URL('./__fixtures__/claude-2.1.316-question-long-freeform.filled.txt', import.meta.url), 'utf8');
+    const input: { questions: StructuredQuestionLike[] } = JSON.parse(readFileSync(new URL('./__fixtures__/claude-2.1.316-question-long-freeform-input.json', import.meta.url), 'utf8'));
+    const text = ('This is harmless synthetic freeform text for an isolated diagnostic. The public fixture should preserve the selected status and explain each ordinary display change without changing any real settings. '.repeat(4)).trim();
+    const answers = { [String(input.questions[0]!.question)]: [text] };
+    const port = createFakeControlPort({ captures: [initial, filled, idle] });
+    await expect(answerClaudeNativeQuestion({ ...controls, port, questions: input.questions, answers })).resolves.toEqual({ status: 'answered' });
+    expect(port.sentLiteral).toEqual([text]);
+    expect(port.sentKeys).toEqual(['Enter']);
+
+    // A cropped preexisting draft has no operation-owned page identity. Changed choices,
+    // foreign draft text, and a different active dialog must never receive Enter.
+    for (const captures of [
+      [filled],
+      [initial, filled.replace('Publish changes only (Recommended)', 'Publish another choice')],
+      [initial, filled.replace('This is harmless synthetic freeform text', 'Someone else edited this text')],
+      [initial, filled + '\nUnrecognized active dialog'],
+    ]) {
+      const changed = createFakeControlPort({ captures });
+      await expect(answerClaudeNativeQuestion({ ...controls, port: changed, questions: input.questions, answers })).resolves.toMatchObject({ status: 'failed' });
+      expect(changed.sentKeys).not.toContain('Enter');
+    }
+  });
+
   it('answers every question and submits when narrow tabs and Submit wrap into aligned columns', async () => {
     // Tab columns captured from Claude 2.1.316 at 48 columns.
     const input = ['Color mode', 'Glass style', 'Phone hints'].map((header, index) => ({

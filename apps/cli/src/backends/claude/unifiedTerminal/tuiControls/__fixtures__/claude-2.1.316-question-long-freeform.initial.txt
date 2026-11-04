@@ -1,0 +1,19 @@
+────────────────────────────────────────────────────────────────────────────────
+ ☐ Fixture
+
+│ Synthetic diagnostic: each public fixture periodically updates a harmless
+│ visible status label. Should this scratch example publish only changes to the
+│ status, while preserving a timestamp for a fixture that has stopped? This
+│ choice changes no real settings or user data.
+
+  1. Publish changes only (Recommended)
+     Keep a public synthetic status current when the fixture changes. Record its
+     timestamp only for the stopped synthetic example.
+  2. Keep periodic updates
+     Retain the harmless periodic publication in this disposable example. This
+     does not change any actual running process or setting.
+❯ 3. Type something.
+────────────────────────────────────────────────────────────────────────────────
+  4. Chat about this
+
+Enter to select · ↑/↓ to navigate · ctrl+g to edit in Vim · Esc to cancel

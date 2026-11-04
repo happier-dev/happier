@@ -232,7 +232,7 @@ export function parseClaudeNativeQuestionScreen(rawText: string): ClaudeNativeQu
       if (incomplete !== (reviewAnswers.length < tabs.length)) return null;
     } else if (incomplete) return null;
   } else {
-    if (heading.length === 0 || options.length === 0) return null;
+    if ((heading.length === 0 && tabs !== null) || options.length === 0) return null;
     const footer = body.slice(optionsEnd).filter((line) => line.trim().length > 0);
     const hint = footer.slice(2).map((line) => line.trim()).join(' ');
     if (footer.length < 3 || !RULE.test(footer[0]!) || !(previewColumn !== null ? /^\s+Chat about this$/u : /^\s*\d+\. Chat about this$/u).test(footer[1]!) || !HINT.test(hint)) return null;
@@ -245,13 +245,14 @@ export function parseClaudeNativeQuestionScreen(rawText: string): ClaudeNativeQu
       if (continuation.length > 0) freeform.label = [freeform.label, ...continuation].join('\n');
     }
   }
-  return { kind: review ? 'review' : 'question', tabs, question: review ? null : heading.map((line) => line.trim()).join('\n'), multiSelect, nextFocused, freeformIndex: review || previewColumn !== null ? null : options.length - 1, notesDraft, options, reviewClipped, reviewAnswers };
+  return { kind: review ? 'review' : 'question', tabs, question: review || heading.length === 0 ? null : heading.map((line) => line.trim()).join('\n'), multiSelect, nextFocused, freeformIndex: review || previewColumn !== null ? null : options.length - 1, notesDraft, options, reviewClipped, reviewAnswers };
 }
 
 /** One page identity for publication and navigation, independent of selection progress. */
 export function resolveClaudeNativeQuestionScreen(
   presentation: ClaudeNativeQuestionPresentation,
   questions: readonly StructuredQuestionLike[],
+  editingQuestionIndex?: number,
 ): Readonly<{ kind: 'question'; questionIndex: number }> | Readonly<{ kind: 'review' }> | null {
   const result = normalizeStructuredQuestionDescriptors(questions);
   if (!result.ok) return null;
@@ -277,7 +278,11 @@ export function resolveClaudeNativeQuestionScreen(
       && (presentation.freeformIndex !== null) === hasFreeformRow
       && presentation.options.length === question.options.length + Number(hasFreeformRow)
       && question.options.every((option, index) => matchesOptionLabel(presentation.options[index]!, option.label))
-      && matchesQuestionHeading(presentation, question.question ?? '') ? [questionIndex] : [];
+      // Only the answer operation that identified this page and still sees its own draft
+      // can retain its identity after typing scrolls the entire heading out of view.
+      && (presentation.question === null && tabs === null
+        ? questionIndex === editingQuestionIndex
+        : matchesQuestionHeading(presentation, question.question ?? '')) ? [questionIndex] : [];
   });
   return matches.length === 1 ? { kind: 'question', questionIndex: matches[0]! } : null;
 }

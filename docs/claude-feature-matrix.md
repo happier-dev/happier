@@ -288,6 +288,10 @@ When the viewport clips a question's tabs and beginning, one shared resolver
 identifies its page from the complete visible question suffix and choice labels
 against the pending hook input. Publication and answer navigation use that same
 identity; missing choices or an ambiguous match remain unrecognized.
+If typing Happier's freeform answer scrolls the entire heading above the viewport,
+the same resolver retains the already identified page only while its complete
+choices and Happier-owned draft still match. A headingless preexisting draft
+does not establish a new question identity.
 Long reviews may clip earlier questions above the viewport. The same parser
 recognizes complete visible entries as a suffix of the hook-owned questions;
 the answer driver submits only after visiting every question page and matching

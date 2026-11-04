@@ -50,6 +50,15 @@ export async function answerClaudeNativeQuestion(params: Readonly<{
   )));
   if (unrepresentable) return failed('native_freeform_unrepresentable');
 
+  const ownDrafts = new Map<number, string>();
+  // Native rendering makes logical newlines and visual wraps indistinguishable. Only an exact
+  // payload written by this operation may use a display comparison across those boundaries.
+  const draftMatches = (index: number, actual: string, expected: string): boolean => (
+    ownDrafts.get(index) === expected
+      ? doesClaudeOwnedTextMatchCapture(expected, actual)
+      : !actual.includes('\n') && actual === expected
+  );
+
   let presentation: ClaudeNativeQuestionPresentation | null = null;
   let questionIndex = -1;
   let completionVisible = false;
@@ -62,7 +71,11 @@ export async function answerClaudeNativeQuestion(params: Readonly<{
       return false;
     }
     presentation = result.state.nativeQuestionPresentation;
-    const match = presentation ? resolveClaudeNativeQuestionScreen(presentation, params.questions) : null;
+    const ownDraft = ownDrafts.get(questionIndex);
+    const editingQuestionIndex = ownDraft !== undefined && presentation?.freeformIndex != null
+      && draftMatches(questionIndex, presentation.options[presentation.freeformIndex]!.label, ownDraft)
+      ? questionIndex : undefined;
+    const match = presentation ? resolveClaudeNativeQuestionScreen(presentation, params.questions, editingQuestionIndex) : null;
     questionIndex = match?.kind === 'question' ? match.questionIndex : -1;
     completionVisible = result.state.inputBoxInteractive || result.state.generating;
     if (presentation && !match) {
@@ -93,14 +106,6 @@ export async function answerClaudeNativeQuestion(params: Readonly<{
   if (!await capture()) return failed(captureReason!);
   if (!presentation) return { status: 'not_visible' };
   const read = (): ClaudeNativeQuestionPresentation => presentation!;
-  const ownDrafts = new Map<number, string>();
-  // Native rendering makes logical newlines and visual wraps indistinguishable. Only an exact
-  // payload written by this operation may use a display comparison across those boundaries.
-  const draftMatches = (index: number, actual: string, expected: string): boolean => (
-    ownDrafts.get(index) === expected
-      ? doesClaudeOwnedTextMatchCapture(expected, actual)
-      : !actual.includes('\n') && actual === expected
-  );
   const reviewMatches = (screen: ClaudeNativeQuestionPresentation): boolean => (
     screen.kind === 'review'
     && (screen.reviewClipped ? seenPages.size === questions.length : screen.reviewAnswers.length === questions.length)
