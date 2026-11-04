@@ -7,6 +7,8 @@ import {
     type KeyboardAwareScrollViewRef as RNKCKeyboardAwareScrollViewRef,
 } from 'react-native-keyboard-controller';
 
+import { useWebScrollReadingAnchor } from '@/components/ui/scroll/webScrollReadingAnchor';
+
 import { DEFAULT_KEYBOARD_AWARE_SCREEN_MODE } from './keyboardAvoidanceDefaults';
 import {
     resolveKeyboardAwareScrollViewDefaults,
@@ -45,8 +47,17 @@ export const KeyboardAwareScrollView = React.forwardRef<ScrollView, KeyboardAwar
             keyboardVerticalOffset,
         });
 
+        // Web pages recompose across breakpoints; the reading anchor keeps what the person was reading in place.
+        const anchoredRef = React.useRef<ScrollView | null>(null);
+        const anchorsReading = Platform.OS === 'web' && !defaults.useKeyboardController && !ScrollViewComponent;
+        useWebScrollReadingAnchor(anchoredRef, anchorsReading);
+        const setScrollRef = React.useCallback((node: ScrollView | null) => {
+            anchoredRef.current = node;
+            if (typeof ref === 'function') ref(node);
+            else if (ref) ref.current = node;
+        }, [ref]);
+
         if (!defaults.useKeyboardController) {
-            const scrollRef = ref as React.Ref<ScrollView>;
 
             if (ScrollViewComponent) {
                 return (
@@ -59,7 +70,7 @@ export const KeyboardAwareScrollView = React.forwardRef<ScrollView, KeyboardAwar
 
             return (
                 <ScrollView
-                    ref={scrollRef}
+                    ref={setScrollRef}
                     automaticallyAdjustKeyboardInsets={automaticallyAdjustKeyboardInsets}
                     {...props}
                 />
