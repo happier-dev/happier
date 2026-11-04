@@ -1,3 +1,4 @@
+import { buildChildExitBeforeWebhookFailure } from '@/daemon/spawn/childStderrDiagnostic';
 import { createSessionAgentIsolationMemberPreparation, type SessionAgentIsolationAccountSource } from '../agentIsolation/sessionPreparation';
 import { hasStoredSessionCredentialProvenance } from '@/persistence';
 import { dispatchOriginalAccountAction } from '@/api/externalActionExecutionAuthorization';
@@ -7647,11 +7648,7 @@ daemonWorkSignal: AbortSignal;
       startupResolver &&
       params.pidToSpawnResultResolver.get(startupPid) === startupResolver
     ) {
-      startupResolver({
-        type: 'error',
-        errorCode: SPAWN_SESSION_ERROR_CODES.CHILD_EXITED_BEFORE_WEBHOOK,
-        errorMessage: 'Child process exited before startup readiness completed',
-      });
+      startupResolver(buildChildExitBeforeWebhookFailure({ pid, ...exit }));
     }
     void params.connectedServiceGroupHomeCleanupScheduler
       ?.cleanupPendingDeletedGroupHomes()

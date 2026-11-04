@@ -1258,6 +1258,13 @@ deadlines retain their redacted `launchError` cause in the existing creation
 result; a spawn already issued with a lost acknowledgement remains pending
 under its original creation key.
 
+Before native Session startup completes, the runner's failure report also carries
+the existing content-free runtime cause through child stderr capture into optional
+`launchError.failureCause`. Its code, phase and classified reason use
+`SessionRuntimeFailureCauseV1`; native messages, paths and credentials are excluded.
+The same spawn-result owner serves separated members and the shared isolated Agent.
+This presentation leaf does not change admission, retry or Session identity.
+
 In 0.3 development source, saving startup correspondence may outlast the
 Workflow claim. The original Action operation's cancellation signal owns its
 admitted launch after that handoff; claim loss ends only Workflow observation.

@@ -1,13 +1,13 @@
 import { HostTerminalTranscriptFollowAdmissionError } from '@/agent/runtime/session/terminal/contract';
 import { isPluginError } from '@happier-dev/plugin-sdk';
 import { logger } from '@/ui/logger';
-import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
-import { readSessionPreparationFailureCode } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
-import { inspectOwnErrorCodeDataProperty } from '@/agent/runtime/session/process/agentRuntimeBridgeError';
+import { classifyPrimarySessionRuntimeIssue, readSessionPreparationFailureDiagnostic } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
 import { readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { writeConsoleErrorBestEffort } from '@/utils/writeConsoleBestEffort';
 import {
   isAgentSessionContinuationUnreachableError,
   SESSION_RUNNER_EXIT_CODES,
+  formatSessionRunnerFailureCause,
 } from '@/session/shared/spawnSessionContract';
 
 /** Preserve non-retryable host admission failures across the runner process boundary. */
@@ -31,13 +31,14 @@ export function resolveSessionRunnerFailureExitCode(error: unknown): number {
 /** Report the command failure and preserve its existing supervised process exit. */
 export function reportSessionRunnerFailure(error: unknown): number {
   const exitCode = resolveSessionRunnerFailureExitCode(error);
-  const errorCode = inspectOwnErrorCodeDataProperty(error);
-  const preparationCode = errorCode.kind === 'string' ? readSessionPreparationFailureCode(errorCode.value) : null;
+  const { originalCode, failureCause } = readSessionPreparationFailureDiagnostic(error);
+  if (failureCause) writeConsoleErrorBestEffort(formatSessionRunnerFailureCause(failureCause));
   const diagnostic = readUnexpectedActionErrorDiagnosticV1(error);
   logger.infoFile('[Session] Runner failed', {
     phase: 'runner_exit', exitCode,
     ...diagnostic,
-    errorCode: preparationCode ?? diagnostic.errorCode,
+    errorCode: originalCode === 'unknown' ? diagnostic.errorCode : originalCode,
+    ...(failureCause ? { failureCause } : {}),
   });
   const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', error });
   if (issue.source === 'dependency_failure' && issue.code === 'preparation_pending') {

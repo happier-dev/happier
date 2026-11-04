@@ -21,6 +21,7 @@ import { resolveTrackedSessionExitSettlementEvidence } from './resolveTrackedSes
 import { stageObservedExit } from './stageObservedExit';
 import type { SkillStore } from '@/prompts/skills/store/skillStore';
 import { readRetainedPlainRunnerExitMarker } from './retireTerminalControlServiceability';
+import type { SessionSpawnLaunchErrorV1 } from '@happier-dev/protocol/spawnSession';
 import { releaseUnretainedRequesterSessionRuntimeContext } from '../sessionEncryption/requesterSessionCredentials';
 
 export type ChildExit = {
@@ -28,6 +29,9 @@ export type ChildExit = {
   code: number | null;
   signal: string | null;
   stderrTail?: string | null;
+  /** Producer-redacted startup diagnostic; custody forwards it without recapturing stderr. */
+  childExit?: NonNullable<SessionSpawnLaunchErrorV1['childExit']>;
+  failureCause?: SessionSpawnLaunchErrorV1['failureCause'];
 };
 
 function normalizeSessionId(value: unknown): string {

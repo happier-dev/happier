@@ -72,6 +72,13 @@ an upgraded host; they do not need a dual writer or a stored-data migration.
 
 ## Runtime failure transcript metadata (0.3 development)
 
+The unreleased 0.3 `SessionSpawnLaunchErrorV1` also admits this same optional
+`failureCause` leaf for runner failures before native Session startup completes.
+The runner producer, daemon child-exit projection and strict launch-result readers
+must load matching development source. Older strict development readers may reject
+the new field; an absent cause remains valid. This changes presentation only and
+adds no released-client update floor, migration, wire epoch or retry behavior.
+
 Host failure messages carry the existing typed `SessionRuntimeIssueV1` in optional
 `runtimeIssueV1` message metadata, beside the legacy `runtimeIssueCode` and
 `runtimeIssueSource`. The canonical stored-message reader retains these declared

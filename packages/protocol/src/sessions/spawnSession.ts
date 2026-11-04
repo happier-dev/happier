@@ -14,7 +14,7 @@ import {
 } from '../connect/connectedServiceUxDiagnostics.js';
 import { ProviderErrorV1Schema, type ProviderErrorV1 } from '../providers/errors.js';
 import { SpawnFailureV1Schema } from '../machines/processes/spawnFailureV1.js';
-export { SessionSpawnLaunchErrorV1Schema, type SessionSpawnLaunchErrorV1 } from './creation/sessionSpawnLaunchErrorV1.js';
+export { SessionSpawnLaunchErrorV1Schema, SESSION_SPAWN_CHILD_STDERR_MAX_BYTES, type SessionSpawnLaunchErrorV1 } from './creation/sessionSpawnLaunchErrorV1.js';
 import { SessionSpawnLaunchErrorV1Schema, type SessionSpawnLaunchErrorV1 } from './creation/sessionSpawnLaunchErrorV1.js';
 
 // Process launch accepts the existing daemon modes, not integrated UI authoring.

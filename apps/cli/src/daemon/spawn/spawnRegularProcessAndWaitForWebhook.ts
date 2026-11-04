@@ -3,7 +3,7 @@ import { spawn as spawnChildProcess } from 'node:child_process';
 import { observeProcessLaunch } from '@/processes/launchNotification';
 import { isPidPresent } from '@happier-dev/cli-common/process';
 
-import { appendBoundedStderrTail, formatChildExitBeforeWebhookMessage, sanitizeChildStderrTail } from './childStderrDiagnostic';
+import { appendBoundedChildStderr, buildChildExitBeforeWebhookFailure, sanitizeChildStderrTail, type CapturedChildStderr } from './childStderrDiagnostic';
 
 import type { ChildExit } from '../sessions/onChildExited';
 import { resolveSpawnWebhookResult } from '../sessions/resolveSpawnWebhookResult';
@@ -133,7 +133,7 @@ export async function spawnRegularProcessAndWaitForWebhook(params: Readonly<{
       errorDetail: { kind: 'spawn_failure', ...spawnFailure } };
   }
 
-  let capturedStderrTail = '';
+  let capturedStderr: CapturedChildStderr = { head: '', tail: '' };
   observeProcessLaunch(happyProcess);
   const stderrSanitizer = params.createStreamingSanitizer?.() ?? null;
   const stdoutSanitizer = params.createStreamingSanitizer?.() ?? null;
@@ -145,7 +145,7 @@ export async function spawnRegularProcessAndWaitForWebhook(params: Readonly<{
     : sanitizeDiagnosticText(String(chunk ?? ''));
   const flushStreamingDiagnostics = () => {
     const stderrFinal = stderrSanitizer?.flush() ?? '';
-    if (stderrFinal) capturedStderrTail = appendBoundedStderrTail(capturedStderrTail, stderrFinal);
+    if (stderrFinal) capturedStderr = appendBoundedChildStderr(capturedStderr, stderrFinal);
     const stdoutFinal = stdoutSanitizer?.flush() ?? '';
     if (stdoutFinal && process.env.DEBUG) {
       params.logDebug(`[DAEMON RUN] Child stdout: ${stdoutFinal}`);
@@ -153,7 +153,7 @@ export async function spawnRegularProcessAndWaitForWebhook(params: Readonly<{
   };
   happyProcess.stderr?.on('data', (data) => {
     const safeChunk = sanitizeStreamChunk(stderrSanitizer, data);
-    if (safeChunk) capturedStderrTail = appendBoundedStderrTail(capturedStderrTail, safeChunk);
+    if (safeChunk) capturedStderr = appendBoundedChildStderr(capturedStderr, safeChunk);
     if (safeChunk && process.env.DEBUG) {
       params.logDebug(`[DAEMON RUN] Child stderr: ${safeChunk}`);
     }
@@ -373,26 +373,24 @@ export async function spawnRegularProcessAndWaitForWebhook(params: Readonly<{
   happyProcess.on('exit', (code, signal) => {
     if (terminalObservation) return;
     flushStreamingDiagnostics();
-    const stderrTail = sanitizeChildStderrTail(capturedStderrTail, sanitizeDiagnosticText);
+    const stderrTail = sanitizeChildStderrTail(capturedStderr.tail, sanitizeDiagnosticText);
     params.logDebug(`[DAEMON RUN] Child PID ${pid} exited with code ${code}, signal ${signal}`, stderrTail ? { stderrTail } : undefined);
     if (pid) {
-      const failure = {
-        type: 'error' as const,
-        errorCode: SPAWN_SESSION_ERROR_CODES.CHILD_EXITED_BEFORE_WEBHOOK,
-        errorDetail: { kind: 'spawn_failure' as const, ...classifySpawnFailure(undefined) },
-        errorMessage: formatChildExitBeforeWebhookMessage({ pid, code, signal, stderrTail }),
-      };
+      const failure = buildChildExitBeforeWebhookFailure({ pid, code, signal, stderrTail: capturedStderr.head,
+        failureCause: capturedStderr.failureCause }, sanitizeDiagnosticText);
       observeTerminalOnce(failure, {
         reason: spawnRequestSettled ? 'process-exited' : 'process-exited-before-webhook',
         code,
         signal,
         stderrTail,
+        childExit: failure.errorDetail.childExit,
+        failureCause: failure.errorDetail.failureCause,
       });
     }
   });
 
   happyProcess.on('error', (error) => {
-    const stderrTail = sanitizeChildStderrTail(capturedStderrTail, sanitizeDiagnosticText);
+    const stderrTail = sanitizeChildStderrTail(capturedStderr.tail, sanitizeDiagnosticText);
     params.logDebug('[DAEMON RUN] Child process error:', {
       error: sanitizeDiagnosticText(error instanceof Error ? error.message : String(error)),
       stderrTail,

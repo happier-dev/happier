@@ -1,3 +1,6 @@
+import { PluginError } from '@happier-dev/plugin-sdk';
+import { reportSessionRunnerFailure } from '@/cli/resolveSessionRunnerFailureExitCode';
+import { logger } from '@/ui/logger';
 import { EventEmitter } from 'node:events';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createServer, type Server } from 'node:http';
@@ -30,6 +33,9 @@ import { createSpawnLifecycleCallbacks } from './createSpawnLifecycleCallbacks';
 import { persistAcceptedSpawnMarker } from './persistAcceptedSpawnMarker';
 import { createSpawnHappyCliEnvScope, withTempHappyCliEntrypoint } from '@/testkit/process/spawnHappyCliHarness';
 import { spawnRegularProcessAndWaitForWebhook } from './spawnRegularProcessAndWaitForWebhook';
+import { projectSessionSpawnFailure } from '@/session/creation/projectSessionSpawnFailure';
+import { SpawnSessionControlErrorResponseSchema, projectSpawnSessionControlErrorResponse } from '@/session/shared/spawnSessionContract';
+import { SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { routeSpawnModeAndWaitForWebhook } from './routeSpawnModeAndWaitForWebhook';
 import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
@@ -170,6 +176,47 @@ function withCanonicalChildExitOwner(
 }
 
 describe('spawnRegularProcessAndWaitForWebhook', () => {
+  it.each([
+    { identity: 'member B', code: 'agent_startup_failed', failureReason: 'unclassified_provider_error' },
+    { identity: 'shared happier-agent', code: 'EACCES', failureReason: 'permission_denied' },
+  ] as const)('retains the runner failure cause through the public spawn result for $identity', async ({ identity, code, failureReason }) => {
+    const child = createFakeChildProcess(5154);
+    mocks.spawnHappyCLI.mockReturnValueOnce(child);
+    const params = withCanonicalChildExitOwner(createParams());
+    const pending = spawnRegularProcessAndWaitForWebhook(params);
+    await vi.waitFor(() => expect(params.pidToSpawnResultResolver.has(5154)).toBe(true));
+    child.stderr.emit('data', 'startup warning\n'.repeat(5000));
+    const failureCause = { code, phase: 'client_start' as const, failureReason };
+    const output = vi.spyOn(console, 'error').mockImplementation((...values: unknown[]) => {
+      // The OS stream is the only replaced boundary: run the real runner
+      // failure producer, daemon capture/custody and strict public projections.
+      const record = `${values.join(' ')}\n`;
+      const split = Math.floor(record.length / 2);
+      child.stderr.emit('data', record.slice(0, split));
+      child.stderr.emit('data', record.slice(split));
+    });
+    const log = vi.spyOn(logger, 'infoFile').mockImplementation(() => {});
+    const fatal = vi.spyOn(logger, 'fatal').mockImplementation(() => {});
+    try {
+      expect(reportSessionRunnerFailure(new PluginError({ code: 'agent_startup_failed',
+        message: `PRIVATE_${identity}_BODY`, details: { failureCause, path: '/PRIVATE_HOME', token: 'PRIVATE_TOKEN' } }))).toBe(1);
+    } finally {
+      output.mockRestore(); log.mockRestore(); fatal.mockRestore();
+    }
+    // The final failure record must survive a traceback filling the tail.
+    child.stderr.emit('data', 'stack frame\n'.repeat(5000));
+    child.emit('exit', 1, null);
+    const failure = await pending;
+    if (failure.type !== 'error') throw new Error('Expected runner startup failure');
+    const response = SpawnSessionControlErrorResponseSchema.parse(projectSpawnSessionControlErrorResponse(failure));
+    const result = SessionSpawnNewResultV1Schema.parse(projectSessionSpawnFailure({
+      errorCode: response.errorCode!, errorMessage: response.error, errorDetail: response.errorDetail,
+    }));
+    expect(result).toMatchObject({ type: 'error', code: 'spawn_failed', launchError: { failureCause } });
+    expect(JSON.stringify(result)).not.toMatch(/PRIVATE_|member B|shared happier-agent/);
+    expect(params.pidToSpawnResultResolver.size).toBe(0);
+  });
+
   let routeRegistryGeneration = 0;
   let pendingCapturedCase: Promise<void> | undefined;
   let currentTestSignal: AbortSignal | undefined;
@@ -1301,7 +1348,7 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
       type: 'error',
       errorCode: SPAWN_SESSION_ERROR_CODES.CHILD_EXITED_BEFORE_WEBHOOK,
       errorMessage: 'Child process exited before session webhook (pid=4244, code=1, signal=null)',
-      errorDetail: { kind: 'spawn_failure', reason: 'other' },
+      errorDetail: expect.objectContaining({ kind: 'launch_error', code: SPAWN_SESSION_ERROR_CODES.CHILD_EXITED_BEFORE_WEBHOOK }),
     });
   });
 
@@ -1568,7 +1615,7 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
       type: 'error',
       errorCode: SPAWN_SESSION_ERROR_CODES.CHILD_EXITED_BEFORE_WEBHOOK,
       errorMessage: 'Child process exited before session webhook (pid=4248, code=1, signal=null)',
-      errorDetail: { kind: 'spawn_failure', reason: 'other' },
+      errorDetail: expect.objectContaining({ kind: 'launch_error', code: SPAWN_SESSION_ERROR_CODES.CHILD_EXITED_BEFORE_WEBHOOK }),
     });
     expect(params.onChildExited).not.toHaveBeenCalled();
     expect(params.pidToTrackedSession.get(4248)).toBe(replacementTracked);
@@ -1614,7 +1661,7 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
       type: 'error',
       errorCode: SPAWN_SESSION_ERROR_CODES.CHILD_EXITED_BEFORE_WEBHOOK,
       errorMessage: 'Child process exited before session webhook (pid=4249, code=1, signal=null)',
-      errorDetail: { kind: 'spawn_failure', reason: 'other' },
+      errorDetail: expect.objectContaining({ kind: 'launch_error', code: SPAWN_SESSION_ERROR_CODES.CHILD_EXITED_BEFORE_WEBHOOK }),
     });
     expect(params.onChildExited).not.toHaveBeenCalled();
     expect(params.pidToTrackedSession.get(4249)).toBe(replacementTracked);
@@ -1748,10 +1795,10 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
       type: 'error',
       errorCode: SPAWN_SESSION_ERROR_CODES.CHILD_EXITED_BEFORE_WEBHOOK,
       errorMessage: expect.stringContaining('fatal: missing configured provider runtime'),
-      errorDetail: { kind: 'spawn_failure', reason: 'other' },
+      errorDetail: expect.objectContaining({ kind: 'launch_error', code: SPAWN_SESSION_ERROR_CODES.CHILD_EXITED_BEFORE_WEBHOOK }),
     });
     expect(result.errorMessage).toContain('recent stderr:');
-    expect(result.errorMessage).toContain('authorization: bearer [REDACTED]');
+    expect(result.errorMessage).toContain('[REDACTED]');
     expect(result.errorMessage).not.toContain('sk-secretsecretsecretsecretsecret');
     expect(params.onChildExited).toHaveBeenCalledWith(5151, expect.objectContaining({
       reason: 'process-exited-before-webhook',

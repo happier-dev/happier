@@ -1,5 +1,6 @@
 import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
 import type { SessionSpawnLaunchErrorV1 } from '@happier-dev/protocol/spawnSession';
+import { SessionRuntimeFailureCauseV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { z } from 'zod/mini';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
 import { decodeBase64, encodeBase64 } from '@happier-dev/protocol/crypto/base64';
@@ -33,6 +34,27 @@ export const SESSION_RUNNER_EXIT_CODES = Object.freeze({
   CONTINUATION_UNREACHABLE: 78,
   TERMINAL_FOLLOW_ADMISSION_FAILED: 79,
 });
+
+const SESSION_RUNNER_FAILURE_CAUSE_PREFIX = 'happier-session-runner-failure-cause:';
+
+/** Content-free terminal diagnostic on the runner's existing stderr transport. */
+export function formatSessionRunnerFailureCause(
+  cause: NonNullable<SessionSpawnLaunchErrorV1['failureCause']>,
+): string {
+  return `\n${SESSION_RUNNER_FAILURE_CAUSE_PREFIX}${JSON.stringify(cause)}`;
+}
+
+/** The daemon validates the process-boundary payload with the canonical cause schema. */
+export function readSessionRunnerFailureCause(stderr: string): SessionSpawnLaunchErrorV1['failureCause'] {
+  for (const line of stderr.split(/\r?\n/u)) {
+    if (!line.startsWith(SESSION_RUNNER_FAILURE_CAUSE_PREFIX)) continue;
+    try {
+      const parsed = SessionRuntimeFailureCauseV1Schema.safeParse(JSON.parse(line.slice(SESSION_RUNNER_FAILURE_CAUSE_PREFIX.length)) as unknown);
+      if (parsed.success) return parsed.data;
+    } catch { /* Incomplete stream records remain ordinary stderr evidence. */ }
+  }
+  return undefined;
+}
 
 const NativeForkProviderSessionIdSchema = z.string().check(z.minLength(1), z.maxLength(2_000), z.refine((value) => value === value.trim(), 'Provider session id must not contain leading or trailing whitespace'));
 const NativeForkCwdSchema = z.string().check(z.minLength(1), z.maxLength(10_000), z.refine((value) => value.trim().length > 0, 'Native fork cwd must not be blank'));

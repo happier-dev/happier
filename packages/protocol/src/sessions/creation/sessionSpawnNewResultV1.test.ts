@@ -8,6 +8,25 @@ import {
 import { createProviderErrorV1 } from '../../providers/errors.js';
 
 describe('Session creation fork files', () => {
+  it('preserves only canonical content-free runtime causes on launch failures', () => {
+    const legacy = { type: 'error', code: 'spawn_failed', retryable: true,
+      launchError: { kind: 'launch_error', code: 'CHILD_EXITED_BEFORE_WEBHOOK', message: 'Runner exited' } };
+    expect(SessionSpawnNewResultV1Schema.parse(legacy)).toEqual(legacy);
+    const failureCause = { code: 'agent_startup_failed', phase: 'client_start', failureReason: 'unclassified_provider_error' };
+    const current = { ...legacy, launchError: { ...legacy.launchError, failureCause } };
+    expect(SessionSpawnNewResultV1Schema.parse(current)).toEqual(current);
+    expect(SessionSpawnNewActionResultV1Schema.parse(current)).toEqual(current);
+    for (const invalid of [
+      { ...failureCause, message: 'PRIVATE_PROVIDER_BODY' },
+      { ...failureCause, path: '/private/person' },
+      { ...failureCause, code: 'PRIVATE provider prose' },
+      { ...failureCause, failureReason: 'PRIVATE_PROVIDER_BODY' },
+    ]) {
+      expect(SessionSpawnNewResultV1Schema.safeParse({ ...legacy,
+        launchError: { ...legacy.launchError, failureCause: invalid } }).success).toBe(false);
+    }
+  });
+
   it('projects the public Action section vocabulary and restores the internal placement', () => {
     const internal = SessionSpawnNewResultV1Schema.parse({
       type: 'success', disposition: 'created', sessionId: 'session-1',
