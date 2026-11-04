@@ -35,9 +35,25 @@ export async function readSharedTypecheckBaseline(repoRoot, packagePath) {
     const compact = location.exec(line);
     let diagnostic;
     try {
-      diagnostic = compact
-        ? compilerDiagnosticFromLine(`${compact[1]}(${compact[2]},1): error TS${compact[3]}: location`, resolve(repoRoot, packagePath), repoRoot)
-        : compilerDiagnosticFromLine(`${line}: location`, resolve(repoRoot, packagePath), repoRoot);
+      const header = compact
+        ? `${compact[1]}(${compact[2]},1): error TS${compact[3]}: location`
+        : `${line}: location`;
+      // Current inventories use repository-relative paths. Retain the older
+      // package-relative CLI/server inventories only when their source exists.
+      for (const cwd of [repoRoot, resolve(repoRoot, packagePath)]) {
+        let candidate;
+        try { candidate = compilerDiagnosticFromLine(header, cwd, repoRoot); }
+        catch { continue; } // A legacy ../ path can be outside the repo at its root.
+        if (!candidate) continue;
+        const source = await stat(resolve(repoRoot, candidate.file)).catch(error => {
+          if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return;
+          throw error;
+        });
+        if (source?.isFile()) {
+          diagnostic = candidate;
+          break;
+        }
+      }
     } catch { throw new Error('invalid shared typecheck baseline'); }
     if (!diagnostic) throw new Error('invalid shared typecheck baseline');
     locations.add(`${diagnostic.file}:${diagnostic.line}:TS${diagnostic.code}`);

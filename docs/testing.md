@@ -1009,6 +1009,13 @@ comparison inventories are excluded. The baseline path, new and removed
 (unattributed) are reported separately. Columns and diagnostic prose do not
 change location identity. This command never advances the shared baseline.
 
+Shared inventory paths are repository-relative, with separators and `..`
+normalized by the compiler diagnostic parser. Existing package-relative
+inventories remain readable when their source file exists; a repository-relative
+source takes precedence. A path resolving to neither source is an invalid
+shared baseline. There is no canonical `.locs` writer; the compiler location
+collector already emits normalized repository-relative paths.
+
 Exit 0 means no new diagnostics in the selected paths; exit 1 means new selected
 diagnostics. The full package verdict is reported separately. Missing or invalid
 baselines, global compiler diagnostics, and incomplete or failed launches return

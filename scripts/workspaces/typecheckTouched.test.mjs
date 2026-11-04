@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { mkdir, mkdtemp, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { basename, join, relative } from 'node:path';
+import { basename, dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import * as touched from './typecheckTouched.mjs';
@@ -27,6 +27,10 @@ test('shared baseline selects the newest complete inventory, normalizing both re
   t.after(() => rm(root, { recursive: true, force: true }));
   const directory = join(root, '.project/tmp/systemic-orch');
   await mkdir(directory, { recursive: true });
+  for (const path of ['apps/ui/sources/a.ts', 'apps/cli/src/b.ts']) {
+    await mkdir(dirname(join(root, path)), { recursive: true });
+    await writeFile(join(root, path), '');
+  }
   const files = [
     ['ui-old.locs', 'sources/old.ts:1:TS2322\n'],
     ['ui-current.locs', 'sources/a.ts:7:TS2322\n../cli/src/b.ts(3,8): error TS2345\n'],
@@ -43,6 +47,44 @@ test('shared baseline selects the newest complete inventory, normalizing both re
   assert.deepEqual(result.locations, ['apps/cli/src/b.ts:3:TS2345', 'apps/ui/sources/a.ts:7:TS2322']);
   await writeFile(join(directory, 'ui-invalid.locs'), 'compiler did not launch\n');
   await assert.rejects(touched.readSharedTypecheckBaseline(root, 'apps/ui'), /invalid.*baseline/i);
+});
+
+test('repository-relative shared baseline matches unchanged UI, sibling CLI and plugin diagnostics', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-touched-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const directory = join(root, '.project/tmp/systemic-orch');
+  await mkdir(directory, { recursive: true });
+  // Location-only vectors from ui-1104b; the sibling path also covers the
+  // apps/ui/../cli form before the compiler owner normalizes it.
+  const current = [
+    'apps/ui/sources/__tests__/app/machine/machineInstallables.managedProjection.test.tsx:70:TS2741',
+    'apps/cli/src/agent/acp/runtime/publicSession/createPublicAcpSession.ts:1880:TS2322',
+    'packages/plugins/channels/src/channelAttachmentRuntime.ts:72:TS18046',
+  ];
+  for (const row of current) {
+    const path = row.replace(/:\d+:TS\d+$/u, '');
+    await mkdir(dirname(join(root, path)), { recursive: true });
+    await writeFile(join(root, path), '');
+  }
+  const baselineFile = join(directory, 'ui-1104b.locs');
+  await writeFile(baselineFile, [current[0], current[1].replace('apps/cli/', 'apps/ui/../cli/'),
+    current[2].replaceAll('/', '\\')].join('\n'));
+  const baseline = await touched.readSharedTypecheckBaseline(root, 'apps/ui');
+  assert.deepEqual(compareTouchedTypecheckLocations({ baseline: baseline.locations, current,
+    paths: ['apps/ui', 'apps/cli', 'packages/plugins'] }), { added: [], removed: [], unattributed: [] });
+  assert.deepEqual(baseline.locations, [...current].sort());
+  // ui-1104b also contains compiler headers with columns and diagnostic prose.
+  await writeFile(baselineFile, current[0].replace(':70:TS2741', '(70,9): error TS2741'));
+  assert.deepEqual((await touched.readSharedTypecheckBaseline(root, 'apps/ui')).locations, [current[0]]);
+});
+
+test('a shared baseline path resolving to neither repository nor legacy package source is invalid', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-touched-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const directory = join(root, '.project/tmp/systemic-orch');
+  await mkdir(directory, { recursive: true });
+  await writeFile(join(directory, 'ui-invalid.locs'), 'apps/ui/sources/missing.ts:7:TS2322\n');
+  await assert.rejects(touched.readSharedTypecheckBaseline(root, 'apps/ui'), /invalid shared typecheck baseline/u);
 });
 
 test('missing baseline is unavailable, whereas an empty completed baseline is a real zero', async t => {
