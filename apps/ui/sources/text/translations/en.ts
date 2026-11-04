@@ -6864,6 +6864,14 @@ const enSettingsProviders = {
         title: 'Anthropic compatible',
         description: 'For gateways that implement the Messages API',
       },
+      'openai-completions': {
+        title: 'OpenAI Completions compatible',
+        description: 'For gateways that implement the legacy Completions API',
+      },
+      'ollama-native': {
+        title: 'Ollama compatible',
+        description: 'For servers that implement the Ollama API',
+      },
     },
     detailsTitle: 'Provider details',
     name: 'Name',
