@@ -1,6 +1,6 @@
 import type { IconName } from '@/components/ui/icons/Icon';
-import { findLanguageByCode } from '@/constants/Languages';
-import { t } from '@/text';
+import { getLanguageDisplayNameForCode } from '@/constants/Languages';
+import { getPreferredLanguage, t } from '@/text';
 import type { VoiceRoleReadiness } from '@/voice/registry/readiness';
 import type { VoiceSettingsPipeline, VoiceSettingsPipelineStep } from '@/voice/settings/projectVoiceSettingsPipeline';
 
@@ -94,7 +94,8 @@ function resolveWhere(step: VoiceSettingsPipelineStep): Readonly<{ text: string;
             return {
                 text: t('settingsVoice.pages.pipeline.messageLanguage', {
                     language: step.placement.language
-                        ? findLanguageByCode(step.placement.language)?.name ?? step.placement.language
+                        // A base tag ("fr") is named like a full one ("fr-FR"): by the language owner.
+                        ? getLanguageDisplayNameForCode(step.placement.language, getPreferredLanguage())
                         : t('settingsVoice.pages.pipeline.languageAutomatic'),
                 }),
                 icon: 'translate',

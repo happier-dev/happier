@@ -185,22 +185,26 @@ function StepReadiness(props: Readonly<{ readiness: VoicePipelineStepReadiness }
 function PipelineStepTile(props: Readonly<{ step: VoicePipelineStep }>) {
     const { theme } = useUnistyles();
     const { step } = props;
-    const needsYou = step.readiness?.tone === 'needs_you' || step.readiness?.tone === 'blocked';
+    // Amber asks for the person; rose says the step cannot work here (VE-01).
+    const toneStyle = step.readiness?.tone === 'blocked'
+        ? styles.tileBlocked
+        : step.readiness?.tone === 'needs_you' ? styles.tileNeedsYou : null;
     return (
         <View
-            accessibilityLabel={`${step.roleLabel}: ${step.name}`}
-            style={[styles.tile, needsYou ? styles.tileNeedsYou : null, step.selected ? styles.tileSelected : null]}
+            accessibilityLabel={`${step.roleLabel}: ${step.name}. ${step.where}`}
+            style={[styles.tile, toneStyle, step.selected ? styles.tileSelected : null]}
         >
-            <Text style={styles.role}>{step.roleLabel}</Text>
+            <Text style={styles.role} numberOfLines={1}>{step.roleLabel}</Text>
+            {/* A tile is one line per fact; what does not fit ellipsizes and the row form shows it whole. */}
             <View style={styles.engine}>
                 <View style={styles.mark}>{step.mark}</View>
-                <Text style={styles.engineName}>{step.name}</Text>
+                <Text style={styles.engineName} numberOfLines={1}>{step.name}</Text>
             </View>
             <View style={styles.where}>
                 <View style={styles.whereGlyph}>
                     <Icon name={step.whereIcon} size={13} color={theme.colors.text.secondary} />
                 </View>
-                <Text style={styles.whereText}>{step.where}</Text>
+                <Text style={styles.whereText} numberOfLines={1}>{step.where}</Text>
             </View>
             {step.readiness ? <StepReadiness readiness={step.readiness} /> : null}
         </View>
@@ -310,6 +314,9 @@ const styles = StyleSheet.create((theme) => ({
     },
     tileNeedsYou: {
         backgroundColor: theme.colors.state.warning.background,
+    },
+    tileBlocked: {
+        backgroundColor: theme.colors.state.danger.background,
     },
     tileSelected: {
         borderWidth: 1.5,
