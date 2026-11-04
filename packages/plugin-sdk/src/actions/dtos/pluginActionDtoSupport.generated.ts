@@ -209,7 +209,7 @@ export type SessionSpawnNewInputV2 = {
     managedCreation?: {
         homeId: string;
         managedId: string;
-        controller: {
+        controller?: {
             machineId: string;
             installationId: string;
         };
@@ -5684,7 +5684,7 @@ export type SessionServerStartSpawnDraftV1 = {
     managedCreation?: {
         homeId: string;
         managedId: string;
-        controller: {
+        controller?: {
             machineId: string;
             installationId: string;
         };
