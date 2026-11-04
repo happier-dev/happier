@@ -15,7 +15,10 @@ export async function readGitCheckpointDiffOutput(input: Readonly<{
         const result = await runGitCheckpointCommand({ cwd: input.cwd,
             args: ['diff', '--no-ext-diff', '--no-textconv', '--no-color', `--output=${outputPath}`, ...input.args] });
         if (!result.success) return result;
-        return { ...result, stdout: await readFile(outputPath, 'utf8') };
+        // Decode once into a contiguous string. readFile's UTF-8 chunk decoder
+        // builds a rope that the raw/patch parser flattens into another full diff.
+        const bytes = await readFile(outputPath);
+        return { ...result, stdout: bytes.toString('utf8') };
     } catch (error) {
         return { success: false, stdout: '', stderr: error instanceof Error ? error.message : 'Checkpoint diff output could not be read', exitCode: -1 };
     } finally {

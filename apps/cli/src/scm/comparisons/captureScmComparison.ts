@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { lstat, mkdir, mkdtemp, readFile, rename, rm, unlink } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readFile, rename, rm, unlink, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { z } from 'zod/mini';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
@@ -8,7 +8,7 @@ import { ScmDiffSummaryMetadataSchema } from '@happier-dev/protocol/scm/diffSumm
 import type { ScmComparison, ScmComparisonFile, ScmComparisonSource, ScmDiffSummaryMetadata } from '@happier-dev/protocol';
 import type { ScmDiffSummaryTurnEvidenceMode } from '@happier-dev/protocol/scm';
 import { configuration } from '@/configuration';
-import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
+import { writeFileAtomically } from '@/utils/fs/writeJsonAtomic';
 import { gitCheckpointAdapter, resolveGitCheckpointBackendContext } from '../checkpoints/gitCheckpointAdapter';
 import { runGitCheckpointCommand } from '../checkpoints/gitCheckpointCommands';
 import { buildRepositoryCheckpointRefs, encodeRepositoryCheckpointScope, parseRepositoryCheckpointRef } from '../checkpoints/refs';
@@ -59,6 +59,39 @@ const StoredComparisonSchema = z.strictObject({
 });
 const StoredComparisonReadSchema = createStoredReadSchema(StoredComparisonSchema);
 
+// Keep each captured file as the serialization unit, rather than allocating a
+// second repository-sized string and write buffer. The schema above supplies
+// plain JSON data; all fields still come from that owner, including future ones.
+function* storedComparisonChunks(value: unknown, files: readonly ScmComparisonFile[]): Generator<string> {
+  if (value === files) {
+    yield '[';
+    for (const [position, file] of files.entries()) {
+      if (position) yield ',';
+      yield JSON.stringify(file);
+    }
+    yield ']';
+  } else if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+    yield '{';
+    let first = true;
+    for (const [key, child] of Object.entries(value)) {
+      if (child === undefined) continue;
+      if (!first) yield ',';
+      first = false;
+      yield `${JSON.stringify(key)}:`;
+      yield* storedComparisonChunks(child, files);
+    }
+    yield '}';
+  } else {
+    yield JSON.stringify(value) ?? 'null';
+  }
+}
+
+async function writeStoredComparison(path: string, value: z.infer<typeof StoredComparisonSchema>): Promise<void> {
+  await writeFileAtomically({ path, writeTemporaryFile: async temporaryPath => {
+    await writeFile(temporaryPath, storedComparisonChunks(value, value.comparison.inventory.files), { mode: 0o600 });
+  } });
+}
+
 function comparisonNamespace(sessionId?: string): string {
   return sessionId ? encodeRepositoryCheckpointScope(sessionId) : 'repository';
 }
@@ -72,12 +105,14 @@ function comparisonPath(id: string, sessionId?: string): string {
 
 async function readStoredComparison(input: Readonly<{ comparisonId: string; sessionId?: string }>) {
   let content: string;
-  try { content = await readFile(comparisonPath(input.comparisonId, input.sessionId), 'utf8'); }
+  // Decode once: filesystem UTF-8 chunk ropes otherwise coexist with the full
+  // contiguous string JSON.parse needs for repository-sized retained evidence.
+  try { content = (await readFile(comparisonPath(input.comparisonId, input.sessionId))).toString('utf8'); }
   catch (error) {
     // A repository capture belongs to this Machine/Home, rather than one Session.
     // Never search other Session namespaces or hide a corrupt/private capture.
     if (!input.sessionId || !(error instanceof Error) || !('code' in error) || error.code !== 'ENOENT') throw error;
-    content = await readFile(comparisonPath(input.comparisonId), 'utf8');
+    content = (await readFile(comparisonPath(input.comparisonId))).toString('utf8');
     const stored = StoredComparisonReadSchema.parse(JSON.parse(content));
     if (stored.sessionId !== undefined || stored.comparison.source.kind === 'session'
       || stored.comparison.source.kind === 'turnCheckpoint') throw new Error('Repository capture has Session-only scope');
@@ -496,7 +531,7 @@ export async function captureScmComparison(input: CaptureScmComparisonInput): Pr
     }
     retainedRefs.push({ ref, oid });
   }
-  await writeJsonAtomic(comparisonPath(id, sessionId), StoredComparisonSchema.parse({
+  await writeStoredComparison(comparisonPath(id, sessionId), StoredComparisonSchema.parse({
     ...(sessionId ? { sessionId } : {}), comparison, metadata, retainedRefs }));
   let retainedTemporary = false;
   for (const temporary of temporaryRefs) {
@@ -506,7 +541,7 @@ export async function captureScmComparison(input: CaptureScmComparisonInput): Pr
       retainedRefs.push({ ref: temporary.checkpointRef.ref, oid: temporary.expectedOid }); retainedTemporary = true;
     }
   }
-  if (retainedTemporary) await writeJsonAtomic(comparisonPath(id, sessionId), StoredComparisonSchema.parse({
+  if (retainedTemporary) await writeStoredComparison(comparisonPath(id, sessionId), StoredComparisonSchema.parse({
     ...(sessionId ? { sessionId } : {}), comparison, metadata, retainedRefs }));
   } catch (error) {
     const cleanupFailures: unknown[] = [];
