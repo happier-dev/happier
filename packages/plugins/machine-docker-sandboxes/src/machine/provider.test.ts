@@ -144,6 +144,15 @@ describe('Docker Sandboxes managed provisioner roles', () => {
     expect(request?.stdin).toEqual(bytes);
     expect(request?.args?.slice(-2)).toEqual([path, '1600']);
     expect(request?.args?.join(' ')).not.toContain(Buffer.from(bytes).toString('base64'));
+    expect(process.run.mock.calls.map(([request]) => request.args?.[0])).toEqual(['exec']);
+  });
+
+  it.each([true, false])('keeps failed exact file writes unknown without inventory (sandbox present: %s)', async present => {
+    const process = { run: vi.fn<ExecService['run']>(async request => request.args?.[0] === 'ls'
+      ? result(0, JSON.stringify({ sandboxes: present ? [{ name: resource.sandboxName, status: 'running' }] : [] })) : result(1)) };
+    expect(await nativeModule.createDockerSandboxesProvider(process, executable, 123)
+      .putFile(resource, '/tmp/payload', new Uint8Array([0, 255]))).toEqual({ kind: 'unknown' });
+    expect(process.run.mock.calls.map(([request]) => request.args?.[0])).toEqual(['exec']);
   });
 
   it('does not recreate an absent retained name on Start or bootstrap', async () => {

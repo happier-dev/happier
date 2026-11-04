@@ -115,8 +115,7 @@ export function createDockerSandboxesProvider(exec: Pick<ExecService, 'run'>, ex
         return { kind: 'refused' as const, code: 'invalid_request' };
       }
       try {
-        const exact = await requirePresent(resource);
-        const result = await native.exec(exact, ['sh', '-c',
+        const result = await native.exec(resource, ['sh', '-c',
           'umask 077; cat > "$1" && chmod "$2" "$1"', 'happier-put-file', guestPath, mode.toString(8)], signal, bytes);
         return { kind: result.termination.observed.kind === 'exit' && result.termination.observed.exitCode === 0
           && result.termination.requestedBy.kind === 'none' ? 'confirmed' as const : 'unknown' as const };
