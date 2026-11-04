@@ -8,7 +8,7 @@ import { installPanelCommonModuleMocks } from '@/components/ui/panels/panelTestH
 import { resolveCompactAppDestinations } from '../destinations/compactAppDestinationCatalog';
 import { createWorkspaceNavigationAdapter } from './workspaceNavigationAdapter';
 import { createWorkspaceState, reduceWorkspaceState } from './workspaceState';
-import { WorkspaceNavigationContext, type WorkspaceNavigationContextValue } from './WorkspaceNavigationContext';
+import { WorkspaceNavigationProvider, type WorkspaceNavigationContextValue } from './WorkspaceNavigationContext';
 import { WorkspaceDestinationRow } from './WorkspaceDestinationRow';
 import { useEntityDragDropRuntime } from '@/components/ui/treeDragDrop/entityDragDropHooks';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -72,6 +72,44 @@ describe('workspace destination row browser gestures', () => {
         });
         standardCleanup();
     });
+    it('opens the shared menu with the context-menu key and Shift-F10 while leaving text controls alone', async () => {
+        const h = harness();
+        const screen = await renderScreen(<WorkspaceNavigationProvider value={h.workspace}>
+            <WorkspaceDestinationRow href="/session/B1?serverId=home-b"><ViewBoundary /></WorkspaceDestinationRow>
+        </WorkspaceNavigationProvider>);
+        const host = document.createElement('div');
+        const primary = document.createElement('div');
+        primary.setAttribute('role', 'treeitem');
+        const input = document.createElement('input');
+        host.append(primary, input);
+        screen.root.findAllByType('View')[0].props.ref(host);
+        for (const key of [new KeyboardEvent('keydown', { key: 'ContextMenu', bubbles: true, cancelable: true }),
+            new KeyboardEvent('keydown', { key: 'F10', shiftKey: true, bubbles: true, cancelable: true })]) {
+            await act(async () => { primary.dispatchEvent(key); });
+            expect(key.defaultPrevented).toBe(true);
+            expect(screen.findByType(DropdownMenu).props.items.some((item: { id: string }) => item.id === WORKSPACE_OPEN_IN_NEW_TAB_ID)).toBe(true);
+            await act(async () => { screen.findByType(DropdownMenu).props.onOpenChange(false); });
+        }
+        const editorMenu = new KeyboardEvent('keydown', { key: 'ContextMenu', bubbles: true, cancelable: true });
+        input.dispatchEvent(editorMenu);
+        expect(editorMenu.defaultPrevented).toBe(false);
+        expect(screen.findAllByType(DropdownMenu)).toHaveLength(0);
+    });
+    it('routes context gestures once into a row-owned menu that already consumes the shared items', async () => {
+        const h = harness();
+        const openExistingMenu = vi.fn();
+        const screen = await renderScreen(<WorkspaceNavigationProvider value={h.workspace}>
+            <WorkspaceDestinationRow href="/session/B1?serverId=home-b" existingMenu onOpenExistingMenu={openExistingMenu}><ViewBoundary /></WorkspaceDestinationRow>
+        </WorkspaceNavigationProvider>);
+        const host = document.createElement('div');
+        screen.root.findAllByType('View')[0].props.ref(host);
+        const pointer = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+        const keyboard = new KeyboardEvent('keydown', { key: 'F10', shiftKey: true, bubbles: true, cancelable: true });
+        await act(async () => { host.dispatchEvent(pointer); host.dispatchEvent(keyboard); });
+        expect([pointer.defaultPrevented, keyboard.defaultPrevented]).toEqual([true, true]);
+        expect(openExistingMenu).toHaveBeenCalledTimes(2);
+        expect(screen.findAllByType(DropdownMenu)).toHaveLength(0);
+    });
     it('registers a typed folder without a navigation href', async () => {
         const item = { kind: 'repository-file', scope: { serverId: 'home-b', accountId: 'account-a' }, machineId: 'machine', path: '/workspace/src', entryKind: 'directory' } as const;
         let openMenu: (() => void) | undefined;
@@ -98,12 +136,12 @@ describe('workspace destination row browser gestures', () => {
             isDirtyRef: { current: true }, tag: 'file-editor', requestDecision,
         });
         try {
-            const screen = await renderScreen(<WorkspaceNavigationContext.Provider value={h.workspace}>
+            const screen = await renderScreen(<WorkspaceNavigationProvider value={h.workspace}>
                 <DetailsTabStrip sessionId="B1" serverId="home-b"
                     pane={{ setActiveDetailsTab: () => {}, pinDetailsTab: () => {}, unpinDetailsTab: () => {}, closeDetailsTab }}
                     group={{ id: 'details', tabKeys: [tab.key], activeTabKey: tab.key, tabs: [tab], isFocused: true }}
                     testIds={{ tab: () => 'file-tab-primary' }} />
-            </WorkspaceNavigationContext.Provider>);
+            </WorkspaceNavigationProvider>);
             const destination = screen.root.findByType(WorkspaceDestinationRow);
             expect(destination.props.href).toContain('/session/B1/details');
             const host = document.createElement('div');
@@ -136,9 +174,9 @@ describe('workspace destination row browser gestures', () => {
                 createWorkflowRunSummaryFixture({ id: 'run-gesture', startedBy: 'user' }),
                 { kind: 'available', value: { title: 'Gesture Run' } },
             )]);
-            const screen = await renderScreen(<WorkspaceNavigationContext.Provider value={h.workspace}>
+            const screen = await renderScreen(<WorkspaceNavigationProvider value={h.workspace}>
                 <WorkflowRunItemBody kind="workflow_run" runId="run-gesture" serverId="server-a" dataActive={false} />
-            </WorkspaceNavigationContext.Provider>);
+            </WorkspaceNavigationProvider>);
             const host = document.createElement('div');
             const primary = document.createElement('button');
             host.appendChild(primary);
@@ -163,11 +201,11 @@ describe('workspace destination row browser gestures', () => {
             resource: { kind: 'browser-view', browserSessionId: 'browser', viewId: 'view',
                 target: { kind: 'externalUrl', targetId: 'target', url: 'https://docs.test' } },
         } as const;
-        const screen = await renderScreen(<WorkspaceNavigationContext.Provider value={h.workspace}>
+        const screen = await renderScreen(<WorkspaceNavigationProvider value={h.workspace}>
             <DetailsTabStrip sessionId="B1" serverId="home-b"
                 pane={{ setActiveDetailsTab: () => {}, pinDetailsTab: () => {}, unpinDetailsTab: () => {}, closeDetailsTab: () => {} }}
                 group={{ id: 'details', tabKeys: [tab.key], activeTabKey: tab.key, tabs: [tab], isFocused: true }} />
-        </WorkspaceNavigationContext.Provider>);
+        </WorkspaceNavigationProvider>);
         const host = document.createElement('div');
         // Host refs are the native/browser boundary; all destination and serializer logic stays real.
         for (const row of screen.root.findAllByType(View).filter(node => typeof node.props.ref === 'function')) row.props.ref(host);
@@ -179,11 +217,11 @@ describe('workspace destination row browser gestures', () => {
         const file = { key: 'file:src/app.ts', kind: 'file', title: 'app.ts', isPinned: false, isPreview: false,
             resource: { kind: 'file', path: 'src/app.ts' },
         } as const;
-        await act(async () => { screen.update(<WorkspaceNavigationContext.Provider value={h.workspace}>
+        await act(async () => { screen.update(<WorkspaceNavigationProvider value={h.workspace}>
             <DetailsTabStrip sessionId="B1" serverId="home-b"
                 pane={{ setActiveDetailsTab: () => {}, pinDetailsTab: () => {}, unpinDetailsTab: () => {}, closeDetailsTab: () => {} }}
                 group={{ id: 'details', tabKeys: [file.key], activeTabKey: file.key, tabs: [file], isFocused: true }} />
-        </WorkspaceNavigationContext.Provider>); });
+        </WorkspaceNavigationProvider>); });
         const destination = screen.root.findByType(WorkspaceDestinationRow);
         destination.findAllByType('View')[0].props.ref(host);
         host.dispatchEvent(drag);
@@ -197,9 +235,9 @@ describe('workspace destination row browser gestures', () => {
     it('opens kept tabs from pointer and menu intent, and carries their scoped href into the tab bar', async () => {
         const h = harness();
         const href = '/session/B1?serverId=home-b';
-        const screen = await renderScreen(<WorkspaceNavigationContext.Provider value={h.workspace}>
+        const screen = await renderScreen(<WorkspaceNavigationProvider value={h.workspace}>
             <WorkspaceDestinationRow href={href}><ViewBoundary /></WorkspaceDestinationRow>
-        </WorkspaceNavigationContext.Provider>);
+        </WorkspaceNavigationProvider>);
         const root = document.createElement('div');
         // Match real row/tab anatomy: the primary target precedes its independent close/pin targets.
         const primary = document.createElement('div');
@@ -261,9 +299,9 @@ describe('workspace destination row browser gestures', () => {
             activeRootPath: '/work/branch', defaultRootPath: '/work/main', activeWorktreeId: 'branch-b',
             sourceSurface: 'browse', initialResource: { kind: 'file', path: 'src/app.ts' },
         });
-        await act(async () => { screen.update(<WorkspaceNavigationContext.Provider value={h.workspace}>
+        await act(async () => { screen.update(<WorkspaceNavigationProvider value={h.workspace}>
             <WorkspaceDestinationRow href={projectHref}><ViewBoundary /></WorkspaceDestinationRow>
-        </WorkspaceNavigationContext.Provider>); });
+        </WorkspaceNavigationProvider>); });
         root.dispatchEvent(drag);
         expect(runtime.getSnapshot().item).toEqual({ kind: 'destination',
             scope: { serverId: 'home-b', accountId: 'account-a' }, href: projectHref });

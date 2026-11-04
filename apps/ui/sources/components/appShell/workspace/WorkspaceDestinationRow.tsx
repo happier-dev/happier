@@ -28,6 +28,8 @@ type WorkspaceDestinationRowProps = Readonly<{
     style?: StyleProp<ViewStyle>;
     /** Rows with an existing menu already include useWorkspaceOpenActions.items there. */
     existingMenu?: boolean;
+    /** Opens the row's own menu, which consumes the shared open items. */
+    onOpenExistingMenu?: () => void;
     /**
      * `false` when the row already is a drag source of its own (a Session row carries itself through
      * the Session list's drag), so one row never offers two competing drags. Click, modifier-click
@@ -74,7 +76,8 @@ function WorkspaceDestinationRowDestination(props: WorkspaceDestinationRowProps)
     const currentDescribe = React.useRef(describe);
     currentDescribe.current = describe;
     const openMenu = React.useCallback(() => {
-        if (latest.current.props.existingMenu || (!latest.current.actions.items.length && !currentGetItem.current())) return;
+        if (latest.current.props.existingMenu) { latest.current.props.onOpenExistingMenu?.(); return; }
+        if (!latest.current.actions.items.length && !currentGetItem.current()) return;
         setAnchor({ kind: 'view', ref: anchorRef });
     }, []);
     const dragSource = props.dragSource !== false;
@@ -116,20 +119,34 @@ function WorkspaceDestinationRowDestination(props: WorkspaceDestinationRowProps)
             }
         };
         const context = (event: MouseEvent) => {
-            if (latest.current.props.existingMenu || (!latest.current.actions.items.length && !currentGetItem.current()) || secondaryControl(event)) return;
+            const existingMenu = latest.current.props.existingMenu;
+            if (event.defaultPrevented || (existingMenu ? !latest.current.props.onOpenExistingMenu
+                : !latest.current.actions.items.length && !currentGetItem.current()) || secondaryControl(event)) return;
             event.preventDefault();
             event.stopPropagation();
-            setAnchor({ kind: 'rect', rect: { left: event.clientX, top: event.clientY, height: 1 }, coordinateSpace: 'window' });
+            if (existingMenu) latest.current.props.onOpenExistingMenu?.();
+            else setAnchor({ kind: 'rect', rect: { left: event.clientX, top: event.clientY, height: 1 }, coordinateSpace: 'window' });
+        };
+        const keydown = (event: KeyboardEvent) => {
+            if (event.defaultPrevented || secondaryControl(event)
+                || (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10'))
+                || (latest.current.props.existingMenu ? !latest.current.props.onOpenExistingMenu
+                    : !latest.current.actions.items.length && !currentGetItem.current())) return;
+            event.preventDefault();
+            event.stopPropagation();
+            openMenu();
         };
         element.addEventListener('click', pointer, true);
         element.addEventListener('auxclick', pointer, true);
         element.addEventListener('contextmenu', context);
+        element.addEventListener('keydown', keydown);
         detach.current = () => {
             element.removeEventListener('click', pointer, true);
             element.removeEventListener('auxclick', pointer, true);
             element.removeEventListener('contextmenu', context);
+            element.removeEventListener('keydown', keydown);
         };
-    }, [sourceRef]);
+    }, [openMenu, sourceRef]);
     return <View ref={attach} style={props.style}>
         {typeof props.children === 'function' ? props.children({ ...actions, openMenu }) : props.children}
         {!props.existingMenu && anchor !== null ? <DropdownMenu
