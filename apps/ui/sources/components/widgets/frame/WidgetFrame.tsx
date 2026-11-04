@@ -228,11 +228,15 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
     }, []);
     const emptyBody = props.body.kind === 'empty' || (props.body.kind === 'content'
         && replacementStates.size > 0 && [...replacementStates.values()].every(empty => empty));
+    // A phone stacks every card in one column, so a card with nothing to show is its one line (F2): a first-run
+    // phone page of scenes would run several screens. It takes its content's height; rows return with content.
+    const phoneEmpty = phone && emptyBody;
     const bodyFootprint = props.widgetPresentation ? projectWidgetGroupCellContent(
         { id: props.testID, ...props.widgetPresentation.footprint }, props.grouped && emptyBody ? 'empty' : undefined,
     ) : undefined;
-    const rows = bodyFootprint ? widgetFootprintBodyRows(bodyFootprint)
+    const reservedRows = bodyFootprint ? widgetFootprintBodyRows(bodyFootprint)
         : props.rows ?? (props.placement === 'home' ? HOME_WIDGET_BODY_ROWS : 0);
+    const rows = phoneEmpty ? 0 : reservedRows;
     const rowHeight = useWidgetBodyRowHeight();
     const inheritedPresentation = useWidgetPresentation();
     const [geometry, setGeometry] = React.useState<WidgetBodyPresentation['geometry']>();
@@ -250,6 +254,8 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
     const viewportContentRef = React.useRef<View | null>(null);
     const inset = resolveHappierWidgetFrameInsetPx(props.frameStyle);
     // Inside a group nothing clips (A6): a grid cell keeps its rows' room and grows; a phone's stack is its content.
+    // Empty content changes the room, never the wrapper: remounting a body withdraws its empty-state
+    // report, restores the fixed wrapper, and starts its credential/data read again.
     const bodyHeight = props.bodyHeight ?? (props.grouped ? phone ? 'content' : 'grow' : 'fixed');
     // A body that sizes itself (a grown or content-height cell) is told its own room: the box its content takes, at
     // least the rows a grown cell keeps. Never the band's: a frame stretched by a taller partner column, or by a
@@ -338,6 +344,7 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
     // The frame sizes every state inside it (W1 bodies, a refusal, a plugin's own): a card's states on
     // Home and a Board, one line under the header in a Companion or other column (lab ST "Compact").
     const stateSize = props.presentation === 'body' ? inheritedStateSize ?? (props.placement === 'companion' ? 'line' : 'pane')
+        : phoneEmpty ? 'line'
         : props.grouped && emptyBody && props.widgetPresentation?.footprint.columnSpan === 1 ? 'line'
         // A compact footprint (Small, Wide) has one row of room: its state is the line, balanced in that row.
         : props.widgetPresentation?.footprint.height === 'compact' ? 'line'
@@ -422,7 +429,7 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
         </SurfaceStateSizeProvider>{footerNode}</>;
     }
     return (
-        <SurfaceStateContentContext.Provider value={props.grouped ? reportContentState : null}>
+        <SurfaceStateContentContext.Provider value={props.grouped || phone ? reportContentState : null}>
         <WidgetFrameResourceActivityContext.Provider value={reportResourceActivity}>
         <HappierWidgetFrame
             testID={props.testID}
@@ -485,14 +492,15 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
                 ) : props.widgetPresentation ? (
                     <HappierScrollArea testID={`${props.testID}.viewport`} onLayout={onFixedViewportLayout}
                         onScroll={bodyFades.onScroll} scrollEventThrottle={16}
-                        style={{ height: props.viewportHeight ?? rows * rowHeight, minWidth: 0,
-                            ...(bodyFadeMask ? { maskImage: bodyFadeMask.maskImage, WebkitMaskImage: bodyFadeMask.WebkitMaskImage } : {}) }}
-                        contentContainerStyle={{ minHeight: '100%' }}>
+                        scrollEnabled={!phoneEmpty}
+                        style={{ height: phoneEmpty ? undefined : props.viewportHeight ?? rows * rowHeight, minWidth: 0,
+                            ...(!phoneEmpty && bodyFadeMask ? { maskImage: bodyFadeMask.maskImage, WebkitMaskImage: bodyFadeMask.WebkitMaskImage } : {}) }}
+                        contentContainerStyle={{ minHeight: phoneEmpty ? undefined : '100%' }}>
                         <View ref={viewportContentRef} testID={`${props.testID}.viewportContent`} onLayout={onFixedContentLayout} style={styles.fixedBodyContent}>
                             <WidgetFrameBodyView testID={props.testID} body={props.body} rows={rows} />
                         </View>
                     </HappierScrollArea>
-                ) : rows > 0 ? (
+                ) : reservedRows > 0 ? (
                     <WidgetFrameReservedRows rows={rows} rowHeight={rowHeight} centered={props.body.kind !== 'content'}>
                         <WidgetFrameBodyView testID={props.testID} body={props.body} rows={rows} />
                     </WidgetFrameReservedRows>

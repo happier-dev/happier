@@ -33,7 +33,15 @@ vi.mock('@/text', async () => {
     return createTextModuleMock();
 });
 
+// The window class is the platform boundary: a phone stacks cards in one column.
+const device = vi.hoisted(() => ({ type: undefined as 'phone' | 'tablet' | undefined }));
+vi.mock('@/utils/platform/responsive', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/utils/platform/responsive')>();
+    return { ...actual, useDeviceType: () => { const measured = actual.useDeviceType(); return device.type ?? measured; } };
+});
+
 afterEach(() => {
+    device.type = undefined;
     standardCleanup();
 });
 
@@ -478,6 +486,64 @@ describe('WidgetFrame', () => {
         expect(screen.findByTestId('frame.empty')).toBeTruthy();
         expect(screen.getTextContent()).toContain('No runs yet');
         expect(screen.getTextContent()).toContain('Runs of your automations show up here.');
+    });
+
+    it.each([true, false])('keeps a credential reader mounted when a phone widget settles to an empty body (footprint: %s)', async (withFootprint) => {
+        device.type = 'phone';
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const { upsertServerProfile, removeServerProfile } = await import('@/sync/domains/server/serverProfiles');
+        const { useServerCredentialAccountScopeBinding } = await import('@/sync/domains/scope/useServerCredentialAccountScopes');
+        const home = await upsertServerProfile({ serverUrl: 'https://home-widget-continuity.example.test' });
+        const token = `e30.${Buffer.from(JSON.stringify({ sub: 'widget-continuity-account' })).toString('base64url')}.signature`;
+        expect(await TokenStorage.setCredentialsForServerUrl(home.serverUrl, { serverId: home.id }, { token })).toBe(true);
+        let mounts = 0;
+        let boundCommits = 0;
+        function Body() {
+            const { binding } = useServerCredentialAccountScopeBinding(home.id);
+            React.useLayoutEffect(() => {
+                mounts += 1;
+                // Fail at the first unintended remount instead of letting the feedback loop run.
+                expect(mounts).toBe(1);
+            }, []);
+            React.useLayoutEffect(() => { if (binding) boundCommits += 1; }, [binding]);
+            return <SurfaceStateCard testID="credential-body" replacesContent
+                kind={binding ? 'empty' : 'loading'} title="No rows" />;
+        }
+        try {
+            const screen = await renderFrame({ ...(withFootprint ? { widgetPresentation: { size: 'medium' as const,
+                footprint: { columns: 2, columnSpan: 1, rowSpan: 2, height: 'regular' as const, width: 'half' as const } } } : {}),
+                body: { kind: 'content', children: <Body /> } });
+            expect(boundCommits).toBe(1);
+            expect(screen.findByTestId('credential-body')).not.toBeNull();
+            expect(mounts).toBe(1);
+        } finally {
+            standardCleanup();
+            await TokenStorage.removeCredentialsForServerUrl(home.serverUrl, { serverId: home.id });
+            await removeServerProfile(home.id);
+        }
+    });
+
+    it('draws an empty widget as its one line on a phone, so a first-run phone Home is not a stack of scenes', async () => {
+        device.type = 'phone';
+        const medium = { size: 'medium' as const,
+            footprint: { columns: 2, columnSpan: 1, rowSpan: 2, height: 'regular' as const, width: 'half' as const } };
+        const own = await renderFrame({ widgetPresentation: medium,
+            body: { kind: 'empty', title: 'No runs yet', reason: 'Runs show here.', scene: 'noAutomations' } });
+        const ownState = own.findByTestId('frame.empty')!;
+        expect(own.root.findAllByType(HappierSurfaceState).find(state => state.props.testID === 'frame.empty')!.props.size).toBe('line');
+        expect(ownState).toBeTruthy();
+        // The card is its content's height: no reserved rows under the line.
+        expect(StyleSheet.flatten(own.findByTestId('frame.viewport')!.props.style).height).toBeUndefined();
+        expect(StyleSheet.flatten(own.findByTestId('frame.viewport')!.props.style).minHeight).toBeUndefined();
+        standardCleanup();
+        const body = await renderFrame({ widgetPresentation: medium, body: { kind: 'content', children:
+            <UsageBodyInsufficient testID="usage-empty" title="No subscription connected" reason="See what each plan has left." /> } });
+        expect(body.root.findAllByType(SurfaceStateCard).find(card => card.props.testID === 'usage-empty')!
+            .findByType(HappierSurfaceState).props.size).toBe('line');
+        standardCleanup();
+        // Real content on a phone keeps its declared room.
+        const rows = await renderFrame({ widgetPresentation: medium });
+        expect(StyleSheet.flatten(rows.findByTestId('frame.viewport')!.props.style).height).toBeGreaterThan(0);
     });
 
     it('names a failure in the person\'s terms and offers the one fixing action', async () => {

@@ -167,7 +167,13 @@ it('publishes retained presentation before reads and observes replacement, platf
         preparePluginUiProjectionWarmCacheEntries(ACCOUNT_A.serverId, ACCOUNT_A.accountId);
         const first = readPluginUiProjectionAdmissionSnapshot(input);
         expect(first).not.toBeNull();
-        const repeated = Array.from({ length: 100 }, () => readPluginUiProjectionAdmissionSnapshot(input));
+        const entries = loadPluginUiProjectionWarmCacheEntries(ACCOUNT_A.serverId, ACCOUNT_A.accountId);
+        const repeated = Array.from({ length: 100 }, () => {
+            // Every newly bound credential reader prepares this same exact scope before publication.
+            preparePluginUiProjectionWarmCacheEntries(ACCOUNT_A.serverId, ACCOUNT_A.accountId);
+            expect(loadPluginUiProjectionWarmCacheEntries(ACCOUNT_A.serverId, ACCOUNT_A.accountId)).toBe(entries);
+            return readPluginUiProjectionAdmissionSnapshot(input);
+        });
         expect(normalize).not.toHaveBeenCalled();
         expect(repeated.every(value => value === first)).toBe(true);
         expect(readPluginUiProjectionAdmissionSnapshot({ ...input, platform: input.platform === 'ios' ? 'web' : 'ios' })).toBeNull();
