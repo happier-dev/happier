@@ -1,7 +1,8 @@
 diff --git a/src/DeltaBundler/DeltaCalculator.js b/src/DeltaBundler/DeltaCalculator.js
+index 5b4b17b1125..2a67bbf8c62 100644
 --- a/src/DeltaBundler/DeltaCalculator.js
 +++ b/src/DeltaBundler/DeltaCalculator.js
-@@ -15,7 +15,7 @@
+@@ -15,7 +15,7 @@ class DeltaCalculator extends _events.default {
    _deletedFiles = new Set();
    _modifiedFiles = new Set();
    _addedFiles = new Set();
@@ -10,7 +11,7 @@ diff --git a/src/DeltaBundler/DeltaCalculator.js b/src/DeltaBundler/DeltaCalcula
    constructor(entryPoints, changeEventSource, options) {
      super();
      this._options = options;
-@@ -42,41 +42,69 @@
+@@ -42,41 +42,69 @@ class DeltaCalculator extends _events.default {
    }
    async getDelta({ reset, shallow }) {
      debug("Calculating delta (reset: %s, shallow: %s)", reset, shallow);
@@ -72,10 +73,9 @@ diff --git a/src/DeltaBundler/DeltaCalculator.js b/src/DeltaBundler/DeltaCalcula
 -      };
 -      this._graph.dependencies.forEach((_, key) => markModified(key));
 -      this._graph.entryPoints.forEach(markModified);
--    }
--    this._currentBuildPromise = this._getChangedDependencies(
 +      }
-+    }
+     }
+-    this._currentBuildPromise = this._getChangedDependencies(
 +    const build = this._getChangedDependencies(
        modifiedFiles,
        deletedFiles,
@@ -95,7 +95,7 @@ diff --git a/src/DeltaBundler/DeltaCalculator.js b/src/DeltaBundler/DeltaCalcula
      }
      if (reset) {
        this._graph.reorderGraph({
-@@ -101,15 +129,8 @@
+@@ -101,15 +129,8 @@ class DeltaCalculator extends _events.default {
    };
    _handleFileChange = ({ type, filePath, metadata }, logger) => {
      debug("Handling %s: %s (type: %s)", type, filePath, metadata.type);
@@ -114,9 +114,10 @@ diff --git a/src/DeltaBundler/DeltaCalculator.js b/src/DeltaBundler/DeltaCalcula
      let state;
      if (this._deletedFiles.has(filePath)) {
 diff --git a/src/DeltaBundler/DeltaCalculator.js.flow b/src/DeltaBundler/DeltaCalculator.js.flow
+index fe8b64ba4de..48a473af54c 100644
 --- a/src/DeltaBundler/DeltaCalculator.js.flow
 +++ b/src/DeltaBundler/DeltaCalculator.js.flow
-@@ -90,12 +90,26 @@
+@@ -90,12 +90,26 @@ export default class DeltaCalculator<T> extends EventEmitter {
      ...
    }): Promise<DeltaResult<T>> {
      debug('Calculating delta (reset: %s, shallow: %s)', reset, shallow);
@@ -127,7 +128,6 @@ diff --git a/src/DeltaBundler/DeltaCalculator.js.flow b/src/DeltaBundler/DeltaCa
 +    while (this._currentBuildPromise) {
        await this._currentBuildPromise;
      }
--
 +    const read = () => this._calculateDelta({reset, shallow});
 +    this._currentBuildPromise = this._options.unstable_withDependencyConsumption
 +      ? this._options.unstable_withDependencyConsumption(read)
@@ -138,7 +138,7 @@ diff --git a/src/DeltaBundler/DeltaCalculator.js.flow b/src/DeltaBundler/DeltaCa
 +      this._currentBuildPromise = null;
 +    }
 +  }
-+
+ 
 +  async _calculateDelta({reset, shallow}: {
 +    reset: boolean,
 +    shallow: boolean,
@@ -147,7 +147,7 @@ diff --git a/src/DeltaBundler/DeltaCalculator.js.flow b/src/DeltaBundler/DeltaCa
      // We don't want the modified files Set to be modified while building the
      // bundle, so we isolate them by using the current instance for the bundling
      // and creating a new instance for the file watcher.
-@@ -124,7 +138,7 @@
+@@ -124,7 +138,7 @@ export default class DeltaCalculator<T> extends EventEmitter {
      // Concurrent requests should reuse the same bundling process. To do so,
      // this method stores the promise as an instance variable, and then it's
      // removed after it gets resolved.
@@ -156,7 +156,7 @@ diff --git a/src/DeltaBundler/DeltaCalculator.js.flow b/src/DeltaBundler/DeltaCa
        modifiedFiles,
        deletedFiles,
        addedFiles,
-@@ -133,7 +147,7 @@
+@@ -133,7 +147,7 @@ export default class DeltaCalculator<T> extends EventEmitter {
      let result;
  
      try {
@@ -165,7 +165,7 @@ diff --git a/src/DeltaBundler/DeltaCalculator.js.flow b/src/DeltaBundler/DeltaCa
      } catch (error) {
        // In case of error, we don't want to mark the modified files as
        // processed (since we haven't actually created any delta). If we do not
-@@ -144,8 +158,6 @@
+@@ -144,8 +158,6 @@ export default class DeltaCalculator<T> extends EventEmitter {
        addedFiles.forEach((file: string) => this._addedFiles.add(file));
  
        throw error;
@@ -175,9 +175,10 @@ diff --git a/src/DeltaBundler/DeltaCalculator.js.flow b/src/DeltaBundler/DeltaCa
  
      // Return all the modules if the client requested a reset delta.
 diff --git a/src/DeltaBundler/Graph.js b/src/DeltaBundler/Graph.js
+index 9f1b169fadf..4c3562a6bcf 100644
 --- a/src/DeltaBundler/Graph.js
 +++ b/src/DeltaBundler/Graph.js
-@@ -8,6 +8,7 @@
+@@ -8,6 +8,7 @@ var _contextModule = require("../lib/contextModule");
  var _CountingSet = _interopRequireDefault(require("../lib/CountingSet"));
  var _isResolvedDependency = require("../lib/isResolvedDependency");
  var _buildSubgraph = require("./buildSubgraph");
@@ -185,7 +186,7 @@ diff --git a/src/DeltaBundler/Graph.js b/src/DeltaBundler/Graph.js
  var _invariant = _interopRequireDefault(require("invariant"));
  var _nullthrows = _interopRequireDefault(require("nullthrows"));
  function _interopRequireDefault(e) {
-@@ -175,7 +176,31 @@
+@@ -175,7 +176,31 @@ class Graph {
            options.onDependencyAdd();
            const result = await options.transform(absolutePath, requireContext);
            options.onDependencyAdded();
@@ -219,6 +220,7 @@ diff --git a/src/DeltaBundler/Graph.js b/src/DeltaBundler/Graph.js
        },
      );
 diff --git a/src/DeltaBundler/Serializers/getExplodedSourceMap.d.ts b/src/DeltaBundler/Serializers/getExplodedSourceMap.d.ts
+index cf3bc0cbc40..81265f0a2d6 100644
 --- a/src/DeltaBundler/Serializers/getExplodedSourceMap.d.ts
 +++ b/src/DeltaBundler/Serializers/getExplodedSourceMap.d.ts
 @@ -10,12 +10,13 @@
@@ -237,9 +239,10 @@ diff --git a/src/DeltaBundler/Serializers/getExplodedSourceMap.d.ts b/src/DeltaB
    readonly functionMap: null | undefined | FBSourceFunctionMap;
    readonly path: string;
 diff --git a/src/DeltaBundler/types.d.ts b/src/DeltaBundler/types.d.ts
+index 6bd653f9c12..bfda2e0a0fc 100644
 --- a/src/DeltaBundler/types.d.ts
 +++ b/src/DeltaBundler/types.d.ts
-@@ -131,6 +131,7 @@
+@@ -131,6 +131,7 @@ export type Options<T = MixedOutput> = Readonly<{
    unstable_allowRequireContext: boolean;
    unstable_enablePackageExports: boolean;
    unstable_incrementalResolution: boolean;
@@ -248,9 +251,10 @@ diff --git a/src/DeltaBundler/types.d.ts b/src/DeltaBundler/types.d.ts
  }>;
  export type DeltaResult<T = MixedOutput> = {
 diff --git a/src/DeltaBundler/types.js.flow b/src/DeltaBundler/types.js.flow
+index d819ce149cc..f3d45104100 100644
 --- a/src/DeltaBundler/types.js.flow
 +++ b/src/DeltaBundler/types.js.flow
-@@ -156,6 +156,7 @@
+@@ -156,6 +156,7 @@ export type Options<T = MixedOutput> = Readonly<{
    unstable_allowRequireContext: boolean,
    unstable_enablePackageExports: boolean,
    unstable_incrementalResolution: boolean,
@@ -259,9 +263,10 @@ diff --git a/src/DeltaBundler/types.js.flow b/src/DeltaBundler/types.js.flow
  }>;
  
 diff --git a/src/DeltaBundler.d.ts b/src/DeltaBundler.d.ts
+index 5821986aec7..30f8eb5823e 100644
 --- a/src/DeltaBundler.d.ts
 +++ b/src/DeltaBundler.d.ts
-@@ -41,6 +41,7 @@
+@@ -41,6 +41,7 @@ declare class DeltaBundler<T = MixedOutput> {
    _changeEventSource: EventEmitter;
    _deltaCalculators: Map<Graph<T>, DeltaCalculator<T>>;
    constructor(changeEventSource: EventEmitter);
@@ -270,9 +275,10 @@ diff --git a/src/DeltaBundler.d.ts b/src/DeltaBundler.d.ts
    getDependencies(
      entryPoints: ReadonlyArray<string>,
 diff --git a/src/DeltaBundler.js b/src/DeltaBundler.js
+index da1cdb8946a..bc46a944195 100644
 --- a/src/DeltaBundler.js
 +++ b/src/DeltaBundler.js
-@@ -15,6 +15,9 @@
+@@ -15,6 +15,9 @@ class DeltaBundler {
    constructor(changeEventSource) {
      this._changeEventSource = changeEventSource;
    }
@@ -282,7 +288,7 @@ diff --git a/src/DeltaBundler.js b/src/DeltaBundler.js
    end() {
      this._deltaCalculators.forEach((deltaCalculator) => deltaCalculator.end());
      this._deltaCalculators = new Map();
-@@ -23,26 +26,34 @@
+@@ -23,26 +26,34 @@ class DeltaBundler {
      const deltaCalculator = new _DeltaCalculator.default(
        new Set(entryPoints),
        this._changeEventSource,
@@ -331,9 +337,10 @@ diff --git a/src/DeltaBundler.js b/src/DeltaBundler.js
      this._deltaCalculators.set(graph, deltaCalculator);
      return graph;
 diff --git a/src/DeltaBundler.js.flow b/src/DeltaBundler.js.flow
+index 293e574723c..14a630f110e 100644
 --- a/src/DeltaBundler.js.flow
 +++ b/src/DeltaBundler.js.flow
-@@ -42,10 +42,15 @@
+@@ -42,12 +42,17 @@ export type {
   */
  export default class DeltaBundler<T = MixedOutput> {
    _changeEventSource: EventEmitter;
@@ -342,14 +349,16 @@ diff --git a/src/DeltaBundler.js.flow b/src/DeltaBundler.js.flow
  
    constructor(changeEventSource: EventEmitter) {
      this._changeEventSource = changeEventSource;
-+  }
-+
-+  unstable_setDependencyConsumption(consume: $NonMaybeType<$PropertyType<Options<T>, 'unstable_withDependencyConsumption'>>): void {
-+    this._withDependencyConsumption = consume;
    }
  
++  unstable_setDependencyConsumption(consume: $NonMaybeType<$PropertyType<Options<T>, 'unstable_withDependencyConsumption'>>): void {
++    this._withDependencyConsumption = consume;
++  }
++
    end(): void {
-@@ -62,7 +67,7 @@
+     this._deltaCalculators.forEach((deltaCalculator: DeltaCalculator<T>) =>
+       deltaCalculator.end(),
+@@ -62,7 +67,7 @@ export default class DeltaBundler<T = MixedOutput> {
      const deltaCalculator = new DeltaCalculator(
        new Set(entryPoints),
        this._changeEventSource,
@@ -358,7 +367,7 @@ diff --git a/src/DeltaBundler.js.flow b/src/DeltaBundler.js.flow
      );
  
      await deltaCalculator.getDelta({reset: true, shallow: options.shallow});
-@@ -82,7 +87,7 @@
+@@ -82,7 +87,7 @@ export default class DeltaBundler<T = MixedOutput> {
      const deltaCalculator = new DeltaCalculator(
        new Set(entryPoints),
        this._changeEventSource,
@@ -368,9 +377,10 @@ diff --git a/src/DeltaBundler.js.flow b/src/DeltaBundler.js.flow
  
      await deltaCalculator.getDelta({reset: true, shallow: options.shallow});
 diff --git a/src/Server/symbolicate.js b/src/Server/symbolicate.js
+index 72d1720e129..7849f0da58d 100644
 --- a/src/Server/symbolicate.js
 +++ b/src/Server/symbolicate.js
-@@ -4,6 +4,7 @@
+@@ -4,6 +4,7 @@ Object.defineProperty(exports, "__esModule", {
    value: true,
  });
  exports.default = symbolicate;
@@ -378,7 +388,7 @@ diff --git a/src/Server/symbolicate.js b/src/Server/symbolicate.js
  var _search = require("metro-source-map/private/Consumer/search");
  var _Symbolication = require("metro-symbolicate/private/Symbolication");
  function createFunctionNameGetter(module) {
-@@ -30,6 +31,7 @@
+@@ -30,6 +31,7 @@ async function symbolicate(stack, maps, config, extraData) {
      mapsByUrl.set(url, map);
    }
    const functionNameGetters = new Map();
@@ -386,7 +396,7 @@ diff --git a/src/Server/symbolicate.js b/src/Server/symbolicate.js
    function findModule(frame) {
      const map = mapsByUrl.get(frame.file);
      if (!map || frame.lineNumber == null) {
-@@ -57,6 +59,20 @@
+@@ -57,6 +59,20 @@ async function symbolicate(stack, maps, config, extraData) {
        line1Based: frame.lineNumber - module.firstLine1Based + 1,
        column0Based: frame.column,
      };
@@ -407,7 +417,7 @@ diff --git a/src/Server/symbolicate.js b/src/Server/symbolicate.js
      const mappingIndex = (0, _search.greatestLowerBound)(
        module.map,
        generatedPosInModule,
-@@ -97,11 +113,6 @@
+@@ -97,11 +113,6 @@ async function symbolicate(stack, maps, config, extraData) {
          ...frame,
        };
      }
@@ -419,50 +429,46 @@ diff --git a/src/Server/symbolicate.js b/src/Server/symbolicate.js
      const originalPos = findOriginalPos(frame, module);
      if (!originalPos) {
        return {
-diff --git a/src/node-haste/DependencyGraph/createFileMap.js b/src/node-haste/DependencyGraph/createFileMap.js
---- a/src/node-haste/DependencyGraph/createFileMap.js
-+++ b/src/node-haste/DependencyGraph/createFileMap.js
-@@ -106,6 +106,7 @@
-           autoSave,
-         })),
-     perfLoggerFactory: config.unstable_perfLoggerFactory,
-+    processFileChanges: config.watcher.unstable_processFileChanges,
-     computeSha1: !config.watcher.unstable_lazySha1,
-     enableSymlinks: true,
-     extensions: Array.from(
-diff --git a/src/node-haste/DependencyGraph/createFileMap.js.flow b/src/node-haste/DependencyGraph/createFileMap.js.flow
---- a/src/node-haste/DependencyGraph/createFileMap.js.flow
-+++ b/src/node-haste/DependencyGraph/createFileMap.js.flow
-@@ -115,6 +115,7 @@
-           autoSave,
-         })),
-     perfLoggerFactory: config.unstable_perfLoggerFactory,
-+    processFileChanges: config.watcher.unstable_processFileChanges,
-     computeSha1: !config.watcher.unstable_lazySha1,
-     enableSymlinks: true,
-     extensions: Array.from(
-diff --git a/src/node-haste/DependencyGraph.js b/src/node-haste/DependencyGraph.js
---- a/src/node-haste/DependencyGraph.js
-+++ b/src/node-haste/DependencyGraph.js
-@@ -186,6 +186,14 @@
-     return (0, _nullthrows.default)(this._fileSystem).getAllFiles();
-   }
-   async getOrComputeSha1(mixedPath) {
-+    if (mixedPath.includes("react-native-worklets/.worklets/")) {
-+      const createHash = require("crypto").createHash;
-+      return {
-+        sha1: createHash("sha1")
-+          .update(performance.now().toString())
-+          .digest("hex"),
-+      };
-+    }
-     const result = await this._fileSystem.getOrComputeSha1(mixedPath);
-     if (!result || !result.sha1) {
-       throw new Error(`Failed to get the SHA-1 for: ${mixedPath}.
+diff --git a/src/Server.js b/src/Server.js
+index 38eea430790..c4553de2aa8 100644
+--- a/src/Server.js
++++ b/src/Server.js
+@@ -615,6 +615,7 @@ class Server {
+     delete: deleteFn,
+     finish,
+   }) {
++    const pendingBuilds = new Map();
+     return async function requestProcessor(
+       req,
+       res,
+@@ -757,7 +758,21 @@ class Server {
+       try {
+         this._fetchTimings.push(fetchTiming);
+         this._activeFetchCount++;
+-        result = await build(startContext);
++        if (bundleType === "bundle" && bundleOptions.platform === "web" && bundleOptions.dev) {
++          // Only admitted, overlapping web-development responses share work.
++          // Parsed options retain serializer URLs and all transform variations.
++          const key = JSON.stringify(bundleOptions);
++          let pending = pendingBuilds.get(key);
++          if (pending == null) {
++            pending = Promise.resolve()
++              .then(() => build(startContext))
++              .finally(() => pendingBuilds.delete(key));
++            pendingBuilds.set(key, pending);
++          }
++          result = await pending;
++        } else {
++          result = await build(startContext);
++        }
+       } catch (error) {
+         const formattedError = (0, _formatBundlingError.default)(error);
+         const status =
 diff --git a/src/lib/formatBundlingError.js b/src/lib/formatBundlingError.js
+index f8a6dc9e771..1c778d2eba1 100644
 --- a/src/lib/formatBundlingError.js
 +++ b/src/lib/formatBundlingError.js
-@@ -79,10 +79,15 @@
+@@ -79,10 +79,15 @@ function formatBundlingError(error) {
        message: error.message,
      };
    } else {
@@ -482,7 +488,7 @@ diff --git a/src/lib/formatBundlingError.js b/src/lib/formatBundlingError.js
      let codeFrame = "";
      try {
        codeFrame = (0, _codeFrame.codeFrameColumns)(
-@@ -101,7 +106,7 @@
+@@ -101,7 +106,7 @@ function formatBundlingError(error) {
      return {
        type: "InternalError",
        errors: [],
@@ -492,9 +498,10 @@ diff --git a/src/lib/formatBundlingError.js b/src/lib/formatBundlingError.js
    }
  }
 diff --git a/src/lib/formatBundlingError.js.flow b/src/lib/formatBundlingError.js.flow
+index f85b144090f..89be6b5096b 100644
 --- a/src/lib/formatBundlingError.js.flow
 +++ b/src/lib/formatBundlingError.js.flow
-@@ -96,10 +96,15 @@
+@@ -96,10 +96,15 @@ export default function formatBundlingError(
        message: error.message,
      };
    } else {
@@ -514,7 +521,7 @@ diff --git a/src/lib/formatBundlingError.js.flow b/src/lib/formatBundlingError.j
  
      let codeFrame = '';
      try {
-@@ -116,7 +121,7 @@
+@@ -116,7 +121,7 @@ export default function formatBundlingError(
      return {
        type: 'InternalError',
        errors: [],
@@ -523,3 +530,46 @@ diff --git a/src/lib/formatBundlingError.js.flow b/src/lib/formatBundlingError.j
      };
    }
  }
+diff --git a/src/node-haste/DependencyGraph/createFileMap.js b/src/node-haste/DependencyGraph/createFileMap.js
+index 2f7e9eb8c41..f60b3de6c9f 100644
+--- a/src/node-haste/DependencyGraph/createFileMap.js
++++ b/src/node-haste/DependencyGraph/createFileMap.js
+@@ -106,6 +106,7 @@ function createFileMap(config, options) {
+           autoSave,
+         })),
+     perfLoggerFactory: config.unstable_perfLoggerFactory,
++    processFileChanges: config.watcher.unstable_processFileChanges,
+     computeSha1: !config.watcher.unstable_lazySha1,
+     enableSymlinks: true,
+     extensions: Array.from(
+diff --git a/src/node-haste/DependencyGraph/createFileMap.js.flow b/src/node-haste/DependencyGraph/createFileMap.js.flow
+index 6b6ab46b840..f86de4a8da9 100644
+--- a/src/node-haste/DependencyGraph/createFileMap.js.flow
++++ b/src/node-haste/DependencyGraph/createFileMap.js.flow
+@@ -115,6 +115,7 @@ export default function createFileMap(
+           autoSave,
+         })),
+     perfLoggerFactory: config.unstable_perfLoggerFactory,
++    processFileChanges: config.watcher.unstable_processFileChanges,
+     computeSha1: !config.watcher.unstable_lazySha1,
+     enableSymlinks: true,
+     extensions: Array.from(
+diff --git a/src/node-haste/DependencyGraph.js b/src/node-haste/DependencyGraph.js
+index 342bbce6374..4b16f01c346 100644
+--- a/src/node-haste/DependencyGraph.js
++++ b/src/node-haste/DependencyGraph.js
+@@ -186,6 +186,14 @@ class DependencyGraph extends _events.default {
+     return (0, _nullthrows.default)(this._fileSystem).getAllFiles();
+   }
+   async getOrComputeSha1(mixedPath) {
++    if (mixedPath.includes("react-native-worklets/.worklets/")) {
++      const createHash = require("crypto").createHash;
++      return {
++        sha1: createHash("sha1")
++          .update(performance.now().toString())
++          .digest("hex"),
++      };
++    }
+     const result = await this._fileSystem.getOrComputeSha1(mixedPath);
+     if (!result || !result.sha1) {
+       throw new Error(`Failed to get the SHA-1 for: ${mixedPath}.
