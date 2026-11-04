@@ -155,7 +155,8 @@ function removePreviewTabsFromGroup(
     const group = getOwnDetailsWorkspaceRecordEntry(details.groupsById, groupId);
     if (!group) return details;
 
-    const groupTabs = Object.fromEntries(Object.entries(details.tabsByKey).map(([id, tab]) => [id, asGroupTab(tab)]));
+    const groupTabs = Object.fromEntries(Object.entries(details.tabsByKey).map(([id, tab]) => [id,
+        tab.presentation ? { ...asGroupTab(tab), preview: false } : asGroupTab(tab)]));
     const previewResult = removeGroupPreviewTabs(asTabGroup(group), groupTabs, exceptTabKey);
     const removedKeys = previewResult.removedTabIds;
     if (removedKeys.length === 0) return details;
@@ -254,6 +255,7 @@ export function applyOpenDetailsTab(
             ...params.tab,
             isPinned,
             isPreview,
+            ...(existing.presentation ? { presentation: existing.presentation } : {}),
         };
         if (
             details.isOpen === true
@@ -341,6 +343,7 @@ export function applyReplaceDetailsTab(
         ...params.tab,
         isPinned,
         isPreview,
+        ...(existing.presentation ? { presentation: existing.presentation } : {}),
     };
     let nextTabsByKey = { ...details.tabsByKey } as Record<string, DetailsTabState>;
     let nextTabState = { ...details.tabState } as Record<string, unknown>;
@@ -517,6 +520,7 @@ export function applyOpenDetailsOverlay(
         isOpen: true,
         overlay: {
             destination: Object.freeze({ ...input.destination }),
+            ...(returnOverlay?.presentation ? { presentation: returnOverlay.presentation } : {}),
             ...(input.instanceKey === undefined ? {} : { instanceKey: input.instanceKey }),
             returnFocusedGroupId: returnOverlay?.returnFocusedGroupId ?? details.focusedGroupId,
             returnMaximizedGroupId: returnOverlay?.returnMaximizedGroupId ?? details.maximizedGroupId,
@@ -814,6 +818,7 @@ function areOverlayStatesEqual(
         && left.destination.pluginId === right.destination.pluginId
         && left.destination.localId === right.destination.localId
         && left.instanceKey === right.instanceKey
+        && left.presentation?.windowId === right.presentation?.windowId
         && left.returnFocusedGroupId === right.returnFocusedGroupId
         && left.returnMaximizedGroupId === right.returnMaximizedGroupId
         && left.returnIsOpen === right.returnIsOpen
@@ -853,4 +858,16 @@ export function arePaneDetailsStatesEqual(left: PaneDetailsState, right: PaneDet
         )) return false;
     }
     return true;
+}
+/** Change presentation without changing the tab's group/index, resource or persisted draft. */
+export function applyDetailsTabPresentation(
+    details: PaneDetailsState,
+    tabKey: string,
+    presentation: DetailsTabState['presentation'] | null,
+): PaneDetailsState {
+    const tab = getOwnDetailsWorkspaceRecordEntry(details.tabsByKey, tabKey);
+    if (!tab || tab.presentation?.windowId === presentation?.windowId) return details;
+    const { presentation: _previous, ...retained } = tab;
+    return { ...details, tabsByKey: setOwnDetailsWorkspaceRecordEntry(details.tabsByKey, tabKey,
+        presentation ? { ...retained, presentation } : retained) };
 }

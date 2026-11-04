@@ -68,6 +68,8 @@ export function useRegisterSessionPaneDriver(
          * keyed by Session, so registering would replace the route Session's own driver.
          */
         registerDriver?: boolean;
+        /** A selected pane recipient retains the source layout's exact scope identity. */
+        scopeId?: string;
     }>,
 ): string {
     const instanceKey = useDestinationInstanceKey();
@@ -97,8 +99,8 @@ export function useRegisterSessionPaneDriver(
     const inferredServerId = usePreferredServerIdForSession({ serverId: explicitServerId, sessionId });
     const serverId = String(suppliedPluginRuntime?.serverId ?? explicitServerId ?? '').trim() || inferredServerId;
     const scopeId = React.useMemo(
-        () => createSessionPaneScopeId(sessionId, serverId, instanceKey),
-        [instanceKey, serverId, sessionId],
+        () => options?.scopeId ?? createSessionPaneScopeId(sessionId, serverId, instanceKey),
+        [instanceKey, options?.scopeId, serverId, sessionId],
     );
     const openDetailsTab = useOptionalDetailsTabOpener(scopeId);
     const openResource = React.useCallback<NonNullable<PaneDriver['openResource']>>((resource, openOptions) => {

@@ -1,14 +1,34 @@
+import { lazyActionSpecArray } from './lazyActionSpecValue.js';
 import { WORKSPACE_ACTION_IDS } from './workspaceActionIdsV1.js';
 export { WORKSPACE_ACTION_IDS } from './workspaceActionIdsV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
 import type { ActionInputFieldHint, PreNormalizedActionSpec } from './actionSpecs.js';
+import { actionInputServerId } from './specs/definition.js';
 import { FindOptionsSchema } from './findActionSpecs.js';
 import { WorkspaceAnchorV1Schema } from '../workspace/anchors/v1.js';
 import { FileChangesScopeSchema } from '../scm/fileChangesScope.js';
 export type WorkspaceActionId = typeof WORKSPACE_ACTION_IDS[number];
 
 const id = z.string().check(z.trim(), z.minLength(1));
+
+const tabOwner = { serverId: id, accountId: id, layoutId: id };
+export const WorkspaceOwnedTabAddressSchema = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('workspaceTab'), ...tabOwner, tabId: id,
+}));
+export const PaneTabAddressSchema = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('paneTab'), ...tabOwner, scopeId: id, tabKey: id,
+}));
+/** A tab key is meaningful only inside its Home, Account and layout owner. */
+export const WorkspaceTabAddressSchema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  WorkspaceOwnedTabAddressSchema, PaneTabAddressSchema,
+]));
+export type WorkspaceTabAddress = z.infer<typeof WorkspaceTabAddressSchema>;
+export type PaneTabAddress = z.infer<typeof PaneTabAddressSchema>;
+
+const addressedTab = { tabId: z.optional(id), address: z.optional(WorkspaceTabAddressSchema) };
+const hasOneTabAddress = (data: { tabId?: string; address?: WorkspaceTabAddress }) =>
+  (data.tabId === undefined) !== (data.address === undefined);
 
 /** Root-relative file addressing is shared by Action ingress and pane URL readers. */
 export function isSafeWorkspaceFilePath(path: string): boolean {
@@ -69,6 +89,7 @@ export const WORKSPACE_ACTION_INPUT_SCHEMAS = {
     present: z.optional(z.boolean()),
     find: z.optional(WorkspaceFindSeedSchema),
     beforeTabId: z.optional(z.nullable(id)), reuseExisting: z.optional(z.boolean()),
+    replace: z.optional(z.boolean()),
     mode: z.optional(z.enum(['preview', 'newTab', 'splitLeft', 'splitRight', 'splitUp', 'splitDown'])),
   }).check(z.refine(data => !(data.href !== undefined && data.file !== undefined), {
     message: 'Address a destination with either href or file',
@@ -80,8 +101,9 @@ export const WORKSPACE_ACTION_INPUT_SCHEMAS = {
     && (data.mode === undefined || data.mode === 'preview') && data.groupId === undefined && data.beforeTabId === undefined), {
     message: 'An unpresented open positions a preview in the foreground Session',
   })),
-  'workspace.tabs.activate': z.strictObject({ tabId: id }),
-  'workspace.tabs.close': z.strictObject({ tabId: id }),
+  'workspace.tabs.activate': z.strictObject({ ...addressedTab, windowId: z.optional(id) }).check(z.refine(data =>
+    [data.tabId, data.address, data.windowId].filter(value => value !== undefined).length === 1)),
+  'workspace.tabs.close': z.strictObject(addressedTab).check(z.refine(hasOneTabAddress)),
   'workspace.tabs.close_others': z.strictObject({ tabId: id }),
   'workspace.tabs.close_left': z.strictObject({ tabId: id }),
   'workspace.tabs.close_right': z.strictObject({ tabId: id }),
@@ -89,7 +111,7 @@ export const WORKSPACE_ACTION_INPUT_SCHEMAS = {
   'workspace.tabs.closed.list': z.strictObject({}),
   'workspace.tabs.reopen': z.strictObject({ tabId: z.optional(id) }),
   'workspace.tabs.pin': z.strictObject({ tabId: id, pinned: z.boolean() }),
-  'workspace.tabs.move': z.strictObject({ tabId: id, targetGroupId: id, beforeTabId: z.optional(z.nullable(id)) }),
+  'workspace.tabs.move': z.strictObject({ ...addressedTab, targetGroupId: id, beforeTabId: z.optional(z.nullable(id)) }).check(z.refine(hasOneTabAddress)),
   'workspace.tabs.reorder': z.union([
     z.strictObject({ tabId: id, index: z.number().check(z.int(), z.nonnegative()) }),
     z.strictObject({ tabId: id, beforeTabId: z.nullable(id) }),
@@ -103,10 +125,21 @@ export const WORKSPACE_ACTION_INPUT_SCHEMAS = {
 
 export const WorkspaceTabsListOutputSchema = lazyZodSchema(() => z.strictObject({
   ok: z.literal(true),
-  tabs: z.array(z.strictObject({
+  windows: z.optional(z.array(z.strictObject({
+    windowId: id, role: z.enum(['primary', 'secondary']), chrome: z.enum(['full', 'destination']),
+    serverId: id, accountId: id, layoutId: id, focused: z.boolean(),
+  }))),
+  tabs: z.array(z.union([z.strictObject({
     id, groupId: id, target: z.strictObject({ kind: id, params: z.record(z.string(), z.string()) }),
+    address: z.optional(WorkspaceOwnedTabAddressSchema),
     pinned: z.boolean(), preview: z.boolean(),
-  })),
+    presentation: z.optional(z.strictObject({ windowId: id, focused: z.optional(z.boolean()) })),
+  }), z.strictObject({
+    kind: z.literal('paneTab'), id, groupId: id, address: PaneTabAddressSchema,
+    scopeId: id, tabKey: id, paneType: id, title: z.optional(z.string()),
+    pinned: z.boolean(), preview: z.boolean(),
+    presentation: z.optional(z.strictObject({ windowId: id, focused: z.optional(z.boolean()) })),
+  })])),
   groups: z.array(z.strictObject({ id, tabIds: z.array(id), activeTabId: id })),
   splits: z.array(z.strictObject({ id, axis: z.enum(['row', 'column']), ratio: z.number().check(z.minimum(0), z.maximum(1)), firstNodeId: id, secondNodeId: id })),
   rootNodeId: id,
@@ -145,6 +178,10 @@ export type WorkspaceTabsListOutput = z.infer<typeof WorkspaceTabsListOutputSche
 export type WorkspaceClosedTabsListOutput = z.infer<typeof WorkspaceClosedTabsListOutputSchema>;
 
 const tabIdHint = { path: 'tabId', title: 'Tab id', widget: 'text', required: true } satisfies ActionInputFieldHint;
+const tabAddressHints = [{ ...tabIdHint, required: false }, {
+  path: 'address', title: 'Qualified tab address', widget: 'json',
+  description: 'Use the workspace or pane address from workspace.tabs.list instead of tabId. Includes Home, Account and layout identity.',
+}] satisfies ActionInputFieldHint[];
 const groupIdHint = { path: 'groupId', title: 'Pane id', widget: 'text', required: true } satisfies ActionInputFieldHint;
 const beforeTabHint = { path: 'beforeTabId', title: 'Insert before tab', widget: 'text',
   description: 'The current tab anchor; null appends after the last tab.' } satisfies ActionInputFieldHint;
@@ -161,14 +198,16 @@ const inputFields = {
     { path: 'find', title: 'Find target', widget: 'json', description: 'Query/options and an exact Session message, Session file or Project file target. Private launch input; not persisted in the URL or tab.' },
     { ...groupIdHint, required: false }, beforeTabHint,
     { path: 'reuseExisting', title: 'Go to an existing tab', widget: 'boolean' },
+    { path: 'replace', title: 'Replace current history entry', widget: 'boolean' },
     { path: 'mode', title: 'Opening mode', widget: 'select', options: [
       { value: 'preview', label: 'Preview' }, { value: 'newTab', label: 'Keep tab' },
       { value: 'splitLeft', label: 'Split left' }, { value: 'splitRight', label: 'Split right' },
       { value: 'splitUp', label: 'Split up' }, { value: 'splitDown', label: 'Split down' },
     ] },
   ],
-  'workspace.tabs.activate': [tabIdHint],
-  'workspace.tabs.close': [tabIdHint],
+  'workspace.tabs.activate': [...tabAddressHints, { path: 'windowId', title: 'Window id', widget: 'text', required: false,
+    description: 'Activate a window from workspace.tabs.list without changing its selected tab. Use instead of tabId or address.' }],
+  'workspace.tabs.close': tabAddressHints,
   'workspace.tabs.close_others': [tabIdHint],
   'workspace.tabs.close_left': [tabIdHint],
   'workspace.tabs.close_right': [tabIdHint],
@@ -176,7 +215,7 @@ const inputFields = {
   'workspace.tabs.closed.list': [],
   'workspace.tabs.reopen': [{ ...tabIdHint, required: false }],
   'workspace.tabs.pin': [tabIdHint, { path: 'pinned', title: 'Keep pinned', widget: 'boolean', required: true }],
-  'workspace.tabs.move': [tabIdHint, { path: 'targetGroupId', title: 'Destination pane id', widget: 'text', required: true }, beforeTabHint],
+  'workspace.tabs.move': [...tabAddressHints, { path: 'targetGroupId', title: 'Destination pane id', widget: 'text', required: true }, beforeTabHint],
   'workspace.tabs.reorder': [tabIdHint, { ...beforeTabHint, description: 'Current tab anchor, or null to append. Use this or index.' },
     { path: 'index', title: 'Tab index', widget: 'text', description: 'Zero-based position, as an alternative to beforeTabId.' }],
   'workspace.groups.focus': [groupIdHint],
@@ -215,12 +254,18 @@ const voiceExamples = {
 
 function row<const TId extends WorkspaceActionId>(actionId: TId, title: string,
   description = 'Operate on the mounted client workspace in its current Home, Account and window. A headless host without that workspace returns unsupported_action.') {
+  const addressedSchema = actionId === 'workspace.tabs.activate' ? WORKSPACE_ACTION_INPUT_SCHEMAS['workspace.tabs.activate']
+    : actionId === 'workspace.tabs.close' ? WORKSPACE_ACTION_INPUT_SCHEMAS['workspace.tabs.close']
+      : actionId === 'workspace.tabs.move' ? WORKSPACE_ACTION_INPUT_SCHEMAS['workspace.tabs.move'] : null;
   return {
     id: actionId, approval: { result: 'required' }, title,
     ...(actionId === 'workspace.tabs.open' ? { toolExposure: { agent: 'direct' as const } } : {}),
     description,
     safety: 'safe', sideEffectClass: actionId === 'workspace.tabs.list' || actionId === 'workspace.tabs.closed.list' || actionId === 'workspace.files.link.get' ? 'read' : 'external',
     executionPlacement: 'client', placements: [],
+    ...(addressedSchema
+      ? { invocationServerIdForInput: actionInputServerId(addressedSchema, input => input.address?.serverId) }
+      : {}),
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },
     cli: { acceptsServerId: true, commands: [] },
     bindings: { mcpToolName: actionId.replaceAll('.', '_'), voiceClientToolName: actionId.replaceAll('.', '_') },
@@ -230,7 +275,8 @@ function row<const TId extends WorkspaceActionId>(actionId: TId, title: string,
   } satisfies PreNormalizedActionSpec;
 }
 
-export const WORKSPACE_ACTION_SPECS = [
+function createWorkspaceActionSpecs() {
+  return [
   row('workspace.files.link.get', 'Get workspace file link'),
   row('workspace.tabs.list', 'List workspace tabs'), row('workspace.tabs.open', 'Open workspace tab'),
   row('workspace.tabs.activate', 'Activate workspace tab'), row('workspace.tabs.close', 'Close workspace tab'),
@@ -245,17 +291,10 @@ export const WORKSPACE_ACTION_SPECS = [
   row('workspace.groups.restore', 'Restore workspace groups'), row('workspace.split', 'Split workspace'),
   row('workspace.resize', 'Resize workspace split'),
 ] as const;
+}
+
+export const WORKSPACE_ACTION_SPECS: ReturnType<typeof createWorkspaceActionSpecs> = lazyActionSpecArray(createWorkspaceActionSpecs);
 
 export function isWorkspaceActionId(value: string): value is WorkspaceActionId {
   return (WORKSPACE_ACTION_IDS as readonly string[]).includes(value);
 }
-
-export const PaneTabAddressSchema = lazyZodSchema(() => z.strictObject({
-  kind: z.literal('paneTab'), ...tabOwner, scopeId: id, tabKey: id,
-}));
-
-const tabOwner = { serverId: id, accountId: id, layoutId: id };
-
-export const WorkspaceOwnedTabAddressSchema = lazyZodSchema(() => z.strictObject({
-  kind: z.literal('workspaceTab'), ...tabOwner, tabId: id,
-}));

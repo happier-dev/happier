@@ -1910,6 +1910,11 @@ export function readComposerPresentationSnapshot(ref: ComposerRefV1, scope?: Ser
     return target?.readSnapshot?.() ?? null;
 }
 
+export function readSessionDraftComposerSnapshot(ref: Extract<ComposerRefV1, { kind: 'session' }>, scope: ServerAccountScope): ComposerSnapshotV1 | null {
+    return readTarget(ref, scope)?.readSnapshot?.() ?? null;
+}
+
+
 /**
  * Scope adapters call this after their incumbent local draft owner advances
  * outside a registry transaction. Observation remains exact-ref scoped; this

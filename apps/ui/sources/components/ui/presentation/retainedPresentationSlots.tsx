@@ -59,7 +59,7 @@ export type RetainedPresentationSlotsStore = Readonly<{
     /** Preserve the body and last placement, but park it off-screen without a visible binder. */
     parkPortalEntry: (slotId: string) => void;
     /** Explicitly tear down a slot's portal-hosted webview (real close, not a route change). */
-    removePortalEntry: (slotId: string) => void;
+    removePortalEntry: (slotId: string, expected?: Readonly<{ node: React.ReactNode }>) => void;
     /** Referentially-stable snapshot of the registered portal entries (for `useSyncExternalStore`). */
     getPortalSnapshot: () => readonly RetainedPresentationSlotEntry[];
     /** Subscribe to portal-registry mutations. */
@@ -98,7 +98,8 @@ export function createRetainedPresentationSlotsStore(): RetainedPresentationSlot
         for (const listener of [...portalListeners]) listener();
     }
 
-    function removePortalEntry(slotId: string): void {
+    function removePortalEntry(slotId: string, expected?: Readonly<{ node: React.ReactNode }>): void {
+        if (expected && portalBySlot.get(slotId)?.node !== expected.node) return;
         if (!portalBySlot.delete(slotId)) return;
         rebuildPortalSnapshot();
         notifyPortal();

@@ -1,15 +1,15 @@
 import * as React from 'react';
 import { useMemo, useRef, useState } from 'react';
-import { getStorage, useActiveServerAccountScope, useLocalSetting } from '@/sync/domains/state/storage';
+import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
+import { paneUiState } from '@/sync/domains/state/filePaneUiState';
+import { UiStatePersistenceError } from '@/sync/domains/state/persistentUiState';
 import type { PaneDriver, PaneScopeId } from './types';
 import { registerSessionTerminalWorkspaceOwner, notifySessionTerminalWorkspaceChanged, retireProjectTerminalPresentationForHome } from '@/components/sessions/terminal/sessionTerminalWorkspaceRuntime';
 import { EMPTY_TERMINAL_WORKSPACE, readSessionTerminalWorkspace } from '@/components/sessions/terminal/sessionTerminalWorkspace';
 import { appPaneReduce, createAppPaneState, type AppPaneAction, type AppPaneState, type PaneScopeState } from './model/appPaneReducer';
-import { migrateLegacyDetailsWorkspaceState, serializeDetailsWorkspaceState } from './details/workspace/migrateLegacyDetailsWorkspaceState';
-import {
-    createBuiltinPaneDestination,
-    type SelectedPaneDestinationV1,
-} from './model/selectedPaneDestination';
+import { normalizePersistedPaneScopes, serializePersistedPaneScope, mergePaneScopePresentationState, reconcilePersistedTerminalWorkspace } from './model/paneScopePersistence';
+import { PersistedPaneScopeSchema } from './model/paneScopePersistenceSchema';
+import { getDeviceType } from '@/utils/platform/responsive';
 import {
     createPaneOverlayFocusReturnOwner,
     type PaneOverlayFocusReturnOwner,
@@ -17,7 +17,7 @@ import {
 } from './paneOverlayFocusReturn';
 import { createFileFindSeedHandoff } from './fileFindSeedHandoff';
 import { useServerProfilesGeneration } from '@/hooks/server/useServerProfilesGeneration';
-import { listServerProfiles, resolveServerProfileScopeId } from '@/sync/domains/server/serverProfiles';
+import { areServerProfileIdentifiersEquivalent, listServerProfiles, resolveServerProfileScopeId } from '@/sync/domains/server/serverProfiles';
 import { useServerCredentialAccountScopeBindings, type ServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { subscribeHomeCredentialChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { parseToken } from '@/utils/auth/parseToken';
@@ -27,10 +27,15 @@ import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAc
 import { parseProjectPaneScopeId } from '@/components/projects/detail/projectPaneScope';
 import { isTerminalDetailsTab } from '@/components/terminal/terminalDetailsTabModel';
 import { applyCloseDetailsTab } from './details/workspace/detailsWorkspaceReducer';
-import { LocalSettingsPersistenceError } from '@/sync/domains/state/settingsPersistence';
 import { AppPaneContext, AppPaneFindSeedContext, AppPaneFocusReturnContext, AppPaneFileFrontContext, AppPaneDriverContext, createFileTabFrontSubscription, type AppPaneContextValue, type AppPaneContextSubscription } from './AppPaneContext';
+import { selectedPaneDestinationTabKey } from './model/selectedPaneDestination';
 
 export { useAppPaneContext, useOptionalAppPaneContext, useOptionalAppPaneFindSeedContext, useOptionalPaneFocusReturnOwner, useOptionalPaneDriverReader } from './AppPaneContext';
+
+type PaneScopePersistenceRead = Readonly<{
+    scopeId: string;
+    value: ReturnType<typeof paneUiState.readStrict> | UiStatePersistenceError;
+}>;
 
 /** Private terminal labels/paths become visible only under their actual persisted Account owner. */
 function qualifyProjectTerminalPane(scopeId: string, pane: PaneScopeState, scope: ServerAccountScope | null): PaneScopeState {
@@ -46,90 +51,6 @@ function qualifyProjectTerminalPane(scopeId: string, pane: PaneScopeState, scope
     if (workspace.tabs.length === 0 && !workspace.ownerScope && details === pane.details) return pane;
     return { ...pane, details, bottom: { ...pane.bottom,
         tabState: { ...pane.bottom.tabState, terminal: EMPTY_TERMINAL_WORKSPACE } } };
-}
-
-type PersistedPaneSlot = Readonly<{
-    isOpen: boolean;
-    activeTabId: string | null;
-    selectedDestination?: SelectedPaneDestinationV1 | null;
-    tabState: Record<string, unknown>;
-}>;
-
-function normalizePersistedPaneSlot(slot: PersistedPaneSlot): PaneScopeState['right'] {
-    // `activeTabId` is the predecessor's built-in selection. Preserve it as a
-    // host-owned selected destination once, at the persistence boundary; the
-    // reducer never has to guess whether a legacy string was a plugin id.
-    const selectedDestination = slot.selectedDestination
-        ?? (slot.activeTabId ? createBuiltinPaneDestination(slot.activeTabId) : null);
-    return {
-        isOpen: slot.isOpen,
-        activeTabId: slot.activeTabId ?? null,
-        selectedDestination,
-        tabState: slot.tabState,
-    };
-}
-
-function normalizePersistedPaneScopes(
-    value: Readonly<Record<string, {
-        mainHidden?: boolean;
-        right: PersistedPaneSlot;
-        details: unknown;
-        bottom: PersistedPaneSlot;
-    }>> | null | undefined,
-): Readonly<Record<string, PaneScopeState>> {
-    if (!value) return {};
-    return Object.fromEntries(
-        Object.entries(value).map(([scopeId, scope]) => [
-            scopeId,
-            {
-                mainHidden: scope.mainHidden === true,
-                right: normalizePersistedPaneSlot(scope.right),
-                details: migrateLegacyDetailsWorkspaceState(scope.details),
-                bottom: normalizePersistedPaneSlot(scope.bottom),
-            } satisfies PaneScopeState,
-        ]),
-    );
-}
-
-function serializePersistedPaneScopes(
-    value: Readonly<Record<string, PaneScopeState>>,
-): Record<string, {
-    mainHidden: boolean;
-    right: {
-        isOpen: boolean;
-        activeTabId: string | null;
-        selectedDestination: SelectedPaneDestinationV1 | null;
-        tabState: Record<string, unknown>;
-    };
-    details: ReturnType<typeof serializeDetailsWorkspaceState>;
-    bottom: {
-        isOpen: boolean;
-        activeTabId: string | null;
-        selectedDestination: SelectedPaneDestinationV1 | null;
-        tabState: Record<string, unknown>;
-    };
-}> {
-    return Object.fromEntries(
-        Object.entries(value).map(([scopeId, scope]) => [
-            scopeId,
-            {
-                mainHidden: scope.mainHidden,
-                right: {
-                    isOpen: scope.right.isOpen,
-                    activeTabId: scope.right.activeTabId,
-                    selectedDestination: scope.right.selectedDestination,
-                    tabState: { ...scope.right.tabState },
-                },
-                details: serializeDetailsWorkspaceState(scope.details),
-                bottom: {
-                    isOpen: scope.bottom.isOpen,
-                    activeTabId: scope.bottom.activeTabId,
-                    selectedDestination: scope.bottom.selectedDestination,
-                    tabState: { ...scope.bottom.tabState },
-                },
-            },
-        ]),
-    );
 }
 
 function resolveOverlayFocusCapture(
@@ -170,6 +91,7 @@ function resolveOverlayFocusCapture(
 
 function resolveOverlayFocusClear(
     action: AppPaneAction,
+    state: AppPaneState,
 ): Readonly<{ scopeId: string; surface: PaneOverlayFocusSurface }> | null {
     switch (action.type) {
         case 'closeDetails':
@@ -184,33 +106,65 @@ function resolveOverlayFocusClear(
     }
 }
 
-export const AppPaneProvider = React.memo((props: Readonly<{ children: React.ReactNode }>) => {
-    const persistedScopesValue = useLocalSetting('appPaneScopesV1');
+export const AppPaneProvider = React.memo((props: Readonly<{ children: React.ReactNode; presentedPaneTab?: Readonly<{ scopeId: string; tabKey: string }> }>) => {
+    // Restoration belongs to this landing. Resizing a live view preserves its
+    // current panes; a fresh phone landing never turns saved columns into sheets.
+    const [restoreOpenPanes] = useState(() => getDeviceType() !== 'phone');
+    const persistedScopesValue = React.useSyncExternalStore(paneUiState.subscribe, paneUiState.readAll, paneUiState.readAll);
     const persistedScopes = useMemo(
-        () => normalizePersistedPaneScopes(persistedScopesValue),
-        [persistedScopesValue],
+        () => normalizePersistedPaneScopes(persistedScopesValue, restoreOpenPanes),
+        [persistedScopesValue, restoreOpenPanes],
     );
-    const [state, setState] = useState(() => createAppPaneState({
+    const [state, setState] = useState(() => {
+        const presented = props.presentedPaneTab;
+        const stored = presented ? paneUiState.readStrict(presented.scopeId, value => PersistedPaneScopeSchema.parse(value)) : null;
+        return createAppPaneState({
         maxScopesInMemory: 12,
-        persistedScopes: persistedScopes ?? {},
-    }));
+        persistedScopes: presented ? stored ? normalizePersistedPaneScopes({ [presented.scopeId]: stored }, true) : {} : persistedScopes ?? {},
+        });
+    });
     const [persistenceFailed, setPersistenceFailed] = useState(false);
     const stateRef = useRef(state);
     const persistedScopesRef = useRef<AppPaneState['scopes'] | null>(null);
     // Reducer intents own persistence. Transient draft/dirty publications must
     // not serialize local settings from a passive effect after every edit.
-    const persistScopes = React.useCallback((scopes: AppPaneState['scopes']) => {
-        if (persistedScopesRef.current === scopes) return;
-        const appPaneScopesV1 = serializePersistedPaneScopes(scopes);
+    const persistScopes = React.useCallback((scopes: AppPaneState['scopes'], options?: Readonly<{ force?: boolean; throwOnFailure?: boolean; selectedPaneTabKey?: string; storedScope?: PaneScopePersistenceRead; retireLegacyApp?: boolean }>) => {
+        if (persistedScopesRef.current === scopes && !options?.force) return true;
         try {
-            getStorage().getState().applyLocalSettings({ appPaneScopesV1 }, { source: 'ui' });
+            // This landing's sheets stay transient through resize and host rebinds.
+            const preserveDesktopVisibility = !restoreOpenPanes;
+            for (const [scopeId, scope] of Object.entries(scopes)) {
+                if (props.presentedPaneTab && scopeId !== props.presentedPaneTab.scopeId) continue;
+                if (persistedScopesRef.current?.[scopeId] === scope && !options?.force) continue;
+                const stored = options?.storedScope?.scopeId === scopeId ? options.storedScope.value
+                    : paneUiState.readStrict(scopeId, value => PersistedPaneScopeSchema.parse(value));
+                if (stored instanceof UiStatePersistenceError) throw stored;
+                const storedScope = stored ? normalizePersistedPaneScopes({ [scopeId]: stored }, true)[scopeId] : null;
+                // Checkpoints normalize presentation; only a scoped intent reduced from this read
+                // may replace retained Shell membership. A flush must not replay an older inventory.
+                const checkpointScope = options?.storedScope?.scopeId === scopeId ? scope
+                    : reconcilePersistedTerminalWorkspace(scope, storedScope?.bottom.tabState.terminal);
+                const ownedScope = mergePaneScopePresentationState(checkpointScope, storedScope, props.presentedPaneTab?.tabKey, options?.selectedPaneTabKey);
+                paneUiState.set(scopeId, serializePersistedPaneScope(ownedScope, {
+                    preserveDesktopVisibility,
+                    previous: preserveDesktopVisibility ? stored : undefined,
+                }));
+            }
+            // Explicit App adoption moves the retained content; omission or eviction
+            // alone never authorizes deleting another presenter's stored scope.
+            if (options?.retireLegacyApp) paneUiState.remove('app');
+            // In-memory scopes can omit a sibling window's writes or scopes evicted by this window.
+            // Only write the scopes this provider changed; absence is not a persistent deletion.
             persistedScopesRef.current = scopes;
             setPersistenceFailed(false);
+            return true;
         } catch (error) {
-            if (!(error instanceof LocalSettingsPersistenceError)) throw error;
+            if (!(error instanceof UiStatePersistenceError)) throw error;
             setPersistenceFailed(true);
+            if (options?.throwOnFailure) throw error;
+            return false;
         }
-    }, []);
+    }, [props.presentedPaneTab, restoreOpenPanes]);
     const driversRef = useRef<Map<PaneScopeId, PaneDriver>>(new Map());
     const [fileFindSeedHandoff] = useState(createFileFindSeedHandoff);
     const homeProfilesGeneration = useServerProfilesGeneration();
@@ -253,16 +207,43 @@ export const AppPaneProvider = React.memo((props: Readonly<{ children: React.Rea
             overlayFocusReturnOwner.capture(capture.scopeId, capture.surface);
         }
 
-        const clear = resolveOverlayFocusClear(action);
+        const clear = resolveOverlayFocusClear(action, stateRef.current);
         if (clear) {
             overlayFocusReturnOwner.clear(clear.scopeId, clear.surface);
         }
 
+        const shouldPersist = action.type !== 'mergePersistedScopes' && !('persist' in action && action.persist === false);
+        let storedScope: PaneScopePersistenceRead | undefined;
         let previousState = stateRef.current;
         if ('scopeId' in action && action.scopeId !== undefined) {
-            const pane = previousState.scopes[action.scopeId];
+            let pane = previousState.scopes[action.scopeId];
+            if (shouldPersist && (!props.presentedPaneTab || props.presentedPaneTab.scopeId === action.scopeId)) {
+                try {
+                    storedScope = { scopeId: action.scopeId,
+                        value: paneUiState.readStrict(action.scopeId, value => PersistedPaneScopeSchema.parse(value)) };
+                } catch (error) {
+                    if (!(error instanceof UiStatePersistenceError)) throw error;
+                    // Keep the local intent usable; the existing persistence owner presents this failure.
+                    storedScope = { scopeId: action.scopeId, value: error };
+                }
+            }
+            const stored = storedScope?.value instanceof UiStatePersistenceError ? undefined : storedScope?.value;
+            if (stored) {
+                // A sibling presenter can publish before this provider's hydration effect runs.
+                // Apply this intent to the device owner's current Shells, including explicit closes.
+                const reconciled = pane ? reconcilePersistedTerminalWorkspace(pane, stored.bottom.tabState.terminal)
+                    : normalizePersistedPaneScopes({ [action.scopeId]: stored }, restoreOpenPanes)[action.scopeId];
+                if (reconciled !== pane) {
+                    pane = reconciled;
+                    previousState = { ...previousState, scopes: { ...previousState.scopes, [action.scopeId]: pane } };
+                }
+            }
             if (pane) {
-                const qualified = qualifyProjectTerminalPane(action.scopeId, pane, readPaneAccountScope(action.scopeId));
+                const accountScope = readPaneAccountScope(action.scopeId);
+                // An unresolved Account masks reads; it is not evidence that
+                // the retained Shells belong to someone else. Keep raw records
+                // until the existing Account transition owner can retire them.
+                const qualified = accountScope ? qualifyProjectTerminalPane(action.scopeId, pane, accountScope) : pane;
                 if (qualified !== pane) previousState = { ...previousState, scopes: { ...previousState.scopes, [action.scopeId]: qualified } };
             }
         }
@@ -288,8 +269,23 @@ export const AppPaneProvider = React.memo((props: Readonly<{ children: React.Rea
         }
         stateRef.current = nextState;
         setState(nextState);
-        if (action.type !== 'mergePersistedScopes' && !('persist' in action && action.persist === false)) {
-            persistScopes(nextState.scopes);
+        if (shouldPersist) {
+            let selectedPaneTabKey: string | undefined;
+            if (action.type === 'selectRightDestination' || action.type === 'setRightTab'
+                || action.type === 'openRight' && action.tabId !== undefined) selectedPaneTabKey = selectedPaneDestinationTabKey('right');
+            else if (action.type === 'selectBottomDestination' || action.type === 'setBottomTab'
+                || action.type === 'openBottom' && action.tabId !== undefined) selectedPaneTabKey = selectedPaneDestinationTabKey('bottom');
+            else if (action.type === 'openDetailsOverlay') selectedPaneTabKey = selectedPaneDestinationTabKey('detailsOverlay');
+            else if (action.type === 'restoreScope') selectedPaneTabKey = action.selectedPaneTabKey;
+            persistScopes(nextState.scopes, {
+                throwOnFailure: 'persist' in action && action.persist === true,
+                // Selection commands already passed the mounted slot's navigation admission.
+                // Draft/scroll writes continue to own content only, never its source selection.
+                selectedPaneTabKey,
+                storedScope,
+                retireLegacyApp: action.type === 'activateScope' && Boolean(previousState.scopes.app)
+                    && !nextState.scopes.app && nextState.scopes[action.scopeId] === previousState.scopes.app,
+            });
         }
         notifySessionTerminalWorkspaceChanged();
         if (action.type === 'terminalWorkspace') {
@@ -306,7 +302,7 @@ export const AppPaneProvider = React.memo((props: Readonly<{ children: React.Rea
                 driversRef.current.get(action.scopeId)?.onTerminalWorkspaceReveal?.({ tabId: tab.id, terminalId });
             }
         }
-    }, [overlayFocusReturnOwner, persistScopes, readPaneAccountScope]);
+    }, [overlayFocusReturnOwner, persistScopes, props.presentedPaneTab, readPaneAccountScope, restoreOpenPanes]);
     const [driverRegistryVersion, setDriverRegistryVersion] = useState(0);
 
     React.useLayoutEffect(() => {
@@ -334,23 +330,31 @@ export const AppPaneProvider = React.memo((props: Readonly<{ children: React.Rea
 
     React.useEffect(() => subscribeHomeCredentialChange(event => {
         const serverId = resolveServerProfileScopeIdForIdentifier(event.serverId);
-        const previous = accountBindingsRef.current.get(serverId);
         let nextAccountId: string | null = null;
         if (event.kind === 'credentials_set' && event.credentials) {
             try { nextAccountId = parseToken(event.credentials.token); } catch { /* Unreadable authority retires private presentation. */ }
         }
-        // Credential renewal/profile refresh for the same Account preserves view continuity.
-        if (previous && nextAccountId === previous.accountId) return;
-        retireProjectTerminalPresentationForHome(serverId, previous?.scope);
+        // The retained record owns its Account identity even while secure
+        // storage is still resolving this landing's credential binding.
+        for (const [scopeId, pane] of Object.entries(stateRef.current.scopes)) {
+            const identity = parseProjectPaneScopeId(scopeId);
+            if (!identity || !areServerProfileIdentifiersEquivalent(identity.serverId, serverId)) continue;
+            const workspace = readSessionTerminalWorkspace(pane.bottom.tabState.terminal);
+            const owner = workspace.ownerScope;
+            if (owner && nextAccountId === owner.accountId
+                && areServerProfileIdentifiersEquivalent(owner.serverId, serverId)) continue;
+            retireProjectTerminalPresentationForHome(serverId, owner, scopeId);
+        }
     }), []);
 
     React.useEffect(() => {
+        if (props.presentedPaneTab) return;
         if (Object.keys(persistedScopes).length === 0) return;
         dispatch({ type: 'mergePersistedScopes', scopes: persistedScopes });
         // Hydration is also the canonical normalization checkpoint for legacy
         // pane shapes and invalid inherited group references.
         persistScopes(stateRef.current.scopes);
-    }, [dispatch, persistedScopes, persistScopes]);
+    }, [dispatch, persistedScopes, persistScopes, props.presentedPaneTab]);
 
     const registerDriver = React.useCallback((driver: PaneDriver) => {
         driversRef.current.set(driver.scopeId, driver);
@@ -372,6 +376,7 @@ export const AppPaneProvider = React.memo((props: Readonly<{ children: React.Rea
         state: qualifiedState,
         getReadState: readQualifiedState,
         persistenceFailed,
+        flushPersistence: () => persistScopes(stateRef.current.scopes, { force: true }),
         dispatch,
         registerDriver,
         getDriver,
@@ -379,7 +384,7 @@ export const AppPaneProvider = React.memo((props: Readonly<{ children: React.Rea
         overlayFocusReturnOwner,
         fileFindSeedHandoff,
         fileFindSeedAccountBindings,
-    }), [driverRegistryVersion, dispatch, fileFindSeedHandoff, fileFindSeedAccountBindings, getDriver, overlayFocusReturnOwner, persistenceFailed, readQualifiedState, registerDriver, qualifiedState]);
+    }), [ driverRegistryVersion, dispatch, fileFindSeedHandoff, fileFindSeedAccountBindings, getDriver, overlayFocusReturnOwner, persistenceFailed, persistScopes, readQualifiedState, registerDriver, qualifiedState]);
 
     // One read-only subscription over the provider's canonical state. A file edit
     // must not broadcast a new React context through every retained pane subtree.

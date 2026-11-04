@@ -414,6 +414,7 @@ export type NewSessionDraftProjection = Readonly<{
 export type SessionDraftRepositoryStorage = Readonly<{
     prepare?(): Promise<void>;
     flush?(): Promise<void>;
+    refresh?(key: string, replicaKey?: string): Promise<void>;
     getString(key: string): string | undefined;
     set(key: string, value: string): unknown;
     delete(key: string): unknown;
@@ -932,6 +933,30 @@ function isNewSessionListAddress(address: SessionDraftAddressV2): boolean {
 }
 
 export class SessionDraftRepository {
+    async reloadSessionDraftFromLocalPersistence(params: Readonly<{
+        scope: SessionDraftRepositoryScope;
+        address: SessionDraftAddressV2;
+    }>): Promise<void> {
+        await this.flushSessionDraftLocally(params);
+        await this.storage.refresh?.(this.storageKey(params.scope), canonicalSessionDraftAddressV2(params.address));
+        const scopeKey = this.scopeKey(params.scope);
+        const previous = this.scopeStates.get(scopeKey);
+        this.scopeStates.delete(scopeKey);
+        const restored = this.getScopeState(params.scope);
+        if (restored.unreadableRetainedContent) {
+            if (previous) this.scopeStates.set(scopeKey, previous);
+            throw new Error('Stored draft is unavailable. Your saved drafts have not been discarded.');
+        }
+        if (previous) {
+            const key = canonicalSessionDraftAddressV2(params.address);
+            const replica = restored.replicas.get(key);
+            if (replica) previous.replicas.set(key, replica);
+            else previous.replicas.delete(key);
+            this.scopeStates.set(scopeKey, previous);
+        }
+        this.notify(params.scope, params.address);
+    }
+
     // Replicas are replaced on writes; unchanged documents need no repeat JSON traversal.
     private readonly serializedReplicas = new WeakMap<PersistedReplica, string>();
     private readonly scopeStates = new Map<string, ScopeState>();
@@ -2950,6 +2975,7 @@ export const writeDiscussionSessionDraft = singleton.writeDiscussionSessionDraft
 export const writeNewSessionDraft = singleton.writeNewSessionDraft.bind(singleton);
 export const writeProjectOpenDraft = singleton.writeProjectOpenDraft.bind(singleton);
 export const flushSessionDraftLocally = singleton.flushSessionDraftLocally.bind(singleton);
+export const reloadSessionDraftFromLocalPersistence = singleton.reloadSessionDraftFromLocalPersistence.bind(singleton);
 export const flushProjectOpenDraftForAdmission = singleton.flushProjectOpenDraftForAdmission.bind(singleton);
 export const writeSessionDraftLocalSupplement = singleton.writeSessionDraftLocalSupplement.bind(singleton);
 export const captureSessionDraftCurrentness = singleton.captureSessionDraftCurrentness.bind(singleton);

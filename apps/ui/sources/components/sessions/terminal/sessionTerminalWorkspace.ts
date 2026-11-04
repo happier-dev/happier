@@ -3,7 +3,7 @@ import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSch
 import { splitCanvasReduce } from '@/components/appShell/splitCanvas/model/splitCanvasReducer';
 import type { SplitCanvasLeafNode, SplitCanvasNode, SplitCanvasState } from '@/components/appShell/splitCanvas/model/splitCanvasTypes';
 import { collectSplitCanvasLeaves } from '@/components/appShell/splitCanvas/model/splitCanvasTree';
-import type { AppPaneState } from '@/components/appShell/panes/model/appPaneReducer';
+import type { AppPaneState, PaneScopeState } from '@/components/appShell/panes/model/appPaneReducer';
 
 export type SessionTerminalWorkspaceCommand =
     | { type: 'open'; terminal: SessionTerminalMemberV1 }
@@ -33,6 +33,15 @@ export function readSessionTerminalWorkspace(value: unknown): SessionTerminalWor
     if (parsed.success) return value as SessionTerminalWorkspaceV1;
     const stored = storedWorkspaceSchema.safeParse(value);
     return stored.success ? stored.data : initialWorkspace;
+}
+
+export function isSessionTerminalWorkspacePane(pane: PaneScopeState['right']): boolean {
+    return pane.isOpen && pane.selectedDestination?.kind === 'builtin' && pane.selectedDestination.id === 'terminal';
+}
+
+export function getVisibleSessionTerminalWorkspacePane(scope: PaneScopeState): 'right' | 'bottom' | null {
+    if (isSessionTerminalWorkspacePane(scope.bottom)) return 'bottom';
+    return isSessionTerminalWorkspacePane(scope.right) ? 'right' : null;
 }
 
 /** Pane visibility and terminal tab selection share the AppPane workspace owner. */

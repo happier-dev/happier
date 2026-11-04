@@ -74,7 +74,7 @@ async function harness(width = 1400) {
                 { paneId: input.target.leafId, paneTitle: null, locateTab: () => null }),
             execute: async effect => {
                 if (!isWorkspaceActionId(effect.actionId)) throw new Error('Expected workspace action');
-                const result = execute(effect.actionId, effect.input);
+                const result = await execute(effect.actionId, effect.input);
                 return result.ok ? { status: 'applied' } : { status: 'refused', reason: { code: result.errorCode, message: result.error } };
             },
         }} /></>;

@@ -1,5 +1,5 @@
 import { z } from 'zod/mini';
-import { SelectedPaneDestinationV1Schema } from './selectedPaneDestination';
+import { SelectedPaneDestinationV1Schema, PaneSlotPresentationSchema } from './selectedPaneDestination';
 
 export const paneDetailsTabSchema = z.object({
     key: z.string(),
@@ -9,6 +9,7 @@ export const paneDetailsTabSchema = z.object({
     resource: z.unknown(),
     isPreview: z.boolean(),
     isPinned: z.boolean(),
+    presentation: z.optional(z.object({ windowId: z.string() })),
 });
 
 /**
@@ -82,6 +83,7 @@ export const paneDetailsWorkspaceStateSchema = z.object({
 });
 
 const paneSlotStateSchema = z.object({
+    presentation: z.optional(PaneSlotPresentationSchema),
     isOpen: z.boolean(),
     activeTabId: z.nullable(z.string()),
     // Destination identity is the one plugin-owned fact in an otherwise
@@ -94,6 +96,7 @@ const paneSlotStateSchema = z.object({
 
 export const paneScopeStateSchema = z.object({
     mainHidden: z._default(z.boolean(), false),
+    mainTabId: z.optional(z.nullable(z.string())),
     right: paneSlotStateSchema,
     details: z.union([legacyPaneDetailsStateSchema, paneDetailsWorkspaceStateSchema]),
     bottom: paneSlotStateSchema,

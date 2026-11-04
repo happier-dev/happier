@@ -312,12 +312,12 @@ export function WorkspaceProvider(props: Readonly<{
             if (closing) {
                 if (!closing.tabIds.length) return execute(request.actionId, request.input);
                 let outcome: WorkspaceActionOutcome = workspaceActionFailure('workspace_navigation_cancelled');
-                await runGuardedTabNavigation(closing.tabIds, () => {
+                await runGuardedTabNavigation(closing.tabIds, async () => {
                     const selection = selectWorkspaceTabsToClose(latest.current.owner.getState(), request.actionId, request.input);
                     if (!selection || selection.groupId !== closing.groupId || selection.tabIds.length !== closing.tabIds.length
                         || selection.tabIds.some((id, index) => id !== closing.tabIds[index])) return false;
                     if (phone) runtime.initialized = true;
-                    outcome = execute(request.actionId, request.input);
+                    outcome = await execute(request.actionId, request.input);
                     return outcome.ok;
                 }, {
                     includeActiveGuard: state.focusedGroupId === closing.groupId
@@ -336,11 +336,11 @@ export function WorkspaceProvider(props: Readonly<{
                 || request.actionId === 'workspace.groups.focus' || request.actionId === 'workspace.split';
             if (!navigates) return execute(request.actionId, request.input);
             let outcome: WorkspaceActionOutcome = workspaceActionFailure('workspace_navigation_cancelled');
-            await runGuardedNavigation(() => {
+            await runGuardedNavigation(async () => {
                 if (phone && isCurrent() && !request.signal?.aborted) runtime.initialized = true;
                 outcome = !isCurrent() ? workspaceActionFailure('workspace_unavailable')
                     : request.signal?.aborted ? workspaceActionFailure('action_cancelled')
-                        : execute(request.actionId, request.input);
+                        : await execute(request.actionId, request.input);
             });
             return outcome;
         });

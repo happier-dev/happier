@@ -21,6 +21,8 @@ export type DetailsTab = Readonly<{
 export type DetailsTabState = Readonly<DetailsTab & {
     isPreview: boolean;
     isPinned: boolean;
+    /** Device-local presentation; canonical group membership stays in this workspace. */
+    presentation?: Readonly<{ windowId: string }>;
 }>;
 
 /**
@@ -114,6 +116,7 @@ export type DetailsWorkspaceNode = SplitCanvasNode<DetailsWorkspaceLeafPayload>;
  * the AppPane-scoped ephemeral handoff owner.
  */
 export type DetailsWorkspaceOverlayState = Readonly<{
+    presentation?: Readonly<{ windowId: string }>;
     destination: PluginUiDestinationReferenceV1;
     instanceKey?: PluginUiInstanceKeyV1;
     returnFocusedGroupId: string | null;

@@ -3,7 +3,16 @@ import {
 } from './detailsWorkspaceSplitCanvas';
 import {
     getOwnDetailsWorkspaceRecordEntry,
+    readDetailsTabRehydrationFallbackState,
 } from './detailsWorkspaceTypes';
+
+/** A viewer switch keeps its original file identity through the existing restoration fallback. */
+export function resolveDetailsPresentationTabKey(details: PaneDetailsState, requestedKey: string): string {
+    if (getOwnDetailsWorkspaceRecordEntry(details.tabsByKey, requestedKey)) return requestedKey;
+    return Object.keys(details.tabsByKey).find(key =>
+        readDetailsTabRehydrationFallbackState(getOwnDetailsWorkspaceRecordEntry(details.tabState, key))?.key === requestedKey,
+    ) ?? requestedKey;
+}
 import type {
     DetailsWorkspaceGroupView,
     PaneDetailsState,
@@ -30,7 +39,7 @@ function buildGroupView(
     if (!group) return null;
     const tabs = group.tabKeys
         .map((tabKey) => getOwnDetailsWorkspaceRecordEntry(details.tabsByKey, tabKey) ?? null)
-        .filter((tab): tab is NonNullable<typeof tab> => tab != null);
+        .filter((tab): tab is NonNullable<typeof tab> => tab != null && !tab.presentation);
     const activeTabKey = group.activeTabKey && tabs.some((tab) => tab.key === group.activeTabKey)
         ? group.activeTabKey
         : tabs.at(-1)?.key ?? null;

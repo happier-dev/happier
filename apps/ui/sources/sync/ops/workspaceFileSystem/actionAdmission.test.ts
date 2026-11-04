@@ -295,10 +295,10 @@ describe('shared workspace filesystem Action admission', () => {
                 push: () => { throw new Error('A file result must use the file Action'); },
                 navigateToSession: () => { throw new Error('A file result must use the file Action'); },
                 openProject: async () => { throw new Error('A file result must use the file Action'); },
-                openFile: async ({ path, ...address }, options) => execute('workspace.tabs.open', {
+                openFile: async ({ path, ...address }, options) => (await execute('workspace.tabs.open', {
                     file: { target: address, path, anchor: options?.anchor, anchorSource: options?.anchorSource },
                     mode: 'preview', find: options?.find,
-                }).ok,
+                })).ok,
             })).toEqual({ ok: true });
             const opened = workspace.tabs[workspace.groups[workspace.focusedGroupId].activeTabId].target;
             if (host === 'session') {

@@ -9,6 +9,7 @@ import type {
 } from '@/components/appShell/panes/details/workspace/detailsWorkspaceTypes';
 import {
     applyCloseDetails,
+    applyDetailsTabPresentation,
     applyCloseDetailsOverlay,
     applyCloseDetailsGroup,
     applyCloseDetailsTab,
@@ -33,12 +34,14 @@ import type {
 } from '@happier-dev/protocol/plugins/ui';
 import { arePaneStateJsonValuesEqual } from './paneStateStructuralEquality';
 import { readSessionTerminalWorkspace, reduceSessionTerminalWorkspace, type SessionTerminalWorkspaceCommand } from '@/components/sessions/terminal/sessionTerminalWorkspace';
+import { reconcilePersistedTerminalWorkspace } from './paneScopePersistence';
 import { resolveTerminalDetailsInstanceId } from '@/components/terminal/terminalDetailsTabModel';
 import { SESSION_BOARD_DESTINATION } from '@/components/sessions/board/sessionBoardDestination';
 import { fileChangesScopeOfComparison } from '@/components/workspaces/files/file/changes/fileChangesScope';
 import { buildWorkspaceFileViewPatch } from '@/components/workspaces/files/details/workspaceFileDetails/workspaceFileView';
 import {
     areSelectedPaneDestinationsEqual,
+    findSelectedPaneSlot,
     createBuiltinPaneDestination,
     type SelectedPaneDestinationV1,
 } from './selectedPaneDestination';
@@ -50,10 +53,12 @@ export type PaneId = 'right' | 'details' | 'bottom';
 
 export type PaneScopeState = Readonly<{
     mainHidden: boolean;
+    mainTabId?: string | null;
     right: {
         isOpen: boolean;
         activeTabId: string | null;
         selectedDestination: SelectedPaneDestinationV1 | null;
+        presentation?: Readonly<{ windowId: string }>;
         tabState: Readonly<Record<string, unknown>>;
     };
     details: PaneDetailsState;
@@ -61,6 +66,7 @@ export type PaneScopeState = Readonly<{
         isOpen: boolean;
         activeTabId: string | null;
         selectedDestination: SelectedPaneDestinationV1 | null;
+        presentation?: Readonly<{ windowId: string }>;
         tabState: Readonly<Record<string, unknown>>;
     };
 }>;
@@ -79,6 +85,9 @@ export type AppPaneState = Readonly<{
 }>;
 
 export type AppPaneAction =
+    | { type: 'setDetailsTabPresentation'; scopeId: string; tabKey: string; presentation: DetailsTabState['presentation'] | null }
+    | { type: 'restoreScope'; scopeId: string; scope: PaneScopeState; selectedPaneTabKey?: string }
+    | { type: 'setSelectedPanePresentation'; scopeId: string; tabKey: string; presentation: Readonly<{ windowId: string }> | null }
     | { type: 'mergePersistedScopes'; scopes: Readonly<Record<string, PaneScopeState>> }
     | { type: 'activateScope'; scopeId: string; initialRight?: InitialRightPaneState }
     /** The page that owned the active scope left the screen: no page's panes are active until one is. */
@@ -213,11 +222,13 @@ function arePaneScopeStatesEqual(left: PaneScopeState, right: PaneScopeState): b
         && left.right.isOpen === right.right.isOpen
         && left.right.activeTabId === right.right.activeTabId
         && areSelectedPaneDestinationsEqual(left.right.selectedDestination, right.right.selectedDestination)
+        && left.right.presentation?.windowId === right.right.presentation?.windowId
         && areTabStateRecordsEqual(left.right.tabState, right.right.tabState)
         && arePaneDetailsStatesEqual(left.details, right.details)
         && left.bottom.isOpen === right.bottom.isOpen
         && left.bottom.activeTabId === right.bottom.activeTabId
         && areSelectedPaneDestinationsEqual(left.bottom.selectedDestination, right.bottom.selectedDestination)
+        && left.bottom.presentation?.windowId === right.bottom.presentation?.windowId
         && areTabStateRecordsEqual(left.bottom.tabState, right.bottom.tabState)
     );
 }
@@ -277,6 +288,28 @@ function unfoldSideColumn(details: PaneDetailsState): PaneDetailsState {
 
 export function appPaneReduce(state: AppPaneState, action: AppPaneAction): AppPaneState {
     switch (action.type) {
+        case 'setDetailsTabPresentation':
+            return updateScopeDetails(state, action.scopeId, details => applyDetailsTabPresentation(details, action.tabKey, action.presentation));
+        case 'restoreScope':
+            return upsertScope(state, action.scopeId, () => reconcilePersistedTerminalWorkspace(action.scope,
+                state.scopes[action.scopeId]?.bottom.tabState.terminal));
+        case 'setSelectedPanePresentation': {
+            const prev = state.scopes[action.scopeId];
+            if (!prev) return state;
+            const slot = findSelectedPaneSlot(prev, action.tabKey);
+            if (!slot || slot.presentation?.windowId === action.presentation?.windowId) return state;
+            return upsertScope(state, action.scopeId, () => {
+                if (slot.slot === 'detailsOverlay') {
+                    const overlay = prev.details.overlay;
+                    if (!overlay) return prev;
+                    const { presentation: _old, ...retained } = overlay;
+                    return { ...prev, details: { ...prev.details, overlay: action.presentation
+                        ? { ...retained, presentation: action.presentation } : retained } };
+                }
+                const { presentation: _old, ...retained } = prev[slot.slot];
+                return { ...prev, [slot.slot]: action.presentation ? { ...retained, presentation: action.presentation } : retained };
+            });
+        }
         case 'mergePersistedScopes': {
             const incomingScopes = action.scopes;
             if (Object.keys(incomingScopes).length === 0) return state;

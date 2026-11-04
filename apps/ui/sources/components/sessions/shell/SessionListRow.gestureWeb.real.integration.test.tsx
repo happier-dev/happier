@@ -210,7 +210,7 @@ describe('SessionListRow real web gesture', () => {
                         execute: async effect => {
                             actions.push(effect.actionId);
                             if (!isWorkspaceActionId(effect.actionId)) throw new Error('Expected workspace Action');
-                            const result = execute(effect.actionId, effect.input);
+                            const result = await execute(effect.actionId, effect.input);
                             return result.ok ? { status: 'applied' } : { status: 'refused', reason: { code: result.errorCode, message: result.error } };
                         },
                     }} /></>;

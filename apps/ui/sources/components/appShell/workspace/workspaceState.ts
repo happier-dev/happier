@@ -7,7 +7,16 @@ import {
     removeGroupPreviewTabs, reorderGroupTab,
 } from './tabGroups/tabGroupTransitions';
 
-export type WorkspaceTab = Readonly<{ id: string; target: DestinationRef; pinned: boolean; preview: boolean }>;
+export type WorkspaceTab = Readonly<{
+    id: string; target: DestinationRef; pinned: boolean; preview: boolean;
+    /** Device-local presentation; group membership and shared tabs remain unchanged. */
+    presentation?: Readonly<{ windowId: string }>;
+}>;
+export function sameDestinationRef(a: DestinationRef, b: DestinationRef): boolean {
+    return a.kind === b.kind && Object.keys(a.params).length === Object.keys(b.params).length
+        && Object.entries(a.params).every(([key, value]) => b.params[key] === value);
+}
+
 export function createWorkspaceEmptyTab(id: string): WorkspaceTab {
     return { id, target: { kind: 'newTab', params: {} }, pinned: false, preview: false };
 }
@@ -31,6 +40,32 @@ export type WorkspaceState = Readonly<{
     recentlyClosed: readonly ClosedWorkspaceTab[];
 }>;
 
+export type WorkspacePresentationVisibility = Readonly<{
+    windowId?: string;
+    scope?: Readonly<{ serverId: string; accountId: string }>;
+    transferringTabIds?: readonly string[];
+    placedTabs?: readonly Readonly<{ tabId: string; windowId: string; serverId: string; accountId: string }>[];
+}>;
+
+/** Presentation filters a layout without changing shared membership or its saved selection. */
+export function selectWorkspaceVisibleGroup(state: WorkspaceState, group: WorkspaceGroup,
+    presentation: WorkspacePresentationVisibility = {}): WorkspaceGroup {
+    const hidden = new Set(presentation.transferringTabIds);
+    for (const placed of presentation.placedTabs ?? []) {
+        if (presentation.scope && placed.windowId !== presentation.windowId && placed.serverId === presentation.scope.serverId
+            && placed.accountId === presentation.scope.accountId) hidden.add(placed.tabId);
+    }
+    const tabIds = group.tabIds.filter(id => {
+        const tab = state.tabs[id];
+        return tab && !hidden.has(id) && (!tab.presentation || tab.presentation.windowId === presentation.windowId);
+    });
+    if (tabIds.length === group.tabIds.length) return group;
+    const visible = new Set(tabIds);
+    const mru = group.mru.filter(id => visible.has(id));
+    return { ...group, tabIds, mru,
+        activeTabId: visible.has(group.activeTabId) ? group.activeTabId : mru[0] ?? tabIds[0] ?? '' };
+}
+
 type MeasuredSplit = Readonly<{
     availableSizePx: number;
     minimumFirstSizePx: number;
@@ -42,6 +77,7 @@ export type WorkspaceAction =
     | (MeasuredSplit & Readonly<{ type: 'openSplitTab'; groupId: string; tab: WorkspaceTab;
         newGroupId: string; axis: SplitCanvasAxis; placement: SplitCanvasPlacement }>)
     | Readonly<{ type: 'activateTab'; groupId: string; tabId: string }>
+    | Readonly<{ type: 'setPresentation'; tabId: string; presentation: WorkspaceTab['presentation'] | null }>
     | Readonly<{ type: 'closeTab'; groupId: string; tabId: string; newTab: WorkspaceTab; remember?: boolean }>
     | Readonly<{ type: 'closeTabs'; groupId: string; tabIds: readonly string[]; newTab: WorkspaceTab }>
     | Readonly<{ type: 'reopenTab'; tabId?: string; reuseTabId?: string }>
@@ -164,6 +200,14 @@ export function selectWorkspaceClosableTabIds(state: WorkspaceState, groupId: st
 
 export function reduceWorkspaceState(state: WorkspaceState, action: WorkspaceAction): WorkspaceState {
     switch (action.type) {
+        case 'setPresentation': {
+            const tab = state.tabs[action.tabId];
+            if (!tab || tab.presentation?.windowId === action.presentation?.windowId) return state;
+            const { presentation: _presentation, ...retained } = tab;
+            return { ...state, tabs: { ...state.tabs, [tab.id]: {
+                ...retained, ...(action.presentation ? { presentation: action.presentation } : {}),
+            } } };
+        }
         case 'openSplitTab': {
             if (!state.groups[action.groupId] || state.tabs[action.tab.id]) return state;
             const opened = reduceWorkspaceState(state, { type: 'openTab', groupId: action.groupId,
@@ -373,7 +417,9 @@ export function reduceWorkspaceState(state: WorkspaceState, action: WorkspaceAct
         }
         case 'setTarget': {
             const tab = state.tabs[action.tabId];
-            if (!tab || tab.target === action.target) return state;
+            // Header declarations and mounted controls belong to this retained
+            // target. Re-adopting equal route data does not replace its lifetime.
+            if (!tab || sameDestinationRef(tab.target, action.target)) return state;
             return { ...state, tabs: { ...state.tabs, [tab.id]: { ...tab, target: action.target } },
                 fallbackTitlesByTabId: withoutTabs(state.fallbackTitlesByTabId, [tab.id]) };
         }

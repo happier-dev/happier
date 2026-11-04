@@ -20,7 +20,7 @@ import { scopedStorageId } from '@/utils/system/storageScope';
 import { encodeBase64 } from '@/encryption/base64';
 import { TERMINAL_CONNECT_WEB_BOOTSTRAP_STORAGE_KEY } from '@/utils/path/terminalConnectWebBootstrap';
 import { resolveBootCredentials } from './resolveBootCredentials';
-import { buildSessionDetailsHref } from '@/components/sessions/panes/url/sessionPaneUrlState';
+import { buildSessionDetailsHref, serializeSessionPaneUrlState } from '@/components/sessions/panes/url/sessionPaneUrlState';
 import { buildWorkspaceFileLink } from '@/utils/url/sessionFileDeepLink';
 
 installTokenStorageWebPlatformMocks();
@@ -32,6 +32,7 @@ const runtime = await vi.hoisted(async () => {
     // Real DOM-dependent imports evaluate before cases; retain the complete jsdom document.
     const document = globalThis.document;
     const navigator = globalThis.navigator;
+    const browserWindow = globalThis.window;
     const sessionValues = new Map<string, string>();
     const sessionStorage: Storage = {
         get length() { return sessionValues.size; },
@@ -46,6 +47,9 @@ const runtime = await vi.hoisted(async () => {
         localStorage: Storage;
         sessionStorage: Storage;
         history: { replaceState: ReturnType<typeof vi.fn> };
+        addEventListener: Window['addEventListener'];
+        removeEventListener: Window['removeEventListener'];
+        dispatchEvent: Window['dispatchEvent'];
         __HAPPIER_WEB_RUNTIME_CONFIG__?: HappierWebRuntimeConfig;
         __TAURI_INTERNALS__?: { invoke: (command: string, args?: Record<string, unknown>) => Promise<unknown> };
     } = {
@@ -53,6 +57,9 @@ const runtime = await vi.hoisted(async () => {
         localStorage: backend,
         sessionStorage,
         history: { replaceState: vi.fn() },
+        addEventListener: browserWindow.addEventListener.bind(browserWindow),
+        removeEventListener: browserWindow.removeEventListener.bind(browserWindow),
+        dispatchEvent: browserWindow.dispatchEvent.bind(browserWindow),
     };
     // The actual owners first evaluate in this ordinary web realm, not an embed realm.
     vi.stubGlobal('window', window);
@@ -132,6 +139,15 @@ async function expectStoredCredentials(serverUrl: string, credentials: AuthCrede
 }
 
 describe('resolveBootCredentials', () => {
+    it('preserves the exact Home, Account and SCM review when a destination Session is retargeted', async () => {
+        const { desktopSessionTargetForDestination } = await import('@/desktop/window/appWindowBoot');
+        const target = { kind: 'session', params: { id: 'next-session', serverId: 'other-home',
+            ...serializeSessionPaneUrlState({ details: { kind: 'scmReview', comparison: { kind: 'workingTree' }, view: 'walkthrough' } }) } };
+        expect(desktopSessionTargetForDestination(target, { serverId: 'home-a', accountId: 'alice' })).toEqual({
+            kind: 'session', sessionId: 'next-session', serverId: 'other-home', accountId: 'alice',
+            destination: { kind: 'scmReview', comparison: { kind: 'workingTree' }, view: 'walkthrough' },
+        });
+    });
     beforeEach(() => {
         // Shared UI setup resets DOM globals; reattach the same pre-evaluation backend and realm.
         vi.stubGlobal('window', runtime.window);
@@ -154,6 +170,9 @@ describe('resolveBootCredentials', () => {
         // Genuine desktop SDK transport preserves native-first secret custody beneath the owner.
         runtime.invoke.mockImplementation(async (command, args) => {
             if (command === 'desktop_read_stack_boot_credentials') return runtime.bootCredentials;
+            if (command === 'desktop_app_windows_teardown') return null;
+            if (command === 'desktop_app_windows_auth_changed') return null;
+            if (command === 'desktop_app_window_ready') return null;
             const key = args?.key;
             if (typeof key !== 'string') throw new Error(`Missing desktop storage key: ${command}`);
             if (command === 'desktop_secure_storage_read') return runtime.secureValues.get(key) ?? null;
@@ -495,5 +514,53 @@ describe('resolveBootCredentials', () => {
         expect(getActiveServerId()).toBe('stack-id');
         expect(getActiveServerUrl()).toBe(namedUrl);
         expect(await TokenStorage.getCredentialsForServerUrl('http://localhost:24541', { serverId: 'stack-id' })).toEqual(credentials);
+    });
+
+    it('boots a destination in its saved Home and Account without changing the main device Home', async () => {
+        enableStackDesktop();
+        const main = await retainHome(stackUrl, { token: 'main-token' });
+        const credentials = { token: `header.${encodeBase64(new TextEncoder().encode(JSON.stringify({ sub: 'window-account' })))}.signature` };
+        const target = await saveHomeCredentials('https://window-home.example.test', credentials);
+        const { resolveDesktopAppWindowBootCredentials } = await import('@/desktop/window/appWindowBoot');
+        const original = runtime.invoke.getMockImplementation()!;
+        runtime.invoke.mockImplementation(async (command, args) => command === 'desktop_app_window_read'
+            ? { windowId: 'window-a', accountId: 'window-account', homeId: target.id, layoutId: 'layout-a', selectedAddress: { kind: 'session', sessionId: 'session-a' } }
+            : original(command, args));
+        stubWebRuntime('http://localhost:8081/desktop/window');
+
+        await expect(resolveDesktopAppWindowBootCredentials('web')).resolves.toEqual(credentials);
+        expect(getActiveServerId()).toBe(target.id);
+        expect(getDeviceDefaultServerId()).toBe(main.serverId);
+        expect(runtime.invoke.mock.calls.filter(([command]) => command === 'desktop_app_window_read')).toHaveLength(1);
+
+        // A restored record is context, never authority to borrow a different Account's bearer.
+        expect(await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, {
+            token: `header.${encodeBase64(new TextEncoder().encode(JSON.stringify({ sub: 'next-account' })))}.signature`,
+        })).toBe(true);
+        await expect(resolveDesktopAppWindowBootCredentials('web')).resolves.toBeNull();
+        expect(runtime.invoke).toHaveBeenCalledWith('desktop_app_window_ready', { failure: 'metadata_unavailable' });
+    });
+
+    it.each([null, { invalid: true }])('settles hidden destination boot when native metadata is unavailable (%j)', async metadata => {
+        enableStackDesktop();
+        const original = runtime.invoke.getMockImplementation()!;
+        runtime.invoke.mockImplementation(async (command, args) => command === 'desktop_app_window_read' ? metadata : original(command, args));
+        const { resolveDesktopAppWindowBootCredentials } = await import('@/desktop/window/appWindowBoot');
+        await expect(resolveDesktopAppWindowBootCredentials('web')).resolves.toBeNull();
+        expect(runtime.invoke).toHaveBeenCalledWith('desktop_app_window_ready', { failure: 'metadata_unavailable' });
+    });
+
+    it('settles the hidden destination when authoritative draft storage fails before its route can mount', async () => {
+        enableStackDesktop();
+        const { runDesktopAppWindowBootSequence } = await import('@/desktop/window/appWindowBoot');
+        const failure = new Error('Draft storage failed with private retained content');
+        let painted = false;
+        await expect(runDesktopAppWindowBootSequence({
+            loadFonts: async () => {}, sodiumReady: Promise.resolve(), resolveCredentials: async () => null,
+            prepareWarmCache: async () => {}, prepareSessionDrafts: async () => { throw failure; },
+            prepareTranslations: async () => {}, restoreSync: null, onReady: () => { painted = true; },
+        })).rejects.toBe(failure);
+        expect(painted).toBe(false);
+        expect(runtime.invoke.mock.calls).toEqual([['desktop_app_window_ready', { failure: 'presentation_unavailable' }]]);
     });
 });

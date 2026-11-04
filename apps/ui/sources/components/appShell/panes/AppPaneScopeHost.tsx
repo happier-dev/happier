@@ -35,7 +35,8 @@ import {
     resolveSelectedPaneDestination,
     type PaneDestinationRuntimeAdmission,
 } from './model/resolveSelectedPaneDestination';
-import type { SelectedPaneDestinationV1 } from './model/selectedPaneDestination';
+import { isSelectedPaneSlotVisible, readSelectedPaneDestinationSlot, type SelectedPaneDestinationV1 } from './model/selectedPaneDestination';
+import { PluginDetailsPaneOverlay } from './details/surfaces/PluginDetailsPaneOverlay';
 import type { InitialRightPaneState } from './model/appPaneReducer';
 import {
     PluginDetailsDestinationLaunchScope,
@@ -65,6 +66,7 @@ export type AppPaneDestinationDetails = Readonly<{
 
 export type AppPaneScopeHostProps = Readonly<{
     scopeId: string;
+    selectedPaneTabKey?: string;
     /** A creation default, never an instruction to reopen an existing scope. */
     initialRight?: InitialRightPaneState;
     main: React.ReactNode;
@@ -354,10 +356,11 @@ function PluginAppPaneSurface(props: Readonly<{
 
 const AppPaneScopeHostContent = React.memo((props: AppPaneScopeHostProps & Readonly<{ paneAdapter: ResolvedPaneAdapter | null }>) => {
     const enclosingNavigationBinding = usePluginSurfaceDestinationNavigationBinding();
-    const { dispatch, right, bottom, detailsOpen, detailsOpenedFrom, mainHidden, overlayFocusReturnOwner } = useAppPaneContext(value => ({
+    const { dispatch, right, bottom, detailsOverlay, detailsOpen, detailsOpenedFrom, mainHidden, overlayFocusReturnOwner } = useAppPaneContext(value => ({
         dispatch: value.dispatch,
         right: value.state.scopes[props.scopeId]?.right,
         bottom: value.state.scopes[props.scopeId]?.bottom,
+        detailsOverlay: value.state.scopes[props.scopeId]?.details.overlay,
         detailsOpen: value.state.scopes[props.scopeId]?.details.isOpen === true,
         detailsOpenedFrom: value.state.scopes[props.scopeId]?.details.openedFrom ?? null,
         mainHidden: value.state.scopes[props.scopeId]?.mainHidden === true,
@@ -381,8 +384,8 @@ const AppPaneScopeHostContent = React.memo((props: AppPaneScopeHostProps & Reado
         return () => dispatch({ type: 'releaseScope', scopeId: props.scopeId });
     }, [dispatch, props.scopeId, screenFocused]);
 
-    const rightOpen = Boolean(right?.isOpen);
-    const bottomOpen = Boolean(bottom?.isOpen);
+    const rightOpen = isSelectedPaneSlotVisible(right, 'right', props.selectedPaneTabKey);
+    const bottomOpen = isSelectedPaneSlotVisible(bottom, 'bottom', props.selectedPaneTabKey);
     const paneAdapter = props.paneAdapter;
     const showActionRail = useAppPaneActionRailVisible(props.scopeId, paneAdapter?.rightSidebarAdapter ?? null);
     const detailsPaneEnabled = paneAdapter?.detailsPaneEnabled !== false;
@@ -390,9 +393,9 @@ const AppPaneScopeHostContent = React.memo((props: AppPaneScopeHostProps & Reado
     const arrangement = props.arrangement === 'honour' && deviceType !== 'phone' ? preference.arrangement : 'session';
     const destinationDetails = props.destinationDetails;
     const destinationOwnsDetails = destinationDetails !== undefined;
-    const effectiveDetailsOpen = arrangement === 'editor' || (destinationOwnsDetails
+    const effectiveDetailsOpen = props.selectedPaneTabKey === undefined && (arrangement === 'editor' || (destinationOwnsDetails
         ? destinationDetails !== null
-        : detailsPaneEnabled ? detailsOpen : false);
+        : detailsPaneEnabled ? detailsOpen : false));
     const mainHiddenPreference = mainHidden;
     const resolveMainHidden = React.useCallback((layout: ResolvedPaneLayout) => (
         props.mainColumn !== undefined && mainHiddenPreference && layout.kind !== 'single'
@@ -400,10 +403,10 @@ const AppPaneScopeHostContent = React.memo((props: AppPaneScopeHostProps & Reado
     ), [effectiveDetailsOpen, mainHiddenPreference, props.mainColumn, rightOpen]);
     React.useEffect(() => {
         // Route-owned details cannot be seen by the reducer. Reconcile them here with every host.
-        if (screenFocused && mainHiddenPreference && !rightOpen && !effectiveDetailsOpen) {
+        if (props.selectedPaneTabKey === undefined && screenFocused && mainHiddenPreference && !rightOpen && !effectiveDetailsOpen) {
             dispatch({ type: 'setMainHidden', scopeId: props.scopeId, hidden: false });
         }
-    }, [dispatch, effectiveDetailsOpen, mainHiddenPreference, props.scopeId, rightOpen, screenFocused]);
+    }, [dispatch, effectiveDetailsOpen, mainHiddenPreference, props.scopeId, props.selectedPaneTabKey, rightOpen, screenFocused]);
     const drawerControls = React.useRef<Readonly<{ open(): void; close(): void }> | null>(null);
     const receiveDrawerControls = React.useCallback((controls: typeof drawerControls.current) => {
         drawerControls.current = controls;
@@ -700,7 +703,7 @@ const AppPaneScopeHostContent = React.memo((props: AppPaneScopeHostProps & Reado
                         selectedDestination: right?.selectedDestination,
                         scopeId: props.scopeId,
                     });
-    const detailsPane = destinationOwnsDetails
+    const detailsPane = props.selectedPaneTabKey !== undefined ? null : destinationOwnsDetails
         ? destinationDetails?.pane ?? null
         : effectiveDetailsOpen
             ? renderBuiltinPane({
@@ -766,6 +769,17 @@ const AppPaneScopeHostContent = React.memo((props: AppPaneScopeHostProps & Reado
         </PluginSurfaceDestinationNavigationBindingProvider>
     ), [effectiveDetailsOpen, enclosingNavigationBinding, paneNavigationBinding, props.arrangement, props.mainColumn, props.onMainColumnControlsChange, props.scopeId,
         rightOpen, rightPaneBuiltinAdapter, rightSidebarAdapter, screenFocused, setMainHidden, setSideVisible, wrapScopeContent]);
+
+    if (props.selectedPaneTabKey !== undefined) {
+        const selectedSlot = readSelectedPaneDestinationSlot(props.selectedPaneTabKey);
+        const selected = selectedSlot === 'right' ? rightPane : selectedSlot === 'bottom' ? bottomPane
+            : selectedSlot === 'detailsOverlay' && detailsOverlay && paneSurfaceScope
+                ? <PluginDetailsPaneOverlay targetKind={paneSurfaceScope.targetKind} projection={paneProjection}
+                    mount={detailsDestinationMount} overlay={detailsOverlay} />
+                : <PaneLoadingFallback />;
+        return wrapContent(<>{selected}</>);
+    }
+
 
     return (
         <PaneColumnsHost

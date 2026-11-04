@@ -27,7 +27,11 @@ function parseTab(value: unknown, id: string): WorkspaceTab | null {
     if (!candidate || candidate.id !== id || !target
         || typeof candidate.pinned !== 'boolean' || typeof candidate.preview !== 'boolean'
         || (candidate.pinned && candidate.preview)) return null;
-    return { id, target, pinned: candidate.pinned, preview: candidate.preview };
+    const presentation = candidate.presentation === undefined ? null : record(candidate.presentation);
+    if (candidate.presentation !== undefined && !nonempty(presentation?.windowId)) return null;
+    return { id, target, pinned: candidate.pinned, preview: candidate.preview,
+        ...(presentation ? { presentation: { windowId: presentation.windowId as string } } : {}),
+    };
 }
 
 function parseGroup(value: unknown, id: string): WorkspaceGroup | null {

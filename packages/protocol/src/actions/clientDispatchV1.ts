@@ -2,7 +2,7 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
 import { ActionIdSchema, type ActionId } from './actionIds.js';
 import { ActionSurfaceSchema, ActionRequiredAuthoritySchema, getActionSpec, resolveActionExecutionPlacementForInput } from './actionSpecs.js';
-import type { ActionExecuteResult } from './executor/types.js';
+import type { ActionExecuteResult, ActionExecutorContext } from './executor/types.js';
 import { ActionApprovalRequestCreatedResultSchema, ActionExecuteFailureSchema } from './actionExecutionResult.js';
 import { ApiTokenGrantV1Schema } from '../auth/apiTokenGrant.js';
 import { ApprovalExecutionOriginCallerV1Schema } from '../approvals/approvalRequestV1.js';
@@ -111,6 +111,16 @@ export const UiActionDispatchRequestV1Schema = lazyZodSchema(() => z.strictObjec
   }
 })));
 export type UiActionDispatchRequestV1 = z.infer<typeof UiActionDispatchRequestV1Schema>;
+
+export function buildUiActionDispatchRequestV1(request: Readonly<{
+  actionId: ActionId; input: unknown; context: ActionExecutorContext;
+}>): UiActionDispatchRequestV1 {
+  const shape = UiActionDispatchRequestV1Schema.shape.context.shape;
+  // Only the executor's closed admission supplies these facts, never a caller's context projection.
+  const context = { ...Object.fromEntries(Object.entries(request.context)
+    .filter(([key]) => Object.hasOwn(shape, key))) };
+  return UiActionDispatchRequestV1Schema.parse({ v: 1, actionId: request.actionId, input: request.input, context });
+}
 
 /**
  * Workflow definition writes and trigger operations whose non-person caller is

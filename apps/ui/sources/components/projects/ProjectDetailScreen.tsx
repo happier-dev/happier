@@ -47,6 +47,8 @@ const PROJECT_BUILTIN_DESTINATION_IDS = RIGHT_SIDEBAR_BUILTIN_TABS
 
 export const ProjectDetailScreen = React.memo((props: Readonly<{
     workspaceRefId: string;
+    paneScopeId?: string;
+    selectedPaneTabKey?: string;
     serverId?: string | null;
     /** Qualified candidate/recovery state from the route owner; U2 owns its presentation. */
     workspaceResolution?: WorkspaceRefResolutionV1 | WorkspaceRefUnconfirmed;
@@ -70,7 +72,8 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
     const lastActiveRootPathByWorkspaceRefId = useLocalSetting('projectLastActiveRootPathByWorkspaceRefId');
     const lastActiveWorktreeIdByWorkspaceRefId = useLocalSetting('projectLastActiveWorktreeIdByWorkspaceRefId');
     const workspaceRef = useWorkspaceRefById(props.workspaceRefId, props.serverId);
-    const scopeId = useDestinationPaneScopeId(buildProjectPaneScopeId(props.workspaceRefId, workspaceRef?.serverId ?? props.serverId));
+    const destinationScopeId = useDestinationPaneScopeId(buildProjectPaneScopeId(props.workspaceRefId, workspaceRef?.serverId ?? props.serverId));
+    const scopeId = props.paneScopeId ?? destinationScopeId;
     const pane = useAppPaneScope(scopeId, () => null);
     // The page's menus and Add surfaces float inside its own column (header and body), never over the sidebar.
     const pageColumnRef = React.useRef<View>(null);
@@ -294,6 +297,7 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
         <View style={{ flex: 1 }} {...pane.overlayFocusReturnCaptureProps}>
             <AppPaneScopeHost
                 scopeId={scopeId}
+                selectedPaneTabKey={props.selectedPaneTabKey}
                 arrangement="honour"
                 mainColumn={{
                     hideLabel: t('panes.mainColumn.hideProject'),

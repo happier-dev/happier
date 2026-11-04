@@ -541,6 +541,7 @@ export type {
   ActionAutomationRunCaller,
   ActionCaller,
   ActionExecuteResult,
+  AdmittedClientActionContext,
   ActionExecutorContext,
   ActionExecutorDeps,
   ActionSessionAddress,

@@ -654,7 +654,7 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
 }
 
 export type UiSessionTargetPreview = SessionTargetPreviewV1;
-type UiProtocolActionExecutor = Pick<ReturnType<typeof createActionExecutor>, 'prepare' | 'execute' | 'replayApprovedApprovalRequest'> & Readonly<{
+type UiProtocolActionExecutor = Pick<ReturnType<typeof createActionExecutor>, 'prepare' | 'execute' | 'executeAdmittedClientAction' | 'replayApprovedApprovalRequest'> & Readonly<{
   executeConfirmed: ReturnType<typeof createActionExecutor>['execute'];
   /** Read-only selector preparation; creates neither an effect nor an approval. */
   previewSessionTargets: (target: SessionTargetSelectorV1, context?: ActionExecutorContext) => Promise<UiSessionTargetPreview>;
@@ -4667,6 +4667,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         ? { kind: 'ready', invocation: { run: () => executeMachinePluginAtDaemon(actionId, input, resolved) } }
         : await executor.prepare(actionId, input, resolved, options);
     },
+    executeAdmittedClientAction: (actionId, input, context) => executor.executeAdmittedClientAction(actionId, input, context),
     execute: executeAction,
     executeConfirmed: (actionId, input, context) => executeAction(actionId, input, context, true),
     replayApprovedApprovalRequest: async (args) => await executor.replayApprovedApprovalRequest(args),
@@ -4683,7 +4684,7 @@ export type UiActionExecutorContext = import('@/components/plugins/surfaces/plug
   /** Destination-owner navigation leaf, consumed only in this invocation. */
   openRoute?: (route: string) => void | Promise<void>;
 }>;
-type DefaultActionExecutor = Omit<UiProtocolActionExecutor, 'execute' | 'prepare' | 'previewSessionTargets'> & Readonly<{
+type DefaultActionExecutor = Omit<UiProtocolActionExecutor, 'execute' | 'prepare' | 'previewSessionTargets' | 'executeAdmittedClientAction'> & Readonly<{
   previewSessionTargets: (target: SessionTargetSelectorV1, context?: UiActionExecutorContext, readInputs?: SessionFollowReadInputs) => Promise<UiSessionTargetPreview>;
   execute: (actionId: ActionId, input: unknown, context?: UiActionExecutorContext) => ReturnType<ReturnType<typeof createActionExecutor>['execute']>;
   prepare: (actionId: ActionId, input: unknown, context?: UiActionExecutorContext, options?: import('@happier-dev/protocol/actions/executor/types').ActionPrepareOptions) => ReturnType<ReturnType<typeof createActionExecutor>['prepare']>;
@@ -4973,6 +4974,18 @@ export async function withDefaultActionExecuteContext<TResult>(
     finishSessionArchiveInvocation(archiveInvocation);
     account.dispose();
   }
+}
+
+/** Trusted native main-to-presenter continuation. The original Action already passed admission. */
+export async function executeAdmittedDesktopAppWindowAction(
+  actionId: ActionId,
+  input: unknown,
+  context: UiActionExecutorContext & Readonly<{ serverId: string }>,
+  options: import('./desktopAppWindowActionDispatch').DesktopAppWindowActionOptions = {},
+): Promise<ActionExecuteResult> {
+  return withDefaultActionExecuteContext({ ...options, admittedClientActionId: actionId }, { ...context, serverId: context.serverId },
+    (executor, account) => executor.executeAdmittedClientAction(actionId, input,
+      { ...context, runtimeAccountId: account.accountId }), actionId);
 }
 
 /** Execute through the complete UI Action owner while borrowing an already-captured Account lifetime. */

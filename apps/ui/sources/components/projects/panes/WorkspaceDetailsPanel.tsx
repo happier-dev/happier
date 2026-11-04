@@ -67,6 +67,7 @@ export type WorkspaceDetailsPanelHeaderActionRenderParams = Readonly<{
 export type WorkspaceDetailsPanelProps = Readonly<{
     workspaceRef: WorkspaceRefV1;
     scopeId: string;
+    destinationTab?: DetailsTabState | null;
     activeRootPath?: string;
     activeWorktreeId?: string | null;
     displayPathOverride?: string;
@@ -519,6 +520,8 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
             sourceSurface: details.kind === 'file' ? 'browse' : 'git', initialResource: details,
         });
     }, [effectiveRootPath, props.activeWorktreeId, props.workspaceRef.id, props.workspaceRef.serverId, props.workspaceRef.rootPath]);
+
+    if (props.destinationTab !== undefined) return props.destinationTab ? renderTabContent(props.destinationTab) : renderEmptyState();
 
     return (
         <DetailsSplitWorkspace

@@ -8,6 +8,8 @@ export type ActiveUnsavedChangesGuard = Readonly<{
     requestDecision: () => Promise<UnsavedChangesDecision>;
     /** Flush editor-owned pending input before this locked dirty decision. */
     prepareGuard?: () => void | Promise<void>;
+    /** Restorable content flushes locally; other forms use their existing departure decision. */
+    preparePresentationTransfer?: () => boolean | Promise<boolean>;
     onDiscard?: () => void | Promise<void>;
     onSave?: () => boolean | Promise<boolean>;
     continueOnSave?: boolean;
@@ -19,7 +21,7 @@ export type ActiveUnsavedChangesGuard = Readonly<{
 }>;
 
 let activeUnsavedChangesGuard: ActiveUnsavedChangesGuard | null = null;
-const mountedTabGuards = new Map<string, ActiveUnsavedChangesGuard>();
+const mountedGuards = new Map<string | null, Set<ActiveUnsavedChangesGuard>>();
 let activeBrowserEntry: Readonly<{ href: string; state: unknown }> | null = null;
 let authorizedBrowserTraversal = false;
 const guardsInFlight = new WeakSet<RefLike<boolean>>();
@@ -36,12 +38,46 @@ export function getActiveUnsavedChangesGuard(): ActiveUnsavedChangesGuard | null
     return activeUnsavedChangesGuard;
 }
 
-/** Retained editors keep their guard until their tab body actually unmounts. */
-export function registerMountedTabUnsavedChangesGuard(tabId: string, guard: ActiveUnsavedChangesGuard): () => void {
-    mountedTabGuards.set(tabId, guard);
+/** Mounted bodies retain their guard; shell-owned authoring has no destination tab. */
+export function registerMountedTabUnsavedChangesGuard(tabId: string | null, guard: ActiveUnsavedChangesGuard): () => void {
+    let guards = mountedGuards.get(tabId);
+    if (!guards) {
+        guards = new Set();
+        mountedGuards.set(tabId, guards);
+    }
+    const registered = guards;
+    registered.add(guard);
     return () => {
-        if (mountedTabGuards.get(tabId) === guard) mountedTabGuards.delete(tabId);
+        registered.delete(guard);
+        if (registered.size === 0 && mountedGuards.get(tabId) === registered) mountedGuards.delete(tabId);
     };
+}
+
+function mountedGuardsForTab(tabId: string): ActiveUnsavedChangesGuard[] {
+    return [...(mountedGuards.get(tabId) ?? [])];
+}
+
+export async function prepareMountedTabPresentationTransfer(tabId: string): Promise<boolean> {
+    for (const guard of mountedGuardsForTab(tabId)) if (!await preparePresentationTransfer(guard)) return false;
+    return true;
+}
+
+/** A full window releases every retained editor and its active form through the same guard owner. */
+export async function prepareMountedWindowPresentationTransfer(): Promise<boolean> {
+    const guards = new Set([...mountedGuards.values()].flatMap(bucket => [...bucket]));
+    if (activeUnsavedChangesGuard) guards.add(activeUnsavedChangesGuard);
+    for (const guard of guards) if (!await preparePresentationTransfer(guard)) return false;
+    return true;
+}
+
+async function preparePresentationTransfer(guard: ActiveUnsavedChangesGuard | null | undefined): Promise<boolean> {
+    if (!guard) return true;
+    if (guard.preparePresentationTransfer) {
+        try { return await guard.preparePresentationTransfer(); } catch { return false; }
+    }
+    let admitted = false;
+    await runUnsavedChangesGuard(guard, () => { admitted = true; });
+    return admitted;
 }
 
 export function setActiveUnsavedChangesGuard(guard: ActiveUnsavedChangesGuard): void {
@@ -80,6 +116,13 @@ export function interceptUnsavedChangesBrowserPopState(event: PopStateEvent): bo
         window.history.go(-1);
     });
     return true;
+}
+
+/** Close requires the mounted guard's ordinary continuation, including Save-and-retry semantics. */
+export async function prepareMountedTabClose(tabId: string): Promise<boolean> {
+    let admitted = false;
+    await runGuardedTabNavigation([tabId], () => { admitted = true; });
+    return admitted;
 }
 
 export function runUnsavedChangesGuard(
@@ -221,9 +264,9 @@ export function runGuardedTabNavigation(
     navigate: () => void | boolean | Promise<void | boolean>,
     options: Readonly<{ includeActiveGuard?: boolean; isCurrent?: () => boolean }> = {},
 ): true | Promise<boolean> {
-    const mountedEditors = tabIds.map(tabId => ({ tabId, dirtyRef: mountedTabGuards.get(tabId)?.isDirtyRef }));
+    const mountedEditors = tabIds.map(tabId => ({ tabId, guards: mountedGuardsForTab(tabId) }));
     const guards = [...new Set([
-        ...tabIds.map(tabId => mountedTabGuards.get(tabId)),
+        ...mountedEditors.flatMap(editor => editor.guards),
         ...(options.includeActiveGuard ? [activeUnsavedChangesGuard] : []),
     ].filter((guard): guard is ActiveUnsavedChangesGuard => guard != null))];
     const pendingDiscards: ActiveUnsavedChangesGuard[] = [];
@@ -265,7 +308,11 @@ export function runGuardedTabNavigation(
     };
     const proceed = (index: number): true | Promise<boolean> => {
         if (options.isCurrent && !options.isCurrent()) return Promise.resolve(false);
-        if (mountedEditors.some(editor => mountedTabGuards.get(editor.tabId)?.isDirtyRef !== editor.dirtyRef)) {
+        if (mountedEditors.some(editor => {
+            const current = mountedGuardsForTab(editor.tabId);
+            return current.length !== editor.guards.length
+                || editor.guards.some(guard => !current.some(next => next.isDirtyRef === guard.isDirtyRef));
+        })) {
             return Promise.resolve(false);
         }
         const guard = guards[index];

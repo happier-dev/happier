@@ -68,17 +68,18 @@ function splitTab(workspace: WorkspaceNavigationContextValue, input: Readonly<{
 }
 
 /** The shell consumes workspace state; the canvas remains the geometry and keyboard owner. */
-export function WorkspaceShell(props: Readonly<{ catalog: readonly CompactAppDestination[] }>): React.ReactNode {
+export function WorkspaceShell(props: Readonly<{ catalog: readonly CompactAppDestination[]; presentation?: 'destination' }>): React.ReactNode {
     const workspace = useOptionalWorkspaceNavigation();
     if (!workspace?.active) return null;
     return <PluginSurfaceFocusEligibilityProvider active currentUiContextActive>
-        <WorkspaceCanvas workspace={workspace} catalog={props.catalog} />
+        <WorkspaceCanvas workspace={workspace} catalog={props.catalog} presentation={props.presentation} />
     </PluginSurfaceFocusEligibilityProvider>;
 }
 
 function WorkspaceCanvas(props: Readonly<{
     workspace: WorkspaceNavigationContextValue;
     catalog: readonly CompactAppDestination[];
+    presentation?: 'destination';
 }>) {
     const workspace = props.workspace;
     const arrangement = useLocalSetting('paneArrangement');
@@ -140,14 +141,17 @@ function WorkspaceCanvas(props: Readonly<{
         isFocused: boolean;
         requestSplit: (direction: SplitCanvasDirection) => void;
     }>) => {
+        if (props.presentation === 'destination') return null;
         const group = workspace.state.groups[input.leaf.payload.groupId];
         if (!group) return null;
         return <WorkspaceGroupView workspace={workspace} group={group} catalog={props.catalog}
             focused={input.isFocused}
             tabsInTitleBar={titleBarGroupIds.includes(group.id)} />;
-    }, [props.catalog, titleBarGroupIds, workspace]);
+    }, [props.catalog, props.presentation, titleBarGroupIds, workspace]);
     const retainedLeafContents = React.useMemo(() => Object.values(workspace.state.groups).flatMap(group =>
-        group.tabIds.flatMap((tabId): SplitCanvasRetainedLeafContent[] => {
+        (props.presentation === 'destination'
+            ? group.id === workspace.state.focusedGroupId && group.activeTabId ? [group.activeTabId] : []
+            : group.tabIds).flatMap((tabId): SplitCanvasRetainedLeafContent[] => {
             const tab = workspace.state.tabs[tabId];
             if (!tab) return [];
             const href = hrefForDestinationRef(props.catalog, tab.target);
