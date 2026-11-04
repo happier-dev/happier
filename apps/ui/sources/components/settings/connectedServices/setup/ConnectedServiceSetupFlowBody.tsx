@@ -1,8 +1,11 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { Icon } from '@/components/ui/icons/Icon';
+import { Text } from '@/components/ui/text/Text';
+import { Typography } from '@/constants/Typography';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { t } from '@/text';
@@ -15,7 +18,7 @@ export type ConnectedServiceSetupMethod = Readonly<{
 
 /**
  * The inside of a setup panel for one service: the ways to sign in (the recommended one first and
- * already running), then the running flow itself — the code to enter, the steps to paste back, or the
+ * selected by default), then its Ready action or running flow — the code to enter, the steps to paste back, or the
  * key to paste — with its waiting, failure and recovery states from the controller.
  */
 export function ConnectedServiceSetupFlowBody(props: Readonly<{
@@ -51,19 +54,24 @@ export function ConnectedServiceSetupFlowBody(props: Readonly<{
     const activeMethodId = props.activeMethodId && methods.some((method) => method.id === props.activeMethodId)
         ? props.activeMethodId
         : methods[0]?.id ?? null;
+    const twoMethods = methods.length === 2;
     return (
         <View style={styles.body} testID="connected-service-setup:flow">
             {methods.length > 1 && activeMethodId ? (
-                <View style={styles.methods}>
+                <View style={twoMethods ? null : styles.methods}>
                     <SegmentedTabBar
                         role="radiogroup"
                         testIDPrefix="connected-service-setup:method"
                         accessibilityLabel={t('connectedServicesSettings.setupHowToSignIn')}
-                        segmentSizing="content"
+                        labelSize={twoMethods ? 'field' : undefined}
+                        segmentSizing={twoMethods ? 'equal' : 'content'}
+                        // A narrow column keeps one line of methods; the ones that no longer fit move behind More.
+                        overflow={twoMethods ? undefined : { label: t('common.more'), testID: 'connected-service-setup:method:more' }}
                         tabs={methods.map((method) => ({
                             id: method.id,
                             label: method.title,
-                            badge: method.recommended ? t('connectedServicesSettings.methodRecommended') : undefined,
+                            // Two methods are one plain choice: the first, already selected, needs no badge.
+                            badge: method.recommended && !twoMethods ? t('connectedServicesSettings.methodRecommended') : undefined,
                         }))}
                         activeTabId={activeMethodId}
                         disabled={props.methodsDisabled}
@@ -71,7 +79,17 @@ export function ConnectedServiceSetupFlowBody(props: Readonly<{
                     />
                 </View>
             ) : null}
-            {props.state === 'preparing' || !props.flow ? (
+            {props.state !== 'preparing' && !props.flow && activeMethodId && props.onSelectMethod ? (
+                // A chosen method waits for the person: nothing signs in until they press (one method or several).
+                <ConnectedServiceSetupFlowActions
+                    primary={{
+                        testID: 'connected-service-setup:method-continue',
+                        label: t('common.continue'),
+                        loading: props.methodsDisabled,
+                        onPress: () => props.onSelectMethod?.(activeMethodId),
+                    }}
+                />
+            ) : props.state === 'preparing' || !props.flow ? (
                 <SurfaceStateCard
                     testID="connected-service-setup:preparing"
                     size="line"
@@ -101,15 +119,21 @@ export type ConnectedServiceSetupFlowAction = Readonly<{
 }>;
 
 /**
- * A sign-in flow's footer in a setup panel: secondary Cancel (local: the panel steps back at once)
- * beside the step's one primary action, right-aligned under the flow.
+ * A sign-in flow's footer in a setup panel: where what you enter is kept, last thing before you commit,
+ * then secondary Cancel (local: the panel steps back at once) beside the step's one primary action.
  */
 export function ConnectedServiceSetupFlowActions(props: Readonly<{
     onCancel?: () => void;
     primary?: ConnectedServiceSetupFlowAction;
 }>) {
+    const { theme } = useUnistyles();
     return (
-        <View style={flowActionStyles.row}>
+        <View style={flowActionStyles.footer}>
+            <View style={flowActionStyles.trust}>
+                <Icon name="lock" size={14} color={theme.colors.text.secondary} />
+                <Text style={flowActionStyles.trustText}>{t('connectedServicesSettings.setupTrust')}</Text>
+            </View>
+            <View style={flowActionStyles.row}>
             {props.onCancel ? (
                 <RoundButton
                     testID="connected-account-setup:cancel"
@@ -129,11 +153,26 @@ export function ConnectedServiceSetupFlowActions(props: Readonly<{
                     onPress={props.primary.onPress}
                 />
             ) : null}
+            </View>
         </View>
     );
 }
 
-const flowActionStyles = StyleSheet.create(() => ({
+const flowActionStyles = StyleSheet.create((theme) => ({
+    footer: {
+        gap: theme.space.s16,
+    },
+    trust: {
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        gap: theme.space.s6,
+    },
+    trustText: {
+        flex: 1,
+        minWidth: 0,
+        ...Typography.variant('meta'),
+        color: theme.colors.text.secondary,
+    },
     row: {
         flexDirection: 'row',
         justifyContent: 'flex-end',
