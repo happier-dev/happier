@@ -489,7 +489,7 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
         // Two short, always-visible options: choosing one is a single tap on a segmented row.
         await chooseOtherSegmentedOption(screen, 'settingsVoice.pages.conversations.talkToTitle');
 
-        expect(readLocalConversationVoiceSettings(account!.persistedSettings.voice).conversationMode).toBe('agent');
+        await expect.poll(() => readLocalConversationVoiceSettings(account!.persistedSettings.voice).conversationMode).toBe('agent');
     });
 
     it('does not use confirm modals for other local conversation enum settings', async () => {
@@ -605,8 +605,8 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
         expect(format).toBeTruthy();
         await act(async () => { format!.props.onSelect('wav'); });
 
+        await expect.poll(() => readVoiceProviderSettingsConfig(account!.persistedSettings.voice, providerId)).toMatchObject({ format: 'wav' });
         const written = account!.persistedSettings.voice;
-        expect(readVoiceProviderSettingsConfig(written, providerId)).toMatchObject({ format: 'wav' });
         expect(written.providerId).toBe('local_direct');
     });
 
@@ -633,6 +633,7 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
         });
 
         expect(screen.findAllHostsByTestId('web-prompt-input')).toHaveLength(0);
+        await expect.poll(() => account!.persistedSettings.voice.assistantLanguage).toBe('en');
         const written = account!.persistedSettings.voice;
         expect(written.assistantLanguage).toBe('en');
         expect(readLocalDirectVoiceSettings(written).stt.localNeural.language).toBe('fr');

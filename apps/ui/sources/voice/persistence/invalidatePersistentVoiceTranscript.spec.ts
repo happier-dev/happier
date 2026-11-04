@@ -1,15 +1,19 @@
 import 'fake-indexeddb/auto';
-import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { standardCleanup } from '@/dev/testkit';
+import { createVoiceSettingsAccountTestHarness } from '@/voice/settings/panels/voiceSettingsAccountTestHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 
 vi.mock('socket.io-client', async original =>
   (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(original));
 
 afterEach(() => standardCleanup());
+// Cold module transformation belongs to suite setup, not the first Forget's
+// operation lifetime. Socket transport is installed by the hoisted boundary.
+beforeAll(async () => { await loadSyncSingletonForTests(); });
 
 describe('invalidatePersistentVoiceTranscript', () => {
   it.each(['plain', 'e2ee'] as const)('forgets across carriers in %s memory without writing Account preferences', async mode => {
-    const { createVoiceSettingsAccountTestHarness } = await import('@/voice/settings/panels/voiceSettingsAccountTestHarness');
     const { settingsParse } = await import('@/sync/domains/settings/settings');
     // 0.2 HEAD 420e7887: voice.adapters.local_conversation.agent.transcript.
     const raw = { voice: {
@@ -55,7 +59,6 @@ describe('invalidatePersistentVoiceTranscript', () => {
   });
 
   it('does not read or write memory for an ephemeral Forget', async () => {
-    const { createVoiceSettingsAccountTestHarness } = await import('@/voice/settings/panels/voiceSettingsAccountTestHarness');
     const { settingsParse } = await import('@/sync/domains/settings/settings');
     const account = await createVoiceSettingsAccountTestHarness(settingsParse({}));
     onTestFinished(account.dispose);
@@ -66,7 +69,6 @@ describe('invalidatePersistentVoiceTranscript', () => {
   });
 
   it('reconciles concurrent Forget intents through the existing row CAS', async () => {
-    const { createVoiceSettingsAccountTestHarness } = await import('@/voice/settings/panels/voiceSettingsAccountTestHarness');
     const { settingsParse } = await import('@/sync/domains/settings/settings');
     const account = await createVoiceSettingsAccountTestHarness(settingsParse({ voice: { providers: {
       local_conversation: { schemaVersion: 1, config: { agent: { transcript: { persistenceMode: 'persistent' } } } },
@@ -81,7 +83,6 @@ describe('invalidatePersistentVoiceTranscript', () => {
   });
 
   it('refuses malformed stored memory without overwriting it or falling back to preferences', async () => {
-    const { createVoiceSettingsAccountTestHarness } = await import('@/voice/settings/panels/voiceSettingsAccountTestHarness');
     const { settingsParse } = await import('@/sync/domains/settings/settings');
     const account = await createVoiceSettingsAccountTestHarness(settingsParse({ voice: { providers: {
       local_conversation: { schemaVersion: 1, config: { agent: { transcript: { persistenceMode: 'persistent' } } } },

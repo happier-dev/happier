@@ -8,7 +8,7 @@ import { createRootLayoutFeaturesResponse } from '@/dev/testkit';
 import { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { getStorage } from '@/sync/domains/state/storage';
-import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { getActiveServerSnapshot, upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 import { selectSessionViewShellSessionForRouteState } from '@/components/sessions/shell/sessionViewStableSession';
 import {
     readLocalConversationVoiceSettings,
@@ -42,7 +42,9 @@ const initialDev = (globalThis as { __DEV__?: boolean }).__DEV__;
 const initialExpoPublicDebug = process.env.EXPO_PUBLIC_DEBUG;
 
 describe('useVoiceSurfaceE2eFixtureComposition', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
+        // Source builds have no implicit Home; fixture addresses require an explicit one.
+        await upsertAndActivateServer({ serverUrl: 'https://voice-fixture.test', name: 'Voice fixture' });
         getStorage().setState(initialStorageState, true);
         useVoiceTargetStore.setState(initialVoiceTargetState, true);
         voiceSessionBindingStore.setState(initialBindingState, true);
