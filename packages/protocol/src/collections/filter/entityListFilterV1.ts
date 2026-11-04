@@ -88,18 +88,23 @@ export function matchEntityFilterExtensionV1(selection: ExtensionSelectionV1, va
 /** Compile only on filter edits; row evaluation never parses selections, fetches facts or calls a plugin. */
 export function compileEntityListFilterV1<Filter, Facts>(
     registry: EntityFilterRegistryV1<Filter, Facts>, filter: Filter, evaluator: EntityFilterEvaluatorV1 = 'list',
-): (facts: Facts) => EntityFilterMatchV1 {
+): (facts: Facts, onUnavailable?: (fieldIds: readonly string[]) => void) => EntityFilterMatchV1 {
     const active = registry.flatMap(field => {
         const match = field.compile(filter, evaluator);
-        return match ? [match] : [];
+        return match ? [{ id: field.id, match }] : [];
     });
-    return facts => {
+    return (facts, onUnavailable) => {
         let unavailable = false;
-        for (const match of active) {
+        const unavailableFields: string[] | undefined = onUnavailable ? [] : undefined;
+        for (const { id, match } of active) {
             const result = match(facts);
             if (result === 'miss') return 'miss';
             unavailable ||= result === 'unavailable';
+            if (result === 'unavailable') unavailableFields?.push(id);
         }
+        // Diagnose only a genuinely unknown result; a proven miss remains a miss even if
+        // another clause lacked evidence. Facts are evaluated once by this same predicate.
+        if (unavailableFields?.length) onUnavailable?.(unavailableFields);
         return unavailable ? 'unavailable' : 'match';
     };
 }

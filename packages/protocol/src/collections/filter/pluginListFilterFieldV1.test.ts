@@ -30,6 +30,12 @@ describe('plugin list filter fields over held facts', () => {
         expect(match({ extensions: { 'test.release/release-stage': 'ready' } })).toBe('match');
         expect(match({ extensions: { 'test.release/release-stage': ['ready', 'blocked'] } })).toBe('miss');
         expect(match({})).toBe('unavailable');
+        let unavailableFields: readonly string[] = [];
+        expect(match({}, fields => { unavailableFields = fields; })).toBe('unavailable');
+        expect(unavailableFields).toEqual(['test.release/release-stage']);
+        unavailableFields = [];
+        expect(match({ extensions: { 'test.release/release-stage': 'blocked' } }, fields => { unavailableFields = fields; })).toBe('miss');
+        expect(unavailableFields).toEqual([]);
         expect(compileEntityListFilterV1(fields, selection, 'daemonRule')({ extensions: { 'test.release/release-stage': 'ready' } })).toBe('unavailable');
         const retired = createPluginListFilterFieldRegistryV1<PluginListFilterSelectionV1, PluginListFilterFactsV1>([]);
         expect(compileEntityListFilterV1(retired, selection)({ extensions: { 'test.release/release-stage': 'ready' } })).toBe('unavailable');
