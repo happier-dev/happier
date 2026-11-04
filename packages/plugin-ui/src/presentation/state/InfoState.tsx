@@ -53,8 +53,8 @@ export function HappierSurfaceStateFrame(props: Readonly<{
 }
 
 /**
- * The room a line's sentence asks for before its recovery moves under it: enough for a short cause on
- * one or two lines, so a Small widget card keeps "Couldn't read this machine · Retry" one block.
+ * The room a freshness line's words ask for before its recoveries move under them: enough for a short
+ * reason on one or two lines.
  */
 const LINE_TEXT_BASIS_PX = 180;
 
@@ -106,7 +106,7 @@ export function HappierStateLine(props: Readonly<{
       // One line that wraps its sentence, never its parts: the glyph and the recovery stay beside the
       // text in a narrow column instead of stacking above and below it.
       flexDirection: 'row',
-      // A sentence that needs more than the room beside its glyph puts the recovery under it, instead of
+      // A sentence that needs more than the room beside its recovery puts the recovery under it, instead of
       // wrapping the sentence to four lines in a column left by the recovery.
       flexWrap: 'wrap',
       alignItems: 'center',
@@ -119,12 +119,16 @@ export function HappierStateLine(props: Readonly<{
         gap: glyphColumn.gapPx,
         flexShrink: 1,
         minWidth: 0,
-        ...(props.action ? { flexGrow: 1, flexBasis: LINE_TEXT_BASIS_PX } : {}),
+        // The sentence asks for its whole width: one that fits beside the recovery stays one block, a longer
+        // one takes the line's width and its recovery moves beneath it rather than squeezing it into a column.
+        ...(props.action ? { flexGrow: 1, flexBasis: 'auto' } : {}),
       }}>
         {props.icon ? <View style={{ flexShrink: 0, width: glyphColumn.boxPx, alignItems: 'center' }} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">{props.icon}</View> : null}
         <View style={{ flexShrink: 1, minWidth: 0 }}>{props.children}</View>
       </View>
-      {props.action ? <View style={{ flexShrink: 0, marginLeft: 'auto' }}>{props.action}</View> : null}
+      {/* Beside the sentence the growing sentence leaves it at the line's end; moved beneath, it starts on the
+          sentence's edge, under the words it recovers, rather than alone at the far end of its own row. */}
+      {props.action ? <View style={{ flexShrink: 0, marginLeft: props.icon ? glyphColumn.boxPx + glyphColumn.gapPx : 0 }}>{props.action}</View> : null}
     </View>
   );
 }
