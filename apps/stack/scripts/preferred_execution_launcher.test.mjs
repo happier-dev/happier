@@ -1373,7 +1373,7 @@ test('AUTO sends small suites to a free peer when the broker head reserves the o
 
 
 
-async function controllerCoalescingFixture(t) {
+async function controllerCoalescingFixture(t, { availableKiB = 25480397, totalKiB = 28311552 } = {}) {
   const fixture = await memoryRoutingFixture(t);
   await executable(join(fixture.binDir, 'uname'), '#!/bin/sh\nprintf "Linux\\n"\n');
   const connections = [];
@@ -1384,7 +1384,7 @@ async function controllerCoalescingFixture(t) {
   await executable(join(fixture.binDir, 'ssh'), `#!/bin/sh
 case "$*" in
   *remote_execution_custody.sh*" cancel "*) exit 0 ;;
-  *getconf*) printf '8 0 0.1 22000000 20 0 25480397 28311552 0 0 0 0 0 0 0 linux 25480397\\n' ;;
+  *getconf*) printf '8 0 ${availableKiB / totalKiB} 22000000 20 0 ${availableKiB} ${totalKiB} 0 0 0 0 0 0 0 linux ${availableKiB}\\n' ;;
   *"&& command -v "*|*-O\\ check*|*-MNf*) exit 0 ;;
   *remote_execution_custody.sh*) exec ${JSON.stringify(process.execPath)} -e '${payload.replaceAll("'", "'\\''")}' ;;
   *) exit 0 ;;
@@ -1454,7 +1454,8 @@ for (const variant of ['argv', 'env', 'cwd', 'ssh-agent']) test(`controller coal
 });
 
 test('controller coalescing queues exactly one whole-package typecheck follower for five requesters', { timeout: 60000, skip: process.platform !== 'linux' }, async t => {
-  const { start, connections } = await controllerCoalescingFixture(t);
+  const compilationFloorKiB = resolveHeavyweightMemoryFloorKiB('compilation');
+  const { start, connections } = await controllerCoalescingFixture(t, { availableKiB: compilationFloorKiB, totalKiB: compilationFloorKiB });
   const request = { args: ['tsc', '--noEmit', '-p', 'apps/stack/tsconfig.json'] };
   const first = start(request); await first.started;
   const followers = Array.from({ length: 5 }, () => start(request));
