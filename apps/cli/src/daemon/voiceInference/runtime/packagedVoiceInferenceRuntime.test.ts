@@ -1,15 +1,22 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { EventEmitter } from 'node:events';
-import { createRequire } from 'node:module';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { VoiceInferenceRuntimeSynthesizeInput, VoiceInferenceRuntimeTranscribeInput } from '../voiceInferenceRuntimeTypes';
 
 const spawnMock = vi.hoisted(() => vi.fn());
-const require = createRequire(import.meta.url);
+const ffmpegBoundary = vi.hoisted(() => ({ candidate: null as string | null }));
+// Replace package resolution, not the decoder: no test may mutate an installed dependency.
+vi.mock('node:module', async importOriginal => {
+    const original = await importOriginal<typeof import('node:module')>();
+    return { ...original, createRequire: (url: string | URL) => {
+        const require = original.createRequire(url);
+        return Object.assign((id: string) => id === 'ffmpeg-static' ? ffmpegBoundary.candidate : require(id), require);
+    } };
+});
 const ZIPFORMER_PACK_ID = 'sherpa-onnx-streaming-zipformer-en-20M-2023-02-17';
 const PUBLIC_ZIPFORMER_PACK_ID = 'dev.happier.fixture.voice.zipformer/zipformer-en-20m';
 const ZIPFORMER_SUPPORT_PATHS = [
@@ -31,6 +38,10 @@ function manifestFiles(paths: readonly string[]) {
 
 vi.mock('node:child_process', () => ({
     spawn: (...args: unknown[]) => spawnMock(...args),
+    execFile: (_path: string, _args: string[], _options: unknown,
+        callback: (error: Error | null, stdout: string) => void) => {
+        queueMicrotask(() => callback(null, 'ffmpeg version fixture'));
+    },
 }));
 
 function createMonoPcm16WavBuffer(sampleCount = 8, sampleRate = 16_000): Buffer {
@@ -135,8 +146,9 @@ describe('packagedVoiceInferenceRuntime', () => {
     }
 
     async function ensureFfmpegBinaryFixture(): Promise<void> {
-        const ffmpegBinaryPath = require('ffmpeg-static');
-        await writeFile(ffmpegBinaryPath, '#!/bin/sh\nexit 0\n');
+        const ffmpegBinaryPath = join(await createTempDir(), 'ffmpeg');
+        await writeFile(ffmpegBinaryPath, '#!/bin/sh\nexit 0\n', { mode: 0o700 });
+        ffmpegBoundary.candidate = ffmpegBinaryPath;
     }
 
     async function createParakeetFixture(rootDir: string, options?: Readonly<{ omitEncoder?: boolean }>): Promise<VoiceInferenceRuntimeTranscribeInput> {
@@ -178,7 +190,21 @@ describe('packagedVoiceInferenceRuntime', () => {
     afterEach(async () => {
         vi.resetModules();
         spawnMock.mockReset();
+        ffmpegBoundary.candidate = null;
         await Promise.all(tempDirs.splice(0).map(async (dir) => await rm(dir, { recursive: true, force: true }).catch(() => undefined)));
+    });
+
+    it('does not rewrite the resolved package member while preparing encoder fixtures', async () => {
+        // A temporary package-boundary sentinel keeps the RED safe even when the actual
+        // installed file is hardlinked to the package store or already contains the old stub.
+        const installedPath = join(await createTempDir(), 'installed-ffmpeg');
+        const bytes = Buffer.from('installed encoder sentinel');
+        await writeFile(installedPath, bytes, { mode: 0o700 });
+        ffmpegBoundary.candidate = installedPath;
+        const mode = (await stat(installedPath)).mode;
+        await ensureFfmpegBinaryFixture();
+        expect(await readFile(installedPath)).toEqual(bytes);
+        expect((await stat(installedPath)).mode).toBe(mode);
     });
 
     it('transcodes supported compressed audio into a wav path for daemon_decode inputs', async () => {
