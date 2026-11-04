@@ -23,9 +23,11 @@ export async function runAgentIsolationMemberReadinessBoundary(input: Readonly<{
   const [command, args, options] = input.request;
   if (command !== 'sudo' || args?.at(-1) !== 'agent-launch' || !options?.inputBytes || !input.nativeHome)
     return undefined;
-  const frame = await readAgentLaunchFrame(Readable.from([options.inputBytes], { objectMode: false }));
-  if (input.fail || frame.executable !== '/bin/sh' || !frame.args.includes('happier-isolation-readiness')
-    || frame.nativeIdentity?.home !== input.nativeHome.path || frame.nativeIdentity.agentUid !== input.nativeHome.uid)
+  const frame = await readAgentLaunchFrame(Readable.from([options.inputBytes], { objectMode: false }), undefined, true);
+  if (input.fail || frame.nativeIdentity?.home !== input.nativeHome.path || frame.nativeIdentity.agentUid !== input.nativeHome.uid)
+    throw Object.assign(new Error('Constructed native payload permission failure'), { code: 73 });
+  if ('action' in frame) return { stdout: '', stderr: '' };
+  if (frame.executable !== '/bin/sh' || !frame.args.includes('happier-isolation-readiness'))
     throw Object.assign(new Error('Constructed native payload permission failure'), { code: 73 });
   return { stdout: 'member-native-ready\n', stderr: '' };
 }

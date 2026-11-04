@@ -101,7 +101,7 @@ export async function readSessionMcpContextFromEnvironment(
         if (!file || !isAbsolute(file)) throw new SessionMcpUnavailableError();
         return z.parse(SessionMcpLocalContextSchema, JSON.parse(await readFile(file, 'utf8')));
     } catch {
-        throw new SessionMcpUnavailableError();
+        throw new SessionMcpUnavailableError('mcp_socket_access_unavailable', { phase: 'context_read' });
     }
 }
 
@@ -148,6 +148,7 @@ export async function connectSessionMcpClient(context: SessionMcpLocalContext, s
         }
         signal?.throwIfAborted();
         throw new SessionMcpUnavailableError(error instanceof StreamableHTTPError
-            && (error.code === 401 || error.code === 403) ? 'not_authenticated' : 'mcp_socket_access_unavailable');
+            && (error.code === 401 || error.code === 403) ? 'not_authenticated' : 'mcp_socket_access_unavailable',
+        { phase: 'client_connect', ...(error instanceof StreamableHTTPError ? { httpStatus: error.code } : {}) });
     }
 }

@@ -5,9 +5,17 @@ export const SESSION_MCP_CONTEXT_FILE_ENV = 'HAPPIER_SESSION_MCP_CONTEXT_FILE';
 
 export class SessionMcpUnavailableError extends Error {
     readonly code: 'mcp_socket_access_unavailable' | 'not_authenticated';
-    constructor(code: 'mcp_socket_access_unavailable' | 'not_authenticated' = 'mcp_socket_access_unavailable') {
-        super(code);
+    readonly phase?: 'context_read' | 'client_connect';
+    readonly httpStatus?: number;
+    constructor(code: 'mcp_socket_access_unavailable' | 'not_authenticated' = 'mcp_socket_access_unavailable',
+        diagnostic?: Readonly<{ phase: 'context_read' | 'client_connect'; httpStatus?: number }>) {
+        // MCP forwards Error.message to the native client. Keep that projection
+        // content-free: never include the context path, bearer or response body.
+        super([diagnostic?.phase, diagnostic?.httpStatus === undefined ? undefined
+            : `httpStatus=${diagnostic.httpStatus}`, code].filter(Boolean).join(' '));
         this.code = code;
+        this.phase = diagnostic?.phase;
+        this.httpStatus = diagnostic?.httpStatus;
         this.name = 'SessionMcpUnavailableError';
     }
 }
