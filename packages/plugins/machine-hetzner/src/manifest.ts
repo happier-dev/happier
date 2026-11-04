@@ -71,6 +71,8 @@ export const PLUGIN = definePlugin({
       id: 'token', kind: 'manual', title: 'API token', outcomeReconciliation: 'none',
       directExport: { contractVersion: CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 },
       fields: [{ id: 'token', title: 'API token', schema: { type: 'string', minLength: 1 }, secret: true }],
+      setup: { url: 'https://console.hetzner.com/', createKeyTitle: 'Open Hetzner Console',
+        checklist: ['Open your project in Hetzner Console, then choose Security → API tokens.', 'Generate a token with Read & Write access, then paste it here.'] },
     }] } }, runtime: connectedAccountRuntime,
   } },
   machineProvisioners: { [PROVISIONER_ID]: MACHINE_PROVISIONER },

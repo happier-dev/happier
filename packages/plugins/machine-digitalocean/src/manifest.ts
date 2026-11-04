@@ -56,6 +56,8 @@ export const PLUGIN = definePlugin({
       id: 'token', kind: 'manual', title: 'API token', outcomeReconciliation: 'none',
       directExport: { contractVersion: CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 },
       fields: [{ id: 'token', title: 'API token', schema: { type: 'string', minLength: 1 }, secret: true }],
+      setup: { url: 'https://cloud.digitalocean.com/account/api/tokens', createKeyTitle: 'Open DigitalOcean API tokens',
+        checklist: ['In the DigitalOcean Control Panel, open Account → API → Tokens and choose Generate New Token.', 'Choose a name, expiration and permissions for managing Droplets, SSH keys and tags, and reading sizes, images and regions.', 'Generate the personal access token, then copy and paste it here.'] },
     }] } }, runtime: connectedAccountRuntime,
   } },
   ui: { translations: DIGITALOCEAN_UI_TRANSLATION_BUNDLES },

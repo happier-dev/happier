@@ -62,6 +62,11 @@ function createSlackPlugin() {
               { id: 'appToken', title: 'App-level token', description: 'Generate an xapp- token with connections:write and enable Socket Mode for the same app.',
                 schema: { type: 'string', minLength: 1 }, secret: true },
             ],
+      setup: {
+              url: 'https://api.slack.com/apps',
+              checklist: ['Create or select your Slack app, add the bot scopes and event subscriptions you need, and install it to your workspace.', 'Copy its Bot User OAuth Token from OAuth & Permissions.', 'Enable Socket Mode and generate an app-level token with connections:write for the same app, then paste both tokens here.'],
+              createKeyTitle: 'Open Slack apps',
+            },
           }] },
         }, runtime: slackConnectedAccountRuntime,
       },

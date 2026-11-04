@@ -57,6 +57,11 @@ export const JIRA_PLUGIN = definePlugin({
                         id: 'site', title: 'Jira Cloud site', required: true, secret: false,
                         semantic: 'connectedAccountOrigin', schema: { type: 'string', minLength: 1 },
                     }] },
+      setup: {
+                        url: 'https://id.atlassian.com/manage-profile/security/api-tokens',
+                        checklist: ['Create an API token without scopes in your Atlassian account; this connection uses your Jira site URL.', 'Copy the token and enter the email address of the Atlassian account that created it.', 'Enter the Jira Cloud site that account can access.'],
+                        createKeyTitle: 'Open Atlassian API tokens',
+                    },
                 }] },
             }, runtime: jiraAccountRuntime,
         },

@@ -103,6 +103,9 @@ export const PLUGIN = definePlugin({
       configuration: { scope: 'account', changeBehavior: 'reconnect', fields: [
         { id: 'organizationSlug', title: 'Organization', schema: { type: 'string', minLength: 1 }, required: true, secret: false },
       ] },
+      setup: { url: 'https://docs.fly.io/security/tokens', createKeyTitle: 'Read Fly.io token instructions',
+        checklist: ['Sign in to Fly.io with fly auth login.', 'Run fly tokens create org --org YOUR_ORGANIZATION to create a token for the organization that will own your Machines.', 'Paste the token here and enter the same organization slug below.'],
+        shapeHint: 'Use an organization token that can manage apps and Machines.' },
     }] } }, runtime: connectedAccountRuntime,
   } },
   machineProvisioners: { [PROVISIONER_ID]: MACHINE_PROVISIONER },

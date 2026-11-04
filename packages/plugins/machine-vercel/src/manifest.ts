@@ -57,6 +57,8 @@ export const PLUGIN = definePlugin({
         { id: 'projectId', title: label('projectId'), description: label('projectIdDescription'), presentation: { placeholder: 'prj_…', order: 2 },
           schema: { type: 'string', minLength: 1 }, required: true, secret: false },
       ] },
+      setup: { url: 'https://vercel.com/account/tokens', createKeyTitle: 'Open Vercel access tokens',
+        checklist: ['Open Tokens in your Vercel account settings and enter a name for the token.', 'Choose a scope with access to the team and projects where you will create sandboxes, then choose an expiration and create the token.', 'Copy the token and paste it here; enter the matching Team ID below.'] },
     }] } }, runtime: connectedAccountRuntime,
   } },
   machineProvisioners: { [CONTRIBUTION.localId]: MACHINE_PROVISIONER },

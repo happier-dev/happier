@@ -8827,6 +8827,14 @@
               "id": "token",
               "kind": "manual",
               "outcomeReconciliation": "none",
+              "setup": {
+                "url": "https://console.hetzner.com/",
+                "createKeyTitle": "Open Hetzner Console",
+                "checklist": [
+                  "Open your project in Hetzner Console, then choose Security → API tokens.",
+                  "Generate a token with Read & Write access, then paste it here."
+                ]
+              },
               "title": "API token"
             }
           ]

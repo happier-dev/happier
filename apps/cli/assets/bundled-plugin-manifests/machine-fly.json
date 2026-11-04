@@ -11359,6 +11359,16 @@
               "id": "token",
               "kind": "manual",
               "outcomeReconciliation": "none",
+              "setup": {
+                "url": "https://docs.fly.io/security/tokens",
+                "createKeyTitle": "Read Fly.io token instructions",
+                "checklist": [
+                  "Sign in to Fly.io with fly auth login.",
+                  "Run fly tokens create org --org YOUR_ORGANIZATION to create a token for the organization that will own your Machines.",
+                  "Paste the token here and enter the same organization slug below."
+                ],
+                "shapeHint": "Use an organization token that can manage apps and Machines."
+              },
               "title": "API token"
             }
           ]

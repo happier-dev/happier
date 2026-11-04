@@ -150,6 +150,11 @@ export const CODEX_PLUGIN = definePlugin({
               default: 'native',
               presentation: { control: 'select', options: [{ value: 'native', title: 'Codex login' }] },
             }],
+      setup: {
+              url: 'https://developers.openai.com/codex/auth',
+              checklist: ['On the computer you will import from, run codex login and complete the ChatGPT sign-in.', 'Choose that computer in Happier to import its saved Codex login.'],
+              createKeyTitle: 'Read Codex login instructions',
+            },
           }],
         },
       },
