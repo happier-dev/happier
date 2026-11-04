@@ -1,6 +1,6 @@
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { DeploymentComposeSelectorsV1Schema } from '../../deployments/storedAppInputV1.js';
+import { DeploymentComposeSelectorsV1Schema, DeploymentComposePublicFilesV1Schema } from '../../deployments/storedAppInputV1.js';
 import { PluginLocalizedStringV2Schema } from './publicTypes.js';
 
 const text = () => z.string().check(z.minLength(1));
@@ -41,7 +41,7 @@ export const DeploymentTemplateV1Schema = lazyZodSchema(() => z.strictObject({
   documentationUrl: z.optional(z.string().check(z.url(), z.refine(value => {
     const url = new URL(value); return url.protocol === 'https:' && !url.username && !url.password;
   }))),
-  compose: z.strictObject({ document: text(), ...DeploymentComposeSelectorsV1Schema.shape }),
+  compose: z.strictObject({ document: text(), publicFiles: z.optional(DeploymentComposePublicFilesV1Schema), ...DeploymentComposeSelectorsV1Schema.shape }),
   variables: z.array(z.strictObject({
     key: key(), label: PluginLocalizedStringV2Schema, help: z.optional(PluginLocalizedStringV2Schema),
     required: z.boolean(), valueKind: z.enum(['string', 'number', 'boolean']), secret: z.boolean(), default: z.optional(z.string()),

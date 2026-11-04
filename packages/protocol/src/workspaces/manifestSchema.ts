@@ -1,7 +1,7 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
 
-const WorkspaceManifestRelativePathSchema = lazyZodSchema(() => z
+export const WorkspaceManifestRelativePathSchema = lazyZodSchema(() => z
   .string().check(z.minLength(1), z.refine((value) => !value.startsWith('/') && !value.startsWith('\\') && !/^[a-zA-Z]:[\\/]/.test(value), {
     message: 'Workspace manifest paths must be relative',
   }), z.refine((value) => value.split(/[\\/]/).every((segment) => segment.length > 0 && segment !== '.' && segment !== '..'), {

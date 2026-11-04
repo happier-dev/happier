@@ -13,6 +13,7 @@ import { ScmRepositoryContainedSubdirV1Schema } from '../scm/repositoryClone.js'
 import { AutomationIdV1Schema } from '../automations/automationIdV1.js';
 import { AutomationTriggerIdSchema, AutomationTriggerRevisionSchema } from '../automations/automationTriggerIdentity.js';
 import { AutomationOccurrenceKeyV1Schema } from '../automations/automationOccurrenceKeyV1.js';
+import { WorkspaceManifestRelativePathSchema } from '../workspaces/manifestSchema.js';
 
 /** Shared serialized leaves: feature-owned Environment records compose these same definitions. */
 export const DeploymentDigestV1Schema = lazyZodSchema(() => z.string().check(z.regex(/^sha256:[0-9a-f]{64}$/u)));
@@ -22,16 +23,34 @@ export const DeploymentTargetManagedRetentionV1Schema = lazyZodSchema(() => z.en
 export const DeploymentComposeSelectorsV1Schema = lazyZodSchema(() => z.strictObject({
     profiles: z.array(DeploymentTextV1Schema), services: z.array(DeploymentTextV1Schema), primaryService: z.optional(DeploymentTextV1Schema),
 }));
+/** Exact public source files travel with the stored Compose source and its digest. */
+export const DeploymentComposePublicFilesV1Schema = lazyZodSchema(() => z.array(z.strictObject({
+    path: WorkspaceManifestRelativePathSchema.check(z.refine(value => !/[\\\0:]/u.test(value)
+        && value.split('/').every(segment => !/[. ]$/u.test(segment)), 'Public file paths must be portable')),
+    content: z.string(),
+})).check(z.superRefine((files, context) => {
+    const paths = new Set(files.map(file => file.path.toLowerCase()));
+    const seen = new Set<string>();
+    for (const [index, file] of files.entries()) {
+        const path = file.path.toLowerCase();
+        const ancestors = path.split('/').slice(0, -1).map((_, index, parts) => parts.slice(0, index + 1).join('/'));
+        if (path === 'compose.yaml' || path.startsWith('compose.yaml/') || seen.has(path)
+            || ancestors.some(ancestor => paths.has(ancestor))) {
+            context.addIssue({ code: 'custom', path: [index, 'path'], message: 'Public files must not collide with the Compose source or each other.' });
+        }
+        seen.add(path);
+    }
+})));
 export const DeploymentStoredDefinitionV1Schema = lazyZodSchema(() => z.strictObject({
     kind: z.literal('stored'), contentRevision: revision, composeDigest: DeploymentDigestV1Schema,
-    document: z.string().check(z.minLength(1)), ...DeploymentComposeSelectorsV1Schema.shape,
+    document: z.string().check(z.minLength(1)), publicFiles: z.optional(DeploymentComposePublicFilesV1Schema), ...DeploymentComposeSelectorsV1Schema.shape,
 }));
 export const DeploymentRepositoryComposeV1Schema = lazyZodSchema(() => z.strictObject({
     path: ScmRepositoryContainedSubdirV1Schema, ...DeploymentComposeSelectorsV1Schema.shape,
 }));
 /** Authored input is normalized once to the existing stored definition before storage. */
 export const DeploymentComposeDefinitionInputV1Schema = lazyZodSchema(() => z.strictObject({
-    from: z.literal('compose'), document: DeploymentStoredDefinitionV1Schema.shape.document,
+    from: z.literal('compose'), ...z.pick(DeploymentStoredDefinitionV1Schema, { document: true, publicFiles: true }).shape,
     ...DeploymentComposeSelectorsV1Schema.shape,
 }));
 export const DeploymentImageDefinitionInputV1Schema = lazyZodSchema(() => z.strictObject({

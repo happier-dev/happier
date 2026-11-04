@@ -1,7 +1,7 @@
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revision } from './deploymentIdentifiersV1.js';
-import { DeploymentTemplateRefV1Schema, DeploymentDigestV1Schema, DeploymentComposeSelectorsV1Schema,
+import { DeploymentTemplateRefV1Schema, DeploymentDigestV1Schema, DeploymentComposeSelectorsV1Schema, DeploymentStoredDefinitionV1Schema,
   StoredAppPresetInputV1Schema, StoredAppPresetBindingsV1Schema, EnvironmentVariableBindingV1Schema, DeploymentSecretBindingSourceV1Schema,
   DeploymentNewProjectV1Schema, hasOneDeploymentProjectV1, DeploymentTargetManagedRetentionV1Schema } from './storedAppInputV1.js';
 import { SharedSavedSecretCreateInputV1Schema } from '../account/settings/savedSecretResourceActionsV1.js';
@@ -62,6 +62,8 @@ export const DeploymentTemplateCapacityReviewV1Schema = lazyZodSchema(() => z.ar
 export type DeploymentTemplateCapacityReviewV1 = z.infer<typeof DeploymentTemplateCapacityReviewV1Schema>;
 export const DeploymentTemplateInstantiationReviewV1Schema = lazyZodSchema(() => z.strictObject({
   templateRef: DeploymentTemplateRefV1Schema, ...DeploymentComposeSelectorsV1Schema.shape,
+  document: z.optional(DeploymentStoredDefinitionV1Schema.shape.document),
+  ...z.pick(DeploymentTemplateV1Schema.shape.compose, { publicFiles: true }).shape,
   bindings: z.array(EnvironmentVariableBindingV1Schema),
   generatedSecrets: z.array(z.strictObject({ name: id, phase: z.enum(['build', 'runtime']), key: id,
     profile: DeploymentTemplateSecretProfileV1Schema })),

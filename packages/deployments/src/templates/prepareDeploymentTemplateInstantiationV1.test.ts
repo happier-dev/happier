@@ -26,6 +26,15 @@ function current(environment: Record<string, unknown> = {}) {
 }
 
 describe('stored template preparation', () => {
+    it('rejects public files that overwrite the Compose source or collide within the contained tree', () => {
+        for (const publicFiles of [[{ path: 'compose.yaml', content: 'replace' }], [{ path: 'Compose.yaml', content: 'replace' }],
+            [{ path: 'compose.yaml.', content: 'replace' }], [{ path: 'compose.yaml ', content: 'replace' }],
+            [{ path: 'C:outside', content: '' }], [{ path: '../outside', content: '' }],
+            [{ path: 'files/a', content: '' }, { path: 'files/a', content: 'duplicate' }],
+            [{ path: 'files/a', content: '' }, { path: 'files/a/b', content: 'child' }]]) {
+            expect(DeploymentTemplateV1Schema.safeParse({ ...template, compose: { ...template.compose, publicFiles } }).success).toBe(false);
+        }
+    });
     it('validates the bundled PostgreSQL resource through the host template contract', async () => {
         const raw: unknown = JSON.parse(await readFile(new URL('../../../plugins/deployment-templates/resources/registry/apps.json', import.meta.url), 'utf8'));
         if (!raw || typeof raw !== 'object' || !('apps' in raw) || !Array.isArray(raw.apps)) throw new Error('Expected packaged app catalog');
