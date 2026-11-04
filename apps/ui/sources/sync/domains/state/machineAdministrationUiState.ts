@@ -63,7 +63,7 @@ export function migrateMachineAdministrationTargetObservations(scope: ServerAcco
     const retained: Record<string, unknown> = {};
     let changed = false;
     for (const [key, value] of Object.entries(targets as Record<string, unknown>)) {
-        if (!key.startsWith('plugin.lastRunOn:')) { retained[key] = value; continue; }
+        if (key !== 'machines.managed' && !key.startsWith('plugin.lastRunOn:')) { retained[key] = value; continue; }
         const target = MachineAdministrationTargetV1Schema.safeParse(value);
         if (target.success) {
             const destination = serverAccountScopedResourceKey(scope, key);
