@@ -29,6 +29,7 @@ export function NotificationPushSection({
 }: NotificationPushSectionProps): React.ReactElement {
 
     return (
+        <>
         <ItemGroup
             title={t('settingsNotifications.push.title')}
             description={t('settingsNotifications.push.footer', { home: homeName })}
@@ -46,12 +47,6 @@ export function NotificationPushSection({
                 showChevron={false}
             />
             <SettingRow
-                testID="settings-notifications-push-troubleshoot"
-                icon={<Icon name="question" />}
-                setting={NOTIFICATIONS_SETTINGS.settings.troubleshoot}
-                onPress={openPushTroubleshooting}
-            />
-            <SettingRow
                 testID="settings-notifications-mute-phone-focused-computer"
                 setting={NOTIFICATIONS_SETTINGS.settings.mutePhoneWhenComputerFocused}
                 rightElement={(
@@ -61,5 +56,15 @@ export function NotificationPushSection({
                 showChevron={false}
             />
         </ItemGroup>
+        {/* A row that opens a page carries an icon, so it gets its own sheet: beside the switches it pushed their titles off the page's edge. */}
+        <ItemGroup>
+            <SettingRow
+                testID="settings-notifications-push-troubleshoot"
+                icon={<Icon name="question" />}
+                setting={NOTIFICATIONS_SETTINGS.settings.troubleshoot}
+                onPress={openPushTroubleshooting}
+            />
+        </ItemGroup>
+        </>
     );
 }

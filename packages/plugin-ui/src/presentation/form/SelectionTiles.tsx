@@ -133,8 +133,6 @@ export type HappierSelectionTilesTextRenderer = (input: Readonly<{
   /** The card group is `density="compact"`. */
   compact: boolean;
   numberOfLines: number;
-  /** Detailed visual captions align together; short standalone choice captions stay centered. */
-  alignment?: 'left' | 'center';
 }>) => ReactNode;
 
 /**
@@ -408,8 +406,7 @@ function VisualSelectionTiles<T extends string, I extends string>(props: Happier
       {props.options.map((option, index) => {
         const selected = isSelected(props, option.id);
         const disabled = option.disabled === true;
-        const alignment = option.subtitle || option.badge ? 'left' : 'center';
-        const label = props.renderText({ role: 'visualLabel', text: option.title, selected, compact: false, numberOfLines: props.labelLines ?? 2, alignment });
+        const label = props.renderText({ role: 'visualLabel', text: option.title, selected, compact: false, numberOfLines: props.labelLines ?? 2 });
         return (
           <Pressable
             key={option.id}
@@ -450,7 +447,7 @@ function VisualSelectionTiles<T extends string, I extends string>(props: Happier
               </View>
             ) : label}
             {showLabels && option.subtitle
-              ? props.renderText({ role: 'visualSublabel', text: option.subtitle, selected, compact: false, numberOfLines: 2, alignment })
+              ? props.renderText({ role: 'visualSublabel', text: option.subtitle, selected, compact: false, numberOfLines: 2 })
               : null}
           </Pressable>
         );

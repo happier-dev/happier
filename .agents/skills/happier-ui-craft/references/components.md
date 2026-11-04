@@ -85,6 +85,7 @@ Rules that come with the table:
   check that a filled secondary does not read as disabled, and use `display="destructive"` for the
   irreversible action.
 - Visual tile rows fill the section width as equal tiles; action tiles wrap to one column on phones.
+- A visual tile's name and its description are both centred under the preview, whether or not it has a description.
 
 ## Status and badges
 

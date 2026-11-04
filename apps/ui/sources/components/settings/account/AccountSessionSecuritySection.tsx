@@ -57,12 +57,13 @@ export const AccountSignOutEverywhereButton = React.memo(function AccountSignOut
     );
 });
 
-/** Closes the security page: signing out everywhere, with its consequence underneath. Render it last. */
+/** Closes the security page: its own section, so the button belongs to something; its consequence reads above it. Render it last. */
 export const AccountSessionSecuritySection = React.memo(function AccountSessionSecuritySection() {
     return (
         <SettingAnchor setting={ACCOUNT_SECURITY_SETTINGS.settings.signOutEverywhere}>
-            <ItemGroup surface="none" accessibilityLabel={t('settingsAccount.sessionsSectionTitle')}>
-                <SectionButtonRow footnote={t('settingsApiTokens.signOutEverywhere.subtitle')}>
+            <ItemGroup surface="none" title={t('settingsAccount.sessionsSectionTitle')}
+                description={t('settingsApiTokens.signOutEverywhere.subtitle')}>
+                <SectionButtonRow>
                     <AccountSignOutEverywhereButton />
                 </SectionButtonRow>
             </ItemGroup>

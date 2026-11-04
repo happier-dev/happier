@@ -224,8 +224,16 @@ export const PluginSettingsHomeScreen = React.memo(function PluginSettingsHomeSc
             )}
         />
 
+        {/* What blocks use comes first, directly under the Machine chip it is about. */}
+        {showSnapshotNotice && state.readOnlySnapshotNotice ? (
+            <PluginReadOnlySnapshotNotice
+                testID="settings.plugins.marketplace.readOnlySnapshot"
+                reason={state.readOnlySnapshotNotice.reason}
+                onRetry={state.refreshPluginTruth}
+            />
+        ) : null}
         {/*
-          * First after the target it acts on: a change waiting on this user
+          * Next after the target it acts on: a change waiting on this user
           * is attention, not one view's content, and a change an Agent
           * prepared has no other route into the app at all.
           */}
@@ -239,13 +247,6 @@ export const PluginSettingsHomeScreen = React.memo(function PluginSettingsHomeSc
             settlement={state.routineOperationSettlement}
             scope="pending"
         />
-        {showSnapshotNotice && state.readOnlySnapshotNotice ? (
-            <PluginReadOnlySnapshotNotice
-                testID="settings.plugins.marketplace.readOnlySnapshot"
-                reason={state.readOnlySnapshotNotice.reason}
-                onRetry={state.refreshPluginTruth}
-            />
-        ) : null}
 
         <PluginsToolbar
             // Beside the app rail the Plugins column owns Installed | Browse (lab `xrail-R1p`).

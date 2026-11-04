@@ -118,6 +118,8 @@ round; use it before inventing a variant, and extend the owner when a case does 
 - A quiet button row closes the page: the common exit bordered with an icon ("Sign out of Personal
   Home"), rare resets as text buttons, the irreversible one (`RoundButton display="destructive"`)
   pushed to the end, then one footnote with the consequence. No sheet, no red rows.
+- An action with its own subject ("Sign out everywhere" on a page about sign-in) is a titled section with no
+  sheet: title, consequence as the description, then the button, so it never hangs under an unrelated sheet.
 
 ## Back navigation
 

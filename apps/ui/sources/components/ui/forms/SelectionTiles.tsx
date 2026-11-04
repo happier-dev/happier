@@ -151,10 +151,9 @@ export function SelectionTiles<T extends string>(props: SelectionTilesProps<T>) 
         divider: theme.colors.border.subtle,
     }), [theme]);
 
-    const renderText = React.useCallback<HappierSelectionTilesTextRenderer>(({ role, text, selected, compact, numberOfLines, alignment }) => (
+    const renderText = React.useCallback<HappierSelectionTilesTextRenderer>(({ role, text, selected, compact, numberOfLines }) => (
         <Text style={[
             textStyle(styles, role, selected, compact),
-            alignment ? { textAlign: alignment } : null,
             // Tile text wraps at word boundaries and is never auto-hyphenated ("ac-count"); RNW's break-word
             // still splits a single word only when it is wider than the whole text column.
             Platform.OS === 'web' && (role === 'visualLabel' || role === 'visualSublabel') ? WEB_VISUAL_TEXT_WRAPPING : null,
