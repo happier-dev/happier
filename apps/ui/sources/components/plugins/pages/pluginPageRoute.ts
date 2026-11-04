@@ -64,10 +64,19 @@ export function appendPluginPageRouteSubPath(routePath: string, subPath: string)
 /** The host owns the prefix and encodes each plugin-local identity/location segment. */
 export function buildPluginAppPageRoutePath(input: Readonly<{
     pluginId: string; localId: string; subPath?: string;
+    /** The page's own declared view the location presents (`replacePageLocation` `view`), when not the page itself. */
+    view?: string | null;
 }>): string {
     const root = `${PLUGIN_APP_PAGE_ROUTE_PREFIX}/${encodeURIComponent(input.pluginId)}/${encodeURIComponent(input.localId)}`;
     const normalized = input.subPath === undefined ? '' : (normalizePluginUiSubPathV1(input.subPath) ?? '');
-    return normalized.length === 0 ? root : `${root}/${normalized.split('/').map(encodeURIComponent).join('/')}`;
+    const path = normalized.length === 0 ? root : `${root}/${normalized.split('/').map(encodeURIComponent).join('/')}`;
+    return input.view == null || input.view === input.localId ? path : `${path}?view=${encodeURIComponent(input.view)}`;
+}
+
+/** The declared view an app-page route names in its `view` query, or `null`. The page resolves it against its views. */
+export function readPluginAppPageRouteView(value: unknown): string | null {
+    const view = Array.isArray(value) ? value[0] : value;
+    return typeof view === 'string' && view.trim() !== '' && !/[/\\]/u.test(view) ? view : null;
 }
 
 /**
