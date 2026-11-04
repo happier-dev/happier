@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createAutomationDefinition, deleteAutomationDefinition, getAutomationDefinition, listAutomationDefinitions, reconcileAutomationDefinition, runAutomationNowReceipt } from './automations';
+import { createAutomationDefinition, deleteAutomationDefinition, getAutomationDefinition, listAutomationDefinitionDetails, listAutomationDefinitions, reconcileAutomationDefinition, runAutomationNowReceipt } from './automations';
 import { normalizeWorkflowActionThrownError } from '@happier-dev/protocol/actions/executor/workflowAccountActions';
 
 const { get, post, request } = vi.hoisted(() => ({
@@ -60,7 +60,36 @@ describe('runAutomationNow', () => {
     expect(post.mock.calls[0]?.slice(0, 2)).toEqual(['https://api.example.test/v3/automations/query', expect.objectContaining(query)]);
   });
 
-  it.each(['list', 'get', 'reconcile'] as const)('cancels an authenticated %s operation at its HTTP boundary', async operation => {
+  it('reads a selected detail page with its cursor and private definition arm in one authenticated request', async () => {
+    const controller = new AbortController();
+    const row = { id: 'automation-one', name: 'Triggers', description: null, enabled: true,
+      workflowDefinitionId: null, scopeSessionId: 'session-one', targetType: null, existingSessionId: null,
+      templateVersion: 1, lastRunAt: null, createdAt: 1, updatedAt: 1, assignments: [], triggers: [],
+      observationOnly: { kind: 'observationOnly', templateVersion: 1 } };
+    post.mockResolvedValue({ status: 200, data: { automations: [row], nextCursor: 'next-page' } });
+    const selection = { limit: 70, cursor: 'previous-page', workflowDefinitionIds: ['builtin:review'], scopeSessionId: 'session-one' };
+    await expect(listAutomationDefinitionDetails({ token: 'token-1', signal: controller.signal, ...selection }))
+      .resolves.toEqual({ automations: [row], nextCursor: 'next-page' });
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(post).toHaveBeenCalledWith('https://api.example.test/v3/automations/query',
+      { ...selection, details: true }, expect.objectContaining({ signal: controller.signal,
+        headers: expect.objectContaining({ Authorization: 'Bearer token-1' }) }));
+    expect(get).not.toHaveBeenCalled();
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  it('rejects a summary-only reply to a detail read without retrying singleton reads', async () => {
+    const summary = { id: 'automation-one', name: 'Triggers', description: null, enabled: true,
+      workflowDefinitionId: null, scopeSessionId: null, targetType: null, existingSessionId: null,
+      templateVersion: 1, lastRunAt: null, createdAt: 1, updatedAt: 1, assignments: [], triggers: [] };
+    post.mockResolvedValue({ status: 200, data: { automations: [summary], nextCursor: null } });
+    await expect(listAutomationDefinitionDetails({ token: 'token-1' })).rejects.toThrow();
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(get).not.toHaveBeenCalled();
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  it.each(['list', 'details', 'get', 'reconcile'] as const)('cancels an authenticated %s operation at its HTTP boundary', async operation => {
     const controller = new AbortController();
     controller.abort();
     const aborted = new Error('cancelled');
@@ -70,6 +99,7 @@ describe('runAutomationNow', () => {
     post.mockImplementation((_url, _body, options) => observeCancellation(options));
     request.mockImplementation(options => observeCancellation(options));
     const pending = operation === 'list' ? listAutomationDefinitions({ token: 'token-1', managedTargetUnindexed: true, signal: controller.signal })
+      : operation === 'details' ? listAutomationDefinitionDetails({ token: 'token-1', signal: controller.signal })
       : operation === 'get' ? getAutomationDefinition({ token: 'token-1', automationId: 'automation-1', signal: controller.signal })
         : reconcileAutomationDefinition({ token: 'token-1', automationId: 'automation-1', signal: controller.signal, input: {
           expectedTemplateVersion: 1, name: 'Triggers', description: null, enabled: true, assignments: [], triggers: [], removedTriggers: [],
@@ -78,7 +108,7 @@ describe('runAutomationNow', () => {
     else await expect(pending).rejects.toBe(aborted);
   });
 
-  it.each(['run', 'list', 'get', 'create', 'reconcile', 'delete'] as const)(
+  it.each(['run', 'list', 'details', 'get', 'create', 'reconcile', 'delete'] as const)(
     'preserves typed HTTP refusal through the Workflow failure consumer for %s without disclosing raw content', async operation => {
       const response = { status: 400, data: { code: 'FST_ERR_VALIDATION', error: 'Bad Request',
         message: 'private validation input', headers: { authorization: 'private credential' } } };
@@ -93,6 +123,7 @@ describe('runAutomationNow', () => {
         switch (operation) {
           case 'run': return runAutomationNowReceipt({ token: 'token-1', automationId: 'automation-1' });
           case 'list': return listAutomationDefinitions({ token: 'token-1' });
+          case 'details': return listAutomationDefinitionDetails({ token: 'token-1' });
           case 'get': return getAutomationDefinition({ token: 'token-1', automationId: 'automation-1' });
           case 'create': return createAutomationDefinition({ token: 'token-1', input });
           case 'reconcile': return reconcileAutomationDefinition({ token: 'token-1', automationId: 'automation-1', input: {
@@ -243,10 +274,11 @@ describe('runAutomationNow', () => {
     );
   });
 
-  it('preserves authentication rejection from the current Automation list owner', async () => {
+  it.each([listAutomationDefinitions, listAutomationDefinitionDetails])('preserves authentication rejection from the current Automation list owner', async list => {
     get.mockResolvedValue({ status: 401, data: { error: 'unauthorized' } });
+    post.mockResolvedValue({ status: 401, data: { error: 'unauthorized' } });
 
-    await expect(listAutomationDefinitions({ token: 'token-1', limit: 20 })).rejects.toMatchObject({
+    await expect(list({ token: 'token-1', limit: 20 })).rejects.toMatchObject({
       response: { status: 401 },
       code: 'not_authenticated',
     });

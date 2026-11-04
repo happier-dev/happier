@@ -3,7 +3,7 @@ import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
 import { randomBytes } from 'node:crypto';
 import { backfillAutomationManagedTargetsV1 } from '@happier-dev/protocol/actions/executor/workflowTriggerAccountHost';
-import { listAutomationDefinitions, getAutomationDefinition, updateAutomationDefinition } from '@/api/automations';
+import { listAutomationDefinitionDetails, updateAutomationDefinition } from '@/api/automations';
 import {
   createAutomationAccountEncryptionMaterialSnapshotV1,
   resolveValidatedAutomationAccountEncryptionV1,
@@ -799,9 +799,7 @@ export function startAutomationWorker(params: {
       return current;
     },
     automations: {
-      list: async input => { await assertBackfillAccountCurrent(); return await listAutomationDefinitions({ ...input, token: params.token,
-        signal: managedTargetBackfillCancellation.signal }); },
-      get: async automationId => { await assertBackfillAccountCurrent(); return await getAutomationDefinition({ token: params.token, automationId,
+      listDetails: async input => { await assertBackfillAccountCurrent(); return await listAutomationDefinitionDetails({ ...input, token: params.token,
         signal: managedTargetBackfillCancellation.signal }); },
       patch: async (automationId, input, beforeWrite) => {
         await beforeWrite?.();

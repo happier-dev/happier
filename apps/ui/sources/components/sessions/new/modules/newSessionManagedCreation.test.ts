@@ -53,6 +53,7 @@ function bindingTransport(options: Readonly<{ beforeWrite?: () => Promise<void>;
         // These operations are the Account's persistent Automation transport.
         automations: {
             list: async () => ({ automations: [...rows.values()], nextCursor: null }),
+            listDetails: async () => ({ automations: [...rows.values()], nextCursor: null }),
             get: async id => rows.get(id) ?? null,
             create: async input => {
                 await options.beforeWrite?.();

@@ -1,6 +1,7 @@
 import { workflowTriggerDisplayNameV1 } from '../../workflows/workflowStepLabel.js';
 import type {
   AutomationDefinitionCreateRequest, AutomationDefinitionDetail, AutomationDefinitionListResponse,
+  AutomationDefinitionDetailsResponse,
   AutomationDefinitionReconcileRequest, AutomationTriggerReconcileExistingItem, AutomationDefinitionListRequest, AutomationDeleteResponse,
 } from '../../automations/automationApiV3.js';
 import { AutomationV3RunMutationResponseSchema, type AutomationV3RunMutationResponse } from '../../automations/automationApiV3.js';
@@ -56,6 +57,7 @@ type Caller = WorkflowActionExecuteArgs['context'];
 type WorkflowTriggerWriteResult = ReturnType<typeof WorkflowTriggerWriteResultV1Schema.parse>;
 export type WorkflowTriggerAutomationOperations = Readonly<{
   list: (input: Readonly<Partial<AutomationDefinitionListRequest>>) => Promise<AutomationDefinitionListResponse>;
+  listDetails: (input: Readonly<Partial<AutomationDefinitionListRequest>>) => Promise<AutomationDefinitionDetailsResponse>;
   get: (automationId: string) => Promise<AutomationDefinitionDetail | null>;
   /** Awaited encoding adapters re-run this owner-supplied check immediately before transport. */
   create: (input: AutomationDefinitionCreateRequest, beforeWrite?: () => Promise<void>) => Promise<AutomationDefinitionDetail>;
@@ -157,25 +159,22 @@ function retainedTriggers(row: AutomationDefinitionDetail): AutomationTriggerRec
   return row.triggers.map((trigger) => ({ kind: 'existing', triggerId: trigger.id, expectedRevision: trigger.revision }));
 }
 
-async function automationRows(automations: Pick<WorkflowTriggerAutomationOperations, 'list'>,
+async function automationRows<T>(readPage: (input: Readonly<Partial<AutomationDefinitionListRequest>>) => Promise<Readonly<{
+  automations: readonly T[]; nextCursor: string | null;
+}>>,
   filter: Readonly<Partial<AutomationDefinitionListRequest>>) {
-  const rows: AutomationDefinitionListResponse['automations'] = [];
+  const rows: T[] = [];
   let cursor: string | undefined;
   do {
-    const page = await automations.list({ ...filter, ...(cursor ? { cursor } : {}) });
+    const page = await readPage({ ...filter, ...(cursor ? { cursor } : {}) });
     rows.push(...page.automations);
     cursor = page.nextCursor ?? undefined;
   } while (cursor);
   return rows;
 }
-function managedTargetRows(automations: Pick<WorkflowTriggerAutomationOperations, 'list'>,
-  managedTarget: Readonly<{ homeId: string; managedId: string }>) {
-  // Only the temporary, explicitly unindexed rows need the predecessor private recognizer.
-  return automationRows(automations, { managedTarget, includeUnindexedManagedTargets: true });
-}
 async function scopedRows(automations: Pick<WorkflowTriggerAutomationOperations, 'list'>, sessionId: string | null = null,
   filter: Readonly<Partial<AutomationDefinitionListRequest>> = {}) {
-  return (await automationRows(automations, { ...filter, ...(sessionId ? { scopeSessionId: sessionId } : {}) }))
+  return (await automationRows(automations.list, { ...filter, ...(sessionId ? { scopeSessionId: sessionId } : {}) }))
     .filter((row) => (row.scopeSessionId ?? null) === sessionId);
 }
 
@@ -184,7 +183,7 @@ export async function removeWorkflowTriggersForDefinition(
   automations: Pick<WorkflowTriggerAutomationOperations, 'list' | 'delete'>,
   workflow: string,
 ): Promise<void> {
-  for (const row of await automationRows(automations, { workflowDefinitionId: workflow })) {
+  for (const row of await automationRows(automations.list, { workflowDefinitionId: workflow })) {
     if (row.workflowDefinitionId === workflow) await automations.delete(row.id);
   }
 }
@@ -476,16 +475,17 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
       }
       const managedTarget = 'managedTarget' in input ? input.managedTarget : null;
       const all = managedTarget !== null || ('scope' in input && input.scope === 'account_all');
-      const rows = managedTarget ? await managedTargetRows(deps.automations, managedTarget)
-        : all ? await automationRows(deps.automations, {}) : (await scopedRows(deps.automations, null, 'workflow' in input
-        ? { workflowDefinitionId: input.workflow } : { scope: 'account_inline' })).filter((row) => 'workflow' in input
-        ? row.workflowDefinitionId === input.workflow : row.workflowDefinitionId == null);
+      const rows = await automationRows(deps.automations.listDetails, managedTarget
+        ? { managedTarget, includeUnindexedManagedTargets: true } : all ? {} : 'workflow' in input
+          ? { workflowDefinitionId: input.workflow } : { scope: 'account_inline' });
+      const selectedRows = all ? rows : rows.filter(row => (row.scopeSessionId ?? null) === null
+        && ('workflow' in input ? row.workflowDefinitionId === input.workflow : row.workflowDefinitionId == null));
       // Pages can overlap while the Account changes. Hydrate each Automation once,
       // preserving census order and preventing duplicate legacy conversion writes.
-      const uniqueRows = [...new Map(rows.map((row) => [row.id, row])).values()];
+      const uniqueRows = [...new Map(selectedRows.map((row) => [row.id, row])).values()];
       const projected = await Promise.allSettled(uniqueRows.map(async (item) => {
         if (all && item.scopeSessionId) await assertSessionAdmission(item.scopeSessionId, caller);
-        let row = await read(item.id, all ? item.scopeSessionId ?? null : null);
+        let row = item;
         if (row.templateCiphertext !== undefined) {
           if (await deps.requiresLegacyReview?.(row)) {
             row = await pauseLegacy(row, caller);
@@ -508,7 +508,16 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
             }
           }
         }
-        if ('scope' in input && (row.executionRecipe?.v === 2 || row.observationOnly)) {
+        if (managedTarget) {
+          const set = await projection(row);
+          if (set.health !== 'available') refuse('source_unavailable');
+          const managed = set.target && readManagedMachineTriggerAction(set.target);
+          const matches = managed && managed.input.homeId === managedTarget.homeId && managed.input.managedId === managedTarget.managedId;
+          if (!matches && row.managedTarget?.homeId === managedTarget.homeId && row.managedTarget.managedId === managedTarget.managedId) {
+            refuse('source_unavailable');
+          }
+          return matches ? set : null;
+        } else if ('scope' in input && (row.executionRecipe?.v === 2 || row.observationOnly)) {
           // Invalid inline context remains visible as unavailable, rather than disappearing from the Triggers section.
           return await projection(row);
         } else if ('workflow' in input || row.templateCiphertext !== undefined) {
@@ -797,11 +806,11 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
           || current.controller?.installationId !== controller.installationId) refuse('target_unavailable');
       };
       await assertCurrent();
-      for (const summary of await managedTargetRows(deps.automations, { homeId: input.machine.homeId, managedId: input.machine.id })) {
+      for (const row of await automationRows(deps.automations.listDetails, {
+        managedTarget: { homeId: input.machine.homeId, managedId: input.machine.id }, includeUnindexedManagedTargets: true,
+      })) {
         input.signal?.throwIfAborted();
-        if (summary.workflowDefinitionId != null || summary.triggers.length !== 1) continue;
-        const row = await deps.automations.get(summary.id);
-        if (!row || row.executionRecipe?.v !== 2 || row.workflowDefinitionId != null || row.triggers.length !== 1) continue;
+        if (row.executionRecipe?.v !== 2 || row.workflowDefinitionId != null || row.triggers.length !== 1) continue;
         const trigger = row.triggers[0]!;
         const scopeEnd = row.scopeSessionId
           ? trigger.kind === 'sessionLifecycle' && trigger.sourceSessionId === row.scopeSessionId
@@ -864,7 +873,9 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
       const input = SessionTriggerListRequestV1Schema.parse(raw);
       await session(input.sessionId, caller);
       const sets: WorkflowTriggerSetV1[] = [];
-      for (const row of await scopedRows(deps.automations, input.sessionId)) sets.push(await projection(await read(row.id, input.sessionId)));
+      for (const row of await automationRows(deps.automations.listDetails, { scopeSessionId: input.sessionId })) {
+        if (row.scopeSessionId === input.sessionId) sets.push(await projection(row));
+      }
       const unavailable = { status: 'unavailable', code: 'target_unavailable' } as const;
       let pullRequestLinks: SessionPullRequestLinkV1[] | typeof unavailable = unavailable;
       if (deps.pullRequests) {

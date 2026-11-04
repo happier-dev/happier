@@ -3,7 +3,8 @@ import { readFileSync } from 'node:fs';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { AUTOMATION_V3_DEFINITION_LIST_MAX_ITEMS, AutomationDefinitionDetailSchema,
-    AutomationDefinitionListRequestSchema, AutomationDefinitionListResponseSchema } from '@happier-dev/protocol/automations/automationApiV3';
+    AutomationDefinitionListResponseSchema, AutomationDefinitionDetailsRequestSchema,
+    AutomationDefinitionDetailsResponseSchema } from '@happier-dev/protocol/automations/automationApiV3';
 import { backfillAutomationManagedTargetsV1 } from '@happier-dev/protocol/actions/executor/workflowTriggerAccountHost';
 import { AutomationTriggerIdSchema } from '@happier-dev/protocol/automations/automationTriggerIdentity';
 import { db } from '@/storage/db';
@@ -25,31 +26,24 @@ async function createManagedTargetBackfillBoundary(app: FastifyInstance) {
         templateVersion: 1, templateCiphertext: JSON.stringify(recipe), managedTargetIndexed: false,
         createdAt: new Date(1), updatedAt: new Date(1) })) });
     const lists: Array<{ cursor?: string; nextCursor: string | null; ids: string[] }> = [];
-    const reads: string[] = [];
     const attempts: string[] = [];
     const writes: string[] = [];
     let conflictId: string | undefined;
     const lostAcknowledgements = new Set<string>();
     const headers = { 'x-test-user-id': accountId };
     const automations: Parameters<typeof backfillAutomationManagedTargetsV1>[0]['automations'] = {
-        list: async input => {
-            const query = AutomationDefinitionListRequestSchema.parse(input);
+        listDetails: async input => {
+            const query = AutomationDefinitionDetailsRequestSchema.parse({ ...input, details: true });
             const previous = lists.at(-1);
             // This is a request-cost contract: each pass consumes the previous
             // server-issued continuation once, including after a row conflict.
             const response = await app.inject({ method: 'POST', url: '/v3/automations/query', headers, payload: query });
             expect(response.statusCode, response.body).toBe(200);
-            const page = AutomationDefinitionListResponseSchema.parse(response.json());
+            const page = AutomationDefinitionDetailsResponseSchema.parse(response.json());
             lists.push({ ...(query.cursor ? { cursor: query.cursor } : {}), nextCursor: page.nextCursor,
                 ids: page.automations.map(row => row.id) });
             if (previous && previous.nextCursor !== null) expect(query.cursor).toBe(previous.nextCursor);
             return page;
-        },
-        get: async id => {
-            reads.push(id);
-            const response = await app.inject({ method: 'GET', url: `/v3/automations/${id}`, headers });
-            expect(response.statusCode, response.body).toBe(200);
-            return AutomationDefinitionDetailSchema.parse(response.json());
         },
         patch: async (id, input, beforeWrite) => {
             await beforeWrite?.();
@@ -70,7 +64,7 @@ async function createManagedTargetBackfillBoundary(app: FastifyInstance) {
             return row;
         },
     };
-    return { accountId, ids, lists, reads, attempts, writes,
+    return { accountId, ids, lists, attempts, writes,
         params: { automations, resolveEncryption: async () => ({ kind: 'available' as const,
             witness: { mode: 'plain' as const, version: 1, contentKeyFingerprint: null } }),
             randomBytes: (length: number) => new Uint8Array(length).fill(3) },
@@ -90,7 +84,6 @@ describe('managed Automation target custody (SQLite)', () => {
             expect(await backfillAutomationManagedTargetsV1(f.params)).toEqual({ updated: f.ids.length, unresolved: 0 });
             expect(f.lists.map(page => page.ids.length)).toEqual([100, 100, 2]);
             expect(f.lists.flatMap(page => page.ids)).toEqual(f.ids);
-            expect(f.reads).toEqual(f.ids);
             expect(f.attempts).toEqual(f.ids);
             expect(f.writes).toEqual(f.ids);
             expect(new Set(f.writes).size).toBe(f.ids.length);
@@ -100,7 +93,6 @@ describe('managed Automation target custody (SQLite)', () => {
             expect(await backfillAutomationManagedTargetsV1(f.params)).toEqual({ updated: 0, unresolved: 0 });
             expect(f.lists.at(-1)?.ids).toEqual([]);
             expect(f.lists).toHaveLength(4);
-            expect(f.reads).toEqual(f.ids);
             expect(f.attempts).toEqual(f.ids);
             expect(f.writes).toEqual(f.ids);
         });
@@ -118,7 +110,6 @@ describe('managed Automation target custody (SQLite)', () => {
             expect(await backfillAutomationManagedTargetsV1(f.params)).toEqual({ updated: f.ids.length - 3, unresolved: 3 });
             expect(f.lists.map(page => page.ids.length)).toEqual([100, 100, 2]);
             expect(f.lists.flatMap(page => page.ids)).toEqual(f.ids);
-            expect(f.reads).toEqual(f.ids);
             expect(f.attempts).toEqual(f.ids);
             expect(f.writes).toEqual(f.ids.filter(id => id !== conflicted));
             expect(await db.automation.count({ where: { accountId: f.accountId, managedTargetIndexed: false } })).toBe(1);
@@ -130,7 +121,6 @@ describe('managed Automation target custody (SQLite)', () => {
             f.conflictOn(undefined);
             f.loseAcknowledgementsFor([]);
             expect(await backfillAutomationManagedTargetsV1(f.params)).toEqual({ updated: 1, unresolved: 0 });
-            expect(f.reads).toEqual([...f.ids, conflicted]);
             expect(f.attempts).toEqual([...f.ids, conflicted]);
             expect(f.writes).toEqual([...f.ids.filter(id => id !== conflicted), conflicted]);
             expect(new Set(f.writes).size).toBe(f.ids.length);

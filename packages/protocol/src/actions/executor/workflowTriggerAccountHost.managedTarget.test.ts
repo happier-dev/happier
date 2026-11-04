@@ -45,6 +45,10 @@ function fixture(encryption: AvailableAutomationAccountEncryptionV1 = plain) {
   const automations: WorkflowTriggerAutomationOperations & Readonly<{
     patch: (id: string, input: AutomationDefinitionPatchRequest, beforeWrite?: () => Promise<void>) => Promise<AutomationDefinitionDetail>;
   }> = {
+    listDetails: async input => {
+      lists.push(input);
+      return { automations: [...rows.values()].filter(row => !input.managedTargetUnindexed || row.managedTarget === undefined), nextCursor: null };
+    },
     list: async input => {
       lists.push(input);
       return { automations: [...rows.values()].filter(row => !input.managedTargetUnindexed || row.managedTarget === undefined)
@@ -98,7 +102,7 @@ describe('Automation managed-target migration', () => {
     f.seed('old-unrelated', false, false, 'team-one');
     expect(await backfillAutomationManagedTargetsV1(f.params)).toEqual({ updated: 2, unresolved: 0 });
     expect(f.writes).toEqual(['old-managed', 'old-unrelated']);
-    expect(f.reads).toEqual(['old-managed', 'old-unrelated']);
+    expect(f.reads).toHaveLength(0);
     expect(f.rows.get('old-managed')?.managedTarget).toEqual(target);
     expect(f.rows.get('old-unrelated')?.managedTarget).toBeNull();
     f.reads.length = 0;
@@ -128,7 +132,7 @@ describe('Automation managed-target migration', () => {
   it('does not hot-retry a conflicting definition or treat it as indexed', async () => {
     const f = fixture(); f.seed('old-managed', true); f.fail('conflict');
     expect(await backfillAutomationManagedTargetsV1(f.params)).toEqual({ updated: 0, unresolved: 1 });
-    expect(f.reads).toEqual(['old-managed']);
+    expect(f.reads).toHaveLength(0);
     expect(f.writes).toHaveLength(0);
     expect(f.rows.get('old-managed')?.managedTarget).toBeUndefined();
   });

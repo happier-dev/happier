@@ -4,7 +4,7 @@ import { resolveValidatedAutomationAccountEncryptionV1 } from '@happier-dev/prot
 import type { WorkflowDefinitionV1, WorkflowTriggerActionsDependencies } from '@happier-dev/protocol';
 
 import { createAutomationDefinition, deleteAutomationDefinition, getAutomationDefinition,
-  listAutomationDefinitions, reconcileAutomationDefinition, runAutomationNowReceipt } from '@/api/automations';
+  listAutomationDefinitionDetails, listAutomationDefinitions, reconcileAutomationDefinition, runAutomationNowReceipt } from '@/api/automations';
 import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
 import { classifyServerEndpointError } from '@/api/client/classifyServerEndpointError';
 import { getRandomBytes } from '@/api/encryption';
@@ -34,6 +34,7 @@ export function createCliWorkflowTriggerActions(params: Readonly<{
   return createAccountWorkflowTriggerActions({
     automations: {
       list: (input) => onServer(() => listAutomationDefinitions({ token, ...input })),
+      listDetails: (input) => onServer(() => listAutomationDefinitionDetails({ token, ...input })),
       get: (automationId) => onServer(() => getAutomationDefinition({ token, automationId })),
       create: (input) => onServer(() => createAutomationDefinition({ token, input })),
       reconcile: (automationId, input) => onServer(() => reconcileAutomationDefinition({ token, automationId, input })),

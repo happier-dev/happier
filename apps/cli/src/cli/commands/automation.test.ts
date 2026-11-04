@@ -15,7 +15,7 @@ function runExecutor(runNow: NonNullable<Parameters<typeof createWorkflowTrigger
   const definitions = createWorkflowDefinitionActions({ artifactStore: { read: unavailable, list: unavailable,
     create: unavailable, update: unavailable, delete: unavailable }, encodeListCursor: (row) => row.artifactId,
     assertDefinitionWriteAllowed: unavailable });
-  const triggers = createWorkflowTriggerActions({ automations: { list: unavailable, get: unavailable, create: unavailable,
+  const triggers = createWorkflowTriggerActions({ automations: { list: unavailable, listDetails: unavailable, get: unavailable, create: unavailable,
     reconcile: unavailable, delete: unavailable, runNow }, newId: () => 'unused', openContext: unavailable,
     sealContext: unavailable, resolveWorkflow: unavailable });
   const settings = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'workflow.trigger.run_now': ['cli'] } });

@@ -97,6 +97,7 @@ function fixture() {
       // The real list projection omits the private execution recipe; callers must
       // open the authorized detail before comparing an inline notification intent.
       list: async () => ({ automations: [...rows.values()].map(({ executionRecipe: _private, ...row }) => row), nextCursor: null }),
+      listDetails: async () => ({ automations: [...rows.values()], nextCursor: null }),
       get: async (id) => rows.get(id) ?? null,
       create: async (input) => {
         const row: AutomationDefinitionDetail = { id: input.automationId, name: input.name, description: input.description ?? null,
@@ -415,8 +416,8 @@ describe('workflow trigger Automation composition', () => {
   it('moves only the exact managed inline scope binding after the resource controller changes', async () => {
     const f = fixture();
     const selections: Parameters<typeof f.deps.automations.list>[0][] = [];
-    const automations = { ...f.deps.automations, list: async (input: Parameters<typeof f.deps.automations.list>[0]) => {
-      selections.push(input); return f.deps.automations.list(input);
+    const automations = { ...f.deps.automations, listDetails: async (input: Parameters<typeof f.deps.automations.list>[0]) => {
+      selections.push(input); return f.deps.automations.listDetails(input);
     } };
     const inline = WorkflowDefinitionV1Schema.parse({ version: 1, blocks: [{ kind: 'action', id: 'stop',
       actionId: 'machines.managed.power.set', input: {
@@ -1155,7 +1156,8 @@ describe('workflow trigger Automation composition', () => {
     const { deps } = fixture();
     const inputs: unknown[] = [];
     const actions = createWorkflowTriggerActions({ ...deps, automations: { ...deps.automations,
-      list: async (input) => { inputs.push(input); return { automations: [], nextCursor: null }; } },
+      list: async (input) => { inputs.push(input); return { automations: [], nextCursor: null }; },
+      listDetails: async (input) => { inputs.push(input); return { automations: [], nextCursor: null }; } },
       resolveSession: async () => ({ project, nativeGoalOwner: false }) });
     await actions.list({ workflow });
     await actions.list({ scope: 'account_inline' });

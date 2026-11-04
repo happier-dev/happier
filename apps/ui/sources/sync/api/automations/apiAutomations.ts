@@ -7,6 +7,8 @@ import {
     AutomationDefinitionDetailSchema,
     AutomationDefinitionListResponseSchema,
     AutomationDefinitionListRequestSchema,
+    AutomationDefinitionDetailsRequestSchema,
+    AutomationDefinitionDetailsResponseSchema,
     AutomationDefinitionCreateRequestSchema,
     AutomationDefinitionPatchRequestSchema,
     AutomationDefinitionReconcileRequestSchema,
@@ -20,6 +22,7 @@ import {
     type AutomationDefinitionDetail,
     type AutomationDefinitionListRequest,
     type AutomationDefinitionListResponse,
+    type AutomationDefinitionDetailsResponse,
     type AutomationDefinitionCreateRequest,
     type AutomationDefinitionPatchRequest,
     type AutomationDefinitionReconcileRequest,
@@ -96,6 +99,20 @@ export async function listAutomationDefinitions(
         ...(selectedPage ? { method: 'POST', body: JSON.stringify(query) } : {}),
     }, { includeAuth: false }, context, context?.request ?? serverFetch, credentials);
     return AutomationDefinitionListResponseSchema.parse(raw);
+}
+
+/** One demanded private definition page, with the same selection and cursor owner as summaries. */
+export async function listAutomationDefinitionDetails(
+    credentials: AuthCredentials,
+    params: Readonly<Partial<AutomationDefinitionListRequest>> = {},
+    context?: AutomationRequestContext,
+): Promise<AutomationDefinitionDetailsResponse> {
+    const query = AutomationDefinitionDetailsRequestSchema.parse({ ...params, details: true });
+    const raw = await readAutomationApiJson('/v3/automations/query', {
+        method: 'POST', headers: getAutomationAuthHeaders(credentials, { includeJsonContentType: true }),
+        body: JSON.stringify(query),
+    }, { includeAuth: false }, context, context?.request ?? serverFetch, credentials);
+    return AutomationDefinitionDetailsResponseSchema.parse(raw);
 }
 
 /** Account-scoped settings are read through their strict owner, never inferred from definitions or runs. */

@@ -95,7 +95,7 @@ async function sealWorkflowContext(params: WorkflowCodecParams, input: Readonly<
  * a committed write; a conflicting, locked or unavailable row remains unknown without a hot retry.
  */
 export async function backfillAutomationManagedTargetsV1(params: WorkflowCodecParams & Readonly<{
-  automations: Pick<WorkflowTriggerAutomationOperations, 'list' | 'get'> & Readonly<{
+  automations: Pick<WorkflowTriggerAutomationOperations, 'listDetails'> & Readonly<{
     patch: (automationId: string, input: AutomationDefinitionPatchRequest, beforeWrite?: () => Promise<void>) => Promise<AutomationDefinitionDetail>;
   }>;
   signal?: AbortSignal;
@@ -110,14 +110,12 @@ export async function backfillAutomationManagedTargetsV1(params: WorkflowCodecPa
   let cursor: string | undefined;
   do {
     assertCurrent();
-    const page = await params.automations.list({ managedTargetUnindexed: true, ...(cursor ? { cursor } : {}) });
+    const page = await params.automations.listDetails({ managedTargetUnindexed: true, ...(cursor ? { cursor } : {}) });
     assertCurrent();
-    for (const summary of page.automations) {
+    for (const row of page.automations) {
       assertCurrent();
       try {
-        const row = await params.automations.get(summary.id);
-        assertCurrent();
-        if (!row || row.managedTarget !== undefined) continue;
+        if (row.managedTarget !== undefined) continue;
         if (row.executionRecipe?.v !== 2) { unresolved++; continue; }
         const openedEncryption = await params.resolveEncryption();
         assertCurrent();
@@ -261,6 +259,7 @@ function createAccountWorkflowTriggerActionOwner(params: WorkflowTriggerAccountH
   return createWorkflowTriggerActions({
     automations: {
       list: (input) => params.automations.list(input),
+      listDetails: (input) => params.automations.listDetails(input),
       get: (automationId) => params.automations.get(automationId),
       create: async (input, beforeWrite) => {
         const current = input.triggers.some((item) => isPrivateTrigger(item.trigger)) ? await params.resolveEncryption() : null;

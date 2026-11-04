@@ -559,6 +559,7 @@ describe('built-ins through accepted materialization and native leaf adapters', 
         workflow: { t: 'plain', v: context }, triggerEvidence: null }),
       automations: {
         list: async () => ({ automations: [...rows.values()], nextCursor: null }),
+        listDetails: async () => ({ automations: [...rows.values()], nextCursor: null }),
         get: async (id) => rows.get(id) ?? null,
         create: async (input) => {
           const row: AutomationDefinitionDetail = { id: input.automationId, name: input.name, description: null,

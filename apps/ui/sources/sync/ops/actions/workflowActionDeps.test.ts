@@ -380,23 +380,27 @@ async function createHarness(mode: 'plain' | 'e2ee' = 'plain', options: Readonly
             }
             return json(artifacts.get(artifactId) ?? { error: 'not-found' }, artifacts.has(artifactId) ? 200 : 404);
         }
-        if (target.pathname === '/v3/automations') {
-            if (init?.method === 'POST') {
+        if (target.pathname === '/v3/automations' || target.pathname === '/v3/automations/query') {
+            const query = target.pathname === '/v3/automations/query'
+                ? JSON.parse(String(init?.body)) : null;
+            if (init?.method === 'POST' && query === null) {
                 const row = createdAutomation(JSON.parse(String(init.body)) as AutomationDefinitionCreateRequest);
                 automationWrites.push(`create:${row.id}`);
                 automationRows.set(row.id, row);
                 return json(row);
             }
             await options.beforeAutomationListResponse?.();
-            const workflowFilter = target.searchParams.get('workflowDefinitionId');
-            const sessionFilter = target.searchParams.get('scopeSessionId');
-            const accountInline = target.searchParams.get('scope') === 'account_inline';
+            const workflowFilter = query?.workflowDefinitionId ?? target.searchParams.get('workflowDefinitionId');
+            const workflowFilters: unknown = query?.workflowDefinitionIds;
+            const sessionFilter = query?.scopeSessionId ?? target.searchParams.get('scopeSessionId');
+            const accountInline = (query?.scope ?? target.searchParams.get('scope')) === 'account_inline';
             const listed = [...(options.automations ?? []), ...[...automationRows.values()].map(listedAutomation)].filter((row) => (
                 (workflowFilter === null || row.workflowDefinitionId === workflowFilter)
+                && (!Array.isArray(workflowFilters) || workflowFilters.includes(row.workflowDefinitionId))
                 && (sessionFilter === null || row.scopeSessionId === sessionFilter)
                 && (!accountInline || (row.workflowDefinitionId == null && row.scopeSessionId == null))
             ));
-            return json({ automations: listed, nextCursor: null });
+            return json({ automations: query?.details === true ? listed.map(row => automationRows.get(row.id)) : listed, nextCursor: null });
         }
         if (target.pathname.startsWith('/v3/automations/') && init?.method === 'DELETE') {
             if (options.cleanupFailure) return json({ error: 'cleanup_unavailable' }, 503);
@@ -1126,14 +1130,16 @@ describe('UI Workflow Action front door', () => {
             let peak = 0;
             let currentnessReads = 0;
             const details: string[] = [];
+            let detailPages = 0;
             runtimeFetch.mockImplementation(async (url: unknown, init?: RequestInit) => {
                 const path = new URL(String(url)).pathname;
                 if (path === '/v1/account/encryption/currentness') {
                     currentnessReads += 1;
                     await new Promise(resolve => setTimeout(resolve, 10));
                 }
+                if (path === '/v3/automations/query' && JSON.parse(String(init?.body)).details === true) detailPages++;
                 const id = path.startsWith('/v3/automations/') ? decodeURIComponent(path.slice('/v3/automations/'.length)) : null;
-                if (!id || init?.method === 'PUT') return request(url, init);
+                if (!id || id === 'query' || init?.method === 'PUT') return request(url, init);
                 details.push(id);
                 active += 1;
                 peak = Math.max(peak, active);
@@ -1151,8 +1157,8 @@ describe('UI Workflow Action front door', () => {
             const { WorkflowTriggerListResultV1Schema } = await import('@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1');
             const { sets } = WorkflowTriggerListResultV1Schema.parse(result.result);
             expect.soft(sets.map(set => set.automationId)).toEqual(expectedIds);
-            expect.soft(details).toHaveLength(expectedIds.length);
-            expect.soft(peak).toBe(expectedIds.length);
+            expect.soft(details).toHaveLength(0);
+            expect.soft(detailPages).toBe(1);
             // One fresh witness shared for opening, plus the fresh final disclosure check.
             expect.soft(currentnessReads).toBeLessThanOrEqual(2);
             if (mode === 'plain') {

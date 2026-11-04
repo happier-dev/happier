@@ -8,7 +8,7 @@ import { createAccountWorkflowTriggerActions } from '@happier-dev/protocol/actio
 import { db } from '@/storage/db';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { createAutomationWorkflowRecipeFixture } from '@/testkit/automationWorkflowRecipe';
-import { createAutomation, deleteAutomation, getAutomation, listAutomations,
+import { createAutomation, deleteAutomation, getAutomation, listAutomations, listAutomationDefinitionsPage,
     reconcileAutomationDefinition, runAutomationNow, updateAutomation } from './automationCrudService';
 import { toAutomationDefinitionDetailApiDto, toAutomationDefinitionListItemApiDto } from './automationApiProjection';
 
@@ -28,6 +28,11 @@ describe('Workflow trigger removal through the Action and retained SQLite owners
             randomBytes, newId: randomUUID,
             resolveWorkflow: async () => { throw new Error('No Artifact reference in this fixture'); },
             automations: {
+                listDetails: async input => {
+                    const page = await listAutomationDefinitionsPage({ accountId, ...input, details: true });
+                    return { automations: page.automations.map(row => toAutomationDefinitionDetailApiDto(row, witness)),
+                        nextCursor: page.nextCursor };
+                },
                 list: async () => ({ automations: (await listAutomations({ accountId }))
                     .map(row => toAutomationDefinitionListItemApiDto(row)), nextCursor: null }),
                 get: async (automationId) => {

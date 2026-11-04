@@ -52,6 +52,7 @@ import {
     deleteAutomationDefinition,
     getAutomationDefinition,
     listAutomationDefinitions,
+    listAutomationDefinitionDetails,
     reconcileAutomationDefinition,
     runAutomationDefinitionNow,
 } from '@/sync/api/automations/apiAutomations';
@@ -168,6 +169,7 @@ export function createUiWorkflowAction(params: Readonly<{
     // owner serves them with no Machine reachable (03 §3.1).
     const automations: WorkflowTriggerAutomationOperations = {
         list: (input) => current(() => listAutomationDefinitions(account.credentials, input, account)),
+        listDetails: (input) => current(() => listAutomationDefinitionDetails(account.credentials, input, account)),
         get: (automationId) => current(async () => {
             try {
                 return await getAutomationDefinition(account.credentials, automationId, account);

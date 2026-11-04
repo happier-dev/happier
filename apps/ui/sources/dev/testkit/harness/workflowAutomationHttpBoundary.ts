@@ -3,6 +3,8 @@ import {
     AutomationDefinitionDetailSchema,
     AutomationDefinitionListItemSchema,
     AutomationDefinitionListRequestSchema,
+    AutomationDefinitionDetailsRequestSchema,
+    AutomationDefinitionDetailsResponseSchema,
     AutomationDefinitionListResponseSchema,
     AutomationDefinitionPatchRequestSchema,
     AutomationDefinitionReconcileRequestSchema,
@@ -29,6 +31,16 @@ export function selectWorkflowAutomationListFixture(rows: readonly AutomationDef
         templateCiphertext: _template, triggers, ...row }) => AutomationDefinitionListItemSchema.parse({ ...row,
             triggers: triggers.map(({ triggerDefinitionEnvelope: _envelope, ...trigger }) => trigger) })),
         nextCursor: offset + page.length < filtered.length ? `fixture-page-${offset + page.length}` : null });
+}
+
+/** Private detail demand uses the same selection and page boundary as the public census. */
+export function selectWorkflowAutomationDetailsFixture(rows: readonly AutomationDefinitionDetail[], raw: unknown) {
+    const { details: _details, ...selection } = AutomationDefinitionDetailsRequestSchema.parse(raw);
+    const page = selectWorkflowAutomationListFixture(rows, selection);
+    const byId = new Map(rows.map(row => [row.id, row]));
+    return AutomationDefinitionDetailsResponseSchema.parse({
+        automations: page.automations.map(row => byId.get(row.id)), nextCursor: page.nextCursor,
+    });
 }
 
 export function createWorkflowAutomationDetailFixture(params: Readonly<{
@@ -70,7 +82,10 @@ export function createWorkflowAutomationHttpBoundary(): {
         async handle(url: URL, init?: RequestInit): Promise<Response | undefined> {
             const method = init?.method ?? 'GET';
             if (url.pathname === '/v3/automations/query' && method === 'POST') {
-                return Response.json(selectWorkflowAutomationListFixture([...rows.values()], JSON.parse(String(init?.body))));
+                const input: unknown = JSON.parse(String(init?.body));
+                return Response.json(input && typeof input === 'object' && 'details' in input && input.details === true
+                    ? selectWorkflowAutomationDetailsFixture([...rows.values()], input)
+                    : selectWorkflowAutomationListFixture([...rows.values()], input));
             }
             const id = /^\/v3\/automations\/([^/]+)$/.exec(url.pathname)?.[1];
             if (url.pathname !== '/v3/automations' && !id) return undefined;

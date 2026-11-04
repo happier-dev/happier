@@ -1797,6 +1797,7 @@ describe('createActionExecutor (approvals)', () => {
     }, encodeListCursor: (row) => row.artifactId, assertDefinitionWriteAllowed: unused });
     const triggers = createWorkflowTriggerActions({ automations: {
       list: async () => ({ automations: [row], nextCursor: null }), get: async () => row,
+      listDetails: async () => ({ automations: [row], nextCursor: null }),
       create: unused, delete: unused,
       reconcile: async (_id, raw) => {
         const input = AutomationDefinitionReconcileRequestSchema.parse(raw);

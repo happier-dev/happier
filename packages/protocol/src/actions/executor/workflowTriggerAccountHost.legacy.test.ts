@@ -39,6 +39,7 @@ function fixture(templateCiphertext: string, encryption = plain, targetType: Aut
       executionSelection: { agentTarget: { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } } }),
     newId: () => 'unused', resolveWorkflow: async () => { throw new Error('No Artifact is read for legacy rows'); },
     automations: { get: async () => row, list: async () => ({ automations: [row], nextCursor: null }),
+      listDetails: async () => ({ automations: [row], nextCursor: null }),
       create: async () => { throw new Error('No Automation is created'); }, delete: async () => ({ ok: true as const }),
       reconcile: async (_id: string, input: AutomationDefinitionReconcileRequest) => {
         if (input.expectedTemplateVersion !== row.templateVersion) throw Object.assign(new Error('conflict'), { code: 'currentness_conflict' });

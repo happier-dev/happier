@@ -2305,7 +2305,7 @@ describe('composed Automation workflow claim and optional receipt', () => {
     let id = 0;
     const unexpected = async (): Promise<never> => { throw new Error('unexpected_automation_effect'); };
     const triggers = createAccountWorkflowTriggerActions({
-      automations: { list: async () => ({ automations: [], nextCursor: null }), get: async () => stored ?? null,
+      automations: { list: async () => ({ automations: [], nextCursor: null }), listDetails: async () => ({ automations: [], nextCursor: null }), get: async () => stored ?? null,
         create: async input => {
           // Opaque Home persistence is the boundary. Preserve the real trigger
           // producer's recipe and validate the stored response with its schema.
@@ -2584,7 +2584,7 @@ describe('composed Automation workflow claim and optional receipt', () => {
     // The Account Automation storage and authenticated Session/key read are
     // external boundaries. Conversion, consent, sealing and Run execution are real.
     const actions = createAccountWorkflowTriggerActions({
-      automations: { list: async () => ({ automations: [row], nextCursor: null }), get: async () => row,
+      automations: { list: async () => ({ automations: [row], nextCursor: null }), listDetails: async () => ({ automations: [row], nextCursor: null }), get: async () => row,
         create: async () => { throw new Error('must_preserve_automation_id'); }, delete: async () => ({ ok: true as const }),
         reconcile: async (_id, input) => {
           if (input.expectedTemplateVersion !== row.templateVersion) throw Object.assign(new Error('currentness_conflict'), { code: 'currentness_conflict' });

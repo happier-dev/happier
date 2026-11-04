@@ -97,7 +97,7 @@ describe('Automation managed target migration at authenticated UI startup', () =
         disposeHome = home.dispose;
         await vi.waitFor(() => expect(automations.patches).toHaveLength(1));
         expect(selected).toEqual([expect.objectContaining({ managedTargetUnindexed: true })]);
-        expect(detailIds).toEqual([unknown.id]);
+        expect(detailIds).toEqual([]);
         // A committed PATCH may legitimately refresh the ordinary projection;
         // it must never traverse that inventory or repeat the migration query.
         expect(ordinaryPages).toBeGreaterThan(0);

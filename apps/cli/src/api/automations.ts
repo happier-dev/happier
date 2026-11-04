@@ -2,7 +2,7 @@ import axios from 'axios';
 import type { ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { WorkflowHttpErrorDetailsV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { normalizeWorkflowActionThrownError } from '@happier-dev/protocol/actions/executor/workflowAccountActions';
-import { AutomationDefinitionListRequestSchema, AutomationDefinitionListResponseSchema, AutomationDefinitionDetailSchema, AutomationDefinitionCreateRequestSchema, AutomationDefinitionPatchRequestSchema, AutomationDefinitionReconcileRequestSchema, AutomationDeleteResponseSchema, AutomationV3RunMutationResponseSchema, type AutomationV3RunMutationResponse, type AutomationDeleteResponse } from '@happier-dev/protocol/automations/automationApiV3';
+import { AutomationDefinitionListRequestSchema, AutomationDefinitionListResponseSchema, AutomationDefinitionDetailsRequestSchema, AutomationDefinitionDetailsResponseSchema, AutomationDefinitionDetailSchema, AutomationDefinitionCreateRequestSchema, AutomationDefinitionPatchRequestSchema, AutomationDefinitionReconcileRequestSchema, AutomationDeleteResponseSchema, AutomationV3RunMutationResponseSchema, type AutomationV3RunMutationResponse, type AutomationDeleteResponse, type AutomationDefinitionDetailsResponse } from '@happier-dev/protocol/automations/automationApiV3';
 import type { AutomationDefinitionListResponse, AutomationDefinitionListRequest, AutomationDefinitionDetail, AutomationDefinitionCreateRequest, AutomationDefinitionPatchRequest, AutomationDefinitionReconcileRequest } from '@happier-dev/protocol';
 
 import {
@@ -46,26 +46,39 @@ function automationHttpError(status: number, body: unknown) {
   });
 }
 
-export async function listAutomationDefinitions(params: Readonly<Partial<AutomationDefinitionListRequest> & {
-  token: string;
-  signal?: AbortSignal;
-}>): Promise<AutomationDefinitionListResponse> {
-  const query = AutomationDefinitionListRequestSchema.parse({
+function automationDefinitionListInput(params: Readonly<Partial<AutomationDefinitionListRequest>>) {
+  return {
     ...(params.limit === undefined ? {} : { limit: params.limit }),
     ...(params.cursor === undefined ? {} : { cursor: params.cursor }),
     ...(params.workflowDefinitionId === undefined ? {} : { workflowDefinitionId: params.workflowDefinitionId }),
+    ...(params.workflowDefinitionIds === undefined ? {} : { workflowDefinitionIds: params.workflowDefinitionIds }),
     ...(params.scopeSessionId === undefined ? {} : { scopeSessionId: params.scopeSessionId }),
     ...(params.scope === undefined ? {} : { scope: params.scope }),
     ...(params.managedTarget === undefined ? {} : { managedTarget: params.managedTarget }),
     ...(params.includeUnindexedManagedTargets === undefined ? {} : { includeUnindexedManagedTargets: params.includeUnindexedManagedTargets }),
     ...(params.managedTargetUnindexed === undefined ? {} : { managedTargetUnindexed: params.managedTargetUnindexed }),
-  });
+  };
+}
+
+export async function listAutomationDefinitions(params: Readonly<Partial<AutomationDefinitionListRequest> & {
+  token: string;
+  signal?: AbortSignal;
+}>): Promise<AutomationDefinitionListResponse> {
+  const query = AutomationDefinitionListRequestSchema.parse(automationDefinitionListInput(params));
   const search = new URLSearchParams({ limit: String(query.limit) });
   if (query.cursor) search.set('cursor', query.cursor);
   if (query.workflowDefinitionId) search.set('workflowDefinitionId', query.workflowDefinitionId);
   if (query.scopeSessionId) search.set('scopeSessionId', query.scopeSessionId);
   if (query.scope) search.set('scope', query.scope);
-  const response = await axios.get(
+  const options = {
+    headers: { Authorization: `Bearer ${params.token}` },
+    ...(params.signal === undefined ? {} : { signal: params.signal }),
+    timeout: AUTOMATION_HTTP_TIMEOUT_MS,
+    validateStatus: () => true,
+  };
+  const response = query.workflowDefinitionIds !== undefined || query.managedTarget !== undefined || query.managedTargetUnindexed !== undefined
+    ? await axios.post(`${resolveServerHttpBaseUrl()}/v3/automations/query`, query, options)
+    : await axios.get(
     `${resolveServerHttpBaseUrl()}/v3/automations?${search.toString()}`,
     options,
   );
@@ -74,6 +87,24 @@ export async function listAutomationDefinitions(params: Readonly<Partial<Automat
     throw automationHttpError(response.status, response.data);
   }
   return AutomationDefinitionListResponseSchema.parse(response.data);
+}
+
+/** Trigger-set readers consume admitted detail pages instead of hydrating summaries one by one. */
+export async function listAutomationDefinitionDetails(params: Readonly<Partial<AutomationDefinitionListRequest> & {
+  token: string;
+  signal?: AbortSignal;
+}>): Promise<AutomationDefinitionDetailsResponse> {
+  const query = AutomationDefinitionDetailsRequestSchema.parse({ ...automationDefinitionListInput(params), details: true });
+  const response = await axios.post(`${resolveServerHttpBaseUrl()}/v3/automations/query`, query, {
+    headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), Authorization: `Bearer ${params.token}` },
+    ...(params.signal === undefined ? {} : { signal: params.signal }),
+    timeout: AUTOMATION_HTTP_TIMEOUT_MS,
+    validateStatus: () => true,
+  });
+  if (response.status < 200 || response.status >= 300) {
+    throw automationHttpError(response.status, response.data);
+  }
+  return AutomationDefinitionDetailsResponseSchema.parse(response.data);
 }
 
 /** Admission preserves the explicit Workflow correspondence supplied by the saved Automation owner. */

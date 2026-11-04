@@ -25,6 +25,7 @@ import {
     SessionTriggerListResultV1Schema,
     WorkflowTriggerWriteResultV1Schema,
     AutomationDefinitionListResponseSchema,
+    AutomationDefinitionDetailsResponseSchema,
     WorkflowDefinitionV1Schema,
 } from "@happier-dev/protocol";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
@@ -248,6 +249,12 @@ describe("automationCrudService (integration)", () => {
                         const response = await app.inject({ method: "GET", url: `/v3/automations?${query}`, headers });
                         expect(response.statusCode).toBe(200);
                         return AutomationDefinitionListResponseSchema.parse(response.json());
+                    },
+                    listDetails: async input => {
+                        const response = await app.inject({ method: "POST", url: "/v3/automations/query", headers,
+                            payload: { ...input, details: true } });
+                        expect(response.statusCode, response.body).toBe(200);
+                        return AutomationDefinitionDetailsResponseSchema.parse(response.json());
                     },
                     reconcile: async (id, input, _current, beforeWrite) => {
                         await beforeWrite?.();
@@ -771,6 +778,12 @@ describe("automationCrudService (integration)", () => {
                 automations: {
                     get: read,
                     list: async () => ({ automations: [await read()], nextCursor: null }),
+                    listDetails: async input => {
+                        const response = await app.inject({ method: "POST", url: "/v3/automations/query", headers,
+                            payload: { ...input, details: true } });
+                        expect(response.statusCode, response.body).toBe(200);
+                        return AutomationDefinitionDetailsResponseSchema.parse(response.json());
+                    },
                     reconcile: async (id, input) => {
                         const response = await app.inject({ method: "PUT", url: `/v3/automations/${id}`, headers, payload: input });
                         expect(response.statusCode).toBe(200);

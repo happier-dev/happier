@@ -5,7 +5,7 @@ import { isDataKeyAuthCredentials } from '@/auth/storage/tokenStorage';
 import { decodeBase64 } from '@/encryption/base64';
 import { getRandomBytes } from '@/platform/cryptoRandom';
 import { fetchAccountEncryptionCurrentness } from '@/sync/api/account/apiAccountEncryptionMode';
-import { listAutomationDefinitions, getAutomationDefinition, updateAutomationDefinition } from '@/sync/api/automations/apiAutomations';
+import { listAutomationDefinitionDetails, updateAutomationDefinition } from '@/sync/api/automations/apiAutomations';
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
 import { areServerAccountScopesEqual, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
@@ -50,8 +50,7 @@ export async function backfillAutomationManagedTargetsForAccount(lifetime: Serve
                 return current;
             },
             automations: {
-                list: input => { assertCurrent(); return listAutomationDefinitions(captured.credentials, input, context); },
-                get: automationId => { assertCurrent(); return getAutomationDefinition(captured.credentials, automationId, context); },
+                listDetails: input => { assertCurrent(); return listAutomationDefinitionDetails(captured.credentials, input, context); },
                 patch: async (automationId, input, beforeWrite) => {
                     await beforeWrite?.();
                     assertCurrent();

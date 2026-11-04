@@ -34,6 +34,7 @@ function fixture(encryption: AvailableAutomationAccountEncryptionV1) {
       attach: async () => { linked = true; }, removeTrigger: async () => undefined },
     automations: {
       list: async () => ({ automations: row ? [row] : [], nextCursor: null }), get: async () => row,
+      listDetails: async () => ({ automations: row ? [row] : [], nextCursor: null }),
       delete: async () => { row = null; return { ok: true }; },
       create: async (input) => {
         row = { id: input.automationId, name: input.name, description: null, enabled: input.enabled,
