@@ -134,7 +134,7 @@ type RenderedScreen = Awaited<ReturnType<typeof renderScreen>>;
 
 /** The editor header's Test action with its result line, read as one control. */
 function findDraftTestRow(screen: RenderedScreen) {
-    const button = screen.findByTestId('settings-provider-authoring-test');
+    const button = findComposite(screen, 'settings-provider-authoring-test', 'loading');
     if (!button) return undefined;
     const result = findComposite(screen, 'settings-provider-authoring-probe-result', 'text');
     return {
@@ -1775,20 +1775,22 @@ describe('ProviderConnectionAuthoringScreen', () => {
             .toBeNull();
     });
 
-    it('invalidates successful Test connection truth after the selected Saved Secret value rotates', async () => {
+    it.each(['is revalidated', 'rotates', 'is deleted', 'access is removed'] as const)('keeps Test connection truth current when the selected Saved Secret %s', async change => {
         await account.publishFeatures(account.serverId, createRootLayoutFeaturesResponse({
             features: { providers: { enabled: true }, teams: { enabled: true } },
         }));
         const ref = 'happier:shared-secret:v1:gateway-key';
-        const publishSecret = (revision: number, value: string) => account.home.answer(account.serverId,
+        const publishSecret = (revision: number, value: string, materialStatus: 'ready' | 'access_removed' = 'ready') => account.home.answer(account.serverId,
             '/v1/account/saved-secrets/resources/materials', { body: { resources: [{
                 resourceId: 'gateway-key', encryptionMode: 'plain', recipientEnvelope: null,
                 storedContent: { t: 'plain', v: { v: 1, name: 'Gateway key', kind: 'token', value } },
                 entry: { ref, source: 'shared_resource', relationship: 'owner', name: 'Gateway key', kind: 'token',
-                    revision, materialStatus: 'ready',
+                    revision, materialStatus,
                     capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } },
             }] } });
         publishSecret(1, 'gateway-private-a');
+        let settleProbe!: (value: unknown) => void;
+        if (change === 'is revalidated') probeProviderDraft.mockReturnValueOnce(new Promise(resolve => { settleProbe = resolve; }));
         const { ProviderConnectionAuthoringScreen } = await import('./ProviderConnectionAuthoringScreen');
         const screen = await renderScreen(<ProviderConnectionAuthoringScreen />);
         const { refreshSavedSecretCatalog } = await import('@/sync/engine/settings/savedSecretCatalogEngine');
@@ -1810,11 +1812,24 @@ describe('ProviderConnectionAuthoringScreen', () => {
         });
         await waitForHomeGovernance(() => expect(findDraftTestRow(screen)?.props.disabled).toBe(false));
         await screen.pressByTestIdAsync('settings-provider-authoring-test');
+        if (change === 'is revalidated') {
+            await waitForHomeGovernance(() => expect(probeProviderDraft).toHaveBeenCalledOnce());
+            expect(findDraftTestRow(screen)?.props.loading).toBe(true);
+            const { invalidateSavedSecretCatalog } = await import('@/sync/store/settings/savedSecretCatalogSnapshot');
+            await React.act(async () => { invalidateSavedSecretCatalog(scope); });
+            expect(findDraftTestRow(screen)?.props.loading).toBe(true);
+            await React.act(async () => {
+                settleProbe({ status: 'success', models: [], requestFingerprint: 'probe-request:v1:revalidated' });
+            });
+        }
         await waitForHomeGovernance(() => expect(findDraftTestRow(screen)?.props.subtitle)
             .toBe('settingsProviders.detail.testSucceeded'));
+        if (change === 'is revalidated') return;
 
         await React.act(async () => {
-            publishSecret(2, 'gateway-private-b');
+            if (change === 'rotates') publishSecret(2, 'gateway-private-b');
+            else if (change === 'access is removed') publishSecret(1, 'gateway-private-a', 'access_removed');
+            else account.home.answer(account.serverId, '/v1/account/saved-secrets/resources/materials', { body: { resources: [] } });
             await refreshSavedSecretCatalog(scope);
         });
 
