@@ -193,8 +193,8 @@ export async function initializeVoiceAgentHandle({
     }
     const providerChat = providerChatState?.status === 'configured' ? providerChatState : null;
     const backend = 'daemon' as const;
-    const permissionIntent = (agentCfg?.permissionIntent ?? 'read-only') as PermissionIntent;
-    const idleTtlSeconds = Number(agentCfg?.idleTtlSeconds ?? 300);
+    const permissionIntent = agentCfg.permissionIntent;
+    const idleTtlSeconds = agentCfg.idleTtlSeconds;
     const verbosity = (agentCfg?.verbosity ?? 'short') as 'short' | 'balanced';
     const admittedVoice = voiceSettingsParse(settings.voice);
     const agentSource = admittedSessionAgentTarget ? 'session' as const : providerChat
