@@ -3181,6 +3181,14 @@ Run occurrence and parent Session through the existing broker check.
 
 ## Execution Run recovery and observation
 
+Execution Run capability preflight in 0.3 development treats
+`RPC_METHOD_NOT_AVAILABLE` as target unavailability, whether returned or thrown.
+It does not establish that the target lacks the Run protocol. The shared
+`readExecutionRunProtocolV2Support` owner reserves protocol-unsupported results
+for a positive missing-method response or an incompatible capability descriptor.
+Session RPC handlers are republished on the existing socket-connect path; no
+additional retry or polling is introduced by this classification.
+
 Finite Run startup can recover an explicit Connected Account model rejection
 before accepting the initial input. The Agent supplies sanitized rejection
 evidence; the native host withholds terminal projection only while opening a

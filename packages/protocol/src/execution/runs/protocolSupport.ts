@@ -1,5 +1,5 @@
 import type { ExecutionRunProtocolV2Requirement } from '../../actions/executor/types.js';
-import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError, isRpcMethodNotFoundResult, RPC_ERROR_CODES } from '../../rpc/errors.js';
+import { isRpcMethodNotFoundError, isRpcMethodNotFoundResult, RPC_ERROR_CODES } from '../../rpc/errors.js';
 
 /** Transport adapters retain observation facts; this owner decides Run support. */
 export type ExecutionRunCapabilityObservation =
@@ -25,11 +25,14 @@ export function readExecutionRunProtocolV2Support(
   )) return failure('cancelled');
   if (!observation.supported) {
     return failure(observation.reason === 'not-supported'
-      || isRpcMethodNotAvailableError(observation.error) || isRpcMethodNotFoundError(observation.error)
+      || isRpcMethodNotFoundError(observation.error)
       ? 'execution_run_protocol_unsupported' : 'execution_run_target_unavailable');
   }
   const response = record(observation.response);
-  if (isRpcMethodNotFoundResult(response) || response.errorCode === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE) {
+  if (response.errorCode === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE) {
+    return failure('execution_run_target_unavailable');
+  }
+  if (isRpcMethodNotFoundResult(response)) {
     return failure('execution_run_protocol_unsupported');
   }
   const result = record(record(response.results)['tool.executionRuns']);
