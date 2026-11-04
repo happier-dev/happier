@@ -402,6 +402,18 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
       seen.add(type);
       if (ts.isTypeReferenceNode(type) && ts.isIdentifier(type.typeName)) {
         if (type.typeName.text === 'Readonly' && type.typeArguments?.[0]) return typeDefinition(type.typeArguments[0], seen);
+        // A forwarding adapter's generic belongs to its lexical declaration,
+        // ahead of any same-named module alias. Check the whole finite family;
+        // an unconstrained/open generic must remain unresolved.
+        const parameterName = type.typeName.text;
+        const owner = ts.findAncestor(type, node => (ts.isFunctionLike(node) || ts.isTypeAliasDeclaration(node)
+          || ts.isInterfaceDeclaration(node) || ts.isClassDeclaration(node))
+          && !!node.typeParameters?.some(parameter => parameter.name.text === parameterName));
+        if (owner && (ts.isFunctionLike(owner) || ts.isTypeAliasDeclaration(owner)
+          || ts.isInterfaceDeclaration(owner) || ts.isClassDeclaration(owner))) {
+          const parameter = owner.typeParameters?.find(parameter => parameter.name.text === parameterName);
+          return parameter?.constraint ? typeDefinition(parameter.constraint, seen) : type;
+        }
         const definition = symbol(type.getSourceFile().fileName, type.typeName.text, 'types');
         if (definition && ts.isTypeNode(definition) && definition !== type) return typeDefinition(definition, seen);
       }

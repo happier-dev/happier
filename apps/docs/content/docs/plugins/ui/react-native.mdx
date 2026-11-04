@@ -49,6 +49,28 @@ producers invalidate through `observe` and dispose subscriptions on retirement.
 This is a development-source contract; check the installed SDK's capability
 matrix before targeting a published host.
 
+## Row status line (0.3 development)
+
+Use `RowStatusLine` under a row title for compact status words and one next
+action. `quiet` shows secondary text; `warn` and `bad` add a coloured trouble
+indicator. `busy` adds a spinner without hiding that indicator or the action.
+The caller supplies translated words and owns the operation's lifecycle.
+
+```tsx
+import { RowStatusLine } from '@happier-dev/plugin-ui/components';
+
+<RowStatusLine
+  text={signingIn ? 'Waiting for sign-in' : 'Sign in needed'}
+  tone="warn"
+  busy={signingIn}
+  action={{ label: 'Sign in', onPress: startSignIn }}
+/>
+```
+
+Rows default to one truncating line; pass `numberOfLines={2}` inside a card.
+For an announcing notice, use `Status` instead. Check the installed package's
+API inventory before using this development-source addition.
+
 ## Find and Search (0.3 development)
 
 A trusted same-realm surface can join the host's Find shortcuts and `ui.find`

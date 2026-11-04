@@ -250,6 +250,27 @@ test('partial dynamic branches stay unresolved and object-shaped execute inputs 
   assert.deepEqual(report.actions, []);
 });
 
+test('generic Action family constraints retain every member and lexical shadowing', () => {
+  const report = collectUiActionParity([
+    { filePath: 'apps/ui/sources/family.ts', content: `
+      const IDS = ['demo.edit', 'demo.missing'] as const;
+      export type MachinePresetActionIdV1 = typeof IDS[number];
+    ` },
+    { filePath: 'apps/ui/sources/components/Example.tsx', content: `
+      import type { MachinePresetActionIdV1 } from '../family';
+      type T = 'demo.edit';
+      function execute<T extends MachinePresetActionIdV1>(actionId: T) { executor.execute(actionId, {}); }
+      function unknown<T extends string>(actionId: T) { executor.execute(actionId, {}); }
+      function nested<T extends MachinePresetActionIdV1>() {
+        function inner<T extends 'demo.edit'>(actionId: T) { executor.execute(actionId, {}); }
+      }
+    ` },
+  ], specs, []);
+  assert.deepEqual(report.actions.map(site => site.actionId), ['demo.edit', 'demo.missing', 'demo.edit']);
+  assert.deepEqual(report.findings.map(site => site.code), ['unregistered_action', 'dynamic_action']);
+  assert.equal(report.findings[0].operation, 'demo.missing');
+});
+
 test('parameter annotations win over same-named globals and finite request fields resolve', () => {
   const report = collectUiActionParity([{ filePath: 'apps/ui/sources/components/Example.tsx', content: `
     const id = 'demo.edit';

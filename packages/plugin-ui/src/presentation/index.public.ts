@@ -605,6 +605,7 @@ export {
   type HappierStatusDotProps,
 } from './status/StatusDot.js';
 export { HappierStatus, type HappierStatusProps } from './status/Status.js';
+export { HappierRowStatusLine, type HappierRowStatusTone, type HappierRowStatusAction, type HappierRowStatusLineContentProps, type HappierRowStatusLineHost, type HappierRowStatusLineProps } from './status/RowStatusLine.js';
 export {
   HAPPIER_REVIEW_SEVERITY_METRICS,
   HAPPIER_REVIEW_SEVERITY_RANK,

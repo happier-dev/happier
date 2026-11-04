@@ -84,6 +84,15 @@ labelled status rows. The default notice is a polite status region; the explicit
 announcements. Triage cells consume that variant while retaining their domain
 state classification and the row's complete accessible description.
 
+Public `RowStatusLine` and shared `HappierRowStatusLine` own compact status
+metadata under a row title in 0.3 development source. Agent and Computer Use
+rows bind their existing host primitives to that shared composition. Quiet
+states show words; warning/failure states add a coloured dot and words. Busy
+work may show its spinner alongside the trouble indicator and one inline
+recovery link. Domain state, copy and operation lifecycle remain caller-owned.
+This compact variant preserves its truncation and independent action rather
+than becoming an announcing notice.
+
 Permission requests in Session chat and Triage share
 [`HappierApprovalPromptChrome`](../packages/plugin-ui/src/presentation/interaction/ApprovalPromptChrome.tsx).
 The host adapter and public `ApprovalPrompt` bind their themes; callers retain

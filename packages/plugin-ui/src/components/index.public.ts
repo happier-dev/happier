@@ -69,6 +69,7 @@ export {
   usePluginUiFocusTarget,
 } from './Focus.js';
 export { ComposerStatusBadge, type ComposerStatusBadgeEmphasis, type ComposerStatusBadgeProps, type ComposerStatusBadgeTone } from './ComposerStatusBadge.js';
+export { RowStatusLine, type RowStatusLineProps, type RowStatusTone, type RowStatusAction } from './RowStatusLine.js';
 export * from './Foundation.js';
 export * from './Form.js';
 export {
