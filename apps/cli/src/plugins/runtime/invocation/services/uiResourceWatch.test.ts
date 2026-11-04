@@ -1,3 +1,4 @@
+import { DAEMON_PLUGIN_UI_RESOURCE_WATCH_MIN_WAIT_MS } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -15,7 +16,7 @@ import {
     type StablePluginResourcesOwner,
 } from './resources';
 import { STABLE_PLUGIN_EVENT_QUEUE_LIMITS } from './events';
-import { createStablePluginUiResourceWatchOwner } from './uiResourceWatch';
+import { createStablePluginUiResourceWatchOwner, type HostResourceWatchError } from './uiResourceWatch';
 
 /**
  * The daemon half of the EU-4b invalidation transport.
@@ -29,6 +30,125 @@ import { createStablePluginUiResourceWatchOwner } from './uiResourceWatch';
 const GENERATION = 'registry:eu4b';
 
 const roots: string[] = [];
+
+describe('native host Resource binding', () => {
+    it('releases only the withdrawn requester host watches and retains their terminal signal', async () => {
+        const owner = createStablePluginUiResourceWatchOwner({
+            isPluginConsumerCurrent: () => false, readPluginOccurrenceId: () => null,
+        });
+        const resource = { hostRead: 'machines.services.logs' as const,
+            input: { serverId: 'home', machineId: 'machine', serviceId: 'service' },
+            expectedGeneration: 'generation', sourceRevision: 'source' };
+        const disposed: string[] = [];
+        const signals = new Map<string, AbortSignal>();
+        try {
+            for (const accountId of ['requester', 'custodian']) {
+                await owner.openHost({ accountId, subscriptionId: 'logs', resource,
+                    async bind(signal) {
+                        signals.set(accountId, signal);
+                        return { digest: digest(Buffer.from('logs')), async dispose() { disposed.push(accountId); } };
+                    } });
+            }
+            await owner.retireHostAccount('requester');
+            expect(disposed).toEqual(['requester']);
+            expect(signals.get('requester')?.aborted).toBe(true);
+            expect(signals.get('custodian')?.aborted).toBe(false);
+            expect(await owner.next({ hostAccountId: 'requester', subscriptionId: 'logs', resource }))
+                .toMatchObject({ status: 'event', event: { kind: 'error', code: 'expired_resource' } });
+            await owner.retireHostAccount('requester');
+            expect(disposed).toEqual(['requester']);
+            expect(await owner.close({ hostAccountId: 'custodian', subscriptionId: 'logs', resource })).toBe(true);
+            expect(disposed).toEqual(['requester', 'custodian']);
+        } finally { owner.retire(); }
+    });
+    it('distinguishes an unavailable observer from actual read-authority retirement', async () => {
+        const owner = createStablePluginUiResourceWatchOwner({
+            isPluginConsumerCurrent: () => false, readPluginOccurrenceId: () => null,
+        });
+        const resource = { hostRead: 'machines.services.logs' as const,
+            input: { serverId: 'home', machineId: 'machine', serviceId: 'service' },
+            expectedGeneration: 'generation', sourceRevision: 'source' };
+        let end: (error?: HostResourceWatchError) => void = () => {};
+        let disposals = 0;
+        const request = { hostAccountId: 'account', subscriptionId: 'observer-failure', resource };
+        const open = () => owner.openHost({ accountId: request.hostAccountId, subscriptionId: request.subscriptionId, resource,
+            async bind(_signal, _emit, finish) {
+                end = finish;
+                return { digest: digest(Buffer.from('admitted')), dispose() { disposals++; } };
+            },
+        });
+        try {
+            await open();
+            end({ code: 'unavailable', diagnostics: ['home_unreachable'] });
+            expect(await owner.next(request)).toMatchObject({ status: 'event', event: {
+                kind: 'error', code: 'unavailable', diagnostics: ['home_unreachable'],
+            } });
+            expect(disposals).toBe(1);
+            await open();
+            end();
+            expect(await owner.next(request)).toMatchObject({ status: 'event', event: {
+                kind: 'error', code: 'expired_resource',
+            } });
+            expect(disposals).toBe(2);
+        } finally { owner.retire(); }
+    });
+    it('binds follow and close to the full admitted native reference', async () => {
+        const owner = createStablePluginUiResourceWatchOwner({
+            isPluginConsumerCurrent: () => false, readPluginOccurrenceId: () => null,
+        });
+        const resource = { hostRead: 'machines.services.logs' as const,
+            input: { serverId: 'home', machineId: 'machine', serviceId: 'service' },
+            expectedGeneration: 'generation', sourceRevision: 'source' };
+        let emit: (digest: string) => void = () => {};
+        let bindingSignal: AbortSignal | undefined;
+        let disposals = 0;
+        const opened = { accountId: 'account', subscriptionId: 'native', resource,
+            // The existing slot consumes the already-admitted native observer.
+            bind: async (signal: AbortSignal, notify: (digest: string) => void) => {
+                bindingSignal = signal;
+                emit = notify;
+                notify(digest(Buffer.from('native')));
+                return { digest: digest(Buffer.from('native')), dispose() { disposals++; } };
+            } };
+        await owner.openHost(opened);
+        const substituted = { ...resource, sourceRevision: 'another-source' };
+        const wrongClose = { hostAccountId: 'account', subscriptionId: 'native', resource: substituted };
+        expect(await owner.close(wrongClose)).toBe(false);
+        expect(disposals).toBe(0);
+        const exactNext = { hostAccountId: 'account', subscriptionId: 'native', resource,
+            waitMs: DAEMON_PLUGIN_UI_RESOURCE_WATCH_MIN_WAIT_MS };
+        emit(digest(Buffer.from('native')));
+        expect(await owner.next(exactNext)).toEqual({ status: 'idle' });
+        emit(digest(Buffer.from('changed')));
+        const wrongNext = { hostAccountId: 'account', subscriptionId: 'native', resource: substituted };
+        await expect(owner.next(wrongNext)).rejects.toMatchObject({ code: 'plugin_resource_subscription_unknown' });
+        expect(await owner.next(exactNext)).toMatchObject({ status: 'event', event: {
+            kind: 'invalidated', digest: digest(Buffer.from('changed')),
+        } });
+        emit(digest(Buffer.from('changed')));
+        expect(await owner.next(exactNext)).toEqual({ status: 'idle' });
+        emit(digest(Buffer.from('native')));
+        expect(await owner.next(exactNext)).toMatchObject({ status: 'event', event: {
+            kind: 'invalidated', digest: digest(Buffer.from('native')),
+        } });
+        expect(await owner.close(exactNext)).toBe(true);
+        expect(disposals).toBe(1);
+        expect(bindingSignal?.aborted).toBe(true);
+        // An observation that differs from the returned admission baseline must
+        // survive binding; equality suppression cannot discard this change.
+        await owner.openHost({ ...opened, async bind(_signal, notify) {
+            notify(digest(Buffer.from('changed-during-bind')));
+            return { digest: digest(Buffer.from('native')), dispose() { disposals++; } };
+        } });
+        expect(await owner.next(exactNext)).toMatchObject({ status: 'event', event: {
+            kind: 'invalidated', digest: digest(Buffer.from('changed-during-bind')),
+        } });
+        expect(await owner.close(exactNext)).toBe(true);
+        expect(disposals).toBe(2);
+        owner.retire();
+    });
+});
+
 
 afterEach(async () => {
     await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));

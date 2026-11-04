@@ -1703,6 +1703,9 @@ export class ApiMachineClient {
                 resolveCurrentTarget: async ({ signal }) => await resolveCurrentMachineExecutionOriginContext(signal),
             },
             daemonContributionRegistryProjection: {
+                resolveHostActionExecutor: request => this.hostResourceRoutes?.resolveLauncherActionExecutor?.(request)
+                    ?? { execute: async () => ({ ok: false as const, errorCode: 'service_admission_unavailable', error: 'service_admission_unavailable' }) },
+                readHostResourceAccountId: () => this.hostResourceRoutes?.accountId ?? null,
                 resolveAccountPluginExecutionSelection: this.resolveAccountPluginExecutionSelection,
                 requestCurrentIntent: async request => {
                     const reportUnavailable: NonNullable<typeof request.reportUnavailable> = reason => {
@@ -2724,6 +2727,7 @@ export class ApiMachineClient {
     private hostResourceRoutes: DaemonLocalServicesMachineRpcRoutes | null = null;
 
     registerLocalServicesRoutes(localServices: DaemonLocalServicesMachineRpcRoutes): void {
+        this.hostResourceRoutes = localServices;
         registerDaemonLocalServicesMachineRpcHandlers(this.rpcHandlerManager, localServices);
         if (!this.projectionSchedulingClosed) this.getMachineServicesBinding().start();
     }

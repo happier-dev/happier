@@ -1,3 +1,4 @@
+import { createDaemonHostResourceRead } from './daemonHostResourceRead';
 import { join } from 'node:path';
 import { openDaemonActionReadWatch } from './actionReadWatch';
 import { createHash } from 'node:crypto';
@@ -128,6 +129,9 @@ import {
 } from './daemonPluginCollectionCandidatePreparation';
 
 export type DaemonContributionRegistryProjectionRegistrationOptions = Readonly<{
+    /** Same receiving Machine Action resolver used by the native service front door. */
+    resolveHostActionExecutor?: Parameters<typeof createDaemonHostResourceRead>[0]['resolveActionExecutor'];
+    readHostResourceAccountId?: () => string | null;
     /** Account caller provenance is read from the captured authenticated Home, never a Machine occurrence. */
     resolveAccountPluginExecutionSelection?: MountedAccountPluginExecutionSelectionResolver;
     /** The connected machine binds approval requests to its current Account custody. */
@@ -2207,6 +2211,10 @@ export function registerDaemonContributionRegistryProjectionHandler(
     rpc: RpcHandlerRegistrar,
     opts?: DaemonContributionRegistryProjectionRegistrationOptions,
 ): void {
+    const hostResources = createDaemonHostResourceRead({
+        ...(opts?.resolveHostActionExecutor ? { resolveActionExecutor: opts.resolveHostActionExecutor } : {}),
+        ...(opts?.readHostResourceAccountId ? { readAccountId: opts.readHostResourceAccountId } : {}),
+    });
     registerDaemonPluginCollectionCandidatePreparationHandler(rpc, {
         resolveCurrentTarget: async ({ signal }) => {
             if (signal?.aborted) return null;
@@ -2471,6 +2479,15 @@ export function registerDaemonContributionRegistryProjectionHandler(
                 reason: 'invalid_payload',
             });
         }
+        if (!('callerPluginId' in request.data)) {
+            try {
+                const value = await hostResources.read(request.data.resource, request.data.machineId, context);
+                return DaemonPluginUiResourceReadResponseSchema.parse({ ok: true, resource: request.data.resource,
+                    contentType: 'application/json', digest: value.digest, bytesBase64: value.bytes.toString('base64') });
+            } catch (error) {
+                return { ok: false, code: isPluginError(error) ? error.code : 'service_unavailable', reason: 'unavailable' };
+            }
+        }
         const declaredRequest = request.data;
         const refuse = (failure: Extract<ReturnType<typeof DaemonPluginUiResourceReadResponseSchema.parse>, { ok: false }>, generation?: number) => {
             // Identity only: never include Resource bytes, contextual input or error text.
@@ -2665,6 +2682,18 @@ export function registerDaemonContributionRegistryProjectionHandler(
         }
         const lease = await acquireProjectionRuntimeRegistryLease(opts);
         try {
+            if (!('callerPluginId' in request.data)) {
+                const requestData = request.data;
+                const owner = lease.registry.uiResourceWatches;
+                if (!owner) throw new PluginError({ code: 'service_admission_unavailable' });
+                const accountId = await hostResources.accountId(context, requestData.resource);
+                const opened = await owner.openHost({ accountId, subscriptionId: requestData.subscriptionId,
+                    resource: requestData.resource,
+                    bind: (signal, emit, retire) => hostResources.observe(requestData.resource, requestData.machineId, context, signal, emit, retire) });
+                try { await hostResources.current(context); }
+                catch (error) { await owner.close({ hostAccountId: accountId, subscriptionId: requestData.subscriptionId }); throw error; }
+                return DaemonPluginUiResourceWatchOpenResponseSchema.parse({ ok: true, ...opened });
+            }
             if (!isExpectedPluginOccurrenceCurrent(
                 lease.registry,
                 request.data.callerPluginId,
@@ -2737,6 +2766,24 @@ export function registerDaemonContributionRegistryProjectionHandler(
         }
         const lease = await acquireProjectionRuntimeRegistryLease(opts);
         try {
+            if ('resource' in request.data) {
+                const owner = lease.registry.uiResourceWatches;
+                if (!owner) throw new PluginError({ code: 'service_admission_unavailable' });
+                const hostAccountId = hostResources.releaseAccountId(context);
+                try {
+                    if (await hostResources.accountId(context, request.data.resource) !== hostAccountId) throw new PluginError({ code: 'scope-retired' });
+                    const result = await owner.next({ hostAccountId, subscriptionId: request.data.subscriptionId,
+                        resource: request.data.resource,
+                        ...(request.data.waitMs === undefined ? {} : { waitMs: request.data.waitMs }),
+                        ...(context?.signal ? { signal: context.signal } : {}) });
+                    await hostResources.current(context);
+                    return DaemonPluginUiResourceWatchNextResponseSchema.parse({ ok: true, ...result });
+                } catch (error) {
+                    await owner.close({ hostAccountId, subscriptionId: request.data.subscriptionId,
+                        resource: request.data.resource });
+                    throw error;
+                }
+            }
             if (!isExpectedPluginOccurrenceCurrent(
                 lease.registry,
                 request.data.callerPluginId,
@@ -2786,13 +2833,20 @@ export function registerDaemonContributionRegistryProjectionHandler(
             await lease.release();
         }
     });
-    rpc.registerHandler(RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_CLOSE, async (raw: unknown) => {
+    rpc.registerHandler(RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_CLOSE, async (raw: unknown, context) => {
         const request = DaemonPluginUiResourceWatchCloseRequestSchema.safeParse(raw);
         if (!request.success) {
             return DaemonPluginUiResourceWatchCloseResponseSchema.parse({ ok: true, closed: false });
         }
         const lease = await acquireProjectionRuntimeRegistryLease(opts);
         try {
+            if ('resource' in request.data) {
+                const owner = lease.registry.uiResourceWatches;
+                const hostAccountId = hostResources.releaseAccountId(context);
+                const closed = await owner?.close({ hostAccountId, subscriptionId: request.data.subscriptionId,
+                    resource: request.data.resource }) ?? false;
+                return DaemonPluginUiResourceWatchCloseResponseSchema.parse({ ok: true, closed });
+            }
             const closed = lease.registry.closeUiResourceWatch?.({
                 callerPluginId: request.data.callerPluginId,
                 subscriptionId: request.data.subscriptionId,

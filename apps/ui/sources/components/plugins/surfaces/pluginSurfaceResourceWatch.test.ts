@@ -123,7 +123,7 @@ function createFakeDaemon(): FakeDaemon {
                 opens.push({
                     subscriptionId: opts.subscriptionId,
                     resource: opts.resource,
-                    ...(opts.context === undefined ? {} : { context: opts.context }),
+                    ...(!('context' in opts) || opts.context === undefined ? {} : { context: opts.context }),
                 });
                 return openResult.supported && openResult.result.ok
                     ? {

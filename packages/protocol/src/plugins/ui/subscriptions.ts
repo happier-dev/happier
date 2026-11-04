@@ -1,3 +1,5 @@
+import { PluginUiMachineServiceReadReferenceV1Schema } from '../../daemon/machineServiceLogsResource.js';
+import type { ActionId } from '../../actions/actionIds.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 
@@ -16,11 +18,20 @@ export const PluginUiReadAuthorityReferenceV1Schema = lazyZodSchema(() => z.stri
 export type PluginUiReadAuthorityReferenceV1 = z.infer<typeof PluginUiReadAuthorityReferenceV1Schema>;
 
 /** Closed host-read identity. Action admission still owns caller policy and input validation. */
-export const PluginUiHostReadReferenceV1Schema = lazyZodSchema(() => z.strictObject({
+export const PluginUiHostReadReferenceV1Schema = lazyZodSchema(() => z.union([z.strictObject({
   hostRead: z.enum(['usage.query', 'connectedServices.quota.get', 'connectedServices.pools.selection.get']),
   input: PluginUiJsonValueV1Schema,
-}));
+}), PluginUiMachineServiceReadReferenceV1Schema]));
 export type PluginUiHostReadReferenceV1 = z.infer<typeof PluginUiHostReadReferenceV1Schema>;
+
+/** Host Resource aliases borrow the original Action's admission in every host. */
+export function resolvePluginUiHostReadActionIdV1(hostRead: PluginUiHostReadReferenceV1['hostRead']): ActionId {
+  switch (hostRead) {
+    case 'machines.services.logs': return 'machines.services.logs.read';
+    default: return hostRead;
+  }
+}
+
 
 /**
  * The resource a subscription observes: a **resource contribution** reference,

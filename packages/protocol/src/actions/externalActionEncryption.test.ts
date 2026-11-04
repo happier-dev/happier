@@ -1,3 +1,6 @@
+import { RPC_METHODS } from '../rpc/methods.js';
+import { DaemonPluginUiResourceReadRequestSchema, DaemonPluginUiResourceReadResponseSchema, DaemonPluginUiResourceWatchOpenResponseSchema,
+  DaemonPluginUiResourceWatchNextRequestSchema, DaemonPluginUiResourceWatchCloseRequestSchema } from '../daemon/contributionRegistryProjection.js';
 import { describe, expect, it } from 'vitest';
 import { sealAccountScopedBlobCiphertext } from '../crypto/accountScopedCipher.js';
 import { computeCanonicalDomainSeparatedDigest } from '../crypto/canonicalDigest.js';
@@ -8,6 +11,7 @@ import {
   isExternalActionRequestWithinLimit,
   measureExternalActionResponseEnvelopeUtf8BytesV1,
   projectExternalActionPendingResetStartAdmissionV1,
+  ExternalActionRequestEnvelopeV1Schema,
 } from './externalActionApi.js';
 import {
   openExternalActionRequestV2,
@@ -26,6 +30,71 @@ const binding = {
 const randomBytes = (length: number) => new Uint8Array(length).fill(2);
 
 describe('whole external Action encryption', () => {
+  it('requires the full native identity for OPEN, joined reads and disposal', () => {
+    const input = { serverId: 'home', machineId: 'machine-1', serviceId: 'worker' };
+    const resource = { hostRead: 'machines.services.logs', input, expectedGeneration: 'generation',
+      sourceRevision: 'actual-native-source' };
+    const { sourceRevision: _sourceRevision, ...withoutRevision } = resource;
+    const candidate = { method: RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN,
+      params: { machineId: input.machineId, subscriptionId: 'watch', resource } };
+    const plain = { v: 1, requestId: binding.requestId, target: binding.target, input, resourceContinuation: candidate };
+    expect(ExternalActionRequestEnvelopeV1Schema.safeParse(plain).success).toBe(true);
+    const { resourceContinuation } = ExternalActionRequestEnvelopeV1Schema.parse(plain);
+    const args = { binding: { ...binding, actionId: 'machines.services.logs.read' }, input,
+      resourceContinuation, material, randomBytes };
+    const request = sealExternalActionRequestV2(args);
+    expect(openExternalActionRequestV2({ envelope: request, binding: args.binding, material }))
+      .toEqual({ input, resourceContinuation });
+    expect(ExternalActionRequestEnvelopeV1Schema.safeParse({ ...plain, resourceContinuation: {
+      ...candidate, params: { ...candidate.params, resource: withoutRevision },
+    } }).success).toBe(false);
+    const readSelector = { machineId: input.machineId, resource };
+    expect(DaemonPluginUiResourceReadRequestSchema.safeParse(readSelector).success).toBe(true);
+    expect(DaemonPluginUiResourceReadRequestSchema.safeParse({ ...readSelector,
+      subscriptionId: 'watch' }).success).toBe(false);
+    for (const [schema, selector] of [
+      [DaemonPluginUiResourceReadRequestSchema, readSelector],
+      [DaemonPluginUiResourceWatchNextRequestSchema, { ...readSelector, subscriptionId: 'watch' }],
+      [DaemonPluginUiResourceWatchCloseRequestSchema, { ...readSelector, subscriptionId: 'watch' }],
+    ] as const) {
+      expect(schema.safeParse({ ...selector, resource: withoutRevision }).success).toBe(false);
+      expect(schema.safeParse({ ...selector, actorAccountId: 'forged' }).success).toBe(false);
+    }
+    const snapshot = { ok: true, resource, contentType: 'application/json',
+      bytesBase64: 'e30=', digest: `sha256:${'0'.repeat(64)}` };
+    expect(DaemonPluginUiResourceReadResponseSchema.safeParse(snapshot).success).toBe(true);
+    expect(DaemonPluginUiResourceWatchOpenResponseSchema.safeParse({ ok: true,
+      subscriptionId: 'watch', digest: snapshot.digest }).success).toBe(true);
+    expect(DaemonPluginUiResourceWatchOpenResponseSchema.safeParse({ ...snapshot,
+      subscriptionId: 'watch' }).success).toBe(false);
+  });
+
+  it.each([
+    RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ,
+    RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN,
+    RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_NEXT,
+    RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_CLOSE,
+  ])('protects the exact native logs Resource continuation for %s', method => {
+    const input = { serverId: 'home', machineId: 'machine-1', serviceId: 'worker',
+      cursor: { sourceRevision: 'source', token: 'position' } };
+    const resource = { hostRead: 'machines.services.logs' as const, input,
+      expectedGeneration: 'generation', sourceRevision: 'source' };
+    const candidate = { method, params: { machineId: input.machineId, resource,
+      ...(method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ ? {} : { subscriptionId: 'watch' }) } };
+    const plain = { v: 1, requestId: binding.requestId, target: binding.target, input, resourceContinuation: candidate };
+    expect(ExternalActionRequestEnvelopeV1Schema.safeParse(plain).success).toBe(true);
+    const { resourceContinuation } = ExternalActionRequestEnvelopeV1Schema.parse(plain);
+    const args = { binding: { ...binding, actionId: 'machines.services.logs.read' }, input,
+      resourceContinuation, material, randomBytes };
+    const request = sealExternalActionRequestV2(args);
+    expect(request).not.toHaveProperty('resourceContinuation');
+    expect(openExternalActionRequestV2({ envelope: request, binding: args.binding, material }))
+      .toEqual({ input, resourceContinuation });
+    expect(ExternalActionRequestEnvelopeV1Schema.safeParse({ ...plain, resourceContinuation: {
+      ...resourceContinuation, params: { ...resourceContinuation.params, authority: 'present_user' },
+    } }).success).toBe(false);
+  });
+
   it('reports only the failed opening phase while preserving opaque public refusal', () => {
     const request = sealExternalActionRequestV2({ binding, material, randomBytes, input: { privateInput: 'private-content' } });
     const failures: unknown[] = [];

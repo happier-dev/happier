@@ -11846,6 +11846,12 @@ daemonWorkSignal: AbortSignal;
       ? {
           currentServerId: params.serverId,
           currentServerHttpBaseUrl: params.serverBaseUrl,
+          invokeResource: async (method, request, context) => {
+            const apiMachine = params.getApiMachineForSessions();
+            if (!apiMachine) throw new PluginError({ code: 'service_admission_unavailable' });
+            return apiMachine.invokeLocalMachineAction(method, request, { signal: context.signal,
+              localActionContext: context.localActionContext, rpcContext: context });
+          },
           acquirePluginRuntimeRegistryLease: acquireDaemonPluginRuntimeRegistryLease,
           resolvePluginExecutionOriginContext: () => params.resolveCurrentMachineExecutionOriginContext?.() ?? null,
           resolveAccountPluginExecutionSelection: async (pluginId, registry, signal) =>

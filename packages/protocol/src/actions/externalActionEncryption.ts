@@ -1,3 +1,4 @@
+import { MachineServiceLogsResourceContinuationV1Schema, MachineServiceLogsGenerationV1Schema } from '../daemon/machineServiceLogsResource.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
 
@@ -54,6 +55,8 @@ export type ExternalActionEncryptionBindingV2 = Readonly<z.infer<typeof BindingS
 
 const requestShape = () => ({
   v: z.literal(2), direction: z.literal('request'), input: StrictJsonValueSchema,
+  resourceContinuation: z.optional(MachineServiceLogsResourceContinuationV1Schema),
+  machineServiceLogsGeneration: z.optional(MachineServiceLogsGenerationV1Schema),
 });
 const RequestSchema = lazyZodSchema(() => z.union([
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(ApiTokenBindingSchema, requestShape())), (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(AccountBindingSchema, requestShape())),
@@ -97,12 +100,16 @@ function open(ciphertext: string, material: Material, maximumPlaintextBytes: num
 
 export function sealExternalActionRequestV2(params: SealOptions & Readonly<{
   binding: ExternalActionEncryptionBindingV2; input: unknown;
+  resourceContinuation?: z.infer<typeof MachineServiceLogsResourceContinuationV1Schema>;
+  machineServiceLogsGeneration?: z.infer<typeof MachineServiceLogsGenerationV1Schema>;
   sessionSpawnAdmission?: ExternalActionRequestEnvelopeV2['sessionSpawnAdmission'];
   pluginInvocation?: ExternalActionRequestEnvelopeV2['pluginInvocation'];
 }>): ExternalActionRequestEnvelopeV2 {
-  const payload = RequestSchema.parse({ ...params.binding, v: 2, direction: 'request', input: params.input });
+  const operands = { ...(params.resourceContinuation ? { resourceContinuation: params.resourceContinuation } : {}),
+    ...(params.machineServiceLogsGeneration ? { machineServiceLogsGeneration: params.machineServiceLogsGeneration } : {}) };
+  const payload = RequestSchema.parse({ ...params.binding, v: 2, direction: 'request', input: params.input, ...operands });
   if (params.material.type !== 'dataKey' || params.material.machineKey.length !== 32) throw new TypeError('Invalid external Action material');
-  if (!isExternalActionRequestWithinLimit({ v: 1, requestId: payload.requestId, target: payload.target, input: payload.input })) {
+  if (!isExternalActionRequestWithinLimit({ v: 1, requestId: payload.requestId, target: payload.target, input: payload.input, ...operands })) {
     throw new RangeError('External Action request exceeds its decoded limit');
   }
   const idempotencyKey = projectExternalActionRunNowIdempotencyKeyV1(payload.actionId, payload.input);
@@ -134,7 +141,9 @@ export function openExternalActionRequestV2(params: Readonly<{
       | 'plaintext_binding' | 'reset_admission' | 'managed_admission' | 'plaintext_limit';
     error?: unknown;
   }>) => void;
-}>): Readonly<{ input: z.infer<typeof StrictJsonValueSchema> }> | null {
+}>): Readonly<{ input: z.infer<typeof StrictJsonValueSchema>;
+  resourceContinuation?: z.infer<typeof MachineServiceLogsResourceContinuationV1Schema>;
+  machineServiceLogsGeneration?: z.infer<typeof MachineServiceLogsGenerationV1Schema>; }> | null {
   let phase: Parameters<NonNullable<typeof params.onFailure>>[0]['phase'] = 'envelope_parse';
   const refused = (error?: unknown): null => {
     // Observability must not change cryptographic admission, even if a host's
@@ -172,8 +181,10 @@ export function openExternalActionRequestV2(params: Readonly<{
         || !sameStrictJsonValue(admission, envelope.pendingResetStartAdmission)) return refused();
     } else if (envelope.pendingResetStartAdmission) return refused();
     phase = 'plaintext_limit';
+    const operands = { ...(decoded.data.resourceContinuation ? { resourceContinuation: decoded.data.resourceContinuation } : {}),
+      ...(decoded.data.machineServiceLogsGeneration ? { machineServiceLogsGeneration: decoded.data.machineServiceLogsGeneration } : {}) };
     return isExternalActionRequestWithinLimit({ v: 1, requestId: decoded.data.requestId,
-      target: decoded.data.target, input: decoded.data.input }) ? { input: decoded.data.input } : refused();
+      target: decoded.data.target, input: decoded.data.input, ...operands }) ? { input: decoded.data.input, ...operands } : refused();
   } catch (error) { return refused(error); }
 }
 

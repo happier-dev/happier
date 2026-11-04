@@ -82,7 +82,9 @@ describe('Session caller-hosted HTML request controller', () => {
             // The daemon long-poll is the genuine external boundary. Keep the
             // canonical Resource watch lifecycle and its abort ownership real.
             watchResource: {
-                open: async (_machine, options) => { contexts.push(options.context); return { supported: true,
+                open: async (_machine, options) => {
+                    if (!('callerPluginId' in options)) throw new Error('Expected a declared plugin Resource watch');
+                    contexts.push(options.context); return { supported: true,
                     result: { ok: true, subscriptionId: options.subscriptionId, digest: DIGEST } }; },
                 next: async (_machine, options) => new Promise<MachinePluginUiResourceWatchNextResult>(resolve => {
                     if (options.signal) nextSignals.push(options.signal);

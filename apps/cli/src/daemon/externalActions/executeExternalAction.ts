@@ -1,3 +1,6 @@
+import { retainVerifiedExternalActionRequester } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+import { sameMachineServiceLogsResourceInput, parseMachineServiceLogsResourceResponse } from './machineServiceLogsResource';
+import type { RpcHandlerContext } from '@/api/rpc/types';
 import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
 import { projectRpcRequesterWorkAttribution } from '@/daemon/lifecycle/requesterWorkAttribution';
 import { openManagedCreationActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
@@ -183,6 +186,8 @@ export async function executeExternalAction(input: Readonly<{
   externalActionMachineRequestPrivateKey?: string | Uint8Array;
   /** Host transport diagnostics only; never authority or Action input. */
   transportRequestId?: string;
+  /** Exact installed Resource dispatcher; only the verified original logs invocation reaches it. */
+  invokeResource?: (method: string, params: unknown, context: RpcHandlerContext) => Promise<unknown>;
   signal?: AbortSignal;
 }>): Promise<ExecuteExternalActionResult> {
   // Keep both public HTTP origins deterministic: first accept the bounded path
@@ -383,6 +388,8 @@ export async function executeExternalAction(input: Readonly<{
   }
   try {
   let decodedInput: unknown;
+  let hasProtectedLogsOperands = false;
+  let logsOperands: Pick<NonNullable<ReturnType<typeof openExternalActionRequestV2>>, 'resourceContinuation' | 'machineServiceLogsGeneration'> = {};
   let prepare = preparedResponse;
   if (envelope.data.v === 2) {
     const request = envelope.data;
@@ -443,6 +450,9 @@ export async function executeExternalAction(input: Readonly<{
       return { kind: 'invalid_request', errorCode: 'invalid_encrypted_envelope', requestId: request.requestId };
     }
     decodedInput = opened.input;
+    logsOperands = { ...(opened.resourceContinuation ? { resourceContinuation: opened.resourceContinuation } : {}),
+      ...(opened.machineServiceLogsGeneration ? { machineServiceLogsGeneration: opened.machineServiceLogsGeneration } : {}) };
+    hasProtectedLogsOperands = opened.resourceContinuation !== undefined || opened.machineServiceLogsGeneration !== undefined;
     prepare = (response) => {
       const prepared = prepareExternalActionResponseV2({ binding, request, execution: response.execution,
         executedMachineId: input.currentMachineId, material: encryption.material, randomBytes });
@@ -451,7 +461,17 @@ export async function executeExternalAction(input: Readonly<{
   } else {
     diagnoseSessionInput('strict_envelope_open', 'plain_v1');
     decodedInput = envelope.data.input;
+    logsOperands = envelope.data;
+    hasProtectedLogsOperands = envelope.data.resourceContinuation !== undefined || envelope.data.machineServiceLogsGeneration !== undefined;
   }
+
+  // The private Resource producer must retain this exact admitted invocation.
+  // Unsupported embeddings still refuse before native IO, never drop operands.
+  if (hasProtectedLogsOperands && (!requesterContext
+    || !executionAuthorization?.success || logsOperands.resourceContinuation && !input.invokeResource
+    || !sameMachineServiceLogsResourceInput(decodedInput, logsOperands, input.currentMachineId, actionId.data))) return { kind: 'invalid_request',
+    errorCode: envelope.data.v === 2 ? 'invalid_encrypted_envelope' : 'invalid_envelope',
+    ...(envelope.data.requestId ? { requestId: envelope.data.requestId } : {}) };
 
   // Signed outer admission facts and private opened input must describe the
   // same invocation before approval, native submission or Session birth.
@@ -697,6 +717,24 @@ export async function executeExternalAction(input: Readonly<{
         baseActionStartDiagnosticRecorder(event);
       }
     : undefined;
+  const originalAuthorization = executionAuthorization?.success ? executionAuthorization.data : undefined;
+  // Home admitted this exact root above. Finite work keeps the same local port
+  // as RPC ingress; withdrawal applies at the next signed request.
+  const originalRootCurrentness = originalAuthorization
+    ? async () => !input.signal?.aborted && input.isInstallationCurrent?.() !== false
+    : undefined;
+  if (admittedAuthorization && requesterContext) {
+    // HTTP projection is immutable. Preserve its private Account ports while
+    // carrying the existing exact executor; no caller-supplied factory is read.
+    admittedAuthorization = Object.defineProperties({ ...admittedAuthorization }, Object.getOwnPropertyDescriptors(admittedAuthorization));
+    Object.defineProperty(admittedAuthorization, 'requesterAccountExecutor', { value: requesterContext.executor, enumerable: false });
+  }
+  if (admittedAuthorization && originalRootCurrentness) admittedAuthorization = retainVerifiedExternalActionRequester({
+    authorization: admittedAuthorization, isCurrent: originalRootCurrentness,
+  });
+  const logsReference = logsOperands.resourceContinuation?.params.resource;
+  const logsGeneration = logsOperands.machineServiceLogsGeneration?.expectedGeneration
+    ?? (logsReference?.hostRead === 'machines.services.logs' ? logsReference.expectedGeneration : undefined);
   const context: RpcActionExecutorContext = {
     ...(!admittedAuthorization && !input.machineAdmission && !accountPrincipal && !apiTokenPrincipal
       && !pluginCaller
@@ -708,6 +746,10 @@ export async function executeExternalAction(input: Readonly<{
           authenticatedLocalRootCustody: input.authenticatedLocalRootCustody,
         }, input.currentServerId) } : {}),
     ...(input.machineAdmission ? { machineAdmission: input.machineAdmission } : {}),
+    ...(admittedAuthorization && originalRootCurrentness ? {
+      verifiedExternalActionRequester: { authorization: admittedAuthorization, isCurrent: originalRootCurrentness },
+      verifyMachineAdmissionCurrent: originalRootCurrentness,
+    } : {}),
     ...(recordActionStartDiagnostic ? { recordActionStartDiagnostic } : {}),
     surface: pluginCaller ? 'plugin' : sessionActionOrigin ? 'agent' : apiTokenPrincipal
       ? 'api'
@@ -751,7 +793,7 @@ export async function executeExternalAction(input: Readonly<{
     ...(executionAuthorization?.success
       ? {
           externalActionExecutionAuthorization: admittedAuthorization!,
-          ...(actionId.data === 'projects.open' || isProjectWorkspaceSyncPreparationActionV1(actionId.data)
+          ...(hasProtectedLogsOperands || actionId.data === 'projects.open' || isProjectWorkspaceSyncPreparationActionV1(actionId.data)
             ? { originalActionEnvelope: envelope.data } : {}),
           signExternalActionApprovalInput: ({ actionId: approvalActionId, input: approvalInput, target: approvalTarget, requesterConfirmation, sessionTargetsV1 }) =>
             signExternalActionApprovalInputV1({
@@ -782,18 +824,36 @@ export async function executeExternalAction(input: Readonly<{
         ? { actionRequestId: envelope.data.requestId }
         : {}),
     ...(input.signal ? { signal: input.signal } : {}),
+    ...(logsGeneration !== undefined ? { machineServiceLogsResource: {
+      expectedGeneration: logsGeneration,
+      ...(logsReference?.hostRead === 'machines.services.logs' ? { sourceRevision: logsReference.sourceRevision } : {}),
+    } } : {}),
   };
   let internalExecution: ActionExecuteResult;
   try {
     trace('action_execution.begin');
     internalExecution = await withWebLatencyTrace(envelope.data.requestId, () => timeWebLatencyPhase('daemon.action.execute', async () => {
-        const executor = requesterContext?.executor ?? input.executor;
+        if (!logsOperands.resourceContinuation) {
+      const executor = requesterContext?.executor ?? input.executor;
         const reviewed = await invokeManagedReviewedChild({ parent: managedReviewedParent ?? requesterContext?.invocation?.reviewedParent,
           requesterOwnedReview: !managedReviewedParent && Boolean(requesterContext?.invocation?.reviewedParent),
           context, actionId: actionId.data, actionInput: decodedInput,
           execute: (childInput, childContext) => executor.execute(actionId.data, childInput, childContext) });
         if (reviewed) return reviewed;
         return executor.execute(actionId.data, decodedInput, context);
+      }
+      const continuation = logsOperands.resourceContinuation;
+      if (context.surface !== 'ui' || context.actionCaller?.kind !== 'host' || !context.signal
+        || !originalRootCurrentness || !admittedAuthorization) return { ok: false, errorCode: 'service_admission_unavailable', error: 'service_admission_unavailable' };
+      const result = await input.invokeResource!(continuation.method, continuation.params, {
+        signal: context.signal, callerInputAuthorization: admittedAuthorization,
+        ...(input.machineAdmission ? { machineAdmission: input.machineAdmission } : {}),
+        verifyMachineAdmissionCurrent: originalRootCurrentness, originalActionEnvelope: envelope.data,
+        localActionContext: context,
+      });
+      const response = parseMachineServiceLogsResourceResponse(continuation.method, result);
+      return response.success ? { ok: true, result: response.data }
+        : { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
     }));
     trace('action_execution.end');
   } catch (error) {
@@ -802,7 +862,9 @@ export async function executeExternalAction(input: Readonly<{
     refuseExternalActionPhase('action_execution', input.currentMachineId, error, { actionId: actionId.data, requestId });
     // Policy preparation runs before protocol execution. Preserve its known
     // refusal without exposing a schema error's input, cause or message.
-    const errorCode = error instanceof AccountSettingsContentInvalidError ? error.code
+    const errorCode = logsOperands.resourceContinuation && context.signal?.aborted ? 'cancelled'
+      : logsOperands.resourceContinuation && isPluginError(error) ? error.code
+      : error instanceof AccountSettingsContentInvalidError ? error.code
       : isPluginError(error) && error.code === 'project_requester_home_unavailable' ? error.code : 'internal_error';
     return prepare({
       v: 1,
@@ -838,7 +900,9 @@ export async function executeExternalAction(input: Readonly<{
       && execution.result.kind === 'approval_request_created'
     )
   ) {
-    const publicResult = SIGNED_ROOT_ACTION_OUTPUT_RUNTIME_SCHEMAS[actionId.data].safeParse(execution.result);
+    const publicResult = logsOperands.resourceContinuation
+      ? { success: true, data: execution.result }
+      : SIGNED_ROOT_ACTION_OUTPUT_RUNTIME_SCHEMAS[actionId.data].safeParse(execution.result);
     execution = publicResult.success
       ? { ok: true, result: publicResult.data }
       : { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };

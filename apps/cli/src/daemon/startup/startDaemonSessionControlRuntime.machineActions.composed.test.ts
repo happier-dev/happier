@@ -1,3 +1,4 @@
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -77,6 +78,12 @@ it('resolves Machine Action adapters after the daemon startup executor is publis
   try {
     const owner = fixture.runtime.externalActionIngressOwner;
     if (!owner) throw new Error('Missing startup-composed Action owner');
+    // The protected Action phase recognizes this canonical error type; a bare
+    // Error with a code property would instead become an internal_error.
+    await expect(owner.invokeResource?.(RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ, {}, {
+      signal: new AbortController().signal,
+    })).rejects.toBeInstanceOf(PluginError);
+
 
     const context = {
       surface: 'ui' as const,

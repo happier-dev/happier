@@ -1,3 +1,6 @@
+import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
+import { executeOriginalAccountMachineAction } from '@/sync/api/externalActionAccountTransport';
+import { randomUUID } from '@/platform/randomUUID';
 import { DaemonContributionRegistryProjectionDescribeRequestSchema, DaemonPluginUiTargetedContributionsReadRequestSchema, DaemonPluginSettingsGetRequestSchema, DaemonPluginSettingsGetResponseSchema, DaemonPluginSettingsSetRequestSchema, DaemonPluginSettingsSetResponseSchema, DaemonPluginSecretStatusRequestSchema, DaemonPluginSecretStatusResponseSchema, DaemonPluginSecretSetRequestSchema, DaemonPluginSecretSetResponseSchema, DaemonPluginSecretDeleteRequestSchema, DaemonPluginSecretDeleteResponseSchema, DaemonPluginStructuredMessageActionExecuteResponseSchema, DaemonPluginActionFormConnectedAccountOptionsResolveRequestSchema, DaemonPluginActionFormConnectedAccountOptionsResolveResponseSchema, DaemonPluginActionSchemasReadRequestSchema, DaemonPluginActionSchemasReadResponseSchema, DaemonPluginUiResourceReadRequestSchema, DaemonPluginUiResourceReadResponseSchema, DaemonPluginUiResourceWatchOpenRequestSchema, DaemonPluginUiResourceWatchOpenResponseSchema, DaemonPluginUiResourceWatchNextRequestSchema, DaemonPluginUiResourceWatchNextResponseSchema, DaemonPluginUiResourceWatchCloseRequestSchema, DaemonPluginUiResourceWatchCloseResponseSchema, type DaemonPluginSettingsSnapshot, type DaemonPluginSettingsMutation, type DaemonPluginSettingsSetResponse, type DaemonPluginSecretStatusResponse, type DaemonPluginSecretSetResponse, type DaemonPluginSecretDeleteResponse, type DaemonPluginStructuredMessageActionExecuteResponse, type DaemonPluginActionFormConnectedAccountOptionsResolveRequest, type DaemonPluginActionFormConnectedAccountOptionsResolveResponse, type DaemonPluginActionSchemasReadRequest, type DaemonPluginActionSchemasReadResponse, type DaemonPluginUiResourceReadRequest, type DaemonPluginUiResourceReadResponse, type DaemonPluginUiResourceWatchOpenRequest, type DaemonPluginUiResourceWatchOpenResponse, type DaemonPluginUiResourceWatchNextRequest, type DaemonPluginUiResourceWatchNextResponse, type DaemonPluginUiResourceWatchCloseRequest, type DaemonContributionRegistryProjectionAutomationEligibleEventsV1, type DaemonPluginUiComposerSurfaceCatalogEntryV1, type DaemonPluginUiTargetedSurfaceMountV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { DaemonPluginStructuredMessageActionExecuteRequest } from '@happier-dev/protocol/plugins/actions/daemonInvocationV1';
 import { buildMachinePluginActionExecuteRequest, isMachinePluginActionScopeCurrent } from './machinePluginActionRequest';
@@ -1108,29 +1111,48 @@ export async function machinePluginActionSchemasRead(
  * This is the transport for the snapshot authority; the daemon owns admission,
  * generation currentness, containment, byte bounds and integrity verification.
  */
+type ResourceTransportInput<T> = T extends unknown ? Omit<T, 'machineId'> : never;
+
+/** Native host Resources continue through the same original-Account Action ingress. */
+async function invokeHostLogsResource(
+    continuation: NonNullable<Parameters<typeof executeOriginalAccountMachineAction>[0]['resourceContinuation']>,
+    options: Readonly<{ serverId?: string | null; accountId?: string | null; signal?: AbortSignal }>,
+): Promise<unknown> {
+    const { resource, machineId } = continuation.params;
+    const serverId = options.serverId ?? resource.input.serverId;
+    const account = await captureLazyActionAccountContext(serverId, options.signal);
+    try {
+        if (options.accountId && account.accountId !== options.accountId) return {
+            ok: false, code: 'action_account_scope_changed', reason: 'unavailable',
+        };
+        const actionId = 'machines.services.logs.read';
+        const result = await executeOriginalAccountMachineAction({ account, actionId,
+            requestId: randomUUID(), machineId, input: resource.input, resourceContinuation: continuation,
+            ...(options.signal ? { signal: options.signal } : {}) });
+        return result.ok ? result.result : { ok: false, code: result.errorCode, reason: 'unavailable' };
+    } finally { account.dispose(); }
+}
+
 export async function machinePluginUiResourceRead(
     machineId: string,
-    opts: Readonly<Omit<DaemonPluginUiResourceReadRequest, 'machineId'> & {
+    opts: Readonly<ResourceTransportInput<DaemonPluginUiResourceReadRequest> & {
         serverId?: string | null;
+        accountId?: string | null;
         timeoutMs?: number | null;
         signal?: AbortSignal;
     }>,
 ): Promise<MachinePluginUiResourceReadResult> {
     try {
-        const payload = DaemonPluginUiResourceReadRequestSchema.parse({
-            machineId,
-            expectedCallerOccurrenceId: opts.expectedCallerOccurrenceId,
-            callerPluginId: opts.callerPluginId,
-            resource: opts.resource,
-            ...(opts.context === undefined ? {} : { context: opts.context }),
-        });
-        const response = await machineRpcWithServerScope<unknown, typeof payload>({
+        const { serverId: _server, accountId: _account, timeoutMs: _timeout, signal: _signal, ...request } = opts;
+        const payload = DaemonPluginUiResourceReadRequestSchema.parse({ machineId, ...request });
+        const response = 'callerPluginId' in payload ? await machineRpcWithServerScope<unknown, typeof payload>({
             machineId,
             serverId: opts.serverId,
             ...pluginRpcOperationOptions(opts),
             method: RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ,
+            accountId: opts.accountId,
             payload,
-        });
+        }) : await invokeHostLogsResource({ method: RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ, params: payload }, opts);
         if (isRpcMethodNotFoundResult(response)) return { supported: false, reason: 'not-supported' };
         const parsed = DaemonPluginUiResourceReadResponseSchema.safeParse(response);
         return parsed.success
@@ -1153,28 +1175,24 @@ export async function machinePluginUiResourceRead(
  */
 export async function machinePluginUiResourceWatchOpen(
     machineId: string,
-    opts: Readonly<Omit<DaemonPluginUiResourceWatchOpenRequest, 'machineId'> & {
+    opts: Readonly<ResourceTransportInput<DaemonPluginUiResourceWatchOpenRequest> & {
         serverId?: string | null;
+        accountId?: string | null;
         timeoutMs?: number | null;
         signal?: AbortSignal;
     }>,
 ): Promise<MachinePluginUiResourceWatchOpenResult> {
     try {
-        const payload = DaemonPluginUiResourceWatchOpenRequestSchema.parse({
-            machineId,
-            expectedCallerOccurrenceId: opts.expectedCallerOccurrenceId,
-            callerPluginId: opts.callerPluginId,
-            subscriptionId: opts.subscriptionId,
-            resource: opts.resource,
-            ...(opts.context === undefined ? {} : { context: opts.context }),
-        });
-        const response = await machineRpcWithServerScope<unknown, typeof payload>({
+        const { serverId: _server, accountId: _account, timeoutMs: _timeout, signal: _signal, ...request } = opts;
+        const payload = DaemonPluginUiResourceWatchOpenRequestSchema.parse({ machineId, ...request });
+        const response = 'callerPluginId' in payload ? await machineRpcWithServerScope<unknown, typeof payload>({
             machineId,
             serverId: opts.serverId,
             ...pluginRpcOperationOptions(opts),
             method: RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN,
+            accountId: opts.accountId,
             payload,
-        });
+        }) : await invokeHostLogsResource({ method: RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN, params: payload }, opts);
         if (isRpcMethodNotFoundResult(response)) return { supported: false, reason: 'not-supported' };
         const parsed = DaemonPluginUiResourceWatchOpenResponseSchema.safeParse(response);
         return parsed.success
@@ -1187,28 +1205,25 @@ export async function machinePluginUiResourceWatchOpen(
 
 export async function machinePluginUiResourceWatchNext(
     machineId: string,
-    opts: Readonly<Omit<DaemonPluginUiResourceWatchNextRequest, 'machineId'> & {
+    opts: Readonly<ResourceTransportInput<DaemonPluginUiResourceWatchNextRequest> & {
         serverId?: string | null;
+        accountId?: string | null;
         signal?: AbortSignal;
     }>,
 ): Promise<MachinePluginUiResourceWatchNextResult> {
     try {
-        const payload = DaemonPluginUiResourceWatchNextRequestSchema.parse({
-            machineId,
-            expectedCallerOccurrenceId: opts.expectedCallerOccurrenceId,
-            callerPluginId: opts.callerPluginId,
-            subscriptionId: opts.subscriptionId,
-            ...(opts.waitMs === undefined ? {} : { waitMs: opts.waitMs }),
-        });
-        const response = await machineRpcWithServerScope<unknown, typeof payload>({
+        const { serverId: _server, accountId: _account, signal: _signal, ...request } = opts;
+        const payload = DaemonPluginUiResourceWatchNextRequestSchema.parse({ machineId, ...request });
+        const response = 'callerPluginId' in payload ? await machineRpcWithServerScope<unknown, typeof payload>({
             machineId,
             serverId: opts.serverId,
             // Keep the daemon's protocol wait; caller retirement cancels the transport.
             operationTimeoutMs: null,
             signal: opts.signal,
             method: RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_NEXT,
+            accountId: opts.accountId,
             payload,
-        });
+        }) : await invokeHostLogsResource({ method: RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_NEXT, params: payload }, opts);
         if (isRpcMethodNotFoundResult(response)) return { supported: false, reason: 'not-supported' };
         const parsed = DaemonPluginUiResourceWatchNextResponseSchema.safeParse(response);
         return parsed.success
@@ -1221,25 +1236,24 @@ export async function machinePluginUiResourceWatchNext(
 
 export async function machinePluginUiResourceWatchClose(
     machineId: string,
-    opts: Readonly<Omit<DaemonPluginUiResourceWatchCloseRequest, 'machineId'> & {
+    opts: Readonly<ResourceTransportInput<DaemonPluginUiResourceWatchCloseRequest> & {
         serverId?: string | null;
+        accountId?: string | null;
         timeoutMs?: number | null;
         signal?: AbortSignal;
     }>,
 ): Promise<void> {
     try {
-        const payload = DaemonPluginUiResourceWatchCloseRequestSchema.parse({
-            machineId,
-            callerPluginId: opts.callerPluginId,
-            subscriptionId: opts.subscriptionId,
-        });
-        const response = await machineRpcWithServerScope<unknown, typeof payload>({
+        const { serverId: _server, accountId: _account, timeoutMs: _timeout, signal: _signal, ...request } = opts;
+        const payload = DaemonPluginUiResourceWatchCloseRequestSchema.parse({ machineId, ...request });
+        const response = 'callerPluginId' in payload ? await machineRpcWithServerScope<unknown, typeof payload>({
             machineId,
             serverId: opts.serverId,
             ...pluginRpcOperationOptions(opts),
             method: RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_CLOSE,
+            accountId: opts.accountId,
             payload,
-        });
+        }) : await invokeHostLogsResource({ method: RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_CLOSE, params: payload }, opts);
         DaemonPluginUiResourceWatchCloseResponseSchema.safeParse(response);
     } catch {
         // Local retirement stays authoritative when the daemon cleanup boundary

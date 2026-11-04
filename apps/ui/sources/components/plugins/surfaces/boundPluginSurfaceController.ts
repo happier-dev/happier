@@ -9,6 +9,7 @@ import { createPluginDeclaredResourceStore } from './PluginContextualResourceSto
 import { createPluginSurfaceHostReadStore } from './pluginSurfaceHostReadStore';
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { getUsageQueryResourceStore } from '@/sync/api/account/usageQueryResource';
+import { resolvePluginUiHostReadActionIdV1 } from '@happier-dev/protocol/plugins/ui/subscriptions';
 import type { PluginUiAccountExecutableOrigin } from '@/components/plugins/reactNative/executableModuleHost';
 import { readPluginAccountAvailability } from '@/sync/domains/plugins/availability/projection';
 import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
@@ -1270,14 +1271,15 @@ export function createBoundPluginSurfaceController(input: Readonly<{
                     if (account.credentialAuthorityKind === 'api_token') {
                         throw Object.assign(new Error('Host Resource admission is unavailable for this credential'), { code: 'action_prepare_unavailable' });
                     }
+                    const actionId = resolvePluginUiHostReadActionIdV1(reference.hostRead);
                     const admission = await preparePluginSurfaceHostRead({
-                        action: reference.hostRead, input: reference.input,
+                        action: actionId, input: reference.input,
                         callerPluginId: surfaceContext.pluginId,
                         callerContributionLocalId: surfaceContext.contributionId,
                         callerBinding,
                         ...(targetedContributions ? { callerSourceCustody: targetedContributions.target.sourceCustody } : {}),
                         hostAction, signal, isCurrent: isInteractionCurrent,
-                    }, reference.hostRead);
+                    }, actionId);
                     if (!admission.ok) throw Object.assign(new Error(admission.reason), { code: admission.reason });
                     return getUsageQueryResourceStore(account).getEntry(reference);
                 } finally { account.dispose(); }

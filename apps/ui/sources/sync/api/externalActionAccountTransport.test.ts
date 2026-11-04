@@ -1,3 +1,7 @@
+import nacl from 'tweetnacl';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+const { machinePluginUiResourceRead } = await import('@/sync/ops/machineContributionRegistryProjection');
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { projectExternalActionHttpError } from '@happier-dev/protocol/actions/externalActionApi';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -45,6 +49,71 @@ async function execute() {
 }
 
 describe('captured Account Action response decoding', () => {
+    it('routes a native host Resource read through its original Account logs Action', async () => {
+        const actionId = 'machines.services.logs.read';
+        const resource = { hostRead: 'machines.services.logs' as const,
+            input: { serverId, machineId: 'machine-1', serviceId: 'worker' },
+            expectedGeneration: 'generation', sourceRevision: 'source' };
+        const row = { ...createPlainMachineRowFixture({ id: 'machine-1', accountId: 'owner' }),
+            installationId: 'installation-1' };
+        homes.answer(serverId, 'POST /v1/machines/read-batch', { select: async body => ({
+            body: await createMachineReadBatchResponseFixture(body, () => row).json(),
+        }) });
+        const actionPath = `/v1/actions/${actionId}`;
+        homes.answer(serverId, `${actionPath}/execution-authorization`, { select: body => {
+            const envelope = ExternalActionRequestEnvelopeV1Schema.parse((body as { envelope: unknown }).envelope);
+            return { body: { v: 1, token: 'home-resource-proof', binding: {
+                ...binding, actionId, requestId: envelope.requestId, machineId: 'machine-1', installationId: 'installation-1',
+                custodianAccountId: 'owner', accountEncryptionMode: 'plain',
+                requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+            } } };
+        } });
+        const result = { ok: true, resource, contentType: 'application/json', digest: `sha256:${'a'.repeat(64)}`,
+            bytesBase64: 'e30=' };
+        homes.answer(serverId, actionPath, { select: body => {
+            const envelope = ExternalActionRequestEnvelopeV1Schema.parse((body as { envelope: unknown }).envelope);
+            return { body: { v: 1, actionId, requestId: envelope.requestId, execution: { ok: true, result } } };
+        } });
+        expect(await machinePluginUiResourceRead('machine-1', { serverId, accountId: 'owner', resource }))
+            .toEqual({ supported: true, result });
+        expect(homes.requestsFor(actionPath)).toHaveLength(1);
+    });
+
+    it('binds native logs continuation and generation into the exact Home-minted original invocation', async () => {
+        if (!account) throw new Error('Expected captured Account');
+        const logsBinding = { ...binding, actionId: 'machines.services.logs.read', requestId: 'logs-resource-read' };
+        const input = { serverId, machineId: 'machine-1', serviceId: 'worker',
+            cursor: { sourceRevision: 'native-source-1', token: 'selected-cursor' } };
+        const resource = { hostRead: 'machines.services.logs' as const, input,
+            expectedGeneration: 'generation-1', sourceRevision: 'native-source-1' };
+        const resourceContinuation = { method: RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ,
+            params: { machineId: input.machineId, resource } };
+        const machineServiceLogsGeneration = { expectedGeneration: resource.expectedGeneration };
+        const actionPath = `/v1/actions/${logsBinding.actionId}`;
+        const installation = nacl.sign.keyPair();
+        let mintedEnvelope: unknown;
+        let receivedEnvelope: unknown;
+        homes.answer(serverId, `${actionPath}/execution-authorization`, { select: body => {
+            const envelope = ExternalActionRequestEnvelopeV1Schema.parse((body as { envelope: unknown }).envelope);
+            mintedEnvelope = envelope;
+            return { body: { v: 1, token: 'home-native-logs-proof', binding: {
+                ...logsBinding, machineId: 'machine-1', installationId: 'installation-1', custodianAccountId: 'owner',
+                accountEncryptionMode: 'plain', requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+            } } };
+        } });
+        homes.answer(serverId, actionPath, { select: body => {
+            receivedEnvelope = typeof body === 'object' && body !== null && 'envelope' in body ? body.envelope : body;
+            return { body: { v: 1, actionId: logsBinding.actionId, requestId: logsBinding.requestId,
+                execution: { ok: true, result: { accepted: true } } } };
+        } });
+        const request = { account, binding: logsBinding, input, resourceContinuation, machineServiceLogsGeneration,
+            machineCustody: { accountMode: 'plain' as const, installationId: 'installation-1',
+                installationPublicKey: installation.publicKey, custodian: { accountId: 'owner' } } };
+        expect(await executeOriginalAccountActionTransport(request)).toEqual({ ok: true, result: { accepted: true } });
+        expect(mintedEnvelope).toMatchObject({ input, resourceContinuation, machineServiceLogsGeneration });
+        expect(receivedEnvelope).toEqual(mintedEnvelope);
+    });
+
     it('reads only the exact Action Machine rather than the Account Machine census', async () => {
         const machines = Array.from({ length: 100 }, (_, index) => createPlainMachineRowFixture({ id: `machine-${index}`, accountId: 'owner' }));
         homes.answer(serverId, '/v1/machines', { body: machines });

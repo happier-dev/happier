@@ -125,6 +125,7 @@ export function registerDaemonExternalActionRoute(
     currentServerHttpBaseUrl?: string;
     verifyPat: DaemonPatVerifier;
     executor: ExternalActionExecutor;
+    invokeResource?: Parameters<typeof executeExternalAction>[0]['invokeResource'];
     acquirePluginRuntimeRegistryLease?: Parameters<typeof executeExternalAction>[0]['acquirePluginRuntimeRegistryLease'];
     resolvePluginExecutionOriginContext?: Parameters<typeof executeExternalAction>[0]['resolvePluginExecutionOriginContext'];
     resolveAccountPluginExecutionSelection?: Parameters<typeof executeExternalAction>[0]['resolveAccountPluginExecutionSelection'];
@@ -266,6 +267,7 @@ export function registerDaemonExternalActionRoute(
         prepareRequesterAccountContext: input.prepareRequesterAccountContext,
         resolveTarget: input.resolveTarget,
         executor: input.executor,
+        invokeResource: input.invokeResource,
         acquirePluginRuntimeRegistryLease: input.acquirePluginRuntimeRegistryLease,
         resolvePluginExecutionOriginContext: input.resolvePluginExecutionOriginContext,
         resolveAccountPluginExecutionSelection: input.resolveAccountPluginExecutionSelection,

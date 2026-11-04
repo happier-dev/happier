@@ -21,6 +21,7 @@ describe('managed image previews', () => {
             expect(request).toMatchObject({ machineId: 'controller', serverId: 'server',
                 method: RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ });
             const payload = DaemonPluginUiResourceReadRequestSchema.parse(request.payload);
+            if (!('callerPluginId' in payload)) throw new Error('Expected a declared preview Resource');
             expect(payload).toMatchObject({ machineId: 'controller', expectedCallerOccurrenceId: 'occ-1',
                 callerPluginId: 'happier.machine.lume' });
             const common = { ok: true, resource: payload.resource, kind: 'asset', digest: `sha256:${'a'.repeat(64)}` };

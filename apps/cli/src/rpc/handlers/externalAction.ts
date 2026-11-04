@@ -31,6 +31,7 @@ export type ExternalActionRpcRegistrationOptions = Readonly<{
     'replayApprovedApprovalRequest' | 'continueConfidentialApprovalRequest'>>;
   resolveEncryption?: ResolveExternalActionEncryption;
   prepareRequesterAccountContext?: PrepareExternalActionRequesterAccountContext;
+  invokeResource?: Parameters<typeof executeExternalAction>[0]['invokeResource'];
   externalActionMachineRequestPrivateKey?: string | Uint8Array;
   acquirePluginRuntimeRegistryLease?: Parameters<typeof executeExternalAction>[0]['acquirePluginRuntimeRegistryLease'];
   resolvePluginExecutionOriginContext?: Parameters<typeof executeExternalAction>[0]['resolvePluginExecutionOriginContext'];
@@ -50,6 +51,7 @@ export type ExternalActionIngressOwner = Readonly<Pick<
   | 'acquirePluginRuntimeRegistryLease'
   | 'resolvePluginExecutionOriginContext'
   | 'resolveAccountPluginExecutionSelection'
+  | 'invokeResource'
 >>;
 
 function forbidden() {
@@ -170,6 +172,7 @@ export function registerExternalActionRpcHandler(
       resolveEncryption: options.resolveEncryption,
       resolveTarget: options.resolveTarget,
       executor: options.executor,
+      invokeResource: options.invokeResource,
       acquirePluginRuntimeRegistryLease: options.acquirePluginRuntimeRegistryLease,
       resolvePluginExecutionOriginContext: options.resolvePluginExecutionOriginContext,
       resolveAccountPluginExecutionSelection: options.resolveAccountPluginExecutionSelection,

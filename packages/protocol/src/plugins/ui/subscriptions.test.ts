@@ -4,9 +4,16 @@ import { DaemonPluginUiResourceWatchOpenRequestSchema, DaemonPluginUiResourceWat
 import {
   PluginUiResourceSubscriptionEventV1Schema,
   PluginUiResourceSubscriptionRequestV1Schema,
+  resolvePluginUiHostReadActionIdV1,
 } from './subscriptions.js';
 
 describe('plugin UI resource subscriptions', () => {
+  it.each([
+    ['machines.services.logs', 'machines.services.logs.read'],
+    ['usage.query', 'usage.query'],
+  ] satisfies Array<[Parameters<typeof resolvePluginUiHostReadActionIdV1>[0], string]>)('admits %s through its canonical %s Action', (hostRead, actionId) => {
+    expect(resolvePluginUiHostReadActionIdV1(hostRead)).toBe(actionId);
+  });
   it('admits an exact consumer and purpose authority watch without accepting credential or routing inputs', () => {
     const resource = { readAuthority: { consumer: { pluginId: 'acme.external', localId: 'read-ci' }, purpose: 'github', input: {} } };
     expect(PluginUiResourceSubscriptionRequestV1Schema.parse({ resource, subscriptionId: 'authority' }).resource).toEqual(resource);

@@ -1,3 +1,8 @@
+import { PluginUiMachineServiceReadReferenceV1Schema, DaemonMachineServiceLogsResourceReadRequestSchema, DaemonMachineServiceLogsResourceWatchOpenRequestSchema,
+  DaemonMachineServiceLogsResourceWatchNextRequestSchema, DaemonMachineServiceLogsResourceWatchCloseRequestSchema,
+  DAEMON_PLUGIN_UI_RESOURCE_WATCH_MIN_WAIT_MS, DAEMON_PLUGIN_UI_RESOURCE_WATCH_MAX_WAIT_MS } from './machineServiceLogsResource.js';
+export { DAEMON_PLUGIN_UI_RESOURCE_WATCH_MIN_WAIT_MS, DAEMON_PLUGIN_UI_RESOURCE_WATCH_MAX_WAIT_MS,
+  DAEMON_PLUGIN_UI_RESOURCE_WATCH_DEFAULT_WAIT_MS } from './machineServiceLogsResource.js';
 import { ActionToolExposureSchema } from '../actions/metadata.js';
 import { DeploymentTargetContributionV1Schema } from '../plugins/contributions/deploymentTargets.js';
 import { PluginStoreKindContributionV1Schema } from '../plugins/contributions/storeKinds.js';
@@ -998,7 +1003,7 @@ export type DaemonPluginUiArtifactBytesReadResponse = z.infer<
  * through the existing `plugin_resource_not_found` taxonomy rather than being
  * policed only on the UI side.
  */
-export const DaemonPluginUiResourceReadRequestSchema = lazyZodSchema(() => z.strictObject({
+export const DaemonPluginUiDeclaredResourceReadRequestSchema = lazyZodSchema(() => z.strictObject({
   machineId: z.string().check(z.trim(), z.minLength(1)),
   expectedCallerOccurrenceId: PluginUiRuntimeOccurrenceIdV1Schema,
   callerPluginId: z.string().check(z.trim(), z.minLength(1)),
@@ -1009,11 +1014,20 @@ export const DaemonPluginUiResourceReadRequestSchema = lazyZodSchema(() => z.str
   /** Omission reaches the Resource owner, which rejects a required context typed. */
   context: zMini.optional(PluginResourceContextV1Schema),
 }));
+export const DaemonPluginUiResourceReadRequestSchema = lazyZodSchema(() => z.union([
+  DaemonPluginUiDeclaredResourceReadRequestSchema,
+  DaemonMachineServiceLogsResourceReadRequestSchema,
+]));
 export type DaemonPluginUiResourceReadRequest = z.infer<
   typeof DaemonPluginUiResourceReadRequestSchema
 >;
 
 export const DaemonPluginUiResourceReadResponseSchema = lazyZodSchema(() => z.union([
+  z.strictObject({
+    ok: z.literal(true), resource: PluginUiMachineServiceReadReferenceV1Schema,
+    contentType: z.literal('application/json'), digest: PluginUiArtifactDigestV1Schema,
+    bytesBase64: z.string().check(z.refine(isCanonicalBase64)),
+  }),
   z.strictObject({
     ok: z.literal(true),
     resource: z.strictObject({
@@ -1054,7 +1068,7 @@ export type DaemonPluginUiResourceReadResponse = z.infer<
  * mount, a reconnect or a replaced daemon-side subscription converges on
  * last-known-good plus one re-read instead of a silent stale view.
  */
-export const DaemonPluginUiResourceWatchOpenRequestSchema = lazyZodSchema(() => z.strictObject({
+export const DaemonPluginUiDeclaredResourceWatchOpenRequestSchema = lazyZodSchema(() => z.strictObject({
   machineId: z.string().check(z.trim(), z.minLength(1)),
   expectedCallerOccurrenceId: PluginUiRuntimeOccurrenceIdV1Schema,
   callerPluginId: z.string().check(z.trim(), z.minLength(1)),
@@ -1069,6 +1083,10 @@ export const DaemonPluginUiResourceWatchOpenRequestSchema = lazyZodSchema(() => 
   /** The watch owns this exact contextual binding until it is closed or retired. */
   context: zMini.optional(PluginResourceContextV1Schema),
 }));
+export const DaemonPluginUiResourceWatchOpenRequestSchema = lazyZodSchema(() => z.union([
+  DaemonPluginUiDeclaredResourceWatchOpenRequestSchema,
+  DaemonMachineServiceLogsResourceWatchOpenRequestSchema,
+]));
 export type DaemonPluginUiResourceWatchOpenRequest = z.infer<
   typeof DaemonPluginUiResourceWatchOpenRequestSchema
 >;
@@ -1102,17 +1120,18 @@ export type DaemonPluginUiResourceWatchOpenResponse = z.infer<
  * both ends so a client cannot pin a daemon handler open indefinitely and a
  * degenerate value cannot turn the poll into a busy loop.
  */
-export const DAEMON_PLUGIN_UI_RESOURCE_WATCH_MIN_WAIT_MS = 1_000;
-export const DAEMON_PLUGIN_UI_RESOURCE_WATCH_MAX_WAIT_MS = 60_000;
-export const DAEMON_PLUGIN_UI_RESOURCE_WATCH_DEFAULT_WAIT_MS = 25_000;
 
-export const DaemonPluginUiResourceWatchNextRequestSchema = lazyZodSchema(() => z.strictObject({
+export const DaemonPluginUiDeclaredResourceWatchNextRequestSchema = lazyZodSchema(() => z.strictObject({
   machineId: z.string().check(z.trim(), z.minLength(1)),
   expectedCallerOccurrenceId: PluginUiRuntimeOccurrenceIdV1Schema,
   callerPluginId: z.string().check(z.trim(), z.minLength(1)),
   subscriptionId: z.string().check(z.trim(), z.minLength(1), z.maxLength(256)),
   waitMs: z.optional(z.number().check(z.int(), z.minimum(DAEMON_PLUGIN_UI_RESOURCE_WATCH_MIN_WAIT_MS), z.maximum(DAEMON_PLUGIN_UI_RESOURCE_WATCH_MAX_WAIT_MS))),
 }));
+export const DaemonPluginUiResourceWatchNextRequestSchema = lazyZodSchema(() => z.union([
+  DaemonPluginUiDeclaredResourceWatchNextRequestSchema,
+  DaemonMachineServiceLogsResourceWatchNextRequestSchema,
+]));
 export type DaemonPluginUiResourceWatchNextRequest = z.infer<
   typeof DaemonPluginUiResourceWatchNextRequestSchema
 >;
@@ -1137,11 +1156,15 @@ export type DaemonPluginUiResourceWatchNextResponse = z.infer<
   typeof DaemonPluginUiResourceWatchNextResponseSchema
 >;
 
-export const DaemonPluginUiResourceWatchCloseRequestSchema = lazyZodSchema(() => z.strictObject({
+export const DaemonPluginUiDeclaredResourceWatchCloseRequestSchema = lazyZodSchema(() => z.strictObject({
   machineId: z.string().check(z.trim(), z.minLength(1)),
   callerPluginId: z.string().check(z.trim(), z.minLength(1)),
   subscriptionId: z.string().check(z.trim(), z.minLength(1), z.maxLength(256)),
 }));
+export const DaemonPluginUiResourceWatchCloseRequestSchema = lazyZodSchema(() => z.union([
+  DaemonPluginUiDeclaredResourceWatchCloseRequestSchema,
+  DaemonMachineServiceLogsResourceWatchCloseRequestSchema,
+]));
 export type DaemonPluginUiResourceWatchCloseRequest = z.infer<
   typeof DaemonPluginUiResourceWatchCloseRequestSchema
 >;

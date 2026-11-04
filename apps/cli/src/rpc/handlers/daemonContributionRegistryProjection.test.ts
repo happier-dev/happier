@@ -155,6 +155,45 @@ function createRegistrar() {
     };
 }
 
+it('preserves the native host slot after registered NEXT rejects a different full reference', async () => {
+    const owner = managedServicesFixture.registry.uiResourceWatches;
+    if (!owner) throw new Error('Missing admitted runtime Resource owner');
+    const resource = { hostRead: 'machines.services.logs' as const,
+        input: { serverId: 'home', machineId: 'machine-1', serviceId: 'worker' },
+        expectedGeneration: 'generation', sourceRevision: 'source' };
+    const initialDigest = `sha256:${'a'.repeat(64)}` as const;
+    let notify: (digest: string) => void = () => {};
+    let disposals = 0;
+    await owner.openHost({ accountId: 'account', subscriptionId: 'native', resource,
+        // Native watch installation/disposal is the system boundary. The slot
+        // owner and registered handler below both run their real logic.
+        bind: async (_signal, emit) => {
+            notify = emit;
+            return { digest: initialDigest, dispose() { disposals++; } };
+        } });
+    const { handlers, registrar } = createRegistrar();
+    const { registerDaemonContributionRegistryProjectionHandler } = await import('./daemonContributionRegistryProjection');
+    registerDaemonContributionRegistryProjectionHandler(registrar, {
+        resolveRuntimeRegistry: async () => managedServicesFixture.registry,
+        resolveInstalledPackages: async () => [],
+        readHostResourceAccountId: () => 'account',
+    });
+    const context = { signal: new AbortController().signal, localActionContext: { surface: 'ui' as const } };
+    try {
+        const next = handlers.get(RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_NEXT);
+        const request = { machineId: 'machine-1', subscriptionId: 'native', resource };
+        await expect(next?.({ ...request, resource: { ...resource, sourceRevision: 'substituted' } }, context))
+            .resolves.toMatchObject({ ok: false, code: 'plugin_resource_subscription_unknown' });
+        expect(disposals).toBe(0);
+        notify(`sha256:${'b'.repeat(64)}`);
+        await expect(next?.(request, context)).resolves.toMatchObject({ ok: true, status: 'event' });
+        expect(await owner.close({ hostAccountId: 'account', subscriptionId: 'native', resource })).toBe(true);
+        expect(disposals).toBe(1);
+    } finally {
+        await owner.close({ hostAccountId: 'account', subscriptionId: 'native', resource });
+    }
+});
+
 function createRuntimeRegistry(
     contributes: ResolvedExecutablePluginRuntimeRegistry['contributes'],
     overrides: Partial<ResolvedExecutablePluginRuntimeRegistry> = {},

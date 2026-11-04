@@ -8951,7 +8951,7 @@ agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').Ho
             return uiResourceWatches.close({
                 callerPluginId: watchParams.callerPluginId,
                 subscriptionId: watchParams.subscriptionId,
-            });
+            }) === true;
         },
         async resolveStructuredMessage(messageParams) {
             if (!consumerAssembly.isOccurrenceCurrent()) {

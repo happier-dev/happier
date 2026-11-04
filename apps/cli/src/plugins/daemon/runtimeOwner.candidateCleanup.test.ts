@@ -121,6 +121,7 @@ function createReloadController(): PluginReloadController {
     isRuntimeRegistryCurrent: vi.fn(() => false),
     invalidateRuntimeProjection: vi.fn(),
     applyResourceSessionAccessWitness: vi.fn(),
+    retireHostResourceWatches: vi.fn(async () => undefined),
     shutdown: vi.fn(async () => undefined),
     getState: () => Object.freeze({
       generation: 0,

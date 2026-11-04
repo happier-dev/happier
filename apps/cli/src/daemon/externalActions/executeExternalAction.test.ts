@@ -3,6 +3,7 @@ import { projectAccountRowReadResponse } from '@/testkit/http/projectAccountRows
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 import tweetnacl from 'tweetnacl';
 import axios from 'axios';
+import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
 import { projectRequesterAccountActionAuthorization } from '../sessionEncryption/requesterSessionCredentials';
 import { createProjectAccountRowCipherV1 } from '@happier-dev/protocol/projects/projectAccountRowCipherV1';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
@@ -100,6 +101,68 @@ function createExactLimitMultibyteResult() {
 }
 
 describe('executeExternalAction', () => {
+  it.each(['plain', 'e2ee'] as const)('refuses unsupported protected logs operands before ordinary Action IO (%s, waived positive control)', async mode => {
+    const actionId = 'machines.services.logs.read' as const;
+    const target = { kind: 'machine' as const, machineId: 'logs-constraint-machine' };
+    const input = { serverId: 'logs-home', machineId: target.machineId, serviceId: 'worker' };
+    const installation = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(44));
+    const material = { type: 'dataKey' as const, machineKey: new Uint8Array(32).fill(45) };
+    const accountPrincipal = { accountId: principal.accountId,
+      authentication: { kind: 'account' as const, tokenEpoch: 0 }, authority: 'present_user' as const };
+    let nativeReads = 0;
+    const network = vi.spyOn(axios, 'get').mockRejectedValue(new Error('Unsupported continuation must not enter ordinary target IO'));
+    // Installed key material, Home authorization verification and native IO are
+    // system boundaries. Envelope crypto, target resolution and Actions stay real.
+    const page = { kind: 'page' as const, page: { sourceRevision: 'current-source', text: 'current native bytes', nextCursor: null, truncated: false } };
+    const actionsSettings = ActionsSettingsV1Schema.parse({ v: 1, scopedApprovalPreferences: [{ actionId,
+      scope: { kind: 'machine', machineId: target.machineId }, approvalRequiredSurfaces: [], approvalWaivedSurfaces: ['ui'] }] });
+    const realExecutor = createActionExecutor({ ...createUnavailableHostActionDeps(),
+      machineServiceLogsRead: async () => { nativeReads++; return page; },
+    });
+    // Account settings are input to the real policy owner, not an approval result.
+    const executor: ExternalActionExecutor = { execute: (id, value, context) => realExecutor.execute(id, value, { ...context, actionsSettings }) };
+    const invoke = async (requestId: string,
+      protectedInput: Pick<Parameters<typeof sealExternalActionRequestV2>[0], 'resourceContinuation' | 'machineServiceLogsGeneration'> = {}) => {
+      const binding = { serverIdentityId: 'srv_logs_home', accountId: accountPrincipal.accountId,
+        authentication: accountPrincipal.authentication, actionId, requestId, target };
+      const envelope = mode === 'e2ee'
+        ? sealExternalActionRequestV2({ binding, material, input, ...protectedInput,
+          randomBytes: length => new Uint8Array(length).fill(46) })
+        : { v: 1 as const, requestId: binding.requestId, target, input, ...protectedInput };
+      const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-logs-proof', binding: {
+        ...binding, machineId: target.machineId, custodianAccountId: accountPrincipal.accountId,
+        installationId: 'logs-installation', accountEncryptionMode: mode,
+        requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+      } });
+      const result = await executeExternalAction({ actionId, envelope, principal: accountPrincipal, executionAuthorization: authorization,
+        currentMachineId: target.machineId, currentServerId: input.serverId, currentInstallationId: 'logs-installation',
+        externalActionMachineRequestPrivateKey: installation.secretKey, verifyExecutionAuthorization: async () => true,
+        resolveEncryption: async () => ({ serverIdentityId: binding.serverIdentityId, material }),
+        resolveTarget: createDaemonExternalActionTargetResolver({ credentials: { token: 'fixture', encryption: null } }), executor,
+      });
+      const execution = result.kind !== 'response' ? null : envelope.v === 2
+        ? openExternalActionResponseV2({ envelope: result.response, binding, material, request: envelope })
+        : result.response.v === 1 ? result.response.execution : null;
+      return { result, execution };
+    };
+    try {
+      expect(await invoke(`ordinary-${mode}`)).toMatchObject({ result: { kind: 'response' }, execution: { ok: true, result: page } });
+      expect(nativeReads).toBe(1);
+      for (const operand of ['generation', 'resource'] as const) {
+        const protectedInput: Pick<Parameters<typeof sealExternalActionRequestV2>[0], 'resourceContinuation' | 'machineServiceLogsGeneration'> = operand === 'generation'
+          ? { machineServiceLogsGeneration: { expectedGeneration: 'retired-generation' } }
+          : { resourceContinuation: { method: RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ, params: {
+            machineId: target.machineId, resource: { hostRead: 'machines.services.logs' as const, input,
+              expectedGeneration: 'retired-generation', sourceRevision: 'retired-source' },
+          } } };
+        expect.soft(await invoke(`unsupported-${mode}-${operand}`, protectedInput))
+          .toMatchObject({ result: { kind: 'invalid_request', errorCode: mode === 'e2ee' ? 'invalid_encrypted_envelope' : 'invalid_envelope' } });
+      }
+      expect(nativeReads).toBe(1);
+      expect(network).not.toHaveBeenCalled();
+    } finally { network.mockRestore(); }
+  });
+
   it.each([
     { kind: 'account', settingsFailure: false, rootFailure: false, rootUnavailable: false },
     { kind: 'terminal', settingsFailure: false, rootFailure: false, rootUnavailable: false },
@@ -949,6 +1012,68 @@ describe('executeExternalAction', () => {
     } })).toMatchObject({ kind: 'invalid_request', errorCode: 'invalid_encrypted_envelope' });
     expect(managedMachineAction).toHaveBeenCalledTimes(1);
   });
+  it('spends one Home verification at signed admission; effects consume local cancel until the next request', async () => {
+    const target = { kind: 'machine' as const, machineId: 'machine-1' };
+    const material = { type: 'dataKey' as const, machineKey: new Uint8Array(32).fill(23) };
+    const installationId = '11111111-1111-4111-8111-111111111111';
+    const binding = { serverIdentityId: 'srv_home', accountId: 'bob',
+      credentialId: '00000000-0000-4000-8000-000000000001', actionId: 'session.spawn_new',
+      requestId: 'one-admission', target };
+    const envelope = sealExternalActionRequestV2({ binding, material,
+      input: { creationKey: 'one-admission', agentTarget: { kind: 'agent',
+        identity: { pluginId: 'happier.agent.codex', localId: 'codex' } }, directory: { kind: 'managed' } },
+      randomBytes: (length) => new Uint8Array(length).fill(2) });
+    const authorization = { v: 1 as const, token: 'home-proof', binding: {
+      ...binding, principalId: 'bob', custodianAccountId: 'alice', installationId,
+      machineId: target.machineId, grant: API_TOKEN_FULL_GRANT_V1,
+      requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+    } };
+    // Home HTTP and the Action effect are the boundaries; ingress and its ports are real.
+    const homePost = vi.spyOn(axios, 'post').mockRejectedValue(new Error('No mid-operation Home currentness POST'));
+    let homeCurrent = true;
+    let installationCurrent = true;
+    const verifyExecutionAuthorization = vi.fn(async () => homeCurrent);
+    let effectPorts: ReadonlyArray<() => Promise<boolean>> = [];
+    const executor = { execute: async (_actionId: string, _input: unknown, context: RpcActionExecutorContext) => {
+      effectPorts = [context.verifyMachineAdmissionCurrent!, context.verifiedExternalActionRequester!.isCurrent,
+        context.externalActionExecutionAuthorization!.requesterHttpProjection!.isCurrent];
+      // Withdrawal during finite work: admitted work finishes, the next request refuses.
+      homeCurrent = false;
+      expect(await Promise.all(effectPorts.flatMap(port => [port(), port(), port()]))).toEqual(Array(9).fill(true));
+      return { ok: true as const, result: { accepted: true } };
+    } } as unknown as Parameters<typeof executeExternalAction>[0]['executor'];
+    const controller = new AbortController();
+    const run = () => executeExternalAction({ actionId: binding.actionId, envelope,
+      principal: { ...principal, accountId: 'bob', principalId: 'bob', credentialId: binding.credentialId },
+      currentMachineId: target.machineId, currentInstallationId: installationId, currentServerId: 'home-profile',
+      currentServerHttpBaseUrl: 'https://home.test', isInstallationCurrent: () => installationCurrent,
+      executionAuthorization: authorization, signal: controller.signal,
+      externalActionMachineRequestPrivateKey: tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(7)).secretKey,
+      resolveEncryption: async () => ({ serverIdentityId: binding.serverIdentityId, material }),
+      resolveTarget: createDaemonExternalActionTargetResolver({ credentials: { token: 'alice-daemon-token', encryption: null } }),
+      verifyExecutionAuthorization, executor });
+    try {
+      expect(await run()).toMatchObject({ kind: 'response' });
+      expect(verifyExecutionAuthorization).toHaveBeenCalledTimes(1);
+      expect(homePost).not.toHaveBeenCalled();
+      installationCurrent = false;
+      expect(await Promise.all(effectPorts.map(port => port()))).toEqual([false, false, false]);
+      installationCurrent = true;
+      controller.abort();
+      expect(await Promise.all(effectPorts.map(port => port()))).toEqual([false, false, false]);
+    } finally { homePost.mockRestore(); }
+    const next = await executeExternalAction({ actionId: binding.actionId, envelope,
+      principal: { ...principal, accountId: 'bob', principalId: 'bob', credentialId: binding.credentialId },
+      currentMachineId: target.machineId, currentInstallationId: installationId, currentServerId: 'home-profile',
+      executionAuthorization: authorization,
+      externalActionMachineRequestPrivateKey: tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(7)).secretKey,
+      resolveEncryption: async () => ({ serverIdentityId: binding.serverIdentityId, material }),
+      resolveTarget: createDaemonExternalActionTargetResolver({ credentials: { token: 'alice-daemon-token', encryption: null } }),
+      verifyExecutionAuthorization, executor });
+    expect(verifyExecutionAuthorization).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(next)).not.toContain('accepted');
+  });
+
   it('preserves admitted requester private Account ports through wire parsing and refuses their retired custody', async () => {
     const target = { kind: 'machine' as const, machineId: 'machine-1' };
     const envelope = { v: 1 as const, requestId: 'requester-ports', target, input: { message: 'Finished' } };

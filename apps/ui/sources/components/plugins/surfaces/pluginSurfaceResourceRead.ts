@@ -37,7 +37,10 @@ import {
  * rejection of an already-invalid request, not the authority.
  */
 
-export type PluginSurfaceResourceReadTransport = typeof machinePluginUiResourceRead;
+export type PluginSurfaceResourceReadTransport = (
+    machineId: string,
+    options: Extract<Parameters<typeof machinePluginUiResourceRead>[1], { callerPluginId: string }>,
+) => ReturnType<typeof machinePluginUiResourceRead>;
 
 /** Minimal request shape consumed by the Resource adapter, independent of surface provenance. */
 export type PluginResourceHostRequest = Readonly<{

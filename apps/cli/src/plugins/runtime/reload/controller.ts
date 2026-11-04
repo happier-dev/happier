@@ -176,6 +176,8 @@ export type PluginReloadController = Readonly<{
     invalidateRuntimeProjection: () => void;
     /** Applies the Account change carrier's current Session-access proof to every live Resource owner. */
     applyResourceSessionAccessWitness: (params: ResourceSessionAccessWitness) => void;
+    /** Releases one requester's host watches across every still-held registry. */
+    retireHostResourceWatches: (accountId: string) => Promise<void>;
     shutdown: (params?: Readonly<{ timeoutMs?: number }>) => Promise<void>;
     getState: () => PluginReloadState;
     /** Notified after daemon-owned initialization or prepared-registry adoption settles. */
@@ -1003,6 +1005,10 @@ export function createPluginReloadController(params?: Readonly<{
             if (!shutdownStarted && activeRegistry) {
                 params?.invalidateCaches?.(generation);
             }
+        },
+        async retireHostResourceWatches(accountId) {
+            await Promise.all([...resourceSessionRegistries()].map(registry =>
+                registry.uiResourceWatches?.retireHostAccount(accountId)));
         },
         applyResourceSessionAccessWitness(input) {
             const nextWitness: ResourceSessionAccessWitness = input.witness === undefined

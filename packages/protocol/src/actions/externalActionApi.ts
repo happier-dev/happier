@@ -1,3 +1,4 @@
+import { MachineServiceLogsResourceContinuationV1Schema, MachineServiceLogsGenerationV1Schema } from '../daemon/machineServiceLogsResource.js';
 import { ActionOperationListActionInputV1Schema, ActionOperationGetActionInputV1Schema } from './specs/actionOperations.js';
 import { projectDeploymentNativeAdmissionV1 } from '../deployments/deploymentCandidatePublicationV1.js';
 import type { ArtifactBodyV1 } from '../artifacts/artifactBinaryV1.js';
@@ -783,6 +784,8 @@ export const ExternalActionRequestEnvelopeV1Schema = lazyZodSchema(() => z.stric
   idempotencyKey: z.optional(AutomationManualIdempotencyKeyV1Schema),
   target: z.optional(ExternalActionTargetV1Schema),
   input: StrictJsonValueSchema,
+  resourceContinuation: z.optional(MachineServiceLogsResourceContinuationV1Schema),
+  machineServiceLogsGeneration: z.optional(MachineServiceLogsGenerationV1Schema),
   pluginInvocation: z.optional(DaemonPluginMountedInvocationV1Schema),
   managedCreationCodec: z.optional(SessionRequesterInstallationSealedBootstrapV1Schema),
   managedAdmission: z.optional(ExternalActionManagedAdmissionV1Schema),
