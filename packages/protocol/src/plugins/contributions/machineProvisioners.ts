@@ -449,6 +449,7 @@ function projectRoleSchema<T>(schema: z.core.$ZodType<T>): ProtocolComposableSch
   );
 }
 export const MachineProvisionerCheckInputV1Schema = defineProtocolObject({}, { policy: 'closed' });
+export const MachineProvisionerNativeCauseProtocolV1Schema = projectRoleSchema(MachineProvisionerNativeCauseV1Schema);
 export const MachineProvisionerCheckResultProtocolV1Schema = projectRoleSchema(MachineProvisionerCheckResultV1Schema);
 export const MachineProvisionerOptionsResultProtocolV1Schema = projectRoleSchema(MachineProvisionerOptionsResultV1Schema);
 export const MachineProvisionerAcquireResultV1Schema = projectRoleSchema(AcquireResultV1Schema);
@@ -456,8 +457,8 @@ export const MachineProvisionerBootstrapCarrierV1Schema = projectRoleSchema(Mana
 export const MachineProvisionerObservationV1Schema = projectRoleSchema(ProviderObservationV1Schema);
 export const MachineProvisionerPowerResultV1Schema = defineProtocolUnion([
   defineProtocolObject({ kind: defineProtocolLiteral('confirmed') }, { policy: 'closed' }),
-  defineProtocolObject({ kind: defineProtocolLiteral('unknown'), code: defineProtocolString({ minLength: 1 }).optional() }, { policy: 'closed' }),
-  defineProtocolObject({ kind: defineProtocolLiteral('refused'), code: defineProtocolString({ minLength: 1 }) }, { policy: 'closed' }),
+  defineProtocolObject({ kind: defineProtocolLiteral('unknown'), code: defineProtocolString({ minLength: 1 }).optional(), nativeCause: MachineProvisionerNativeCauseProtocolV1Schema.optional() }, { policy: 'closed' }),
+  defineProtocolObject({ kind: defineProtocolLiteral('refused'), code: defineProtocolString({ minLength: 1 }), nativeCause: MachineProvisionerNativeCauseProtocolV1Schema.optional() }, { policy: 'closed' }),
 ]);
 export const MachineProvisionerDestroyResultV1Schema = defineProtocolUnion([
   defineProtocolObject({ kind: defineProtocolLiteral('confirmed') }, { policy: 'closed' }),
