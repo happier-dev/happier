@@ -19,6 +19,8 @@ import type {
     IrohHomeTunnelRuntime,
 } from './types';
 import type { IrohRelayPolicy } from '@happier-dev/iroh-native';
+import { startNativeLoopbackTunnelRuntimeAppStateLifecycle } from '@/sync/runtime/nativeLoopbackTunnels/runtime';
+import { isRuntimeActive } from '@/utils/runtime/isRuntimeActive';
 
 export const DEFAULT_IROH_RELAY_POLICY: IrohRelayPolicy = 'automatic';
 
@@ -339,6 +341,7 @@ export function getIrohHomeTunnelRuntime(params: Readonly<{
 }> = {}): IrohHomeTunnelRuntime {
     if (!singletonRuntime) {
         singletonRuntime = createIrohHomeTunnelRuntime(params);
+        if (!isRuntimeActive()) singletonRuntime.markSuspended();
     }
     return singletonRuntime;
 }
@@ -368,6 +371,9 @@ export async function disposeIrohHomeTunnelRuntime(): Promise<void> {
 export async function acquireIrohHomeRuntimeOrigin(
     input: IrohHomeTunnelAcquireInput,
 ): Promise<IrohHomeRuntimeOriginLease> {
+    // Enrollment and secondary Homes need the same activity owner as the
+    // focused connection, including when no focused connection exists yet.
+    startNativeLoopbackTunnelRuntimeAppStateLifecycle();
     return await getIrohHomeTunnelRuntime().acquireHomeRuntimeOrigin(input);
 }
 

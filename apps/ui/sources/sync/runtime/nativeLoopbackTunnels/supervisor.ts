@@ -104,6 +104,9 @@ export function createLoopbackTunnelSupervisor<
 
     function subscribeToNativeEvents(key: string, nativeTunnelId: string): void {
         removeNativeSubscription(nativeTunnelId);
+        // Acquisition or a foreground probe can finish after suspension.
+        // Keep the admitted lease, but do not restart its status observation.
+        if (store.isSuspended()) return;
         const unsubscribe = input.adapter.subscribeLoopbackTunnelEvents?.(
             nativeTunnelId,
             (event) => notifyNativeEvent(key, nativeTunnelId, event),

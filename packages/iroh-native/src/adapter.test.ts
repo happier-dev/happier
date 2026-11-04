@@ -298,7 +298,8 @@ describe('Iroh native lifecycle adapter', () => {
       const events: unknown[] = [];
       adapter.subscribeEvents(lease.leaseId, (event) => events.push(event));
 
-      await vi.advanceTimersByTimeAsync(200);
+      // Subscription reads once immediately, then uses the existing cadence.
+      await vi.advanceTimersByTimeAsync(100);
       expect(events).toEqual([
         expect.objectContaining({ type: 'error', tunnelHandle: 'l1', status: 'error', errorCode: 'unknown' }),
         expect.objectContaining({ type: 'ready', tunnelHandle: 'l1', status: 'ready', observedPath: 'direct' }),
@@ -313,7 +314,7 @@ describe('Iroh native lifecycle adapter', () => {
     }
   });
 
-  it('polls exact tunnel handles when two leases belong to the same Home', async () => {
+  it('reads current status immediately for exact tunnel handles when two leases belong to the same Home', async () => {
     vi.useFakeTimers();
     try {
       const getTunnelStatus = vi.fn(async (tunnelId: string) => ({
@@ -335,7 +336,7 @@ describe('Iroh native lifecycle adapter', () => {
       adapter.subscribeEvents(first.leaseId, (event) => events.push(event));
       adapter.subscribeEvents(second.leaseId, (event) => events.push(event));
 
-      await vi.advanceTimersByTimeAsync(100);
+      await vi.advanceTimersByTimeAsync(0);
 
       expect(getTunnelStatus.mock.calls.map(([tunnelId]) => tunnelId).sort()).toEqual(['l1', 'l2']);
       expect(events).toEqual(expect.arrayContaining([

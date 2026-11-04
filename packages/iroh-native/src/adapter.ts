@@ -244,6 +244,8 @@ export function createIrohNativeAdapter(native?: NativeLifecycleModule, options:
         const listeners = new Set([listener]);
         const timer = setInterval(() => { void pollStatus(leaseId); }, statusPollIntervalMs);
         pollers.set(leaseId, { listeners, timer, lastStatus: null, polling: false });
+        // Foreground re-subscription refreshes once before the visible cadence.
+        void pollStatus(leaseId);
       }
       return () => {
         const poller = pollers.get(leaseId);

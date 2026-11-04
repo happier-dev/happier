@@ -48,7 +48,10 @@ export function startNativeLoopbackTunnelRuntimeAppStateLifecycle(): void {
                 markSuspended: () => getNativeSshTunnelRuntime().markSuspended(),
                 markForeground: async () => await getNativeSshTunnelRuntime().markForeground(),
             },
-            getIrohHomeTunnelRuntime(),
+            {
+                markSuspended: () => getIrohHomeTunnelRuntime().markSuspended(),
+                markForeground: async () => await getIrohHomeTunnelRuntime().markForeground(),
+            },
             irohMachineTransferRuntimeActivity,
         ],
     });
