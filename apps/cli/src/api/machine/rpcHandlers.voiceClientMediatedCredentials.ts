@@ -1,5 +1,3 @@
-import { isDeepStrictEqual } from 'node:util';
-
 import { DaemonVoiceClientAccountOperationRequestV1Schema, DaemonVoiceClientAccountOperationResponseV1Schema } from '@happier-dev/protocol/daemon/voiceCredentials';
 import { deriveVoiceCredentialBindingIdentityV1 } from '@happier-dev/protocol/plugins/contributions/voice';
 import { sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
@@ -129,15 +127,13 @@ export function registerMachineVoiceClientMediatedCredentialRpcHandlers(params: 
         const connectedAccounts = lease.registry.resolveConnectedAccountPurposeBindingOwner?.() ?? null;
         if (!connectedAccounts) return failure(null);
         const snapshotLifetime = getActiveAccountSettingsSnapshotLifetimeToken();
-        const isCredentialCurrent = () => {
+        const isAccountCurrent = () => {
           const current = getSnapshot();
           if (!current || getActiveAccountSettingsSnapshotLifetimeToken() !== snapshotLifetime) return false;
           if (capturedSnapshot.scopeKey === undefined || current.scopeKey === undefined) {
             if (current !== capturedSnapshot) return false;
           } else if (current.scopeKey !== capturedSnapshot.scopeKey) return false;
-          try {
-            return isDeepStrictEqual(before, credentialResolver.resolveSelectedAuthority(identity));
-          } catch { return false; }
+          return true;
         };
         const operationSignal = AbortSignal.any([signal, lifecycle.retirementSignal]);
         let httpFailure: ReturnType<typeof classifyVoiceProviderHttpFailure> = null;
@@ -149,7 +145,7 @@ export function registerMachineVoiceClientMediatedCredentialRpcHandlers(params: 
           credentialResolver,
           connectedAccounts,
           isCurrent: lifecycle.isCurrent,
-          isCredentialCurrent,
+          isCredentialCurrent: isAccountCurrent,
           signal: operationSignal,
           transport: createGlobalFetchRuntime(),
           recordResponseDiagnostic: (diagnostic) => {

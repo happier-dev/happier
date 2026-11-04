@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { basename, dirname, join } from 'node:path';
 import { lstat, rename } from 'node:fs/promises';
 
-import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { buildQualifiedPluginContributionKey, parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { parseModelPackManifest } from '@happier-dev/protocol/voice/modelPacks/manifest';
 import type { ModelPackManifest, VoiceModelPackIdentityV1, VoiceModelPackRuntimeV1, VoiceModelPackSupportArtifactV1 } from '@happier-dev/protocol';
 import {
@@ -346,7 +346,12 @@ export function createDaemonPublicVoiceModelPackRuntime(params: Readonly<{
     const requestedKeys = keys === undefined ? null : new Set(keys);
     await ready();
     const durable = await state.read();
-    const pluginCatalog = await readInstalledPluginCatalogSnapshot({ happyHomeDir: params.happyHomeDir });
+    const pluginCatalog = await readInstalledPluginCatalogSnapshot({ happyHomeDir: params.happyHomeDir,
+      ...(requestedKeys ? { pluginIds: [...requestedKeys].flatMap((key) => {
+        const identity = parseQualifiedPluginContributionKey(key);
+        return identity ? [identity.pluginId] : [];
+      }) } : {}),
+    });
     if (admittedRegistryRevision !== null && admittedRegistryRevision !== pluginCatalog.revision) {
       // A registry revision can include an unobserved disable/orphan/re-enable
       // interval. A new revision therefore starts a fresh verification epoch;
@@ -382,6 +387,7 @@ export function createDaemonPublicVoiceModelPackRuntime(params: Readonly<{
               hostId: params.machineId,
             },
             installedMetadata: durable.installed,
+            ...(requestedKeys ? { packKeys: requestedKeys } : {}),
           });
         } finally {
           await lease?.release();

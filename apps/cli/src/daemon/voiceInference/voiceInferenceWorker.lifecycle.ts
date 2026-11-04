@@ -508,7 +508,8 @@ export function createVoiceInferenceWorkerLifecycle(params?: VoiceInferenceWorke
       : stopScopedController.signal;
     throwIfWarmAborted(warmSignal);
     const resolveInvalidationEpoch = publicInvalidationEpoch;
-    const publicEntry = await publicModelPacks?.resolve(packId);
+    const catalogEntry = getModelPackCatalogEntry(packId);
+    const publicEntry = catalogEntry ? null : await publicModelPacks?.resolve(packId);
     throwIfWarmAborted(warmSignal);
     if (publicEntry && resolveInvalidationEpoch !== publicInvalidationEpoch) {
       // Resolution may have retained an old registry lease. Any reload while
@@ -524,7 +525,6 @@ export function createVoiceInferenceWorkerLifecycle(params?: VoiceInferenceWorke
     } else {
       warmPublicPluginIdByPackId.delete(packId);
     }
-    const catalogEntry = getModelPackCatalogEntry(packId);
     if (!publicEntry && !isCatalogRuntimeAdmitted(catalogEntry)) {
       throw createVoiceInferenceError('unsupported_runtime_family');
     }

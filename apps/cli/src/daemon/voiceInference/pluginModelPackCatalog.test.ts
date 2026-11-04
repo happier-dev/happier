@@ -415,8 +415,7 @@ describe('daemon public voice model-pack catalog projection', () => {
 
     const current = await projectInstalledDaemonPluginVoiceModelPackCatalogV1({
       installedPlugins: [entry],
-      currentPluginRuntimes: new Map([[entry.pluginId, currentRuntime()]]),
-      resolvePluginSourceCustody: () => oldBinding.sourceCustody,
+      currentPluginRuntimes: new Map([[entry.pluginId, currentRuntime({ sourceCustody: oldBinding.sourceCustody })]]),
       host,
       licenseScope,
       acceptedLicenses,
@@ -436,9 +435,8 @@ describe('daemon public voice model-pack catalog projection', () => {
         appliedGeneration: 'generation-local-8',
       }],
       currentPluginRuntimes: new Map([[entry.pluginId, currentRuntime({
-        sourceCustody: { kind: 'managed', immutableGenerationId: 'generation-local-8', installSource: 'localPath' },
+        sourceCustody: oldBinding.sourceCustody,
       })]]),
-      resolvePluginSourceCustody: () => oldBinding.sourceCustody,
       host,
       licenseScope,
       acceptedLicenses,

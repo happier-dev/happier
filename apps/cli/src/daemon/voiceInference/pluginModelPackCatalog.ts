@@ -1,5 +1,6 @@
 import { evaluatePluginFinalPolicy } from '@happier-dev/protocol/plugins/actions/policy';
 import type { PluginSourceCustodyV1, VoiceModelPackContributionV1 } from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import {
   admitVoiceModelPackContributionV1,
   decideInstalledVoiceModelPackLifecycleV1,
@@ -95,6 +96,7 @@ export async function projectInstalledDaemonPluginVoiceModelPackCatalogV1(params
   licenseScope?: VoiceModelPackLicenseScopeV1;
   resourcePolicy?: VoiceModelPackResourcePolicyV1;
   installedMetadata?: readonly InstalledVoiceModelPackMetadataV1[];
+  packKeys?: ReadonlySet<string>;
 }>): Promise<readonly DaemonVoiceModelPackCatalogEntryV1[]> {
   const records: DaemonVoiceModelPackPluginRecordV1[] = [];
   for (const plugin of params.installedPlugins) {
@@ -102,12 +104,13 @@ export async function projectInstalledDaemonPluginVoiceModelPackCatalogV1(params
     const current = params.currentPluginRuntimes.get(plugin.pluginId) ?? null;
     if (
       !current
-      || current.sourceCustody.kind !== 'managed'
-      || plugin.desiredGeneration !== current.sourceCustody.immutableGenerationId
+      || (current.sourceCustody.kind === 'managed'
+        ? plugin.desiredGeneration !== current.sourceCustody.immutableGenerationId
+        : current.sourceCustody.kind !== 'development')
     ) continue;
     const artifactBinding = resolveInstalledVoiceModelPackArtifactBinding(
       plugin,
-      params.resolvePluginSourceCustody?.(plugin.pluginId) ?? null,
+      params.resolvePluginSourceCustody?.(plugin.pluginId) ?? current.sourceCustody,
     );
     if (!artifactBinding) continue;
     const authorization = evaluatePluginFinalPolicy({
@@ -127,7 +130,11 @@ export async function projectInstalledDaemonPluginVoiceModelPackCatalogV1(params
       grantedNetworkOrigins: resolveRequiredPluginNetworkOrigins({
         required: plugin.manifest.hostAccess.required,
       }),
-      contributions: Object.freeze([...(plugin.manifest.contributes.voiceModelPacks ?? [])]),
+      contributions: Object.freeze((plugin.manifest.contributes.voiceModelPacks ?? []).filter((contribution) => (
+        !params.packKeys || params.packKeys.has(buildQualifiedPluginContributionKey({
+          pluginId: plugin.pluginId, localId: contribution.id,
+        }))
+      ))),
     });
   }
   return projectDaemonPluginVoiceModelPackCatalogV1({

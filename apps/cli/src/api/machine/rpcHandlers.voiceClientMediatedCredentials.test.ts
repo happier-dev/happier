@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import * as undici from 'undici';
 
 import { accountSettingsParse, VoiceProviderContributionSchema } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -9,6 +10,16 @@ import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRu
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { PLUGIN_MANIFEST } from '../../../../../packages/plugins/openai/src/manifest';
 import { registerMachineVoiceClientMediatedCredentialRpcHandlers } from './rpcHandlers.voiceClientMediatedCredentials';
+
+// Genuine HTTP boundary; keep the real fetch adapter and its package-owned Agent.
+vi.mock('undici', async importOriginal => {
+  const runtime = await importOriginal<typeof import('undici')>();
+  return { ...runtime, fetch: vi.fn(runtime.fetch) };
+});
+
+function stubProviderFetch(fetchBoundary: typeof globalThis.fetch) {
+  return vi.mocked(undici.fetch).mockImplementation(fetchBoundary as unknown as typeof undici.fetch);
+}
 
 const contribution = Object.freeze({ pluginId: PLUGIN_MANIFEST.id, localId: 'realtime-openai' });
 const declaration = VoiceProviderContributionSchema.parse(
@@ -175,12 +186,12 @@ const operationResponse = { status: 200, finalUrl: 'https://api.openai.com/v1/re
 
 describe('Voice client mediated Connected Account credential RPC', () => {
   beforeEach(() => {
-    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(ephemeralBody, { status: 200, headers: { 'content-type': 'application/json' } }));
+    stubProviderFetch(async () => new Response(ephemeralBody, { status: 200, headers: { 'content-type': 'application/json' } }));
   });
-  afterEach(() => { vi.restoreAllMocks(); });
+  afterEach(() => { vi.mocked(undici.fetch).mockReset(); vi.restoreAllMocks(); });
   it('executes the declared mint on the machine and returns only its ephemeral response', async () => {
     const owner = connectedAccountsOwner({ resolvedAccountId: 'account-a' });
-    const providerFetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(
+    const providerFetch = stubProviderFetch(async () => new Response(
       JSON.stringify({ value: 'ephemeral-client-secret', expires_at: 2_000_000_000 }),
       { status: 200, headers: { 'content-type': 'application/json', 'x-provider-private': 'hidden' } },
     ));
@@ -209,7 +220,7 @@ describe('Voice client mediated Connected Account credential RPC', () => {
     [401, { error: 'private provider text' }, 'plugin_voice_credential_access_unavailable'],
     [200, { value: 'Bearer account-a' }, 'plugin_voice_provider_operation_failed'],
   ] as const)('does not disclose rejected HTTP artifacts (status %s)', async (status, body, errorCode) => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(body), {
+    stubProviderFetch(async () => new Response(JSON.stringify(body), {
       status, headers: { 'content-type': 'application/json' },
     }));
     const owner = connectedAccountsOwner({ resolvedAccountId: 'account-a' });
@@ -220,18 +231,41 @@ describe('Voice client mediated Connected Account credential RPC', () => {
     })).resolves.toEqual({ ok: false, errorCode });
   });
 
-  it('discards an ephemeral response after the selected Account changes in flight', async () => {
+  it('finishes an admitted mint after same-Account selection changes and uses the new selection next time', async () => {
     let current = snapshot('account-a');
-    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+    let completedHttp = false;
+    stubProviderFetch(async () => {
       current = snapshot('account-b');
+      completedHttp = true;
       return new Response(ephemeralBody, { headers: { 'content-type': 'application/json' } });
     });
     const owner = connectedAccountsOwner({ resolvedAccountId: 'account-a' });
     const handler = await registerHandler({ connectedAccounts: owner, currentSnapshot: current, getSnapshot: () => current });
+    const request = {
+      contribution, platform: 'web', phase: 'prepare', operationId: 'client-auth', parameters: { body: {} },
+      declarationAuthority: { kind: 'bundled' }, expectedSelection: accountTarget('account-a'),
+    };
+    const result = await handler(request);
+    expect(completedHttp).toBe(true);
+    expect(result).toMatchObject({ ok: true });
+    await expect(handler(request)).resolves.toEqual({ ok: false, errorCode: 'plugin_voice_credential_access_unavailable' });
+  });
+
+  it('discards an ephemeral response after switching the owning Happier Account', async () => {
+    let current = snapshot('account-a');
+    let completedHttp = false;
+    stubProviderFetch(async () => {
+      current = { ...snapshot('account-b'), scopeKey: 'another-happier-account' };
+      completedHttp = true;
+      return new Response(ephemeralBody, { headers: { 'content-type': 'application/json' } });
+    });
+    const handler = await registerHandler({ connectedAccounts: connectedAccountsOwner({ resolvedAccountId: 'account-a' }),
+      currentSnapshot: current, getSnapshot: () => current });
     await expect(handler({
       contribution, platform: 'web', phase: 'prepare', operationId: 'client-auth', parameters: { body: {} },
       declarationAuthority: { kind: 'bundled' }, expectedSelection: accountTarget('account-a'),
     })).resolves.toEqual({ ok: false, errorCode: 'plugin_voice_credential_access_unavailable' });
+    expect(completedHttp).toBe(true);
   });
 
   it('materializes only the selected manifest-declared source and exact operation projection', async () => {

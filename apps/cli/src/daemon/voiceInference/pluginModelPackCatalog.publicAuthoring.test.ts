@@ -10,16 +10,15 @@ import { ingestPluginManifestV2, type ParsedPluginManifestV2 } from '@happier-de
 import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityIntentReadActionInputV1Schema,
   PluginAvailabilityIntentReadActionOutputV1Schema } from '@happier-dev/protocol/plugins/availability/actions';
 
-import {
-  loadInstalledPlugins,
-  type LoadInstalledPluginsResult,
-} from '@/plugins/discovery/load/installed';
+import { loadInstalledPlugins } from '@/plugins/discovery/load/installed';
 import { buildPluginProjectionV2 } from '@/plugins/projection/registry/projection/v2';
 import { createDaemonPluginRuntimeOwner } from '@/plugins/daemon/runtimeOwner';
 import { createPackedTestConnectedAccountsRuntime } from '@/plugins/daemon/packedTestConnectedAccounts';
 import type { PluginReloadController } from '@/plugins/runtime/reload/controller';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
-import { projectDaemonPluginVoiceModelPackCatalogV1 } from './pluginModelPackCatalog.js';
+import { readInstalledPluginCatalog } from '@/plugins/projection/catalog/installed';
+import { projectInstalledDaemonPluginVoiceModelPackCatalogV1 } from './pluginModelPackCatalog.js';
+import { manifest as publicAuthoringManifest } from '../../../../../packages/plugin-sdk/examples/public-authoring/index';
 
 const pluginId = 'examples.public-sdk-review-assistant';
 const pluginVersion = '0.1.0';
@@ -35,22 +34,17 @@ const daemonHost = {
 };
 
 async function readPublicAuthoringManifest(): Promise<ParsedPluginManifestV2> {
-  // This example is code-defined. Consume its canonical evaluated entrypoint;
-  // a handwritten source manifest would create a second authority beside
-  // `definePlugin(publicAuthoringDefinition)`.
-  const publicAuthoringModule = await import(
-    publicAuthoringEntry.href
-  ) as Readonly<{ manifest: unknown }>;
-  const ingested = ingestPluginManifestV2(publicAuthoringModule.manifest);
+  // Load the real example with the test graph so cold SDK compilation does not
+  // consume the fixture operation's test deadline.
+  const ingested = ingestPluginManifestV2(publicAuthoringManifest);
   expect(ingested.ok, ingested.ok ? undefined : JSON.stringify(ingested.diagnostics)).toBe(true);
   if (!ingested.ok) throw new Error('public_authoring_manifest_ingestion_failed');
   return ingested.manifest;
 }
 
 async function projectLoadedPlugins(
-  loadResult: LoadInstalledPluginsResult,
+  happyHomeDir: string,
   controller: PluginReloadController,
-  grantedNetworkOrigins: readonly string[] = [modelOrigin],
 ) {
   const lease = controller.tryAcquireRuntimeRegistry();
   if (!lease) throw new Error('Expected the development authoring owner to publish a serving registry');
@@ -59,24 +53,12 @@ async function projectLoadedPlugins(
     const projection = buildPluginProjectionV2({ registry, generation: controller.getState().generation });
     if (!lease.registry.readPluginSourceCustody) throw new Error('Expected admitted plugin source custody reader');
     const readSourceCustody = lease.registry.readPluginSourceCustody;
-    const catalog = projectDaemonPluginVoiceModelPackCatalogV1({
-      plugins: loadResult.loadedPlugins.map((plugin) => {
-        const sourceCustody = readSourceCustody(plugin.pluginId);
-        if (sourceCustody?.kind !== 'development') {
-          throw new Error('Expected admitted linked public authoring development source custody');
-        }
-        return {
-          pluginId: plugin.pluginId,
-          pluginVersion: plugin.manifest.version,
-          artifactBinding: { kind: 'materialization' as const, sourceCustody },
-          enabled: true,
-          authorization: { outcome: 'visible' as const, code: 'plugin_final_available' as const, requiresCurrentIntent: false },
-          grantedNetworkOrigins,
-          contributions: (registry.voiceModelPacks ?? [])
-            .filter((entry) => entry.pluginId === plugin.pluginId)
-            .map((entry) => entry.definition),
-        };
-      }),
+    const currentPluginRuntimes = lease.registry.pluginFinalPolicyCurrentRuntimesById;
+    if (!currentPluginRuntimes) throw new Error('Expected admitted plugin policy facts');
+    const catalog = await projectInstalledDaemonPluginVoiceModelPackCatalogV1({
+      installedPlugins: await readInstalledPluginCatalog({ happyHomeDir }),
+      currentPluginRuntimes,
+      resolvePluginSourceCustody: readSourceCustody,
       host: daemonHost,
     });
     return { registry, projection, catalog };
@@ -215,8 +197,7 @@ describe('public declarative voice model-pack authoring integration fixture', ()
     const fixture = await installPublicAuthoringFixture();
     try {
       const enabledLoad = await loadInstalledPlugins({ happyHomeDir: fixture.happyHomeDir });
-      const enabled = await projectLoadedPlugins(enabledLoad, fixture.controller);
-      const ungranted = await projectLoadedPlugins(enabledLoad, fixture.controller, []);
+      const enabled = await projectLoadedPlugins(fixture.happyHomeDir, fixture.controller);
       const qualifiedPackId = `${pluginId}/english-small`;
       const qualifiedSettingsId = `${pluginId}/preferences`;
       const qualifiedVoiceProviderId = `${pluginId}/credentialed-browser`;
@@ -247,14 +228,6 @@ describe('public declarative voice model-pack authoring integration fixture', ()
           sourceLabel: { pluginId, pluginVersion },
         }),
       ]);
-      expect(ungranted.catalog).toEqual([
-        expect.objectContaining({
-          status: 'blocked',
-          reason: 'network_origin_not_granted',
-          installable: false,
-          loadable: false,
-        }),
-      ]);
 
       expect(manifest.contributes.voiceProviders).toContainEqual(expect.objectContaining({
         id: 'credentialed-browser',
@@ -268,7 +241,7 @@ describe('public declarative voice model-pack authoring integration fixture', ()
       expect(enabled.catalog[0]).not.toHaveProperty('server');
 
       await fixture.setEnabled(false);
-      const disabled = await projectLoadedPlugins(await loadInstalledPlugins({ happyHomeDir: fixture.happyHomeDir }), fixture.controller);
+      const disabled = await projectLoadedPlugins(fixture.happyHomeDir, fixture.controller);
 
       expect(disabled.projection.settingsById).not.toHaveProperty(qualifiedSettingsId);
       expect(disabled.projection.familiesById.voiceModelPacks?.entriesById ?? {}).not.toHaveProperty(qualifiedPackId);

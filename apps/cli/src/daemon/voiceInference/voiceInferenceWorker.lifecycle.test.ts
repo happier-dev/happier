@@ -8,6 +8,12 @@ import { getModelPackCatalogEntry, type ModelPackManifest } from '@happier-dev/p
 import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest/v2';
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 
+// Count real manifest reads, one per installed-plugin catalog projection.
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return { ...actual, readFile: vi.fn(actual.readFile) };
+});
+
 import { reloadConfiguration } from '@/configuration';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createInferenceInstallBookkeeping } from '@/daemon/inference/inferenceInstallBookkeeping';
@@ -22,7 +28,7 @@ import {
   createDaemonPublicVoiceModelPackRuntime,
   resolveDefaultDaemonVoiceModelPackHostCapabilities,
 } from './publicModelPacks/runtime';
-import { installVoiceModelPackPluginArchiveFixture } from './publicModelPacks/pluginArchiveFixture';
+import { installVoiceModelPackPluginArchiveFixture, VOICE_MODEL_PACK_TEST_RUNTIME_LIFECYCLE } from './publicModelPacks/pluginArchiveFixture';
 import { hashVoiceModelPackManifest } from './voiceModelPackInstaller';
 import * as lifecycleModule from './voiceInferenceWorker.lifecycle';
 import { createNodeInstalledModelPackIntegrityHost } from './nodeModelPackIntegrityHost';
@@ -200,6 +206,7 @@ describe('createVoiceInferenceWorkerLifecycle', () => {
     homeDir: string,
     localId: string,
     fingerprintInstalledPack?: Parameters<typeof createDaemonPublicVoiceModelPackRuntime>[0]['fingerprintInstalledPack'],
+    pluginId = 'acme.voice',
   ) {
     // The real controller owns one file-lifetime publication; keep its source roots until shutdown.
     retainedRuntimeHomes.add(homeDir);
@@ -215,7 +222,7 @@ describe('createVoiceInferenceWorkerLifecycle', () => {
     }
     const host = resolveDefaultDaemonVoiceModelPackHostCapabilities(process.platform, process.arch);
     if (!host) throw new Error('model-pack fixture requires a supported daemon host');
-    plugin.id = 'acme.voice';
+    plugin.id = pluginId;
     contribution.id = localId;
     const manifest = createKokoroCatalogManifest();
     const assets = new Map<string, Uint8Array>();
@@ -1051,6 +1058,48 @@ describe('createVoiceInferenceWorkerLifecycle', () => {
       oldReleaseGate.resolve();
       await stopLifecycle?.();
       vi.useRealTimers();
+    }
+  });
+
+  it.each([1, 4])('projects only the selected plugin at speech admission with %i installed plugins', async (pluginCount) => {
+    const homeDir = await createHomeDir();
+    const { createVoiceInferenceWorkerLifecycle } = await importLifecycleModuleForHome(homeDir);
+    for (let index = 1; index < pluginCount; index += 1) {
+      await createInstalledPublicPack(homeDir, 'unrelated', undefined, `acme.unrelated-${index}`);
+    }
+    const { publicModelPacks, key } = await createInstalledPublicPack(homeDir, 'selected');
+    const { manifest } = createZipformerCatalogManifest();
+    await serveModelPackManifest(manifest);
+    const lifecycle = createVoiceInferenceWorkerLifecycle({
+      publicModelPacks,
+      runtimeLoader: async () => ({
+        warmModel: async () => undefined,
+        synthesizeTts: async () => { throw new Error('not exercised'); },
+        transcribeAudio: async () => { throw new Error('not exercised'); },
+      }),
+    });
+    const reads = vi.mocked(readFile);
+    const pluginProjections = () => reads.mock.calls.filter(([path]) => (
+      String(path).endsWith(join('.happier-plugin', 'plugin.json'))
+    )).length;
+    try {
+      await lifecycle.installModel({ packId: ZIPFORMER_PACK_ID });
+      for (let admission = 0; admission < 2; admission += 1) {
+        reads.mockClear();
+        await lifecycle.warmModelPack(ZIPFORMER_PACK_ID);
+        expect.soft(pluginProjections(), 'built-in admission').toBe(0);
+        reads.mockClear();
+        await lifecycle.warmModelPack(key);
+        expect.soft(pluginProjections(), 'plugin-pack admission').toBe(1);
+      }
+      // A real enablement change still reaches the next exact read.
+      const { createPluginRegistryStateStore } = await import('@/plugins/store/registry/currentState');
+      await createPluginRegistryStateStore({ happyHomeDir: homeDir, runtimeLifecycle: VOICE_MODEL_PACK_TEST_RUNTIME_LIFECYCLE })
+        .setEnabled('acme.voice', false);
+      await expect(publicModelPacks.resolve(key)).resolves.toMatchObject({ descriptor: { loadable: false } });
+    } finally {
+      await lifecycle.stop();
+      reads.mockClear();
     }
   });
 

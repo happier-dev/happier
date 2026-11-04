@@ -26,8 +26,6 @@ type VoiceCredentialReference = Readonly<{
   secretId: string;
   source: VoiceCredentialResolutionSource;
   materialFingerprint: string;
-  /** Retained only for unscoped snapshots, which cannot prove Account identity. */
-  snapshot: ActiveAccountSettingsSnapshot;
 }>;
 
 export type VoiceCredentialMaterialStatus = SavedSecretResolutionV1['status'];
@@ -115,31 +113,8 @@ function inspectReference(params: Readonly<{
       secretId,
       source: resolved.savedSecret.source,
       materialFingerprint: inspected.fingerprint,
-      snapshot: params.snapshot,
     }),
   };
-}
-
-/**
- * A Settings version is the whole-document CAS revision, so unrelated Account
- * settings writes advance it.  This resolver instead fences the exact
- * selected SavedSecret record and source.  Unscoped snapshots cannot prove
- * they belong to the same Account and therefore retain the stricter identity
- * check; Account-lifetime changes are fenced separately by the publisher.
- */
-function sameCredentialReference(
-  before: VoiceCredentialReference,
-  after: VoiceCredentialReference,
-): boolean {
-  const beforeScopeKey = before.snapshot.scopeKey;
-  const afterScopeKey = after.snapshot.scopeKey;
-  if (beforeScopeKey === undefined || afterScopeKey === undefined) {
-    return before.snapshot === after.snapshot;
-  }
-  return beforeScopeKey === afterScopeKey
-    && before.secretId === after.secretId
-    && before.source === after.source
-    && before.materialFingerprint === after.materialFingerprint;
 }
 
 function readSelectedSource(params: Readonly<{
@@ -318,30 +293,18 @@ export function createVoiceCredentialResolver(params: Readonly<{
         .recheck(resolved.secretId, resolved.materialFingerprint);
       if (material.status !== 'ready') throw unavailable(material.status);
       const result = await input.use(material.value);
+      // Finite admitted work finishes after same-Account selection or rotation.
+      // Its result still belongs to the Account lifetime that acquired it.
       const currentSnapshot = getSnapshot();
-      const currentInspection = inspectReference({
-        snapshot: currentSnapshot,
-        machineId: params.machineId,
-        identity: input.identity,
-        ...(input.recipientContractDigest
-          ? { recipientContractDigest: input.recipientContractDigest }
-          : {}),
-      });
-      // A client artifact minted from a superseded selected credential must
-      // not escape after an Account switch, source change, removal, rotation,
-      // or recipient-approval change. Account Settings' whole-document CAS
-      // version is deliberately not an authority fence here.
       if (
         getLifetimeToken() !== lifetimeToken
         || !currentSnapshot
-        || currentInspection.status !== 'ready'
-        || !sameCredentialReference(resolved, currentInspection.reference)
+        || (admittedSnapshot.scopeKey === undefined || currentSnapshot.scopeKey === undefined
+          ? currentSnapshot !== admittedSnapshot
+          : currentSnapshot.scopeKey !== admittedSnapshot.scopeKey)
       ) {
-        throw unavailable(currentInspection.status === 'ready' ? 'repair_required' : currentInspection.status);
+        throw unavailable('repair_required');
       }
-      const rechecked = createSavedSecretMaterializerFromSnapshotV1(currentSnapshot)
-        .recheck(resolved.secretId, resolved.materialFingerprint);
-      if (rechecked.status !== 'ready') throw unavailable(rechecked.status);
       return result;
     },
   });

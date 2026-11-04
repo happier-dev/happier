@@ -367,10 +367,13 @@ async function projectInstalledPluginCatalog(
   rollbackAvailabilityByPluginId: Readonly<Record<string, 'available' | 'unavailable'>>,
   admittedIntegrityByPluginId: Readonly<Record<string, string>>,
   approvedAuthorityManifestsByPluginId: Readonly<Record<string, CanonicalPluginManifest>>,
+  pluginIds?: readonly string[],
 ): Promise<readonly PluginCatalogEntry[]> {
   const entries: PluginCatalogEntry[] = [];
 
-  for (const [pluginId, record] of Object.entries(state.plugins)) {
+  for (const pluginId of pluginIds ? new Set(pluginIds) : Object.keys(state.plugins)) {
+    if (!Object.hasOwn(state.plugins, pluginId)) continue;
+    const record = state.plugins[pluginId]!;
     entries.push(await resolvePluginCatalogEntryFromRecord(
       pluginId,
       record,
@@ -386,6 +389,7 @@ async function projectInstalledPluginCatalog(
 
 export async function readInstalledPluginCatalogSnapshot(params?: Readonly<{
   happyHomeDir?: string;
+  pluginIds?: readonly string[];
 }>): Promise<Readonly<{
   revision: number;
   bundledPluginEnabledById: Readonly<Record<string, boolean>>;
@@ -402,6 +406,7 @@ export async function readInstalledPluginCatalogSnapshot(params?: Readonly<{
       snapshot.rollbackAvailabilityByPluginId,
       snapshot.admittedIntegrityByPluginId,
       snapshot.approvedAuthorityManifestsByPluginId,
+      params?.pluginIds,
     ),
   });
 }
@@ -414,8 +419,9 @@ export async function readInstalledPluginCatalogEntry(params: Readonly<{
   pluginId: string;
   happyHomeDir?: string;
 }>): Promise<PluginCatalogEntry | null> {
-  const entries = await readInstalledPluginCatalog({ happyHomeDir: params.happyHomeDir });
-  return entries.find((entry) => entry.pluginId === params.pluginId) ?? null;
+  const { entries } = await readInstalledPluginCatalogSnapshot({ happyHomeDir: params.happyHomeDir,
+    pluginIds: [params.pluginId] });
+  return entries[0] ?? null;
 }
 
 /**

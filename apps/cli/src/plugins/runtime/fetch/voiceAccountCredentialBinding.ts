@@ -124,6 +124,10 @@ function retired(): PluginError {
 
 function assertCurrent(authority: VoiceAccountOperationAuthority): void {
     if (!authority.isCurrent()) throw retired();
+    assertActive(authority);
+}
+
+function assertActive(authority: VoiceAccountOperationAuthority): void {
     if (authority.isCancelled()) throw cancelled();
     if (!authority.isCredentialCurrent()) throw credentialUnavailable();
 }
@@ -457,15 +461,11 @@ async function executeVoiceAccountOperation(input: Readonly<{
             sourceCredentials: readonly string[],
         ): Promise<VoiceAccountOperationResponse> => {
                 assertCurrent(input.authority);
-                if (!hasExactPluginHttpCredentialScope({ url: materialized.url, method: materialized.method,
-                    issued: operation.request })) {
-                    throw unauthorized();
-                }
                 const response = await input.execute(Object.freeze({
                     headers,
                     secretHeaderNames: Object.freeze(Object.keys(headers)),
                 }));
-                assertCurrent(input.authority);
+                assertActive(input.authority);
                 const responseDiagnostic = responseContractDiagnostic({
                     operationPurpose: operation.purpose,
                     declaredContentTypes: operation.response.contentTypes,

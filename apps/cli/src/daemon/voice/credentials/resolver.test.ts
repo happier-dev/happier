@@ -198,7 +198,7 @@ describe('Voice credential resolver', () => {
       .resolves.toBe('b-key');
   });
 
-  it('keeps an in-flight SavedSecret operation only while its selected credential remains current', async () => {
+  it('finishes admitted SavedSecret work after same-Account changes and isolates Account lifetimes', async () => {
     const replacements = [{
       label: 'unrelated Account Settings mutation',
       next: {
@@ -212,21 +212,21 @@ describe('Voice credential resolver', () => {
         settingsVersion: 2,
         credentialSource: 'connectedAccount' as const,
       },
-      allowed: false,
+      allowed: true,
     }, {
       label: 'SavedSecret revocation',
       next: {
         settingsVersion: 2,
         includeSecret: false,
       },
-      allowed: false,
+      allowed: true,
     }, {
       label: 'selected credential revision',
       next: {
         settingsVersion: 2,
         secretUpdatedAt: 2,
       },
-      allowed: false,
+      allowed: true,
     }, {
       label: 'same Account re-entry',
       next: {
@@ -270,6 +270,11 @@ describe('Voice credential resolver', () => {
 
       if (replacement.allowed) {
         await expect(operation, replacement.label).resolves.toBe('a-key');
+        if (replacement.label === 'source switch' || replacement.label === 'SavedSecret revocation') {
+          await expect(resolver.withSecret({
+            identity: identityFor(GOOGLE_STT_CONTRIBUTION), use: async (secret) => secret,
+          })).rejects.toMatchObject({ code: 'credential_unavailable' });
+        }
       } else {
         await expect(operation, replacement.label).rejects.toMatchObject({
           code: 'credential_unavailable',
@@ -297,7 +302,7 @@ describe('Voice credential resolver', () => {
     })).resolves.toBe('account-key');
   });
 
-  it('uses the canonical catalog for a ready shared resource and fences its revision', async () => {
+  it('finishes admitted shared-secret work and acquires the latest revision next time', async () => {
     const resourceId = 'resource_voice_shared';
     const secretId = 'happier:shared-secret:v1:' + resourceId;
     const sharedResource = (revision: number, value: string) => ({
@@ -327,8 +332,8 @@ describe('Voice credential resolver', () => {
       machineId: null,
       getSnapshot: () => snapshot,
       getLifetimeToken: () => 1,
-      // This case is about the post-use revision fence, so the Home admits the
-      // operation unchanged; its own refusals are the next two cases.
+      // Home admits each acquisition; the operation keeps its admitted result,
+      // and the next acquisition observes the new material revision.
       refreshForOperation: async () => {
         if (!snapshot) throw new Error('Voice Account settings retired');
         return snapshot;
@@ -361,10 +366,10 @@ describe('Voice credential resolver', () => {
     };
     releaseUse();
 
-    await expect(operation).rejects.toMatchObject({
-      code: 'credential_unavailable',
-      materialStatus: 'repair_required',
-    });
+    await expect(operation).resolves.toBe('provider-result');
+    await expect(resolver.withSecret({
+      identity: identityFor(GOOGLE_STT_CONTRIBUTION), use: async (secret) => secret,
+    })).resolves.toBe('shared-key-v2');
   });
 
   it.each([
