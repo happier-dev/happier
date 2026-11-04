@@ -5,6 +5,7 @@ import { SavedSecretSchema } from '@happier-dev/protocol/profiles/backendProfile
 import { DaemonProviderConnectionMutationRequestV1Schema } from '@happier-dev/protocol/rpc/providers';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { isProviderActionMachineRequiredV1, parseProviderActionRequestV1 } from '@happier-dev/protocol/providers/providerActionsV1';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 
 import { configuration } from '@/configuration';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -96,7 +97,9 @@ export async function resolveProviderCliDependencies(requestOptions: Readonly<{ 
       featureGate: { isEnabled: () => providersFeature.decision.state === 'enabled' },
       // This private preparation owner can write the approved static binding,
       // but only the daemon can attest executable status in a standalone CLI.
-      runtimeSummary: async () => ({ status: 'error' }),
+      runtimeSummary: async () => ({ status: 'error', error: createProviderErrorV1('provider_machine_unavailable', {
+        machineId: snapshot.machineId,
+      }) }),
     });
     return connectionRuntimeServices.service;
   };

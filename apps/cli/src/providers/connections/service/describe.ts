@@ -6,14 +6,15 @@ import { resolveProviderManagedRuntimeDeclarationV1, providerEndpointPolicySecur
 import { resolveEffectiveProviderEndpointV1 } from '@happier-dev/protocol/providers/connections/v1';
 import { projectAvailableProviderContributionsV1 } from '@happier-dev/protocol/providers/connections/sourceFactsV1';
 import { describeAccountProviderConnectionV1 } from '@happier-dev/protocol/providers/connections/accountProviderActionV1';
-import type { ResolvedProviderManagedConnectedAccountPurposeDeclarationV1 } from '@happier-dev/protocol';
+import type { ProviderErrorV1, ResolvedProviderManagedConnectedAccountPurposeDeclarationV1 } from '@happier-dev/protocol';
 
 import {
   getProviderContribution,
 } from '@/providers/registry/lookup';
-import { redactProviderSettingsDiagnostic } from './settings';
+import { parseProviderError, redactProviderSettingsDiagnostic } from './settings';
 import type {
   ProviderConnectionDescription,
+  ProviderConnectionRuntimeProjection,
   ProviderConnectionRuntimeSummary,
   ProviderConnectionServiceDeps,
   ProviderConnectionServiceResult,
@@ -206,8 +207,11 @@ export async function describeProviderConnections(
       const effectiveState = effectiveGrantResolution?.state
         ?? (resolution.status === 'endpoint_unresolved' && (readOwnRecordValue(connection.endpointOverridesByMachineId, input.machineId)?.length ?? 0) === 0
           ? accountState : 'absent' as const);
-      const runtimeProjection = resolved && resolved.record.authorization.authorized
-        ? await deps.runtimeSummary({
+      let runtimeProjection: ProviderConnectionRuntimeProjection = EMPTY_RUNTIME_PROJECTION;
+      let runtimeError: ProviderErrorV1 | null = null;
+      if (resolved && resolved.record.authorization.authorized) {
+        try {
+          runtimeProjection = await deps.runtimeSummary({
             connectionId: connection.id,
             machineId: input.machineId,
             accountSettings: snapshot.accountSettings,
@@ -217,8 +221,16 @@ export async function describeProviderConnections(
             dnsEvidence,
             resolution: resolved,
             lifetime,
-          })
-        : EMPTY_RUNTIME_PROJECTION;
+          });
+        } catch (error) {
+          runtimeError = parseProviderError(error);
+          if (!runtimeError) throw error;
+          runtimeProjection = {
+            ...EMPTY_RUNTIME_PROJECTION,
+            summary: { ...EMPTY_RUNTIME_SUMMARY, health: 'needs_attention' },
+          };
+        }
+      }
       const gatewayRuntime = connection.deployment.kind === 'managedLocal'
         && managedRuntimeDeclaration && managedRuntimeDeclaration.connectedAccounts.length > 0
         ? isRemoteProviderGatewayPlacement(connection.gatewayPlacement, input.machineId)
@@ -341,8 +353,8 @@ export async function describeProviderConnections(
         managedLocalOption,
         endpoints,
         scope: resolved?.record.scope ?? null,
-        authorized: resolved?.record.authorization.authorized === true,
-        authorizationError: resolved?.record.authorization.authorized === false
+        authorized: resolved?.record.authorization.authorized === true && runtimeError === null,
+        authorizationError: runtimeError ?? (resolved?.record.authorization.authorized === false
           ? createProviderErrorV1(resolved.record.authorization.errorCode, { connectionId: connection.id, machineId: input.machineId })
           : resolution.status === 'source_unavailable'
             ? createProviderErrorV1('provider_contribution_unavailable', { connectionId: connection.id, machineId: input.machineId })
@@ -355,7 +367,7 @@ export async function describeProviderConnections(
                 )
               : resolution.status === 'invalid' || resolution.status === 'missing' || resolution.status === 'deleted'
                 ? createProviderErrorV1('provider_connection_not_found', { connectionId: connection.id, machineId: input.machineId })
-                : null,
+                : null),
         revision: connection.revision,
         probeObservationIdentity: runtimeProjection.probeObservationIdentity,
         runtime: gatewayRuntime ? { ...runtimeProjection.summary, gateway: gatewayRuntime } : runtimeProjection.summary,

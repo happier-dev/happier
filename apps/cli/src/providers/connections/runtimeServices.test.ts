@@ -8,6 +8,7 @@ import { AccountSettingsSchema, DEFAULT_PROVIDER_SETTINGS_V1, FeaturesResponseSc
 import { SharedSavedSecretPromoteInputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import { deriveSavedSecretImportResourceIdV1 } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
 import { openSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
+import { sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 import { openProviderConnectionsContentV1, type ProviderConnectionsCatalogV1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
 
 import { configuration } from '@/configuration';
@@ -100,6 +101,80 @@ afterEach(async () => {
 });
 
 describe('runtime Provider connection composition', () => {
+  it.each(['missing', 'ready'] as const)('isolates Home-current credential readiness per connection in Machine descriptions (%s)', async materialState => {
+    const { setActiveAccountSettingsSnapshot } = await import('@/settings/accountSettings/activeAccountSettingsSnapshot');
+    const { resolveProviderConnectionForMachine } = await import('@/providers/registry');
+    const { createRuntimeProviderServices } = await import('@/providers/probe/runtimeServices');
+    const { createRuntimeProviderConnectionServices } = await import('./runtimeServices');
+    const credentials: StoredCredentials = { token: 'provider-summary-refusal', encryption: null };
+    persistenceBoundary.readStoredCredentials.mockResolvedValue(credentials);
+    const connection = ProviderConnectionV1Schema.parse({ v: 1, id: 'pc_health', role: 'named',
+      displayName: 'Health', displayNameMode: 'custom', revision: 0, createdAt: 1, updatedAt: 1,
+      source: { kind: 'custom', template: { v: 1, name: 'Health', endpointTemplates: [{ id: 'chat', protocol: 'openai-chat',
+        baseUrl: 'https://health.example/v1', capabilities: { streaming: 'unknown', toolRoundTrips: 'unknown',
+          statefulResponses: 'unknown', reasoningControls: 'unknown' } }],
+        credential: { kind: 'apiKey', slotId: 'apiKey', required: true, transports: [{ id: 'bearer',
+          protocols: ['openai-chat'], uses: ['probe'], destination: { kind: 'httpHeader', name: 'Authorization', format: 'bearer' } }] },
+        catalog: { source: 'probe', manualModelPolicy: 'allowed', probes: [{ endpointTemplateId: 'chat', path: '/models', parser: 'openai-models' }] },
+      } } });
+    const { defaultsByAgentTargetKey: _defaults, ...empty } = DEFAULT_PROVIDER_SETTINGS_V1;
+    const healthyConnection = ProviderConnectionV1Schema.parse({ ...connection, id: 'pc_healthy', displayName: 'Healthy' });
+    const ungranted = { ...empty, connections: [connection, healthyConnection] };
+    const registry = { providersByContributionKey: new Map() };
+    const accountGrants = ungranted.connections.map(row => {
+      const resolved = resolveProviderConnectionForMachine({ connectionId: row.id, machineId: 'machine-a',
+      providerSettings: { ...ungranted, defaultsByAgentTargetKey: {} }, registry,
+      dnsEvidenceByEndpointUrl: new Map([['https://health.example/v1', ['1.1.1.1']]]) });
+      if (resolved.status !== 'resolved') throw new Error('Expected real custom connection');
+      return { v: 1 as const, connectionId: row.id,
+        connectionSecurityFingerprint: resolved.record.connectionSecurityFingerprint, confirmedAt: 1 };
+    });
+    const catalog = { ...ungranted, accountGrants,
+      secretBindingsByConnectionId: {
+        [connection.id]: { account: { apiKey: 'happier:shared-secret:v1:missing' }, byMachineId: {} },
+        [healthyConnection.id]: { account: { apiKey: 'happier:shared-secret:v1:healthy' }, byMachineId: {} },
+      } };
+    setActiveAccountSettingsSnapshot({ source: 'network', settings: AccountSettingsSchema.parse({}), rawSettings: {},
+      settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKey(credentials),
+      providerConnectionsCatalog: { status: 'ready', revision: 1, catalog },
+      savedSecretResources: [], savedSecretCatalogState: 'temporarily_unavailable' });
+    mockProviderCatalogReadHttp(catalog);
+    const get = vi.mocked(axios.get).getMockImplementation()!;
+    vi.mocked(axios.get).mockImplementation(async (url, options) => {
+      if (new URL(String(url)).pathname === '/v1/account/saved-secrets/resources/materials') return { status: 200, data: {
+        resources: (materialState === 'missing' ? ['healthy'] : ['missing', 'healthy']).map(resourceId => ({ resourceId, encryptionMode: 'plain', recipientEnvelope: null,
+          entry: { ref: `happier:shared-secret:v1:${resourceId}`, source: 'shared_resource', relationship: 'owner',
+            name: 'Provider key', kind: 'apiKey', ownerAccountId: 'owner', revision: 1, materialStatus: 'ready',
+            capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } },
+          storedContent: sealSavedSecretResourceStoredContentV1({ resourceId, mode: 'plain',
+            content: { v: 1, name: 'Provider key', kind: 'apiKey', value: 'dummy-provider-value' } }),
+        })),
+      } };
+      return get(url, options);
+    });
+    vi.stubGlobal('fetch', vi.fn<typeof fetch>(async () => Response.json(FeaturesResponseSchema.parse({ features: {}, capabilities: {} }))));
+    const { createProviderProbeHttpClient } = await import('@/providers/probe/client');
+    const runtime = createRuntimeProviderServices({ machineId: 'machine-a', happyHomeDir: configuration.happyHomeDir,
+      registry, featureGate: { isEnabled: () => true }, client: createProviderProbeHttpClient({
+        resolveAddresses: async () => ['1.1.1.1'], transport: async () => ({ status: 200,
+          headers: { 'content-type': 'application/json' }, body: Buffer.from('{"data":[{"id":"dummy-model"}]}') }),
+      }) });
+    const services = createRuntimeProviderConnectionServices({ machineId: 'machine-a', credentials,
+      happyHomeDir: configuration.happyHomeDir, featureGate: { isEnabled: id => id === 'providers' },
+      runtimeSummary: runtime.summary, resolveRegistry: async () => registry, resolveAddresses: async () => ['1.1.1.1'] });
+    const expected = materialState === 'ready'
+      ? { connectionId: connection.id, authorized: true, authorizationError: null }
+      : { connectionId: connection.id, authorized: false, runtime: { health: 'needs_attention' },
+        authorizationError: { code: 'provider_secret_missing', action: 'add_secret', retryable: false } };
+    await expect(services.describeConnections({ machineId: 'machine-a' })).resolves.toMatchObject({
+      status: 'success', connections: [expected,
+        { connectionId: healthyConnection.id, authorized: true, authorizationError: null }],
+    });
+    await expect(services.describeConnections({ machineId: 'machine-a', connectionId: connection.id })).resolves.toMatchObject({
+      status: 'success', connections: [expected],
+    });
+  });
+
   it('reobserves deletion without withdrawing admitted authority from overlapping descriptions', async () => {
     const { setActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshot } = await import('@/settings/accountSettings/activeAccountSettingsSnapshot');
     const { readProviderSettingsForCli } = await import('@/providers/settings/read');
@@ -127,7 +202,7 @@ describe('runtime Provider connection composition', () => {
     const { createRuntimeProviderConnectionServices } = await import('./runtimeServices');
     const services = createRuntimeProviderConnectionServices({ machineId: 'machine-a', credentials,
       happyHomeDir: configuration.happyHomeDir, featureGate: { isEnabled: () => true },
-      runtimeSummary: async () => ({ status: 'error' }), resolveRegistry: async () => ({ providersByContributionKey: new Map() }) });
+      runtimeSummary: async () => ({ status: 'error', error: createProviderErrorV1('provider_secret_missing') }), resolveRegistry: async () => ({ providersByContributionKey: new Map() }) });
     const first = services.describeConnections({ machineId: 'machine-a', connectionId: connection.id });
     await rowEntered;
     const second = services.describeConnections({ machineId: 'machine-a', connectionId: connection.id });

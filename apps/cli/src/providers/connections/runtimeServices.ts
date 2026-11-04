@@ -3,7 +3,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { composeProviderSettingsV1, splitProviderSettingsV1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
 import { resolveProviderSecretBindingIdV1 } from '@happier-dev/protocol/providers/settings/operationsV1';
 import { readOwnRecordValue } from '@happier-dev/protocol/providers/ownRecordValue';
-import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { createProviderErrorV1, type ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import type { ProviderActionRequestV1 } from '@happier-dev/protocol/providers/providerActionsV1';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createCliAccountProviderActionExecuteV1 } from './accountActions';
@@ -40,10 +40,6 @@ import type { ProviderDiscoveryCandidateV1 } from '@happier-dev/protocol';
 import type { ProviderConnectionServiceDeps } from './service/types';
 import type { ProviderConnectionView } from './service';
 
-const EMPTY_RUNTIME_SUMMARY: ProviderConnectionRuntimeSummary = Object.freeze({
-  health: 'not_checked', modelCount: null, checkedAt: null, endpoints: [],
-});
-
 export type RuntimeProviderConnectionServices = Readonly<
   { service: ReturnType<typeof createProviderConnectionService> }
   & ReturnType<typeof createProviderConnectionRpcAdapter>
@@ -66,7 +62,7 @@ export function createRuntimeProviderConnectionServices(input: Readonly<{
         summary: ProviderConnectionRuntimeSummary;
         probeObservationIdentity: NonNullable<ProviderConnectionRuntimeProjection['probeObservationIdentity']>;
       }>
-    | Readonly<{ status: 'error' }>
+    | Readonly<{ status: 'error'; error: ProviderErrorV1 }>
   >;
   now?: () => number;
   resolveAddresses?: (hostname: string) => Promise<readonly string[]>;
@@ -264,9 +260,8 @@ export function createRuntimeProviderConnectionServices(input: Readonly<{
       }),
     runtimeSummary: async (request) => {
       const result = await input.runtimeSummary(request);
-      return result.status === 'success'
-        ? { summary: result.summary, probeObservationIdentity: result.probeObservationIdentity }
-        : { summary: EMPTY_RUNTIME_SUMMARY, probeObservationIdentity: null };
+      if (result.status === 'error') throw result.error;
+      return { summary: result.summary, probeObservationIdentity: result.probeObservationIdentity };
     },
     readSharedGatewayRuntime: async ({ connectionId, machineId }) => {
       const unchecked = { status: 'not_checked', reachability: 'not_checked' } as const;
