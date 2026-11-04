@@ -13278,6 +13278,7 @@ class Sync {
               sourceServerId,
               shouldContinue,
               onAccountChangeWake: (wake) => {
+
                   // Catalogs that need current rows independently of the history
                   // cursor opt into this wake at the existing snapshot lifecycle.
                   if (shouldContinue() && sourceServerId) {
@@ -13292,7 +13293,13 @@ class Sync {
                   this.requestChangesCatchUp();
               },
               artifactDataKeys: this.artifactDataKeys,
-              applySessions: (sessions) => this.applySessions(sessions, parsedUpdate?.body.t === 'new-session' ? 'full' : 'projection'),
+              applySessions: (sessions) => {
+                  if (parsedUpdate && context.credentials === this.credentials) for (const session of sessions) {
+                      const address = normalizeSessionAddress(sourceServerId, session.id);
+                      if (address) sessionRuntimeObservations.recordServerObservation(address, parsedUpdate.seq, session, this.serverID);
+                  }
+                  this.applySessions(sessions, parsedUpdate?.body.t === 'new-session' ? 'full' : 'projection');
+              },
 	              fetchSessions: () => {
                       if (this.embedSessionScope || context.sessionId) return;
 	                  fireAndForget(this.fetchSessions(), { tag: 'Sync.handleUpdate.fetchSessions', logError: false });

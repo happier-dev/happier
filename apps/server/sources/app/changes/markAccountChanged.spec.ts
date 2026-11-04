@@ -1,3 +1,4 @@
+import { UpdateContainerSchema } from '@happier-dev/protocol/updates';
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { inTxPostgresControlStatementMock, installDbModuleMock } from "../api/testkit/dbMocks";
@@ -169,7 +170,8 @@ describe("markAccountChanged", () => {
             },
         };
 
-        eventRouter.setIo({ to: vi.fn(() => ({ emit: vi.fn() })) } as any);
+        const emit = vi.fn();
+        eventRouter.setIo({ to: () => ({ emit, disconnectSockets: vi.fn() }) });
         const cursor = await runMarkAccountChanged(tx, {
             accountId: "a1",
             kind: "session",
@@ -181,6 +183,37 @@ describe("markAccountChanged", () => {
         expect(tx.$queryRawUnsafe).toHaveBeenCalled();
         expect(tx.account.update).not.toHaveBeenCalled();
         expect(tx.accountChange.upsert).not.toHaveBeenCalled();
+        expect(UpdateContainerSchema.parse(emit.mock.calls[0][1]).body).toEqual({
+            t: "account-change", changeKinds: ["session"], entityIds: ["s1"], sessionSystemRecords: [],
+        });
+    });
+
+    it("carries every PostgreSQL Session-set identity only to its allocated Account audience", async () => {
+        process.env.HAPPIER_DB_PROVIDER = "postgres";
+        const tx = { $queryRawUnsafe: vi.fn().mockResolvedValue([
+            { accountId: "a2", cursor: 24 }, { accountId: "a1", cursor: 12 }, { accountId: "a1", cursor: 11 },
+        ]) };
+        const deliveries: Array<{ room: string | string[]; seq: number; body: unknown }> = [];
+        eventRouter.setIo({ to: room => ({ disconnectSockets: vi.fn(), emit: (_event, payload) => {
+            const update = UpdateContainerSchema.parse(payload);
+            deliveries.push({ room, seq: update.seq, body: update.body });
+        } }) });
+        transaction.mockImplementationOnce(async fn => fn({ ...inTxPostgresControlStatementMock, ...tx }));
+        const { inTx } = await import("@/storage/inTx");
+        const { markSessionAccountsChanged } = await import("./markAccountChanged");
+        const publications = await inTx(transactionTx => markSessionAccountsChanged(transactionTx, new Map([
+            ["s1", ["a2", "a1", "a1"]], ["s2", ["a1"]],
+        ])));
+        expect(publications.map(publication => ({ accountId: publication.accountId, cursor: publication.resolveCursor() })))
+            .toEqual([{ accountId: "a1", cursor: 11 }, { accountId: "a1", cursor: 12 }, { accountId: "a2", cursor: 24 }]);
+        expect(deliveries).toEqual([
+            { room: "account-stored-content-v3:a1", seq: 12,
+                body: { t: "account-change", changeKinds: ["session"], entityIds: ["s1", "s2"],
+                    sessionSystemRecords: [{ sessionId: "s1" }, { sessionId: "s2" }] } },
+            { room: "account-stored-content-v3:a2", seq: 24,
+                body: { t: "account-change", changeKinds: ["session"], entityIds: ["s1"],
+                    sessionSystemRecords: [{ sessionId: "s1" }] } },
+        ]);
     });
 
     it("falls back to the Prisma update + upsert path outside the postgres raw fast path", async () => {

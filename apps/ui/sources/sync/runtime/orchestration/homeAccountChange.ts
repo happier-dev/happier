@@ -4,7 +4,7 @@ import {
     type HomeCredentialMutationEvent,
 } from '@/auth/storage/tokenStorage';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
-import { accountChangeKindsAffectWorkflowTriggers, accountChangeKindsAffectWorkflowDefinitions, planSyncActionsFromChanges, plannedChangesAffectSessionListQuery, plannedChangesAffectWorkflowTriggers, plannedChangesAffectWorkflowDefinitions } from './changesPlanner';
+import { plannedSessionReadinessChanges, planSessionReadinessWake, type SessionReadinessChanges, accountChangeKindsAffectWorkflowTriggers, accountChangeKindsAffectWorkflowDefinitions, planSyncActionsFromChanges, plannedChangesAffectSessionListQuery, plannedChangesAffectWorkflowTriggers, plannedChangesAffectWorkflowDefinitions } from './changesPlanner';
 import type { SessionSystemRecordInvalidationV1 } from '@happier-dev/protocol/sessions/board/changeHint';
 import { readSavedSecretDisclosureActivityEntityIdV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 
@@ -38,6 +38,7 @@ export type HomeAccountChangeEvent = Readonly<{
      * remain conservative. `'structural'` means only row-level Session writes: a
      * corpus the ordinary list can answer is unaffected, a structural filter may move.
      */
+    sessionReadinessChanges?: SessionReadinessChanges;
     sessionListQueryAffects?: boolean | 'structural';
     /** Exact focused-page Profile/Artifact/source decision; content-free wakes omit it. */
     profileCatalogAffects?: boolean;
@@ -61,6 +62,7 @@ type HomeAccountChangeDetails = Readonly<{
     changeKinds?: readonly ChangeEntry['kind'][];
     /** Exact content-free record/access routing; an empty list excludes record changes. */
     sessionSystemRecords?: readonly SessionSystemRecordInvalidationV1[];
+    sessionReadinessChanges?: SessionReadinessChanges;
     sessionListQueryAffects?: boolean | 'structural';
     profileCatalogAffects?: boolean;
     accountSettingsAffects?: boolean;
@@ -224,8 +226,15 @@ export function publishHomeAccountChangeForRouting(
     const coarse = unknownKinds || (advisory && (rawKinds === undefined
         || (rawKinds.includes('account') && details?.sessionSystemRecords === undefined && !disclosureOnly && !scopedAccountPlan)));
     const changeKinds = coarse ? undefined : rawKinds;
+    const sessionReadinessChanges = details?.source === 'connected' || details?.source === 'snapshot'
+        ? 'all' : details?.sessionReadinessChanges ?? (unknownKinds ? 'all' : accountWakePlan
+            ? plannedSessionReadinessChanges(accountWakePlan) : planSessionReadinessWake(rawKinds, entityIds));
     const event = Object.freeze({
         serverId,
+        sessionReadinessChanges: sessionReadinessChanges === 'all' ? 'all' as const : Object.freeze({
+            sessionIds: Object.freeze([...sessionReadinessChanges.sessionIds]),
+            machineIds: Object.freeze([...sessionReadinessChanges.machineIds]),
+        }),
         ...(details?.source ? { source: details.source } : {}),
         ...(entityIds ? { entityIds: Object.freeze([...new Set(entityIds)]) } : {}),
         ...(details?.entityRevisions ? { entityRevisions: Object.freeze({ ...details.entityRevisions }) } : {}),

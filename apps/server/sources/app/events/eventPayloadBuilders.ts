@@ -1,3 +1,5 @@
+import type { SessionSystemRecordInvalidationV1 } from '@happier-dev/protocol/sessions/board/changeHint';
+import type { ChangeKind } from '@happier-dev/protocol/changes';
 import { ExternalSessionStorageStateV1Schema } from '@happier-dev/protocol/sessions/external/operationV1';
 import { projectAccountNameToLegacyFieldsV1 } from '@happier-dev/protocol/account/accountDisplayProfileV1';
 import { type SessionViewerProjectionV1 } from '@happier-dev/protocol/sessions/personal/viewer';
@@ -337,11 +339,14 @@ export function buildSessionMetadataRecipientUpdate(
     updateSeq: number,
     updateId: string,
     projection: SessionMetadataRecipientProjectionV1,
+    runtimeProjection?: Parameters<typeof buildUpdateSessionUpdate>[5],
+    changed?: Readonly<{ ownerMetadata: boolean; agentState: boolean }>,
 ): UpdatePayload {
     const recipientProjection =
         SessionMetadataRecipientProjectionV1Schema.parse(projection);
     const agentState =
-        "agentState" in recipientProjection
+        changed?.agentState !== false
+        && "agentState" in recipientProjection
         && "agentStateVersion" in recipientProjection
         && (
             typeof recipientProjection.agentState === "string"
@@ -354,7 +359,8 @@ export function buildSessionMetadataRecipientUpdate(
             }
             : undefined;
     const ownerMetadata =
-        "ownerMetadata" in recipientProjection
+        changed?.ownerMetadata !== false
+        && "ownerMetadata" in recipientProjection
             ? {
                 ownerMetadata: {
                     value: recipientProjection.ownerMetadata,
@@ -371,6 +377,7 @@ export function buildSessionMetadataRecipientUpdate(
             version: recipientProjection.metadataVersion,
         },
         agentState,
+        runtimeProjection,
     );
     const recipientBody: UpdatePayload["body"] = {
         ...payload.body,
@@ -556,11 +563,18 @@ export function buildUpdateAccountUpdate(userId: string, profile: Partial<Accoun
  * The cursor remains the sole durable ordering authority; this wake carries no
  * changed entity, settings, availability, or plugin payload.
  */
-export function buildAccountChangeWakeUpdate(changeCursor: number, updateId: string): UpdatePayload {
+export function buildAccountChangeWakeUpdate(
+    changeCursor: number, updateId: string,
+    changes?: Readonly<{ changeKinds: readonly ChangeKind[]; entityIds: readonly string[];
+        sessionSystemRecords?: readonly SessionSystemRecordInvalidationV1[] }>,
+): UpdatePayload {
     return {
         id: updateId,
         seq: changeCursor,
-        body: { t: 'account-change' },
+        body: { t: 'account-change', ...(changes ? {
+            changeKinds: [...changes.changeKinds], entityIds: [...changes.entityIds],
+            ...(changes.sessionSystemRecords !== undefined ? { sessionSystemRecords: [...changes.sessionSystemRecords] } : {}),
+        } : {}) },
         createdAt: Date.now(),
     };
 }

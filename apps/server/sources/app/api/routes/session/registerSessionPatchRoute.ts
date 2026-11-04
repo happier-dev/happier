@@ -213,6 +213,7 @@ export function registerSessionPatchRoute(app: Fastify) {
                         sharedMetadata: tupleResult.sharedMetadata,
                         ownerMetadata: tupleResult.ownerMetadata,
                         agentState: tupleResult.agentState,
+                        ...(tupleResult.changed ? { changed: tupleResult.changed } : {}),
                         ...(tupleResult.projectKey !== undefined ? { projectKey: tupleResult.projectKey } : {}),
                     },
                 });

@@ -1,3 +1,4 @@
+import { TEAM_CREDENTIAL_MATERIAL_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 import type { ApiChangeEntry } from '@/sync/api/types/apiTypes';
 import { ACCOUNT_SESSION_FOLLOW_CHANGE_ENTITY_ID } from '@happier-dev/protocol/sessions/follow/changes';
 import {
@@ -844,4 +845,43 @@ export function plannedChangesAffectWorkflowDefinitions(planned: PlannedChangeAc
 export function accountChangeKindsAffectWorkflowDefinitions(changeKinds: readonly string[] | undefined): boolean {
     return accountChangeKindsAffectWorkflowTriggers(changeKinds)
         || changeKinds?.some(kind => isMachineProjectionChangeKindV1(kind)) === true;
+}
+
+export type SessionReadinessChanges = 'all' | Readonly<{
+    sessionIds: readonly string[];
+    machineIds: readonly string[];
+}>;
+
+/** Selection is observed from admitted Session keys; content arrivals are not readiness demand. */
+export function plannedSessionReadinessChanges(planned: PlannedChangeActions): SessionReadinessChanges {
+    if (planned.unsupportedChanges.length > 0 || planned.invalidate.settings || planned.invalidate.profile
+        || planned.invalidate.savedSecretResources) return 'all';
+    const sessionIds = new Set<string>();
+    const machineIds = new Set<string>();
+    for (const change of planned.changes) {
+        if (change.kind === 'share') sessionIds.add(change.entityId);
+        if (isMachineProjectionChangeKindV1(change.kind)) machineIds.add(change.entityId);
+        if (change.kind === 'account' && (change.entityId === TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1
+            || change.entityId === TEAM_CREDENTIAL_MATERIAL_ACCOUNT_CHANGE_ENTITY_ID_V1
+            || change.entityId === HOME_GOVERNANCE_ACCOUNT_CHANGE_ENTITY_ID_V1)) return 'all';
+        if (change.kind === 'pluginDomain') {
+            const parsed = PluginDomainChangeEntrySchema.safeParse(change);
+            if (!parsed.success || parsed.data.hint.pluginDomain === 'availability'
+                || parsed.data.hint.pluginDomain === 'settings') return 'all';
+        }
+    }
+    return { sessionIds: [...sessionIds], machineIds: [...machineIds] };
+}
+
+/** Advisory wakes reuse the same planner; missing identity pairs retain conservative recovery. */
+export function planSessionReadinessWake(changeKinds: readonly string[] | undefined, entityIds?: readonly string[]): SessionReadinessChanges {
+    if (!changeKinds?.length) return 'all';
+    const planned = planSyncActionsFromChanges(changeKinds.length === 1 && entityIds?.length
+        ? entityIds.map(entityId => ({ kind: changeKinds[0]!, entityId, cursor: 0, changedAt: 0 }))
+        : changeKinds.map(kind => ({ kind, entityId: '', cursor: 0, changedAt: 0 })));
+    const changes = plannedSessionReadinessChanges(planned);
+    if (changes === 'all') return changes;
+    if (!changes.sessionIds.length && !changes.machineIds.length) return changes;
+    if (!entityIds?.length) return 'all';
+    return { sessionIds: changes.sessionIds.length ? entityIds : [], machineIds: changes.machineIds.length ? entityIds : [] };
 }

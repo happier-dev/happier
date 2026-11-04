@@ -1,10 +1,12 @@
+import { isSessionSystemRecordUnchangedHintV1, readSessionSystemRecordChangeV1, type SessionSystemRecordInvalidationV1 } from '@happier-dev/protocol/sessions/board/changeHint';
+import { readSessionFollowReceiverChangeV1 } from '@happier-dev/protocol/sessions/follow/changes';
 import { afterTx, getTransactionContext, TransactionReplayRequiredError, type Tx } from "@/storage/inTx";
 import { getDbProviderFromEnv } from "@/storage/prisma";
 import { resolveDbSqlDialect } from "@/config/databaseProvider";
-import { buildAccountChangeWakeUpdate } from "@/app/events/eventPayloadBuilders";
+import { buildAccountChangeWakeUpdate, buildAccountSettingsChangedUpdate } from "@/app/events/eventPayloadBuilders";
 import { eventRouter } from "@/app/events/connectionEventRouter";
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
-import { ChangeKindSchema, type ChangeKind } from '@happier-dev/protocol/changes';
+import { ChangeKindSchema, readAccountSettingsVersionChangeV1, type ChangeKind } from '@happier-dev/protocol/changes';
 import { PluginDomainChangeHintSchema, buildPluginDomainAccountChangeEntityId } from '@happier-dev/protocol/changes/pluginDomain';
 import { acquireAccountSessionOwnerMetadataFencesInTx, acquireAccountSessionOwnerMetadataPublicationFencesInTx, type AccountAdmissionIntent } from '@/app/encryption/accountSessionOwnerMetadataFence';
 
@@ -14,13 +16,21 @@ export interface AccountChangePublication {
     resolveCursor(): number;
 }
 
+interface AccountChangeWake {
+    cursor: number;
+    settingsVersion?: number;
+    changeKinds: Set<ChangeKind>;
+    entityIds: Set<string>;
+    sessionSystemRecords?: Map<string, SessionSystemRecordInvalidationV1> | null;
+}
+
 interface AccountPublicationPhase {
     phase: 'domain' | 'validating' | 'publishing' | 'projecting' | 'complete';
     accountIds: Set<string>;
     operations: Array<(tx: Tx) => Promise<void>>;
     validations: Array<(tx: Tx) => Promise<void>>;
     projections: Array<(tx: Tx) => Promise<void>>;
-    wakes?: Map<string, { cursor: number }>;
+    wakes?: Map<string, AccountChangeWake>;
 }
 
 const accountPublicationSymbol = Symbol('account-publication');
@@ -177,27 +187,97 @@ function compactHint(_kind: ChangeKind, hint: unknown): unknown {
     return hint;
 }
 
-function scheduleAccountChangeWake(tx: Tx, accountId: string, cursor: number): void {
+function scheduleAccountChangeWake(
+    tx: Tx, accountId: string, cursor: number, kind: ChangeKind, entityIds: readonly string[], hint?: unknown,
+): void {
     const state = publicationPhase(tx);
-    const wakes = state.wakes ??= new Map<string, { cursor: number }>();
+    const wakes: NonNullable<AccountPublicationPhase['wakes']> = state.wakes ??= new Map();
     const pending = wakes.get(accountId);
-    if (pending) {
-        pending.cursor = Math.max(pending.cursor, cursor);
-        return;
+    const wake: AccountChangeWake = pending ?? {
+        cursor, changeKinds: new Set(), entityIds: new Set(),
+    };
+    wake.cursor = Math.max(wake.cursor, cursor);
+    const settingsVersion = entityIds.length === 1
+        ? readAccountSettingsVersionChangeV1({ kind, entityId: entityIds[0]!, hint }) : null;
+    if (settingsVersion !== null) {
+        wake.settingsVersion = Math.max(wake.settingsVersion ?? 0, settingsVersion);
+    } else {
+        wake.changeKinds.add(kind);
+        for (const entityId of entityIds) wake.entityIds.add(entityId);
+        collectSessionSystemRecordWakeTargets(wake, kind, entityIds, hint);
     }
-    // Generic wakes share one V3 audience; keep each Account's maximum at its first callback slot.
-    const wake = { cursor };
+    if (pending) return;
+    // Keep one post-commit slot per Account; typed settings facts never widen
+    // unrelated Machine/Session changes that committed in the same transaction.
     wakes.set(accountId, wake);
     afterTx(tx, () => {
+        if (wake.settingsVersion !== undefined) eventRouter.emitUpdate({
+            userId: accountId,
+            payload: buildAccountSettingsChangedUpdate(wake.settingsVersion, wake.cursor, randomKeyNaked(12)),
+            recipientFilter: { type: 'account-stored-content-v3' },
+        });
+        if (wake.changeKinds.size === 0) return;
         eventRouter.emitUpdate({
             userId: accountId,
-            payload: buildAccountChangeWakeUpdate(wake.cursor, randomKeyNaked(12)),
+            payload: buildAccountChangeWakeUpdate(wake.cursor, randomKeyNaked(12), {
+                changeKinds: [...wake.changeKinds], entityIds: [...wake.entityIds],
+                ...(wake.sessionSystemRecords ? { sessionSystemRecords: [...wake.sessionSystemRecords.values()] } : {}),
+            }),
             recipientFilter: { type: 'account-stored-content-v3' },
         });
     });
 }
 
+function collectSessionSystemRecordWakeTargets(
+    wake: { sessionSystemRecords?: Map<string, SessionSystemRecordInvalidationV1> | null },
+    kind: ChangeKind, entityIds: readonly string[], hint: unknown,
+): void {
+    // Unknown Account facts retain the existing coarse recovery for the entire
+    // committed wake. A later known transcript cannot narrow that audience.
+    if (wake.sessionSystemRecords === null) return;
+    for (const entityId of entityIds) {
+        const record = readSessionSystemRecordChangeV1({ kind, entityId, hint });
+        const followReceiver = readSessionFollowReceiverChangeV1({ kind, entityId });
+        if (record) {
+            (wake.sessionSystemRecords ??= new Map()).set(JSON.stringify([kind, entityId]), record);
+        } else if (followReceiver !== null) {
+            // This known domain key carries the same receiver as its Session
+            // projection, not an unknown Account-wide records invalidation.
+            (wake.sessionSystemRecords ??= new Map()).set(JSON.stringify(['session', followReceiver]), { sessionId: followReceiver });
+        } else if (kind === 'account' && entityId === 'public-profile') {
+            // Disclosure changes do not invalidate private Session records.
+            wake.sessionSystemRecords ??= new Map();
+        } else if (kind === 'account') {
+            wake.sessionSystemRecords = null;
+            return;
+        } else if (kind === 'session' || kind === 'share') {
+            const targets = wake.sessionSystemRecords ??= new Map();
+            if (kind !== 'session' || !isSessionSystemRecordUnchangedHintV1(hint)) {
+                targets.set(JSON.stringify([kind, entityId]), { sessionId: entityId });
+            }
+        }
+    }
+}
+
 export type AccountChangeCursor = Readonly<{ accountId: string; cursor: number }>;
+
+function scheduleAccountProjectionWakes(
+    tx: Tx, kind: ChangeKind, requests: readonly { accountId: string; entityId: string }[],
+    cursors: readonly AccountChangeCursor[], hint?: unknown,
+): void {
+    const entityIdsByAccountId = new Map<string, string[]>();
+    for (const { accountId, entityId } of requests) {
+        const entityIds = entityIdsByAccountId.get(accountId) ?? [];
+        entityIds.push(entityId);
+        entityIdsByAccountId.set(accountId, entityIds);
+    }
+    // Both providers return Account/cursor-sorted allocations. The last cursor
+    // per Account is its maximum; retain the same Account callback order.
+    for (const [index, row] of cursors.entries()) {
+        if (cursors[index + 1]?.accountId === row.accountId) continue;
+        scheduleAccountChangeWake(tx, row.accountId, row.cursor, kind, entityIdsByAccountId.get(row.accountId)!, hint);
+    }
+}
 
 /** Admit the complete audience, retaining MySQL's exclusive entry and PostgreSQL stability. */
 export async function acquireAccountChangePublicationLocksInTx(
@@ -367,7 +447,7 @@ async function publishAccountProjectionChanges(
             return { accountId: row.accountId, cursor };
         }).sort((left, right) => left.accountId < right.accountId ? -1
             : left.accountId > right.accountId ? 1 : left.cursor - right.cursor);
-        for (const row of cursors) scheduleAccountChangeWake(tx, row.accountId, row.cursor);
+        scheduleAccountProjectionWakes(tx, kind, requests, cursors);
         return cursors;
     }
 
@@ -423,7 +503,7 @@ async function publishAccountProjectionChanges(
     const cursors = changes.map(({ accountId, cursor }) => ({ accountId, cursor }))
         .sort((left, right) => left.accountId < right.accountId ? -1
             : left.accountId > right.accountId ? 1 : left.cursor - right.cursor);
-    for (const row of cursors) scheduleAccountChangeWake(tx, row.accountId, row.cursor);
+    scheduleAccountProjectionWakes(tx, kind, requests, cursors);
     return cursors;
 }
 
@@ -614,7 +694,7 @@ async function publishAccountChanged(
         if (params.accountEncryptionTransitionActivation && rows[0]?.activationCount !== 1) {
             throw new Error('Account publication requires its prelocked activation receipt');
         }
-        scheduleAccountChangeWake(tx, accountId, cursor);
+        scheduleAccountChangeWake(tx, accountId, cursor, kind, [entityId], hint);
         return cursor;
     }
 
@@ -705,6 +785,6 @@ async function publishAccountChanged(
         if (updated.count !== 1) throw new Error('Account publication requires its prelocked activation receipt');
     }
 
-    scheduleAccountChangeWake(tx, accountId, cursor);
+    scheduleAccountChangeWake(tx, accountId, cursor, kind, [entityId], hint);
     return cursor;
 }

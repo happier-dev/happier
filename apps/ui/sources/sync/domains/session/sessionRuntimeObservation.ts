@@ -13,10 +13,19 @@ export type SessionRuntimeObservation = Readonly<{
 
 /** Retained runtime observations formerly owned by ActivityUpdateAccumulator. */
 export function createSessionRuntimeObservationSource() {
-    const observations = new Map<string, SessionRuntimeObservation & { fullPublicationUpdatedAt?: number }>();
+    const observations = new Map<string, SessionRuntimeObservation & { fullPublicationUpdatedAt?: number;
+        serverObservationCursor?: number; serverObservationAccountId?: string }>();
     const key = (address: ActivityInstanceAddress) => activityInstanceKey(address, 'ephemeral_activity_update');
     return {
         read: (address: ActivityInstanceAddress) => observations.get(key(address)),
+        recordServerObservation: (address: ActivityInstanceAddress, cursor: number,
+            baseline: Pick<SessionRuntimeObservation, 'active' | 'activeAt' | 'thinking'>, accountId: string): void => {
+            const previous = observations.get(key(address));
+            if (previous?.serverObservationAccountId === accountId
+                && previous.serverObservationCursor !== undefined && previous.serverObservationCursor >= cursor) return;
+            observations.set(key(address), { ...baseline, ...previous,
+                serverObservationCursor: cursor, serverObservationAccountId: accountId });
+        },
         recordFullPublication: (address: ActivityInstanceAddress, updatedAt: number,
             baseline?: Pick<SessionRuntimeObservation, 'active' | 'activeAt' | 'thinking'>): void => {
             const previous = observations.get(key(address));
@@ -25,7 +34,7 @@ export function createSessionRuntimeObservationSource() {
             // Content currentness is independent of runtime sample ordering: a
             // newer ephemeral may already have supplied a later activeAt. Seed
             // only compact incumbent facts, never content or inferred presence.
-            observations.set(key(address), { active: runtime.active, activeAt: runtime.activeAt,
+            observations.set(key(address), { ...previous, active: runtime.active, activeAt: runtime.activeAt,
                 thinking: runtime.thinking, presence: previous?.presence, fullPublicationUpdatedAt: updatedAt });
         },
         forget: (address: ActivityInstanceAddress): void => { observations.delete(key(address)); },
@@ -42,6 +51,7 @@ export function createSessionRuntimeObservationSource() {
                 || (previous.thinking === false && thinking === true)
             )) return false;
             observations.set(key(address), {
+                ...previous,
                 active: observation.active,
                 activeAt: observation.activeAt,
                 thinking,

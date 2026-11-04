@@ -54,6 +54,18 @@ export const ChangeKindSchema = lazyZodSchema(() => z.enum([
 
 export type ChangeKind = z.infer<typeof ChangeKindSchema>;
 
+/** Only an exact settings-version fact can exclude Account currentness/access changes. */
+export function readAccountSettingsVersionChangeV1(
+  change: Readonly<{ kind: string; entityId: string; hint?: unknown }>,
+): number | null {
+  if (change.kind !== 'account' || change.entityId !== 'self') return null;
+  const hint = change.hint;
+  if (hint === null || typeof hint !== 'object' || Array.isArray(hint)
+    || Object.keys(hint).length !== 1 || !('settingsVersion' in hint)) return null;
+  const version = hint.settingsVersion;
+  return typeof version === 'number' && Number.isSafeInteger(version) && version >= 0 ? version : null;
+}
+
 export function isMachineProjectionChangeKindV1(kind: string): kind is 'machine' | typeof MACHINE_RECIPIENT_ACCESS_CHANGE_KIND_V1 {
   return kind === 'machine' || kind === MACHINE_RECIPIENT_ACCESS_CHANGE_KIND_V1;
 }

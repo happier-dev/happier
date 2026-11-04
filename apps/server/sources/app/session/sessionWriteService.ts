@@ -1,3 +1,4 @@
+import type { SessionCurrentViewPublicationSourceV1 } from '@/app/session/metadata/publishSessionCurrentViewUpdates';
 import { normalizeSessionMessageContentForStorage } from "@/app/session/normalizeSessionMessageContentForStorage";
 import { projectSessionInputRepliesFromTurnInTx } from './messages/sessionMessageReply';
 import * as z from 'zod/mini';
@@ -4397,6 +4398,7 @@ export type UpdateSessionMetadataEnvelopeTupleResult =
         agentState: Readonly<{ version: number; value: string | null }>;
         /** Present only when this owner patch admitted a Project identity. */
         projectKey?: string;
+        changed?: SessionCurrentViewPublicationSourceV1['changed'];
       }>
     | Readonly<{
         ok: false;
@@ -4571,12 +4573,14 @@ function toMetadataEnvelopeTupleSuccess(
     recipientCursors: SessionRecipientPublication[],
     sessionOwnerId: string,
     ownerAccountMode: "plain" | "e2ee",
+    changed?: SessionCurrentViewPublicationSourceV1['changed'],
 ): SessionRecipientPublicationResult<Extract<UpdateSessionMetadataEnvelopeTupleResult, { ok: true }>> {
     return sessionRecipientPublicationResult({
         ok: true,
         recipientCursors,
         sessionOwnerId,
         ownerAccountMode,
+        ...(changed ? { changed } : {}),
         ...(params.mode === "owner" && params.projectKey !== undefined
             ? { projectKey: params.projectKey }
             : {}),
@@ -5400,6 +5404,13 @@ async function updateSessionMetadataEnvelopeTupleAfterCursorFenceInTx(
         params.sharedMetadata.expectedVersion + 1;
     const agentStateChanged = params.mode !== "shared_editor"
         && current.agentState !== params.agentState.ciphertext;
+    // Writers re-send the exact retained owner envelope when no owner fact changed.
+    const ownerMetadataChanged = params.mode !== "shared_editor"
+        && !doesStoredSessionOwnerMetadataMatchEnvelope({
+            stored: current.ownerMetadata,
+            envelope: params.ownerMetadata,
+            accountMode: accountCurrentness.currentness.encryptionMode,
+        });
     const nextAgentStateVersion = agentStateChanged
         ? params.agentState.expectedVersion + 1
         : current.agentStateVersion;
@@ -5572,6 +5583,7 @@ async function updateSessionMetadataEnvelopeTupleAfterCursorFenceInTx(
         recipientCursors,
         access.sessionOwnerId,
         accountCurrentness.currentness.encryptionMode,
+        { ownerMetadata: ownerMetadataChanged, agentState: agentStateChanged },
     );
 }
 

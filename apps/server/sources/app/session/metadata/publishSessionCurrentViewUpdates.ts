@@ -2,6 +2,8 @@ import { SESSION_METADATA_LAYOUT_VERSION_V1, SessionMetadataRecipientProjectionV
 
 import {
     buildSessionMetadataRecipientUpdate,
+    buildAccountChangeWakeUpdate,
+    type ClientConnection,
     buildUpdateSessionUpdate,
     eventRouter,
 } from "@/app/events/eventRouter";
@@ -39,7 +41,17 @@ import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
  * remains available to every participant.
  */
 
-export type SessionCurrentViewPublicationSourceV1 =
+export type SessionCurrentViewPublicationSourceV1 = Readonly<{
+    runtimeProjection?: Parameters<typeof buildUpdateSessionUpdate>[5];
+    /**
+     * Which private tuple parts this commit changed. An unchanged owner envelope
+     * or Agent state is left out of the frame: its version is unchanged, so every
+     * reader already holds it (or recovers it through its ordinary cursor gap).
+     * Shared metadata carries the tuple revision and is always sent. Omission
+     * means "all changed".
+     */
+    changed?: Parameters<typeof buildSessionMetadataRecipientUpdate>[5];
+}> & (
     | Readonly<{
         kind: "envelope_tuple_v1";
         sessionOwnerId: string;
@@ -50,16 +62,23 @@ export type SessionCurrentViewPublicationSourceV1 =
         /** Omission leaves the recipient's accepted identity unchanged. */
         projectKey?: string | null;
       }>
-    | Readonly<{
+    | (Readonly<{
         kind: "legacy_v0";
         sessionOwnerId: string;
+      }> & (Readonly<{
         /**
          * The stored row, passed to the projector unchanged so IT keeps owning
          * the layout dispatch. A concurrent layout migration between the write
          * and this read must not be flattened to layout zero here.
          */
         session: SessionMetadataRecipientProjectionInput;
-      }>;
+      }> | Readonly<{
+        metadata: Readonly<{ version: number; value: string }>;
+        agentState?: Readonly<{ version: number; value: string | null }>;
+      }> | Readonly<{
+        metadata?: Readonly<{ version: number; value: string }>;
+        agentState: Readonly<{ version: number; value: string | null }>;
+      }>)));
 
 export type PublishSessionCurrentViewUpdatesResult =
     | { ok: true }
@@ -69,18 +88,27 @@ export async function publishSessionCurrentViewUpdates(params: Readonly<{
     sessionId: string;
     recipientCursors: readonly SessionRecipientCursor[];
     source: SessionCurrentViewPublicationSourceV1;
+    skipSenderConnection?: ClientConnection;
 }>): Promise<PublishSessionCurrentViewUpdatesResult> {
     const { sessionId, recipientCursors, source } = params;
 
     if (source.kind === "legacy_v0") {
-        let payloadProjection;
-        try {
-            payloadProjection = projectSessionMetadataForRecipient({
-                session: source.session,
-                recipient: { type: "legacy_owner", accountId: source.sessionOwnerId },
-            });
-        } catch {
-            return { ok: false };
+        let metadata: Parameters<typeof buildUpdateSessionUpdate>[3];
+        let agentState: Parameters<typeof buildUpdateSessionUpdate>[4];
+        if ("session" in source) {
+            try {
+                const projection = projectSessionMetadataForRecipient({
+                    session: source.session,
+                    recipient: { type: "legacy_owner", accountId: source.sessionOwnerId },
+                });
+                metadata = { value: projection.metadata, version: projection.metadataVersion };
+                agentState = { value: projection.agentState, version: projection.agentStateVersion };
+            } catch {
+                return { ok: false };
+            }
+        } else {
+            metadata = source.metadata;
+            agentState = source.agentState;
         }
 
         await Promise.all(recipientCursors
@@ -92,16 +120,12 @@ export async function publishSessionCurrentViewUpdates(params: Readonly<{
                         sessionId,
                         cursor,
                         randomKeyNaked(12),
-                        {
-                            value: payloadProjection.metadata,
-                            version: payloadProjection.metadataVersion,
-                        },
-                        {
-                            value: payloadProjection.agentState,
-                            version: payloadProjection.agentStateVersion,
-                        },
+                        metadata,
+                        agentState,
+                        source.runtimeProjection,
                     ),
                     recipientFilter: { type: "all-interested-in-session", sessionId },
+                    skipSenderConnection: params.skipSenderConnection,
                 });
             }));
         return { ok: true };
@@ -150,6 +174,8 @@ export async function publishSessionCurrentViewUpdates(params: Readonly<{
                 cursor,
                 randomKeyNaked(12),
                 projection,
+                source.runtimeProjection,
+                ...(source.changed ? [source.changed] as const : []),
             ),
             recipientFilter: { type: "all-interested-in-session", sessionId },
         });
