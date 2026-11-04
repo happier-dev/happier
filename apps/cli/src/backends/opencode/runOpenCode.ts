@@ -24,11 +24,17 @@ import { resolveOpenCodeLocalControlSupport } from './localControl/resolveOpenCo
 import { resolveOpenCodeBackendModeFromEnv } from './backendMode';
 import { hasHostedAttachedTerminalPresentation } from '@/agent/localControl/createAttachedTerminalSupervisor';
 
-export async function runOpenCode(opts: StandardAcpProviderRunOptions & {
+type OpenCodeRunOptions = StandardAcpProviderRunOptions & {
   credentials: Credentials;
   permissionMode?: PermissionMode;
   startingMode?: 'local' | 'remote';
-}): Promise<void> {
+};
+
+export async function runOpenCode(opts: OpenCodeRunOptions): Promise<void> {
+  await runStandardAcpProvider(opts, createOpenCodeProviderConfig(opts));
+}
+
+export function createOpenCodeProviderConfig(opts: OpenCodeRunOptions): StandardAcpProviderConfig {
   const lastPublishedOpenCodeSessionMetadata: OpenCodeSessionMetadataPublicationState = {
     sessionId: null as string | null,
     backendMode: null as 'server' | 'acp' | null,
@@ -78,7 +84,7 @@ export async function runOpenCode(opts: StandardAcpProviderRunOptions & {
       : null;
   };
 
-  await runStandardAcpProvider(opts, {
+  return {
     flavor: 'opencode',
     backendDisplayName: 'OpenCode',
     uiLogPrefix: '[OpenCode]',
@@ -204,7 +210,7 @@ export async function runOpenCode(opts: StandardAcpProviderRunOptions & {
     },
     onAfterReset: () => {
       currentRuntime = null;
-      serverRuntime = null;
+      // The runner restarts this same runtime; reset already releases its selected client.
       prepareLocalAttachment = null;
       lastPublishedOpenCodeSessionMetadata.sessionId = null;
       lastPublishedOpenCodeSessionMetadata.backendMode = null;
@@ -218,5 +224,5 @@ export async function runOpenCode(opts: StandardAcpProviderRunOptions & {
       await localControl.dispose();
     },
     formatPromptErrorMessage: formatProviderPromptErrorMessage,
-  });
+  };
 }
