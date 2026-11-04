@@ -341,6 +341,12 @@ const FINAL_COMMAND_RULES = [
   })),
   { when: { component: ['.'], script: ['test:tooling:self'], admissionWrapper: ['0'], heavyClass: ['validation'] }, set: { heavyClass: 'compilation' } },
   { when: { heavyClass: HEAVYWEIGHT_COMPILE_CLASSES }, set: { localCompile: '1' } },
+  // Only the controller expands configured targets. Its finite worker request
+  // retains the ordinary host-local publisher policy and resource admission.
+  { when: { command: ['node', 'nodejs'], nativeTest: ['0'], workerRequest: ['0'],
+    entryRepositoryPath: ['scripts/workspaces/ensureWorkspacePackagesBuiltCli.mjs'] },
+    set: { placement: 'primary-only', commandClass: 'workspace-build-coordinator',
+      heavyClass: '', localCompile: '0', bootstrap: '0', validation: '0' } },
 ];
 function commandBasename(value) {
   return String(value ?? '').trim().replaceAll('\\', '/').split('/').at(-1);
@@ -833,6 +839,15 @@ export async function resolvePackageCommandPolicy(commandArgs, options = {}) {
   let heavyClass = policy.heavyClass;
   if (manifest) {
     const resolved = await resolveWorkspacePackageScriptPolicy({ ...options, ...manifest, cwd: manifest.packageDir });
+    if (resolved.placement === 'primary-only') {
+      policy.placement = resolved.placement;
+      policy.commandClass = resolved.commandClass;
+      if (resolved.commandClass === 'tracked-source-writer') policy.generator = '1';
+    }
+    if (resolved.commandClass === 'workspace-build-coordinator' && !resolved.admissionClass) {
+      // A public alias of the coordinator owns dispatch, not a local payload.
+      Object.assign(policy, { bootstrap: '0', validation: '0', localCompile: '0' });
+    }
     for (const tool of resolved.requiredTools.split(/\s+/u).filter(Boolean)) requiredTools.add(tool);
     if (resolved.selfPublisher) selfPublisher = '1';
     const requiredClass = resolved.selfPublisher || policy.kind === 'typecheck' ? resolved.admissionClass : resolved.knownAdmissionClass;

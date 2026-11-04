@@ -7,6 +7,7 @@ import { dirname, join, relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import yaml from 'js-yaml';
+import { installWorkspaceAdmissionProcessFixture } from '../../apps/stack/scripts/testkit/core/native_admission_fixture.mjs';
 
 import { BUILD_INPUT_RECORD, ensureWorkspacePackagesBuiltByName, ensureWorkspacePackagesBuiltForComponent, isWorkspacePackageOutputCurrent } from './ensureWorkspacePackagesBuilt.mjs';
 import { copyDirDereferenceContainedSync, vendorRuntimeDependencyTree } from '../../packages/cli-common/workspaceRuntimeDependencies.mjs';
@@ -15,6 +16,19 @@ import {
   parseWorkspaceBuildArgs,
   runWorkspacePackageBuild,
 } from './ensureWorkspacePackagesBuiltCli.mjs';
+
+function fixtureCompilerPackageManager(root) {
+  const path = join(root, 'fixture-package-manager.mjs');
+  // Package-manager execution is an OS boundary. The fixture has no external
+  // dependencies; retain the real compiler child without pnpm's auto-install.
+  writeFileSync(path, `import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+assert.deepEqual(process.argv.slice(2), ['run', '--silent', 'build']);
+const result = spawnSync(process.execPath, ['compile.mjs'], { stdio: 'inherit' });
+process.exitCode = result.status ?? 1;
+`);
+  return path;
+}
 
 test('root workspace preparation forwards its environment and reuses current shared outputs across components', async (t) => {
   const repoRoot = mkdtempSync(join(tmpdir(), 'happier-preparation-cli-environment-'));
@@ -52,6 +66,63 @@ writeFileSync(join(output, 'index.js'), 'export const value = ' + JSON.stringify
       'export const value = "from-root-preparation";\n');
   }
   assert.deepEqual((await runWorkspacePackageBuild(options)).built, [], 'a repeated preparation must reuse current outputs');
+});
+test('a configured workspace build refreshes stale target dist before returning', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'happier-target-workspace-build-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const native = await installWorkspaceAdmissionProcessFixture(t, root);
+  const env = { ...native.env, npm_execpath: fixtureCompilerPackageManager(root) };
+  const controller = join(root, 'controller');
+  const replicas = ['command-worker', 'runtime-only-worker'].map(name => join(root, name));
+  const packageName = '@happier-dev/example';
+  for (const repo of [controller, ...replicas]) {
+    mkdirSync(join(repo, 'packages/example/src'), { recursive: true });
+    writeFileSync(join(repo, 'package.json'), JSON.stringify({ private: true, type: 'module' }));
+    writeFileSync(join(repo, 'pnpm-lock.yaml'), '# fixture\n');
+    writeFileSync(join(repo, 'pnpm-workspace.yaml'), 'packages:\n  - apps/*\n  - packages/*\n');
+    for (const app of ['cli', 'ui', 'server']) {
+      mkdirSync(join(repo, 'apps', app), { recursive: true });
+      writeFileSync(join(repo, 'apps', app, 'package.json'), JSON.stringify({ name: `@fixture/${app}` }));
+    }
+    writeFileSync(join(repo, 'packages/example/package.json'), JSON.stringify({ name: packageName,
+      type: 'module', main: './dist/index.js', scripts: { build: 'node compile.mjs' } }));
+    writeFileSync(join(repo, 'packages/example/src/index.ts'), 'export const initial = 1;\n');
+    // Compiler and SSH transport are genuine process boundaries. Both invoke
+    // child processes; graph, currentness, capture and publication stay real.
+    writeFileSync(join(repo, 'packages/example/compile.mjs'), `import { readFileSync, writeFileSync } from 'node:fs';
+writeFileSync(process.env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR + '/index.js', readFileSync('src/index.ts'));
+`);
+    await runWorkspacePackageBuild({ repoRoot: repo, env, packageNames: [packageName] });
+  }
+  for (const repo of [controller, ...replicas]) writeFileSync(join(repo, 'packages/example/src/index.ts'),
+    'export const initial = 1;\nexport const newlyAdded = 2;\n');
+  const configPath = join(root, 'dev-targets.json');
+  writeFileSync(configPath, JSON.stringify({ version: 3,
+    targets: replicas.map((repoDir, index) => ({ name: index ? 'runtime-only-worker' : 'command-worker',
+      ssh: 'fixture-worker', platform: 'posix', repoDir, cliHomeDir: join(root, 'worker-home') })),
+    commandExecution: { mode: 'prefer-target', target: 'command-worker', fallback: 'local' } }));
+  const cli = fileURLToPath(new URL('./ensureWorkspacePackagesBuiltCli.mjs', import.meta.url));
+  const options = { repoRoot: controller, env: { ...env, HAPPIER_EXEC_CONFIG_PATH: configPath },
+    packageNames: [packageName], prepareConfiguredTargets: true,
+    async runDevTargetCommandImpl({ target, commandArgs }) {
+      const child = spawnSync(process.execPath, [cli, ...commandArgs.slice(2)], {
+        cwd: target.repoDir, env: { ...env, HAPPIER_DEV_TARGET_EXECUTION: '1' }, encoding: 'utf8',
+      });
+      assert.equal(child.status, 0, child.stderr);
+      return { code: child.status, signal: child.signal };
+    },
+  };
+  await runWorkspacePackageBuild(options);
+  for (const replica of replicas) {
+    const child = spawnSync(process.execPath, ['--input-type=module', '--eval',
+      `import { newlyAdded } from ${JSON.stringify(pathToFileURL(join(replica, 'packages/example/dist/index.js')).href)}; process.stdout.write(String(newlyAdded));`],
+    { env: { ...process.env, NODE_OPTIONS: '' }, encoding: 'utf8' });
+    assert.equal(child.status, 0, child.stderr);
+    assert.equal(child.stdout, '2');
+  }
+  await assert.rejects(runWorkspacePackageBuild({ ...options,
+    runDevTargetCommandImpl: async () => ({ code: 255, signal: null }),
+  }), /command-worker/);
 });
 for (const { compiledAlready, buildMode, changeAfterManifest } of [
   { compiledAlready: false, buildMode: 'strict' },

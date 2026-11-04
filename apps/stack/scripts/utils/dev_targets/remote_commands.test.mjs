@@ -694,7 +694,8 @@ test('build:packages delegates admission to its transitive finite publishers', a
   const publicPolicy = await commandPolicy.resolvePackageCommandPolicy(
     ['pnpm', 'run', 'build:packages', '@happier-dev/protocol', '@happier-dev/transfers'], { repoRoot: root, cwd: root });
   assert.equal(publicPolicy.selfPublisher, '1', 'the real manifest must preserve producer-owned resource-first admission');
-  assert.equal(publicPolicy.heavyClass, 'compilation', 'placement must retain the composed build envelope');
+  assert.equal(publicPolicy.heavyClass, '', 'the controller dispatches finite publishers without a local compile envelope');
+  assert.equal(publicPolicy.localCompile, '0', 'the public coordinator must not be refused as a controller compiler');
   const native = spawnSync('/bin/sh', ['-c', `${renderNativeCommandPolicy()}\nrepo_root=$1; invoked_cwd=$1; shift; resolve_native_command_policy "$@"; printf '%s' "$policy_selfPublisher"`,
     'policy', root, ...args], { encoding: 'utf8' });
   assert.equal(native.status, 0, native.stderr);
@@ -702,6 +703,14 @@ test('build:packages delegates admission to its transitive finite publishers', a
   const target = { name: 'worker', platform: 'linux', repoDir: root, cliHomeDir: '/tmp/workspace-build-worker-home' };
   assert.doesNotMatch(buildRemoteExecCommand(target, { commandArgs: args, admissionClass: 'compilation', executionId }), /--heavyweight-admission/);
   assert.equal(resolveRemoteCommandPolicy(['node', './fixture/scripts/workspaces/ensureWorkspacePackagesBuiltCli.mjs'], { repoRoot: root, cwd: root }).selfPublisher, '0');
+});
+
+test('workspace build coordination stays primary while its worker request remains target-local', () => {
+  const root = fileURLToPath(new URL('../../../../../', import.meta.url));
+  const args = ['node', 'scripts/workspaces/ensureWorkspacePackagesBuiltCli.mjs', '@happier-dev/protocol'];
+  assert.equal(resolveRemoteCommandPolicy(args, { repoRoot: root, cwd: root }).placement, 'primary-only');
+  const worker = [args[0], args[1], '--worker-request={"packageNames":["@happier-dev/protocol"],"componentDirs":[]}'];
+  assert.notEqual(resolveRemoteCommandPolicy(worker, { repoRoot: root, cwd: root }).placement, 'primary-only');
 });
 
 test('manifest publisher delegation follows real scripts without bypassing placement', async t => {

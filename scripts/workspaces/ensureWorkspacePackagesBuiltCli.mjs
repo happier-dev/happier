@@ -34,6 +34,8 @@ export async function runWorkspacePackageBuild({
   publishBundledPluginArtifactsAfterWorkspaceBuildImpl = publishBundledPluginArtifactsAfterWorkspaceBuildDefault,
   rebuildWorkspacesInvalidatedByBundledPluginPublicationImpl = rebuildWorkspacesInvalidatedByBundledPluginPublicationDefault,
   onPackageBuildResult,
+  prepareConfiguredTargets = false,
+  runDevTargetCommandImpl,
 } = {}) {
   const normalizedPackageNames = [...new Set(
     packageNames.map((name) => String(name ?? '').trim()).filter(Boolean),
@@ -43,6 +45,12 @@ export async function runWorkspacePackageBuild({
   )];
   if (normalizedPackageNames.length === 0 && normalizedComponentDirs.length === 0) {
     throw new Error('Workspace package build requires at least one workspace package name or component.');
+  }
+  if (prepareConfiguredTargets) {
+    const { prepareWorkspacePackageBuildTargets } = await import('./prepareWorkspacePackageBuildTargets.mjs');
+    const targets = await prepareWorkspacePackageBuildTargets({ repoRoot, env,
+      packageNames: normalizedPackageNames, componentDirs: normalizedComponentDirs, runDevTargetCommandImpl });
+    if (targets) return targets;
   }
 
   const results = [];
@@ -132,12 +140,20 @@ export function parseWorkspaceBuildArgs(argv) {
 }
 
 export async function main(argv = process.argv.slice(2)) {
+  const workerRequest = argv.length === 1 && argv[0].startsWith('--worker-request=')
+    ? JSON.parse(argv[0].slice('--worker-request='.length)) : null;
   const result = await runWorkspacePackageBuild({
-    ...parseWorkspaceBuildArgs(argv),
+    ...(workerRequest ?? parseWorkspaceBuildArgs(argv)),
+    ...(workerRequest ? { repoRoot: resolve(process.cwd()) } : {}),
+    prepareConfiguredTargets: !workerRequest,
     onPackageBuildResult({ packageName, reason, elapsedMs, queueWaitMs }) {
       process.stdout.write(`[workspace-build] ${packageName}: ${reason}; work=${elapsedMs.toFixed(1)}ms queue=${queueWaitMs.toFixed(1)}ms\n`);
     },
   });
+  if (result.preparedTargets) {
+    process.stdout.write(`[workspace-build] prepared targets: ${result.preparedTargets.join(', ')}\n`);
+    return;
+  }
   const built = result.built.length > 0 ? result.built.join(', ') : 'none (already current)';
   process.stdout.write(`[workspace-build] built: ${built}\n`);
   if (result.refreshed?.length > 0) process.stdout.write(`[workspace-build] refreshed: ${result.refreshed.join(', ')}\n`);
