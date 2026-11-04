@@ -1,4 +1,19 @@
 #[cfg(desktop)]
+#[path = "window_chrome_preferences.rs"]
+mod preferences;
+
+#[cfg(desktop)]
+#[path = "window_chrome_presentation.rs"]
+mod presentation;
+
+#[cfg(desktop)]
+#[derive(Default)]
+struct MainWindowPresentationState(Mutex<presentation::MainWindowPresentation>);
+
+#[cfg(desktop)]
+struct DesktopWindowChromeState(std::sync::Mutex<preferences::WindowChromePreferences>);
+
+#[cfg(desktop)]
 use serde::{Deserialize, Serialize};
 
 #[cfg(desktop)]
@@ -36,7 +51,18 @@ struct DesktopGlassMaterialRequest {
 /// Floating panels show the main window's material behind their one rounded card.
 #[cfg(desktop)]
 fn is_glass_panel_window(label: &str) -> bool {
-    crate::desktop_window::is_capture_window(label)
+    crate::desktop_window::is_capture_window(label) || label == crate::desktop_window::ACTIVITY_WINDOW_LABEL
+}
+
+/// Where a panel's material stands when it does not fill the window (the notch's island), in window
+/// points from the top-left. A side running past the window reads square: only free corners round.
+#[cfg(desktop)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+pub struct DesktopGlassPanelFrame {
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
 }
 
 /// The native material a window currently carries; a panel's is clipped to its card's corners.
@@ -45,6 +71,7 @@ fn is_glass_panel_window(label: &str) -> bool {
 struct DesktopGlassApplied {
     blur: DesktopGlassBlur,
     radius: Option<f64>,
+    frame: Option<DesktopGlassPanelFrame>,
 }
 
 #[cfg(desktop)]
@@ -87,6 +114,7 @@ struct DesktopGlassRuntimeInner {
 struct DesktopGlassWindow {
     /// A panel's resting card radius while the card fills the window; None while it moves.
     panel_radius: Option<f64>,
+    panel_frame: Option<DesktopGlassPanelFrame>,
     applied: Option<DesktopGlassApplied>,
     payload: DesktopGlassStatePayload,
 }
@@ -193,7 +221,60 @@ fn apply_native_glass(
         Some(if panel { NSVisualEffectState::Active } else { NSVisualEffectState::FollowsWindowActiveState }),
         applied.and_then(|applied| applied.radius),
     )
-    .map_err(|error| error.to_string())
+    .map_err(|error| error.to_string())?;
+    if let Some(frame) = applied.and_then(|applied| applied.frame) {
+        place_native_glass_view(window, frame)?;
+    }
+    Ok(())
+}
+
+/// The view `apply_vibrancy` added under the webview, with the content view it stands in.
+#[cfg(target_os = "macos")]
+fn with_native_glass_view(
+    window: &WebviewWindow,
+    action: impl FnOnce(&objc2::runtime::AnyObject, &objc2_app_kit::NSView),
+) -> Result<(), String> {
+    use objc2::{msg_send, rc::Retained, runtime::{AnyClass, AnyObject, Bool}};
+    let pointer = window.ns_window().map_err(|error| error.to_string())?;
+    let native: &objc2_app_kit::NSWindow = unsafe { &*pointer.cast() };
+    let content = native.contentView().ok_or("Glass content view unavailable")?;
+    let class = AnyClass::get(c"NSVisualEffectView").ok_or("AppKit visual effect views unavailable")?;
+    let subviews: Retained<objc2_foundation::NSArray<AnyObject>> = unsafe { msg_send![&*content, subviews] };
+    for view in subviews.iter() {
+        let matches: Bool = unsafe { msg_send![&*view, isKindOfClass: class] };
+        if matches.as_bool() {
+            action(&view, &content);
+            break;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn place_native_glass_view(window: &WebviewWindow, frame: DesktopGlassPanelFrame) -> Result<(), String> {
+    use objc2::{msg_send, runtime::Bool};
+    use objc2_foundation::{NSPoint, NSRect, NSSize};
+    with_native_glass_view(window, |view, content| {
+        let flipped: Bool = unsafe { msg_send![content, isFlipped] };
+        let (x, y, width, height) = desktop_glass_view_rect(frame, content.frame().size.height, flipped.as_bool());
+        unsafe {
+            let _: () = msg_send![view, setAutoresizingMask: 0usize];
+            let _: () = msg_send![view, setFrame: NSRect::new(NSPoint::new(x, y), NSSize::new(width, height))];
+        }
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn show_native_glass_view(window: &WebviewWindow, shown: bool) -> Result<(), String> {
+    with_native_glass_view(window, |view, _| unsafe {
+        let _: () = objc2::msg_send![view, setHidden: !shown];
+    })
+}
+
+/// Only macOS panels take material (`glass_platform_supported`).
+#[cfg(all(desktop, not(target_os = "macos")))]
+fn show_native_glass_view(_window: &WebviewWindow, _shown: bool) -> Result<(), String> {
+    Ok(())
 }
 
 #[cfg(target_os = "windows")]
@@ -275,6 +356,7 @@ fn refresh_desktop_glass(window: &WebviewWindow, announce: bool) -> Result<Deskt
     let desired = wants_material.then_some(DesktopGlassApplied {
         blur: inner.request.blur,
         radius: entry.panel_radius,
+        frame: entry.panel_frame,
     });
     let mut material_live = entry.applied.is_some();
     if desired != entry.applied {
@@ -353,20 +435,43 @@ fn request_refresh_desktop_glass(app: &tauri::AppHandle) {
 /// Must run on the native main thread (synchronous commands do).
 #[cfg(desktop)]
 pub(crate) fn set_desktop_glass_panel_shape(window: &WebviewWindow, radius: Option<f64>) -> Result<(), String> {
+    set_desktop_glass_panel_placement(window, radius, None)
+}
+
+/// A panel placed by frame (the notch's island) moves far more often than it changes material, and its
+/// webview's coat follows `material_live`. So while it moves the view only hides: nothing is torn down
+/// and no state event re-renders the panel.
+#[cfg(desktop)]
+fn set_desktop_glass_panel_placement(
+    window: &WebviewWindow,
+    radius: Option<f64>,
+    frame: Option<DesktopGlassPanelFrame>,
+) -> Result<(), String> {
     if !is_glass_panel_window(window.label()) {
         return Err("window is not a glass panel".into());
     }
-    window
-        .app_handle()
-        .state::<DesktopGlassRuntime>()
-        .0
-        .lock()
-        .map_err(|error| error.to_string())?
-        .windows
-        .entry(window.label().to_string())
-        .or_default()
-        .panel_radius = radius.filter(|radius| radius.is_finite() && *radius >= 0.0);
-    refresh_desktop_glass(window, false).map(|_| ())
+    let radius = radius.filter(|radius| radius.is_finite() && *radius >= 0.0);
+    let frame = frame.filter(|frame| [frame.x, frame.y, frame.width, frame.height].iter().all(|value| value.is_finite()));
+    {
+        let state = window.app_handle().state::<DesktopGlassRuntime>();
+        let mut guard = state.0.lock().map_err(|error| error.to_string())?;
+        let entry = guard.windows.entry(window.label().to_string()).or_default();
+        if radius.is_none() && entry.panel_frame.is_some() {
+            drop(guard);
+            return show_native_glass_view(window, false);
+        }
+        entry.panel_radius = radius;
+        entry.panel_frame = frame;
+    }
+    refresh_desktop_glass(window, false)?;
+    show_native_glass_view(window, true)
+}
+
+/// A frame in AppKit's coordinates for a content view of `content_height`.
+#[cfg(any(target_os = "macos", test))]
+fn desktop_glass_view_rect(frame: DesktopGlassPanelFrame, content_height: f64, flipped: bool) -> (f64, f64, f64, f64) {
+    let y = if flipped { frame.y } else { content_height - frame.y - frame.height };
+    (frame.x, y, frame.width, frame.height)
 }
 
 #[cfg(target_os = "macos")]
@@ -534,8 +639,12 @@ pub async fn desktop_apply_glass_material(
 /// Clears a panel's material while its card moves; resting shapes arrive with the frame that fits them.
 #[cfg(desktop)]
 #[tauri::command]
-pub fn desktop_set_glass_panel_shape(window: WebviewWindow, radius: Option<f64>) -> Result<(), String> {
-    set_desktop_glass_panel_shape(&window, radius)
+pub fn desktop_set_glass_panel_shape(
+    window: WebviewWindow,
+    radius: Option<f64>,
+    frame: Option<DesktopGlassPanelFrame>,
+) -> Result<(), String> {
+    set_desktop_glass_panel_placement(&window, radius, frame)
 }
 
 #[cfg(desktop)]
@@ -569,6 +678,7 @@ pub async fn desktop_open_reduce_transparency_settings(
 pub enum DesktopWindowChromeStrategy {
     None,
     NativeMacosTrafficLights,
+    NativeWindowsFrame,
     CustomControls,
 }
 
@@ -595,6 +705,10 @@ struct DesktopWindowChromeRuntimePolicy {
 #[serde(rename_all = "camelCase")]
 pub struct DesktopWindowChromePolicyPayload {
     pub strategy: DesktopWindowChromeStrategy,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub can_set_native_title_bar: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub native_title_bar_persistence_error: bool,
 }
 
 #[cfg(desktop)]
@@ -609,6 +723,7 @@ pub struct DesktopWindowStatePayload {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DesktopWindowCloseStrategy {
     Hide,
+    Return,
     Close,
 }
 
@@ -651,16 +766,8 @@ fn resolve_current_desktop_window_platform() -> DesktopWindowPlatform {
 fn resolve_desktop_window_chrome_runtime_policy(
     window_label: &str,
     platform: DesktopWindowPlatform,
+    use_native_title_bar: bool,
 ) -> DesktopWindowChromeRuntimePolicy {
-    if window_label != MAIN_WINDOW_LABEL {
-        return DesktopWindowChromeRuntimePolicy {
-            strategy: DesktopWindowChromeStrategy::None,
-            use_window_decorations: true,
-            title_bar_style: None,
-            hide_native_title: false,
-        };
-    }
-
     if crate::desktop_window::is_capture_window(window_label) || crate::desktop_window::is_app_window(window_label) {
         return DesktopWindowChromeRuntimePolicy {
             strategy: DesktopWindowChromeStrategy::CustomControls,
@@ -679,6 +786,14 @@ fn resolve_desktop_window_chrome_runtime_policy(
     }
 
     match platform {
+        DesktopWindowPlatform::Windows if use_native_title_bar => {
+            DesktopWindowChromeRuntimePolicy {
+                strategy: DesktopWindowChromeStrategy::NativeWindowsFrame,
+                use_window_decorations: true,
+                title_bar_style: None,
+                hide_native_title: false,
+            }
+        }
         DesktopWindowPlatform::MacOs => DesktopWindowChromeRuntimePolicy {
             strategy: DesktopWindowChromeStrategy::NativeMacosTrafficLights,
             use_window_decorations: true,
@@ -715,8 +830,16 @@ fn resolve_desktop_window_close_strategy(window_label: &str) -> DesktopWindowClo
     if window_label == MAIN_WINDOW_LABEL {
         return DesktopWindowCloseStrategy::Hide;
     }
+    if crate::desktop_window::is_app_window(window_label) {
+        return DesktopWindowCloseStrategy::Return;
+    }
 
     DesktopWindowCloseStrategy::Close
+}
+
+#[cfg(desktop)]
+fn chrome_policy_label(label: &str, full_chrome: bool) -> &str {
+    if full_chrome { MAIN_WINDOW_LABEL } else { label }
 }
 
 #[cfg(desktop)]
@@ -740,7 +863,45 @@ fn build_desktop_window_chrome_policy_payload(
 ) -> DesktopWindowChromePolicyPayload {
     DesktopWindowChromePolicyPayload {
         strategy: policy.strategy,
+        can_set_native_title_bar: false,
+        native_title_bar_persistence_error: false,
     }
+}
+
+#[cfg(desktop)]
+fn resolve_window_chrome_policy<R: Runtime>(
+    app: &tauri::AppHandle<R>,
+    label: &str,
+) -> DesktopWindowChromeRuntimePolicy {
+    let state = app.state::<DesktopWindowChromeState>();
+    let preferences = state
+        .0
+        .lock()
+        .expect("window chrome preference lock poisoned");
+    resolve_desktop_window_chrome_runtime_policy(
+        chrome_policy_label(label, crate::app_window::uses_full_chrome(app, label)),
+        resolve_current_desktop_window_platform(),
+        preferences.use_native_title_bar,
+    )
+}
+
+#[cfg(desktop)]
+fn window_chrome_policy_payload(
+    label: &str,
+    preferences: &preferences::WindowChromePreferences,
+) -> DesktopWindowChromePolicyPayload {
+    let platform = resolve_current_desktop_window_platform();
+    let mut payload =
+        build_desktop_window_chrome_policy_payload(resolve_desktop_window_chrome_runtime_policy(
+            label,
+            platform,
+            preferences.use_native_title_bar,
+        ));
+    payload.can_set_native_title_bar =
+        label == MAIN_WINDOW_LABEL && platform == DesktopWindowPlatform::Windows;
+    payload.native_title_bar_persistence_error =
+        payload.can_set_native_title_bar && preferences.persistence_error;
+    payload
 }
 
 #[cfg(desktop)]
@@ -774,10 +935,7 @@ fn resolve_desktop_window_state_payload_for_policy(
 fn resolve_desktop_window_state_payload_for_window<R: Runtime>(
     window: &Window<R>,
 ) -> DesktopWindowStatePayload {
-    let policy = resolve_desktop_window_chrome_runtime_policy(
-        window.label(),
-        resolve_current_desktop_window_platform(),
-    );
+    let policy = resolve_window_chrome_policy(window.app_handle(), window.label());
     resolve_desktop_window_state_payload_for_policy(
         policy,
         window.is_maximized().unwrap_or(false),
@@ -810,10 +968,7 @@ fn apply_desktop_window_chrome_runtime_policy<R: Runtime>(
 
 #[cfg(desktop)]
 fn emit_desktop_window_state<R: Runtime>(window: &WebviewWindow<R>) {
-    let policy = resolve_desktop_window_chrome_runtime_policy(
-        window.label(),
-        resolve_current_desktop_window_platform(),
-    );
+    let policy = resolve_window_chrome_policy(window.app_handle(), window.label());
     if !desktop_window_chrome_policy_supports_controls(policy) {
         return;
     }
@@ -845,6 +1000,9 @@ pub(crate) fn show_main_window(app: &tauri::AppHandle) -> tauri::Result<()> {
             window
         }
     };
+    if !app.state::<MainWindowPresentationState>().0.lock().unwrap().request_show() {
+        return Ok(());
+    }
     window.unminimize()?;
     window.show()?;
     window.set_focus()?;
@@ -865,10 +1023,8 @@ pub(crate) fn request_show_main_window(app: &tauri::AppHandle) {
 
 #[cfg(desktop)]
 fn show_existing_main_window(app: &tauri::AppHandle) -> tauri::Result<()> {
-    if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
-        window.unminimize()?;
-        window.show()?;
-        window.set_focus()?;
+    if app.get_webview_window(MAIN_WINDOW_LABEL).is_some() {
+        show_main_window(app)?;
     }
     Ok(())
 }
@@ -897,6 +1053,14 @@ pub(crate) fn create_main_window(
     app: &tauri::AppHandle,
     initial_visibility: crate::window_sizing::InitialWindowVisibility,
 ) -> tauri::Result<WebviewWindow> {
+    {
+        let state = app.state::<MainWindowPresentationState>();
+        let mut presentation = state.0.lock().unwrap();
+        *presentation = presentation::MainWindowPresentation::default();
+        if initial_visibility == crate::window_sizing::InitialWindowVisibility::Visible {
+            presentation.request_show();
+        }
+    }
     let mut config = app
         .config()
         .app
@@ -907,12 +1071,38 @@ pub(crate) fn create_main_window(
         .ok_or_else(|| tauri::Error::WindowNotFound)?;
     // The renderer starts solid and clears selected paint roles only after native success.
     config.transparent = cfg!(any(target_os = "macos", target_os = "windows"));
+    let policy = resolve_window_chrome_policy(app, MAIN_WINDOW_LABEL);
     let window = tauri::WebviewWindowBuilder::from_config(app, &config)?
         .visible(false)
+        .decorations(policy.use_window_decorations)
+        .on_page_load(|window, payload| {
+            if payload.event() == tauri::webview::PageLoadEvent::Started {
+                window.app_handle().state::<MainWindowPresentationState>().0.lock().unwrap()
+                    .loading(window.is_visible().unwrap_or(false));
+                if let Err(error) = window.hide() {
+                    log::warn!("failed to hide loading main window: {error}");
+                }
+            }
+        })
         .build()?;
     configure_main_window(app, &window);
-    crate::window_sizing::configure_main_window(app, &window, initial_visibility)?;
+    crate::window_sizing::configure_main_window(app, &window, crate::window_sizing::InitialWindowVisibility::Hidden)?;
     Ok(window)
+}
+
+/// The main shell (or its recovery screen) acknowledges its first nonempty committed layout.
+#[cfg(desktop)]
+#[tauri::command]
+pub async fn desktop_main_window_content_rendered(window: Window) -> Result<bool, String> {
+    if window.label() != MAIN_WINDOW_LABEL {
+        return Err("main window content acknowledgement requires the main caller".into());
+    }
+    let reveal = window.state::<MainWindowPresentationState>().0.lock()
+        .map_err(|error| error.to_string())?.content_rendered();
+    if reveal {
+        show_main_window(window.app_handle()).map_err(|error| error.to_string())?;
+    }
+    Ok(reveal)
 }
 
 #[cfg(desktop)]
@@ -920,12 +1110,9 @@ pub(crate) fn create_main_window(
 pub async fn desktop_get_window_chrome_policy(
     window: Window,
 ) -> Result<DesktopWindowChromePolicyPayload, String> {
-    Ok(build_desktop_window_chrome_policy_payload(
-        resolve_desktop_window_chrome_runtime_policy(
-            window.label(),
-            resolve_current_desktop_window_platform(),
-        ),
-    ))
+    let state = window.state::<DesktopWindowChromeState>();
+    let preferences = state.0.lock().map_err(|error| error.to_string())?;
+    Ok(window_chrome_policy_payload(chrome_policy_label(window.label(), crate::app_window::uses_full_chrome(window.app_handle(), window.label())), &preferences))
 }
 
 #[cfg(desktop)]
@@ -943,10 +1130,7 @@ pub async fn desktop_set_window_title(window: Window, title: String) -> Result<(
 #[cfg(desktop)]
 #[tauri::command]
 pub async fn desktop_minimize_window(window: Window) -> Result<bool, String> {
-    let policy = resolve_desktop_window_chrome_runtime_policy(
-        window.label(),
-        resolve_current_desktop_window_platform(),
-    );
+    let policy = resolve_window_chrome_policy(window.app_handle(), window.label());
     if !desktop_window_chrome_policy_supports_controls(policy) {
         return Ok(false);
     }
@@ -962,10 +1146,7 @@ pub async fn desktop_minimize_window(window: Window) -> Result<bool, String> {
 #[cfg(desktop)]
 #[tauri::command]
 pub async fn desktop_toggle_window_maximize(window: Window) -> Result<bool, String> {
-    let policy = resolve_desktop_window_chrome_runtime_policy(
-        window.label(),
-        resolve_current_desktop_window_platform(),
-    );
+    let policy = resolve_window_chrome_policy(window.app_handle(), window.label());
     if !desktop_window_chrome_policy_supports_controls(policy) {
         return Ok(false);
     }
@@ -989,10 +1170,7 @@ pub async fn desktop_toggle_window_maximize(window: Window) -> Result<bool, Stri
 #[cfg(desktop)]
 #[tauri::command]
 pub async fn desktop_close_window(window: Window) -> Result<bool, String> {
-    let policy = resolve_desktop_window_chrome_runtime_policy(
-        window.label(),
-        resolve_current_desktop_window_platform(),
-    );
+    let policy = resolve_window_chrome_policy(window.app_handle(), window.label());
     if !desktop_window_chrome_policy_supports_controls(policy) {
         return Ok(false);
     }
@@ -1003,6 +1181,9 @@ pub async fn desktop_close_window(window: Window) -> Result<bool, String> {
         }
         DesktopWindowCloseStrategy::Close => {
             window.close().map_err(|error| error.to_string())?;
+        }
+        DesktopWindowCloseStrategy::Return => {
+            crate::app_window::request_return(window.app_handle(), window.label())?;
         }
     }
     Ok(true)
@@ -1039,6 +1220,19 @@ pub async fn desktop_start_window_dragging(window: Window) -> Result<bool, Strin
 /// which has no window until the tray's Open asks for one.
 #[cfg(desktop)]
 pub fn register(app: &mut App) -> tauri::Result<()> {
+    let preferences = if resolve_current_desktop_window_platform() == DesktopWindowPlatform::Windows
+    {
+        preferences::WindowChromePreferences::load(
+            app.path()
+                .app_config_dir()
+                .ok()
+                .map(|directory| directory.join("window-state/main-window-chrome.json")),
+        )
+    } else {
+        preferences::WindowChromePreferences::default()
+    };
+    app.manage(DesktopWindowChromeState(std::sync::Mutex::new(preferences)));
+    app.manage(MainWindowPresentationState::default());
     app.manage(DesktopGlassRuntime(Mutex::new(DesktopGlassRuntimeInner {
         request: DesktopGlassMaterialRequest {
             enabled: false,
@@ -1068,6 +1262,12 @@ fn configure_main_window(app: &tauri::AppHandle, window: &WebviewWindow) {
     request_refresh_desktop_glass(app);
     let glass_handle = app.clone();
     window.on_window_event(move |event| {
+        if let WindowEvent::Focused(focused) = event {
+            crate::app_window::note_window_focus(&glass_handle, MAIN_WINDOW_LABEL, *focused);
+        }
+        if matches!(event, WindowEvent::Destroyed) {
+            crate::app_window::retire_live_window(&glass_handle, MAIN_WINDOW_LABEL);
+        }
         if matches!(
             event,
             WindowEvent::Focused(_) | WindowEvent::ThemeChanged(_)
@@ -1075,10 +1275,7 @@ fn configure_main_window(app: &tauri::AppHandle, window: &WebviewWindow) {
             request_refresh_desktop_glass(&glass_handle);
         }
     });
-    let policy = resolve_desktop_window_chrome_runtime_policy(
-        window.label(),
-        resolve_current_desktop_window_platform(),
-    );
+    let policy = resolve_window_chrome_policy(window.app_handle(), window.label());
 
     if let Err(error) = apply_desktop_window_chrome_runtime_policy(window, policy) {
         log::warn!("failed to apply main-window chrome policy: {error}");
@@ -1115,6 +1312,36 @@ fn configure_main_window(app: &tauri::AppHandle, window: &WebviewWindow) {
     crate::tray::follow_tray_theme_from_window(app, window);
     #[cfg(not(target_os = "windows"))]
     let _ = app;
+}
+
+/// App-window controls share the existing chrome policy and close owner.
+#[cfg(desktop)]
+pub(crate) fn configure_app_window(window: &WebviewWindow) {
+    let policy = resolve_window_chrome_policy(window.app_handle(), window.label());
+    if let Err(error) = apply_desktop_window_chrome_runtime_policy(window, policy) {
+        log::warn!("failed to apply app-window chrome policy: {error}");
+    }
+    let retained = window.clone();
+    window.on_window_event(move |event| {
+        match event {
+            WindowEvent::Destroyed => {
+                if let Ok(mut inner) = retained.app_handle().state::<DesktopGlassRuntime>().0.lock() {
+                    inner.windows.remove(retained.label());
+                }
+            }
+            WindowEvent::Focused(_) | WindowEvent::ThemeChanged(_) => request_refresh_desktop_glass(retained.app_handle()),
+            WindowEvent::CloseRequested { api, .. } => {
+                if matches!(resolve_desktop_window_close_strategy(retained.label()), DesktopWindowCloseStrategy::Return) {
+                    api.prevent_close();
+                    if let Err(error) = crate::app_window::request_return(retained.app_handle(), retained.label()) {
+                        log::warn!("failed to return the app window: {error}");
+                    }
+                }
+            }
+            WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => emit_desktop_window_state(&retained),
+            _ => {}
+        }
+    });
 }
 
 #[cfg(test)]
@@ -1157,6 +1384,15 @@ mod tests {
     }
 
     #[test]
+    fn glass_frame_converts_to_appkit_coordinates_from_the_window_top_left() {
+        let frame = DesktopGlassPanelFrame { x: -18., y: 8., width: 482., height: 300. };
+        assert_eq!(desktop_glass_view_rect(frame, 316., false), (-18., 8., 482., 300.));
+        assert_eq!(desktop_glass_view_rect(DesktopGlassPanelFrame { x: 8., y: -18., width: 464., height: 318. }, 300., false),
+            (8., 0., 464., 318.));
+        assert_eq!(desktop_glass_view_rect(frame, 316., true), (-18., 8., 482., 300.));
+    }
+
+    #[test]
     fn capture_panel_follows_main_glass_on_its_own_event_with_projected_settings() {
         assert!(is_glass_panel_window(crate::desktop_window::CAPTURE_WINDOW_LABEL));
         assert!(is_glass_panel_window("capture_42"));
@@ -1164,6 +1400,8 @@ mod tests {
         assert!(!is_glass_panel_window("capture_selection_1"));
         assert_eq!(desktop_glass_state_event(MAIN_WINDOW_LABEL), "desktopGlass://state");
         assert_eq!(desktop_glass_state_event("capture"), "desktopGlass://state/capture");
+        assert!(is_glass_panel_window(crate::desktop_window::ACTIVITY_WINDOW_LABEL));
+        assert_eq!(desktop_glass_state_event("activity_overlay"), "desktopGlass://state/activity_overlay");
         let view = DesktopGlassStateView {
             state: DesktopGlassStatePayload { supported: true, material_live: true, window_active: true, ..Default::default() },
             settings: Some(serde_json::json!({ "glassBlurEnabled": true })),
@@ -1195,10 +1433,29 @@ mod tests {
     }
 
     #[test]
+    fn windows_native_title_bar_restores_decorations_without_disabling_actions() {
+        let policy = resolve_desktop_window_chrome_runtime_policy(
+            MAIN_WINDOW_LABEL,
+            DesktopWindowPlatform::Windows,
+            true,
+        );
+        assert!(policy.use_window_decorations);
+        assert!(desktop_window_chrome_policy_supports_controls(policy));
+        assert!(!desktop_window_chrome_policy_tracks_maximized_state(policy));
+        for platform in [DesktopWindowPlatform::MacOs, DesktopWindowPlatform::Linux] {
+            assert_eq!(
+                resolve_desktop_window_chrome_runtime_policy(MAIN_WINDOW_LABEL, platform, true),
+                resolve_desktop_window_chrome_runtime_policy(MAIN_WINDOW_LABEL, platform, false),
+            );
+        }
+    }
+
+    #[test]
     fn main_window_prefers_native_traffic_lights_on_macos() {
         let policy = resolve_desktop_window_chrome_runtime_policy(
             MAIN_WINDOW_LABEL,
             DesktopWindowPlatform::MacOs,
+            false,
         );
 
         assert_eq!(
@@ -1215,6 +1472,7 @@ mod tests {
         let policy = resolve_desktop_window_chrome_runtime_policy(
             MAIN_WINDOW_LABEL,
             DesktopWindowPlatform::Windows,
+            false,
         );
 
         assert_eq!(policy.strategy, DesktopWindowChromeStrategy::CustomControls);
@@ -1228,6 +1486,7 @@ mod tests {
         let policy = resolve_desktop_window_chrome_runtime_policy(
             "pet_overlay",
             DesktopWindowPlatform::MacOs,
+            false,
         );
 
         assert_eq!(policy.strategy, DesktopWindowChromeStrategy::None);
@@ -1237,11 +1496,42 @@ mod tests {
     }
 
     #[test]
+    fn capture_always_reports_its_borderless_custom_chrome_independent_of_main_preferences() {
+        for platform in [DesktopWindowPlatform::MacOs, DesktopWindowPlatform::Windows, DesktopWindowPlatform::Linux] {
+            for native_preference in [true, false] {
+                let policy = resolve_desktop_window_chrome_runtime_policy(
+                    crate::desktop_window::CAPTURE_WINDOW_LABEL, platform, native_preference);
+                assert_eq!(resolve_desktop_window_chrome_runtime_policy("capture_42", platform, native_preference), policy);
+                assert_eq!(policy.strategy, DesktopWindowChromeStrategy::CustomControls);
+                assert!(!policy.use_window_decorations);
+                assert_eq!(policy.title_bar_style, None);
+                assert!(!policy.hide_native_title);
+            }
+        }
+    }
+
+    #[test]
     fn main_window_hides_instead_of_closing() {
         assert_eq!(
             resolve_desktop_window_close_strategy(MAIN_WINDOW_LABEL),
             DesktopWindowCloseStrategy::Hide
         );
+    }
+
+    #[test]
+    fn full_extras_share_main_platform_chrome_but_keep_guarded_close() {
+        for platform in [DesktopWindowPlatform::MacOs, DesktopWindowPlatform::Windows, DesktopWindowPlatform::Linux] {
+            for preference in [true, false] {
+                let full = resolve_desktop_window_chrome_runtime_policy(chrome_policy_label("destination_full", true), platform, preference);
+                assert_eq!(full, resolve_desktop_window_chrome_runtime_policy(MAIN_WINDOW_LABEL, platform, preference));
+                let destination = resolve_desktop_window_chrome_runtime_policy(chrome_policy_label("destination_detached", false), platform, preference);
+                assert_eq!(destination.strategy, DesktopWindowChromeStrategy::CustomControls);
+                assert!(!destination.use_window_decorations);
+            }
+        }
+        assert_eq!(resolve_desktop_window_close_strategy("destination_full"), DesktopWindowCloseStrategy::Return);
+        assert_eq!(resolve_desktop_window_close_strategy("destination_detached"), DesktopWindowCloseStrategy::Return);
+        assert_eq!(resolve_desktop_window_close_strategy(MAIN_WINDOW_LABEL), DesktopWindowCloseStrategy::Hide);
     }
 
     #[test]
@@ -1299,6 +1589,7 @@ mod tests {
             resolve_desktop_window_chrome_runtime_policy(
                 MAIN_WINDOW_LABEL,
                 DesktopWindowPlatform::Windows,
+                false,
             ),
         );
 
@@ -1327,6 +1618,7 @@ mod tests {
         let policy = resolve_desktop_window_chrome_runtime_policy(
             "pet_overlay",
             DesktopWindowPlatform::Windows,
+            false,
         );
 
         assert!(!desktop_window_chrome_policy_supports_controls(policy));
@@ -1338,6 +1630,7 @@ mod tests {
             resolve_desktop_window_chrome_runtime_policy(
                 MAIN_WINDOW_LABEL,
                 DesktopWindowPlatform::MacOs,
+                false,
             ),
             true,
             true,
@@ -1352,6 +1645,7 @@ mod tests {
             resolve_desktop_window_chrome_runtime_policy(
                 MAIN_WINDOW_LABEL,
                 DesktopWindowPlatform::Windows,
+                false,
             ),
             true,
             false,
@@ -1365,6 +1659,7 @@ mod tests {
         let policy = resolve_desktop_window_chrome_runtime_policy(
             MAIN_WINDOW_LABEL,
             DesktopWindowPlatform::MacOs,
+            false,
         );
 
         assert!(!desktop_window_chrome_policy_tracks_maximized_state(policy));
@@ -1375,6 +1670,7 @@ mod tests {
         let policy = resolve_desktop_window_chrome_runtime_policy(
             MAIN_WINDOW_LABEL,
             DesktopWindowPlatform::Windows,
+            false,
         );
 
         assert!(desktop_window_chrome_policy_tracks_maximized_state(policy));

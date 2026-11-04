@@ -33,7 +33,6 @@ const MIN_WINDOW_HEIGHT_PX: f64 = 520.0;
 #[cfg(desktop)]
 const WRITE_DEBOUNCE: Duration = Duration::from_millis(400);
 
-
 #[cfg(desktop)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum InitialWindowVisibility {
@@ -47,6 +46,7 @@ fn present_initial_main_window(visibility: InitialWindowVisibility, show: impl F
         show();
     }
 }
+
 #[cfg(desktop)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Rect {
@@ -68,8 +68,9 @@ struct PersistedWindowState {
     maximized: bool,
     #[serde(default)]
     units: PersistedWindowUnits,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    monitor_name: Option<String>,
 }
-
 
 /// Logical outer geometry shared by Capture and app-window placement.
 #[cfg(desktop)]
@@ -110,6 +111,88 @@ pub(crate) fn note_presented_work_window(window: &tauri::WebviewWindow) {
         *previous = Some(window.label().into());
     }
 }
+
+#[cfg(desktop)]
+pub(crate) fn app_window_saved_frame(app: &AppHandle, label: &str) -> Option<WindowFrame> {
+    let path = app.path().resolve(format!("window-state/{label}.json"), BaseDirectory::AppConfig).ok()?;
+    let saved = read_json(&path)?;
+    Some(WindowFrame { x: saved.x, y: saved.y, width: saved.width, height: saved.height })
+}
+
+#[cfg(desktop)]
+pub(crate) fn app_window_work_area(window: &tauri::WebviewWindow) -> Result<Option<WindowFrame>, String> {
+    let saved_monitor = window.app_handle().path().resolve(format!("window-state/{}.json", window.label()), BaseDirectory::AppConfig)
+        .ok().and_then(|path| read_json(&path)).and_then(|saved| saved.monitor_name);
+    let monitor = saved_monitor.and_then(|name| window.available_monitors().ok()?
+        .into_iter().find(|monitor| monitor.name().is_some_and(|candidate| candidate == &name)))
+        .or(window.current_monitor().map_err(|error| error.to_string())?)
+        .or_else(|| window.primary_monitor().ok().flatten());
+    Ok(monitor.map(|monitor| {
+        let scale = monitor.scale_factor();
+        let area = monitor.work_area();
+        WindowFrame { x: area.position.x as f64 / scale, y: area.position.y as f64 / scale,
+            width: area.size.width as f64 / scale, height: area.size.height as f64 / scale }
+    }))
+}
+
+#[cfg(desktop)]
+pub(crate) fn recover_app_window_frame(window: &tauri::WebviewWindow) -> Result<(), String> {
+    let Some(area) = app_window_work_area(window)? else { return Ok(()); };
+    let frame = window_frame(window)?;
+    // App windows have no content-size cap. Only the actual monitor work area constrains recovery.
+    let width = frame.width.min(area.width).max(1.);
+    let height = frame.height.min(area.height).max(1.);
+    let x = frame.x.clamp(area.x, area.x + (area.width - width).max(0.));
+    let y = frame.y.clamp(area.y, area.y + (area.height - height).max(0.));
+    if width != frame.width || height != frame.height {
+        window.set_size(LogicalSize::new(width, height)).map_err(|error| error.to_string())?;
+    }
+    if x != frame.x || y != frame.y {
+        window.set_position(LogicalPosition::new(x, y)).map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+#[cfg(desktop)]
+pub(crate) fn configure_app_window(window: &tauri::WebviewWindow, initial: Option<WindowFrame>) -> Result<(), String> {
+    let app = window.app_handle();
+    if let Some(frame) = app_window_saved_frame(app, window.label()).or(initial) {
+        window.set_size(LogicalSize::new(frame.width, frame.height)).map_err(|error| error.to_string())?;
+        window.set_position(LogicalPosition::new(frame.x, frame.y)).map_err(|error| error.to_string())?;
+    }
+    recover_app_window_frame(window)?;
+    let path = app.path().resolve(format!("window-state/{}.json", window.label()), BaseDirectory::AppConfig)
+        .map_err(|error| error.to_string())?;
+    if read_json(&path).is_some_and(|saved| saved.maximized) {
+        window.maximize().map_err(|error| error.to_string())?;
+    }
+    let last_write = Arc::new(Mutex::new(Instant::now() - WRITE_DEBOUNCE));
+    let retained = window.clone();
+    window.on_window_event(move |event| {
+        if !matches!(event, WindowEvent::Moved(_) | WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } | WindowEvent::CloseRequested { .. }) { return; }
+        let Ok(mut last_write) = last_write.lock() else { return; };
+        if last_write.elapsed() < WRITE_DEBOUNCE && !matches!(event, WindowEvent::CloseRequested { .. }) { return; }
+        *last_write = Instant::now();
+        persist_app_window_frame(&retained);
+    });
+    Ok(())
+}
+
+#[cfg(desktop)]
+pub(crate) fn persist_app_window_frame(window: &tauri::WebviewWindow) {
+    let Ok(path) = window.app_handle().path().resolve(format!("window-state/{}.json", window.label()), BaseDirectory::AppConfig) else { return; };
+    let Ok(frame) = window_frame(window) else { return; };
+    let saved_name = read_json(&path).and_then(|saved| saved.monitor_name);
+    // A disconnected monitor keeps its identity until it returns; recovery changes only geometry.
+    let monitor_name = match saved_name {
+        Some(name) if !window.available_monitors().unwrap_or_default().iter()
+            .any(|monitor| monitor.name().is_some_and(|candidate| candidate == &name)) => Some(name),
+        _ => window.current_monitor().ok().flatten().and_then(|monitor| monitor.name().cloned()),
+    };
+    write_json(&path, &PersistedWindowState { x: frame.x, y: frame.y, width: frame.width, height: frame.height,
+        maximized: window.is_maximized().unwrap_or(false), units: PersistedWindowUnits::Logical, monitor_name });
+}
+
 #[cfg(desktop)]
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -365,6 +448,7 @@ fn apply_main_window_rect<R: Runtime>(
             height: rect.height,
             maximized: state.maximized,
             units: PersistedWindowUnits::Logical,
+            monitor_name: state.monitor_name.clone(),
         }
     });
 
@@ -478,6 +562,7 @@ pub(crate) fn configure_main_window(
                 height: logical.height,
                 maximized,
                 units: PersistedWindowUnits::Logical,
+                monitor_name: window_for_events.current_monitor().ok().flatten().and_then(|monitor| monitor.name().cloned()),
             },
         );
     });
@@ -543,7 +628,7 @@ mod tests {
     use serde_json::json;
 
     #[test]
-        fn hidden_main_window_configuration_never_presents_the_native_window() {
+    fn hidden_main_window_configuration_never_presents_the_native_window() {
         let mut presentations = 0;
         // Only the native show operation is substituted at the OS boundary.
         present_initial_main_window(InitialWindowVisibility::Hidden, || presentations += 1);
@@ -705,6 +790,7 @@ mod tests {
             height: 4000.0,
             maximized: false,
             units: PersistedWindowUnits::Logical,
+            monitor_name: None,
         };
         let rect = resolve_launch_window_rect(monitor, Some(&persisted));
         assert!(rect.width <= monitor.width);

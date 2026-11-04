@@ -107,6 +107,14 @@ fn registered_notch_commands_are_granted_to_their_native_caller_windows() {
 }
 
 #[test]
+fn the_notch_reads_and_places_its_glass() {
+    let overlay = include_str!("../capabilities/overlay.json");
+    for permission in ["allow-desktop-get-glass-state", "allow-desktop-set-glass-panel-shape"] {
+        assert!(overlay.contains(permission), "the notch panel lacks {permission}");
+    }
+}
+
+#[test]
 fn registered_overlay_and_window_commands_have_an_effective_capability() {
     let capabilities = [
         include_str!("../capabilities/default.json"),

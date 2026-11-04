@@ -15,7 +15,7 @@
 //! path. Ordinary person Quit awaits the writer and existing shutdown handoff before AppKit replies.
 
 #[cfg(desktop)]
-use tauri::{menu::MenuEvent, AppHandle};
+use tauri::{menu::MenuEvent, AppHandle, Emitter, Manager};
 
 #[cfg(target_os = "macos")]
 use tauri::{
@@ -40,6 +40,8 @@ pub const OPEN_UPDATES_REQUESTED_EVENT: &str = "desktop_open_updates_requested";
 /// Tells the main webview to navigate to Settings.
 #[cfg(desktop)]
 pub const OPEN_SETTINGS_REQUESTED_EVENT: &str = "desktop_open_settings_requested";
+#[cfg(desktop)]
+pub const NEW_WINDOW_REQUESTED_EVENT: &str = "desktop_new_window_requested";
 
 #[cfg(desktop)]
 pub fn handle_menu_event(app: &AppHandle, event: MenuEvent) {
@@ -49,6 +51,20 @@ pub fn handle_menu_event(app: &AppHandle, event: MenuEvent) {
     match action {
         DesktopMenuAction::ShowMainWindow => {
             crate::window_chrome::request_show_main_window(app);
+        }
+        DesktopMenuAction::NewWindow => {
+            let target = app.webview_windows().into_iter().find(|(label, window)| {
+                window.is_focused().unwrap_or(false)
+                    && (label == crate::desktop_window::MAIN_WINDOW_LABEL
+                        || crate::app_window::uses_full_chrome(app, label))
+            }).map(|(label, _)| label);
+            let label = target.unwrap_or_else(|| {
+                crate::window_chrome::request_show_main_window(app);
+                crate::desktop_window::MAIN_WINDOW_LABEL.to_string()
+            });
+            if let Err(error) = app.emit_to(label, NEW_WINDOW_REQUESTED_EVENT, ()) {
+                log::warn!("failed to deliver New Window menu intent: {error}");
+            }
         }
         DesktopMenuAction::OpenUpdates => crate::menu_bar::open_main_window_at(
             app,
@@ -119,7 +135,12 @@ pub fn build_app_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> 
         app,
         "File",
         true,
-        &[&PredefinedMenuItem::close_window(app, None)?],
+        &[
+            &MenuItemBuilder::with_id(ids::NEW_WINDOW_MENU_ID, "New Window")
+                .accelerator("CmdOrCtrl+Shift+N").build(app)?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::close_window(app, None)?,
+        ],
     )?;
 
     let edit_menu = Submenu::with_items(

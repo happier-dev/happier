@@ -6,6 +6,7 @@
 
 /// Reveals the main window (recreating it in menu-bar mode).
 pub const SHOW_MAIN_WINDOW_MENU_ID: &str = "show-main-window";
+pub const NEW_WINDOW_MENU_ID: &str = "new-window";
 /// Quits the app through `app.exit`, the only quit that reaches the shutdown handoff. With the
 /// login-start setting on it leaves the tray and the background services running (R16 a).
 pub const QUIT_APP_MENU_ID: &str = "quit-app";
@@ -64,6 +65,7 @@ pub fn service_menu_id(action: ServiceMenuAction, relay_url: &str) -> String {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DesktopMenuAction {
     ShowMainWindow,
+    NewWindow,
     OpenUpdates,
     OpenSettings,
     QuitApp,
@@ -85,6 +87,7 @@ pub enum DesktopMenuAction {
 pub fn resolve_desktop_menu_action(menu_item_id: &str) -> Option<DesktopMenuAction> {
     match menu_item_id {
         SHOW_MAIN_WINDOW_MENU_ID => Some(DesktopMenuAction::ShowMainWindow),
+        NEW_WINDOW_MENU_ID => Some(DesktopMenuAction::NewWindow),
         OPEN_UPDATES_MENU_ID => Some(DesktopMenuAction::OpenUpdates),
         OPEN_SETTINGS_MENU_ID => Some(DesktopMenuAction::OpenSettings),
         QUIT_APP_MENU_ID => Some(DesktopMenuAction::QuitApp),
@@ -135,6 +138,11 @@ mod tests {
             resolve_desktop_menu_action(SHOW_MAIN_WINDOW_MENU_ID),
             Some(DesktopMenuAction::ShowMainWindow)
         );
+    }
+
+    #[test]
+    fn new_window_is_an_owned_menu_intent() {
+        assert_eq!(resolve_desktop_menu_action("new-window"), Some(DesktopMenuAction::NewWindow));
     }
 
     #[test]

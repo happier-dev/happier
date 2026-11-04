@@ -51,6 +51,9 @@ mod desktop_window;
 mod capture_window;
 
 #[cfg(desktop)]
+mod app_window;
+
+#[cfg(desktop)]
 mod capture;
 
 #[cfg(desktop)]
@@ -144,6 +147,7 @@ pub fn run() {
             .manage(desktop_downloads::DesktopDownloadsState::default())
             .manage(capture::CaptureState::default())
             .manage(window_sizing::WindowSizingState::default())
+            .manage(app_window::AppWindowState::default())
             .manage(activity_overlay::ActivityOverlayState::default())
             .manage(pet_overlay::DesktopPetOverlayState::default())
             .manage(browser::DesktopBrowserState::default())
@@ -216,6 +220,8 @@ pub fn run() {
                 tauri::RunEvent::ExitRequested { api, code, .. } => {
                     if desktop_lifecycle::handle_exit_requested(app_handle, code) {
                         api.prevent_exit();
+                    } else {
+                        app_window::preserve_for_quit(app_handle);
                     }
                 }
                 tauri::RunEvent::WindowEvent { event: tauri::WindowEvent::Focused(true), .. } => {

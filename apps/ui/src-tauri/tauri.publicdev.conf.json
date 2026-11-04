@@ -23,6 +23,7 @@
       "capabilities": [
         "default",
         "overlay",
+        "notch-presentation",
         "pet_overlay",
         "mcp-dev"
       ]

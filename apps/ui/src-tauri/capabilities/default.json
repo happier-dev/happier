@@ -3,7 +3,8 @@
   "identifier": "default",
   "description": "enables the default permissions",
   "windows": [
-    "main"
+    "main",
+    "destination_*"
   ],
   "permissions": [
     "core:default",
@@ -99,6 +100,18 @@
     "allow-desktop-activity-overlay-get-window-state",
     "allow-desktop-window-emit-action-result",
     "allow-desktop-window-emit-action",
+    "allow-desktop-app-window-open",
+    "allow-desktop-app-window-ready",
+    "allow-desktop-app-window-read",
+    "allow-desktop-app-window-restore",
+    "allow-desktop-app-window-responders",
+    "allow-desktop-app-window-surface",
+    "allow-desktop-app-window-surfaces",
+    "allow-desktop-app-window-placement",
+    "allow-desktop-app-window-update",
+    "allow-desktop-app-window-close",
+    "allow-desktop-app-windows-teardown",
+    "allow-desktop-app-windows-auth-changed",
     "allow-desktop-capture-window-hide",
     "allow-iroh-ensure-home-tunnel",
     "allow-iroh-release-home-tunnel",
