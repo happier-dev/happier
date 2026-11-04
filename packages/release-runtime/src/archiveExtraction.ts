@@ -213,7 +213,8 @@ function createArchiveAbortContext(params: Readonly<{
         () => abort(new ArchiveExtractionTimeoutError()),
         params.timeoutMs,
       );
-  timeout?.unref?.();
+  // Node timers expose unref; DOM-lib consumers type setTimeout as a number.
+  if (typeof timeout === 'object' && timeout !== null && 'unref' in timeout) timeout.unref();
 
   return {
     abort,
