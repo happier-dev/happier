@@ -559,6 +559,7 @@ function SessionParticipantComposerContent(props: SessionParticipantComposerProp
     }, [composerRef, participantComposerDocumentOwner]);
 
     const composerTarget = useStableComposerPresentationTarget(composerRef, {
+        readPickedAttachments: () => transferDraftManager,
         readScope: () => composerAccountLifetime?.scope ?? null,
         readReferenceWorkspace: () => props.sessionId === null ? null : resolveWorkspaceTargetForSession(participantSessionAddress ?? props.sessionId),
         readRevision: () => participantComposerDocumentOwner.read().revision,

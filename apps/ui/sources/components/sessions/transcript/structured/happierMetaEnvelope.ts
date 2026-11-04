@@ -1,3 +1,4 @@
+import { parseSessionMediaMessageMeta, type ParsedSessionMediaMessageMeta } from '@/sync/domains/session/media/sessionMediaMessageMeta';
 import { HappierMetaEnvelopeSchema, type HappierMetaEnvelope } from '@happier-dev/protocol/messages/structured/HappierMetaEnvelope';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { AttachmentsMessageMetaV1Schema, type AttachmentsMessageMetaV1 } from '@/sync/domains/attachments/attachmentsMessageMeta';
@@ -10,6 +11,12 @@ export function readTranscriptAttachmentsMeta(meta: unknown): AttachmentsMessage
     if (envelope?.kind !== 'attachments.v1') return null;
     const parsed = AttachmentsMessageMetaV1Schema.safeParse(envelope.payload);
     return parsed.success && parsed.data.attachments.length > 0 ? parsed.data : null;
+}
+
+export function readTranscriptSessionMediaMeta(meta: unknown): ParsedSessionMediaMessageMeta | null {
+    const primary = parseHappierMetaEnvelope(meta);
+    const envelope = primary?.kind === 'session_media.v1' ? primary : parseHappierMetaEnvelope(meta, 'happierMedia');
+    return parseSessionMediaMessageMeta(envelope);
 }
 
 export function parseHappierMetaEnvelope(meta: unknown, key = 'happier'): HappierMetaEnvelope | null {

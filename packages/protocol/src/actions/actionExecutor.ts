@@ -5461,6 +5461,15 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             ...(ctx.signal ? { signal: ctx.signal } : {}) }));
         }
 
+        if (actionId === 'media.annotation.read' || actionId === 'media.annotation.apply') {
+          if (!deps.mediaAnnotation) return completeActionResult({ status: 'unavailable', reason: 'annotation.targetUnavailable' });
+          const request = actionId === 'media.annotation.read'
+            ? { actionId, input: parsed.data as AdmittedActionInputById['media.annotation.read'] }
+            : { actionId, input: parsed.data as AdmittedActionInputById['media.annotation.apply'] };
+          return completeActionResult(await deps.mediaAnnotation({ ...request, context: ctx,
+            ...(ctx.signal ? { signal: ctx.signal } : {}) }));
+        }
+
         if (isActionFamilyId(actionId, InternalTaskActionIdSchema)) {
           if (!deps.internalTaskAction) return { ok: true, result: { status: 'unavailable' } };
           return completeActionResult(await deps.internalTaskAction({ actionId, input: parsed.data, context: ctx,

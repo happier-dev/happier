@@ -169,6 +169,9 @@ export function useNewSessionAttachmentsController(params: Readonly<{
         return addWebFilesToDrafts([], { sources: admissions.flatMap(admission => admission.ok ? [admission.source] : []) });
     }, [addWebFilesToDrafts, params.isTemporaryComputer, attachmentDropHint]);
     const bindAttachmentPicker = params.composerDocument?.bindAttachmentPicker;
+    const bindPickedAttachments = params.composerDocument?.bindPickedAttachments;
+    const { replaceDrafts } = attachmentDraftManager;
+    React.useEffect(() => bindPickedAttachments?.({ getDraftsSnapshot, replaceDrafts }), [bindPickedAttachments, getDraftsSnapshot, replaceDrafts]);
     React.useEffect(() => bindAttachmentPicker?.(() => {
         if (!attachmentsUploadsEnabled || params.isCreating || !filePickerRef.current) return false;
         openAttachmentFilePickerFiles(filePickerRef.current);

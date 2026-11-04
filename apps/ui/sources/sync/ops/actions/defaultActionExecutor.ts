@@ -2028,6 +2028,10 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       }
     },
     composerIngress: executeComposerIngressAction,
+    mediaAnnotation: async (args) => {
+      const { executeMediaAnnotationAction } = await import('./mediaAnnotationActionRuntime');
+      return executeMediaAnnotationAction(args);
+    },
     listReorder: executeListReorderAction,
     todoSessionLink: executeTodoSessionLinkAction,
     internalTaskAction: executeInternalTaskHostAction,

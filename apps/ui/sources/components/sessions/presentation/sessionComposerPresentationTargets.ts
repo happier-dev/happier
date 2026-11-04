@@ -173,7 +173,14 @@ export type ComposerPresentationAttachmentComposition = Readonly<{
  * replace pair stays until the daemon presentation command migrates through
  * the same transaction grammar.
  */
+export type ComposerPickedAttachmentsPort = Readonly<{
+    getDraftsSnapshot: () => readonly AttachmentDraft[];
+    replaceDrafts: (drafts: readonly AttachmentDraft[]) => void;
+}>;
+
 export type ComposerPresentationTarget = Readonly<{
+    /** Picked-file occurrences remain with the incumbent transfer draft manager. */
+    readPickedAttachments?: () => ComposerPickedAttachmentsPort | null;
     readRevision: () => number;
     replace: (text: string, expectedRevision: number) => number;
     /**
@@ -289,6 +296,7 @@ export function useStableComposerPresentationTarget(
                     isCurrent: () => readCurrent().isCurrent?.() ?? true,
                 } : {}),
                 ...(target.readScope ? { readScope: () => readCurrent().readScope?.() ?? null } : {}),
+                ...(target.readPickedAttachments ? { readPickedAttachments: () => readCurrent().readPickedAttachments?.() ?? null } : {}),
                 ...(target.readReferenceWorkspace ? { readReferenceWorkspace: () => readCurrent().readReferenceWorkspace?.() ?? null } : {}),
                 ...(target.isPresented ? {
                     isPresented: () => readCurrent().isPresented?.() ?? true,
@@ -1673,6 +1681,17 @@ export function readMountedComposerPresentationSnapshot(request: Readonly<{
     scope: ServerAccountScope;
 }>): ComposerSnapshotV1 | null {
     return readScopedMountedComposerTarget(request.ref, request.scope)?.readSnapshot?.() ?? null;
+}
+
+/** Annotation resolves through the same scoped mounted registration as composer transactions. */
+export function readMountedComposerPickedAttachments(request: Readonly<{
+    ref: ComposerRefV1;
+    scope: ServerAccountScope;
+    editable: boolean;
+}>): ComposerPickedAttachmentsPort | null {
+    const target = readScopedMountedComposerTarget(request.ref, request.scope);
+    if (!target || (request.editable && target.readSnapshot?.().state.editable !== true)) return null;
+    return target.readPickedAttachments?.() ?? null;
 }
 
 export function readMountedComposerAttachmentComposition(request: Readonly<{

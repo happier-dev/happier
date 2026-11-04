@@ -40,6 +40,7 @@ import {
     useStableComposerPresentationTarget,
     type ComposerPresentationDocumentMutation,
     type ComposerPresentationTarget,
+    type ComposerPickedAttachmentsPort,
 } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
 import { useComposerPresentationInputEffects } from '@/components/sessions/presentation/useComposerPresentationInputEffects';
 import {
@@ -112,6 +113,7 @@ export type NewSessionComposerDocument = Readonly<{
     onPromptPickerOpenRequestChange: (request: (() => boolean) | null) => void;
     /** The existing transfer controller binds its OS picker after this document owner mounts. */
     bindAttachmentPicker?: (request: () => boolean) => () => void;
+    bindPickedAttachments?: (port: ComposerPickedAttachmentsPort) => () => void;
     onComposerInputFlushRequestChange: (request: (() => void) | null) => void;
     flushComposerInput: () => void;
     onComposerActionBarLayoutChange: (layout: ComposerSnapshotV1['layout']) => void;
@@ -234,6 +236,11 @@ export function useNewSessionComposerDocument(params: Readonly<{
     const composerFocusRequestRef = React.useRef<(() => void) | null>(null);
     const promptPickerOpenRequestRef = React.useRef<(() => boolean) | null>(null);
     const attachmentPickerOpenRequestRef = React.useRef<(() => boolean) | null>(null);
+    const pickedAttachmentsRef = React.useRef<ComposerPickedAttachmentsPort | null>(null);
+    const bindPickedAttachments = React.useCallback((port: ComposerPickedAttachmentsPort) => {
+        pickedAttachmentsRef.current = port;
+        return () => { if (pickedAttachmentsRef.current === port) pickedAttachmentsRef.current = null; };
+    }, []);
     const bindAttachmentPicker = React.useCallback((request: () => boolean) => {
         attachmentPickerOpenRequestRef.current = request;
         return () => {
@@ -580,6 +587,7 @@ export function useNewSessionComposerDocument(params: Readonly<{
     }, [documentOwner, params.promptStore, pendingAttachmentSeeds, ref]);
 
     const target = useStableComposerPresentationTarget(ref, {
+        readPickedAttachments: () => pickedAttachmentsRef.current,
         readRevision: () => documentOwner.read().revision,
         replace: (text, expectedRevision) => {
             if (documentOwner.read().revision !== expectedRevision) return documentOwner.read().revision;
@@ -920,6 +928,7 @@ export function useNewSessionComposerDocument(params: Readonly<{
         onComposerFocusRequestChange,
         onPromptPickerOpenRequestChange,
         bindAttachmentPicker,
+        bindPickedAttachments,
         onComposerInputFlushRequestChange,
         flushComposerInput,
         onComposerActionBarLayoutChange,
@@ -954,6 +963,7 @@ export function useNewSessionComposerDocument(params: Readonly<{
         onComposerFocusRequestChange,
         onPromptPickerOpenRequestChange,
         bindAttachmentPicker,
+        bindPickedAttachments,
         onComposerInputFlushRequestChange,
         flushComposerInput,
         onStructuredInputMentionsChange,

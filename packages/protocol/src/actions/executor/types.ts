@@ -2,6 +2,7 @@ import type { SessionStopIntent } from '../../sessions/metadata/sessionExplicitS
 import type { DeploymentPublishResultV1, DeploymentPrepareInputV1, DeploymentPrepareResultV1 } from '../../deployments/deploymentActionsV1.js';
 import type { DeploymentTemplateInstantiateResultV1 } from '../../deployments/deploymentActionsV1.js';
 import type { DeploymentTemplateInstantiateInputV1 } from '../../deployments/deploymentActionsV1.js';
+import type { MediaAnnotationActionRequestV1 } from '../mediaAnnotationAction.js';
 import type { SessionSpaceMembershipSetInputV1 } from '../sessionSpaceMembership.js';
 import type { QualifiedPluginActionId } from '../../plugins/actions/qualifiedActionId.js';
 import type { DeploymentPublishInputV1 } from '../../deployments/deploymentActionsV1.js';
@@ -1676,6 +1677,7 @@ export type ActionExecutorDeps = Readonly<{
     signal?: AbortSignal;
   }>) => Promise<unknown>;
   composerIngress?: (args: Readonly<{ actionId: 'composer.transaction.apply' | 'composer.attachments.pick' | 'repository.upload.pick'; input: unknown; context: ActionExecutorContext; signal?: AbortSignal }>) => Promise<unknown>;
+  mediaAnnotation?: (args: MediaAnnotationActionRequestV1 & Readonly<{ context: ActionExecutorContext; signal?: AbortSignal }>) => Promise<unknown>;
   listReorder?: (args: Readonly<{ actionId: 'session.pending.reorder' | 'tasks.internal.reorder'; input: unknown; context: ActionExecutorContext; signal?: AbortSignal }>) => Promise<unknown>;
   internalTaskAction?: (args: Readonly<{ actionId: InternalTaskActionId; input: unknown; context: ActionExecutorContext; signal?: AbortSignal }>) => Promise<InternalTaskActionOutput>;
   todoSessionLink?: (args: Readonly<{ input: unknown; context: ActionExecutorContext; signal?: AbortSignal }>) => Promise<TodoSessionLinkOutputV1>;

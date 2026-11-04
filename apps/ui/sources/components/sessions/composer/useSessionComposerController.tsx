@@ -4795,6 +4795,7 @@ export function useSessionComposerController({
         return true;
     };
     const activeComposerPresentationTarget = useStableComposerPresentationTarget(activeComposerRef, {
+        readPickedAttachments: () => attachmentDraftManager,
         readScope: () => composerPresentationAccountLifetime?.scope ?? null,
         readReferenceWorkspace: () => companionAddress ? resolveWorkspaceTargetForSession(companionAddress) : null,
         readAttachmentComposition: () => !composerPluginActionScopeSignal.aborted && composerAttachmentAvailabilityEntriesById
@@ -4860,6 +4861,7 @@ export function useSessionComposerController({
         hasActionChip: (chipKey) => composerActionChipKeysRef.current.has(chipKey),
     });
     const sessionComposerPresentationTarget = useStableComposerPresentationTarget(sessionComposerRef, {
+        readPickedAttachments: () => attachmentDraftManager,
         readScope: () => composerPresentationAccountLifetime?.scope ?? null,
         readReferenceWorkspace: () => companionAddress ? resolveWorkspaceTargetForSession(companionAddress) : null,
         readAttachmentComposition: () => !composerPluginActionScopeSignal.aborted && composerAttachmentAvailabilityEntriesById
