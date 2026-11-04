@@ -1,6 +1,48 @@
 import type { WorkflowBlock, WorkflowStep } from './workflowV1.js';
 import type { JsonValue } from '../json/strictJsonValue.js';
 import { walkWorkflowBlocks } from './workflowDefinitionEditV1.js';
+import type { TriggerTargetV1 } from './triggers/triggerTargetV1.js';
+
+/** Executable trigger sets retain this storage label; it is never an authored display name. */
+export const WORKFLOW_TRIGGER_SET_STORAGE_NAME = 'Workflow triggers';
+
+/** One name rule for the Account Library projection, its presenters and trigger-started Runs. */
+export function workflowTriggerDisplayNameV1(input: Readonly<{ name?: string; target?: TriggerTargetV1 }>, presentation?: Readonly<{
+  then: Readonly<Record<'runWorkflow' | 'sendPrompt' | 'notifyMe' | 'doAction', string>>;
+  block: (block: WorkflowBlock) => string;
+  empty: string;
+  resolveWorkflowTitle: (ref: string) => string | null;
+}>): string | undefined {
+  if (input.name !== undefined && input.name !== WORKFLOW_TRIGGER_SET_STORAGE_NAME) return input.name;
+  const target = input.target;
+  if (target === undefined) return undefined;
+  const labels = presentation?.then ?? { runWorkflow: 'Run a workflow', sendPrompt: 'Send a prompt', notifyMe: 'Notify me', doAction: 'Do an action' };
+  if (target.kind === 'workflow') return presentation?.resolveWorkflowTitle(target.ref) ?? labels.runWorkflow;
+  const definition = target.definition;
+  const first = definition.blocks[0];
+  const only = definition.blocks.length === 1 ? first : undefined;
+  if (definition.inputs.length === 0) {
+    if (only?.kind === 'step' && only.inputMode !== 'none') return only.name?.trim() || labels.sendPrompt;
+    if (only?.kind === 'action') {
+      const message = only.input.message;
+      if (only.actionId === 'notifications.notify_me' && message?.kind === 'literal' && typeof message.value === 'string') return labels.notifyMe;
+      if (Object.values(only.input).every(binding => binding.kind === 'literal')) return labels.doAction;
+    }
+  }
+  if (first === undefined) return presentation?.empty ?? '0 steps';
+  if (presentation) return presentation.block(first);
+  if (first.name?.trim()) return first.name.trim();
+  switch (first.kind) {
+    case 'step': return 'Agent step';
+    case 'wait': return 'Wait for you';
+    case 'action': return labels.doAction;
+    case 'workflow': return labels.runWorkflow;
+    case 'parallel': return 'Side by side';
+    case 'if': return 'If';
+    case 'loop': return first.repetition.kind === 'items' ? 'Once for each item'
+      : first.repetition.kind === 'until' ? 'Until a result says stop' : 'Repeat';
+  }
+}
 
 /** Authored labels for a static Artifact preview; containers and runtime occurrences are omitted. */
 export function workflowDefinitionPreviewStepsV1(blocks: readonly WorkflowBlock[]): readonly string[] {

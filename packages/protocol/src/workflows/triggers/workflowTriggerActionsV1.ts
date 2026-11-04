@@ -98,6 +98,9 @@ const OpenedPullRequestTriggerDetailSchema = lazyZodSchema(() => z.strictObject(
   ...AutomationPullRequestTriggerSchema.shape,
 }));
 export const WorkflowTriggerSetV1Schema = lazyZodSchema(() => z.strictObject({
+  /** Display facts from the already-admitted Account record, not another lookup. */
+  name: z.optional(z.string()),
+  updatedAt: z.optional(z.number().check(z.int(), z.nonnegative())),
   automationId: asProtocolZod(AutomationIdV1Schema), revision: Revision, enabled: z.boolean(),
   scopeSessionId: zMini.optional(zMini.nullable(asProtocolZod(SessionIdSchema))),
   health: z.enum(['available', 'source_unavailable']),

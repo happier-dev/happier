@@ -1491,3 +1491,21 @@ describe('workflow trigger Automation composition', () => {
     expect(rows.get(row!.id)?.triggers).toEqual([]);
   });
 });
+
+describe('trigger source display provenance', () => {
+  it('carries the Account Workflow name and ordering fact from the admitted record', async () => {
+    const f = fixture();
+    const added = await f.actions.add({ target: { kind: 'inline', definition }, project, trigger });
+    const row = f.rows.get(added.set.automationId)!;
+    f.rows.set(row.id, { ...row, name: 'Renamed review', updatedAt: 42 });
+    const current = await f.actions.list({ scope: 'account_inline' });
+    expect(current.sets).toMatchObject([{ automationId: row.id, name: 'Renamed review', updatedAt: 42 }]);
+  });
+  it('carries no name for an Account Workflow nobody named, so readers name it by what it runs', async () => {
+    const f = fixture();
+    const added = await f.actions.add({ target: { kind: 'inline', definition }, project, trigger });
+    const current = await f.actions.list({ scope: 'account_inline' });
+    expect(current.sets.map(set => set.automationId)).toEqual([added.set.automationId]);
+    expect(current.sets[0]).not.toHaveProperty('name');
+  });
+});

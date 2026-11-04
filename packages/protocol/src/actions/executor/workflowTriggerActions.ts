@@ -1,3 +1,4 @@
+import { workflowTriggerDisplayNameV1 } from '../../workflows/workflowStepLabel.js';
 import type {
   AutomationDefinitionCreateRequest, AutomationDefinitionDetail, AutomationDefinitionListResponse,
   AutomationDefinitionReconcileRequest, AutomationTriggerReconcileExistingItem, AutomationDefinitionListRequest, AutomationDeleteResponse,
@@ -349,7 +350,11 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
         triggers.push({ ...trigger, ...definition });
       } else triggers.push(trigger);
     }
-    const base = { automationId: row.id, revision: row.templateVersion, enabled: row.enabled, triggers, scopeSessionId: row.scopeSessionId ?? null,
+    // The storage label every executable set is created with is not a name anyone chose: readers name
+    // such a Workflow by what it runs. A 0.2 Automation or a named observation keeps its own name.
+    const name = workflowTriggerDisplayNameV1({ name: row.name });
+    const base = { automationId: row.id, ...(name === undefined ? {} : { name }), updatedAt: row.updatedAt,
+      revision: row.templateVersion, enabled: row.enabled, triggers, scopeSessionId: row.scopeSessionId ?? null,
       ...(row.templateCiphertext !== undefined && !row.observationOnly ? { legacy: { editable: false as const, reason: 'created_in_0_2' as const } } : {}) };
     if (row.observationOnly) return { ...base, observationOnly: row.observationOnly, health: 'available' };
     try {
