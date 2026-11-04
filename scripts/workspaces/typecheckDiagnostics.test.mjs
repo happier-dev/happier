@@ -44,6 +44,9 @@ test('diagnostics delta retains full verdict, then attributes staged, unstaged a
   await writeFile(join(f.cwd, 'other.ts'), 'export const other = 2;\n');
   await writeFile(join(f.cwd, 'new.ts'), 'export const created = 2;\n');
   const next = await f.finish(compilerDiagnostic
+    // The lane contract compares file:line:code, so a shifted column on
+    // an existing diagnostic is neither a second location nor a new error.
+    + compilerDiagnostic.replace('input.ts(1,7)', 'input.ts(1,9)')
     + compilerDiagnostic.replace('input.ts(1,7)', 'input.ts(2,7)')
     + compilerDiagnostic.replace('input.ts', 'other.ts')
     + compilerDiagnostic.replace('input.ts', 'new.ts'));
@@ -68,6 +71,22 @@ test('incomplete and signalled runs preserve the previous full baseline', async 
   assert.equal(await readFile(initial[0].path, 'utf8'), before);
   assert.deepEqual(await f.finish('compiler crashed', 1), []);
   assert.equal(await readFile(initial[0].path, 'utf8'), before);
+});
+
+test('explicit location collection uses complete compiler results without reading or advancing an automatic baseline', async t => {
+  const f = await fixture(t);
+  const initial = await f.finish(compilerDiagnostic);
+  const before = await readFile(initial[0].path, 'utf8');
+  const run = await createTypecheckDiagnosticRun(f.options);
+  run.record(f.project, { stdout: compilerDiagnostic.replace('input.ts', 'other.ts'), stderr: '', status: 2, signal: null });
+  // Explicit collection must not scan Git's dirty inventory to attribute paths.
+  await rm(join(f.root, '.git'), { recursive: true });
+  assert.deepEqual(await run.publish({ locationsOnly: true }), [{ package: 'apps/sample',
+    globalDiagnostics: 0, locations: ['apps/sample/other.ts:1:TS2322'] }]);
+  assert.equal(await readFile(initial[0].path, 'utf8'), before);
+  const interrupted = await createTypecheckDiagnosticRun(f.options);
+  interrupted.record(f.project, { stdout: compilerDiagnostic, stderr: '', status: null, signal: 'SIGTERM' });
+  assert.deepEqual(await interrupted.publish({ locationsOnly: true }), []);
 });
 
 test('a UI-sized untracked inventory publishes without truncation', async t => {

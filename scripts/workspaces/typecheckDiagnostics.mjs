@@ -8,9 +8,36 @@ import { typecheckCompilerOptions } from './resolveTypeScriptCliInvocation.mjs';
 
 const execute = promisify(execFile);
 const portable = value => value.replaceAll('\\', '/');
-const location = row => `${row.line}:${row.column}:${row.code}`;
+const location = row => `${row.line}:${row.code}`;
 const inside = value => value !== '..' && !value.startsWith('../') && !isAbsolute(value);
 const introspection = new Set(['--explainfiles', '--listfiles', '--listfilesonly', '--traceresolution', '--diagnostics', '--extendeddiagnostics']);
+
+function diagnosticLocations(diagnosticsByPath) {
+  return Object.entries(diagnosticsByPath).flatMap(([file, rows]) =>
+    rows.map(row => `${file}:${row.line}:TS${row.code}`)).sort();
+}
+
+export function compareTouchedTypecheckLocations({ baseline, current, paths }) {
+  const selected = new Set(paths.map(path => portable(path).replace(/\/+$/u, '')));
+  const touched = value => {
+    let file = /^(.+):\d+:TS\d+$/u.exec(value)[1];
+    while (file) {
+      if (selected.has(file)) return true;
+      const separator = file.lastIndexOf('/');
+      if (separator < 0) break;
+      file = file.slice(0, separator);
+    }
+    return false;
+  };
+  const before = new Set(baseline);
+  const after = new Set(current);
+  const added = [...after].filter(row => !before.has(row));
+  return {
+    added: added.filter(touched).sort(),
+    removed: [...before].filter(row => !after.has(row) && touched(row)).sort(),
+    unattributed: added.filter(row => !touched(row)).sort(),
+  };
+}
 
 class DiagnosticSnapshotError extends Error {
   constructor(step, cause) {
@@ -155,7 +182,7 @@ export async function createTypecheckDiagnosticRun({ projects, producers = [], c
       if (producers.includes(project)) producerResults.set(project, result);
       else projectGroups.get(project)?.results.set(project, result);
     },
-    async publish() {
+    async publish({ locationsOnly = false } = {}) {
       const reports = [];
       for (const group of groups.values()) {
         if (group.results.size !== group.projects.length || producerResults.size !== producers.length) continue;
@@ -166,6 +193,11 @@ export async function createTypecheckDiagnosticRun({ projects, producers = [], c
           ? 'complete with producer diagnostics' : 'complete';
         const projects = [...group.projects].sort();
         const packagePath = portable(relative(repoRoot, group.root)) || '.';
+        if (locationsOnly) {
+          reports.push({ package: packagePath, globalDiagnostics: globalDiagnostics.size,
+            locations: diagnosticLocations(diagnosticsByPath) });
+          continue;
+        }
         let previous = await diagnosticStep('snapshot-read', () => readSnapshot(group.path, projects));
         let baselineSource = previous ? 'local' : undefined;
         if (!previous) {
@@ -181,14 +213,11 @@ export async function createTypecheckDiagnosticRun({ projects, producers = [], c
           ...await diagnosticStep('git-diff', () => gitPaths(['diff', '--name-only', '-z', 'HEAD'], repoRoot)),
           ...await diagnosticStep('git-untracked', () => gitPaths(['ls-files', '--others', '--exclude-standard', '-z', '--', packagePath], repoRoot)),
         ]);
-        let newInTouchedPaths = 0;
-        let total = 0;
-        for (const [file, rows] of Object.entries(diagnosticsByPath)) {
-          total += rows.length;
-          if (!baseline || !touched.has(file)) continue;
-          const old = new Set((previous.diagnosticsByPath[file] ?? []).map(location));
-          newInTouchedPaths += rows.filter(row => !old.has(location(row))).length;
-        }
+        const locations = diagnosticLocations(diagnosticsByPath);
+        const total = locations.length;
+        const newInTouchedPaths = baseline ? compareTouchedTypecheckLocations({
+          baseline: diagnosticLocations(previous.diagnosticsByPath), current: locations, paths: [...touched],
+        }).added.length : 0;
         await diagnosticStep('snapshot-write', () => writeJsonAtomic(group.path, { projects, diagnosticsByPath, globalDiagnostics: globalDiagnostics.size }));
         reports.push({ package: packagePath, path: group.path, baseline, baselineSource, completion,
           newInTouchedPaths: baseline ? newInTouchedPaths : null, total, globalDiagnostics: globalDiagnostics.size });

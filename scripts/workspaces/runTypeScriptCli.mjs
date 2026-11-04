@@ -225,8 +225,12 @@ if (process.platform !== 'win32' && (executorArgs.length > 0 || shouldRouteTypeS
     }
     if (!cancelled && diagnostics?.enabled) {
       try {
-        const reports = await diagnostics.publish();
-        for (const report of reports) process.stderr.write(`[typecheck-delta] ${report.package}: ${report.baseline ? `${report.newInTouchedPaths} new in touched paths; baseline ${report.baselineSource}` : 'baseline unavailable (first run or changed project set)'}; ${report.total} diagnostics, ${report.globalDiagnostics} global; ${report.path}${report.completion === 'complete with producer diagnostics' ? `; ${report.completion}` : ''}\n`);
+        const locationsOnly = process.env.HAPPIER_TYPECHECK_LOCATIONS_ONLY === '1';
+        const reports = await diagnostics.publish({ locationsOnly });
+        for (const report of reports) {
+          if (locationsOnly) process.stderr.write(`[typecheck-locations] ${JSON.stringify(report)}\n`);
+          else process.stderr.write(`[typecheck-delta] ${report.package}: ${report.baseline ? `${report.newInTouchedPaths} new in touched paths; baseline ${report.baselineSource}` : 'baseline unavailable (first run or changed project set)'}; ${report.total} diagnostics, ${report.globalDiagnostics} global; ${report.path}${report.completion === 'complete with producer diagnostics' ? `; ${report.completion}` : ''}\n`);
+        }
         if (!reports.length) process.stderr.write('[typecheck-delta] unavailable: no complete diagnostic result; previous baseline retained\n');
       } catch (error) {
         process.stderr.write(`[typecheck-delta] unavailable: ${typecheckDiagnosticFailureIdentifier(error, 'snapshot')}; compiler verdict unchanged\n`);

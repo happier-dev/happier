@@ -76,6 +76,18 @@ Before retaining or adding a test, answer all four questions:
 
 A missing answer is a review signal, not an automatic deletion verdict. Static inspection remains valid when it is the cheapest independent proof of a public API, generated artifact, package boundary, workflow permission/trust contract, migration, security property, or platform configuration and survives behavior-preserving refactoring.
 
+## Explicit touched-path compiler evidence
+
+In 0.3 development, use `pnpm run typecheck:touched -- apps/ui apps/ui/sources/path.ts`
+from the repository root (also `apps/cli` / `apps/server`; paths are repository-relative).
+It runs the complete public package typecheck through AUTO and compares explicit
+paths by file:line:code with the newest complete shared Systemic `.locs` baseline.
+Read both the touched delta and unattributed additions elsewhere; a zero touched
+delta alone does not establish zero new diagnostics across the package. Missing
+baseline or incomplete compilation is unavailable evidence, never GREEN. Do not
+hand-build scoped tsconfigs. See `docs/testing.md` “Touched-path typecheck delta”.
+
+
 ## Test Audit And Mechanical Cleanup
 
 For an explicit test-pruning, test-infrastructure, or whole-subsystem audit, read [test-audit.md](references/test-audit.md). Audit one canonical owner or subsystem at a time. Use deterministic analyzers and codemods for mechanical repetition, but keep contract value, keeper selection, compatibility obligations, and deletion decisions evidence-led.
