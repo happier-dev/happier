@@ -3512,6 +3512,7 @@ model ProjectSource {
     updatedAt DateTime @updatedAt
 
     @@index([createdByAccountId, id])
+    deletedAt DateTime?
 }
 
 model Artifact {

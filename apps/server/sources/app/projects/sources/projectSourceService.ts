@@ -226,8 +226,9 @@ async function admitSourceRowsInTx(tx: Tx, actorAccountId: string, rows: readonl
     return result;
 }
 
-export async function resolveProjectSourceAccessInTx(tx: Tx, actorAccountId: string, sourceId: string, authentication: Authentication = {}) {
-    const row = await tx.projectSource.findUnique({ where: { id: sourceId } });
+export async function resolveProjectSourceAccessInTx(tx: Tx, actorAccountId: string, sourceId: string, authentication: Authentication = {},
+    options: Readonly<{ includeDeleted?: boolean }> = {}) {
+    const row = await tx.projectSource.findUnique({ where: { id: sourceId, ...(options.includeDeleted ? {} : { deletedAt: null }) } });
     if (!row) return { ok: false as const, failure: unavailable() };
     return (await admitSourceRowsInTx(tx, actorAccountId, [row], authentication)).get(sourceId)
         ?? { ok: false as const, failure: unavailable() };
@@ -236,10 +237,11 @@ export async function resolveProjectSourceAccessInTx(tx: Tx, actorAccountId: str
 /** Exact demand only; transport chunks do not repeat the Source policy census. */
 export async function resolveProjectSourcesAccessInTx(tx: Tx, actorAccountId: string, sourceIds: readonly string[],
     authentication: Authentication = {},
+    options: Readonly<{ includeDeleted?: boolean }> = {},
 ): Promise<ReadonlyMap<string, ProjectSourceAccessResult>> {
     const rows: SourceRow[] = [];
     for (const ids of portableQueryChunks({ values: [...new Set(sourceIds)], bindingsPerValue: 1, fixedBindings: 1 })) {
-        rows.push(...await tx.projectSource.findMany({ where: { id: { in: [...ids] } } }));
+        rows.push(...await tx.projectSource.findMany({ where: { id: { in: [...ids] }, ...(options.includeDeleted ? {} : { deletedAt: null }) } }));
     }
     return admitSourceRowsInTx(tx, actorAccountId, rows, authentication);
 }
@@ -418,7 +420,7 @@ export async function updateProjectSourceInTx(tx: Tx, actorAccountId: string, in
     return { ok: true, source: next, canManage: admission.canManage(nextOwner, next.audience) };
 }
 
-/** Removing metadata never invokes daemon, filesystem, setup, or Artifact deletion. */
+/** Tombstone metadata uniformly; retained Environment and receipt references keep their identity. */
 export async function deleteProjectSourceInTx(tx: Tx, actorAccountId: string, input: unknown, authentication: Authentication = {}): Promise<Extract<ProjectSourcesDeleteOutputV1, { ok: true }> | (ProjectSourcesFailureV1 & { error: 'source_invalid' | 'source_unavailable' | 'source_access_denied' | 'source_conflict' })> {
     const parsed = ProjectSourcesDeleteInputV1Schema.safeParse(input);
     if (!parsed.success) return invalid();
@@ -426,7 +428,8 @@ export async function deleteProjectSourceInTx(tx: Tx, actorAccountId: string, in
     if (!loaded.ok) return loaded.failure;
     if (!loaded.canManage) return denied();
     if (loaded.source.revision !== parsed.data.expectedRevision) return { ok: false, error: 'source_conflict', current: loaded.source };
-    const result = await tx.projectSource.deleteMany({ where: { id: loaded.source.id, revision: parsed.data.expectedRevision } });
+    const result = await tx.projectSource.updateMany({ where: { id: loaded.source.id, revision: parsed.data.expectedRevision, deletedAt: null },
+        data: { deletedAt: await readTransactionDatabaseTime(tx) } });
     if (result.count !== 1) {
         const current = await resolveProjectSourceAccessInTx(tx, actorAccountId, loaded.source.id, authentication);
         return current.ok ? { ok: false, error: 'source_conflict', current: current.source } : current.failure;
@@ -439,7 +442,8 @@ export async function deleteProjectSourceInTx(tx: Tx, actorAccountId: string, in
 export async function listProjectSourcesInTx(tx: Tx, actorAccountId: string, input: unknown, authentication: Authentication = {}): Promise<Extract<ProjectSourcesListOutputV1, { ok: true }> | (ProjectSourcesFailureV1 & { error: 'source_invalid' | 'source_unavailable' })> {
     const parsed = ProjectSourcesListInputV1Schema.safeParse(input);
     if (!parsed.success) return invalid();
-    const rows = await tx.projectSource.findMany({ orderBy: { id: 'asc' }, ...(parsed.data.cursor ? { where: { id: { gt: parsed.data.cursor } } } : {}) });
+    const rows = await tx.projectSource.findMany({ orderBy: { id: 'asc' }, where: { deletedAt: null,
+        ...(parsed.data.cursor ? { id: { gt: parsed.data.cursor } } : {}) } });
     const parsedRows = rows.map(row => ({ row, owner: ownerFromRow(row) }));
     const admission = await admissionInTx(tx, actorAccountId, rows.flatMap(row => {
         const audience = storedAudience.safeParse(row.audience);

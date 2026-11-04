@@ -51,10 +51,13 @@ export function canDeployDeploymentEnvironment(admission: DeploymentSourceAdmiss
 /** The Source is the only workload authority, independent of creator and audience ordering. */
 
 export async function resolveDeploymentEnvironmentAdmissionInTx(tx: Tx, actorAccountId: string,
-    input: Readonly<{ serverId: string; projectSourceId: string }>, authentication: DeploymentAuthentication = {},
+    input: Readonly<{ serverId: string; projectSourceId: string; includeDeletedSource?: boolean }>, authentication: DeploymentAuthentication = {},
 ): Promise<Readonly<{ ok: true; admission: DeploymentSourceAdmission }> | DeploymentFailure> {
     if (await readCurrentServerIdentityId(process.env, tx) !== input.serverId) return deploymentFailure('deployment_unavailable');
-    const read = await resolveProjectSourceAccessInTx(tx, actorAccountId, input.projectSourceId, authentication);
+    // Existing Environments retain Source authority and identity after deletion.
+    // New-Environment admission opts into the owner's active-only read instead.
+    const read = await resolveProjectSourceAccessInTx(tx, actorAccountId, input.projectSourceId, authentication,
+        { includeDeleted: input.includeDeletedSource !== false });
     if (!read.ok) return deploymentFailure('deployment_unavailable');
     return { ok: true, admission: projectDeploymentSourceAdmission(read) };
 }

@@ -28,24 +28,28 @@ describe('Source catalog real SQLite owner', () => {
     const account = () => db.account.create({ data: { encryptionMode: 'plain' } });
     it('widens retained SQLite Sources without losing either FK child, data, indexes or integrity', async () => {
         const migrationName = '20261027122000_project_source_optional_repository';
+        const tombstoneMigration = '20261103133000_project_source_tombstone';
         const migrationsDir = fileURLToPath(new URL('../../../../prisma/sqlite/migrations/', import.meta.url));
         const directory = await mkdtemp(join(tmpdir(), 'happier-source-nullable-upgrade-'));
         const previousMigrations = join(directory, 'migrations');
         const databasePath = join(directory, 'upgrade.sqlite');
         await mkdir(previousMigrations);
         for (const entry of await readdir(migrationsDir, { withFileTypes: true })) {
-            if (entry.isDirectory() && entry.name !== migrationName) await cp(join(migrationsDir, entry.name), join(previousMigrations, entry.name), { recursive: true });
+            if (entry.isDirectory() && entry.name !== migrationName && entry.name !== tombstoneMigration) await cp(join(migrationsDir, entry.name), join(previousMigrations, entry.name), { recursive: true });
         }
         const client = new SqlitePrismaClient({ datasources: { db: { url: renderPrismaCompatibleSqliteDatabaseUrl({ dbPath: databasePath, platform: process.platform }) } } });
         try {
             await applySqliteMigrations({ databasePath, migrationsDir: previousMigrations });
             const creator = await client.account.create({ data: { encryptionMode: 'plain' } });
             const team = await client.team.create({ data: { name: 'Retained owner' } });
+            // Read the historical Source columns before the additive tombstone migration exists.
+            const retainedSourceSelect = { id: true, createdByAccountId: true, revision: true, name: true, repository: true,
+                owner: true, defaultRef: true, subdir: true, audience: true, attachments: true, createdAt: true, updatedAt: true } as const;
             const sources = await Promise.all([
                 client.projectSource.create({ data: { createdByAccountId: creator.id, name: 'Personal retained', repository,
-                    owner: { kind: 'account', accountId: creator.id }, audience: [], attachments: [] } }),
+                    owner: { kind: 'account', accountId: creator.id }, audience: [], attachments: [] }, select: retainedSourceSelect }),
                 client.projectSource.create({ data: { createdByAccountId: creator.id, name: 'Team retained', repository,
-                    owner: { kind: 'team', teamId: team.id }, audience: [], attachments: [] } }),
+                    owner: { kind: 'team', teamId: team.id }, audience: [], attachments: [] }, select: retainedSourceSelect }),
             ]);
             const machine = await client.machine.create({ data: { id: crypto.randomUUID(), accountId: creator.id, metadata: '{}' } });
             const artifact = await client.artifact.create({ data: { id: crypto.randomUUID(), accountId: creator.id,
@@ -59,9 +63,10 @@ describe('Source catalog real SQLite owner', () => {
             expect(await client.projectSource.count()).toBe(2);
             expect(await client.deploymentEnvironment.count()).toBe(1);
             expect(await client.projectDeploymentDefaults.count()).toBe(1);
-            expect(await applySqliteMigrations({ databasePath, migrationsDir })).toEqual({ applied: [migrationName] });
+            expect(await applySqliteMigrations({ databasePath, migrationsDir })).toEqual({ applied: [migrationName, tombstoneMigration] });
             expect(await applySqliteMigrations({ databasePath, migrationsDir })).toEqual({ applied: [] });
-            expect(await client.projectSource.findMany({ orderBy: { id: 'asc' } })).toEqual([...sources].sort((a, b) => a.id.localeCompare(b.id)));
+            expect(await client.projectSource.findMany({ orderBy: { id: 'asc' } }))
+                .toEqual([...sources].sort((a, b) => a.id.localeCompare(b.id)).map(source => ({ ...source, deletedAt: null })));
             expect(await client.deploymentEnvironment.findMany()).toEqual([environment]);
             expect(await client.projectDeploymentDefaults.findMany()).toEqual([defaults]);
             expect(await Promise.all(['DeploymentEnvironment', 'ProjectDeploymentDefaults']
@@ -247,7 +252,8 @@ describe('Source catalog real SQLite owner', () => {
         expect(await create()).toEqual(updated);
         expect(await inTx(tx => deleteProjectSourceInTx(tx, owner.id, { serverId, sourceId: first.source.id, expectedRevision: updated.source.revision }))).toMatchObject({ ok: true });
         expect(await create()).toEqual({ ok: false, error: 'source_conflict' });
-        expect(await db.projectSource.count({ where: { createdByAccountId: owner.id } })).toBe(0);
+        expect(await db.projectSource.count({ where: { createdByAccountId: owner.id, deletedAt: null } })).toBe(0);
+        expect(await db.projectSource.count({ where: { createdByAccountId: owner.id } })).toBe(1);
     });
     it('uses current Team and group lifetimes for reads; ordinary audience cannot edit and revoked access cannot use metadata', async () => {
         const [owner, member, outsider] = await Promise.all([account(), account(), account()]);

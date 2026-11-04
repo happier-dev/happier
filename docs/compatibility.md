@@ -5145,3 +5145,14 @@ comparisons are a separate, still-unbounded response path.
 `diagnostic`. Older strict error readers cannot retain this optional field;
 the updated Home and clients load together. Plain refusals remain accepted.
 This unreleased development correction adds no persistence format or epoch.
+
+Unreleased 0.3 Project Source deletion uniformly tombstones metadata through
+the nullable `ProjectSource.deletedAt` column added by an append-only migration.
+Ordinary Source reads and new-Environment admission exclude deleted records;
+Environment and receipt history retain the same admitted Source identity and
+name. The existing closed `{ ok: true, sourceId, revision }` acknowledgement and
+all inputs remain unchanged, including for older CLI readers. The development-only
+`environment_history_retained` refusal is removed. No wire epoch, runtime ABI,
+alternate disposition owner or compatibility adapter is added. Deploy the additive
+migration before loading the new server; rolling back the server after tombstones
+exist would expose them again in old lists and is unsupported.
