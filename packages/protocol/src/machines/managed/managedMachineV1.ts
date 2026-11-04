@@ -75,6 +75,7 @@ export function createManagedMachineV1Schema<Launch extends z.core.$ZodType, Nat
     enrollmentIdentity: z.optional(ManagedMachineEnrollmentIdentityV1Schema),
     preset: z.optional(z.strictObject({ id: id(), revision: z.int().check(z.gte(0)) })),
     launch: createRetainedManagedLaunchSnapshotV1Schema(launch), controller: ManagedControllerV1Schema,
+    controllerAccess: z.optional(ManagedControllerAccessV1Schema),
     reviewedFacts: z.optional(createManagedConfigurationFactsV1Schema(launch)),
     environmentSetup: z.optional(ManagedMachineEnvironmentSetupV1Schema),
     allocation: z.enum(['unsubmitted', 'may-exist', 'bound', 'confirmed-absent']),
@@ -142,3 +143,13 @@ export const ManagedMachineSetupV1Schema = lazyDefinition(() => z.strictObject({
 })));
 
 export { classifyManagedMachineAllocationV1, type ManagedMachineAllocationPresentationV1 } from './managedAllocationPresentationV1.js';
+
+/** Public creator output never carries the custodian's connection or bootstrap selectors. */
+export function redactManagedMachineCredentialReferences(machine: ManagedMachineV1): ManagedMachineV1 {
+  const { bootstrapCredentialRef: _bootstrap, ...publicMachine } = machine;
+  const { credentials: _credentials, ...launch } = machine.launch;
+  const facts = machine.reviewedFacts;
+  if (!facts) return { ...publicMachine, launch };
+  const { credentials: _factCredentials, ...reviewedLaunch } = facts.launch;
+  return { ...publicMachine, launch, reviewedFacts: { ...facts, launch: reviewedLaunch } };
+}

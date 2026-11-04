@@ -1,3 +1,6 @@
+import { portableQueryChunks } from '@/storage/portableQueryChunks';
+import { jsonPathEquals } from '@/storage/jsonPathFilter';
+import { redactManagedMachineCredentialReferences, type ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { ManagedListInputV1Schema, ManagedGetInputV1Schema, ManagedCancelInputV1Schema, type ManagedMachineActionInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedResourceDependencyV1Schema, type ManagedResourceDependencyV1, type ManagedResourceDispositionV1 } from '@happier-dev/protocol/machines/managed/managedDependencyV1';
 import { SharedSavedSecretRefV1Schema } from '@happier-dev/protocol/machines/managed/providerFactsV1';
@@ -11,7 +14,9 @@ import {
     ManagedMachineError, readManagedMachineInTx, projectManagedMachineInTx,
     invalidateManagedMachineInTx, projectManagedMachine, readManagedLaunchSnapshot, sameManagedInput, type StoredManagedMachine,
     inManagedMachinePublicationTx,
-    projectManagedMachinesInTx,
+    projectManagedMachinesInTx, projectManagedControllerAccess,
+    readManagedAdmissionState,
+    resolveManagedMachineRoleInTx, resolveManagedMachineRole,
 } from "./managedRows";
 
 type ManagedResourceDependencyTarget =
@@ -84,8 +89,18 @@ async function requireHome(tx: Tx, homeId: string) {
     if (await readCurrentServerIdentityId(process.env, tx) !== homeId) throw new ManagedMachineError("permission_denied");
 }
 export async function requireManagedMachineAccessInTx(tx: Tx, row: StoredManagedMachine, actorAccountId: string, manage: boolean) {
-    const role = await resolveEffectiveMachineRoleInTx(tx, { actorAccountId, machineId: row.controllerMachineId });
+    if (!manage && isManagedMachineCreator(row, actorAccountId)) return;
+    const role = await resolveManagedMachineRoleInTx(tx, row, actorAccountId);
     if (!role || (manage && role !== "manage")) throw new ManagedMachineError("permission_denied");
+}
+/** Only explicit admitted requester identity grants creation-scoped access. */
+export function isManagedMachineCreator(row: Pick<StoredManagedMachine, 'admittedInput'>, actorAccountId: string): boolean {
+    return readManagedAdmissionState(row.admittedInput).enrollmentAccountId === actorAccountId;
+}
+/** Creation recovery/cancellation does not grant native power or controller management. */
+export async function requireManagedCreationAccessInTx(tx: Tx, row: StoredManagedMachine, actorAccountId: string): Promise<void> {
+    if (isManagedMachineCreator(row, actorAccountId)) return;
+    await requireManagedMachineAccessInTx(tx, row, actorAccountId, true);
 }
 export async function getManagedMachine(params: Readonly<{ actorAccountId: string; input: ManagedMachineActionInputV1<"machines.managed.get"> }>) {
     const input = ManagedGetInputV1Schema.parse(params.input);
@@ -93,8 +108,20 @@ export async function getManagedMachine(params: Readonly<{ actorAccountId: strin
         await requireHome(tx, input.homeId);
         const row = await readManagedMachineInTx(tx, input);
         await requireManagedMachineAccessInTx(tx, row, params.actorAccountId, false);
-        return await projectManagedMachineInTx(tx, row);
+        return projectManagedMachineForActorInTx(tx, row, params.actorAccountId);
     });
+}
+/** Private native custody and public creator results share one actor-aware projection. */
+export async function projectManagedMachineForActorInTx(tx: Tx, row: StoredManagedMachine, actorAccountId: string): Promise<ManagedMachineV1> {
+    const machine = await projectManagedMachineInTx(tx, row);
+    if (!isManagedMachineCreator(row, actorAccountId) || row.custodianAccountId === actorAccountId
+        || await resolveManagedMachineRoleInTx(tx, row, actorAccountId) === 'manage') return machine;
+    if (!row.controllerMachineId || !row.controllerInstallationId) return redactManagedMachineCredentialReferences(machine);
+    const controller = await tx.machine.findUnique({ where: { id: row.controllerMachineId }, select: {
+        kind: true, accountId: true, installationId: true, installationPublicKey: true, revokedAt: true, replacedByMachineId: true,
+    } });
+    const controllerAccess = projectManagedControllerAccess(controller, { installationId: row.controllerInstallationId });
+    return { ...redactManagedMachineCredentialReferences(machine), ...(controllerAccess ? { controllerAccess } : {}) };
 }
 export async function listManagedMachines(params: Readonly<{ actorAccountId: string; input: ManagedMachineActionInputV1<"machines.managed.list"> }>) {
     const input = ManagedListInputV1Schema.parse(params.input);
@@ -102,13 +129,38 @@ export async function listManagedMachines(params: Readonly<{ actorAccountId: str
         await requireHome(tx, input.homeId);
         // Retiring a controller must not conceal the custodian's retained managed
         // resources, including archived history and outstanding native cleanup.
-        const candidates = await listMachineCandidatesInTx(tx, params.actorAccountId, { includeRevokedOwned: true });
-        const rows = await tx.managedMachine.findMany({ where: { homeId: input.homeId, controllerMachineId: { in: candidates }, archivedAt: input.archived ? { not: null } : null }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
+        const candidates = input.enrolledMachineId ? undefined
+            : await listMachineCandidatesInTx(tx, params.actorAccountId, { includeRevokedOwned: true });
+        // Home, creator JSON path/value and Prisma pagination accompany each ID set.
+        const selections = candidates ? portableQueryChunks({ values: candidates, bindingsPerValue: 1,
+            fixedBindings: 6 + (input.presetId ? 1 : 0) }) : [];
+        const rowsById = new Map<string, StoredManagedMachine>();
+        for (const [index, ids] of (selections.length ? selections : [undefined]).entries()) {
+            const selected = await tx.managedMachine.findMany({ where: { homeId: input.homeId,
+            ...(input.presetId ? { presetId: input.presetId } : {}),
+            ...(input.enrolledMachineId ? { enrolledMachineId: input.enrolledMachineId } : {}),
+            ...(candidates ? { OR: [
+                ...(ids ? [{ controllerMachineId: { in: [...ids] } }] : []),
+                ...(index === 0 ? [{ admittedInput: jsonPathEquals(['enrollmentAccountId'], params.actorAccountId) },
+                    { custodianAccountId: params.actorAccountId, controllerMachineId: null }] : []),
+            ] } : {}),
+            archivedAt: input.archived ? { not: null } : null }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
+            for (const row of selected) rowsById.set(row.id, row);
+        }
+        const rows = [...rowsById.values()].sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime()
+            || left.id.localeCompare(right.id));
         const access = await resolveEffectiveMachineAccessForMachinesInTx(tx, {
-            machineIds: rows.map(row => row.controllerMachineId), accountIds: [params.actorAccountId],
+            machineIds: rows.flatMap(row => row.controllerMachineId ? [row.controllerMachineId] : []), accountIds: [params.actorAccountId],
         });
-        const accessible = rows.filter(row => access.get(row.controllerMachineId)?.get(params.actorAccountId));
-        return { machines: await projectManagedMachinesInTx(tx, accessible) };
+        const accessible = rows.filter(row => isManagedMachineCreator(row, params.actorAccountId)
+            || resolveManagedMachineRole(row, params.actorAccountId, row.controllerMachineId ? access.get(row.controllerMachineId)?.get(params.actorAccountId) ?? null : null));
+        const machines = await projectManagedMachinesInTx(tx, accessible);
+        return { machines: machines.map((machine, index) => {
+            const row = accessible[index];
+            return row.custodianAccountId !== params.actorAccountId && isManagedMachineCreator(row, params.actorAccountId)
+                && resolveManagedMachineRole(row, params.actorAccountId, row.controllerMachineId ? access.get(row.controllerMachineId)?.get(params.actorAccountId) ?? null : null) !== 'manage'
+                ? redactManagedMachineCredentialReferences(machine) : machine;
+        }) };
     });
 }
 /** Cancellation retires creation; only the existing intent owner can perform native cleanup. */
@@ -117,9 +169,9 @@ export async function cancelManagedCreation(params: Readonly<{ actorAccountId: s
     return await inManagedMachinePublicationTx(input, async tx => {
         const row = await readManagedMachineInTx(tx, input);
         await requireHome(tx, input.homeId);
-        await requireManagedMachineAccessInTx(tx, row, params.actorAccountId, true);
+        await requireManagedCreationAccessInTx(tx, row, params.actorAccountId);
         if (row.intentRevision !== input.expectedIntentRevision) throw new ManagedMachineError("intent_changed");
-        if (row.creationState !== "active") return { machine: await projectManagedMachineInTx(tx, row) };
+        if (row.creationState !== "active") return { machine: await projectManagedMachineForActorInTx(tx, row, params.actorAccountId) };
         if (row.enrolledMachineId) throw new ManagedMachineError("intent_changed");
         const possibleResource = row.allocation !== "unsubmitted" && row.allocation !== "confirmed-absent";
         const changed = await tx.managedMachine.updateMany({ where: { id: row.id, intentRevision: input.expectedIntentRevision, creationState: "active", enrolledMachineId: null }, data: {
@@ -129,6 +181,6 @@ export async function cancelManagedCreation(params: Readonly<{ actorAccountId: s
         if (changed.count !== 1) throw new ManagedMachineError("intent_changed");
         const current = await tx.managedMachine.findUniqueOrThrow({ where: { id: row.id } });
         await invalidateManagedMachineInTx(tx, current);
-        return { machine: await projectManagedMachineInTx(tx, current) };
+        return { machine: await projectManagedMachineForActorInTx(tx, current, params.actorAccountId) };
     });
 }

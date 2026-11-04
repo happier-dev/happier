@@ -102,7 +102,9 @@ export function resolveManagedAcquireReviewV1(input: ManagedAcquireInputV1) {
     retention: input.selection.retention, wakeOnAcceptedMessage: input.selection.wakeOnAcceptedMessage };
 }
 export const ManagedAcceptedV1Schema = lazyZodSchema(() => z.strictObject({ managedId: id(), operation: z.optional(ActionOperationGetV1RequestSchema) }));
-export const ManagedListInputV1Schema = lazyZodSchema(() => z.strictObject({ homeId: id(), archived: mini.optional(mini.boolean()) }));
+export const ManagedListInputV1Schema = lazyZodSchema(() => z.strictObject({ homeId: id(), archived: mini.optional(mini.boolean()),
+  presetId: mini.optional(id()), enrolledMachineId: mini.optional(id()),
+}));
 export const ManagedListOutputV1Schema = lazyZodSchema(() => z.strictObject({ machines: mini.array(ManagedMachineV1Schema) }));
 export const ManagedGetOutputV1Schema = lazyZodSchema(() => z.lazy(() => ManagedMachineV1Schema));
 export const ManagedGetInputV1Schema = lazyZodSchema(() => z.strictObject(target()));
