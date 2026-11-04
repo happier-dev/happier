@@ -33,6 +33,7 @@ export function transitionVoiceRuntimeToIdle(params: Readonly<{
         kind: resolveVoiceMachineErrorKind(reason, params.kind),
         reason,
         uxDiagnostic: readConnectedServiceUxDiagnosticFromError(params.cause) ?? undefined,
+        cause: params.cause,
     });
     if (params.cause !== undefined) {
         Object.defineProperty(error, 'cause', { value: params.cause, enumerable: false });

@@ -4,6 +4,24 @@ import { deriveLocalVoiceSessionSnapshot } from '@/voice/runtime/machine/deriveL
 import { useVoiceConversationRuntimeStore } from '@/voice/runtime/machine/voiceConversationRuntimeStore';
 
 describe('voiceSessionStore subscriptions', () => {
+  it('publishes a changed provider reason and retires it on recovery', async () => {
+    vi.resetModules();
+    const { getVoiceSessionSnapshot, setVoiceSessionSnapshot, resetVoiceSessionRuntimeStateForTests } = await import('./voiceSessionStore');
+    const snapshot = { adapterId: 'local_conversation', sessionId: 's1', status: 'disconnected' as const,
+      mode: 'idle' as const, canStop: false, errorCode: 'provider_error', errorMessage: 'acp_turn_failed' };
+    try {
+      setVoiceSessionSnapshot(snapshot);
+      const generic = getVoiceSessionSnapshot();
+      setVoiceSessionSnapshot({ ...snapshot, errorProviderMessage: 'Cannot connect to API' });
+      expect(getVoiceSessionSnapshot()).not.toBe(generic);
+      expect(getVoiceSessionSnapshot().errorProviderMessage).toBe('Cannot connect to API');
+      setVoiceSessionSnapshot({ ...snapshot, status: 'connected', canStop: true });
+      expect(getVoiceSessionSnapshot().errorProviderMessage).toBeUndefined();
+    } finally {
+      await resetVoiceSessionRuntimeStateForTests();
+    }
+  });
+
   it('publishes connected-account repair changes and clears them after recovery', async () => {
     vi.resetModules();
     const { ConnectedServiceUxDiagnosticV1Schema } = await import('@happier-dev/protocol/connect/connectedServiceUxDiagnostics');

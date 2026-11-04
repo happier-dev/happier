@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { VoiceMachineErrorKind } from './voiceConversationRuntimeTypes';
-import { resolveVoiceMachineErrorTranslationKey } from './voiceMachineErrorCopy';
+import { readSafeVoiceProviderFailureMessage, resolveVoiceMachineErrorTranslationKey } from './voiceMachineErrorCopy';
 
 const expectedTranslationKeys = {
     mic_permission_denied: 'settingsVoice.local.machineErrors.mic_permission_denied',
@@ -29,6 +29,12 @@ const expectedTranslationKeys = {
 } as const satisfies Readonly<Record<VoiceMachineErrorKind, string>>;
 
 describe('voiceMachineErrorCopy', () => {
+    it('does not admit arbitrary transport prose as a provider reason', () => {
+        const privateFailure = new Error('PRIVATE_TRANSPORT_BODY');
+        expect(readSafeVoiceProviderFailureMessage('provider_error', privateFailure)).toBeUndefined();
+        expect(readSafeVoiceProviderFailureMessage('unknown_failure', privateFailure)).toBeUndefined();
+        expect(readSafeVoiceProviderFailureMessage('acp_turn_failed', new Error('acp_turn_failed'))).toBeUndefined();
+    });
     it.each(['voice_agent_selection_unavailable', 'VOICE_AGENT_SELECTION_UNAVAILABLE'])(
         'explains the unavailable Session Agent with the existing setup recovery (%s)', reason => {
         expect(resolveVoiceMachineErrorTranslationKey('provider_setup_required', reason))

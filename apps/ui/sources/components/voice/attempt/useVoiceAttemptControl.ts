@@ -703,8 +703,9 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
         control, attemptId: expectedAttempt, ended: presentedEnded !== null,
         errorCode: snap.errorCode, errorMessage: snap.errorMessage, recoveryAction, recoveryContext,
         errorConnectedServiceDiagnostic: snap.errorConnectedServiceDiagnostic,
+        errorProviderMessage: snap.errorProviderMessage,
         serviceTitle, agentTitle, agentMachineLabel,
-    }), [control, expectedAttempt, presentedEnded, snap.errorCode, snap.errorMessage, snap.errorConnectedServiceDiagnostic, recoveryAction,
+    }), [control, expectedAttempt, presentedEnded, snap.errorCode, snap.errorMessage, snap.errorProviderMessage, snap.errorConnectedServiceDiagnostic, recoveryAction,
         recoveryContext, serviceTitle, agentTitle, agentMachineLabel]);
     const recoveryLabel = publicPresentation.recovery?.label ?? null;
     const recoveryIcon = publicPresentation.recovery?.icon ?? null;

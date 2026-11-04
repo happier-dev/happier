@@ -17,6 +17,8 @@ export type VoiceMachineErrorPresentation =
 export type VoiceMachineError = Readonly<{
     kind: VoiceMachineErrorKind;
     reason: string;
+    /** Sanitized provider prose admitted by the shared error-copy owner. */
+    providerMessage?: string;
     phase: VoiceMachineErrorPhase;
     retryPolicy: VoiceMachineRetryPolicy;
     recoveryAction: VoiceMachineRecoveryAction;

@@ -17,6 +17,7 @@ export function projectVoiceAttemptPresentation(input: Readonly<{
     ended: boolean;
     errorCode?: string | null;
     errorMessage?: string | null;
+    errorProviderMessage?: string;
     errorConnectedServiceDiagnostic?: ConnectedServiceUxDiagnosticV1;
     recoveryAction: VoiceMachineRecoveryAction | null;
     recoveryContext: VoiceAttemptRecoveryContext;
@@ -38,6 +39,7 @@ export function projectVoiceAttemptPresentation(input: Readonly<{
                 : { label: t('voicePresence.recovery.setUp'), icon: 'gear' as const };
     const failureKind = input.errorCode ? resolveVoiceMachineErrorKind(input.errorCode) : null;
     const failureMessage = connectedService ? t(connectedService.bodyKey) : failureKind === null ? null
+        : failureKind === 'provider_error' && input.errorProviderMessage ? input.errorProviderMessage
         : failureKind === 'authentication_required' && input.errorMessage === 'agent_signed_out' && agentTitle && agentMachineLabel
             ? t('settingsVoice.local.machineErrors.agent_signed_out', { agent: agentTitle, machine: agentMachineLabel })
             : translateVoiceReadiness(resolveVoiceMachineErrorTranslationKey(failureKind, input.errorMessage ?? undefined), { service: input.serviceTitle });

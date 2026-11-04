@@ -735,12 +735,15 @@ function buildCodexAppServerTurnFailureIssue(
   error: Error,
   activeTurn?: PendingTurn,
 ): CodexAppServerRuntimeIssue {
-  const modelUnavailable = readCodexAppServerTurnFailureDiagnostic(error).providerErrorCode === 'model_not_found';
+  const failureDiagnostic = readCodexAppServerTurnFailureDiagnostic(error);
+  const modelUnavailable = failureDiagnostic.providerErrorCode === 'model_not_found';
+  const usageLimit = failureDiagnostic.failureReason === 'usage_limit';
   return {
     v: 1,
     scope: 'primary_session',
     status: 'failed',
-    code: modelUnavailable ? 'provider_model_not_found'
+    code: usageLimit ? 'usage_limit'
+      : modelUnavailable ? 'provider_model_not_found'
       : isCodexAppServerContextWindowExhaustedError(error, { structuredOnly: true })
       ? 'agent_context_window_exceeded'
       : readCodexAppServerFailureCode(error) ?? CODEX_APP_SERVER_TURN_FAILURE_CODE,
@@ -749,7 +752,8 @@ function buildCodexAppServerTurnFailureIssue(
     agentId: 'codex',
     failureCause: readCodexAppServerFailureCause(error),
     ...(activeTurn?.agentTurnId ? { agentTurnId: activeTurn.agentTurnId } : {}),
-    sanitizedPreview: modelUnavailable ? 'The selected model is unavailable. Choose another model.'
+    sanitizedPreview: usageLimit ? 'Codex usage limit reached. Try another connected account or try again after your limit resets.'
+      : modelUnavailable ? 'The selected model is unavailable. Choose another model.'
       : isCodexAppServerWorkspaceRoutingUnauthorizedError(error)
       ? CODEX_APP_SERVER_WORKSPACE_ROUTING_AUTH_PREVIEW
       : CODEX_APP_SERVER_TURN_FAILURE_PREVIEW,

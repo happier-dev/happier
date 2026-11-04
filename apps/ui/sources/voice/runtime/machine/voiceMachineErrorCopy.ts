@@ -1,4 +1,14 @@
 import type { VoiceMachineErrorKind } from './voiceConversationRuntimeTypes';
+import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
+import { redactVoicePathLikeString } from '@/voice/shared/redactVoicePathLikeData';
+
+/** Only a typed Agent turn failure admits provider prose into the shared presenter. */
+export function readSafeVoiceProviderFailureMessage(reason: string, cause: unknown): string | undefined {
+    if (reason !== 'acp_turn_failed' && reason !== 'usage_limit') return undefined;
+    const message = cause instanceof Error ? cause.message : undefined;
+    if (!message || message === reason) return undefined;
+    return redactVoicePathLikeString(redactBugReportSensitiveText(message)).trim() || undefined;
+}
 
 export const VOICE_MACHINE_ERROR_TRANSLATION_KEYS = {
     mic_permission_denied: 'settingsVoice.local.machineErrors.mic_permission_denied',

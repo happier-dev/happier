@@ -1242,6 +1242,54 @@ describe('local voice engine agent behavior', () => {
         });
     });
 
+    it.each([
+        { code: 'acp_turn_failed', message: 'Cannot connect to API: Unable to connect. https://user:PRIVATE_PASSWORD@example.test/v1?api_key=PRIVATE_API_KEY token=PRIVATE_TOKEN /home/alice/private/model',
+            reason: 'Cannot connect to API', recovery: 'retry' },
+        { code: 'usage_limit', message: 'Codex usage limit reached. Try another connected account or try again after your limit resets.',
+            reason: 'usage limit', recovery: 'open_settings' },
+    ])('shows the $code reason and recovery from the live turn stream without leaking provider credentials', async ({ code, message, reason, recovery }) => {
+        const storage = await getStorage();
+        const voice = storage.getState().settings.voice;
+        const local = readLocalConversationVoiceSettings(voice);
+        storage.__setState({ settings: { ...storage.getState().settings, voice: {
+            ...voice, providerId: 'local_conversation', providers: { ...voice.providers,
+                local_conversation: { schemaVersion: 1, config: {
+                    ...local, conversationMode: 'agent',
+                    tts: { ...local.tts, autoSpeakReplies: false },
+                } },
+            },
+        } } });
+        await localVoiceEngine.toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
+        readTurnRpc.mockResolvedValueOnce(ExecutionRunTurnStreamReadResponseSchema.parse({
+            streamId: 'stream-1', nextCursor: 1, done: true,
+            events: [{ t: 'error', errorCode: code, error: message }],
+        }));
+        await expect(localVoiceEngine.sendLocalVoiceAgentTextTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'SAY READY', {
+            localId: 'run71-acp-failure', deliveryCommand: 'interrupt_and_send',
+        }, async () => {})).rejects.toMatchObject({ rpcErrorCode: code });
+        const { voiceConversationRuntimeMachine } = await import('@/voice/runtime/machine/VoiceConversationRuntimeMachine');
+        const { deriveLocalVoiceSessionSnapshot } = await import('@/voice/runtime/machine/deriveLocalVoiceSessionSnapshot');
+        const { projectVoiceAttemptPresentation } = await import('@/components/voice/attempt/projectVoiceAttemptPresentation');
+        const { resolveVoiceAttemptControl } = await import('@/components/voice/attempt/resolveVoiceAttemptControl');
+        const snapshot = deriveLocalVoiceSessionSnapshot('local_conversation', 'local', voiceConversationRuntimeMachine.getSnapshot());
+        const presentation = projectVoiceAttemptPresentation({
+            ...snapshot, attemptId: 'run71-acp', ended: false,
+            control: resolveVoiceAttemptControl({ status: snapshot.status, startAdmitted: false,
+                canStop: snapshot.canStop, muted: false, capturing: false, surfaceState: 'error', tone: 'error',
+                sessionId: VOICE_AGENT_GLOBAL_SESSION_ID, hasRecovery: true }),
+            recoveryAction: snapshot.errorRecoveryAction ?? null,
+            recoveryContext: { connectRecoveryTarget: { kind: 'default' }, runtimeRecoveryTarget: null,
+                attemptSessionId: VOICE_AGENT_GLOBAL_SESSION_ID, startSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+                globalStartAuthorized: false },
+            serviceTitle: 'Voice', agentTitle: 'ACP agent', agentMachineLabel: 'Dev machine',
+        });
+        expect(snapshot.errorMessage).toBe(code);
+        expect(presentation.failureMessage).toContain(reason);
+        expect(presentation.recovery?.action).toBe(recovery);
+        expect(presentation.failureMessage).not.toBe('Voice provider failed.');
+        expect(JSON.stringify(presentation)).not.toMatch(/PRIVATE_PASSWORD|PRIVATE_API_KEY|PRIVATE_TOKEN|\/home\/alice/);
+    });
+
     it('interrupts an in-flight local agent text update and surfaces the follow-up assistant reply', async () => {
         const storage = await getStorage();
         storage.__setState({

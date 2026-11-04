@@ -3,6 +3,7 @@ import type { MicSessionFailure } from '@/voice/runtime/mic/MicSession';
 import { readVoiceProviderCredentialRemediationCode } from '@happier-dev/protocol/voice/providerOperations';
 import { CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS, readConnectedServiceUxDiagnosticFromError, type ConnectedServiceUxDiagnosticV1 } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 import { readSafeVoiceRuntimeFailureCode } from '@/voice/runtime/voiceRuntimeFailureCode';
+import { readSafeVoiceProviderFailureMessage } from './voiceMachineErrorCopy';
 
 import type {
     VoiceMachineError,
@@ -98,13 +99,19 @@ export function createVoiceMachineError(params: Readonly<{
     kind: VoiceMachineErrorKind;
     reason: string;
     uxDiagnostic?: ConnectedServiceUxDiagnosticV1;
+    cause?: unknown;
 }>): VoiceMachineError {
     const policy = POLICY_BY_KIND[params.kind];
     const uxDiagnostic = params.uxDiagnostic;
+    const providerMessage = readSafeVoiceProviderFailureMessage(params.reason, params.cause);
     return {
         kind: params.kind,
         reason: uxDiagnostic?.code ?? params.reason,
+        ...(providerMessage ? { providerMessage } : {}),
         ...policy,
+        // A quota refusal requires choosing another account in Voice settings or waiting for reset.
+        ...(params.kind === 'provider_error' && params.reason === 'usage_limit'
+            ? { recoveryAction: 'open_settings' as const } : {}),
         // Connected Services owns retryability; its refusal stays visible until dismissed.
         ...(uxDiagnostic ? {
             uxDiagnostic,
@@ -197,5 +204,6 @@ export function classifyVoiceMachineError(
         // A specific owner code survives a generic pre-effect wrapper. A family
         // code keeps its more specific existing reason (for example missing text segmentation).
         reason: code && code !== kind ? code : readErrorReason(error, fallback.reason ?? kind),
+        cause: error,
     });
 }

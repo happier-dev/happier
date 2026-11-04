@@ -1260,6 +1260,7 @@ describe('Codex app-server temporary recoverable turn failures', () => {
 
   it.each([
     ['structured context exhaustion', 'context_window_exceeded', 'Input rejected.', 'agent_context_window_exceeded'],
+    ['structured usage exhaustion', 'usage_limit_exceeded', 'Provider usage exhausted.', 'usage_limit'],
     ['unclassified context prose', 'other', 'Codex ran out of room in the context window.', 'codex_app_server_turn_failed'],
     ['temporary provider capacity', 'other', 'Selected model is at capacity. Please try a different model.', 'codex_app_server_turn_failed'],
   ])('publishes the native failure fact for %s and admits a distinct next turn in the same session', async (
@@ -1293,7 +1294,11 @@ describe('Codex app-server temporary recoverable turn failures', () => {
         expect.objectContaining({
           turnId: 'host-turn-original',
           agentTurnId: 'turn-1',
-          diagnostic: expect.objectContaining({ code: expectedCode }),
+          diagnostic: expect.objectContaining({ code: expectedCode,
+            ...(expectedCode === 'usage_limit' ? {
+              message: 'Codex usage limit reached. Try another connected account or try again after your limit resets.',
+            } : {}),
+          }),
         }),
       ]);
       expect(clientState.requests.filter(({ method }) => method === 'turn/start')).toHaveLength(1);
@@ -1468,12 +1473,12 @@ describe('Codex app-server temporary recoverable turn failures', () => {
         v: 1,
         scope: 'primary_session',
         status: 'failed',
-        code: 'codex_app_server_turn_failed',
+        code: 'usage_limit',
         source: 'usage_limit',
         occurredAt: expect.any(Number),
         agentId: 'codex',
         agentTurnId: 'turn-1',
-        sanitizedPreview: safeFailurePreview,
+        sanitizedPreview: 'Codex usage limit reached. Try another connected account or try again after your limit resets.',
       },
     });
     expect(events.filter(event => event.kind === 'backend-error')).toHaveLength(0);
