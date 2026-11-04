@@ -129,6 +129,29 @@ describe('buildProviderCollection', () => {
       null,
     ]);
   });
+  it('gives a gateway no saved-model count: it serves its Connected accounts, not models saved to the Account', () => {
+    const data = createProviderConnectionsDescribeFixture({
+      connections: [
+        createProviderConnectionViewFixture({
+          connectionId: 'pc_gateway',
+          contributionKey: 'happier.provider.cliproxyapi/cliproxyapi',
+          deployment: { kind: 'managedLocal', targetMachineId: 'machine-a', effects: null },
+          managedLocalOption: null,
+        }),
+        createProviderConnectionViewFixture({ connectionId: 'pc_direct' }),
+      ],
+    });
+    const rows = buildProviderCollection({ declarationContext: { kind: 'account' },
+      data: data as never,
+      query: '',
+      localDiscoveryEnabled: false,
+      catalogCounts: { pc_gateway: { shown: 0, total: 0 }, pc_direct: { shown: 2, total: 2 } },
+    }).connections;
+    expect(rows.map((row) => [row.connectionId, row.gateway, row.catalogCount])).toEqual([
+      ['pc_gateway', true, null],
+      ['pc_direct', false, { shown: 2, total: 2 }],
+    ]);
+  });
   it('draws a found local server with its bundled source mark', () => {
     const data = createProviderConnectionsDescribeFixture({
       discoveryCandidates: [

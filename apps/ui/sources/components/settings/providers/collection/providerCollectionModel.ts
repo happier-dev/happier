@@ -109,7 +109,8 @@ function presentConnectionRow(connection: Connection, catalogCount: AccountProvi
         title: presentation.title,
         provenance: presentation.subtitle,
         keySaved: connection.credential?.accountBound === true,
-        catalogCount,
+        // A gateway serves its Connected accounts' models; the Account's saved catalog never holds them.
+        catalogCount: gateway ? null : catalogCount,
         icon: resolveProviderConnectionIcon(connection, declarationContext),
         contributionKey: connection.contributionKey,
         status: presentation.status,
