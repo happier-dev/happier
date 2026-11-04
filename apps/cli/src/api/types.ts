@@ -891,6 +891,7 @@ export type Metadata = Readonly<Partial<RuntimeDescriptorMetadataCarrier>> & Rea
    */
   modelOverrideV1?: ModelOverrideV1,
   modelSelectionIntentV1?: SessionModelSelectionIntentV1,
+  modelSelectionIntentV2?: SessionOwnerCompatibilityViewV1['modelSelectionIntentV2'],
   sessionAppliedModelV1?: SessionAppliedModelV1,
 };
 

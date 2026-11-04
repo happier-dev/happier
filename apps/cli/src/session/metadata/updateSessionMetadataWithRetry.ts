@@ -1,4 +1,6 @@
 import { randomBytes as nodeRandomBytes } from 'node:crypto';
+import { readSessionModelSelectionV2FromMetadata } from '@happier-dev/agents/session/state/metadataReaders';
+import { SessionModelSelectionIntentV1Schema } from '@happier-dev/protocol/providers/model-selection';
 
 import {
   prepareSessionMetadataTuplePatchV1,
@@ -171,8 +173,18 @@ async function waitForSessionMetadataRetry(params: Readonly<{
   assertSessionMetadataMutationCurrentness(params.currentness);
 }
 
+/** Non-content accepted-selection facts acquired with metadata on this exact CAS attempt. */
+export type SessionMetadataMutationContext = Readonly<{
+  metadataRevision?: number;
+  acceptedTeamCredentialBinding?: SessionTeamCredentialBindingIntentListV1[number] | null;
+}>;
+
+type MetadataTupleMutation = SessionMetadataTupleMutationV1<Metadata, AgentState>;
 export type SessionMetadataEnvelopeTupleMutation =
-  SessionMetadataTupleMutationV1<Metadata, AgentState>;
+  | Exclude<MetadataTupleMutation, { kind: 'metadata' }>
+  | (Omit<Extract<MetadataTupleMutation, { kind: 'metadata' }>, 'update'> & Readonly<{
+      update: (metadata: Metadata, context?: SessionMetadataMutationContext) => Metadata | Promise<Metadata>;
+    }>);
 
 function toSharedTupleSnapshot(
   snapshot: SessionMetadataWriterSnapshot,
@@ -187,6 +199,7 @@ function fromSharedTupleSnapshot(
 }
 
 type LayoutAwareRawSession = Readonly<{
+  acceptedTeamCredentialBinding?: SessionTeamCredentialBindingIntentListV1[number] | null;
   metadata: string;
   metadataLayoutVersion?: unknown;
   metadataVersion: number;
@@ -882,6 +895,7 @@ export async function updateSessionMetadataEnvelopeTupleWithRetry(
     sessionExpectation?:
       SessionMetadataInactiveModelIntentExpectationV1;
     teamCredentialBindings?: SessionTeamCredentialBindingIntentListV1;
+    acceptedTeamCredentialBinding?: SessionTeamCredentialBindingIntentListV1[number] | null;
     teamCredentialBindingOperation?: SessionTeamCredentialBindingMutationOperationV1;
     teamVisibilityGrantConsent?: Readonly<{ teamId: string }>;
     mutateLegacy?: (
@@ -906,8 +920,10 @@ export async function updateSessionMetadataEnvelopeTupleWithRetry(
     let accountEncryptionCurrentness = owner?.accountEncryptionCurrentness;
     let activitySummaryV1: SessionMetadataOwnerPatchV1['activitySummaryV1'];
     let sharedActionConfirmationSummaryV1: SessionMetadataOwnerPatchV1['sharedActionConfirmationSummaryV1'];
+    let teamCredentialBindings = params.teamCredentialBindings;
+    let acceptedTeamCredentialBinding = params.acceptedTeamCredentialBinding;
     const mutation = params.mutation;
-    const mutationWithSummary: SessionMetadataEnvelopeTupleMutation = mutation.kind === 'agentState'
+    const mutationWithSummary: MetadataTupleMutation = mutation.kind === 'agentState'
       ? {
           ...mutation,
           update: async (previous: AgentState) => {
@@ -926,8 +942,23 @@ export async function updateSessionMetadataEnvelopeTupleWithRetry(
         }
       : mutation.kind === 'metadata' ? {
           ...mutation,
-          update: async (previous: Metadata) => {
-            const next = await mutation.update(previous);
+          update: async (previous: Metadata, metadataRevision?: number) => {
+            const next = await mutation.update(previous, { acceptedTeamCredentialBinding, metadataRevision });
+            // Recompute on each tuple CAS attempt, from the transition that
+            // actually won. Active and inactive model owners share this writer.
+            teamCredentialBindings = params.teamCredentialBindings;
+            if (!teamCredentialBindings && next.modelSelectionIntentV2 === undefined
+              && (previous.modelSelectionIntentV2 !== undefined || acceptedTeamCredentialBinding?.resourceId != null)) {
+              const previousIntent = SessionModelSelectionIntentV1Schema.safeParse(previous.modelSelectionIntentV1);
+              const nextIntent = SessionModelSelectionIntentV1Schema.safeParse(next.modelSelectionIntentV1);
+              const ordinaryIntentChanged = nextIntent.success && (!previousIntent.success
+                || JSON.stringify(previousIntent.data) !== JSON.stringify(nextIntent.data));
+              const removedTeamIntent = readSessionModelSelectionV2FromMetadata(previous)?.ref.source === 'team_resource';
+              if (nextIntent.success && (removedTeamIntent
+                || (acceptedTeamCredentialBinding?.resourceId != null && ordinaryIntentChanged))) {
+                teamCredentialBindings = [{ v: 1, slot: { kind: 'provider_model' }, resourceId: null }];
+              }
+            }
             if (previous.actionConfirmationsV1 !== undefined || next.actionConfirmationsV1 !== undefined) {
               const confirmations = next.actionConfirmationsV1 === undefined
                 ? null : SessionActionConfirmationsV1Schema.parse(next.actionConfirmationsV1);
@@ -980,7 +1011,7 @@ export async function updateSessionMetadataEnvelopeTupleWithRetry(
             sessionExpectation: params.sessionExpectation,
           } satisfies SessionMetadataInactiveModelIntentOwnerPatchV1;
         }
-        if (params.teamCredentialBindings) {
+        if (teamCredentialBindings) {
           if (patch.mode !== 'owner') {
             throw createMetadataUpdateError(
               'Team credential binding requires owner metadata authority',
@@ -991,7 +1022,7 @@ export async function updateSessionMetadataEnvelopeTupleWithRetry(
             ...patch,
             mode: 'owner_team_credential_binding',
             operation: params.teamCredentialBindingOperation ?? 'session.model.set',
-            teamCredentialBindings: params.teamCredentialBindings,
+            teamCredentialBindings,
             ...(params.teamVisibilityGrantConsent ? { teamVisibilityGrantConsent: params.teamVisibilityGrantConsent } : {}),
             ...(params.sessionExpectation ? { sessionExpectation: params.sessionExpectation } : {}),
           };
@@ -1126,6 +1157,7 @@ export async function updateSessionMetadataEnvelopeTupleWithRetry(
           );
         }
         accountEncryptionCurrentness = refreshedAccountCurrentness;
+        acceptedTeamCredentialBinding = authoritativeRaw.acceptedTeamCredentialBinding;
         const authoritativeMode =
           resolveSessionStoredContentEncryptionMode(authoritativeRaw);
         const authoritativeContext = resolveStoredSessionCryptoContext({

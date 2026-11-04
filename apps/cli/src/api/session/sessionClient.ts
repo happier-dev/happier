@@ -67,6 +67,7 @@ import {
     type SessionMetadataEnvelopeTupleSnapshot,
     type SessionMetadataLegacyOwnerSnapshot,
     type SessionMetadataSharedEditorSnapshot,
+    type SessionMetadataMutationContext,
 } from '@/session/metadata/updateSessionMetadataWithRetry';
 import type {
     SessionMetadataLegacyOwnerMutationRequestV1,
@@ -577,6 +578,17 @@ export class ApiSessionClient extends EventEmitter {
     private sessionActionConfirmationRequestStore: AgentStateRequestStore | null = null;
     private readonly agentStateResponseTargetDispatcher = new AgentStateResponseTargetDispatcher();
     private agentStateVersion: number;
+    /**
+     * The owner tuple this client last committed, the CAS seed for its next
+     * write while no newer version has been applied. The Home CAS still rejects
+     * a seed another writer moved past; the conflict path then re-reads.
+     */
+    private committedOwnerTuple: Readonly<{
+        token: string;
+        snapshot: SessionMetadataEnvelopeTupleSnapshot;
+        accountEncryptionCurrentness: AccountEncryptionCurrentnessResponse;
+        acceptedTeamCredentialBinding: NonNullable<Awaited<ReturnType<typeof fetchSessionByIdCompat>>>['acceptedTeamCredentialBinding'];
+    }> | null = null;
     private ownerActivityDelivery: 'rich_sender' | 'home_required' = 'home_required';
     private socket!: Socket<ServerToClientEvents, ClientToServerEvents>;
     private userSocket: Socket<ServerToClientEvents, ClientToServerEvents> | null;
@@ -3419,7 +3431,7 @@ export class ApiSessionClient extends EventEmitter {
         }
     }
 
-    updateMetadata(handler: (metadata: Metadata) => Metadata, options?: Readonly<{ expectedMetadataRevision?: number }>): Promise<void> {
+    updateMetadata(handler: (metadata: Metadata, context?: SessionMetadataMutationContext) => Metadata, options?: Readonly<{ expectedMetadataRevision?: number }>): Promise<void> {
         const queuedAt = performance.now();
         return this.metadataLock.inLock(async () => {
             logger.infoFile('[API] Session tuple mutation phase', { operation: 'metadata', phase: 'lock_wait',
@@ -3430,7 +3442,7 @@ export class ApiSessionClient extends EventEmitter {
     }
 
     updateMetadataAsCurrentPublisher(
-        handler: (metadata: Metadata) => Metadata,
+        handler: (metadata: Metadata, context?: SessionMetadataMutationContext) => Metadata,
     ): Promise<void> {
         // The current-publisher precondition is an owner tuple-write condition.
         // Refuse before the authority-check round trip rather than emitting it.
@@ -3461,7 +3473,7 @@ export class ApiSessionClient extends EventEmitter {
     }
 
     private async updateMetadataLocked(
-        handler: (metadata: Metadata) => Metadata,
+        handler: (metadata: Metadata, context?: SessionMetadataMutationContext) => Metadata,
         publisherPrecondition?: SessionMetadataPublisherPreconditionV1,
         expectedMetadataRevision?: number,
     ): Promise<void> {
@@ -3511,7 +3523,7 @@ export class ApiSessionClient extends EventEmitter {
     }
 
     private async commitMetadataLocked(
-        handler: (metadata: Metadata) => Metadata,
+        handler: (metadata: Metadata, context?: SessionMetadataMutationContext) => Metadata,
         publisherPrecondition?: SessionMetadataPublisherPreconditionV1,
         expectedMetadataRevision?: number,
     ): Promise<void> {
@@ -3541,12 +3553,14 @@ export class ApiSessionClient extends EventEmitter {
                 },
             );
         }
+        let acquired: Awaited<ReturnType<ApiSessionClient['acquireMetadataTupleWriterSnapshot']>> | null = null;
         const updated = await this.runSessionRequest(async () => {
             const cryptoContext = this.getMetadataTupleCryptoContext();
-            const { initialSnapshot, accountEncryptionCurrentness } =
-                await this.acquireMetadataTupleWriterSnapshot(credentials, operation);
+            acquired = await this.acquireMetadataTupleWriterSnapshot(credentials, operation);
+            const { initialSnapshot, accountEncryptionCurrentness, acceptedTeamCredentialBinding } = acquired;
             return await this.traceMetadataTuplePhase(operation, 'tuple_commit', () => updateSessionMetadataEnvelopeTupleWithRetry({
                 token: this.token,
+                currentness: { signal: this.socketAckAbortController.signal },
                 sessionId: this.sessionId,
                 authority: {
                     kind: 'owner',
@@ -3578,6 +3592,7 @@ export class ApiSessionClient extends EventEmitter {
         }
         if (updated.metadataLayoutVersion === 1) {
             this.applyMetadataEnvelopeTupleSnapshot(updated);
+            this.retainCommittedOwnerTuple(updated, acquired);
         }
     }
 
@@ -3587,7 +3602,7 @@ export class ApiSessionClient extends EventEmitter {
      * metadata schema rather than being silently dropped or escalated.
      */
     private async updateSharedMetadataLocked(
-        handler: (metadata: Metadata) => Metadata,
+        handler: (metadata: Metadata, context?: SessionMetadataMutationContext) => Metadata,
         publisherPrecondition?: SessionMetadataPublisherPreconditionV1,
     ): Promise<void> {
         if (publisherPrecondition) {
@@ -3663,18 +3678,31 @@ export class ApiSessionClient extends EventEmitter {
         credentials: StoredCredentials,
         operation: 'metadata' | 'publisher_metadata' | 'agent_state',
     ) {
-        // Acquire independent HTTP facts together. Opening or mutating the
-        // tuple still requires both the Account mode and the raw Session.
-        const [accountEncryptionCurrentness, rawSession] = await Promise.all([
+        // Account currentness is admitted on every write. The Session tuple is
+        // re-read only when this client's own last commit is not the newest
+        // version it has applied; both reads overlap when both are needed.
+        const seed = this.committedOwnerTuple;
+        this.committedOwnerTuple = null;
+        const readSession = () => this.traceMetadataTuplePhase(operation, 'snapshot_read', () =>
+            this.runSessionRequest(() => fetchSessionByIdCompat({
+                token: this.token,
+                sessionId: this.sessionId,
+                reason: 'waitForMetadataUpdate',
+            })));
+        const seedCurrent = () => seed !== null && seed.token === this.token
+            && seed.snapshot.metadataLayoutVersion === this.metadataLayoutVersion
+            && seed.snapshot.metadataVersion === this.metadataVersion
+            && seed.snapshot.agentStateVersion === this.agentStateVersion;
+        const [accountEncryptionCurrentness, readRawSession] = await Promise.all([
             this.traceMetadataTuplePhase(operation, 'account_currentness', () =>
                 this.runSessionRequest(() => this.getAccountEncryptionCurrentness())),
-            this.traceMetadataTuplePhase(operation, 'snapshot_read', () =>
-                this.runSessionRequest(() => fetchSessionByIdCompat({
-                    token: this.token,
-                    sessionId: this.sessionId,
-                    reason: 'waitForMetadataUpdate',
-                }))),
+            seedCurrent() ? null : readSession(),
         ]);
+        if (seed && seedCurrent() && isDeepStrictEqual(seed.accountEncryptionCurrentness, accountEncryptionCurrentness)) {
+            return { initialSnapshot: seed.snapshot, accountEncryptionCurrentness,
+                acceptedTeamCredentialBinding: seed.acceptedTeamCredentialBinding };
+        }
+        const rawSession = readRawSession ?? await readSession();
         if (!rawSession) {
             throw Object.assign(new Error('Session not found'), {
                 code: 'session_not_found' as const,
@@ -3686,7 +3714,26 @@ export class ApiSessionClient extends EventEmitter {
             rawSession,
             accountEncryptionCurrentness,
         });
-        return { initialSnapshot, accountEncryptionCurrentness };
+        return { initialSnapshot, accountEncryptionCurrentness,
+            acceptedTeamCredentialBinding: rawSession.acceptedTeamCredentialBinding };
+    }
+
+    /**
+     * Retains an own commit as the next CAS seed only when it is the newest
+     * applied version. A Team model resource binding keeps its fresh read: the
+     * metadata writer may change that binding in the same commit.
+     */
+    private retainCommittedOwnerTuple(
+        snapshot: SessionMetadataEnvelopeTupleSnapshot,
+        acquired: Awaited<ReturnType<ApiSessionClient['acquireMetadataTupleWriterSnapshot']>> | null,
+    ): void {
+        if (!acquired || acquired.acceptedTeamCredentialBinding?.resourceId != null) return;
+        if (snapshot.metadataLayoutVersion !== this.metadataLayoutVersion
+            || snapshot.metadataVersion !== this.metadataVersion
+            || snapshot.agentStateVersion !== this.agentStateVersion) return;
+        this.committedOwnerTuple = { token: this.token, snapshot,
+            accountEncryptionCurrentness: acquired.accountEncryptionCurrentness,
+            acceptedTeamCredentialBinding: acquired.acceptedTeamCredentialBinding };
     }
 
     private applyMetadataEnvelopeTupleSnapshot(
@@ -4229,12 +4276,14 @@ export class ApiSessionClient extends EventEmitter {
                     },
                 );
             }
+            let acquired: Awaited<ReturnType<ApiSessionClient['acquireMetadataTupleWriterSnapshot']>> | null = null;
             const updated = await this.runSessionRequest(async () => {
                 const cryptoContext = this.getMetadataTupleCryptoContext();
-                const { initialSnapshot, accountEncryptionCurrentness } =
-                    await this.acquireMetadataTupleWriterSnapshot(credentials, 'agent_state');
+                acquired = await this.acquireMetadataTupleWriterSnapshot(credentials, 'agent_state');
+                const { initialSnapshot, accountEncryptionCurrentness } = acquired;
                 return await this.traceMetadataTuplePhase('agent_state', 'tuple_commit', () => updateSessionMetadataEnvelopeTupleWithRetry({
                     token: this.token,
+                    currentness: { signal: this.socketAckAbortController.signal },
                     sessionId: this.sessionId,
                     authority: {
                         kind: 'owner',
@@ -4265,6 +4314,7 @@ export class ApiSessionClient extends EventEmitter {
             }
             if (updated.metadataLayoutVersion === 1) {
                 this.applyMetadataEnvelopeTupleSnapshot(updated);
+                this.retainCommittedOwnerTuple(updated, acquired);
             }
             this.agentStateRequestStore?.confirmAppliedCompletions();
         });
