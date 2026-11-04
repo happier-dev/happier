@@ -1,10 +1,17 @@
 import { describe, expect, it } from 'vitest';
+import { RPC_ERROR_CODES, RpcError } from '../rpc/errors.js';
 
 import { ProviderBindingCompatibilityV1Schema } from './compatibility/v1.js';
 import { createProviderErrorV1, ProviderErrorV1Schema, providerErrorFromRpcFailure } from './errors.js';
 import { ProfileRecordIdV1Schema } from '../profiles/v2/profileId.js';
 
 describe('provider stable errors and compatibility envelopes', () => {
+  it('offers Retry when Machine transport discovery cannot reach a Provider read', () => {
+    const failure = new RpcError('transport unavailable', RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE);
+    expect(providerErrorFromRpcFailure(failure, { machineId: 'machine-a' })).toEqual(
+      createProviderErrorV1('provider_machine_unavailable', { machineId: 'machine-a' }),
+    );
+  });
   it('keeps an unavailable Account catalog retryable without treating it as an Agent failure', () => {
     const failure = Object.assign(new Error('provider_catalog_unavailable'), {
       code: 'provider_catalog_unavailable', details: { status: 'unavailable', reason: 'unreachable' },

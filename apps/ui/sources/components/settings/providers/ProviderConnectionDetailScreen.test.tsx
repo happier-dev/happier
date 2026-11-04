@@ -5,6 +5,7 @@ import { NavigationContext, useNavigation } from '@react-navigation/native';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createProviderErrorV1 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RPC_ERROR_CODES, RpcError } from '@happier-dev/protocol/rpc/errors';
 import { ProviderConnectionV1Schema } from '@happier-dev/protocol/providers/connections/v1';
 import { serializeModelVisibilityRefV1 } from '@happier-dev/protocol/providers/model-selection';
 import { createAccountProviderActionExecuteV1 } from '@happier-dev/protocol/providers/connections/accountProviderActionV1';
@@ -1598,6 +1599,40 @@ describe('ProviderConnectionDetailScreen', () => {
         expect(router.replace).not.toHaveBeenCalled();
         expect(accountCatalogWrites()).toHaveLength(1);
         expect(run).not.toHaveBeenCalled();
+    });
+
+    it('opens one read per visible Machine and exposes a failed peer row Retry without reloading healthy rows', async () => {
+        state.connection = connection({
+            scope: 'machine', authorized: true,
+            grants: { accountEnabled: true, enabledMachineIds: ['machine-a'],
+                accountState: 'valid', machineState: 'valid', effectiveState: 'valid' },
+        });
+        let failPeer = true;
+        providerHarness.intercept(RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE, async request => {
+            if (request.machineId === 'machine-b' && failPeer) {
+                throw new RpcError('RPC transport unavailable', RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE);
+            }
+            return createProviderConnectionsDescribeFixture({ connections: [createProviderConnectionViewFixture(state.connection!)] });
+        });
+        const { ProviderConnectionDetailScreen } = await import('./ProviderConnectionDetailScreen');
+        const { ProviderErrorItems } = await import('./ProviderErrorItems');
+        const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('provider-connection-detail')).not.toBeNull());
+        const reads = () => providerHarness.state.requests.filter(request => request.method === RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE);
+        expect(reads().filter(request => request.machineId === 'machine-b')).toHaveLength(0);
+        const beforeOpen = reads().length;
+        await openAdvanced(screen);
+        await waitForHomeGovernance(() => expect(screen.findAllByType(ProviderErrorItems)
+            .some(item => item.props.error?.code === 'provider_machine_unavailable' && typeof item.props.retry === 'function')).toBe(true));
+        expect(reads().slice(beforeOpen).map(request => request.machineId).sort()).toEqual(['machine-a', 'machine-b']);
+        const retry = screen.findByTestId('provider-error-action:provider_machine_unavailable');
+        expect(retry).not.toBeNull();
+        const beforeRetry = reads().length;
+        failPeer = false;
+        await screen.pressByTestIdAsync('provider-error-action:provider_machine_unavailable');
+        await waitForHomeGovernance(() => expect(reads()).toHaveLength(beforeRetry + 1));
+        expect(reads().slice(beforeRetry).map(request => request.machineId)).toEqual(['machine-b']);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('provider-error-action:provider_machine_unavailable')).toBeNull());
     });
 
     it('labels account and machine grant switches with their owning rows', async () => {

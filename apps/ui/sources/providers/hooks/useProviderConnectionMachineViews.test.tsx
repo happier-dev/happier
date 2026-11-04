@@ -1,6 +1,7 @@
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RPC_ERROR_CODES, RpcError } from '@happier-dev/protocol/rpc/errors';
 
 import {
     createProviderConnectionViewFixture,
@@ -51,6 +52,48 @@ describe('useProviderConnectionMachineViews', () => {
         providerHarness.reset();
         standardCleanup();
         await account.reset();
+    });
+
+    it('settles each visible Machine independently and retries only the failed row', async () => {
+        type Answer = ReturnType<typeof createProviderConnectionsDescribeFixture>;
+        const pending = new Map<string, { resolve: (value: Answer) => void; reject: (error: Error) => void }>();
+        providerHarness.intercept(RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE, request => (
+            new Promise<Answer>((resolve, reject) => { pending.set(request.machineId, { resolve, reject }); })
+        ));
+        const { useProviderConnectionMachineViews } = await import('./useProviderConnectionMachineViews');
+        const targets = machines.map(machine => row('srv_a', machine.id, serverId));
+        const rendered = await renderHook((props: { visible: boolean }) => useProviderConnectionMachineViews({
+            enabled: true, active: props.visible, connectionId: 'pc_a', targets,
+        }), { initialProps: { visible: false } });
+        const reads = () => providerHarness.state.requests.filter(request => request.method === RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE);
+        await flushHookEffects();
+        expect(reads()).toHaveLength(0);
+        await rendered.rerender({ visible: true });
+        await waitForHomeGovernance(() => expect(pending.size).toBe(3));
+        expect(reads().map(request => request.machineId).sort()).toEqual(machines.map(machine => machine.id).sort());
+        const answer = createProviderConnectionsDescribeFixture({ connections: [createProviderConnectionViewFixture({ connectionId: 'pc_a' })] });
+        try {
+            await act(async () => {
+                pending.get('machine-a')!.resolve(answer);
+                pending.get('machine-b')!.reject(new RpcError('RPC transport unavailable', RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE));
+            });
+            await waitForHomeGovernance(() => {
+                expect(rendered.getCurrent().byTargetKey['srv_a\u0000machine-a']).toMatchObject({ status: 'success' });
+                expect(rendered.getCurrent().byTargetKey['srv_a\u0000machine-b']).toMatchObject({ status: 'error', error: { code: 'provider_machine_unavailable', action: 'retry' } });
+                expect(rendered.getCurrent().byTargetKey['srv_a\u0000machine-shared']).toMatchObject({ status: 'loading' });
+            });
+            let retry!: Promise<void>;
+            await act(async () => { retry = rendered.getCurrent().refresh(targets[1]!.target); });
+            await waitForHomeGovernance(() => expect(reads()).toHaveLength(4));
+            expect(reads().map(request => request.machineId)).toEqual(['machine-a', 'machine-b', 'machine-shared', 'machine-b']);
+            expect(rendered.getCurrent().byTargetKey['srv_a\u0000machine-a']).toMatchObject({ status: 'success' });
+            await act(async () => { pending.get('machine-b')!.resolve(answer); await retry; });
+            expect(rendered.getCurrent().byTargetKey['srv_a\u0000machine-b']).toMatchObject({ status: 'success' });
+        } finally {
+            await act(async () => { for (const entry of pending.values()) entry.resolve(answer); });
+        }
+        await waitForHomeGovernance(() => expect(rendered.getCurrent().loading).toBe(false));
+        expect(reads()).toHaveLength(4);
     });
 
     it('shares the selected Machine check with its peer row and retains it on a new detail demand', async () => {

@@ -166,6 +166,9 @@ export function providerErrorFromRpcFailure(
   if (rpcErrorCode === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE || rpcErrorCode === RPC_ERROR_CODES.METHOD_NOT_FOUND) {
     return createProviderErrorV1('agent_unavailable', context);
   }
+  if (rpcErrorCode === RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE) {
+    return createProviderErrorV1('provider_machine_unavailable', context);
+  }
   if (isMachineRpcTimeoutError(caught)
     || transportCode === MACHINE_RPC_TIMEOUT_ERROR_CODE
     || transportCode === 'ETIMEDOUT'

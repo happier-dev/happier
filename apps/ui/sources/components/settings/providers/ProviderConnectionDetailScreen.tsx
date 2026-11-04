@@ -232,12 +232,6 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
     const query = useProviderConnections({ enabled: enabled && accountAddressAvailable, active: focused, machineId, serverId, connectionId: props.connectionId });
     const connection = query.data?.connections.find((item) => item.connectionId === props.connectionId) ?? null;
     const machineSectionVisible = connection?.scope === 'machine' || (connection?.grants.enabledMachineIds.length ?? 0) > 0;
-    const machineViews = useProviderConnectionMachineViews({
-        enabled,
-        active: focused && machineSectionVisible,
-        connectionId: props.connectionId,
-        targets: readableMachineRows,
-    });
     const refreshConnectionQuery = React.useCallback(async (scope?: ProviderConnectionRefreshScope): Promise<void> => {
         await query.refresh(scope);
     }, [query.refresh]);
@@ -764,6 +758,24 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
     const gatewayDeclarations = storedConnection ? readProviderGatewayPurposeDeclarations(storedConnection, query.declarationContext) : null;
     const gateway = storedConnection && gatewayDeclarations && gatewayDeclarations.length > 0
         ? { saved: storedConnection, declarations: gatewayDeclarations } : null;
+    const availabilityVisible = connection !== null && (connection.scope === 'account' || connection.grants.accountState !== 'absent');
+    const teamsSharingAvailable = Boolean(teamCredentialResourcesEnabled && selectedTargetServerMatchesActiveAccount && serverId);
+    // A grant that is not in force is explained by the error above and fixed in here: open by itself.
+    const advancedNeedsAttention = connection !== null && (connection.authorizationError != null
+        || (connection.grants.accountState !== 'valid' && connection.grants.accountState !== 'absent')
+        || (machineSectionVisible && connection.grants.machineState !== 'valid' && connection.grants.machineState !== 'absent'));
+    // A gateway runs where Runs on says and is reached through Happier: availability, grants and
+    // endpoints are a gateway user's concern only when one of them is broken and needs the repair.
+    const advancedAvailable = gateway
+        ? advancedNeedsAttention
+        : availabilityVisible || machineSectionVisible || teamsSharingAvailable || (connection?.endpoints.length ?? 0) > 0;
+    const advancedShown = advancedAvailable && (advancedOpen || advancedNeedsAttention);
+    const machineViews = useProviderConnectionMachineViews({
+        enabled,
+        active: focused && advancedShown && machineSectionVisible,
+        connectionId: props.connectionId,
+        targets: readableMachineRows,
+    });
     // The machine already says "gateway" while the Account's saved row is still arriving: hold the
     // older managed-service controls back rather than show them for a moment.
     const gatewayArriving = !gateway && query.loading && query.catalog === null && connection !== null
@@ -1148,18 +1160,6 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
             onSubmitEditing={() => { void commitName(); }}
         /></SettingAnchor>
     );
-    const availabilityVisible = connection.scope === 'account' || connection.grants.accountState !== 'absent';
-    const teamsSharingAvailable = Boolean(teamCredentialResourcesEnabled && selectedTargetServerMatchesActiveAccount && serverId);
-    // A grant that is not in force is explained by the error above and fixed in here: open by itself.
-    const advancedNeedsAttention = connection.authorizationError !== null
-        || (connection.grants.accountState !== 'valid' && connection.grants.accountState !== 'absent')
-        || (machineSectionVisible && connection.grants.machineState !== 'valid' && connection.grants.machineState !== 'absent');
-    // A gateway runs where Runs on says and is reached through Happier: availability, grants and
-    // endpoints are a gateway user's concern only when one of them is broken and needs the repair.
-    const advancedAvailable = gateway
-        ? advancedNeedsAttention
-        : availabilityVisible || machineSectionVisible || teamsSharingAvailable || connection.endpoints.length > 0;
-    const advancedShown = advancedAvailable && (advancedOpen || advancedNeedsAttention);
     // A failed write from a control inside Advanced (account access, a machine grant) keeps its status, with
     // its retry or fresh-read action, right under that control rather than far above it.
     const accountAccessShown = connection.scope === 'account' || connection.grants.accountState !== 'absent';
@@ -1619,10 +1619,10 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                                             showChevron={!selected}
                                             onPress={!selected ? () => selectTargetMachine(row.target) : undefined}
                                         />
-                                        {selected && machineError ? (
+                                        {machineError ? (
                                             <ProviderErrorItems
                                                 error={machineError}
-                                                retry={machineViews.refresh}
+                                                retry={() => machineViews.refresh(row.target)}
                                                 enableOnMachine={machineError.action === 'enable_on_machine'
                                                     ? () => setMachineEnabled(rowMachineId, true)
                                                     : undefined}

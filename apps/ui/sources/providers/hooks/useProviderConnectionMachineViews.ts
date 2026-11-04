@@ -195,14 +195,22 @@ export function useProviderConnectionMachineViews(input: Readonly<{
                 loading: true,
             };
         });
-        const entries = await Promise.all(targets.map(async (row) => {
+        const settle = (key: string, entry: ProviderConnectionMachineViewState) => {
+            if (!requestStillCurrent() || latestReadByTarget.current.get(key) !== requestControllers.get(key)) return;
+            setState(current => {
+                if (current.scopeKey !== scopeKey || current.accountLifetime !== accountLifetime) return current;
+                const byTargetKey = { ...current.byTargetKey, [key]: entry };
+                return { ...current, byTargetKey, loading: Object.values(byTargetKey).some(value => value.status === 'loading') };
+            });
+        };
+        await Promise.all(targets.map(async (row) => {
             const key = providerSettingsMachineRowKey(row.target);
             const machineId = row.target.machineId;
             const binding = credentialStates.get(resolveServerProfileScopeIdForIdentifier(row.serverId))?.binding;
             if (!binding || !binding.isCurrent()) {
-                return [key, { status: 'error', error: createProviderErrorV1('provider_authorization_changed', {
+                return settle(key, { status: 'error', error: createProviderErrorV1('provider_authorization_changed', {
                     connectionId: input.connectionId, machineId,
-                }) } satisfies ProviderConnectionMachineViewState] as const;
+                }) });
             }
             try {
                 const publish = binding.credentialKey ? beginProviderConnectionCheckRead(binding.scope, binding.credentialKey,
@@ -210,30 +218,19 @@ export function useProviderConnectionMachineViews(input: Readonly<{
                 const result = await describeProviderConnections({
                     machineId, serverId: row.serverId, connectionId: input.connectionId,
                 }, { signal: requestControllers.get(key)!.signal });
-                if (!binding.isCurrent()) return [key, { status: 'error',
+                if (!binding.isCurrent()) return settle(key, { status: 'error',
                     error: createProviderErrorV1('provider_authorization_changed', { connectionId: input.connectionId, machineId }),
-                } satisfies ProviderConnectionMachineViewState] as const;
+                });
                 if (result.status === 'success' && requestStillCurrent() && !requestControllers.get(key)!.signal.aborted) publish?.(result);
-                return [key, result.status === 'success'
-                    ? { status: 'success', connection: result.connections.find(connection => connection.connectionId === input.connectionId) ?? null } satisfies ProviderConnectionMachineViewState
-                    : { status: 'error', error: result.error } satisfies ProviderConnectionMachineViewState] as const;
+                return settle(key, result.status === 'success'
+                    ? { status: 'success', connection: result.connections.find(connection => connection.connectionId === input.connectionId) ?? null }
+                    : { status: 'error', error: result.error });
             } catch (caught) {
-                return [key, { status: 'error', error: providerErrorFromRpcFailure(caught, {
+                return settle(key, { status: 'error', error: providerErrorFromRpcFailure(caught, {
                     connectionId: input.connectionId, machineId,
-                }) } satisfies ProviderConnectionMachineViewState] as const;
+                }) });
             }
         }));
-        if (!requestStillCurrent()) return;
-        setState(current => {
-            if (current.scopeKey !== scopeKey || current.accountLifetime !== accountLifetime) return current;
-            const byTargetKey = { ...current.byTargetKey };
-            for (const [key, entry] of entries) {
-                if (latestReadByTarget.current.get(key) === requestControllers.get(key)) {
-                    byTargetKey[key] = entry;
-                }
-            }
-            return { ...current, byTargetKey, loading: Object.values(byTargetKey).some(entry => entry.status === 'loading') };
-        });
     }, [accountLifetime, accountScopesByTargetKey, credentialStates, describeProviderConnections, input.connectionId, input.enabled, ready, scopeKey, targetsKey]);
 
     React.useEffect(() => {
@@ -253,7 +250,11 @@ export function useProviderConnectionMachineViews(input: Readonly<{
         };
     }, [accountLifetime, input.active, read, scopeEnabled, scopeKey]);
 
-    const refresh = React.useCallback(async () => { await read(); }, [read]);
+    const refresh = React.useCallback(async (target?: ProviderSettingsMachineRowV1['target']) => {
+        await read(target ? targetsRef.current
+            .filter(row => providerSettingsMachineRowKey(row.target) === providerSettingsMachineRowKey(target))
+            .map(row => ({ machineId: row.target.machineId, serverId: row.serverId })) : undefined);
+    }, [read]);
 
     return {
         byTargetKey,
