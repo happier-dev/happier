@@ -4,7 +4,7 @@ import {
     type HomeCredentialMutationEvent,
 } from '@/auth/storage/tokenStorage';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
-import { accountChangeKindsAffectWorkflowTriggers, planSyncActionsFromChanges, plannedChangesAffectSessionListQuery, plannedChangesAffectWorkflowTriggers } from './changesPlanner';
+import { accountChangeKindsAffectWorkflowTriggers, accountChangeKindsAffectWorkflowDefinitions, planSyncActionsFromChanges, plannedChangesAffectSessionListQuery, plannedChangesAffectWorkflowTriggers, plannedChangesAffectWorkflowDefinitions } from './changesPlanner';
 import type { SessionSystemRecordInvalidationV1 } from '@happier-dev/protocol/sessions/board/changeHint';
 import { readSavedSecretDisclosureActivityEntityIdV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 
@@ -47,6 +47,8 @@ export type HomeAccountChangeEvent = Readonly<{
     usageQueryAffects?: boolean;
     /** The canonical planner's private trigger-read decision; status is not definition content. */
     workflowTriggersAffect?: boolean;
+    /** The canonical planner's saved definition/source query decision. */
+    workflowDefinitionsAffect?: boolean;
     /** An acknowledged local Artifact deletion; no private content or replay guarantee. */
     deletedArtifactIds?: readonly string[];
 }>;
@@ -64,6 +66,7 @@ type HomeAccountChangeDetails = Readonly<{
     accountSettingsAffects?: boolean;
     usageQueryAffects?: boolean;
     workflowTriggersAffect?: boolean;
+    workflowDefinitionsAffect?: boolean;
     deletedArtifactIds?: readonly string[];
 }>;
 
@@ -177,10 +180,18 @@ export function publishHomeAccountChange(
     entityIds?: readonly string[],
     details?: HomeAccountChangeDetails,
 ): void {
+    publishHomeAccountChangeForRouting(serverId, entityIds, details);
+}
+
+/** Secondary-Home routing consumes the same admitted event sent to observers. */
+export function publishHomeAccountChangeForRouting(
+    serverId: string,
+    entityIds?: readonly string[],
+    details?: HomeAccountChangeDetails,
+): HomeAccountChangeEvent {
     // Advance before any consumer can synchronously start its refresh. An adapter
     // listener would depend on insertion order and could join a pre-wake read.
     invalidateHomeAccountReadJoins(serverId);
-    if (homeAccountChangeObservers.size === 0) return;
     const rawKinds = details?.changeKinds;
     const unknownKinds = rawKinds !== undefined && (rawKinds.length === 0
         || rawKinds.some(kind => !ChangeKindSchema.safeParse(kind).success));
@@ -205,6 +216,8 @@ export function publishHomeAccountChange(
         && plannedChangesAffectSessionListQuery(accountWakePlan) === false ? accountWakePlan : null;
     const workflowTriggersAffect = details?.workflowTriggersAffect
         ?? (scopedAccountPlan ? plannedChangesAffectWorkflowTriggers(scopedAccountPlan) : undefined);
+    const workflowDefinitionsAffect = details?.workflowDefinitionsAffect
+        ?? (scopedAccountPlan ? plannedChangesAffectWorkflowDefinitions(scopedAccountPlan) : undefined);
     // Explicit record routing is produced only when no unknown Account fact
     // joined this wake. Retain its Session ids too: legacy workflow readers on
     // a secondary Home have no detailed feed cursor to recover a mixed wake.
@@ -229,6 +242,9 @@ export function publishHomeAccountChange(
         ...(details?.usageQueryAffects !== undefined ? { usageQueryAffects: details.usageQueryAffects } : {}),
         workflowTriggersAffect: !disclosureOnly && (details?.source === 'connected' || coarse
             || (workflowTriggersAffect ?? accountChangeKindsAffectWorkflowTriggers(changeKinds))),
+        workflowDefinitionsAffect: details?.source === 'connected' || details?.source === 'snapshot'
+            || (!disclosureOnly && (coarse
+                || (workflowDefinitionsAffect ?? accountChangeKindsAffectWorkflowDefinitions(changeKinds)))),
         ...(details?.deletedArtifactIds ? { deletedArtifactIds: Object.freeze([...new Set(details.deletedArtifactIds)]) } : {}),
     });
     for (const [observer, { includeCatchUpPending }] of [...homeAccountChangeObservers]) {
@@ -240,4 +256,5 @@ export function publishHomeAccountChange(
             // this owner's own session-cache refresh.
         }
     }
+    return event;
 }

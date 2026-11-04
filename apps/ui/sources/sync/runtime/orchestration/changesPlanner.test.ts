@@ -896,3 +896,25 @@ describe('planSyncActionsFromChanges', () => {
         expect(planned.kv).toEqual({ type: 'refresh-feature', feature: 'todos' });
     });
 });
+
+describe('Workflow definition query relevance', () => {
+    it('publishes the canonical Workflow definition query relevance for unrelated changes and recovery', async () => {
+        const { publishHomeAccountChangeForRouting } = await import('./homeAccountChange');
+        for (const kind of ['session', 'discussion', 'feed', 'friends', 'pet', 'kv'] as const) {
+            expect(publishHomeAccountChangeForRouting('home', ['row'], { source: 'socket', changeKinds: [kind] }))
+                .toMatchObject({ workflowDefinitionsAffect: false });
+        }
+        expect(publishHomeAccountChangeForRouting('home', ['workflow-run:one'], { source: 'socket', changeKinds: ['account'] }))
+            .toMatchObject({ workflowDefinitionsAffect: false });
+        for (const kind of ['artifact', 'automation', 'machine', 'machineRecipientAccess', 'pluginDomain', 'share'] as const) {
+            expect(publishHomeAccountChangeForRouting('home', ['row'], { source: 'socket', changeKinds: [kind] }))
+                .toMatchObject({ workflowDefinitionsAffect: true });
+        }
+        expect(publishHomeAccountChangeForRouting('home')).toMatchObject({ workflowDefinitionsAffect: true });
+        expect(publishHomeAccountChangeForRouting('home', [], { changeKinds: [] }))
+            .toMatchObject({ workflowDefinitionsAffect: true });
+        expect(publishHomeAccountChangeForRouting('home', undefined, { source: 'connected' }))
+            .toMatchObject({ workflowDefinitionsAffect: true });
+    });
+
+});

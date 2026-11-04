@@ -834,3 +834,14 @@ function plannedChangesAffectEverySessionListQuery(planned: PlannedChangeActions
             || Object.keys(hint).some((key) => key !== 'settingsVersion');
     });
 }
+
+/** Library definitions also consume Machine-contributed Workflow sources. */
+export function plannedChangesAffectWorkflowDefinitions(planned: PlannedChangeActions): boolean {
+    return plannedChangesAffectWorkflowTriggers(planned) || planned.invalidate.machines;
+}
+
+/** Precise unrelated kinds cannot change saved definitions, triggers, plugin sources or access. */
+export function accountChangeKindsAffectWorkflowDefinitions(changeKinds: readonly string[] | undefined): boolean {
+    return accountChangeKindsAffectWorkflowTriggers(changeKinds)
+        || changeKinds?.some(kind => isMachineProjectionChangeKindV1(kind)) === true;
+}

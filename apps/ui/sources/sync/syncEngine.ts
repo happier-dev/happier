@@ -571,6 +571,7 @@ import {
     plannedChangesAffectSessionListQuery,
     plannedChangesAffectProfileCatalog,
     plannedChangesAffectWorkflowTriggers,
+    plannedChangesAffectWorkflowDefinitions,
     plannedChangesAffectUsageQuery,
 } from './runtime/orchestration/changesPlanner';
 import { applyPlannedChangeActions } from './runtime/orchestration/changesApplier';
@@ -12982,6 +12983,7 @@ class Sync {
                                     sessionListQueryAffects: materialization?.workflowRunsMaterialized ? false : plannedChangesAffectSessionListQuery(publishedPlan),
                                     profileCatalogAffects: materialization?.workflowRunsMaterialized ? false : plannedChangesAffectProfileCatalog(publishedPlan),
                                     workflowTriggersAffect: materialization?.workflowRunsMaterialized ? false : plannedChangesAffectWorkflowTriggers(publishedPlan),
+                                    workflowDefinitionsAffect: materialization?.workflowRunsMaterialized ? false : plannedChangesAffectWorkflowDefinitions(publishedPlan),
                                     accountSettingsAffects: materialization?.workflowRunsMaterialized ? false : publishedPlan.invalidate.settings || publishedPlan.unsupportedChanges.length > 0,
                                     usageQueryAffects: materialization?.workflowRunsMaterialized ? false : plannedChangesAffectUsageQuery(publishedPlan),
                                 });
