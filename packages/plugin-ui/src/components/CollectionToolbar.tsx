@@ -170,8 +170,9 @@ function WideToolbar(props: CollectionToolbarProps): ReactElement {
     read('lead', lead);
     read('trail', trail);
   };
+  // It leads with the add glyph the folded toolbar's round "+" shows, so the one primary reads the same at every width.
   const primary = props.primary === undefined ? null : (
-    <Button title={props.primary.label} variant="primary" onPress={props.primary.onPress}
+    <Button title={props.primary.label} variant="primary" icon={<Icon name="add" size="small" />} onPress={props.primary.onPress}
       {...(props.primary.testID === undefined ? {} : { testID: props.primary.testID })} />
   );
   return (
@@ -296,7 +297,7 @@ function CompactToolbar(props: CollectionToolbarProps): ReactElement {
       {filters}
       <MoreMenu {...props} folded />
       {props.primary === undefined ? null : (
-        <IconButton icon={<Icon name="add" />} accessibilityLabel={props.primary.label} onPress={props.primary.onPress}
+        <IconButton icon={<Icon name="add" />} appearance="well" accessibilityLabel={props.primary.label} onPress={props.primary.onPress}
           {...(props.primary.testID === undefined ? {} : { testID: props.primary.testID })} />
       )}
     </>

@@ -4626,8 +4626,13 @@ describe("the search in the caller's header row", () => {
     // A bounded field: it never takes the whole row, and narrows (to the row) rather than overflowing it.
     let slot: HTMLElement = input;
     while (slot.parentElement !== toolbar) slot = slot.parentElement!;
-    expect(Number.parseFloat(getComputedStyle(slot).width)).toBeGreaterThan(0);
-    expect(getComputedStyle(slot).maxWidth).toBe('100%');
+    // A readable basis it grows from, up to a readable measure; it gives way before the trailing controls wrap.
+    expect(Number.parseFloat(getComputedStyle(slot).flexBasis)).toBeGreaterThan(0);
+    expect(Number.parseFloat(getComputedStyle(slot).maxWidth)).toBeGreaterThan(Number.parseFloat(getComputedStyle(slot).flexBasis));
+    // A wrapping row breaks its line on each control's own width before anything narrows. The field counts at its
+    // narrowest, not at its input's content width, so the trailing controls wrap (and the toolbar folds) only when
+    // the row cannot hold them beside the narrowest field (a 1440 Tasks page folded with room to spare).
+    expect(Number.parseFloat(getComputedStyle(slot).width)).toBe(Number.parseFloat(getComputedStyle(slot).flexBasis));
     expect(
       Number.parseFloat(getComputedStyle(slot).flexShrink),
     ).toBeGreaterThan(0);

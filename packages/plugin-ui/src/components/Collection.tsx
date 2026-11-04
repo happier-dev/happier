@@ -2027,7 +2027,12 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
         // Phone-narrow it grows into the row beside the toolbar's round buttons, from the same readable basis, so a
         // caller's own wrapping row still gives it a line of its own.
         : compactToolbar ? { flexGrow: 1, flexBasis: HEADER_SEARCH_WIDTH * accessibility.textScale }
-          : { width: HEADER_SEARCH_WIDTH * accessibility.textScale }]}>{search.control}</View>
+          // Wide, it gives way first: from its readable measure down to the narrowest the row allows, so the
+          // trailing controls keep the one row (lab a2) instead of wrapping under it and folding the toolbar. A
+          // wrapping row breaks its line on each control's own width before anything narrows, so the field's own
+          // width is that narrowest: counted at its input's content width, a 1440 Tasks row wrapped with room to spare.
+          : { flexGrow: 1, flexBasis: HEADER_SEARCH_MIN_WIDTH * accessibility.textScale,
+            width: HEADER_SEARCH_MIN_WIDTH * accessibility.textScale, maxWidth: HEADER_SEARCH_WIDTH * accessibility.textScale }]}>{search.control}</View>
     ),
     selection: selectionMode,
     pageActions: pageChrome?.renderNavigationActions?.(null) ?? null,
@@ -2635,6 +2640,8 @@ const rootStyle: HappierPortableStyle = { flex: 1, minWidth: 0, minHeight: 0, ov
  * text, narrowing with a tight row and never wider than it, so the page's trailing controls keep their place.
  */
 const HEADER_SEARCH_WIDTH = 380;
+/** The narrowest a wide header search gives way to before the row folds: lab a2 draws it at about this width. */
+const HEADER_SEARCH_MIN_WIDTH = 220;
 const headerSearchStyle: HappierPortableStyle = { maxWidth: '100%', minWidth: 0, flexShrink: 1 };
 const fillSearchStyle: HappierPortableStyle = { width: '100%' };
 /** Inside the page's scroller the stage sizes to its rows instead of filling a fixed height. */

@@ -16,7 +16,7 @@ import {
 } from '../presentation/interaction/buttonChrome.js';
 import { HappierSpinner, iconMatchedSpinnerSize } from '../presentation/feedback/Spinner.js';
 import { HappierText } from '../presentation/text/Text.js';
-import { HAPPIER_ICON_BUTTON_SIZE, resolveHappierIconButtonChrome } from '../presentation/interaction/iconButtonChrome.js';
+import { HAPPIER_ICON_BUTTON_SIZE, HAPPIER_ICON_BUTTON_WELL_SIZE, resolveHappierIconButtonChrome } from '../presentation/interaction/iconButtonChrome.js';
 import { PluginUiLeadingGlyphInkContext } from './Icon.js';
 /**
  * A state's action in a container that never owns its page's primary (the host's `stateActions: 'quiet'`): a
@@ -256,6 +256,8 @@ export type IconButtonProps = Readonly<{
   disabled?: boolean;
   busy?: boolean;
   selected?: boolean;
+  /** `well`: the round filled button a folded toolbar's Filters and ⋯ menus draw, for an action beside them. */
+  appearance?: 'well';
   /** Logical focus target transferred by the mounted host after author state changes. */
   focusTarget?: PluginUiFocusTarget;
   testID?: string;
@@ -270,6 +272,7 @@ export function IconButton({
   disabled,
   busy,
   selected,
+  appearance,
   focusTarget,
   testID,
   onPress,
@@ -279,9 +282,10 @@ export function IconButton({
     resolveAuthorText(usePluginTranslation(), accessibilityLabel, accessibilityLabelKey),
     undefined,
   );
-  const size = HAPPIER_ICON_BUTTON_SIZE;
+  const well = appearance === 'well';
+  const size = well ? HAPPIER_ICON_BUTTON_WELL_SIZE : HAPPIER_ICON_BUTTON_SIZE;
   const chrome = (state: HappierPressableStyleState) => resolveHappierIconButtonChrome({
-    size, variant: 'plain', selected: state.selected, hovered: state.hovered,
+    size, variant: well ? 'well' : 'plain', selected: state.selected, hovered: state.hovered,
     pressed: state.pressed, focused: state.focused, disabled: state.disabled && !state.busy,
     colors: { background: theme.colors.control, border: theme.colors.border,
       hover: theme.colors.control, pressed: theme.colors.control,
