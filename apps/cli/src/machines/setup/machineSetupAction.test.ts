@@ -6,6 +6,7 @@ import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/proto
 import { nativeTerminal } from '@/testkit/machines/nativeSoftwareOs';
 import { createMachineSetupPlanAction } from './machineSetupAction';
 import { readFile } from 'node:fs/promises';
+import { createMachineSetupEffectPlan } from '@happier-dev/cli-common/machineSetup';
 
 describe('admitted Machine setup snapshot lifetime', () => {
   beforeEach(() => {
@@ -13,6 +14,33 @@ describe('admitted Machine setup snapshot lifetime', () => {
     nativeTerminal.exit = undefined;
     nativeTerminal.onLaunch = undefined;
     nativeTerminal.autoExit = false;
+  });
+  it.each([false, true])('binds native Apply to the installed recipe plan (tampered: %s)', async tampered => {
+    const fixture = await createNativeSoftwareInstallFixture({ scenario: 'apt' });
+    const plan = MachineSetupPlanResultV1Schema.parse(await fixture.machineSetupPlan({
+      input: { homeId: 'srv_home', machineId: fixture.machine.id, sources: fixture.sources, mode: 'effects' },
+      context: fixture.context('machines.setup.plan'),
+    }));
+    const recipePlans = (plan.recipePlans ?? []).map(entry => {
+      if (!tampered) return entry;
+      const { v: _version, planDigest: _digest, ...contents } = entry.plan;
+      return { ...entry, plan: createMachineSetupEffectPlan({ ...contents,
+        steps: [...contents.steps, { id: 'unreviewed-script', kind: 'script', shell: 'sh', body: 'true\n' }],
+        nativeFacts: [...contents.nativeFacts, { stepId: 'unreviewed-script', status: 'drifted', facts: {} }],
+      }) };
+    });
+    expect(recipePlans).toHaveLength(1);
+    const result = await fixture.apply({ input: { homeId: 'srv_home', machineId: fixture.machine.id,
+      desiredRevision: plan.desiredRevision, sources: plan.sources, exclusions: [], recipePlans },
+      context: fixture.context('machines.setup.apply') });
+    if (tampered) {
+      expect(result).toMatchObject({ ok: false, errorCode: 'plan_changed' });
+      expect(fixture.rootLaunches).toEqual([]);
+      expect(fixture.metadataWrites).toEqual([]);
+    } else {
+      expect(result).toMatchObject({ operationId: expect.any(String) });
+      expect((await fixture.readInstalled()).installed).toBe(true);
+    }
   });
   it.each(['admission', 'installation', 'credentials'] as const)('retains the installed runtime %s refusal in a managed Plan', async reason => {
     const fixture = await createNativeSoftwareInstallFixture({ scenario: 'apt' });

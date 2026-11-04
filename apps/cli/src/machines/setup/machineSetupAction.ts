@@ -293,6 +293,14 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
             generation: lease.registry.generation }, machineRecipesProjectionFamily).entriesById);
         } });
         if ('errorCode' in planned) return planned;
+        if (mode === 'apply') {
+          const recipePlans = planned.recipePlans ?? [];
+          if (recipePlans.length !== input.recipePlans.length || recipePlans.some((entry, index) => {
+            const reviewed = input.recipePlans[index];
+            return !reviewed || entry.sourceIndex !== reviewed.sourceIndex || entry.itemIndex !== reviewed.itemIndex
+              || entry.plan.planDigest !== reviewed.plan.planDigest;
+          })) return fail('plan_changed');
+        }
         const observedSourceFacts = observeInitialPresence(sources, planned.recipePlans ?? []);
         if (prepared && !prepared.ok) return prepared;
         if (mode !== 'remove') {

@@ -114,7 +114,6 @@ export function createCombinedMachineSetupActionDeps(host: Readonly<{
         const observed = MachineSetupPlanResultV1Schema.safeParse(result);
         if (!observed.success) return failure('invalid_action_output');
         if (observed.data.desiredRevision !== target.desiredRevision || !sameStrictJsonValue(observed.data.sources, target.sources)
-          || !sameStrictJsonValue(observed.data.recipePlans ?? [], target.recipePlans)
           || !sameStrictJsonValue(observed.data.removeItemKeys, target.removeItemKeys)
           || requestedExclusions !== undefined && !sameStrictJsonValue(observed.data.exclusions, requestedExclusions)) return failure('plan_changed');
         exclusions = observed.data.exclusions;
