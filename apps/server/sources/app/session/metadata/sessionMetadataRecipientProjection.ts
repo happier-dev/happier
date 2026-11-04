@@ -1,4 +1,4 @@
-import { parseSessionOwnerMetadataEnvelopeV1, SESSION_METADATA_LAYOUT_VERSION_V1, SessionSharedMetadataV1Schema, StoredSessionOwnerMetadataEnvelopeV1Schema, validateSessionOwnerMetadataEnvelopeForAccountModeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { parseSessionOwnerMetadataEnvelopeV1, SESSION_METADATA_LAYOUT_VERSION_V1, SessionSharedMetadataV1Schema, validateAdmittedSessionOwnerMetadataEnvelopeForAccountModeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import type { SessionMetadataRecipientProjectionV1, SessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { validateSessionDisplayProjectionV1, type SessionDisplayProjectionV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import type { Prisma } from "@prisma/client";
@@ -35,7 +35,7 @@ export type SessionMetadataRecipientProjectionInput = Readonly<{
     metadata: string;
     metadataVersion: number;
     metadataLayoutVersion?: number | null;
-    ownerMetadata?: string | null;
+    ownerMetadata?: string | SessionOwnerMetadataEnvelopeV1 | null;
     agentState: string | null;
     agentStateVersion: number;
     projectKey?: string | null;
@@ -60,20 +60,18 @@ export type SessionMetadataOwnerAccountMode =
 
 /** Admit the captured envelope against current Account authority, retaining its structural proof. */
 export function assertSessionOwnerMetadataCurrentness(params: Readonly<{
-    metadataLayoutVersion: number; ownerMetadata: unknown;
+    metadataLayoutVersion: number; ownerMetadata: string | SessionOwnerMetadataEnvelopeV1 | null;
     accountMode: SessionMetadataOwnerAccountMode; isOwner: boolean;
 }>): SessionOwnerMetadataEnvelopeV1 {
     if (params.metadataLayoutVersion !== SESSION_METADATA_LAYOUT_VERSION_V1) {
         throw new SessionMetadataPrivacyUpgradeRequiredError();
     }
-    const parsed = typeof params.ownerMetadata === "string"
-        ? null : StoredSessionOwnerMetadataEnvelopeV1Schema.safeParse(params.ownerMetadata);
     const envelope = typeof params.ownerMetadata === "string"
         ? params.isOwner
             ? parsePersistedSessionOwnerMetadataEnvelopeV1({ ...params, ownerMetadata: params.ownerMetadata })
             : parseSessionOwnerMetadataEnvelopeV1(params.ownerMetadata)
-        : parsed?.success ? parsed.data : null;
-    if (envelope === null || !validateSessionOwnerMetadataEnvelopeForAccountModeV1({
+        : params.ownerMetadata;
+    if (envelope === null || !validateAdmittedSessionOwnerMetadataEnvelopeForAccountModeV1({
         accountMode: params.accountMode, envelope,
     }).ok) throw new SessionMetadataPrivacyUpgradeRequiredError();
     return envelope;
@@ -267,6 +265,14 @@ export async function readSessionMetadataOwnerAccountModes(
  * session envelopes. Ciphertexts remain opaque; only ownership and the stored
  * split-layout marker determine which envelope can leave the server.
  */
+export function projectSessionMetadataForRecipient(params: Readonly<{
+    session: SessionMetadataRecipientProjectionInput & Readonly<{ metadataLayoutVersion: 1 }>;
+    recipient: SessionMetadataRecipientAuthority;
+}>): SessionMetadataRecipientProjectionV1;
+export function projectSessionMetadataForRecipient(params: Readonly<{
+    session: SessionMetadataRecipientProjectionInput;
+    recipient: SessionMetadataRecipientAuthority;
+}>): SessionMetadataRecipientProjection;
 export function projectSessionMetadataForRecipient(params: Readonly<{
     session: SessionMetadataRecipientProjectionInput;
     recipient: SessionMetadataRecipientAuthority;

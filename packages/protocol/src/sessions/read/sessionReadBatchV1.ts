@@ -51,10 +51,10 @@ export type SessionReadBatchDetailV1 = { status: 200; body: V2SessionByIdRespons
 export type SessionReadBatchTurnsV1 = { status: 200; body: SessionTurnsProjectionV1 } | SessionReadFailureV1;
 export type SessionReadBatchMessagesV1 = { status: 200; body: SessionMessagesPageV1 } | SessionReadFailureV1;
 
-export const SessionReadBatchDetailV1Schema: z.ZodMiniType<SessionReadBatchDetailV1> = lazyZodSchema(() => z.union([
+export const SessionReadBatchDetailV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ status: z.literal(200), body: V2SessionByIdResponseSchema }),
   SessionReadFailureV1Schema,
-]));
+])) satisfies z.ZodMiniType<SessionReadBatchDetailV1>;
 export const SessionReadBatchTurnsV1Schema: z.ZodMiniType<SessionReadBatchTurnsV1> = lazyZodSchema(() => z.union([
   z.strictObject({ status: z.literal(200), body: SessionTurnsProjectionV1Schema }),
   SessionReadFailureV1Schema,
@@ -73,12 +73,20 @@ export type SessionReadBatchResultV1 = {
 export type SessionReadBatchResponseV1 = { results: SessionReadBatchResultV1[] };
 
 /** Components retain single-read admission failures; clients open their normal envelopes. */
-export const SessionReadBatchResultV1Schema: z.ZodMiniType<SessionReadBatchResultV1> = lazyZodSchema(() => z.strictObject({
+// Bound declaration emission while preserving object identity for safeExtend consumers.
+export const SessionReadBatchResultV1Schema: z.ZodMiniObject<{
+  sessionId: z.ZodMiniString<string>;
+  detail: z.ZodMiniOptional<typeof SessionReadBatchDetailV1Schema>;
+  turns: z.ZodMiniOptional<typeof SessionReadBatchTurnsV1Schema>;
+  messages: z.ZodMiniOptional<typeof SessionReadBatchMessagesV1Schema>;
+}, z.core.$strict> = lazyZodSchema(() => z.strictObject({
   sessionId: z.string().check(z.minLength(1)),
   detail: z.optional(SessionReadBatchDetailV1Schema),
   turns: z.optional(SessionReadBatchTurnsV1Schema),
   messages: z.optional(SessionReadBatchMessagesV1Schema),
-}));
-export const SessionReadBatchResponseV1Schema: z.ZodMiniType<SessionReadBatchResponseV1> = lazyZodSchema(() => z.strictObject({
+})) satisfies z.ZodMiniType<SessionReadBatchResultV1>;
+export const SessionReadBatchResponseV1Schema: z.ZodMiniObject<{
+  results: z.ZodMiniArray<typeof SessionReadBatchResultV1Schema>;
+}, z.core.$strict> = lazyZodSchema(() => z.strictObject({
   results: z.array(SessionReadBatchResultV1Schema),
-}));
+})) satisfies z.ZodMiniType<SessionReadBatchResponseV1>;

@@ -4,7 +4,7 @@ import type { SessionAccessAuthentication } from "./sessionAccessAuthentication"
 import { createSessionDataKeyEnvelopeViewerSelect, projectViewerSessionDataKey, type SessionDataKeyEnvelopeViewerRow } from "../encryption/sessionDataKeyEnvelopePersistence";
 import { assertSessionOwnerMetadataCurrentness, deriveSessionMetadataOwnerAccountMode, projectSessionDisplayForRecipient, sessionMetadataOwnerAccountCurrentnessSelect } from "../metadata/sessionMetadataRecipientProjection";
 import { buildSessionAccessProjectionSelect, projectSessionEffectiveAccessV1, resolveSessionAccessForOperation, type SessionAccessOperationDecision } from "./sessionAccess";
-import type { SessionDisplayProjectionV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import type { SessionDisplayProjectionV1, SessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { projectSessionLegacyShare } from "../listing/rows";
 
 /** Filter a captured projection without re-reading or broadening its content corpus. */
@@ -29,7 +29,7 @@ export async function readCurrentSessionIdsInTx(tx: Tx, input: Readonly<{
 }
 
 type CapturedSessionReadRow = Readonly<{ id: string; encryptionMode?: string;
-    metadataLayoutVersion?: number | null; metadata?: unknown; ownerMetadata?: unknown; effectiveAccess?: unknown;
+    metadataLayoutVersion?: number | null; metadata?: unknown; ownerMetadata?: string | SessionOwnerMetadataEnvelopeV1 | null; effectiveAccess?: unknown;
     metadataVersion?: number; displayProjectionV1?: string | SessionDisplayProjectionV1 | null;
     dataEncryptionKey?: string | null; dataKeyEnvelopes?: SessionDataKeyEnvelopeViewerRow["dataKeyEnvelopes"] }>;
 

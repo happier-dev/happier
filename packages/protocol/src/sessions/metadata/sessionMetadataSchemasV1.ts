@@ -2791,13 +2791,26 @@ export function validateSessionOwnerMetadataEnvelopeForAccountModeV1(
   if (!parsed.success) {
     return { ok: false, reason: 'invalid_envelope' };
   }
+  return validateAdmittedSessionOwnerMetadataEnvelopeForAccountModeV1({
+    accountMode: params.accountMode,
+    envelope: parsed.data,
+  });
+}
+
+/** Account authority is checked against the envelope already admitted at ingress. */
+export function validateAdmittedSessionOwnerMetadataEnvelopeForAccountModeV1(
+  params: Readonly<{
+    accountMode: AccountEncryptionMode;
+    envelope: SessionOwnerMetadataEnvelopeV1;
+  }>,
+): ValidateSessionOwnerMetadataEnvelopeForAccountModeV1Result {
   const expectedKind = params.accountMode === 'plain'
     ? 'plain'
     : 'encrypted';
-  if (parsed.data.t !== expectedKind) {
+  if ((params.accountMode !== 'plain' && params.accountMode !== 'e2ee') || params.envelope.t !== expectedKind) {
     return { ok: false, reason: 'account_mode_mismatch' };
   }
-  return { ok: true, envelope: parsed.data };
+  return { ok: true, envelope: params.envelope };
 }
 
 export function isSessionOwnerMetadataCiphertextV1(
