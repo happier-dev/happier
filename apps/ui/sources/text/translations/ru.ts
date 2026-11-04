@@ -13867,6 +13867,7 @@ settingsSession: {
           installSubtitle: 'Нажмите, чтобы установить на машину Voice',
           setDefaultSubtitle: "Нажмите, чтобы использовать по умолчанию",
           modelFiles: ({ size }: { size: string }) => `Файлы модели: ${size}`,
+          download: "Скачать",
           removeConfirmTitle: "Удалить пакет модели",
           removeConfirmBody: ({ name }: { name: string }) => `Удалить файлы модели ${name} с вашей машины?`,
           state: {

@@ -272,7 +272,6 @@ export async function invokeVoiceSettingsOperation(operation: VoiceSettingsOpera
             return statuses && await operationCurrent() ? completed({ machineId, models: statuses }) : { status: 'cancelled' };
         }
         if (!packId) return unavailable('model_pack_unselected');
-        if (operation.endsWith('_update')) return unavailable('daemon_model_update_unsupported');
         const statuses = await catalog.read({ client, packIds: [packId], requireNewObservation: true, isCurrent: selectionCurrent, signal: context.signal });
         if (!statuses) return { status: 'cancelled' };
         const rows = buildModelCatalogRows({ statuses, selectedSttPackId: stt.localNeural.assetId, selectedTtsPackId: tts.localNeural.assetId });

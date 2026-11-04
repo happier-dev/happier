@@ -13902,6 +13902,7 @@ settingsSession: {
           installSubtitle: 'Touche pour l’installer sur ta machine Voice',
           setDefaultSubtitle: "Touche pour l’utiliser par défaut",
           modelFiles: ({ size }: { size: string }) => `Fichiers du modèle : ${size} fichiers de modèles`,
+          download: "Télécharger",
           removeConfirmTitle: "Supprimer le pack de modèles",
           removeConfirmBody: ({ name }: { name: string }) => `Supprimer les fichiers de modèle de ${name} sur ta machine ?`,
           state: {

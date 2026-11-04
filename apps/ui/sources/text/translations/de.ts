@@ -14054,6 +14054,7 @@ settingsSession: {
                 installSubtitle: 'Zum Installieren auf deinem Voice-Rechner antippen',
                 setDefaultSubtitle: 'Antippen, um es als Standard zu nutzen',
                 modelFiles: ({ size }: { size: string }) => `${size} Modelldateien`,
+                download: "Laden",
                 removeConfirmTitle: 'Modellpaket entfernen',
                 removeConfirmBody: ({ name }: { name: string }) => `Die Modelldateien auf deinem Rechner für ${name} löschen?`,
                 state: {

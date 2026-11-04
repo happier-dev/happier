@@ -13541,6 +13541,7 @@ settingsSession: {
           installSubtitle: '点按以安装到你的 Voice 机器',
           setDefaultSubtitle: "点按以设为默认",
           modelFiles: ({ size }: { size: string }) => `模型文件 ${size}`,
+          download: "下载",
           removeConfirmTitle: "移除模型包",
           removeConfirmBody: ({ name }: { name: string }) => `从你的机器上删除 ${name} 的模型文件?`,
           state: {

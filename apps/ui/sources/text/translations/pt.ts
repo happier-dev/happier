@@ -14140,6 +14140,7 @@ settingsSession: {
           installSubtitle: 'Toque para instalar na sua máquina do Voice',
           setDefaultSubtitle: "Toque para usar como padrão",
           modelFiles: ({ size }: { size: string }) => `Arquivos do modelo: ${size}`,
+          download: "Baixar",
           removeConfirmTitle: "Remover pacote de modelo",
           removeConfirmBody: ({ name }: { name: string }) => `Excluir os arquivos de modelo de ${name} da sua máquina?`,
           state: {

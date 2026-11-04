@@ -50,7 +50,7 @@ export type ModelCatalogRow = Readonly<{
   lastError: string | null;
   /** Whether this pack is the selected default for its kind. */
   isDefault: boolean;
-  /** Whether an install/retry action is offered for this row. */
+  /** Whether an install, retry or update action is offered for this row. */
   canInstall: boolean;
   /** Whether a remove action is offered for this row. */
   canRemove: boolean;
@@ -155,6 +155,7 @@ function buildRowsForKind(
       packId: status.packId,
       kind: status.kind,
       model: status.model,
+      displayName: status.model,
       runtimeFamily: status.runtimeFamily ?? null,
       external: true as const,
       publicationAvailable: true,
@@ -206,7 +207,7 @@ function buildRowsForKind(
       canInstall: entry.publicationAvailable
         && (actionFailed
           ? actionError?.operation === 'install'
-          : state === 'not_installed' || state === 'error'),
+          : installed || state === 'not_installed' || state === 'error'),
       canRemove: actionFailed
         ? actionError?.operation === 'install'
           || (actionError?.operation === 'remove' && installedByDaemon)

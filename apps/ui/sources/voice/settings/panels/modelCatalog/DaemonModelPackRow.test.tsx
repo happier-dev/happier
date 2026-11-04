@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { act, type ReactTestInstance } from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import 'fake-indexeddb/auto';
 
 import { pressTestInstanceAsync, renderScreen, waitForTestEvent } from '@/dev/testkit';
@@ -27,9 +27,9 @@ const { DaemonVoiceModelCatalogProvider } = await import('./DaemonVoiceModelCata
 const { useDaemonVoiceModelCatalogState } = await import('./useDaemonVoiceModelCatalogState');
 const { VOICE_CONVERSATIONS_SETTINGS } = await import('@/voice/settings/voiceSettingsDeclarations');
 
-async function restoreModelAccount() {
+async function restoreModelAccount(waivedActions?: NonNullable<Parameters<typeof account.restore>[0]>['waivedActions']) {
     const machineId = 'model-row-machine';
-    const scope = await account.restore({ settings: { experiments: true,
+    const scope = await account.restore({ waivedActions, settings: { experiments: true,
         featureToggles: { 'voice.agent': true, 'execution.runs': true, 'voice.daemonInference': true },
         voice: { executionMachine: { mode: 'fixed', machineId } } },
         machines: [createMachineFixture({ id: machineId, activeAt: Date.now() })],
@@ -247,5 +247,46 @@ describe('DaemonModelPackRow', () => {
             </DaemonVoiceModelCatalogProvider>,
         ));
         expect(screen.tree.root.findAllByProps({ nativeID: anchor })).toHaveLength(0);
+    });
+    it('updates an installed web Kokoro pack from its visible row and observes refreshed named voices', async () => {
+        const { Platform } = await import('react-native');
+        const previousPlatform = { ...Platform };
+        Object.assign(Platform, (await (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock()).Platform);
+        onTestFinished(() => { Object.assign(Platform, previousPlatform); });
+        await restoreModelAccount(['settings.invoke']);
+        const entry = listModelPackCatalogEntries('tts_sherpa').find(candidate => candidate.packId === 'kokoro-82m-v1.0-onnx-q8-wasm')!;
+        let model = DaemonVoiceInferenceModelStatusSchema.parse({
+            packId: entry.packId, kind: entry.kind, model: entry.model, pluginIdentity: null,
+            version: 'retained', executionSupport: ['daemon'], runtimeFamily: entry.runtimeFamily,
+            runtimeSupported: true, installState: 'installed', progress: null, lastError: null, updatedAtMs: 0,
+            voices: [], defaultVoiceId: null,
+        });
+        let installs = 0;
+        reply = request => {
+            const catalog = answerVoiceModelCatalogRpcRequest(request, [model]);
+            if (catalog) return catalog;
+            if (request.method.endsWith(':daemon.voiceInference.models.install')) {
+                installs += 1;
+                model = DaemonVoiceInferenceModelStatusSchema.parse({ ...model,
+                    voices: [{ id: 'af_maple', title: 'Maple' }], defaultVoiceId: 'af_maple' });
+                return DaemonVoiceInferenceModelsInstallResponseSchema.parse({ ok: true, model });
+            }
+            throw new Error(`Unexpected model RPC: ${request.method}`);
+        };
+        const screen = await renderScreen(<SelectedRowOwner packId={entry.packId} kind="tts_sherpa" />);
+        await waitForTestEvent(screen.subscribe, () => screen.tree.root.findAllByProps({ testID: `voice-model-row-${entry.packId}` })[0]?.props.detail,
+            detail => detail === t('settingsVoice.local.models.state.installed'));
+        const update = screen.tree.root.findAllByProps({ testID: `voice-model-install-${entry.packId}` })
+            .find(node => String(node.type) === 'Pressable');
+        expect(update, 'Installed web packs need a visible Update button').toBeTruthy();
+        expect(update!.props.accessibilityLabel).toContain(t('common.update'));
+        await pressTestInstanceAsync(update!);
+        const { captureDaemonVoiceModelCatalogObservation } = await import('./daemonVoiceModelCatalogObservation');
+        const observation = captureDaemonVoiceModelCatalogObservation('model-row-machine');
+        await waitForTestEvent(observation.subscribe, () => observation.getSnapshot().statuses.find(row => row.packId === entry.packId)?.defaultVoiceId,
+            id => id === 'af_maple');
+        expect(installs).toBe(1);
+        expect(observation.getSnapshot().statuses.find(row => row.packId === entry.packId)?.voices)
+            .toEqual([expect.objectContaining({ id: 'af_maple' })]);
     });
 });

@@ -1,3 +1,4 @@
+import { publishMachineContributionRegistryProjectionInvalidation } from '@/sync/ops/machineContributionRegistryProjectionRevision';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
@@ -2177,12 +2178,17 @@ describe('AppShellPluginUiProjectionProvider', () => {
             supported: true;
             projection: typeof rawProjection;
         }>> | null = null;
+        const initialDescription = createDeferred<{ supported: true; projection: typeof rawProjection }>();
+        onTestFinished(() => {
+            initialDescription.resolve({ supported: true, projection: rawProjection });
+            releaseActivation.resolve();
+        });
         projectionDescribeSpy.mockImplementation((machineId) => (
             machineId === 'machine-newer'
                 ? Promise.resolve({ supported: true as const, projection: projection({}) })
                 : reconnectDescription
                 ? reconnectDescription.promise
-                : Promise.resolve({ supported: true as const, projection: rawProjection })
+                : initialDescription.promise
         ));
 
         const { AppShellPluginUiProjectionProvider } = await import('./AppShellPluginUiProjection');
@@ -2191,6 +2197,16 @@ describe('AppShellPluginUiProjectionProvider', () => {
         );
         const screen = await renderScreen(renderApp());
         await flushHookEffects({ cycles: 8 });
+        const acquisition = getCurrentAppShellVoiceProviderActivation(providerId);
+        expect(acquisition).not.toBeNull();
+        let acquisitionSettled = false;
+        void acquisition?.then(() => { acquisitionSettled = true; });
+        await flushHookEffects({ cycles: 3 });
+        // Public Start borrows this completion before reading adapter capabilities.
+        // A catalog still being described has not finished provider activation.
+        expect(acquisitionSettled).toBe(false);
+        expect(screen.findByType('ProjectionProbe' as never).props.value.clientExecutableActivation.status).toBe('establishing');
+        await act(async () => initialDescription.resolve({ supported: true, projection: rawProjection }));
         await activationEntered.promise;
         const completion = getCurrentAppShellVoiceProviderActivation(providerId);
         expect(completion).not.toBeNull();
@@ -2198,6 +2214,7 @@ describe('AppShellPluginUiProjectionProvider', () => {
         await act(async () => {
             releaseActivation.resolve(undefined);
             await completion;
+            await acquisition;
         });
         await vi.waitFor(() => {
             expect(screen.findByType('ProjectionProbe' as never).props.value.clientExecutableActivation)
@@ -2231,19 +2248,27 @@ describe('AppShellPluginUiProjectionProvider', () => {
         expect(getVoiceAdapterRegistry().get(providerId)).toBeNull();
 
         reconnectDescription = createDeferred();
-        // apiSocket's onConnected callback publishes status and reconnect
-        // invalidation synchronously, before yielding to a render.
+        // A replaced daemon reconnects under fresh projection authority.
         await act(async () => {
             persistentStorage.setState({ endpointStatus: 'online' });
-            projectionRefreshState.publish();
+            publishMachineContributionRegistryProjectionInvalidation({
+                machineId: 'machine-voice', serverId: APP_SCOPE_FIXTURE.serverId,
+            });
         });
         await screen.update(renderApp());
         await flushHookEffects({ cycles: 3 });
         expect(registration()).toBeNull();
         expect(activate).toHaveBeenCalledTimes(2);
+        const reconnectActivation = getCurrentAppShellVoiceProviderActivation(providerId);
+        expect(reconnectActivation).not.toBeNull();
+        let reconnectSettled = false;
+        void reconnectActivation?.then(() => { reconnectSettled = true; });
+        await flushHookEffects({ cycles: 3 });
+        expect(reconnectSettled).toBe(false);
 
         reconnectDescription.resolve({ supported: true, projection: rawProjection });
         await flushHookEffects({ cycles: 8 });
+        await reconnectActivation;
         await vi.waitFor(() => expect(registration()).not.toBeNull());
         expect(activate).toHaveBeenCalledTimes(3);
         expect(getVoiceAdapterRegistry().get(providerId)).not.toBeNull();

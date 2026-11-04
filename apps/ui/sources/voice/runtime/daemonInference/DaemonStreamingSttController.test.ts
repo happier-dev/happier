@@ -509,7 +509,8 @@ describe('createDaemonStreamingSttController with actual capture and daemon clie
       ? DaemonVoiceInferenceSttStreamStartResponseSchema.parse({ ok: false, errorCode: 'runtime_unavailable', error: 'daemon_voice_inference_runtime_unavailable', retryable: false })
       : respond(request));
     const runtime = controller();
-    const params = startParams();
+    const sink = createSink();
+    const params = startParams({ sink });
     await runtime.start(params);
     expect(params.sink.onError).toHaveBeenCalledWith({
       kind: 'provider_error', phase: 'runtime', presentation: 'notice',
@@ -520,6 +521,28 @@ describe('createDaemonStreamingSttController with actual capture and daemon clie
     expect(browser.micSession.getStream()).toBeNull();
     expect(context.createMediaStreamSource).not.toHaveBeenCalled();
     expect(requests('chunk')).toHaveLength(0);
+    const { classifyVoiceMachineError } = await import('@/voice/runtime/machine/voiceMachineError');
+    const { resolveVoiceAttemptControl } = await import('@/components/voice/attempt/resolveVoiceAttemptControl');
+    const { projectVoiceAttemptPresentation } = await import('@/components/voice/attempt/projectVoiceAttemptPresentation');
+    const { resolveVoicePresenceCaption } = await import('@/components/voice/presence/resolveVoicePresenceCaption');
+    const { t } = await import('@/text');
+    const failure = classifyVoiceMachineError(sink.onError.mock.calls[0]?.[0]);
+    const control = resolveVoiceAttemptControl({
+      surfaceState: 'error', tone: 'error', status: 'disconnected',
+      sessionId: params.sessionId, canStop: false, muted: false, capturing: false,
+      startAdmitted: true, hasRecovery: true, canDismissFailedAttempt: true,
+    });
+    const presentation = projectVoiceAttemptPresentation({
+      control, attemptId: 'french-start', ended: false,
+      errorCode: failure.kind, errorMessage: failure.reason, recoveryAction: failure.recoveryAction,
+      recoveryContext: { connectRecoveryTarget: { kind: 'unavailable' }, runtimeRecoveryTarget: null,
+        attemptSessionId: params.sessionId, startSessionId: params.sessionId, globalStartAuthorized: false },
+      serviceTitle: 'Local conversation', agentTitle: null, agentMachineLabel: null,
+    });
+    expect(presentation.failureMessage).toBe(t('settingsVoice.local.daemonInference.states.runtimeUnavailable'));
+    expect(resolveVoicePresenceCaption({
+      ...control, captionLabel: presentation.failureMessage ?? '',
+    })).toBe(presentation.failureMessage);
   });
 
   it('retains the sender-start cause privately while publishing a safe machine failure', async () => {

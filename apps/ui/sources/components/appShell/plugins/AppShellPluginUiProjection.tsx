@@ -509,6 +509,11 @@ export function AppShellPluginUiProjectionProvider(props: Readonly<{
         load: voiceProjectionDemand,
     });
     const voiceProjectionCurrentness = voiceUnionMember ?? dedicatedVoiceProjectionCurrentness;
+    const voiceProjectionAcquiring = voiceProjectionDemand && Boolean(voiceExecutionMachineId) && (
+        !declarationReady
+        || (voiceMachineIsUnionMember && !voiceUnionMember)
+        || voiceProjectionCurrentness.phase === 'establishing'
+    );
     const {
         interactionEnabled: voiceInteractionEnabled,
         machineId: voiceMachineId,
@@ -611,6 +616,7 @@ export function AppShellPluginUiProjectionProvider(props: Readonly<{
         projection: pluginUiProjection,
         platform: clientExecutablePlatform,
         voiceInteractionEnabled,
+        voiceProjectionAcquiring,
         voiceMachineId,
         voicePluginUiProjection,
         voiceRuntimeGenerationRevision,
@@ -624,6 +630,7 @@ export function AppShellPluginUiProjectionProvider(props: Readonly<{
         clientExecutablePlatform,
         pluginUiProjection,
         voiceInteractionEnabled,
+        voiceProjectionAcquiring,
         voiceMachineId,
         voicePluginUiProjection,
         voiceRuntimeGenerationRevision,
@@ -638,7 +645,8 @@ export function AppShellPluginUiProjectionProvider(props: Readonly<{
         request: typeof clientExecutableActivationRequest;
         state: AppShellClientExecutableActivationState;
     }> | null>(null);
-    const clientExecutableActivation = settledClientExecutableActivation?.request.basis === clientExecutableActivationBasis
+    const clientExecutableActivation = !voiceProjectionAcquiring
+        && settledClientExecutableActivation?.request.basis === clientExecutableActivationBasis
         ? settledClientExecutableActivation.state
         : ESTABLISHING_CLIENT_EXECUTABLE_ACTIVATION;
     const appNavigationBinding = usePluginSurfaceDestinationNavigationBindingForScope({
@@ -651,14 +659,38 @@ export function AppShellPluginUiProjectionProvider(props: Readonly<{
     appNavigationBindingRef.current = appNavigationBinding;
     const readAppNavigationBinding = React.useCallback(() => appNavigationBindingRef.current, []);
 
-    const voiceActivation = React.useRef<Readonly<{ providerIds: ReadonlySet<string>; completion: Promise<void> }> | null>(null);
+    const voiceActivation = React.useRef<{
+        providerIds: ReadonlySet<string>;
+        completion: Promise<void>;
+        settle(): void;
+        reject(error: unknown): void;
+    } | null>(null);
     const getVoiceProviderActivation = React.useCallback((providerId: string) => {
         const activation = voiceActivation.current;
         return activation?.providerIds.has(providerId) ? activation.completion : null;
     }, []);
+    React.useLayoutEffect(() => () => {
+        voiceActivation.current?.settle();
+        voiceActivation.current = null;
+    }, [accountLifetime, activeServer.serverId, voiceExecutionMachineId]);
     React.useLayoutEffect(() => {
         const request = clientExecutableActivationRequest;
         const basis = request.basis;
+        // Start borrows one completion across declaration acquisition and the
+        // executable reconciliation it enables, including a reconnect describe.
+        if (!voiceActivation.current) {
+            let settle!: () => void;
+            let reject!: (error: unknown) => void;
+            const completion = new Promise<void>((resolve, rejectCompletion) => {
+                settle = resolve;
+                reject = rejectCompletion;
+            });
+            // Borrowers still observe rejection; an idle shell need not borrow it.
+            void completion.catch(() => {});
+            voiceActivation.current = { providerIds: basis.voiceProviderIds, completion, settle, reject };
+        }
+        const activation = voiceActivation.current;
+        activation.providerIds = basis.voiceProviderIds;
         const next = basis.projection ?? EMPTY_PLUGIN_UI_PROJECTION;
         let cancelled = false;
         const voice = basis.voiceInteractionEnabled && basis.voiceMachineId && basis.voicePluginUiProjection
@@ -695,14 +727,16 @@ export function AppShellPluginUiProjectionProvider(props: Readonly<{
             });
             if (!cancelled && settlement.status !== 'cancelled') {
                 setSettledClientExecutableActivation({ request, state: settlement });
+                if (!basis.voiceProjectionAcquiring) {
+                    if (voiceActivation.current === activation) voiceActivation.current = null;
+                    activation.settle();
+                }
             }
         });
         pluginRuntimeUpdateTailRef.current = update;
-        const activation = { providerIds: basis.voiceProviderIds, completion: update };
-        voiceActivation.current = activation;
+        void update.catch(activation.reject);
         return () => {
             cancelled = true;
-            if (voiceActivation.current === activation) voiceActivation.current = null;
         };
     }, [clientExecutableActivationRequest, readAppNavigationBinding]);
 

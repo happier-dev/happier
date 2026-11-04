@@ -226,6 +226,53 @@ describe('useDaemonVoiceModelCatalogState', () => {
         await screen.unmount();
     });
 
+    it('shows the same settled daemon Dictation readiness on the actual hub and page for web', async () => {
+        const { Platform } = await import('react-native');
+        const nativePlatform = { ...Platform };
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        Object.assign(Platform, (await createReactNativeWebMock()).Platform);
+        try {
+            const { VoiceSettingsIntentIndexScreen } = await import('../../VoiceSettingsIntentIndexScreen');
+            const { VoiceDictationSettingsScreen } = await import('../../screens/VoiceDictationSettingsScreen');
+            const current = storage.getState().settings;
+            const voice = settingsParse({ voice: { providerId: 'local_conversation',
+                executionMachine: { mode: 'fixed', machineId: 'machine-a' },
+                dictation: { sttBinding: 'same_as_local' },
+                providers: { local_conversation: { schemaVersion: 1, config: {
+                    stt: { provider: 'local_neural', localNeural: { execution: 'daemon', assetId: STT_PACK } },
+                    tts: { provider: 'device' },
+                } } },
+            } }).voice;
+            storage.setState({ settings: settingsParse({ ...current,
+                featureToggles: { ...current.featureToggles, voice: true },
+                ...normalizeVoiceSettingsLocalDelta({ voice }, current) }) });
+            const hub = await renderScreen(<AuthProvider initialCredentials={{ token: 'token-1', secret: 'secret-1' }}>
+                <VoiceSettingsIntentIndexScreen />
+            </AuthProvider>);
+            const readiness = (tree: ReactTestRenderer, testID: string) => tree.root.findAll(node =>
+                node.props.testID === testID && node.props.pipeline)[0]?.props.pipeline.readiness;
+            await settle();
+            expect(readiness(hub.tree, 'settings.voice.intent.dictation'))
+                .toMatchObject({ status: 'unavailable', code: 'runtime_unknown' });
+            expect(listingRequests()).toHaveLength(0);
+            catalogReply([status(STT_PACK, { installState: 'installed' })]);
+            const page = await renderScreen(<AuthProvider initialCredentials={{ token: 'token-1', secret: 'secret-1' }}>
+                <VoiceDictationSettingsScreen />
+            </AuthProvider>);
+            await settle();
+            expect(readiness(page.tree, 'settings.voice.dictation.pipeline')?.status).toBe('ready');
+            expect(readiness(hub.tree, 'settings.voice.intent.dictation')).toEqual(readiness(page.tree, 'settings.voice.dictation.pipeline'));
+            expect(listingRequests()).toHaveLength(1);
+            await page.unmount();
+            await settle();
+            expect(readiness(hub.tree, 'settings.voice.intent.dictation')?.status).toBe('ready');
+            expect(listingRequests()).toHaveLength(1);
+            await hub.unmount();
+        } finally {
+            Object.assign(Platform, nativePlatform);
+        }
+    });
+
     it('refuses manual model mutations when settings.invoke is disabled while settings.set remains admitted', async () => {
         const scope = storage.getState().settingsScope!;
         const settings = settingsParse({ ...storage.getState().settings, actionsSettingsV1: { v: 1,

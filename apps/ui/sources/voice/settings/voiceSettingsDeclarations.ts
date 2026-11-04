@@ -1,4 +1,4 @@
-import { builtInSettingUiDeclaration, defineSettingsPage, settingsHosts, type SettingRef, type SettingsPageDeclaration } from '@/components/settings/catalog/settingDeclarations';
+import { builtInSettingUiDeclaration, defineSettingsPage, type SettingRef, type SettingsPageDeclaration } from '@/components/settings/catalog/settingDeclarations';
 import { voiceSettingBinding, voiceGreetingBinding, voiceLocalConversationBinding, voiceAgentSelectionBinding, voiceAgentConnectedServicesBinding, voiceCustomAgentBinding, voiceConversationLanguageBinding } from './voiceSettingBinding';
 import type { VoiceSettings } from '@/sync/domains/settings/voiceSettings';
 import type { VoiceProviderRegistry } from '@/voice/registry/providerRegistry';
@@ -51,7 +51,7 @@ export const VOICE_DICTATION_SETTINGS = defineSettingsPage({
                 sttPrepareModel: {  operation: voiceSettingsOperation('stt_prepare', 'dictation') },
                 sttCancelPrepare: { operation: voiceSettingsOperation('stt_cancel', 'dictation') },
                 sttRemoveModel: {  operation: voiceSettingsOperation('stt_remove', 'dictation') },
-                sttUpdateModel: { host: settingsHosts.native, operation: voiceSettingsOperation('stt_update', 'dictation') },
+                sttUpdateModel: { operation: voiceSettingsOperation('stt_update', 'dictation') },
                 readiness: {  operation: voiceSettingsOperation('readiness_inspect', 'dictation') },
             },
         },
@@ -95,7 +95,7 @@ export const VOICE_CONVERSATIONS_SETTINGS = defineSettingsPage({
                 sttPrepareModel: {  operation: voiceSettingsOperation('stt_prepare') },
                 sttCancelPrepare: { operation: voiceSettingsOperation('stt_cancel') },
                 sttRemoveModel: {  operation: voiceSettingsOperation('stt_remove') },
-                sttUpdateModel: { host: settingsHosts.native, operation: voiceSettingsOperation('stt_update') },
+                sttUpdateModel: { operation: voiceSettingsOperation('stt_update') },
                 ttsProvider: { storage: voiceLocalConversationBinding('tts.provider') },
                 autoSpeakReplies: { storage: voiceLocalConversationBinding('tts.autoSpeakReplies') },
                 bargeInEnabled: { storage: voiceLocalConversationBinding('tts.bargeInEnabled') },
@@ -106,7 +106,7 @@ export const VOICE_CONVERSATIONS_SETTINGS = defineSettingsPage({
                 ttsPrepareModel: {  operation: voiceSettingsOperation('tts_prepare') },
                 ttsCancelPrepare: { operation: voiceSettingsOperation('tts_cancel') },
                 ttsRemoveModel: {  operation: voiceSettingsOperation('tts_remove') },
-                ttsUpdateModel: { host: settingsHosts.native, operation: voiceSettingsOperation('tts_update') },
+                ttsUpdateModel: { operation: voiceSettingsOperation('tts_update') },
                 ttsPreview: { operation: voiceSettingsOperation('tts_preview') },
                 ttsPreviewStop: { operation: voiceSettingsOperation('tts_preview_stop') },
                 ttsCatalog: { operation: voiceSettingsOperation('tts_catalog') },

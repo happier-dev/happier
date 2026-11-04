@@ -16904,6 +16904,7 @@ const enSettingsVoice = {
       installSubtitle: 'Tap to install it on your Voice machine',
       setDefaultSubtitle: 'Tap to use as the default',
       modelFiles: ({ size }: { size: string }) => `${size} model files`,
+      download: "Download",
       removeConfirmTitle: 'Remove model pack',
       removeConfirmBody: ({ name }: { name: string }) =>
         `Delete the model files on your machine for ${name}?`,

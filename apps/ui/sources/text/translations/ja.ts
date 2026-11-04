@@ -14307,6 +14307,7 @@ settingsSession: {
           installSubtitle: 'タップして Voice マシンにインストール',
           setDefaultSubtitle: "タップして既定として使用",
           modelFiles: ({ size }: { size: string }) => `モデルファイル ${size}`,
+          download: "ダウンロード",
           removeConfirmTitle: "モデルパックを削除",
           removeConfirmBody: ({ name }: { name: string }) => `マシンから ${name} のモデルファイルを削除しますか?`,
           state: {

@@ -1672,6 +1672,64 @@ describe('declared settings owner', () => {
             .toEqual({ ok: true, result: { anchor: 'voiceAdvanced.installSpeechModel', status: 'cancelled' } });
         expect(owner.openedInteractions).toEqual([]);
     });
+    it.each([
+        { anchor: 'voiceConversations.ttsUpdateModel', packId: 'kokoro-82m-v1.0-onnx-q8-wasm' },
+        { anchor: 'voiceConversations.sttUpdateModel', packId: 'sherpa-onnx-streaming-zipformer-en-20M-2023-02-17' },
+        { anchor: 'voiceDictation.sttUpdateModel', packId: 'sherpa-onnx-streaming-zipformer-en-20M-2023-02-17' },
+    ])('refreshes an installed daemon model through web settings.invoke ($anchor)', async ({ anchor, packId }) => {
+        const before = storage.getState();
+        const { primeServerFeaturesSnapshot, resetServerFeaturesClientForTests } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+        const { captureDaemonVoiceModelCatalogObservation } = await import('@/voice/settings/panels/modelCatalog/daemonVoiceModelCatalogObservation');
+        const { upsertAndActivateServer, setActiveServer } = await import('@/sync/domains/server/serverRuntime');
+        const { getTabActiveServerId, clearTabActiveServerId } = await import('@/sync/domains/server/serverProfiles');
+        const previousHome = getTabActiveServerId();
+        await upsertAndActivateServer({ serverUrl: 'https://voice-model-update.test', scope: 'tab' });
+        onTestFinished(async () => {
+            if (previousHome) await setActiveServer({ serverId: previousHome, scope: 'tab' });
+            else clearTabActiveServerId();
+        });
+        vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('unexpected_network_request'); }));
+        onTestFinished(() => { storage.setState(before, true); settingsMachineRpc.mockReset(); resetServerFeaturesClientForTests(); vi.unstubAllGlobals(); });
+        const local = readLocalConversationVoiceSettings(settingsDefaults.voice);
+        const stt = { ...local.stt, provider: 'local_neural' as const,
+            localNeural: { ...local.stt.localNeural, execution: 'daemon' as const, assetId: 'sherpa-onnx-streaming-zipformer-en-20M-2023-02-17' } };
+        const voice = writeLocalConversationVoiceSettings(settingsDefaults.voice, { ...local, stt,
+            tts: { ...local.tts, provider: 'local_neural',
+                localNeural: { ...local.tts.localNeural, execution: 'daemon', assetId: 'kokoro-82m-v1.0-onnx-q8-wasm' } } });
+        const account = applySettings(settingsDefaults, normalizeVoiceSettingsLocalDelta({ experiments: true,
+            featureToggles: { voice: true, 'voice.agent': true, 'voice.daemonInference': true, 'execution.runs': true },
+            voice: { ...voice, providerId: 'local_conversation', executionMachine: { mode: 'fixed' as const, machineId: 'voice-machine' },
+                dictation: { ...voice.dictation, stt } } }, settingsDefaults));
+        storage.setState({ settings: account, machines: { 'voice-machine': createMachineFixture({ id: 'voice-machine', activeAt: Date.now() }) } });
+        await installVoiceMachineFixture(storage.getState().machines);
+        const { resolveVoiceExecutionMachineSelectionFromState } = await import('@/voice/settings/executionMachine');
+        expect(resolveVoiceExecutionMachineSelectionFromState(storage.getState())).toEqual({ kind: 'resolved', machineId: 'voice-machine' });
+        primeServerFeaturesSnapshot({ serverId: getActiveServerSnapshot().serverId,
+            snapshot: { status: 'ready', features: FeaturesResponseSchema.parse({ features: { voice: { enabled: true }, execution: { runs: { enabled: true } } }, capabilities: {} }) } });
+        const entry = getModelPackCatalogEntry(packId);
+        if (!entry) throw new Error('missing canonical fixture model');
+        const status = { packId, pluginIdentity: null, kind: entry.kind, model: entry.model, version: 'retained',
+            executionSupport: ['daemon'], runtimeFamily: entry.runtimeFamily, runtimeSupported: true, installState: 'installed',
+            progress: null, lastError: null, updatedAtMs: 0, voices: [], defaultVoiceId: null };
+        const observation = captureDaemonVoiceModelCatalogObservation('voice-machine');
+        settingsMachineRpc.mockImplementation(async request => {
+            if (request.machineId !== 'voice-machine') throw new Error('wrong_machine');
+            if (request.method === 'daemon.voiceInference.models.status') return { ok: true, models: [status] };
+            if (request.method === 'daemon.voiceInference.models.install') {
+                expect(observation.getSnapshot()).toMatchObject({ statuses: [status] });
+                return { ok: true, model: status };
+            }
+            throw new Error('unexpected_machine_operation');
+        });
+        const owner = createOwner(undefined, true, true, account);
+        const result = await throughActionExecutor(owner.action).execute('settings.invoke', { anchor }, { surface: 'ui', authority: 'present_user' });
+        expect(result).toEqual({ ok: true, result: { anchor, status: 'completed', value: { packId } } });
+        expect(settingsMachineRpc.mock.calls.map(([request]) => request.method))
+            .toEqual(['daemon.voiceInference.models.status', 'daemon.voiceInference.models.install']);
+        expect(observation.getSnapshot()).toMatchObject({ stale: true, statuses: [] });
+        expect(owner.openedInteractions).toEqual([]);
+    });
     it('executes Voice operations with typed missing-target results instead of opening a settings row', async () => {
         const owner = createOwner(undefined, true);
         for (const anchor of ['voiceAdvanced.installSpeechModel', 'voiceAdvanced.removeSpeechModel', 'voiceAdvanced.defaultSpeechModel', 'voicePrivacy.diagnosticsExport', 'voicePrivacy.diagnosticsSessionOptOut', 'voicePrivacy.diagnosticsRetryShutdown']) {

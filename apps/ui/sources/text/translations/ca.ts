@@ -13052,6 +13052,7 @@ settingsSession: {
                 installSubtitle: 'Toca per instal·lar-lo a la teva màquina de Voice',
                 setDefaultSubtitle: "Toca per usar com a predeterminat",
                 modelFiles: ({ size }: { size: string }) => `Fitxers del model: ${size}`,
+                download: "Baixa",
                 removeConfirmTitle: "Elimina el paquet de model",
                 removeConfirmBody: ({ name }: { name: string }) => `Vols suprimir els fitxers del model ${name} de la teva màquina?`,
                 state: {

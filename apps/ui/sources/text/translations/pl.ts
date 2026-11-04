@@ -13858,6 +13858,7 @@ settingsSession: {
           installSubtitle: 'Stuknij, aby zainstalować na maszynie Voice',
           setDefaultSubtitle: "Dotknij, aby ustawić jako domyślny",
           modelFiles: ({ size }: { size: string }) => `Pliki modelu: ${size}`,
+          download: "Pobierz",
           removeConfirmTitle: "Usuń pakiet modelu",
           removeConfirmBody: ({ name }: { name: string }) => `Usunąć pliki modelu ${name} z Twojej maszyny?`,
           state: {
