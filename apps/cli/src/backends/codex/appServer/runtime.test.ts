@@ -5609,6 +5609,15 @@ describe('createCodexAppServerRuntime', () => {
 
     it.each([
         '{"findings":[',
+        'The API returns {"findings":[\n\n' + JSON.stringify({
+            overall_explanation: 'Authorization is missing.',
+            findings: [{
+                title: 'Preserve authorization',
+                body: 'The write skips authorization.',
+                priority: 1,
+                code_location: { absolute_file_path: '/repo/auth.ts', line_range: { start: 10, end: 12 } },
+            }],
+        }),
         '',
         [
             'One correctness issue is present.',

@@ -155,6 +155,18 @@ describe('normalizeReviewOutput codex reviews', () => {
     expect(payload.findings).toEqual([]);
   });
 
+  it.each([
+    JSON.stringify(nativeReview),
+    'Review comment:\n- Preserve authorization -- /repo/auth.ts:10-12\n  The write skips authorization.',
+  ])('rejects an unterminated unquoted example before a review: %s', (review) => {
+    const result = normalizeCodex(`The API returns {"findings":[\n\n${review}`);
+
+    expect(result.status).toBe('failed');
+    expect(result.toolResultOutput).toMatchObject({ error: { code: 'invalid_output' } });
+    expect(result.structuredMeta).toBeUndefined();
+    expect(result.toolResultOutput).not.toHaveProperty('findingsDigest');
+  });
+
   it('keeps native prose findings whose evidence contains a JSON example', () => {
     const result = normalizeCodex([
       'One correctness issue is present.',

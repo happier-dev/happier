@@ -18,7 +18,7 @@ type FindingDraft = {
 };
 
 type TextSpan = { start: number; end: number };
-type JsonSpan = TextSpan & { text: string };
+type JsonSpan = TextSpan & { text: string; terminated: boolean };
 
 const REVIEW_COMMENTS_HEADER_PATTERN = /^(?:Full review comments|Review comment):\s*$/i;
 const FINDING_BULLET_PATTERN = /^\s*-\s+(.+?)\s+(?:--|[-\u2013\u2014])\s+(.+):(\d+)(?:-(\d+))?\s*$/u;
@@ -121,7 +121,7 @@ function extractJsonSpans(text: string, examples: readonly TextSpan[]): JsonSpan
         if (depth === 0) break;
       }
     }
-    spans.push({ text: text.slice(start, end + 1), start, end: Math.min(end + 1, text.length) });
+    spans.push({ text: text.slice(start, end + 1), start, end: Math.min(end + 1, text.length), terminated: end < text.length });
     start = end;
   }
   return spans;
@@ -139,7 +139,9 @@ function hasExampleIntroduction(prefix: string): boolean {
 }
 
 function isInlineOverviewExample(text: string, span: JsonSpan, overviewEnd: number): boolean {
-  if (span.end > overviewEnd) return false;
+  // An unclosed value owns the remaining text, which may include the actual
+  // review. Never discard that remainder merely because it starts as evidence.
+  if (!span.terminated || span.end > overviewEnd) return false;
   const lineStart = text.lastIndexOf('\n', span.start - 1) + 1;
   const prefix = text.slice(lineStart, span.start).replace(/`+$/, '').trim();
   return hasExampleIntroduction(prefix);
