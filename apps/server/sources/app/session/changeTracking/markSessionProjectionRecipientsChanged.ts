@@ -1,3 +1,5 @@
+import { isSessionSystemRecordUnchangedHintV1 } from '@happier-dev/protocol/sessions/board/changeHint';
+import { publishesSessionCurrentViewForAccount, type SessionCurrentViewPublicationAudience } from '@/app/session/metadata/publishSessionCurrentViewUpdates';
 import { resolveCurrentSessionRecipientAccountIdsInTx } from "@/app/session/access/sessionRecipients";
 import {
     loadSessionTranscriptPublication,
@@ -32,6 +34,7 @@ export async function markSessionProjectionRecipientsChanged(params: {
     hint?: unknown;
     recipientAccountIds?: readonly string[];
     hintForRecipient?: (accountId: string) => unknown;
+    currentViewPublication?: SessionCurrentViewPublicationAudience;
 }): Promise<SessionRecipientPublication[]> {
     const publication = await loadSessionTranscriptPublication(params.tx, params.sessionId);
     const recipientAccountIds = params.recipientAccountIds
@@ -53,10 +56,17 @@ export async function markSessionProjectionRecipientsChanged(params: {
         ...[...hints].filter(([, hint]) => hint.kind === "publish").map(([accountId]) => accountId),
         ...[...destinationRecipients.values()].flat(),
     ]);
+    const currentViewPublication = params.currentViewPublication;
     const cursors = await markAccountChangesForSessionAccounts({
         tx: params.tx,
         sessionId: params.sessionId,
         accountIds: recipientAccountIds,
+        currentViewForAccount: currentViewPublication ? accountId => {
+            const hint = hints.get(accountId);
+            return hint?.kind === 'publish' && isSessionSystemRecordUnchangedHintV1(hint.value)
+                && publishesSessionCurrentViewForAccount(currentViewPublication, accountId);
+        } : undefined,
+
         hintForAccount: (accountId) => {
             const hint = hints.get(accountId);
             return !hint || hint.kind === "suppress"

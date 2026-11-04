@@ -84,12 +84,47 @@ export type PublishSessionCurrentViewUpdatesResult =
     | { ok: true }
     | { ok: false };
 
+export type SessionCurrentViewPublicationAudience = Pick<SessionCurrentViewPublicationSourceV1, 'kind' | 'sessionOwnerId'>;
+
+/** Legacy owner-private tuples cannot supply a shared recipient's current view. */
+export function publishesSessionCurrentViewForAccount(source: SessionCurrentViewPublicationAudience, accountId: string): boolean {
+    return source.kind === 'envelope_tuple_v1' || accountId === source.sessionOwnerId;
+}
+
+/** A failed current-view projection must still announce the durable recovery cursor. */
+export function publishSessionCurrentViewRecoveryWake(params: Readonly<{
+    sessionId: string;
+    recipientCursors: readonly SessionRecipientCursor[];
+    source: SessionCurrentViewPublicationAudience;
+}>): void {
+    for (const { accountId, cursor } of params.recipientCursors) {
+        if (!publishesSessionCurrentViewForAccount(params.source, accountId)) continue;
+        eventRouter.emitUpdate({ userId: accountId,
+            payload: buildAccountChangeWakeUpdate(cursor, randomKeyNaked(12), {
+                changeKinds: ['session'], entityIds: [params.sessionId], sessionSystemRecords: [],
+            }),
+            recipientFilter: { type: 'account-stored-content-v3' },
+        });
+    }
+}
+
 export async function publishSessionCurrentViewUpdates(params: Readonly<{
     sessionId: string;
     recipientCursors: readonly SessionRecipientCursor[];
     source: SessionCurrentViewPublicationSourceV1;
     skipSenderConnection?: ClientConnection;
 }>): Promise<PublishSessionCurrentViewUpdatesResult> {
+    try {
+        const result = await publishCurrentViews(params);
+        if (result.ok) return result;
+    } catch {
+        // The tuple already committed. Delivery failure retains cursor recovery.
+    }
+    publishSessionCurrentViewRecoveryWake(params);
+    return { ok: false };
+}
+
+async function publishCurrentViews(params: Parameters<typeof publishSessionCurrentViewUpdates>[0]): Promise<PublishSessionCurrentViewUpdatesResult> {
     const { sessionId, recipientCursors, source } = params;
 
     if (source.kind === "legacy_v0") {
@@ -112,7 +147,7 @@ export async function publishSessionCurrentViewUpdates(params: Readonly<{
         }
 
         await Promise.all(recipientCursors
-            .filter(({ accountId }) => accountId === source.sessionOwnerId)
+            .filter(({ accountId }) => publishesSessionCurrentViewForAccount(source, accountId))
             .map(async ({ accountId, cursor }) => {
                 eventRouter.emitUpdate({
                     userId: accountId,

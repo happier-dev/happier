@@ -369,7 +369,9 @@ class EventRouter {
                 return connection.connectionType === 'machine-scoped';
 
             case 'account-stored-content-v3':
-                return readAccountStoredContentCompatibilityForSocket(connection.socket).supportsPluginDataProtocol;
+                return readAccountStoredContentCompatibilityForSocket(connection.socket).supportsPluginDataProtocol
+                    && (!filter.exceptSessionCurrentView || !this.shouldSendToConnection(connection,
+                        { type: 'all-interested-in-session', sessionId: filter.exceptSessionCurrentView }));
 
             case 'all-user-authenticated-connections':
                 // Send to all connection types (default behavior)
@@ -400,7 +402,16 @@ class EventRouter {
         if (this.io) {
             const skipSocketId = params.skipSenderConnection?.socket?.id;
             const target = this.getEmitterTargetForFilter(params.userId, params.recipientFilter);
-            const emitter = this.getEmitterForFilter(params.userId, params.recipientFilter);
+            let emitter = this.getEmitterForFilter(params.userId, params.recipientFilter);
+            if (params.recipientFilter.type === 'account-stored-content-v3' && params.recipientFilter.exceptSessionCurrentView) {
+                // Use the very same audience as the current-view publication.
+                // Machines and other Session sockets retain their Account wake.
+                const coveredRooms = this.getEmitterTargetForFilter(params.userId,
+                    { type: 'all-interested-in-session', sessionId: params.recipientFilter.exceptSessionCurrentView });
+                for (const room of Array.isArray(coveredRooms) ? coveredRooms : [coveredRooms]) {
+                    if (emitter.except) emitter = emitter.except(room);
+                }
+            }
             if (skipSocketId && typeof (emitter as any).except === "function") {
                 (emitter as any).except(skipSocketId).emit(params.eventName, params.payload);
             } else {

@@ -98,6 +98,14 @@ describe("Session current-view publication carries only changed tuple parts (SQL
                 ["metadata"],
                 ["metadata", "ownerMetadata"],
             ]);
+            // A committed current-view frame already delivers this cursor. The
+            // durable feed remains recovery evidence, without a second wake.
+            expect(viewerFrames.mock.calls.map(([, payload]) => payload.body.t))
+                .toEqual(["update-session", "update-session", "update-session"]);
+            expect(machineFrames.mock.calls.map(([, payload]) => payload.body.t))
+                .toEqual(["account-change", "account-change", "account-change"]);
+            expect(await db.accountChange.count({ where: { accountId: account.id, kind: "session", entityId: session.id } }))
+                .toBe(1);
             // Frames without the unchanged owner envelope stay far below its size.
             expect(frames[0]!.bytes).toBeLessThan(2_000);
             expect(frames[1]!.bytes).toBeLessThan(2_000);

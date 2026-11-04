@@ -1,3 +1,7 @@
+import { CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION, buildAccountStoredContentCompatibilitySocketAuthV1 } from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
+import { createFakeSocket } from '@/app/api/testkit/socketHarness';
+import { evaluateAccountStoredContentSocketCompatibility, writeAccountStoredContentCompatibilityForSocket } from '@/app/clientCompatibility/accountStoredContentCompatibility';
+import type { ClientConnection } from '@/app/events/eventPayloadTypes';
 import { UpdateContainerSchema } from '@happier-dev/protocol/updates';
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -46,6 +50,42 @@ async function runMarkAccountsChanged(
 }
 
 describe("markAccountChanged", () => {
+    it.each(['covered-only', 'covered-first', 'uncovered-first'] as const)(
+        'retains a viewer wake when any coalesced publication is uncovered (%s)', async order => {
+            process.env.HAPPIER_DB_PROVIDER = 'postgres';
+            let cursor = 0;
+            const tx = { ...inTxPostgresControlStatementMock, $queryRawUnsafe: async (query: string) =>
+                query.includes('INSERT INTO "AccountChange"') ? [{ cursor: ++cursor }] : [] };
+            transaction.mockImplementationOnce(async fn => fn(tx));
+            const sockets = ['session-scoped', 'machine-scoped'].map(kind => {
+                const socket = Object.assign(createFakeSocket({ id: kind }), { data: {} });
+                writeAccountStoredContentCompatibilityForSocket(socket,
+                    evaluateAccountStoredContentSocketCompatibility(buildAccountStoredContentCompatibilitySocketAuthV1(
+                        CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION)));
+                const connection: ClientConnection = kind === 'session-scoped'
+                    ? { connectionType: kind, userId: 'a1', sessionId: 's1', socket: socket as unknown as ClientConnection['socket'] }
+                    : { connectionType: 'machine-scoped', userId: 'a1', machineId: 'm1', socket: socket as unknown as ClientConnection['socket'] };
+                eventRouter.addConnection('a1', connection);
+                return { socket, connection };
+            });
+            try {
+                const { inTx } = await import('@/storage/inTx');
+                const { markAccountChanged, markAccountsChanged } = await import('./markAccountChanged');
+                await inTx(async transactionTx => {
+                    const covered = () => markAccountsChanged(transactionTx, { accountIds: ['a1'], kind: 'session',
+                        entityId: 's1', hint: { lastMessageSeq: 1 }, currentViewForAccount: () => true });
+                    const uncovered = () => markAccountChanged(transactionTx, { accountId: 'a1', kind: 'machine', entityId: 'm1' });
+                    if (order === 'uncovered-first') { await uncovered(); await covered(); }
+                    else { await covered(); await (order === 'covered-only' ? covered() : uncovered()); }
+                });
+                expect(sockets[0]!.socket.emit.mock.calls.map(([, payload]) => UpdateContainerSchema.parse(payload).body.t))
+                    .toEqual(order === 'covered-only' ? [] : ['account-change']);
+                expect(sockets[1]!.socket.emit.mock.calls.map(([, payload]) => UpdateContainerSchema.parse(payload).body.t))
+                    .toEqual(['account-change']);
+            } finally { for (const { connection } of sockets) eventRouter.removeConnection('a1', connection); }
+        });
+
+
     const originalDbProvider = process.env.HAPPIER_DB_PROVIDER;
     afterEach(() => {
         process.env.HAPPIER_DB_PROVIDER = originalDbProvider;

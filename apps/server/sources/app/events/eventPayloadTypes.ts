@@ -66,7 +66,7 @@ export type RecipientFilter =
     | { type: 'all-user-authenticated-connections' }
     // Content-free AccountChange wake. Only V3 stored-content sockets can consume
     // the pluginDomain arm of the canonical change feed.
-    | { type: 'account-stored-content-v3' };
+    | { type: 'account-stored-content-v3'; exceptSessionCurrentView?: string };
 
 // === UPDATE EVENT TYPES (Persistent) ===
 

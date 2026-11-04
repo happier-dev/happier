@@ -18,6 +18,8 @@ export interface AccountChangePublication {
 
 interface AccountChangeWake {
     cursor: number;
+    /** Null after a coalesced fact needs the ordinary Account-wide wake. */
+    currentViewSessionId: string | null;
     settingsVersion?: number;
     changeKinds: Set<ChangeKind>;
     entityIds: Set<string>;
@@ -189,14 +191,16 @@ function compactHint(_kind: ChangeKind, hint: unknown): unknown {
 
 function scheduleAccountChangeWake(
     tx: Tx, accountId: string, cursor: number, kind: ChangeKind, entityIds: readonly string[], hint?: unknown,
+    currentViewSessionId?: string,
 ): void {
     const state = publicationPhase(tx);
     const wakes: NonNullable<AccountPublicationPhase['wakes']> = state.wakes ??= new Map();
     const pending = wakes.get(accountId);
     const wake: AccountChangeWake = pending ?? {
-        cursor, changeKinds: new Set(), entityIds: new Set(),
+        cursor, currentViewSessionId: currentViewSessionId ?? null, changeKinds: new Set(), entityIds: new Set(),
     };
     wake.cursor = Math.max(wake.cursor, cursor);
+    if (wake.currentViewSessionId !== currentViewSessionId) wake.currentViewSessionId = null;
     const settingsVersion = entityIds.length === 1
         ? readAccountSettingsVersionChangeV1({ kind, entityId: entityIds[0]!, hint }) : null;
     if (settingsVersion !== null) {
@@ -223,7 +227,8 @@ function scheduleAccountChangeWake(
                 changeKinds: [...wake.changeKinds], entityIds: [...wake.entityIds],
                 ...(wake.sessionSystemRecords ? { sessionSystemRecords: [...wake.sessionSystemRecords.values()] } : {}),
             }),
-            recipientFilter: { type: 'account-stored-content-v3' },
+            recipientFilter: { type: 'account-stored-content-v3',
+                ...(wake.currentViewSessionId ? { exceptSessionCurrentView: wake.currentViewSessionId } : {}) },
         });
     });
 }
@@ -321,6 +326,7 @@ export async function markAccountsChanged(
         kind?: ChangeKind;
         hint?: unknown;
         hintForAccount?: (accountId: string) => unknown;
+        currentViewForAccount?: (accountId: string) => boolean;
     }>,
 ): Promise<AccountChangePublication[]> {
     const accountIds = [...new Set(params.accountIds
@@ -331,7 +337,7 @@ export async function markAccountsChanged(
     if (!entityId) throw new Error("markAccountsChanged: entityId is required");
     if (accountIds.length === 0) return [];
 
-    if (params.hint !== undefined || params.hintForAccount
+    if (params.hint !== undefined || params.hintForAccount || params.currentViewForAccount
         || (kind !== "account" && kind !== "savedSecretResource" && kind !== "session")) {
         // Project all caller-owned hints before locking any Account. Cursor
         // allocation and merge-sensitive hints remain solely point-writer-owned.
@@ -339,7 +345,8 @@ export async function markAccountsChanged(
             params.hintForAccount ? params.hintForAccount(accountId) : params.hint]));
         const cursors: AccountChangePublication[] = [];
         for (const accountId of accountIds) {
-            cursors.push(await markAccountChanged(tx, { accountId, kind, entityId, hint: hints.get(accountId) }));
+            cursors.push(await markAccountChanged(tx, { accountId, kind, entityId, hint: hints.get(accountId),
+                ...(params.currentViewForAccount?.(accountId) ? { currentViewSessionId: entityId } : {}) }));
         }
         return cursors;
     }
@@ -512,6 +519,7 @@ export interface MarkAccountChangedParams {
     kind: ChangeKind;
     entityId: string;
     hint?: unknown;
+    currentViewSessionId?: string;
     /** The coordinator has already locked this existing activation receipt. */
     accountEncryptionTransitionActivation?: Readonly<{
         transitionId: string;
@@ -538,6 +546,7 @@ export async function markAccountChanged(tx: Tx, params: MarkAccountChangedParam
         accountId: params.accountId,
         kind,
         entityId: params.entityId,
+        ...(params.currentViewSessionId ? { currentViewSessionId: params.currentViewSessionId } : {}),
         ...(params.hint === undefined ? {} : { hint: structuredClone(compactHint(kind, params.hint)) }),
         ...(params.accountEncryptionTransitionActivation ? {
             accountEncryptionTransitionActivation: structuredClone(params.accountEncryptionTransitionActivation),
@@ -694,7 +703,7 @@ async function publishAccountChanged(
         if (params.accountEncryptionTransitionActivation && rows[0]?.activationCount !== 1) {
             throw new Error('Account publication requires its prelocked activation receipt');
         }
-        scheduleAccountChangeWake(tx, accountId, cursor, kind, [entityId], hint);
+        scheduleAccountChangeWake(tx, accountId, cursor, kind, [entityId], hint, params.currentViewSessionId);
         return cursor;
     }
 
@@ -785,6 +794,6 @@ async function publishAccountChanged(
         if (updated.count !== 1) throw new Error('Account publication requires its prelocked activation receipt');
     }
 
-    scheduleAccountChangeWake(tx, accountId, cursor, kind, [entityId], hint);
+    scheduleAccountChangeWake(tx, accountId, cursor, kind, [entityId], hint, params.currentViewSessionId);
     return cursor;
 }

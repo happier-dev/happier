@@ -8,7 +8,7 @@ import {
 import {
     createSessionMetadataPrivacyUpgradeRequiredResponse,
 } from "@/app/session/metadata/sessionMetadataRecipientProjection";
-import { publishSessionCurrentViewUpdates } from "@/app/session/metadata/publishSessionCurrentViewUpdates";
+import { publishSessionCurrentViewUpdates, publishSessionCurrentViewRecoveryWake } from "@/app/session/metadata/publishSessionCurrentViewUpdates";
 import { db } from "@/storage/db";
 import {
     enforceCurrentAccountStoredContentCompatibilityForHttpRequest,
@@ -123,7 +123,7 @@ export function registerSessionPatchRoute(app: Fastify) {
                     authentication: readSessionAccessAuthenticationFromRequest(request),
                 }
                 : { ...tupleBody, actorUserId: userId, sessionId };
-            const tupleResult = await updateSessionMetadataEnvelopeTuple(tupleInput);
+            const tupleResult = await updateSessionMetadataEnvelopeTuple(tupleInput, { publishCurrentView: true });
             if (!tupleResult.ok) {
                 if (tupleResult.error === "invalid-params") return reply.code(400).send({ error: "Invalid parameters" });
                 if (tupleResult.error === "forbidden") return reply.code(403).send({ error: "Forbidden" });
@@ -243,6 +243,7 @@ export function registerSessionPatchRoute(app: Fastify) {
             conditionedMutation?.sessionExpectation;
 
         const result = await patchSession({
+            publishCurrentView: true,
             actorUserId: userId,
             sessionId,
             authentication: readSessionAccessAuthenticationFromRequest(request),
@@ -334,11 +335,15 @@ export function registerSessionPatchRoute(app: Fastify) {
                 recipientCursors: result.recipientCursors,
                 source: { kind: "legacy_v0", sessionOwnerId: userId, session: currentSession },
             }) : { ok: false };
+            if (!currentSession) publishSessionCurrentViewRecoveryWake({ sessionId, recipientCursors: result.recipientCursors,
+                source: { kind: 'legacy_v0', sessionOwnerId: userId } });
             log({ module: "session-metadata", sessionId, mode,
                 phase: published.ok ? "publication_submitted" : "publication_failed",
                 ...(published.ok ? {} : { level: "warn" }) },
             published.ok ? "Submitted committed Session metadata publication" : "Failed to publish committed Session metadata");
         } catch {
+            publishSessionCurrentViewRecoveryWake({ sessionId, recipientCursors: result.recipientCursors,
+                source: { kind: 'legacy_v0', sessionOwnerId: userId } });
             log({ module: "session-metadata", level: "warn", sessionId, mode, phase: "publication_failed" }, "Failed to publish committed Session metadata");
         }
         return reply;

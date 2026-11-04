@@ -1,3 +1,4 @@
+import { publishSessionCurrentViewUpdates } from "@/app/session/metadata/publishSessionCurrentViewUpdates";
 import { sessionAliveEventsCounter, socketMessageAckCounter, websocketEventsCounter } from "@/app/monitoring/metrics/index";
 import {
     buildMessageUpdatedUpdate,
@@ -1235,6 +1236,7 @@ export function sessionUpdateHandler(
             const updateMetadata = async (
                 publisherAuthority?: Parameters<typeof updateSessionMetadata>[0]["publisherAuthority"],
             ) => await updateSessionMetadata({
+                publishCurrentView: true,
                 actorUserId: userId,
                 sessionId: sid,
                 authentication: readSessionAccessAuthenticationFromSocket(socket),
@@ -1293,34 +1295,13 @@ export function sessionUpdateHandler(
                     skipSenderConnection: connection,
                 });
             }
-            const metadataUpdate = {
-                value: result.metadata,
-                version: result.version,
-            };
-            await Promise.all(result.recipientCursors
-                .filter(({ accountId }) => accountId === userId)
-                .map(async ({
-                accountId,
-                cursor,
-            }) => {
-                const payload = buildUpdateSessionUpdate(
-                    sid,
-                    cursor,
-                    randomKeyNaked(12),
-                    metadataUpdate,
-                    undefined,
-                );
-                eventRouter.emitUpdate({
-                    userId: accountId,
-                    payload,
-                    recipientFilter: {
-                        type: "all-interested-in-session",
-                        sessionId: sid,
-                    },
-                    skipSenderConnection:
-                        accountId === userId ? connection : undefined,
-                });
-            }));
+            await publishSessionCurrentViewUpdates({
+                sessionId: sid,
+                recipientCursors: result.recipientCursors,
+                source: { kind: "legacy_v0", sessionOwnerId: userId,
+                    metadata: { value: result.metadata, version: result.version } },
+                skipSenderConnection: connection,
+            });
             scheduleTrackedSessionBadgeRefresh({
                 badgeAttentionChanged: result.badgeAttentionChanged,
                 sessionId: sid,
@@ -1393,6 +1374,7 @@ export function sessionUpdateHandler(
             const updateAgentState = async (
                 publisherAuthority?: import("@/app/presence/sessionPublisherPresence").CurrentSessionPublisherAuthority,
             ) => await updateSessionAgentState({
+                    publishCurrentView: true,
                     actorUserId: userId,
                     sessionId: sid,
                     expectedVersion,
@@ -1454,10 +1436,6 @@ export function sessionUpdateHandler(
                 ownerActivityDelivery = reportedOwnerActivityDelivery;
             }
 
-            const agentStateUpdate = {
-                value: result.agentState,
-                version: result.version,
-            };
             const rawRealtimeProjection = (
                 typeof result.pendingPermissionRequestCount === "number"
                 || typeof result.pendingUserActionRequestCount === "number"
@@ -1484,31 +1462,14 @@ export function sessionUpdateHandler(
                         : {}),
                 }
                 : undefined;
-            await Promise.all(result.recipientCursors
-                .filter(({ accountId }) => accountId === userId)
-                .map(async ({
-                accountId,
-                cursor,
-            }) => {
-                const payload = buildUpdateSessionUpdate(
-                    sid,
-                    cursor,
-                    randomKeyNaked(12),
-                    undefined,
-                    agentStateUpdate,
-                    rawRealtimeProjection,
-                );
-                eventRouter.emitUpdate({
-                    userId: accountId,
-                    payload,
-                    recipientFilter: {
-                        type: "all-interested-in-session",
-                        sessionId: sid,
-                    },
-                    skipSenderConnection:
-                        accountId === userId ? connection : undefined,
-                });
-            }));
+            await publishSessionCurrentViewUpdates({
+                sessionId: sid,
+                recipientCursors: result.recipientCursors,
+                source: { kind: "legacy_v0", sessionOwnerId: userId,
+                    agentState: { value: result.agentState, version: result.version },
+                    runtimeProjection: rawRealtimeProjection },
+                skipSenderConnection: connection,
+            });
             scheduleTrackedSessionBadgeRefresh({
                 badgeAttentionChanged: result.badgeAttentionChanged,
                 sessionId: sid,

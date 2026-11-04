@@ -1925,6 +1925,7 @@ export type UpdateSessionMetadataResult =
 
 export async function updateSessionMetadata(params: {
     actorUserId: string;
+    publishCurrentView?: true;
     sessionId: string;
     authentication: SessionAccessAuthentication;
     expectedVersion: number;
@@ -2075,7 +2076,9 @@ export async function updateSessionMetadata(params: {
             const recipientCursors = await markSessionProjectionRecipientsChanged({
                 tx,
                 sessionId,
+                hint: { metadataVersion: expectedVersion + 1 },
                 recipientAccountIds: access.recipientAccountIds,
+                ...(params.publishCurrentView ? { currentViewPublication: { kind: 'legacy_v0', sessionOwnerId: access.sessionOwnerId } } as const : {}),
             });
             const privateReadCursor = await applyReadHint();
             return transactionResult(() => ({
@@ -2471,6 +2474,7 @@ async function publishCommittedSessionRequestOccurrencesInTx(tx: Tx, input: Read
 
 export async function updateSessionAgentState(params: {
     actorUserId: string;
+    publishCurrentView?: true;
     sessionId: string;
     expectedVersion: number;
     agentStateCiphertext: string | null;
@@ -2641,7 +2645,9 @@ export async function updateSessionAgentState(params: {
             const recipientCursors = await markSessionProjectionRecipientsChanged({
                 tx,
                 sessionId,
+                hint: { agentStateVersion: expectedVersion + 1 },
                 recipientAccountIds: access.recipientAccountIds,
+                ...(params.publishCurrentView ? { currentViewPublication: { kind: 'legacy_v0', sessionOwnerId: access.sessionOwnerId } } as const : {}),
             });
             const badgeAttentionChanged = didSessionActivityBadgeSignalChange(
                 toSessionActivityBadgeInputs(session),
@@ -4069,6 +4075,7 @@ function isExactInactiveModelIntentExpectation(
 
 export async function patchSession(params: {
     actorUserId: string;
+    publishCurrentView?: true;
     sessionId: string;
     authentication: SessionAccessAuthentication;
     metadata?: { ciphertext: string; expectedVersion: number };
@@ -4101,6 +4108,7 @@ export async function patchSession(params: {
  */
 export async function patchSessionInTx(tx: Tx, params: {
     actorUserId: string;
+    publishCurrentView?: true;
     sessionId: string;
     metadata?: { ciphertext: string; expectedVersion: number };
     agentState?: { ciphertext: string | null; expectedVersion: number };
@@ -4323,7 +4331,10 @@ export async function patchSessionInTx(tx: Tx, params: {
     const recipientCursors = await markSessionProjectionRecipientsChanged({
         tx,
         sessionId,
+        hint: metadata ? { metadataVersion: metadataChanged ? metadata.expectedVersion + 1 : current.metadataVersion }
+            : { agentStateVersion: agentStateChanged && agentState ? agentState.expectedVersion + 1 : current.agentStateVersion },
         recipientAccountIds: access.recipientAccountIds,
+        ...(params.publishCurrentView ? { currentViewPublication: { kind: 'legacy_v0', sessionOwnerId: access.sessionOwnerId } } as const : {}),
     });
     return sessionRecipientPublicationResult({
         ok: true,
@@ -4903,6 +4914,7 @@ export async function updateSessionMetadataEnvelopeTupleInTx(
     tx: Tx,
     params: UpdateSessionMetadataEnvelopeTupleInput,
     preconditions?: SessionMetadataWritePreconditionsV1,
+    publication?: Readonly<{ publishCurrentView: true }>,
 ): Promise<SessionWriteInTxResult<UpdateSessionMetadataEnvelopeTupleResult>> {
     if (!isValidSessionMetadataEnvelopeTupleInput(params)) {
         return { ok: false, error: "invalid-params" };
@@ -4919,13 +4931,14 @@ export async function updateSessionMetadataEnvelopeTupleInTx(
     } else {
         await acquireSessionAccountCursorLocksInTx(tx, [params.sessionId], [params.actorUserId]);
     }
-    return updateSessionMetadataEnvelopeTupleAfterCursorFenceInTx(tx, params, preconditions);
+    return updateSessionMetadataEnvelopeTupleAfterCursorFenceInTx(tx, params, preconditions, publication);
 }
 
 async function updateSessionMetadataEnvelopeTupleAfterCursorFenceInTx(
     tx: Tx,
     params: UpdateSessionMetadataEnvelopeTupleInput,
     preconditions?: SessionMetadataWritePreconditionsV1,
+    publication?: Readonly<{ publishCurrentView: true }>,
 ): Promise<SessionWriteInTxResult<UpdateSessionMetadataEnvelopeTupleResult>> {
     // Same metadata CAS, independent contribution: owner Agent-state refreshes
     // and shared-confirmation settlement cannot replace each other's counts.
@@ -5576,6 +5589,7 @@ async function updateSessionMetadataEnvelopeTupleAfterCursorFenceInTx(
         sessionId: params.sessionId,
         recipientAccountIds: access.recipientAccountIds,
         hint: { sharedMetadataVersion: nextMetadataVersion },
+        ...(publication?.publishCurrentView ? { currentViewPublication: { kind: 'envelope_tuple_v1', sessionOwnerId: access.sessionOwnerId } } as const : {}),
     });
     return toMetadataEnvelopeTupleSuccess(
         nextTuple,
@@ -5589,6 +5603,7 @@ async function updateSessionMetadataEnvelopeTupleAfterCursorFenceInTx(
 
 export async function updateSessionMetadataEnvelopeTuple(
     params: UpdateSessionMetadataEnvelopeTupleInput,
+    publication?: Readonly<{ publishCurrentView: true }>,
 ): Promise<UpdateSessionMetadataEnvelopeTupleResult> {
     try {
         if (!isValidSessionMetadataEnvelopeTupleInput(params)) {
@@ -5596,7 +5611,7 @@ export async function updateSessionMetadataEnvelopeTuple(
         }
         const consent = params.mode === "owner_team_credential_binding" ? params.teamVisibilityGrantConsent : undefined;
         return await inTx(async (tx) =>
-            updateSessionMetadataEnvelopeTupleAfterCursorFenceInTx(tx, params), {
+            updateSessionMetadataEnvelopeTupleAfterCursorFenceInTx(tx, params, undefined, publication), {
                 // Consent changes access, so admit its prospective Team audience
                 // with the strongest intent before the shared CAS body. Ordinary
                 // metadata retains its prepared content-audience discovery.
