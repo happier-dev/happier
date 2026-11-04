@@ -94,10 +94,12 @@ export const SESSION_PREPARATION_FAILURE_PREVIEWS = {
   agent_runtime_daemon_service_generation_not_current: 'The runner agent generation is no longer current. Retry the session on the target machine.',
   native_agent_privileged_effect_authority_unavailable: 'Runner daemon authority is unavailable. Check the target machine, then retry the session.',
   native_agent_privileged_effect_outcome_unknown: 'Runner daemon preparation could not be confirmed. Check the session and target machine before retrying.',
+  action_outcome_unknown: 'The external operation could not be confirmed. Check its current status before retrying.',
   daemon_draining: 'The target machine is temporarily pausing new work. Retry the session when it is ready.',
   daemon_shutting_down: 'Happier is shutting down on the target machine. Restart it there, then retry the session.',
   skills_unavailable: 'Skill delivery is unavailable. Check the target machine, then retry the session.',
   team_credential_provider_selection_not_current: 'The selected Team provider is unavailable. Review the Team model selection, then retry the session.',
+  team_credential_model_selection_required: 'Choose a Team model before starting this session.',
 } as const;
 export type SessionPreparationFailureCode = keyof typeof SESSION_PREPARATION_FAILURE_PREVIEWS;
 

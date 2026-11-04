@@ -6,9 +6,17 @@ import {
   SessionRuntimeUsageLimitDetailsV1Schema,
   sanitizeSessionRuntimeIssueV1,
   resolveSessionRuntimeIssueSignInRecovery,
+  readSessionPreparationFailureCode,
+  readSessionStartupFailurePreview,
 } from './runtimeIssueV1.js';
 
 describe('runtime authentication recovery', () => {
+  it('admits the missing Team model choice as a closed preparation reason', () => {
+    const code = 'team_credential_model_selection_required';
+    expect(readSessionPreparationFailureCode(code)).toBe(code);
+    expect(readSessionStartupFailurePreview(code)).toBeTruthy();
+    expect(readSessionPreparationFailureCode(`${code}: private detail`)).toBeNull();
+  });
   it('retains closed failure evidence while refusing provider prose in the cause', () => {
     const failureCause = { phase: 'turn', failureReason: 'authentication_required', httpStatus: 401 };
     const issue = { v: 1, scope: 'primary_session', status: 'failed', occurredAt: 1,
