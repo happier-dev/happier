@@ -1,4 +1,4 @@
-import { SessionRuntimeFailureCauseV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { SESSION_RUNTIME_ISSUE_PREVIEW_MAX_LENGTH, SessionRuntimeFailureCauseV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { readSessionStartupFailurePreview } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { resolveAgentDisplayTitle } from '@/agent/catalog/agentDisplayTitle';
 import type {
@@ -528,7 +528,7 @@ export function classifyPrimarySessionRuntimeIssue(
     && Number.isSafeInteger(diagnosticDetails.requestErrorCode) ? diagnosticDetails.requestErrorCode : null;
   // Reuse SessionRuntimeIssueV1.sanitizedPreview's existing 2,000-code-unit boundary.
   const diagnosticPreview = typedDiagnostic?.message?.trim()
-    ? redactBugReportSensitiveText(`${requestErrorCode === null ? '' : `ACP ${requestErrorCode}: `}${typedDiagnostic.message}`).slice(0, 2_000)
+    ? redactBugReportSensitiveText(`${requestErrorCode === null ? '' : `ACP ${requestErrorCode}: `}${typedDiagnostic.message}`).slice(0, SESSION_RUNTIME_ISSUE_PREVIEW_MAX_LENGTH)
     : null;
   const errorCode = inspectOwnErrorCodeDataProperty(input.error);
   // Home adapters preserve only their status; machine bootstrap can also throw

@@ -312,6 +312,8 @@ export const SessionRuntimeFailureCauseV1Schema = lazyZodSchema(() => z.strictOb
   providerErrorMessage: z.optional(z.string().check(z.trim(), z.minLength(1))),
 }));
 
+export const SESSION_RUNTIME_ISSUE_PREVIEW_MAX_LENGTH = 2_000;
+
 export const SessionRuntimeIssueV1Schema = lazyZodSchema(() => (<I extends z.core.$ZodType, O extends z.core.$ZodType>(input: I, output: O) => new z.ZodMiniPipe({ type: 'pipe', in: input, out: output }) as z.ZodMiniPipe<I, O>)(z.transform(normalizeLegacyRuntimeIssueV1), z.readonly(z.object({
     v: z.literal(1),
     scope: z.literal('primary_session'),
@@ -322,7 +324,7 @@ export const SessionRuntimeIssueV1Schema = lazyZodSchema(() => (<I extends z.cor
     sessionSeq: z.optional(z.number().check(z.int(), z.nonnegative())),
     agentId: z.optional(AgentIdV1Schema),
     agentTurnId: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(256))),
-    sanitizedPreview: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(2_000))),
+    sanitizedPreview: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(SESSION_RUNTIME_ISSUE_PREVIEW_MAX_LENGTH))),
     usageLimit: z.optional(SessionRuntimeUsageLimitDetailsV1Schema),
     teamCredential: z.optional(SessionRuntimeTeamCredentialDenialDetailsV1Schema),
     temporaryThrottle: z.optional(SessionRuntimeTemporaryThrottleDetailsV1Schema),

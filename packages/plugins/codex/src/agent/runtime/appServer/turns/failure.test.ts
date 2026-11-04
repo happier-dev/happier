@@ -13,6 +13,21 @@ import {
 } from './failure.js';
 
 describe('createCodexAppServerTurnFailure', () => {
+  it('bounds retained provider text to the existing sanitized preview budget after redaction', () => {
+    const rejection = createJsonRpcApplicationError({
+      method: 'thread/start',
+      code: -32603,
+      message: `Bearer private-provider-token; ${'x'.repeat(2_001)}`,
+    });
+    const failure = createCodexAppServerTurnFailure({
+      phase: 'thread_open', value: rejection,
+    });
+    for (const value of [rejection, failure]) {
+      expect(readCodexAppServerFailureCause(value).providerErrorMessage)
+        .toBe('Bearer [REDACTED]; '.padEnd(2_000, 'x'));
+    }
+  });
+
   it('retains redacted correlated provider messages through public runtime and launch failures', () => {
     const rejection = createJsonRpcApplicationError({
       method: 'thread/start',

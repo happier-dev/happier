@@ -4,6 +4,7 @@ import type {
   SessionRuntimeTemporaryThrottleDetailsV1,
   SessionRuntimeUsageLimitDetailsV1,
 } from '@happier-dev/protocol';
+import { SESSION_RUNTIME_ISSUE_PREVIEW_MAX_LENGTH } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 
 export type BuildSessionRuntimeIssueV1Input = Readonly<{
   code: string;
@@ -39,7 +40,7 @@ export function buildSessionRuntimeIssueV1(
   const sessionSeq = normalizeNonNegativeInteger(input.sessionSeq);
   const agentId = normalizeString(input.agentId, 128);
   const agentTurnId = normalizeString(input.agentTurnId, 256);
-  const sanitizedPreview = normalizeString(input.sanitizedPreview, 2_000);
+  const sanitizedPreview = normalizeString(input.sanitizedPreview, SESSION_RUNTIME_ISSUE_PREVIEW_MAX_LENGTH);
 
   return {
     v: 1,

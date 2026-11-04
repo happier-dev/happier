@@ -1,5 +1,5 @@
 import { readJsonRpcApplicationRejection } from '@happier-dev/plugin-sdk/exec/protocol-clients';
-import { RunnerDaemonPluginServicesPreparationCauseV1Schema, SessionRuntimeFailureCauseV1Schema, sanitizeSessionRuntimeIssueV1, readAgentStartupFailureCode, readAgentStartupFailureDetails, readSessionPreparationFailureCode, readSessionStartupFailurePreview, type SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { SESSION_RUNTIME_ISSUE_PREVIEW_MAX_LENGTH, RunnerDaemonPluginServicesPreparationCauseV1Schema, SessionRuntimeFailureCauseV1Schema, sanitizeSessionRuntimeIssueV1, readAgentStartupFailureCode, readAgentStartupFailureDetails, readSessionPreparationFailureCode, readSessionStartupFailurePreview, type SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { ProviderBrokerAdmissionFailureCodeV1Schema } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import { readCodexNativeTransportStartupFailure, readCodexSharedAppServerStartupFailure, type CodexSharedAppServerStartupFailure } from '../sharedServer.js';
 
@@ -156,7 +156,7 @@ function readRetainedFailureCause(error: unknown): CodexFailureCause | null {
 function readRedactedProviderErrorMessage(error: unknown): string | undefined {
   // Only a correlated provider response admits prose; native/transport errors do not.
   if (!(error instanceof Error) || !readJsonRpcApplicationRejection(error)) return undefined;
-  return redactBugReportSensitiveText(error.message).trim() || undefined;
+  return redactBugReportSensitiveText(error.message).trim().slice(0, SESSION_RUNTIME_ISSUE_PREVIEW_MAX_LENGTH) || undefined;
 }
 
 export function readCodexAppServerFailureCause(
