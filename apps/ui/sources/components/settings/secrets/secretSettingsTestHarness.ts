@@ -97,6 +97,8 @@ export async function createSecretSettingsTestHarness(options: Readonly<{
     approvalRequired?: boolean;
     connectedPurposes?: ConnectedPurposeCatalogV1;
     voiceEnabled?: boolean;
+    /** Additional Home HTTP routes, installed before Account restoration starts its readers. */
+    handleRequest?: (path: string, init?: RequestInit) => Promise<Response | null>;
 }> = {}): Promise<SecretSettingsTestHarness> {
     await loadSyncSingletonForTests();
     const mode = options.mode ?? 'plain';
@@ -150,6 +152,8 @@ export async function createSecretSettingsTestHarness(options: Readonly<{
     const handleRequest = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
         const url = new URL(String(input));
         const path = url.pathname;
+        const additionalResponse = await options.handleRequest?.(`${path}${url.search}`, init);
+        if (additionalResponse) return additionalResponse;
         const purposeResponse = purposes ? await purposes.handle(input, init) : null;
         if (purposeResponse) return purposeResponse;
         const artifactResponse = artifacts.handle(`${path}${url.search}`, init);
