@@ -9127,7 +9127,7 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
 
     emptyState: {
       title: "Nie ma jeszcze sesji",
-      connectMachineActionSubtitle: 'Połącz ten komputer, aby mógł rozpoczynać sesje.',
+      firstRunLine: "Rozpoczęte sesje pojawią się tutaj.",
       description: "Rozpocznij sesję na jednej ze swoich maszyn online.",
       descriptionPrefix: "Rozpocznij sesję na jednej ze swoich maszyn, używając ",
       descriptionSuffix: " w terminalu lub używając przycisków poniżej.",

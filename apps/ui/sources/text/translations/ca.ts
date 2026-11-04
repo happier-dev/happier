@@ -8468,7 +8468,7 @@ encryptedUnavailable: "Detalls xifrats no disponibles",
     sessionsList: {
         emptyState: {
             title: 'Encara no hi ha sessions', description: 'Inicia una sessió en una de les màquines en línia.', descriptionPrefix: 'Inicia una sessió en una de les teves màquines fent servir ', descriptionSuffix: ' al terminal o amb els botons de sota.', actionsTitle: 'Inicia una sessió',
-            startSessionOnMachine: ({ machine }: { machine: string }) => `Inicia una sessió a ${machine}`, startSessionOnMachineSubtitle: 'Tria una carpeta i obre una sessió nova en aquesta màquina.', connectMachineActionSubtitle: 'Connecta aquest ordinador perquè pugui iniciar sessions.', reconnectMachineActionSubtitle: 'Torna a connectar el servei en segon pla perquè aquesta màquina pugui iniciar sessions de nou.', startDaemonActionSubtitle: 'Instal·la o reinicia el servei en segon pla necessari per iniciar sessions.',
+            startSessionOnMachine: ({ machine }: { machine: string }) => `Inicia una sessió a ${machine}`, startSessionOnMachineSubtitle: 'Tria una carpeta i obre una sessió nova en aquesta màquina.', firstRunLine: "Les sessions que iniciïs apareixen aquí.", reconnectMachineActionSubtitle: 'Torna a connectar el servei en segon pla perquè aquesta màquina pugui iniciar sessions de nou.', startDaemonActionSubtitle: 'Instal·la o reinicia el servei en segon pla necessari per iniciar sessions.',
         },
         openProject: 'Obre el projecte', workspaceRoot: 'Arrel de l’espai de treball', failedToMoveSessionToFolder: 'No s’ha pogut moure la sessió a la carpeta.', newFolderDefaultName: 'Carpeta nova',
         reminders: sessionReminderTranslations['ca'],

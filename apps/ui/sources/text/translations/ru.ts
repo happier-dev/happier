@@ -7763,7 +7763,7 @@ export const ru: TranslationStructure = {
 
     emptyState: {
       title: "Сессий пока нет",
-      connectMachineActionSubtitle: 'Подключите этот компьютер, чтобы он мог запускать сессии.',
+      firstRunLine: "Здесь появятся сессии, которые вы начнёте.",
       description: "Запустите сессию на одной из ваших машин в сети.",
       descriptionPrefix: "Запустите сессию на одной из ваших машин с помощью ",
       descriptionSuffix: " в терминале или с помощью кнопок ниже.",

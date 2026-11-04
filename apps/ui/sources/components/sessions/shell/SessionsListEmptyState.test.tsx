@@ -155,7 +155,7 @@ describe('SessionsListEmptyState', () => {
             {pushes.map((push, index) => <DestinationInstanceHost key={index}
                 tabId={`home-${index}`} ref={{ kind: 'sessions', params: {} }} pathname="/"
                 focused={index === 0} visible navigation={{ push, replace: () => {}, back: () => {} }}>
-                <SessionsListEmptyState kind="connect_machine" targetLabel="Computer" />
+                <SessionsListEmptyState kind="start_daemon" targetLabel="Computer" />
             </DestinationInstanceHost>)}
         </>);
         const actions = screen.root.findAll((node) => typeof node.type === 'string'
@@ -228,23 +228,16 @@ describe('SessionsListEmptyState', () => {
         expect(selectedDraft()).toMatchObject({ selectedMachineId: 'f874-machine', targetServerId: 'server-1' });
     });
 
-    it('renders the connect action below the tile for never-connected accounts and routes it to the machine draft', async () => {
+    // No machine yet (58d AF1): the setup page is desktop-only, so neither the phone's Sessions tab nor the
+    // sidebar offers it. One quiet line; New Session ("Run on…") is the way to start.
+    it.each(['default', 'sidebar'] as const)('keeps the %s surface to one quiet line with no machine yet', async (surface) => {
         const { SessionsListEmptyState } = await import('./SessionsListEmptyState');
-        const screen = await renderSessions(<SessionsListEmptyState kind="connect_machine" targetLabel="leeroy-mbp" />);
+        const screen = await renderSessions(<SessionsListEmptyState kind="connect_machine" targetLabel="leeroy-mbp" surface={surface} />);
 
         expect(screen.findByProps({ testID: 'session-getting-started-kind-connect_machine' })).toBeTruthy();
-        expect(
-            screen.findAllByType('Text' as never)
-                .some((node) => flattenTextValue(node.props.children) === 'sessionsList.emptyState.connectMachineActionSubtitle'),
-        ).toBe(true);
-        expect(
-            screen.findAllByType('Text' as never)
-                .some((node) => flattenTextValue(node.props.children) === 'sessionsList.emptyState.reconnectMachineActionSubtitle'),
-        ).toBe(false);
-
-        await screen.pressByTestIdAsync('sessions-empty-state-open-setup');
-
-        expect(routerPushSpy).toHaveBeenCalledWith(buildMachineAddHref({ path: 'thisComputer' }));
+        expect(screen.findByProps({ testID: 'sessions-empty-state-first-run' })).toBeTruthy();
+        expect(() => screen.findByProps({ testID: 'sessions-empty-state-summary' })).toThrow();
+        expect(() => screen.findByProps({ testID: 'sessions-empty-state-open-setup' })).toThrow();
     });
 
     it('renders the reconnect action below the tile when a machine exists but is offline', async () => {

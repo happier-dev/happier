@@ -8961,7 +8961,7 @@ export const zhHans: TranslationStructure = {
       actionsTitle: "启动会话",
       startSessionOnMachine: ({ machine }: { machine: string }) => `在${machine}上启动会话`,
       startSessionOnMachineSubtitle: "选择一个文件夹，并在这台机器上打开新的会话。",
-      connectMachineActionSubtitle: '连接这台电脑，以便在其上启动会话。',
+      firstRunLine: "你开始的会话会显示在这里。",
       reconnectMachineActionSubtitle: "重新连接后台服务，让这台机器可以再次启动会话。",
       startDaemonActionSubtitle: "安装或重启启动会话所需的后台服务。",
     },

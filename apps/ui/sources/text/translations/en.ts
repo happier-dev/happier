@@ -11003,8 +11003,7 @@ const enSessionsList = {
       `Start a session on ${machine}`,
     startSessionOnMachineSubtitle:
       'Choose a folder and open a new session on this machine.',
-    connectMachineActionSubtitle:
-      'Connect this computer so it can start sessions.',
+    firstRunLine: "Sessions you start appear here.",
     reconnectMachineActionSubtitle:
       'Reconnect the background service so this machine can start sessions again.',
     startDaemonActionSubtitle:

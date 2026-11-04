@@ -9597,7 +9597,7 @@ localTailscale: {
       startSessionOnMachineSubtitle: "フォルダーを選んで、このマシンで新しいセッションを開きます。",
       reconnectMachineActionSubtitle: "このマシンで再びセッションを開始できるように、バックグラウンドサービスを再接続します。",
       startDaemonActionSubtitle: "セッション開始に必要なバックグラウンドサービスをインストールまたは再起動します。",
-      connectMachineActionSubtitle: 'セッションを開始できるように、このコンピューターを接続します。',
+      firstRunLine: "開始したセッションはここに表示されます。",
     },
     openProject: 'プロジェクトを開く',
     workspaceRoot: "ワークスペースのルート",

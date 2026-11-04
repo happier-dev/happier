@@ -17,6 +17,7 @@ import { useMachineReachabilityRevision } from '@/sync/domains/machines/reachabi
 
 import type { SessionGettingStartedDecisionKind } from '@/components/sessions/guidance/gettingStartedModel';
 import { Icon } from '@/components/ui/icons/Icon';
+import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { seedAndOpenNewSession } from '@/components/sessions/new/newSessionSeedComposer';
 import { buildNewSessionLaunchRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
@@ -59,9 +60,17 @@ export function SessionsListEmptyState(props: SessionsListEmptyStateProps) {
     const handleOpenSetup = React.useCallback(() => {
         router.push(buildMachineAddHref({ path: 'thisComputer' }) as never);
     }, [router]);
-    const setupSubtitle = props.kind === 'connect_machine'
-        ? t('sessionsList.emptyState.connectMachineActionSubtitle')
-        : t('sessionsList.emptyState.reconnectMachineActionSubtitle');
+    // No machine yet: Home's Machines and Capacity widgets and New Session's "Run on…" carry the first steps
+    // (58d AF1), so the list says only what will appear here (the phone's Sessions tab shows Home itself). Setting
+    // up this machine is desktop-only; the Add flow offers it where the device can do it.
+    if (props.kind === 'connect_machine') {
+        return (
+            <ItemList presentation="grouped" testID="sessions-empty-state-list" containerStyle={{ paddingTop: theme.space.s12 }}>
+                <View testID={`session-getting-started-kind-${props.kind}`} style={{ width: 0, height: 0, overflow: 'hidden' }} />
+                <EmptyState layout="line" testID="sessions-empty-state-first-run" title={t('sessionsList.emptyState.firstRunLine')} />
+            </ItemList>
+        );
+    }
 
     return (
         <ItemList presentation="grouped" testID="sessions-empty-state-list" containerStyle={{ paddingTop: theme.space.s12 }}>
@@ -103,12 +112,12 @@ export function SessionsListEmptyState(props: SessionsListEmptyStateProps) {
                 </ItemGroup>
             ) : null}
 
-            {props.kind === 'connect_machine' || props.kind === 'start_daemon' ? (
+            {props.kind === 'start_daemon' ? (
                 <ItemGroup>
                     <Item
                         testID="sessions-empty-state-open-setup"
                         title={t('setupOnboarding.openSetupAction')}
-                        subtitle={setupSubtitle}
+                        subtitle={t('sessionsList.emptyState.reconnectMachineActionSubtitle')}
                         icon={<Icon name="desktop" size={20} color={theme.colors.text.secondary} />}
                         onPress={handleOpenSetup}
                     />
