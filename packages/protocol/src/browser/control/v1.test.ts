@@ -2,6 +2,13 @@ import { describe, expect, it } from 'vitest';
 import * as mod from '../index.js';
 
 describe('browser control protocol v1', () => {
+  it('selects a persistent profile only when opening a managed view', () => {
+    const command = { kind: 'openView', commandId: 'open-profile', browserSessionId: 'browser', viewId: 'view',
+      platform: 'web', profileId: 'personal', target: { kind: 'externalUrl', targetId: 'external', url: 'https://example.test' } };
+    expect(mod.BrowserCommandV1Schema.safeParse(command).success).toBe(true);
+    expect(mod.BrowserCommandV1Schema.safeParse({ kind: 'navigate', commandId: 'navigate', browserSessionId: 'browser',
+      viewId: 'view', profileId: 'other', url: 'https://example.test' }).success).toBe(false);
+  });
   it('validates optional known or unknown failed-command completion without relaxing the envelope', () => {
     const result = { v: 1, commandId: 'command', status: 'failed', adapterKind: 'chromiumSidecar',
       error: { code: 'adapter_unavailable', message: 'CDP unavailable' } };

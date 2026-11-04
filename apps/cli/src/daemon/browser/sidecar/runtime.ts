@@ -32,13 +32,17 @@ function rejectedLaunchResult(input: Readonly<{
     });
 }
 
-function buildSidecarLaunchArgs(profileDirectory: string): readonly string[] {
+function buildSidecarLaunchArgs(profileDirectory: string, extensionDirectories: readonly string[]): readonly string[] {
     return [
         '--headless=new',
         `--user-data-dir=${profileDirectory}`,
         '--remote-debugging-pipe',
         '--no-first-run',
         '--no-default-browser-check',
+        ...(extensionDirectories.length > 0 ? [
+            `--load-extension=${extensionDirectories.join(',')}`,
+            `--disable-extensions-except=${extensionDirectories.join(',')}`,
+        ] : []),
     ];
 }
 
@@ -47,6 +51,7 @@ export function createSidecarLaunchPlan(params: Readonly<{
     nowMs: number;
     profile: BrowserProfileV1;
     profileDirectory: string;
+    extensionDirectories?: readonly string[];
     binaryResolution: SidecarBrowserBinaryResolution;
 }>): SidecarLaunchPlan {
     if (!params.binaryResolution.ok) {
@@ -86,7 +91,8 @@ export function createSidecarLaunchPlan(params: Readonly<{
         privateLaunch: {
             sidecarId: params.sidecarId,
             executablePath: params.binaryResolution.executablePath,
-            args: buildSidecarLaunchArgs(profileResolution.cleanup.profileDirectory),
+            args: buildSidecarLaunchArgs(profileResolution.cleanup.profileDirectory,
+                params.profile.storageMode === 'user' || params.profile.storageMode === 'plugin' ? params.extensionDirectories ?? [] : []),
             source: params.binaryResolution.source,
             profileId: profileResolution.binding.profileId,
             profileDirectory: profileResolution.cleanup.profileDirectory,

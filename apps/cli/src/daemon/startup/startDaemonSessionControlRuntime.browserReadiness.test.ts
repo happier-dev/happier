@@ -20,8 +20,6 @@ it('serves control during an installed-browser probe, keeps missing routes unava
         sidecar: { enabled: true }, automation: { enabled: true } } },
     }) }),
     browserSidecarControlAdapterFactory: createProductBrowserSidecarControlAdapterFactory({
-      featureEnabled: true,
-      autoInstallWhenMissing: false,
       // Installed-artifact discovery is the filesystem boundary. Keep the real
       // product source, feature gate, route owner and startup composition.
       resolveManagedCandidate: async () => {

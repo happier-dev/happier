@@ -42,7 +42,7 @@ it('wires canonical effective memory through startup into browser admission', as
           sidecar: { enabled: true }, automation: { enabled: true } } },
       }) }),
       browserSidecarControlAdapterFactory: createProductBrowserSidecarControlAdapterFactory({
-        featureEnabled: true, profileStore: profiles, autoInstallWhenMissing: false,
+        profileStore: profiles,
         // Managed artifact, child process and CDP are external boundaries. Keep
         // startup, registration, vitals, profile lifecycle and admission real.
         resolveManagedCandidate: async () => ({ source: 'managedBrowserPackage', executablePath: '/managed/chrome',

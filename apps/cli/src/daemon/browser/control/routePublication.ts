@@ -1,7 +1,6 @@
 import { createBrowserProfileCookieImporter } from "@/daemon/browser/profiles/importCookies";
 import { createBrowserProfilePasskeyImporter } from "@/daemon/browser/profiles/importPasskeys";
 import { createBrowserProfilePasskeyAuthenticator } from "@/daemon/browser/profiles/passkeys";
-import type { BrowserStoragePartitionOwner } from '@/daemon/browser/storage/partitions';
 import { invalidateProcessLaunchDiscovery } from "@/processes/launchNotification";
 import { join, resolve } from "node:path";
 import type { ApiMachineClient } from "@/api/apiMachine";
@@ -40,8 +39,9 @@ import { createDesktopReverseBrowserRecordingCaptureUiCall } from "@/daemon/brow
 import { createBrowserAutomationReverseDispatcher } from "@/daemon/browser/automation/reverseDispatch";
 import type { BrowserUiAutomationRouteOwner } from "@/daemon/runtimeActionExecutor";
 import type { BrowserRecordingRoutes } from "@/daemon/browser/recording/routes";
-import { createBrowserProfileStore, type BrowserProfileStore } from "@/daemon/browser/profiles/store";
-import { createBrowserStoragePartitionOwner } from "@/daemon/browser/storage/partitions";
+import type { BrowserProfileStore } from "@/daemon/browser/profiles/store";
+import { createConfiguredBrowserProfileStore } from "@/daemon/browser/profiles/configuredStore";
+import { createBrowserExtensionService } from "@/daemon/browser/extensions/service";
 import type { BrowserSidecarContextCaptureSurface, BrowserSidecarControlAdapterFactory, BrowserSidecarControlAdapterFactoryInput, BrowserSidecarControlAdapterFactoryResult } from "@/daemon/browser/sidecar/controlAdapter";
 import { createProductBrowserSidecarControlAdapterFactory } from "@/daemon/browser/sidecar/productSource";
 import { createBrowserDaemonFeatureGate, type BrowserDaemonFeatureGate } from "@/daemon/browser/featureGate";
@@ -53,7 +53,6 @@ import type { DaemonSessionMutationCustody } from "@/daemon/connectedServices/us
 
 export type DaemonBrowserStoragePurgeOwner = Readonly<{
   store: BrowserProfileStore;
-  partitionOwner: BrowserStoragePartitionOwner;
   purgeForSessionDeleted: (sessionId: string) => Promise<void>;
   purgeForLogout: () => Promise<void>;
 }>;
@@ -322,22 +321,8 @@ setBrowserRecordingRoutesProvider?: (
         const browserSidecarControlAdapterFactory =
           params.browserSidecarControlAdapterFactory ??
           createProductBrowserSidecarControlAdapterFactory({
-            featureEnabled: browserSidecarEnabled,
             profileStore: browserProfileStore,
             readMachineResourcesPolicy: params.readMachineResourcesPolicy,
-            // OPEN PRODUCT DECISION (E2-F1, awaiting a user ruling — see
-            // `.project/plans/2026-08-23-ru2-surfaces-finalization/lanes/A1.md`).
-            // `autoInstallWhenMissing` defaults to `true`, and MCH-2's lazy install is
-            // the ONLY production path that can ever place the managed
-            // Chrome-for-Testing artifact on disk (`getArchiveDownloadInstallableAdapter`
-            // has zero non-test callers). Leaving it defaulted here would make every
-            // daemon fetch ~150 MB of third-party Chromium at startup, because
-            // `browser.sidecar` is default-ALLOW and this refresh runs on every start.
-            // That is a cost/trust change no user has agreed to, so it stays explicitly
-            // off: the daemon wires browser control/context/automation the moment a
-            // managed Chromium exists on disk, and provisioning it stays a separate,
-            // explicit decision. Flip this to `true` to adopt the lazy install.
-            autoInstallWhenMissing: false,
           });
         const browserSidecarControlAdapterResult =
           await browserSidecarControlAdapterFactory({
@@ -372,6 +357,10 @@ setBrowserRecordingRoutesProvider?: (
               });
             }
             browserControlRoutes = createBrowserDaemonControlRoutes({
+              ...(browserSidecarControlAdapterResult.extensions ? {
+                extensions: createBrowserExtensionService({ profileStore: browserProfileStore,
+                  runtime: browserSidecarControlAdapterResult.extensions }),
+              } : {}),
               importCookies: createBrowserProfileCookieImporter(browserSidecarControlAdapterResult.contextCapture, {
                 getNativeClient: params.getApiMachineForSessions,
               }),
@@ -744,12 +733,7 @@ setBrowserRecordingRoutesProvider?: (
   // to the session-deleted signal (purges session profiles and cleanup-on-close ephemeral profiles) and the
   // logout transition (purges `ephemeral` profiles + partitions). Fail-closed: a failed disk
   // purge marks the profile `unusable` and emits an audit; it is never silently reused.
-  const browserStoragePartitionOwner = createBrowserStoragePartitionOwner({
-    storageRootDirectory: configuration.happyHomeDir,
-  });
-  const browserProfileStore: BrowserProfileStore = createBrowserProfileStore({
-    storageRootDirectory: configuration.happyHomeDir,
-    partitionOwner: browserStoragePartitionOwner,
+  const browserProfileStore: BrowserProfileStore = createConfiguredBrowserProfileStore({
     emitAudit: (record) => {
       logger.debug('[DAEMON RUN] Browser profile purge audit', record);
     },
@@ -785,13 +769,12 @@ setBrowserRecordingRoutesProvider?: (
   };
   params.onBrowserStoragePurgeOwnerReady?.({
     store: browserProfileStore,
-    partitionOwner: browserStoragePartitionOwner,
     purgeForSessionDeleted: purgeBrowserStorageForSessionDeleted,
     purgeForLogout: purgeBrowserStorageForLogout,
   });
   const publishBrowserAutomationRuntimeProvisioner = (): void => {
   // Install-on-first-automation-attempt (user ruling, 2026-08-23). Startup deliberately does NOT
-  // fetch the ~150MB managed Chromium (`autoInstallWhenMissing: false` above); the provisioner is
+  // fetch the ~150MB managed Chromium; the provisioner is
   // published so the FIRST `browser.automation.*` dispatch that finds no route can start the
   // fetch and, when it lands, refresh these same route owners. No feature check here: the browser
   // action executor already refuses the family when `browser.automation` is server-disabled, and a

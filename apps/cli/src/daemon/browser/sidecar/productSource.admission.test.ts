@@ -48,7 +48,7 @@ async function host(initialOverride: number | null = null,
         removeDirectory: async () => {},
     });
     const factory = createProductBrowserSidecarControlAdapterFactory({
-        featureEnabled: true, profileStore: profiles,
+        profileStore: profiles,
         readMachineResourcesPolicy: () => readMachineResourcesPolicyV1SnapshotFromMetadata({
             metadata: { resourcesPolicyV1: { v: 1, processes: { browserMaxConcurrent: override } } },
             metadataVersion: 1, hasContentKey: true,

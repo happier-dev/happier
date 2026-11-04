@@ -258,6 +258,10 @@ continues to enter through the human takeover owner. An uncertain stop stays vis
 human input remains possible, and a fresh settled observation after takeover clears uncertainty
 before handback. Native computer input shares this recovery owner.
 
+Persistent-profile extension install/update reviews carry an active profile's restart
+consequence with any new grants. Accepting that review covers the restart in the same
+decision. Active-profile changes without a new-grant review still ask for restart confirmation.
+
 Live browser events travel as strict metadata batches on the watched view's existing encrypted
 frame transport. Each batch projects current engine navigation and automation controller state
 from their owners, so the stream's latest-startup-observation projection retains both. The single

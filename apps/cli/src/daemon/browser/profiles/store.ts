@@ -1,10 +1,13 @@
-import { rm } from 'node:fs/promises';
+import { lstat, readFile, readdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { BrowserProfileV1Schema } from '@happier-dev/protocol/browser/profile/v1';
+import { BrowserProfileV1Schema, BrowserExtensionIdV1Schema, BrowserExtensionRecordV1Schema, type BrowserExtensionRecordV1 } from '@happier-dev/protocol/browser/profile/v1';
 import type { BrowserProfileOwnerV1, BrowserProfilePurgeFailureReasonCodeV1, BrowserProfileStorageModeV1, BrowserProfileV1 } from '@happier-dev/protocol';
+import { isPortableRelativePath } from '@happier-dev/protocol/filesystem/portablePathSegment';
+import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
 
 import type { BrowserStoragePartitionOwner } from '../storage/partitions';
+import { readProfileExtensions, removeProfileExtension, writeProfileExtension } from './extensions';
 
 const PROFILE_STORAGE_DIRNAME = 'profiles';
 
@@ -23,7 +26,7 @@ export type BrowserProfilePurgeAuditRecord = Readonly<{
   kind: 'browser_profile_purged' | 'browser_profile_purge_failed';
   profileId: string;
   storageMode: BrowserProfileStorageModeV1;
-  reason: 'session_deleted' | 'logout' | 'runtime_stopped';
+  reason: 'session_deleted' | 'logout' | 'explicit_request';
   reasonCode?: BrowserProfilePurgeFailureReasonCodeV1;
   message?: string;
   occurredAt: number;
@@ -34,15 +37,29 @@ export type BrowserProfilePurgeOutcome = Readonly<{
   failedProfileIds: readonly string[];
 }>;
 
+export type BrowserPersistentProfileRegistration = BrowserProfileRegistration & Readonly<{ storageMode: 'user' | 'plugin' }>;
+
+export type BrowserProfileExtensionsResult =
+  | Readonly<{ ok: true; extensions: readonly BrowserExtensionRecordV1[] }>
+  | Readonly<{ ok: false; reason: 'profile_not_found' | 'profile_unavailable' | 'persistent_profile_required' }>;
+
 export type BrowserProfileStore = Readonly<{
   register(registration: BrowserProfileRegistration): BrowserProfileV1;
+  registerPersistentProfile(registration: BrowserPersistentProfileRegistration): Promise<BrowserProfileV1>;
+  loadPersistentProfile(profileId: string): Promise<BrowserProfileV1 | null>;
+  listPersistentProfiles(): Promise<readonly BrowserProfileV1[]>;
   getProfile(profileId: string): BrowserProfileV1 | null;
   listProfiles(): readonly BrowserProfileV1[];
   resolveProfileDirectory(profileId: string): string;
+  listExtensions(profileId: string): Promise<BrowserProfileExtensionsResult>;
+  setExtension(profileId: string, extension: BrowserExtensionRecordV1): Promise<BrowserProfileExtensionsResult>;
+  recordExtensionUpstream(profileId: string, extensionId: string, expectedVersion: string,
+    upstream: NonNullable<BrowserExtensionRecordV1['upstream']>): Promise<BrowserProfileExtensionsResult>;
+  removeExtension(profileId: string, extensionId: string): Promise<BrowserProfileExtensionsResult>;
   purgeForSessionDeleted(input: Readonly<{ sessionId: string }>): Promise<BrowserProfilePurgeOutcome>;
   purgeForLogout(): Promise<BrowserProfilePurgeOutcome>;
-  /** Stops only the named transient runtime profiles, not other profiles of a live session. */
-  purgeForRuntimeStopped(input: Readonly<{ profileIds: readonly string[] }>): Promise<BrowserProfilePurgeOutcome>;
+  /** Explicitly purges the named profiles, settling their native engines first. */
+  purgeForExplicitRequest(input: Readonly<{ profileIds: readonly string[] }>): Promise<BrowserProfilePurgeOutcome>;
 }>;
 
 export type BrowserProfileStoreOptions = Readonly<{
@@ -66,7 +83,62 @@ export function createBrowserProfileStore(options: BrowserProfileStoreOptions): 
   const profilesRoot = join(options.storageRootDirectory, PROFILE_STORAGE_DIRNAME);
 
   function resolveProfileDirectory(profileId: string): string {
+    if (!isPortableRelativePath(profileId) || profileId.includes('/')) {
+      throw new TypeError('Browser profile ID must be a portable path segment.');
+    }
     return join(profilesRoot, profileId);
+  }
+
+  function buildRegisteredProfile(registration: BrowserProfileRegistration): BrowserProfileV1 {
+    const timestamp = registration.createdAt ?? now();
+    const profile = BrowserProfileV1Schema.parse({
+      profileId: registration.profileId,
+      storageMode: registration.storageMode,
+      owner: registration.owner,
+      ...(registration.displayName !== undefined ? { displayName: registration.displayName } : {}),
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      lifecycleState: 'active',
+      ...(registration.cleanupOnSessionClose !== undefined ? { cleanupOnSessionClose: registration.cleanupOnSessionClose } : {}),
+    });
+    resolveProfileDirectory(profile.profileId);
+    return profile;
+  }
+
+  async function readProfileDirectory(profileId: string) {
+    const directory = resolveProfileDirectory(profileId);
+    const entry = await lstat(directory).catch((error: unknown) => {
+      if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return null;
+      throw error;
+    });
+    if (entry && !entry.isDirectory()) throw new TypeError('Browser profile storage must be a directory, not a link.');
+    return { directory, exists: entry !== null };
+  }
+
+  async function loadPersistentProfile(profileId: string): Promise<BrowserProfileV1 | null> {
+    const existing = profilesById.get(profileId);
+    if (existing) return existing.storageMode === 'user' || existing.storageMode === 'plugin' ? existing : null;
+    const { directory, exists } = await readProfileDirectory(profileId);
+    if (!exists) return null;
+    const content = await readFile(join(directory, 'profile.json'), 'utf8').catch((error: unknown) => {
+      if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return null;
+      throw error;
+    });
+    if (content === null) return null;
+    const profile = BrowserProfileV1Schema.parse(JSON.parse(content));
+    if (profile.profileId !== profileId || (profile.storageMode !== 'user' && profile.storageMode !== 'plugin')) {
+      throw new TypeError('Stored browser profile identity does not match its persistent directory.');
+    }
+    profilesById.set(profileId, profile);
+    return profile;
+  }
+
+  function admitExtensionStorage(profileId: string): Readonly<{ ok: true; directory: string; profile: BrowserProfileV1 }> | Extract<BrowserProfileExtensionsResult, { ok: false }> {
+    const profile = profilesById.get(profileId);
+    if (!profile) return { ok: false, reason: 'profile_not_found' };
+    if (profile.lifecycleState !== 'active') return { ok: false, reason: 'profile_unavailable' };
+    if (profile.storageMode !== 'user' && profile.storageMode !== 'plugin') return { ok: false, reason: 'persistent_profile_required' };
+    return { ok: true, directory: resolveProfileDirectory(profileId), profile };
   }
 
   function markUnusable(
@@ -148,8 +220,8 @@ export function createBrowserProfileStore(options: BrowserProfileStoreOptions): 
     const purgedProfileIds: string[] = [];
     const failedProfileIds: string[] = [];
     for (const profile of targets) {
-      // An admitted purge owns process settlement and deletion. Subordinate runtime
-      // cleanup must not re-enter it or wait back on the lifecycle cancelling it.
+      // An admitted purge owns process settlement and deletion. Concurrent purges
+      // must not re-enter it or wait back on the lifecycle cancelling it.
       if (profilesById.get(profile.profileId)?.lifecycleState !== 'active') continue;
       const purged = await purgeProfile(profile, reason);
       if (purged) {
@@ -163,22 +235,71 @@ export function createBrowserProfileStore(options: BrowserProfileStoreOptions): 
 
   return {
     register(registration) {
-      const timestamp = registration.createdAt ?? now();
-      const profile = BrowserProfileV1Schema.parse({
-        profileId: registration.profileId,
-        storageMode: registration.storageMode,
-        owner: registration.owner,
-        ...(registration.displayName !== undefined ? { displayName: registration.displayName } : {}),
-        createdAt: timestamp,
-        updatedAt: timestamp,
-        lifecycleState: 'active',
-        ...(registration.cleanupOnSessionClose !== undefined
-          ? { cleanupOnSessionClose: registration.cleanupOnSessionClose }
-          : {}),
-      });
+      const profile = buildRegisteredProfile(registration);
       profilesById.set(profile.profileId, profile);
       if (registration.beforePurge) beforePurgeById.set(profile.profileId, registration.beforePurge);
       return profile;
+    },
+
+    async registerPersistentProfile(registration) {
+      const profile = buildRegisteredProfile({ ...registration, cleanupOnSessionClose: registration.cleanupOnSessionClose ?? false });
+      if (profile.storageMode !== 'user' && profile.storageMode !== 'plugin') throw new TypeError('Persistent browser profiles must be user or plugin owned.');
+      const { directory } = await readProfileDirectory(profile.profileId);
+      await writeJsonAtomic(join(directory, 'profile.json'), profile);
+      profilesById.set(profile.profileId, profile);
+      if (registration.beforePurge) beforePurgeById.set(profile.profileId, registration.beforePurge);
+      return profile;
+    },
+
+    loadPersistentProfile,
+
+    async listPersistentProfiles() {
+      const entries = await readdir(profilesRoot, { withFileTypes: true }).catch((error: unknown) => {
+        if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return [];
+        throw error;
+      });
+      for (const entry of entries) if (entry.isDirectory()) await loadPersistentProfile(entry.name);
+      return [...profilesById.values()].filter(profile => profile.storageMode === 'user' || profile.storageMode === 'plugin');
+    },
+
+    async listExtensions(profileId) {
+      const storage = admitExtensionStorage(profileId);
+      if (!storage.ok) return storage;
+      return { ok: true, extensions: await readProfileExtensions(storage.directory) };
+    },
+
+    async setExtension(profileId, extension) {
+      const storage = admitExtensionStorage(profileId);
+      if (!storage.ok) return storage;
+      const record = BrowserExtensionRecordV1Schema.parse(extension);
+      const previous = await readProfileExtensions(storage.directory);
+      // Existing synchronous registrations also become discoverable after restart
+      // once they own an installed extension.
+      await writeJsonAtomic(join(storage.directory, 'profile.json'), storage.profile);
+      await writeProfileExtension(storage.directory, record);
+      return { ok: true, extensions: [...previous.filter(item => item.id !== record.id), record].sort((left, right) => left.id.localeCompare(right.id)) };
+    },
+
+    async recordExtensionUpstream(profileId, extensionId, expectedVersion, upstream) {
+      const storage = admitExtensionStorage(profileId);
+      if (!storage.ok) return storage;
+      const previous = await readProfileExtensions(storage.directory);
+      const installed = previous.find(extension => extension.id === extensionId);
+      // An observation belongs to the version checked, never to a newer install
+      // or a removed record. Merge into the current record to retain user choices.
+      if (!installed || installed.version !== expectedVersion) return { ok: true, extensions: previous };
+      const record = BrowserExtensionRecordV1Schema.parse({ ...installed, upstream });
+      await writeProfileExtension(storage.directory, record);
+      return { ok: true, extensions: previous.map(extension => extension.id === record.id ? record : extension) };
+    },
+
+    async removeExtension(profileId, extensionId) {
+      const storage = admitExtensionStorage(profileId);
+      if (!storage.ok) return storage;
+      const id = BrowserExtensionIdV1Schema.parse(extensionId);
+      const previous = await readProfileExtensions(storage.directory);
+      await removeProfileExtension(storage.directory, id);
+      return { ok: true, extensions: previous.filter(item => item.id !== id) };
     },
 
     getProfile(profileId) {
@@ -208,11 +329,11 @@ export function createBrowserProfileStore(options: BrowserProfileStoreOptions): 
       );
       return await purgeProfiles(targets, 'logout');
     },
-    async purgeForRuntimeStopped(input) {
+    async purgeForExplicitRequest(input) {
       const profileIds = new Set(input.profileIds);
       const targets = [...profilesById.values()].filter(profile => profileIds.has(profile.profileId)
-        && profile.storageMode === 'ephemeral' && profile.lifecycleState !== 'unusable');
-      return await purgeProfiles(targets, 'runtime_stopped');
+        && profile.lifecycleState !== 'unusable');
+      return await purgeProfiles(targets, 'explicit_request');
     },
   };
 }

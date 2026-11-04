@@ -64,6 +64,7 @@ export function createBrowserSidecarCdpControlAdapterFactory(input: Readonly<{
         return {
             ok: true as const,
             adapter,
+            extensions: adapter.extensions,
             // Same live transport + view bindings power the BRW-11 context producer AND the offline
             // diagnostics lane; no second transport is opened and the binding map is never duplicated.
             contextCapture: {

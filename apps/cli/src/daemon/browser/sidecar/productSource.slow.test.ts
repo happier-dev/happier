@@ -15,6 +15,7 @@ vi.mock('@/configuration', () => ({ configuration: {
 } }));
 
 import { createProductBrowserSidecarControlAdapterFactory } from './productSource';
+import { createBrowserAutomationRuntimeProvisioner } from './provisioning';
 import { createBrowserProfileStore } from '../profiles/store';
 import { createBrowserStoragePartitionOwner } from '../storage/partitions';
 import { createBrowserDaemonControlBroker } from '../control/broker';
@@ -84,15 +85,13 @@ describe('managed browser live Session execution', () => {
                 }) }),
             });
             await featureGate.refresh();
-            // First explicit browser use exercises the real digest-verified installer if missing.
-            runtime = await createProductBrowserSidecarControlAdapterFactory({ featureEnabled: featureGate.isEnabled('browser.sidecar'),
+            // Explicit acquisition uses the same dispatch provisioner as the production Action.
+            const provisioner = createBrowserAutomationRuntimeProvisioner({ refreshRouteOwners: async () => {} });
+            const candidate = await resolveManagedBrowserSidecarCandidate();
+            if (candidate?.available === false) expect(await provisioner.provision()).toBe('ready');
+            runtime = await createProductBrowserSidecarControlAdapterFactory({
                 profileStore: profiles,
                 readMachineResourcesPolicy: resourcesPolicy.read,
-                installManagedBrowserChromium: async params => {
-                    const installed = await getBrowserChromiumArchiveDownloadInstallableAdapter().installOrUpgrade(params);
-                    expect(installed.ok, JSON.stringify(installed)).toBe(true);
-                    return installed;
-                },
                 createLaunchOwnerFactory: input => createBrowserSidecarLaunchOwnerControlAdapterFactory({
                     ...input,
                     spawnProcess: (executable, args) => {

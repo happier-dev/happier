@@ -1,4 +1,5 @@
-import { ACTION_ID_FAMILIES_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { ACTION_ID_FAMILIES_V1, isBrowserExtensionActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
+import type { BrowserExtensionActionInputV1 } from '@happier-dev/protocol/actions';
 import { createUnavailableRuntimeActionExecutor, resolveRuntimeActionExecutionFamily } from '@happier-dev/protocol/actions/executor/dispatch';
 import { BrowserCommandV1Schema, BrowserOpenViewInProgressV1Schema } from '@happier-dev/protocol/browser/control/v1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
@@ -129,6 +130,12 @@ async function executeBrowserControlAction(
 ): Promise<unknown> {
   const parsed = parseRuntimeActionInput(args);
   if (!parsed.ok) return parsed.result;
+
+  if (isBrowserExtensionActionIdV1(args.actionId)) {
+    const control = input.control ?? input.resolveControl?.();
+    if (!control?.extensions) return { status: 'unavailable', code: 'managed_browser_required' };
+    return await control.extensions.execute(args.actionId, parsed.input as BrowserExtensionActionInputV1, args.context);
+  }
 
   const command = BrowserCommandV1Schema.safeParse(parsed.input);
   if (!command.success) {

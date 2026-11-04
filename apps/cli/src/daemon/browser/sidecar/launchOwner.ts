@@ -39,6 +39,7 @@ export type BrowserSidecarLaunchOwnerControlAdapterFactoryInput = Readonly<{
     sidecarId: string;
     profile: BrowserProfileV1;
     profileDirectory: string;
+    extensionDirectories?: readonly string[];
     binaryResolution: SidecarBrowserBinaryResolution;
     deadlineMs?: number;
     signal?: AbortSignal;
@@ -115,6 +116,7 @@ export function createBrowserSidecarLaunchOwnerControlAdapterFactory(
             nowMs: input.nowMs?.() ?? Date.now(),
             profile: input.profile,
             profileDirectory: input.profileDirectory,
+            extensionDirectories: input.extensionDirectories,
             binaryResolution: input.binaryResolution,
         });
         if (!launchPlan.privateLaunch) {
@@ -176,6 +178,16 @@ export function createBrowserSidecarLaunchOwnerControlAdapterFactory(
         const ownerCreatedAtMs = input.nowMs?.() ?? Date.now();
         let lastUsedAt = ownerCreatedAtMs;
         let wayBack: BrowserSidecarResourceTarget['wayBack'];
+        const runCommand = async <T>(dispatch: () => Promise<T>): Promise<T> => {
+            activeCommands += 1;
+            try {
+                return await dispatch();
+            } finally {
+                activeCommands -= 1;
+                lastUsedAt = input.nowMs?.() ?? Date.now();
+            }
+        };
+        const extensions = adapterResult.extensions;
         const dispose = () => {
             disposal ??= (async () => {
                 try {
@@ -201,8 +213,7 @@ export function createBrowserSidecarLaunchOwnerControlAdapterFactory(
             ok: true,
             isProcessAlive: () => processController.getPid ? processController.getPid() !== null : processController.getStatus().state === 'running',
             adapter: { ...adapterResult.adapter, async dispatchCommand(command, scope) {
-                activeCommands += 1;
-                try {
+                return runCommand(async () => {
                     const result = await adapterResult.adapter.dispatchCommand(command, scope);
                     if (command.kind === 'openView' && result.status === 'dispatched' && !wayBack) {
                         // Re-admit the original open Action with a fresh command receipt identity.
@@ -210,9 +221,11 @@ export function createBrowserSidecarLaunchOwnerControlAdapterFactory(
                             input: projectNativeJsonValueForTransport({ ...command, commandId: randomUUID() }) }];
                     }
                     return result;
-                }
-                finally { activeCommands -= 1; lastUsedAt = input.nowMs?.() ?? Date.now(); }
+                });
             } },
+            ...(extensions ? { extensions: {
+                openView: (...args: Parameters<typeof extensions.openView>) => runCommand(() => extensions.openView(...args)),
+            } } : {}),
             readResourceTargets,
             readProcessRoots: () => readResourceTargets().map(target => target.root),
             ...(adapterResult.contextCapture ? { contextCapture: {

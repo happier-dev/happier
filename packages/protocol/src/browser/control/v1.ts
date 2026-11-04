@@ -46,6 +46,7 @@ export const BrowserOpenViewCommandV1Schema = lazyZodSchema(() => z.extend(Brows
   currentUrl: z.optional(BrowserHttpUrlV1Schema),
   currentUrlExpiresAt: z.optional(z.number().check(z.int(), z.nonnegative())),
   focus: z._default(z.optional(z.boolean()), true),
+  profileId: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(256))),
   openerViewId: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(256))),
 }));
 

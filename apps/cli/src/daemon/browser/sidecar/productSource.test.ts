@@ -10,6 +10,7 @@ import { createBrowserSidecarLaunchOwnerControlAdapterFactory } from './launchOw
 import { createBrowserProfileStore } from '../profiles/store';
 import { createBrowserStoragePartitionOwner } from '../storage/partitions';
 import * as productSource from './productSource';
+import * as chromiumInstaller from '@/packagedRuntime/installables/sourceAdapters/chromiumForTesting';
 
 // The native process census reads the OS filesystem; lifecycle and ownership projection stay real.
 vi.mock('node:fs/promises', async importOriginal => {
@@ -50,7 +51,7 @@ describe('browser sidecar product source owner', () => {
             removeDirectory: async () => undefined,
         });
         const factory = productSource.createProductBrowserSidecarControlAdapterFactory({
-            platform: 'linux', featureEnabled: true, profileStore,
+            platform: 'linux', profileStore,
             resolveManagedCandidate: async () => managedCandidate(),
             createLaunchOwnerFactory: input => createBrowserSidecarLaunchOwnerControlAdapterFactory({
                 ...input,
@@ -132,7 +133,7 @@ describe('browser sidecar product source owner', () => {
             },
         });
         const factory = productSource.createProductBrowserSidecarControlAdapterFactory({
-            platform: 'linux', featureEnabled: true, profileStore,
+            platform: 'linux', profileStore,
             resolveManagedCandidate: async () => managedCandidate(),
             createLaunchOwnerFactory: (input) => createBrowserSidecarLaunchOwnerControlAdapterFactory({
                 ...input, spawnProcess: () => process,
@@ -154,14 +155,13 @@ describe('browser sidecar product source owner', () => {
         expect(removed).toHaveLength(1);
         expect(profileStore.listProfiles()).toEqual([]);
     });
-    it('rejects a resolved but server-disabled source', async () => {
+
+    it('binds the admitted source without replaying its feature decision', async () => {
         const factory = productSource.createProductBrowserSidecarControlAdapterFactory({
             platform: 'linux',
-            // Server-disabled `browser.sidecar` decision threaded from the daemon startup gate.
-            featureEnabled: false,
             resolveManagedCandidate: vi.fn(async () => managedCandidate()),
         });
-        expect(await factory({ machineId: 'machine_disabled' })).toMatchObject({ ok: false, errorCode: 'feature_disabled' });
+        expect(await factory({ machineId: 'machine_disabled' })).toMatchObject({ ok: true });
     });
 
     it('stays fail-closed when no managed candidate is installed', async () => {
@@ -172,7 +172,7 @@ describe('browser sidecar product source owner', () => {
 
         const factory = mod.createProductBrowserSidecarControlAdapterFactory({
             platform: 'linux',
-            featureEnabled: true,
+
             resolveManagedCandidate: vi.fn(async () => null),
         });
 
@@ -181,9 +181,7 @@ describe('browser sidecar product source owner', () => {
         expect(result).toMatchObject({ ok: false, errorCode: 'managed_package_missing' });
     });
 
-    // MCH-2: lazy-install trigger — a supported, digest-pinned platform whose artifact is missing
-    // (available:false) installs once, then re-resolves to the freshly-installed candidate.
-    it('lazily installs the managed binary when missing then re-resolves and delegates to launch', async () => {
+    it('leaves a missing managed binary to the dispatch provisioner without installing at factory resolution', async () => {
         const mod = await import('./productSource');
 
         expect(mod?.createProductBrowserSidecarControlAdapterFactory).toBeTypeOf('function');
@@ -198,51 +196,25 @@ describe('browser sidecar product source owner', () => {
                 disabledReason: 'not installed',
             })
             .mockResolvedValueOnce(managedCandidate());
-        const installManagedBrowserChromium = vi.fn(async () => ({
+        const installManagedBrowserChromium = vi.spyOn(chromiumInstaller, 'installChromiumForTesting').mockResolvedValue({
             ok: true as const,
             executablePath: '/home/u/.happier/tools/browser-chromium/current/chrome',
             pinnedVersion: '127.0.6533.88',
             integrityDigest: `sha256:${'a'.repeat(64)}`,
-        }));
+        });
 
         const factory = mod.createProductBrowserSidecarControlAdapterFactory({
             platform: 'linux',
-            featureEnabled: true,
+
             resolveManagedCandidate: missingThenInstalled,
-            installManagedBrowserChromium,
         });
 
         const result = await factory({ machineId: 'machine_lazy' });
 
-        expect(installManagedBrowserChromium).toHaveBeenCalledOnce();
-        expect(missingThenInstalled).toHaveBeenCalledTimes(2);
-        expect(result.ok).toBe(true);
-    });
-
-    it('does not lazily install when autoInstallWhenMissing is disabled', async () => {
-        const mod = await import('./productSource');
-
-        expect(mod?.createProductBrowserSidecarControlAdapterFactory).toBeTypeOf('function');
-        if (!mod?.createProductBrowserSidecarControlAdapterFactory) return;
-
-        const installManagedBrowserChromium = vi.fn(async () => ({ ok: true as const, executablePath: '/x', pinnedVersion: '1.2.3.4', integrityDigest: `sha256:${'a'.repeat(64)}` }));
-        const factory = mod.createProductBrowserSidecarControlAdapterFactory({
-            platform: 'linux',
-            featureEnabled: true,
-            autoInstallWhenMissing: false,
-            resolveManagedCandidate: vi.fn(async () => ({
-                source: 'managedBrowserPackage' as const,
-                discoveryKind: 'managedRuntime' as const,
-                available: false as const,
-                disabledReason: 'not installed',
-            })),
-            installManagedBrowserChromium,
-        });
-
-        const result = await factory({ machineId: 'machine_no_lazy' });
-
         expect(installManagedBrowserChromium).not.toHaveBeenCalled();
+        expect(missingThenInstalled).toHaveBeenCalledTimes(1);
         expect(result).toMatchObject({ ok: false, errorCode: 'managed_package_missing' });
+        installManagedBrowserChromium.mockRestore();
     });
 
     it('stays fail-closed when a managed candidate lacks provenance (never delegates to launch)', async () => {
@@ -253,7 +225,7 @@ describe('browser sidecar product source owner', () => {
 
         const factory = mod.createProductBrowserSidecarControlAdapterFactory({
             platform: 'linux',
-            featureEnabled: true,
+
             resolveManagedCandidate: vi.fn(async () => ({
                 source: 'managedBrowserPackage' as const,
                 executablePath: '/home/u/.happier/tools/browser-chromium/current/chrome',

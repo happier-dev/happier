@@ -8,10 +8,12 @@ import { isBrowserSidecarCdpCommandNotDispatched } from './cdpTransport';
 import type { HappierProcessRoot } from '@/daemon/processes/ownership/types';
 import type { HappierProcessRootSource } from '@/daemon/processes/roots/listHappierProcessRoots';
 import type { MachineGuardActivityEntryV1 } from '@happier-dev/protocol/machines/guard/activityV1';
+import type { BrowserExtensionRecordV1 } from '@happier-dev/protocol/browser/profile/v1';
 import { createBrowserViewportOwner, type BrowserViewportOwner } from './viewport';
 
 import {
     browserCommandDispatchFailure,
+    type BrowserCommandScope,
     type BrowserDaemonControlAdapter,
 } from '../control/types';
 
@@ -20,11 +22,7 @@ export type BrowserSidecarCdpPageHandle = Readonly<{
     sessionId?: string;
 }>;
 
-export type BrowserSidecarCdpCommandScope = Readonly<{
-    /** Containing operation's absolute deadline, in Date.now() milliseconds. */
-    deadlineMs?: number;
-    signal?: AbortSignal;
-}>;
+export type BrowserSidecarCdpCommandScope = BrowserCommandScope;
 
 export type BrowserSidecarCdpControlTransport = Readonly<{
     openPage(input: BrowserSidecarCdpCommandScope & Readonly<{ url: string; focus: boolean }>): Promise<BrowserSidecarCdpPageHandle>;
@@ -84,6 +82,8 @@ export type BrowserSidecarControlAdapterFactoryInput = Readonly<{
 
 export type BrowserSidecarResourceTarget = Readonly<{
     root: HappierProcessRoot;
+    /** Explicit Process stop also clears this browser's workspace; automatic stop retains it. */
+    stopAndPurge?: () => Promise<void>;
     ownerRef: string;
     idle: boolean | null;
     settledAt?: number;
@@ -126,6 +126,7 @@ export type BrowserSidecarControlAdapterFactoryResult =
     | Readonly<{
         ok: true;
         adapter: BrowserDaemonControlAdapter;
+        extensions?: BrowserSidecarExtensionSurface;
         dispose?: () => void | Promise<void>;
         contextCapture?: BrowserSidecarContextCaptureSurface;
         readProcessRoots?: () => readonly HappierProcessRootSource[];
@@ -143,6 +144,24 @@ export type BrowserSidecarControlAdapterFactory = (
     input: BrowserSidecarControlAdapterFactoryInput
 ) => BrowserSidecarControlAdapterFactoryResult | Promise<BrowserSidecarControlAdapterFactoryResult>;
 
+/** Private installed-manifest input; public URL navigation keeps its HTTP-only contract. */
+export type BrowserSidecarExtensionViewInput = Readonly<{
+    commandId: string;
+    browserSessionId: string;
+    viewId: string;
+    profileId: string;
+    extension: BrowserExtensionRecordV1;
+    kind: 'actionPopup' | 'optionsPage';
+    focus?: boolean;
+    platform?: BrowserPlatformV1;
+}>;
+
+export type BrowserSidecarExtensionSurface = Readonly<{
+    openView(input: BrowserSidecarExtensionViewInput, scope?: BrowserSidecarCdpCommandScope): Promise<BrowserCommandDispatchResultV1>;
+    restartProfile?(profileId: string): Promise<void>;
+    getProfileRuntime?(profileId: string): Readonly<{ active: boolean; extensionDirectories: readonly string[] }>;
+}>;
+
 type BrowserSidecarCdpControlAdapterInput = Readonly<{
     browserSessionId: string;
     sidecarId: string;
@@ -158,6 +177,7 @@ type BrowserSidecarCdpControlAdapterInput = Readonly<{
  */
 export type BrowserSidecarCdpControlAdapter = BrowserDaemonControlAdapter & Readonly<{
     viewportOwner: BrowserViewportOwner;
+    extensions: Pick<BrowserSidecarExtensionSurface, 'openView'>;
     getNavigationState(view: Readonly<{ browserSessionId: string; viewId: string }>): BrowserSidecarNavigationState | null;
     subscribeBrowserEvents(listener: (event: BrowserEventV1) => void): () => void;
     resolvePageHandle(
@@ -194,7 +214,7 @@ type BoundView = BrowserSidecarCdpPageHandle & {
     frameId?: string;
 };
 
-function dispatched(command: BrowserCommandV1): Extract<BrowserCommandDispatchResultV1, { status: 'dispatched' }> {
+function dispatched(command: Readonly<{ commandId: string }>): Extract<BrowserCommandDispatchResultV1, { status: 'dispatched' }> {
     return {
         v: 1,
         commandId: command.commandId,
@@ -205,7 +225,7 @@ function dispatched(command: BrowserCommandV1): Extract<BrowserCommandDispatchRe
 }
 
 function failed(
-    command: BrowserCommandV1,
+    command: Readonly<{ commandId: string }>,
     code: BrowserCommandErrorCodeV1,
     message: string,
     retryable?: boolean,
@@ -221,7 +241,7 @@ function failed(
     });
 }
 
-function cdpFailure(command: BrowserCommandV1, completion: 'known' | 'unknown' = 'unknown'): BrowserCommandDispatchResultV1 {
+function cdpFailure(command: Readonly<{ commandId: string }>, completion: 'known' | 'unknown' = 'unknown'): BrowserCommandDispatchResultV1 {
     return failed(command, 'adapter_unavailable', 'Browser sidecar CDP command failed.', true, completion);
 }
 
@@ -448,7 +468,7 @@ export function createBrowserSidecarCdpControlAdapter(
     function listenToCdp(): void {
         unsubscribeCdp ??= input.transport.subscribeCdpEvents?.(handleCdpEvent);
     }
-    function dispatchState(command: BrowserCommandV1): BrowserCommandDispatchResultV1 {
+    function dispatchState(command: Readonly<{ commandId: string; browserSessionId: string; viewId: string }>): BrowserCommandDispatchResultV1 {
         const view = 'viewId' in command ? boundViews.get(browserViewKey(command)) : undefined;
         return { ...dispatched(command), events: view ? [stateEvent(view)] : [] };
     }
@@ -569,8 +589,87 @@ export function createBrowserSidecarCdpControlAdapter(
         }
     }
 
+    async function openView(
+        command: Readonly<{ commandId: string; browserSessionId: string; viewId: string; target: SidecarViewTarget; platform: BrowserPlatformV1; focus?: boolean }>,
+        url: string,
+        scope: BrowserSidecarCdpCommandScope = {},
+    ): Promise<BrowserCommandDispatchResultV1> {
+        if (disposed) return cdpFailure(command, 'known');
+        if (command.browserSessionId !== input.browserSessionId) {
+            return failed(command, 'unsupported_command', 'Browser sidecar does not own this browser session.');
+        }
+        const currentUrl = BrowserHttpUrlV1Schema.safeParse(url);
+        if (input.resolveInputControl?.(command)?.isObservationHeld()) return cdpFailure(command, 'known');
+        try {
+            const page = await input.transport.openPage({
+                ...scope,
+                url,
+                focus: command.focus ?? true,
+            });
+            if (disposed || input.resolveInputControl?.(command)?.isObservationHeld()) {
+                try { await input.transport.dispatchBrowserCommand({ method: 'Target.closeTarget', params: { targetId: page.targetId } }); }
+                catch { /* The existing confidential binding remains retained on transport loss. */ }
+                return cdpFailure(command);
+            }
+            boundViews.set(browserViewKey(command), {
+                browserSessionId: command.browserSessionId,
+                viewId: command.viewId,
+                target: command.target,
+                platform: command.platform,
+                state: { navigationGeneration: 0, ...(currentUrl.success ? { currentUrl: currentUrl.data } : {}), loadingState: 'loading', canGoBack: false, canGoForward: false },
+                targetId: page.targetId,
+                ...(page.sessionId ? { sessionId: page.sessionId } : {}),
+            });
+            listenToCdp();
+            emitLifecycle({
+                type: 'bound',
+                browserSessionId: command.browserSessionId,
+                viewId: command.viewId,
+            });
+            const bound = boundViews.get(browserViewKey(command));
+            if (bound && input.transport.subscribeCdpEvents) {
+                try {
+                    await input.transport.dispatchBrowserCommand({ ...scope, method: 'Target.setDiscoverTargets', params: { discover: true } });
+                    await observePage(bound, scope);
+                } catch {
+                    if (boundViews.get(browserViewKey(command)) === bound) {
+                        boundViews.delete(browserViewKey(command));
+                        emitLifecycle({ type: 'unbound', browserSessionId: command.browserSessionId, viewId: command.viewId });
+                        releaseCdpListener();
+                    }
+                    try { await input.transport.dispatchBrowserCommand({ method: 'Target.closeTarget', params: { targetId: page.targetId } }); }
+                    catch { /* Disconnected transport cannot acknowledge cleanup; the open still fails. */ }
+                    return cdpFailure(command);
+                }
+            }
+            return dispatchState(command);
+        } catch {
+            return cdpFailure(command);
+        }
+    }
+
     return {
         adapterKind: 'chromiumSidecar',
+        extensions: {
+            async openView(command, scope = {}) {
+                const path = command.extension[command.kind];
+                if (!path) return failed(command, 'unsupported_command', 'The installed extension does not declare this page.');
+                // Acquisition owns manifest path validation. Only its installed record reaches this private surface.
+                const target: SidecarViewTarget = { kind: 'streamedBrowser', targetId: command.viewId,
+                    streamId: browserViewKey(command), daemonView: { browserSessionId: command.browserSessionId, viewId: command.viewId } };
+                // Chromium's active content tab remains the popup's tabs.query target.
+                // The streamed view can still be selected in Happier independently.
+                const result = await openView({ ...command, target, platform: command.platform ?? 'web',
+                    focus: command.focus ?? command.kind !== 'actionPopup' },
+                    `chrome-extension://${command.extension.id}/${path}`, scope);
+                if (result.status !== 'dispatched') return result;
+                const view = boundViews.get(browserViewKey(command));
+                if (!view) return cdpFailure(command);
+                const opened = openedViewEvent(view);
+                publishEvent(opened);
+                return { ...result, events: [opened, ...result.events] };
+            },
+        },
         viewportOwner,
         dispose() {
             if (disposed) return;
@@ -618,56 +717,10 @@ export function createBrowserSidecarCdpControlAdapter(
             if (disposed) return cdpFailure(command, 'known');
             switch (command.kind) {
                 case 'openView': {
-                    if (command.browserSessionId !== input.browserSessionId || command.target.kind !== 'externalUrl') {
+                    if (command.target.kind !== 'externalUrl') {
                         return failed(command, 'unsupported_command', 'Browser sidecar supports only external URL views.');
                     }
-                    if (input.resolveInputControl?.(command)?.isObservationHeld()) return cdpFailure(command, 'known');
-                    try {
-                        const page = await input.transport.openPage({
-                            ...scope,
-                            url: command.target.url,
-                            focus: command.focus ?? true,
-                        });
-                        if (disposed || input.resolveInputControl?.(command)?.isObservationHeld()) {
-                            try { await input.transport.dispatchBrowserCommand({ method: 'Target.closeTarget', params: { targetId: page.targetId } }); }
-                            catch { /* The existing confidential binding remains retained on transport loss. */ }
-                            return cdpFailure(command);
-                        }
-                        boundViews.set(browserViewKey(command), {
-                            browserSessionId: command.browserSessionId,
-                            viewId: command.viewId,
-                            target: command.target,
-                            platform: command.platform,
-                            state: { navigationGeneration: 0, currentUrl: command.target.url, loadingState: 'loading', canGoBack: false, canGoForward: false },
-                            targetId: page.targetId,
-                            ...(page.sessionId ? { sessionId: page.sessionId } : {}),
-                        });
-                        listenToCdp();
-                        emitLifecycle({
-                            type: 'bound',
-                            browserSessionId: command.browserSessionId,
-                            viewId: command.viewId,
-                        });
-                        const bound = boundViews.get(browserViewKey(command));
-                        if (bound && input.transport.subscribeCdpEvents) {
-                            try {
-                                await input.transport.dispatchBrowserCommand({ ...scope, method: 'Target.setDiscoverTargets', params: { discover: true } });
-                                await observePage(bound, scope);
-                            } catch {
-                                if (boundViews.get(browserViewKey(command)) === bound) {
-                                    boundViews.delete(browserViewKey(command));
-                                    emitLifecycle({ type: 'unbound', browserSessionId: command.browserSessionId, viewId: command.viewId });
-                                    releaseCdpListener();
-                                }
-                                try { await input.transport.dispatchBrowserCommand({ method: 'Target.closeTarget', params: { targetId: page.targetId } }); }
-                                catch { /* Disconnected transport cannot acknowledge cleanup; the open still fails. */ }
-                                return cdpFailure(command);
-                            }
-                        }
-                        return dispatchState(command);
-                    } catch {
-                        return cdpFailure(command);
-                    }
+                    return openView({ ...command, target: command.target }, command.target.url, scope);
                 }
                 case 'closeView':
                     return dispatchBrowserTargetCommand(command, 'Target.closeTarget', scope);

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -16,18 +16,151 @@ async function pathExists(target: string): Promise<boolean> {
   }
 }
 
+async function createExtensionObservationFixture() {
+  const root = await mkdtemp(join(tmpdir(), 'happier-browser-extension-observation-'));
+  const createStore = () => createBrowserProfileStore({ storageRootDirectory: root,
+    partitionOwner: createBrowserStoragePartitionOwner({ storageRootDirectory: root }) });
+  const profileId = 'personal';
+  const profiles = createStore();
+  await profiles.registerPersistentProfile({ profileId, storageMode: 'user', owner: { kind: 'user', id: profileId } });
+  const extension = { id: 'a'.repeat(32), name: 'Fixture', version: '1.0', enabled: true,
+    source: { kind: 'unpacked' as const, directory: '/original/fixture' }, directory: '/owned/1', permissions: [], hostPermissions: [] };
+  await profiles.setExtension(profileId, extension);
+  const checker = createStore();
+  await checker.loadPersistentProfile(profileId);
+  const snapshot = await checker.listExtensions(profileId);
+  if (!snapshot.ok) throw new Error(snapshot.reason);
+  const upstream = { state: 'update_available' as const, latest: { kind: 'version' as const, version: '3.0' } };
+  let resumeCheck: () => void = () => {};
+  const paused = new Promise<void>(resolve => { resumeCheck = resolve; });
+  // A registry observation can finish after another store has applied a user mutation.
+  const observation = paused.then(() => checker.recordExtensionUpstream(profileId, extension.id, snapshot.extensions[0].version, upstream));
+  return { root, createStore, profileId, profiles, checker, extension, upstream, resumeCheck, observation };
+}
+
 describe('browser profile store disk purge', () => {
-  it('purges only the stopped runtime ephemeral profile without deleting other profiles for that session', async () => {
-    const store = createBrowserProfileStore({ storageRootDirectory: '/unused',
-      partitionOwner: createBrowserStoragePartitionOwner({ storageRootDirectory: '/unused' }),
-      removeDirectory: async () => {} });
-    store.register({ profileId: 'sidecar', storageMode: 'ephemeral', owner: { kind: 'session', id: 'session' } });
-    store.register({ profileId: 'persistent_session', storageMode: 'session', owner: { kind: 'session', id: 'session' } });
-    expect(await store.purgeForRuntimeStopped({ profileIds: ['sidecar', 'persistent_session'] }))
-      .toEqual({ purgedProfileIds: ['sidecar'], failedProfileIds: [] });
-    expect(store.listProfiles().map(profile => profile.profileId)).toEqual(['persistent_session']);
+  it('discards a late upstream observation for a superseded installed version', async () => {
+    const fixture = await createExtensionObservationFixture();
+    const { root, profiles, profileId, extension, resumeCheck, observation, createStore } = fixture;
+    try {
+      const replacement = { ...extension, enabled: false, version: '2.0', directory: '/owned/2' };
+      await profiles.setExtension(profileId, replacement);
+      resumeCheck();
+      await observation;
+      expect(await profiles.listExtensions(profileId)).toEqual({ ok: true, extensions: [replacement] });
+      const restarted = createStore();
+      await restarted.loadPersistentProfile(profileId);
+      expect(await restarted.listExtensions(profileId)).toEqual({ ok: true, extensions: [replacement] });
+    } finally { resumeCheck(); await observation; await rm(root, { recursive: true, force: true }); }
   });
-  it('purges a session-owned ephemeral profile once after its process settles despite concurrent runtime cleanup', async () => {
+
+  it('records an upstream observation while preserving a changed enablement choice', async () => {
+    const { root, profiles, profileId, extension, upstream, resumeCheck, observation } = await createExtensionObservationFixture();
+    try {
+      await profiles.setExtension(profileId, { ...extension, enabled: false });
+      resumeCheck();
+      await observation;
+      expect(await profiles.listExtensions(profileId)).toEqual({ ok: true,
+        extensions: [{ ...extension, enabled: false, upstream }] });
+    } finally { resumeCheck(); await observation; await rm(root, { recursive: true, force: true }); }
+  });
+
+  it('does not resurrect an extension removed while another store checks upstream', async () => {
+    const { root, profiles, profileId, extension, resumeCheck, observation } = await createExtensionObservationFixture();
+    try {
+      await profiles.removeExtension(profileId, extension.id);
+      resumeCheck();
+      await observation;
+      expect(await profiles.listExtensions(profileId)).toEqual({ ok: true, extensions: [] });
+    } finally { resumeCheck(); await observation; await rm(root, { recursive: true, force: true }); }
+  });
+
+  it('loads a persistent registration without a startup scan and rejects paths outside profile storage', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-browser-extensions-'));
+    const createStore = () => createBrowserProfileStore({ storageRootDirectory: root,
+      partitionOwner: createBrowserStoragePartitionOwner({ storageRootDirectory: root }) });
+    try {
+      const first = createStore();
+      const profile = await first.registerPersistentProfile({ profileId: 'personal', storageMode: 'user',
+        owner: { kind: 'user', id: 'person' }, displayName: 'Personal', createdAt: 10, cleanupOnSessionClose: false });
+      const restarted = createStore();
+      expect(restarted.listProfiles()).toEqual([]);
+      const outside = join(root, 'outside');
+      await mkdir(outside);
+      await writeFile(join(outside, 'profile.json'), JSON.stringify({ ...profile, profileId: 'linked' }));
+      await symlink(outside, join(root, 'profiles', 'linked'), 'junction');
+      restarted.register({ profileId: 'temporary', storageMode: 'ephemeral', owner: { kind: 'session', id: 'session' } });
+      expect(await restarted.listPersistentProfiles()).toEqual([profile]);
+      expect(await restarted.loadPersistentProfile('personal')).toEqual(profile);
+      expect(restarted.getProfile('personal')).toEqual(profile);
+      expect(await restarted.loadPersistentProfile('absent')).toBeNull();
+      expect(restarted.listProfiles().map(item => item.profileId)).toEqual(['temporary', 'personal']);
+      for (const profileId of ['../escape', 'a/b', 'a\\b', '..', 'C:drive']) {
+        await expect(restarted.loadPersistentProfile(profileId)).rejects.toThrow();
+        await expect(restarted.registerPersistentProfile({ profileId, storageMode: 'user', owner: { kind: 'user', id: 'person' } })).rejects.toThrow();
+      }
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it('retains independent persistent profile extensions across store recreation and purges them with the profile', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-browser-extensions-'));
+    const createStore = () => createBrowserProfileStore({ storageRootDirectory: root,
+      partitionOwner: createBrowserStoragePartitionOwner({ storageRootDirectory: root }) });
+    const user = { profileId: 'personal', storageMode: 'user' as const, owner: { kind: 'user' as const, id: 'person' } };
+    const plugin = { profileId: 'plugin', storageMode: 'plugin' as const, owner: { kind: 'plugin' as const, id: 'plugin' } };
+    const extension = { id: 'a'.repeat(32), name: 'Fixture', version: '1.0', enabled: true,
+      source: { kind: 'unpacked' as const, directory: '/original/fixture' },
+      directory: '/owned/fixture', permissions: ['storage'], hostPermissions: ['https://example.test/*'],
+      actionPopup: 'popup.html', optionsPage: 'options.html' };
+    try {
+      const first = createStore();
+      first.register(user);
+      first.register(plugin);
+      await Promise.all([
+        first.setExtension(user.profileId, extension),
+        first.setExtension(user.profileId, { ...extension, id: 'b'.repeat(32), enabled: false }),
+        first.setExtension(plugin.profileId, { ...extension, version: '2.0' }),
+      ]);
+      const restarted = createStore();
+      expect((await restarted.listPersistentProfiles()).map(profile => profile.profileId).sort()).toEqual(['personal', 'plugin']);
+      expect(await restarted.listExtensions(user.profileId)).toEqual({ ok: true,
+        extensions: [extension, { ...extension, id: 'b'.repeat(32), enabled: false }] });
+      expect(await restarted.listExtensions(plugin.profileId)).toEqual({ ok: true,
+        extensions: [{ ...extension, version: '2.0' }] });
+      await restarted.setExtension(user.profileId, { ...extension, enabled: false });
+      await restarted.removeExtension(user.profileId, 'b'.repeat(32));
+      expect(await restarted.listExtensions(user.profileId)).toEqual({ ok: true,
+        extensions: [{ ...extension, enabled: false }] });
+      expect(await restarted.purgeForLogout()).toEqual({ purgedProfileIds: [], failedProfileIds: [] });
+      expect(await restarted.purgeForExplicitRequest({ profileIds: [user.profileId] }))
+        .toEqual({ purgedProfileIds: [user.profileId], failedProfileIds: [] });
+      const afterPurge = createStore();
+      afterPurge.register(user);
+      expect(await afterPurge.listExtensions(user.profileId)).toEqual({ ok: true, extensions: [] });
+      expect(await restarted.listExtensions(plugin.profileId)).toEqual({ ok: true,
+        extensions: [{ ...extension, version: '2.0' }] });
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it('returns a typed unsupported result for session and ephemeral extension records without writing storage', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-browser-extensions-'));
+    try {
+      const store = createBrowserProfileStore({ storageRootDirectory: root,
+        partitionOwner: createBrowserStoragePartitionOwner({ storageRootDirectory: root }) });
+      for (const storageMode of ['session', 'ephemeral'] as const) {
+        store.register({ profileId: storageMode, storageMode, owner: { kind: 'session', id: 'session' } });
+        expect(await store.listExtensions(storageMode)).toEqual({ ok: false, reason: 'persistent_profile_required' });
+        expect(await store.setExtension(storageMode, { id: 'a'.repeat(32), name: 'Fixture', version: '1', enabled: true,
+          source: { kind: 'unpacked', directory: '/original' }, directory: '/owned', permissions: [], hostPermissions: [] }))
+          .toEqual({ ok: false, reason: 'persistent_profile_required' });
+        expect(await store.removeExtension(storageMode, 'a'.repeat(32))).toEqual({ ok: false, reason: 'persistent_profile_required' });
+        expect(await pathExists(store.resolveProfileDirectory(storageMode))).toBe(false);
+      }
+      expect(await store.listExtensions('missing')).toEqual({ ok: false, reason: 'profile_not_found' });
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it('purges a session-owned ephemeral profile once after its process settles despite concurrent session deletion', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-browser-profiles-'));
     try {
       let settle: (() => void) | undefined;
@@ -48,12 +181,12 @@ describe('browser profile store disk purge', () => {
         owner: { kind: 'session', id: 'session_2' }, cleanupOnSessionClose: true,
       });
       const purge = store.purgeForSessionDeleted({ sessionId: 'session_1' });
-      const runtimeCleanup = store.purgeForRuntimeStopped({ profileIds: ['ephemeral_session'] });
+      const duplicatePurge = store.purgeForSessionDeleted({ sessionId: 'session_1' });
       await Promise.resolve();
       expect(removeDirectory).not.toHaveBeenCalled();
       settle?.();
       expect(await purge).toEqual({ purgedProfileIds: ['ephemeral_session'], failedProfileIds: [] });
-      expect(await runtimeCleanup).toEqual({ purgedProfileIds: [], failedProfileIds: [] });
+      expect(await duplicatePurge).toEqual({ purgedProfileIds: [], failedProfileIds: [] });
       expect(removeDirectory.mock.calls).toEqual([[store.resolveProfileDirectory('ephemeral_session')]]);
       expect(store.getProfile('ephemeral_other')?.lifecycleState).toBe('active');
     } finally {

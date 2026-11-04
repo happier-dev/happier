@@ -1,6 +1,6 @@
 import { PassThrough } from 'node:stream';
 import { EventEmitter } from 'node:events';
-import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -26,16 +26,18 @@ function open(sessionId: string): Extract<BrowserCommandV1, { kind: 'openView' }
 }
 
 describe('product browser session isolation', () => {
-    it('opens separate real-session profiles and routes context to the matching process, then purges only that session', async () => {
+    it('retains isolated session storage across final-view close and reopen, then purges retained profiles at session end', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-browser-isolation-'));
         const partitionOwner = createBrowserStoragePartitionOwner({ storageRootDirectory: root });
         const removed: string[] = [];
         const store = createBrowserProfileStore({
             storageRootDirectory: root, partitionOwner,
-            removeDirectory: async (directory) => { removed.push(directory); },
+            removeDirectory: async (directory) => { removed.push(directory); await rm(directory, { recursive: true, force: true }); },
         });
         const spawnArgs: string[][] = [];
         const stopped: string[] = [];
+        const children = new Map<string, EventEmitter>();
+        let failNextSpawn = false;
         const navigationScopes: Array<Readonly<{ deadlineMs?: number; signal?: AbortSignal }>> = [];
         const cdpListeners = new Map<string, Set<BrowserSidecarCdpEventSubscriber>>();
         function navigateFromEngine(sessionId: string, url: string): void {
@@ -45,7 +47,7 @@ describe('product browser session isolation', () => {
             }
         }
         const factory = createProductBrowserSidecarControlAdapterFactory({
-            featureEnabled: true, platform: 'linux', profileStore: store,
+            platform: 'linux', profileStore: store,
             resolveManagedCandidate: async () => ({
                 source: 'managedBrowserPackage', executablePath: '/managed/chrome',
                 discoveryKind: 'managedRuntime', available: true,
@@ -56,12 +58,14 @@ describe('product browser session isolation', () => {
             }),
             createLaunchOwnerFactory: (input) => {
                 const child = new EventEmitter();
+                children.set(input.browserSessionId, child);
                 const stderr = new PassThrough();
                 const listeners = new Set<BrowserSidecarCdpEventSubscriber>();
                 cdpListeners.set(input.browserSessionId, listeners);
                 return createBrowserSidecarLaunchOwnerControlAdapterFactory({
                     ...input,
                     spawnProcess: (_executable, args) => {
+                        if (failNextSpawn) { failNextSpawn = false; throw new Error('Managed Chromium launch failed'); }
                         spawnArgs.push([...args]);
                         return Object.assign(child, {
                             pid: 123, stderr, stdio: [null, null, stderr, new PassThrough(), new PassThrough()],
@@ -76,7 +80,7 @@ describe('product browser session isolation', () => {
                                 if (command.method === 'Page.navigate') navigationScopes.push({ deadlineMs: command.deadlineMs, signal: command.signal });
                                 return command.method === 'Page.captureScreenshot' ? { data: pngBase64 } : { ownerSession: input.browserSessionId };
                             },
-                            dispatchBrowserCommand: async () => ({}),
+                            dispatchBrowserCommand: async () => ({ success: true }),
                             subscribeCdpEvents: (listener) => {
                                 listeners.add(listener);
                                 return () => { listeners.delete(listener); };
@@ -121,6 +125,20 @@ describe('product browser session isolation', () => {
             expect(profiles.map((profile) => profile.owner.id).sort()).toEqual(['happier_session_a', 'happier_session_b']);
             const directories = spawnArgs.map((args) => args.find((arg) => arg.startsWith('--user-data-dir=')));
             expect(new Set(directories).size).toBe(2);
+            const markers = new Map<string, { profile: string; partition: string }>();
+            for (const profile of profiles) {
+                const partition = partitionOwner.register({ profileId: profile.profileId,
+                    originKey: 'https://example.test', targetKind: 'externalUrl', persistence: 'ephemeral',
+                    createdAt: 0, updatedAt: 0 });
+                const profileDirectory = store.resolveProfileDirectory(profile.profileId);
+                const partitionDirectory = partitionOwner.resolvePartitionDirectory(partition.partitionId);
+                await mkdir(profileDirectory, { recursive: true });
+                await mkdir(partitionDirectory, { recursive: true });
+                const paths = { profile: join(profileDirectory, 'cookie-marker'), partition: join(partitionDirectory, 'storage-marker') };
+                await writeFile(paths.profile, profile.owner.id);
+                await writeFile(paths.partition, profile.owner.id);
+                markers.set(profile.owner.id, paths);
+            }
             for (const sessionId of ['happier_session_a', 'happier_session_b']) {
                 const handle = result.contextCapture?.resolvePageHandle({ browserSessionId: sessionId, viewId: 'view' });
                 expect(handle).toBeTruthy();
@@ -141,12 +159,46 @@ describe('product browser session isolation', () => {
             const mediaFiles = await readdir(mediaDirectory);
             expect(mediaFiles).toHaveLength(1);
             expect(await readFile(join(mediaDirectory, mediaFiles[0]!))).toEqual(Buffer.from(pngBase64, 'base64'));
-            const purged = await store.purgeForSessionDeleted({ sessionId: 'happier_session_a' });
+            const close = (sessionId: string) => result.adapter.dispatchCommand({ kind: 'closeView', commandId: `close_${sessionId}`,
+                browserSessionId: sessionId, viewId: 'view' });
+            expect(await close('happier_session_a')).toMatchObject({ status: 'dispatched' });
+            expect(stopped).toEqual(['happier_session_a']);
+            expect(result.adapter.ownsView({ browserSessionId: 'happier_session_a', viewId: 'view' })).toBe(false);
+            const markerA = markers.get('happier_session_a')!;
+            expect(await readFile(markerA.profile, 'utf8')).toBe('happier_session_a');
+            expect(await readFile(markerA.partition, 'utf8')).toBe('happier_session_a');
+            failNextSpawn = true;
+            expect(await result.adapter.dispatchCommand(open('happier_session_a'))).toMatchObject({ status: 'failed' });
+            expect(await readFile(markerA.profile, 'utf8')).toBe('happier_session_a');
+            expect(await readFile(markerA.partition, 'utf8')).toBe('happier_session_a');
+            // With B still live, A can reopen only if closing its final view released
+            // the old process slot. Its new process must use the same stored profile.
+            expect(await result.adapter.dispatchCommand(open('happier_session_a'))).toMatchObject({ status: 'dispatched' });
+            expect(spawnArgs).toHaveLength(3);
+            expect(spawnArgs[2]?.find(arg => arg.startsWith('--user-data-dir='))).toBe(directories[0]);
+            expect(await readFile(markerA.profile, 'utf8')).toBe('happier_session_a');
+            expect(await readFile(markerA.partition, 'utf8')).toBe('happier_session_a');
+            children.get('happier_session_a')!.emit('exit', 1, null);
+            expect(await result.adapter.dispatchCommand(open('happier_session_a'))).toMatchObject({ status: 'dispatched' });
+            expect(spawnArgs).toHaveLength(4);
+            expect(spawnArgs[3]?.find(arg => arg.startsWith('--user-data-dir='))).toBe(directories[0]);
+            expect(await readFile(markerA.profile, 'utf8')).toBe('happier_session_a');
+            expect(await readFile(markerA.partition, 'utf8')).toBe('happier_session_a');
+            expect(await close('happier_session_a')).toMatchObject({ status: 'dispatched' });
+            const purging = store.purgeForSessionDeleted({ sessionId: 'happier_session_a' });
+            // A Session purge claims the profile synchronously, so a concurrent
+            // reopen must not register over it while disk removal is in flight.
+            const reopeningDuringPurge = result.adapter.dispatchCommand(open('happier_session_a'));
+            const purged = await purging;
+            expect(await reopeningDuringPurge).toMatchObject({ status: 'failed' });
+            expect(spawnArgs).toHaveLength(4);
             expect(purged.failedProfileIds).toEqual([]);
             expect(purged.purgedProfileIds).toHaveLength(1);
-            expect(stopped).toEqual(['happier_session_a']);
-            expect(unboundSessions).toEqual(['happier_session_a']);
+            expect(stopped).toEqual(['happier_session_a', 'happier_session_a']);
+            expect(unboundSessions).toEqual(['happier_session_a', 'happier_session_a', 'happier_session_a']);
             expect(removed).toHaveLength(1);
+            await expect(stat(markerA.profile)).rejects.toMatchObject({ code: 'ENOENT' });
+            await expect(stat(markerA.partition)).rejects.toMatchObject({ code: 'ENOENT' });
             expect(result.adapter.ownsView({ browserSessionId: 'happier_session_a', viewId: 'view' })).toBe(false);
             expect(result.adapter.ownsView({ browserSessionId: 'happier_session_b', viewId: 'view' })).toBe(true);
             browserEvents.length = 0;
@@ -160,9 +212,28 @@ describe('product browser session isolation', () => {
                 kind: 'navigationStateChanged', currentUrl: 'https://example.test/engine-b' }]);
             store.register({ profileId: 'other_session_profile', storageMode: 'session',
                 owner: { kind: 'session', id: 'happier_session_b' } });
+            expect(await close('happier_session_b')).toMatchObject({ status: 'dispatched' });
+            const markerB = markers.get('happier_session_b')!;
+            expect(await readFile(markerB.profile, 'utf8')).toBe('happier_session_b');
             await result.dispose?.();
-            expect(unboundSessions).toEqual(['happier_session_a', 'happier_session_b']);
-            expect(store.listProfiles().map(profile => profile.profileId)).toEqual(['other_session_profile']);
+            expect(unboundSessions).toEqual(['happier_session_a', 'happier_session_a', 'happier_session_a', 'happier_session_b']);
+            // Adapter disposal ends a Chromium runtime, not its owning Session.
+            expect(await readFile(markerB.profile, 'utf8')).toBe('happier_session_b');
+            expect(await readFile(markerB.partition, 'utf8')).toBe('happier_session_b');
+            const resumed = await factory(factoryInput);
+            expect(resumed.ok).toBe(true);
+            if (!resumed.ok) throw new Error(resumed.disabledReason);
+            expect(await resumed.adapter.dispatchCommand(open('happier_session_b'))).toMatchObject({ status: 'dispatched' });
+            expect(spawnArgs[4]?.find(arg => arg.startsWith('--user-data-dir='))).toBe(directories[1]);
+            expect(await readFile(markerB.profile, 'utf8')).toBe('happier_session_b');
+            expect(await readFile(markerB.partition, 'utf8')).toBe('happier_session_b');
+            expect(await store.purgeForSessionDeleted({ sessionId: 'happier_session_b' }))
+                .toMatchObject({ failedProfileIds: [], purgedProfileIds: expect.arrayContaining(['other_session_profile']) });
+            expect(store.listProfiles()).toEqual([]);
+            expect(resumed.adapter.ownsView({ browserSessionId: 'happier_session_b', viewId: 'view' })).toBe(false);
+            await resumed.dispose?.();
+            await expect(stat(markerB.profile)).rejects.toMatchObject({ code: 'ENOENT' });
+            await expect(stat(markerB.partition)).rejects.toMatchObject({ code: 'ENOENT' });
         } finally {
             await rm(root, { recursive: true, force: true });
         }

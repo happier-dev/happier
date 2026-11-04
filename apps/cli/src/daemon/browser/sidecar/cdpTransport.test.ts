@@ -245,6 +245,27 @@ describe('browser sidecar CDP JSON-RPC transport', () => {
         } finally { transport.dispose(); }
     });
 
+    it('creates popup documents in the background while options keep ordinary page focus', async () => {
+        const fake = createFakeJsonClient(command => command.method === 'Target.createTarget'
+            ? { targetId: 'target' } : command.method === 'Target.attachToTarget'
+                ? { sessionId: 'page' } : {});
+        const transport = createBrowserSidecarCdpTransport({ client: fake.client });
+        const adapter = createBrowserSidecarCdpControlAdapter({ browserSessionId: 'browser', sidecarId: 'sidecar', transport });
+        const extension = { id: 'a'.repeat(32), name: 'Fixture', version: '1.0', enabled: true,
+            source: { kind: 'unpacked' as const, directory: '/original' }, directory: '/owned',
+            permissions: [], hostPermissions: [], actionPopup: 'popup.html', optionsPage: 'options.html' };
+        try {
+            for (const kind of ['actionPopup', 'optionsPage'] as const) {
+                expect(await adapter.extensions.openView({ commandId: kind, browserSessionId: 'browser', viewId: kind,
+                    profileId: 'profile', extension, kind })).toMatchObject({ status: 'dispatched' });
+            }
+            expect(fake.sent.filter(command => command.method === 'Target.createTarget').map(command => command.params)).toEqual([
+                { url: `chrome-extension://${extension.id}/popup.html`, background: true },
+                { url: `chrome-extension://${extension.id}/options.html` },
+            ]);
+        } finally { adapter.dispose(); transport.dispose(); }
+    });
+
     it('drains issued navigation acknowledgements on cancellation and honors the containing deadline without closing unrelated requests', async () => {
         vi.useFakeTimers();
         const fake = createFakeJsonClient(command => {

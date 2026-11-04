@@ -3,6 +3,7 @@ import type { BrowserCommandDispatchResultV1, BrowserCommandV1, BrowserDaemonVie
 
 import {
   browserCommandDispatchFailure,
+  browserCommandScope,
   type BrowserDaemonControlBroker,
   isBrowserDaemonControlAdapterKind,
 } from './types';
@@ -11,15 +12,17 @@ import type { BrowserAutomationDaemonService } from '../automation/service';
 import type { createBrowserProfileCookieImporter } from '../profiles/importCookies';
 import type { BrowserProfilePasskeyActivation } from '../profiles/passkeys';
 import type { BrowserProfileLoginsImportResultV1 } from '@happier-dev/protocol/browser/profile/v1';
+import type { BrowserExtensionService } from '../extensions/service';
 
 
 type ImportPasskeys = (input: BrowserProfilePasskeyActivation) => Promise<BrowserProfileLoginsImportResultV1>;
 
 export type BrowserDaemonControlRoutes = Readonly<{
-  dispatchCommand(command: unknown, context?: Pick<ActionExecutorContext, 'authority' | 'bypassApprovals' | 'signal'>): Promise<BrowserCommandDispatchResultV1>;
+  dispatchCommand(command: unknown, context?: Pick<ActionExecutorContext, 'authority' | 'bypassApprovals' | 'signal'> & NonNullable<Parameters<typeof browserCommandScope>[0]>): Promise<BrowserCommandDispatchResultV1>;
   listViews(browserSessionId: string): readonly BrowserDaemonViewV1[];
   importCookies?: ReturnType<typeof createBrowserProfileCookieImporter>;
   importPasskeys?: ImportPasskeys;
+  extensions?: BrowserExtensionService;
 }>;
 
 function readCommandId(input: unknown): string {
@@ -43,9 +46,10 @@ export function createBrowserDaemonControlRoutes(input: Readonly<{
   automation?: () => BrowserAutomationDaemonService | null;
   importCookies?: ReturnType<typeof createBrowserProfileCookieImporter>;
   importPasskeys?: ImportPasskeys;
+  extensions?: BrowserExtensionService;
 }>): BrowserDaemonControlRoutes {
-  async function dispatchToBroker(command: BrowserCommandV1, signal?: AbortSignal): Promise<BrowserCommandDispatchResultV1> {
-    const result = await input.broker.dispatchCommand(command, signal ? { signal } : undefined);
+  async function dispatchToBroker(command: BrowserCommandV1, context?: Parameters<BrowserDaemonControlRoutes['dispatchCommand']>[1]): Promise<BrowserCommandDispatchResultV1> {
+    const result = await input.broker.dispatchCommand(command, browserCommandScope(context));
     const parsed = BrowserCommandDispatchResultV1Schema.safeParse(result);
     if (!parsed.success || parsed.data.commandId !== command.commandId) return invalidBrokerResult(command.commandId);
     if (typeof parsed.data.adapterKind !== 'undefined' && !isBrowserDaemonControlAdapterKind(parsed.data.adapterKind)) {
@@ -57,6 +61,7 @@ export function createBrowserDaemonControlRoutes(input: Readonly<{
   return {
     ...(input.importCookies ? { importCookies: input.importCookies } : {}),
     ...(input.importPasskeys ? { importPasskeys: input.importPasskeys } : {}),
+    ...(input.extensions ? { extensions: input.extensions } : {}),
     listViews(browserSessionId) {
       return (input.broker.listViews?.(browserSessionId) ?? []).map(view => {
         const source = input.captureRegistry?.resolve({ sourceId: view.sourceId, streamFamily: 'browser.streamed' });
@@ -126,7 +131,7 @@ export function createBrowserDaemonControlRoutes(input: Readonly<{
           try {
             const execution = await automation.executeControlCommand(command.data,
               context?.authority === 'present_user' ? 'present_user' : 'account_automation',
-              () => dispatchToBroker(command.data, context?.signal));
+              () => dispatchToBroker(command.data, context));
             if (!execution.ok) return browserCommandDispatchFailure({ commandId: command.data.commandId,
               code: 'permission_denied', message: `Browser input controller refused the command: ${execution.errorCode}.` });
             const result = execution.value;
@@ -136,7 +141,7 @@ export function createBrowserDaemonControlRoutes(input: Readonly<{
         if (context?.authority === 'account_automation') return browserCommandDispatchFailure({ commandId: command.data.commandId,
           code: 'adapter_unavailable', message: 'Browser input controller is unavailable.' });
       }
-      return dispatchToBroker(command.data, context?.signal);
+      return dispatchToBroker(command.data, context);
     },
   };
 }

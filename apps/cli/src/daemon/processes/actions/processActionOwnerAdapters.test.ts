@@ -1,3 +1,5 @@
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { describe, expect, it, vi } from 'vitest';
@@ -23,7 +25,9 @@ vi.mock('node:fs/promises', async importOriginal => {
 });
 
 describe('Process Actions through retained lifecycle owners', () => {
-    it('stops and reopens the original browser through its product launch owner', async () => {
+    it('retains browser storage on automatic stop, purges it on explicit Process stop, and reopens the original target', async () => {
+        const fs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+        const directory = await fs.mkdtemp(join(tmpdir(), 'happier-browser-process-purge-'));
         installLocalServiceCensusFixture([{ pid: 42, ppid: process.pid, command: ['chromium'] }]);
         class NativeProcess extends EventEmitter {
             pid = 42;
@@ -31,10 +35,9 @@ describe('Process Actions through retained lifecycle owners', () => {
             stdio = [null, null, this.stderr, new PassThrough(), new PassThrough()];
             kill() { queueMicrotask(() => this.emit('exit', 0, 'SIGTERM')); return true; }
         }
-        const profileStore = createBrowserProfileStore({ storageRootDirectory: '/unused',
-            partitionOwner: createBrowserStoragePartitionOwner({ storageRootDirectory: '/unused' }),
-            removeDirectory: async () => undefined });
-        const factory = createProductBrowserSidecarControlAdapterFactory({ platform: 'linux', featureEnabled: true, profileStore,
+        const partitions = createBrowserStoragePartitionOwner({ storageRootDirectory: directory });
+        const profileStore = createBrowserProfileStore({ storageRootDirectory: directory, partitionOwner: partitions });
+        const factory = createProductBrowserSidecarControlAdapterFactory({ platform: 'linux', profileStore,
             resolveManagedCandidate: async () => ({ source: 'managedBrowserPackage', executablePath: '/managed/chrome',
                 discoveryKind: 'managedRuntime', available: true, provenance: { origin: 'managed_package',
                     pinnedVersion: '127.0.6533.88', channel: 'stable', integrityDigest: `sha256:${'a'.repeat(64)}`, license: 'BSD-3-Clause' } }),
@@ -44,26 +47,66 @@ describe('Process Actions through retained lifecycle owners', () => {
                 connectTransport: async () => ({ transport: { openPage: async () => ({ targetId: 'page', sessionId: 'cdp' }),
                     dispatchPageCommand: async () => ({}), dispatchBrowserCommand: async () => ({ success: true }) } }),
             }) });
-        const browser = await factory({ machineId: 'machine' });
+        const browser = await factory({ machineId: 'machine', readMachineMemory: () => ({ reported: true,
+            totalBytes: 8 * 1024 ** 3, availableBytes: 8 * 1024 ** 3, usedBytes: 0,
+            pressure: { level: 'calm', source: 'none' } }) });
         if (!browser.ok) throw new Error(browser.disabledReason);
         try {
-            await browser.adapter.dispatchCommand({ kind: 'openView', commandId: 'original-open', browserSessionId: 'session',
+            const originalOpen = { kind: 'openView', commandId: 'original-open', browserSessionId: 'session',
                 viewId: 'view', platform: 'web', focus: true,
-                target: { kind: 'externalUrl', targetId: 'original-target', url: 'https://example.test/original' } });
+                target: { kind: 'externalUrl', targetId: 'original-target', url: 'https://example.test/original' } } as const;
+            expect(await browser.adapter.dispatchCommand(originalOpen)).toMatchObject({ status: 'dispatched' });
+            expect(await browser.adapter.dispatchCommand({ ...originalOpen, browserSessionId: 'other', commandId: 'other-open' }))
+                .toMatchObject({ status: 'dispatched' });
+            const markers = new Map<string, { profile: string; partition: string }>();
+            for (const profile of profileStore.listProfiles()) {
+                const partition = partitions.register({ profileId: profile.profileId, originKey: 'https://example.test',
+                    targetKind: 'externalUrl', persistence: 'ephemeral', createdAt: 0, updatedAt: 0 });
+                const profileDirectory = profileStore.resolveProfileDirectory(profile.profileId);
+                const partitionDirectory = partitions.resolvePartitionDirectory(partition.partitionId);
+                await fs.mkdir(profileDirectory, { recursive: true });
+                await fs.mkdir(partitionDirectory, { recursive: true });
+                const paths = { profile: join(profileDirectory, 'cookie-marker'), partition: join(partitionDirectory, 'storage-marker') };
+                await fs.writeFile(paths.profile, profile.owner.id);
+                await fs.writeFile(paths.partition, profile.owner.id);
+                markers.set(profile.owner.id, paths);
+            }
+            const originalMarkers = markers.get('session')!;
+            const otherMarkers = markers.get('other')!;
+            profileStore.register({ profileId: 'separate_session_profile', storageMode: 'session',
+                owner: { kind: 'session', id: 'session' } });
+            const separateDirectory = profileStore.resolveProfileDirectory('separate_session_profile');
+            await fs.mkdir(separateDirectory, { recursive: true });
+            const separateMarker = join(separateDirectory, 'separate-marker');
+            await fs.writeFile(separateMarker, 'same Session, separate profile');
             const target = browser.readResourceTargets?.()[0];
             if (!target) throw new Error('Browser root missing');
+            // Guard consumes this native stop directly, without Process Action capture.
+            await target.root.stop?.();
+            expect(await fs.readFile(originalMarkers.profile, 'utf8')).toBe('session');
+            expect(await fs.readFile(originalMarkers.partition, 'utf8')).toBe('session');
+            expect(await browser.adapter.dispatchCommand(originalOpen)).toMatchObject({ status: 'dispatched' });
+            const explicitTarget = browser.readResourceTargets?.().find(item => item.ownerRef === 'session');
+            if (!explicitTarget) throw new Error('Reopened browser root missing');
             const actions = createProcessActionOwnerAdapters({ readBrowsers: browser.readResourceTargets,
                 getBrowserAdapter: () => browser.adapter });
-            const retainedRoot = actions.captureBrowserRoot(target);
+            const retainedRoot = actions.captureBrowserRoot(explicitTarget);
             await actions.stopOwner(retainedRoot, {});
-            expect(browser.readResourceTargets?.()).toEqual([]);
+            await expect(fs.stat(originalMarkers.profile)).rejects.toMatchObject({ code: 'ENOENT' });
+            await expect(fs.stat(originalMarkers.partition)).rejects.toMatchObject({ code: 'ENOENT' });
+            expect(await fs.readFile(otherMarkers.profile, 'utf8')).toBe('other');
+            expect(await fs.readFile(otherMarkers.partition, 'utf8')).toBe('other');
+            expect(await fs.readFile(separateMarker, 'utf8')).toBe('same Session, separate profile');
+            expect(browser.adapter.ownsView({ browserSessionId: 'other', viewId: 'view' })).toBe(true);
             await expect(actions.startOwner(retainedRoot, {})).resolves.toEqual({ status: 'started' });
             expect(browser.adapter.ownsView({ browserSessionId: 'session', viewId: 'view' })).toBe(true);
-            const reopened = browser.readResourceTargets?.()[0];
+            await expect(fs.stat(originalMarkers.profile)).rejects.toMatchObject({ code: 'ENOENT' });
+            const reopened = browser.readResourceTargets?.().find(item => item.ownerRef === 'session');
             expect(reopened?.wayBack?.[0]?.input).toMatchObject({ target: { url: 'https://example.test/original' } });
-            await expect(actions.startOwner(retainedRoot, { verifyCurrent: async () => false }))
+            const controller = new AbortController(); controller.abort();
+            await expect(actions.startOwner(retainedRoot, { signal: controller.signal }))
                 .resolves.toEqual({ status: 'refused', reasonCode: 'access_denied' });
-        } finally { await browser.dispose?.(); }
+        } finally { await browser.dispose?.(); await fs.rm(directory, { recursive: true, force: true }); }
     });
 
     it('closes the actual PTY manager through terminal custody', async () => {

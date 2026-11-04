@@ -16001,7 +16001,6 @@ describe('startDaemonSessionControlRuntime', () => {
         const browserSidecarControlAdapterFactory = mod.createProductBrowserSidecarControlAdapterFactory({
             platform: 'linux',
             arch: 'x64',
-            featureEnabled: true,
             resolveManagedCandidate,
             createLaunchOwnerFactory,
         });

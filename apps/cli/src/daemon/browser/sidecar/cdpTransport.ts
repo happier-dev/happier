@@ -282,7 +282,7 @@ export function createBrowserSidecarCdpTransport(input: Readonly<{
         const createTargetResult = await sendCommand({
             ...scope,
             method: 'Target.createTarget',
-            params: { url: pageInput.url },
+            params: { url: pageInput.url, ...(!pageInput.focus ? { background: true } : {}) },
         });
         const targetId = readStringField(createTargetResult, 'targetId');
         if (!targetId) {

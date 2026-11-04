@@ -61,9 +61,12 @@ export function createProcessActionOwnerAdapters(input: ProcessActionOwnerAdapte
         } };
     };
     const captureBrowserRoot = (target: BrowserSidecarResourceTarget): HappierProcessRoot => {
+        // Explicit Process Actions consume the browser owner's purge intent;
+        // Guard retains the original target.root.stop and its Session workspace.
+        const root = target.stopAndPurge ? { ...target.root, stop: target.stopAndPurge } : target.root;
         const start = target.wayBack?.find(item => item.actionId === 'browser.view.open');
         const command = BrowserOpenViewCommandV1Schema.safeParse(start?.input);
-        return !command.success ? target.root : { ...target.root, async startAgain(execution) {
+        return !command.success ? root : { ...root, async startAgain(execution) {
             if (!await isCurrent(execution)) return { status: 'refused', reasonCode: 'access_denied' };
             const adapter = input.getBrowserAdapter?.();
             if (!adapter) return { status: 'refused', reasonCode: 'original_start_unavailable' };

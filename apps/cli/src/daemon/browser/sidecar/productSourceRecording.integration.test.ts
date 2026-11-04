@@ -61,7 +61,7 @@ describe.skipIf(!process.env.HAPPIER_TEST_BROWSER_RUNTIME_HOME)('managed browser
         let unsubscribe: (() => void) | undefined;
         try {
             expect((await resolveManagedBrowserSidecarCandidate())?.available, 'A preinstalled pinned managed browser is required').toBe(true);
-            runtime = await createProductBrowserSidecarControlAdapterFactory({ featureEnabled: true, profileStore: profiles })(
+            runtime = await createProductBrowserSidecarControlAdapterFactory({ profileStore: profiles })(
                 { machineId: 'recording_machine' });
             if (!runtime.ok || !runtime.contextCapture) throw new Error('Managed browser runtime unavailable');
             const capture = runtime.contextCapture;
@@ -167,7 +167,7 @@ describe.skipIf(!process.env.HAPPIER_TEST_BROWSER_RUNTIME_HOME)('managed browser
         const profiles = createBrowserProfileStore({ storageRootDirectory: root,
             partitionOwner: createBrowserStoragePartitionOwner({ storageRootDirectory: root }) });
         const registry = createMachineLiveStreamCaptureRegistry();
-        const factory = createProductBrowserSidecarControlAdapterFactory({ featureEnabled: true, profileStore: profiles });
+        const factory = createProductBrowserSidecarControlAdapterFactory({ profileStore: profiles });
         const owners: { sidecar?: Awaited<ReturnType<typeof factory>>; recordingRuntime?: BrowserRecordingDaemonRuntime | null } = {};
         let viewer: MachineLiveStreamCaptureSession | undefined;
         const attachments: Parameters<DaemonSessionMutationCustody['stageTranscriptMessage']>[0][] = [];
