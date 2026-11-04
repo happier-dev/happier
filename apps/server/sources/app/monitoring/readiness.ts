@@ -4,7 +4,7 @@ import {
     dbReadinessChecksCounter,
     dbReadinessDurationHistogram,
 } from "@/app/monitoring/metrics2";
-import { db } from "@/storage/db";
+import { probeDbReadiness } from "@/storage/db";
 import { log } from "@/utils/logging/log";
 import { isShutdown } from "@/utils/process/shutdown";
 
@@ -54,7 +54,7 @@ async function withDbReadinessTimeout<T>(operation: Promise<T>, timeoutMs: numbe
 }
 
 async function runDatabaseReadinessQuery(): Promise<void> {
-    await db.$queryRaw`SELECT 1`;
+    await probeDbReadiness();
 }
 
 export function createHealthyMonitoringResponse() {

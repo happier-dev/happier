@@ -18,6 +18,8 @@ describe("accepted Pending settlement publisher replacement race on SQLite", () 
     beforeAll(async () => {
         harness = await createLightSqliteHarness({
             tempDirPrefix: "happier-accepted-settlement-publisher-race-",
+            // These cases exhaust transaction acquisition by holding the pool's only connection.
+            env: { HAPPIER_SQLITE_CONNECTION_LIMIT: "1" },
             initAuth: false,
             initEncrypt: false,
             initFiles: false,

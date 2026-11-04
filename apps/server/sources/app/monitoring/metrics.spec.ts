@@ -10,8 +10,8 @@ const mockLog = vi.fn();
 vi.mock("@/storage/db", () => ({
     db: {
         $metrics: { prometheus: mockPrismaMetrics },
-        $queryRaw: mockQueryRaw,
     },
+    probeDbReadiness: () => mockQueryRaw(),
 }));
 
 vi.mock("@/app/monitoring/metrics2", () => ({

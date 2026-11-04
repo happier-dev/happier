@@ -9,6 +9,7 @@ import { initGithub } from '@/app/auth/providers/github/webhooks';
 import { loadFiles, initFilesLocalFromEnv, initFilesS3FromEnv } from '@/storage/blob/files';
 import {
     applySqliteRuntimePragmas,
+    disconnectDbReadinessProbe,
     createDbSqliteMaintenanceClient,
     db,
     getDbProviderFromEnv,
@@ -257,6 +258,7 @@ export async function startServer(flavor: ServerFlavor): Promise<void> {
             await sqliteIncrementalVacuumWorker?.stop();
             try {
                 await sqliteWalCheckpointClient?.$disconnect();
+                await disconnectDbReadinessProbe();
             } finally {
                 await db.$disconnect();
             }

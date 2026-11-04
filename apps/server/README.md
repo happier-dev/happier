@@ -266,6 +266,8 @@ To avoid exhausting Postgres connections:
 
 Prisma pooling is typically configured via the database connection string / driver settings. A common pattern is to append a per-process limit (for example `connection_limit=<n>`) to `DATABASE_URL`, or to point `DATABASE_URL` at a pooler (PgBouncer) and keep the app-side pool small.
 
+For the light flavor with SQLite, the generated `DATABASE_URL` carries the pool size from `HAPPIER_SQLITE_CONNECTION_LIMIT` (default `1`, deliberately); see the [server environment reference](../docs/content/docs/self-hosting/env.mdx#light-flavor-sqlite).
+
 ### Operational tips
 
 - Set `HAPPIER_INSTANCE_ID` to something stable per process/pod for debugging (for example, Kubernetes `metadata.uid`). If unset, it is generated automatically at runtime.

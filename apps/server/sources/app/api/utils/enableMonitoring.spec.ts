@@ -11,7 +11,7 @@ const mockDbReadinessDurationObserve = vi.fn();
 const mockLog = vi.fn();
 
 vi.mock('@/storage/db', () => ({
-    db: { $queryRaw: mockQueryRaw },
+    probeDbReadiness: () => mockQueryRaw(),
 }));
 
 vi.mock('@/app/monitoring/metrics2', () => ({
