@@ -446,11 +446,11 @@ async function unpackTools(options = {}) {
             // the launch resolver reads. Re-record so an already-extracted tree
             // can never present the wrapper without its integrity entry.
             recordCliRuntimeAsset(toolsDir, getStagedRuntimeAssetsForPlatform(archivesDir, platformDir));
-            console.log(`Tools already unpacked for ${platformDir}`);
+            console.error(`Tools already unpacked for ${platformDir}`);
             return { success: true, alreadyUnpacked: true };
         }
 
-        console.log(`Unpacking tools for ${platformDir}...`);
+        console.error(`Unpacking tools for ${platformDir}...`);
 
         if (!fs.existsSync(unpackedPath)) {
             fs.mkdirSync(unpackedPath, { recursive: true });
@@ -468,7 +468,7 @@ async function unpackTools(options = {}) {
         recordCliRuntimeAsset(toolsDir, runtimeAssetEntries);
         writeVersionMarker(unpackedPath, platformDir, [...entries, ...runtimeAssetEntries]);
 
-        console.log(`Tools unpacked successfully to ${unpackedPath}`);
+        console.error(`Tools unpacked successfully to ${unpackedPath}`);
         return { success: true, alreadyUnpacked: false };
     } catch (error) {
         console.error('Failed to unpack tools:', error.message);

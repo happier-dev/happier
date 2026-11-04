@@ -98,7 +98,7 @@ async function writeRuntimeAssetChecksums(archivesDir: string, checksums: Record
 }
 
 describe('unpack-tools script', () => {
-  it('extracts and reuses only the selected optional tool while retaining checksum verification', async () => {
+  it('extracts and reuses only the selected optional tool without contaminating its caller’s JSON stdout', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-optional-tool-'));
     const archives = join(root, 'archives');
     const staging = join(root, 'staging');
@@ -111,10 +111,24 @@ describe('unpack-tools script', () => {
     await writeManifestChecksums(archives, { 'difftastic-x64-linux.tar.gz': await sha256(archive) });
     const unpacker = require('../unpack-tools.cjs') as UnpackToolsModule;
     const options = { toolsDir: root, platformDir: 'x64-linux', tools: ['difftastic'] };
-    await expect(unpacker.unpackTools(options)).resolves.toEqual({ success: true, alreadyUnpacked: false });
+    // Source-bundle construction imports this tool in its JSON-producing
+    // worker. Keep the real extraction and process stdout boundary together.
+    const unpackInWorker = () => {
+      const result = spawnSync(process.execPath, ['-e', `
+        require(${JSON.stringify(require.resolve('../unpack-tools.cjs'))}).unpackTools(JSON.parse(process.argv[1]))
+          .then(result => process.stdout.write(JSON.stringify(result)))
+          .catch(error => { console.error(error); process.exitCode = 1; });
+      `, JSON.stringify(options)], { encoding: 'utf8' });
+      expect(result.error).toBeUndefined();
+      expect(result.status, result.stderr).toBe(0);
+      const parsed = JSON.parse(result.stdout);
+      expect(result.stderr.trim()).not.toBe('');
+      return parsed;
+    };
+    expect(unpackInWorker()).toEqual({ success: true, alreadyUnpacked: false });
     expect(await readFile(join(root, 'unpacked/difft'), 'utf8')).toBe('difft');
     expect(unpacker.areToolsUnpacked(root, 'x64-linux')).toBe(false);
-    await expect(unpacker.unpackTools(options)).resolves.toEqual({ success: true, alreadyUnpacked: true });
+    expect(unpackInWorker()).toEqual({ success: true, alreadyUnpacked: true });
     await expect(unpacker.unpackTools({ ...options, tools: ['unknown'] })).rejects.toThrow('Unsupported tool');
   });
   it('manifest treats rg as the ripgrep runtime and retains zellij on every supported target', () => {
@@ -365,9 +379,9 @@ describe('unpack-tools CLI entry', () => {
       },
     });
 
-    expect(result.stderr).toBe('');
-    expect(result.status).toBe(0);
-    expect(result.stdout).toContain('Tools unpacked successfully');
+    expect(result.stdout).toBe('');
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stderr).toContain('Tools unpacked successfully');
     expect(existsSync(exitLog)).toBe(false);
   });
 });
