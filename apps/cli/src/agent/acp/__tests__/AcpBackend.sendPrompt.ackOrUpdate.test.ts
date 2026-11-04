@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { join } from 'node:path';
+import { inspect } from 'node:util';
 
 import { AcpBackend } from '../AcpBackend';
 import {
@@ -9,6 +10,7 @@ import {
   writeAcpTestAgentScript,
 } from '../testkit/subprocessHarness';
 import { withTempDir } from '@/testkit/fs/tempDir';
+import { logger } from '@/ui/logger';
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -96,7 +98,10 @@ function writeFakeAcpAgentScript(params: {
 
           setTimeout(() => {
             if (${JSON.stringify(ackMode)} === 'gemini_late_empty_response_error') {
-              err(id, -32603, 'Internal error', { details: 'Model stream ended with empty response text.' });
+              err(id, -32603, 'Internal error: Bearer synthetic-acp-private-token', {
+                details: 'Model stream ended with empty response text.',
+                authorization: 'Bearer synthetic-acp-private-token',
+              });
               return;
             }
             ok(id, {});
@@ -268,7 +273,7 @@ describe('AcpBackend.sendPrompt (prompt ACK vs first session/update)', () => {
     });
   }, 20_000);
 
-  it('does not treat catalog-only traffic as provider effect before prompt rejection', async () => {
+  it('settles a terminal prompt error without logging raw provider error data', async () => {
     await withTempDir('happier-acp-sendprompt-catalog-rejection-', async (dir) => {
       const scriptPath = writeFakeAcpAgentScript({
         dir,
@@ -283,12 +288,19 @@ describe('AcpBackend.sendPrompt (prompt ACK vs first session/update)', () => {
         args: [scriptPath],
         transportHandler: createAcpTestTransportHandler({ idleTimeoutMs: 1 }),
       });
+      // File logging is the system boundary; keep the ACP transport and error path real.
+      const debug = vi.spyOn(logger, 'debug').mockImplementation(() => {});
       try {
         const started = await backend.startSession();
         const submitted = await backend.sendPrompt(started.sessionId, 'hi');
         const settled = submitted.kind === 'submitted_to_transport' ? await submitted.settlement : submitted;
         expect(settled).toEqual({ kind: 'rejected_before_effect', error: expect.any(Error) });
+        expect(debug).toHaveBeenCalled();
+        expect(debug.mock.calls.filter(([message]) => message === '[AcpBackend] Error sending prompt:'))
+          .toEqual([['[AcpBackend] Error sending prompt:']]);
+        expect(inspect(debug.mock.calls, { depth: null, showHidden: true })).not.toContain('synthetic-acp-private-token');
       } finally {
+        debug.mockRestore();
         await backend.dispose();
       }
     });

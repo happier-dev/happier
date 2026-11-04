@@ -2432,7 +2432,7 @@ export class AcpBackend implements CatalogAcpBackend {
     this.bumpTurnInactivityTimeout();
 
     const handlePromptError = (error: unknown): Error => {
-      logger.debug('[AcpBackend] Error sending prompt:', error);
+      logger.debug('[AcpBackend] Error sending prompt:');
 
       const normalizedError = error instanceof Error ? error : new Error(String(error));
       this.failPendingResponseWait(normalizedError);
