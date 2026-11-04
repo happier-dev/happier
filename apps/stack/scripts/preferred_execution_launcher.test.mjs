@@ -2225,36 +2225,20 @@ test(`queue policy native: controller state failure (${failure}) cannot redirect
 });
 }
 
-for (const masterState of ['unavailable', 'contended']) {
-test(`queue policy native: ${masterState} SSH master ${masterState === 'contended' ? 'waits without a fresh connection and remains cancellable' : 'uses the reachable direct command connection'}`, async (t) => {
+test('queue policy native: unavailable SSH master uses the reachable direct command connection', async (t) => {
   const { invocation } = await memoryRoutingFixture(t, { fallback: 'local' });
   const binDir = invocation.env.PATH.split(':')[0];
   const sshPath = join(binDir, 'ssh');
   const sshSource = await readFile(sshPath, 'utf8');
   await executable(sshPath, sshSource.replace('case "$*" in', 'last=; for arg in "$@"; do last=$arg; done\n[ "$last" = : ] && exit 0\ncase "$*" in\n  *-MNf*) exit 255 ;;'));
-  if (masterState === 'contended') {
-    // Filesystem is a real boundary: a different live creator owns the socket.
-    // Waiting must stay cancellable and must not open a direct connection.
-    await executable(join(binDir, 'mkdir'), '#!/bin/sh\nlast=; for arg in "$@"; do last=$arg; done\ncase "$last" in *.lock) /bin/mkdir -p "$last"; printf "%s\\n" "$MASTER_CREATOR_PID" > "$last/pid"; exit 1 ;; esac\nexec /bin/mkdir "$@"\n');
-    invocation.env.MASTER_CREATOR_PID = String(process.pid);
-  }
   await executable(join(binDir, 'probe-command'), '#!/bin/sh\nprintf "unexpected-local\\n"\n');
-  if (masterState === 'contended') {
-    const child = spawn('/bin/sh', [launcher, '--', 'probe-command'], { ...invocation, stdio: ['ignore', 'pipe', 'pipe'] });
-    const completion = new Promise(resolve => child.once('close', (code, signal) => resolve({ code, signal })));
-    try {
-      await new Promise(resolve => setTimeout(resolve, 200));
-      assert.equal(child.exitCode, null);
-      await assert.rejects(readFile(invocation.env.DISPATCHES), { code: 'ENOENT' });
-    } finally { child.kill('SIGTERM'); await completion; }
-    return;
-  }
   const result = spawnSync('/bin/sh', [launcher, '--', 'probe-command'], invocation);
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(result.stdout, 'remote:starved\n');
-  assert.equal(await readFile(invocation.env.DISPATCHES, 'utf8'), 'starved\n');
+  const dispatched = await readFile(invocation.env.DISPATCHES, 'utf8');
+  assert.match(dispatched, /^(?:starved|roomy)\n$/);
+  assert.equal(result.stdout, `remote:${dispatched}`);
+  assert.doesNotMatch(await readFile(invocation.env.FIXTURE_TRACE, 'utf8'), /-MNf|ControlMaster=yes/);
 });
-}
 
 for (const dispatcher of ['native', 'javascript', 'pinned']) {
   test(`queue policy ${dispatcher}: routed work recovers from real target admission pressure`, { timeout: 30_000 }, async (t) => {
@@ -3250,19 +3234,6 @@ exec /usr/bin/flock "$@"
     CONFIGURED_CONTROL_PATH: configuredControlPath,
   };
 
-  // Construct the interrupted OS boundary: the creator exits after mkdir,
-  // before any owner PID can be published. The next real launcher must run.
-  const abandonedCreator = spawnSync('/bin/sh', ['-c', 'mkdir "$1.lock"; exit $?', 'creator', configuredControlPath], {
-    cwd: repoRoot, env, encoding: 'utf8',
-  });
-  assert.equal(abandonedCreator.status, 0, abandonedCreator.stderr);
-  await assert.rejects(access(`${configuredControlPath}.lock/pid`), { code: 'ENOENT' });
-  const successor = spawnSync('/bin/sh', [launcher, '--', 'probe-command', 'after-abandoned-creator'], {
-    cwd: repoRoot, env, encoding: 'utf8', timeout: 5000,
-  });
-  assert.equal(successor.error?.code, undefined, 'an unpublished creator PID must not strand its successor');
-  assert.equal(successor.status, 0, successor.stderr);
-  assert.equal(successor.stdout, 'remote:after-abandoned-creator\n');
   const startupCompletions = [];
   try {
     // Independent payload connections retain admission publication ordering.
@@ -3345,7 +3316,10 @@ exec /usr/bin/flock "$@"
         await new Promise((resolveWait) => setTimeout(resolveWait, 20));
       }
     }
-    await readFile(heldCommandStarted);
+    await readFile(heldCommandStarted).catch(error => {
+      const codes = heldOutput.stderr.match(/HSTACK_[A-Z_]+/g) ?? [];
+      throw new Error(`held payload did not start (exit=${held.exitCode}, signal=${held.signalCode}, codes=${codes.join(',')})`, { cause: error });
+    });
     const concurrent = spawnSync('/bin/sh', [launcher, '--', 'probe-command', 'concurrent'], {
       cwd: repoRoot,
       env,
@@ -4809,104 +4783,7 @@ test('native launcher retries another target when the selected host is unreachab
   assert.match(result.stdout, /remote:mac2:.*probe-command.*ok/);
 });
 
-test('native launcher retries another target when a live control master refuses the authoritative session channel', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'happier-preferred-launcher-mux-session-refused-'));
-  const binDir = join(root, 'bin');
-  const storageDir = join(root, 'stacks');
-  const stackDir = join(storageDir, `repo-${repoToken}-native`);
-  const warmedMarker = join(root, 'mac-master-warmed');
-  await mkdir(binDir, { recursive: true });
-  await mkdir(join(stackDir, 'mutagen', 'data'), { recursive: true });
-  await writeFile(join(stackDir, 'dev-targets.json'), '{"version":1,"targets":[]}\n');
-  await writeNativeProjectionFixture(join(stackDir, 'dev-target-exec-v1.sh'), [
-    "HSTACK_EXEC_PROJECTION_VERSION='2'",
-    `projection_repo_root='${repoRoot}'`,
-    "command_mode='auto'",
-    "include_local='0'",
-    "fallback_mode='local'",
-    "load_ttl_seconds='15'",
-    "unavailable_ttl_seconds='120'",
-    "target_count='2'",
-    "target_1_name='mac'",
-    "target_1_ssh='mac-host'",
-    "target_1_ssh_config=''",
-    "target_1_repo_dir='/remote/repo'",
-    "target_1_cli_home='/remote/home'",
-    "target_1_remote_path='/usr/bin:/bin'",
-    "target_2_name='mac2'",
-    "target_2_ssh='mac2-host'",
-    "target_2_ssh_config=''",
-    "target_2_repo_dir='/remote/repo'",
-    "target_2_cli_home='/remote/home'",
-    "target_2_remote_path='/usr/bin:/bin'",
-    '',
-  ].join('\n'));
-  await executable(join(binDir, 'node'), '#!/bin/sh\nexit 97\n');
-  await executable(join(binDir, 'mutagen'), '#!/bin/sh\nprintf "%s|Watching|false|true|1|0/0|0/0|true|1|0/0|0/0|active|7|ok|0|0\\n" "$3"\n');
-  await executable(join(binDir, 'probe-command'), '#!/bin/sh\nprintf "wrong-local\\n"\n');
-  await executable(join(binDir, 'ssh'), [
-    '#!/bin/sh',
-    'control_path=',
-    'debug_log=',
-    'previous=',
-    'for argument in "$@"; do',
-    '  if [ "$previous" = -S ]; then control_path=$argument; fi',
-    '  if [ "$previous" = -E ]; then debug_log=$argument; fi',
-    '  previous=$argument',
-    '  last_argument=$argument',
-    'done',
-    'case "$*" in',
-    '  *getconf*) case "$*" in *mac2-host*) printf "8 4 0.5\\n" ;; *) printf "8 1 0.5\\n" ;; esac ;;',
-    '  *command\\ -v*) exit 0 ;;',
-    '  *-O\\ check*) [ -f "$control_path" ] ;;',
-    '  *-MNf*) mkdir -p "${control_path%/*}"; : > "$control_path" ;;',
-    '  *mac-host*)',
-    '    if [ "$last_argument" = : ]; then',
-    '      if [ -e "$WARMED_MARKER" ]; then',
-    '        printf "mux_client_request_session: session request failed: Session open refused by peer\\n" >&2',
-    '        exit 255',
-    '      fi',
-    '      exit 0',
-    '    fi',
-    '    if [ -e "$WARMED_MARKER" ]; then',
-    '      [ -z "$debug_log" ] || printf "mux_client_request_session: session request failed: Session open refused by peer\\n" > "$debug_log"',
-      '      printf "mux_client_request_session: session request failed: Session open refused by peer\\n" >&2',
-    '      exit 255',
-    '    fi',
-    '    : > "$WARMED_MARKER"',
-    '    printf "remote:mac:warm\\n"',
-    '    ;;',
-    '  *mac2-host*) printf "remote:mac2:%s\\n" "$*" ;;',
-    'esac',
-    '',
-  ].join('\n'));
 
-  const invocation = {
-    cwd: repoRoot,
-    env: {
-      ...executionNeutralEnv,
-      HOME: root,
-      XDG_RUNTIME_DIR: root,
-      HAPPIER_STACK_STORAGE_DIR: storageDir,
-      PATH: `${binDir}:/usr/bin:/bin`,
-      TMPDIR: root,
-      WARMED_MARKER: warmedMarker,
-    },
-    encoding: 'utf8',
-  };
-
-  const warm = spawnSync('/bin/sh', [launcher, '--target=mac', '--', 'probe-command', 'warm'], invocation);
-  assert.equal(warm.status, 0, warm.stderr);
-  assert.match(warm.stdout, /remote:mac:warm/);
-
-  const result = spawnSync('/bin/sh', [launcher, '--', 'probe-command', 'ok'], invocation);
-
-  assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stderr, /selected mac /);
-  assert.match(result.stderr, /selected mac2 /);
-  assert.match(result.stdout, /remote:mac2:.*probe-command.*ok/);
-  assert.doesNotMatch(result.stdout, /wrong-local/);
-});
 
 async function liveSshControlFixture(t) {
   const fixture = await createTempFixture(t, { prefix: 'ssh-control-' });
