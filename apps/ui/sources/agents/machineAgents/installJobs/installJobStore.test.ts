@@ -32,6 +32,8 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', a
 });
 
 import { useAgentInstallJob } from './useAgentInstallJob';
+// Load the real inventory graph during collection, outside the job's settlement test.
+import '../useMachineAgents';
 import { cancelAgentInstallJob, ensureMachineAgentInstallJobs, readAgentInstallJob, readMachineAgentInstallJobs, startAgentInstallJob, subscribeAgentInstallJob, waitForAgentInstallJob } from './installJobStore';
 
 function wireJob(agentId: string, jobId: string) {
@@ -208,16 +210,14 @@ describe('agent install job owner', () => {
         expect(machineAgentInventoryStore.read(serverAccountScopedResourceKey(aScope, 'machine-agents', machine.id)).agents).toEqual([]);
     });
 
-    it('refreshes daemon facts on success without a mounted inventory or setup presenter', async () => {
-        await import('../useMachineAgents');
+    it('settles success without a client inventory readback when no inventory presenter is mounted', async () => {
         const server = await upsertServerProfile({ serverUrl: 'https://install-completion.example.test' });
         const target = { serverId: server.id, accountId: 'store-account', machineId: 'completed-machine', agentId: 'codex' };
         const machine = createMachineFixture({ id: target.machineId, active: true, activeAt: Date.now(), daemonStateVersion: 1 });
         storage.setState({ machineListByServerId: { [server.id]: [machine] } });
         const projection: PluginProjectionV2 = { v: 2, generation: 1, installedPackagesById: {}, agentsById: {
             codex: { id: 'codex', title: 'Codex', providerOwnedEnvironmentKeys: [], capabilities: { surfaces: [], sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } } },
-        }, actionsById: {}, familiesById: {},   resourcesById: {}, settingsById: {}, diagnostics: [] };
-        const key = serverAccountScopedResourceKey(target, 'machine-agents', target.machineId);
+        }, actionsById: {}, familiesById: {}, resourcesById: {}, settingsById: {}, diagnostics: [] };
         boundary.rpc.mockImplementation(async ({ method }: { method: string }) => {
             if (method.endsWith('.list')) return { ok: true, jobs: [wireJob('codex', 'completed-job')] };
             if (method.endsWith('.read')) return { ok: true, steps: [], progress: [], events: [], nextCursor: 1, done: true, outcome: { kind: 'succeeded', version: '2.0' } };
@@ -229,7 +229,13 @@ describe('agent install job owner', () => {
             } } } };
         });
         await ensureMachineAgentInstallJobs(target);
-        await vi.waitFor(() => expect(machineAgentInventoryStore.read(key)).toMatchObject({ status: 'ready', agents: [{ installed: true, version: '2.0', state: 'ready', job: { outcome: { kind: 'succeeded' } } }] }));
+        let outcome: unknown;
+        void waitForAgentInstallJob(target).then(value => { outcome = value; });
+        await vi.waitFor(() => expect(outcome).toEqual({ kind: 'succeeded', version: '2.0' }));
+        // Daemon completion pushes the changed Machine revision.
+        // A job presenter does not own a second executable inventory acquisition.
+        expect(boundary.rpc.mock.calls.filter(([request]) => request.method === 'capabilities.detect')).toHaveLength(0);
+        expect(readAgentInstallJob(target)).toMatchObject({ outcome: { kind: 'succeeded' } });
     });
 
     it('publishes daemon cursor progress and cancellation into the shared inventory without replacing unrelated agents', async () => {

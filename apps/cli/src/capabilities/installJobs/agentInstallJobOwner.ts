@@ -42,6 +42,7 @@ export type AgentInstallJobOwnerOptions = Readonly<{
   admissionDrain?: Pick<DaemonAdmissionDrain, 'isQuiescing' | 'isFinalShutdown'>;
   readAcpCatalog?: () => AcpCatalogSnapshotV1 | undefined;
   readTrackedSessions?: () => Iterable<TrackedSession>;
+  invalidateInventory?: () => void;
 }>;
 
 type JobRecord = {
@@ -80,6 +81,7 @@ export function createAgentInstallJobOwner(options: AgentInstallJobOwnerOptions 
   let admissionDrain = options.admissionDrain;
   let readTrackedSessions = options.readTrackedSessions;
   let readAcpCatalog = options.readAcpCatalog ?? (() => getActiveAccountSettingsSnapshot()?.acpCatalog);
+  let invalidateInventory = options.invalidateInventory;
   const readRegistry = options.readRegistry ?? readCurrentContributionRegistry;
   const env = options.env ?? process.env;
   const installerDeps = { execFileWithDeadline: executeInstallCommand, ...options.installerDeps };
@@ -141,6 +143,9 @@ export function createAgentInstallJobOwner(options: AgentInstallJobOwnerOptions 
     const previous = recentByAgent.get(key);
     if (previous && !previous.cleanupError) jobs.delete(previous.snapshot.jobId);
     recentByAgent.set(key, job);
+    // The daemon's existing Machine projection push renews every inventory
+    // consumer, including clients that never observed this install job.
+    if (result.kind === 'succeeded') invalidateInventory?.();
     notifyActivity();
   };
   const runDefinition = async (job: JobRecord, input: DaemonAgentInstallStartRequest, definition: AcpBackendDefinitionV1 | undefined) => {
@@ -361,6 +366,7 @@ export function createAgentInstallJobOwner(options: AgentInstallJobOwnerOptions 
     activity,
     isDefinitionJob(jobId: string): boolean { return jobs.get(jobId)?.snapshot.definitionId !== undefined; },
     bindAccountId(id: string): void { accountId = id; },
+    bindInventoryInvalidation(invalidate: () => void): void { invalidateInventory = invalidate; },
     bindAdmissionDrain(drain: NonNullable<AgentInstallJobOwnerOptions['admissionDrain']>): void {
       admissionDrain = drain;
     },
@@ -473,11 +479,12 @@ export function createAgentInstallJobOwner(options: AgentInstallJobOwnerOptions 
 
 export type AgentInstallJobOwner = ReturnType<typeof createAgentInstallJobOwner>;
 let daemonOwner: AgentInstallJobOwner | null = null;
-export function getDaemonAgentInstallJobOwner(options?: Pick<AgentInstallJobOwnerOptions, 'accountId' | 'admissionDrain' | 'readTrackedSessions' | 'readAcpCatalog'>): AgentInstallJobOwner {
+export function getDaemonAgentInstallJobOwner(options?: Pick<AgentInstallJobOwnerOptions, 'accountId' | 'admissionDrain' | 'readTrackedSessions' | 'readAcpCatalog' | 'invalidateInventory'>): AgentInstallJobOwner {
   const owner = daemonOwner ??= createAgentInstallJobOwner(options);
   if (options?.accountId) owner.bindAccountId(options.accountId);
   if (options?.admissionDrain) owner.bindAdmissionDrain(options.admissionDrain);
   if (options?.readTrackedSessions) owner.bindTrackedSessions(options.readTrackedSessions);
   if (options?.readAcpCatalog) owner.bindAcpCatalog(options.readAcpCatalog);
+  if (options?.invalidateInventory) owner.bindInventoryInvalidation(options.invalidateInventory);
   return owner;
 }

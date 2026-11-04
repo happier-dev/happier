@@ -73,14 +73,6 @@ function publish(target: AgentInstallJobTarget, job: MachineAgentJob | null): vo
     machineAgentInventoryStore.publishJobs(inventoryKey(target), jobs);
     for (const listener of state.agentListeners.get(targetKey) ?? []) listener();
     for (const listener of state.listeners) listener();
-    if (job?.outcome?.kind === 'succeeded' && (previous?.jobId !== job.jobId || previous.outcome?.kind !== 'succeeded')) {
-        const lifetime = accountLifetime(state);
-        // Facts come from the same inventory owner, including when every presenter is closed.
-        // Loading it lazily keeps the job owner free of a static React/inventory-driver cycle.
-        void import('../useMachineAgents').then(({ refreshMachineAgents }) => refreshMachineAgents({
-            serverId: target.serverId, machineId: target.machineId, accountLifetime: lifetime, force: true,
-        })).catch(() => {});
-    }
 }
 
 export function readAgentInstallJob(target: AgentInstallJobTarget): MachineAgentJob | null {
@@ -320,7 +312,7 @@ export async function cancelMachineAgentInstallJob(target: MachineAgentInstallJo
     return response;
 }
 
-/** Queue and update adapters wait on this owner, with no installer-sized UI deadline. */
+/** Queue and update adapters await the daemon job's terminal outcome. */
 export function waitForAgentInstallJob(target: AgentInstallJobTarget): Promise<NonNullable<MachineAgentJob['outcome']>> {
     return new Promise((resolve, reject) => {
         const inspect = () => {

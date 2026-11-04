@@ -1012,4 +1012,66 @@ describe('machine inventory lifecycle boundary', () => {
         expect(rpc).not.toHaveBeenCalled();
         await hook.unmount();
     });
+
+    it('applies install, uninstall and daemon restart pushes only to the changed Machine inventory', async () => {
+        const { getMachineContributionRegistryProjectionRevision } = await import('@/sync/ops/machineContributionRegistryProjectionRevision');
+        const server = await network.addHome('https://inventory-install-push.test', 'inventory-account');
+        const scope = { serverId: server.id, accountId: 'inventory-account' };
+        const lifetime = { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+        let changed = createMachineFixture({ id: 'installed-machine', active: true, activeAt: Date.now(), daemonStateVersion: 1,
+            daemonState: { status: 'running', runtimeId: 'before-restart', contributionRegistryProjectionRevision: 0 } });
+        const other = createMachineFixture({ id: 'unchanged-machine', active: true, activeAt: Date.now(), daemonStateVersion: 1,
+            daemonState: { status: 'running', runtimeId: 'other-runtime', contributionRegistryProjectionRevision: 0 } });
+        storage.setState({ profileScope: scope });
+        storage.getState().applyMachines([changed, other], true, { sourceServerId: server.id, sourceAccountId: scope.accountId });
+        const projection = PluginProjectionV2Schema.parse({ ...emptyProjection, agentsById: { review: {
+            id: 'review', title: 'Review', capabilities: { surfaces: [], sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } },
+        } } });
+        let installed = false;
+        rpc.mockImplementation(async ({ method }: { method: string }) => {
+            if (method.includes('contributionRegistryProjection.describe')) return { protocolVersion: 1, projection };
+            if (method === 'capabilities.detect') return { protocolVersion: 1, results: {
+                'cli.review': { ok: true, checkedAt: Date.now(), data: { ...item, installed } },
+            } };
+            return { jobs: [] };
+        });
+        for (const machine of [changed, other]) await refreshMachineAgents({ serverId: server.id, machineId: machine.id, accountLifetime: lifetime });
+        const selected = await renderHook(() => useMachineAgents({ serverId: server.id, machineId: changed.id, agentId: 'review' }));
+        let otherRenders = 0;
+        const unrelated = await renderHook(() => {
+            otherRenders++;
+            return useMachineAgents({ serverId: server.id, machineId: other.id, agentId: 'review' });
+        });
+        await vi.waitFor(() => expect(selected.getCurrent().status).toBe('ready'));
+        await vi.waitFor(() => expect(unrelated.getCurrent().status).toBe('ready'));
+        const otherAgent = unrelated.getCurrent().agents[0];
+        const otherSnapshot = unrelated.getCurrent();
+        const rendersBefore = otherRenders;
+        rpc.mockClear();
+        const requestsBefore = network.requests.length;
+        for (const transition of ['install', 'uninstall', 'restart'] as const) {
+            installed = transition !== 'uninstall';
+            changed = { ...changed, daemonStateVersion: changed.daemonStateVersion + 1,
+                daemonState: { ...changed.daemonState!, runtimeId: transition === 'restart' ? 'after-restart' : 'before-restart',
+                    contributionRegistryProjectionRevision: transition === 'install' ? 1 : transition === 'uninstall' ? 2 : 0 } };
+            await act(async () => storage.getState().applyMachines([changed], false,
+                { sourceServerId: server.id, sourceAccountId: scope.accountId }));
+            expect(getMachineContributionRegistryProjectionRevision({ serverId: server.id, machineId: changed.id })).toBe(
+                transition === 'install' ? 1 : transition === 'uninstall' ? 2 : 3);
+            await vi.waitFor(() => {
+                expect(selected.getCurrent()).toMatchObject({ status: 'ready', agents: [{ installed, stale: false }] });
+                expect(isAgentSelectableForNewSession({ agentId: 'review', machineAgentsById: {
+                    review: selected.getCurrent().agents[0],
+                } })).toBe(installed);
+            });
+            expect(unrelated.getCurrent()).toBe(otherSnapshot);
+            expect(unrelated.getCurrent().agents[0]).toBe(otherAgent);
+            expect(otherRenders).toBe(rendersBefore);
+            expect(network.requests.slice(requestsBefore).filter(request => request.targetId === other.id)).toHaveLength(0);
+            expect(storage.getState().machineListByServerId[server.id]?.find(machine => machine.id === other.id)).toBe(other);
+        }
+        await selected.unmount();
+        await unrelated.unmount();
+    });
+
 });

@@ -1717,7 +1717,12 @@ proof of success or failure. Cancellation stops the active operation and cleans 
 staging; software installed by a completed step and vendor-script side effects may remain.
 If process cleanup cannot be verified, cancellation reports failure and the daemon refuses
 another install for that Agent. Stop the installer process manually before restarting the daemon.
-Completion invalidates CLI detection snapshots so inventory can re-detect current software.
+Completion invalidates CLI detection snapshots. Successful install, update and uninstall
+jobs also advance the owning Machine's existing daemon projection revision. Mounted
+inventory readers consume that push and re-detect current software; unrelated Machines
+retain their rows and do not re-probe. The job store does not start a separate client
+inventory readback. A restarted daemon's identity already renews the same inventory
+demand, independently of its lost in-memory job history.
 
 #### Update source and verification
 

@@ -1039,6 +1039,7 @@ export async function startDaemon(
     const managedActivity = createManagedActivityInventory({ producers: [
       sessionActivity, machineActivity, automationActivity, serviceActivity, syncActivity,
       transferActivity, executionRunActivity, getDaemonAgentInstallJobOwner({ admissionDrain,
+        invalidateInventory: pluginRegistryProjectionInvalidation.invalidateProjection,
         accountId: readAccountIdFromToken(credentials.token) ?? undefined,
         readTrackedSessions: () => pidToTrackedSession.values(), readAcpCatalog: () => {
           const snapshot = getActiveAccountSettingsSnapshot();

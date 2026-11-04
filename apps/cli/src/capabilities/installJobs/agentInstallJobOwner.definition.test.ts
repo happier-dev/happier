@@ -9,6 +9,8 @@ import { CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1 } from '@happier-dev/protocol
 import type { AgentInstallJobOutcome } from '@happier-dev/protocol';
 import { DaemonAgentInstallStartResponseSchema } from '@happier-dev/protocol/daemon/agent-install-jobs';
 import type { TrackedSession } from '@/daemon/types';
+import { createDaemonPluginRegistryProjectionInvalidation } from '@/daemon/pluginRegistryProjectionInvalidation';
+import type { DaemonState } from '@/api/types';
 import { resolveAcpLaunch } from '@/agent/acp/catalog/configured/resolveAcpLaunch';
 import { createAgentInstallJobOwner, type AgentInstallJobOwner } from './agentInstallJobOwner';
 import cliTestConfig from '../../../vitest.config';
@@ -73,12 +75,21 @@ describe('definition-qualified managed Agent jobs', () => {
     const sessions: TrackedSession[] = [{ pid: process.pid, startedBy: 'daemon', spawnOptions: { directory: root,
       agentTarget: { kind: 'agent', identity: CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1, definitionId: 'npm-agent' } } }];
     let owner: AgentInstallJobOwner | undefined;
+    const publications: DaemonState[] = [];
+    const invalidation = createDaemonPluginRegistryProjectionInvalidation({
+      getApiMachine: () => ({ updateDaemonState: async updater => {
+        publications.push(updater(publications.at(-1) ?? null));
+      } }),
+      isDaemonQuiescing: () => false,
+      onPublicationFailure: error => { throw error; },
+    });
     try {
       const pnpm = join(root, 'pnpm'); await writeFile(pnpm, '#!/bin/sh\nexit 0\n'); await chmod(pnpm, 0o755);
       const env = { ...process.env, HAPPIER_HOME_DIR: root, HAPPIER_PNPM_BIN: pnpm, HAPPIER_JS_RUNTIME_PATH: process.execPath };
       const definition = AcpBackendDefinitionV1Schema.parse({ id: 'npm-agent', name: 'npm-agent', title: 'Npm Agent',
         launch: { kind: 'npm', package: '@fixture/agent', version: '1.2.3' }, createdAt: 1, updatedAt: 1 });
-      owner = createAgentInstallJobOwner({ accountId: 'alice', env, readTrackedSessions: () => sessions, readRegistry: () => ({ agents: [{
+      owner = createAgentInstallJobOwner({ accountId: 'alice', env, invalidateInventory: invalidation.invalidateProjection,
+        readTrackedSessions: () => sessions, readRegistry: () => ({ agents: [{
         id: 'custom-acp', pluginId: CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1.pluginId, identity: CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1,
       }] }), readAcpCatalog: () => ({ status: 'ready', record: { v: 1, definitions: [definition] }, revision: 1 }),
       installerDeps: { execFileWithDeadline: async (_command, args) => {
@@ -94,6 +105,7 @@ describe('definition-qualified managed Agent jobs', () => {
         intent: 'install', consent: { vendorRecipe: false } });
       expect(job.ok).toBe(true); if (!job.ok) return;
       expect(await terminal(owner, job.jobId)).toEqual({ kind: 'succeeded', version: '1.2.3' });
+      expect(publications.map(state => state.contributionRegistryProjectionRevision)).toEqual([1]);
       const ready = await resolveAcpLaunch({ accountId: 'alice', definition, env, platform: process.platform, arch: process.arch });
       expect(ready.kind).toBe('ready'); if (ready.kind !== 'ready') return;
       expect(JSON.parse(await readFile(join(dirname(dirname(ready.command)), 'workspace', 'package.json'), 'utf8')))
@@ -103,6 +115,7 @@ describe('definition-qualified managed Agent jobs', () => {
       const replacement = owner.start({ agentId: 'custom-acp', definitionId: definition.id, intent: 'update', consent: { vendorRecipe: false } });
       expect(replacement.ok).toBe(true); if (!replacement.ok) return;
       expect(await terminal(owner, replacement.jobId)).toMatchObject({ kind: 'succeeded', version: '2.0.0' });
+      expect(publications.map(state => state.contributionRegistryProjectionRevision)).toEqual([1, 2]);
       await expect(access(ready.command)).resolves.toBeUndefined();
       definition.launch.version = '1.2.3';
       expect(await resolveAcpLaunch({ accountId: 'alice', definition, env, platform: process.platform, arch: process.arch })).toMatchObject({ kind: 'ready' });
@@ -110,6 +123,7 @@ describe('definition-qualified managed Agent jobs', () => {
       const uninstall = owner.start({ agentId: 'custom-acp', definitionId: definition.id, intent: 'uninstall', consent: { vendorRecipe: false } });
       expect(uninstall.ok).toBe(true); if (!uninstall.ok) return;
       expect(await terminal(owner, uninstall.jobId)).toEqual({ kind: 'succeeded', version: null });
+      expect(publications.map(state => state.contributionRegistryProjectionRevision)).toEqual([1, 2, 3]);
       await expect(access(ready.command)).rejects.toThrow();
     } finally { await owner?.shutdown(); await rm(root, { recursive: true, force: true }); }
   });
