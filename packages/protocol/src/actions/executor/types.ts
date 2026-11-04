@@ -2900,6 +2900,11 @@ export type ActionExecutorDeps = Readonly<{
     Readonly<{ status: 'opened' }> | ActionExecuteFailure
   >;
 
+  /** The answering client's existing file chooser/download boundary; bytes stay invocation-local. */
+  saveClientFile?: (args: Readonly<{ bytes: Uint8Array; fileName: string; signal?: AbortSignal }>) => Promise<
+    Readonly<{ status: 'saved' | 'canceled' }> | ActionExecuteFailure
+  >;
+
   /** The answering client's platform clipboard boundary; copied text never enters observation records. */
   clipboardWrite?: (args: Readonly<{ text: string; signal?: AbortSignal }>) => Promise<
     z.infer<typeof ClipboardWriteResultSchema> | ActionExecuteFailure

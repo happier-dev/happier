@@ -7187,6 +7187,16 @@ observation projection contain no text, and durable replay cannot reconstruct it
 The answering client must still be available to deliver the copy; approval does
 not supply a clipboard or turn an unavailable delivery into success.
 
+In unreleased 0.3 source, `files.save` is the shared client file handoff for native
+and deployment log downloads and Agent/MCP/CLI callers. Its `source` accepts
+`{ kind: 'text', text }` or `{ kind: 'deploymentLog', reference }`; the latter
+walks the finite masked pages of `deployments.logs.read` for the selected build
+or step reference. It refuses changed or unavailable sources without handing off
+a partial file. `fileName` names the download, and ordinary client dispatch selects
+the answering app. The result reports `saved` or chooser `canceled`; an unavailable
+platform returns a typed refusal. File content stays in the live invocation and
+is omitted from approval Artifacts and observations, as with `clipboard.write`.
+
 `ui.current_context.read` and `ui.current_context.command.invoke` are client-local host Actions available to UI, Voice, Agent, MCP and CLI callers. In development source, the canonical CLI projections are `happier ui current-context read` and `happier ui current-context command invoke <commandId>`. The read returns the current navigation snapshot and complete opaque command inventory; invocation accepts only a currently published command id. Context data is strict JSON, and executable declarations and descriptors remain closed. The snapshot has no independent command-count or aggregate-byte ceiling: a growing filter or view inventory must not erase its entity or commands. Semantic command launch inputs retain their own operation boundary. The answering AppShell uses the same current-context reader and semantic dispatcher as Voice, retaining mount retirement, current Action availability, declared caller surfaces and approval policy. CLI invocation requires that answering client; headless CLI/RPC hosts have no mounted execution owner and cannot substitute a successful local result.
 
 Plugin pages publish finite `executeAction` or route-owned `openSurface` commands rather than raw UI state. PRs & Issues uses this seam for its [mounted-page operations](triage-sources.md#mounted-page-actions-03-development); the current context carries that page's ephemeral Action address for typed operations requiring entry references or a lens.

@@ -233,6 +233,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
   app_updates: APP_UPDATE_ACTION_IDS,
   updates: UPDATES_ACTION_IDS,
   clipboard: CLIPBOARD_ACTION_IDS,
+  client_files: ['files.save'],
   screen_capture_delivery: SCREEN_CAPTURE_ACTION_IDS,
   external_links: EXTERNAL_LINK_ACTION_IDS,
   home_hub_layout: ['home.hub.layout.get', 'home.hub.layout.update', 'home.reachNudge.dismiss'],

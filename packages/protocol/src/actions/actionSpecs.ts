@@ -107,6 +107,9 @@ export { ScreenCaptureStartInputSchema, ScreenCapturePermissionRequestInputSchem
   ScreenCaptureRecordingInputSchema, ScreenCaptureRecordingEditInputSchema,
   ScreenCaptureRecordingReadInputSchema } from './specs/screenCapture.js';
 import { EXTERNAL_LINK_ACTION_SPECS } from './externalLinkActionFamily.js';
+import { FILE_SAVE_ACTION_SPECS } from './fileSaveActionFamily.js';
+export { FileSaveInputSchema, FileSaveResultSchema } from './fileSaveActionFamily.js';
+export type { FileSaveInput } from './fileSaveActionFamily.js';
 import { WORKFLOW_EFFECT_ACTION_SPECS_V1, WorkflowEffectActionInputSchemasV1, WorkflowEffectActionOutputSchemasV1, type WorkflowEffectActionIdV1 } from '../workflows/stepActionsV1.js';
 import { ROLE_ACTION_IDS_V1, type RoleActionIdV1 } from '../prompts/roles/roleActionIdsV1.js';
 import { RoleActionTargetInputSchemasV1, RoleActionOutputSchemasV1 } from '../prompts/roles/roleActionsV1.js';
@@ -610,6 +613,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX_LEAD_OPENING = Object.freeze(defineAc
   ...(DESKTOP_WINDOWS_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
   ...(DESKTOP_SHELL_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
   ...(EXTERNAL_LINK_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
+  ...(FILE_SAVE_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
   ...(CODE_INTELLIGENCE_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
   ...(VOICE_CONVERSATION_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
   ...(SCOPE_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
@@ -1318,6 +1322,7 @@ type DirectActionSpecDefinition =
   | LiteralActionSpecTupleDefinition<typeof SCREEN_CAPTURE_DELIVERY_ACTION_SPECS>
   | LiteralActionSpecTupleDefinition<typeof SCREEN_CAPTURE_NATIVE_ACTION_SPECS>
   | LiteralActionSpecTupleDefinition<typeof EXTERNAL_LINK_ACTION_SPECS>
+  | LiteralActionSpecTupleDefinition<typeof FILE_SAVE_ACTION_SPECS>
   | LiteralActionSpecTupleDefinition<typeof SESSION_ORGANIZATION_MOVE_ACTION_SPECS>
   | LiteralActionSpecTupleDefinition<typeof LIST_REORDER_ACTION_SPECS>
   | LiteralActionSpecTupleDefinition<typeof TODO_SESSION_LINK_ACTION_SPECS>

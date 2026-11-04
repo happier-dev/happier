@@ -424,6 +424,9 @@ import { isUpdatesActionId } from './updatesActionFamily.js';
 import { ClipboardWriteInputSchema } from './clipboardActionFamily.js';
 import { AutomationOccurrenceActionIdSchema, AutomationOccurrenceInputSchemas } from '../automations/occurrenceActions.js';
 import { ExternalUrlOpenInputSchema } from './externalLinkActionFamily.js';
+import { FileSaveInputSchema } from './fileSaveActionFamily.js';
+import { executeFileSave } from './executor/fileSave.js';
+import { executeDeploymentAction } from './executor/deploymentAction.js';
 import { isInternalActionId } from './pluginActionSurface.js';
 import {
   PluginSessionHookInstallActionInputV1Schema,
@@ -4813,6 +4816,10 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         return readActionFailureEnvelope(result) ?? { ok: true, result };
       }
 
+      if (actionId === 'files.save') {
+        return executeFileSave(parsed.data as z.infer<typeof FileSaveInputSchema>, ctx, deps);
+      }
+
       if (actionId === 'desktop.windows.open') {
         if (!deps.desktopWindowsOpen) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         ctx.signal?.throwIfAborted();
@@ -5556,12 +5563,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           return 'errorCode' in result ? result : { ok: true, result };
         }
         if (isDeploymentActionIdV1(actionId)) {
-          if (!deps.deploymentAction) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
-          const result = await deps.deploymentAction(actionId, DeploymentActionInputSchemasV1[actionId].parse(data), ctx);
-          if ('errorCode' in result) return result;
-          if ('kind' in result) return { ok: true, result };
-          if (!result.ok) return { ok: false, errorCode: result.error, error: result.error, details: result };
-          return { ok: true, result };
+          return executeDeploymentAction(actionId, data as z.infer<(typeof DeploymentActionInputSchemasV1)[typeof actionId]>,
+            ctx, deps);
         }
         const dispatchProjectsDispatch3Result = await dispatchProjectsDispatch3({ actionId, deps, data, ctx });
         if (dispatchProjectsDispatch3Result !== null) return dispatchProjectsDispatch3Result;
