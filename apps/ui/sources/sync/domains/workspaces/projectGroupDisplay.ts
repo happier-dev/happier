@@ -33,6 +33,23 @@ export function readSessionListProjectDisplay(
     return item.projectKey ? projectDisplayByKey.get(projectGroupIdentityKey(item.projectKey)) : item.fallbackGroupDisplay;
 }
 
+/** The baseline election: the oldest admitted ref, then the lowest id. Reachability, order and activity never elect. */
+function isEarlierBaseline(candidate: WorkspaceRefV1, current: WorkspaceRefV1): boolean {
+    return candidate.createdAtMs < current.createdAtMs
+        || candidate.createdAtMs === current.createdAtMs && candidate.id.localeCompare(current.id) < 0;
+}
+
+/** One Project's baseline by the index's election, without building the whole index (Space marks). */
+export function readProjectBaselineRef(workspaceRefs: readonly WorkspaceRefV1[], project: QualifiedProjectKeyV1): WorkspaceRefV1 | null {
+    const key = projectGroupIdentityKey(project);
+    let baseline: WorkspaceRefV1 | null = null;
+    for (const ref of workspaceRefs) {
+        if (projectGroupIdentityKey(projectWorkspaceRefV1(ref)) !== key) continue;
+        if (!baseline || isEarlierBaseline(ref, baseline)) baseline = ref;
+    }
+    return baseline;
+}
+
 /** One admitted-ref pass; reachability, list order and activity never elect the baseline. */
 export function buildProjectGroupDisplayIndex(
     workspaceRefs: readonly WorkspaceRefV1[],
@@ -43,8 +60,7 @@ export function buildProjectGroupDisplayIndex(
         const project = projectWorkspaceRefV1(ref);
         const key = projectGroupIdentityKey(project);
         const previous = result.get(key)?.baseline;
-        if (previous && (previous.createdAtMs < ref.createdAtMs
-            || previous.createdAtMs === ref.createdAtMs && previous.id.localeCompare(ref.id) <= 0)) continue;
+        if (previous && !isEarlierBaseline(ref, previous)) continue;
         result.set(key, { project, baseline: ref, title: ref.label ?? resolveWorkspacePathBasenameV1(ref.rootPath), hasCustomLabel: false });
     }
     for (const row of organizations) {
