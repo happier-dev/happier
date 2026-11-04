@@ -30,7 +30,9 @@ export function WorkspaceRouteEntry(props: Readonly<{ Body: React.ComponentType;
         // Layout mirrors must stay mounted: Expo still owns their URL serialization.
         return <>{props.mirror ?? props.loadingFallback ?? <PaneLoadingFallback testID="workspace-route-hydrating" />}</>;
     }
-    if (workspace?.active === true && !hosted) return <><WorkspaceRouteTitle />{props.mirror}</>;
+    // Keep the mirror in its pending position: inserting title metadata before
+    // it remounts nested Expo navigators and loses their parsed child route.
+    if (workspace?.active === true && !hosted) return <>{props.mirror}<WorkspaceRouteTitle /></>;
     return !hosted && workspace && Platform.OS !== 'web'
         ? <NativeWorkspaceRouteTitle><props.Body /></NativeWorkspaceRouteTitle> : <props.Body />;
 }

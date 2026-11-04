@@ -1,6 +1,7 @@
 /** @vitest-environment jsdom */
 import * as React from 'react';
 import { act } from 'react-test-renderer';
+import { BaseNavigationContainer, createNavigatorFactory, StackRouter, useNavigationBuilder } from '@react-navigation/core';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { createSessionFixture, invokeTestInstanceHandler, renderScreen, standardCleanup } from '@/dev/testkit';
 import { WORKSPACE_ACTION_OUTPUT_SCHEMAS } from '@happier-dev/protocol';
@@ -183,6 +184,12 @@ function RetainedDirtyEditor(props: Readonly<{ tabId: string; focused: boolean; 
     </DestinationInstanceHost>;
 }
 
+function ColdAccountNavigator(props: Readonly<{ children: React.ReactNode }>) {
+    const { state, descriptors, NavigationContent } = useNavigationBuilder(StackRouter, props);
+    return <NavigationContent>{descriptors[state.routes[state.index].key].render()}</NavigationContent>;
+}
+const ColdAccountStack = createNavigatorFactory(ColdAccountNavigator)();
+
 /** Real event dispatch beneath the external browser URL/history fixtures. */
 function installBrowserBoundary(input: Record<string, unknown> & { history: object }) {
     const events = new EventTarget();
@@ -194,6 +201,34 @@ function installBrowserBoundary(input: Record<string, unknown> & { history: obje
 }
 
 describe('consumed workspace navigation owner', () => {
+    it('retains the nested Settings child when its URL mirror becomes a ready workspace', async () => {
+        boundary.platform = 'web'; boundary.pathname = '/settings/server/add'; boundary.params = {};
+        boundary.dataReady = false;
+        installBrowserBoundary({ location: { pathname: boundary.pathname, search: '', hash: '' },
+            history: { state: null, replaceState() {}, pushState() {}, go() {} }, sessionStorage: { getItem: () => 'join' } });
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: false, workflows: false, friends: false } });
+        function Overview() { return React.createElement('JoinSettingsOverview'); }
+        function AddHome() { return React.createElement('JoinAddHomeForm'); }
+        function Mirror() { return <ColdAccountStack.Navigator>
+            <ColdAccountStack.Screen name="index" component={Overview} />
+            <ColdAccountStack.Screen name="add" component={AddHome} />
+        </ColdAccountStack.Navigator>; }
+        function Settings() { return <WorkspaceRouteEntry Body={Overview} mirror={<Mirror />} />; }
+        const render = () => <WorkspaceProvider enabled catalog={catalog}>
+            <BaseNavigationContainer initialState={{ routes: [{ name: 'settings', state: { routes: [{ name: 'add' }] } }] }}>
+                <ColdAccountStack.Navigator><ColdAccountStack.Screen name="settings" component={Settings} /></ColdAccountStack.Navigator>
+            </BaseNavigationContainer>
+        </WorkspaceProvider>;
+        const screen = await renderScreen(render());
+        try {
+            expect(screen.tree.findAllByType('JoinAddHomeForm' as never)).toHaveLength(1);
+            boundary.dataReady = true;
+            await screen.update(render());
+            expect(screen.tree.findAllByType('JoinAddHomeForm' as never)).toHaveLength(1);
+            expect(screen.tree.findAllByType('JoinSettingsOverview' as never)).toHaveLength(0);
+        } finally { await screen.unmount(); }
+    });
+
     it('retains the initial settings navigator while its first Account catalog is published, but withdraws a retired Account', async () => {
         const { activateStorageAccountScope } = await import('@/dev/testkit/runtime/storageRuntime');
         const { captureActiveServerAccountScopeLifetime, retireActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
