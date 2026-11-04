@@ -5,6 +5,7 @@ import { parseProviderResetAt, parseProviderTimestampMs } from '@/daemon/connect
 
 import { readSessionHookSidechainAgentId } from '../utils/sessionHookAttribution';
 import { readClaudeJsonlTimestampMs } from '../utils/claudeJsonlTimestamp';
+import type { ClaudeUsageLimitNote } from '../attachments/claudeAttachmentTypes';
 
 export type NormalizedProviderUsageLimitDetailsV1 = Readonly<{
   v: 1;
@@ -27,6 +28,7 @@ export type NormalizedProviderUsageLimitDetailsV1 = Readonly<{
   sourceProviderOrganizationId?: string | null;
   /** Provider chronology retained for turn identity cross-checks. */
   providerObservedAtMs?: number;
+  usageLimitNoteKind?: ClaudeUsageLimitNote['kind'];
   /**
    * Set when the evidence row was imported from a subagent transcript (`isSidechain: true`).
    * Sidechain limits are real account-level evidence (quota snapshots may consume them) but
@@ -34,6 +36,26 @@ export type NormalizedProviderUsageLimitDetailsV1 = Readonly<{
    */
   sourcedFromSidechain?: true;
 }>;
+
+/** Native notes supply no numerical quota observation. Preserve their kind so
+ * only a grace wrap-up takes the hard-failure path. */
+export function mapClaudeUsageLimitNoteToUsageDetails(note: ClaudeUsageLimitNote): NormalizedProviderUsageLimitDetailsV1 {
+  return {
+    v: 1,
+    resetAtMs: null,
+    retryAfterMs: null,
+    limitCategory: 'usage_limit',
+    quotaScope: 'unknown',
+    recoverability: 'switch_account',
+    planType: null,
+    utilization: null,
+    overage: null,
+    action: null,
+    connectedService: null,
+    providerObservedAtMs: note.timestampMs,
+    usageLimitNoteKind: note.kind,
+  };
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);

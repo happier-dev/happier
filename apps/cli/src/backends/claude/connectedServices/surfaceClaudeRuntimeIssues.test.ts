@@ -1,5 +1,6 @@
 import type { notifyDaemonConnectedServiceRuntimeAuthFailure, notifyDaemonConnectedServiceQuotaSnapshot } from '@/daemon/controlClient';
 import { sanitizeConnectedServiceRuntimeFailureClassification } from '@/daemon/connectedServices/runtimeAuth/sanitizeConnectedServiceRuntimeFailureClassification';
+import { resolveRuntimeAuthFailureSourceProfile } from '@/daemon/connectedServices/runtimeAuth/resolveRuntimeAuthFailureSourceProfile';
 import { appendFile, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -7,12 +8,15 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { logger } from '@/ui/logger';
 import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol';
+import { ConnectedServiceQuotaSnapshotV1Schema } from '@happier-dev/protocol';
+import { createProviderAccountUsageStore } from '@/daemon/connectedServices/accountUsage/store';
 
 import { HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY } from '@/daemon/connectedServices/connectedServiceChildEnvironment';
 import {
   CONNECTED_SERVICE_RUNTIME_AUTH_FAILURE_REPORT_TIMEOUT_MS,
   resetConnectedServiceRuntimeAuthFailureReportDedupeForTests,
 } from '@/daemon/connectedServices/runtimeAuth/reportConnectedServiceRuntimeAuthFailureToDaemon';
+import { resetRuntimeAuthFailureReportOutboxDrainSchedulerForTests } from '@/daemon/connectedServices/runtimeAuth/reportOutbox/runtimeAuthFailureReportOutboxDrainScheduler';
 import { buildProviderAccountUsageSnapshotFromConnectedServiceQuotaObservation } from '@/daemon/connectedServices/accountUsage/fromConnectedServiceQuotaObservation';
 import { canRecordProviderAccountUsageSourceLinks } from '@/daemon/connectedServices/accountUsage/record';
 import { recordConnectedServiceRuntimeQuotaSnapshotForSession } from '@/daemon/connectedServices/quotas/recordConnectedServiceRuntimeQuotaSnapshotForSession';
@@ -46,6 +50,11 @@ vi.mock('@/daemon/controlClient', () => ({
   notifyDaemonConnectedServiceQuotaSnapshot: mockNotifyDaemonConnectedServiceQuotaSnapshot,
   notifyDaemonConnectedServiceTurnLifecycle: mockNotifyDaemonConnectedServiceTurnLifecycle,
 }));
+
+afterEach(() => {
+  // Reports without a durable receipt may schedule a later drain; it must not call the next test's IPC mock.
+  resetRuntimeAuthFailureReportOutboxDrainSchedulerForTests();
+});
 
 type ClaudeFailTurn = (params: FailTurnInput) => Promise<void>;
 
@@ -1489,13 +1498,95 @@ describe('R3-4: Claude in-band evidence becomes source-backed → predictive sof
   }
 
   function deliveredQuotaCall() {
-    const calls = mockNotifyDaemonConnectedServiceQuotaSnapshot.mock.calls as readonly (readonly unknown[])[];
-    const call = calls.at(-1)?.[0] as
-      | { sourceProviderAccountId?: string; snapshot: import('@happier-dev/protocol').ConnectedServiceQuotaSnapshotV1 }
-      | undefined;
+    const call = mockNotifyDaemonConnectedServiceQuotaSnapshot.mock.calls.at(-1)?.[0];
     if (!call) throw new Error('expected a quota snapshot delivery');
-    return call;
+    return { ...call, snapshot: ConnectedServiceQuotaSnapshotV1Schema.parse(call.snapshot) };
   }
+
+  it('routes a live wrap-up without a 429 to usage recovery attributed to the issued request', async () => {
+    mockNotifyDaemonConnectedServiceRuntimeAuthFailure.mockClear();
+    await writeMaterializedClaudeConfig({ accountUuid: 'issued-account', organizationUuid: 'issued-org' });
+    const transcriptPath = join(tmpDir, 'wrap-up-session.jsonl');
+    await writeFile(transcriptPath, JSON.stringify({
+      type: 'attachment', sessionId: 'wrap-up-session', timestamp: '2026-10-28T20:35:00.000Z',
+      attachment: { type: 'credential_org', organizationUuid: 'issued-org' },
+    }) + '\n');
+    const failTurn = createClaudeFailTurnSpy();
+    const session = { sessionId: 'wrap-up-session', transcriptPath,
+      client: { sessionId: 'wrap-up-recovery', sessionTurnLifecycle: { failTurn } } };
+    await captureClaudeRuntimeAuthRequestIdentity(session);
+    // Another session may have rewritten the shared home before this request's note arrives.
+    await writeMaterializedClaudeConfig({ accountUuid: 'later-account', organizationUuid: 'later-org' });
+    const scanner = await createSessionScanner({ sessionId: 'wrap-up-session', transcriptPath, workingDirectory: tmpDir,
+      onMessage: () => {},
+      onRawJsonlValue: (value, observation) => observeClaudeRuntimeAuthTranscript(session, value, observation) });
+    try {
+      await appendFile(transcriptPath, JSON.stringify({
+        type: 'user', isMeta: true, turnCompanion: true, usageLimitNote: 'wrap_up',
+        sessionId: 'wrap-up-session', timestamp: '2026-10-28T20:35:17.925Z',
+        message: { role: 'user', content: '[Usage limit reached; a short grace allowance remains.]' },
+      }) + '\n');
+      await vi.waitFor(() => expect(mockNotifyDaemonConnectedServiceRuntimeAuthFailure).toHaveBeenCalledWith(
+        expect.objectContaining({ sessionId: 'wrap-up-recovery', classification: expect.objectContaining({
+          kind: 'usage_limit', sourceProviderAccountId: 'issued-account',
+          sourceProviderOrganizationId: 'issued-org', providerReportedOrganizationId: 'issued-org',
+        }) }), expect.anything(),
+      ));
+      expect(failTurn).toHaveBeenCalledWith(expect.objectContaining({
+        issue: expect.objectContaining({ code: 'usage_limit' }),
+      }));
+    } finally { await scanner.cleanup(); }
+  });
+
+  it.each([true, false])('keeps near-limit runnable without publishing quota (attributed=%s)', async (knownIdentity) => {
+    mockNotifyDaemonConnectedServiceRuntimeAuthFailure.mockClear();
+    const log = vi.spyOn(logger, 'infoFile').mockImplementation(() => {});
+    try {
+      await writeMaterializedClaudeConfig({ accountUuid: 'issued-account', organizationUuid: 'issued-org' });
+      const transcriptPath = join(tmpDir, 'near-note.jsonl');
+      const failTurn = createClaudeFailTurnSpy();
+      const session = { sessionId: 'near-note', transcriptPath,
+        client: { sessionId: 'near-note-quota', sessionTurnLifecycle: { failTurn } } };
+      if (knownIdentity) await captureClaudeRuntimeAuthRequestIdentity(session);
+      // A later shared-home identity must never be attributed to this note.
+      await writeMaterializedClaudeConfig({ accountUuid: 'ambient-account', organizationUuid: 'ambient-org' });
+      observeClaudeRuntimeAuthTranscript(session, {
+        type: 'user', isMeta: true, turnCompanion: true, usageLimitNote: 'near_limit',
+        sessionId: 'near-note', timestamp: '2026-10-28T20:35:17.925Z',
+        message: { role: 'user', content: '[Usage limit approaching. Checkpoint now.]' },
+      });
+      // Drain the fire-and-forget intake's already-resolved request identity and delivery microtasks.
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(mockNotifyDaemonConnectedServiceQuotaSnapshot).not.toHaveBeenCalled();
+      expect(failTurn).not.toHaveBeenCalled();
+      expect(mockNotifyDaemonConnectedServiceRuntimeAuthFailure).not.toHaveBeenCalled();
+      expect(log).toHaveBeenCalledWith('[claude] Native usage-limit advisory', expect.objectContaining({
+        sessionId: 'near-note-quota', sourceSessionId: 'near-note', usageLimitNoteKind: 'near_limit',
+        attribution: knownIdentity ? 'attributed' : 'unattributed',
+        sourceProviderAccountId: knownIdentity ? 'issued-account' : null,
+        sourceProviderOrganizationId: knownIdentity ? 'issued-org' : null,
+      }));
+    } finally { log.mockRestore(); }
+  });
+
+  it('does not recover from replay, sidechains, release notes, foreign sessions, or native sessions', () => {
+    mockNotifyDaemonConnectedServiceRuntimeAuthFailure.mockClear();
+    const failTurn = createClaudeFailTurnSpy();
+    const session = { sessionId: 'guarded-note', client: { sessionId: 'guarded-note', sessionTurnLifecycle: { failTurn } } };
+    const note = { type: 'user', isMeta: true, turnCompanion: true, usageLimitNote: 'near_limit',
+      sessionId: 'guarded-note', timestamp: '2026-10-28T20:35:17.925Z',
+      message: { role: 'user', content: '[Usage limit approaching. Checkpoint now.]' } };
+    observeClaudeRuntimeAuthTranscript(session, note, { historicalReplay: true });
+    observeClaudeRuntimeAuthTranscript(session, { ...note, isSidechain: true });
+    observeClaudeRuntimeAuthTranscript(session, { ...note, usageLimitNote: 'release' });
+    observeClaudeRuntimeAuthTranscript(session, { ...note, sessionId: 'foreign-session' });
+    const poolEnv = process.env[HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY];
+    delete process.env[HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY];
+    try { observeClaudeRuntimeAuthTranscript(session, note); }
+    finally { restoreClaudeSelectionEnv(poolEnv); }
+    expect(failTurn).not.toHaveBeenCalled();
+    expect(mockNotifyDaemonConnectedServiceRuntimeAuthFailure).not.toHaveBeenCalled();
+  });
 
   it.each(['auth', 'quota'] as const)('cross-checks a %s failure against the last credential_org at or before its timestamp', async (kind) => {
     await writeMaterializedClaudeConfig({ accountUuid: 'later-account', organizationUuid: 'later-org' });
@@ -1526,6 +1617,19 @@ describe('R3-4: Claude in-band evidence becomes source-backed → predictive sof
     expect(mockNotifyDaemonConnectedServiceRuntimeAuthFailure).toHaveBeenCalledWith(expect.objectContaining({
       classification: expect.objectContaining({ providerReportedOrganizationId: 'failing-org' }),
     }), expect.anything());
+    const reported = sanitizeConnectedServiceRuntimeFailureClassification(
+      mockNotifyDaemonConnectedServiceRuntimeAuthFailure.mock.calls.at(-1)?.[0].classification,
+    );
+    if (!reported) throw new Error('Expected a reported runtime failure');
+    expect(reported).toMatchObject({ sourceProviderAccountId: null, sourceProviderOrganizationId: null });
+    const attributed = await resolveRuntimeAuthFailureSourceProfile({
+      classification: reported,
+      getGroupMembers: async () => [{ profileId: 'claude-main', enabled: true }, { profileId: 'ai1', enabled: true }],
+      // Connected-account credential storage is the daemon's external identity boundary.
+      resolveProviderAccountIdentity: async (profileId) => ({ providerAccountId: profileId,
+        providerOrganizationId: profileId === 'ai1' ? 'failing-org' : 'later-org' }),
+    });
+    expect(attributed).toMatchObject({ profileId: 'ai1', groupGeneration: null, credentialRevision: null });
   });
 
   it('reconciles only fresh credential_org observations through the real scanner raw channel', async () => {
@@ -1571,6 +1675,19 @@ describe('R3-4: Claude in-band evidence becomes source-backed → predictive sof
         credentialRevision: 'csr_7123456789ABCDEFGHJKMNPQRS', sourceProviderAccountId: 'issued-account',
         sourceProviderOrganizationId: 'issued-org' }),
     }), expect.anything());
+    const reported = sanitizeConnectedServiceRuntimeFailureClassification(
+      mockNotifyDaemonConnectedServiceRuntimeAuthFailure.mock.calls.at(-1)?.[0].classification,
+    );
+    if (!reported) throw new Error('Expected a reported runtime failure');
+    const attributed = await resolveRuntimeAuthFailureSourceProfile({
+      classification: reported,
+      getGroupMembers: async () => [{ profileId: 'claude-main', enabled: true }, { profileId: 'ai1', enabled: true }],
+      resolveProviderAccountIdentity: async (profileId) => ({
+        providerAccountId: profileId === 'ai1' ? 'issued-account' : 'later-account',
+        providerOrganizationId: profileId === 'ai1' ? 'issued-org' : 'later-org',
+      }),
+    });
+    expect(attributed).toMatchObject({ profileId: 'ai1', groupGeneration: null, credentialRevision: null });
   });
 
   it('reports a rejected provider organization acknowledgement on the default log', async () => {

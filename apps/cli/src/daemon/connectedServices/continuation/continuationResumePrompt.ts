@@ -20,8 +20,8 @@ export function buildContinuationResumePrompt(input: Readonly<{
     const custom = input.customResumePrompt?.trim() ?? '';
     if (custom.length > 0) return custom;
   }
-  return input.afterUsageLimitReset === true
-    && (input.recoveryKind === 'usage_limit' || input.recoveryKind === 'rate_limit')
+  return input.recoveryKind === 'usage_limit'
+    || (input.recoveryKind === 'rate_limit' && input.afterUsageLimitReset === true)
     ? USAGE_LIMIT_CONTINUATION_RESUME_PROMPT
     : GENERIC_CONTINUATION_RESUME_PROMPT;
 }

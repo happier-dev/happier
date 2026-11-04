@@ -289,6 +289,6 @@ describe('execution-run recovery through the run controller', () => {
     expect(run.prompts).toHaveLength(1);
     await vi.advanceTimersByTimeAsync(60_000);
     await run.manager.waitForTerminal(run.runId);
-    expect(run.prompts[1].text).toBe('Continue where you left off');
+    expect(run.prompts[1].text).toBe('Usage limits are lifted. Continue where you left off.');
   });
 });

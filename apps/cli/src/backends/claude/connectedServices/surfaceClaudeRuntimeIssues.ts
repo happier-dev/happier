@@ -30,7 +30,7 @@ import { resolveConfiguredClaudeConfigDir } from '../utils/resolveConfiguredClau
 
 import { resolveClaudeRuntimeAuthRetryDecision } from './claudeRuntimeAuthRetryDecision';
 import { classifyClaudeConnectedServiceRuntimeAuthFailure } from './classifyClaudeConnectedServiceRuntimeAuthFailure';
-import type { NormalizedProviderUsageLimitDetailsV1 } from './mapClaudeRateLimitEventToUsageDetails';
+import { mapClaudeUsageLimitNoteToUsageDetails, type NormalizedProviderUsageLimitDetailsV1 } from './mapClaudeRateLimitEventToUsageDetails';
 import { resolveClaudeUsageWindowLabel } from './quotaFetcher';
 import { resolveClaudeRuntimeProviderAccountIdentity } from './resolveClaudeRuntimeProviderAccountIdentity';
 import { readClaudeSessionJsonlMessages } from '../utils/readClaudeSessionJsonlMessages';
@@ -159,6 +159,35 @@ export function observeClaudeRuntimeAuthTranscript(
     const selection = resolveClaudeRuntimeIssueSelection(session);
     if (selection?.kind !== 'group' || selection.serviceId !== 'claude-subscription') return;
     routeClaudeAttachment(value, {
+        onUsageLimitNote(note) {
+            if (!session.sessionId || note.sourceSessionId !== session.sessionId) return;
+            if (note.kind === 'near_limit') {
+                const issued = requestIdentityBySession.get(session);
+                const identity = issued?.identity ?? Promise.resolve({
+                    sourceProviderAccountId: null,
+                    sourceProviderOrganizationId: null,
+                });
+                void identity.then((identity) => {
+                    logger.infoFile('[claude] Native usage-limit advisory', {
+                        sessionId: session.client.sessionId,
+                        sourceSessionId: note.sourceSessionId,
+                        usageLimitNoteKind: note.kind,
+                        observedAtMs: note.timestampMs,
+                        attribution: identity.sourceProviderAccountId || identity.sourceProviderOrganizationId
+                            ? 'attributed' : 'unattributed',
+                        ...identity,
+                    });
+                }).catch((error) => {
+                    logger.warnFile('[claude] Failed to log usage-limit advisory', { error });
+                });
+                return;
+            }
+            const details = mapClaudeUsageLimitNoteToUsageDetails(note);
+            void surfaceClaudeRateLimitRuntimeIssue(session, details, '[claude usage-limit note]')
+                .catch((error) => {
+                    logger.warnFile('[claude] Failed to report usage-limit transcript note', { error });
+                });
+        },
         onCredentialOrganization(event) {
             if (!session.sessionId || event.sourceSessionId !== session.sessionId) return;
             void notifyDaemonConnectedServiceTurnLifecycle({
@@ -475,7 +504,8 @@ function resolveClaudeQuotaSnapshotTarget(session: RuntimeIssueSession, input: R
     groupId: string | null;
     groupGeneration: number | null;
 }> {
-    const selection = resolveClaudeRuntimeIssueSelection(session);
+    const issued = requestIdentityBySession.get(session);
+    const selection = issued ? issued.selection : resolveClaudeRuntimeIssueSelection(session);
     const selectedGroup = selection?.kind === 'group' ? selection : null;
     const serviceId = input.serviceId
         ?? (selection?.serviceId === 'anthropic' ? 'anthropic' : 'claude-subscription');
@@ -502,7 +532,12 @@ export async function recordClaudeRateLimitQuotaEvidence(
     const target = resolveClaudeQuotaSnapshotTarget(session, {});
     if (!target.profileId) return;
     // All windows come from one provider response, so one account identity covers them.
-    const enrichedPrimaryWindow = await enrichClaudeRuntimeEvidenceWithAccountIdentity(primaryWindow);
+    const issued = requestIdentityBySession.get(session);
+    const enrichedPrimaryWindow = issued
+        ? { ...primaryWindow, ...await issued.identity }
+        : 'transcriptPath' in session
+            ? { ...primaryWindow, sourceProviderAccountId: null, sourceProviderOrganizationId: null }
+            : await enrichClaudeRuntimeEvidenceWithAccountIdentity(primaryWindow);
     const observedAt = Date.now();
     void claudeQuotaSnapshotDeliveryOutbox.enqueueAndFlush({
         sessionId: session.client.sessionId,

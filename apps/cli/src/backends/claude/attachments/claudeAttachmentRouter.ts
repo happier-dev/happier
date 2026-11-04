@@ -2,12 +2,13 @@ import { parseClaudeGoalStatusAttachment } from '../workState/claudeGoalStatus';
 import {
   parseClaudeQueuedCommandAttachment,
   parseClaudeCredentialOrganizationAttachment,
+  parseClaudeUsageLimitNote,
   readClaudeAttachmentRecord,
   type ClaudeAttachmentHandlers,
 } from './claudeAttachmentTypes';
 
 /**
- * Single deep seam (plan D1) for Claude transcript `attachment` records.
+ * Single deep seam (plan D1) for Claude transcript attachments and control notes.
  *
  * The native Claude JSONL parser previously dropped attachments; this router is
  * the one place that knows the attachment envelope and dispatches by
@@ -19,6 +20,10 @@ import {
  * is safe to call inside the tail-follow message loop for every transcript row.
  */
 export function routeClaudeAttachment(value: unknown, handlers: ClaudeAttachmentHandlers): void {
+  if (handlers.onUsageLimitNote) {
+    const note = parseClaudeUsageLimitNote(value);
+    if (note) handlers.onUsageLimitNote(note);
+  }
   const record = readClaudeAttachmentRecord(value);
   if (!record) return;
 

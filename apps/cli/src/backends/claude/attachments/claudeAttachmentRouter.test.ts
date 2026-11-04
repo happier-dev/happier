@@ -15,6 +15,38 @@ function readFixtureLine(name: string): unknown {
 }
 
 describe('routeClaudeAttachment', () => {
+  it('routes structured near-limit and wrap-up companion notes through the transcript control owner', () => {
+    const events: unknown[] = [];
+    // wrap_up: Claude Code 2.1.310, 5438145a...jsonl:470. near_limit: 2.1.316 binary's note producer.
+    for (const usageLimitNote of ['near_limit', 'wrap_up']) {
+      routeClaudeAttachment({
+        type: 'user', isMeta: true, turnCompanion: true, usageLimitNote,
+        sessionId: 'native-session', timestamp: '2026-10-28T20:35:17.925Z',
+        message: { role: 'user', content: '[Usage limit approaching. Checkpoint now.]' },
+      }, { onUsageLimitNote: (event) => events.push(event) });
+    }
+    expect(events).toEqual(['near_limit', 'wrap_up'].map((kind) => ({
+      kind, sourceSessionId: 'native-session', timestampMs: 1793219717925,
+    })));
+  });
+
+  it('ignores release notes, user text, and malformed usage-limit companions', () => {
+    const events: unknown[] = [];
+    const note = { type: 'user', isMeta: true, turnCompanion: true, usageLimitNote: 'wrap_up',
+      sessionId: 'native-session', timestamp: '2026-10-28T20:35:17.925Z',
+      message: { role: 'user', content: '[Usage limit reached.]' } };
+    for (const value of [
+      { ...note, usageLimitNote: 'release' },
+      { ...note, isMeta: false },
+      { ...note, turnCompanion: false },
+      { ...note, timestamp: 'invalid' },
+      { ...note, sessionId: '' },
+      { ...note, type: 'assistant' },
+      { ...note, usageLimitNote: undefined },
+    ]) routeClaudeAttachment(value, { onUsageLimitNote: (event) => events.push(event) });
+    expect(events).toEqual([]);
+  });
+
   it('routes provider-attested credential organizations with transcript chronology', () => {
     const events: unknown[] = [];
     routeClaudeAttachment({

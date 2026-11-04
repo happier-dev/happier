@@ -25,6 +25,12 @@ export type ClaudeCredentialOrganizationAttachment = Readonly<{
   timestampMs: number;
 }>;
 
+export type ClaudeUsageLimitNote = Readonly<{
+  kind: 'near_limit' | 'wrap_up';
+  sourceSessionId: string;
+  timestampMs: number;
+}>;
+
 /**
  * Typed dispatch callbacks for {@link routeClaudeAttachment}. All optional and
  * forward-compatible: unknown `attachment.type` values are ignored (or routed
@@ -34,6 +40,7 @@ export type ClaudeAttachmentHandlers = Readonly<{
   onGoalStatus?: (event: ClaudeGoalStatusTranscriptEvent) => void;
   onQueuedCommand?: (command: ClaudeQueuedCommandAttachment) => void;
   onCredentialOrganization?: (event: ClaudeCredentialOrganizationAttachment) => void;
+  onUsageLimitNote?: (event: ClaudeUsageLimitNote) => void;
   onUnknown?: (record: ClaudeAttachmentRecord) => void;
 }>;
 
@@ -41,6 +48,20 @@ function readRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
     : null;
+}
+
+/** Claude Code 2.1.316 emits these control notes as meta user rows, not attachments. */
+export function parseClaudeUsageLimitNote(value: unknown): ClaudeUsageLimitNote | null {
+  const record = readRecord(value);
+  if (!record || record.type !== 'user' || record.isMeta !== true || record.turnCompanion !== true) return null;
+  const kind = record.usageLimitNote;
+  if (kind !== 'near_limit' && kind !== 'wrap_up') return null;
+  const message = readRecord(record.message);
+  if (message?.role !== 'user') return null;
+  const sourceSessionId = typeof record.sessionId === 'string' ? record.sessionId.trim() : '';
+  const timestampMs = readClaudeJsonlTimestampMs(record);
+  if (!sourceSessionId || timestampMs === null) return null;
+  return { kind, sourceSessionId, timestampMs };
 }
 
 /**
