@@ -11,6 +11,14 @@ const IdSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1)))
 const PositiveSafeIntSchema = lazyZodSchema(() => z.number().check(z.int(), z.positive()));
 const CoordinateSchema = lazyZodSchema(() => z.number());
 const DimensionSchema = lazyZodSchema(() => z.number().check(z.positive()));
+/** Selection lifetime owner; Machine-person identity comes from authenticated host context. */
+export type ComputerSourceIdentityV1 = Readonly<{ kind: 'session'; sessionId: string }>
+  | Readonly<{ kind: 'machine-person'; personId: string }>;
+
+export function computerSourceIdentityKeyV1(source: ComputerSourceIdentityV1): string {
+  return JSON.stringify([source.kind, source.kind === 'session' ? source.sessionId : source.personId]);
+}
+
 export const ComputerProviderIdV1Schema = lazyZodSchema(() => z.enum(['cua', 'agent-desktop']));
 export type ComputerProviderIdV1 = z.infer<typeof ComputerProviderIdV1Schema>;
 export const COMPUTER_PROVIDER_INSTALLABLE_KEYS = Object.freeze({
@@ -200,12 +208,18 @@ export const ComputerActionResultV1Schema = lazyZodSchema(() => z.discriminatedU
 ]));
 export type ComputerActionResultV1 = z.infer<typeof ComputerActionResultV1Schema>;
 
-export const ComputerCaptureResponseV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
+export const ComputerCaptureResponseV1Schema = lazyZodSchema(() => z.union([
   TargetSelectionRequiredResultSchema,
   z.strictObject({
     ...IdentityShape, status: z.literal('captured'), captureId: IdSchema,
     geometry: ComputerCaptureGeometryV1Schema,
     media: z.required(SessionImageMediaReferenceV1Schema, { file: true }),
+  }),
+  z.strictObject({
+    ...IdentityShape, status: z.literal('captured'), captureId: IdSchema,
+    geometry: ComputerCaptureGeometryV1Schema,
+    /** Machine-person previews are ephemeral and never claim Session media custody. */
+    frame: z.strictObject({ mimeType: z.literal('image/png'), base64: IdSchema }),
   }),
   FailedResultSchema,
 ]));
@@ -276,6 +290,8 @@ export const COMPUTER_PRESENT_USER_ACTION_IDS = [
   'computer.target.select',
   'computer.permissions.openSettings',
   'computer.capture',
+  'computer.clipboard.read',
+  'computer.clipboard.write',
   'computer.control.status',
   'computer.control.interrupt',
   'computer.control.handBack',
@@ -284,7 +300,7 @@ export const COMPUTER_PRESENT_USER_ACTION_IDS = [
 export type ComputerPresentUserActionId = (typeof COMPUTER_PRESENT_USER_ACTION_IDS)[number];
 
 export const DaemonComputerActionExecuteRequestV1Schema = lazyZodSchema(() => z.strictObject({
-  sessionId: IdSchema,
+  sessionId: z.optional(IdSchema),
   actionId: z.enum(COMPUTER_PRESENT_USER_ACTION_IDS),
   /** Validated by the Action's own input schema at the daemon's computer owner. */
   input: z.unknown(),

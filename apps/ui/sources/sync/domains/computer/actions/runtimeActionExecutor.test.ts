@@ -203,7 +203,16 @@ describe('computer runtime Actions from Happier', () => {
         }));
     });
 
-    it('never carries an agent’s or a Session-less request onto the person’s route', async () => {
+    it('opens Machine-person Computer through the Action front door without a Session', async () => {
+        const machine = vi.fn<ComputerMachineRpc>(async () => selected);
+        expect(await executorWith(machine).execute('computer.target.select', { machineId: 'machine_1', target }, {
+            surface: 'ui', authority: 'present_user', runtimeAccountId: 'alice', serverId: 'home_1',
+        })).toMatchObject({ ok: true, result: selected });
+        expect(machine).toHaveBeenCalledWith(expect.objectContaining({ machineId: 'machine_1', accountId: 'alice', actionId: 'computer.target.select' }));
+        expect(machine.mock.calls[0]?.[0]).not.toHaveProperty('sessionId');
+    });
+
+    it('never carries an agent’s or an unbound Machine-person request onto the person’s route', async () => {
         const machine = vi.fn<ComputerMachineRpc>(async () => selected);
         const executor = executorWith(machine);
         expect(await executor.execute('computer.control.status', { machineId: 'machine_1' }, {

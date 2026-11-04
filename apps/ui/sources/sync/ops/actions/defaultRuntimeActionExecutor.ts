@@ -14,6 +14,7 @@ import {
 import { readRegisteredBrowserContextAnnotationAdapter } from '@/sync/domains/browser/context/runtimeAnnotationRegistry';
 import { createSimulatorPreviewRuntimeActionExecutor } from '@/sync/domains/devices/simulator/actions/runtimeActionExecutor';
 import { createComputerRuntimeActionExecutor } from '@/sync/domains/computer/actions/runtimeActionExecutor';
+import { resolveComputerOwnDesktopOnly } from '@/sync/domains/computer/actions/machineRpc';
 import {
     createLocalServicesRuntimeActionExecutor,
     type CreateLocalServicesRuntimeActionExecutorInput,
@@ -75,7 +76,11 @@ export function createDefaultRuntimeActionExecutor(
         fallback,
     });
     // The person's computer controls (choose a window, stop, hand back) go to the machine they name.
-    const computer = createComputerRuntimeActionExecutor({ fallback: simulator, accountLifetime });
+    const computer = createComputerRuntimeActionExecutor({
+        fallback: simulator,
+        accountLifetime,
+        resolveOwnDesktopOnly: resolveComputerOwnDesktopOnly,
+    });
     const localServices = createLocalServicesRuntimeActionExecutor({
         ...input.localServices,
         executeOnMachine,

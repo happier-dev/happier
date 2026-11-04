@@ -665,15 +665,15 @@ describe.skipIf(process.platform !== 'linux')('managed native computer driver (X
       ]));
       expect(registry.list()).toHaveLength(1);
       const owner = registry.list()[0]?.computer;
-      if (!owner) throw new Error('Missing selected target owner');
-      const otherSession = owner.sessionId === 'session-a' ? 'session-b' : 'session-a';
+      if (!owner || owner.sourceIdentity.kind !== 'session') throw new Error('Missing selected Session target owner');
+      const otherSession = owner.sourceIdentity.sessionId === 'session-a' ? 'session-b' : 'session-a';
       expect(await routes.dispatch('computer.target.get', { machineId: 'machine' },
         { authority: 'account_automation', defaultSessionId: otherSession }))
         .toMatchObject({ consentGranted: false, approvalDisplay: { requiresTargetSelection: true } });
       const observation = await owner.observe();
       const pendingInput = owner.input(observation.captureId, { kind: 'click', x: 1, y: 1 }, 'agent');
       await vi.waitFor(() => expect(releaseInput).toBeDefined());
-      closing = routes.closeSession(owner.sessionId);
+      closing = routes.closeSession(owner.sourceIdentity.sessionId);
       expect(await select(otherSession)).toMatchObject({ ok: false, errorCode: 'computer_target_in_use' });
       releaseInput?.();
       await pendingInput;

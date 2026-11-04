@@ -1,6 +1,6 @@
 import { ComputerActionResultV1Schema, ComputerCaptureResponseV1Schema, ComputerControlStatusResponseV1Schema, ComputerOpenSettingsResponseV1Schema, ComputerSelectedTargetResponseV1Schema, ComputerTargetsListResponseV1Schema, type ComputerActionResultV1, type ComputerAccessV1, type ComputerCaptureResponseV1, type ComputerControlStatusResponseV1, type ComputerSelectedTargetResponseV1, type ComputerTargetsListResponseV1, type ComputerTargetV1 } from '@happier-dev/protocol/computer/v1';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { resolveComputerAccess } from '@happier-dev/protocol/computer/v1';
+import { computerSourceIdentityKeyV1, resolveComputerAccess, type ComputerSourceIdentityV1 } from '@happier-dev/protocol/computer/v1';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
@@ -11,6 +11,7 @@ import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAcco
 import { selectActiveServerAccountScopeForServer } from '@/sync/domains/scope/activeServerAccountScope';
 import type { UiActionExecutorContext } from '@/sync/ops/actions/defaultActionExecutor';
 import { resolveComputerRecovery } from './targets';
+import { ComputerClipboardResultV1Schema, type ComputerClipboardOperationV1, type ComputerClipboardResultV1 } from '@happier-dev/protocol/computer/v1';
 
 /** The Session and machine whose shared window the person is acting on. */
 export type ComputerSessionScope = Readonly<{
@@ -19,24 +20,40 @@ export type ComputerSessionScope = Readonly<{
     machineId: string;
 }>;
 
+/** A person can share this Machine's desktop independently of an agent Session. */
+export type ComputerMachinePersonScope = Readonly<{
+    serverId?: string | null;
+    machineId: string;
+    source: Extract<ComputerSourceIdentityV1, { kind: 'machine-person' }>;
+    sessionId?: never;
+}>;
+export type ComputerScope = ComputerSessionScope | ComputerMachinePersonScope;
+
+/** One identity owner for Action projections, stream metadata and picker state. */
+function sourceIdentity(scope: ComputerScope): ComputerSourceIdentityV1 {
+    return 'source' in scope ? scope.source : { kind: 'session' as const, sessionId: scope.sessionId };
+}
+
 export type ComputerActionExecute = (actionId: ActionId, input: unknown, context: ActionExecutorContext) => Promise<ActionExecuteResult>;
 
 export type ComputerOutcome<T> = Readonly<{ ok: true; value: T }> | Readonly<{ ok: false; code: string }>;
 
 /**
- * The person's computer controls through the one Action front door (Actions settings, the present-user
- * floor and the output schema all apply there). Each call names the Session and the machine; the payload
+ * The person's computer controls through the one Action front door (Actions settings and the
+ * output schema apply there). Each call names the machine and its source; the payload
  * comes back parsed by the Action's own schema or as a stable failure code.
  */
-export function createComputerControlClient(scope: ComputerSessionScope, execute: ComputerActionExecute, accountLifetime?: ServerAccountScopeLifetime | null) {
+export function createComputerControlClient(scope: ComputerScope, execute: ComputerActionExecute, accountLifetime?: ServerAccountScopeLifetime | null) {
     const serverId = scope.serverId ?? accountLifetime?.scope.serverId;
     const isCurrent = () => accountLifetime === undefined || (accountLifetime !== null && accountLifetime.isCurrent()
+        && (!('source' in scope) || scope.source.personId === accountLifetime.scope.accountId)
         && selectActiveServerAccountScopeForServer(accountLifetime.scope, serverId ?? accountLifetime.scope.serverId) !== null);
     const context: UiActionExecutorContext = {
         surface: 'ui',
-        // A person's press in Happier; the daemon route stamps the same authority and checks it again.
+        // A person's press in Happier; authority identifies whose native input this is.
         authority: 'present_user',
-        defaultSessionId: scope.sessionId,
+        ...(scope.sessionId ? { defaultSessionId: scope.sessionId } : {}),
+        ...('source' in scope ? { runtimeAccountId: scope.source.personId } : {}),
         ...(serverId ? { serverId } : {}),
         ...(accountLifetime ? { expectedAccountId: accountLifetime.scope.accountId } : {}),
     };
@@ -61,6 +78,9 @@ export function createComputerControlClient(scope: ComputerSessionScope, execute
     }
     return {
         isCurrent,
+        clipboard: (operation: ComputerClipboardOperationV1) => run<ComputerClipboardResultV1>(
+            operation.kind === 'read' ? 'computer.clipboard.read' : 'computer.clipboard.write',
+            { ...machine, ...(operation.kind === 'write' ? { text: operation.text } : {}) }, ComputerClipboardResultV1Schema),
         getTarget: () => run<ComputerSelectedTargetResponseV1>('computer.target.get', machine, ComputerSelectedTargetResponseV1Schema),
         listTargets: () => run<ComputerTargetsListResponseV1>('computer.targets.list', machine, ComputerTargetsListResponseV1Schema),
         selectTarget: (target: ComputerTargetV1, access?: ComputerAccessV1) => run<ComputerSelectedTargetResponseV1>(
@@ -84,7 +104,7 @@ export function createComputerControlClient(scope: ComputerSessionScope, execute
                 || !confirmed.value.approvalDisplay.requiresTargetSelection) {
                 return { ok: false, code: 'control_not_drained' };
             }
-            for (const projection of mountedProjections.get(projectionKey(scope)) ?? []) {
+            for (const projection of mountedProjections.get(computerScopeKey(scope)) ?? []) {
                 projection.applySelection(confirmed.value);
             }
             return result;
@@ -104,18 +124,19 @@ type ComputerProjectionSnapshot = Readonly<{
 const EMPTY_PROJECTION: ComputerProjectionSnapshot = { selection: null, status: null, grants: null, failure: null };
 const projections = new WeakMap<ComputerActionExecute, Map<string, ComputerSessionProjection>>();
 const mountedProjections = new Map<string, Set<ComputerSessionProjection>>();
-function projectionKey(scope: ComputerSessionScope): string {
-    return JSON.stringify([scope.serverId || null, scope.sessionId, scope.machineId]);
+export function computerScopeKey(scope: ComputerScope): string {
+    return JSON.stringify([scope.serverId || null, scope.machineId, computerSourceIdentityKeyV1(sourceIdentity(scope))]);
 }
 
+
 /** A refreshable projection of Action answers, never a computer controller. */
-function createComputerSessionProjection(scope: ComputerSessionScope, execute: ComputerActionExecute, accountLifetime?: ServerAccountScopeLifetime | null) {
+function createComputerSessionProjection(scope: ComputerScope, execute: ComputerActionExecute, accountLifetime?: ServerAccountScopeLifetime | null) {
     const client = createComputerControlClient(scope, execute, accountLifetime);
     let snapshot = EMPTY_PROJECTION;
     let flight: Promise<void> | null = null;
     let invalidated = false;
     const listeners = new Map<() => void, boolean>();
-    const key = projectionKey(scope);
+    const key = computerScopeKey(scope);
     const hasDemand = () => client.isCurrent() && [...listeners.values()].some(Boolean);
     let retirement: Readonly<{ dispose(): void }> | null = null;
     function publish(next: ComputerProjectionSnapshot): void {
@@ -253,9 +274,9 @@ function createComputerSessionProjection(scope: ComputerSessionScope, execute: C
 }
 
 /** The selected source's strict status projection; metadata is never interpreted as image bytes. */
-export function publishComputerStatusFrame(scope: ComputerSessionScope, sourceId: string, frame: MachineLiveStreamFrameV1): void {
+export function publishComputerStatusFrame(scope: ComputerScope, sourceId: string, frame: MachineLiveStreamFrameV1): void {
     if (frame.payloadKind !== 'metadata') return;
-    const mounted = mountedProjections.get(projectionKey(scope));
+    const mounted = mountedProjections.get(computerScopeKey(scope));
     if (!mounted?.size) return;
     try {
         const parsed = ComputerControlStatusResponseV1Schema.safeParse(JSON.parse(new TextDecoder().decode(decodeBase64(frame.payloadBase64))));
@@ -266,19 +287,19 @@ export function publishComputerStatusFrame(scope: ComputerSessionScope, sourceId
 export type ComputerSessionProjection = ReturnType<typeof createComputerSessionProjection>;
 
 /** A native input refusal is source-owned evidence, not a stream-ending event or a replay request. */
-export function publishComputerStreamInputFailure(scope: ComputerSessionScope, sourceId: string, code: string): void {
+export function publishComputerStreamInputFailure(scope: ComputerScope, sourceId: string, code: string): void {
     if (resolveComputerRecovery({ kind: 'failed', code }, 'use')?.action !== 'capture') return;
-    for (const projection of mountedProjections.get(projectionKey(scope)) ?? []) projection.applySourceFailure(sourceId, code);
+    for (const projection of mountedProjections.get(computerScopeKey(scope)) ?? []) projection.applySourceFailure(sourceId, code);
 }
 
-export function getComputerSessionProjection(scope: ComputerSessionScope, execute: ComputerActionExecute, accountLifetime?: ServerAccountScopeLifetime | null): ComputerSessionProjection {
+export function getComputerSessionProjection(scope: ComputerScope, execute: ComputerActionExecute, accountLifetime?: ServerAccountScopeLifetime | null): ComputerSessionProjection {
     // An unavailable or mismatched binding must not displace a current Account's shared reader.
     if (!createComputerControlClient(scope, execute, accountLifetime).isCurrent()) {
         return createComputerSessionProjection(scope, execute, accountLifetime);
     }
     let scoped = projections.get(execute);
     if (!scoped) projections.set(execute, scoped = new Map());
-    const key = projectionKey(scope);
+    const key = computerScopeKey(scope);
     let projection = scoped.get(key);
     if (!projection || projection.accountLifetime !== accountLifetime) {
         scoped.set(key, projection = createComputerSessionProjection(scope, execute, accountLifetime));
@@ -286,9 +307,9 @@ export function getComputerSessionProjection(scope: ComputerSessionScope, execut
     return projection;
 }
 
-/** Picker and control Actions invalidate all mounted readers of the same Session/machine. */
-export function publishComputerActionAnswer(scope: ComputerSessionScope, actionId: string, answer: unknown): void {
-    const mounted = mountedProjections.get(projectionKey(scope));
+/** Publish source-owned Action facts to mounted readers; refresh only answers without a final selection fact. */
+export function publishComputerActionAnswer(scope: ComputerScope, actionId: string, answer: unknown): void {
+    const mounted = mountedProjections.get(computerScopeKey(scope));
     if (!mounted?.size) return;
     if (actionId === 'computer.targets.list') {
         const targets = ComputerTargetsListResponseV1Schema.safeParse(answer);

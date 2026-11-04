@@ -172,6 +172,9 @@ describe('native computer Action contracts', () => {
     };
     const outputSchema = nativeSpec('computer.capture').outputSchema;
     expect(outputSchema.safeParse(output).success).toBe(true);
+    const { media: _media, ...capture } = output;
+    expect(outputSchema.safeParse({ ...capture, frame: { mimeType: 'image/png', base64: 'cG5n' } }).success).toBe(true);
+    expect(outputSchema.safeParse({ ...output, frame: { mimeType: 'image/png', base64: 'cG5n' } }).success).toBe(false);
     expect(outputSchema.safeParse({ ...output, media: { ...output.media, base64: 'unsafe' } }).success).toBe(false);
     const { file: _file, ...metadataOnly } = output.media;
     expect(outputSchema.safeParse({ ...output, media: metadataOnly }).success).toBe(false);

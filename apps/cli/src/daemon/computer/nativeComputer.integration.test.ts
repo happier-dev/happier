@@ -234,7 +234,7 @@ describe.skipIf(!executablePath || !fixturePath || process.platform !== 'linux')
       const output = await handlers.get('action_execute')!({ actionId: 'computer.capture', input });
       expect(output).toMatchObject({ isError: false, content: expect.arrayContaining([{ type: 'image', mimeType: 'image/png', data: expect.any(String) }]) });
       const observation = ComputerCaptureResponseV1Schema.parse(captured);
-      if (observation.status !== 'captured') throw new Error(observation.status);
+      if (observation.status !== 'captured' || !('media' in observation)) throw new Error('Expected Session capture');
       expect(observation.geometry).toMatchObject({ captureWidth: 400, captureHeight: 240, originX: 20, originY: 20 });
       const clicked = line(fixture.stdout!);
       expect(await executor.execute('computer.input', { ...input, captureId: observation.captureId, operation: { kind: 'click', x: 50, y: 50 } }, context)).toMatchObject({ ok: true, result: { status: 'dispatched' } });

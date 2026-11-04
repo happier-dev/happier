@@ -10,7 +10,9 @@ export type ComputerMachineRpc = (input: Readonly<{
     /** Existing front-door Account admission, pinned by the scoped transport. */
     accountId?: string;
     machineId: string;
-    sessionId: string;
+    /** The verified daemon owner confines this route to the invoking person's desktop. */
+    ownDesktopOnly?: boolean;
+    sessionId?: string;
     actionId: string;
     input: unknown;
     signal?: AbortSignal;
@@ -31,12 +33,13 @@ function readMachineId(input: unknown): string | null {
 /**
  * The person's computer controls as runtime Actions: the front door has already applied Actions
  * settings and the present-user floor; this leaf carries them to the machine the request names, for
- * the Session the person is in. Only the person's Actions travel here (choose, look, stop, hand back,
+ * the Session or Machine-person source. Only the person's Actions travel here (choose, look, stop, hand back,
  * permission pane), and only with present-user authority, because the daemon route stamps that
  * authority itself. Agent computer Actions run in their Session's own dispatch, never from this client.
  */
 export function createComputerRuntimeActionExecutor(input: Readonly<{
     executeOnMachine?: ComputerMachineRpc;
+    resolveOwnDesktopOnly?: (target: Readonly<{ machineId: string; serverId?: string }>) => boolean;
     fallback: RuntimeActionExecute;
     /** The invoking Account owns publication, never the effect's returned acknowledgement. */
     accountLifetime?: ServerAccountScopeLifetime;
@@ -48,20 +51,24 @@ export function createComputerRuntimeActionExecutor(input: Readonly<{
             return refuse('present_user_required');
         }
         const sessionId = typeof args.context.defaultSessionId === 'string' ? args.context.defaultSessionId.trim() : '';
-        if (!sessionId) return refuse('computer_session_required');
+        const personId = args.context.runtimeAccountId ?? input.accountLifetime?.scope.accountId;
+        if (!sessionId && !personId) return refuse('computer_session_required');
         const machineId = readMachineId(args.input);
         if (!machineId) return refuse('invalid_parameters');
         const result = await executeOnMachine({
             ...(args.context.serverId ? { serverId: args.context.serverId } : {}),
-            ...(args.context.runtimeAccountId ? { accountId: args.context.runtimeAccountId } : {}),
+            ...(personId ? { accountId: personId } : {}),
             machineId,
-            sessionId,
+            ...(input.resolveOwnDesktopOnly?.({ machineId, serverId: args.context.serverId ?? undefined })
+                ? { ownDesktopOnly: true } : {}),
+            ...(sessionId ? { sessionId } : {}),
             actionId: args.actionId,
             input: args.input,
             ...(args.context.signal ? { signal: args.context.signal } : {}),
         });
         if (!input.accountLifetime || input.accountLifetime.isCurrent()) {
-            publishComputerActionAnswer({ sessionId, machineId, serverId: args.context.serverId ?? null }, args.actionId, result);
+            const sourceScope = sessionId ? { sessionId } : { source: { kind: 'machine-person' as const, personId: personId! } };
+            publishComputerActionAnswer({ ...sourceScope, machineId, serverId: args.context.serverId ?? null }, args.actionId, result);
         }
         return result;
     };

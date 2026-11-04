@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { computerTargetKeyV1, resolveComputerAccess } from '@happier-dev/protocol/computer/v1';
 import { normalizeBrowserActiveTargetRect, BrowserActiveTargetV1Schema } from '@happier-dev/protocol/browser/events/activeTarget';
 import type { ComputerTargetV1, ComputerInputOperationV1, ComputerActionResultV1, ComputerAccessV1, BrowserActiveTargetV1, ComputerControlStatusResponseV1, ComputerCaptureGeometryV1, ComputerAccessibilityNodeV1, MachineLiveStreamControlSidebandV1, SessionImageMediaReferenceV1 } from '@happier-dev/protocol';
-import type { ComputerClipboardOperationV1, ComputerClipboardResultV1, ComputerProviderIdV1 } from '@happier-dev/protocol/computer/v1';
+import type { ComputerClipboardOperationV1, ComputerClipboardResultV1, ComputerProviderIdV1, ComputerSourceIdentityV1 } from '@happier-dev/protocol/computer/v1';
 import { createManagedComputerDriver } from './driver/managedComputerDriver';
 import { createSurfaceInputControl } from '../surfaces/inputControl';
 import { createSimulatorFrameProducerCaptureAdapter } from '../devices/simulator/capture/adapter';
@@ -12,9 +12,10 @@ export const computerTargetKey = computerTargetKeyV1;
 
 export type ComputerCaptureSource = ReturnType<typeof createComputerCaptureSource>;
 
-/** One native producer per exact Session/provider/target, retained by the existing capture registry. */
-export function createComputerCaptureSource(input: Readonly<{
-  sessionId: string;
+/** One native producer per exact source owner/provider/target, retained by the capture registry. */
+export function createComputerCaptureSource(input: Readonly<({
+  sourceIdentity: ComputerSourceIdentityV1; sessionId?: never;
+} | { sessionId: string; sourceIdentity?: never }) & {
   target: ComputerTargetV1;
   title?: string;
   appName?: string;
@@ -22,13 +23,18 @@ export function createComputerCaptureSource(input: Readonly<{
   provider?: ComputerProviderIdV1;
   executablePath?: string;
   environment?: Readonly<Record<string, string>>;
+  /** Private desktop scope retained by the Computer route owner. */
+  desktopKey?: string;
+  createDriver?: () => ReturnType<typeof createManagedComputerDriver>;
 }>) {
+  const sourceIdentity: ComputerSourceIdentityV1 = input.sourceIdentity ?? { kind: 'session', sessionId: input.sessionId };
   // A stream source is one selection lifetime; revoked approvals cannot bind a later reselection.
   const sourceId = `computer:${randomUUID()}`;
   const provider = input.provider ?? 'cua';
   const control = createSurfaceInputControl({ requireObservation: true, onStatusChange: publishStatus });
   let driver: ReturnType<typeof createManagedComputerDriver> | null = null;
-  const getDriver = () => driver ??= createManagedComputerDriver({ displayId: input.target.displayId, executablePath: input.executablePath, environment: input.environment, provider });
+  const getDriver = () => driver ??= input.createDriver?.()
+    ?? createManagedComputerDriver({ displayId: input.target.displayId, executablePath: input.executablePath, environment: input.environment, provider });
   type Capture = Awaited<ReturnType<Awaited<ReturnType<typeof createManagedComputerDriver>>['capture']>> & Readonly<{ provider: ComputerProviderIdV1 }>;
   let latest: Pick<Capture, 'png' | 'geometry'> | null = null;
   let modelCaptureId: string | null = null;
@@ -220,7 +226,7 @@ export function createComputerCaptureSource(input: Readonly<{
       } };
     },
   };
-  return { sessionId: input.sessionId, target: input.target, sourceId, get provider() { return provider; }, adapter, access,
+  return { sourceIdentity, desktopKey: input.desktopKey, target: input.target, sourceId, get provider() { return provider; }, adapter, access,
     isClosed: () => closed,
     get title() { return title; },
     get appName() { return appName; },

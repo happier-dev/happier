@@ -21,7 +21,7 @@ const isComputerAgentActionId = (actionId: string): actionId is ComputerAgentAct
 const SelectionRequiredSchema = z.object({ status: z.literal('target_selection_required'), approvalDisplay: ComputerApprovalDisplayV1Schema });
 
 export type TranscriptComputerVerb = Exclude<ComputerInputOperationV1['kind'], 'element'> | 'capture' | 'query';
-type CapturedMedia = Extract<ComputerCaptureResponseV1, { status: 'captured' }>['media'];
+type CapturedMedia = Extract<ComputerCaptureResponseV1, { status: 'captured'; media: unknown }>['media'];
 
 /**
  * What a transcript row says for an agent's computer Action (lab `computer` transcript and TP):
@@ -108,7 +108,7 @@ export function resolveTranscriptComputerActionReference(input: Readonly<{
             running: false,
             outcome,
             targetLabel: 'targetLabel' in result ? result.targetLabel ?? null : null,
-            media: result.status === 'captured' ? result.media : null,
+            media: result.status === 'captured' && 'media' in result ? result.media : null,
             watch: true,
         });
     }

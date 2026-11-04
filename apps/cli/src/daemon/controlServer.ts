@@ -1391,6 +1391,7 @@ export function createDaemonControlApp({
         input: request.body.input,
         context: { defaultSessionId: request.body.sessionId, signal: lifetime.signal,
           authority: 'account_automation',
+          ...(requester ? { requesterSessionBootstrap: requester.bootstrap } : {}),
           ...(request.body.approvalAdmitted ? { bypassApprovals: true } : {}) },
       });
       const response = BrowserRuntimeActionControlResponseSchema.safeParse({ result });

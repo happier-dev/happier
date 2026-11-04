@@ -1,4 +1,5 @@
 import { buildChildExitBeforeWebhookFailure } from '@/daemon/spawn/childStderrDiagnostic';
+import { resolveRequesterSessionExecutionIdentityForHost } from '../sessionEncryption/requesterSessionCredentials';
 import { createSessionAgentIsolationMemberPreparation, type SessionAgentIsolationAccountSource } from '../agentIsolation/sessionPreparation';
 import { hasStoredSessionCredentialProvenance } from '@/persistence';
 import { dispatchOriginalAccountAction } from '@/api/externalActionExecutionAuthorization';
@@ -9263,6 +9264,45 @@ daemonWorkSignal: AbortSignal;
         machineDisplayName: params.currentMachineHost ?? undefined,
         registry: params.liveStreamCaptureRegistry,
         defaultDisplayId: process.env.DISPLAY,
+        requesterHost: {
+          custodianAccountId: params.externalActionAccountId ?? null,
+          installationId: readInstallationIdentityIfExistsSync()?.installationId ?? null,
+          readHomeServerIdentityId: async signal =>
+            (await params.resolveCurrentMachineExecutionOriginContext?.(signal))?.serverIdentityId ?? null,
+          readSessionBootstrap: async (sessionId, signal) => {
+            try {
+              return await withSessionAccountContext(sessionId, async context => {
+                if (context) return context.bootstrap;
+                // A recovered Session without loaded requester ports is not
+                // proof of owner custody. Reuse the private-birth owner before
+                // retaining the ordinary owner's existing desktop behavior.
+                const origin = await params.resolveCurrentMachineExecutionOriginContext?.(signal);
+                const identity = await resolveRequesterSessionExecutionIdentityForHost({
+                  happyHomeDir: configuration.happyHomeDir,
+                  serverId: params.requesterSessionCustodyServerId ?? params.serverId,
+                  serverHttpBaseUrl: params.serverBaseUrl, sessionId, machineId: params.machineId,
+                  hostHomeServerIdentityId: origin?.machineId === params.machineId ? origin.serverIdentityId : null,
+                  sessionCustodianAccountId: params.externalActionAccountId, credentials: params.credentials,
+                  runtimeContext: null, signal,
+                  isCurrent: () => !signal?.aborted && !controlRuntimeResourcesDisposed && !isRuntimePublicationQuiescing(),
+                });
+                if (identity.kind === 'unknown') throw new PluginError({ code: 'agent_isolation_unavailable',
+                  message: 'Requester desktop is unavailable', details: { reason: identity.reason } });
+                return undefined;
+              }, undefined, signal);
+            } catch (cause) {
+              signal?.throwIfAborted();
+              if (cause instanceof PluginError) throw cause;
+              throw new PluginError({ code: 'agent_isolation_unavailable', message: 'Requester desktop is unavailable' }, { cause });
+            }
+          },
+          agentIsolation: params.agentIsolation,
+          prepareNativeOperation: async request => {
+            const machine = params.getApiMachineForSessions();
+            if (!machine) throw new PluginError({ code: 'agent_isolation_unavailable', message: 'Requester desktop is unavailable' });
+            return machine.prepareNativeOperation(request);
+          },
+        },
         resolveProviderSettings: () => {
           const settings = getActiveAccountSettingsSnapshot()?.settings;
           return settings ? readComputerUseSettingsForMachine(settings, params.machineId) : DEFAULT_COMPUTER_USE_SETTINGS_V1;

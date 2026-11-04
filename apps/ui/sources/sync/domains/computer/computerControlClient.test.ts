@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import type { ComputerGrantStatusV1, ComputerSelectedTargetResponseV1 } from '@happier-dev/protocol/computer/v1';
 import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
-import { getComputerSessionProjection } from './computerControlClient';
+import { createComputerControlClient, getComputerSessionProjection } from './computerControlClient';
 
 const target = { kind: 'window', displayId: ':73', pid: 42, windowId: 123 } as const;
 const selection = {
@@ -12,6 +12,39 @@ const selection = {
 const unselected = { consentGranted: false, approvalDisplay: { machineDisplayName: 'Studio', requiresTargetSelection: true } };
 
 describe('computer Action-answer projection', () => {
+    it('exchanges clipboard text for a Machine-person through the private present-user Action path', async () => {
+        let text = 'remote clipboard';
+        const observations: unknown[] = [];
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({ observeActionExecution: async observation => { observations.push(observation); }, runtimeActionExecute: async ({ actionId, input }) => {
+            if (actionId === 'computer.clipboard.read') return { ok: true, text };
+            if (actionId === 'computer.clipboard.write') { text = (input as { text: string }).text; return { ok: true }; }
+            throw new Error(`Unexpected clipboard Action: ${actionId}`);
+        } }));
+        const client = createComputerControlClient({ machineId: 'machine', serverId: 'home', source: { kind: 'machine-person', personId: 'alice' } }, executor.execute);
+        expect(await client.clipboard({ kind: 'read' })).toEqual({ ok: true, value: { ok: true, text: 'remote clipboard' } });
+        expect(await client.clipboard({ kind: 'write', text: 'local clipboard' })).toEqual({ ok: true, value: { ok: true } });
+        expect(await client.clipboard({ kind: 'read' })).toEqual({ ok: true, value: { ok: true, text: 'local clipboard' } });
+        expect(await client.clipboard({ kind: 'write', text: '' })).toEqual({ ok: true, value: { ok: true } });
+        expect(await client.clipboard({ kind: 'read' })).toEqual({ ok: true, value: { ok: true, text: '' } });
+        expect(JSON.stringify(observations)).not.toContain('remote clipboard');
+        expect(JSON.stringify(observations)).not.toContain('local clipboard');
+        expect(observations).toHaveLength(5);
+    });
+
+    it('keeps Machine-person selections separate from other people and Session selections without inventing a Session', async () => {
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({ runtimeActionExecute: async () => unselected }));
+        const machine = { machineId: 'machine', serverId: 'home' };
+        const alice = getComputerSessionProjection({ ...machine, source: { kind: 'machine-person', personId: 'alice' } }, executor.execute);
+        const aliceAgain = getComputerSessionProjection({ ...machine, source: { kind: 'machine-person', personId: 'alice' } }, executor.execute);
+        const bob = getComputerSessionProjection({ ...machine, source: { kind: 'machine-person', personId: 'bob' } }, executor.execute);
+        const session = getComputerSessionProjection({ ...machine, sessionId: 'alice' }, executor.execute);
+        alice.applySelection(selection);
+        expect(aliceAgain).toBe(alice);
+        expect(aliceAgain.getSnapshot().selection?.sourceId).toBe(selection.sourceId);
+        expect(bob.getSnapshot().selection).toBeNull();
+        expect(session.getSnapshot().selection).toBeNull();
+    });
+
     it.each([
         { capture: 'denied', readFailure: false }, { capture: 'unknown', readFailure: false },
         { capture: 'denied', readFailure: true }, { capture: 'unknown', readFailure: true },

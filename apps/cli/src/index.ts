@@ -13,6 +13,16 @@ const isCliDistIntegrityProbe = process.env.HAPPIER_CLI_DIST_INTEGRITY_PROBE ===
 
 if (!isCliDistIntegrityProbe && isTopLevelVersionRequest(readCliProcessArgs())) {
   printCliVersion();
+} else if (!isCliDistIntegrityProbe && readCliProcessArgs()[0] === 'computer-effect') {
+  // Private native desktop child: no Account or daemon bootstrap under its selected uid.
+  void import('./daemon/computer/memberRuntimeInternal').then(async ({ runMemberComputerRuntimeInternal }) => {
+    if (readCliProcessArgs().length !== 1) throw new Error('computer_effect_operation_invalid');
+    const controller = new AbortController();
+    const stop = () => { controller.abort(); };
+    process.once('SIGTERM', stop); process.once('SIGINT', stop);
+    try { await runMemberComputerRuntimeInternal(process.stdin, process.stdout, controller.signal); }
+    finally { process.removeListener('SIGTERM', stop); process.removeListener('SIGINT', stop); }
+  }).catch(() => { process.stderr.write('computer_effect_operation_failed\n'); process.exitCode = 1; });
 } else if (!isCliDistIntegrityProbe && readCliProcessArgs()[0] === 'filesystem-effect') {
   // Host-private native IO: never bootstrap an Account or daemon in this child.
   void import('./rpc/handlers/fileSystem/filesystemEffectInternal').then(async ({ runFilesystemEffectInternal }) => {

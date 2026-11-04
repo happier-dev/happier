@@ -6,16 +6,25 @@ import { isRpcMethodNotFoundResult, RPC_METHODS } from '@happier-dev/protocol/rp
 import { isMachineRpcTimeoutError, MACHINE_RPC_TIMEOUT_ERROR_CODE, readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
+import { readRegisteredStorageState } from '@/sync/domains/state/storageStateReaderBridge';
+import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
 
 import type { ComputerMachineRpc } from './runtimeActionExecutor';
+
+/** Shared Use controls and streaming reach the same personal desktop owner. */
+export function resolveComputerOwnDesktopOnly(input: Readonly<{ machineId: string; serverId?: string | null }>): boolean {
+    const state = readRegisteredStorageState();
+    const machine = state ? resolveServerScopedMachine(state, input.serverId, input.machineId) : null;
+    return machine?.isShared === true && machine.access?.role === 'use';
+}
 
 function refuse(code: string) {
     return { ok: false, errorCode: code, error: code } as const;
 }
 
 /**
- * UI→daemon transport for the person's computer controls: the owner-scoped machine RPC to the daemon's
- * one computer owner (`daemon.computer.actions.execute`). The result is the Action's own payload or the
+ * UI→daemon transport for the person's computer controls through the daemon's Computer owner.
+ * Shared Use requests name its personal-desktop entry point. The result is the Action's payload or the
  * owner's refusal envelope; the front door validates the payload against the Action's output schema.
  */
 export const executeComputerActionViaMachineRpc: ComputerMachineRpc = async (input) => {
@@ -31,7 +40,9 @@ export const executeComputerActionViaMachineRpc: ComputerMachineRpc = async (inp
             machineId: input.machineId,
             ...(input.serverId ? { serverId: input.serverId } : {}),
             ...(input.accountId ? { accountId: input.accountId } : {}),
-            method: RPC_METHODS.DAEMON_COMPUTER_ACTION_EXECUTE,
+            method: input.ownDesktopOnly
+                ? RPC_METHODS.DAEMON_COMPUTER_PERSONAL_ACTION_EXECUTE
+                : RPC_METHODS.DAEMON_COMPUTER_ACTION_EXECUTE,
             payload: payload.data,
             ...(input.signal ? { signal: input.signal } : {}),
         });
