@@ -42,6 +42,19 @@ export class QualifiedConnectedAccountRefreshLeaseError extends Error {
   }
 }
 
+/** The provider returned a replacement; a later failure must not look like a rejected exchange. */
+export class QualifiedConnectedAccountRefreshSettlementError extends Error {
+  readonly providerExchange = 'succeeded';
+
+  constructor(
+    readonly persistenceOutcome: 'not_attempted' | 'unknown' | 'confirmed',
+    cause: unknown,
+  ) {
+    super(`Provider refresh succeeded but credential settlement failed (persistence: ${persistenceOutcome})`, { cause });
+    this.name = 'QualifiedConnectedAccountRefreshSettlementError';
+  }
+}
+
 export type QualifiedConnectedAccountRefreshSettlement =
   | Readonly<{
       status: 'refreshed';
@@ -244,97 +257,111 @@ export async function refreshQualifiedConnectedAccount(input: Readonly<{
     clearInterval(renewalTimer);
     await renewalInFlight;
   }
-  const configurationRevision =
-    invocation.basis.credentialConfigurationRevision;
-  if (
-    !leaseCurrent
-    || invocation.basis.credentialRevision
-      !== expectedCredential.credentialRevision
-    || configurationRevision
-      !== expectedCredential.configurationRevision
-    || (input.reason === 'provider_context' && !invocation.basis.isCurrent())
-  ) {
-    throw new Error(
-      'Qualified Connected Account refresh invocation no longer matches its exact lease and snapshot basis',
-    );
-  }
-
-  if (invocation.result.status === 'outcomeUnknown') {
-    return Object.freeze({
-      status: 'outcome_unknown' as const,
-      result: invocation.result,
-      basis: invocation.basis,
-    });
-  }
-  if (invocation.result.status !== 'connected') {
-    return Object.freeze({
-      status: 'not_connected' as const,
-      result: invocation.result,
-      basis: invocation.basis,
-    });
-  }
-
   const mutation = staged.readMutation();
-  if (
-    Object.keys(mutation.set).length === 0
-    && mutation.delete.length === 0
-  ) {
+  const hasCredentialMutation = Object.keys(mutation.set).length > 0 || mutation.delete.length > 0;
+  // A completed refresh can consume a single-use token; finish its replacement
+  // even if the caller no longer needs the result.
+  const settlementSignal = input.reason === 'provider_context' ? input.signal : undefined;
+  let persistenceOutcome: QualifiedConnectedAccountRefreshSettlementError['persistenceOutcome'] = 'not_attempted';
+  try {
+    settlementSignal?.throwIfAborted();
+    const configurationRevision =
+      invocation.basis.credentialConfigurationRevision;
+    if (
+      !leaseCurrent
+      || invocation.basis.credentialRevision
+        !== expectedCredential.credentialRevision
+      || configurationRevision
+        !== expectedCredential.configurationRevision
+      || (input.reason === 'provider_context' && !invocation.basis.isCurrent())
+    ) {
+      throw new Error(
+        'Qualified Connected Account refresh invocation no longer matches its exact lease and snapshot basis',
+      );
+    }
+
+    if (invocation.result.status === 'outcomeUnknown') {
+      return Object.freeze({
+        status: 'outcome_unknown' as const,
+        result: invocation.result,
+        basis: invocation.basis,
+      });
+    }
+    if (invocation.result.status !== 'connected') {
+      return Object.freeze({
+        status: 'not_connected' as const,
+        result: invocation.result,
+        basis: invocation.basis,
+      });
+    }
+
+    if (!hasCredentialMutation) {
+      return Object.freeze({
+        status: 'unchanged' as const,
+        result: invocation.result,
+        basis: invocation.basis,
+      });
+    }
+    const replacement =
+      await invocation.basis.prepareCredentialReplacement({
+        ...mutation,
+        metadata: {
+          ...(invocation.result.providerIdentity
+            ? { providerIdentity: invocation.result.providerIdentity }
+            : {}),
+          ...(invocation.result.displayName
+            ? { displayName: invocation.result.displayName }
+            : {}),
+          ...(invocation.result.scopes
+            ? { scopes: invocation.result.scopes }
+            : {}),
+        },
+      });
+    settlementSignal?.throwIfAborted();
+    if ((input.reason === 'provider_context' && !invocation.basis.isCurrent()) || !leaseCurrent) {
+      throw new Error(
+        'Qualified Connected Account refresh generation or lease changed before credential settlement',
+      );
+    }
+    const mutateCredential =
+      input.mutateCredential
+      ?? mutateQualifiedConnectedAccountCredentialV4;
+    persistenceOutcome = 'unknown';
+    const settled = await mutateCredential({
+      token: input.token,
+      ...(settlementSignal ? { signal: settlementSignal } : {}),
+      mutation: Object.freeze({
+        ref: input.account,
+        authenticationModeId: replacement.authenticationModeId,
+        content: replacement.content,
+        metadata: replacement.metadata,
+        expectedCredentialRevision:
+          invocation.basis.credentialRevision,
+        expectedConfigurationRevision: configurationRevision,
+        refreshLeaseOwnerId: ownerId,
+      }),
+    });
+    persistenceOutcome = 'confirmed';
+    if (
+      settled.credentialRevision === invocation.basis.credentialRevision
+      || settled.configurationRevision !== configurationRevision
+      || (input.reason === 'provider_context' && !invocation.basis.isCurrent())
+      || !leaseCurrent
+    ) {
+      throw new Error(
+        'Qualified Connected Account refresh mutation did not settle against the exact current invocation basis',
+      );
+    }
     return Object.freeze({
-      status: 'unchanged' as const,
+      status: 'refreshed' as const,
+      credentialRevision: settled.credentialRevision,
       result: invocation.result,
       basis: invocation.basis,
     });
+  } catch (error) {
+    if (input.reason !== 'provider_context' && invocation.result.status === 'connected' && hasCredentialMutation) {
+      throw new QualifiedConnectedAccountRefreshSettlementError(persistenceOutcome, error);
+    }
+    throw error;
   }
-  const replacement =
-    await invocation.basis.prepareCredentialReplacement({
-      ...mutation,
-      metadata: {
-        ...(invocation.result.providerIdentity
-          ? { providerIdentity: invocation.result.providerIdentity }
-          : {}),
-        ...(invocation.result.displayName
-          ? { displayName: invocation.result.displayName }
-          : {}),
-        ...(invocation.result.scopes
-          ? { scopes: invocation.result.scopes }
-          : {}),
-      },
-    });
-  if ((input.reason === 'provider_context' && !invocation.basis.isCurrent()) || !leaseCurrent) {
-    throw new Error(
-      'Qualified Connected Account refresh generation or lease changed before credential settlement',
-    );
-  }
-  const mutateCredential =
-    input.mutateCredential
-    ?? mutateQualifiedConnectedAccountCredentialV4;
-  const settled = await mutateCredential({
-    token: input.token,
-    mutation: Object.freeze({
-      ref: input.account,
-      authenticationModeId: replacement.authenticationModeId,
-      content: replacement.content,
-      metadata: replacement.metadata,
-      expectedCredentialRevision:
-        invocation.basis.credentialRevision,
-      expectedConfigurationRevision: configurationRevision,
-      refreshLeaseOwnerId: ownerId,
-    }),
-  });
-  if (
-    settled.credentialRevision === invocation.basis.credentialRevision
-    || settled.configurationRevision !== configurationRevision
-    || (input.reason === 'provider_context' && !invocation.basis.isCurrent())
-    || !leaseCurrent
-  ) {
-    throw new Error(
-      'Qualified Connected Account refresh mutation did not settle against the exact current invocation basis',
-    );
-  }
-  return Object.freeze({
-    status: 'refreshed' as const,
-    credentialRevision: settled.credentialRevision,
-    result: invocation.result,
-    basis: invocation.basis,
-  });
 }

@@ -951,6 +951,8 @@ export function createConnectedAccountEstablishedRuntimeOwner<
             async prepareCredentialReplacement(
               mutation: QualifiedConnectedAccountCredentialMutationPreparationInput,
             ) {
+              // A returned refresh replacement must survive caller cancellation.
+              const signal = input.operation.kind === 'refresh' ? undefined : input.signal;
               if (input.operation.kind !== 'refresh' && !isCurrent()) {
                 throw new Error(
                   'Connected-account runtime generation is no longer current',
@@ -1029,8 +1031,8 @@ export function createConnectedAccountEstablishedRuntimeOwner<
                   metadata,
                   now: Date.now(),
                 });
-              const currentMode = await runCurrentAccountRead(() => params.getAccountEncryptionMode(input.signal, { usage: 'fresh-authority' }), input.signal);
-              assertNotAborted(input.signal);
+              const currentMode = await runCurrentAccountRead(() => params.getAccountEncryptionMode(signal, { usage: 'fresh-authority' }), signal);
+              assertNotAborted(signal);
               if (currentMode !== accountMode || (input.operation.kind !== 'refresh' && !isCurrent())) {
                 throw new Error('Connected-account credential mutation basis is no longer current');
               }

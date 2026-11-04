@@ -133,7 +133,8 @@ async function createHarness(idToken = 'id-old', accountMode: 'plain' | 'e2ee' =
   const mutateCredential = vi.fn(async (_params: Readonly<{
     token: string;
     mutation: unknown;
-  }>) => ({
+    signal?: AbortSignal;
+  }>): ReturnType<NonNullable<Parameters<typeof refreshQualifiedConnectedAccount>[0]['mutateCredential']>> => ({
     success: true as const,
     credentialRevision: nextCredentialRevision,
     configurationRevision: null,
@@ -155,6 +156,108 @@ async function createHarness(idToken = 'id-old', accountMode: 'plain' | 'e2ee' =
 }
 
 describe('refreshQualifiedConnectedAccount', () => {
+  it.each(['before_persist', 'during_persist'] as const)(
+    'persists the rotated replacement when the caller cancels %s', async timing => {
+      const harness = await createHarness();
+      const controller = new AbortController();
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+        access_token: 'access-new', refresh_token: 'refresh-new', expires_in: 3600,
+      }), { status: 200, headers: { 'content-type': 'application/json' } })));
+      if (timing === 'before_persist') {
+        harness.getAccountEncryptionMode.mockImplementation(async () => {
+          if (vi.mocked(fetch).mock.calls.length > 0) controller.abort();
+          return 'plain';
+        });
+      } else {
+        harness.mutateCredential.mockImplementationOnce(async params => {
+          controller.abort();
+          params.signal?.throwIfAborted();
+          return { success: true, credentialRevision: nextCredentialRevision, configurationRevision: null };
+        });
+      }
+      await expect(refreshQualifiedConnectedAccount({
+        account, token: harness.credentials.token, ownerId: 'machine-1:runtime-1',
+        leaseMs: 60_000, operationId: 'cancel-after-exchange', signal: controller.signal,
+        expectedCredential: harness.credentialSnapshot, resolveV4Support: () => 'advertised',
+        establishedRuntimeOwner: harness.owner, acquireRefreshLease: harness.acquireRefreshLease,
+        mutateCredential: harness.mutateCredential,
+      })).resolves.toMatchObject({ status: 'refreshed', credentialRevision: nextCredentialRevision });
+      expect(controller.signal.aborted).toBe(true);
+      expect(fetch).toHaveBeenCalledOnce();
+      expect(harness.mutateCredential).toHaveBeenCalledOnce();
+      expect(harness.mutateCredential.mock.calls[0]![0]).not.toHaveProperty('signal');
+    },
+  );
+
+  it('cancels before the exchange when the caller aborts during lease admission', async () => {
+    const harness = await createHarness();
+    const controller = new AbortController();
+    vi.stubGlobal('fetch', vi.fn());
+    harness.acquireRefreshLease.mockImplementationOnce(async () => {
+      controller.abort();
+      return { acquired: true, leaseUntil: Date.now() + 60_000, ownerId: 'machine-1:runtime-1', credentialRevision };
+    });
+    await expect(refreshQualifiedConnectedAccount({
+      account, token: harness.credentials.token, ownerId: 'machine-1:runtime-1',
+      leaseMs: 60_000, operationId: 'cancel-before-exchange', signal: controller.signal,
+      expectedCredential: harness.credentialSnapshot, resolveV4Support: () => 'advertised',
+      establishedRuntimeOwner: harness.owner, acquireRefreshLease: harness.acquireRefreshLease,
+      mutateCredential: harness.mutateCredential,
+    })).rejects.toMatchObject({ name: 'AbortError' });
+    expect(fetch).not.toHaveBeenCalled();
+    expect(harness.mutateCredential).not.toHaveBeenCalled();
+  });
+
+  it.each(['not_attempted', 'unknown', 'confirmed'] as const)(
+    'identifies a successful provider exchange when credential persistence is %s', async (persistenceOutcome) => {
+      const harness = await createHarness();
+      vi.stubGlobal('fetch', vi.fn(async () => {
+        return new Response(JSON.stringify({
+          access_token: 'access-new', refresh_token: 'refresh-new', expires_in: 3600,
+        }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }));
+      if (persistenceOutcome === 'not_attempted') {
+        harness.getAccountEncryptionMode.mockImplementation(async () => {
+          if (vi.mocked(fetch).mock.calls.length > 0) throw new Error('Account mode authority unavailable');
+          return 'plain';
+        });
+      } else if (persistenceOutcome === 'unknown') {
+        harness.mutateCredential.mockRejectedValueOnce(new Error('credential write response lost'));
+      } else if (persistenceOutcome === 'confirmed') {
+        harness.mutateCredential.mockImplementationOnce(async () => {
+          return { success: true, credentialRevision: nextCredentialRevision, configurationRevision: 'unexpected-configuration' };
+        });
+      }
+
+      await expect(refreshQualifiedConnectedAccount({
+        account, token: harness.credentials.token, ownerId: 'machine-1:runtime-1',
+        leaseMs: 60_000, operationId: 'refresh-settlement-failure', expectedCredential: harness.credentialSnapshot,
+        resolveV4Support: () => 'advertised', establishedRuntimeOwner: harness.owner,
+        acquireRefreshLease: harness.acquireRefreshLease, mutateCredential: harness.mutateCredential,
+      })).rejects.toMatchObject({
+        providerExchange: 'succeeded', persistenceOutcome,
+      });
+      // A rotated token must never cause a second OAuth exchange on settlement failure.
+      expect(fetch).toHaveBeenCalledOnce();
+      expect(harness.mutateCredential).toHaveBeenCalledTimes(persistenceOutcome === 'not_attempted' ? 0 : 1);
+    },
+  );
+
+  it('keeps provider rejection distinct from a successful exchange with failed persistence', async () => {
+    const harness = await createHarness();
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: 'invalid_grant' }), {
+      status: 400, headers: { 'content-type': 'application/json' },
+    })));
+    await expect(refreshQualifiedConnectedAccount({
+      account, token: harness.credentials.token, ownerId: 'machine-1:runtime-1',
+      leaseMs: 60_000, operationId: 'refresh-provider-rejected', expectedCredential: harness.credentialSnapshot,
+      resolveV4Support: () => 'advertised', establishedRuntimeOwner: harness.owner,
+      acquireRefreshLease: harness.acquireRefreshLease, mutateCredential: harness.mutateCredential,
+    })).resolves.toMatchObject({ status: 'not_connected', result: { status: 'reconnectRequired' } });
+    expect(harness.mutateCredential).not.toHaveBeenCalled();
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+
   it.each([
     ['plain', 'provider_response'], ['plain', 'after_exchange'], ['plain', 'before_persist'], ['plain', 'during_persist'],
     ['e2ee', 'provider_response'], ['e2ee', 'after_exchange'], ['e2ee', 'before_persist'], ['e2ee', 'during_persist'],

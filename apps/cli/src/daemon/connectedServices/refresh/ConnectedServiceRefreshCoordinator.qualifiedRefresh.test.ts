@@ -90,6 +90,44 @@ afterEach(async () => {
 });
 
 describe('ConnectedServiceRefreshCoordinator qualified refresh integration', () => {
+  it.each(['write_failure', 'cancelled_write', 'quota_write_failure'] as const)('logs successful exchange with unconfirmed persistence without retrying the provider (%s)', async scenario => {
+    const harness = await createBuiltInQualifiedRefreshHarness();
+    createdRegistries.push(harness);
+    const warn = vi.spyOn(logger, 'warn');
+    const controller = new AbortController();
+    harness.mutateCredential.mockImplementationOnce(async () => {
+      if (scenario === 'cancelled_write') controller.abort();
+      throw new Error('credential write response lost');
+    });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      access_token: 'access-new', refresh_token: 'refresh-new', expires_in: 3600,
+    }), { status: 200, headers: { 'content-type': 'application/json' } })));
+
+    const refresh = scenario === 'quota_write_failure'
+      ? harness.coordinator.refreshConnectedServiceCredentialForQuota({
+        serviceId: 'openai-codex', profileId: harness.account.accountId, force: true,
+        expectedCredentialRevision: harness.firstRevision,
+      })
+      : harness.coordinator.refreshQualifiedConnectedAccountCredentialForRequestAuth({
+        account: harness.account, expectedCredentialRevision: harness.firstRevision, signal: controller.signal,
+      });
+    if (scenario === 'cancelled_write') await expect(refresh).rejects.toMatchObject({ name: 'AbortError' });
+    else if (scenario === 'quota_write_failure') await expect(refresh).resolves.toBeNull();
+    else await expect(refresh).resolves.toBe(false);
+    expect(warn).toHaveBeenCalledWith(
+      '[DAEMON RUN] Qualified Connected Account refresh did not settle',
+      expect.objectContaining({
+        account: harness.account, credentialRevision: harness.firstRevision,
+        providerExchange: 'succeeded', persistenceOutcome: 'unknown',
+      }),
+    );
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(harness.mutateCredential).toHaveBeenCalledOnce();
+    // Quota retains its independent pre-refresh status observation; this lane
+    // does not change that health policy into a rotation-settlement receipt.
+    if (scenario !== 'quota_write_failure') expect(harness.mutateCredentialHealth).not.toHaveBeenCalled();
+  });
+
   it('parks a healthy bound V4 OAuth account without expiry instead of polling its credential', async () => {
     const harness = await createBuiltInQualifiedRefreshHarness();
     createdRegistries.push(harness);

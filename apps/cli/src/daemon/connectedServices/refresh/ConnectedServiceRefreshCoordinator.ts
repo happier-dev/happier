@@ -86,6 +86,7 @@ import type {
 import {
   refreshQualifiedConnectedAccount,
   QualifiedConnectedAccountRefreshLeaseError,
+  QualifiedConnectedAccountRefreshSettlementError,
   type QualifiedConnectedAccountRefreshSettlement,
 } from './refreshQualifiedConnectedAccount';
 import { sanitizeConnectedServiceDiagnosticError } from '../runtimeAuth/sanitizeConnectedServiceDiagnosticString';
@@ -1758,6 +1759,7 @@ export class ConnectedServiceRefreshCoordinator {
 
   async refreshQualifiedConnectedAccountCredentialForRequestAuth(input: Readonly<{
     account: QualifiedConnectedAccountRef;
+    signal?: AbortSignal;
     expectedCredentialRevision: ConnectedServiceCredentialRevisionV1;
   }>): Promise<boolean> {
     return (await this.refreshQualifiedCredential(input)).status === 'refreshed';
@@ -1845,6 +1847,7 @@ export class ConnectedServiceRefreshCoordinator {
 
   private async refreshQualifiedCredential(input: Readonly<{
     account: QualifiedConnectedAccountRef;
+    signal?: AbortSignal;
     expectedCredentialRevision: ConnectedServiceCredentialRevisionV1;
   }>): Promise<Readonly<{
     status: 'refreshed' | 'unchanged' | 'reconnect_required' | 'refresh_failed';
@@ -1884,6 +1887,7 @@ export class ConnectedServiceRefreshCoordinator {
       }
       const settlement = await this.refreshQualifiedAccount({
         account: input.account,
+        ...(input.signal ? { signal: input.signal } : {}),
         token: this.params.credentials.token,
         ownerId,
         leaseMs: this.params.refreshLeaseMs,
@@ -1940,16 +1944,19 @@ export class ConnectedServiceRefreshCoordinator {
       this.armQualifiedConnectedAccountHealthBackoff(input.account);
       return { status: health.reconnectRequired ? 'reconnect_required' : 'refresh_failed' };
     } catch (error) {
+      input.signal?.throwIfAborted();
       this.armQualifiedConnectedAccountHealthBackoff(input.account);
-      logger.warn(
-        '[DAEMON RUN] Qualified Connected Account request-auth refresh did not settle',
-        {
-          service: input.account.service,
-          error: sanitizeConnectedServiceDiagnosticError(error, {
-            redactedValues: [input.account.accountId],
-          }),
-        },
-      );
+      if (!(error instanceof QualifiedConnectedAccountRefreshSettlementError)) {
+        logger.warn(
+          '[DAEMON RUN] Qualified Connected Account request-auth refresh did not settle',
+          {
+            service: input.account.service,
+            error: sanitizeConnectedServiceDiagnosticError(error, {
+              redactedValues: [input.account.accountId],
+            }),
+          },
+        );
+      }
       return { status: 'refresh_failed',
         ...(error instanceof QualifiedConnectedAccountRefreshLeaseError ? { reason: error.code } : {}),
       };
@@ -2439,6 +2446,18 @@ export class ConnectedServiceRefreshCoordinator {
     this.inFlightRefreshes.set(key, inFlight);
     try {
       return await completion;
+    } catch (error) {
+      // Observe the shared exchange once, before any caller propagates cancellation.
+      if (error instanceof QualifiedConnectedAccountRefreshSettlementError) {
+        logger.warn('[DAEMON RUN] Qualified Connected Account refresh did not settle', {
+          account: input.account,
+          credentialRevision: input.expectedCredential.credentialRevision,
+          providerExchange: error.providerExchange,
+          persistenceOutcome: error.persistenceOutcome,
+          error: sanitizeConnectedServiceDiagnosticError(error, { redactedValues: [input.account.accountId] }),
+        });
+      }
+      throw error;
     } finally {
       if (this.inFlightRefreshes.get(key) === inFlight) {
         this.inFlightRefreshes.delete(key);
