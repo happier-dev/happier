@@ -10,7 +10,7 @@
  */
 
 import * as React from 'react';
-import { View } from 'react-native';
+import { View, type ViewProps } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { VirtualizedList } from '@/components/ui/lists/virtualized/VirtualizedList';
@@ -421,7 +421,6 @@ function renderVirtualizedOptionCell(
     cellPlacement?: SelectionListGridCellPlacement,
     rowIndex?: number,
 ): React.ReactElement {
-    const dynStyles = selectionListDynamicRowStyles;
     const isSelected = ctx.selectedOptionIds.has(item.option.id);
     const isFocused = ctx.focusedOptionId !== null && ctx.focusedOptionId === item.option.id;
     const optionRow = (
@@ -440,9 +439,25 @@ function renderVirtualizedOptionCell(
             {...(rowIndex === undefined ? {} : { rowIndex })}
         />
     );
-    return item.isStale
-        ? <View style={dynStyles.staleSection}>{optionRow}</View>
-        : optionRow;
+    // A source's refresh state changes presentation, never the retained row's parent/identity.
+    return <VirtualizedOptionCellFrame key={item.rowKey} stale={item.isStale === true}>{optionRow}</VirtualizedOptionCellFrame>;
+}
+
+/**
+ * The retained parent of a virtualized option. Inside a grid row it IS the row's flex child, so it
+ * takes the equal-column share `SelectionListColumnRow` hands its cells; without it a long card sized
+ * its own column and pushed its neighbour past the pane's edge.
+ */
+function VirtualizedOptionCellFrame(props: Readonly<{
+    stale: boolean;
+    columnCellStyle?: ViewProps['style'];
+    children: React.ReactNode;
+}>): React.ReactElement {
+    return (
+        <View style={[props.columnCellStyle, props.stale ? selectionListDynamicRowStyles.staleSection : undefined]}>
+            {props.children}
+        </View>
+    );
 }
 
 function renderVirtualizedListRow(
@@ -466,14 +481,10 @@ function renderVirtualizedListRow(
                 rowIndex={placement?.rowIndex}
                 optionRowIndex={placement?.optionRowIndex}
             >
-                {item.options.map((cell, columnIndex) => (
-                    <React.Fragment key={cell.rowKey}>
-                        {renderVirtualizedOptionCell(cell, ctx, {
-                            columnIndex: columnIndex + 1,
-                            columnSpan: item.columnSpan,
-                        })}
-                    </React.Fragment>
-                ))}
+                {item.options.map((cell, columnIndex) => renderVirtualizedOptionCell(cell, ctx, {
+                    columnIndex: columnIndex + 1,
+                    columnSpan: item.columnSpan,
+                }))}
             </SelectionListColumnRow>
         );
     }

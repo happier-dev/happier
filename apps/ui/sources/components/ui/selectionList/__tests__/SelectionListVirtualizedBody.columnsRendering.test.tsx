@@ -38,13 +38,18 @@ const { module: capturedLegendList, state: legendListState } = createCapturingLe
     renderItems: true,
 });
 
-vi.mock('@legendapp/list/react-native', () => ({
+// Keep the real exports: the virtualized barrel's section-list entry imports `internal` from here.
+vi.mock('@legendapp/list/react-native', async (importOriginal) => ({
+    ...(await importOriginal<Record<string, unknown>>()),
     LegendList: capturedLegendList.LegendList,
 }));
 
 import { View } from 'react-native';
 
 import { SELECTION_LIST_VIRTUALIZATION_THRESHOLD } from '../_constants';
+
+// Load the real UI graph during collection; a cold transform is not row-rendering work.
+const { SelectionList } = await import('../SelectionList');
 
 const ACCESSORY_TEST_ID = 'trailing-accessory';
 
@@ -105,7 +110,6 @@ async function measureContainer(screen: Screen, widthPx: number): Promise<void> 
 async function renderColumnedVirtualizedList(
     props: Partial<SelectionListProps>,
 ): Promise<Screen> {
-    const { SelectionList } = await import('../SelectionList');
     const screen = await renderScreen(<SelectionList {...defaultProps(props)} />);
     await measureContainer(screen, TWO_COLUMN_WIDTH_PX);
     return screen;
@@ -218,7 +222,6 @@ describe('SelectionList — columned rows through the virtualized body', () => {
     });
 
     it('is the DECLARED columns config that pulls a lone section onto the flat path', async () => {
-        const { SelectionList } = await import('../SelectionList');
         const screen = await renderScreen(
             <SelectionList {...defaultProps({ rootStep: makeStep(makeOptions(5), 'force') })} />,
         );
@@ -299,6 +302,30 @@ describe('SelectionList — grid ARIA through a virtualized columned list', () =
             expect(cells.length).toBeLessThanOrEqual(2);
             expect(cells.map((cell) => cell.props['aria-colindex']))
                 .toEqual(cells.map((_cell, index) => index + 1));
+        }
+    });
+
+    it('gives every grid row child the equal-column share, so a long card cannot widen its column', async () => {
+        // Live 1440 engine pane (2026-11-03): a long Vercel model id sized its cell to its content,
+        // pushing the second card past the pane's edge. Equal columns are the row's direct children.
+        const options = makeOptions(4).map((option, index) => (index === 1
+            ? { ...option, label: 'A very long model name that would otherwise size its own column', expandedContent: <View /> }
+            : option));
+        const screen = await renderColumnedVirtualizedList({
+            rootStep: makeStep(options, 'force'),
+            selectedOptionId: 'm-1',
+        });
+
+        const rows = visualRows(screen);
+        expect(rows.length).toBeGreaterThan(0);
+        for (const row of rows) {
+            const cells = row.children.filter((child): child is ReactTestInstance => typeof child !== 'string');
+            expect(cells).toHaveLength(2);
+            for (const cell of cells) {
+                // The host node that the row lays out (a composite resolves to its first host).
+                const host = typeof cell.type === 'string' ? cell : cell.findAll((node) => typeof node.type === 'string')[0]!;
+                expect(flattenStyle(host.props.style)).toMatchObject({ flexBasis: 0, flexGrow: 1, minWidth: 0 });
+            }
         }
     });
 

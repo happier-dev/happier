@@ -19,6 +19,7 @@ export {
     type SelectionListKeyboardHint,
     type SelectionListLazyVisual,
     type SelectionListOption,
+    type SelectionListOptionVisualState,
     type SelectionListOptionPresentation,
     type SelectionListPagination,
     type SelectionListProps,

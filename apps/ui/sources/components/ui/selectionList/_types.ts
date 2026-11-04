@@ -25,10 +25,12 @@ import type { SelectionListDynamicSectionCache } from './selectionListDynamicSec
 /**
  * A row visual may be supplied directly for small/static lists or through a
  * render-time factory for virtualized lists. Factories are invoked only when
- * the owning row renderer materializes that row.
+ * the owning row renderer materializes that row. Generic visuals keep their
+ * no-argument contract; only right accessories receive current row selection.
  */
+export type SelectionListOptionVisualState = Readonly<{ selected: boolean }>;
 export type SelectionListLazyVisual = React.ReactNode | (() => React.ReactNode);
-export type SelectionListAccessory = SelectionListLazyVisual;
+export type SelectionListAccessory = React.ReactNode | ((row?: SelectionListOptionVisualState) => React.ReactNode);
 export type SelectionListTextEllipsizeMode = 'head' | 'middle' | 'tail' | 'clip';
 
 export type SelectionListKeyboardHint = Readonly<{
@@ -102,6 +104,8 @@ type SelectionListOptionBase = Readonly<{
      */
     content?: React.ReactNode;
     subtitle?: string;
+    /** Item's existing text allowance; 0 lets a complete disclosure grow without truncation. */
+    subtitleLines?: number;
     /** Rich visual subtitle; `subtitle` remains the searchable plain-text value. */
     subtitleContent?: SelectionListLazyVisual;
     /**
@@ -123,7 +127,7 @@ type SelectionListOptionBase = Readonly<{
      * Pressable. This prevents nested-button markup on web while preserving
      * one accessible row activation target beside the independent control.
      */
-    rightAccessoryOutsidePressable?: boolean;
+    rightAccessoryOutsidePressable?: boolean | ((row?: SelectionListOptionVisualState) => boolean);
     /**
      * Extra body rendered directly BELOW the row, by default only while the row
      * is selected. It is mounted as a sibling of the row — outside every

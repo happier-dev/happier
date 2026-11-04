@@ -228,9 +228,14 @@ export function PlanOptionRow(
     props.option.titleAccessory,
   );
   const icon = renderSelectionListAccessory(props.option.icon);
+  const visualState = { selected: isSelected };
   const rightAccessory = renderSelectionListAccessory(
     props.option.rightAccessory,
+    visualState,
   );
+  const rightAccessoryOutsidePressable = typeof props.option.rightAccessoryOutsidePressable === 'function'
+    ? props.option.rightAccessoryOutsidePressable(visualState)
+    : props.option.rightAccessoryOutsidePressable === true;
   // What the row's accessories may react to: the pointer over the row, or the keyboard's focus on it.
   const [hovered, setHovered] = React.useState(false);
   const optionState = React.useMemo(
@@ -317,7 +322,7 @@ export function PlanOptionRow(
   // The cell also contains independent accessory controls. Only the main option is disabled;
   // aria-disabled on their ancestor would override an enabled accessory's own state.
   const cellDisabled = props.option.disabled === true
-    && !(props.option.rightAccessoryOutsidePressable === true && rightAccessory !== undefined);
+    && !(rightAccessoryOutsidePressable && rightAccessory !== undefined);
   const wrapperCellAria = buildSelectionListGridCellWrapperA11yProps({
     pattern: a11yPattern,
     placement: cellPlacement,
@@ -479,11 +484,14 @@ export function PlanOptionRow(
   // Spread rather than passed as `style={isCard ? … : undefined}` so a flush
   // row carries NO style prop at all and `Item` resolves the user's density
   // setting exactly as it does for every other list in the app.
-  // A card's description may take two lines (a model card: name, then one or two lines of what it
-  // is for), as in the engine picker's grid; flush rows keep `Item`'s one-line default.
-  const cardItemInsetProps = isCard
-    ? { style: cardStyles.itemInset, subtitleLines: 2 }
-    : {};
+  // Compact card descriptions default to two lines. A consumer that must show a
+  // complete disclosure uses Item's existing 0/full-text allowance in both the
+  // visible row and its height-measurement mirror.
+  // A card's name wraps once rather than cutting: a narrow grid column otherwise left look-alike
+  // names ("Nemotron 3.5 Lightning 3…") that no longer said which model they were.
+  const itemInsetAndTextProps = isCard
+    ? { style: cardStyles.itemInset, titleLines: 2, subtitleLines: props.option.subtitleLines ?? 2 }
+    : props.option.subtitleLines === undefined ? {} : { subtitleLines: props.option.subtitleLines };
   // The overlay carries no role of its own: it is part of the option, and the
   // option's cell (this wrapper at two columns, the node inside it at one)
   // already owns it. Giving it a cell of its own was how the single-column
@@ -553,7 +561,7 @@ export function PlanOptionRow(
           icon={icon}
           rightElement={itemRightElement}
           rightElementOutsidePressable={
-            !isCard && props.option.rightAccessoryOutsidePressable === true
+            !isCard && rightAccessoryOutsidePressable
           }
           selected={isSelected}
           focused={props.isFocused}
@@ -564,7 +572,7 @@ export function PlanOptionRow(
             props.option.keepChevronWithAccessory === true
           }
           webRole="presentation"
-          {...cardItemInsetProps}
+          {...itemInsetAndTextProps}
         />
         {renderCardAccessoryOverlay(false)}
         {expandedContent}
@@ -642,7 +650,7 @@ export function PlanOptionRow(
         // A row's trailing facts and its selected check are never cut; the label gives way instead.
         accessoryMaxWidth="row"
         rightElementOutsidePressable={
-          !isCard && props.option.rightAccessoryOutsidePressable === true
+          !isCard && rightAccessoryOutsidePressable
         }
         onPressIn={props.option.onPressIn}
         onHoverIn={props.option.disabled === true ? undefined : () => {
@@ -677,7 +685,7 @@ export function PlanOptionRow(
         accessibilitySetSize={
           optionAria.role === 'option' ? optionAria['aria-setsize'] : undefined
         }
-        {...cardItemInsetProps}
+        {...itemInsetAndTextProps}
       />
     );
   // Everything the option owns, in reading order. In `listbox` mode these are

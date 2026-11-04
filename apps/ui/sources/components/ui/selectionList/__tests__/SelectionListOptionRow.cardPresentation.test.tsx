@@ -61,6 +61,7 @@ vi.mock('react-native-unistyles', async () => {
 installDisconnectedServerSocketBoundary();
 await loadSyncSingletonForTests();
 const { PlanOptionRow } = await import('../SelectionListOptionRow');
+const { renderSelectionListAccessory } = await import('../renderSelectionListAccessory');
 
 import { View } from 'react-native';
 
@@ -113,6 +114,54 @@ function makeOption(overrides: Partial<SelectionListOption> = {}): SelectionList
         ...overrides,
     };
 }
+
+it('leaves section and header factories without row state', async () => {
+    const header = renderSelectionListAccessory(row => row
+        ? <View testID="unexpected-row-visual" /> : <View testID="header-visual" />);
+    const screen = await renderScreen(<View>{header}</View>);
+    expect(screen.findByTestId('header-visual')).not.toBeNull();
+    expect(screen.findByTestId('unexpected-row-visual')).toBeNull();
+});
+
+it('resolves a stable accessory factory from current row selection before reserving a card gutter', async () => {
+    const option = makeOption({ expandedContent: undefined,
+        rightAccessory: state => state?.selected ? <View testID={ACCESSORY_TEST_ID} /> : null });
+    const row = (isSelected: boolean) => (
+        <SelectionListA11yPatternContext.Provider value="grid">
+            <SelectionListOptionPresentationContext.Provider value="card">
+                <PlanOptionRow option={option} rootTestID="models" stepId="root" isSelected={isSelected}
+                    isFocused={false} onSelect={() => {}} onPushStep={() => {}} />
+            </SelectionListOptionPresentationContext.Provider>
+        </SelectionListA11yPatternContext.Provider>
+    );
+    const screen = await renderScreen(row(false));
+    expect(screen.findByTestId(OVERLAY_TEST_ID)).toBeNull();
+    expect(readItemProps(screen).rightElement).toBeUndefined();
+    await screen.update(row(true));
+    expect(screen.findByTestId(ACCESSORY_TEST_ID)).not.toBeNull();
+    expect(screen.findByTestId(OVERLAY_TEST_ID)).not.toBeNull();
+    expect(readItemProps(screen).rightElement).toBeDefined();
+    await screen.update(row(false));
+    expect(screen.findByTestId(OVERLAY_TEST_ID)).toBeNull();
+    expect(readItemProps(screen).rightElement).toBeUndefined();
+});
+
+it('keeps selection-dependent accessory placement consistent with the row accessibility owner', async () => {
+    const option = makeOption({ expandedContent: undefined,
+        rightAccessoryOutsidePressable: state => state?.selected === true });
+    const row = (isSelected: boolean) => (
+        <SelectionListA11yPatternContext.Provider value="grid">
+            <PlanOptionRow option={option} rootTestID="models" stepId="root" isSelected={isSelected}
+                isFocused={false} onSelect={() => {}} onPushStep={() => {}} />
+        </SelectionListA11yPatternContext.Provider>
+    );
+    const screen = await renderScreen(row(false));
+    expect(readItemProps(screen).rightElementOutsidePressable).toBe(false);
+    await screen.update(row(true));
+    expect(readItemProps(screen).rightElementOutsidePressable).toBe(true);
+    await screen.update(row(false));
+    expect(readItemProps(screen).rightElementOutsidePressable).toBe(false);
+});
 
 async function renderRow(params: Readonly<{
     presentation: 'row' | 'card';
