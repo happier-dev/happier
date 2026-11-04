@@ -33,8 +33,8 @@ export function resolveCommandRepositoryConfig(config, { repoRoot, executorRepoR
   }
   const name = basename(repoRoot);
   const defaults = ['mac2-linux', 'windows2-linux'].filter(name => normalized.targets.some(target => target.name === name && target.platform === 'posix'));
-  // Automatic commands use workers; explicit sibling service placements
-  // retain their own endpoints in the same canonical synchronization project.
+  // Automatic commands use workers; service placement keeps its host while
+  // every sibling source gets its own directory in that host's mirror parent.
   const requested = commandExecution ?? (defaults.length ? { mode: 'auto', targets: defaults, fallback: 'local' } : { mode: 'local' });
   const commands = requested.mode === 'auto'
     ? { ...requested, targets: requested.targets.filter(target => target !== 'mac-host') }
@@ -55,6 +55,9 @@ export function resolveCommandRepositoryConfig(config, { repoRoot, executorRepoR
       repoDir: posix.join(posix.dirname(target.repoDir), name) }]));
   for (const { target } of services) {
     targets.set(target.name, { ...target,
+      // Linked worktrees share a Git-based Stack identity and can inherit the
+      // parent checkout's service configuration. Never reuse its destination.
+      repoDir: posix.join(posix.dirname(target.repoDir), name),
       executorRepoDir: normalized.targets.find(parent => parent.name === target.name)?.repoDir ?? target.repoDir });
   }
   return parseDevTargetsConfig({

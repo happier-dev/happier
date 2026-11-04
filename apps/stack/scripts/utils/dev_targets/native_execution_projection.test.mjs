@@ -501,6 +501,22 @@ test('sibling service mirrors retain explicit placement without enrolling mac-ho
   assert.match(project, /mode: "portable"/);
 });
 
+test('sibling service routing scopes inherited runtime endpoints to each alpha', () => {
+  const runtimeConfig = { version: 3, targets: [{ name: 'mac-host', platform: 'posix', ssh: 'mac-ssh',
+    repoDir: '/mirror/0.2', cliHomeDir: '/home/mac' }], runtimePlacement: {
+    daemon: { mode: 'local-and-targets', targets: ['mac-host'] },
+  } };
+  const parent = { version: 3, targets: [{ ...runtimeConfig.targets[0], repoDir: '/mirror/0.3' }] };
+  const routes = ['0.2', 'pr745-steward', 'pr738-steward', 'pr750-steward'].map(name => {
+    const config = resolveCommandRepositoryConfig(parent, {
+      repoRoot: `/source/${name}`, executorRepoRoot: '/source/0.3', runtimeConfig,
+    });
+    return config.targets.find(target => target.name === 'mac-host').repoDir;
+  });
+  assert.deepEqual(routes, ['/mirror/0.2', '/mirror/pr745-steward', '/mirror/pr738-steward', '/mirror/pr750-steward']);
+  assert.equal(new Set(routes).size, routes.length);
+});
+
 test('sibling preparation reads its own persisted service placement', async t => {
   const root = await mkdtemp(join(tmpdir(), 'hstack-sibling-services-'));
   t.after(() => rm(root, { recursive: true, force: true }));
