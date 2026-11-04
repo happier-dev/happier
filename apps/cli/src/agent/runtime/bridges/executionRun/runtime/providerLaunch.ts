@@ -1,3 +1,4 @@
+import { SessionTeamCredentialLaunchUnavailableError } from '@/session/services/sessionTeamCredentialLaunchError';
 import { join } from 'node:path';
 
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
@@ -44,6 +45,7 @@ export type ExecutionRunProviderSelectionInput = Readonly<{
 /** Only the caller's exact choice crosses the existing snapshot service seam. */
 export type ExecutionRunProviderLaunchRequest = Readonly<{
     selection: ProviderBoundModelRef;
+    teamCredentialModel?: TeamCredentialProviderModelSelectionV1;
     backendTarget: BackendTargetRefV2Input;
     agentId: string;
     runId: string;
@@ -229,6 +231,10 @@ export async function prepareExecutionRunProviderLaunch(input: Readonly<{
             const redaction = createProviderRedactionLease({
                 values: teamBinding.additionalRedactionValues,
             });
+            const cleanupOnExit = async () => {
+                try { await teamBinding.cleanup(); } finally { redaction.close(); }
+            };
+            input.retainCleanup?.(cleanupOnExit);
             return Object.freeze({
                 environment: Object.freeze(environment),
                 unsetEnvKeys: Object.freeze(unsetEnvKeys),
@@ -239,23 +245,15 @@ export async function prepareExecutionRunProviderLaunch(input: Readonly<{
                 sanitizeDiagnosticText: redaction.redact,
                 additionalRedactionValues: redaction.values(),
                 revalidateBeforeCommit: async () => Object.freeze({ ok: true as const }),
-                cleanupOnExit: async () => {
-                    try { await teamBinding.cleanup(); } finally { redaction.close(); }
-                },
+                cleanupOnExit,
             });
         }
         if (input.teamCredentialModel) {
-            throw refusal(createProviderErrorV1('provider_connection_not_found', {
-                connectionId: input.teamCredentialModel.resourceId,
-                ...(input.machineId ? { machineId: input.machineId } : {}),
-            }));
+            throw new SessionTeamCredentialLaunchUnavailableError();
         }
     }
     if (input.teamCredentialModel) {
-        throw refusal(createProviderErrorV1('provider_connection_not_found', {
-            connectionId: input.teamCredentialModel.resourceId,
-            ...(input.machineId ? { machineId: input.machineId } : {}),
-        }));
+        throw new SessionTeamCredentialLaunchUnavailableError();
     }
     if (!input.selection || input.selection.providerConnectionId === null) {
         return nativeLaunch;

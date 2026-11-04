@@ -600,6 +600,7 @@ export const PLUGIN_SERVICE_DESCRIPTORS = Object.freeze({
         id: 'machineProvisioners', publicProperty: 'machineProvisioners', availabilityOwner: 'host', unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
         createUnavailable(code?: string, diagnostic?: PluginServiceUnavailableDiagnostic): PluginServices['machineProvisioners'] {
             return Object.freeze({
+                materializeNativeCredentialHeaders: async () => ({ ok: false as const, code: 'native_credential_binding_unavailable' as const }),
                 materializeBootstrapCredential: unavailableMethod('machineProvisioners', code, diagnostic),
                 withBootstrapCredentialFile: unavailableMethod('machineProvisioners', code, diagnostic),
             });

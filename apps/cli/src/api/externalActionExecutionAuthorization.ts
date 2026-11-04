@@ -9,6 +9,12 @@ import { MachineAgentIsolationPreviewInputV1Schema, MachineAgentIsolationSetInpu
 import { ManagedEnrollmentInstallationV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { sealManagedCreationActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import type { ResolvedHomeTarget } from '@happier-dev/cli-common/homeTarget';
+import { readManagedMachine } from '@/machines/managed/readManagedMachine';
+import { sealManagedControllerActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { projectExternalActionManagedAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import type { SessionTeamCredentialBindingIntentV1 } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
+import { readSessionSpawnNativeCredentialChildV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { createDeploymentChildExecutionProofV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { readHostAdmittedReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { type WorkspaceSyncSourceExecutionV1 } from '@happier-dev/protocol/socketRpc';
@@ -341,6 +347,12 @@ type OriginalAccountActionInput = Readonly<{
   templateRequesterSetupPlanContinuation?: ExternalActionExecutionAuthorizationRequestV1['templateRequesterSetupPlanContinuation'];
   /** Host provenance retained inside the existing installation-bound private box. */
   invocation?: ExternalActionRequesterInvocationV1;
+  /** The admitted original spawn authorizes only its exact native install child. */
+  nativeCredentialSpawnChild?: Readonly<{
+    context: ActionExecutorContext; machineId: string; installationId: string; privateKey: ExternalActionMachineRequestSigningKey;
+    binding: Exclude<SessionTeamCredentialBindingIntentV1, { resourceId: null }>;
+    agentTargetKey: string; modelId: string;
+  }>;
   /** A human confidentiality decision, distinct from the target Action's Ask first policy. */
   onRequesterSessionCredentialDisclosure?: (disclosure: ReturnType<typeof projectRequesterSessionCredentialDisclosure>) => boolean | void | Promise<boolean | void>;
   isCurrent?: () => boolean | Promise<boolean>;
@@ -392,12 +404,49 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
   const requiresMachineProof = input.managedContinuation !== undefined
     || input.templateRequesterSetupPlanContinuation !== undefined
     || requiresOriginalAccountMachineActionProof(input.actionId, input.input);
-  const isCurrent = async () => !input.signal?.aborted && (!input.isCurrent || await phase('currentness', () => input.isCurrent!()));
+  const spawnChild = input.nativeCredentialSpawnChild;
+  const spawnRequester = spawnChild
+    ? readRequesterAccountActionContext(spawnChild.context.externalActionExecutionAuthorization) : null;
+  if (spawnChild) {
+    const authorization = spawnChild.context.externalActionExecutionAuthorization;
+    if (!authorization || !spawnRequester || authorization.binding.accountId !== accountId || authorization.binding.serverIdentityId !== input.serverIdentityId
+      || spawnChild.installationId !== authorization.binding.installationId
+      || !await isReviewedSessionSpawnNativeCredentialChild({ authorization, envelope: spawnChild.context.originalActionEnvelope,
+        actionId: input.actionId, machineId: spawnChild.machineId, params: input.input,
+        binding: spawnChild.binding, agentTargetKey: spawnChild.agentTargetKey, modelId: spawnChild.modelId,
+        ...(input.signal ? { signal: input.signal } : {}) })) return fail('admission_unavailable');
+  }
+  const isCurrent = async () => !input.signal?.aborted
+    && (!spawnRequester || input.isCurrent === spawnRequester.isCurrent || await phase('spawn_custody', () => spawnRequester.isCurrent()))
+    && (!input.isCurrent || await phase('currentness', () => input.isCurrent!()));
+
   if (!await isCurrent()) return fail('target_unavailable');
   // This branch only chooses the incumbent own-account path. Home still owns
   // authentication and the destination owns its Action admission.
   let machines: Awaited<ReturnType<typeof listCurrentAccountMachines>> | undefined;
-  if (input.foreignTargetOnly) {
+  const managedAdmission = projectExternalActionManagedAdmissionV1(input.actionId, input.input);
+  let scopedController: (NonNullable<ManagedMachineV1['controllerAccess']> & ManagedMachineV1['controller']) | undefined;
+  if (managedAdmission && managedAdmission.actionId !== 'machines.managed.power.set'
+    && managedAdmission.actionId !== 'machines.managed.delete'
+    && accountId && input.serverIdentityId && input.target.kind === 'machine') {
+    const managed = managedAdmission.input;
+    const managedHomeId = 'homeId' in managed ? managed.homeId : managed.selection.homeId;
+    if (managedHomeId !== input.serverIdentityId) return fail('server_target_mismatch');
+    if ('managedId' in managed) {
+      const row = await phase('managed_machine', () => readManagedMachine({ credentials: input.credentials,
+        serverHttpBaseUrl: homeUrl, homeId: managed.homeId, managedId: managed.managedId,
+        ...(input.signal ? { signal: input.signal } : {}) }));
+      if (row.id !== managed.managedId || row.homeId !== managed.homeId
+        || !row.controller || row.controller.machineId !== input.target.machineId) return fail('controller_retired');
+      if (row.enrollmentAccountId === accountId && row.custodianAccountId !== accountId) {
+        if (!row.controllerAccess) return fail('controller_unavailable');
+        scopedController = { ...row.controller, ...row.controllerAccess };
+      }
+    }
+    if (scopedController && (scopedController.machineId !== input.target.machineId
+      || !await isCurrent())) return fail('controller_retired');
+  }
+  if (input.foreignTargetOnly && !scopedController) {
     if (input.target.kind !== 'machine') return fail('target_unavailable');
     const machineId = input.target.machineId;
     machines = await phase('machine_inventory', () => listCurrentAccountMachines({ token: input.credentials.token, serverHttpBaseUrl: homeUrl,
@@ -429,10 +478,10 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
     phase('account_mode', () => readAccountEncryptionModeOnce({ credentials: input.credentials, request: () => axios.get<unknown>(`${homeUrl}/v1/account/encryption`, {
       headers, ...(input.signal ? { signal: input.signal } : {}), validateStatus: () => true,
     }) })),
-    input.target.kind === 'machine' && !machines
+    input.target.kind === 'machine' && !machines && !scopedController
       ? phase('machine_inventory', () => listCurrentAccountMachines({ token: input.credentials.token, serverHttpBaseUrl: homeUrl,
         ...(input.signal ? { signal: input.signal } : {}) })) : machines,
-    input.target.kind === 'machine' && requiresMachineProof && input.serverIdentityId
+    input.target.kind === 'machine' && requiresMachineProof && input.serverIdentityId && !scopedController
       ? readInstalledPublication(input.target.machineId) : undefined,
   ]);
   // Preserve mode refusal/error precedence while settling all passive reads.
@@ -442,8 +491,8 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
   if (inventoryRead.status === 'rejected') throw inventoryRead.reason;
   machines = inventoryRead.value;
   let machine: CurrentAccountMachineInventoryItem | undefined;
-  let foreign = false;
-  if (input.target.kind === 'machine') {
+  let foreign = scopedController ? scopedController.custodian.accountId !== accountId : false;
+  if (input.target.kind === 'machine' && !scopedController) {
     const machineId = input.target.machineId;
     machine = machines?.find(row => row.id === machineId);
     // Offline remains a retained target; current Home admission still decides
@@ -457,16 +506,18 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
       || input.credentials.credentialProvenance === 'api_token')) return fail('requester_account_material_unavailable');
   }
   let material: Extract<AccountScopedCryptoMaterial, { type: 'dataKey' }> | undefined;
+  const controllerCodec = Boolean(managedAdmission && foreign);
+  if (controllerCodec) material = { type: 'dataKey', machineKey: randomBytes(32) };
   if (mode.mode === 'e2ee') {
     if (!input.serverIdentityId) return fail('admission_unavailable');
-    try {
+    try { if (!controllerCodec) {
       const keyed = requireAccountEncryptionCredentials(input.credentials).encryption;
       material = { type: 'dataKey', machineKey: keyed.type === 'dataKey'
-        ? keyed.machineKey : deriveAccountMachineKeyFromRecoverySecret(keyed.secret) };
+        ? keyed.machineKey : deriveAccountMachineKeyFromRecoverySecret(keyed.secret) }; }
     } catch { return fail('content_unavailable'); }
   }
   const actionId = ExternalActionActionIdV1Schema.parse(input.actionId);
-  const binding = material ? { serverIdentityId: input.serverIdentityId!, accountId, authentication: authentication.data,
+  const binding = mode.mode === 'e2ee' && material ? { serverIdentityId: input.serverIdentityId!, accountId, authentication: authentication.data,
     actionId, requestId: input.requestId, target: input.target } satisfies ExternalActionEncryptionBindingV2 : undefined;
   const idempotencyKey = projectExternalActionRunNowIdempotencyKeyV1(actionId, input.input);
   const envelope = binding && material ? sealExternalActionRequestV2({ binding, material, input: input.input, randomBytes })
@@ -474,10 +525,23 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
         ...(idempotencyKey === undefined ? {} : { idempotencyKey }) });
   let body: unknown = envelope;
   const access = machine?.access;
-  if (machine && access && (foreign || requiresMachineProof)) {
+  const nativeCredentialSpawnChild = spawnChild ? (() => {
+    if (managedAdmission?.actionId !== 'machines.managed.credentials.install') return null;
+    const authorization = spawnChild.context.externalActionExecutionAuthorization!;
+    const params = envelope.v === 1 ? envelope.input : envelope.payload.c;
+    const method = `${input.target.kind === 'machine' ? input.target.machineId : ''}:machines.managed.credentials.install`;
+    const execution = createExternalActionSourceMachineRpcExecution({ authorization,
+      target: authorization.binding.target, sourceMachineId: spawnChild.machineId,
+      sourceInstallationId: spawnChild.installationId, effectActionId: input.actionId,
+      method, requestId: input.requestId, params, managedAdmission, privateKey: spawnChild.privateKey });
+    return execution && spawnChild.context.originalActionEnvelope ? { externalActionExecution: execution,
+      method, requestId: input.requestId, params, originalActionEnvelope: spawnChild.context.originalActionEnvelope } : null;
+  })() : undefined;
+  if (spawnChild && !nativeCredentialSpawnChild) return fail('admission_unavailable');
+  if (scopedController || machine && access && (foreign || requiresMachineProof)) {
     if (!input.serverIdentityId) return fail('admission_unavailable');
     const templatePlanParent = input.templateRequesterSetupPlanContinuation?.authorization;
-    if (foreign && !templatePlanParent?.requesterAccountContext && !input.onRequesterSessionCredentialDisclosure) return fail('requester_credential_disclosure_required');
+    if (foreign && !controllerCodec && !templatePlanParent?.requesterAccountContext && !input.onRequesterSessionCredentialDisclosure) return fail('requester_credential_disclosure_required');
     const readInstalledMachine = async (observed: CurrentAccountMachineInventoryItem) => {
       const isOriginalTarget = input.target.kind === 'machine' && observed.id === input.target.machineId && requiresMachineProof;
       if (isOriginalTarget && installedRead.status === 'rejected') throw installedRead.reason;
@@ -488,22 +552,30 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
         || installed.access.resourceMode !== observed.access?.resourceMode || !await isCurrent()) return null;
       return installed;
     };
-    const installed = await readInstalledMachine(machine);
+    const installed = scopedController ?? (machine ? await readInstalledMachine(machine) : null);
     if (!installed) return fail('admission_unavailable');
-    const minted = await phase('mint_authorization', () => mintExternalActionExecutionAuthorization({ actionId, envelope, machineId: machine.id,
+    const destinationId = scopedController?.machineId ?? machine!.id;
+    const custodianAccountId = scopedController?.custodian.accountId ?? access!.custodian.accountId;
+    const minted = await phase('mint_authorization', () => mintExternalActionExecutionAuthorization({ actionId, envelope, machineId: destinationId,
       pat: input.credentials.token, serverHttpBaseUrl: homeUrl,
       ...(input.managedContinuation ? { managedContinuation: input.managedContinuation } : {}),
       ...(input.templateRequesterSetupPlanContinuation ? { templateRequesterSetupPlanContinuation: input.templateRequesterSetupPlanContinuation } : {}),
+      ...(nativeCredentialSpawnChild ? { nativeCredentialSpawnChild } : {}),
       ...(input.authority === 'account_automation' ? { authorityCeiling: 'account_automation' as const } : {}),
       ...(input.signal ? { signal: input.signal } : {}) }));
     if (!minted.ok) return fail(minted.code);
     const root = minted.authorization.binding;
     if (!('authentication' in root) || root.authentication.kind !== authentication.data.kind
       || root.authentication.tokenEpoch !== authentication.data.tokenEpoch || root.accountId !== accountId
-      || root.custodianAccountId !== access.custodian.accountId || root.serverIdentityId !== input.serverIdentityId
-      || root.machineId !== machine.id || root.installationId !== installed.installationId
+      || root.custodianAccountId !== custodianAccountId || root.serverIdentityId !== input.serverIdentityId
+      || root.machineId !== destinationId || root.installationId !== installed.installationId
       || root.accountEncryptionMode !== mode.mode || root.actionId !== actionId || root.requestId !== input.requestId
       || root.requestEnvelopeDigest !== computeExternalActionRequestEnvelopeDigestV1(envelope)
+      || !sameStrictJsonValue(root.managedAdmission, managedAdmission)
+      || !sameStrictJsonValue(root.nativeCredentialSpawnChild, spawnChild ? {
+        requestId: spawnChild.context.externalActionExecutionAuthorization!.binding.requestId,
+        requestEnvelopeDigest: spawnChild.context.externalActionExecutionAuthorization!.binding.requestEnvelopeDigest,
+      } : undefined)
       || !sameStrictJsonValue(root.templateRequesterSetupPlanAdmission, templatePlanParent ? {
         parentActionId: 'template.updates.apply', parentRequestEnvelopeDigest: templatePlanParent.binding.requestEnvelopeDigest,
         planInputDigest: templatePlanParent.binding.templateRequesterSetupAdmission?.planInputDigest,
@@ -535,10 +607,15 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
     };
     let authorization = minted.authorization;
     try {
-      if (foreign || input.invocation || templatePlanParent?.requesterAccountContext) {
+      if (controllerCodec) {
+        if (!installed.installationPublicKey || !material || authorization.managedFiniteWake) return fail('admission_unavailable');
+        authorization = sealManagedControllerActionCodecV1({ authorization, material,
+          ...(input.invocation ? { invocation: input.invocation } : {}),
+          installationPublicKey: decodeBase64(installed.installationPublicKey, scopedController ? 'base64url' : 'base64'), randomBytes });
+      } else if (foreign || input.invocation || templatePlanParent?.requesterAccountContext) {
         if (!installed.installationPublicKey) return fail('admission_unavailable');
         if (foreign && !templatePlanParent?.requesterAccountContext) {
-          const refusal = await confirmDisclosure(machine);
+          const refusal = await confirmDisclosure(machine!);
           if (refusal) return refusal;
         }
         authorization = sealExternalActionRequesterAccountContextV1({ authorization,
@@ -566,7 +643,7 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
             installationPublicKey: controllerKey, randomBytes });
         }
       }
-      body = ExternalActionExecutionAuthorizationRequestV1Schema.parse({ v: 1, machineId: machine.id, envelope,
+      body = ExternalActionExecutionAuthorizationRequestV1Schema.parse({ v: 1, machineId: destinationId, envelope,
         executionAuthorization: authorization });
     } catch { return fail('content_unavailable'); }
   }
@@ -609,6 +686,7 @@ export function createExternalActionMachineRpcExecution(input: Readonly<{
   deploymentChildRouting?: DeploymentChildRoutingV1;
   deploymentChildExecution?: WorkspaceSyncSourceExecutionV1;
   deploymentArchiveOrigin?: DeploymentArchiveOriginForHost;
+  managedAdmission?: ExternalActionMachineRpcExecutionV1['managedAdmission'];
   privateKey: ExternalActionMachineRequestSigningKey;
 }>): ExternalActionMachineRpcExecutionV1 | null {
   const authorization = input.context?.externalActionExecutionAuthorization;
@@ -627,6 +705,7 @@ export function createExternalActionMachineRpcExecution(input: Readonly<{
     ...(reviewedChild ? { reviewedChild } : {}),
     ...(input.deploymentChildRouting ? { deploymentChildRouting: input.deploymentChildRouting } : {}),
     ...(input.deploymentChildExecution ? { deploymentChildExecution: createDeploymentChildExecutionProofV1(input.deploymentChildExecution, input.deploymentArchiveOrigin) } : {}),
+    ...(input.managedAdmission ? { managedAdmission: input.managedAdmission } : {}),
     machineSignature: signExternalActionMachineRpcRequestV1({
       authorizationToken: authorization.token,
       requesterAccountContext: authorization.requesterAccountContext,
@@ -638,6 +717,7 @@ export function createExternalActionMachineRpcExecution(input: Readonly<{
       method: input.method,
       requestId: input.requestId,
       ...(input.params === undefined ? {} : { params: input.params }),
+      ...(input.managedAdmission ? { managedAdmission: input.managedAdmission } : {}),
         ...(input.workspaceSyncSourceRouting ? { workspaceSyncSourceRouting: input.workspaceSyncSourceRouting } : {}),
       ...(input.workspaceSyncSourceWriterTargetRouting ? { workspaceSyncSourceWriterTargetRouting: input.workspaceSyncSourceWriterTargetRouting } : {}),
       ...(input.workspaceSyncSeedRouting ? { workspaceSyncSeedRouting: input.workspaceSyncSeedRouting } : {}),
@@ -660,7 +740,7 @@ export function readExternalActionSourceMachineRpcSigner(
   const parsed = ExternalActionExecutionAuthorizationV1Schema.safeParse(authorization);
   if (!parsed.success) return null;
   const binding = parsed.data.binding;
-  if ((binding.actionId === 'projects.service.relocate' || binding.actionId === 'discussion.second_opinion.start' || isSessionStopChildRootV1(binding.actionId)
+  if ((binding.actionId === 'session.spawn_new' || binding.actionId === 'projects.service.relocate' || binding.actionId === 'discussion.second_opinion.start' || isSessionStopChildRootV1(binding.actionId)
     || isDeploymentChildRootActionIdV1(binding.actionId, binding.deploymentPreparationAdmission)
     || isMachineSetupPlanRpcChildV1({ rootActionId: binding.actionId, effectActionId: 'machines.setup.plan', method: RPC_METHODS.MACHINE_SETUP_PLAN })) && binding.target.kind === 'machine'
     && binding.target.machineId === binding.machineId) return { machineId: binding.machineId, installationId: binding.installationId };
@@ -685,6 +765,7 @@ export function createExternalActionSourceMachineRpcExecution(input: Readonly<{
   requestId?: string;
   params?: unknown;
   deploymentChildRouting?: DeploymentChildRoutingV1;
+  managedAdmission?: ExternalActionMachineRpcExecutionV1['managedAdmission'];
   privateKey: ExternalActionMachineRequestSigningKey;
 }>): ExternalActionMachineRpcExecutionV1 | null {
   const parsed = ExternalActionExecutionAuthorizationV1Schema.safeParse(input.authorization);
@@ -698,8 +779,12 @@ export function createExternalActionSourceMachineRpcExecution(input: Readonly<{
     effectActionId: 'machines.setup.plan', method: RPC_METHODS.MACHINE_SETUP_PLAN });
   const setupPlanChild = isMachineSetupPlanRpcChildV1({ rootActionId: binding.actionId,
     effectActionId: input.effectActionId, method: input.method.slice(input.method.indexOf(':') + 1) });
+  const nativeCredentialChild = readSessionSpawnNativeCredentialChildV1({ rootActionId: binding.actionId,
+    effectActionId: input.effectActionId, method: input.method.slice(input.method.indexOf(':') + 1),
+    managedAdmission: input.managedAdmission, params: input.params });
   if (!source || source.machineId !== input.sourceMachineId
     || source.installationId !== input.sourceInstallationId
+    || binding.actionId === 'session.spawn_new' && !nativeCredentialChild
     || setupPlanRoot && !setupPlanChild && (input.effectActionId !== binding.actionId
       || input.method !== `${binding.machineId}:${binding.actionId}`)
     || isSessionStopChildRootV1(binding.actionId) && !stopChild
@@ -713,7 +798,7 @@ export function createExternalActionSourceMachineRpcExecution(input: Readonly<{
       || deploymentChild.actionId !== deploymentChildEffectActionIdForRootV1(binding.actionId, binding.deploymentPreparationAdmission)
       || input.effectActionId !== deploymentChild.actionId
       || input.method !== `${deploymentChild.machineId}:${RPC_METHODS.DAEMON_DEPLOYMENT_CHILD}`)
-    || binding.actionId !== 'projects.service.relocate' && binding.actionId !== 'discussion.second_opinion.start' && !deploymentChild && !setupPlanChild && !stopChild
+    || binding.actionId !== 'projects.service.relocate' && binding.actionId !== 'discussion.second_opinion.start' && !deploymentChild && !setupPlanChild && !stopChild && !nativeCredentialChild
       && !input.method.startsWith(`${binding.machineId}:`)) return null;
   return createExternalActionMachineRpcExecution({
     context: { ...input.context, surface: 'rpc', externalActionExecutionAuthorization: input.authorization, externalActionTarget: input.target },
@@ -723,6 +808,7 @@ export function createExternalActionSourceMachineRpcExecution(input: Readonly<{
     ...(input.requestId ? { requestId: input.requestId } : {}),
     ...(input.params === undefined ? {} : { params: input.params }),
     ...(deploymentChild ? { deploymentChildRouting: deploymentChild } : {}),
+    ...(input.managedAdmission ? { managedAdmission: input.managedAdmission } : {}),
     privateKey: input.privateKey,
   });
 }
@@ -1656,6 +1742,38 @@ export async function isReviewedMachineSetupPlanChild(input: Readonly<{
     || rootInput.homeId !== input.authorization.binding.serverIdentityId) return false;
   return readMachineSetupPlanChildInputV1({ rootActionId: input.authorization.binding.actionId,
     rootInput, machineId: input.machineId, input: input.params }) !== null;
+}
+
+/** Initial native delivery spends only the Team selection in the approved spawn. */
+export async function isReviewedSessionSpawnNativeCredentialChild(input: Readonly<{
+  authorization: ExternalActionExecutionAuthorizationV1; envelope: unknown; actionId: string;
+  machineId: string; params: unknown;
+  binding: Exclude<SessionTeamCredentialBindingIntentV1, { resourceId: null }>;
+  agentTargetKey: string; modelId: string; signal?: AbortSignal;
+}>): Promise<boolean> {
+  const root = input.authorization.binding;
+  const facet = input.binding.nativeDelivery;
+  const request = readSessionSpawnNativeCredentialChildV1({ rootActionId: root.actionId,
+    effectActionId: input.actionId, method: 'machines.managed.credentials.install',
+    managedAdmission: projectExternalActionManagedAdmissionV1(input.actionId, input.params), params: input.params });
+  if (!request || !facet || input.binding.slot.kind !== 'provider_model'
+    || input.binding.deliveryMode !== 'vendor-native' || !input.binding.teamId
+    || root.machineId !== input.machineId || root.installationId !== facet.guestInstallationId
+    || request.homeId !== root.serverIdentityId || request.managedId !== facet.managedId
+    || request.bindingKey !== facet.bindingKey || request.expectedResourceRevision !== input.binding.expectedResourceRevision
+    || request.expectedSourceRevision !== facet.sourceRevision || request.expectedProviderTicket !== facet.providerTicket) return false;
+  const reviewed = SessionSpawnNewInputV2Schema.safeParse(await readReviewedExternalActionInput(input));
+  if (!reviewed.success || reviewed.data.executionTarget.machineId !== input.machineId
+    || buildBackendTargetKeyV2(reviewed.data.agentTarget) !== input.agentTargetKey) return false;
+  const selected = reviewed.data.teamCredentialBindings?.find(binding => binding.slot.kind === 'provider_model');
+  if (!selected || selected.resourceId === null || selected.resourceId !== input.binding.resourceId
+    || selected.expectedResourceRevision !== input.binding.expectedResourceRevision
+    || selected.teamId !== input.binding.teamId || selected.deliveryMode !== 'vendor-native') return false;
+  const model = selected.providerModelSelection;
+  return !!model?.application && model.agentTargetKey === input.agentTargetKey && model.modelId === input.modelId
+    && model.executionMachineId === input.machineId && model.nativeSource?.sourceRevision === facet.sourceRevision
+    && model.nativeSource.providerTicket === facet.providerTicket
+    && (input.binding.providerModelSelection === undefined || sameStrictJsonValue(model, input.binding.providerModelSelection));
 }
 
 export async function isReviewedSessionStopChild(input: Readonly<{

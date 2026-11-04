@@ -1,3 +1,10 @@
+import { isDeepStrictEqual } from 'node:util';
+import type { SessionTeamCredentialNativeOpen } from '@/providers/broker/sessionTeamCredentialNativeBinding';
+import { assertSessionTeamCredentialNativeModel } from '@/providers/broker/sessionTeamCredentialNativeBinding';
+import type { SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
+import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
+import { installDaemonSessionTeamCredentialNativeBinding, readDaemonSessionTeamCredentialNativeBinding } from './sessionTeamCredentialNativeLifetime';
+export { readDaemonSessionTeamCredentialNativeBinding } from './sessionTeamCredentialNativeLifetime';
 import { join } from 'node:path';
 
 import type { StoredCredentials } from '@/persistence';
@@ -22,6 +29,37 @@ import type { startDaemonSessionControlRuntime } from '../startup/startDaemonSes
 type BindingOpen = NonNullable<Parameters<typeof startDaemonSessionControlRuntime>[0]['openTeamCredentialProviderBinding']>;
 type BindingOpenInput = Parameters<BindingOpen>[0];
 
+/** An installed Session/Run open borrows only local launch material. Actual
+ * owning Session end is a separate awaited lifecycle Action, never PID cleanup. */
+export function createDaemonSessionTeamCredentialNativeOpen(
+  dependencies: Parameters<typeof readDaemonSessionTeamCredentialNativeBinding>[1] & Readonly<{
+    spawnActionContext?: RpcActionExecutorContext;
+    providerSettingsOperationContext?: SavedSecretOperationContextV1;
+  }>,
+): SessionTeamCredentialNativeOpen {
+  return async input => {
+    const sessionId = input.consumer.kind === 'session' ? input.consumer.sessionId : input.sessionId;
+    if (!sessionId || input.sessionId && input.sessionId !== sessionId) throw new SessionTeamCredentialLaunchUnavailableError();
+    const read = (signal = input.signal) => readDaemonSessionTeamCredentialNativeBinding({
+      sessionId, binding: input.binding, signal, providerSettingsOperationContext: dependencies.providerSettingsOperationContext,
+    }, dependencies);
+    let accepted = await read();
+    if (accepted.status === 'prepared' && isDeepStrictEqual(accepted.binding, input.binding.nativeDelivery)) {
+      await installDaemonSessionTeamCredentialNativeBinding({ ...input, spawnActionContext: dependencies.spawnActionContext }, dependencies);
+      accepted = await read();
+    }
+    if (accepted.status !== 'ready' || !isDeepStrictEqual(accepted.binding, input.binding.nativeDelivery)) {
+      throw new SessionTeamCredentialLaunchUnavailableError();
+    }
+    assertSessionTeamCredentialNativeModel({ row: accepted.model, binding: input.binding,
+      agentTargetKey: input.agentTargetKey, modelId: input.modelId });
+    return Object.freeze({ model: accepted.model, endpoint: accepted.endpoint,
+      credentialTransport: accepted.credentialTransport, placeholder: accepted.placeholder,
+      async cleanup() {},
+    });
+  };
+}
+
 /** Composition used by both Session and independently selected Run bindings. */
 export async function openDaemonSessionTeamCredentialProviderBinding(input: BindingOpenInput, dependencies: Readonly<{
   machineId: string;
@@ -34,6 +72,7 @@ export async function openDaemonSessionTeamCredentialProviderBinding(input: Bind
   runtime?: DaemonMachineIrohRuntime | null;
   resolveTrustRoots: Parameters<typeof createProviderBrokerMachineCarrierTunnelOpen>[0]['resolveTrustRoots'];
   openTeamDirect: SessionTeamCredentialDirectOpen;
+  openVendorNative?: SessionTeamCredentialNativeOpen;
 }>): Promise<SessionTeamCredentialProviderBinding> {
   // The dispatcher supplies the admitted Session/Run Account. Changing only
   // its Home URL cannot change the daemon's captured bearer or tunnel identity.
@@ -65,16 +104,18 @@ export async function openDaemonSessionTeamCredentialProviderBinding(input: Bind
       agentTargetKey: input.agentTargetKey, modelId: input.modelId,
       binding: { v: 1, slot: { kind: 'provider_model' }, resourceId: input.resourceId,
         expectedResourceRevision: input.expectedResourceRevision,
-        deliveryMode: input.deliveryMode, teamId: input.teamId },
+        deliveryMode: input.deliveryMode, teamId: input.teamId,
+        ...(input.nativeDelivery ? { nativeDelivery: input.nativeDelivery } : {}) },
       lease, materializationBaseDir: join(dependencies.happyHomeDir, 'providers', 'materialized'),
       signal: input.signal, providerSettingsOperationContext: input.providerSettingsOperationContext,
       readCatalog: signal => readSessionTeamCredentialProviderModels({
         homeDomainAction, lease, agentId: input.agentId,
-        agentTargetKey: input.agentTargetKey, resourceId: input.resourceId, teamId: input.teamId, signal,
+        agentTargetKey: input.agentTargetKey, resourceId: input.resourceId, teamId: input.teamId, deliveryMode: input.deliveryMode, executionMachineId: dependencies.machineId, signal,
       }),
       ...(openTunnel ? { openBroker: (request, signal) => openTeamCredentialProviderBroker({
         token: credentials.token, serverBaseUrl: serverHttpBaseUrl, request, signal }), openTunnel } : {}),
       openTeamDirect: dependencies.openTeamDirect,
+      ...(dependencies.openVendorNative ? { openVendorNative: dependencies.openVendorNative } : {}),
     });
     if (!opened) throw new SessionTeamCredentialLaunchUnavailableError();
     return opened;

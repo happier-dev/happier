@@ -1,3 +1,4 @@
+import { settleFinalExitPublisher } from './sessionTerminalSettlement';
 import { isPidPresent } from '@happier-dev/cli-common/process';
 import type { ApiMachineClient } from '@/api/apiMachine';
 import { logger } from '@/ui/logger';
@@ -80,48 +81,16 @@ function isServerBackedSessionId(sessionId: string): boolean {
   return !/^PID-\d+$/.test(sessionId);
 }
 
-async function settleFinalExitPublisher(params: Readonly<{
-  apiMachine: Pick<ApiMachineClient, 'captureMachineSessionTerminal' | 'finalizeMachineSessionTerminal'>;
-  sessionId: string;
-}>): Promise<boolean> {
-  try {
-    const captureStartedAtMs = Date.now();
-    const captured = await params.apiMachine.captureMachineSessionTerminal(params.sessionId);
-    logger.infoFile('[DAEMON STOP] Final-exit terminal capture completed', {
-      sessionId: params.sessionId, status: captured.status, elapsedMs: Date.now() - captureStartedAtMs,
-    });
-    if (captured.status === 'rejected') {
-      logger.warn('[DAEMON RUN] Failed to capture final-exit Session terminal authority; retaining marker evidence', {
-        sessionId: params.sessionId,
-        reason: captured.reason,
-      });
-      return false;
-    }
-    if (captured.status === 'already_inactive') return true;
+export type SessionNativeCredentialLifetimeAccount = Readonly<{
+  credentials: import('@/persistence').StoredCredentials;
+  serverHttpBaseUrl: string;
+  homeServerIdentityId: string | null;
+  accountId: string;
+}>;
 
-    const finalizeStartedAtMs = Date.now();
-    const finalized = await params.apiMachine.finalizeMachineSessionTerminal({
-      sessionId: captured.sessionId,
-      authority: captured.authority,
-    });
-    logger.infoFile('[DAEMON STOP] Final-exit terminal finalization completed', {
-      sessionId: params.sessionId, status: finalized.status, elapsedMs: Date.now() - finalizeStartedAtMs,
-    });
-    if (finalized.status !== 'rejected') return true;
-
-    logger.warn('[DAEMON RUN] Failed to finalize final-exit Session terminal authority; retaining marker evidence', {
-      sessionId: params.sessionId,
-      reason: finalized.reason,
-    });
-    return false;
-  } catch (error) {
-    logger.warn('[DAEMON RUN] Failed to settle final-exit Session terminal authority; retaining marker evidence', {
-      sessionId: params.sessionId,
-      error,
-    });
-    return false;
-  }
-}
+export type ChildExitHandler = ((pid: number, exit: ChildExit) => Promise<void>) & Readonly<{
+  awaitPendingExits(): Promise<void>;
+}>;
 
 export function createOnChildExited(params: Readonly<{
   skillStore?: SkillStore;
@@ -139,8 +108,14 @@ export function createOnChildExited(params: Readonly<{
   beforeUnexpectedExitSettlement?: (
     trackedSession: TrackedSession,
     exit: ChildExit,
+    lifetimeAccount?: SessionNativeCredentialLifetimeAccount,
   ) => void | Promise<void>;
   onUnexpectedExit?: (trackedSession: TrackedSession, exit: ChildExit) => void | Promise<void>;
+  /** Owning Session retirement only; PID cleanup and respawn retain installed
+   * use. True confirms removal; prepared/no-effect success must be re-read if
+   * terminal publication later needs another real exit trigger. */
+  releaseSessionOwnedNativeBindings?: (sessionId: string, trackedSession: TrackedSession,
+    lifetimeAccount?: SessionNativeCredentialLifetimeAccount) => Promise<boolean | void>;
   /**
    * Retire the managed children this Session runner owned, before anything respawns it.
    *
@@ -171,7 +146,7 @@ export function createOnChildExited(params: Readonly<{
   promoteSessionMarkerFn?: typeof promoteSessionMarkerPid;
   updateSessionMarkerActiveTurnFn?: typeof updateSessionMarkerActiveTurn;
   stageObservedExitFn?: typeof stageObservedExit;
-}>): (pid: number, exit: ChildExit) => Promise<void> {
+}>): ChildExitHandler {
   const {
     pidToTrackedSession,
     spawnResourceCleanupByPid,
@@ -208,7 +183,9 @@ export function createOnChildExited(params: Readonly<{
     });
   };
 
-  const observeChildExit = async (pid: number, exit: ChildExit) => {
+  type ExitLifetime = { account?: SessionNativeCredentialLifetimeAccount; nativeBindingsReleased: boolean; scopeExitObserved: boolean };
+  const observeChildExit = async (pid: number, exit: ChildExit, lifetime?: ExitLifetime) => {
+    const lifetimeAccount = lifetime?.account;
     const tracked = pidToTrackedSession.get(pid);
     if (exit.reason === 'process-missing' && tracked?.windowsTerminalLaunchCustody) {
       const presence = await classifyTrackedSessionProcessPresence({
@@ -280,7 +257,10 @@ export function createOnChildExited(params: Readonly<{
       const isCurrentPidOwner = (): boolean => pidToTrackedSession.get(pid) === tracked;
       if (!isCurrentPidOwner()) return;
       try {
-        await params.observeSessionScopeExit?.(tracked);
+        if (!lifetime?.scopeExitObserved) {
+          await params.observeSessionScopeExit?.(tracked);
+          if (lifetime) lifetime.scopeExitObserved = true;
+        }
         await tracked.guardStopReceipt?.settle('stopped');
       } catch (error) {
         logger.warn('[DAEMON RUN] Session exit evidence settlement unavailable; retaining exit custody', { pid, error });
@@ -374,12 +354,14 @@ export function createOnChildExited(params: Readonly<{
       }
       const hasServerBackedSession = Boolean(finalSessionId) && isServerBackedSessionId(finalSessionId);
       const actionableUnexpectedExit = shouldReportSessionEnd && isUnexpected && hasServerBackedSession;
-      let shouldPreserveMarker = !personRequestedKill && hasServerBackedSession && await shouldPreserveSessionMarkerOnExit?.({
+      let finalPublisherUnavailable = false;
+      const preserveTerminalHostMarker = !personRequestedKill && hasServerBackedSession && await shouldPreserveSessionMarkerOnExit?.({
         pid,
         trackedSession: tracked,
         exit,
         unexpected: actionableUnexpectedExit,
       }) === true;
+      let shouldPreserveMarker = preserveTerminalHostMarker;
       // Explicit Stop still owes control-serviceability publication after this
       // exit callback. Keep its existing durable evidence until that owner settles.
       if (hasServerBackedSession && typeof tracked.stopRequestedAtMs === 'number'
@@ -393,7 +375,7 @@ export function createOnChildExited(params: Readonly<{
         && tracked.happySessionId.trim().length > 0
       ) {
         try {
-          await beforeUnexpectedExitSettlement?.(tracked, exit);
+          await beforeUnexpectedExitSettlement?.(tracked, exit, ...(lifetimeAccount ? [lifetimeAccount] as const : [] as const));
         } catch (error) {
           logger.warn('[DAEMON RUN] Failed to capture unexpected runner exit authority; retaining marker evidence', {
             sessionId: tracked.happySessionId,
@@ -409,19 +391,43 @@ export function createOnChildExited(params: Readonly<{
         && finalSessionId
         && isServerBackedSessionId(finalSessionId)
       ) {
+        try {
+          if (!lifetime?.nativeBindingsReleased) {
+            const confirmedRemoval = await params.releaseSessionOwnedNativeBindings?.(finalSessionId, tracked, ...(lifetimeAccount ? [lifetimeAccount] as const : [] as const));
+            if (lifetime) lifetime.nativeBindingsReleased = confirmedRemoval === true;
+          }
+        } catch (error) {
+          logger.warn('[DAEMON RUN] Native binding retirement unconfirmed; retaining exit custody', {
+            sessionId: finalSessionId, pid, error,
+          });
+          throw error;
+        }
+        if (!isCurrentPidOwner()) return;
         // Exact turn settlement updates turn state only. Runner presence has its
         // own captured publisher authority even when that turn is already terminal.
-        if (!apiMachineForSessions || !await settleFinalExitPublisher({
+        const publisherSettlement = apiMachineForSessions ? await settleFinalExitPublisher({
           apiMachine: apiMachineForSessions,
           sessionId: finalSessionId,
-        })) {
+        }) : 'pending';
+        finalPublisherUnavailable = publisherSettlement === 'unavailable';
+        // Permanent Home refusal ends its publication obligation; independent
+        // physical terminal-host evidence still keeps its original custody.
+        if (finalPublisherUnavailable) shouldPreserveMarker = preserveTerminalHostMarker;
+        if (publisherSettlement === 'pending') {
           if (!await readRetainedPlainRunnerExitMarker(tracked)) return;
           shouldPreserveMarker = true;
         }
       }
       const stagingStartedAtMs = Date.now();
       try {
-        await stageObservedExitFn({
+        if (finalPublisherUnavailable) {
+          // A permanently unavailable peer/Session cannot accept exact-turn or
+          // control retirement. Release only this already-dead runner's evidence.
+          if (!shouldPreserveMarker) {
+            await Promise.all(Array.from(new Set([pid, tracked.sessionRunnerPid ?? pid])).map(candidatePid =>
+              removeObservedSessionMarker(candidatePid, tracked, isCurrentPidOwner)));
+          }
+        } else await stageObservedExitFn({
           trackedSession: trackedExitSettlementEvidence,
           observedAt,
           enqueueExactTurnEnd: async (mutation) => {
@@ -517,6 +523,7 @@ export function createOnChildExited(params: Readonly<{
           await onUnexpectedExit?.(tracked, exit);
         } catch (error) {
           logger.debug('[DAEMON RUN] Failed to run onUnexpectedExit handler', error);
+          throw error;
         }
       }
       void writeSessionExitReport({
@@ -551,8 +558,9 @@ export function createOnChildExited(params: Readonly<{
     });
   };
 
-  const inFlightByTrackedSession = new WeakMap<TrackedSession, Promise<void>>();
-  return async function handleChildExit(pid: number, exit: ChildExit) {
+  type ExitSettlement = { completion: Promise<void>; pending: boolean; lifetime: ExitLifetime };
+  const inFlightByTrackedSession = new WeakMap<TrackedSession, ExitSettlement>();
+  const handleChildExit = async (pid: number, exit: ChildExit): Promise<void> => {
     const trackedSession = pidToTrackedSession.get(pid);
     if (!trackedSession) {
       await observeChildExit(pid, exit);
@@ -560,22 +568,40 @@ export function createOnChildExited(params: Readonly<{
     }
 
     const existing = inFlightByTrackedSession.get(trackedSession);
-    if (existing) {
-      await existing;
+    if (existing?.pending) {
+      await existing.completion;
       if (exit.reason !== 'process-missing' && pidToTrackedSession.get(pid) === trackedSession) {
         await handleChildExit(pid, exit);
       }
       return;
     }
 
-    const observation = observeChildExit(pid, exit);
-    inFlightByTrackedSession.set(trackedSession, observation);
+    const requesterBirth = trackedSession.requesterSessionRuntimeContext?.bootstrap;
+    const lifetimeAccount = existing?.lifetime.account ?? (requesterBirth ? {
+      credentials: requesterBirth.credentials, serverHttpBaseUrl: requesterBirth.serverHttpBaseUrl,
+      homeServerIdentityId: requesterBirth.homeServerIdentityId ?? null, accountId: requesterBirth.attribution.accountId,
+    } : undefined);
+    const lifetime: ExitLifetime = existing?.lifetime ?? { nativeBindingsReleased: false, scopeExitObserved: false,
+      ...(lifetimeAccount ? { account: lifetimeAccount } : {}) };
+    const observation = observeChildExit(pid, exit, lifetime);
+    const settlement: ExitSettlement = { completion: observation, pending: true, lifetime };
+    inFlightByTrackedSession.set(trackedSession, settlement);
     try {
       await observation;
     } finally {
-      if (inFlightByTrackedSession.get(trackedSession) === observation) {
+      settlement.pending = false;
+      if (pidToTrackedSession.get(pid) !== trackedSession && inFlightByTrackedSession.get(trackedSession) === settlement) {
         inFlightByTrackedSession.delete(trackedSession);
       }
     }
   };
+  return Object.assign(handleChildExit, { async awaitPendingExits(): Promise<void> {
+    const completions = [...new Set(pidToTrackedSession.values())].flatMap(tracked => {
+      const pending = inFlightByTrackedSession.get(tracked);
+      return pending ? [pending.completion] : [];
+    });
+    const results = await Promise.allSettled(completions);
+    const failure = results.find(result => result.status === 'rejected');
+    if (failure?.status === 'rejected') throw failure.reason;
+  } });
 }

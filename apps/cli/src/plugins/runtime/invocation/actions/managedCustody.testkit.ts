@@ -8,6 +8,7 @@ import {
     MachineProvisionerOptionsResultProtocolV1Schema, MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerCleanupObservationV1Schema,
     MachineProvisionerObservationV1Schema, MachineProvisionerPowerResultV1Schema,
     MachineProvisionerNativeExecResultV1Schema, MachineProvisionerPutFileResultV1Schema,
+    MachineProvisionerNativeCredentialApplyResultV1Schema,
     type MachineProvisionerContributionV1,
 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
@@ -47,6 +48,7 @@ const roleSchemas = {
     rebuild: { input: nativeSchemas.rebuildInput, result: nativeSchemas.rebuildResult },
     exec: { input: nativeSchemas.execInput, result: MachineProvisionerNativeExecResultV1Schema },
     'put-file': { input: nativeSchemas.putFileInput, result: MachineProvisionerPutFileResultV1Schema },
+    'native-credential-apply': { input: nativeSchemas.nativeCredentialApplyInput, result: MachineProvisionerNativeCredentialApplyResultV1Schema },
 };
 function schemasFor(localId: string) { return Object.entries(roleSchemas).find(([id]) => id === localId)?.[1]; }
 export function roleInput(localId: string): JsonValue {
@@ -77,6 +79,8 @@ export function fixture(options: Readonly<{
     nativeTransport?: boolean;
     bootstrapCredential?: 'ssh' | 'native-token';
     nativeCredentialService?: boolean;
+    nativeCredentialDelivery?: boolean;
+    onNativeCredentialApply?: (context: Parameters<TargetActionInvocationRegistration['handler']>[1]) => void | Promise<void>;
     createHostServiceBinding?: CreatePluginInvocationServiceBinding;
     hostServiceAdapters?: Pick<PluginInvocationServicesFactoryParams, 'exec' | 'http' | 'connectedAccounts'>;
     /** Authored module handlers and production service owners for composed native tests. */
@@ -124,7 +128,7 @@ export function fixture(options: Readonly<{
         : localId === 'ordinary' && repairSchemas ? repairSchemas
         : schemasFor(localId);
     const localIds = options.fixtureManifest?.contributes.actions.map(action => action.id)
-        ?? [...roles.map(roleActionId), 'check', 'options', 'inspect', 'ordinary', ...(options.reconciliation ? ['reconcile'] : []), ...(options.cleanupObservation ? ['cleanup'] : [])];
+        ?? [...roles.map(roleActionId), 'check', 'options', 'inspect', 'ordinary', ...(options.nativeCredentialDelivery ? ['native-credential-apply'] : []), ...(options.reconciliation ? ['reconcile'] : []), ...(options.cleanupObservation ? ['cleanup'] : [])];
     const dangerLevel = (localId: string) => options.dangerous && !['check', 'options', 'inspect', 'reconcile', 'cleanup'].includes(localId) ? 'writesRemote' as const : 'safe' as const;
     const registrations = localIds.map((localId): TargetActionInvocationRegistration => ({
         pluginId, pluginVersion: '1.0.0', occurrenceId,
@@ -148,6 +152,10 @@ export function fixture(options: Readonly<{
         handler: async (_input, context) => {
             effects += 1;
             if (localId === 'ordinary') await options.onOrdinary?.(context);
+            if (localId === 'native-credential-apply') {
+                await options.onNativeCredentialApply?.(context);
+                return { kind: 'confirmed' };
+            }
             if (localId === 'cleanup' && options.cleanupObservation) return options.cleanupObservation;
             if (localId === 'check' && options.nativeRoleResults?.check) return options.nativeRoleResults.check;
             if (localId === 'inspect') {
@@ -194,6 +202,8 @@ export function fixture(options: Readonly<{
                 actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy', rebuild: 'rebuild' },
                 ...(options.nativeTransport === false ? {} : { bootstrapTransport: { kind: 'native', exec: 'exec', putFile: 'put-file' } }),
                 ...(options.bootstrapCredential ? { bootstrapCredential: { kind: options.bootstrapCredential } } : {}),
+                ...(options.nativeCredentialDelivery ? { nativeCredentialDelivery: { apply: 'native-credential-apply',
+                    transports: ['https_headers'], preservesEndpoint: true, perBindingMatching: true } } : {}),
                 ...(options.reconciliation ? { reconciliation: { nativeOperationSchema: (options.reconciliationResource ? native : nativeOperation).jsonSchema, action: 'reconcile',
                     ...(options.continueAcquire ? { continueAcquire: true as const } : {}),
                     ...(options.cleanupObservation ? { cleanup: 'cleanup' } : {}) } } : {}),
@@ -299,7 +309,7 @@ export function fixture(options: Readonly<{
         role: 'acquire' as const, isCurrent: () => true,
     };
     return {
-        runtimeRegistry, custody, materializedAccounts,
+        runtimeRegistry, targetActionInvocations, custody, materializedAccounts, manifest,
         effects: () => effects, activations: () => activations,
         retire: () => { currentOccurrenceId = createPluginRuntimeOccurrenceId(pluginId); },
     };

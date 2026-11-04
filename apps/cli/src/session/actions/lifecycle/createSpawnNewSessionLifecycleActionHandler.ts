@@ -26,6 +26,7 @@ import type { SpawnConfigOptionValue } from '@happier-dev/protocol';
 import { canUseCustodianAccountForMachineRequest, RequesterWorkAttributionV1Schema } from '@/daemon/lifecycle/requesterWorkAttribution';
 import { isAdmittedRequesterSessionBootstrapCurrent } from '@/daemon/sessionEncryption/requesterSessionCredentials';
 import { createSessionStartupProjectSpawn } from './sessionStartupProjectOperation';
+import { buildActionExecutorContextForRpc } from '@/rpc/handlers/_actionDispatchAdapter';
 
 import type {
     SessionLifecycleActionHandler,
@@ -51,6 +52,7 @@ export function createSpawnNewSessionLifecycleActionHandler(params: Readonly<{
                 || Object.hasOwn(rawParams, 'verifyRequesterMachineAdmissionCurrent')
                 || Object.hasOwn(rawParams, 'beforeSessionRunnerLaunch')
                 || Object.hasOwn(rawParams, 'resumeActionContext')
+                || Object.hasOwn(rawParams, 'spawnActionContext')
                 || Object.hasOwn(rawParams, 'projectSetupOperation')
                 || Object.hasOwn(rawParams, 'requesterSessionCredentialFile')
                 || Object.hasOwn(rawParams, 'requesterSessionRuntimeContext')
@@ -429,6 +431,10 @@ export function createSpawnNewSessionLifecycleActionHandler(params: Readonly<{
             ...(params.awaitAgentSessionOpen ? { awaitAgentSessionOpen: params.awaitAgentSessionOpen } : {}) });
         const buildBaseSpawnOptions = (resolvedDirectory: string): SpawnSessionOptions => ({
             ...admittedSpawnOptions,
+            ...(context?.callerInputAuthorization && context.originalActionEnvelope ? {
+                spawnActionContext: buildActionExecutorContextForRpc({ ...context, serverId: params.serverId,
+                    actionId: 'session.spawn_new', externalActionExecutionAuthorization: context.callerInputAuthorization }),
+            } : {}),
             ...(context?.requesterSessionBootstrap ? { requesterSessionBootstrap: context.requesterSessionBootstrap } : {}),
             ...(context?.beforeSessionRunnerLaunch ? { beforeSessionRunnerLaunch: context.beforeSessionRunnerLaunch } : {}),
             ...(requesterWorkAttribution ? {

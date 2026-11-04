@@ -1,3 +1,4 @@
+export { projectProviderBindingAuthorizationTicketReferenceV1 as projectProviderBindingAuthorizationTicketReference } from '@happier-dev/protocol/providers/grants/v1';
 import { ProviderBindingAuthorizationTicketV1Schema } from '@happier-dev/protocol/providers/grants/v1';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import type { ProviderBindingAuthorizationTicketV1, ProviderErrorV1 } from '@happier-dev/protocol';

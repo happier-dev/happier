@@ -79,6 +79,8 @@ export type PluginInvocationServicesSeed = Readonly<{
     processOwner?: ProcessOwnerRef;
     /** Exact host-admitted managed row; never plugin input or SDK context. */
     managedBootstrapCredential?: ManagedBootstrapCredentialInvocationBinding;
+    /** Host-admitted complete native apply; never copied from Action operands. */
+    managedNativeCredentials?: ManagedNativeCredentialInvocationBinding;
     /** Canonical invocation owner retains private material cleanup. */
     retainCleanup?(cleanup: Readonly<{ dispose(): Promise<void> }>): void;
     /** Host-only observed read authority withdrawal; never a plugin-authored event. */
@@ -311,3 +313,13 @@ export type CreatePluginInvocationServiceBinding = (
     hostAccessRequests?: readonly Readonly<{ request: import('@happier-dev/protocol').PluginHostAccessRequestV2; required: boolean }>[],
     contributionQualifiedId?: string,
 ) => PluginInvocationServiceBinding;
+
+export type ManagedNativeCredentialInvocationBinding = Readonly<{
+    role: 'nativeCredentialApply';
+    bindings: ReadonlyMap<string, Readonly<{
+        readRenderedHeaders(): Promise<
+            | Readonly<{ ok: true; headers: Readonly<Record<string, string>> }>
+            | Readonly<{ ok: false; error: import('@happier-dev/protocol/providers/errors').ProviderErrorV1 }>
+        >;
+    }>>;
+}>;

@@ -367,6 +367,7 @@ function applySnapshotToSpawnOptions(
     freshSessionCreation: _freshSessionCreation,
     managedDirectorySeed: _managedDirectorySeed,
     verifyRequesterMachineAdmissionCurrent: _verifyRequesterMachineAdmissionCurrent,
+    spawnActionContext: _spawnActionContext,
     requesterSessionCredentialFile: _requesterSessionCredentialFile,
     requesterSessionBootstrap: _requesterSessionBootstrap,
     requesterSessionRuntimeContext: _requesterSessionRuntimeContext,

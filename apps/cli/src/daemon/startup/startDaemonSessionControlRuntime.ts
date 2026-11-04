@@ -433,7 +433,9 @@ import { createLocalPageTitleEnricher } from '../local/services/inventory/pageTi
 import type { LocalServicePreviewRoutes } from '../local/services/preview/routes';
 import { createLocalServicePublicPreviewServerRoutes } from '../local/services/public/routes';
 import { resolveHostedWebStaticAssetLifecycleSource } from '../local/services/plugins/staticAssets/source';
-import { createOnChildExited } from '../sessions/onChildExited';
+import { createOnChildExited, type SessionNativeCredentialLifetimeAccount } from '../sessions/onChildExited';
+import { isSessionTerminalPermanentlyUnavailable } from '../sessions/sessionTerminalSettlement';
+import type { MachineSessionTerminalCaptureResponseV1 } from '@happier-dev/protocol/sessions/control/machineSessionTerminalV1';
 import type { SkillStore } from '@/prompts/skills/store/skillStore';
 import type { SkillUsageRecorder } from '@/prompts/skills/store/skillUsage';
 import { resolveRecoveredSpawnNonceAdmission } from '../spawn/recoveredSpawnNonceAdmission';
@@ -1157,6 +1159,7 @@ export async function startDaemonSessionControlRuntime(
     readManagedMachinePolicyCurrent?: Parameters<
       typeof createDaemonManagedMachineActionAdapter
     >[0]['readPolicyCurrent'];
+    prepareTeamCredentialNativeSource?: import('@/providers/modelManagement/runtimeServices').RuntimeProviderModelManagementServices['prepareTeamCredentialNativeSource'];
     /** Process-lifetime Workflow admission authority reused at every work-releasing control. */
     workflowAcceptedAuthorizationCurrentness?: Parameters<
       typeof createCliActionExecutorFromCredentials
@@ -1213,6 +1216,10 @@ export async function startDaemonSessionControlRuntime(
     ) => Promise<unknown>;
     deviceLocalSecretStorage?: DeviceLocalSecretStorage;
     api: Parameters<typeof executeSpawnSessionRequest>[0]['api'];
+    readInstalledTeamCredentialProviderModel?: (
+      input: Parameters<import('@/providers/broker/sessionTeamCredentialNativeBinding').SessionTeamCredentialInstalledModelRead>[0]
+        & Readonly<{ providerSettingsOperationContext?: SavedSecretOperationContextV1 }>,
+    ) => ReturnType<import('@/providers/broker/sessionTeamCredentialNativeBinding').SessionTeamCredentialInstalledModelRead>;
     openTeamCredentialProviderBinding?: (
       input: Readonly<{
         sessionId?: string;
@@ -1220,6 +1227,7 @@ export async function startDaemonSessionControlRuntime(
         resourceId: string;
         expectedResourceRevision: number;
         deliveryMode: TeamCredentialProviderModelSelectionV1['deliveryMode'];
+        nativeDelivery?: TeamCredentialProviderModelSelectionV1['nativeDelivery'];
         agentId: string;
         agentTargetKey: string;
         modelId: string;
@@ -1232,6 +1240,8 @@ export async function startDaemonSessionControlRuntime(
       import('@/providers/broker/sessionTeamCredentialProviderBinding').SessionTeamCredentialProviderBinding
     >;
     connectedServicesMaterializationBaseDir: string;
+    releaseSessionOwnedNativeBindings?: Parameters<typeof createOnChildExited>[0]['releaseSessionOwnedNativeBindings'];
+    prepareNativeTeamCredentialBinding?: Parameters<typeof executeSpawnSessionRequest>[0]['prepareNativeTeamCredentialBinding'];
     getConnectedServiceRefreshCoordinator: () => ConnectedServiceRefreshCoordinator | null;
     getConnectedServiceQuotasCoordinator: () => ConnectedServiceQuotasCoordinator | null;
     resolveQualifiedConnectedAccountV4Support?: () => QualifiedConnectedAccountV4Support;
@@ -4393,6 +4403,7 @@ daemonWorkSignal: AbortSignal;
                   shutdownCancellationDomains.daemonWorkSignal, !requesterRuntime && !existingSessionId
                     ? await captureFreshAgentIsolationAccountSource(shutdownCancellationDomains.daemonWorkSignal) : undefined),
                 readAgentIsolationEnabled: () => params.agentIsolation?.read()?.enabled === true,
+                prepareNativeTeamCredentialBinding: spawnParams.prepareNativeTeamCredentialBinding,
                 agentIsolation: params.agentIsolation,
                 signal: shutdownCancellationDomains.daemonWorkSignal,
                 readMachineResourcesPolicy: params.readMachineResourcesPolicy,
@@ -4422,6 +4433,12 @@ daemonWorkSignal: AbortSignal;
                 credentials: spawnParams.credentials,
                 deviceLocalSecretStorage: spawnParams.deviceLocalSecretStorage,
                 api: spawnParams.api,
+                ...(spawnParams.readInstalledTeamCredentialProviderModel ? {
+                  readInstalledTeamCredentialProviderModel: input => spawnParams.readInstalledTeamCredentialProviderModel!({
+                    ...input,
+                    ...(requesterRuntime ? { providerSettingsOperationContext: requesterRuntime.bootstrap.savedSecretOperationContext } : {}),
+                  }),
+                } : {}),
                 connectedServicesMaterializationBaseDir:
                   spawnParams.connectedServicesMaterializationBaseDir,
                 connectedServiceRefreshCoordinator:
@@ -5106,13 +5123,16 @@ daemonWorkSignal: AbortSignal;
         authority: MachineSessionTerminalAuthorityV1;
       }>
     | Readonly<{ status: 'already_inactive'; sessionId: string }>
-    | Readonly<{ status: 'unavailable'; sessionId: string }>;
+    | Readonly<{ status: 'unavailable'; sessionId: string;
+        reason?: Extract<MachineSessionTerminalCaptureResponseV1, { status: 'rejected' }>['reason'] }>;
   type RunnerTerminalCycle = {
     entriesByPid: Map<
       number,
       {
         tracked: TrackedSession;
         admission: CapturedRunnerTerminal;
+        lifetimeAccount?: SessionNativeCredentialLifetimeAccount;
+        nativeBindingsReleased?: boolean;
       }
     >;
   };
@@ -5172,22 +5192,35 @@ daemonWorkSignal: AbortSignal;
     }>,
   ): Promise<void> => {
     const cycle = runnerTerminalCycleBySessionId.get(input.sessionId);
-    if (cycle) runnerTerminalCycleBySessionId.delete(input.sessionId);
     const entries = cycle ? Array.from(cycle.entriesByPid.entries()) : [];
     const captured = cycle?.entriesByPid.get(input.previousPid)?.admission;
     if (input.reason === 'already_running') {
       await removeRunnerTerminalEntries(input.sessionId, entries);
+      if (runnerTerminalCycleBySessionId.get(input.sessionId) === cycle) runnerTerminalCycleBySessionId.delete(input.sessionId);
       return;
     }
-    if (!cycle || !captured || captured.status === 'unavailable') {
+    const entry = cycle?.entriesByPid.get(input.previousPid);
+    if (entry && !entry.nativeBindingsReleased) {
+      const released = await params.releaseSessionOwnedNativeBindings?.(input.sessionId, entry.tracked, entry.lifetimeAccount);
+      entry.nativeBindingsReleased = typeof released === 'boolean' ? released : undefined;
+    }
+    const retainNativePublicationCustody = () => {
+      // A native lifetime's boolean result also retains its captured Account
+      // across publication retry. Ordinary exits still use durable markers.
+      if (entry?.nativeBindingsReleased !== undefined) throw new Error('native_session_terminal_publication_pending');
+    };
+    if (!cycle || !captured || (captured.status === 'unavailable'
+      && (captured.reason === undefined || !isSessionTerminalPermanentlyUnavailable(captured.reason)))) {
       logger.debug(
         '[DAEMON RUN] Terminal respawn has no captured Session publisher authority; retaining marker for startup recovery',
         input,
       );
+      retainNativePublicationCustody();
       return;
     }
-    if (captured.status === 'already_inactive') {
+    if (captured.status !== 'captured') {
       await removeRunnerTerminalEntries(input.sessionId, entries);
+      if (runnerTerminalCycleBySessionId.get(input.sessionId) === cycle) runnerTerminalCycleBySessionId.delete(input.sessionId);
       return;
     }
     const apiMachine = params.getApiMachineForSessions();
@@ -5196,6 +5229,7 @@ daemonWorkSignal: AbortSignal;
         '[DAEMON RUN] Machine Session terminal transport unavailable; retaining marker for startup recovery',
         input,
       );
+      retainNativePublicationCustody();
       return;
     }
     try {
@@ -5203,7 +5237,7 @@ daemonWorkSignal: AbortSignal;
         sessionId: captured.sessionId,
         authority: captured.authority,
       });
-      if (finalized.status === 'rejected') {
+      if (finalized.status === 'rejected' && !isSessionTerminalPermanentlyUnavailable(finalized.reason)) {
         logger.debug(
           '[DAEMON RUN] Machine Session terminal finalize was rejected; retaining marker for startup recovery',
           {
@@ -5212,9 +5246,11 @@ daemonWorkSignal: AbortSignal;
             reason: finalized.reason,
           },
         );
+        retainNativePublicationCustody();
         return;
       }
       await removeRunnerTerminalEntries(input.sessionId, entries);
+      if (runnerTerminalCycleBySessionId.get(input.sessionId) === cycle) runnerTerminalCycleBySessionId.delete(input.sessionId);
     } catch (error) {
       logger.debug(
         '[DAEMON RUN] Machine Session terminal finalize failed; retaining marker for startup recovery',
@@ -5223,6 +5259,7 @@ daemonWorkSignal: AbortSignal;
           error: error instanceof Error ? error.message : String(error),
         },
       );
+      throw error;
     }
   };
   const readStartupFailure: NonNullable<Parameters<typeof createSessionRunnerRespawnManager>[0]['readStartupFailure']> =
@@ -5266,6 +5303,7 @@ daemonWorkSignal: AbortSignal;
       }, attribution);
     };
   const sessionRunnerRespawnManager = createSessionRunnerRespawnManager({
+    onTerminalSettlementChanged: notifySessionLiveWorkChanged,
     // Runner death is non-fatal: the respawn owner is adopt-first (reattaches the durable
     // terminal host / claude session, never blind-relaunches a healthy one) and storm-bounded
     // via `decideRestartForCycle` independent of this flag. The historical `false` default traces
@@ -5364,18 +5402,11 @@ daemonWorkSignal: AbortSignal;
         ...(next ? { next: summarizeSessionRunnerEndpoint(next) } : {}),
       });
     },
-    onRespawnTerminal: ({ sessionId, previousPid, reason, detail }) => {
+    onRespawnTerminal: async ({ sessionId, previousPid, reason, detail }) => {
       runnerRespawnScheduledPids.delete(previousPid);
       params.connectedServicesRestartRequestedPids.delete(previousPid);
-      void settleCapturedRunnerTerminal({ sessionId, previousPid, reason });
-      void clearSessionMarkerConnectedServiceRestartIntent(previousPid).catch(
-        (error) => {
-          logger.debug(
-            '[DAEMON RUN] Failed to clear connected-service restart intent after terminal respawn suppression',
-            error,
-          );
-        },
-      );
+      await settleCapturedRunnerTerminal({ sessionId, previousPid, reason });
+      await clearSessionMarkerConnectedServiceRestartIntent(previousPid);
       settleVersionRuntimeRefreshCompletion(
         sessionId,
         previousPid,
@@ -7413,6 +7444,7 @@ daemonWorkSignal: AbortSignal;
     },
   });
   const onChildExitedBase = createOnChildExited({
+    releaseSessionOwnedNativeBindings: params.releaseSessionOwnedNativeBindings,
     skillStore: params.skillStore,
     observeSessionScopeExit: async tracked => {
       const sessionId = normalizeOptionalString(tracked.happySessionId);
@@ -7455,7 +7487,7 @@ daemonWorkSignal: AbortSignal;
     spawnResourceCleanupByPid: params.spawnResourceCleanupByPid,
     sessionAttachCleanupByPid: params.sessionAttachCleanupByPid,
     getApiMachineForSessions: params.getApiMachineForSessions,
-    beforeUnexpectedExitSettlement: async (tracked) => {
+    beforeUnexpectedExitSettlement: async (tracked, _exit, lifetimeAccount) => {
       const sessionId = normalizeOptionalString(tracked.happySessionId);
       if (sessionId && tracked.startedBy === 'daemon') {
         const cycle = runnerTerminalCycleBySessionId.get(sessionId) ?? {
@@ -7463,14 +7495,19 @@ daemonWorkSignal: AbortSignal;
         };
         runnerTerminalCycleBySessionId.set(sessionId, cycle);
         const previousEntry = cycle.entriesByPid.get(tracked.pid);
-        if (previousEntry?.tracked === tracked) {
+        if (previousEntry?.tracked === tracked
+          && (previousEntry.admission.status !== 'unavailable'
+            || (previousEntry.admission.reason !== undefined
+              && isSessionTerminalPermanentlyUnavailable(previousEntry.admission.reason)))) {
           return;
         }
         const entry: {
           tracked: TrackedSession;
           admission: CapturedRunnerTerminal;
-        } = {
+          lifetimeAccount?: SessionNativeCredentialLifetimeAccount;
+        } = previousEntry?.tracked === tracked ? previousEntry : {
           tracked,
+          ...(lifetimeAccount ? { lifetimeAccount } : {}),
           admission: {
             status: 'unavailable',
             sessionId,
@@ -7492,6 +7529,8 @@ daemonWorkSignal: AbortSignal;
               status: 'already_inactive',
               sessionId,
             };
+          } else if (captured?.status === 'rejected') {
+            entry.admission = { status: 'unavailable', sessionId, reason: captured.reason };
           }
         } catch (error) {
           logger.debug(
@@ -7520,7 +7559,7 @@ daemonWorkSignal: AbortSignal;
         );
       }
     },
-    onUnexpectedExit: (tracked, exit) => {
+    onUnexpectedExit: async (tracked, exit) => {
       const transientSpawnOptions = tracked.happySessionId
         ? takeVersionRuntimeRefreshTransientSpawnOptions(
             tracked.happySessionId,
@@ -7544,13 +7583,14 @@ daemonWorkSignal: AbortSignal;
         runnerRespawnScheduledPids.add(tracked.pid);
       } else if (disposition === 'ignored' && tracked.happySessionId) {
         runnerRespawnScheduledPids.delete(tracked.pid);
-        void settleCapturedRunnerTerminal({
+        await settleCapturedRunnerTerminal({
           sessionId: tracked.happySessionId,
           previousPid: tracked.pid,
           reason: 'no_restart',
         });
       } else {
         runnerRespawnScheduledPids.delete(tracked.pid);
+        if (tracked.happySessionId && disposition === 'terminal') await sessionRunnerRespawnManager.awaitTerminalSettlement(tracked.happySessionId);
       }
     },
     isExitUnexpectedOverride: (tracked) => {
@@ -11825,6 +11865,7 @@ daemonWorkSignal: AbortSignal;
       params.resolveCurrentMachineExecutionOriginContext,
     installationIdentity: externalActionInstallationIdentity,
     managedProviderOperationAuthority: params.managedProviderOperationAuthority,
+    ...(params.prepareTeamCredentialNativeSource ? { prepareTeamCredentialNativeSource: params.prepareTeamCredentialNativeSource } : {}),
     subscribeManagedMachineChanges,
     ...(params.readManagedMachinePolicyCurrent
       ? { readPolicyCurrent: params.readManagedMachinePolicyCurrent }
@@ -11909,6 +11950,7 @@ daemonWorkSignal: AbortSignal;
                     resolveCurrentMachineExecutionOriginContext: params.resolveCurrentMachineExecutionOriginContext,
                     installationIdentity: installation,
                     managedProviderOperationAuthority: params.managedProviderOperationAuthority,
+                    ...(params.prepareTeamCredentialNativeSource ? { prepareTeamCredentialNativeSource: params.prepareTeamCredentialNativeSource } : {}),
                     ...(params.readManagedMachinePolicyCurrent ? { readPolicyCurrent: params.readManagedMachinePolicyCurrent } : {}),
                     acquireRuntimeRegistryLease: acquireDaemonPluginRuntimeRegistryLease,
                     observeActionExecution: async request => {
@@ -12402,6 +12444,10 @@ daemonWorkSignal: AbortSignal;
       readonly [phase: string, run: () => Promise<void>]
     > = [],
   ): Promise<void> => {
+    // Owning native removal keeps its installed transport and Account lifetime
+    // until settlement. Rejection retains recovery custody rather than teardown.
+    await onChildExitedBase.awaitPendingExits();
+    await sessionRunnerRespawnManager.awaitTerminalSettlement();
     const failures: unknown[] = [];
     const phases: ReadonlyArray<readonly [string, () => Promise<void>]> = [
       ['runner_plugin_mcp', async () => { await runnerPluginMcp.dispose(); }],
@@ -12675,6 +12721,26 @@ daemonWorkSignal: AbortSignal;
           readCredentials: async () => await account.isCurrent() ? account.credentials : null,
           readAccountSettingsSnapshot: account.readAccountSettingsSnapshot,
           isCurrent: async () => await context.isCurrent() && await account.isCurrent() }),
+        ...(request.teamCredentialModel ? { prepareTeamCredentialProviderBinding: async () => {
+          const team = request.teamCredentialModel!;
+          const accepted = tracked.spawnOptions?.teamCredentialBindings?.find(binding => binding.slot.kind === 'provider_model');
+          if (!params.openTeamCredentialProviderBinding || accepted?.resourceId !== team.resourceId
+            || accepted.teamId !== team.teamId || accepted.deliveryMode !== team.deliveryMode
+            || team.deliveryMode !== 'vendor-native' || !team.nativeDelivery
+            || !isDeepStrictEqual(accepted.nativeDelivery, team.nativeDelivery)
+            || request.selection.providerConnectionId !== null
+            || request.selection.agentTargetKey !== team.agentTargetKey || request.selection.modelId !== team.modelId) {
+            throw new SessionTeamCredentialLaunchUnavailableError();
+          }
+          return await params.openTeamCredentialProviderBinding({ sessionId: context.sessionId,
+            consumer: { kind: 'execution_run', executionRunId: request.runId },
+            teamId: team.teamId, resourceId: team.resourceId, expectedResourceRevision: team.expectedResourceRevision,
+            deliveryMode: team.deliveryMode, nativeDelivery: team.nativeDelivery,
+            agentId: request.agentId, agentTargetKey: team.agentTargetKey, modelId: team.modelId,
+            ...(account.savedSecretOperationContext ? { providerSettingsOperationContext: account.savedSecretOperationContext } : {}),
+            signal: context.signal ?? shutdownCancellationDomains.daemonWorkSignal,
+          });
+        } } : {}),
         prepareManagedEndpoint: async ({ scope, authorization, registerCleanup, signal }) => {
           const unavailable = () => createForegroundProviderError('provider_endpoint_unavailable');
           if (scope.kind !== 'execution_run' || scope.executionRunId !== request.runId || !request.controllerOccurrenceId
@@ -13379,6 +13445,7 @@ daemonWorkSignal: AbortSignal;
             const binding = ((): Readonly<{
               teamId: string;
               deliveryMode: TeamCredentialProviderModelSelectionV1['deliveryMode'];
+              nativeDelivery?: TeamCredentialProviderModelSelectionV1['nativeDelivery'];
             }> | null => {
               if (!tracked || consumerAgentId === null) return null;
               if (carriesRunSelection) {
@@ -13410,7 +13477,8 @@ daemonWorkSignal: AbortSignal;
                 selection.modelId !== operation.modelId
               )
                 return null;
-              return { teamId, deliveryMode: teamBinding.deliveryMode };
+              return { teamId, deliveryMode: teamBinding.deliveryMode,
+                ...(teamBinding.nativeDelivery ? { nativeDelivery: teamBinding.nativeDelivery } : {}) };
             })();
             const openTeamBinding = params.openTeamCredentialProviderBinding;
             if (
@@ -13432,6 +13500,7 @@ daemonWorkSignal: AbortSignal;
                   expectedResourceRevision:
                     operation.expectedResourceRevision,
                   deliveryMode: binding.deliveryMode,
+                  ...(binding.nativeDelivery ? { nativeDelivery: binding.nativeDelivery } : {}),
                   agentId: consumerAgentId,
                   agentTargetKey: operation.agentTargetKey,
                   modelId: operation.modelId,
@@ -16075,6 +16144,7 @@ daemonWorkSignal: AbortSignal;
     isSessionAlreadyRunning,
     hasPendingRunnerRestarts: () => versionRuntimeRefreshAttemptHandoff.hasPending()
       || params.connectedServicesRestartRequestedPids.size > 0
+      || sessionRunnerRespawnManager.hasPendingTerminalSettlements()
       || sessionRunnerRespawnManager.hasPendingIntendedRestarts(),
     restartStaleSessionRunnersAfterDaemonStart: () => restartStaleRunnersAfterDaemonStart({
       readSettings,

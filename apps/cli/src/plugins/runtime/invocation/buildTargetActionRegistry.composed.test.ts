@@ -547,6 +547,18 @@ function fact(overrides: Partial<PluginTargetActivationFact> = {}): PluginTarget
 }
 
 describe('buildTargetActionInvocationRegistry', () => {
+    it('executes an ordinary Action when the optional Machine provisioner family is absent', async () => {
+        const { machineProvisioners: _provisioners, ...contributes } = registry();
+        const target = buildRegistry({ contributes, targetActivationFacts: [fact()],
+            targetRegistrations: [{ pluginId: 'acme.alpha', occurrenceId: '7', registration: {
+                family: 'actions', localId: 'run', value: async () => ({ ordinary: true }),
+            } }],
+        });
+        try {
+            expect(await target.invoke({ pluginId: 'acme.alpha', localId: 'run', input: {}, surface: 'cli' }))
+                .toMatchObject({ status: 'executed', value: { ordinary: true } });
+        } finally { target.dispose(); }
+    });
     it.each(['actions/read-v1', 'actions/administer-v1'])('discovers the actual Triage %s declaration cold while retaining Account storage policy', async (localId) => {
         const triageManifest = normalizePluginManifestV2(TRIAGE_MANIFEST);
         const declaration = triageManifest.contributes.actions.find(action => action.id === localId);

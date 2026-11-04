@@ -265,6 +265,7 @@ export function createDaemonMachineBootstrapRuntime(
     machineResourceSummary?: MachineResourceSummary;
     resolveManagedPurposeBindingIntent?: BootstrapRuntime['resolveManagedPurposeBindingIntent'];
     resolveManagedPurposeBindingIntentSelection?: BootstrapRuntime['resolveManagedPurposeBindingIntentSelection'];
+    teamCredentialNativeSource?: BootstrapRuntime['teamCredentialNativeSource'];
     mcpServers?: BootstrapRuntime['mcpServers'];
     openTeamDirect?: BootstrapRuntime['openTeamDirect'];
     prepareRunTeamCredentialProviderBinding?: ExecutionRunTeamCredentialProviderBindingPreparer;
@@ -844,6 +845,7 @@ agentIsolation: params.agentIsolation,
     ...(params.resolveManagedPurposeBindingIntentSelection
       ? { resolveManagedPurposeBindingIntentSelection: params.resolveManagedPurposeBindingIntentSelection }
       : {}),
+    ...(params.teamCredentialNativeSource ? { teamCredentialNativeSource: params.teamCredentialNativeSource } : {}),
     ...(params.createAgentCatalogObservation
       ? { createAgentCatalogObservation: params.createAgentCatalogObservation }
       : {}),

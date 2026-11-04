@@ -1,3 +1,6 @@
+import { readSpawnConnectedServicesTeamResources } from './sessionTeamCredentialCatalog';
+import { readTeamCredentialLaunchReadinessRefusal } from './sessionTeamCredentialReadiness';
+export { readTeamCredentialLaunchReadinessRefusal } from './sessionTeamCredentialReadiness';
 import {
   resolveConnectedServiceSessionSelection,
 } from '@happier-dev/agents';
@@ -66,33 +69,7 @@ export function createSpawnConnectedServicesTeamResourceCatalogResolver(params: 
   };
 }
 
-/** The shared paginated recipient read, through the already Home-bound Action transport. */
-export async function readSpawnConnectedServicesTeamResources(params: Readonly<{
-  homeDomainAction: NonNullable<ActionExecutorDeps['homeDomainAction']>;
-  serverId?: string;
-  teamIds: readonly string[];
-  application?: ProviderBrokerApplicationBindingV1;
-  signal?: AbortSignal;
-}>): Promise<readonly TeamCredentialResourceCatalogEntryV1[] | null> {
-    const resources: TeamCredentialResourceCatalogEntryV1[] = [];
-    for (const teamId of params.teamIds) {
-      let cursor: string | null = null;
-      do {
-        const raw = await params.homeDomainAction({
-          actionId: 'teams.credentials.entitled.list', input: { teamId, ...(cursor ? { cursor } : {}),
-            ...(params.application ? { application: params.application } : {}) },
-          context: { surface: 'cli', ...(params.serverId ? { serverId: params.serverId } : {}) },
-          ...(params.signal ? { signal: params.signal } : {}),
-        });
-        if (raw && typeof raw === 'object' && 'ok' in raw && raw.ok === false) return null;
-        const parsed = TeamCredentialResourceEntitledPageV1Schema.safeParse(raw);
-        if (!parsed.success) return null;
-        resources.push(...parsed.data.resources);
-        cursor = readRecipientCatalogNextCursor(parsed.data);
-      } while (cursor);
-    }
-    return resources;
-}
+export { readSpawnConnectedServicesTeamResources } from './sessionTeamCredentialCatalog';
 
 /**
  * The Team catalog read for a daemon/runner component that holds only the

@@ -29,7 +29,8 @@ import { resolveTeamCredentialModelCompatibility } from './teamCredentialModelCo
 import { ProviderErrorCodeV1Schema, type ProviderErrorCodeV1 } from '@happier-dev/protocol/providers/errors';
 import { readTeamCredentialLaunchReadinessRefusal } from '@/session/services/sessionTeamCredentialReadiness';
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
-import { SessionTeamCredentialLaunchUnavailableError } from '@/session/services/sessionTeamCredentialLaunch';
+import { SessionTeamCredentialLaunchUnavailableError } from '@/session/services/sessionTeamCredentialLaunchError';
+import { assertSessionTeamCredentialNativeModel, materializeSessionTeamCredentialNativeBinding, type SessionTeamCredentialNativeOpen } from './sessionTeamCredentialNativeBinding';
 
 type BrokerTunnel = Readonly<{
   localPort: number;
@@ -414,6 +415,7 @@ export async function openSessionTeamCredentialProviderBinding(input: Readonly<{
   openBroker?: SessionTeamCredentialProviderBindingOpenDependencies['openBroker'];
   openTunnel?: SessionTeamCredentialProviderBindingOpenDependencies['openTunnel'];
   openTeamDirect?: SessionTeamCredentialDirectOpen;
+  openVendorNative?: SessionTeamCredentialNativeOpen;
 }>): Promise<SessionTeamCredentialProviderBinding | null> {
   if (input.binding.slot.kind !== 'provider_model' || input.binding.resourceId === null) return null;
   const consumer = resolveProviderBrokerConsumer(input);
@@ -421,6 +423,24 @@ export async function openSessionTeamCredentialProviderBinding(input: Readonly<{
     ? consumer.executionRunId
     : consumer.sessionId;
   input.signal.throwIfAborted();
+  if (input.binding.deliveryMode === 'vendor-native') {
+    if (!input.openVendorNative || !input.binding.nativeDelivery) throw new SessionTeamCredentialLaunchUnavailableError();
+    const opened = await input.openVendorNative({ consumer,
+      ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+      agentTargetKey: input.agentTargetKey, modelId: input.modelId,
+      binding: input.binding, signal: input.signal });
+    const row = opened.model;
+    try {
+      assertSessionTeamCredentialNativeModel({ row, binding: input.binding,
+        agentTargetKey: input.agentTargetKey, modelId: input.modelId });
+      await assertTeamCredentialModelAdmission({ lease: input.lease, agentId: input.agentId,
+        model: { ...row, deliveryMode: 'vendor-native' }, signal: input.signal });
+    } catch (error) {
+      await opened.cleanup();
+      throw error;
+    }
+    return await materializeSessionTeamCredentialNativeBinding({ ...input, consumer, row, binding: input.binding, opened });
+  }
   const rows = await input.readCatalog(input.signal);
   // The selection's revision was the precondition of the selection mutation,
   // not the binding's identity: a policy edit since then must not strand a

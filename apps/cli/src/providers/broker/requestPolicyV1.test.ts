@@ -1,7 +1,7 @@
+import { PROVIDER_ENDPOINT_SAFETY_LIMITS } from '@happier-dev/protocol';
 import { describe, expect, it } from 'vitest';
 import type { TeamCredentialRequestPolicyV1 } from '@happier-dev/protocol/teams';
-import { PROVIDER_ENDPOINT_SAFETY_LIMITS } from '@happier-dev/protocol';
-import { evaluateTeamCredentialRequestPolicyV1 } from './requestPolicyV1';
+import { classifyTeamCredentialRequestRouteV1, evaluateTeamCredentialRequestPolicyV1, projectTeamCredentialNativeRequestMatchesV1 } from './requestPolicyV1';
 
 // Fixtures use the canonical wire shape the schema parses (mutable arrays),
 // not a narrower readonly literal, so the test exercises the real input type.
@@ -19,6 +19,42 @@ function bodyOf(result: ReturnType<typeof evaluateTeamCredentialRequestPolicyV1>
   if (!result.ok || !result.request.body) throw new Error('expected admitted request');
   return JSON.parse(new TextDecoder().decode(result.request.body)) as Record<string, unknown>;
 }
+
+describe('projectTeamCredentialNativeRequestMatchesV1', () => {
+  it('preserves the admitted Vercel base when projecting exact native Agent requests', () => {
+    expect(projectTeamCredentialNativeRequestMatchesV1({
+      protocol: 'openai-responses', normalizedUrl: 'https://ai-gateway.vercel.sh/codex/v1',
+    })).toEqual([
+      { methods: ['POST'], path: '/codex/v1/responses' },
+      { methods: ['GET'], path: '/codex/v1/models' },
+    ]);
+    expect(projectTeamCredentialNativeRequestMatchesV1({
+      protocol: 'anthropic', normalizedUrl: 'https://ai-gateway.vercel.sh/claude-code/',
+    })).toEqual([
+      { methods: ['POST'], path: '/claude-code/v1/messages' },
+      { methods: ['POST'], path: '/claude-code/v1/messages/count_tokens' },
+    ]);
+    // Native URL projection must not widen the existing managed broker routes.
+    expect(classifyTeamCredentialRequestRouteV1('/codex/v1/responses')).toBeNull();
+    expect(classifyTeamCredentialRequestRouteV1('/v1/messages?beta=true'))
+      .toEqual({ kind: 'anthropic_messages', generation: true });
+  });
+
+  it('refuses unsupported protocols and unsafe or noncanonical endpoint bases', () => {
+    expect(projectTeamCredentialNativeRequestMatchesV1({
+      protocol: 'openai-chat', normalizedUrl: 'https://ai-gateway.vercel.sh/coding-agent/v1',
+    })).toBeNull();
+    for (const normalizedUrl of [
+      'http://ai-gateway.vercel.sh/codex/v1',
+      'https://key@ai-gateway.vercel.sh/codex/v1',
+      'https://ai-gateway.vercel.sh/codex/v1?route=one',
+      'https://ai-gateway.vercel.sh/codex/v1#fragment',
+      'https://ai-gateway.vercel.sh/codex/%2e%2e/v1',
+      'https://ai-gateway.vercel.sh/codex%2fv1',
+      'https://ai-gateway.vercel.sh/codex/v1\\other',
+    ]) expect(projectTeamCredentialNativeRequestMatchesV1({ protocol: 'openai-responses', normalizedUrl })).toBeNull();
+  });
+});
 
 describe('evaluateTeamCredentialRequestPolicyV1', () => {
   it('admits inference bodies beyond the unrelated catalog response ceiling', () => {

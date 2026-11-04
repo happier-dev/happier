@@ -7,10 +7,9 @@ import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import type { ConnectedServiceBindingsV2 } from '@happier-dev/protocol';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
-import { projectAgentProviderBrokerApplications } from '@/providers/broker/applicationProjection';
-import { readLeasedAgentProviderRequirements } from '@/plugins/runtime/providerBindings/adapter';
-import { normalizeSessionTeamCredentialLaunch, readSessionTeamCredentialResourceCatalog,
+import {
     SessionTeamCredentialLaunchUnavailableError, type NormalizedSessionTeamCredentialLaunch } from '@/session/services/sessionTeamCredentialLaunch';
+import { prepareSessionTeamCredentialLaunch } from './prepareSessionTeamCredentialLaunch';
 import { validateEnvVarRecordStrict } from '@/terminal/runtime/envVarSanitization';
 import { resolveTerminalRequestFromSpawnOptions } from '@/terminal/runtime/terminalConfig';
 import { prepareHerdrTerminalContext } from '@/terminal/runtime/prepareHerdrTerminalContext';
@@ -142,6 +141,18 @@ export type ExecuteSpawnSessionRequestParams = Readonly<{
     prepareAgentIsolationMember?: import('../spawn/prepareDaemonConnectedServices').PrepareAgentIsolationMember;
     readAgentIsolationEnabled?: () => boolean;
     agentIsolation?: import('../agentIsolation/agentIsolationLaunchPolicy').HostAgentIsolationLaunchContext;
+    prepareNativeTeamCredentialBinding?: (input: Readonly<{
+        sessionId: string;
+        created: boolean;
+        binding: Exclude<import('@happier-dev/protocol/teams/credentials/sessionBindingIntentV1').SessionTeamCredentialBindingIntentV1, { resourceId: null }>;
+        agentTargetKey: string;
+        modelId: string;
+        spawnActionContext?: SpawnSessionOptions['spawnActionContext'];
+        providerSettingsOperationContext?: import('@/settings/secrets/savedSecretOperationContext').SavedSecretOperationContextV1;
+        signal?: AbortSignal;
+    }>) => Promise<() => Promise<void>>;
+    readInstalledTeamCredentialProviderModel?: import('@/providers/broker/sessionTeamCredentialNativeBinding').SessionTeamCredentialInstalledModelRead;
+
     signal?: AbortSignal;
     readMachineResourcesPolicy?: import('@/processes/toolIdleTimeouts').MachineResourcesPolicyReader;
     readSpawnFailureLimits?: SpawnFailureLimitsReader;
@@ -595,34 +606,25 @@ export async function executeSpawnSessionRequest(
             const appliedPluginRuntimeLease = await pluginRuntimeLease.acquire();
             recordPreparationPhase('plugin_runtime');
             let teamModelRow: NormalizedSessionTeamCredentialLaunch['teamModelRow'] = null;
+            const retainedTeamBinding = sessionAttachPayload?.snapshot?.acceptedTeamCredentialBinding;
             const hasTeamSelection = options.teamCredentialBindings?.some(binding => (
                 binding.slot.kind === 'provider_model' && binding.resourceId !== null
-            )) || hasTeamResourceConnectedServiceBinding(prepared.connectedServices);
+            )) || hasTeamResourceConnectedServiceBinding(prepared.connectedServices)
+                || (retainedTeamBinding?.slot.kind === 'provider_model' && retainedTeamBinding.resourceId !== null);
             if (hasTeamSelection) {
                 const homeDomainAction = createAccountServerActionDeps({
                     token: params.credentials.token, credentials: params.credentials,
                 }).homeDomainAction;
-                if (!catalogAgentId || !homeDomainAction) return await refuseSpawn({ type: 'error',
-                    errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
-                    errorMessage: 'team_credential_provider_selection_not_current' });
-                const agentTargetKey = buildBackendTargetKeyV2(effectiveBackendTargetV2);
-                const applications = projectAgentProviderBrokerApplications({
-                    registry: appliedPluginRuntimeLease.registry.contributes,
-                    agentTargetKey,
-                    acceptedProtocols: readLeasedAgentProviderRequirements({
-                        lease: appliedPluginRuntimeLease, agentId: catalogAgentId,
-                    })?.acceptsProtocols ?? [],
-                });
                 try {
-                    const normalized = await normalizeSessionTeamCredentialLaunch({
+                    const normalized = await prepareSessionTeamCredentialLaunch({
                         options: { ...options, ...(modelSelection ? { modelSelection } : {}),
                             ...(normalizedExistingSessionId ? { existingSessionId: normalizedExistingSessionId } : {}) },
-                        agentId: catalogAgentId, agentTargetKey,
-                        contributions: appliedPluginRuntimeLease.registry.contributes,
-                        applications,
-                        readCatalog: () => readSessionTeamCredentialResourceCatalog({
-                            homeDomainAction, applications, ...(params.signal ? { signal: params.signal } : {}),
-                        }),
+                        agentId: catalogAgentId, agentTargetKey: buildBackendTargetKeyV2(effectiveBackendTargetV2),
+                        lease: appliedPluginRuntimeLease, homeDomainAction,
+                        executionMachineId: options.machineId,
+                        acceptedTeamCredentialBinding: retainedTeamBinding,
+                        readInstalledTeamCredentialProviderModel: params.readInstalledTeamCredentialProviderModel,
+                        ...(params.signal ? { signal: params.signal } : {}),
                     });
                     options = normalized.options;
                     teamModelRow = normalized.teamModelRow;
@@ -906,6 +908,15 @@ export async function executeSpawnSessionRequest(
                         errorMessage: executable.errorMessage, agentId: catalogAgentId });
                 }
                 const committed = await commitDaemonLaunchSession({
+                    ...(params.prepareNativeTeamCredentialBinding ? { prepareNativeTeamCredentialBinding: async ({ sessionId: committedSessionId, created, binding }) => {
+                        const model = optionsWithProviderIsolation.modelSelection?.ref;
+                        if (!model) throw new SessionTeamCredentialLaunchUnavailableError();
+                        return await params.prepareNativeTeamCredentialBinding!({ sessionId: committedSessionId, created, binding,
+                            agentTargetKey: model.agentTargetKey, modelId: model.modelId,
+                            spawnActionContext: options.spawnActionContext,
+                            providerSettingsOperationContext: acpOperationContext,
+                            signal: optionsWithProviderIsolation.projectSetupOperation?.signal ?? params.signal });
+                    } } : {}),
                     ...(requesterRuntime ? { accountSettings: requesterRuntime.readAccountSettingsSnapshot().settings } : {}),
                     api: params.api,
                     credentials: params.credentials,
@@ -927,6 +938,7 @@ export async function executeSpawnSessionRequest(
                         // once submitted, the runner owns it.
                         onFailure: async () => {
                             if (childLaunchSubmitted) return;
+                            await committed.session.releaseNativeBindingOnLaunchFailure?.();
                             await archiveSessionOnceInactive({
                                 token: params.credentials.token,
                                 sessionId: committedSessionId,

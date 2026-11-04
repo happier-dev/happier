@@ -9,3 +9,4 @@ export * from './nativeBootstrap.js';
 
 export { prepareManagedMachineSetupApplyInput } from './setupApply.js';
 export * from './enrollmentIsolation.js';
+export * from './bootstrapCredentialLease.js';

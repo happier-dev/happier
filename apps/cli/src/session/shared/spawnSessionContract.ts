@@ -138,6 +138,8 @@ export interface SpawnSessionOptions extends SessionCreateOriginFieldsV1 {
   beforeSessionRunnerLaunch?: () => Promise<boolean>;
   /** Invocation-only admitted Resume caller; raw spawn requests cannot supply this. */
   resumeActionContext?: ActionExecutorContext;
+  /** Verified original spawn invocation for its exact native-install child. Never serialized or reused for release. */
+  spawnActionContext?: import('@/rpc/handlers/_actionDispatchAdapter').RpcActionExecutorContext;
   machineId?: string;
   directory: string;
   /** Daemon-owned directory routing fact; filesystem authority comes from the allocation record. */

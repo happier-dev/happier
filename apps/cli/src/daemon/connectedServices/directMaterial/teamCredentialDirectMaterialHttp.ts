@@ -1,3 +1,5 @@
+import { TeamCredentialNativeBindingReadRequestV1Schema, TeamCredentialNativeBindingReadResponseV1Schema,
+  type TeamCredentialNativeBindingReadRequestV1 } from '@happier-dev/protocol/teams/credentials/directMaterialV1';
 import axios, { type AxiosResponse } from 'axios';
 
 import { TeamCredentialDirectMaterialMineResponseV1Schema, TeamCredentialDirectMaterialPreparationResponseV1Schema, TeamCredentialDirectMaterialUpsertRequestV1Schema, TeamCredentialDirectMaterialUpsertResponseV1Schema, TeamCredentialDirectMaterialWithdrawRequestV1Schema, TeamCredentialDirectMaterialWithdrawResponseV1Schema, TeamCredentialDirectMaterialOpenRequestV1Schema } from '@happier-dev/protocol/teams/credentials/directMaterialV1';
@@ -119,4 +121,26 @@ export async function withdrawTeamCredentialDirectMaterial(params: Readonly<{
   const body = TeamCredentialDirectMaterialWithdrawRequestV1Schema.parse(params.body);
   const response = await axios.delete(route(params), { ...config(params.token, params.signal), data: body });
   return TeamCredentialDirectMaterialWithdrawResponseV1Schema.parse(response.data);
+}
+
+export async function fetchTeamCredentialNativeBinding(params: Readonly<{
+  token: string; serverUrl?: string; request: TeamCredentialNativeBindingReadRequestV1; signal?: AbortSignal;
+}>) {
+  params.signal?.throwIfAborted();
+  const request = TeamCredentialNativeBindingReadRequestV1Schema.safeParse(params.request);
+  if (!request.success) throw new TeamCredentialDirectMaterialHttpContractError();
+  let response: AxiosResponse<unknown>;
+  try {
+    response = await axios.post(route({ ...params, teamId: request.data.teamId, resourceId: request.data.resourceId }), request.data, {
+      ...config(params.token, params.signal), validateStatus: () => true,
+    });
+  } catch {
+    params.signal?.throwIfAborted();
+    throw new TeamCredentialDirectMaterialHttpTransportError();
+  }
+  params.signal?.throwIfAborted();
+  if (response.status < 200 || response.status >= 300) return { status: 'unavailable', reason: 'binding_unavailable' } as const;
+  const result = TeamCredentialNativeBindingReadResponseV1Schema.safeParse(response.data);
+  if (!result.success) throw new TeamCredentialDirectMaterialHttpContractError();
+  return result.data;
 }

@@ -32,6 +32,8 @@ export type MachineProvisionerContributionV1 = Readonly<{
   resourceIdPath?: string;
   bootstrapTransport?: Readonly<{ kind: 'native'; exec: string; putFile: string }>;
   bootstrapCredential?: Readonly<{ kind: 'ssh' | 'native-token' }>;
+  nativeCredentialDelivery?: Readonly<{ apply: string; transports: readonly ['https_headers'];
+    preservesEndpoint: true; perBindingMatching: true }>;
   /** Qualified native launch variants that do not require a declared purpose. */
   credentialPurposeRequirements?: readonly Readonly<{ purpose: string; optionalWhen: InputPredicate }>[];
   reconciliation?: Readonly<{ nativeOperationSchema: PluginJsonSchema; action: string; cleanup?: string; continueAcquire?: true }>;
@@ -97,6 +99,11 @@ export type MachineProvisionerAcquireResultV1<TResource = ProtocolJsonValue, TNa
 export type MachineProvisionerBootstrapCarrierV1 = ManagedBootstrapCarrierV1;
 export type MachineProvisionerObservationV1 = Readonly<{ observedAt: number; availability: 'present' | 'absent' | 'unavailable'; power?: 'running' | 'stopped' | 'suspended' | 'unknown'; storage?: 'retained' | 'lost' | 'unknown'; daemon?: 'connected' | 'disconnected' | 'unknown'; billing?: MachineProvisionerContributionV1['billing']; prices?: readonly MachineProvisionerPriceV1[]; nativeExpiry?: number; reason?: string }>;
 export type MachineProvisionerPowerResultV1 = Readonly<{ kind: 'confirmed' }> | Readonly<{ kind: 'unknown'; code?: string }> | Readonly<{ kind: 'refused'; code: string }>;
+export type MachineProvisionerNativeCredentialBindingV1 = canonical.MachineProvisionerNativeCredentialBindingV1;
+export type MachineProvisionerNativeCredentialApplyInputV1<TResource = ProtocolJsonValue> = canonical.MachineProvisionerNativeCredentialApplyInputV1<TResource>;
+export type MachineProvisionerNativeCredentialApplyResultV1 = MachineProvisionerPowerResultV1;
+export const MachineProvisionerNativeCredentialApplyInputV1Schema: ProtocolComposableSchema<MachineProvisionerNativeCredentialApplyInputV1> = /* @__PURE__ */ projectProtocolValue(canonical.MachineProvisionerNativeCredentialApplyInputProtocolV1Schema);
+export const MachineProvisionerNativeCredentialApplyResultV1Schema: ProtocolComposableSchema<MachineProvisionerNativeCredentialApplyResultV1> = /* @__PURE__ */ projectProtocolValue(canonical.MachineProvisionerNativeCredentialApplyResultV1Schema);
 export type MachineProvisionerDestroyResultV1<TNativeOperation = ProtocolJsonValue> = MachineProvisionerPowerResultV1
   | Readonly<{ kind: 'accepted'; nativeOperationRef: MachineProvisionerResourceV1<TNativeOperation> }>;
 export type MachineProvisionerRebuildResultV1<TResource = ProtocolJsonValue> = Extract<MachineProvisionerAcquireResultV1<TResource>, { kind: 'bound' | 'unknown' }> | Readonly<{ kind: 'refused'; code: string }>;

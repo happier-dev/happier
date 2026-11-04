@@ -117,6 +117,12 @@ export type ProviderSpawnAuthorization = ProviderSpawnAuthorizationBase & Readon
     }
 >;
 
+export function isExternalProviderSpawnAuthorization(
+  authorization: ProviderSpawnAuthorization,
+): authorization is Extract<ProviderSpawnAuthorization, { deployment: { kind: 'external' } }> {
+  return authorization.deployment.kind === 'external';
+}
+
 export type ProviderSpawnAuthorizationResult =
   | Readonly<{ ok: true; authorization: ProviderSpawnAuthorization }>
   | Readonly<{ ok: false; error: ProviderErrorV1 }>;
@@ -224,6 +230,8 @@ export type ResolveProviderSpawnAuthorizationInput = Readonly<{
   accountSettings: unknown;
   savedSecretResources?: readonly SavedSecretCatalogResourceInputV1[];
   providerSettings: ProviderSettingsV1;
+  /** Current Team source identity supplied by its owning resource admission. */
+  teamCredentialResource?: Parameters<typeof resolveProviderModelCompatibility>[0]['teamCredentialResource'];
   registry: ProviderContributionRegistryView;
   dnsEvidenceByEndpointUrl: ProviderEndpointDnsEvidence;
   localCandidateUrlsByConnectionId?: Parameters<typeof resolveProviderConnectionForMachine>[0]['localCandidateUrlsByConnectionId'];
@@ -947,6 +955,7 @@ export function resolveProviderSpawnAuthorization(
   const compatibility = resolveProviderModelCompatibility({
     record,
     providerSettings,
+    ...(input.teamCredentialResource ? { teamCredentialResource: input.teamCredentialResource } : {}),
     agentTargetKey: input.agentTargetKey,
     support: adapter.support,
     model,
@@ -1032,6 +1041,7 @@ export function resolveProviderSpawnAuthorization(
         return { ok: false, error: createProviderErrorV1('provider_model_not_found', errorContext) };
       }
       const helperCompatibility = resolveProviderModelCompatibility({ record, providerSettings,
+        ...(input.teamCredentialResource ? { teamCredentialResource: input.teamCredentialResource } : {}),
         agentTargetKey: input.agentTargetKey, support: adapter.support, model: helperModel,
         adapterVersion: adapter.adapter.adapterVersion });
       if (helperCompatibility.result.status === 'incompatible'

@@ -38,6 +38,7 @@ const providersEnabledFeatureGate = Object.freeze({
 
 function createMachineServices(): RuntimeProviderOperationsProducer['machineServices'] {
   return {
+    prepareTeamCredentialNativeSource: vi.fn(async () => { throw new Error('Unexpected native Team credential source RPC'); }),
     prepareProfileMigrationSource: vi.fn(async () => { throw new Error('Unexpected Profile migration source RPC'); }),
     probe: vi.fn(async () => ({
       status: 'success' as const,

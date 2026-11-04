@@ -12,7 +12,8 @@ import type { RpcHandlerContext } from '@/api/rpc/types';
 export type SessionLifecycleActionHandler = (
     rawParams: unknown,
     context?: Readonly<{ signal?: AbortSignal }> & Pick<SpawnSessionOptions, 'creationAuthorization' | 'callerInputConstraints'>
-        & Pick<RpcHandlerContext, 'machineAdmission' | 'verifyMachineAdmissionCurrent' | 'requesterSessionBootstrap' | 'beforeSessionRunnerLaunch' | 'localActionContext'>,
+        & Pick<RpcHandlerContext, 'machineAdmission' | 'verifyMachineAdmissionCurrent' | 'requesterSessionBootstrap' | 'beforeSessionRunnerLaunch' | 'localActionContext'
+            | 'callerInputAuthorization' | 'originalActionEnvelope'>,
 ) => Promise<unknown>;
 
 export type SessionLifecycleMachineHandlers = Readonly<{

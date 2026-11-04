@@ -5294,6 +5294,59 @@ nonce recovery preserve it. The Action returns `update_required` with
 failure or an unknown-outcome timeout. The outer daemon error remains
 `SPAWN_VALIDATION_FAILED` for consumers that do not understand the added detail.
 
+#### Vendor-native Team launch (0.3 development contract)
+
+The existing Provider Team-binding owner chooses the custodian's most-preferred
+allowed route supported by the exact execution Machine, intersecting audience
+entitlement and current readiness. Picker and launch consume the same result;
+there is no member route override or retry-to-direct branch. Native delivery
+extends the accepted Team witness and desired model intent rather than creating
+a separate native selection store. The composed loaded journey remains an
+integration obligation; these are development contracts, not release availability.
+Focused source checks and loaded integration remain separate evidence. Under the
+approved native authority contract, approving `session.spawn_new` authorizes only
+the exact Session's already custodian-authorized native binding installation. The
+installed guest signs that child after ordinary spawn Ask has completed; Home's
+existing issuer remints the exact controller Action. A retained birth association
+limits the Session and binding, but is not an approval receipt. Installation runs
+after the accepted binding commits and before launch acceptance retires the spawn
+ingress. Loaded integration remains parked with its runtime owner.
+
+`machines.managed.credentials.install` is an ordinary exact-controller Action.
+Home admission validates the accepted Session binding, requester, source revision,
+allowance and managed placement; broad controller Use/Manage is not the grant for
+this exact admitted effect. The controller reads current active bindings for the
+same sandbox, uses canonical source materialization in lawful custodian custody,
+and calls the provisioner's declared native apply role with one complete policy.
+Cloud-operation credentials remain separate from transient rendered inference
+headers. The guest receives the admitted endpoint and random placeholder, never
+the inference key or cloud token.
+
+Launch must use the pinned daemon-backed Provider service before any guest-local
+registry or credential preparation. Missing/lost Team binding keeps
+`team_credential_provider_binding_unavailable`; changed currentness keeps its
+existing typed Team/Provider cause. An attached Run without the pinned service
+refuses with `execution_run_contribution_snapshot_unavailable`. None of these
+failures is native Agent sign-in guidance. Failed attached Run recovery must reuse
+a still-current installed binding and placeholder without reinstalling or releasing
+the owning Session's rule. Owning Session end/delete/final exit always permits
+removal for that lifetime, without replaying a retired spawn or turn ingress.
+Release awaits full-policy cleanup through the same controller Action. Only an
+exact owning-guest diagnostic proving prepared/no-submission may omit policy IO;
+unavailability is not proof of removal, and a prepared observation is re-read at
+the next lifetime trigger. Partial or abandoned remote writes remain unconfirmed.
+Normal and respawn exits retain the owning Account until removal settles, and
+daemon shutdown awaits that settlement. After removal, both paths use the same
+terminal-publication refusal classification: temporary failures retain recovery
+custody; archived, missing or unsupported publication completes local cleanup.
+
+The same current-state composer owns start/end, source changes, withdrawal,
+controller reconnect and pre-resume preparation as those paths land. Unimplemented
+transitions must refuse before new native effects. Signals trigger current reads,
+not event replay or polling. Reusing an unchanged installed binding performs no
+controller policy work per inference request. Controller-offline removal cannot
+be guaranteed; upstream key rotation/revocation is the independent hard stop.
+
 #### Direct Team launch material commits the Session first
 
 Normally the runner creates a fresh Session from its creation tag. A fresh daemon

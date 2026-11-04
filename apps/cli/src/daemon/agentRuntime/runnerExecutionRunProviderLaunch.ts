@@ -13,12 +13,14 @@ import {
     type ExecutionRunProviderSelectionInput,
     type ExecutionRunProviderLaunchRequest,
     type ExecutionRunProviderLaunchServices,
+    type ExecutionRunTeamCredentialProviderBindingPreparer,
     type PreparedExecutionRunProviderLaunch,
 } from '@/agent/runtime/bridges/executionRun/runtime/providerLaunch';
 
 export type RunnerExecutionRunProviderPreparation = Omit<ExecutionRunProviderSelectionInput,
     'selection' | 'backendTarget' | 'agentId' | 'runId' | 'connectedServices' | 'runtimeRegistryLease'> & Readonly<{
     prepareManagedEndpoint?: DirectManagedProviderEndpointPreparer;
+    prepareTeamCredentialProviderBinding?: ExecutionRunTeamCredentialProviderBindingPreparer;
     isCurrent(): boolean | Promise<boolean>;
 }>;
 

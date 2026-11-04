@@ -27,6 +27,8 @@ export type DaemonChildExit = Readonly<{ reason: string; code: number | null; si
 export type SessionRunnerRespawnDisposition = 'ignored' | 'scheduled' | 'terminal';
 
 export type SessionRunnerRespawnManager = Readonly<{
+  hasPendingTerminalSettlements(): boolean;
+  awaitTerminalSettlement(sessionId?: string): Promise<void>;
   hasPendingIntendedRestarts: (sessionId?: string) => boolean;
   markStopRequested: (sessionId: string, request: StopRequest) => void;
   prepareAutomaticResumeAdmission: (sessionId: string) => () => boolean;
@@ -134,7 +136,8 @@ function buildRespawnOptions(params: Readonly<{
   const resumeFromOptions = readNonBlankOpaqueIdentifier(params.spawnOptions.resume);
   const resumeFromTracked = readNonBlankOpaqueIdentifier(params.vendorResumeId);
   const effectiveResume = resumeFromOptions || resumeFromTracked;
-  const { resume: _resume, freshSessionCreation: _freshSessionCreation, managedDirectorySeed: _managedDirectorySeed, ...spawnOptionsWithoutResume } = params.spawnOptions;
+  const { resume: _resume, freshSessionCreation: _freshSessionCreation, managedDirectorySeed: _managedDirectorySeed,
+    spawnActionContext: _spawnActionContext, ...spawnOptionsWithoutResume } = params.spawnOptions;
   return {
     ...spawnOptionsWithoutResume,
     ...(effectiveResume ? { resume: effectiveResume } : {}),
@@ -207,8 +210,9 @@ export function createSessionRunnerRespawnManager(params: Readonly<{
     previousPid: number;
     reason: SessionRunnerRespawnTerminalReason;
     detail?: string;
-  }>) => void;
+  }>) => void | Promise<void>;
   onStopRequested?: (sessionId: string) => void;
+  onTerminalSettlementChanged?: () => void;
   random: () => number;
   logDebug: (message: string, payload?: unknown) => void;
   logWarn: (message: string) => void;
@@ -218,10 +222,10 @@ export function createSessionRunnerRespawnManager(params: Readonly<{
     const stop = stopRequestedBySessionId.get(sessionId);
     return stop?.active ? stop.request : undefined;
   };
-  const stateBySessionId = new Map<
-    string,
-    { controller: RestartController; timer: NodeJS.Timeout | null; intended: boolean; retire?: () => void }
-  >();
+  type TerminalSettlement = { previousPid: number; completion: Promise<void>; status: 'pending' | 'failed' };
+  type RespawnState = { controller: RestartController; timer: NodeJS.Timeout | null; intended: boolean;
+    retire?: () => void; terminalSettlement?: TerminalSettlement };
+  const stateBySessionId = new Map<string, RespawnState>();
 
   const getOrCreateController = (sessionId: string): RestartController => {
     const existing = stateBySessionId.get(sessionId);
@@ -320,6 +324,33 @@ export function createSessionRunnerRespawnManager(params: Readonly<{
     stateBySessionId.delete(sessionId);
   };
 
+  // Terminal effects belong to the existing supervisor until their asynchronous
+  // publisher/removal completes. A rejection retains custody for the next real
+  // exit/recovery trigger; it is neither a completed removal nor a timed retry.
+  const beginTerminalSettlement = (input: Parameters<NonNullable<typeof params.onRespawnTerminal>>[0], before?: () => Promise<void>): Promise<void> => {
+    getOrCreateController(input.sessionId);
+    clearTimer(input.sessionId);
+    const state = stateBySessionId.get(input.sessionId)!;
+    const previous = state.terminalSettlement;
+    if (previous?.previousPid === input.previousPid && previous.status === 'pending') return previous.completion;
+    let invoked: void | Promise<void>;
+    try { invoked = before ? before().then(() => params.onRespawnTerminal?.(input)) : params.onRespawnTerminal?.(input); }
+    catch (error) { invoked = Promise.reject(error); }
+    const terminal: TerminalSettlement = { previousPid: input.previousPid, completion: Promise.resolve(invoked), status: 'pending' };
+    state.terminalSettlement = terminal;
+    terminal.completion = terminal.completion.then(() => {
+      if (stateBySessionId.get(input.sessionId) !== state || state.terminalSettlement !== terminal) return;
+      delete state.terminalSettlement;
+      endRespawnCycle(input.sessionId);
+      params.onTerminalSettlementChanged?.();
+    }, (error: unknown) => { terminal.status = 'failed'; params.onTerminalSettlementChanged?.(); throw error; });
+    params.onTerminalSettlementChanged?.();
+    terminal.completion.catch(error => params.logDebug('[DAEMON RUN] Terminal Session cleanup remains pending', {
+      sessionId: input.sessionId, previousPid: input.previousPid, ...readUnexpectedActionErrorDiagnosticV1(error),
+    }));
+    return terminal.completion;
+  };
+
   const observeRespawnSuccess = (sessionId: string) => {
     const existing = stateBySessionId.get(sessionId);
     if (!existing) return;
@@ -362,7 +393,7 @@ export function createSessionRunnerRespawnManager(params: Readonly<{
         params.logWarn(`[DAEMON RUN] Session ${sessionId} crashed; respawn suppressed (${decision.reason})`);
       }
       endRespawnCycle(sessionId);
-      params.onRespawnTerminal?.({ sessionId, previousPid, reason: 'no_restart', detail: decision.reason });
+      beginTerminalSettlement({ sessionId, previousPid, reason: 'no_restart', detail: decision.reason });
       return;
     }
 
@@ -397,7 +428,7 @@ export function createSessionRunnerRespawnManager(params: Readonly<{
     const reportStopRetirement = () => {
       if (stopRetirementReported) return;
       stopRetirementReported = true;
-      params.onRespawnTerminal?.({ sessionId, previousPid, reason: 'stop_requested' });
+      beginTerminalSettlement({ sessionId, previousPid, reason: 'stop_requested' });
     };
     existing.retire = reportStopRetirement;
     const timer = setTimeout(() => {
@@ -416,7 +447,7 @@ export function createSessionRunnerRespawnManager(params: Readonly<{
         if (finishIfCycleRetired()) return;
         if (alreadyRunning) {
           endRespawnCycle(sessionId);
-          params.onRespawnTerminal?.({ sessionId, previousPid, reason: 'already_running' });
+          beginTerminalSettlement({ sessionId, previousPid, reason: 'already_running' });
           return;
         }
         const issue = await params.readStartupFailure?.({ sessionId, trackedSession });
@@ -427,7 +458,7 @@ export function createSessionRunnerRespawnManager(params: Readonly<{
         if (isCurrentDefiniteSessionStartupFailure(issue, processStartTimeMs)) {
           endRespawnCycle(sessionId);
           params.logWarn(`[DAEMON RUN] Respawn suppressed for session ${sessionId} (startup dependency: ${issue.code})`);
-          params.onRespawnTerminal?.({ sessionId, previousPid, reason: 'startup_dependency_failure', detail: issue.code });
+          beginTerminalSettlement({ sessionId, previousPid, reason: 'startup_dependency_failure', detail: issue.code });
           return;
         }
 
@@ -467,7 +498,7 @@ export function createSessionRunnerRespawnManager(params: Readonly<{
               && result.errorCode === SPAWN_SESSION_ERROR_CODES.SESSION_DIRECTORY_MISSING) {
               params.logWarn(`[DAEMON RUN] Respawn suppressed for session ${sessionId} (private directory missing)`);
               endRespawnCycle(sessionId);
-              params.onRespawnTerminal?.({ sessionId, previousPid, reason: 'session_directory_missing' });
+              beginTerminalSettlement({ sessionId, previousPid, reason: 'session_directory_missing' });
               return;
             }
             if (result && typeof result === 'object' && (result as any).type === 'success') {
@@ -479,21 +510,21 @@ export function createSessionRunnerRespawnManager(params: Readonly<{
             if (result && typeof result === 'object' && (result as any).type === 'requestToApproveDirectoryCreation') {
               params.logWarn(`[DAEMON RUN] Respawn suppressed for session ${sessionId} (directory approval required)`);
               endRespawnCycle(sessionId);
-              params.onRespawnTerminal?.({ sessionId, previousPid, reason: 'directory_approval_required' });
+              beginTerminalSettlement({ sessionId, previousPid, reason: 'directory_approval_required' });
               return;
             }
 
             if (isNotAuthenticatedSpawnResult(result)) {
               params.logWarn(`[DAEMON RUN] Respawn suppressed for session ${sessionId} (auth:not_authenticated)`);
               endRespawnCycle(sessionId);
-              params.onRespawnTerminal?.({ sessionId, previousPid, reason: 'not_authenticated' });
+              beginTerminalSettlement({ sessionId, previousPid, reason: 'not_authenticated' });
               return;
             }
 
             if (isResumeNotSupportedSpawnResult(result)) {
               params.logWarn(`[DAEMON RUN] Respawn suppressed for session ${sessionId} (resume not supported)`);
               endRespawnCycle(sessionId);
-              params.onRespawnTerminal?.({ sessionId, previousPid, reason: 'resume_not_supported' });
+              beginTerminalSettlement({ sessionId, previousPid, reason: 'resume_not_supported' });
               return;
             }
 
@@ -552,13 +583,24 @@ export function createSessionRunnerRespawnManager(params: Readonly<{
     if (existing) {
       existing.controller.markStopRequested(request);
       clearTimer(sessionId);
-      stateBySessionId.delete(sessionId);
+      if (!existing.terminalSettlement) stateBySessionId.delete(sessionId);
       existing.retire?.();
     }
     params.onStopRequested?.(sessionId);
   };
 
   return {
+    hasPendingTerminalSettlements: () => {
+      for (const state of stateBySessionId.values()) if (state.terminalSettlement) return true;
+      return false;
+    },
+    async awaitTerminalSettlement(sessionId) {
+      const completions = (sessionId === undefined ? [...stateBySessionId.values()] : [stateBySessionId.get(normalizeSessionId(sessionId))])
+        .flatMap(state => state?.terminalSettlement ? [state.terminalSettlement.completion] : []);
+      const settled = await Promise.allSettled(completions);
+      const failure = settled.find(result => result.status === 'rejected');
+      if (failure?.status === 'rejected') throw failure.reason;
+    },
     hasPendingIntendedRestarts: (sessionId) => {
       if (sessionId !== undefined) return stateBySessionId.get(normalizeSessionId(sessionId))?.intended === true;
       for (const state of stateBySessionId.values()) if (state.intended) return true;
@@ -609,7 +651,7 @@ export function createSessionRunnerRespawnManager(params: Readonly<{
         endRespawnCycle(sessionId);
         // Keep requester custody until the existing exact-activation failure
         // owner has read Home. This terminal exit bypasses the retry preflight.
-        void (async () => {
+        beginTerminalSettlement({ sessionId, previousPid: trackedSession.pid, reason: 'continuation_unreachable' }, async () => {
           try {
             await params.readStartupFailure?.({ sessionId, trackedSession, runnerExitCode: exit.code });
           } catch (error) {
@@ -617,17 +659,9 @@ export function createSessionRunnerRespawnManager(params: Readonly<{
               sessionId, phase: 'pending_activation_failure', exitCode: exit.code,
               ...readUnexpectedActionErrorDiagnosticV1(error),
             });
-          } finally {
-            params.logWarn(
-              `[DAEMON RUN] Respawn suppressed for session ${sessionId} (continuation unreachable)`,
-            );
-            params.onRespawnTerminal?.({
-              sessionId,
-              previousPid: trackedSession.pid,
-              reason: 'continuation_unreachable',
-            });
           }
-        })();
+          params.logWarn(`[DAEMON RUN] Respawn suppressed for session ${sessionId} (continuation unreachable)`);
+        });
         return 'terminal';
       }
 
@@ -636,7 +670,7 @@ export function createSessionRunnerRespawnManager(params: Readonly<{
       if (exit.code === SESSION_RUNNER_EXIT_CODES.TERMINAL_FOLLOW_ADMISSION_FAILED) {
         endRespawnCycle(sessionId);
         params.logWarn(`[DAEMON RUN] Respawn suppressed for session ${sessionId} (terminal follow admission failed)`);
-        params.onRespawnTerminal?.({
+        beginTerminalSettlement({
           sessionId,
           previousPid: trackedSession.pid,
           reason: 'terminal_follow_admission_failed',
@@ -650,7 +684,7 @@ export function createSessionRunnerRespawnManager(params: Readonly<{
       if (trackedSession.projectSetupOperation) {
         endRespawnCycle(sessionId);
         params.logWarn(`[DAEMON RUN] Respawn suppressed for session ${sessionId} (original startup exited before native open)`);
-        params.onRespawnTerminal?.({ sessionId, previousPid: trackedSession.pid, reason: 'startup_operation_failed' });
+        beginTerminalSettlement({ sessionId, previousPid: trackedSession.pid, reason: 'startup_operation_failed' });
         return 'terminal';
       }
 
@@ -664,7 +698,7 @@ export function createSessionRunnerRespawnManager(params: Readonly<{
         || typeof (spawnOptions as any).directory !== 'string'
         || !String((spawnOptions as any).directory).trim()
       ) {
-        params.onRespawnTerminal?.({
+        beginTerminalSettlement({
           sessionId,
           previousPid: trackedSession.pid,
           reason: 'missing_spawn_options',
@@ -686,7 +720,7 @@ export function createSessionRunnerRespawnManager(params: Readonly<{
           `[DAEMON RUN] Respawn suppressed for session ${sessionId} `
           + '(startup-instruction cold-resume effectiveness is unproven)',
         );
-        params.onRespawnTerminal?.({
+        beginTerminalSettlement({
           sessionId,
           previousPid: trackedSession.pid,
           reason: 'startup_instructions_cold_resume_unproven',
@@ -713,7 +747,7 @@ export function createSessionRunnerRespawnManager(params: Readonly<{
           params.logWarn(`[DAEMON RUN] Session ${sessionId} crashed; respawn suppressed (${decision.reason})`);
         }
         endRespawnCycle(sessionId);
-        params.onRespawnTerminal?.({
+        beginTerminalSettlement({
           sessionId,
           previousPid: trackedSession.pid,
           reason: 'no_restart',

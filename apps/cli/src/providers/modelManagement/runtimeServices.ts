@@ -1,3 +1,4 @@
+import type { z } from 'zod/mini';
 import { randomUUID } from 'node:crypto';
 import { logProviderUnexpectedFailure } from '@/providers/diagnostics';
 
@@ -16,7 +17,7 @@ import { projectProviderConnectionBrokerApplication } from '@/providers/broker/p
 import { isRemoteProviderGatewayPlacement } from '@/providers/managed/gatewayPlacement';
 import type { DaemonProviderBindingStatusRequestV1, DaemonProviderBindingStatusResponseV1, DaemonProviderModelProjectionRefreshFailureV1, DaemonProviderModelProjectionRequestV1, DaemonProviderModelProjectionResponseV1, DaemonProviderTeamCredentialRequestPolicySupportV1, DaemonProviderTeamCredentialRequestPolicySupportRequestV1, DaemonProviderTeamCredentialRequestPolicySupportResponseV1, DaemonProviderModelSettingsMutationRequestV1, DaemonProviderModelSettingsMutationResponseV1, DaemonProviderTeamCredentialResourceTestCandidateRequestV1, DaemonProviderTeamCredentialResourceTestCandidateResponseV1, DaemonProviderTeamCredentialBrokerEligibilityRequestV1, DaemonProviderTeamCredentialBrokerEligibilityResponseV1 } from '@happier-dev/protocol/rpc/providers';
 import type { TeamCredentialSourceBindingV1 } from '@happier-dev/protocol/teams';
-import { DaemonProviderModelProjectionResponseV1Schema, DaemonProviderTeamCredentialResourceTestCandidateResponseV1Schema, DaemonProviderTeamCredentialBrokerEligibilityResponseV1Schema } from '@happier-dev/protocol/rpc/providers';
+import { DaemonProviderModelProjectionRequestV1Schema, DaemonProviderModelProjectionResponseV1Schema, DaemonProviderTeamCredentialResourceTestCandidateResponseV1Schema, DaemonProviderTeamCredentialBrokerEligibilityResponseV1Schema } from '@happier-dev/protocol/rpc/providers';
 import type { ProviderContributionRegistryView, ProviderEndpointDnsEvidence } from '@/providers/registry';
 import { resolveProviderConnectionForMachine } from '@/providers/registry';
 import { getProviderContribution } from '@/providers/registry/lookup';
@@ -101,6 +102,8 @@ import { projectConnectedAccountCatalog, readConnectedAccountCatalogSources, typ
 import { qualifySessionTeamCredentialProviderModels, selectSessionTeamCredentialProviderModel } from '@/providers/broker/sessionTeamCredentialProviderBinding';
 import { readProviderConnectionSourceCatalog, projectProviderConnectionSourceCatalog } from './providerConnectionSourceCatalog';
 import type { AccountScopedProviderReadInput } from './remoteProjection';
+import { createTeamCredentialNativeSourceServices, type TeamCredentialNativeSourceContext } from './nativeProviderSource';
+import type { PrepareTeamCredentialNativeProviderSourceResult } from '@/providers/broker/teamCredentialNativeProviderSource';
 
 export type ProviderModelManagementFeatureGate = Readonly<{
   isEnabled(featureId: 'providers' | 'providers.localModelManagement'): boolean;
@@ -191,6 +194,10 @@ export type RuntimeProviderModelManagementServices = Readonly<{
     request: DaemonProviderModelProjectionRequestV1,
     context: RuntimeProviderAccountModelProjectionContext,
   ): Promise<DaemonProviderModelProjectionResponseV1>;
+  prepareTeamCredentialNativeSource(
+    request: z.input<typeof DaemonProviderModelProjectionRequestV1Schema>,
+    signal?: AbortSignal,
+  ): Promise<PrepareTeamCredentialNativeProviderSourceResult>;
   resolveTeamCredentialRequestPolicySupport(
     request: DaemonProviderTeamCredentialRequestPolicySupportRequestV1,
     signal?: AbortSignal,
@@ -260,6 +267,7 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
   secretSources?: Parameters<typeof createRuntimeProviderServices>[0]['secretSources'];
   resolveRegistry?: () => ProviderContributionRegistryView | Promise<ProviderContributionRegistryView>;
   getAccountSettingsSnapshot?: () => ActiveAccountSettingsSnapshot | null;
+  teamCredentialNativeSource?: TeamCredentialNativeSourceContext;
   runtimeStore?: ProviderRuntimeStateStore;
   resolveAddresses?: (hostname: string) => Promise<readonly string[]>;
   localCandidateUrlsByConnectionId?: Parameters<typeof createRuntimeProviderServices>[0]['localCandidateUrlsByConnectionId'];
@@ -385,6 +393,11 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
         status: 'error',
         error: createProviderErrorV1('provider_not_enabled_on_machine', { machineId: request.machineId }),
       });
+    }
+
+    if (request.nativeSource) {
+      if (accountContext) return { status: 'error', error: createProviderErrorV1('provider_authorization_changed') };
+      return nativeSourceServices.projectModels(request, signal);
     }
 
     const target = parseBackendTargetKeyV2(request.agentTargetKey);
@@ -1710,6 +1723,15 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
 
   const projectModelsForAccount: RuntimeProviderModelManagementServices['projectModelsForAccount'] =
     (request, context) => projectModels({ ...request, refreshPolicy: request.forceRefresh ? undefined : 'current_only' }, context);
+  const nativeSourceServices = createTeamCredentialNativeSourceServices({ machineId: input.machineId,
+    isFeatureEnabled: () => input.featureGate.isEnabled('providers'),
+    context: input.teamCredentialNativeSource,
+    getAccountSettingsSnapshot: input.getAccountSettingsSnapshot ?? getActiveAccountSettingsSnapshot,
+    acquireRuntimeLease: input.acquireRuntimeLease ?? (() => acquireAuthoritativePluginRuntimeRegistryLease({
+      happyHomeDir: input.happyHomeDir ?? configuration.happyHomeDir })),
+    projectSourceModels: (request, signal) => projectModels(request, undefined, signal),
+    resolveAddresses: input.resolveAddresses,
+  });
   return Object.freeze({
     probe: sharedRuntime.probe,
     probeDraft: sharedRuntime.probeDraft,
@@ -1719,6 +1741,7 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
     projectModels: (request: DaemonProviderModelProjectionRequestV1, signal?: AbortSignal, context?: RpcHandlerContext) =>
       projectModels(request, undefined, signal, undefined, context),
     projectModelsForAccount,
+    prepareTeamCredentialNativeSource: nativeSourceServices.prepare,
     resolveTeamCredentialRequestPolicySupport,
     resolveTeamCredentialResourceTestCandidate: resolveResourceTestCandidate,
     resolveTeamCredentialBrokerEligibility: resolveBrokerEligibility,

@@ -50,7 +50,7 @@ export async function createInstalledProjectAgentDaemonFixture(readControl: () =
   controller?: PluginReloadController,
   requesterOptions?: Partial<Pick<Parameters<typeof createRequesterSessionRuntimeContext>[0], 'resolveQualifiedConnectedAccountV4Support'>>
     & Partial<Pick<Parameters<typeof startDaemonSessionControlRuntime>[0], 'resolveCurrentMachineExecutionOriginContext' | 'processEnv' | 'openTeamCredentialProviderBinding'>>
-    & Partial<Pick<Parameters<typeof startDaemonSessionControlRuntime>[0], 'credentials' | 'externalActionAccountId' | 'agentIsolation' | 'onLocalServicesRoutesReady' | 'resolveServerFeaturesSnapshot'>>
+    & Partial<Pick<Parameters<typeof startDaemonSessionControlRuntime>[0], 'credentials' | 'externalActionAccountId' | 'agentIsolation' | 'onLocalServicesRoutesReady' | 'resolveServerFeaturesSnapshot' | 'releaseSessionOwnedNativeBindings' | 'getApiMachineForSessions'>>
     & Pick<NonNullable<Parameters<typeof createInstalledProjectAgentLaunchFixture>[0]>, 'machineAccess' | 'serverId' | 'homeServerIdentityId' | 'accountSettings' | 'machineRpcMethods'>
     & { requesterCredentials?: StoredCredentials; ordinaryAccountSession?: boolean }): Promise<InstalledProjectAgentDaemonFixture> {
   let daemonCredentials = requesterOptions?.credentials ?? { token: 'custodian-token', encryption: null };
@@ -146,6 +146,7 @@ export async function createInstalledProjectAgentDaemonFixture(readControl: () =
     openTeamCredentialProviderBinding: requesterOptions?.openTeamCredentialProviderBinding,
     onLocalServicesRoutesReady: requesterOptions?.onLocalServicesRoutesReady,
     resolveServerFeaturesSnapshot: requesterOptions?.resolveServerFeaturesSnapshot,
+    releaseSessionOwnedNativeBindings: requesterOptions?.releaseSessionOwnedNativeBindings,
     externalActionAccountId: requesterOptions?.externalActionAccountId ?? 'custodian', credentials: daemonCredentials, api: {} as never,
     deviceLocalSecretStorage,
     pluginRuntimeController: plugin.controller, connectedServiceRuntimeRegistry,
@@ -154,7 +155,7 @@ export async function createInstalledProjectAgentDaemonFixture(readControl: () =
     connectedServicesMaterializationBaseDir: join(f.directory, 'connected-services'),
     getConnectedServiceRefreshCoordinator: () => null, getConnectedServiceQuotasCoordinator: () => null,
     pidToTrackedSession, pidToAwaiter, pidToSpawnResultResolver: new Map(), pidToSpawnWebhookTimeout: new Map(),
-    getApiMachineForSessions: () => machine, spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(),
+    getApiMachineForSessions: requesterOptions?.getApiMachineForSessions ?? (() => machine), spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(),
     resolveRequesterSessionRuntimeContext: resolveRequesterRuntime,
     releaseRequesterSessionRuntimeContext: async context => {
       await releaseUnretainedRequesterSessionRuntimeContext(context,

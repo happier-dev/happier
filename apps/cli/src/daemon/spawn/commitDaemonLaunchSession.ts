@@ -10,8 +10,10 @@ import type { SessionCreationOutcome } from '@/api/types';
 import { buildCommittedLaunchMetadata } from '@/agent/runtime/createSessionMetadata';
 import type { SessionAttachFilePayload } from '@/agent/runtime/sessionAttachPayload';
 import type { StoredCredentials } from '@/persistence';
+import type { SessionTeamCredentialBindingIntentV1 } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
 import { resolveAvailableAccountSettings } from '@/settings/accountSettings/resolveAvailableAccountSettings';
 import { archiveSessionOnceInactive } from '@/session/services/archiveSessionOnceInactive';
+import { SessionTeamCredentialLaunchUnavailableError } from '@/session/services/sessionTeamCredentialLaunchError';
 import {
   SPAWN_SESSION_ERROR_CODES,
   type SpawnSessionOptions,
@@ -69,6 +71,7 @@ export type CommittedDaemonLaunchSession = Readonly<{
   attachPayload: SessionAttachFilePayload;
   /** The launch continues as an attach to this Session with these options. */
   options: SpawnSessionOptions;
+  releaseNativeBindingOnLaunchFailure?: () => Promise<void>;
 }>;
 
 /**
@@ -86,6 +89,11 @@ export async function commitDaemonLaunchSession(input: Readonly<{
   agentModeId?: string;
   agentModeUpdatedAt?: number;
   accountSettings?: Readonly<Record<string, unknown>>;
+  prepareNativeTeamCredentialBinding?: (input: Readonly<{
+    sessionId: string;
+    created: boolean;
+    binding: Exclude<SessionTeamCredentialBindingIntentV1, { resourceId: null }>;
+  }>) => Promise<() => Promise<void>>;
 }>): Promise<
   | Readonly<{ ok: true; session: CommittedDaemonLaunchSession }>
   | Readonly<{ ok: false; result: SpawnError }>
@@ -163,6 +171,22 @@ export async function commitDaemonLaunchSession(input: Readonly<{
     } };
   }
 
+  // The accepted birth witness exists now, but no caller has yet observed the
+  // committed Session. Keep genuine spawn custody through its exact first
+  // native install before acceptance may retire the ingress or launch Agent work.
+  let releaseNativeBindingOnLaunchFailure: (() => Promise<void>) | undefined;
+  if (acceptedTeamModel?.resourceId && acceptedTeamModel.deliveryMode === 'vendor-native') {
+    if (!input.prepareNativeTeamCredentialBinding) throw new SessionTeamCredentialLaunchUnavailableError();
+    releaseNativeBindingOnLaunchFailure = await input.prepareNativeTeamCredentialBinding({ sessionId: created.id, created: createdHere, binding: acceptedTeamModel });
+  }
+
+  // The same operation continues launch, native open and original-input admission.
+  // Only its individually opted-in observers can receive this committed proof.
+  const acceptance = options.projectSetupOperation?.operationAcceptance;
+  if (acceptance?.actionId === 'session.spawn_new') {
+    acceptance.accept({ type: 'pending', retryWithSameCreationKey: true, outcome: 'accepted', sessionId: created.id });
+  }
+
   const rejoined = !createdHere;
   // A rejoined Session keeps the identity its first launch persisted; without
   // one, the existing-Session identity owner repairs or refuses it.
@@ -176,6 +200,7 @@ export async function commitDaemonLaunchSession(input: Readonly<{
   return {
     ok: true,
     session: {
+      ...(releaseNativeBindingOnLaunchFailure ? { releaseNativeBindingOnLaunchFailure } : {}),
       sessionId: created.id,
       created: createdHere,
       ...(created.sessionCreationOutcome

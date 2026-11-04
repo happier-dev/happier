@@ -1,3 +1,7 @@
+import { createManagedNativeInvocation } from './reconcile';
+import type { RuntimeProviderModelManagementServices } from '@/providers/modelManagement/runtimeServices';
+import { ManagedControllerCredentialDeliveryReportOutputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { composeManagedNativeCredentials, applyManagedNativeCredentialPolicy } from './nativeCredentialComposer';
 import axios from 'axios';
 import { MachineAdminAccessMutationResultV1Schema, MachineAdminAccessFieldV1 } from '@happier-dev/protocol';
 import { resolveManagedMachineEnrollmentAdminAccessV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
@@ -48,6 +52,7 @@ export type ManagedMachineAcquisitionDriverInput = Readonly<{
     readPolicyCurrent?: (managedId: string, signal?: AbortSignal) => Promise<ManagedMachineV1 | null>;
     /** Classified changes from the controller's existing Account-feed owner. */
     subscribeManagedMachineChanges?: import('@/api/apiMachine').ApiMachineClient['onManagedMachinePolicyInvalidated'];
+    prepareTeamCredentialNativeSource?: RuntimeProviderModelManagementServices['prepareTeamCredentialNativeSource'];
 }>;
 export type ManagedMachineExecutionOptions = Readonly<{
     requestId: string;
@@ -385,6 +390,31 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
         }
     }
     return {
+        async reconcileNativeCredentials(machine: ManagedMachineV1, options: ManagedMachineExecutionOptions): Promise<void> {
+            const contribution = input.runtimeRegistry.contributes.machineProvisioners?.find(candidate =>
+                candidate.identity.pluginId === machine.launch.provider.pluginId
+                && candidate.identity.localId === machine.launch.provider.localId);
+            if (!contribution?.definition.nativeCredentialDelivery) return;
+            if (!input.externalActionMachineRequestPrivateKey || !input.prepareTeamCredentialNativeSource) {
+                throw new ManagedMachineControllerError('credential_unavailable');
+            }
+            const { readManagedMachinePolicyCensus } = await import('@/daemon/startup/managedMachinePolicyRuntime');
+            const census = await readManagedMachinePolicyCensus({ homeId: input.homeId, controller: input.controller,
+                custodianAccountId: machine.custodianAccountId, privateKey: input.externalActionMachineRequestPrivateKey,
+                token: input.token, serverUrl: input.serverUrl, signal: options.signal, nativeCredentialManagedId: machine.id });
+            const admitted = census.machines.find(row => row.id === machine.id);
+            const policy = census.nativeCredentialPolicies?.find(row => row.managedId === machine.id);
+            if (!admitted || !policy) throw new ManagedMachineControllerError('admission_unavailable');
+            const action = 'machines.managed.credentials.install' as const;
+            const client = createManagedMachineControllerClient(input, options, action);
+            client.assertConnection(admitted);
+            const invocation = createManagedNativeInvocation({ input, options, client, machine: admitted, action,
+                nativePolicyAdmission: true }, () => admitted);
+            const result = await applyManagedNativeCredentialPolicy({ machine: admitted, bindings: policy.bindings,
+                desiredBindingKeys: policy.desiredBindingKeys, prepareSource: input.prepareTeamCredentialNativeSource,
+                invoke: invocation.invoke, signal: options.signal });
+            if (result.kind !== 'confirmed') throw new ManagedMachineControllerError(result.code);
+        },
         async executePolicy(machine: ManagedMachineV1, purpose: ManagedPolicyPurposeV1, options: ManagedMachineExecutionOptions): Promise<JsonValue> {
             if (!options.context?.operationAcceptance?.operationId || !options.context.operationOwnerUpdate
                 || options.context.externalActionCredential || options.context.externalActionExecutionAuthorization) {
@@ -549,6 +579,58 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
             if (review.homeId !== input.homeId || ('controller' in review && review.controller
                 && (review.controller.machineId !== input.controller.machineId || review.controller.installationId !== input.controller.installationId))) {
                 throw new ManagedMachineControllerError('controller_unavailable');
+            }
+            if (action === 'machines.managed.credentials.install') {
+                const request = ManagedMachineActionInputSchemasV1[action].parse(parsed);
+                const machine = await client.post(managedMachineActionEndpointPathV1('machines.managed.get'), {
+                    homeId: request.homeId, managedId: request.managedId,
+                }, ManagedMachineV1Schema);
+                client.assertConnection(machine);
+                let retained = await client.post('/v1/machines/managed/controller/context', {
+                    homeId: machine.homeId, managedId: machine.id, expectedIntentRevision: machine.intentRevision,
+                    controller: input.controller, includeNativeCredentialBindings: true,
+                }, ManagedControllerContextOutputV1Schema);
+                client.assertConnection(retained.machine);
+                if (!retained.nativeCredentialBindings || !retained.nativeCredentialDesiredBindingKeys) return { kind: 'refused', code: 'credential_unavailable' };
+                if (!input.prepareTeamCredentialNativeSource) return { kind: 'refused', code: 'provider_unavailable' };
+                const currentOptions = { ...options, requestId: retained.requestId };
+                const currentClient = createManagedMachineControllerClient(input, currentOptions, action);
+                try {
+                    const submitted = await currentClient.post('/v1/machines/managed/controller/report', {
+                        ...currentClient.correlation(retained.machine), credentialDelivery: { request, phase: 'submitted' },
+                    }, ManagedControllerSubmitOutputV1Schema, null);
+                    if (!submitted.submitted) return { kind: 'unknown', code: 'action_outcome_unknown' };
+                    // The durable exact-request claim precedes every vendor
+                    // effect. Reread its complete desired census under that claim.
+                    retained = await currentClient.post('/v1/machines/managed/controller/context', {
+                        homeId: retained.machine.homeId, managedId: retained.machine.id,
+                        expectedIntentRevision: retained.machine.intentRevision,
+                        controller: input.controller, includeNativeCredentialBindings: true,
+                    }, ManagedControllerContextOutputV1Schema);
+                    currentClient.assertConnection(retained.machine);
+                    if (!retained.nativeCredentialBindings || !retained.nativeCredentialDesiredBindingKeys) return { kind: 'unknown', code: 'action_outcome_unknown' };
+                } catch {
+                    return { kind: 'unknown', code: 'action_outcome_unknown' };
+                }
+                const appliedPolicy = { ownedBindingKeys: retained.nativeCredentialBindings.map(binding => binding.safeFacet.bindingKey),
+                    desiredBindingKeys: retained.nativeCredentialDesiredBindingKeys };
+                const invocation = createManagedNativeInvocation({ input, options: currentOptions, client: currentClient,
+                    machine: retained.machine, action }, () => retained.machine);
+                const result = await composeManagedNativeCredentials({ request, machine: retained.machine,
+                    bindings: retained.nativeCredentialBindings, desiredBindingKeys: retained.nativeCredentialDesiredBindingKeys,
+                    prepareSource: input.prepareTeamCredentialNativeSource,
+                    invoke: invocation.invoke, signal: options.signal });
+                try {
+                    const completed = await currentClient.post('/v1/machines/managed/controller/report', {
+                        ...currentClient.correlation(retained.machine), credentialDelivery: { request, result,
+                            ...(result.kind === 'confirmed' ? { appliedPolicy } : {}) },
+                    }, ManagedControllerCredentialDeliveryReportOutputV1Schema, null);
+                    return completed.credentialDeliveryResult;
+                } catch {
+                    // A vendor acknowledgement does not prove Home retained the
+                    // outcome. Do not release launch on an unrecorded result.
+                    return result.kind === 'refused' ? result : { kind: 'unknown', code: 'action_outcome_unknown' };
+                }
             }
             if (action === 'machines.provisioners.list') {
                 const request = ManagedMachineActionInputSchemasV1[action].parse(parsed);

@@ -1,3 +1,4 @@
+import type { ManagedNativeCredentialInvocationBinding } from '@/plugins/runtime/invocation/services/types';
 import { ACTION_IDS } from '@happier-dev/protocol/actions/actionIds';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
@@ -107,6 +108,8 @@ export type AdmittedManagedProviderOperationExecutionRequest = Readonly<{
   role: MachineProvisionerRoleV1;
   /** Owned bytes from this exact row's retained SavedSecret; never an SDK selector. */
   readBootstrapCredential?(): Promise<Uint8Array>;
+  /** Deferred, exact-binding inference material, independent of cloud-purpose custody. */
+  managedNativeCredentials?: ManagedNativeCredentialInvocationBinding;
   /** Existing purpose lease; the operation owner retains its cleanup lifetime. */
   exactPurposeBindingSubjectId?: string;
   /** Host-only live output delivery while the native Exec Action is pending. */
@@ -916,7 +919,8 @@ export async function executeContributedAction(params: Readonly<{
       : params.requestCurrentIntent;
     const exactPurposeBindingSubjectId = params.admittedManagedProviderOperation?.exactPurposeBindingSubjectId
       ?? params.admittedConnectedAccountPurposeBinding?.exactPurposeBindingSubjectId;
-    const targetInvocation = {
+    const nativeCredentials = params.admittedManagedProviderOperation?.managedNativeCredentials;
+  const targetInvocation = {
       pluginId,
       localId: action.definition.id,
       ...(params.requiredReadOnly ? { requiredReadOnly: true as const } : {}),
@@ -994,6 +998,9 @@ export async function executeContributedAction(params: Readonly<{
             readBootstrapCredential: params.admittedManagedProviderOperation.readBootstrapCredential,
             isCurrent: async () => await checkManagedCustody() === null,
           } }
+        : {}),
+      ...(nativeCredentials
+        ? { managedNativeCredentials: nativeCredentials }
         : {}),
       ...(['acquire', 'rebuild', 'reconcile'].includes(params.admittedManagedProviderOperation?.role ?? '')
         ? { retainHandlerResultAfterCancellation: true as const }

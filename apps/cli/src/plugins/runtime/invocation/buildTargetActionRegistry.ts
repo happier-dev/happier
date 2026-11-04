@@ -202,6 +202,14 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
             ? [{ pluginId: target.pluginId, localId: right.localId }]
             : [])
     ));
+    // Native apply descriptors carry opaque bearer placeholders. Treat their
+    // declared operands as confidential even when a plugin omits input hints.
+    const nativeCredentialApplyKeys = new Set((params.contributes.machineProvisioners ?? []).flatMap((entry) => {
+        const localId = entry.definition.nativeCredentialDelivery?.apply;
+        return localId ? [buildQualifiedPluginContributionKey(createPluginContributionIdentity({
+            pluginId: entry.pluginId, localId,
+        }))] : [];
+    }));
     const readActions = () => {
         const targetActivationFacts = params.readTargetActivationFacts?.()
             ?? params.targetActivationFacts;
@@ -263,6 +271,12 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
             const observeRead = readPluginActionReadObserver(capturedHandler);
             const occurrenceId = params.readCurrentPluginOccurrenceId?.(entry.pluginId);
             const sourceCustody = params.readCurrentPluginSourceCustody?.(entry.pluginId);
+            const secretInputPaths = [
+                ...(actionDefinition.inputHints?.fields ?? [])
+                    .filter(field => field.widget === 'secret').map(field => field.path),
+                ...(nativeCredentialApplyKeys.has(buildQualifiedPluginContributionKey(actionIdentity))
+                    ? ['bindings', 'ownedBindings'] : []),
+            ];
             const secretInputLabels = Object.fromEntries((actionDefinition.inputHints?.fields ?? [])
                 .filter(field => field.widget === 'secret')
                 .map(field => [field.path, typeof field.title === 'string' ? field.title : field.title.fallback]));
@@ -279,8 +293,7 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
                 localId: entry.registration.localId,
                 definition: {
                     ...readTargetDefinition(resolvedAction.definition),
-                    secretInputPaths: (actionDefinition.inputHints?.fields ?? [])
-                        .filter(field => field.widget === 'secret').map(field => field.path),
+                    secretInputPaths,
                     ...(Object.keys(secretInputLabels).length ? { secretInputLabels } : {}),
                     hostAccessRequests: resolveManifestHostAccessRequests({
                         manifest,

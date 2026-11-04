@@ -14,6 +14,8 @@ import {
 import { logger } from '@/ui/logger';
 import { deriveSessionCreationTagV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
 import { SessionCreationCorrespondenceV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
+import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 
 vi.mock('@/ui/logger', () => ({
   logger: {
@@ -28,6 +30,34 @@ import { buildSpawnChildProcessEnv } from '@/daemon/spawn/buildSpawnChildProcess
 import { captureSessionLaunchControlMetadata, createSessionMetadata } from '@/agent/runtime/createSessionMetadata';
 
 describe('createSpawnNewSessionLifecycleActionHandler', () => {
+  it('keeps admitted spawn authority invocation-only for the exact native credential child', async () => {
+    const input = { directory: '/repo', backendTarget: { kind: 'backend' as const, backendId: 'codex', sourceKind: 'built_in' as const } };
+    const target = { kind: 'machine' as const, machineId: 'guest' };
+    const originalActionEnvelope = { v: 1 as const, requestId: 'spawn-native', target, input };
+    const callerInputAuthorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'admitted-home-proof', binding: {
+      serverIdentityId: 'home', accountId: 'member', authentication: { kind: 'account', tokenEpoch: 0 },
+      actionId: 'session.spawn_new', requestId: 'spawn-native', requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(originalActionEnvelope),
+      machineId: 'guest', custodianAccountId: 'member', installationId: 'guest-installation', target, accountEncryptionMode: 'plain',
+    } });
+    const machineAdmission = { actorAccountId: 'member', custodianAccountId: 'member', machineId: 'guest',
+      installationId: 'guest-installation', role: 'use' as const, encryptionMode: 'plain' as const };
+    const verifyMachineAdmissionCurrent = async () => true;
+    let launched: SpawnSessionOptions | undefined;
+    const handler = createSpawnNewSessionLifecycleActionHandler({ serverId: 'home', spawnSession: async options => {
+      launched = options;
+      return { type: 'success', sessionId: 'session-native' };
+    } });
+    expect(await handler(input, { machineAdmission, verifyMachineAdmissionCurrent, callerInputAuthorization,
+      originalActionEnvelope })).toMatchObject({ type: 'success' });
+    expect(launched?.spawnActionContext).toMatchObject({ callerInputAuthorization, originalActionEnvelope, machineAdmission });
+    expect(launched?.spawnActionContext?.verifyMachineAdmissionCurrent).toBe(verifyMachineAdmissionCurrent);
+    const environment = await resolveSpawnChildEnvironment({ options: launched!, processEnv: {}, profileEnvironmentVariables: {},
+      daemonSpawnHooks: null, logDebug() {}, logInfo() {}, logWarn() {} });
+    expect(JSON.stringify(environment)).not.toContain('admitted-home-proof');
+    expect(await handler({ ...input, spawnActionContext: launched?.spawnActionContext })).toMatchObject({
+      type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+    });
+  });
   it.each([false, true])('accepts the canonical Agent target without a legacy backend target (model selection: %s)', async withModel => {
     const agentTarget = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } };
     const modelSelection = { v: 1 as const, updatedAt: 1791524847849,

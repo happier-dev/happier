@@ -1,23 +1,32 @@
+import { createUnavailableManagedServices } from '@/plugins/runtime/invocation/services/managedServicesAdapter';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
+import { createServer } from 'node:http';
+import { once } from 'node:events';
+import tweetnacl from 'tweetnacl';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { activate, PLUGIN_MANIFEST } from '@happier-dev/plugins-cliproxyapi';
+import type { ManagedServiceSpec } from '@happier-dev/plugin-sdk/managed-services';
+import { createCLIProxyAPIManagedHealthResponse } from '../../../../../packages/plugins/cliproxyapi/src/provider/managedHealth.testkit';
 import { evaluateTeamCredentialRequestPolicyV1 } from './requestPolicyV1';
 import { PROVIDER_BROKER_ENDPOINT_PATH_HEADER } from './providerBrokerPrivateProtocol';
 import type { PluginApi } from '@happier-dev/plugin-sdk';
-import { TeamCredentialDirectMaterialPayloadV1Schema } from '@happier-dev/protocol/teams';
+import { TeamCredentialDirectMaterialPayloadV1Schema, type TeamCredentialProviderModelCatalogEntryV1 } from '@happier-dev/protocol/teams';
 import { AccountSettingsSchema, DEFAULT_PROVIDER_SETTINGS_V1, ProviderSettingsV1Schema, splitProviderSettingsV1 } from '@happier-dev/protocol';
 import { ProviderModelBindingSourceV1Schema } from '@happier-dev/protocol/providers/binding-compatibility';
 import { resolveTeamCredentialModelCompatibility } from './teamCredentialModelCompatibility';
 import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
-import { ProviderBrokerAdmissionFailureCodeV1Schema } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import { ProviderBrokerAdmissionFailureCodeV1Schema, createProviderBrokerRouteGrantSigningInputV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import { createProviderBrokerMachineCarrierTunnelOpen } from '@/daemon/peer/iroh/providerBrokerMachineCarrierTunnelOpen';
+import type { DaemonMachineIrohRuntime } from '@/daemon/peer/iroh/daemonMachineIrohRuntime';
+import { MachineCarrierError } from '@/daemon/peer/iroh/machineCarrier';
 import { SessionTeamCredentialLaunchUnavailableError } from '@/session/services/sessionTeamCredentialLaunch';
 import { logger } from '@/ui/logger';
 import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
-import { PROVIDER_BROKER_APPLICATION_ERROR_CODE_HEADER } from './providerBrokerApplicationServer';
+import { PROVIDER_BROKER_APPLICATION_ERROR_CODE_HEADER, writeProviderBrokerApplicationFailure } from './providerBrokerApplicationServer';
 
 import {
   openExactSessionTeamCredentialProviderBinding,
@@ -125,6 +134,77 @@ describe('Session Team credential Provider binding', () => {
     expect(unconfirmed).toMatchObject({ result: { status: 'experimental' }, confirmed: true });
   });
 
+  it('reuses the installed native placeholder without a controller catalog and awaits local release', async () => {
+    const credentialTransport = row.sourceFacts.credential?.transports[0];
+    if (!credentialTransport) throw new Error('Expected the native credential transport');
+    const nativeDelivery = { managedId: 'managed-1', controllerInstallationId: 'controller-installation',
+      guestInstallationId: 'guest-installation', bindingKey: 'binding-native', placeholderRef: 'placeholder-ref',
+      sourceRevision: row.sourceRevision, providerTicket: 't'.repeat(43) };
+    const offered = { ...row, selection: { ...row.selection, deliveryMode: 'vendor-native' as const },
+      nativeSource: { providerTicket: nativeDelivery.providerTicket } };
+    let currentModel: TeamCredentialProviderModelCatalogEntryV1 = offered;
+    const placeholder = 'binding-placeholder';
+    const publicHeaders = { 'http-referer': 'https://happier.dev', 'x-title': 'Happier' };
+    let released = false;
+    const open = () => openSessionTeamCredentialProviderBinding({
+      sessionId: 'session-1', machineId: 'worker-1', agentId: 'codex',
+      agentTargetKey: row.selection.agentTargetKey, modelId: row.selection.modelId,
+      binding: { v: 1, slot: { kind: 'provider_model' }, resourceId: row.selection.resourceId,
+        expectedResourceRevision: 3, deliveryMode: 'vendor-native', nativeDelivery },
+      lease: lease({ v: 1, adapterVersion: 1, prepare: prepareSpawnEnv, materialize: input => {
+        expect(input.binding.endpoint.publicHeaders).toEqual(publicHeaders);
+        return materializeBrokerAuthoritySpawnEnv(input);
+      } }),
+      materializationBaseDir: '/tmp/happier-team-native', signal: new AbortController().signal,
+      readCatalog: async () => { throw new Error('Installed native use must not reread the controller catalog'); },
+      openVendorNative: async () => ({ model: currentModel, endpoint: { endpointTemplateId: row.application.endpointTemplateId,
+        normalizedUrl: 'https://gateway.example.test/v1', protocol: row.application.protocol, publicHeaders },
+        credentialTransport, placeholder,
+        cleanup: async () => { await Promise.resolve(); released = true; } }),
+      openBroker: async () => { throw new Error('Native cannot acquire broker authority'); },
+      openTeamDirect: async () => { throw new Error('Native cannot resolve company plaintext'); },
+    });
+    const opened = await open();
+    expect(opened?.providerBinding.upstream?.normalizedUrl).toBe('https://gateway.example.test/v1');
+    expect(opened?.environmentOverlay).toEqual([{ name: 'BROKER_AUTHORITY', value: placeholder, source: 'provider' }]);
+    await opened?.cleanup();
+    expect(released).toBe(true);
+    for (const substituted of [
+      { ...offered, selection: { ...offered.selection, resourceId: 'another-resource' } },
+      { ...offered, sourceRevision: 'changed-source' },
+      { ...offered, nativeSource: { providerTicket: 'x'.repeat(43) } },
+    ]) {
+      currentModel = substituted;
+      released = false;
+      await expect(open()).rejects.toMatchObject({ code: 'team_credential_provider_selection_not_current' });
+      expect(released).toBe(true);
+    }
+  });
+
+  it.each(['vendor-native', 'future-route'])('refuses an unsupported %s route without opening a broker or direct material', async deliveryMode => {
+    const binding = { v: 1 as const, slot: { kind: 'provider_model' as const }, resourceId: row.selection.resourceId,
+      expectedResourceRevision: 3, deliveryMode: 'brokered' as const };
+    const offered = { ...row, selection: { ...row.selection } };
+    // Exercise an untrusted/future route at the catalog/intent ingress boundary.
+    Reflect.set(binding, 'deliveryMode', deliveryMode);
+    Reflect.set(offered.selection, 'deliveryMode', deliveryMode);
+    let brokerOpens = 0;
+    let directOpens = 0;
+    const open = openSessionTeamCredentialProviderBinding({
+      sessionId: 'session-1', machineId: 'worker-1', agentId: 'codex',
+      agentTargetKey: row.selection.agentTargetKey, modelId: row.selection.modelId, binding,
+      lease: lease({ v: 1, adapterVersion: 1, prepare: prepareSpawnEnv, materialize: materializeEmptySpawnEnv }),
+      materializationBaseDir: '/tmp/happier-team-unsupported-route', signal: new AbortController().signal,
+      readCatalog: async () => [offered],
+      openBroker: async () => { brokerOpens++; return { ok: false, reasonCode: 'broker_unavailable' }; },
+      openTunnel: async () => { throw new Error('Unsupported delivery cannot open a tunnel'); },
+      openTeamDirect: async () => { directOpens++; return { ok: false, reason: 'temporarily_unavailable' }; },
+    });
+    await expect(open).rejects.toMatchObject({ code: 'team_credential_provider_selection_not_current' });
+    expect(brokerOpens).toBe(0);
+    expect(directOpens).toBe(0);
+  });
+
   it.each(ProviderBrokerAdmissionFailureCodeV1Schema.options)('retains exact broker-open refusal %s as a typed launch error', async code => {
     const refused = await openExactSessionTeamCredentialProviderBinding({
       sessionId: 'session-1', machineId: 'worker-1', agentId: 'codex',
@@ -192,12 +272,10 @@ describe('Session Team credential Provider binding', () => {
     if (!runtime) throw new Error('missing managed runtime');
     const snapshot = { id: 'cliproxyapi-managed', state: 'healthy' as const, mode: 'spawn' as const,
       baseUrl: 'http://127.0.0.1:45123', startedAtMs: 1, lastHealthyAtMs: 2, diagnostics: [], diagnosticsTruncated: false };
+    let launch: ManagedServiceSpec | undefined;
     const service = {
       snapshot: () => snapshot, waitUntilHealthy: async () => snapshot, observe: () => ({ dispose() {} }),
-      request: async () => ({ ok: true, status: 200, statusText: 'OK', headers: { 'content-type': 'application/json' },
-        body: Response.json({ v: 1, contractVersion: 'happier.cliproxyapi-managed/v2', sdkVersion: 'v7.2.95',
-          wrapperBuildVersion: 'test', protocols: [protocol], purposes: [], modelListEnabled: false,
-          sourceClass: 'provider_connection' }).body }),
+      request: async () => createCLIProxyAPIManagedHealthResponse(launch),
       stop: async () => ({ status: 'stopped' as const }), dispose: async () => undefined,
     };
     const declared = await runtime.start({ reason: 'explicitStartLocal', endpointTemplateIds: [endpointTemplateId] }, {
@@ -205,7 +283,8 @@ describe('Session Team credential Provider binding', () => {
       connectedAccounts: {
         getBinding: async () => null,
       },
-      managedServices: { supervise: async () => service },
+      managedServices: {
+          ...createUnavailableManagedServices(), supervise: async (spec: ManagedServiceSpec) => { launch = spec; return service; } },
       // Only managed-process and Connected Account service boundaries are
       // supplied; the public plugin start and endpoint declaration stay real.
     } as never);
@@ -268,12 +347,15 @@ describe('Session Team credential Provider binding', () => {
       consumerInput: { consumer: { kind: 'execution_run' as const, executionRunId: 'run-1' } },
       expectedConsumer: { kind: 'execution_run' as const, executionRunId: 'run-1' },
     },
-  ])('opens exact direct material for a $name and feeds it through the canonical Agent Provider materializer', async ({
+  ])('opens experimental direct material without confirmation for a $name through the canonical Agent Provider materializer', async ({
     consumerInput,
     expectedConsumer,
   }) => {
     const directRow = {
       ...row,
+      sourceFacts: { ...row.sourceFacts, compatibilityOverrides: row.sourceFacts.compatibilityOverrides!.map(override => ({
+        ...override, status: 'experimental' as const,
+      })) },
       selection: { ...row.selection, deliveryMode: 'direct' as const },
       direct: {
         sourceMemberKey: 'provider:source-member',
@@ -282,7 +364,11 @@ describe('Session Team credential Provider binding', () => {
     };
     const openBroker = vi.fn();
     const openTunnel = vi.fn();
-    const openTeamDirect = vi.fn<SessionTeamCredentialDirectOpen>(async () => ({
+    let disclosed = false;
+    const readCatalog = vi.fn(async () => disclosed ? [] : [directRow]);
+    const openTeamDirect = vi.fn<SessionTeamCredentialDirectOpen>(async () => {
+      disclosed = true;
+      return {
       ok: true as const,
       payload: TeamCredentialDirectMaterialPayloadV1Schema.parse({
         v: 1 as const,
@@ -313,7 +399,8 @@ describe('Session Team credential Provider binding', () => {
         },
         },
       }),
-    }));
+      };
+    });
     const adapter: ProviderAdapter = {
       v: 1, adapterVersion: 1,
       prepare: vi.fn(prepareSpawnEnv),
@@ -326,7 +413,7 @@ describe('Session Team credential Provider binding', () => {
       binding: { v: 1, slot: { kind: 'provider_model' }, resourceId: 'resource-1', expectedResourceRevision: 3, deliveryMode: 'direct' },
       lease: lease(adapter), materializationBaseDir: '/tmp/happier-team-direct-test',
       signal: new AbortController().signal,
-      readCatalog: async () => [directRow], openBroker: openBroker as never, openTunnel: openTunnel as never,
+      readCatalog, openBroker: openBroker as never, openTunnel: openTunnel as never,
       openTeamDirect,
     });
 
@@ -336,6 +423,7 @@ describe('Session Team credential Provider binding', () => {
       consumer: expectedConsumer,
     });
     expect(openBroker).not.toHaveBeenCalled();
+    expect(readCatalog).toHaveBeenCalledOnce();
     expect(openTunnel).not.toHaveBeenCalled();
     expect(adapter.materialize).toHaveBeenCalledWith(expect.objectContaining({
       credential: expect.objectContaining({ kind: 'apiKey', value: 'recipient-secret' }),
@@ -466,7 +554,7 @@ describe('Session Team credential Provider binding', () => {
     expect(openBroker).not.toHaveBeenCalled();
   });
 
-  it('opens one exact broker/tunnel, revalidates current catalog, and closes Session custody once', async () => {
+  it('opens one exact broker/tunnel from one admitted catalog and closes Session custody once', async () => {
     const closeOrder: string[] = [];
     const retire = vi.fn(async () => { closeOrder.push('retire'); });
     const close = vi.fn(async () => undefined);
@@ -502,6 +590,7 @@ describe('Session Team credential Provider binding', () => {
     });
 
     expect(openBroker).toHaveBeenCalledOnce();
+    expect(readCatalog).toHaveBeenCalledOnce();
     expect(openTunnel).toHaveBeenCalledWith(expect.objectContaining({
       brokerOpen: brokerOpened,
       refreshBrokerOpen: expect.any(Function),
@@ -575,13 +664,13 @@ describe('Session Team credential Provider binding', () => {
     const adapter: ProviderAdapter = {
       v: 1, adapterVersion: 1,
       prepare: vi.fn(prepareSpawnEnv),
-      materialize: vi.fn(materializeEmptySpawnEnv),
+      materialize: vi.fn(materializeBrokerAuthoritySpawnEnv),
     };
     const readCatalog = vi.fn()
       .mockResolvedValueOnce([row])
       .mockResolvedValueOnce([directTwin]);
 
-    await expect(openSessionTeamCredentialProviderBinding({
+    const opened = await openSessionTeamCredentialProviderBinding({
       sessionId: 'session-1', machineId: 'worker-1', agentId: 'codex',
       agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'gpt-5',
       binding: { v: 1, slot: { kind: 'provider_model' }, resourceId: 'resource-1', expectedResourceRevision: 3, deliveryMode: 'brokered' },
@@ -590,8 +679,11 @@ describe('Session Team credential Provider binding', () => {
       openBroker: async () => ({ ok: true, authority,
         target: { custodianAccountId: 'account-2', brokerMachineId: 'broker-1', endpointId: 'b'.repeat(64), endpointRevision: 1, endpoint: { endpointId: 'b'.repeat(64) } } }),
       openTunnel: async () => ({ localPort: 43123, localCapability: 'c'.repeat(64), observedPath: 'direct', retire: async () => undefined, close: async () => undefined }),
-    })).rejects.toThrow('team_credential_provider_selection_changed');
-    expect(adapter.materialize).not.toHaveBeenCalled();
+    });
+    expect(readCatalog).toHaveBeenCalledOnce();
+    expect(adapter.materialize).toHaveBeenCalledOnce();
+    expect(opened?.providerBinding.source).toMatchObject({ resourceId: row.selection.resourceId });
+    await opened?.cleanup();
   });
 
   it('retains the native transport when the target retirement acknowledgement is lost, so a retry can still reach it', async () => {
@@ -660,16 +752,14 @@ describe('Session Team credential Provider binding', () => {
     expect(close).toHaveBeenCalledOnce();
   });
 
-  it('fails currentness before acquiring the carrier or materializing the Agent', async () => {
+  it('refuses a withdrawn catalog selection at the next open before acquiring the carrier or materializing the Agent', async () => {
     const close = vi.fn(async () => undefined);
     const adapter: ProviderAdapter = {
       v: 1, adapterVersion: 1,
       prepare: vi.fn(prepareSpawnEnv),
       materialize: vi.fn(materializeNullBrokerAuthoritySpawnEnv),
     };
-    const readCatalog = vi.fn()
-      .mockResolvedValueOnce([row])
-      .mockResolvedValueOnce([{ ...row, sourceRevision: 'catalog:changed' }]);
+    const readCatalog = vi.fn(async () => []);
     const openTunnel = vi.fn(async () => ({ localPort: 43123, localCapability: 'c'.repeat(64), observedPath: 'direct' as const,
       retire: async () => undefined, close }));
     await expect(openSessionTeamCredentialProviderBinding({
@@ -681,13 +771,13 @@ describe('Session Team credential Provider binding', () => {
       openBroker: async () => ({ ok: true, authority,
         target: { custodianAccountId: 'account-2', brokerMachineId: 'broker-1', endpointId: 'b'.repeat(64), endpointRevision: 1, endpoint: { endpointId: 'b'.repeat(64) } } }),
       openTunnel,
-    })).rejects.toThrow('selection_changed');
+    })).rejects.toThrow('team_credential_provider_selection_not_current');
     expect(adapter.materialize).not.toHaveBeenCalled();
     expect(openTunnel).not.toHaveBeenCalled();
     expect(close).not.toHaveBeenCalled();
   });
 
-  it.each(['missing declaration', 'non-204', 'non-204 unknown reason', 'cancelled', 'selection changed'] as const)(
+  it.each(['missing declaration', 'non-204', 'non-204 unknown reason', 'cancelled'] as const)(
     'does not publish Team custody when endpoint discovery is %s', async (failure) => {
       const diagnostic = vi.spyOn(logger, 'warnLocalFile');
       onTestFinished(() => diagnostic.mockRestore());
@@ -698,9 +788,7 @@ describe('Session Team credential Provider binding', () => {
         v: 1, adapterVersion: 1, prepare: prepareSpawnEnv,
         materialize: vi.fn(materializeBrokerAuthoritySpawnEnv),
       };
-      let discoveryFinished = false;
       vi.stubGlobal('fetch', vi.fn<typeof fetch>(async () => {
-        discoveryFinished = true;
         if (failure === 'cancelled') controller.abort(new Error('cancelled-during-endpoint-discovery'));
         return new Response(null, { status: failure.startsWith('non-204') ? 403 : 204,
           headers: failure === 'missing declaration' ? {} : { [PROVIDER_BROKER_ENDPOINT_PATH_HEADER]: '/v1',
@@ -713,8 +801,7 @@ describe('Session Team credential Provider binding', () => {
         binding: { v: 1, slot: { kind: 'provider_model' }, resourceId: 'resource-1', expectedResourceRevision: 3, deliveryMode: 'brokered' },
         lease: lease(adapter), materializationBaseDir: '/tmp/happier-team-broker-test', signal: controller.signal,
         // Home catalog and the tunnel HTTP transport are external boundaries.
-        readCatalog: async () => failure === 'selection changed' && discoveryFinished
-          ? [{ ...row, sourceRevision: 'catalog:changed' }] : [row],
+        readCatalog: async () => [row],
         openBroker: async () => ({ ok: true, authority,
           target: { custodianAccountId: 'account-2', brokerMachineId: 'broker-1', endpointId: 'b'.repeat(64), endpointRevision: 1,
             endpoint: { endpointId: 'b'.repeat(64) } } }),
@@ -737,11 +824,108 @@ describe('Session Team credential Provider binding', () => {
         });
       } else {
         expect(refused).toBeInstanceOf(Error);
-        expect(refused).toHaveProperty('message', failure === 'cancelled'
-          ? 'cancelled-during-endpoint-discovery' : 'team_credential_provider_selection_changed');
+        expect(refused).toHaveProperty('message', 'cancelled-during-endpoint-discovery');
       }
       expect(adapter.materialize).not.toHaveBeenCalled();
       expect(close).toHaveBeenCalledOnce();
+    },
+  );
+
+  it.each(['refresh before dial', 'refresh socket close', 'refresh HTTP refusal', 'accepted refresh socket close', 'HTTP refusal'] as const)(
+    'preserves the discovery refusal through the real carrier: %s', async failure => {
+      const diagnostic = vi.spyOn(logger, 'warnLocalFile');
+      onTestFinished(() => diagnostic.mockRestore());
+      const readFailureDiagnostic = vi.fn(async () => ({ closingSide: 'initiator' as const, closingStage: 'stream_decision' as const }));
+      const key = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(7));
+      const payload = { ...authority.payload, issuedAt: 100, expiresAt: 10_000 };
+      const signed = { payload, signature: { alg: 'Ed25519' as const, keyId: 'home',
+        valueBase64Url: Buffer.from(tweetnacl.sign.detached(
+          Buffer.from(createProviderBrokerRouteGrantSigningInputV1(payload)), key.secretKey,
+        )).toString('base64url') } };
+      const opened = { ok: true as const, authority: signed,
+        target: { custodianAccountId: 'account-2', brokerMachineId: 'broker-1', endpointId: 'b'.repeat(64),
+          endpointRevision: 1, endpoint: { endpointId: 'b'.repeat(64) } } };
+      let transport: Parameters<DaemonMachineIrohRuntime['openHttpTunnel']>[0] | undefined;
+      let homeReads = 0;
+      let nativeOpens = 0;
+      let endpointReads = 0;
+      const close = vi.fn(async () => undefined);
+      // Native HTTP forwarding is the transport boundary. Keep signing,
+      // verification, refresh, discovery and the Team consumer real.
+      const listener = createServer(async (request, response) => {
+        endpointReads++;
+        try {
+          await transport?.handshakeProvider?.();
+          if (failure === 'refresh socket close' || failure === 'refresh HTTP refusal') await transport?.handshakeProvider?.();
+          if (failure === 'HTTP refusal') {
+            writeProviderBrokerApplicationFailure({
+              header: (name, value) => response.setHeader(name, value),
+              code: status => ({ send: body => response.writeHead(status).end(JSON.stringify(body)) }),
+            }, { ok: false, reasonCode: 'resource_unavailable' }, 'resource-1');
+            return;
+          }
+        } catch (error) {
+          // Current native forwards the real carrier refusal body with fixed
+          // HTTP framing; older native closes the socket instead.
+          if (failure === 'refresh HTTP refusal' && error instanceof MachineCarrierError && error.httpRefusal) {
+            response.writeHead(403, { 'content-type': 'application/json' }).end(error.httpRefusal.responseBody);
+            return;
+          }
+        }
+        request.socket.destroy();
+      });
+      listener.listen(0, '127.0.0.1');
+      await once(listener, 'listening');
+      onTestFinished(() => new Promise<void>(resolve => listener.close(() => resolve())));
+      const address = listener.address();
+      if (!address || typeof address === 'string') throw new Error('Missing native HTTP listener');
+      const openTunnel = createProviderBrokerMachineCarrierTunnelOpen({
+        accountId: 'account-1', localMachineId: 'worker-1', nowMs: () => 200,
+        resolveTrustRoots: () => [{ keyId: 'home', publicKey: Buffer.from(key.publicKey).toString('base64url') }],
+        runtime: { endpoint: { endpointId: 'a'.repeat(64) }, openHttpTunnel: async input => {
+          nativeOpens++;
+          transport = input;
+          return { localPort: address.port, localCapability: 'c'.repeat(64), remoteEndpointId: 'b'.repeat(64),
+            observedPath: 'direct', readFailureDiagnostic, close };
+        } },
+        fetchImpl: async () => new Response(null, { status: 204 }),
+      });
+      const adapter: ProviderAdapter = { v: 1, adapterVersion: 1, prepare: prepareSpawnEnv,
+        materialize: vi.fn(materializeBrokerAuthoritySpawnEnv) };
+      // Use real loopback fetch, including its UND_ERR_SOCKET cause.
+      vi.unstubAllGlobals();
+      const refused = await openExactSessionTeamCredentialProviderBinding({
+        sessionId: 'session-1', machineId: 'worker-1', agentId: 'codex',
+        selection: { ...row.selection, descriptor: row.descriptor, application: row.application,
+          sourceRevision: row.sourceRevision, sourceFacts: row.sourceFacts, brokerMachineId: 'broker-1' },
+        lease: lease(adapter), materializationBaseDir: '/tmp/happier-team-broker-refusal',
+        signal: new AbortController().signal,
+        openBroker: async () => {
+          homeReads++;
+          return (failure === 'refresh before dial' && homeReads === 2)
+            || ((failure === 'refresh socket close' || failure === 'refresh HTTP refusal') && homeReads === 3)
+            ? { ok: false, reasonCode: 'resource_unavailable' } : opened;
+        },
+        openTunnel,
+      }).then(() => null, (error: unknown) => error);
+      const code = failure === 'accepted refresh socket close' ? 'provider_endpoint_unavailable' : 'resource_unavailable';
+      expect(refused).toBeInstanceOf(SessionTeamCredentialLaunchUnavailableError);
+      expect(refused).toMatchObject({ code });
+      expect(classifyPrimarySessionRuntimeIssue({ cause: 'session_error', error: refused }))
+        .toMatchObject({ source: failure === 'accepted refresh socket close' ? 'agent_session_error' : 'team_credential', code });
+      expect(adapter.materialize).not.toHaveBeenCalled();
+      // One initial open and one refresh per stream; refusals cause no repolls.
+      expect(homeReads).toBe(failure === 'refresh socket close' || failure === 'refresh HTTP refusal' ? 3 : 2);
+      expect(endpointReads).toBe(failure === 'refresh before dial' ? 0 : 1);
+      expect(nativeOpens).toBe(failure === 'refresh before dial' ? 0 : 2);
+      expect(close).toHaveBeenCalledTimes(failure === 'refresh before dial' ? 0 : 2);
+      expect(readFailureDiagnostic).toHaveBeenCalledTimes(failure === 'accepted refresh socket close' ? 1 : 0);
+      if (failure === 'accepted refresh socket close') expect(diagnostic).toHaveBeenCalledWith(
+        '[ProviderBroker] Endpoint discovery refused', expect.objectContaining({
+          discoveryCause: 'socket_closed', refreshOutcome: 'accepted',
+          closingSide: 'initiator', closingStage: 'stream_decision',
+        }),
+      );
     },
   );
 

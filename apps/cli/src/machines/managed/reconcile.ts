@@ -19,7 +19,7 @@ import type { ManagedMachineActionIdV1 } from '@happier-dev/protocol/machines/ma
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
 import type { AdmittedManagedProviderOperationExecutionRequest } from '@/plugins/runtime/invocation/actions/executeContributedAction';
-import type { PluginExternalActionContext } from '@/plugins/runtime/invocation/services/types';
+import type { ManagedNativeCredentialInvocationBinding, PluginExternalActionContext } from '@/plugins/runtime/invocation/services/types';
 import { createPrivateBearerCredential } from '@/daemon/privateBearerFile';
 import { MachineProvisionerNativeExecResultV1Schema, MachineProvisionerPutFileResultV1Schema, isMachineProvisionerCredentialPurposeRequiredV1,
     isMachineProvisionerBootstrapCredentialRoleV1, type MachineProvisionerContributionV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
@@ -227,7 +227,10 @@ async function materializeBootstrapCredential(params: ManagedMachineReconciliati
 }
 
 /** Acquisition and retained-resource control share the same private native custody. */
-export function createManagedNativeInvocation(params: ManagedMachineReconciliationInput, readMachine: () => ManagedMachineV1,
+export function createManagedNativeInvocation<NativePolicyAdmission extends true | undefined = undefined>(params: ManagedMachineReconciliationInput & Readonly<{
+    /** The signed current-set census already admitted this row-free replacement. */
+    nativePolicyAdmission?: NativePolicyAdmission;
+}>, readMachine: () => ManagedMachineV1,
     readBootstrapCredentialRevision?: () => number | undefined) {
     const machine = readMachine();
     const selectedContribution = params.input.runtimeRegistry.contributes.machineProvisioners?.find((candidate) =>
@@ -242,7 +245,8 @@ export function createManagedNativeInvocation(params: ManagedMachineReconciliati
     const occurrenceId = selectedOccurrenceId;
     const target = params.input.homeTarget;
     if (target.homeServerIdentityId !== params.input.homeId) throw new ManagedMachineControllerError('admission_unavailable');
-    if (params.action !== 'machines.managed.inspect' && (!target.descriptor || !params.options.context?.operationOwnerUpdate)) {
+    if (params.action !== 'machines.managed.inspect' && (!target.descriptor
+        || !params.nativePolicyAdmission && !params.options.context?.operationOwnerUpdate)) {
         throw new ManagedMachineControllerError('admission_unavailable');
     }
     async function roleCredentialAuthorization(localId: string) {
@@ -250,12 +254,16 @@ export function createManagedNativeInvocation(params: ManagedMachineReconciliati
         return resolveManagedRoleCredentialAuthorizations(params.input, contribution.pluginId, localId, launch.credentials,
             { descriptor: contribution.definition, launch: launch.choices });
     }
-    async function invoke(role: keyof typeof contribution.definition.actions | 'exec' | 'putFile' | 'reconcile' | 'cleanup', body: unknown, io?: Readonly<{ signal?: AbortSignal; timeoutMs?: number | null; onStdoutChunk?: (text: string) => void; beforeNativeEffect?: () => Promise<void> }>): Promise<JsonValue | null> {
+    async function invoke(role: keyof typeof contribution.definition.actions | 'exec' | 'putFile' | 'reconcile' | 'cleanup' | 'nativeCredentialApply', body: unknown, io?: Readonly<{ signal?: AbortSignal; timeoutMs?: number | null; onStdoutChunk?: (text: string) => void; beforeNativeEffect?: () => Promise<void>; managedNativeCredentials?: ManagedNativeCredentialInvocationBinding }>): Promise<JsonValue | null> {
         let dispatched = false;
         try {
+            if (params.action === 'machines.managed.inspect' && role !== 'inspect' && role !== 'reconcile' && role !== 'cleanup') {
+                throw new ManagedMachineControllerError('native_intent_unsupported');
+            }
             const machine = readMachine();
             const { executeContributedAction } = await import('@/plugins/runtime/invocation/actions/executeContributedAction');
-            const localId = role === 'reconcile' ? contribution.definition.reconciliation?.action
+            const localId = role === 'nativeCredentialApply' ? contribution.definition.nativeCredentialDelivery?.apply
+                : role === 'reconcile' ? contribution.definition.reconciliation?.action
                 : role === 'cleanup' ? contribution.definition.reconciliation?.cleanup
                 : role === 'exec' || role === 'putFile' ? contribution.definition.bootstrapTransport?.[role] : contribution.definition.actions[role];
             if (!localId) throw new ManagedMachineControllerError('provider_unavailable');
@@ -296,6 +304,8 @@ export function createManagedNativeInvocation(params: ManagedMachineReconciliati
                     controller: params.input.controller,
                     contribution: { ...contribution.identity, occurrenceId },
                     role,
+                    ...(io?.managedNativeCredentials
+                        ? { managedNativeCredentials: io.managedNativeCredentials } : {}),
                     ...(bootstrapCredentialKind && isMachineProvisionerBootstrapCredentialRoleV1(role)
                         ? { readBootstrapCredential: async () => {
                             if (!await params.client.isCurrent(machine)) throw new ManagedMachineControllerError('intent_changed');
@@ -408,7 +418,12 @@ export function createManagedNativeInvocation(params: ManagedMachineReconciliati
             throw error;
         }
     }
-    return { contribution, occurrenceId, target, bootstrapCredentialKind, roleCredentialAuthorization, invoke };
+    const admittedInvoke: (
+        role: NativePolicyAdmission extends true ? 'nativeCredentialApply' : Parameters<typeof invoke>[0],
+        body: unknown,
+        io?: Parameters<typeof invoke>[2],
+    ) => ReturnType<typeof invoke> = invoke;
+    return { contribution, occurrenceId, target, bootstrapCredentialKind, roleCredentialAuthorization, invoke: admittedInvoke };
 }
 
 /** Read the same submitted acquisition by its retained handle or immutable launch correlation. */

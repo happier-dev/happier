@@ -31,6 +31,7 @@ export async function mintExternalActionExecutionAuthorization(input: Readonly<{
   sessionActionSource?: ExternalActionExecutionAuthorizationRequestV1['sessionActionSource'];
   installationProof?: ExternalActionExecutionAuthorizationRequestV1['installationProof'];
   managedContinuation?: ExternalActionExecutionAuthorizationRequestV1['managedContinuation'];
+  nativeCredentialSpawnChild?: ExternalActionExecutionAuthorizationRequestV1['nativeCredentialSpawnChild'];
   templateRequesterSetupAdmission?: ExternalActionExecutionAuthorizationRequestV1['templateRequesterSetupAdmission'];
   templateRequesterInitialAccessAdmission?: ExternalActionExecutionAuthorizationRequestV1['templateRequesterInitialAccessAdmission'];
   templateRequesterSetupEnrichment?: ExternalActionExecutionAuthorizationRequestV1['templateRequesterSetupEnrichment'];
@@ -43,6 +44,7 @@ export async function mintExternalActionExecutionAuthorization(input: Readonly<{
     response = await axios.post<unknown>(
       `${input.serverHttpBaseUrl}${path}`,
       { v: 1, machineId: input.machineId, envelope: input.envelope,
+        ...(input.nativeCredentialSpawnChild ? { nativeCredentialSpawnChild: input.nativeCredentialSpawnChild } : {}),
         ...(input.sessionActionOrigin ? { sessionActionOrigin: input.sessionActionOrigin } : {}),
         ...(input.workflowActionOrigin ? { workflowActionOrigin: input.workflowActionOrigin } : {}),
         ...(input.sessionActionSource ? { sessionActionSource: input.sessionActionSource } : {}),

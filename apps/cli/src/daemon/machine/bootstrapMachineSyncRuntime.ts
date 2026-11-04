@@ -687,6 +687,7 @@ export type BootstrapMachineSyncRuntimeParams = Readonly<{
   openTeamDirect?: Parameters<
     typeof createRuntimeProviderModelManagementServices
   >[0]['openTeamDirect'];
+  teamCredentialNativeSource?: import('@/providers/modelManagement/nativeProviderSource').TeamCredentialNativeSourceContext;
   createAgentCatalogObservation?: (
     infrastructure: Pick<
       Parameters<typeof createAgentProviderCatalogObservationService>[0],
@@ -1219,6 +1220,7 @@ export async function bootstrapMachineSyncRuntime(
           }
         : {}),
       ...(params.openTeamDirect ? { openTeamDirect: params.openTeamDirect } : {}),
+      ...(params.teamCredentialNativeSource ? { teamCredentialNativeSource: params.teamCredentialNativeSource } : {}),
     });
     providerLocalInstallationReader = createProviderLocalInstallationReader({
       ...providerLocalToolContext,

@@ -1,6 +1,7 @@
-import type { ManagedServiceRequest } from '@happier-dev/plugin-sdk/managed-services';
 import { PROVIDER_ENDPOINT_SAFETY_LIMITS } from '@happier-dev/protocol/providers/safety/limits';
-import { normalizeProviderOriginRelativePathSyntax } from '@happier-dev/protocol/providers/safety/url';
+import type { ManagedServiceRequest } from '@happier-dev/plugin-sdk/managed-services';
+import type { MachineProvisionerNativeCredentialBindingV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { normalizeProviderEndpointUrlSyntax, normalizeProviderOriginRelativePathSyntax } from '@happier-dev/protocol/providers/safety/url';
 import { normalizeProviderPublicHeaders } from '@happier-dev/protocol/providers/credential-headers';
 import { TeamCredentialRequestPolicyV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
 import type { TeamCredentialRequestPolicyV1, TeamCredentialRequestProtocolKindV1 } from '@happier-dev/protocol/teams';
@@ -133,6 +134,47 @@ function sanitizeRequest(request: ManagedServiceRequest): ManagedServiceRequest 
     }
 }
 
+type RequestRoute = Readonly<{
+    kind: TeamCredentialRequestProtocolKindV1;
+    generation: boolean;
+    brokerPath?: string;
+    native?: Readonly<{ protocol: string; path: string; method: 'GET' | 'POST' }>;
+}>;
+
+// Native paths are Agent base-URL append contracts, not origin-relative probe
+// paths. Codex rust-v0.162.1: codex-client/src/provider.rs and codex-api/src/
+// endpoint/{responses,models}.rs. Compaction uses the same Responses stream;
+// our ordinary Codex adapter disables WebSockets. Claude Code 2.1.310's bundled
+// SDK appends /v1/messages and /v1/messages/count_tokens to ANTHROPIC_BASE_URL.
+const REQUEST_ROUTES: readonly RequestRoute[] = [
+    { kind: 'openai_responses', generation: true, brokerPath: '/v1/responses',
+        native: { protocol: 'openai-responses', path: '/responses', method: 'POST' } },
+    { kind: 'openai_chat_completions', generation: true, brokerPath: '/v1/chat/completions' },
+    { kind: 'anthropic_messages', generation: true, brokerPath: '/v1/messages',
+        native: { protocol: 'anthropic', path: '/v1/messages', method: 'POST' } },
+    { kind: 'anthropic_messages', generation: false, brokerPath: '/v1/messages/count_tokens',
+        native: { protocol: 'anthropic', path: '/v1/messages/count_tokens', method: 'POST' } },
+    { kind: 'openai_responses', generation: false,
+        native: { protocol: 'openai-responses', path: '/models', method: 'GET' } },
+];
+
+/** Exact native rules from an already source-admitted endpoint. Syntax checks
+ * do not grant endpoint/DNS authority; the Provider source owner still does. */
+export function projectTeamCredentialNativeRequestMatchesV1(input: Readonly<{
+    protocol: string;
+    normalizedUrl: string;
+}>): MachineProvisionerNativeCredentialBindingV1['requests'] | null {
+    try {
+        const endpoint = normalizeProviderEndpointUrlSyntax(input.normalizedUrl, { allowQuery: false });
+        if (endpoint.protocol !== 'https:' || endpoint.normalizedUrl !== input.normalizedUrl) return null;
+        const basePath = new URL(endpoint.normalizedUrl).pathname.replace(/\/$/u, '');
+        const requests = REQUEST_ROUTES.flatMap(route => route.native?.protocol === input.protocol
+            ? [{ path: normalizeProviderOriginRelativePathSyntax(`${basePath}${route.native.path}`), methods: [route.native.method] }]
+            : []);
+        return requests.length ? requests : null;
+    } catch { return null; }
+}
+
 /** Canonical closed managed-inference route classifier shared by policy and
  * composition; callers must not infer a protocol from an open `/v1/*` prefix. */
 export function classifyTeamCredentialRequestRouteV1(pathAndQuery: string): Readonly<{
@@ -140,11 +182,8 @@ export function classifyTeamCredentialRequestRouteV1(pathAndQuery: string): Read
     generation: boolean;
 }> | null {
     const path = pathAndQuery.split('?', 1)[0];
-    if (path === '/v1/responses') return { kind: 'openai_responses', generation: true };
-    if (path === '/v1/chat/completions') return { kind: 'openai_chat_completions', generation: true };
-    if (path === '/v1/messages') return { kind: 'anthropic_messages', generation: true };
-    if (path === '/v1/messages/count_tokens') return { kind: 'anthropic_messages', generation: false };
-    return null;
+    const route = REQUEST_ROUTES.find(route => route.brokerPath === path);
+    return route ? { kind: route.kind, generation: route.generation } : null;
 }
 
 function configuredEffort(

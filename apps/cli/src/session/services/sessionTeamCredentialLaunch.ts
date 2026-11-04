@@ -1,10 +1,9 @@
-import { SessionTeamCredentialLaunchUnavailableError } from './sessionTeamCredentialLaunchError';
 import type { SpawnSessionOptions } from '@/session/shared/spawnSessionContract';
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
-import type { ActionExecutorDeps, ProviderBrokerApplicationBindingV1, TeamCredentialResourceCatalogEntryV1 } from '@happier-dev/protocol';
+import type { ProviderBrokerApplicationBindingV1, TeamCredentialResourceCatalogEntryV1 } from '@happier-dev/protocol';
 import { ConnectedServiceBindingsV2IngressSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
-import { TeamsPageV1Schema } from '@happier-dev/protocol/teams/projections';
-import { mergeSessionTeamCredentialBindingIntents, readSpawnConnectedServicesTeamResources,
+import { mergeSessionTeamCredentialBindingIntents,
+  readTeamCredentialLaunchReadinessRefusal,
   resolvePurposeTeamCredentialBindingIntents, type PurposeTeamResourceSelectionForSession } from './spawnConnectedServicesDefaults';
 import { resolveQualifiedPurposeDeclarationSnapshotForAgentSpawn,
   type AgentSpawnPurposeContributions } from '@/daemon/connectedServices/requestAuth/prepareConnectedAccountRequestAuthForSpawn';
@@ -12,89 +11,23 @@ import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugi
 import { projectAgentProviderBrokerApplications, resolveManagedProviderBrokerPurpose } from '@/providers/broker/applicationProjection';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { isSameTeamCredentialBrokerApplication } from '@/providers/broker/teamCredentialModelCatalog';
-import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
-import { readLeasedAgentProviderRequirements } from '@/plugins/runtime/providerBindings/adapter';
+import { SessionTeamCredentialLaunchUnavailableError, projectTeamCredentialLaunchFailure } from './sessionTeamCredentialLaunchError';
+import { selectSessionTeamCredentialProviderModel } from '@/providers/broker/sessionTeamCredentialProviderBinding';
 
-/** Runtime opens use the worker's admitted application and the shared catalog transport. */
-export async function readSessionTeamCredentialProviderModels(input: Readonly<{
-  homeDomainAction: NonNullable<ActionExecutorDeps['homeDomainAction']>;
-  lease: PluginRuntimeRegistryLease;
-  agentId: string;
-  agentTargetKey: string;
-  resourceId: string;
-  teamId: string;
-  signal: AbortSignal;
-}>): Promise<TeamCredentialResourceCatalogEntryV1['providerModels']> {
-  const requirements = readLeasedAgentProviderRequirements(input);
-  if (!requirements) throw new SessionTeamCredentialLaunchUnavailableError();
-  const applications = projectAgentProviderBrokerApplications({
-    registry: input.lease.registry.contributes, agentTargetKey: input.agentTargetKey,
-    acceptedProtocols: requirements.acceptsProtocols,
-  });
-  const resources = await readSessionTeamCredentialResourceCatalog({
-    homeDomainAction: input.homeDomainAction, applications, teamIds: [input.teamId], signal: input.signal,
-  });
-  return resources.find(resource => resource.id === input.resourceId)?.providerModels ?? [];
-}
+export { readSessionTeamCredentialResourceCatalog } from './sessionTeamCredentialCatalog';
+export { SessionTeamCredentialLaunchUnavailableError } from './sessionTeamCredentialLaunchError';
+export { readSessionTeamCredentialProviderModels } from './sessionTeamCredentialProviderCatalog';
 
 export type NormalizedSessionTeamCredentialLaunch = Readonly<{
   options: SpawnSessionOptions;
   teamModelRow: TeamCredentialResourceCatalogEntryV1['providerModels'][number] | null;
 }>;
 
-export { SessionTeamCredentialLaunchUnavailableError } from './sessionTeamCredentialLaunchError';
-
-/** Reads source-owned model rows through the one paginated recipient transport.
- * Applications come from the worker's leased Agent/Provider projection, never a
- * personal connection or a model-id-to-Provider guess. */
-export async function readSessionTeamCredentialResourceCatalog(input: Readonly<{
-  homeDomainAction: NonNullable<ActionExecutorDeps['homeDomainAction']>;
-  applications: readonly ProviderBrokerApplicationBindingV1[];
-  teamIds?: readonly string[];
-  signal?: AbortSignal;
-}>): Promise<readonly TeamCredentialResourceCatalogEntryV1[]> {
-  let teamIds = input.teamIds;
-  if (!teamIds) {
-    const discovered: string[] = [];
-    let cursor: string | null = null;
-    do {
-      const raw = await input.homeDomainAction({
-        actionId: 'teams.list',
-        input: { v: 1, scope: 'member', archived: 'active', ...(cursor ? { cursor } : {}) },
-        context: { surface: 'cli' },
-        ...(input.signal ? { signal: input.signal } : {}),
-      });
-      const parsed = TeamsPageV1Schema.safeParse(raw);
-      if (!parsed.success) throw new SessionTeamCredentialLaunchUnavailableError();
-      discovered.push(...parsed.data.items.map(team => team.id));
-      cursor = parsed.data.nextCursor;
-    } while (cursor);
-    teamIds = discovered;
-  }
-  const resourcesById = new Map<string, TeamCredentialResourceCatalogEntryV1>();
-  for (const application of input.applications.length > 0 ? input.applications : [undefined]) {
-    input.signal?.throwIfAborted();
-    const resources = await readSpawnConnectedServicesTeamResources({
-      homeDomainAction: input.homeDomainAction, teamIds, ...(application ? { application } : {}),
-      ...(input.signal ? { signal: input.signal } : {}),
-    });
-    if (!resources) throw new SessionTeamCredentialLaunchUnavailableError();
-    for (const resource of resources) {
-      const prior = resourcesById.get(resource.id);
-      if (prior && (prior.teamId !== resource.teamId || prior.resourceRevision !== resource.resourceRevision)) {
-        throw new SessionTeamCredentialLaunchUnavailableError();
-      }
-      const basis = resource.providerModels.some(model => model.availability === 'available') ? resource : prior ?? resource;
-      resourcesById.set(resource.id, { ...basis, providerModels: [...(prior?.providerModels ?? []), ...resource.providerModels] });
-    }
-  }
-  return [...resourcesById.values()];
-}
-
 export async function normalizeSessionTeamCredentialLaunch(input: Readonly<{
   options: SpawnSessionOptions;
   agentId: string;
   agentTargetKey: string;
+  executionMachineId?: string;
   contributions: AgentSpawnPurposeContributions & Pick<ResolvedContributionRegistry, 'providersByContributionKey'>;
   applications: readonly ProviderBrokerApplicationBindingV1[];
   readCatalog(): Promise<readonly TeamCredentialResourceCatalogEntryV1[]>;
@@ -102,7 +35,7 @@ export async function normalizeSessionTeamCredentialLaunch(input: Readonly<{
   const { options } = input;
   const connectedServices = options.connectedServices == null ? null
     : ConnectedServiceBindingsV2IngressSchema.safeParse(options.connectedServices);
-  if (connectedServices && !connectedServices.success) throw new SessionTeamCredentialLaunchUnavailableError();
+  if (connectedServices && !connectedServices.success) throw new SessionTeamCredentialLaunchUnavailableError('invalid_request', 'connected_services');
   const explicitModelBinding = options.teamCredentialBindings?.find(binding => binding.slot.kind === 'provider_model');
   const declarations = resolveQualifiedPurposeDeclarationSnapshotForAgentSpawn({
     agentId: input.agentId, contributions: input.contributions,
@@ -117,13 +50,26 @@ export async function normalizeSessionTeamCredentialLaunch(input: Readonly<{
     return { options, teamModelRow: null };
   }
   if (options.modelSelection && options.modelSelection.ref.agentTargetKey !== input.agentTargetKey) {
-    throw new SessionTeamCredentialLaunchUnavailableError();
+    throw new SessionTeamCredentialLaunchUnavailableError('provider_incompatible_with_agent', 'agent_target');
   }
-  const resources = await input.readCatalog();
+  const resources = await input.readCatalog().catch(error => {
+    throw projectTeamCredentialLaunchFailure(error, 'resource_catalog', 'provider_catalog_unavailable');
+  });
   const fresh = !options.existingSessionId && !options.resume;
+  const explicitModelResource = explicitModelBinding?.resourceId
+    ? resources.find(candidate => candidate.id === explicitModelBinding.resourceId) : undefined;
+  // Check the caller's identity/revision witness before projecting readiness:
+  // an exhausted current resource must not disguise a genuinely stale choice.
+  if (options.modelSelection?.ref.providerConnectionId == null
+    && explicitModelBinding && explicitModelBinding.resourceId !== null
+    && (!explicitModelResource
+      || (explicitModelBinding.teamId !== undefined && explicitModelBinding.teamId !== explicitModelResource.teamId)
+      || (fresh && explicitModelBinding.expectedResourceRevision !== explicitModelResource.resourceRevision))) {
+    throw new SessionTeamCredentialLaunchUnavailableError(explicitModelResource ? 'resource_changed' : 'resource_unavailable', 'resource_selection');
+  }
   const purposeSelections: PurposeTeamResourceSelectionForSession[] = selectedPurposes.map(({ scope, selection }) => {
     const resource = resources.find(candidate => candidate.id === selection.resourceId);
-    if (!resource) throw new SessionTeamCredentialLaunchUnavailableError();
+    if (!resource) throw new SessionTeamCredentialLaunchUnavailableError('resource_unavailable', 'resource_selection');
     return { purpose: scope.purpose, services: scope.serviceRefs, selection, teamId: resource.teamId };
   });
   let teamCredentialBindings = options.teamCredentialBindings;
@@ -135,8 +81,8 @@ export async function normalizeSessionTeamCredentialLaunch(input: Readonly<{
           teamResourceSelections: purposeSelections, teamCredentialResourceCatalog: { resources },
         }),
       });
-    } catch {
-      throw new SessionTeamCredentialLaunchUnavailableError();
+    } catch (error) {
+      throw projectTeamCredentialLaunchFailure(error, 'purpose_binding', 'resource_unavailable');
     }
   }
   const normalizedOptions = teamCredentialBindings ? { ...options, teamCredentialBindings } : options;
@@ -154,7 +100,7 @@ export async function normalizeSessionTeamCredentialLaunch(input: Readonly<{
       .flatMap(provider => provider.definition.endpointTemplates.map(endpoint => endpoint.protocol)))],
   }) : [];
   const modelSourceResources = new Set(selectedPurposes.flatMap(({ scope, selection }) => (
-    selection.deliveryMode === 'brokered' && relevanceApplications.some(application => (
+    relevanceApplications.some(application => (
       scope.serviceRefs.some(service => resolveManagedProviderBrokerPurpose({
         registry, application, service,
       }) !== null)
@@ -163,22 +109,25 @@ export async function normalizeSessionTeamCredentialLaunch(input: Readonly<{
   if (!explicitModelBinding && (!fresh || modelSourceResources.size === 0)) {
     return { options: normalizedOptions, teamModelRow: null };
   }
-  if (!explicitModelBinding && modelSourceResources.size !== 1) throw new SessionTeamCredentialLaunchUnavailableError();
+  if (!explicitModelBinding && modelSourceResources.size !== 1) throw new SessionTeamCredentialLaunchUnavailableError('invalid_request', 'model_source');
   const resourceId = explicitModelBinding?.resourceId ?? modelSourceResources.values().next().value;
   const model = options.modelSelection?.ref;
-  if (!model || !resourceId) throw new SessionTeamCredentialLaunchUnavailableError();
+  if (!resourceId) throw new SessionTeamCredentialLaunchUnavailableError('resource_unavailable', 'resource_selection');
+  if (!model) throw new SessionTeamCredentialLaunchUnavailableError('team_credential_model_selection_required', 'model_selection');
+  const resource = explicitModelResource ?? resources.find(candidate => candidate.id === resourceId);
+  if (!resource) throw new SessionTeamCredentialLaunchUnavailableError('resource_unavailable', 'resource_selection');
+  const automatic = selectSessionTeamCredentialProviderModel({ resource, agentTargetKey: model.agentTargetKey,
+    modelId: model.modelId, applications: input.applications });
   const deliveryMode = explicitModelBinding && explicitModelBinding.resourceId !== null
-    ? explicitModelBinding.deliveryMode : 'brokered';
-  const resource = resources.find(candidate => candidate.id === resourceId);
-  if (!resource) throw new SessionTeamCredentialLaunchUnavailableError();
-  if (explicitModelBinding && explicitModelBinding.resourceId !== null
-    && ((explicitModelBinding.teamId !== undefined && explicitModelBinding.teamId !== resource.teamId)
-      || (fresh && explicitModelBinding.expectedResourceRevision !== resource.resourceRevision))) {
-    throw new SessionTeamCredentialLaunchUnavailableError();
+    ? explicitModelBinding.deliveryMode : automatic?.selection.deliveryMode ?? 'brokered';
+  if (fresh && explicitModelBinding && resource.deliveryPolicy && resource.allowedRoutes
+    && automatic && automatic.selection.deliveryMode !== deliveryMode) {
+    throw new SessionTeamCredentialLaunchUnavailableError('team_credential_provider_selection_not_current', 'model_source');
   }
-  const row = resource.providerModels.find(candidate => (
-    candidate.availability === 'available'
-    && candidate.selection.resourceId === resourceId
+  const readinessRefusal = readTeamCredentialLaunchReadinessRefusal(resource, deliveryMode);
+  if (readinessRefusal) throw new SessionTeamCredentialLaunchUnavailableError(readinessRefusal, 'readiness');
+  const matchingRows = resource.providerModels.filter(candidate => (
+    candidate.selection.resourceId === resourceId
     && candidate.selection.teamId === resource.teamId
     && candidate.selection.expectedResourceRevision === resource.resourceRevision
     && candidate.selection.deliveryMode === deliveryMode
@@ -186,11 +135,27 @@ export async function normalizeSessionTeamCredentialLaunch(input: Readonly<{
     && candidate.selection.modelId === model.modelId
     && input.applications.some(application => isSameTeamCredentialBrokerApplication(application, candidate.application))
   ));
-  if (!row) throw new SessionTeamCredentialLaunchUnavailableError();
+  const row = automatic?.selection.deliveryMode === deliveryMode
+    ? automatic : matchingRows.find(candidate => candidate.availability === 'available');
+  if (!row) {
+    const refusal = matchingRows.find(candidate => candidate.deliveryUnavailableReason)?.deliveryUnavailableReason;
+    throw new SessionTeamCredentialLaunchUnavailableError(refusal
+      ?? (matchingRows.length > 0 ? 'team_credential_provider_selection_not_current' : 'provider_model_not_found'), 'model_catalog');
+  }
+  if (!explicitModelBinding && !automatic) throw new SessionTeamCredentialLaunchUnavailableError('provider_compatibility_unverified', 'model_catalog');
+  if (explicitModelBinding && explicitModelBinding.teamId === undefined) {
+    teamCredentialBindings = teamCredentialBindings?.map(binding => binding.slot.kind === 'provider_model'
+      ? { ...binding, teamId: row.selection.teamId } : binding);
+  }
   if (!explicitModelBinding) teamCredentialBindings = mergeSessionTeamCredentialBindingIntents({
     explicit: teamCredentialBindings,
     admitted: [{ v: 1, slot: { kind: 'provider_model' }, resourceId,
       teamId: row.selection.teamId, expectedResourceRevision: row.selection.expectedResourceRevision, deliveryMode }],
   });
+  if (fresh) teamCredentialBindings = teamCredentialBindings?.map(binding => binding.slot.kind === 'provider_model' && binding.resourceId !== null
+    ? { ...binding, providerModelSelection: { agentTargetKey: row.selection.agentTargetKey, modelId: row.selection.modelId,
+      ...(input.executionMachineId ? { application: row.application, executionMachineId: input.executionMachineId } : {}),
+      ...(row.nativeSource ? { nativeSource: { sourceRevision: row.sourceRevision, providerTicket: row.nativeSource.providerTicket } } : {}),
+    }, ...(row.selection.nativeDelivery ? { nativeDelivery: row.selection.nativeDelivery } : {}) } : binding);
   return { options: teamCredentialBindings ? { ...options, teamCredentialBindings } : options, teamModelRow: row };
 }

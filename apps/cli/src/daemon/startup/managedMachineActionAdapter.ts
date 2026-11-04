@@ -1,7 +1,8 @@
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import type { RuntimeProviderModelManagementServices } from '@/providers/modelManagement/runtimeServices';
 import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps, ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { ManagedAcquireInputV1Schema, ManagedControllerUpdateInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedAcquireInputV1Schema, ManagedControllerUpdateInputV1Schema, ManagedCredentialInstallInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { SessionSpawnNewInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
@@ -49,6 +50,7 @@ type ManagedMachineActionAdapterParams = Readonly<{
     managedProviderOperationAuthority?: ManagedProviderOperationAuthority;
     observeActionExecution?: ApiMachineClient['observeActionExecution'];
     readPolicyCurrent?: (managedId: string, signal?: AbortSignal) => Promise<ManagedMachineV1 | null>;
+    prepareTeamCredentialNativeSource?: RuntimeProviderModelManagementServices['prepareTeamCredentialNativeSource'];
     executeManagedPolicyAction?: (machine: ManagedMachineV1, context: ActionExecutorContext,
         runApproved: (context: ActionExecutorContext) => Promise<ManagedMachineV1>) => Promise<ManagedMachineV1>;
     prepareRequesterAccountContext?: PrepareExternalActionRequesterAccountContext;
@@ -144,6 +146,7 @@ async function withBoundDriver<T>(params: ManagedMachineActionAdapterParams, sig
                 managedProviderOperationAuthority: params.managedProviderOperationAuthority,
                 credentials: controllerCredentials,
                 homeTarget,
+                ...(params.prepareTeamCredentialNativeSource ? { prepareTeamCredentialNativeSource: params.prepareTeamCredentialNativeSource } : {}),
                 ...(params.readPolicyCurrent ? { readPolicyCurrent: params.readPolicyCurrent } : {}),
                 ...(params.subscribeManagedMachineChanges ? { subscribeManagedMachineChanges: params.subscribeManagedMachineChanges } : {}),
             }));
@@ -153,8 +156,24 @@ async function withBoundDriver<T>(params: ManagedMachineActionAdapterParams, sig
 }
 
 /** Explicit callers and automatic host policy work consume the same bound native owner. */
+// Factories are also created by finite execution paths. The live resource
+// writer therefore belongs to this module, not an individual adapter instance.
+// Entries contain only joined work, never desired policy or replay authority.
+const nativeCredentialWrites = new Map<string, Promise<void>>();
+
+async function serializeNativeCredentialWrite<T>(homeId: string, managedId: string, signal: AbortSignal | undefined,
+    execute: () => Promise<T>): Promise<T> {
+    const key = JSON.stringify([homeId, managedId]);
+    const previous = nativeCredentialWrites.get(key) ?? Promise.resolve();
+    const result = previous.then(async () => { signal?.throwIfAborted(); return execute(); });
+    const settled = result.then(() => {}, () => {});
+    nativeCredentialWrites.set(key, settled);
+    try { return await result; }
+    finally { if (nativeCredentialWrites.get(key) === settled) nativeCredentialWrites.delete(key); }
+}
+
 export function createDaemonManagedMachineActionAdapter(params: ManagedMachineActionAdapterParams) {
-    const executeNativeAction: NonNullable<ActionExecutorDeps['managedMachineAction']> = async ({ actionId, input, context, signal }) => {
+    const executeNativeActionNow: NonNullable<ActionExecutorDeps['managedMachineAction']> = async ({ actionId, input, context, signal }) => {
         const requestId = context.actionRequestId;
         if (!requestId) throw Object.assign(new Error('admission_unavailable'), { code: 'admission_unavailable' });
         // This identity is stamped by the accepted in-process FIN invocation;
@@ -281,6 +300,12 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
             return { ok: false, errorCode: 'managed_binding_move_incomplete', error: 'managed_binding_move_incomplete', details: { machine, code } };
         }
     };
+    const executeNativeAction: NonNullable<ActionExecutorDeps['managedMachineAction']> = async request => {
+        if (request.actionId !== 'machines.managed.credentials.install') return executeNativeActionNow(request);
+        const input = ManagedCredentialInstallInputV1Schema.parse(request.input);
+        return serializeNativeCredentialWrite(input.homeId, input.managedId, request.signal,
+            () => executeNativeActionNow(request));
+    };
     const actionAdapter: NonNullable<ActionExecutorDeps['managedMachineAction']> = async request => {
         const { actionId, input, context, signal } = request;
         const runId = context.executionRunWorkflowRunId;
@@ -308,6 +333,11 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
         return await executeNativeAction(request);
     };
     return Object.assign(actionAdapter, {
+        reconcileNativeCredentials: async (machine: ManagedMachineV1, signal: AbortSignal): Promise<void> =>
+            serializeNativeCredentialWrite(machine.homeId, machine.id, signal, () =>
+                withBoundDriver(params, signal, driver => driver.reconcileNativeCredentials(machine, {
+                    requestId: randomUUID(), signal,
+                }))),
         executePolicy: async (request: ManagedMachinePolicyRequest): Promise<ActionExecuteResult> => {
             if (!params.observeActionExecution || !params.executeManagedPolicyAction) throw Object.assign(new Error('admission_unavailable'), { code: 'admission_unavailable' });
             request.signal?.throwIfAborted();

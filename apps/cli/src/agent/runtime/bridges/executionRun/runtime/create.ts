@@ -55,11 +55,11 @@ import {
 import { cleanupExecutionRunIsolationBundle } from './isolation';
 import { buildExecutionRunConfiguration } from './openInputs';
 import {
-    prepareExecutionRunProviderLaunch,
     type ExecutionRunTeamCredentialProviderBindingPreparer,
     type ExecutionRunProviderLaunchServices,
     type PreparedExecutionRunProviderLaunch,
 } from './providerLaunch';
+import { assertExecutionRunProviderLaunchPlacement, prepareExecutionRunRuntimeProviderLaunch } from './providerPreparation';
 
 /**
  * The Run's resolved connected-services selection, reported to its Run owner
@@ -205,6 +205,9 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
         signal.throwIfAborted();
         if (resolvedBackendPromise) return await resolvedBackendPromise;
         resolvedBackendPromise = (async () => {
+            assertExecutionRunProviderLaunchPlacement({ scope: opts.scope,
+                selection: opts.modelSelection, teamCredentialModel: opts.teamCredentialModel,
+                providerLaunch: opts.providerLaunch });
             const trace = <T>(phase: Parameters<typeof traceRunPreparationPhase>[1], work: () => T | Promise<T>) =>
                 traceRunPreparationPhase(opts.runId, phase, signal, work);
             const engineResolution = await trace('engine_resolution', () => opts.engineRegistry
@@ -279,26 +282,11 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
             if (effectiveBackendTarget && (
                 opts.modelSelection || opts.teamCredentialModel || opts.sessionInteractionHost?.prepareRunTeamCredentialProviderBinding
             )) {
-                const featureEnabled =
-                    !opts.modelSelection
-                    || opts.modelSelection.providerConnectionId === null
-                    || await trace('provider_features', () => opts.resolveProvidersFeatureEnabled?.()) === true;
-                const accountSettingsSnapshot = await trace('account_snapshot', () => opts.resolveAccountSettingsSnapshot?.()) ?? null;
-                const providerLaunchServices = opts.providerLaunch;
-                const modelSelection = opts.modelSelection;
-                if (providerLaunchServices && modelSelection?.providerConnectionId) {
-                    const expectedAccountSettingsScopeKey = accountSettingsSnapshot?.scopeKey;
-                    if (!expectedAccountSettingsScopeKey) throw Object.assign(new Error('provider_connection_not_found'), { code: 'provider_connection_not_found' });
-                    providerLaunch = await trace('provider_launch', () => providerLaunchServices.prepareLaunch({
-                        selection: modelSelection, backendTarget: effectiveBackendTarget,
-                        agentId: engineResolution.agentId, runId: String(opts.runId ?? '').trim(),
-                        ...(opts.controllerOccurrenceId ? { controllerOccurrenceId: opts.controllerOccurrenceId } : {}),
-                        connectedServices: connectedServicesSelection?.bindings ?? null,
-                        expectedAccountSettingsScopeKey,
-                    }, signal));
-                    if (providerLaunch.cleanupOnExit) providerResources.register(providerLaunch.cleanupOnExit);
-                } else providerLaunch = await trace('provider_launch', () => prepareExecutionRunProviderLaunch({
+                providerLaunch = await prepareExecutionRunRuntimeProviderLaunch({
                     signal,
+                    scope: opts.scope,
+                    providerLaunch: opts.providerLaunch,
+                    controllerOccurrenceId: opts.controllerOccurrenceId,
                     ...(opts.modelSelection ? { selection: opts.modelSelection } : {}),
                     ...(opts.teamCredentialModel ? { teamCredentialModel: opts.teamCredentialModel } : {}),
                     backendTarget: effectiveBackendTarget,
@@ -307,11 +295,10 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
                     runId: String(opts.runId ?? '').trim(),
                     connectedServices:
                         connectedServicesSelection?.bindings ?? null,
-                    featureEnabled,
                     happyHomeDir:
                         opts.happyHomeDir ?? configuration.happyHomeDir,
-                    accountSettingsSnapshot,
-                    savedSecretOperationContext: opts.resolveAccountSettingsSnapshot?.readOperationContext?.() ?? undefined,
+                    resolveProvidersFeatureEnabled: opts.resolveProvidersFeatureEnabled,
+                    resolveAccountSettingsSnapshot: opts.resolveAccountSettingsSnapshot,
                     ...(opts.resolveManagedPurposeBindingIntent ? { resolveManagedPurposeBindingIntent: opts.resolveManagedPurposeBindingIntent } : {}),
                     ...(opts.readModelProjection ? { readModelProjection: opts.readModelProjection } : {}),
                     ...(opts.prepareManagedEndpoint ? { prepareManagedEndpoint: opts.prepareManagedEndpoint } : {}),
@@ -319,7 +306,7 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
                     ...(prepareRunTeamCredentialProviderBinding
                         ? { prepareTeamCredentialProviderBinding: prepareRunTeamCredentialProviderBinding }
                         : {}),
-                }));
+                });
             }
             const materializedConnectedServicesSelection:
                 ResolvedExecutionRunConnectedServicesSelection | null =

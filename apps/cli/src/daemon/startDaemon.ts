@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util';
 import { createDaemonAgentIsolationEffects } from './agentIsolation/createDaemonAgentIsolationEffects';
 import { createDaemonMachineReachabilityRoutes } from '@/machines/reachability/createDaemonMachineReachabilityRoutes';
 import { getActiveProjectAccountRowsSnapshot } from '@/workspaces/projectAccountRows';
@@ -287,6 +288,7 @@ import {
   resolveRunnerCredentialSelectionCurrentness,
 } from '@/providers/broker/daemonProviderBrokerRuntime';
 import { readTeamCredentialBrokerResource, startDaemonProviderBrokerRuntimeWithCustody } from '@/providers/broker/startDaemonProviderBrokerRuntimeWithCustody';
+import { projectTeamCredentialNativeProviderSourceAuthority } from '@/providers/broker/teamCredentialNativeProviderSource';
 import {
   createConnectedServicesBrokerSourceMemberSelect,
   createConnectedServicesBrokerSourceOpen,
@@ -323,7 +325,9 @@ import { createConnectedAccountRequestAuthSubjectRegistry } from './connectedSer
 import { resolveQualifiedPurposeBindingSnapshotForAgentSpawn } from './connectedServices/requestAuth/prepareConnectedAccountRequestAuthForSpawn';
 import { createProviderRedactionLease } from '@/providers/spawn/redaction';
 import { createDaemonTeamCredentialDirectMaterialOpen } from './providers/teamCredentialDirectMaterialComposition';
-import { openDaemonSessionTeamCredentialProviderBinding } from './providers/sessionTeamCredentialProviderBindingComposition';
+import { createDaemonSessionTeamCredentialNativeOpen, openDaemonSessionTeamCredentialProviderBinding, readDaemonSessionTeamCredentialNativeBinding } from './providers/sessionTeamCredentialProviderBindingComposition';
+import { createDaemonSessionTeamCredentialNativeRelease, releaseDaemonSessionTeamCredentialNativeBindings } from './providers/sessionTeamCredentialNativeLifetime';
+import { SessionTeamCredentialLaunchUnavailableError } from '@/session/services/sessionTeamCredentialLaunchError';
 import {
   createCurrentRuntimeProviderOperationsSource,
   type RuntimeProviderOperationsProducer,
@@ -2062,6 +2066,15 @@ const pluginRuntimeOwner = createDaemonPluginRuntimeOwner({
             controller: pluginReloadController,
             runtime: machineIrohRuntime,
             resolveTrustRoots: resolvePeerMediationTrustRoots,
+            openVendorNative: createDaemonSessionTeamCredentialNativeOpen({
+              machineId: workerMachineId, accountId: externalActionAccountId, credentials,
+              providerSettingsOperationContext: input.providerSettingsOperationContext,
+              serverHttpBaseUrl: readRequesterRuntimeServerHttpBaseUrl(),
+              installationIdentity: readInstallationIdentityIfExistsSync(),
+              resolveCurrentMachineExecutionOriginContext: async signal =>
+                isDaemonQuiescing() || homeTransportCancellation.signal.aborted ? null
+                  : await resolveCurrentMachineExecutionOriginContext(signal),
+            }),
             openTeamDirect: createDaemonTeamCredentialDirectMaterialOpen({
                 clientOpen: teamCredentialDirectMaterialClient.open,
                 workerMachineId,
@@ -2240,6 +2253,13 @@ const pluginRuntimeOwner = createDaemonPluginRuntimeOwner({
       readLiveWorkInventory: managedActivity.read,
       machineId,
       managedProviderOperationAuthority,
+      prepareTeamCredentialNativeSource: async (request, signal) => {
+        const producer = providerOperationsProducer;
+        if (!producer || isDaemonQuiescing() || homeTransportCancellation.signal.aborted) {
+          throw Object.assign(new Error('provider_authorization_changed'), { code: 'provider_authorization_changed' });
+        }
+        return await producer.machineServices.prepareTeamCredentialNativeSource(request, signal);
+      },
       readManagedMachinePolicyCurrent: async (managedId, signal) => (
         await readCurrentManagedMachinePolicies(signal)
       ).machines.find(machine => machine.id === managedId) ?? null,
@@ -2291,6 +2311,47 @@ const pluginRuntimeOwner = createDaemonPluginRuntimeOwner({
       deviceLocalSecretStorage,
       api,
       ...(openTeamCredentialProviderBinding ? { openTeamCredentialProviderBinding } : {}),
+      ...(externalActionAccountId ? {
+        prepareNativeTeamCredentialBinding: async input => {
+          if (isDaemonQuiescing() || homeTransportCancellation.signal.aborted) throw new SessionTeamCredentialLaunchUnavailableError();
+          const open = createDaemonSessionTeamCredentialNativeOpen({ machineId, accountId: externalActionAccountId, credentials,
+            serverHttpBaseUrl: readRequesterRuntimeServerHttpBaseUrl(), installationIdentity: readInstallationIdentityIfExistsSync(),
+            resolveCurrentMachineExecutionOriginContext,
+            spawnActionContext: input.spawnActionContext, providerSettingsOperationContext: input.providerSettingsOperationContext });
+          const { sessionId, binding } = input;
+          const releaseInput = { sessionId, bindings: [binding],
+            owningAccountId: input.spawnActionContext?.externalActionExecutionAuthorization?.binding.accountId ?? externalActionAccountId };
+          const lifetime = { machineId, credentials: input.providerSettingsOperationContext?.credentials ?? credentials,
+            serverHttpBaseUrl: input.providerSettingsOperationContext?.serverHttpBaseUrl ?? readRequesterRuntimeServerHttpBaseUrl(),
+            homeServerIdentityId: input.spawnActionContext?.externalActionExecutionAuthorization?.binding.serverIdentityId,
+            installationIdentity: readInstallationIdentityIfExistsSync(), resolveCurrentMachineExecutionOriginContext };
+          const release = async () => { await releaseDaemonSessionTeamCredentialNativeBindings(releaseInput, lifetime); };
+          let borrowed: Awaited<ReturnType<typeof open>> | undefined;
+          try {
+            borrowed = await open({ ...input, consumer: { kind: 'session', sessionId },
+              signal: input.signal ?? homeTransportCancellation.signal });
+          }
+          catch (error) { if (input.created) await release(); throw error; }
+          finally { await borrowed?.cleanup(); }
+          return release;
+        },
+        releaseSessionOwnedNativeBindings: createDaemonSessionTeamCredentialNativeRelease({
+          machineId, accountId: externalActionAccountId, credentials, get serverHttpBaseUrl() { return readRequesterRuntimeServerHttpBaseUrl(); },
+          readInstallationIdentity: readInstallationIdentityIfExistsSync, resolveCurrentMachineExecutionOriginContext,
+        }),
+      } : {}),
+      ...(externalActionAccountId ? { readInstalledTeamCredentialProviderModel: async input => {
+        if (isDaemonQuiescing() || homeTransportCancellation.signal.aborted) throw new SessionTeamCredentialLaunchUnavailableError();
+        const result = await readDaemonSessionTeamCredentialNativeBinding(input, {
+          machineId, accountId: externalActionAccountId, credentials,
+          serverHttpBaseUrl: readRequesterRuntimeServerHttpBaseUrl(),
+          installationIdentity: readInstallationIdentityIfExistsSync(),
+          resolveCurrentMachineExecutionOriginContext,
+        });
+        if (result.status !== 'ready' || !isDeepStrictEqual(result.binding, input.binding.nativeDelivery)
+          || isDaemonQuiescing() || homeTransportCancellation.signal.aborted) throw new SessionTeamCredentialLaunchUnavailableError();
+        return result.model;
+      } } : {}),
       ...(openRunAccountConnectionSource ? { openAccountConnectionManagedConsumerSource: openRunAccountConnectionSource } : {}),
       ...(managedPolicyHomeId && externalActionAccountId ? {
         openAccountConnectionProviderBrokerAccess: async request => {
@@ -3987,6 +4048,15 @@ agentIsolation,
           connectedAccountPurposeBindingRuntime.resolveBindingIntent,
         resolveManagedPurposeBindingIntentSelection:
           connectedAccountPurposeBindingRuntime.resolveBindingIntentSelection,
+        ...(externalActionAccountId ? { teamCredentialNativeSource: {
+          controllerAccountId: externalActionAccountId,
+          async readResource(resourceId: string, signal: AbortSignal) {
+            if (isDaemonQuiescing() || homeTransportCancellation.signal.aborted) return null;
+            const resource = await readTeamCredentialBrokerResource(api, resourceId, signal);
+            if (!resource || isDaemonQuiescing() || homeTransportCancellation.signal.aborted) return null;
+            return projectTeamCredentialNativeProviderSourceAuthority(resource, externalActionAccountId);
+          },
+        } } : {}),
         mcpServers: {
           readCredentials: async () => credentials,
           issueRequestAuth: createDaemonMcpRequestAuthForTest({ credentials, materializationBaseDir: connectedServicesMaterializationBaseDir,
@@ -4262,6 +4332,7 @@ agentIsolation,
               readCensus: readCurrentManagedMachinePolicies,
               executePolicy: managedMachinePolicyAdapter.executePolicy,
               onUnavailable: error => logger.debug('[DAEMON RUN] Managed policy execution unavailable', error),
+              reconcileNativeCredentials: managedMachinePolicyAdapter.reconcileNativeCredentials,
             });
             managedMachinePolicyRuntime = attemptedManagedMachinePolicyRuntime;
           }

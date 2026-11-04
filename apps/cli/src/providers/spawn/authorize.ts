@@ -30,6 +30,7 @@ import type {
 } from './resolve';
 import {
   resolveProviderSpawnAuthorization,
+  isExternalProviderSpawnAuthorization,
   resolveProviderSpawnDefinitiveRejection,
   selectProviderSpawnClaudeHelperModels,
   type ResolveProviderSpawnAuthorizationInput,
@@ -137,12 +138,6 @@ export function sameManagedProviderAuthorizationCurrentnessBasis(
     )
     && expected.deployment.implementation.runtime.isCurrent() === true
     && actual.deployment.implementation.runtime.isCurrent() === true;
-}
-
-function isExternalProviderSpawnAuthorization(
-  authorization: ProviderSpawnAuthorization,
-): authorization is ExternalProviderSpawnAuthorization {
-  return authorization.deployment.kind === 'external';
 }
 
 function isManagedProviderSpawnAuthorization(

@@ -63,6 +63,7 @@ import type {
     PluginExternalActionContext,
     PluginInvocationServiceBinding,
     ManagedBootstrapCredentialInvocationBinding,
+    ManagedNativeCredentialInvocationBinding,
 } from './services/types';
 import { createPluginInvocationPresentation } from './services/interactions';
 import { readReviewedSharedSaveAdmission } from './sharedSaveAdmission';
@@ -206,6 +207,7 @@ export type InvokeTargetActionParams = Readonly<{
     execInvocationTimeoutMs?: number | null;
     /** Host-private exact admitted row material; never projected into SDK context. */
     managedBootstrapCredential?: ManagedBootstrapCredentialInvocationBinding;
+    managedNativeCredentials?: ManagedNativeCredentialInvocationBinding;
     /** Host-private cleanup retention for an issued, custody-admitted managed acquire. */
     retainHandlerResultAfterCancellation?: true;
 }>;
@@ -602,6 +604,9 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                     ...(invocation.readObservation ? { retireReadObservation } : {}),
                     ...(invocation.managedBootstrapCredential
                         ? { managedBootstrapCredential: invocation.managedBootstrapCredential }
+                        : {}),
+                    ...(invocation.managedNativeCredentials
+                        ? { managedNativeCredentials: invocation.managedNativeCredentials }
                         : {}),
                 });
                 let connectedAccountOperationBinding:

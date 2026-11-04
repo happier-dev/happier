@@ -15,6 +15,8 @@ export function resolveProviderModelCompatibility(input: Readonly<{
   support: AgentProviderRequirementsV1;
   adapterVersion: number;
   model: ProviderModelDescriptorV1;
+  /** A current Team resource is admitted by its owning source, independently of personal consent. */
+  teamCredentialResource?: Readonly<{ resourceId: string; resourceRevision: number }>;
 }>) {
   const facts = resolveProviderSourceFacts(input.record);
   const compatibility = resolveProviderBindingCompatibilityWithFingerprintV1({
@@ -29,7 +31,7 @@ export function resolveProviderModelCompatibility(input: Readonly<{
   return Object.freeze({
     ...compatibility,
     confirmed: compatibility.result.status === 'experimental'
-      ? hasProviderExperimentalConfirmation({
+      ? input.teamCredentialResource !== undefined || hasProviderExperimentalConfirmation({
           providerSettings: input.providerSettings,
           connectionId: input.record.connectionId,
           agentTargetKey: input.agentTargetKey,
