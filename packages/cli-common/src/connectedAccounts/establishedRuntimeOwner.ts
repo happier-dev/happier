@@ -951,7 +951,7 @@ export function createConnectedAccountEstablishedRuntimeOwner<
             async prepareCredentialReplacement(
               mutation: QualifiedConnectedAccountCredentialMutationPreparationInput,
             ) {
-              if (!isCurrent()) {
+              if (input.operation.kind !== 'refresh' && !isCurrent()) {
                 throw new Error(
                   'Connected-account runtime generation is no longer current',
                 );
@@ -1031,7 +1031,7 @@ export function createConnectedAccountEstablishedRuntimeOwner<
                 });
               const currentMode = await runCurrentAccountRead(() => params.getAccountEncryptionMode(input.signal, { usage: 'fresh-authority' }), input.signal);
               assertNotAborted(input.signal);
-              if (currentMode !== accountMode || !isCurrent()) {
+              if (currentMode !== accountMode || (input.operation.kind !== 'refresh' && !isCurrent())) {
                 throw new Error('Connected-account credential mutation basis is no longer current');
               }
               const content = params.sealCredentialContent(accountMode, plaintext);

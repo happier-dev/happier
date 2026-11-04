@@ -63,6 +63,9 @@ export function createConnectedAccountEstablishedRuntimeDispatcher(params: Reado
             return await assertEstablishedAuthorityCurrent(input, lease, signal);
         }
         signal.throwIfAborted();
+        // A successful refresh may already have consumed a single-use token.
+        // Its admitted replacement must survive registry retirement.
+        if (phase === 'afterCallback' && input.operation.kind === 'refresh') return;
         if (!lease.isCurrent() || input.configurationRevocationSignal?.(input.context.configuration)?.aborted) {
             throw staleConnectedAccountProducerResult(input.operation.kind);
         }
@@ -70,9 +73,9 @@ export function createConnectedAccountEstablishedRuntimeDispatcher(params: Reado
 /**
  * The typed invocation boundary, rather than a recursive runtime wrapper,
  * owns the occurrence/currentness fence around every plugin callback. The
- * callback's own rejection stays visible while current; a retirement while it
- * is pending wins over that stale producer result just as every other host
- * currentness boundary does.
+ * callback's own rejection stays visible while current. Refresh replacements
+ * survive retirement because the provider may already have consumed a token;
+ * other callbacks retain their operation's publication qualification.
  */
 async function invokeCurrentConnectedAccountCallback<TResult, TOutput>(
     assertCurrent: (phase: ConnectedAccountCallbackCurrentnessPhase) => Promise<void>,
@@ -196,7 +199,9 @@ async function invokeCurrentConnectedAccountCallback(
                             }),
                             stagedCredentials: guardStagedCredentials(
                                 operation.stagedCredentials,
-                                assertCurrent,
+                                operation.kind === 'refresh'
+                                    ? async () => { input.signal?.throwIfAborted(); }
+                                    : assertCurrent,
                                 (value) => registerRawForRedaction(value),
                             ),
                         });
