@@ -6,7 +6,7 @@ import { MachineVitalsHostFactsV1Schema } from '../../machines/vitals/machineVit
 import { MachineSudoPasswordPromptV1Schema, MachineElevationFailureV1Schema } from '../../machines/adminAccessV1.js';
 import { MachineAdministratorUsernameV1Schema } from '../../machines/adminAccessV1.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { MachineAgentIsolationReadyPreviewV1Schema, MachineAgentIsolationUnavailableStatusV1Schema } from '../../machines/agentIsolationV1.js';
+import { MachineAgentIsolationReadyPreviewV1Schema, MachineAgentIsolationUnavailableStatusV1Schema, MachineAgentIsolationPolicyV1Schema } from '../../machines/agentIsolationV1.js';
 import { z } from 'zod/mini';
 
 import { SessionForkStrategySchema } from '../../sessions/fork.js';
@@ -151,11 +151,19 @@ export const ManagedBootstrapFailureDetailsV1Schema = lazyZodSchema(() => z.stri
   : value.resultStatus === undefined && value.reason === undefined)));
 export type ManagedBootstrapFailureDetailsV1 = Readonly<z.infer<typeof ManagedBootstrapFailureDetailsV1Schema>>;
 /** Preserve the isolation owner's closed refusal without native output or recovery payloads. */
-export const ManagedAgentIsolationFailureDetailsV1Schema = lazyZodSchema(() => z.strictObject({
+export const ManagedAgentIsolationFailureDetailsV1Schema = lazyZodSchema(() => z.union([z.strictObject({
   kind: z.literal('managedAgentIsolation'),
   phase: z.literal('machines.agentIsolation.preview'),
   status: MachineAgentIsolationUnavailableStatusV1Schema,
-}));
+}), z.strictObject({
+  kind: z.literal('managedAgentIsolation'),
+  phase: z.literal('machines.agentIsolation.set'),
+  code: z.enum(['conflict', 'plan_changed']),
+  expectedMetadataVersion: z.number().check(z.int(), z.nonnegative(), z.maximum(Number.MAX_SAFE_INTEGER)),
+  metadataVersion: z.number().check(z.int(), z.nonnegative(), z.maximum(Number.MAX_SAFE_INTEGER)),
+  expectedPolicy: MachineAgentIsolationPolicyV1Schema,
+  policy: MachineAgentIsolationPolicyV1Schema,
+})]));
 export type ManagedAgentIsolationFailureDetailsV1 = Readonly<z.infer<typeof ManagedAgentIsolationFailureDetailsV1Schema>>;
 /** Pre-native Setup availability facts only; no Account, installation or native content. */
 export const MachineSetupTargetUnavailableFailureV1Schema = lazyZodSchema(() => z.strictObject({
@@ -184,7 +192,7 @@ export const ActionOperationFailureV1Schema = lazyZodSchema(() => z.strictObject
   ? failure.errorCode === 'outcome_unknown' || failure.errorCode === failure.details.failure.kind
     || failure.errorCode === 'platform_unsupported'
   : failure.details.kind === 'managedAgentIsolation'
-  ? failure.details.status.code === failure.errorCode
+  ? (failure.details.phase === 'machines.agentIsolation.preview' ? failure.details.status.code : failure.details.code) === failure.errorCode
   : failure.details.kind === 'managedNative'
   ? true
   : failure.details.kind === 'managedControllerRequest'

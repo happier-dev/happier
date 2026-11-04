@@ -51,6 +51,7 @@ export async function initializeManagedMachineEnrollmentIsolation(machine: Manag
     } catch (error) {
         // The enrolled daemon publishes this optional capability's refusal on
         // its Machine. Authentication, admission and unknown failures still fail.
-        if (!(error instanceof ManagedMachineControllerError) || error.details?.kind !== 'managedAgentIsolation') throw error;
+        if (!(error instanceof ManagedMachineControllerError) || error.details?.kind !== 'managedAgentIsolation'
+            || error.details.phase !== 'machines.agentIsolation.preview') throw error;
     }
 }

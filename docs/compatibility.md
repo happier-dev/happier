@@ -4098,6 +4098,15 @@ Run-on writer or store is added.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 managed bootstrap failures retain isolation Set conflicts and
+changed-plan facts in the existing closed `managedAgentIsolation` details.
+Both metadata versions and policies are retained; native plans and paths are
+excluded. Existing Preview-unavailable details remain valid. Load matching
+Protocol, controller, CLI and UI operation readers together because older
+development readers reject the new Set arm. Released V1 operation projections
+continue omitting these development-only details. No admission, credential,
+isolation identity, wire epoch, migration or alternate cause carrier is added.
+
 Unreleased 0.3 External Action locality refusals retain their selector or
 locality phase in the existing Action failure details. Exact matching Machine
 targets remain supported; admission decisions and error codes are unchanged.

@@ -10,6 +10,16 @@ an existing management path.
 
 ## Managed bootstrap settlement (0.3 development)
 
+An isolation conflict after installation does not undo the installed CLI or
+stop the enrolled daemon. The bootstrap operation remains failed and retains
+the isolation Set refusal in `managedAgentIsolation` details: the reviewed and
+current metadata versions and policies. A changed native plan retains those
+same facts without copying native paths or setup plans. The person reviews the
+Machine's current Agent isolation settings before applying; bootstrap never
+retries the effect automatically. Matching, effective isolation already settles
+without a Set request. A deliberate stored disable remains protected from the
+creation default.
+
 The portable driver saves `bootstrap.incomplete` through the existing Home
 report before guest IO. Typed installation, daemon-start, pairing and enrollment
 expiry failures replace it with `bootstrap.<producer code>` and any existing

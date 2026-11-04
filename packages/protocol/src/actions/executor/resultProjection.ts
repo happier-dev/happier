@@ -80,7 +80,12 @@ export function normalizeActionExecutorThrownError(error: unknown, phase?: Actio
   }
   if (rawCodes[0] && (readRecord(rawDetails).kind === 'managedBootstrap' || readRecord(rawDetails).kind === 'managedAgentIsolation')) {
     const failure = ActionOperationFailureV1Schema.safeParse({ errorCode: rawCodes[0], error: rawCodes[0], details: rawDetails });
-    if (failure.success) return failure.data;
+    if (failure.success) {
+      const details = failure.data.details;
+      return details && 'kind' in details && details.kind === 'managedAgentIsolation' && details.phase === 'machines.agentIsolation.set'
+        ? { ...failure.data, error: `Agent isolation requires a fresh review (reviewed metadata version ${details.expectedMetadataVersion}, current ${details.metadataVersion}). Review the Machine's Agent isolation settings before applying.` }
+        : failure.data;
+    }
   }
   // Closed native bootstrap reasons remain useful without a vendor error body.
   if (errorRecord.code === 'native_resource_unavailable' || errorRecord.code === 'native_action_failed'

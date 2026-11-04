@@ -30,7 +30,14 @@ export async function applyManagedMachineEnrollmentIsolation(params: Readonly<{
     } }));
     if (!result.success) throw new ManagedMachineControllerError('action_outcome_unknown');
     if (result.data.kind === 'failed') throw new ManagedMachineControllerError(result.data.code);
-    if (result.data.kind === 'plan_changed' || result.data.kind === 'conflict') throw new ManagedMachineControllerError(result.data.kind);
+    if (result.data.kind === 'plan_changed' || result.data.kind === 'conflict') {
+        const current = result.data.kind === 'plan_changed' ? result.data.current : result.data;
+        throw new ManagedMachineControllerError(result.data.kind, undefined, {
+            kind: 'managedAgentIsolation', phase: 'machines.agentIsolation.set', code: result.data.kind,
+            expectedMetadataVersion: preview.data.metadataVersion, metadataVersion: current.metadataVersion,
+            expectedPolicy: preview.data.policy, policy: current.policy,
+        });
+    }
     // Applying is not effective. The runtime owner still refuses first Agent
     // admission until its own native readiness and replacement have settled.
 }
