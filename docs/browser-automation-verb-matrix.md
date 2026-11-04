@@ -24,6 +24,10 @@ screencast, diagnostics, recording and agents share that connection. No debuggin
 `/json/version` endpoint is opened. Missing pipes or a failed readiness handshake return
 typed unavailable results without a TCP fallback. Stderr remains diagnostic input only.
 
+macOS managed launches also use `--use-mock-keychain` to avoid a login-Keychain
+lookup during cookie encryption. This includes persistent managed profiles; see
+the [at-rest protection trade-off](encryption.md#material-entrusted-to-a-shared-machine-unreleased-03).
+
 ## Controller and cancellation (development source)
 
 `browser.view.setViewport` selects a per-view device preset or `fitViewer` through the

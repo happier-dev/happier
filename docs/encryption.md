@@ -5403,3 +5403,14 @@ The selected managed profile owns imported browser state and its existing purge
 lifecycle. The Session agent and anyone who can drive that browser can use the
 imported logins; this feature does not isolate them from same-UID processes.
 See [Browser login import](actions.md) for the current development adapter scope.
+
+On macOS, managed Chromium launches use `--use-mock-keychain`, including persistent profiles. Chromium's cookie encryption
+then uses its fixed mock secret instead of the person's login Keychain. Imported
+cookies and other data protected by that secret therefore rely on the profile's
+filesystem permissions, OS account isolation and disk protection for confidentiality
+at rest; possession of the profile bytes is sufficient to decrypt them. This does
+not change the explicitly selected native-source importer's OS authorization.
+Existing managed cookies encrypted with a real Keychain secret may require a fresh
+sign-in or import; launch does not read that secret or migrate those records.
+The flag does not disable native certificate-trust queries to Keychain.
+Linux and Windows keep their existing launch arguments and platform storage behavior.

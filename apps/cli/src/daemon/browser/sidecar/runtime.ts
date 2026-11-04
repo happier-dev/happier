@@ -39,6 +39,9 @@ function buildSidecarLaunchArgs(profileDirectory: string, extensionDirectories: 
         '--remote-debugging-pipe',
         '--no-first-run',
         '--no-default-browser-check',
+        // Managed cookie storage must not use the person's login Keychain.
+        // Chromium's fixed mock secret leaves at-rest protection to the profile filesystem.
+        ...(process.platform === 'darwin' ? ['--use-mock-keychain'] : []),
         ...(extensionDirectories.length > 0 ? [
             `--load-extension=${extensionDirectories.join(',')}`,
             `--disable-extensions-except=${extensionDirectories.join(',')}`,

@@ -3,6 +3,31 @@ import { describe, expect, it } from 'vitest';
 import * as runtime from './runtime';
 
 describe('daemon browser sidecar runtime planning', () => {
+    it.each(['darwin', 'linux', 'win32'] as const)('isolates headless managed profiles from the login Keychain on %s without changing other platforms', (platform) => {
+        const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+        Object.defineProperty(process, 'platform', { configurable: true, value: platform });
+        try {
+            for (const storageMode of ['ephemeral', 'session', 'user', 'plugin'] as const) {
+                const plan = runtime.createSidecarLaunchPlan({
+                    sidecarId: 'keychain-isolation', nowMs: 2_000,
+                    profile: { profileId: 'managed', storageMode,
+                        owner: { kind: storageMode === 'ephemeral' ? 'session' : storageMode, id: 'owner' }, cleanupOnSessionClose: storageMode === 'ephemeral' },
+                    profileDirectory: '/profiles/managed',
+                    binaryResolution: { ok: true, source: 'managedBrowserPackage', executablePath: '/managed/chrome', discoveryKind: 'managedRuntime', diagnostics: [] },
+                });
+                expect(plan.publicResult.accepted).toBe(true);
+                expect(new Set(plan.privateLaunch?.args)).toEqual(new Set([
+                    '--headless=new',
+                    '--user-data-dir=/profiles/managed', '--remote-debugging-pipe',
+                    '--no-first-run', '--no-default-browser-check',
+                    ...(platform === 'darwin' ? ['--use-mock-keychain'] : []),
+                ]));
+            }
+        } finally {
+            Object.defineProperty(process, 'platform', originalPlatform);
+        }
+    });
+
     it('loads only selected extension directories for a persistent profile', () => {
         const input = {
             sidecarId: 'sidecar', nowMs: 2_000,
