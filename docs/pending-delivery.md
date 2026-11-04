@@ -820,6 +820,12 @@ continuation isolation remains a separate composed-validation obligation.
 
 This section describes development behavior that is not yet a released contract. Pending Queue V2 remains the sole durable owner of message custody, ordering, and exact-row actions. An inactive-session activation request is a small session-level authorization for one exact eligible queued row; it is not another message-delivery state machine and does not change that row's delivery priority.
 
+Shared-editor input can arm inactive Session activation through the managed
+Machine's accepted-input wake policy only while it is asleep and
+`wakeOnAcceptedMessage` is enabled.
+Otherwise it stays queued, including on a running managed Machine, just as on an
+ordinary Machine. Owner-authored input retains its existing explicit-resume behavior.
+
 - The resumable inactive composer remains usable while its exact target machine or daemon is offline. Ordinary submissions persist in Pending while the session continues to present its offline status. An input that first requires remote attachment upload or preparation stays in its draft if that step is unavailable; it is not queued with attachments silently omitted.
 - The account preference **Automatic resume after sending** (`sessionInactiveResumePolicy`) has one three-state owner. All ordinary inactive/offline input persists as FIFO `enqueue`. `when_available` additionally arms the exact Session authorization; `online_only` makes at most one user-present UI resume attempt when the exact machine is currently reachable; `manual` only persists the row. The default is `online_only`.
 - Neither `when_available` nor `online_only` changes an ordinary row to `send_now`; that action remains reserved for an explicit immediate-delivery request. If reachability changes or an `online_only` attempt fails, Pending custody remains without authorization for a later unattended start.

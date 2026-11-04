@@ -15,7 +15,8 @@ import { db } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
 import { setMachineAccessGrantInTx } from '@/app/machines/machineAccess';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
-import { assertManagedWakeOriginCurrentInTx, prepareManagedFiniteActionWake } from './managedWake';
+import { assertManagedWakeOriginCurrentInTx, prepareManagedFiniteActionWake, readManagedWakeTargets } from './managedWake';
+import { projectManagedMachine } from './managedRows';
 import { createExternalActionDaemonDispatcher, EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1,
     resolveCurrentSessionMachineFromServer, resolveCurrentSessionPublisherFromServer } from '@/app/api/socket/externalActionDispatcher';
 import { Server } from 'socket.io';
@@ -151,6 +152,81 @@ describe('finite managed wake original Action authority (real SQLite)', () => {
                 .toMatchObject({ ok: true, activationTarget: { accountId: requester.id } });
             const sessionAfter = await db.session.findUniqueOrThrow({ where: { id: session.id } });
             expect(sessionAfter.pendingActivationManagedTarget).toBeNull();
+        } finally { restoreEnv(envBefore); }
+    });
+
+    it.each([
+        { power: 'stopped', wakeOnAcceptedMessage: true, arms: true },
+        { power: 'running', wakeOnAcceptedMessage: true, arms: false },
+        { power: 'stopped', wakeOnAcceptedMessage: false, arms: false },
+    ] as const)('keeps collaborator input queued unless managed wake applies ($power, wake=$wakeOnAcceptedMessage)', async ({ power, wakeOnAcceptedMessage, arms }) => {
+        const test = await setup();
+        await db.managedMachine.update({ where: { id: test.row.id }, data: { wakeOnAcceptedMessage,
+            observation: { observedAt: 1, availability: 'present', power, storage: 'retained' },
+        } });
+        const managed = await db.managedMachine.findUniqueOrThrow({ where: { id: test.row.id } });
+        expect(managed.observation).toMatchObject({ availability: 'present', power });
+        expect(projectManagedMachine(managed).submittedNativeEffect).toBeUndefined();
+        const collaborator = await db.account.create({ data: { encryptionMode: 'plain' } });
+        await db.machine.update({ where: { id: test.guest.id }, data: {
+            active: power === 'running',
+            operationProtocolCapabilities: { sessionInputAdmission: { protocolVersions: [1, 2] } },
+        } });
+        const session = await db.session.create({ data: { accountId: test.account.id, tag: randomUUID(),
+            metadata: '{}', encryptionMode: 'plain', active: false } });
+        await db.sessionShare.create({ data: { sessionId: session.id, sharedByUserId: test.account.id,
+            sharedWithUserId: collaborator.id, accessLevel: 'edit', canApprovePermissions: false } });
+        expect(await inTx(tx => createSessionMachineAccessKeyInTx(tx, { accountId: test.account.id,
+            sessionId: session.id, machineId: test.guest.id, data: 'private-key-ciphertext' }))).toMatchObject({ ok: true });
+        const localId = randomUUID();
+        const input = { actorUserId: collaborator.id, authentication: createPresentUserSessionAccessAuthentication(),
+            sessionId: session.id, localId, targetMachineId: test.guest.id,
+            requestedAction: { v: 1, kind: 'send_now' },
+            content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'collaborator accepted input' } } } } as const;
+        const envBefore = snapshotEnv();
+        applyEnvValues({ HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional' });
+        try {
+            expect(await enqueuePendingMessage(input)).toMatchObject({ ok: true });
+            const retained = await db.session.findUniqueOrThrow({ where: { id: session.id } });
+            expect(retained.pendingActivationRequestId).toBe(arms ? localId : null);
+            if (arms) {
+                expect(mapPendingActivationAuthorization(retained)?.managedWakeTargetV1).toMatchObject({
+                    managedId: test.row.id, enrolledMachineId: test.guest.id,
+                    origin: { kind: 'session-input', session: { sessionId: session.id }, pendingRequestId: localId },
+                });
+            }
+            expect(await listPendingMessages(input)).toMatchObject({ ok: true, pending: [{ localId,
+                status: 'queued', deliveryState: null, content: input.content }] });
+            expect((await readManagedWakeTargets({ actorAccountId: test.account.id, request: { homeId,
+                controller: { machineId: test.controller.id, installationId: test.controller.installationId! } } })).targets).toHaveLength(arms ? 1 : 0);
+            expect(await updatePendingRequestedAction({ ...input, requestedAction: { v: 1, kind: 'enqueue' },
+                resumeWhenAvailable: true })).toMatchObject({ ok: true });
+            expect((await db.session.findUniqueOrThrow({ where: { id: session.id } })).pendingActivationRequestId)
+                .toBe(arms ? localId : null);
+            await expect(readManagedWakeTargets({ actorAccountId: collaborator.id, request: { homeId,
+                controller: { machineId: test.controller.id, installationId: test.controller.installationId! } } }))
+                .rejects.toMatchObject({ code: 'permission_denied' });
+            const authored = await db.sessionPendingMessage.findUniqueOrThrow({ where: {
+                sessionId_localId: { sessionId: session.id, localId },
+            } });
+            expect(authored.authorAccountId).toBe(collaborator.id);
+            expect(authored.inputAdmissionReceipt).toMatchObject({ actorAccountId: collaborator.id,
+                sessionRelationship: 'sharedEditor', admittedTarget: { accountId: test.account.id,
+                    sessionId: session.id, machineId: test.guest.id } });
+
+            const ordinaryGuest = await db.machine.create({ data: { id: randomUUID(), accountId: test.account.id,
+                installationId: randomUUID(), metadata: test.guest.metadata, dataEncryptionKey: test.guest.dataEncryptionKey,
+                operationProtocolCapabilitiesRevision: 1,
+                operationProtocolCapabilities: { sessionInputAdmission: { protocolVersions: [1, 2] } } } });
+            const ordinarySession = await db.session.create({ data: { accountId: test.account.id,
+                tag: randomUUID(), metadata: '{}', encryptionMode: 'plain', active: false } });
+            await db.sessionShare.create({ data: { sessionId: ordinarySession.id, sharedByUserId: test.account.id,
+                sharedWithUserId: collaborator.id, accessLevel: 'edit', canApprovePermissions: false } });
+            expect(await inTx(tx => createSessionMachineAccessKeyInTx(tx, { accountId: test.account.id,
+                sessionId: ordinarySession.id, machineId: ordinaryGuest.id, data: 'private-key-ciphertext' }))).toMatchObject({ ok: true });
+            expect(await enqueuePendingMessage({ ...input, sessionId: ordinarySession.id,
+                targetMachineId: ordinaryGuest.id, localId: randomUUID() })).toMatchObject({ ok: true });
+            expect((await db.session.findUniqueOrThrow({ where: { id: ordinarySession.id } })).pendingActivationRequestId).toBeNull();
         } finally { restoreEnv(envBefore); }
     });
 

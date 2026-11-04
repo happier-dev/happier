@@ -1,5 +1,4 @@
 import { ManagedWakeTargetV1Schema, ManagedWakeTargetsReadRequestV1Schema, type ManagedWakeTargetV1, type ManagedWakeTargetsReadRequestV1, ManagedIntentResultSchema } from '@happier-dev/protocol/machines/managed/managedIntentV1';
-import { SessionInputAdmissionReceiptV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { type ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { ManagedFiniteWakeRequestV1Schema, MANAGED_FINITE_WAKE_RPC_METHOD } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
@@ -28,6 +27,7 @@ import type { RpcAckResponseEmitter } from '@/app/api/socket/rpc/_types';
 import { readMachineDaemonSocketIdentity } from '@/app/machines/machineDaemonPresence';
 import { readVerifiedMachineSocketInstallationIdFromSocketData } from '@/app/api/socket/machineSocketInstallationProof';
 import type { PendingActivationHoldReasonV1 } from '@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1';
+import { readPendingSessionInputAdmission } from '@/app/session/pending/pendingInputAdmission';
 
 type FiniteWakePreparation = Readonly<{ kind: 'not-needed' | 'ready'; isCurrent(): Promise<boolean> }>
     | Readonly<{ kind: 'unavailable' | 'submitted-unknown' }>;
@@ -178,14 +178,17 @@ async function readManagedWakeTargetBindingInTx(tx: Tx, input: Readonly<{
     if (projected.observation?.availability === 'absent' || projected.observation?.storage === 'lost') return undefined;
     return { binding: { homeId, managedId: row.id, enrolledMachineId: input.machineId,
         expectedIntentRevision: row.intentRevision, controller, reason: 'admitted-work' as const }, controllerRole,
+        wakeOnAcceptedMessage: row.wakeOnAcceptedMessage,
         asleep: !projected.submittedNativeEffect && projected.observation?.availability === 'present'
             && (projected.observation.power === 'stopped' || projected.observation.power === 'suspended') };
 }
 
 export async function resolveManagedWakeTargetInTx(tx: Tx, input: Readonly<{
     actorAccountId: string; machineId: string; origin: ManagedWakeTargetV1['origin'];
+    requireAcceptedInputWake?: boolean;
 }>): Promise<ManagedWakeTargetV1 | undefined> {
     const binding = await readManagedWakeTargetBindingInTx(tx, input);
+    if (input.requireAcceptedInputWake && !(binding?.asleep && binding.wakeOnAcceptedMessage)) return undefined;
     return binding?.controllerRole === 'manage' ? ManagedWakeTargetV1Schema.parse({ ...binding.binding, origin: input.origin }) : undefined;
 }
 
@@ -355,16 +358,12 @@ export async function assertManagedWakeOriginCurrentInTx(tx: Tx, input: Readonly
                     enrolledMachineId: target.enrolledMachineId, origin: target.origin })) throw new ManagedMachineError('admission_unavailable');
         const pending = await tx.sessionPendingMessage.findUnique({ where: { sessionId_localId: {
             sessionId: origin.session.sessionId, localId: origin.pendingRequestId }, targetExecutionRunId: null },
-            select: { status: true, messageRole: true, deliveryState: true, providerAction: true, inputAdmissionReceipt: true } });
-        const receipt = createStoredReadSchema(SessionInputAdmissionReceiptV1Schema).safeParse(pending?.inputAdmissionReceipt);
+            select: { status: true, messageRole: true, authorAccountId: true, deliveryState: true, providerAction: true, inputAdmissionReceipt: true } });
+        const receipt = pending ? readPendingSessionInputAdmission({ sessionId: origin.session.sessionId,
+            accountId: session.accountId, pending }) : undefined;
         if (!pending || pending.status !== 'queued' || pending.messageRole !== 'user' || pending.deliveryState !== null || pending.providerAction !== null
-            || !receipt.success || !['authenticatedAccount', 'authenticatedMachine'].includes(receipt.data.issuer)
-            || (receipt.data.issuer === 'authenticatedAccount'
-                && (receipt.data.actorAccountId !== session.accountId || receipt.data.sessionRelationship !== 'owner'))
-            || !receipt.data.admittedTarget || receipt.data.admittedTarget.accountId !== session.accountId
-            || receipt.data.admittedTarget.sessionId !== origin.session.sessionId
-            || receipt.data.admittedTarget.machineId !== target.enrolledMachineId
-            || !await isCurrentSessionInputMachineTargetInTx(tx, receipt.data.admittedTarget)) throw new ManagedMachineError('admission_unavailable');
+            || !receipt?.admittedTarget || receipt.admittedTarget.machineId !== target.enrolledMachineId
+            || !await isCurrentSessionInputMachineTargetInTx(tx, receipt.admittedTarget)) throw new ManagedMachineError('admission_unavailable');
         actorAccountId = session.accountId;
     } else if (target.origin.kind === 'workflow-assignment') {
         const origin = target.origin;

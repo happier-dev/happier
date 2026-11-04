@@ -1,7 +1,7 @@
 import { isDeepStrictEqual } from 'node:util';
 import { z } from 'zod/mini';
 import { PendingRequestedActionV1StoredSchema } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
-import { SessionInputAdmissionReceiptV1Schema, type SessionInputAdmissionReceiptV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { SessionInputAdmissionReceiptV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { ManagedWakeTargetV1Schema } from '@happier-dev/protocol/machines/managed/managedIntentV1';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { type PendingActivationAuthorizationV1, type PendingActivationFailureCodeV1 } from '@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1';
@@ -12,7 +12,9 @@ import { getActivePrismaRuntime } from '@/storage/db';
 import { readManagedPendingActivationHoldReasonInTx, resolveManagedWakeTargetInTx } from '@/app/machines/managed/managedWake';
 import { projectManagedMachine } from '@/app/machines/managed/managedRows';
 import { markAccountChanged, type AccountChangePublication } from '@/app/changes/markAccountChanged';
-import { readStoredSessionInputAdmissionReceipt, isCurrentSessionInputMachineTargetInTx } from '@/app/session/messages/sessionInputAdmission';
+import { isCurrentSessionInputMachineTargetInTx } from '@/app/session/messages/sessionInputAdmission';
+import { readPendingSessionInputAdmission } from './pendingInputAdmission';
+export { readPendingOwnerInputAdmission } from './pendingInputAdmission';
 import type { EffectiveSessionAccess } from '@/app/session/access/sessionAccess';
 import { PendingActivationFailureCodeV1Schema, PendingActivationFailureDetailsV1Schema,
     type PendingActivationFailureDetailsV1, type PendingActivationHoldReasonV1 } from '@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1';
@@ -74,19 +76,6 @@ const ACTIVATION_ELIGIBILITY_SELECT = {
     inputAdmissionReceipt: true,
 } as const;
 
-/** One owner recovery admission predicate for activation and reset-bound Pending starts. */
-export function readPendingOwnerInputAdmission(input: Readonly<{
-    sessionId: string; accountId: string;
-    pending: Readonly<{ messageRole: string | null; authorAccountId: string | null; inputAdmissionReceipt: unknown }>;
-}>): SessionInputAdmissionReceiptV1 | undefined {
-    const receipt = readStoredSessionInputAdmissionReceipt(input.pending.inputAdmissionReceipt);
-    if (!receipt || input.pending.messageRole !== 'user'
-        || input.pending.authorAccountId !== null && input.pending.authorAccountId !== input.accountId
-        || receipt.issuer === 'authenticatedAccount' && (receipt.actorAccountId !== input.accountId || receipt.sessionRelationship !== 'owner')
-        || receipt.admittedTarget && (receipt.admittedTarget.accountId !== input.accountId || receipt.admittedTarget.sessionId !== input.sessionId)) return undefined;
-    return receipt;
-}
-
 export function shouldArmPendingActivationAuthorization(params: Readonly<{
     requestedAction: { kind: string };
     resumeWhenAvailable?: boolean;
@@ -106,7 +95,7 @@ export async function readPendingActivationHoldReasonsInTx(tx: Tx, input: Readon
         const action = PendingRequestedActionV1StoredSchema.safeParse(row.requestedAction ?? { v: 1, kind: 'enqueue' });
         if (row.status !== 'queued' || row.targetExecutionRunId != null || row.deliveryState != null
             || row.providerAction != null || !action.success || !['enqueue', 'send_now'].includes(action.data.kind)) return [];
-        const receipt = readPendingOwnerInputAdmission({ sessionId: input.sessionId, accountId: session.accountId,
+        const receipt = readPendingSessionInputAdmission({ sessionId: input.sessionId, accountId: session.accountId,
             pending: { messageRole: typeof row.messageRole === 'string' ? row.messageRole : null,
                 authorAccountId: row.authorAccountId, inputAdmissionReceipt: row.inputAdmissionReceipt } });
         return receipt?.admittedTarget ? [{ localId: row.localId, target: receipt.admittedTarget }] : [];
@@ -192,9 +181,7 @@ export async function armPendingActivationAuthorizationInTx(params: Readonly<{
     now?: Date;
     resumeWhenAvailable?: true;
 }>): Promise<PendingActivationPublicationTarget | undefined> {
-    // Immutable input provenance is not current mutation authority. An editor
-    // may change an owner's queued input without borrowing its owner activation.
-    if (params.currentAccess.level !== 'owner' || params.currentAccess.sessionId !== params.sessionId) return undefined;
+    if (params.currentAccess.sessionId !== params.sessionId) return undefined;
     const eligible = await params.tx.sessionPendingMessage.findUnique({
         where: { sessionId_localId: { sessionId: params.sessionId, localId: params.requestId }, targetExecutionRunId: null },
         select: ACTIVATION_ELIGIBILITY_SELECT,
@@ -239,8 +226,8 @@ export async function armPendingActivationAuthorizationInTx(params: Readonly<{
         where: { id: params.sessionId },
         select: AUTHORIZATION_SELECT,
     });
-    if (session.accountId !== params.currentAccess.accountId) return undefined;
-    const ownerAdmission = readPendingOwnerInputAdmission({ sessionId: params.sessionId, accountId: session.accountId, pending: eligible });
+    if (params.currentAccess.level === 'owner' && session.accountId !== params.currentAccess.accountId) return undefined;
+    const ownerAdmission = readPendingSessionInputAdmission({ sessionId: params.sessionId, accountId: session.accountId, pending: eligible });
     if (!ownerAdmission) return undefined;
     const admittedTarget = ownerAdmission.admittedTarget;
     if (admittedTarget && !await isCurrentSessionInputMachineTargetInTx(params.tx, admittedTarget)) return undefined;
@@ -256,10 +243,14 @@ export async function armPendingActivationAuthorizationInTx(params: Readonly<{
         && session.pendingActivationRequestId === params.requestId ? retained.data : undefined;
     const managedTarget = admittedTarget
         ? await resolveManagedWakeTargetInTx(params.tx, { actorAccountId,
+            requireAcceptedInputWake: params.currentAccess.level !== 'owner',
             machineId: admittedTarget.machineId, origin: { kind: 'session-input',
                 session: { homeId: admittedTarget.homeId, sessionId: params.sessionId },
                 pendingRequestId: params.requestId, requestedAt: requestedAt.getTime() } })
         : undefined;
+    // Shared input can trigger the custodian's existing managed wake policy;
+    // it cannot acquire ordinary Session start authority or vendor control.
+    if (params.currentAccess.level !== 'owner' && !managedTarget) return undefined;
     if (inputAdmissionReceipt.data.issuer === 'authenticatedMachine' && !managedTarget && !admittedTarget) return undefined;
     if (priorTarget && managedTarget && priorTarget.managedId !== managedTarget.managedId) return undefined;
     await params.tx.session.update({
@@ -300,7 +291,7 @@ export async function readPendingActivationTargetInTx(tx: Tx, sessionId: string)
         sessionId, localId: session.pendingActivationRequestId }, targetExecutionRunId: null },
         select: { status: true, messageRole: true, deliveryState: true, providerAction: true,
             authorAccountId: true, inputAdmissionReceipt: true } });
-    const receipt = row && readPendingOwnerInputAdmission({ sessionId, accountId: session.accountId, pending: row });
+    const receipt = row && readPendingSessionInputAdmission({ sessionId, accountId: session.accountId, pending: row });
     if (!row || row.status !== 'queued' || row.messageRole !== 'user' || row.deliveryState !== null || row.providerAction !== null
         || !receipt || !receipt.admittedTarget
         || !await isCurrentSessionInputMachineTargetInTx(tx, receipt.admittedTarget)) return undefined;
