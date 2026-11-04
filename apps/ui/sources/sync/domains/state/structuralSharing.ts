@@ -66,3 +66,38 @@ export function areSnapshotProjectionsEquivalent(previous: unknown, incoming: un
 export function retainIfEqual<T>(previous: T | undefined, next: T): T {
     return previous !== undefined && areSnapshotProjectionsEquivalent(previous, next) ? previous : next;
 }
+
+/**
+ * `previous` when `next` is a flat record whose own members are all identical to it, otherwise `next`.
+ * For a published bundle of already-stable members (a context value or model) where deep equality
+ * would be wrong because members are functions or identity-bound objects.
+ */
+export function retainShallow<T extends object>(previous: T | undefined, next: T): T {
+    if (previous === undefined || previous === next) return next;
+    const keys = Object.keys(next) as Array<keyof T>;
+    if (keys.length !== Object.keys(previous).length) return next;
+    return keys.every(key => Object.is(previous[key], next[key])) ? previous : next;
+}
+
+/**
+ * Reuse admitted rows by domain identity, and the array itself when its ordered contents did not
+ * change. Rows are reconciled deeply, so a changed row still shares its unchanged members.
+ */
+export function retainKeyedRows<TRow>(
+    previous: readonly TRow[] | null | undefined,
+    incoming: readonly TRow[],
+    keyOf: (row: TRow) => string,
+    options?: Readonly<{ freeze: false }>,
+): readonly TRow[] {
+    const publish = (rows: readonly TRow[]): readonly TRow[] => (options?.freeze === false ? rows : Object.freeze([...rows]));
+    if (!previous) return publish(incoming);
+    const previousByKey = new Map(previous.map(row => [keyOf(row), row]));
+    let changed = previous.length !== incoming.length;
+    const rows = incoming.map((row, index) => {
+        const existing = previousByKey.get(keyOf(row));
+        const retained = existing === undefined ? row : retainDeep(existing, row);
+        if (retained !== previous[index]) changed = true;
+        return retained;
+    });
+    return changed ? publish(rows) : previous;
+}
