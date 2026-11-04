@@ -9,6 +9,7 @@ import type { WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/workf
 import type { WorkflowMaterializedLeafV1 } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
 import { walkWorkflowBlocks } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import { useRoleCatalog } from '@/components/roles/catalog/useRoleCatalog';
+import { roleDisplayName } from '@/sync/domains/roles/roleCatalog';
 import { useRoleEnginePresentation } from '@/components/roles/catalog/useRoleEnginePresentation';
 import { RoleEngineField } from '@/components/roles/engine/RoleEngineField';
 import { FieldItem } from '@/components/ui/forms/FieldItem';
@@ -59,7 +60,7 @@ export function WorkflowRunRoles(props: Readonly<{
             ...props.overrides.filter((value) => value.roleId !== roleId), { ...override, roleId, ...patch },
         ]);
         return <View key={roleId}>
-            <FieldItem label={current.selection.name} supportingText={t('workflows.start.rolesUnchanged')}>
+            <FieldItem label={roleDisplayName(current.selection)} supportingText={t('workflows.start.rolesUnchanged')}>
                 {!pluginJsonValuesEqual(original.selection.engine ?? null, current.selection.engine ?? null)
                     ? <Text>{`${originalEngine.label ?? t('roles.rail.defaultEngine')} → ${engine.label ?? t('roles.rail.defaultEngine')}`}</Text> : null}
                 <RoleEngineField engine={current.selection.engine} label={engine.label} leading={engine.icon}
@@ -84,7 +85,7 @@ export function WorkflowAcceptedRunRoles(props: Readonly<{ leaves: readonly Work
     const presentEngine = useRoleEnginePresentation();
     const roles = [...new Map(props.leaves.flatMap((leaf) => leaf.role
         ? [[JSON.stringify([leaf.sourceKey, leaf.role.roleId]), leaf.role] as const] : [])).entries()];
-    return <View>{roles.map(([key, role]) => <FieldItem key={key} label={role.name}>
+    return <View>{roles.map(([key, role]) => <FieldItem key={key} label={roleDisplayName(role)}>
         <Text>{presentEngine(role.engine).label ?? t('roles.rail.defaultEngine')}</Text>
         <Text>{describeRoleRunsAs(role.runsAs.kind)}</Text>
     </FieldItem>)}</View>;

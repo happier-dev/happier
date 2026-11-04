@@ -66,6 +66,10 @@ const BUILT_IN_ROLE_PURPOSE_KEYS = {
 } as const satisfies Record<BuiltInRoleIdV1, string>;
 const PLUGIN_ROLE_ID = /^plugin:([^/]+)\/(.+)$/u;
 
+export function roleDisplayName(role: Pick<ResolvedRoleV1, 'roleId' | 'name'>): string {
+    return role.roleId === 'second_opinion' ? t('roles.settings.secondOpinionTitle') : role.name;
+}
+
 function classify(item: RolesListItem): Readonly<{ source: RoleSourceKind; pluginId?: string }> {
     if (BUILT_IN_ROLE_IDS.has(item.roleId)) return { source: 'built_in' };
     const plugin = PLUGIN_ROLE_ID.exec(item.roleId);
@@ -158,5 +162,5 @@ export function describeRolePurpose(role: Pick<ResolvedRoleV1, 'roleId' | 'instr
  */
 export function resolveRoleDisplayName(roleId: string, workflowRoles?: readonly WorkflowRoleV1[]): string {
     const resolved = resolveRoleSelectionV1({ roleId, workflowRoles: workflowRoles ?? [] });
-    return resolved.ok && resolved.selection.name ? resolved.selection.name : roleId;
+    return resolved.ok && resolved.selection.name ? roleDisplayName(resolved.selection) : roleId;
 }

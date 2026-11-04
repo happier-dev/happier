@@ -21,12 +21,15 @@ export const en = {
     },
     reportToSession: 'Report to this session',
     startsWhenYouSend: ({ count }: { count: number }) => count > 1 ? `${count} reviews start when you send` : 'Starts when you send',
+    selector: {
+        nothingStarts: 'Nothing starts until the plugin runs it',
+    },
     thisFolder: 'this folder',
     offline: ({ machine }: { machine: string }) => `${machine} is offline. The agent starts there; your draft stays here until it’s back.`,
     menu: {
         askSection: 'Ask an agent to',
-        secondOpinionTitle: 'Second opinion',
-        secondOpinionSubtitle: 'An independent check before done',
+        secondOpinionTitle: 'Independent check',
+        secondOpinionSubtitle: 'Another agent reviews the work before it’s done',
         keepGoingTitle: 'Keep going until done…',
         keepGoingSubtitle: 'Set a goal in the Goal control',
         runWorkflowTitle: 'Run a workflow',

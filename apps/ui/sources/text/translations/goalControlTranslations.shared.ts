@@ -14,7 +14,7 @@ export const en = {
         strikesPrefix: 'Stop after',
         strikesSuffix: 'checks without progress',
         strikesLabel: 'Checks without progress before stopping',
-        secondOpinionTitle: 'Ask for a second opinion before finishing',
+        secondOpinionTitle: 'Independent check before finishing',
         secondOpinionDescription: 'Before the goal is marked done, a second agent checks it. If it disagrees, you get a notification and the goal stays open.',
         budgetUnreported: ({ agent }: { agent: string }) => `${agent} doesn't report token usage, so only the rounds and progress checks apply.`,
     },

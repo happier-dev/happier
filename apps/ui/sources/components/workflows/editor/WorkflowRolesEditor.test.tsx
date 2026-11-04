@@ -40,3 +40,12 @@ it('dispatches canonical role edits for the controlled editor and preserves the 
     expect(batches.at(-1)).toEqual([{ kind: 'remove_role', roleId: 'workflow_role_1' }]);
     expect(current.roles).toEqual([]);
 });
+
+it('names a second_opinion role through the shared role display name', async () => {
+    const draft = { ...createWorkflowEditorDraft({ draftId: 'roles-review', name: 'Review' }), roles: [{
+        roleId: 'second_opinion', name: 'Second opinion', instructions: 'Check the work', runsAs: { kind: 'session' as const },
+    }] };
+    const screen = await renderScreen(<WorkflowRolesEditor draft={draft} prefix="roles" onEdit={() => {}} />);
+    expect(screen.getTextContent()).toContain('Independent check');
+    expect(screen.getTextContent()).not.toContain('Second opinion');
+});

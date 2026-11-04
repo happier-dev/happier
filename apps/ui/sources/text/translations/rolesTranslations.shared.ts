@@ -219,7 +219,7 @@ export const rolesTranslationsEnglish = { en: {
             runsAsBackgroundDescription: 'Runs in the background and reports back; there is no session to steer.',
             handsOffTitle: 'Hands-off',
             handsOffDescription: 'Plans and delegates; it doesn’t edit files itself.',
-            secondOpinionTitle: 'Second opinion',
+            secondOpinionTitle: 'Independent check',
             secondOpinionDescription: 'Encouraged asks it to consider a second opinion before a pull request or before calling work done.',
             secondOpinionOff: 'Off',
             secondOpinionEncouraged: 'Encouraged',

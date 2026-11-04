@@ -6,6 +6,7 @@ import { describeRoleRunsAs } from '@/components/roles/catalog/rolePresentation'
 import type { RoleOverrideV1 } from '@happier-dev/protocol/prompts/roles/rolesV1';
 import { walkWorkflowBlocks, type WorkflowDefinitionEditOpV1 } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import { useRoleCatalog } from '@/components/roles/catalog/useRoleCatalog';
+import { roleDisplayName } from '@/sync/domains/roles/roleCatalog';
 import { useRoleEnginePresentation } from '@/components/roles/catalog/useRoleEnginePresentation';
 import { RoleEngineField } from '@/components/roles/engine/RoleEngineField';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -73,7 +74,7 @@ export function WorkflowRolesEditor(props: Readonly<{
                     </FieldItem>
                 </> : null}
                 {effective.ok ? <>
-                    <FieldItem label={effective.selection.name}>
+                    <FieldItem label={roleDisplayName(effective.selection)}>
                         <RoleEngineField engine={effective.selection.engine} label={engine?.label ?? null} leading={engine?.icon}
                             disabled={!editable} onChange={(value) => { if (editable) change({ engine: value }); }} testID={`${prefix}-engine`} />
                     </FieldItem>
@@ -94,7 +95,7 @@ export function WorkflowRolesEditor(props: Readonly<{
                 testID={`${props.prefix}-add-role-trigger`} onPress={toggle} />}
             items={[
                 ...catalog.entries.filter((entry) => !roles.some((role) => role.roleId === entry.roleId))
-                    .map((entry) => ({ id: `catalog:${entry.roleId}`, title: entry.role.name })),
+                    .map((entry) => ({ id: `catalog:${entry.roleId}`, title: roleDisplayName({ roleId: entry.roleId, name: entry.role.name }) })),
                 { id: 'new-inline-role', title: t('roles.settings.newRole'), testID: `${props.prefix}-add-role-inline` },
             ]}
             onSelect={(choiceId) => {

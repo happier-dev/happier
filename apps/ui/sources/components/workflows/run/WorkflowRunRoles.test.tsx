@@ -85,4 +85,24 @@ describe('workflow run role controls', () => {
         expect(home.requestsFor('/v1/account/entity-rows/prompt-library')).toEqual([]);
         expect(screen.findByTestId('run-role-portable_builder-engine')).toBeNull();
     });
+
+    // F-JOURNEY-UI live: "Keep going until done" listed its review role as "Second opinion" while Work, Run and
+    // Roles settings read "Independent check"; the role's display name has one owner.
+    it('names the second_opinion role through the shared role display name, editable and frozen', async () => {
+        const reviewDefinition = createWorkflowDefinitionFixture({ defaults: { engine: { role: 'second_opinion' } }, roles: [{
+            roleId: 'second_opinion', name: 'Second opinion', instructions: 'Check the work', runsAs: { kind: 'session' },
+        }] });
+        const editable = await renderScreen(<WorkflowRunRoles definition={reviewDefinition} roleIds={['second_opinion']}
+            overrides={[]} pending={false} prefix="run" onChange={() => {}} />);
+        await vi.waitFor(() => expect(editable.findByTestId('run-role-second_opinion-reset')).toBeNull());
+        await vi.waitFor(() => expect(editable.getTextContent()).toContain('roles.settings.secondOpinionTitle'));
+        expect(editable.getTextContent()).not.toContain('Second opinion');
+        await editable.unmount();
+        const accepted = resolveRoleSelectionV1({ roleId: 'second_opinion', workflowRoles: reviewDefinition.roles });
+        if (!accepted.ok) throw new Error('invalid_role_fixture');
+        const frozen = await renderScreen(<WorkflowAcceptedRunRoles leaves={[{ sourceKey: '$root', blockId: 'check', kind: 'step',
+            selection: {}, authoredWorkspace: { kind: 'inherit' }, executionTarget: { kind: 'session' }, role: accepted.selection }]} />);
+        expect(frozen.getTextContent()).toContain('roles.settings.secondOpinionTitle');
+        expect(frozen.getTextContent()).not.toContain('Second opinion');
+    });
 });
