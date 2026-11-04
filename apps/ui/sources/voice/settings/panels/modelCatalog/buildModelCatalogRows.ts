@@ -54,6 +54,8 @@ export type ModelCatalogRow = Readonly<{
   canInstall: boolean;
   /** Whether a remove action is offered for this row. */
   canRemove: boolean;
+  /** Whether this installed pack can serve its conversation role (STT requires streaming). */
+  canSetDefault: boolean;
   /** Exact daemon-projected consent review for an external plugin pack. */
   licenseReview: DaemonVoiceInferenceModelStatus['licenseReview'] | null;
   sourcePluginId: string | null;
@@ -156,6 +158,7 @@ function buildRowsForKind(
       runtimeFamily: status.runtimeFamily ?? null,
       external: true as const,
       publicationAvailable: true,
+      streamingCapable: status.runtimeFamily === 'sherpa_zipformer_streaming',
     }));
   return [...builtIns, ...external].flatMap((entry): readonly ModelCatalogRow[] => {
     const status = statusByPackId.get(entry.packId);
@@ -208,6 +211,8 @@ function buildRowsForKind(
         ? actionError?.operation === 'install'
           || (actionError?.operation === 'remove' && installedByDaemon)
         : installed || installedByDaemon || state === 'error',
+      canSetDefault: !statusUnavailable && runtimeSupported && installed
+        && (entry.kind === 'tts_sherpa' || entry.streamingCapable),
       licenseReview: status?.licenseReview ?? null,
       sourcePluginId: status?.pluginIdentity?.pluginId ?? null,
     };

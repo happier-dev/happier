@@ -276,7 +276,7 @@ export async function invokeVoiceSettingsOperation(operation: VoiceSettingsOpera
         if (!row) return unavailable('model_pack_unavailable');
         if (!await operationCurrent()) return { status: 'cancelled' };
         if (operation === 'model_default') {
-            if (!row.canRemove || row.state === 'unsupported' || row.state === 'unknown') return unavailable('model_not_installed');
+            if (!row.canSetDefault) return unavailable('model_pack_unavailable');
             await context.mutateSettings(latest => {
                 const next = updateVoiceLocalConversationSetting(latest.voice, row.kind === 'stt_sherpa' ? 'stt.localNeural.assetId' : 'tts.localNeural.assetId', packId);
                 return selectionCurrent() && material(latest) === capturedMaterial && next ? { voice: next } : null;

@@ -33,7 +33,7 @@ export function DaemonModelPackRow(props: Readonly<{
 }>): React.ReactElement {
     const { theme } = useUnistyles();
     const { row } = props;
-    const canPromoteToDefault = row.canRemove && !row.isDefault;
+    const canPromoteToDefault = row.canSetDefault && !row.isDefault;
     const isUnsupported = row.state === 'unsupported';
     const showRemove = row.canRemove;
     const isDiscard = row.state === 'error';

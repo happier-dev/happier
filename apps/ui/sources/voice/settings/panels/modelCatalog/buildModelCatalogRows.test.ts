@@ -31,6 +31,17 @@ function status(
 }
 
 describe('buildModelCatalogRows', () => {
+  it('keeps an installed batch-only pack removable without promoting it to the streaming conversation default', () => {
+    const batchId = 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8';
+    const streamingId = getDefaultModelPackId('stt_sherpa')!;
+    const rows = buildModelCatalogRows({ statuses: [
+      status(batchId, { installState: 'installed' }),
+      status(streamingId, { installState: 'installed' }),
+    ], selectedSttPackId: null, selectedTtsPackId: null }).stt;
+    expect(rows.find(row => row.packId === batchId)).toMatchObject({ canRemove: true, canSetDefault: false });
+    expect(rows.find(row => row.packId === streamingId)).toMatchObject({ canRemove: true, canSetDefault: true });
+  });
+
   it('omits uninstalled packs whose runtime family the daemon does not support', () => {
     const unsupportedPack = listModelPackCatalogEntries('stt_sherpa')
       .find((entry) => entry.runtimeFamily === 'sherpa_parakeet_offline')!;

@@ -75,6 +75,7 @@ describe('DaemonModelPackRow', () => {
         const row: ModelCatalogRow = {
             packId: 'pack-unknown', kind: 'stt_sherpa', displayName: 'Unknown Pack', model: 'zipformer',
             state: 'unknown', progress: null, lastError: null, loadedArtifactBytes: null,
+            canSetDefault: false,
             isDefault: false, canInstall: false, canRemove: false, licenseReview: null, sourcePluginId: null,
         };
         const screen = await renderScreen(
@@ -91,6 +92,7 @@ describe('DaemonModelPackRow', () => {
         const row: ModelCatalogRow = {
             packId: 'pack-active', kind: 'tts_sherpa', displayName: 'Active Pack', model: 'kokoro',
             state: 'downloading', progress: 0.5, lastError: null, loadedArtifactBytes: null,
+            canSetDefault: false,
             isDefault: false, canInstall: false, canRemove: false, licenseReview: null, sourcePluginId: null,
         };
         const onCancel = vi.fn();
@@ -119,6 +121,7 @@ describe('DaemonModelPackRow', () => {
             lastError: null,
             loadedArtifactBytes: null,
             isDefault: false,
+            canSetDefault: true,
             canInstall: false,
             canRemove: true,
             licenseReview: null,
@@ -174,6 +177,7 @@ describe('DaemonModelPackRow', () => {
             lastError: null,
             loadedArtifactBytes: null,
             isDefault: true,
+            canSetDefault: true,
             canInstall: false,
             canRemove: true,
             licenseReview: null,

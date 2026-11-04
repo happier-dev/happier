@@ -162,6 +162,16 @@ describe('useDaemonVoiceModelCatalogState', () => {
     });
     afterEach(async () => { vi.useRealTimers(); await account.reset(); vi.restoreAllMocks(); });
 
+    it('refuses an installed batch-only pack as the streaming conversation default through the existing Action', async () => {
+        const packId = 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8';
+        catalogReply([status(packId, { installState: 'installed' })]);
+        const result = await createDefaultActionExecutor().execute('settings.invoke', {
+            anchor: 'voiceAdvanced.defaultSpeechModel', input: { kind: 'model_pack', packId, machineId: 'machine-a' },
+        }, { surface: 'ui' });
+        expect(result).toMatchObject({ ok: true, result: { status: 'unavailable', reason: 'model_pack_unavailable' } });
+        expect(mutations()).toHaveLength(0);
+    });
+
     it('shares selected-role model facts between passive hubs and pages without probing from the hub', async () => {
         const voice = settingsParse({ voice: { providerId: 'local_conversation',
             executionMachine: { mode: 'fixed', machineId: 'machine-a' },
