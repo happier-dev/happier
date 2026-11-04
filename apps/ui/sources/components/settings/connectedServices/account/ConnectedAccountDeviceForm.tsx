@@ -130,14 +130,14 @@ export const ConnectedAccountDeviceForm = React.memo(function ConnectedAccountDe
             </View>
             {!expired && props.automaticPolling === false ? <RoundButton testID="connected-account-device:poll" size="small" display="secondary"
                 title={t('connectedServicesSetup.deviceCheckNow')} disabled={props.busy} onPress={props.onPoll} /> : null}
-            {expired ? <View style={styles.recovery}>
-                <RoundButton
+            {expired || props.onCancel ? <View style={styles.recovery}>
+                {expired ? <RoundButton
                     testID="connected-account-device:resume"
                     size="small"
                     title={t('connectedServicesSettings.deviceNewCode')}
                     disabled={props.busy}
                     onPress={props.onResume}
-                />
+                /> : null}
                 {props.onCancel ? (
                     <>
                         <View style={styles.grow} />

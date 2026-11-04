@@ -52,4 +52,14 @@ describe('ConnectedAccountDeviceForm', () => {
         await pressTestInstanceAsync(screen.tree.find((node) => node.props.testID === 'connected-account-device:resume'));
         expect(onResume).toHaveBeenCalledOnce();
     });
+    it('lets the owner cancel an active device sign-in before its code expires', async () => {
+        const onCancel = vi.fn();
+        const screen = await renderScreen(<ConnectedAccountDeviceForm userCode="ABCD"
+            busy={false} onPoll={vi.fn()} onResume={vi.fn()} onCancel={onCancel} />);
+
+        await pressTestInstanceAsync(screen.tree.find((node) => node.props.testID === 'connected-account-setup:cancel'));
+
+        expect(onCancel).toHaveBeenCalledOnce();
+        expect(screen.tree.findAll((node) => node.props.testID === 'connected-account-device:resume')).toHaveLength(0);
+    });
 });
