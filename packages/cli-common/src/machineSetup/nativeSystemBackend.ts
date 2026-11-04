@@ -4,7 +4,7 @@ import { createNativePackageBackend } from './nativePackageBackend.js';
 import { evaluateInputPredicate } from '@happier-dev/protocol/inputs';
 export { inspectAptLocks, mutateApt } from './nativePackageBackend.js';
 
-export type NativeRun = (executable: string, args: readonly string[], env?: Readonly<Record<string, string>>) => Promise<MachineSetupNativeCommandResult>;
+export type NativeRun = (executable: string, args: readonly string[], env?: Readonly<Record<string, string>>, inputBytes?: Uint8Array, discardOutput?: boolean) => Promise<MachineSetupNativeCommandResult>;
 type SystemStep = Exclude<MachineRecipeStepV1, { kind: 'file' | 'directory' | 'packageSource' | 'workspaceAccess' | 'pathTraversal' }>;
 type Facts = MachineSetupStepObservationV1['facts'];
 const locale = { LC_ALL: 'C' };
@@ -24,11 +24,14 @@ export async function readLocalAccount(run: NativeRun, database: 'passwd' | 'gro
 }
 
 
-export function createNativeSystemBackend(run: NativeRun, runAsDaemonUser?: NativeRun): Pick<MachineSetupBackend, 'observe' | 'apply'> {
+export function createNativeSystemBackend(run: NativeRun, runAsDaemonUser?: NativeRun, platform: NodeJS.Platform = process.platform): Pick<MachineSetupBackend, 'observe' | 'apply'> {
     const packages = createNativePackageBackend(run, runAsDaemonUser);
-    const effect = async (executable: string, args: readonly string[]) => {
-        if ((await run(executable, args, locale)).code !== 0) throw new MachineSetupEffectError('native_effect_failed');
+    const effect = async (executable: string, args: readonly string[], inputBytes?: Uint8Array, discardOutput?: boolean) => {
+        if ((await run(executable, args, locale, inputBytes, discardOutput)).code !== 0) throw new MachineSetupEffectError('native_effect_failed');
     };
+    const checked = (step: MachineRecipeStepV1, result: MachineSetupNativeCommandResult, unsatisfiedExitCodes: readonly number[]) =>
+        observation(step, result.code === 0 ? 'satisfied' : result.code !== null && unsatisfiedExitCodes.includes(result.code) ? 'drifted' : 'unavailable',
+            { exitCode: result.code }, result.code !== 0 && (result.code === null || !unsatisfiedExitCodes.includes(result.code)) ? 'required_fact_unavailable' : undefined);
     const inspectUser = async (step: Extract<SystemStep, { kind: 'user' }>): Promise<MachineSetupStepObservationV1> => {
         const row = await readLocalAccount(run, 'passwd', step.username);
         if (!row) {
@@ -121,6 +124,11 @@ export function createNativeSystemBackend(run: NativeRun, runAsDaemonUser?: Nati
         if (step.kind === 'group') return inspectGroup(step);
         if (step.kind === 'package') return packages.observe(step);
         if (step.kind === 'serviceUnit') return inspectService(step);
+        if (step.kind === 'script') {
+            if (platform === 'win32') return observation(step, 'unsupported', { platform }, 'platform_unsupported');
+            if (!step.check) return observation(step, 'drifted', {});
+            return checked(step, await run(step.shell, ['-s', '--'], locale, Buffer.from(step.check.body, 'utf8'), true), step.check.unsatisfiedExitCodes);
+        }
         if (step.kind === 'command') {
             // Kernel verification is consumed by the composing native backend.
             if ('kind' in step.check) return observation(step, 'unsupported', {}, 'required_fact_unavailable');
@@ -131,8 +139,7 @@ export function createNativeSystemBackend(run: NativeRun, runAsDaemonUser?: Nati
                 const stdoutJsonMatched = evaluateInputPredicate(step.check.stdoutJson, output);
                 return observation(step, stdoutJsonMatched ? 'satisfied' : 'drifted', { exitCode: 0, stdoutJsonMatched });
             }
-            return observation(step, result.code === 0 ? 'satisfied' : result.code !== null && step.check.unsatisfiedExitCodes.includes(result.code) ? 'drifted' : 'unavailable',
-                { exitCode: result.code }, result.code !== 0 && (result.code === null || !step.check.unsatisfiedExitCodes.includes(result.code)) ? 'required_fact_unavailable' : undefined);
+            return checked(step, result, step.check.unsatisfiedExitCodes);
         }
         return observation(step, 'unsupported', {}, 'required_fact_unavailable');
     };
@@ -145,6 +152,7 @@ export function createNativeSystemBackend(run: NativeRun, runAsDaemonUser?: Nati
             if (state.status !== 'drifted') throw new MachineSetupEffectError(state.reason === 'package_manager_busy' ? 'package_manager_busy'
                 : state.reason === 'foreign_effect_conflict' ? 'foreign_effect_conflict' : 'required_fact_unavailable');
             if (step.kind === 'command') { await effect(step.executable, step.args); return; }
+            if (step.kind === 'script') { await effect(step.shell, ['-s', '--'], Buffer.from(step.body, 'utf8'), true); return; }
             if (step.kind === 'user') {
                 if (step.state === 'absent') {
                     if (!step.ownershipMarker) throw new MachineSetupEffectError('foreign_effect_conflict');

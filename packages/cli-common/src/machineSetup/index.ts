@@ -105,6 +105,9 @@ export type MachineSetupApplyResultV1 = Readonly<{
 /** Unknown steps cannot establish that this operation first installed an item. */
 export function readMachineSetupInitialPresenceV1(plan: MachineSetupEffectPlanV1): 'present' | 'absent' | undefined {
   const presence = plan.steps.flatMap((step, index): Array<boolean | undefined> => {
+    // Script execution has no independent persisted identity. A recipe's native
+    // footprint establishes first-presence; script-only recipes remain unknown.
+    if (step.kind === 'script') return [];
     const observation = plan.nativeFacts[index];
     if (!observation || observation.stepId !== step.id
       || observation.status !== 'satisfied' && observation.status !== 'drifted') return [undefined];
@@ -443,6 +446,10 @@ export async function applyMachineSetupEffectPlans(input: Readonly<{
                 // Native command acceptance is dispatch only. Restoration is
                 // observed by the reboot Action after the Machine reconnects.
                 if (step.kind === 'reboot') continue;
+                if (step.kind === 'script' && !step.check) {
+                    input.onProgress?.({ planIndex, stepId: step.id, phase: 'apply', status: 'satisfied' });
+                    continue;
+                }
                 let verified: MachineSetupStepObservationV1;
                 try {
                     verified = await input.backend.observe(step);

@@ -14,7 +14,7 @@ import { activateNativeFile, removeNativeFile, assertProtectedNativeTarget, insp
     isMissingNativeFile as isMissing, type NativeFileState as FileState } from './nativeFileSafety.js';
 import { createNativeFirewallBackend } from './nativeFirewall.js';
 
-export type MachineSetupNativeCommand = Readonly<{ executable: string; args: readonly string[]; signal?: AbortSignal; env?: Readonly<Record<string, string>>; inputBytes?: Uint8Array }>;
+export type MachineSetupNativeCommand = Readonly<{ executable: string; args: readonly string[]; signal?: AbortSignal; env?: Readonly<Record<string, string>>; inputBytes?: Uint8Array; discardOutput?: boolean }>;
 export type MachineSetupNativeCommandResult = Readonly<{ code: number | null; stdout: string; stderr: string; errorCode?: string }>;
 export type MachineSetupSecretGrantMaterial = Readonly<{
     bytes: Uint8Array;
@@ -73,6 +73,7 @@ function desiredBytes(step: FileStep, state: FileState): string {
 export async function runMachineSetupNativeCommand(command: MachineSetupNativeCommand): Promise<MachineSetupNativeCommandResult> {
     try {
         const result = await execFileWithDeadline(command.executable, command.args, { encoding: 'utf8',
+            ...(command.discardOutput ? { outputTailMaxBytes: 0 } : {}),
             ...(command.inputBytes ? { inputBytes: command.inputBytes } : {}),
             ...(command.env ? { env: { ...process.env, ...command.env } } : {}), ...(command.signal ? { signal: command.signal } : {}) });
         return { code: 0, stdout: String(result.stdout), stderr: String(result.stderr) };
@@ -95,9 +96,9 @@ export function createMachineSetupNativeBackend(options: Readonly<{
     runAsDaemonUser?: (command: MachineSetupNativeCommand) => Promise<MachineSetupNativeCommandResult>;
     materializeSecretGrant?: (grantRef: string) => Promise<MachineSetupSecretGrantMaterial>;
 }> = {}): MachineSetupBackend {
-    const run = (executable: string, args: readonly string[], env?: Readonly<Record<string, string>>, inputBytes?: Uint8Array) => {
+    const run = (executable: string, args: readonly string[], env?: Readonly<Record<string, string>>, inputBytes?: Uint8Array, discardOutput?: boolean) => {
         options.signal?.throwIfAborted();
-        return (options.run ?? runMachineSetupNativeCommand)({ executable, args, ...(env ? { env } : {}), ...(inputBytes ? { inputBytes } : {}), ...(options.signal ? { signal: options.signal } : {}) }).then(result => {
+        return (options.run ?? runMachineSetupNativeCommand)({ executable, args, ...(env ? { env } : {}), ...(inputBytes ? { inputBytes } : {}), ...(discardOutput ? { discardOutput } : {}), ...(options.signal ? { signal: options.signal } : {}) }).then(result => {
             if (result.errorCode === 'EACCES' || result.errorCode === 'EPERM') throw new MachineSetupEffectError('needs_admin_to_check');
             return result;
         });
@@ -107,7 +108,7 @@ export function createMachineSetupNativeBackend(options: Readonly<{
         options.signal?.throwIfAborted();
         return runAsDaemonUser({ executable, args, ...(env ? { env } : {}), ...(options.signal ? { signal: options.signal } : {}) });
     } : undefined;
-    const system = createNativeSystemBackend(run, daemonRun);
+    const system = createNativeSystemBackend(run, daemonRun, options.platform);
     const workspace = createWorkspaceAccessBackend(run);
     const requireProtectedDaemon = async () => {
         if (!('daemonUsername' in options)) return;
