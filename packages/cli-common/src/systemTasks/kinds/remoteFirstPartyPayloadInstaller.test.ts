@@ -1,5 +1,5 @@
-import { execFile } from 'node:child_process';
-import { cp, lstat, mkdir, mkdtemp, readFile, readdir, readlink, rm, symlink, writeFile } from 'node:fs/promises';
+import { execFile, spawn } from 'node:child_process';
+import { cp, lstat, mkdir, mkdtemp, open, readFile, readdir, readlink, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { promisify } from 'node:util';
@@ -62,11 +62,23 @@ describe('installRemoteFirstPartyComponent', () => {
     const fixture = await createPayloadRootFixture();
     const installRoot = join(home, '.happier', 'cli');
     const versions = join(installRoot, 'versions');
+    let runningPayload: Awaited<ReturnType<typeof open>> | undefined;
+    let runningChild: ReturnType<typeof spawn> | undefined;
+    let childExited: Promise<void> | undefined;
     try {
-      for (const id of ['1.0.0', '1.1.0', '1.2.0', 'local-stable-1792190545251']) {
+      for (const id of ['0.6.0', '0.7.0', '0.8.0', '0.9.0', '1.0.0', '1.1.0', '1.2.0', 'local-stable-1792190545251']) {
         await mkdir(join(versions, id), { recursive: true });
         await writeFile(join(versions, id, 'happier'), id);
       }
+      // A process still uses this old payload after both activation pointers moved on.
+      runningPayload = await open(join(versions, '0.9.0', 'happier'), 'r');
+      const script = join(versions, '0.8.0', 'entry.mjs');
+      await writeFile(script, 'process.send("ready"); setInterval(() => {}, 1000);');
+      const child = spawn(process.execPath, [script], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
+      runningChild = child;
+      childExited = new Promise<void>((resolve, reject) => { child.once('exit', () => resolve()); child.once('error', reject); });
+      await new Promise<void>((resolve, reject) => { child.once('message', () => resolve()); child.once('error', reject); });
+      expect(child.pid).toBeGreaterThan(0);
       await symlink('versions/1.2.0', join(installRoot, 'current'));
       await symlink(join(versions, '1.1.0'), join(installRoot, 'previous'));
       const outside = join(home, 'outside');
@@ -89,6 +101,8 @@ describe('installRemoteFirstPartyComponent', () => {
         resolveRemoteReleaseTarget: async () => ({ os: 'linux', arch: 'x64' }),
         runRemoteText: async ({ remoteCommand }) => {
           if (remoteCommand.includes('tar -xf')) {
+            expect(await readFile(script, 'utf8')).toContain('process.send');
+            expect(await readFile(join(versions, '0.9.0', 'happier'), 'utf8')).toBe('0.9.0');
             await expect(lstat(join(versions, '1.0.0'))).rejects.toMatchObject({ code: 'ENOENT' });
             await expect(lstat(join(versions, 'local-stable-1792190545251'))).rejects.toMatchObject({ code: 'ENOENT' });
             expect(await readFile(join(versions, '1.2.0', 'happier'), 'utf8')).toBe('1.2.0');
@@ -110,17 +124,20 @@ describe('installRemoteFirstPartyComponent', () => {
       });
       if (promotionFails) {
         await expect(installation).rejects.toThrow(/install failed|promotion failed/u);
-        expect((await readdir(versions)).sort()).toEqual(['1.1.0', '1.2.0', 'unrelated-link']);
+        expect((await readdir(versions)).sort()).toEqual(['0.8.0', '0.9.0', '1.1.0', '1.2.0', 'unrelated-link']);
         expect(await readFile(join(installRoot, 'current', 'happier'), 'utf8')).toBe('1.2.0');
         expect(await readFile(join(installRoot, 'previous', 'happier'), 'utf8')).toBe('1.1.0');
       } else {
         await installation;
-        expect((await readdir(versions)).sort()).toEqual(['1.2.0', '1.3.0', 'unrelated-link']);
+        expect((await readdir(versions)).sort()).toEqual(['0.8.0', '0.9.0', '1.2.0', '1.3.0', 'unrelated-link']);
         expect(await readlink(join(installRoot, 'current'))).toBe(join(versions, '1.3.0'));
         expect(await readFile(join(installRoot, 'previous', 'happier'), 'utf8')).toBe('1.2.0');
       }
       expect(await readFile(join(outside, 'keep'), 'utf8')).toBe('outside');
     } finally {
+      await runningPayload?.close();
+      runningChild?.kill();
+      await childExited;
       await fixture.cleanup();
       await rm(home, { recursive: true, force: true });
     }

@@ -1,6 +1,7 @@
 import { normalizePublicReleaseRingId, type PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 import { quoteRemotePathWithHomeExpansion } from '../../ssh/shellQuote.js';
 import { resolveRetainedVersionIds } from '../../firstPartyRuntime/retentionPolicy.js';
+import { FIRST_PARTY_VERSION_UNUSED_SHELL_FUNCTION } from '../../firstPartyRuntime/versionUse.js';
 import { compareVersions } from '../../update/compareVersions.js';
 
 import {
@@ -169,9 +170,12 @@ export function buildRemoteFirstPartyRetentionCommand(params: Readonly<{
     'set -eu',
     `test ! -L ${quoteRemotePathWithHomeExpansion(params.layout.versionsDir)}`,
     buildRemoteFirstPartyProtectedVersionFunction(params.layout),
+    FIRST_PARTY_VERSION_UNUSED_SHELL_FUNCTION,
     ...prune.map((id) => {
-      const path = quoteRemotePathWithHomeExpansion(`${params.layout.versionsDir}/${id}`);
-      return `if [ -d ${path} ] && [ ! -L ${path} ] && ! is_protected_version ${path}; then rm -rf ${path}; fi`;
+      // Keep the candidate out of this shell's argv as a complete path, so
+      // native PID observation does not mistake the reaper for a payload user.
+      const path = `${quoteRemotePathWithHomeExpansion(params.layout.versionsDir)}/${quoteRemotePathWithHomeExpansion(id)}`;
+      return `retention_path=${path}; if [ -d "$retention_path" ] && [ ! -L "$retention_path" ] && ! is_protected_version "$retention_path" && is_version_unused "$retention_path"; then rm -rf "$retention_path"; fi`;
     }),
   ].join('; ');
 }

@@ -16,7 +16,9 @@ export function resolveRetainedVersionIds(params: Readonly<{
   previousVersionId?: string | null;
   retainCount?: number;
 }>): FirstPartyRetentionResolution {
-  const retainCount = Math.max(1, params.retainCount ?? 2);
+  // A spare arbitrary installation is not a rollback target. Default retention
+  // protects only activation's named current/previous; explicit callers may keep more.
+  const retainCount = params.retainCount === undefined ? 0 : Math.max(1, params.retainCount);
   const keep: string[] = [];
 
   appendUnique(keep, params.currentVersionId);

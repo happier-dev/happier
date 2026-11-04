@@ -6,6 +6,8 @@ import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRi
 import type { FirstPartyComponentId } from './componentCatalog.js';
 import { resolveFirstPartyVersionInstallPath } from './installLayout.js';
 import { resolveRetainedVersionIds } from './retentionPolicy.js';
+import { FIRST_PARTY_VERSION_UNUSED_SHELL_FUNCTION } from './versionUse.js';
+import { execFileWithDeadline } from '../process/execFileWithDeadline.js';
 
 export interface FirstPartyPruneRetainedVersionsResult {
   keptVersionIds: string[];
@@ -23,6 +25,14 @@ function isRetryableVersionPruneError(error: unknown): boolean {
 }
 
 async function pruneVersionPathBestEffort(versionPath: string): Promise<boolean> {
+  // Windows retains locked payloads through the existing native removal errors below.
+  // POSIX permits unlinking live executables, so obtain native file-use evidence first.
+  if (process.platform !== 'win32') {
+    const unused = await execFileWithDeadline('/bin/sh', [
+      '-c', `${FIRST_PARTY_VERSION_UNUSED_SHELL_FUNCTION}; is_version_unused "$happier_retention_path"`,
+    ], { env: { ...process.env, happier_retention_path: versionPath } }).then(() => true, () => false);
+    if (!unused) return false;
+  }
   for (let attemptNumber = 1; attemptNumber <= VERSION_PRUNE_MAX_ATTEMPTS; attemptNumber += 1) {
     try {
       await rm(versionPath, { recursive: true, force: true });

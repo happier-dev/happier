@@ -3503,6 +3503,18 @@ bootstrap `cli.update.v1` (`updateManagedLocalFirstPartyComponent`) and the daem
    no release could be resolved). A record that cannot be written never blocks recovery; it is
    reported on stderr.
 
+In current development source, remote payload installation applies the same retention policy
+before staging and after successful activation. Retention keeps the named current and previous
+versions (the update transaction uses the latter for rollback), without reserving an arbitrary
+extra version when no previous version exists. POSIX deletion additionally requires a native
+PID observation without a command referring to the immutable version root, plus a diagnostic-free
+`lsof` observation with no open files anywhere in the payload. This also protects JavaScript
+hosted by a separate Node payload after its module file closes. Open files, unavailable native
+observations, or inconclusive results retain that version until a later install can
+prove it unused. Local activation and remote pruning share this file-use rule; Windows retains
+its existing locked-file deletion handling. No free-space estimate precedes staging, and native
+ENOSPC still reports `remote_storage_full`.
+
 In current development source, admitted post-update service repair runs through the activated
 managed CLI. A successful update ends the invoking guided repair walk, discarding its remaining
 stale findings and pending plan and directing the user to rerun repair against the updated CLI. The service row
