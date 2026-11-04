@@ -2,6 +2,7 @@ import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 import { HAPPIER_GUIDE_MARKDOWN, HAPPIER_GUIDE_TITLE } from './happierGuideInstructionsV1.js';
 import { ArtifactOrganizationHeaderV1Schema } from '../../artifacts/artifactOrganizationV1.js';
+import { ArtifactSavedByV1Schema } from '../../artifacts/artifactBinaryV1.js';
 import { ArtifactRevisionV1Schema, type ArtifactRevisionV1 } from '../../artifacts/artifactRevisionV1.js';
 import { PromptLibrarySaveOrganizationFieldsV1, isPromptLibrarySaveFolderAssignmentV1 } from './promptFolderActionSchemasV1.js';
 
@@ -21,6 +22,11 @@ export function resolvePromptDocCreateActionInputV1(input: PromptDocCreateAction
 
 export const PromptDocRevisionV1Schema = ArtifactRevisionV1Schema;
 export type PromptDocRevisionV1 = ArtifactRevisionV1;
+
+export const PromptDocReadResultV1Schema = lazyZodSchema(() => z.strictObject({
+  ok: z.literal(true), artifactId: z.string().check(z.minLength(1)), title: z.string().check(z.minLength(1)), markdown: z.string(),
+  revision: PromptDocRevisionV1Schema, provenance: z.optional(z.strictObject({ savedBy: ArtifactSavedByV1Schema })),
+}));
 
 export const PromptDocBodyV1Schema = lazyZodSchema(() => z
   .object({

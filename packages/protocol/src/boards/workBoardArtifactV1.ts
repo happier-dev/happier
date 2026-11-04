@@ -57,9 +57,9 @@ export type WorkBoardArtifactTransportV1 = Readonly<{
             bodyVersion?: number; ownerAccountId?: string; access?: ArtifactCallerAccessV1 }>[];
         nextCursor?: string;
     }>>;
-    create(input: Readonly<{ artifactId: string; header: Readonly<Record<string, unknown>>; body: string; savedBy?: ArtifactSavedByV1; signal?: AbortSignal }>): Promise<unknown>;
+    create(input: Readonly<{ artifactId: string; header: Readonly<Record<string, unknown>>; body: string; savedBy?: ArtifactSavedByV1 | null; signal?: AbortSignal }>): Promise<unknown>;
     update(input: Readonly<{ artifactId: string; expectedRevision: WorkBoardArtifactRevisionV1;
-        header: Readonly<Record<string, unknown>>; body: string; savedBy?: ArtifactSavedByV1; signal?: AbortSignal }>): Promise<
+        header: Readonly<Record<string, unknown>>; body: string; savedBy?: ArtifactSavedByV1 | null; signal?: AbortSignal }>): Promise<
         Readonly<{ ok: true; revision: WorkBoardArtifactRevisionV1 }> | Readonly<{ ok: false; errorCode: string; error: string }>>;
     delete(artifactId: string, options?: Readonly<{ signal?: AbortSignal; expectedRevision?: WorkBoardArtifactRevisionV1 }>): Promise<
         Readonly<{ ok: true; revision?: never }> | Readonly<{ ok: false; errorCode: string; error: string }>>;

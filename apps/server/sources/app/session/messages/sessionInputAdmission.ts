@@ -1,3 +1,4 @@
+import { classifyMachineAvailabilityState } from '@/app/machines/machineStateGuards';
 import { SESSION_ACCESS_SESSION_BATCH_SIZE, type EffectiveSessionAccess } from "@/app/session/access/sessionAccess";
 import { SessionInputAdmissionReceiptV1Schema, type SessionInputAdmissionReceiptV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
@@ -10,16 +11,26 @@ import { readCurrentServerIdentityId } from '@/app/serverIdentity/serverIdentity
 /** Exact input placement comes from the requester tuple and C41, never a first-key guess. */
 export async function readCurrentSessionInputMachineTargetInTx(tx: Tx, input: Readonly<{
     accountId: string; sessionId: string; machineId: string;
-}>): Promise<SessionInputMachineTargetV1 | undefined> {
+}>, options?: Readonly<{ admittedWork: true }>): Promise<SessionInputMachineTargetV1 | undefined> {
     const binding = { accountId: input.accountId, sessionId: input.sessionId, machineId: input.machineId };
     const key = await tx.accessKey.findUnique({ where: { accountId_machineId_sessionId: binding },
-        select: { session: { select: { accountId: true } } } });
+        select: { session: { select: { accountId: true } },
+            machine: options?.admittedWork ? { select: { installationId: true, revokedAt: true, replacedByMachineId: true } } : false } });
     if (!key || key.session.accountId !== input.accountId) return undefined;
-    const admission = await resolveMachineAdmissionInTx(tx, { actorAccountId: input.accountId, machineId: input.machineId });
-    if (admission.kind !== 'admitted') return undefined;
+    let installationId: string;
+    if (options?.admittedWork) {
+        // The root already admitted the grant; only the retained tuple and
+        // installed resource remain structural requirements at this effect.
+        if (!key.machine.installationId || classifyMachineAvailabilityState(key.machine) !== 'available') return undefined;
+        installationId = key.machine.installationId;
+    } else {
+        const admission = await resolveMachineAdmissionInTx(tx, { actorAccountId: input.accountId, machineId: input.machineId });
+        if (admission.kind !== 'admitted') return undefined;
+        installationId = admission.installationId;
+    }
     const homeId = await readCurrentServerIdentityId(process.env, tx);
     if (!homeId) return undefined;
-    return SessionInputMachineTargetV1Schema.parse({ ...binding, homeId, installationId: admission.installationId });
+    return SessionInputMachineTargetV1Schema.parse({ ...binding, homeId, installationId });
 }
 
 /** Retained placement cannot follow a replacement installation or another Home. */
@@ -67,13 +78,14 @@ function sameMachineTarget(left: SessionInputMachineTargetV1, right: SessionInpu
 }
 
 /** Only an actual publisher commit establishes cold placement; keys alone never select it. */
-export async function readCurrentCommittedSessionInputMachineTargetInTx(tx: Tx, sessionId: string): Promise<SessionInputMachineTargetV1 | undefined> {
+export async function readCurrentCommittedSessionInputMachineTargetInTx(tx: Tx, sessionId: string,
+    options?: Readonly<{ admittedWork: true }>): Promise<SessionInputMachineTargetV1 | undefined> {
     const session = await tx.session.findUnique({ where: { id: sessionId },
         select: { accountId: true, archivedAt: true, runtimeMachineTarget: true } });
     if (!session || session.archivedAt !== null || session.runtimeMachineTarget == null) return undefined;
     const stored = createStoredReadSchema(SessionInputMachineTargetV1Schema).safeParse(session.runtimeMachineTarget);
     if (!stored.success || stored.data.sessionId !== sessionId || stored.data.accountId !== session.accountId) return undefined;
-    const current = await readCurrentSessionInputMachineTargetInTx(tx, stored.data);
+    const current = await readCurrentSessionInputMachineTargetInTx(tx, stored.data, options);
     return current && sameMachineTarget(current, stored.data) ? stored.data : undefined;
 }
 

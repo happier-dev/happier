@@ -13,6 +13,7 @@ export function isBrowserExtensionActionIdV1(actionId: string): actionId is Brow
 export function isBrowserExtensionMutationActionIdV1(actionId: string): boolean {
   return (BROWSER_EXTENSION_MUTATION_ACTION_IDS as readonly string[]).includes(actionId);
 }
+import { BOT_TEMPLATE_ACTION_IDS_V1 } from '../bots/templates/botTemplateActionIdsV1.js';
 import { MACHINE_ADMIN_ACCESS_ACTION_IDS } from '../machines/adminAccessActionIdsV1.js';
 import { MACHINE_AGENT_ISOLATION_ACTION_IDS } from './specs/machine/agentIsolationActionIdsV1.js';
 import { MACHINE_SERVICE_ACTION_IDS } from '../local/services/actionIdsV1.js';
@@ -221,6 +222,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
   workflow_diagnostics: ['workflow.trigger.test', 'workflow.starters.list', 'workflow.starters.resolve'],
   session_authoring: ['session.authoring.open'],
   artifact_access: ARTIFACT_ACCESS_ACTION_IDS_V1,
+  bot_templates: BOT_TEMPLATE_ACTION_IDS_V1,
   artifacts: ARTIFACT_ACTION_IDS_V1,
   doc_collaboration: DOC_COLLABORATION_ACTION_IDS_V1,
   settings_declarations: [...SETTINGS_DECLARATION_ACTION_IDS_V1, ...ACTION_POLICY_ACTION_IDS],

@@ -13,6 +13,7 @@
 
 
 
+import { createCliBotTemplateActionDeps } from './cliActionDeps/botTemplates';
 import { importCliSavedSecretPasskeysForOperation } from './cliActionDeps/browserProfileLogins';
 import { importBrowserProfileCookiesV1 } from '@happier-dev/protocol/browser/profile/v1';
 import { createCliWorkspaceSyncActionDeps } from './cliActionDeps/workspaceSync';
@@ -1063,6 +1064,10 @@ export function createCliActionDeps(params: CliActionDepsParams,
     }) } : {}),
     artifactAction: artifactsDeps.artifactAction,
     artifactAccessAction: artifactsDeps.artifactAccessAction,
+    ...createCliBotTemplateActionDeps(params, { artifactCallerContext, homeAccountId, isSameActionHomeId,
+      content: { ...promptsDeps, get machineSetupPlan() { return (readEffectiveDeps?.() ?? actionDeps).machineSetupPlan; } },
+      registryPort: approvalsStore?.promptLibraryStore.organization,
+      roleArtifactStore, resolveServerRequestHeaders, resolveTransportForSession, readTransportSessionOwnerMetadata }),
     connectedServiceAction,
     profileActionExecute: connectionsDeps.profileActionExecute,
     mcpServerAction: connectionsDeps.mcpServerAction,

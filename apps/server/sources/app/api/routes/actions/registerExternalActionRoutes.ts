@@ -1,6 +1,11 @@
 import { verifyExternalActionMachineRpcExecution } from '@/app/auth/externalActionExecutionAuthorization';
 import { prepareManagedCredentialDeliveryForAction, readManagedCredentialDeliveryAuthorityInTx } from '@/app/machines/managed/credentialDeliveryAdmission';
 import { readExternalActionManagedRecoveryAdmission, readExternalActionManagedControlAdmission } from '@/app/auth/externalActionManagedAdmission';
+import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
+import { MachineSetupPlanInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { readSessionAccessAuthenticationFromRequest } from '@/app/session/access/sessionAccessAuthentication';
+import { SessionInitialAccessDraftV1Schema } from '@happier-dev/protocol/sessions';
+import { verifyTemplateRequesterExecutionAuthorization } from '@/app/auth/externalActionExecutionAuthorization';
 import { Buffer } from "node:buffer";
 import { randomUUID } from "node:crypto";
 import { timeWebLatencyPhase, withWebLatencyTrace } from '@/utils/webLatencyTrace';
@@ -311,7 +316,9 @@ async function readAdmittedRootRelay(app: Fastify, request: FastifyRequest, acti
     body: ReturnType<typeof ExternalActionExecutionAuthorizationRequestV1Schema.parse>) {
     const authorization = body.executionAuthorization;
     if (!authorization || body.sessionActionOrigin || body.sessionActionSource || body.installationProof
-        || body.managedContinuation || body.handoffContinuation || body.handoffPreflight) return null;
+        || body.managedContinuation || body.handoffContinuation || body.handoffPreflight
+        || body.templateRequesterSetupAdmission || body.templateRequesterInitialAccessAdmission
+        || body.templateRequesterSetupEnrichment || body.templateRequesterSetupPlanContinuation) return null;
     const root = await auth.verifyExternalActionExecutionAuthorization(authorization.token);
     if (!root || root.serverIdentityId !== await getOrCreateServerIdentityId() || root.accountId !== request.userId
         || !sameManagedInput(root, authorization.binding)
@@ -518,6 +525,77 @@ export function registerExternalActionRoutes(
             reply.header("cache-control", "no-store");
             const actionId = ExternalActionActionIdV1Schema.safeParse(request.params.actionId);
             const body = externalActionExecutionAuthorizationRequestSchemaForActionV1(request.params.actionId).safeParse(request.body);
+            if (body.success && body.data.templateRequesterSetupPlanContinuation) {
+                const continuation = body.data.templateRequesterSetupPlanContinuation;
+                const root = continuation.authorization.binding;
+                const envelope = body.data.envelope;
+                const admitted = actionId.success && actionId.data === 'machines.setup.plan'
+                    && !body.data.templateRequesterSetupAdmission && !body.data.templateRequesterInitialAccessAdmission && !body.data.templateRequesterSetupEnrichment
+                    && !body.data.executionAuthorization
+                    && !body.data.sessionActionOrigin && !body.data.sessionActionSource && !body.data.workflowActionOrigin
+                    && !body.data.installationProof && !body.data.managedContinuation
+                    && !body.data.handoffContinuation && !body.data.handoffPreflight
+                    && body.data.machineId === root.machineId && envelope.requestId === root.requestId
+                    && envelope.target?.kind === 'machine' && envelope.target.machineId === root.machineId
+                    && envelope.v === continuation.originalActionEnvelope.v
+                    ? await verifyTemplateRequesterExecutionAuthorization({ ...continuation, accountId: request.userId,
+                        authentication: readSessionAccessAuthenticationFromRequest(request), expectedActionId: 'template.updates.apply' }) : null;
+                const setup = admitted?.binding.templateRequesterSetupAdmission;
+                const plan = envelope.v === 1 ? MachineSetupPlanInputV1Schema.safeParse(envelope.input) : null;
+                if (!admitted || admitted.binding.admittedMachineRole !== 'manage' || !setup?.planInputDigest
+                    || envelope.v === 1 && (!plan?.success || plan.data.homeId !== root.serverIdentityId
+                        || plan.data.machineId !== root.machineId || plan.data.mode !== 'effects'
+                        || computeActionInputApprovalDigestV1('machines.setup.plan', plan.data) !== setup.planInputDigest)) {
+                    return sendExternalActionHttpError(reply, 'credential_scope_denied', envelope.requestId);
+                }
+                try {
+                    return reply.send(await auth.deriveExternalActionTemplateSetupPlanAuthorization(continuation.authorization,
+                        computeExternalActionRequestEnvelopeDigestV1(envelope)));
+                } catch (error) {
+                    if (error instanceof ApiTokenOperationError) return sendExternalActionHttpError(reply, 'credential_scope_denied', envelope.requestId);
+                    throw error;
+                }
+            }
+            if (body.success && body.data.templateRequesterSetupEnrichment) {
+                const enrichment = body.data.templateRequesterSetupEnrichment;
+                const admitted = actionId.success && (actionId.data === 'template.instantiate' || actionId.data === 'template.updates.apply')
+                    && !body.data.templateRequesterSetupAdmission && !body.data.templateRequesterInitialAccessAdmission
+                    && !body.data.executionAuthorization
+                    && !body.data.sessionActionOrigin && !body.data.workflowActionOrigin && !body.data.installationProof
+                    && !body.data.managedContinuation && !body.data.handoffContinuation && !body.data.handoffPreflight
+                    && enrichment.authorization.binding.machineId === body.data.machineId
+                    ? await verifyTemplateRequesterExecutionAuthorization({ authorization: enrichment.authorization,
+                        originalActionEnvelope: body.data.envelope, accountId: request.userId,
+                        authentication: readSessionAccessAuthenticationFromRequest(request), expectedActionId: actionId.data }) : null;
+                if (!admitted?.binding.templateRequesterSetupAdmission || admitted.binding.admittedMachineRole !== 'manage') {
+                    return sendExternalActionHttpError(reply, 'credential_scope_denied', body.data.envelope.requestId);
+                }
+                try {
+                    return reply.send(await auth.deriveExternalActionTemplateAuthorization(enrichment.authorization,
+                        { planInputDigest: enrichment.planInputDigest }));
+                } catch (error) {
+                    if (error instanceof ApiTokenOperationError) return sendExternalActionHttpError(reply, 'credential_scope_denied', body.data.envelope.requestId);
+                    throw error;
+                }
+            }
+            if (body.success && body.data.templateRequesterSetupAdmission && (!['template.instantiate', 'template.updates.apply'].includes(request.params.actionId)
+                || body.data.executionAuthorization || body.data.handoffContinuation || body.data.handoffPreflight
+                || body.data.managedContinuation)) return sendExternalActionHttpError(reply, 'invalid_envelope');
+            if (body.success && body.data.templateRequesterInitialAccessAdmission) {
+                if (request.params.actionId !== 'template.instantiate' || body.data.executionAuthorization
+                    || body.data.sessionActionOrigin || body.data.sessionActionSource
+                    || body.data.workflowActionOrigin || body.data.installationProof || body.data.handoffContinuation
+                    || body.data.handoffPreflight || body.data.managedContinuation) return sendExternalActionHttpError(reply, 'invalid_envelope');
+                if (body.data.envelope.v === 1) {
+                    const input = body.data.envelope.input;
+                    const creation = input && typeof input === 'object' && !Array.isArray(input) ? Reflect.get(input, 'creation') : null;
+                    const initialAccess = creation && typeof creation === 'object' && !Array.isArray(creation)
+                        ? SessionInitialAccessDraftV1Schema.safeParse(Reflect.get(creation, 'initialAccess')) : null;
+                    if (!initialAccess?.success || !sameManagedInput(initialAccess.data, body.data.templateRequesterInitialAccessAdmission)) {
+                        return sendExternalActionHttpError(reply, 'invalid_envelope');
+                    }
+                }
+            }
             let principal = readExternalActionRequestPrincipal(request, request.params.actionId, body.success ? body.data : undefined);
             if (principal === 'credential_scope_denied') return sendExternalActionHttpError(reply, principal);
             let continuation: Awaited<ReturnType<typeof readManagedGuestContinuation>> = null;
@@ -655,6 +733,7 @@ export function registerExternalActionRoutes(
                     machineId: receivingMachineId, actionId: actionId.data, envelope: body.data.envelope,
                     ...(body.data.sessionActionSource ? { sessionActionSource: body.data.sessionActionSource } : {}),
                     ...('sessionActionOrigin' in principal ? { sessionActionOrigin: principal.sessionActionOrigin } : {}),
+                    ...(body.data.templateRequesterSetupAdmission ? { templateRequesterSetupAdmission: body.data.templateRequesterSetupAdmission } : {}),
                     authentication: { authenticationAuthority: principal.authority,
                         authenticationEvidence: request.authTokenAuthenticationEvidence } });
             if (!admission || admission.kind !== 'admitted') {
@@ -690,6 +769,8 @@ export function registerExternalActionRoutes(
                     requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(body.data.envelope),
                     ...(body.data.envelope.idempotencyKey === undefined ? {} : { idempotencyKey: body.data.envelope.idempotencyKey }),
                     target,
+                    ...(body.data.templateRequesterSetupAdmission ? { templateRequesterSetupAdmission: body.data.templateRequesterSetupAdmission } : {}),
+                    ...(body.data.templateRequesterInitialAccessAdmission ? { templateRequesterInitialAccessAdmission: body.data.templateRequesterInitialAccessAdmission } : {}),
                     ...(pendingResetStartAdmission ? { pendingResetStartAdmission } : {}),
                     ...(managedAdmission ? { managedAdmission } : {}),
                     ...(nativeCredentialSpawnChild ? { nativeCredentialSpawnChild } : {}),

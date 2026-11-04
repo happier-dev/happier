@@ -1780,6 +1780,11 @@
       "types": "./dist/actions/specs/automation.d.ts",
       "default": "./dist/actions/specs/automation.js"
     },
+    "./actions/specs/botTemplates": {
+      "happier-source": "./src/actions/specs/botTemplates.ts",
+      "types": "./dist/actions/specs/botTemplates.d.ts",
+      "default": "./dist/actions/specs/botTemplates.js"
+    },
     "./actions/specs/browser": {
       "happier-source": "./src/actions/specs/browser.ts",
       "types": "./dist/actions/specs/browser.d.ts",
@@ -2880,6 +2885,21 @@
       "types": "./dist/artifacts/artifactActionIdsV1.d.ts",
       "default": "./dist/artifacts/artifactActionIdsV1.js"
     },
+    "./bots/templates/botTemplateActionIdsV1": {
+      "happier-source": "./src/bots/templates/botTemplateActionIdsV1.ts",
+      "types": "./dist/bots/templates/botTemplateActionIdsV1.d.ts",
+      "default": "./dist/bots/templates/botTemplateActionIdsV1.js"
+    },
+    "./bots/templates/botTemplateActionsV1": {
+      "happier-source": "./src/bots/templates/botTemplateActionsV1.ts",
+      "types": "./dist/bots/templates/botTemplateActionsV1.d.ts",
+      "default": "./dist/bots/templates/botTemplateActionsV1.js"
+    },
+    "./bots/templates/botTemplateOperations": {
+      "happier-source": "./src/bots/templates/botTemplateOperations.ts",
+      "types": "./dist/bots/templates/botTemplateOperations.d.ts",
+      "default": "./dist/bots/templates/botTemplateOperations.js"
+    },
     "./bots/templates/botTemplateV1": {
       "happier-source": "./src/bots/templates/botTemplateV1.ts",
       "types": "./dist/bots/templates/botTemplateV1.d.ts",
@@ -3424,6 +3444,36 @@
       "happier-source": "./src/boards/workBoardV1.ts",
       "types": "./dist/boards/workBoardV1.d.ts",
       "default": "./dist/boards/workBoardV1.js"
+    },
+    "./bots/templates/templateAcceptedVersionsV1": {
+      "happier-source": "./src/bots/templates/templateAcceptedVersionsV1.ts",
+      "types": "./dist/bots/templates/templateAcceptedVersionsV1.d.ts",
+      "default": "./dist/bots/templates/templateAcceptedVersionsV1.js"
+    },
+    "./bots/templates/templateInstantiationOperations": {
+      "happier-source": "./src/bots/templates/templateInstantiationOperations.ts",
+      "types": "./dist/bots/templates/templateInstantiationOperations.d.ts",
+      "default": "./dist/bots/templates/templateInstantiationOperations.js"
+    },
+    "./bots/templates/templateSetupSelectionsV1": {
+      "happier-source": "./src/bots/templates/templateSetupSelectionsV1.ts",
+      "types": "./dist/bots/templates/templateSetupSelectionsV1.d.ts",
+      "default": "./dist/bots/templates/templateSetupSelectionsV1.js"
+    },
+    "./bots/templates/templateSetupV1": {
+      "happier-source": "./src/bots/templates/templateSetupV1.ts",
+      "types": "./dist/bots/templates/templateSetupV1.d.ts",
+      "default": "./dist/bots/templates/templateSetupV1.js"
+    },
+    "./bots/templates/templateUpdateActionsV1": {
+      "happier-source": "./src/bots/templates/templateUpdateActionsV1.ts",
+      "types": "./dist/bots/templates/templateUpdateActionsV1.d.ts",
+      "default": "./dist/bots/templates/templateUpdateActionsV1.js"
+    },
+    "./bots/templates/templateUpdateOperations": {
+      "happier-source": "./src/bots/templates/templateUpdateOperations.ts",
+      "types": "./dist/bots/templates/templateUpdateOperations.d.ts",
+      "default": "./dist/bots/templates/templateUpdateOperations.js"
     },
     "./browser/adapters/index": {
       "happier-source": "./src/browser/adapters/index.ts",
@@ -10934,6 +10984,11 @@
       "happier-source": "./src/sessions/creation/sessionInitialTriggerAdmissionV1.ts",
       "types": "./dist/sessions/creation/sessionInitialTriggerAdmissionV1.d.ts",
       "default": "./dist/sessions/creation/sessionInitialTriggerAdmissionV1.js"
+    },
+    "./sessions/creation/sessionPreparedBirthV1": {
+      "happier-source": "./src/sessions/creation/sessionPreparedBirthV1.ts",
+      "types": "./dist/sessions/creation/sessionPreparedBirthV1.d.ts",
+      "default": "./dist/sessions/creation/sessionPreparedBirthV1.js"
     },
     "./sessions/creation/sessionRequesterBootstrapSchemasV1": {
       "happier-source": "./src/sessions/creation/sessionRequesterBootstrapSchemasV1.ts",

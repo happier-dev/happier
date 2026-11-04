@@ -1,6 +1,9 @@
 import { z } from 'zod/mini';
 import { ManagedCredentialInstallInputV1Schema } from '../machines/managed/credentialDeliveryV1.js';
 import { sameStrictJsonValue } from '../json/strictJsonValue.js';
+import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, EXTERNAL_ACTION_EFFECT_ACTION_HEADER, EXTERNAL_ACTION_RESOLVED_TARGET_HEADER, EXTERNAL_ACTION_REVIEWED_CHILD_HEADER, ExternalActionExecutionAuthorizationV1Schema } from './externalActionApi.js';
+import { MachineSetupPlanInputV1Schema, type MachineSetupPlanInputV1 } from '../machines/managed/actionsV1.js';
+import { computeActionInputApprovalDigestV1 } from './decisionAuthority.js';
 import { WorkspaceSyncSourceExecutionV1Schema, type WorkspaceSyncSourceExecutionV1 } from '../rpc/socket.js';
 import { DeploymentChildExecutionProofV1Schema, type DeploymentChildExecutionProofV1 } from '../deployments/deploymentChildExecutionProofV1.js';
 import { decodeBase64, encodeBase64 } from '../crypto/base64.js';
@@ -24,6 +27,58 @@ import { ExternalActionRequestEnvelopeSchema, ExternalActionRequestIdV1Schema, E
   ReviewedActionChildHttpProofV1Schema, type ReviewedActionChildHttpProofV1,
   type ExternalActionExecutionAuthorizationBindingV1, type ExternalActionExecutionAuthorizationV1,
   type ExternalActionTargetV1, type ExternalActionRequestEnvelope } from './externalActionApi.js';
+
+export const TEMPLATE_BIRTH_EXECUTION_AUTHORIZATION_HEADER_V1 = 'x-happier-template-birth-authorization';
+
+/** The original requester spends a finite template root without impersonating its Machine. */
+export function createTemplateRequesterExecutionHttpHeadersV1(input: Readonly<{
+  authorization: ExternalActionExecutionAuthorizationV1;
+  requesterToken: string;
+  effectActionId: string;
+  target: ExternalActionTargetV1;
+  reviewedChild?: ReviewedActionChildHttpProofV1;
+}>): Readonly<Record<string, string>> | null {
+  if (input.authorization.binding.actionId !== 'template.instantiate'
+    && input.authorization.binding.actionId !== 'template.updates.apply') return null;
+  return {
+    Authorization: `Bearer ${input.requesterToken}`,
+    [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: input.authorization.token,
+    [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: input.effectActionId,
+    [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(input.target),
+    ...(input.reviewedChild ? { [EXTERNAL_ACTION_REVIEWED_CHILD_HEADER]: encodeReviewedActionChildHttpProofV1(input.reviewedChild) } : {}),
+  };
+}
+
+export function encodeTemplateBirthExecutionAuthorizationV1(authorization: ExternalActionExecutionAuthorizationV1): string {
+  return encodeBase64(new TextEncoder().encode(createCanonicalJsonSigningInput(
+    ExternalActionExecutionAuthorizationV1Schema.parse(authorization))), 'base64url');
+}
+
+export function decodeTemplateBirthExecutionAuthorizationV1(value: string): ExternalActionExecutionAuthorizationV1 | null {
+  try {
+    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(JSON.parse(
+      new TextDecoder('utf-8', { fatal: true }).decode(decodeBase64(value, 'base64url'))));
+    return encodeTemplateBirthExecutionAuthorizationV1(authorization) === value ? authorization : null;
+  } catch { return null; }
+}
+
+/** Private input is consumed only after the issuer's signed setup admission was verified. */
+export function readTemplateRequesterSetupPlanInputV1(input: Readonly<{
+  authorization: ExternalActionExecutionAuthorizationV1;
+  originalActionEnvelope: ExternalActionRequestEnvelope;
+  input: unknown;
+}>): MachineSetupPlanInputV1 | null {
+  const binding = input.authorization.binding;
+  const plan = MachineSetupPlanInputV1Schema.safeParse(input.input);
+  if (!plan.success || binding.actionId !== 'template.instantiate' || binding.admittedMachineRole !== 'manage'
+    || !binding.templateRequesterSetupAdmission?.planInputDigest
+    || !isExternalActionAuthorizationBoundToEnvelope(binding, { actionId: binding.actionId,
+      machineId: binding.machineId, envelope: input.originalActionEnvelope })
+    || plan.data.homeId !== binding.serverIdentityId || plan.data.machineId !== binding.machineId
+    || plan.data.mode !== 'effects'
+    || computeActionInputApprovalDigestV1('machines.setup.plan', plan.data) !== binding.templateRequesterSetupAdmission.planInputDigest) return null;
+  return plan.data;
+}
 
 export function computeExternalActionRequestEnvelopeDigestV1(envelope: ExternalActionRequestEnvelope): string {
   return computeCanonicalDomainSeparatedDigest('happier-external-action-envelope-v1', [

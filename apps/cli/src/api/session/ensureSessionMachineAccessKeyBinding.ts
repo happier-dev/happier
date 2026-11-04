@@ -36,6 +36,8 @@ export async function ensureSessionMachineAccessKeyBinding(params: Readonly<{
     token: string;
     sessionId: string;
     machineId?: string;
+    /** Host-private requester authorization; ordinary runners retain bearer auth. */
+    authorizeRequest?: (request: Readonly<{ method: 'GET' | 'POST'; path: string; body?: unknown }>) => Readonly<Record<string, string>>;
 }>): Promise<void> {
     if (!params.machineId) return;
     const serverUrl = params.serverUrl ?? resolveServerHttpBaseUrl();
@@ -65,32 +67,33 @@ export async function ensureSessionMachineAccessKeyBinding(params: Readonly<{
     await bindingPromise;
 }
 
-async function ensureSessionMachineAccessKeyBindingUncached(params: Readonly<{
+async function ensureSessionMachineAccessKeyBindingUncached(params: Parameters<typeof ensureSessionMachineAccessKeyBinding>[0] & Readonly<{
     serverUrl: string;
-    token: string;
-    sessionId: string;
     machineId: string;
 }>): Promise<void> {
-    const requestConfig = {
+    const path = `/v1/access-keys/${encodeURIComponent(params.sessionId)}/${encodeURIComponent(params.machineId)}`;
+    const requestConfig = (method: 'GET' | 'POST', body?: unknown) => ({
         headers: {
-            Authorization: `Bearer ${params.token}`,
             'Content-Type': 'application/json',
             ...buildCurrentSessionRunnerCompatibilityHttpHeaders(),
+            ...(params.authorizeRequest ? params.authorizeRequest({ method, path, ...(body !== undefined ? { body } : {}) })
+                : { Authorization: `Bearer ${params.token}` }),
         },
         timeout: configuration.sessionControlHttpTimeoutMs,
         validateStatus: () => true,
-    };
-    const accessKeyUrl = `${params.serverUrl}/v1/access-keys/${encodeURIComponent(params.sessionId)}/${encodeURIComponent(params.machineId)}`;
-    const existing = await axios.get(accessKeyUrl, requestConfig);
+    });
+    const accessKeyUrl = `${params.serverUrl}${path}`;
+    const existing = await axios.get(accessKeyUrl, requestConfig('GET'));
     if (existing.status === 200 && existing.data?.accessKey) return;
     if (isAuthenticationStatus(existing.status)) {
         throw createAuthenticationHttpStatusError(existing.status, 'Authentication failed while binding session machine control');
     }
     if (existing.status !== 200) throw createHttpStatusError(existing.status, 'Session machine access-key lookup failed');
 
-    const created = await axios.post(accessKeyUrl, {
+    const body = {
         data: `session-machine-control:${randomUUID()}`,
-    }, requestConfig);
+    };
+    const created = await axios.post(accessKeyUrl, body, requestConfig('POST', body));
     if (isAuthenticationStatus(created.status)) {
         throw createAuthenticationHttpStatusError(created.status, 'Authentication failed while binding session machine control');
     }

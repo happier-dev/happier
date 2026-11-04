@@ -18,6 +18,16 @@ const MachineOperationProtocolCapabilityThroughV2Schema = lazyZodSchema(() => z.
   ]),
 })));
 
+/** Spawn V3 observes committed birth; V4 recovers asleep birth and admitted pre-Agent setup. */
+export const MachineSessionSpawnProtocolCapabilityV1Schema = lazyZodSchema(() => z.readonly(z.strictObject({
+  protocolVersions: z.union([
+    MachineOperationProtocolVersionsV1Schema,
+    z.readonly(z.tuple([z.literal(1), z.literal(2)])),
+    z.readonly(z.tuple([z.literal(1), z.literal(2), z.literal(3)])),
+    z.readonly(z.tuple([z.literal(1), z.literal(2), z.literal(3), z.literal(4)])),
+  ]),
+})));
+
 /**
  * Current transport identity published by the authenticated daemon through the
  * existing complete Machine projection. The projection's server-assigned
@@ -36,7 +46,7 @@ const MachineOperationProtocolCapabilitiesV1ObjectSchema = lazyZodSchema(() => z
     sessionMessageReply: z.optional(MachineOperationProtocolCapabilityV1Schema),
     // Published only once the admitted host can open B witnesses and release held Pending input.
     sessionPendingResetStart: z.optional(MachineOperationProtocolCapabilityV1Schema),
-    sessionSpawn: z.optional(MachineOperationProtocolCapabilityThroughV2Schema),
+    sessionSpawn: z.optional(MachineSessionSpawnProtocolCapabilityV1Schema),
     sessionSpawnPlacementOrigin: z.optional(MachineOperationProtocolCapabilityV1Schema),
     sessionSpawnAuthoringOrigin: z.optional(MachineOperationProtocolCapabilityV1Schema),
     pluginWebhookClaim: z.optional(MachineOperationProtocolCapabilityV1Schema),
@@ -180,7 +190,7 @@ export function supportsMachineOperationProtocolCapabilityV1(
 
 export function supportsMachineSessionSpawnProtocolVersionV1(
   capabilities: unknown,
-  protocolVersion: 1 | 2,
+  protocolVersion: 1 | 2 | 3 | 4,
 ): boolean {
   const parsed = MachineOperationProtocolCapabilitiesV1StoredReadSchema.safeParse(capabilities);
   return parsed.success

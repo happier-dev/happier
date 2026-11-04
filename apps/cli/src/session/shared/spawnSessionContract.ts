@@ -144,6 +144,8 @@ export interface SpawnSessionOptions extends SessionCreateOriginFieldsV1 {
   directoryKind?: 'path' | 'managed';
   /** Trusted creator evidence for a fresh replay row committed before runner launch. */
   freshSessionCreation?: boolean;
+  /** Authored checkout intent retained until the selected Machine realizes its first launch. */
+  checkoutCreationDraft?: import('@happier-dev/protocol/sessions/authoring/creationFieldsV1').SessionAuthoringCheckoutCreationDraftV1;
   /** Host-private fork seed; the daemon must prove source allocation ownership before reading. */
   managedDirectorySeed?: Readonly<{
     sourceSessionId: string;
@@ -169,6 +171,9 @@ export interface SpawnSessionOptions extends SessionCreateOriginFieldsV1 {
   sessionCreationTag?: import('@happier-dev/protocol').SessionCreationTagV1;
   /** Full immutable create-or-rejoin recipe carried with the admitted tag. */
   sessionCreationCorrespondence?: import('@happier-dev/protocol').SessionCreationCorrespondenceV1;
+  /** Exact admitted pre-Agent setup input and original authority, restored from immutable birth. */
+  machineSetupPlanInput?: import('@happier-dev/protocol/machines/managed/actionsV1').MachineSetupPlanInputV1;
+  machineSetupExecution?: import('@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1').SessionCreationMachineSetupExecutionV1;
   /** Informational creation origin; never an execution target or runtime authority. */
   placementOrigin?: MachinePoolSelectionOriginV1;
   /** Mutable presentation state committed inside the fresh Session create transaction. */

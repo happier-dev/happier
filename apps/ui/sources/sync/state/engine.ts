@@ -3,7 +3,7 @@ import {
     type SessionStateFieldWriteValue,
     type SessionStateMetadataWriteResult,
 } from '@happier-dev/agents';
-import type { SessionMetadata, SessionStateCapabilitiesV1, SessionStateFieldId } from '@happier-dev/protocol';
+import type { SessionMetadata, SessionStateCapabilitiesV1, SessionStateFieldId, SessionStateFieldValue } from '@happier-dev/protocol';
 
 import type { Metadata } from '@happier-dev/session-core/state';
 import { createUiSessionStateMetadataUpdatePort } from './metadataUpdatePort';
@@ -17,6 +17,8 @@ const UI_SESSION_STATE_CAPABILITIES: SessionStateCapabilitiesV1 = {
         context: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
         memoryEnabled: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
         voicePreference: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
+        templateDraftRef: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
+        templateInstance: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
     },
     display: {
         statusReason: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
@@ -28,7 +30,7 @@ const UI_SESSION_STATE_CAPABILITIES: SessionStateCapabilitiesV1 = {
     },
 };
 
-export type UiSessionStateMetadataUpdater = (metadata: Metadata) => Metadata;
+export type UiSessionStateMetadataUpdater = (metadata: Metadata, metadataRevision?: number) => Metadata;
 export type UiSessionStateMetadataPreprocess = (metadata: Metadata) => Metadata;
 export type UiSessionStateMetadataPostprocess = (metadata: Metadata) => Metadata;
 export type UiSessionStateWriteResult = SessionStateMetadataWriteResult;
@@ -56,11 +58,11 @@ export function createUiSessionStateEngine(params: Readonly<{
 	                update: (sessionId, updater, opts) =>
 	                    basePort.update(
 	                        sessionId,
-	                        (metadata) => {
+	                        (metadata, metadataRevision) => {
 	                            const preparedMetadata = metadataPreprocess
 	                                ? metadataPreprocess(metadata as Metadata)
 	                                : metadata as Metadata;
-	                            return metadataPostprocess(updater(preparedMetadata) as Metadata) as SessionMetadata;
+	                            return metadataPostprocess(updater(preparedMetadata, metadataRevision) as Metadata) as SessionMetadata;
 	                        },
 	                        opts,
 	                    ),
@@ -70,7 +72,7 @@ export function createUiSessionStateEngine(params: Readonly<{
 	                    update: (sessionId, updater, opts) =>
 	                        basePort.update(
 	                            sessionId,
-	                            (metadata) => updater(metadataPreprocess(metadata as Metadata)) as SessionMetadata,
+	                            (metadata, metadataRevision) => updater(metadataPreprocess(metadata as Metadata), metadataRevision) as SessionMetadata,
 	                            opts,
 	                        ),
 	                }
@@ -82,6 +84,8 @@ export async function writeUiSessionStateField<F extends SessionStateFieldId>(pa
     sessionId: string;
     fieldId: F;
     value: SessionStateFieldWriteValue<F>;
+    expectedMetadataRevision?: number;
+    expectedValue?: SessionStateFieldValue<F> | null;
     metadataReason: string;
 	    updateSessionMetadataWithRetry: (
 	        sessionId: string,
@@ -104,6 +108,8 @@ export async function writeUiSessionStateField<F extends SessionStateFieldId>(pa
         value: params.value,
         reason: 'user-mutation',
         metadataReason: params.metadataReason,
+        expectedMetadataRevision: params.expectedMetadataRevision,
+        expectedValue: params.expectedValue,
         ...(typeof params.maxAttempts === 'number' ? { maxAttempts: params.maxAttempts } : {}),
         mirrorToProvider: false,
     });

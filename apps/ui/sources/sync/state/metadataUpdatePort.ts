@@ -23,7 +23,7 @@ function isForbiddenMetadataUpdateError(error: unknown): boolean {
 export function createUiSessionStateMetadataUpdatePort(params: Readonly<{
     updateSessionMetadataWithRetry: (
         sessionId: string,
-        updater: (metadata: Metadata) => Metadata,
+        updater: (metadata: Metadata, metadataRevision?: number) => Metadata,
         opts?: Readonly<{ maxAttempts?: number }>,
     ) => Promise<unknown>;
 }>): MetadataUpdatePort {
@@ -32,7 +32,7 @@ export function createUiSessionStateMetadataUpdatePort(params: Readonly<{
             try {
                 const result = await params.updateSessionMetadataWithRetry(
                     sessionId,
-                    (metadata) => updater(metadata as SessionMetadata) as Metadata,
+                    (metadata, metadataRevision) => updater(metadata as SessionMetadata, metadataRevision) as Metadata,
                     typeof opts?.maxAttempts === 'number' ? { maxAttempts: opts.maxAttempts } : undefined,
                 );
                 const version = typeof (result as { version?: unknown } | null)?.version === 'number'
@@ -46,6 +46,7 @@ export function createUiSessionStateMetadataUpdatePort(params: Readonly<{
                 const code = typeof (error as { code?: unknown } | null)?.code === 'string'
                     ? (error as { code: string }).code
                     : 'unknown_error';
+                if (code === 'metadata_tuple_conflict') return { ok: false, reason: 'conflict' };
                 if (code === 'unsupported' || code === 'conflict' || code === 'forbidden' || code === 'unknown_error') {
                     return { ok: false, reason: code };
                 }

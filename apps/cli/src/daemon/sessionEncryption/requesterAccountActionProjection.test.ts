@@ -1033,9 +1033,10 @@ describe('admitted requester Action projection', () => {
     const root = { ...authorization, binding: { ...authorization.binding, accountEncryptionMode: 'plain' as const,
       serverIdentityId: 'srv_current_machine_fixture', requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) } };
     const privateKey = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(31)).secretKey;
+    const actionsSettingsV1 = { v: 1, actions: { 'machines.setup.plan': { enabled: false } } };
     const reads = vi.spyOn(axios, 'get').mockImplementation(async (url: string) => {
       if (url.endsWith('/v1/account/profile')) return { status: 200, data: { id: 'bob' } };
-      if (url.endsWith('/v2/account/settings')) return { status: 200, data: { content: { t: 'plain', v: {} }, version: 1 } };
+      if (url.endsWith('/v2/account/settings')) return { status: 200, data: { content: { t: 'plain', v: { actionsSettingsV1 } }, version: 1 } };
       if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: { mode: 'plain', version: 1,
         signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
       throw new Error(`Unexpected requester GET ${url}`);
@@ -1064,6 +1065,8 @@ describe('admitted requester Action projection', () => {
     const admitted = requesterAccountOwner.readRequesterAccountActionContext(prepared?.authorization);
     if (!admitted) throw new Error('Missing real private custody');
     try {
+      expect(prepared?.actionsSettings).toEqual(admitted.accountSettingsContext.settings.actionsSettingsV1);
+      expect(prepared?.actionsSettings).toMatchObject(actionsSettingsV1);
       // One admission decision opens this operation's custody. Constructing
       // its HTTP ports must reuse that decision; native effects reverify below.
       expect(posts.mock.calls.filter(([url]) => String(url).endsWith('/verify'))).toHaveLength(1);

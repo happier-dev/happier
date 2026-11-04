@@ -1,3 +1,6 @@
+import type { ExternalActionExecutionAuthorizationBindingV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import type { SessionPendingTemplateOnboardingInputV1 } from '@happier-dev/protocol/sessions/messages/sessionPendingMachineAdmissionV1';
+import { buildSessionSpawnInitialInputLocalIdV1 } from '@happier-dev/protocol/sessions/messages/spawnedFirstTurn';
 import { normalizeSessionMessageContentForStorage } from "@/app/session/normalizeSessionMessageContentForStorage";
 import { DiscussionMessageAddressingV1Schema, type DiscussionAddressingV1 } from '@happier-dev/protocol/discussions/references';
 import { buildSessionInputAdmissionReceipt, isSameSessionInputAdmissionIssuer, readCurrentSessionInputMachineTargetInTx, readCurrentCommittedSessionInputMachineTargetInTx, readStoredSessionInputAdmissionReceipt, isSessionInputTargetCurrentForPublisherInTx, isCurrentSessionInputMachineTargetInTx, areCurrentSessionInputMachineTargetsInTx } from "@/app/session/messages/sessionInputAdmission";
@@ -18,6 +21,7 @@ import {
     buildSessionAccessProjectionSelect,
     SESSION_ACCESS_SESSION_BATCH_SIZE,
     type SessionAccessProjectionRow,
+    type EffectiveSessionAccess,
 } from "@/app/session/access/sessionAccess";
 import type { SessionAccessAuthentication } from "@/app/session/access/sessionAccessAuthentication";
 import { buildSessionAccessWhere } from '@/app/session/access/sessionAccessWhere';
@@ -37,7 +41,7 @@ import { isSessionAgentTransitionDividerLocalId } from '@happier-dev/protocol/se
 import { normalizePendingRequestedActionV1, PendingRequestedActionV1Schema, PendingRequestedActionV1StoredSchema, type PendingRequestedActionV1 } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
 import { isPendingLocalId, readPendingLocalId } from '@happier-dev/protocol/sessions/pending/pendingLocalId';
 import { PendingMessageMutationFingerprintV1Schema } from '@happier-dev/protocol/sessions/pending/pendingMessageMutationFingerprintV1';
-import { SessionInputAdmissionReceiptV1Schema, SessionInputRequestEqualityEvidenceV1Schema, SESSION_MESSAGE_PROVENANCE_META_KEY, readSessionInputAuthority, readSessionInputRequest, readSessionMessageProvenance, requiresAuthenticatedMachineAdmissionForSessionInput, settleSessionInputRequestV1, settleSessionInputRequestV2, settleSessionMessageProvenanceV1, settleSessionMessageProvenanceV2, withSessionInputAuthority, deriveWorkflowSessionInputLocalIdV2, type SessionInputAdmissionReceiptV1, type SessionInputAdmissionResultV1, type SessionInputRequestEqualityEvidenceV1, type SessionInputMachineTargetV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { SessionInputAdmissionReceiptV1Schema, SessionInputRequestEqualityEvidenceV1Schema, SESSION_MESSAGE_PROVENANCE_META_KEY, readSessionInputAuthority, readSessionInputRequest, readSessionMessageProvenance, requiresAuthenticatedMachineAdmissionForSessionInput, settleSessionInputRequestV1, settleSessionInputRequestV2, settleSessionMessageProvenanceV1, settleSessionMessageProvenanceV2, withSessionInputAuthority, deriveWorkflowSessionInputLocalIdV2, type SessionInputAdmissionReceiptV1, type SessionInputAdmissionResultV1, type SessionInputEnqueueResultV1, type SessionInputRequestEqualityEvidenceV1, type SessionInputMachineTargetV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { deriveSessionMessageAuthorAccountIdV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageAccountActorV1';
 import { SessionInputAdmissionRejectionCodeV1Schema, type SessionInputAdmissionRejectionCodeV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmissionRejectionV1';
@@ -689,10 +693,13 @@ type EnqueuePendingMessageInput = {
 );
 
 type PendingMessageAdmissionContext =
-    | Readonly<{
+    | (Readonly<{
         kind: "account";
         authentication: SessionAccessAuthentication;
-      }>
+      }> & (
+        | Readonly<{ access: EffectiveSessionAccess; templateBirth?: never }>
+        | Readonly<{ access?: never; templateBirth: Readonly<{ creationTag: string; installationId: string }> }>
+      ))
     | Readonly<{
         kind: "machine";
         sourceMachineId: string;
@@ -760,6 +767,7 @@ export async function enqueuePendingMessage(
     return await enqueuePendingMessageWithAdmission({ ...params, ...(executionRunFrontier ? { executionRunFrontier } : {}) }, {
         kind: "account",
         authentication: params.authentication,
+        access: decision.access,
     });
 }
 
@@ -850,6 +858,7 @@ async function enqueuePendingMessageWithAdmission(
                 where: { id: sessionId },
                 select: {
                     accountId: true,
+                    tag: true,
                     active: true,
                     archivedAt: true,
                     encryptionMode: true,
@@ -888,10 +897,13 @@ async function enqueuePendingMessageWithAdmission(
             // still decides whether that tuple can receive input.
             const actorUserId = admission.kind === "machine" && admission.sourceMachineId === admission.targetMachineId
                 ? session.accountId : requestAccountId;
-            const access = admission.kind === "account"
-                ? await assertSessionCapabilityInTx({ tx, accountId: actorUserId, sessionId, capability: "submitAgentInput", authentication: admission.authentication })
+            const access = admission.kind === "account" && !admission.templateBirth
+                ? { ok: true, access: admission.access } as const
                 : await assertSessionOwnerInTx({ tx, accountId: actorUserId, sessionId });
             if (!access.ok) return { ok: false, error: projectPendingSessionAccessError(access.reason) } as const;
+            if (admission.kind === 'account' && admission.templateBirth && session.tag !== admission.templateBirth.creationTag) {
+                return { ok: false, error: 'forbidden', admissionRejectionCode: 'session_input_unauthorized' } as const;
+            }
             let inputAdmissionReceipt = admission.kind === "account"
                 ? SessionInputAdmissionReceiptV1Schema.parse({
                     ...buildSessionInputAdmissionReceipt({ issuer: "authenticatedAccount", access: access.access,
@@ -913,8 +925,9 @@ async function enqueuePendingMessageWithAdmission(
             // the Session's main runner. Its retained Machine placement does
             // not admit that provider; the provider/run ingress does so later.
             const requiresMachineTarget = deliveryMode !== "external_handoff";
+            const retainedTemplateTarget = admission.kind === 'account' && admission.templateBirth ? { admittedWork: true as const } : undefined;
             const committedTarget = !requiresMachineTarget || session.runtimeMachineTarget == null ? undefined
-                : await readCurrentCommittedSessionInputMachineTargetInTx(tx, sessionId);
+                : await readCurrentCommittedSessionInputMachineTargetInTx(tx, sessionId, retainedTemplateTarget);
             if (requiresMachineTarget && session.runtimeMachineTarget != null && !committedTarget) return {
                 ok: false, error: "session-not-found", admissionRejectionCode: "session_input_target_unavailable",
             } as const;
@@ -974,7 +987,7 @@ async function enqueuePendingMessageWithAdmission(
                 }
                 const admittedTarget = await readCurrentSessionInputMachineTargetInTx(tx, {
                     accountId: session.accountId, sessionId, machineId: targetMachineId,
-                });
+                }, retainedTemplateTarget);
                 // The released owned, uninstalled tuple predates installation admission.
                 // It retains the old receipt/hint, never a foreign or installed fallback.
                 const legacyOwnedTarget = admission.kind === 'account' && targetExecutionRunId === null
@@ -1017,6 +1030,10 @@ async function enqueuePendingMessageWithAdmission(
                     } as const;
                 }
                 if (admittedTarget) inputAdmissionReceipt = SessionInputAdmissionReceiptV1Schema.parse({ ...inputAdmissionReceipt, admittedTarget });
+                if (admission.kind === 'account' && admission.templateBirth
+                    && admittedTarget?.installationId !== admission.templateBirth.installationId) {
+                    return { ok: false, error: 'forbidden', admissionRejectionCode: 'session_input_unauthorized' } as const;
+                }
             }
 
             let suppressedFollow: Pick<Parameters<typeof retainSuppressedSessionFollowInputInTx>[1], 'delivery' | 'progresses' | 'relations'> | undefined;
@@ -1740,6 +1757,37 @@ export async function enqueuePendingMessageByAuthenticatedMachine(params: Readon
         inputAdmissionReceipt,
     });
 
+    return await publishPendingInputAdmissionResult(params, result);
+}
+
+export async function enqueuePendingTemplateOnboarding(params: Readonly<{
+    accountId: string;
+    binding: ExternalActionExecutionAuthorizationBindingV1;
+    authentication: SessionAccessAuthentication;
+    request: SessionPendingTemplateOnboardingInputV1;
+}>): Promise<SessionInputEnqueueResultV1> {
+    const { binding, request } = params;
+    const birth = binding.templateRequesterBirth;
+    if (!birth || binding.accountId !== params.accountId || birth.sessionId !== request.sessionId
+        || binding.machineId !== request.targetMachineId
+        || request.localId !== buildSessionSpawnInitialInputLocalIdV1({ sessionCreationTag: birth.creationTag })
+        || request.requestedAction.kind !== 'send_now') {
+        return { status: 'rejected', code: 'session_input_unauthorized' };
+    }
+    const result = await enqueuePendingMessageWithAdmission({ actorUserId: params.accountId,
+        sessionId: request.sessionId, targetMachineId: request.targetMachineId, localId: request.localId,
+        messageRole: 'user', content: request.content, requestedAction: request.requestedAction,
+        ...(request.requestEqualityEvidenceV1 ? { requestEqualityEvidenceV1: request.requestEqualityEvidenceV1 } : {}),
+    }, { kind: 'account', templateBirth: { creationTag: birth.creationTag, installationId: binding.installationId },
+        authentication: { ...params.authentication, apiTokenGrant: undefined,
+            callerInputConstraints: 'grant' in binding ? binding.grant : params.authentication.callerInputConstraints } });
+    return await publishPendingInputAdmissionResult({ accountId: params.accountId, sessionId: request.sessionId,
+        localId: request.localId }, result);
+}
+
+async function publishPendingInputAdmissionResult(params: Readonly<{
+    accountId: string; sessionId: string; localId: string; targetExecutionRunId?: string | null;
+}>, result: EnqueuePendingMessageResult): Promise<SessionInputEnqueueResultV1> {
     if (result.ok) {
         if (result.didWrite) {
             await emitPendingChanged({

@@ -1,3 +1,4 @@
+import { BotTemplateActionIdV1Schema, BotTemplateActionOutputSchemasV1 } from '../bots/templates/botTemplateActionsV1.js';
 import { executeSessionDelete } from './executor/session/delete.js';
 import type { AdmittedActionInputById } from './actionSpecs.js';
 import { createHostReviewedChildPortV1 } from './executor/deploymentRoleChild.js';
@@ -6,7 +7,7 @@ import { isHostAdmittedReviewedChildPolicyV1, readHostReviewedChildOperationV1 }
 import { createConfidentialApprovalContinuation, isDecidingHumanAdmissionCurrent } from './executor/confidentialContinuation.js';
 import { settleActionOutput, isDeferredApprovalResult } from './executor/resultProjection.js';
 import { bindCallerInput, callerInputSchema } from './executor/callerInput.js';
-import type { HostReviewedChildrenPlanV1 } from './executor/types.js';
+import type { HostReviewedChildrenPlanV1, HostReviewedChildrenPreparationV1 } from './executor/types.js';
 import { admitPresentUserConfirmationV1 } from './executor/approvalReview.js';
 import type { SessionSpaceMembershipSetInputV1 } from './sessionSpaceMembership.js';
 import { dispatchProjectsDispatch1, dispatchProjectsDispatch2, dispatchProjectsDispatch3 } from './executor/projects/dispatch.js';
@@ -2368,7 +2369,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     const retainedDeploymentReview = existingAdmission?.deploymentReview ?? ctx.approvedActionReplay?.deploymentReview;
     const semanticInput = existingAdmission?.semanticInput ?? admittedInput;
     let deploymentReview: JsonValue | undefined = retainedDeploymentReview;
-    let preparedHostReviewedChildren: HostReviewedChildrenPlanV1 | undefined;
+    let preparedHostReviewedChildren: HostReviewedChildrenPreparationV1 | undefined;
     let observePendingOperation = existingAdmission?.observePendingOperation;
     if ((!existingAdmission || actionId === 'deployments.templates.instantiate') && (actionId === 'machines.setup.apply' && deps.prepareMachineSetupApply
       || actionId === 'deployments.publish'
@@ -2886,7 +2887,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         ? spec.hostReviewedChildren(admittedInput)
         : spec.hostReviewedChildren;
       if (children.length > 0) {
-        preparedHostReviewedChildren = { children: [...(preparedHostReviewedChildren?.children ?? []), ...children] };
+        preparedHostReviewedChildren = { ...preparedHostReviewedChildren, children: [...(preparedHostReviewedChildren?.children ?? []), ...children] };
       }
     }
     const nativeReview = !existingAdmission && !sharedRequesterRequest
@@ -2898,8 +2899,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       ...(existingAdmission ? { existing: existingAdmission } : {}), approvalReplay: options?.approvalReplay === true,
       isSameHome: (left, right) => isSameHome(left, right, ctx) });
     if ('ok' in childrenPreparation) return childrenPreparation;
-    const { plan: hostReviewedChildren, policies: childPolicies, approvalPreview: childrenApprovalPreview, executeAdmittedAction,
+    const { plan: hostReviewedChildren, policies: childPolicies, approvalPreview: childrenApprovalPreview, executeAdmittedAction: executePreparedChildren,
       admittedReviewedChild: preparedChildAdmission } = childrenPreparation;
+    const executeAdmittedAction = preparedHostReviewedChildren?.executeAdmittedAction ?? executePreparedChildren;
     let admittedReviewedChild = preparedChildAdmission;
     const reviewAdmitted = existingAdmission?.reviewAdmitted === true || nativeReview !== null
       // The private replay owner already admitted and recorded this decision.
@@ -3981,6 +3983,12 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         return { ok: true, result };
       }
 
+      const botTemplateActionId = isActionFamilyId(actionId, BotTemplateActionIdV1Schema) ? actionId : null;
+      if (botTemplateActionId !== null) {
+        if (!deps.botTemplateAction) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+        const result = await deps.botTemplateAction({ actionId: botTemplateActionId, input: parsed.data, context: ctx, signal: ctx.signal });
+        return readActionFailureEnvelope(result) ?? { ok: true, result: BotTemplateActionOutputSchemasV1[botTemplateActionId].parse(result) };
+      }
       const artifactAccessActionId = isActionFamilyId(actionId, ArtifactAccessActionIdV1Schema) ? actionId : null;
       if (artifactAccessActionId !== null) {
         if (!deps.artifactAccessAction) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
@@ -5502,9 +5510,11 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           if (!spawnArgs) {
             return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
           }
-          const res = await deps.sessionSpawnNew({ ...spawnArgs,
-            admittedInput: admittedSpawnInput,
-          });
+          const args = { ...spawnArgs, admittedInput: admittedSpawnInput };
+          const continuation = ctx.invocationServices?.sessionCreation;
+          const res = continuation
+            ? await deps.sessionSpawnNew(args, continuation)
+            : await deps.sessionSpawnNew(args);
           return completeSpawnActionResult(res);
         }
         const dispatchProjectsDispatch2Result = await dispatchProjectsDispatch2({ actionId, deps, data, ctx });

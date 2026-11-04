@@ -54,7 +54,7 @@ export interface SessionStateFacet {
 export interface MetadataUpdatePort {
   update(
     sessionId: string,
-    updater: (prev: SessionMetadata) => SessionMetadata,
+    updater: (prev: SessionMetadata, metadataRevision?: number) => SessionMetadata,
     opts: Readonly<{
       reason: string;
       maxAttempts?: number;

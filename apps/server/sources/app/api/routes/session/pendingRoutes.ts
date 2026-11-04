@@ -1,3 +1,7 @@
+import { SessionPendingEnqueueByMachineResponseV1Schema } from '@happier-dev/protocol/sessions/messages/sessionPendingMachineAdmissionV1';
+import { enqueuePendingTemplateOnboarding } from '@/app/session/pending/pendingMessageService';
+import { SessionPendingTemplateOnboardingRequestV1Schema } from '@happier-dev/protocol/sessions/messages/sessionPendingMachineAdmissionV1';
+import { verifyTemplateRequesterExecutionAuthorization } from '@/app/auth/externalActionExecutionAuthorization';
 import { z } from "zod/mini";
 import { AutonomousExchangeControlRequestV1Schema, AutonomousExchangeStatusV1Schema } from '@happier-dev/protocol/sessions/messages/autonomousExchangeV1';
 import { SessionMessageReplyAdmissionV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
@@ -165,6 +169,32 @@ export function sessionPendingRoutes(app: Fastify) {
     const exchangeResponses = { 200: AutonomousExchangeStatusV1Schema,
         403: z.union([exchangeErrorResponse, AccountRouteAuthenticationForbiddenResponseSchema]),
         404: exchangeErrorResponse, 409: exchangeErrorResponse };
+    app.post('/v2/sessions/:sessionId/pending/template-onboarding', {
+        preHandler: app.authenticate,
+        schema: { params: z.strictObject({ sessionId: z.string().check(z.minLength(1)) }),
+            body: SessionPendingTemplateOnboardingRequestV1Schema,
+            response: { 200: SessionPendingEnqueueByMachineResponseV1Schema,
+                403: z.union([z.strictObject({ error: z.string() }), AccountRouteAuthenticationForbiddenResponseSchema]) } },
+        config: { allowApiToken: true, allowScopedApiToken: true,
+            restrictedCredentialBinding: { scope: 'account' },
+            rateLimit: resolveApiHotEndpointRateLimit(process.env, 'session.pending') },
+    }, async (request, reply) => {
+        const authentication = readSessionAccessAuthenticationFromRequest(request);
+        const verified = await verifyTemplateRequesterExecutionAuthorization({
+            authorization: request.body.authorization, originalActionEnvelope: request.body.originalActionEnvelope,
+            accountId: request.userId, authentication,
+        });
+        if (!verified || request.params.sessionId !== request.body.request.sessionId) {
+            return reply.code(403).send({ error: 'forbidden' });
+        }
+        const result = await enqueuePendingTemplateOnboarding({ accountId: request.userId,
+            binding: verified.binding, authentication: { ...authentication, authority: verified.effectiveAuthority },
+            request: request.body.request });
+        if (result.status === 'rejected' && result.code === 'session_input_unauthorized') {
+            return reply.code(403).send({ error: 'forbidden' });
+        }
+        return reply.send({ v: 1 as const, result });
+    });
     app.get(exchangePath, {
         preHandler: app.authenticate,
         schema: { params: exchangeParams, response: exchangeResponses },

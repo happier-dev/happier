@@ -369,7 +369,7 @@ describe('Home atmosphere picture and Project mutations', () => {
 
     function services(request: Parameters<typeof createAtmosphereSettingServices>[0]['request'] = async () => { throw new Error('unexpected_http'); }) {
         return createAtmosphereSettingServices({ serverId: 'home-a', accountId: 'account-a', credentials: { token: 'plain-token' },
-            assertCurrent: () => {}, resolveAccountEncryption: async () => ({ accountMode: 'plain', encryption: null }), request });
+            assertCurrent: () => {}, resolveAccountEncryption: async () => ({ accountMode: 'plain' as const, encryption: null }), request });
     }
     function ownerWithServices(mutationServices: SettingsMutationServices) {
         return createOwner(undefined, false, true, settingsDefaults, undefined, undefined, undefined, undefined, undefined, mutationServices);

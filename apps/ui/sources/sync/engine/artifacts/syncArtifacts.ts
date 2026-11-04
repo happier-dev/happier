@@ -103,6 +103,8 @@ function artifactAccessProjection(artifact: Artifact, previous?: DecryptedArtifa
     const identity = previous?.storageIdentity;
     return { kind: artifact.kind, ...(Object.hasOwn(artifact, 'kindHint') ? { kindHint: artifact.kindHint } : {}),
         access: artifact.access, ownerAccountId: artifact.ownerAccountId,
+        ...(artifact.ownerDisplayName === undefined ? {} : { ownerDisplayName: artifact.ownerDisplayName }),
+        ...(artifact.sharedTeamIds === undefined ? {} : { sharedTeamIds: artifact.sharedTeamIds }),
         publicAudience: ArtifactPublicAudienceV1ReadSchema.parse(artifact.publicAudience),
         storageIdentity: identity?.contentKeyEnvelope === artifact.dataEncryptionKey
             && identity.provenanceKeyEnvelope === (artifact.provenanceDataEncryptionKey ?? null)
@@ -274,8 +276,9 @@ function decodePlainArtifactBody(value: string): ArtifactBodyEnvelopeV1 {
     return ArtifactBodyEnvelopeV1StoredSchema.parse(decoded);
 }
 
-function artifactRevisionProvenance(credentials: AuthCredentials, savedBy?: ArtifactSavedByV1,
+function artifactRevisionProvenance(credentials: AuthCredentials, savedBy?: ArtifactSavedByV1 | null,
     restoredFromBodyVersion?: number, source?: ArtifactWorkspaceSourceV1): ArtifactRevisionProvenanceV1 | undefined {
+    if (savedBy === null) return undefined;
     let actor = savedBy;
     if (!actor) {
         try { actor = ArtifactSavedByV1Schema.parse({ kind: 'person', accountId: parseToken(credentials.token) }); }
@@ -1397,7 +1400,7 @@ export async function fetchArtifactBodyRevisionsFromApi(params: ArtifactRevision
 export async function restoreArtifactBodyRevisionViaApi(params: ArtifactRevisionReadParams & Readonly<{
     bodyVersion: number;
     expectedRevision: ArtifactRevisionV1;
-    savedBy?: ArtifactSavedByV1;
+    savedBy?: ArtifactSavedByV1 | null;
     updateArtifact: (artifact: DecryptedArtifact) => void;
 }>) {
     const artifact = await fetchArtifactApi(params.credentials, params.artifactId, { ...params, fresh: true });
@@ -1479,7 +1482,7 @@ export async function createArtifactWithHeaderViaApi(params: {
     signal?: AbortSignal;
     header: Readonly<Record<string, unknown>>;
     body: ArtifactBodyInput;
-    savedBy?: ArtifactSavedByV1;
+    savedBy?: ArtifactSavedByV1 | null;
     source?: ArtifactWorkspaceSourceV1;
     encryption: Encryption | null;
     artifactDataKeys: ArtifactDataKeyCache;
@@ -1649,7 +1652,7 @@ export async function updateArtifactWithHeaderViaApi(params: {
     signal?: AbortSignal;
     header: Readonly<Record<string, unknown>>;
     body: ArtifactBodyInput;
-    savedBy?: ArtifactSavedByV1;
+    savedBy?: ArtifactSavedByV1 | null;
     encryption: Encryption | null;
     artifactDataKeys: ArtifactDataKeyCache;
     getArtifact: (artifactId: string) => DecryptedArtifact | undefined;

@@ -1,3 +1,4 @@
+import { createScopedResolutionSingleFlight } from '@/sync/runtime/orchestration/serverScopedRpc/scopedResolutionSingleFlight';
 import { pick } from 'zod/mini';
 import type { CoordinationMessageRefV1 } from '@happier-dev/protocol/discussions/messageRefs';
 import { TokenStorage, subscribeHomeCredentialMutations, areCredentialsEqual, type AuthCredentials } from '@/auth/storage/tokenStorage';
@@ -55,8 +56,8 @@ function readableRawArtifactHeader(artifact: DecryptedArtifact | null): Readonly
 }
 
 const artifactAccessProjectionSchema = pick(ArtifactAccessRecipientCensusResponseV1Schema, { ownerAccountId: true, access: true });
-type ArtifactCreateOperation = Readonly<{ artifactId?: string; header: Readonly<Record<string, unknown>>; body: ArtifactBodyInput; savedBy?: ArtifactSavedByV1; source?: ArtifactWorkspaceSourceV1; memoryDecisionSource?: CoordinationMessageRefV1; signal?: AbortSignal }>;
-type ArtifactUpdateOperation = Omit<Parameters<WorkflowDefinitionArtifactOperations['update']>[0], 'body'> & Readonly<{ body: ArtifactBodyInput; savedBy?: ArtifactSavedByV1 }>;
+type ArtifactCreateOperation = Readonly<{ artifactId?: string; header: Readonly<Record<string, unknown>>; body: ArtifactBodyInput; savedBy?: ArtifactSavedByV1 | null; source?: ArtifactWorkspaceSourceV1; memoryDecisionSource?: CoordinationMessageRefV1; signal?: AbortSignal }>;
+type ArtifactUpdateOperation = Omit<Parameters<WorkflowDefinitionArtifactOperations['update']>[0], 'body' | 'savedBy'> & Readonly<{ body: ArtifactBodyInput; savedBy?: ArtifactSavedByV1 | null }>;
 type ArtifactContentReadOptions = NonNullable<Parameters<WorkflowDefinitionArtifactOperations['read']>[1]> & Readonly<{ includeGrants?: boolean }>;
 type ArtifactContentRead = NonNullable<Awaited<ReturnType<WorkflowDefinitionArtifactOperations['read']>>> & Readonly<{
     publicAudience?: DecryptedArtifact['publicAudience'];
@@ -101,7 +102,13 @@ function requireArtifactAccessProjection(artifact: DecryptedArtifact) {
  * closed. Actions that never touch encrypted content (Account Security, Machine Pools) skip the extra
  * round-trip and key derivation.
  */
-export async function captureLazyActionAccountContext(serverIdRaw: string, signal?: AbortSignal) {
+export type ActionAccountRequestAuthorization = (request: Readonly<{
+    path: string; method: string; headers: Headers; signal?: AbortSignal;
+}>) => Promise<Readonly<Record<string, string>> | undefined>;
+
+export async function captureLazyActionAccountContext(serverIdRaw: string, signal?: AbortSignal,
+    requestAuthorization?: ActionAccountRequestAuthorization) {
+
     const embed = isEmbedWindowContext() ? (await import('@/sync/sync')).sync.getEmbedSessionRequestContext() : null;
     if (embed) {
         if (serverIdRaw !== embed.serverId) throw new Error('action_home_not_found');
@@ -131,7 +138,7 @@ export async function captureLazyActionAccountContext(serverIdRaw: string, signa
             accountLifetime: { scope: { serverId: embed.serverId, accountId: embed.accountId }, isCurrent: embed.isCurrent, onRetire: embed.onRetire },
             accountOnlyLifetime: { scope: { serverId: embed.serverId, accountId: embed.accountId }, isCurrent: embed.isCurrent, onRetire: embed.onRetire },
             credentials: embed.credentials, credentialAuthorityKind: 'api_token' as const, invocationSignal: signal,
-            request: embed.request, readTransport: undefined,
+            request: embed.request, readTransport: undefined, prepareRequest: undefined,
             assertCurrent, assertAccountCurrent, assertResultCurrent, dispose: () => {},
             resolveAccountMode: unavailable, resolveAccountEncryption: unavailable, readSettings: unavailable, readRawSettings: unavailable,
             readRawSettingsSnapshot: unavailable,
@@ -147,6 +154,7 @@ export async function captureLazyActionAccountContext(serverIdRaw: string, signa
             },
             fetchArtifact: async (_artifactId: string, _options?: ArtifactReadOptions) => unavailable(),
             readArtifact: async (_artifactId: string, _options?: ArtifactReadOptions): Promise<DecryptedArtifact | null> => artifactUnavailable(),
+            readArtifactHeader: async (_artifactId: string, _options?: Pick<ArtifactReadOptions, 'signal' | 'fresh'>): Promise<DecryptedArtifact | null> => artifactUnavailable(),
             readArtifactHeaders: async (_artifactIds: readonly string[], _options?: Pick<ArtifactReadOptions, 'signal' | 'fresh'>): Promise<PromiseSettledResult<DecryptedArtifact | null>[]> => artifactUnavailable(),
             readArtifactContent: async (_artifactId: string, _options?: ArtifactContentReadOptions): Promise<ArtifactContentRead | null> => artifactUnavailable(),
             readArtifactContents: async (_ids: readonly string[], _options?: Parameters<WorkflowDefinitionArtifactOperations['read']>[1]):
@@ -259,8 +267,18 @@ export async function captureLazyActionAccountContext(serverIdRaw: string, signa
             });
         // Restricted reads retain their invocation's Action authorization; a
         // neutral Account transport cannot borrow mutation/claim admission.
+        const prepareRequest = async (path: string, init: RequestInit | undefined): Promise<RequestInit | undefined> => {
+            if (!requestAuthorization) return init;
+            assertCurrent();
+            const headers = new Headers(init?.headers);
+            const authorization = await requestAuthorization({ path, method: (init?.method ?? 'GET').toUpperCase(),
+                headers, signal: init?.signal ?? signal });
+            for (const [key, value] of Object.entries(authorization ?? {})) headers.set(key, value);
+            return authorization ? { ...init, headers } : init;
+        };
         const readTransport = credentialAuthorityKind === 'api_token' ? undefined
-            : createCapturedServerReadTransport({ serverId, profile, credentials, accountEncryptionObservation });
+            : createCapturedServerReadTransport({ serverId, profile, credentials, accountEncryptionObservation,
+                ...(requestAuthorization ? { prepareRequest } : {}) });
         // Every Action owns an explicit Home target. Resolve it through the
         // canonical scoped carrier so a staged focus change cannot retarget an
         // Action through the ambient focused request path.
@@ -271,7 +289,7 @@ export async function captureLazyActionAccountContext(serverIdRaw: string, signa
             const cancellation = mergeAbortSignals([controller.signal, signal, init?.signal ?? undefined]);
             try {
                 throwIfAborted(cancellation.signal);
-                const requestInit = { ...init, signal: cancellation.signal };
+                const requestInit = await prepareRequest(path, { ...init, signal: cancellation.signal });
                 const transport = await resolveServerScopedTransport({ profile, credentials });
                 try {
                     assertCurrent();
@@ -296,9 +314,9 @@ export async function captureLazyActionAccountContext(serverIdRaw: string, signa
                 cancellation.dispose();
             }
         };
-        const loadAccountMode = async () => {
+        const loadAccountMode = async (operationSignal?: AbortSignal) => {
             const transport = await resolveServerScopedTransport({ profile, credentials });
-            const cancellation = mergeAbortSignals([controller.signal, signal]);
+            const cancellation = mergeAbortSignals([controller.signal, signal, operationSignal]);
             try {
                 assertCurrent();
                 throwIfAborted(cancellation.signal);
@@ -319,7 +337,7 @@ export async function captureLazyActionAccountContext(serverIdRaw: string, signa
                 const modeRequest: ServerFetch = (path, init, options) => endpointRequest(path,
                     { ...init, signal: cancellation.signal }, options);
                 bindAccountEncryptionObservation(modeRequest, binding);
-                const mode = (await fetchAccountEncryptionMode(credentials, { request: modeRequest, usage: 'identity' })).mode;
+                const mode = (await fetchAccountEncryptionMode(credentials, { request: modeRequest, signal: cancellation.signal, usage: 'identity' })).mode;
                 assertCurrent();
                 return mode;
             } finally {
@@ -328,19 +346,36 @@ export async function captureLazyActionAccountContext(serverIdRaw: string, signa
                 assertCurrent();
             }
         };
-        let accountMode: ReturnType<typeof loadAccountMode> | null = null;
-        const resolveAccountMode = () => {
+        type CapturedAccountMode = Awaited<ReturnType<typeof loadAccountMode>>;
+        let accountMode: CapturedAccountMode | null = null;
+        const accountModeReads = createScopedResolutionSingleFlight<CapturedAccountMode>();
+        const resolveAccountMode = (operationSignal?: AbortSignal) => {
             assertCurrent();
-            return (accountMode ??= loadAccountMode());
+            throwIfAborted(operationSignal);
+            if (accountMode !== null) return Promise.resolve(accountMode);
+            return accountModeReads.run('mode', loadAccountMode, {
+                signal: operationSignal,
+                onResolved: (mode, live) => { if (live) accountMode = mode; },
+            });
         };
-        const loadAccountEncryption = async () => {
-            const accountMode = await resolveAccountMode();
+        const loadAccountEncryption = async (operationSignal?: AbortSignal) => {
+            const accountMode = await resolveAccountMode(operationSignal);
             const encryption = accountMode === 'plain' ? null : await createEncryptionFromAuthCredentials(credentials);
             assertCurrent();
             return { accountMode, encryption };
         };
-        let accountEncryption: ReturnType<typeof loadAccountEncryption> | null = null;
-        const resolveAccountEncryption = () => (accountEncryption ??= loadAccountEncryption());
+        type CapturedAccountEncryption = Awaited<ReturnType<typeof loadAccountEncryption>>;
+        let accountEncryption: CapturedAccountEncryption | null = null;
+        const accountEncryptionReads = createScopedResolutionSingleFlight<CapturedAccountEncryption>();
+        const resolveAccountEncryption = (operationSignal?: AbortSignal) => {
+            assertCurrent();
+            throwIfAborted(operationSignal);
+            if (accountEncryption !== null) return Promise.resolve(accountEncryption);
+            return accountEncryptionReads.run('encryption', loadAccountEncryption, {
+                signal: operationSignal,
+                onResolved: (value, live) => { if (live) accountEncryption = value; },
+            });
+        };
         // The existing artifact codec requires an invocation-local key map. Never reuse the
         // focused sync singleton's Account-owned keys or publish a background Home into it.
         const artifactDataKeys: ArtifactDataKeyCache = new Map();
@@ -401,6 +436,12 @@ export async function captureLazyActionAccountContext(serverIdRaw: string, signa
                     return artifact;
                 }));
             });
+        const readArtifactHeader = async (artifactId: string, options?: Pick<ArtifactReadOptions, 'signal' | 'fresh'>): Promise<DecryptedArtifact | null> => {
+            const [result] = await readArtifactHeaders([artifactId], options);
+            if (!result) throw artifactContentUnavailable();
+            if (result.status === 'rejected') throw result.reason;
+            return result.value;
+        };
         const accessApi = createArtifactAccessApi(credentials, { request, readTransport, serverId });
         const prepareArtifact = async (artifactId: string, operationSignal?: AbortSignal) => {
             // A held pre-operation census cannot witness the resulting audience.
@@ -486,7 +527,7 @@ export async function captureLazyActionAccountContext(serverIdRaw: string, signa
             assertCurrent();
             const publication: { artifact?: DecryptedArtifact } = {};
             await createArtifactWithHeaderViaApi({ ...await artifactParams(), artifactId, signal: operationSignal ?? signal,
-                header, body, source, memoryDecisionSource, savedBy: savedBy ?? { kind: 'person', accountId },
+                header, body, source, memoryDecisionSource, savedBy: savedBy === undefined ? { kind: 'person', accountId } : savedBy,
                 addArtifact: (artifact) => {
                     publication.artifact = artifact;
                     if (canPublish()) storage.getState().addArtifact(artifact);
@@ -503,7 +544,7 @@ export async function captureLazyActionAccountContext(serverIdRaw: string, signa
                 const publication: { artifact?: DecryptedArtifact } = {};
                 try {
                     await updateArtifactWithHeaderViaApi({ ...await artifactParams(), artifactId, expectedRevision, signal: operationSignal ?? signal,
-                        header, body, memoryDecisionSource, savedBy: savedBy ?? { kind: 'person', accountId }, getArtifact: () => current,
+                        header, body, memoryDecisionSource, savedBy: savedBy === undefined ? { kind: 'person', accountId } : savedBy, getArtifact: () => current,
                         updateArtifact: (artifact) => {
                             publication.artifact = artifact;
                             if (canPublish()) storage.getState().updateArtifact(artifact);
@@ -541,6 +582,8 @@ export async function captureLazyActionAccountContext(serverIdRaw: string, signa
                 assertCurrent();
                 throwIfAborted(options?.signal);
                 return { artifactId: artifact.id, header, body: artifact.body,
+                    ...(artifact.ownerDisplayName === undefined ? {} : { ownerDisplayName: artifact.ownerDisplayName }),
+                    ...(artifact.sharedTeamIds === undefined ? {} : { sharedTeamIds: artifact.sharedTeamIds }),
                     provenance: artifact.provenance,
                     ...access, ...sharing,
                     ...(options?.includeGrants ? { grants: audience?.artifactId === artifactId
@@ -636,6 +679,7 @@ export async function captureLazyActionAccountContext(serverIdRaw: string, signa
             readTransport,
             resolveHomeTarget, shareableServerUrl,
             request, assertCurrent, assertAccountCurrent, assertResultCurrent, dispose, accountLifetime, accountOnlyLifetime,
+            prepareRequest: requestAuthorization ? prepareRequest : undefined,
             resolveAccountMode, resolveAccountEncryption,
             readLaunchProfileSnapshot,
             readLaunchProfiles: async (rawProfiles: unknown) => {
@@ -720,6 +764,7 @@ export async function captureLazyActionAccountContext(serverIdRaw: string, signa
             },
             fetchArtifact,
             readArtifact,
+            readArtifactHeader,
             readArtifactHeaders,
             // Finite content observations use the same codec and authority without
             // invalidating the list that is currently reading them.
@@ -762,7 +807,7 @@ export async function captureLazyActionAccountContext(serverIdRaw: string, signa
             restoreArtifactRevision: async (input: ArtifactActionInputV1<'artifact.revisions.restore'>, operationSignal?: AbortSignal, savedBy?: ArtifactSavedByV1) => {
                 assertCurrent();
                 const result = await restoreArtifactBodyRevisionViaApi({ ...await artifactParams(), ...input, signal: operationSignal ?? signal,
-                    savedBy: savedBy ?? { kind: 'person', accountId },
+                    savedBy: savedBy === undefined ? { kind: 'person', accountId } : savedBy,
                     updateArtifact: (artifact) => { if (canPublish()) storage.getState().updateArtifact(artifact); },
                 });
                 assertCurrent();

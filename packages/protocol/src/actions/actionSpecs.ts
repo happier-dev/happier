@@ -1,3 +1,5 @@
+import { BotTemplateActionInputSchemasV1, BotTemplateActionOutputSchemasV1, type BotTemplateActionIdV1 } from '../bots/templates/botTemplateActionsV1.js';
+import { BOT_TEMPLATE_ACTION_SPECS_V1 } from './specs/botTemplates.js';
 import { MACHINE_REACHABILITY_ACTION_SPECS_V1 } from './specs/machineReachability.js';
 import { SESSION_MESSAGE_PIN_ACTION_SPECS } from './sessionMessagePinActionSpecs.js';
 import { MEDIA_ANNOTATION_ACTION_SPECS } from './mediaAnnotationAction.js';
@@ -567,6 +569,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_FAMILIES: readonly (
   ...PROVIDER_ACTION_SPECS_V1,
   ...REMOTE_HOST_ACTION_SPECS_V1,
   ...HOME_RUNTIME_ACTION_SPECS_V1,
+  ...(BOT_TEMPLATE_ACTION_SPECS_V1 satisfies readonly PreNormalizedActionSpec[]),
   ...ARTIFACT_FOLDER_ACTION_SPECS_V1,
   ...MANAGED_IDENTITY_PROVIDER_ACTION_SPECS,
   ...MANAGED_GITHUB_APP_ACTION_SPECS,
@@ -1551,6 +1554,11 @@ type ArtifactAccessActionSpecDefinition = {
   >;
 }[ArtifactAccessActionIdV1];
 
+type BotTemplateActionSpecDefinition = {
+  [Id in BotTemplateActionIdV1]: CanonicalActionSchemaDefinition<Id,
+    (typeof BotTemplateActionInputSchemasV1)[Id], (typeof BotTemplateActionOutputSchemasV1)[Id], never, 'account_automation'>;
+}[BotTemplateActionIdV1];
+
 type ArtifactActionSpecDefinition = {
   [TActionId in ArtifactActionIdV1]: CanonicalActionSchemaDefinition<
     TActionId,
@@ -1823,6 +1831,7 @@ export type CanonicalActionSpecDefinition =
   | ActionPolicyActionSpecDefinition
   | WorkBoardActionSpecDefinition
   | ArtifactAccessActionSpecDefinition
+  | BotTemplateActionSpecDefinition
   | ArtifactActionSpecDefinition
   | RoleActionSpecDefinition
   | ScmGitActionSpecDefinition

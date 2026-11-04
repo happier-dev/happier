@@ -1,9 +1,16 @@
 import { SESSION_METADATA_LAYOUT_VERSION_V1, createPlainSessionOwnerMetadataEnvelopeV1, createSessionOwnerMetadataV1, projectSessionSharedMetadataV1, type SessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { V2SessionByIdResponseSchema, type V2SessionByIdResponse } from '@happier-dev/protocol/sessions/control/contract';
 import { sealSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
-import { projectSessionDisplayV1, type SessionDisplayProjectionV1 } from '@happier-dev/protocol';
+import { projectSessionDisplayV1, addSessionInitialAccessTeamShareStatement,
+    materializeSessionInitialAccessCreateFields, resolveVerifiedSessionRecipientContentPublicKey,
+    SessionInitialAccessEnvelopeHostError, type SessionDisplayProjectionV1,
+    type SessionInitialAccessMaterializedV1, type SessionSpawnNewInputV2 } from '@happier-dev/protocol/sessions';
+import { decodeHex } from '@/encryption/hex';
+import { readActionCredentialScopeDeniedHttpFailureV1, type ExternalActionExecutionAuthorizationV1, type ExternalActionRequestEnvelope } from '@happier-dev/protocol/actions/externalActionApi';
+import { decodeTemplateBirthExecutionAuthorizationV1, TEMPLATE_BIRTH_EXECUTION_AUTHORIZATION_HEADER_V1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
+import { HappyError } from '@/utils/errors/errors';
 import { encodeBase64 } from '@/encryption/base64';
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
 import type { EnsureSessionVisibleForRouteResult } from '@/sync/domains/session/sessionRouteHydrationState';
@@ -25,9 +32,20 @@ export type SessionCreateOrLoadInput = Readonly<{
     encryption: HostedSystemSessionEncryption | null;
     tag: string;
     metadata: Readonly<Record<string, unknown>>;
+    organizationPlacement?: SessionSpawnNewInputV2['organizationPlacement'];
+    initialAccess?: SessionSpawnNewInputV2['initialAccess'];
+    primaryTeamId?: SessionSpawnNewInputV2['primaryTeamId'];
+    teamCredentialBindings?: SessionSpawnNewInputV2['teamCredentialBindings'];
+    manager?: SessionSpawnNewInputV2['manager'];
     randomBytes(length: number): Uint8Array;
     request(path: string, init: RequestInit): Promise<Response>;
     assertCurrent(): void;
+    /** Private admitted requester proof; absent from public Session authoring input. */
+    templateRequesterAuthorization?: Readonly<{
+        authorization: ExternalActionExecutionAuthorizationV1;
+        originalActionEnvelope: ExternalActionRequestEnvelope;
+    }>;
+    onCreationAuthorization?(authorization: ExternalActionExecutionAuthorizationV1): void;
 }>;
 export type SessionCreateOrLoadResult = Readonly<{
     session: V2SessionByIdResponse['session'];
@@ -72,7 +90,13 @@ export type HostedSystemSessionEnsureResult = Readonly<{
 }>;
 
 type HostedSystemSessionCreateBody = Readonly<{
+    templateRequesterAuthorization?: SessionCreateOrLoadInput['templateRequesterAuthorization'];
     tag: string;
+    organizationPlacement?: SessionSpawnNewInputV2['organizationPlacement'];
+    initialAccess?: SessionInitialAccessMaterializedV1;
+    primaryTeamId?: SessionSpawnNewInputV2['primaryTeamId'];
+    teamCredentialBindings?: SessionSpawnNewInputV2['teamCredentialBindings'];
+    manager?: SessionSpawnNewInputV2['manager'];
     metadataLayoutVersion: typeof SESSION_METADATA_LAYOUT_VERSION_V1;
     sharedMetadata: Readonly<{ ciphertext: string }>;
     ownerMetadata: SessionOwnerMetadataEnvelopeV1;
@@ -102,12 +126,36 @@ function createMetadataPrivacyUpgradeRequiredError(
 async function buildCreateBody(
     input: SessionCreateOrLoadInput,
 ): Promise<HostedSystemSessionCreateBody> {
+    const accessFields = {
+        ...(input.initialAccess === undefined ? {} : { initialAccess: input.initialAccess }),
+        ...(input.primaryTeamId === undefined ? {} : { primaryTeamId: input.primaryTeamId }),
+    };
+    const metadata = addSessionInitialAccessTeamShareStatement(input.metadata, accessFields, input.accountMode);
+    const buildAccess = async (sessionDataKey: Uint8Array | null) => ({
+        ...(input.organizationPlacement === undefined ? {} : { organizationPlacement: input.organizationPlacement }),
+        ...(input.teamCredentialBindings === undefined ? {} : { teamCredentialBindings: input.teamCredentialBindings }),
+        ...(input.manager === undefined ? {} : { manager: input.manager }),
+        ...await materializeSessionInitialAccessCreateFields({ fields: accessFields, sessionEncryptionMode: input.accountMode,
+            sessionDataKey, randomBytes: input.randomBytes,
+            resolveRecipientContentPublicKey: async accountId => {
+                input.assertCurrent();
+                const response = await input.request(`/v1/user/${encodeURIComponent(accountId)}`, {
+                    method: 'GET', headers: { Authorization: `Bearer ${input.credentials.token}` },
+                });
+                input.assertCurrent();
+                if (response.status === 401 || response.status === 403) throw new SessionInitialAccessEnvelopeHostError('not_authenticated', response.status);
+                if (response.status === 404) throw new SessionInitialAccessEnvelopeHostError('session_access_subject_not_found', response.status);
+                if (!response.ok) throw new SessionInitialAccessEnvelopeHostError('session_access_request_failed', response.status);
+                return resolveVerifiedSessionRecipientContentPublicKey(await response.json(), decodeHex);
+            },
+        }),
+    });
     const sharedMetadata = projectSessionSharedMetadataV1({
-        metadata: input.metadata,
+        metadata,
         agentState: null,
     });
     const ownerMetadata = createSessionOwnerMetadataV1({
-        metadata: input.metadata,
+        metadata,
     });
     if (!ownerMetadata.ok) {
         throw createMetadataPrivacyUpgradeRequiredError(
@@ -140,6 +188,7 @@ async function buildCreateBody(
     };
     if (input.accountMode === 'plain') {
         return {
+            ...await buildAccess(null),
             tag: input.tag,
             metadataLayoutVersion: SESSION_METADATA_LAYOUT_VERSION_V1,
             sharedMetadata: {
@@ -174,6 +223,7 @@ async function buildCreateBody(
     }
 
     return {
+        ...await buildAccess(resourceKey.dataKey),
         tag: input.tag,
         metadataLayoutVersion: SESSION_METADATA_LAYOUT_VERSION_V1,
         sharedMetadata: {
@@ -201,10 +251,16 @@ export async function createSessionCreateOrLoad(input: SessionCreateOrLoadInput)
     const headers = new Headers({ 'Content-Type': 'application/json' });
     headers.set('Authorization', `Bearer ${input.credentials.token}`);
     const response = await input.request('/v1/sessions', {
-        method: 'POST', headers, body: JSON.stringify(body),
+        method: 'POST', headers, body: JSON.stringify({ ...body,
+            ...(input.templateRequesterAuthorization ? { templateRequesterAuthorization: input.templateRequesterAuthorization } : {}),
+        }),
     });
     const responsePayload: unknown = await response.json().catch(() => null);
     input.assertCurrent();
+    const scopeDenial = readActionCredentialScopeDeniedHttpFailureV1(response.status, responsePayload);
+    if (scopeDenial) throw new HappyError(scopeDenial.error, false, {
+        status: response.status, kind: 'auth', code: scopeDenial.errorCode,
+    });
     if (!response.ok) throw new Error(`Session create/load failed (${response.status})`);
     const parsed = V2SessionByIdResponseSchema.safeParse(responsePayload);
     if (!parsed.success || parsed.data.session.metadataLayoutVersion !== SESSION_METADATA_LAYOUT_VERSION_V1
@@ -214,6 +270,12 @@ export async function createSessionCreateOrLoad(input: SessionCreateOrLoadInput)
     const created = responsePayload !== null && typeof responsePayload === 'object'
         ? Reflect.get(responsePayload, 'created') : undefined;
     if (typeof created !== 'boolean') throw new Error('Invalid Session create/load disposition');
+    const birthAuthorization = response.headers.get(TEMPLATE_BIRTH_EXECUTION_AUTHORIZATION_HEADER_V1);
+    if (birthAuthorization && input.onCreationAuthorization) {
+        const authorization = decodeTemplateBirthExecutionAuthorizationV1(birthAuthorization);
+        if (!authorization) throw new Error('Invalid Session birth authorization');
+        input.onCreationAuthorization(authorization);
+    }
     // A rejoin returns the actual row's envelope; the candidate key is never a launch result.
     return { session: parsed.data.session, disposition: created ? 'created' as const : 'rejoined' as const };
 }

@@ -12,6 +12,27 @@ import { createDeferred } from '@/dev/testkit';
 import { projectArtifactBoundaryReadRow, projectArtifactStoredKind } from '@/dev/testkit/harness/artifactStoreBoundary';
 
 describe('createArtifactWithHeaderViaApi', () => {
+  it('honors explicit provenance omission for a portable release on create and update', async () => {
+    const writes: Record<string, unknown>[] = [];
+    let current: DecryptedArtifact | undefined;
+    const request = async (path: string, init?: RequestInit) => {
+      if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
+      const wire = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      writes.push(wire);
+      return Response.json(path === '/v1/artifacts'
+        ? { ...wire, ownerAccountId: 'owner', access: 'owner', encryptionMode: 'plain', headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 }
+        : { success: true, headerVersion: 2, bodyVersion: 2 });
+    };
+    const { createArtifactWithHeaderViaApi, updateArtifactWithHeaderViaApi } = await import('./syncArtifacts');
+    const token = `header.${encodeBase64(new TextEncoder().encode(JSON.stringify({ sub: 'owner' })), 'base64url')}.signature`;
+    const shared = { credentials: { token }, encryption: null, artifactDataKeys: new Map(), request };
+    const artifactId = await createArtifactWithHeaderViaApi({ ...shared, header: { kind: 'bot_template.v1', title: 'Helper' },
+      body: 'release', savedBy: null, addArtifact: artifact => { current = artifact; } });
+    await updateArtifactWithHeaderViaApi({ ...shared, artifactId, header: { kind: 'bot_template.v1', title: 'Helper' },
+      body: 'next release', savedBy: null, getArtifact: () => current, updateArtifact: artifact => { current = artifact; } });
+    expect(current?.provenance).toBeUndefined();
+    for (const write of writes) expect(write).not.toHaveProperty('provenance');
+  });
   it('preserves valid long private kinds on create and update without an unrepresentable public hint', async () => {
     const writes: Record<string, unknown>[] = [];
     let current: DecryptedArtifact | undefined;

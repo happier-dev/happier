@@ -90,6 +90,8 @@ export type SessionStateSyncEngine = Readonly<{
     value: SessionStateFieldWriteValue<F>;
     reason: SessionStateApplyReason;
     metadataReason: string;
+    expectedMetadataRevision?: number;
+    expectedValue?: SessionStateFieldValue<F> | null;
     ctx?: RuntimeFacetCtx;
     maxAttempts?: number;
     mirrorToProvider?: boolean;
@@ -221,6 +223,8 @@ export function createSessionStateSyncEngine(
         createSessionStateFieldMetadataUpdater(
           params.fieldId,
           params.value as SessionStateFieldWriteValue<typeof params.fieldId>,
+          params.expectedMetadataRevision,
+          params.expectedValue,
         ),
         {
           reason: params.metadataReason,

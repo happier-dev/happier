@@ -1,3 +1,6 @@
+import { SessionCreationMachineSetupExecutionV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
+import { MachineSetupPlanInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { SessionAuthoringCheckoutCreationDraftV1Schema } from '@happier-dev/protocol/sessions/authoring/creationFieldsV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { z } from 'zod/mini';
 import { AgentSessionToolPolicyShapeV1 } from '@happier-dev/protocol/runtime/permissionIntentV1';
@@ -198,6 +201,7 @@ const SpawnDaemonSessionRequestCompatSchema = (<I extends z.core.$ZodType, O ext
   directory: z.string(),
   directoryKind: z.optional(z.enum(['path', 'managed'])),
   freshSessionCreation: z.optional(z.boolean()),
+  checkoutCreationDraft: z.optional(asHostProtocolZod(SessionAuthoringCheckoutCreationDraftV1Schema)),
   managedDirectorySeed: z.optional(z.strictObject({
     sourceSessionId: z.string().check(z.trim(), z.minLength(1)),
     sourceSessionCreationTag: z.optional(z.string().check(z.trim(), z.minLength(1))),
@@ -215,6 +219,8 @@ const SpawnDaemonSessionRequestCompatSchema = (<I extends z.core.$ZodType, O ext
   identity: z.optional(asHostProtocolZod(SessionIdentityAdditionsV1Schema)),
   memoryEnabled: z.optional(z.boolean()),
   promptStack: z.optional(asHostProtocolZod(SessionPromptStackV1Schema)),
+  machineSetupPlanInput: z.optional(asHostProtocolZod(MachineSetupPlanInputV1Schema)),
+  machineSetupExecution: z.optional(asHostProtocolZod(SessionCreationMachineSetupExecutionV1Schema)),
   initialAccess: z.optional(SessionInitialAccessDraftV1Schema),
   initialTriggers: z.optional(z.array(asHostProtocolZod(SessionInitialTriggerAdmissionV1Schema))),
   manager: z.optional(SessionManagerV1Schema),
@@ -435,6 +441,7 @@ const SPAWN_SESSION_OPTION_KEYS = [
   'directory',
   'directoryKind',
   'freshSessionCreation',
+  'checkoutCreationDraft',
   'managedDirectorySeed',
   'originKind',
   'originSessionId',
@@ -445,6 +452,8 @@ const SPAWN_SESSION_OPTION_KEYS = [
   'spawnNonce',
   'sessionCreationTag',
   'sessionCreationCorrespondence',
+  'machineSetupPlanInput',
+  'machineSetupExecution',
   'placementOrigin',
   'initialTitle',
   'authoringOrigin',

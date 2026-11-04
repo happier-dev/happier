@@ -1217,6 +1217,14 @@ export type PluginSettingsAdministrationActionRequest = Readonly<{
   context: ActionExecutorContext;
 }>;
 
+export type SessionCreationHostContinuationV1 = Readonly<{
+  beforeLaunch(birth: Readonly<{ sessionId: string; disposition: 'created' | 'rejoined'; metadataRevision?: number }>): Promise<void>;
+  hostOnboarding?: Readonly<{ templateName: string; templateVersion: string; firstTask?: string }>;
+  machineSetup?: import('../../machines/managed/machineSetupV1.js').MachineSetupV1;
+  /** Exact admitted setup request; recovery consumes the signed input without recomposition. */
+  machineSetupPlanInput?: import('../../machines/managed/actionsV1.js').MachineSetupPlanInputV1;
+}>;
+
 export type ActionExecutorDeps = Readonly<{
   executionRunHostActionApprovalReplay?: ActionExecutorDeps['targetActionApprovalReplay'];
 
@@ -1325,6 +1333,12 @@ export type ActionExecutorDeps = Readonly<{
     context: ActionExecutorContext;
     phase: 'prepare' | 'dispatch' | 'replay';
   }>) => Promise<import('../actionApprovalPolicy.js').ActionEnvironmentApprovalScopeAdmissionV1 | ActionExecuteFailure>;
+  prepareBotTemplateInstantiation?: (request: Readonly<{ input: unknown; context: ActionExecutorContext }>) =>
+    Promise<HostReviewedChildrenPreparationV1 | ActionExecuteFailure>;
+  prepareBotTemplateRelease?: (request: Readonly<{ input: unknown; context: ActionExecutorContext }>) =>
+    Promise<HostReviewedChildrenPreparationV1 | ActionExecuteFailure>;
+  prepareBotTemplateUpdate?: (request: Readonly<{ input: unknown; context: ActionExecutorContext }>) =>
+    Promise<HostReviewedChildrenPreparationV1 | ActionExecuteFailure>;
   /** Host-private placement port. Null means this process already owns the Machine effect. */
   routeHostChildAction?: (args: Readonly<{
     actionId: ActionId;
@@ -1844,7 +1858,7 @@ export type ActionExecutorDeps = Readonly<{
     /** Host-only exact directory-creation authorization from approval replay. */
     sessionCreationDirectoryApproval?: SessionCreationDirectoryApprovalV1 | null;
     signal?: AbortSignal;
-  }>) => Promise<unknown>;
+  }>, continuation?: SessionCreationHostContinuationV1) => Promise<unknown>;
   /**
    * Host-owned admission for an Agent-originated child Session request. It
    * runs before approval creation and compares explicit V2 choices with the
@@ -3147,6 +3161,14 @@ export type ActionExecutorDeps = Readonly<{
   }>) => Promise<unknown>;
 
   /** Ordinary Account content; authenticated storage and workspace copying remain host-owned. */
+  /** Ordinary Account content; authenticated storage and workspace copying remain host-owned. */
+  botTemplateAction?: (args: Readonly<{
+    actionId: import('../../bots/templates/botTemplateActionsV1.js').BotTemplateActionIdV1;
+    input: unknown;
+    context: ActionExecutorContext;
+    signal?: AbortSignal;
+  }>) => Promise<unknown>;
+
   artifactAction?: (args: ArtifactHostActionInvocationV1 & Readonly<{
     context: ActionExecutorContext;
     signal?: AbortSignal;
@@ -3276,6 +3298,8 @@ export type HostReviewedChildrenPreparationV1 = HostReviewedChildrenPlanV1 & Rea
   executeAdmittedAction?: (request: ActionAdmittedExecutionV1) => Promise<ActionExecuteResult>;
 }>;
 
+/** Fresh domain-owner evidence plus its invocation-scoped continuation; never stored or transported. */
+
 export type ActionAdmittedExecutionV1 = Readonly<{
   actionId: ActionId;
   input: unknown;
@@ -3295,6 +3319,10 @@ export type AdmittedClientActionContext = ActionExecutorContext & Readonly<{
 }>;
 
 export type HostReviewedChildInvocationServicesV1 = Readonly<{
+  /** Trusted composition callback retained by the reviewed parent; never a public spawn operand. */
+  sessionCreation?: SessionCreationHostContinuationV1;
+  /** Explicit recipient inclusion for a template's new skill; never an Everywhere default. */
+  templateSkillSessionId?: string;
   /** Same host-admitted purpose seed; carried beside, never inside, child operands. */
   connectedAccountPurposeBinding?: import('../../connect/connectedAccountInvocationPurposeBinding.js').ConnectedAccountInvocationPurposeBinding;
   /** Exact retained descriptor returned by Home admission; never a child business operand. */
@@ -3314,6 +3342,7 @@ export type HostReviewedChildInvocationServicesV1 = Readonly<{
     }>[] }>>;
   }>;
 }>;
+
 
 export type HostReviewedChildInvocationV1 = Readonly<{
   action: ActionId | Readonly<{ pluginId: string; localId: string }>;

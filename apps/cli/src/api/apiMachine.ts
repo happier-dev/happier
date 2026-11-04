@@ -4492,6 +4492,15 @@ export class ApiMachineClient {
         }
         if (!capabilities) return null;
         if (!capabilities?.sessionSpawn) return capabilities;
+        // The Home validates complete Machine publications strictly. Older Homes
+        // retain the ordinary spawn epochs instead of receiving an unknown one.
+        if (snapshot?.status === 'ready'
+            && snapshot.features.capabilities.machines?.sessionSpawn?.protocolVersions.some(version => version === 4) === true) {
+            capabilities = { ...capabilities, sessionSpawn: { protocolVersions: [1, 2, 3, 4] } };
+        } else if (snapshot?.status === 'ready'
+            && snapshot.features.capabilities.machines?.sessionSpawn?.protocolVersions.some(version => version === 3) === true) {
+            capabilities = { ...capabilities, sessionSpawn: { protocolVersions: [1, 2, 3] } };
+        }
 
         // Capability publication consumes only the daemon-wide cache supplied by
         // composition. Absence is unknown and must not trigger a per-publication

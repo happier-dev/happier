@@ -1,6 +1,9 @@
 import nacl from 'tweetnacl';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { ExternalActionExecutionAuthorizationRequestV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 const { machinePluginUiResourceRead } = await import('@/sync/ops/machineContributionRegistryProjection');
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { projectExternalActionHttpError } from '@happier-dev/protocol/actions/externalActionApi';
@@ -49,6 +52,135 @@ async function execute() {
 }
 
 describe('captured Account Action response decoding', () => {
+    it('uses the actual birth proof only for its Session key envelopes and retains the original content root', async () => {
+        if (!account) throw new Error('Expected captured Account');
+        const { createTemplateRequesterActionAdmissionScope } = await import('./externalActionAccountTransport');
+        const originalActionEnvelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: 'template-key-envelopes', target: binding.target, input: {} });
+        const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'original-template-root', binding: {
+            ...binding, actionId: 'template.instantiate', requestId: originalActionEnvelope.requestId,
+            machineId: 'machine-1', installationId: 'installation-1', custodianAccountId: 'owner', accountEncryptionMode: 'plain',
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(originalActionEnvelope),
+        } });
+        const birth = ExternalActionExecutionAuthorizationV1Schema.parse({ ...root, token: 'actual-birth-root', binding: {
+            ...root.binding, templateRequesterBirth: { sessionId: 'created-session', creationTag: `create:v1:${'a'.repeat(43)}` },
+        } });
+        account.dispose();
+        const scope = createTemplateRequesterActionAdmissionScope();
+        account = await captureLazyActionAccountContext(serverId, undefined, scope.requestAuthorization);
+        expect(await scope.prepareOriginal(account, {}, { surface: 'ui', originalActionEnvelope,
+            externalActionExecutionAuthorization: root })).toMatchObject({ ok: true });
+        const keyPath = '/v2/sessions/created-session/data-key/envelopes';
+        const keyReadPath = `${keyPath}?state=action_required&cursor=next-page`;
+        homes.answer(serverId, keyPath, { select: (_body, http) => ({
+            status: new Headers(http.init?.headers).get('x-happier-action-execution-authorization') === birth.token ? 200 : 403,
+            body: { ok: true },
+        }) });
+        homes.answer(serverId, keyReadPath, { select: (_body, http) => ({
+            status: new Headers(http.init?.headers).get('x-happier-action-execution-authorization') === birth.token ? 200 : 403,
+            body: { status: 'not_required' },
+        }) });
+        scope.retainBirthAuthorization(birth);
+        for (const method of ['GET', 'PATCH']) {
+            expect((await account.request(keyPath, { method }, { includeAuth: true, retry: 'none' })).status).toBe(200);
+        }
+        const { createEnvelopeTransport } = await import('./session/sessionDataKeyEnvelopeTransport');
+        const capturedAccount = account;
+        const envelopes = createEnvelopeTransport({ authority: { request: capturedAccount.request },
+            guard: { signal: new AbortController().signal, check: capturedAccount.assertCurrent,
+                isCurrent: capturedAccount.accountLifetime.isCurrent }, sessionId: 'created-session' });
+        expect(await envelopes.fetchPage('next-page')).toEqual({ status: 'not_required' });
+        expect(() => scope.retainBirthAuthorization({ ...birth, binding: { ...birth.binding, accountId: 'another-account' } })).toThrow('execution_not_authorized');
+        const artifactPath = '/v1/artifacts/template-content';
+        homes.answer(serverId, artifactPath, { select: (_body, http) => ({
+            body: { root: new Headers(http.init?.headers).get('x-happier-action-execution-authorization') },
+        }) });
+        expect(await (await account.request(artifactPath, undefined, { includeAuth: true, retry: 'none' })).json()).toEqual({ root: root.token });
+        const otherPath = '/v2/sessions/other-session/data-key/envelopes';
+        homes.answer(serverId, otherPath, { select: (_body, http) => ({
+            body: { root: new Headers(http.init?.headers).get('x-happier-action-execution-authorization') },
+        }) });
+        expect(await (await account.request(otherPath, { method: 'GET' },
+            { includeAuth: true, retry: 'none' })).json()).toEqual({ root: root.token });
+    });
+    it('plans an update through the original Account mint with its exact admitted template root before approval', async () => {
+        if (!account) throw new Error('Expected captured Account');
+        const { executeManagedMachineNativeAction } = await import('./machines/managedMachineOrigination');
+        const { createTemplateRequesterActionAdmissionScope } = await import('./externalActionAccountTransport');
+        const { ManagedMachineActionInputSchemasV1 } = await import('@happier-dev/protocol/machines/managed/actionsV1');
+        const machine = { ...createPlainMachineRowFixture({ id: 'machine-1', accountId: 'owner' }), installationId: 'installation-1',
+            installationPublicKey: Buffer.from(nacl.box.keyPair().publicKey).toString('base64') };
+        homes.answer(serverId, '/v1/machines/machine-1', { body: { machine } });
+        const requestId = 'update-plan-before-approval';
+        const input = ManagedMachineActionInputSchemasV1['machines.setup.plan'].parse({
+            homeId: binding.serverIdentityId, machineId: 'machine-1', mode: 'effects', sources: [{ kind: 'direct', setup: {} }] });
+        const originalActionEnvelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId, target: binding.target,
+            input: { sessionRef: { serverId: binding.serverIdentityId, sessionId: 'bot-1' }, expectedVersion: '2.0.0',
+                expectedRevision: { headerVersion: 1, bodyVersion: 1 }, expectedMetadataRevision: 1 } });
+        const planInputDigest = computeActionInputApprovalDigestV1('machines.setup.plan', input);
+        const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'admitted-template-update', binding: {
+            ...binding, actionId: 'template.updates.apply', requestId, machineId: 'machine-1', installationId: 'installation-1',
+            custodianAccountId: 'owner', accountEncryptionMode: 'plain', admittedMachineRole: 'manage',
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(originalActionEnvelope),
+            templateRequesterSetupAdmission: { kind: 'software', planInputDigest },
+        } });
+        const context = { surface: 'ui' as const, authority: 'present_user' as const, serverIdentityId: binding.serverIdentityId,
+            actionRequestId: requestId, originalActionEnvelope, externalActionExecutionAuthorization: authorization };
+        account.dispose();
+        const scope = createTemplateRequesterActionAdmissionScope('template.updates.apply');
+        account = await captureLazyActionAccountContext(serverId, undefined, scope.requestAuthorization);
+        expect(await scope.prepareOriginal(account, {}, context)).toMatchObject({ ok: true });
+        const actionPath = '/v1/actions/machines.setup.plan';
+        homes.answer(serverId, `${actionPath}/execution-authorization`, { select: (body, http) => {
+            expect(new Headers(http.init?.headers).get('x-happier-action-execution-authorization')).toBeNull();
+            expect(body).toMatchObject({ templateRequesterSetupPlanContinuation: { authorization, originalActionEnvelope } });
+            const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+            return { body: { v: 1, token: 'native-update-plan', binding: { ...authorization.binding,
+                actionId: 'machines.setup.plan', requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope),
+                templateRequesterSetupAdmission: undefined,
+                templateRequesterSetupPlanAdmission: { parentActionId: 'template.updates.apply',
+                    parentRequestEnvelopeDigest: authorization.binding.requestEnvelopeDigest, planInputDigest },
+            } } };
+        } });
+        const result = { desiredRevision: 1, sources: [{ kind: 'direct', setup: {} }], exclusions: [], support: [], recipePlans: [] };
+        homes.answer(serverId, actionPath, { select: (body, http) => {
+            expect(new Headers(http.init?.headers).get('x-happier-action-execution-authorization')).toBeNull();
+            expect(body).toMatchObject({ envelope: { requestId, input }, executionAuthorization: { token: 'native-update-plan' } });
+            return { body: { v: 1, actionId: 'machines.setup.plan', requestId, execution: { ok: true, result } } };
+        } });
+        expect(await executeManagedMachineNativeAction({ account, actionId: 'machines.setup.plan', input, context }))
+            .toEqual({ ok: true, result });
+        expect(homes.artifacts(serverId).list()).toEqual([]);
+    });
+    it('mints retained managed follow-up authorization even for the requester own ordinary Machine', async () => {
+        if (!account) throw new Error('Expected captured Account');
+        answerOwnedMachine();
+        const actionId = 'machines.setup.plan';
+        const requestId = 'retained-setup-1';
+        const actionPath = `/v1/actions/${actionId}`;
+        const managedContinuation = { managedId: 'managed-1', creationRequestId: 'create-1', expectedIntentRevision: 0 };
+        let admittedContinuation: unknown;
+        let forwardedEnvelope: unknown;
+        homes.answer(serverId, `${actionPath}/execution-authorization`, { select: body => {
+            const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+            admittedContinuation = request.managedContinuation;
+            return { body: { v: 1, token: 'home-managed-follow-up-proof', binding: {
+                ...binding, actionId, requestId, machineId: 'machine-1', installationId: 'installation-1',
+                custodianAccountId: 'owner', accountEncryptionMode: 'plain',
+                requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope),
+                managedContinuation: { ...managedContinuation,
+                    acquireRequestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope) },
+            } } };
+        } });
+        homes.answer(serverId, actionPath, { select: body => {
+            forwardedEnvelope = body;
+            return { body: { v: 1, actionId, requestId, execution: { ok: true, result: { accepted: true } } } };
+        } });
+        const request = { account, machineId: 'machine-1', actionId, requestId,
+            input: { homeId: binding.serverIdentityId, machineId: 'machine-1' }, managedContinuation };
+        expect(await executeOriginalAccountMachineAction(request)).toEqual({ ok: true, result: { accepted: true } });
+        expect(admittedContinuation).toEqual(managedContinuation);
+        expect(forwardedEnvelope).toMatchObject({ executionAuthorization: { token: 'home-managed-follow-up-proof' } });
+    });
     it('routes a native host Resource read through its original Account logs Action', async () => {
         const actionId = 'machines.services.logs.read';
         const resource = { hostRead: 'machines.services.logs' as const,

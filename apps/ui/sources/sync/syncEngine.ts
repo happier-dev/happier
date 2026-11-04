@@ -8528,6 +8528,8 @@ class Sync {
             expectedMetadataRevision?: number;
             onMetadataCommitted?: (revision: number) => void;
             accountLifetime?: Pick<ServerAccountScopeLifetime, 'scope' | 'isCurrent'>;
+            /** The admitted caller's request preparation applies to both captured reads and writes. */
+            prepareRequest?: Parameters<typeof runWithServerRequestAuthorityForServerAccountScope>[0]['prepareRequest'];
             shouldContinue?: () => boolean;
         }>,
     ): Promise<void> => {
@@ -8551,6 +8553,7 @@ class Sync {
         await runWithServerRequestAuthorityForServerAccountScope({
             ...(lifetime ? { scope: lifetime.scope } : { serverId: targetServerId }),
             activeRequest: this.createSessionRequest(sessionId),
+            ...(options?.prepareRequest ? { prepareRequest: options.prepareRequest } : {}),
         }, async (authority) => {
             const isCurrent = () => !credentialSignal.aborted
                 && (!lifetime || (lifetime.isCurrent()

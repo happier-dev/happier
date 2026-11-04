@@ -28,6 +28,7 @@ export type CapturedServerReadTransport = Readonly<{
  * acquired carrier; returning a raw Response here would release it too early.
  */
 type CapturedProfile = Parameters<typeof resolveServerScopedTransport>[0]['profile'];
+export type CapturedServerRequestPreparation = (path: string, init: RequestInit | undefined) => Promise<RequestInit | undefined>;
 type PreparedReadTransport = Readonly<{
     endpointUrl: string;
     runtimeOrigin?: string;
@@ -43,6 +44,8 @@ export function createCapturedServerReadTransport(params: Readonly<{
     credentials: AuthCredentials;
     accountEncryptionObservation?: AccountEncryptionObservationBinding;
     superviseReachability?: boolean;
+    /** An admitted finite invocation retains its own HTTP proof and read scope. */
+    prepareRequest?: CapturedServerRequestPreparation;
 } & ({ profile: CapturedProfile; prepared?: never } | { prepared: PreparedReadTransport; profile?: CapturedProfile })>): CapturedServerReadTransport {
     if (params.prepared) {
         const prepared = params.prepared;
@@ -55,11 +58,12 @@ export function createCapturedServerReadTransport(params: Readonly<{
             prepared.generation, resolveAuthCredentialsScopeKey(params.credentials),
         ]);
         return {
-            ...(prepared.scope ? { scope: prepared.scope } : {}),
+            ...(params.prepareRequest ? { scope: params } : prepared.scope ? { scope: prepared.scope } : {}),
             get key() { return JSON.stringify([bindingKey, readHomeAccountReadRevision(params.serverId)]); },
             async read(path, init, options, consumeResponse) {
                 throwIfAborted(init?.signal ?? undefined);
-                return await prepared.request(path, init, { recoveryRead: 'unbounded', ...options }, consumeResponse);
+                const requestInit = params.prepareRequest ? await params.prepareRequest(path, init) : init;
+                return await prepared.request(path, requestInit, { recoveryRead: 'unbounded', ...options }, consumeResponse);
             },
         };
     }
@@ -75,11 +79,13 @@ export function createCapturedServerReadTransport(params: Readonly<{
         resolveAuthCredentialsScopeKey(params.credentials),
     ]);
     return {
+        ...(params.prepareRequest ? { scope: params } : {}),
         get key() {
             return JSON.stringify([bindingKey, readHomeAccountReadRevision(params.serverId)]);
         },
         async read(path, init, options, consumeResponse) {
             throwIfAborted(init?.signal ?? undefined);
+            const requestInit = params.prepareRequest ? await params.prepareRequest(path, init) : init;
             const transport = await resolveServerScopedTransport({ profile, credentials: params.credentials });
             try {
                 throwIfAborted(init?.signal ?? undefined);
@@ -92,7 +98,7 @@ export function createCapturedServerReadTransport(params: Readonly<{
                     recoverStoredCredentials: true,
                     superviseReachability: params.superviseReachability,
                     ...(transport.homeCarrier ? { homeCarrier: transport.homeCarrier } : {}),
-                })(path, init, { recoveryRead: 'unbounded', ...options }, consumeResponse);
+                })(path, requestInit, { recoveryRead: 'unbounded', ...options }, consumeResponse);
             } finally {
                 await transport.release();
             }

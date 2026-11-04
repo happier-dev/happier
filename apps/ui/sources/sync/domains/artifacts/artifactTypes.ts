@@ -20,6 +20,8 @@ export interface Artifact {
     id: string;
     /** Authenticated sharing and owner Account-mode projection from HTTP. */
     ownerAccountId: string;
+    ownerDisplayName?: string | null;
+    sharedTeamIds?: readonly string[];
     access: 'owner' | 'view' | 'edit' | 'admin';
     encryptionMode: 'plain' | 'e2ee';
     publicAudience?: ArtifactPublicAudienceV1;
@@ -79,6 +81,8 @@ export interface DecryptedArtifactBase {
     /** HTTP grant projection; content-only socket events do not carry authority. */
     access?: 'owner' | 'view' | 'edit' | 'admin';
     ownerAccountId?: string;
+    ownerDisplayName?: string | null;
+    sharedTeamIds?: readonly string[];
     /** Authenticated exact-read exposure; missing/socket/list facts never establish privacy. */
     publicAudience?: ArtifactPublicAudienceV1;
     id: string;

@@ -12,7 +12,7 @@ import {
 } from './sessionInputAdmission.js';
 import { SessionStoredMessageContentSchema } from './sessionStoredMessageContent.js';
 import { asProtocolZod } from "../../plugins/actions/internalProtocolZodAdapter.js";
-import { ExternalActionMachineRpcExecutionV1Schema } from '../../actions/externalActionApi.js';
+import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionMachineRpcExecutionV1Schema, ExternalActionRequestEnvelopeSchema } from '../../actions/externalActionApi.js';
 import { SessionMessageReplyAdmissionV1Schema } from './sessionMessageReplyV1.js';
 
 export const SESSION_PENDING_ENQUEUE_BY_MACHINE_EVENT_V1 =
@@ -65,6 +65,24 @@ export const SessionPendingEnqueueByMachineRequestV1Schema = lazyZodSchema(() =>
 export type SessionPendingEnqueueByMachineRequestV1 = z.infer<
   typeof SessionPendingEnqueueByMachineRequestV1Schema
 >;
+
+/** One requester-owned startup input under the signed, canonical template birth. */
+export const SessionPendingTemplateOnboardingInputV1Schema = lazyZodSchema(() => z.strictObject({
+  v: SessionPendingEnqueueByMachineFieldsV1.v,
+  sessionId: SessionPendingEnqueueByMachineFieldsV1.sessionId,
+  targetMachineId: SessionPendingEnqueueByMachineFieldsV1.targetMachineId,
+  localId: SessionPendingEnqueueByMachineFieldsV1.localId,
+  content: SessionPendingEnqueueByMachineFieldsV1.content,
+  requestedAction: SessionPendingEnqueueByMachineFieldsV1.requestedAction,
+  requestEqualityEvidenceV1: SessionPendingEnqueueByMachineFieldsV1.requestEqualityEvidenceV1,
+}).check(z.superRefine(refineSessionPendingMachineEqualityEvidenceV1)));
+export type SessionPendingTemplateOnboardingInputV1 = z.infer<typeof SessionPendingTemplateOnboardingInputV1Schema>;
+
+export const SessionPendingTemplateOnboardingRequestV1Schema = lazyZodSchema(() => z.strictObject({
+  authorization: ExternalActionExecutionAuthorizationV1Schema,
+  originalActionEnvelope: ExternalActionRequestEnvelopeSchema,
+  request: SessionPendingTemplateOnboardingInputV1Schema,
+}));
 
 export const SessionPendingEnqueueByMachineResponseV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1),

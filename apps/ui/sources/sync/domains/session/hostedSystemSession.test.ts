@@ -1,3 +1,9 @@
+import { deriveSessionCreationTagV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
+import { openEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
+import { signAccountContentKeyBindingV1 } from '@happier-dev/protocol/crypto/accountContentKeyBindingV1';
+import { computeExternalActionRequestEnvelopeDigestV1, encodeTemplateBirthExecutionAuthorizationV1,
+    TEMPLATE_BIRTH_EXECUTION_AUTHORIZATION_HEADER_V1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import {
     createPlainSessionOwnerMetadataEnvelopeV1,
     createSessionOwnerMetadataV1,
@@ -636,4 +642,80 @@ describe('createHostedSystemSessionEnsurer', () => {
         })).rejects.toThrow('Invalid Session create/load response');
         expect(hydrate).not.toHaveBeenCalled();
     });
+});
+
+
+it.each(['plain', 'e2ee'] as const)('carries the admitted template root and returns its committed birth authorization (%s)', async accountMode => {
+        const tag = deriveSessionCreationTagV1({ callerCreationNamespace: 'user', creationKey: 'browser-template-copy' });
+        const originalActionEnvelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: 'template-request',
+            target: { kind: 'machine', machineId: 'asleep-machine' }, input: {} });
+        // Home is the genuine boundary: this fixture supplies its typed issuer response.
+        const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'issuer-root-token', binding: {
+            accountId: 'requester-account', authentication: { kind: 'account', tokenEpoch: 0 }, serverIdentityId: 'srv_template',
+            machineId: 'asleep-machine', custodianAccountId: 'requester-account', installationId: 'machine-installation',
+            actionId: 'template.instantiate', requestId: originalActionEnvelope.requestId,
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(originalActionEnvelope), target: originalActionEnvelope.target,
+        } });
+        const bound = ExternalActionExecutionAuthorizationV1Schema.parse({ ...authorization, token: 'issuer-birth-token',
+            binding: { ...authorization.binding, templateRequesterBirth: { sessionId: 'committed-bot', creationTag: tag } } });
+        const delivered: unknown[] = [];
+        let posted: unknown;
+        const result = await createSessionCreateOrLoad({
+            credentials: accountMode === 'plain' ? { token: 'requester-token' } : createDataKeyCredentials('requester-token'),
+            accountMode, encryption: accountMode === 'e2ee' ? createEncryptionFixture() : null,
+            tag, metadata: { name: 'My copy' }, randomBytes: length => new Uint8Array(length).fill(4), assertCurrent: () => {},
+            templateRequesterAuthorization: { authorization, originalActionEnvelope },
+            onCreationAuthorization: value => { delivered.push(value); },
+            request: async (_path, init) => {
+                const body = JSON.parse(String(init.body));
+                posted = body.templateRequesterAuthorization;
+                const response = sessionResponse({ id: 'committed-bot', metadata: body.sharedMetadata.ciphertext,
+                    ownerMetadata: body.ownerMetadata, encryptionMode: accountMode, dataEncryptionKey: body.dataEncryptionKey });
+                response.headers.set(TEMPLATE_BIRTH_EXECUTION_AUTHORIZATION_HEADER_V1, encodeTemplateBirthExecutionAuthorizationV1(bound));
+                return response;
+            },
+        });
+        expect(posted).toEqual({ authorization, originalActionEnvelope });
+        expect(delivered).toEqual([bound]);
+        expect(result).toMatchObject({ disposition: 'created', session: { id: 'committed-bot', encryptionMode: accountMode } });
+    });
+
+
+it.each([{ accountMode: 'plain', recipientReady: false }, { accountMode: 'e2ee', recipientReady: false },
+    { accountMode: 'e2ee', recipientReady: true }] as const)('preserves selected access, organization and Team binding on atomic browser birth ($accountMode/$recipientReady)', async ({ accountMode, recipientReady }) => {
+    const credentials = accountMode === 'plain' ? { token: 'token' } : createDataKeyCredentials();
+    const encryption = accountMode === 'plain' ? null : await createEncryptionFromAuthCredentials(credentials);
+    const initialAccess = { grants: [{ subject: { kind: 'account' as const, accountId: 'recipient' }, accessLevel: 'view' as const, canApprovePermissions: false }] };
+    const organizationPlacement = { folderId: 'folder', tagIds: ['tag'] };
+    const recipient = tweetnacl.box.keyPair();
+    const signing = tweetnacl.sign.keyPair();
+    const calls: string[] = [];
+    let posted: unknown;
+    await createSessionCreateOrLoad({ credentials, accountMode, encryption, tag: 'selected-birth', metadata: { name: 'Bot' },
+        initialAccess, primaryTeamId: 'team', organizationPlacement, teamCredentialBindings: [], manager: { sessionId: 'lead' },
+        randomBytes: tweetnacl.randomBytes, assertCurrent: () => {},
+        request: async (path, init) => {
+            calls.push(path);
+            if (path === '/v1/user/recipient') return Response.json({ user: { id: 'recipient', firstName: 'Recipient', lastName: null,
+                avatar: null, username: 'recipient', bio: null, badges: [], status: 'none',
+                publicKey: recipientReady ? [...signing.publicKey].map(value => value.toString(16).padStart(2, '0')).join('') : null,
+                contentPublicKey: recipientReady ? encodeBytes(recipient.publicKey) : null,
+                contentPublicKeySig: recipientReady ? encodeBytes(signAccountContentKeyBindingV1({ accountSigningSecretKey: signing.secretKey,
+                    contentPublicKey: recipient.publicKey })) : null,
+                recipientEnvelopeReadiness: recipientReady ? { status: 'available' } : { status: 'unavailable', reason: 'encryption_setup_required' } } });
+            const body = JSON.parse(String(init.body)); posted = body;
+            if (recipientReady) {
+                const key = openEncryptedDataKeyEnvelopeV1({ envelope: decodeBase64(body.initialAccess.grants[0].accountEnvelopeInput.encryptedDataKey, 'base64'),
+                    recipientSecretKeyOrSeed: recipient.secretKey });
+                expect(key).toEqual(await encryption!.decryptEncryptionKey(body.dataEncryptionKey));
+                const codec = await encryption!.openEncryption(key);
+                const [shared] = await codec.decrypt([decodeBase64(body.sharedMetadata.ciphertext, 'base64')]);
+                expect(shared).toMatchObject({ teamShareStatementV1: { v: 1, teamIds: ['team'] } });
+            }
+            return sessionResponse({ id: 'selected-bot', metadata: body.sharedMetadata.ciphertext, ownerMetadata: body.ownerMetadata,
+                encryptionMode: accountMode, dataEncryptionKey: body.dataEncryptionKey });
+        },
+    });
+    expect(posted).toMatchObject({ initialAccess, primaryTeamId: 'team', organizationPlacement, teamCredentialBindings: [], manager: { sessionId: 'lead' } });
+    expect(calls).toEqual(accountMode === 'plain' ? ['/v1/sessions'] : ['/v1/user/recipient', '/v1/sessions']);
 });

@@ -392,6 +392,8 @@ export async function fetchAccountEncryptionMode(
     credentials: AuthCredentials,
     opts: Readonly<{
         retry?: 'default' | 'none';
+        /** Preserve the captured request's observation binding while cancelling this reader. */
+        signal?: AbortSignal;
         /**
          * Explicit Home-targeted request transport. Reads never consult ambient
          * focus; identity usage may borrow only this request's admitted socket
@@ -402,16 +404,17 @@ export async function fetchAccountEncryptionMode(
         usage?: AccountEncryptionReadUsage;
     }> = {},
 ): Promise<AccountEncryptionModeResult> {
+    throwIfAborted(opts.signal);
     const binding = opts.usage !== 'fresh-authority' && (opts.usage === 'identity' || (!opts.request && opts.retry !== 'none'))
         ? opts.request ? readAccountEncryptionObservationBinding(opts.request, credentials)
             : sync?.getAccountEncryptionObservationBinding(credentials) ?? null
         : null;
     if (binding) {
         const read = async () => {
-            const identity = await binding.read();
+            const identity = await binding.read(opts.signal);
             return { mode: identity.mode, updatedAt: identity.updatedAt };
         };
-        return !opts.request && opts.retry !== 'none'
+        return !opts.request && !opts.signal && opts.retry !== 'none'
             ? await readSharedAccountEncryptionMode(credentials, read)
             : await read();
     }
@@ -424,6 +427,7 @@ export async function fetchAccountEncryptionMode(
             '/v1/account/encryption',
             {
                 method: 'GET',
+                signal: opts.signal,
                 headers: {
                     Authorization: `Bearer ${credentials.token}`,
                     'Content-Type': 'application/json',
@@ -470,7 +474,7 @@ export async function fetchAccountEncryptionMode(
         // pending owner. Final authority and cursor witnesses never join them.
         return await accountEncryptionModeReads.run(scopeKey, run, { scope: opts.request });
     }
-    if (opts.retry === 'none' || opts.request || opts.usage === 'fresh-authority') {
+    if (opts.retry === 'none' || opts.request || opts.signal || opts.usage === 'fresh-authority') {
         return await run();
     }
 

@@ -66,8 +66,16 @@ export async function prepareHostReviewedChildrenV1(params: Readonly<{
   // A private-schema host original is still original work.
   const machineRuntimeDemand = reviewedChild ? null
     : getActionSpec(actionId).machineRuntimeDemandForInput?.(params.input, context);
-  const prepared = await deps.prepareHostReviewedChildren?.({ actionId, input: params.input, context,
-    ...(machineRuntimeDemand ? { machineRuntimeDemand } : {}) });
+  const prepared = actionId === 'template.instantiate' && deps.prepareBotTemplateInstantiation
+    ? await deps.prepareBotTemplateInstantiation({ input: params.input,
+      context: { ...context, runActionOperation: context.runActionOperation ?? deps.runActionOperation } })
+    : actionId === 'template.release' && deps.prepareBotTemplateRelease
+      ? await deps.prepareBotTemplateRelease({ input: params.input, context })
+    : actionId === 'template.updates.apply' && deps.prepareBotTemplateUpdate
+      ? await deps.prepareBotTemplateUpdate({ input: params.input,
+        context: { ...context, runActionOperation: context.runActionOperation ?? deps.runActionOperation } })
+    : await deps.prepareHostReviewedChildren?.({ actionId, input: params.input, context,
+      ...(machineRuntimeDemand ? { machineRuntimeDemand } : {}) });
   if (prepared && 'ok' in prepared) return prepared;
   const declarations = prepared || params.declaredChildren ? {
     children: [...(prepared?.children ?? []), ...(params.declaredChildren ?? [])],

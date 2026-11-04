@@ -16,6 +16,10 @@ export function resolveMachineRpcFeature(env: NodeJS.ProcessEnv): FeaturesPayloa
                 },
             },
         },
-        capabilities: {},
+        capabilities: {
+            machines: {
+                sessionSpawn: { protocolVersions: [1, 2, 3, 4] },
+            },
+        },
     };
 }

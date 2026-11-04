@@ -1,3 +1,4 @@
+import { prepareSessionCreationTarget } from '@/session/creation/prepareSessionCreationTarget';
 import type { PersistedTakeoverAdmissionWaiter } from '../spawn/persistedTakeoverAdmission';
 import { configuration } from '@/configuration';
 import type { SpawnFailureLimitsReader } from '@/processes/spawnFailure/classifySpawnFailure';
@@ -123,6 +124,7 @@ import { readRequesterAgentStartPolicyV1 } from '../sessionEncryption/requesterA
 import { resolveSessionMemoryCeilingBytes } from '../platform/linux/sessionMemoryCeiling';
 import { readRequesterHomeWithinActionLifetime } from '../sessionEncryption/requesterCurrentness';
 import { ConnectedServiceBindingsV2Schema } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { reportTemplateAcceptedVersionAfterLaunch } from '../sessions/reportTemplateAcceptedVersionAfterLaunch';
 
 /** `SpawnSessionOptions.connectedServices` is wire-typed; read its team-resource selection through the canonical schema. */
 function hasTeamResourceConnectedServiceBinding(connectedServices: unknown): boolean {
@@ -145,6 +147,7 @@ export type ExecuteSpawnSessionRequestParams = Readonly<{
     readSpawnFailureLimits?: SpawnFailureLimitsReader;
     checkRegistryUpdates?: () => Promise<void>;
     options: SpawnSessionOptions;
+    applyMachineSetupBeforeAgent?: (options: SpawnSessionOptions) => Promise<import('@happier-dev/protocol').ActionExecuteFailure | null>;
     requesterSessionRuntimeContext?: RequesterSessionRuntimeContext;
     retainedTerminalRecovery?: 'adopt';
     persistedTakeoverAdmissionWaiter?: Pick<PersistedTakeoverAdmissionWaiter, 'getRegistration'>;
@@ -268,6 +271,16 @@ export async function executeSpawnSessionRequest(
                 errorMessage: 'Requester Account settings unavailable' };
         } else await refreshAccountSettingsForSpawn(params);
         recordPreparationPhase('account_settings');
+
+        if (options.machineSetupPlanInput || options.machineSetupExecution) {
+            const failure = params.applyMachineSetupBeforeAgent
+                ? await params.applyMachineSetupBeforeAgent(options)
+                : { errorCode: 'credential_scope_denied', error: 'credential_scope_denied' };
+            if (failure) return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+                errorMessage: failure.error, errorDetail: { kind: 'launch_error', code: failure.errorCode,
+                    message: failure.error } };
+            recordPreparationPhase('machine_setup');
+        }
 
         let activeAccountSettingsSnapshot = requesterRuntime?.readAccountSettingsSnapshot() ?? getActiveAccountSettingsSnapshot();
         let profilesSnapshot: Awaited<ReturnType<typeof readAccountLaunchProfiles>> | undefined;
@@ -669,6 +682,22 @@ export async function executeSpawnSessionRequest(
             recordPreparationPhase('provider_authorization');
             if (!daemonProviderLaunch.ok) {
                 return await refuseSpawn(daemonProviderLaunch.result);
+            }
+            if (options.checkoutCreationDraft) {
+                const target = await prepareSessionCreationTarget({
+                    request: { directory: { kind: 'path', path: directory },
+                        checkoutCreationDraft: options.checkoutCreationDraft,
+                        ...(options.sessionCreationTag ? { sessionCreationTag: options.sessionCreationTag } : {}) },
+                    env: params.processEnv ?? process.env,
+                    signal: preparationSignal ?? params.signal,
+                });
+                if (!target.ok) {
+                    return await refuseSpawn({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+                        errorMessage: target.code });
+                }
+                directory = target.directory;
+                options = { ...options, directory, checkoutCreationDraft: undefined,
+                    attachMetadataIdentityPolicy: 'replace_with_runtime_identity' };
             }
             const preparedAgentIsolationIdentity = await prepareDaemonAgentIsolationIdentity({
                 hasAgentRuntime: catalogAgentId !== null, prepareAgentIsolationMember: params.prepareAgentIsolationMember,
@@ -1478,6 +1507,9 @@ export async function executeSpawnSessionRequest(
             if (!providerBindingAttempt && !retainResourcesForUntrackedHostedChild) {
                 await pluginRuntimeLease.release();
             }
+            await reportTemplateAcceptedVersionAfterLaunch({ result: spawnResult,
+                requester: requesterRuntime?.bootstrap, ownerMetadata: launchSessionAttachPayload?.snapshot?.ownerMetadata,
+                signal: preparationSignal });
             return spawnResult;
         } catch (error) {
             if (!childLaunchSubmitted) await rollbackManagedAllocation();

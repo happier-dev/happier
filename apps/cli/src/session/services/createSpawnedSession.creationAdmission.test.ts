@@ -1,3 +1,9 @@
+import { AxiosError, AxiosHeaders } from 'axios';
+import nacl from 'tweetnacl';
+import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionRequestEnvelopeSchema, EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER } from '@happier-dev/protocol/actions/externalActionApi';
+import { encodeTemplateBirthExecutionAuthorizationV1, TEMPLATE_BIRTH_EXECUTION_AUTHORIZATION_HEADER_V1, verifyExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { createExternalActionAuthorizedRequestHeaders } from '@/api/externalActionExecutionAuthorization';
+import { createCurrentSessionProjectionRecordFixture, createSessionNotificationContextFixture } from '@/testkit/backends/sessionFixtures';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { createServer } from 'node:http';
@@ -28,7 +34,8 @@ import {
   settleSessionInputRequestV1,
 } from '@happier-dev/protocol';
 import { deriveSessionInputActionRequestAttributionV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
-import { UserMessageSchema } from '@/api/types';
+import { SessionCreationKeyV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
+import { SessionMessageContentSchema, UserMessageSchema } from '@/api/types';
 import { SessionOwnerMetadataEnvelopeV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { SessionSpawnNewActionResultV1Schema, SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { materializeMcpServerConfigRecord } from '@/mcp/servers/materializeMcpServerConfigRecord';
@@ -37,10 +44,12 @@ import { getWorkflowStarterExamplesV1 } from '@happier-dev/protocol/workflows/bu
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { createLocalMachineActionTransportFixture } from '@/testkit/apiMachineTransport';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { createWorkflowRequesterCustody, listWorkflowRequesterCredentialScopes } from '@/daemon/workflows/requesterCustody';
 import { configuration } from '@/configuration';
 import { resetServerFeaturesClientForTests } from '@/features/serverFeaturesClient';
 import { createSpawnedSession } from './createSpawnedSession';
+import { submitSpawnInitialInput } from './submitSpawnInitialInput';
 import { SpawnDaemonSessionRequestSchema } from '@/rpc/handlers/spawnSessionOptionsContract';
 import { buildSessionSpawnInitialInputAdmissionForLocalIdV1 } from './sessionInputAdmissionIdentity';
 import { buildSessionMetadataEnvelopeCreateFields } from '@/session/metadata/buildSessionMetadataEnvelopeCreateFields';
@@ -49,7 +58,7 @@ import { buildSessionMetadataEnvelopeCreateFields } from '@/session/metadata/bui
 // lookup decoding, creation settlement and Message admission remain real.
 vi.mock('axios', async (importOriginal) => {
   const actual = await importOriginal<typeof import('axios')>();
-  return { default: { post: vi.fn(), get: vi.fn(), isAxiosError: actual.default.isAxiosError } };
+  return { ...actual, default: { ...actual.default, post: vi.fn(), get: vi.fn(), isAxiosError: actual.default.isAxiosError } };
 });
 vi.mock('@/auth/validateStoredAuthTokenAgainstActiveServer', () => ({
   validateStoredAuthTokenAgainstActiveServer: vi.fn(async () => ({ state: 'valid' })),
@@ -114,6 +123,152 @@ describe('canonical Session creation admission', () => {
       metadataVersion: 1, metadataLayoutVersion: 1, encryptionMode: 'plain', metadata: JSON.stringify({ v: 1 }),
     });
     fetchAccountEncryptionCurrentness.mockRejectedValue(new Error('Account currentness unavailable'));
+  });
+
+  it('admits a rejoined first input whose canonical request omits the optional caller', async () => {
+    const credentials = { token: 'test-token', encryption: null };
+    const fields = buildSessionMetadataEnvelopeCreateFields({ credentials, accountEncryptionMode: 'plain',
+      storedContentMode: 'plain', agentState: null, metadata: { path: '/repo', host: 'host', machineId: 'machine-1',
+        permissionMode: 'read-only', sessionCreationCorrespondenceV1: sessionCreationCorrespondence } });
+    const session = createCurrentSessionProjectionRecordFixture({ ...createSessionNotificationContextFixture('session-created'),
+      encryptionMode: 'plain', share: null, active: true, archivedAt: null,
+      metadataLayoutVersion: fields.metadataLayoutVersion, metadata: fields.sharedMetadata.ciphertext,
+      ownerMetadata: fields.ownerMetadata, dataEncryptionKey: null });
+    fetchSessionById.mockResolvedValue(session);
+    fetchAccountEncryptionCurrentness.mockResolvedValue({ mode: 'plain', version: 1, signingKeyFingerprint: null,
+      contentKeyFingerprint: null, updatedAt: 1,
+      recipientEnvelopeReadiness: { status: 'unavailable', reason: 'plain_account' } });
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json(FeaturesResponseSchema.parse({ features: {},
+      capabilities: { encryption: { storagePolicy: 'optional', allowAccountOptOut: true, defaultAccountMode: 'plain' } } }))));
+    let persisted: import('@/api/types').SessionMessageContent | null = null;
+    vi.mocked(axios.post).mockImplementation(async (url, body: unknown) => {
+      if (!String(url).endsWith('/pending')) throw new Error(`Unexpected input request ${url}`);
+      if (!body || typeof body !== 'object') throw new Error('Missing Pending request');
+      persisted = SessionMessageContentSchema.parse(Reflect.get(body, 'content'));
+      return { status: 200, data: { didWrite: true } };
+    });
+    const localId = buildSessionSpawnInitialInputLocalIdV1({ sessionCreationTag });
+    const handoff = buildSessionSpawnInitialInputAdmissionForLocalIdV1({ actionCaller: { kind: 'host' }, callerSurface: 'cli', localId });
+    const { caller: _optionalCaller, ...requestWithoutCaller } = handoff.inputAdmission.request;
+    const request = SessionInputRequestV1Schema.parse(requestWithoutCaller);
+    expect(request).not.toHaveProperty('caller');
+    expect(await submitSpawnInitialInput({ credentials, sessionId: session.id, targetMachineId: 'machine-1', localId,
+      rejoinSession: session, initialInput: { text: 'First input after reconnect' },
+      initialInputHandoff: { ...handoff, inputAdmission: { ...handoff.inputAdmission, request } },
+    })).toEqual({ status: 'accepted', localId });
+    expect(persisted).not.toBeNull();
+  });
+
+  it.each(['prepared', 'incompatible'] as const)('resolves the managed target directory before preparing deferred Template birth triggers (%s target)', async targetReply => {
+    const custodyHome = await mkdtemp(join(tmpdir(), 'managed-trigger-custody-'));
+    const targetHome = await mkdtemp(join(tmpdir(), 'managed-trigger-target-'));
+    onTestFinished(async () => { await rm(custodyHome, { recursive: true, force: true }); await rm(targetHome, { recursive: true, force: true }); });
+    const { prepareSessionCreationTarget } = await import('@/session/creation/prepareSessionCreationTarget');
+    const creationKey = SessionCreationKeyV1Schema.parse('managed-template-with-trigger');
+    const tag = deriveSessionCreationTagV1({ callerCreationNamespace: 'user', creationKey });
+    const expectedTarget = await prepareSessionCreationTarget({
+      request: { directory: { kind: 'managed' }, sessionCreationTag: tag }, activeServerDir: targetHome,
+    });
+    if (!expectedTarget.ok) throw new Error('Managed target fixture did not resolve');
+    fetchAccountEncryptionCurrentness.mockResolvedValue({ mode: 'plain', version: 1,
+      signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
+      recipientEnvelopeReadiness: { status: 'unavailable', reason: 'plain_account' } });
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json(FeaturesResponseSchema.parse({ features: {},
+      capabilities: { encryption: { storagePolicy: 'optional', allowAccountOptOut: true, defaultAccountMode: 'plain' } } }))));
+    vi.mocked(axios.get).mockImplementation(async url => {
+      if (String(url).endsWith('/v1/account/encryption/currentness')) return { status: 200, data: {
+        mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
+        recipientEnvelopeReadiness: { status: 'unavailable', reason: 'plain_account' },
+      } };
+      if (String(url).endsWith('/v1/machines/machine-1')) return { status: 200, data: { machine: {
+        id: 'machine-1', revokedAt: null, replacedByMachineId: null,
+        operationProtocolCapabilities: { sessionSpawn: { protocolVersions: [1, 2, 3, 4] } },
+        operationProtocolCapabilitiesRevision: 1,
+      } } };
+      throw new Error(`Unexpected managed trigger HTTP read ${url}`);
+    });
+    let birthTriggers: unknown;
+    let birthOwnerMetadata: unknown;
+    vi.mocked(axios.post).mockImplementation(async (url, raw) => {
+      if (String(url).endsWith('/lookup-by-tags')) return { status: 200, data: { sessions: [] } };
+      if (!String(url).endsWith('/v1/sessions') || raw === null || typeof raw !== 'object') {
+        throw new Error(`Unexpected managed trigger HTTP write ${url}`);
+      }
+      birthTriggers = Reflect.get(raw, 'initialTriggers');
+      birthOwnerMetadata = Reflect.get(raw, 'ownerMetadata');
+      // Real HTTP effect boundary: refuse the birth after inspecting the exact
+      // prepared transaction. This test creates no Session or runner.
+      throw new AxiosError('Isolated birth boundary refuses persistence', 'ERR_BAD_REQUEST');
+    });
+    const attribution = { serverId: 'home-a', accountId: 'guest', machineId: 'machine-1', installationId: 'installation' };
+    const deps = createCliActionDeps({
+      token: params.credentials.token, credentials: params.credentials,
+      sessionId: 'cli-global', mode: 'plain', ctx: null, rawSession: {},
+      serverId: 'home-a', serverHttpBaseUrl: 'https://home-a.example.test',
+      actionsSettingsProvider: createActionSettingsProvider({ getAccountSettings: () => accountSettingsParse({ memoryUpkeepInNewBots: false }) }),
+      workflowRequesterCustody: createWorkflowRequesterCustody({ happyHomeDir: custodyHome, attribution,
+        credentials: params.credentials, serverHttpBaseUrl: 'https://home-a.example.test' }),
+      machineActionDirectTargetTransport: targetReply === 'prepared'
+        ? createLocalMachineActionTransportFixture('machine-1')
+        : { machineId: 'machine-1', invoke: async method => {
+          // The real RPC transport may return malformed data. Keep the typed
+          // local preparation owner truthful and exercise its receiver parser.
+          if (method === RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT
+            || method === RPC_METHODS.DAEMON_SESSION_CREATION_PREPARE) return undefined;
+          throw new Error(`Unexpected managed trigger RPC ${method}`);
+        } },
+      ...(targetReply === 'prepared' ? { sessionSpawnDirectTargetTransport: {
+        machineId: 'machine-1',
+        // Exact Machine transport boundary delegates to the real target owner;
+        // no Workflow or directory logic is mocked.
+        prepare: (request: Parameters<typeof prepareSessionCreationTarget>[0]['request']) => prepareSessionCreationTarget({ request, activeServerDir: targetHome }),
+        spawnedSession: { spawn, resolveSpawnSessionByNonce },
+      } } : {}),
+    });
+    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'template-birth-authorization', binding: {
+      accountId: 'owner', authentication: { kind: 'account', tokenEpoch: 0 }, accountEncryptionMode: 'plain',
+      custodianAccountId: 'owner', serverIdentityId: 'home-a', machineId: 'machine-1', installationId: 'installation-1',
+      actionId: 'template.instantiate', requestId: 'managed-trigger-template', target: { kind: 'machine', machineId: 'machine-1' },
+      requestEnvelopeDigest: 'a'.repeat(43),
+    } });
+    const input = SessionSpawnNewInputV2Schema.parse({ creationKey,
+      executionTarget: { serverId: 'home-a', machineId: 'machine-1' }, directory: { kind: 'managed' },
+      agentTarget: sessionCreationCorrespondence.recipe.agentTarget, connectedServices: { v: 2, bindingsByServiceId: {} },
+      memoryEnabled: false, initialTriggers: [{
+        target: { kind: 'inline', definition: getWorkflowStarterExamplesV1().find(item => item.key === 'memory-upkeep-in-session')!.definition },
+        executionTarget: { kind: 'session' }, trigger: { kind: 'schedule', enabled: true,
+          schedule: { kind: 'cron', scheduleExpr: '0 9 * * 0', everyMs: null, timezone: null } },
+      }],
+    });
+    if (!deps.sessionSpawnNew) throw new Error('Canonical spawn dependency is unavailable');
+    const result = await deps.sessionSpawnNew({ ...input, creationKey, sessionCreationTag: tag,
+      actionCaller: { kind: 'host' }, callerSurface: 'cli', actionRequestId: 'managed-trigger-template',
+      context: { surface: 'cli', authority: 'present_user', serverId: 'home-a',
+        externalActionExecutionAuthorization: authorization,
+        originalActionEnvelope: ExternalActionRequestEnvelopeSchema.parse({ v: 1, requestId: 'managed-trigger-template',
+          input: {}, target: { kind: 'machine', machineId: 'machine-1' } }) },
+    }, {
+      beforeLaunch: async () => { throw new Error('Refused birth must not reach content preparation'); },
+      hostOnboarding: { templateName: 'Managed helper', templateVersion: '1.0.0' },
+    });
+    if (targetReply === 'incompatible') {
+      expect(result).toEqual({ type: 'error', code: 'incompatible_target', retryable: false,
+        incompatibleTarget: { reason: 'target_preparation_invalid_result' } });
+      expect(birthTriggers).toBeUndefined();
+      expect(spawn).not.toHaveBeenCalled();
+      return;
+    }
+    // The failure before the fix is an absent birth transaction: the canonical
+    // Workflow recipe parser rejects the missing managed directory first.
+    expect(Array.isArray(birthTriggers)).toBe(true);
+    if (!Array.isArray(birthTriggers)) throw new Error('Trigger-bearing birth never reached the HTTP boundary');
+    expect(birthTriggers).toHaveLength(1);
+    expect(SessionInitialTriggerAdmissionV1Schema.parse(birthTriggers[0])).toMatchObject({
+      executionRecipe: { workflow: { t: 'plain', v: { workspace: { directory: expectedTarget.directory } } } },
+    });
+    expect(birthOwnerMetadata).toMatchObject({ t: 'plain', v: { workspace: { sessionDirectoryV1: { v: 1, kind: 'managed' } } } });
+    expect(birthOwnerMetadata).not.toMatchObject({ t: 'plain', v: { workspace: { path: expectedTarget.directory } } });
+    expect(spawn).not.toHaveBeenCalled();
   });
 
   it('retains the spawn nonce after an uncoded post-dispatch disconnect', async () => {
@@ -860,4 +1015,137 @@ describe('canonical Session creation admission', () => {
     await expect(result).resolves.toMatchObject({ sessionId: 'session-created', disposition: 'created' });
     expect(socket.eventNames()).toEqual([]);
   });
+
+  it.each([false, true])('commits ordinary Bot birth and awaits content preparation before dispatching its runner (retry: %s)', async retry => {
+    const keys = nacl.sign.keyPair();
+    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'template-birth-authorization', binding: {
+      accountId: 'owner', authentication: { kind: 'account', tokenEpoch: 0 }, accountEncryptionMode: 'plain',
+      custodianAccountId: 'owner', serverIdentityId: 'home', machineId: 'machine-1', installationId: 'installation-1',
+      actionId: 'template.instantiate', requestId: 'template-birth', target: { kind: 'machine', machineId: 'machine-1' },
+      requestEnvelopeDigest: 'a'.repeat(43),
+    } });
+    const child = { actionId: 'session.spawn_new', role: 'create_bot', inputDigest: 'b'.repeat(43) };
+    const signed = { authorizationToken: authorization.token, effectActionId: 'session.spawn_new',
+      target: authorization.binding.target, installationId: authorization.binding.installationId,
+      requestId: authorization.binding.requestId, method: 'POST', path: '/v1/sessions', reviewedChild: child };
+    fetchAccountEncryptionCurrentness.mockResolvedValue({ mode: 'plain', version: 1,
+      signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 });
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json(FeaturesResponseSchema.parse({ features: {},
+      capabilities: { encryption: { storagePolicy: 'optional', allowAccountOptOut: true, defaultAccountMode: 'plain' } } }))));
+    const events: string[] = [];
+    let committed: Record<string, unknown> | null = null;
+    vi.mocked(axios.get).mockImplementation(async url => {
+      if (String(url).includes('/v1/access-keys/')) return { status: 200, data: { accessKey: 'existing' } };
+      throw new Error(`Unexpected HTTP read ${url}`);
+    });
+    vi.mocked(axios.post).mockImplementation(async (url, raw, config) => {
+      if (String(url).endsWith('/lookup-by-tags')) return { status: 200, data: { sessions: committed ? [committed] : [] } };
+      if (!String(url).endsWith('/v1/sessions')) throw new Error(`Unexpected HTTP write ${url}`);
+      expect(verifyExternalActionMachineRequestV1({ ...signed, body: raw, publicKey: keys.publicKey,
+        signature: String(config?.headers?.[EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]) })).toBe(true);
+      const input = raw as ReturnType<typeof buildSessionMetadataEnvelopeCreateFields>;
+      events.push('birth');
+      committed = {
+        id: 'session-created', seq: 0, createdAt: 1, updatedAt: 1, active: false, activeAt: 1,
+        runtimeActivityState: 'unknown', runtimeActivityActiveCount: 0, runtimeActivityObservedAt: null,
+        runtimeActivityRevision: 0, archivedAt: null,
+        metadataVersion: 1, metadataLayoutVersion: 1, metadata: input.sharedMetadata.ciphertext,
+        ownerMetadata: input.ownerMetadata, encryptionMode: 'plain', agentState: null, agentStateVersion: 0,
+        dataEncryptionKey: null, share: null,
+      };
+      return { status: 200, data: { created: true, session: committed } };
+    });
+    spawn.mockImplementation(async request => {
+      events.push('launch');
+      expect(request).toMatchObject({ existingSessionId: 'session-created', freshSessionCreation: !retry });
+      expect(events).toEqual(retry ? ['birth', 'content', 'content', 'launch'] : ['birth', 'content', 'launch']);
+      return { type: 'success', sessionId: 'session-created' };
+    });
+    let failPreparation = retry;
+    const preparedParams = { ...params,
+      authorizeCreationRequest: (body: unknown) => createExternalActionAuthorizedRequestHeaders({ authorization,
+        effectActionId: 'session.spawn_new', target: authorization.binding.target, installationId: signed.installationId,
+        method: 'POST', path: '/v1/sessions', body, reviewedChild: child, privateKey: keys.secretKey }),
+      beforeLaunch: async birth => {
+        expect(birth).toMatchObject({ sessionId: 'session-created', metadataRevision: 1 });
+        await Promise.resolve();
+        events.push('content');
+        if (failPreparation) throw new Error('Content boundary unavailable');
+      },
+    } satisfies Parameters<typeof createSpawnedSession>[0];
+    if (retry) {
+      await expect(createSpawnedSession(preparedParams)).rejects.toMatchObject({ details: { sessionId: 'session-created' } });
+      expect(spawn).not.toHaveBeenCalled();
+      failPreparation = false;
+    }
+    const result = await createSpawnedSession(preparedParams);
+    expect(result).toMatchObject({ disposition: retry ? 'rejoined' : 'created', sessionId: 'session-created' });
+    expect(events.filter(event => event === 'birth')).toHaveLength(1);
+  });
+
+
+  it.each([false, true])('commits an asleep managed Bot without inventing a remote path or dispatching a runner and rejoins its birth (private carrier: %s)', async privateCarrier => {
+    fetchAccountEncryptionCurrentness.mockResolvedValue({ mode: 'plain', version: 1,
+      signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 });
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json(FeaturesResponseSchema.parse({ features: {},
+      capabilities: { encryption: { storagePolicy: 'optional', allowAccountOptOut: true, defaultAccountMode: 'plain' } } }))));
+    const sessionId = privateCarrier ? 'session-private-birth' : 'session-deferred-birth';
+    let committed: Record<string, unknown> | null = null;
+    let births = 0;
+    let requests = 0;
+    let returnedAuthorization = false;
+    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'template-birth-authorization', binding: {
+      accountId: 'owner', authentication: { kind: 'account', tokenEpoch: 0 }, accountEncryptionMode: 'plain',
+      custodianAccountId: 'owner', serverIdentityId: 'home', machineId: 'machine-1', installationId: 'installation-1',
+      actionId: 'template.instantiate', requestId: 'template-birth', target: { kind: 'machine', machineId: 'machine-1' },
+      requestEnvelopeDigest: 'a'.repeat(43),
+    } });
+    const carrier = { authorization, originalActionEnvelope: ExternalActionRequestEnvelopeSchema.parse({ v: 1,
+      requestId: 'template-birth', input: {}, target: { kind: 'machine', machineId: 'machine-1' } }) };
+    const birthAuthorization = ExternalActionExecutionAuthorizationV1Schema.parse({ ...authorization,
+      binding: { ...authorization.binding, templateRequesterBirth: { sessionId, creationTag: sessionCreationTag } } });
+    vi.mocked(axios.get).mockImplementation(async url => {
+      if (String(url).includes('/v1/access-keys/')) {
+        if (privateCarrier) throw new Error('The finite birth transaction already owns the Machine binding');
+        return { status: 200, data: { accessKey: 'existing' } };
+      }
+      throw new Error(`Unexpected HTTP read ${url}`);
+    });
+    vi.mocked(axios.post).mockImplementation(async (url, raw) => {
+      if (String(url).endsWith('/lookup-by-tags')) return { status: 200, data: { sessions: committed ? [committed] : [] } };
+      if (!String(url).endsWith('/v1/sessions')) throw new Error(`Unexpected HTTP write ${url}`);
+      requests++;
+      if (privateCarrier) expect(raw).toMatchObject({ templateRequesterAuthorization: carrier });
+      if (committed) return { status: 200, headers: { [TEMPLATE_BIRTH_EXECUTION_AUTHORIZATION_HEADER_V1]:
+        encodeTemplateBirthExecutionAuthorizationV1(birthAuthorization) }, data: { created: false, session: committed } };
+      births++;
+      const body = raw as ReturnType<typeof buildSessionMetadataEnvelopeCreateFields>;
+      expect(body.ownerMetadata).toMatchObject({ t: 'plain', v: { workspace: { sessionDirectoryV1: { v: 1, kind: 'managed' } } } });
+      expect(body.ownerMetadata.t === 'plain' && body.ownerMetadata.v.workspace?.path).toBeUndefined();
+      expect(body.ownerMetadata.t === 'plain' && body.ownerMetadata.v.workspace?.host).toBeUndefined();
+      committed = createCurrentSessionProjectionRecordFixture({ ...createSessionNotificationContextFixture(sessionId),
+        id: sessionId, seq: 0, createdAt: 1, updatedAt: 1, active: false, activeAt: 1,
+        archivedAt: null, metadataVersion: 1, metadataLayoutVersion: 1,
+        metadata: body.sharedMetadata.ciphertext, ownerMetadata: body.ownerMetadata, encryptionMode: 'plain',
+        agentState: null, agentStateVersion: 0, dataEncryptionKey: null, share: null });
+      return { status: 200, headers: { [TEMPLATE_BIRTH_EXECUTION_AUTHORIZATION_HEADER_V1]:
+        encodeTemplateBirthExecutionAuthorizationV1(birthAuthorization) }, data: { created: true, session: committed } };
+    });
+    const deferred = { ...params, directory: undefined, directoryKind: 'managed' as const, deferLaunch: true as const,
+      sessionCreationCorrespondence: SessionCreationCorrespondenceV1Schema.parse({ ...sessionCreationCorrespondence,
+        recipe: { ...sessionCreationCorrespondence.recipe, execution: { machineId: 'machine-1', directory: { kind: 'managed' } } } }),
+      ...(privateCarrier ? { templateRequesterAuthorization: carrier,
+        onCreationAuthorization: (proof: typeof authorization) => { expect(proof).toEqual(birthAuthorization); returnedAuthorization = true; } } : {}),
+      beforeLaunch: async () => { if (privateCarrier) expect(returnedAuthorization).toBe(true); },
+    };
+    const first = await createSpawnedSession(deferred);
+    returnedAuthorization = false;
+    const second = await createSpawnedSession({ ...deferred, ...(privateCarrier ? { resumeOnly: true } : {}) });
+    expect(first).toMatchObject({ disposition: 'created', sessionId });
+    expect(second).toMatchObject({ disposition: 'rejoined', sessionId });
+    expect(births).toBe(1);
+    expect(requests).toBe(privateCarrier ? 2 : 1);
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
 });

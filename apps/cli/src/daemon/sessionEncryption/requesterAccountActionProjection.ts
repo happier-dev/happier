@@ -482,6 +482,7 @@ export async function prepareInstalledRequesterAccountActionContext(input: Reado
   /** Manager-owned proof of the exact forwarded Move child, including current destination access. */
   verifyServiceMoveChildCurrent?: () => Promise<boolean>;
   deploymentChildExecution?: import('@happier-dev/protocol/socketRpc').WorkspaceSyncSourceExecutionV1;
+  templateRequesterSetup?: Readonly<{ planInputDigest: string }>;
   resolveCurrentMachineExecutionOriginContext(signal?: AbortSignal): Promise<CurrentMachineExecutionOriginContext | null>;
   createExecutor(context: RequesterAccountActionContext, installation: NonNullable<ReturnType<typeof readInstallationIdentityIfExistsSync>>):
     NonNullable<ExternalActionExecutionAuthorizationV1['requesterAccountExecutor']>;
@@ -555,6 +556,7 @@ export async function prepareInstalledRequesterAccountActionContext(input: Reado
         effectActionId: input.authorization.binding.actionId, target: input.authorization.binding.target,
         installationId: installation.installationId, privateKey: installation.privateKey,
         serverHttpBaseUrl: input.serverHttpBaseUrl,
+        ...(input.templateRequesterSetup ? { templateRequesterSetup: input.templateRequesterSetup } : {}),
         ...(input.purpose.kind === 'managed_finite_wake' ? { managedFiniteWakeTarget: input.purpose.target } : {}),
         ...(input.signal ? { signal: input.signal } : {}) }));
     }, createExecutor: admitted => input.createExecutor(admitted, installation) });
@@ -652,6 +654,7 @@ export async function prepareRequesterAccountActionContext(input: Readonly<{
         if (value) Object.defineProperty(authorization, key, { value, enumerable: false });
       }
       return { authorization: Object.freeze(authorization), executor, dispose: admitted.dispose, resolveEncryption: admitted.resolveEncryption,
+        actionsSettings: admitted.accountSettingsContext.settings.actionsSettingsV1,
         ...(encoded?.invocation ? { invocation: encoded.invocation } : {}) };
     } catch (error) { await admitted.dispose(); rethrowRequesterHomeReadFailure(error); return refused(phase, error); }
   } finally { if (!custodyTransferred) await sessionCustody?.release(); }

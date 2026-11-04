@@ -327,7 +327,8 @@ export async function insertLayout1SessionRowInTx(
             intents: prepared.teamCredentialBindings,
             authentication: params.authentication,
             ...(params.sessionCreationAuthorization && !('modelBirth' in params.sessionCreationAuthorization)
-                ? { creationAuthorization: params.sessionCreationAuthorization } : {}),
+                ? { creationAuthorization: 'binding' in params.sessionCreationAuthorization
+                    ? params.sessionCreationAuthorization.binding : params.sessionCreationAuthorization } : {}),
         });
         if (!bindingResult.ok) throw new SessionTeamCredentialBindingError(bindingResult.reason);
         if (prepared.teamCredentialBindings.length > 0) {

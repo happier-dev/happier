@@ -1,4 +1,6 @@
 import { createCliArtifactSignedInLinkJoinAction } from './artifactSignedInLinkJoin';
+import type { ArtifactTemplateAcceptedVersionInputV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
+import { reportArtifactTemplateAcceptedVersion } from './artifactAccessHttp';
 import { isDeepStrictEqual } from 'node:util';
 import { resolveInboxItemAttentionV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';
 import { type ServiceHealthNoticeNotificationV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
@@ -543,11 +545,11 @@ export function createAccountArtifactStore(params: Readonly<{
     }
     return parsed.data.provenance;
   };
-  const writeProvenance = async (input: Readonly<{ artifactId: string; bodyVersion: number; savedBy?: ArtifactSavedByV1; source?: ArtifactWorkspaceSourceV1; restoredFromBodyVersion?: number; signal?: AbortSignal; mutationAuthorizationHeaders?: ArtifactRequestAuthorizationHeaders; authorizationHeaders?: ArtifactRequestAuthorizationHeaders }>, stored: StoredArtifact | undefined, contentCodec: Codec): Promise<Readonly<{
+  const writeProvenance = async (input: Readonly<{ artifactId: string; bodyVersion: number; savedBy?: ArtifactSavedByV1 | null; source?: ArtifactWorkspaceSourceV1; restoredFromBodyVersion?: number; signal?: AbortSignal; mutationAuthorizationHeaders?: ArtifactRequestAuthorizationHeaders; authorizationHeaders?: ArtifactRequestAuthorizationHeaders }>, stored: StoredArtifact | undefined, contentCodec: Codec): Promise<Readonly<{
     wire: Readonly<{ provenance?: string; provenanceDataEncryptionKey?: string }>;
     prepareRecipients?: () => Promise<void>;
   }>> => {
-    const savedBy = input.savedBy ?? params.savedBy;
+    const savedBy = input.savedBy === undefined ? params.savedBy : input.savedBy;
     if (!savedBy) return { wire: {} };
     const existing = stored ? await openProvenanceCodec(stored) : null;
     const codec = existing ?? await createCodec({ credentials: contentCredentials,
@@ -835,7 +837,7 @@ export function createAccountArtifactStore(params: Readonly<{
         codec, input.signal, input.authorizationHeaders);
     } } as const;
   };
-  type UpdateInput = Readonly<{ artifactId: string; expectedRevision: AccountArtifactRevision; header: Readonly<Record<string, unknown>>; savedBy?: ArtifactSavedByV1; memoryDecisionSource?: CoordinationMessageRefV1; signal?: AbortSignal; beforeWrite?: () => void | Promise<void>; mutationAuthorizationHeaders?: ArtifactRequestAuthorizationHeaders; authorizationHeaders?: ArtifactRequestAuthorizationHeaders; prepareRecipients?: boolean }> & ArtifactWriteContent;
+  type UpdateInput = Readonly<{ artifactId: string; expectedRevision: AccountArtifactRevision; header: Readonly<Record<string, unknown>>; savedBy?: ArtifactSavedByV1 | null; memoryDecisionSource?: CoordinationMessageRefV1; signal?: AbortSignal; beforeWrite?: () => void | Promise<void>; mutationAuthorizationHeaders?: ArtifactRequestAuthorizationHeaders; authorizationHeaders?: ArtifactRequestAuthorizationHeaders; prepareRecipients?: boolean }> & ArtifactWriteContent;
   const update = async (input: UpdateInput, storedBasis?: StoredArtifact) => {
     const prepared = await prepareUpdateContent(input, storedBasis);
     if (!prepared.ok) return prepared;
@@ -1079,6 +1081,12 @@ export function createAccountArtifactStore(params: Readonly<{
       input.signal?.throwIfAborted();
       return bytes;
     },
+    reportTemplateAcceptedVersion: async (input: ArtifactTemplateAcceptedVersionInputV1, signal?: AbortSignal,
+      options?: Readonly<{ authorizationHeaders?: ArtifactRequestAuthorizationHeaders }>): Promise<void> => {
+      await reportArtifactTemplateAcceptedVersion(input, {
+        ...await authorizedAccessConfig(input.artifactId, 'accepted-version', 'PUT', signal, options?.authorizationHeaders, input), signal,
+      });
+    },
     accessGrants: {
       list: async (input: Readonly<{ artifactId: string }>, signal?: AbortSignal, options?: Readonly<{ authorizationHeaders?: ArtifactRequestAuthorizationHeaders }>) => {
         const result = await readAccessGrants(input.artifactId, signal, options?.authorizationHeaders);
@@ -1185,7 +1193,7 @@ export function createAccountArtifactStore(params: Readonly<{
         ...(kindCoverage ? { kindCoverage } : {}),
         ...(hasUnclassified === undefined ? {} : { hasUnclassified }) };
     },
-    create: async (input: Readonly<{ artifactId?: string; noticeAccountId?: string; header: Readonly<Record<string, unknown>>; savedBy?: ArtifactSavedByV1; source?: ArtifactWorkspaceSourceV1; memoryDecisionSource?: CoordinationMessageRefV1; signal?: AbortSignal; beforeWrite?: () => void | Promise<void>; authorizationHeaders?: ArtifactRequestAuthorizationHeaders; prepareRecipients?: boolean }> & ArtifactWriteContent) => {
+    create: async (input: Readonly<{ artifactId?: string; noticeAccountId?: string; header: Readonly<Record<string, unknown>>; savedBy?: ArtifactSavedByV1 | null; source?: ArtifactWorkspaceSourceV1; memoryDecisionSource?: CoordinationMessageRefV1; signal?: AbortSignal; beforeWrite?: () => void | Promise<void>; authorizationHeaders?: ArtifactRequestAuthorizationHeaders; prepareRecipients?: boolean }> & ArtifactWriteContent) => {
       input.signal?.throwIfAborted();
       if (input.memoryDecisionSource && typeof input.body !== 'string')
         throw Object.assign(new Error('memory_decision_source_unsupported'), { code: 'memory_decision_source_unsupported' });

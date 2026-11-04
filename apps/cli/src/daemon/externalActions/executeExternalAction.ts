@@ -3,6 +3,8 @@ import { sameMachineServiceLogsResourceInput, parseMachineServiceLogsResourceRes
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
 import { projectRpcRequesterWorkAttribution } from '@/daemon/lifecycle/requesterWorkAttribution';
+import { MachineSetupPlanInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { openManagedCreationActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import type { HostReviewedParentV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { invokeManagedReviewedChild } from './managedReviewedChild';
@@ -109,11 +111,15 @@ export type PrepareExternalActionRequesterAccountContext = (input: Readonly<{
   verifyWorkspaceSyncPrepareCurrent?: () => Promise<boolean>;
   verifyServiceMoveChildCurrent?: () => Promise<boolean>;
   deploymentChildExecution?: import('@happier-dev/protocol/socketRpc').WorkspaceSyncSourceExecutionV1;
+  /** Exact software operand retained by a template's admitted creation recipe. */
+  templateRequesterSetup?: Readonly<{ planInputDigest: string }>;
   signal?: AbortSignal;
 }>) => Promise<Readonly<{
   authorization: ExternalActionExecutionAuthorizationV1;
   executor: ExternalActionExecutor;
   resolveEncryption: ResolveExternalActionEncryption;
+  /** Admitted policy from this requester holder for reviewed-child approval replay. */
+  actionsSettings?: NonNullable<ActionExecutorContext['actionsSettings']>;
   /** Target reads use the same privately admitted Account as the effect. */
   resolveTarget?: ResolveExternalActionTarget;
   invocation?: import('@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1').ExternalActionRequesterInvocationV1;
@@ -476,6 +482,14 @@ export async function executeExternalAction(input: Readonly<{
   // Signed outer admission facts and private opened input must describe the
   // same invocation before approval, native submission or Session birth.
   try {
+    const templatePlan = executionAuthorization?.success ? executionAuthorization.data.binding.templateRequesterSetupPlanAdmission : undefined;
+    if (templatePlan && executionAuthorization?.success) {
+      const plan = MachineSetupPlanInputV1Schema.parse(decodedInput);
+      if (plan.homeId !== executionAuthorization.data.binding.serverIdentityId || plan.machineId !== executionAuthorization.data.binding.machineId
+        || plan.mode !== 'effects' || computeActionInputApprovalDigestV1('machines.setup.plan', plan) !== templatePlan.planInputDigest) {
+        throw new TypeError('Template Setup Plan admission mismatch');
+      }
+    }
     if (projectExternalActionRunNowIdempotencyKeyV1(actionId.data, decodedInput) !== envelope.data.idempotencyKey
       || executionAuthorization?.success && executionAuthorization.data.binding.idempotencyKey !== envelope.data.idempotencyKey) {
       throw new TypeError('Manual retry identity mismatch');

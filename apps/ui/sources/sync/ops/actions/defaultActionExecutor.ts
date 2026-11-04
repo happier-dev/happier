@@ -1,3 +1,6 @@
+import { createUiPreparedSessionBirthV1 } from './preparedSessionBirth';
+import { createTemplateRequesterActionAdmissionScope } from '@/sync/api/externalActionAccountTransport';
+import { createUiBotTemplateAction, readUiOwnedSessionForAction } from './botTemplateActionDeps';
 import { resolveAuthCredentialsScopeKey } from '@/auth/storage/resolveAuthCredentialsScopeKey';
 import { artifactSavedByFromActionContextV1 } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
 import { writeSessionApprovalReviewerOverrideV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
@@ -818,7 +821,14 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
   /** Host-page defaults remain outside Action input and personal persisted copies. */
   resolveWidgetAreaPresets?: Parameters<typeof createWidgetAreaActionDepsV1>[1];
   widgetAreaIsCurrent?: () => boolean;
-  }>, accountContext?: LazyActionAccountContext & { settings: Awaited<ReturnType<LazyActionAccountContext['readSettings']>> }, followReadInputs?: SessionFollowReadInputs): UiProtocolActionExecutor & Readonly<{
+    /** Mounted template editor presentation; Action admission remains executor-owned. */
+  openBotTemplate?: (input: import('@happier-dev/protocol/bots/templates/botTemplateActionsV1').BotTemplateOpenInputV1) => void | Promise<void>;
+  /** Parsed link release retained by this mounted recipient invocation. */
+  resolveBotTemplateInstantiationRelease?: import('@happier-dev/protocol/bots/templates/botTemplateOperations').BotTemplateOperationPortV1['resolveInstantiationRelease'];
+  prepareBotTemplateRequesterAdmission?: NonNullable<import('@happier-dev/protocol/bots/templates/botTemplateOperations').BotTemplateOperationPortV1['recipient']>['prepareRequesterAdmission'];
+  prepareBotTemplateUpdateRequesterAdmission?: NonNullable<import('@happier-dev/protocol/bots/templates/botTemplateOperations').BotTemplateOperationPortV1['recipient']>['prepareUpdateRequesterAdmission'];
+  templateRequesterAdmissionScope?: ReturnType<typeof createTemplateRequesterActionAdmissionScope>;
+}>, accountContext?: LazyActionAccountContext & { settings: Awaited<ReturnType<LazyActionAccountContext['readSettings']>> }, followReadInputs?: SessionFollowReadInputs): UiProtocolActionExecutor & Readonly<{
     executeNativeManagedAction(actionId: ManagedMachineActionIdV1, input: unknown, context?: ActionExecutorContext,
       retainedMachine?: ManagedMachineActionOutputV1<'machines.managed.get'>): Promise<ActionExecuteResult>;
     readWidgetMovementAdmission(ref: WidgetInstanceRefV1, surface: WidgetSurfaceRefV1, context: ActionExecutorContext): ReturnType<typeof readWidgetEntityMovementAdmission>;
@@ -1159,21 +1169,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         accountContext.assertCurrent();
         return { grants, publicShares };
       },
-      readSession: async (ref, context) => {
-        accountContext.assertCurrent(); throwIfAborted(context.signal);
-        const { session } = await runWithServerRequestAuthorityForServerAccountScope({
-          scope: accountContext.accountLifetime.scope, activeRequest: accountContext.request,
-        }, authority => readSessionSnapshotForAuthority({ authority, sessionId: ref.sessionId, isCurrent: accountContext.accountLifetime.isCurrent }));
-        accountContext.assertCurrent(); throwIfAborted(context.signal);
-        if (!session || !admitProjectWorkspaceCensusForSubject({
-          subject: { kind: 'session', ownerAccountId: session.ownerAccountId, access: session.access, accessLevel: session.accessLevel },
-          rowServerId: ref.serverId, censusServerId: accountContext.serverId,
-          viewerAccountId: accountContext.accountLifetime.scope.accountId,
-        }).admitted) throw Object.assign(new Error('session_target_unavailable'), { code: 'session_target_unavailable' });
-        const metadata = readSessionOwnerMetadataView(session);
-        if (!metadata) throw Object.assign(new Error('session_target_unavailable'), { code: 'session_target_unavailable' });
-        return { metadata, revision: session.metadataVersion };
-      },
+      readSession: (ref, context) => readUiOwnedSessionForAction(accountContext, ref, context),
       readInheritedContext: (snapshot, context) => readUiMemoryInheritedContext(accountContext, snapshot, context),
       readScopeContext: (target, context) => readUiMemoryScopeContext(accountContext, target, context),
       readArtifactHeaders: async (refs, context) => {
@@ -1486,6 +1482,20 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       ? await executeMachineOwnedPluginAction({ actionId: args.actionId, input: args.input, context: args.context })
       : { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' },
     ...(accountContext ? { artifactAction: createUiArtifactAction(accountContext, { onPublicLinkIssued: opts?.onPublicLinkIssued }) } : {}),
+    ...(accountContext ? (() => {
+      const botTemplateAction = createUiBotTemplateAction(accountContext, opts?.openBotTemplate ?? (async input => {
+        const { router } = await import('expo-router');
+        const { buildBotTemplateEditorRoute } = await import('@/components/sessions/bots/templates/botTemplateEditorDestination');
+        router.push(buildBotTemplateEditorRoute(input));
+      }), promptLibraryStore?.organization, () => deps, { onPublicLinkIssued: opts?.onPublicLinkIssued,
+        resolveInstantiationRelease: opts?.resolveBotTemplateInstantiationRelease,
+        prepareRequesterAdmission: opts?.prepareBotTemplateRequesterAdmission,
+        prepareUpdateRequesterAdmission: opts?.prepareBotTemplateUpdateRequesterAdmission });
+      return { botTemplateAction, prepareBotTemplateInstantiation: request => botTemplateAction.prepareInstantiation(request),
+        prepareBotTemplateUpdate: request => botTemplateAction.prepareUpdate(request),
+        prepareBotTemplateRelease: request => botTemplateAction.prepareRelease(request) } satisfies
+        Pick<ActionExecutorDeps, 'botTemplateAction' | 'prepareBotTemplateInstantiation' | 'prepareBotTemplateUpdate' | 'prepareBotTemplateRelease'>;
+    })() : {}),
     ...(accountContext ? {
       profileActionExecute: createUiProfileActionExecuteV1(accountContext, { onRpcDispatched: opts?.onProviderRpcDispatched }),
       mcpServerAction: createUiMcpServerActionExecuteV1(accountContext, connectedServiceAction, {
@@ -2672,15 +2682,21 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     },
 
     sessionSpawnNewDirectoryApprovalPreflight: createUiSessionSpawnNewDirectoryApprovalPreflight(accountContext ?? null),
-    sessionSpawnNew: async ({
-      context,
-      admittedInput,
-      creationKey,
-      actionCaller: _actionCaller,
-      actionRequestId,
-      signal,
-    }) => {
+    sessionSpawnNew: async (args, continuation) => {
+      const {
+        context,
+        admittedInput,
+        creationKey,
+        actionCaller: _actionCaller,
+        actionRequestId,
+        signal,
+      } = args;
       if (!admittedInput) return { type: 'error' as const, code: 'invalid_input' as const, retryable: false as const };
+      if (continuation) {
+        if (!accountContext) return { type: 'error' as const, code: 'permission_denied' as const, retryable: false as const };
+        return createUiPreparedSessionBirthV1(accountContext, args, continuation,
+          opts?.templateRequesterAdmissionScope?.retainBirthAuthorization);
+      }
       // The daemon re-admits public selections. Host launch expansion (including
       // the original Discussion recipe sidecar) is never a transport payload.
       const input = { ...admittedInput, creationKey };
@@ -3169,6 +3185,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         throw error;
       }
     },
+    machineSetupPlan: async (args) => await deps.managedMachineAction!({ actionId: 'machines.setup.plan', ...args }),
     machinePresetAction: async (args) => {
       if (!accountContext) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
       accountContext.assertCurrent();
@@ -4594,7 +4611,12 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
   };
 
   const executeAction = async (actionId: ActionId, input: unknown, context?: ActionExecutorContext, confirmInFlow = false) => {
-      const resolved = resolveContext(context, input, actionId);
+      let resolved = resolveContext(context, input, actionId);
+    if (actionId === 'template.instantiate' && accountContext && opts?.templateRequesterAdmissionScope) {
+      const prepared = await opts.templateRequesterAdmissionScope.prepareOriginal(accountContext, input, resolved);
+      if (!prepared.ok) return prepared;
+      resolved = prepared.context;
+    }
       if (opts?.admittedClientActionId === actionId) {
         return await executor.executeAdmittedClientAction(actionId, input, resolved);
       }
@@ -4633,7 +4655,12 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     readWidgetMovementAdmission: (ref: WidgetInstanceRefV1, surface: WidgetSurfaceRefV1, context: ActionExecutorContext) =>
       readWidgetEntityMovementAdmission(widgetInputDeps, ref, surface, resolveContext(context, { ref })),
     prepare: async (actionId, input, context, options) => {
-      const resolved = resolveContext(context, input, actionId);
+      let resolved = resolveContext(context, input, actionId);
+      if (actionId === 'template.instantiate' && accountContext && opts?.templateRequesterAdmissionScope) {
+        const prepared = await opts.templateRequesterAdmissionScope.prepareOriginal(accountContext, input, resolved);
+        if (!prepared.ok) return { kind: 'settled', result: prepared };
+        resolved = prepared.context;
+      }
       // The daemon owns both implicit and explicitly requested plugin review.
       // Preparation must not create an app-local approval before that owner runs.
       return resolved.surface !== 'plugin' && isMachineOwnedPluginAction(actionId, input)
@@ -4908,8 +4935,10 @@ export async function withDefaultActionExecuteContext<TResult>(
   // intent signal ends. Its captured Account still owns that final Artifact
   // CAS; actual credential/Account retirement continues to revoke the carrier.
   const retained = opts?.hostActionApprovalLifetime;
+  const templateRequesterAdmissionScope = executedActionId === 'template.instantiate' || executedActionId === 'template.updates.apply'
+    ? createTemplateRequesterActionAdmissionScope(executedActionId) : undefined;
   const account = await captureLazyActionAccountContext(context.serverId,
-    retained?.signal === context.signal ? undefined : context.signal);
+    retained?.signal === context.signal ? undefined : context.signal, templateRequesterAdmissionScope?.requestAuthorization);
   const archiveInvocation = createSessionArchiveInvocation(executedActionId, context.archiveInput, context.archiveOperation, context.serverId, context.defaultSessionId);
   try {
     try {
@@ -4919,6 +4948,9 @@ export async function withDefaultActionExecuteContext<TResult>(
       throwIfAborted(context.signal);
       const listContributedActionDefinitions = context.contributedActionInvocation?.listContributedActionDefinitions ?? opts?.listContributedActionDefinitions;
       const result = await work(buildDefaultActionExecutor({ ...opts, archiveInvocation,
+        ...(templateRequesterAdmissionScope ? { templateRequesterAdmissionScope,
+          prepareBotTemplateRequesterAdmission: templateRequesterAdmissionScope.prepareRequesterAdmission,
+          prepareBotTemplateUpdateRequesterAdmission: request => templateRequesterAdmissionScope.prepareUpdateRequesterAdmission(account, request) } : {}),
         ...(listContributedActionDefinitions ? { listContributedActionDefinitions } : {}),
         ...(context.openRoute ? { openRoute: context.openRoute } : {}) }, { ...account, settings }, followReadInputs), account, settings);
       const effectClass = executedActionId ? getActionSpec(executedActionId).sideEffectClass : undefined;
@@ -5232,7 +5264,9 @@ export function createDefaultActionExecutor(opts?: DefaultActionExecutorOptions)
       }
       const serverId = resolveDefaultActionInvocationServerId(actionId, input, context);
       if (!serverId) return await ordinary().prepare(actionId, input, actionContext, options);
-      const account = await captureLazyActionAccountContext(serverId, context?.signal);
+      const templateRequesterAdmissionScope = actionId === 'template.instantiate' || actionId === 'template.updates.apply'
+        ? createTemplateRequesterActionAdmissionScope(actionId) : undefined;
+      const account = await captureLazyActionAccountContext(serverId, context?.signal, templateRequesterAdmissionScope?.requestAuthorization);
       const archiveInvocation = createSessionArchiveInvocation(actionId, input, archiveOperation, account.serverId, context?.defaultSessionId);
       try {
         assertExpectedActionAccount(account, context);
@@ -5241,6 +5275,9 @@ export function createDefaultActionExecutor(opts?: DefaultActionExecutorOptions)
         throwIfAborted(context?.signal);
         const listContributedActionDefinitions = actionContext.contributedActionInvocation?.listContributedActionDefinitions ?? opts?.listContributedActionDefinitions;
         const executor = buildDefaultActionExecutor({ ...opts, archiveInvocation,
+          ...(templateRequesterAdmissionScope ? { templateRequesterAdmissionScope,
+            prepareBotTemplateRequesterAdmission: templateRequesterAdmissionScope.prepareRequesterAdmission,
+            prepareBotTemplateUpdateRequesterAdmission: request => templateRequesterAdmissionScope.prepareUpdateRequesterAdmission(account, request) } : {}),
           ...(listContributedActionDefinitions ? { listContributedActionDefinitions } : {}),
           ...(openRoute ? { openRoute } : {}) }, { ...account, settings });
         const native = await resolveNativeManagedAction(actionId, input, account, actionContext, opts);

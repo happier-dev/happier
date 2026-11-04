@@ -1,3 +1,7 @@
+import { createAccountEncryptionCurrentnessFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
+import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionRequestEnvelopeSchema } from '@happier-dev/protocol/actions/externalActionApi';
+import { encodeTemplateBirthExecutionAuthorizationV1, TEMPLATE_BIRTH_EXECUTION_AUTHORIZATION_HEADER_V1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import axios from 'axios';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -157,4 +161,38 @@ describe('getOrCreateSessionByTag creation placement transport', () => {
     })).rejects.toMatchObject({ name: 'AbortError' });
     expect(get).toHaveBeenCalledOnce();
   });
+
+  it.each([true, false])('returns the birth-bound authorization before handing the committed Session to its caller (valid header: %s)', async validHeader => {
+    const features = FeaturesResponseSchema.parse({ features: {}, capabilities: { encryption: {
+      storagePolicy: 'optional', defaultAccountMode: 'plain', allowAccountOptOut: true,
+    } } });
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json(features)));
+    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'birth-proof', binding: {
+      accountId: 'owner', authentication: { kind: 'account', tokenEpoch: 0 }, accountEncryptionMode: 'plain',
+      custodianAccountId: 'owner', serverIdentityId: 'home', machineId: 'machine-1', installationId: 'installation-1',
+      actionId: 'template.instantiate', requestId: 'template-birth', target: { kind: 'machine', machineId: 'machine-1' },
+      requestEnvelopeDigest: 'a'.repeat(43),
+    } });
+    const originalActionEnvelope = ExternalActionRequestEnvelopeSchema.parse({ v: 1, requestId: 'template-birth',
+      input: {}, target: { kind: 'machine', machineId: 'machine-1' } });
+    const carrier = { authorization, originalActionEnvelope };
+    const birthAuthorization = ExternalActionExecutionAuthorizationV1Schema.parse({ ...authorization,
+      binding: { ...authorization.binding, templateRequesterBirth: { sessionId: 'birth-session',
+        creationTag: `create:v1:${'b'.repeat(43)}` } } });
+    const post = vi.spyOn(axios, 'post').mockResolvedValueOnce({ status: 200, headers: {
+      [TEMPLATE_BIRTH_EXECUTION_AUTHORIZATION_HEADER_V1]: validHeader ? encodeTemplateBirthExecutionAuthorizationV1(birthAuthorization) : 'malformed-proof',
+    }, data: { created: false, session: createSessionRecordFixture({ id: 'birth-session', encryptionMode: 'plain' }) } });
+    const received: typeof authorization[] = [];
+    const { getOrCreateSessionByTag } = await import('./sessionsHttp');
+    const result = getOrCreateSessionByTag({
+      credentials: { token: 'synthetic-creation-account', encryption: null }, tag: 'birth-session',
+      metadata: {}, agentState: null, accountEncryptionCurrentness: createAccountEncryptionCurrentnessFixture(),
+      templateRequesterAuthorization: carrier, onCreationAuthorization: (proof: typeof authorization) => received.push(proof),
+    });
+    if (validHeader) await expect(result).resolves.toMatchObject({ created: false, session: { id: 'birth-session' } });
+    else await expect(result).rejects.toThrow('Unexpected /v1/sessions birth authorization shape');
+    expect(received).toEqual(validHeader ? [birthAuthorization] : []);
+    expect(post.mock.calls[0]?.[1]).toMatchObject({ templateRequesterAuthorization: carrier });
+  });
+
 });

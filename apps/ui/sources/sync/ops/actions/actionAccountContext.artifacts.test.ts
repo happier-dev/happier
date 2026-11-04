@@ -1,3 +1,5 @@
+import { projectBotTemplateArtifactHeaderV1, type BotTemplateDraftV1, type BotTemplateArtifactV1, projectBotTemplateReleaseV1 } from '@happier-dev/protocol/bots/templates/botTemplateV1';
+import { createUiBotTemplateAction } from './botTemplateActionDeps';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
     createActionExecutor, ArtifactActionOutputSchemasV1, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent, withArtifactExcerptV1,
@@ -80,6 +82,49 @@ function installSessionBatchHttpFixture(accountId: string, route: (url: unknown,
 afterEach(() => { runtimeFetch.mockReset(); vi.restoreAllMocks(); });
 
 describe('scoped Account workflow Artifact operations', () => {
+    it.each([false, true])('admits only an owner-private template draft at release (shared=%s)', async shared => {
+        const home = await upsertAndActivateServer({ serverUrl: `https://template-private-${shared}.test`, scope: 'tab' });
+        const token = `header.${encodeBase64(new TextEncoder().encode(JSON.stringify({ sub: 'artifact-account' })), 'base64url')}.signature`;
+        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token });
+        const draftId = '7e23f798-230a-42f3-931f-e38b20736333';
+        const releaseId = '84a6bc9c-0418-44f6-a593-8a751bde13e0';
+        const draft: BotTemplateDraftV1 = { v: 1, state: 'draft', sourceSessionRef: { serverId: home.id, sessionId: 'source' }, releaseArtifactId: releaseId,
+            content: { v: 1, identity: { name: 'Helper', description: '' }, instructions: { markdown: 'Help' }, memoryRules: [], skills: [],
+                needs: { software: [], connectedAccounts: [], mcpServers: [] } }, candidates: { memoryRules: [], skills: [] } };
+        const release = { v: 1 as const, state: 'released' as const, release: projectBotTemplateReleaseV1(draft, { version: '1.0.0', releasedAtMs: 1, changelog: '' }) };
+        const envelopes: [string, BotTemplateArtifactV1][] = [[draftId, draft], [releaseId, release]];
+        const rows = new Map(envelopes.map(([id, value]) => {
+            const rawHeader = projectBotTemplateArtifactHeaderV1(value);
+            return [id, { ...createPlainArtifactHttpFixture({ id, title: 'Helper', rawHeader, header: { title: 'Helper' }, body: JSON.stringify(value),
+                isDecrypted: true, headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 }, 'artifact-account'), ownerDisplayName: 'Maya Rowan' }] as const;
+        }));
+        runtimeFetch.mockImplementation(async (input: unknown, init?: RequestInit) => {
+            const path = new URL(String(input)).pathname;
+            if (path === '/health' || path === '/v1/auth/ping') return json({});
+            if (path === '/v1/features') return json({ features: {}, capabilities: {} });
+            if (path === '/v1/account/encryption') return json({ mode: 'plain', updatedAt: 0 });
+            if (path === '/v1/artifacts/read') return createArtifactReadBatchHttpResponse(JSON.parse(String(init?.body)), artifactId => ({ artifactId,
+                ok: true, artifact: rows.get(artifactId), recipientCensus: null }));
+            if (path.endsWith('/access/grants')) return json({ artifactId: path.includes(draftId) ? draftId : releaseId,
+                ownerAccountId: 'artifact-account', access: 'owner', grants: shared && path.includes(draftId)
+                    ? [{ principal: { kind: 'account', accountId: 'recipient' }, accessLevel: 'view', createdByAccountId: 'artifact-account', createdAt: 1, display: { name: 'Recipient' } }] : [] });
+            if (path === `/v1/artifacts/${draftId}`) return json(rows.get(draftId));
+            if (path === `/v1/artifacts/${releaseId}`) return json(rows.get(releaseId));
+            throw new Error(`Unexpected route ${path}`);
+        });
+        const account = await captureLazyActionAccountContext(home.id);
+        try {
+            const execute = createUiBotTemplateAction(account, () => {});
+            const result = await execute({ actionId: 'template.release', input: { draftArtifactId: draftId,
+                expectedRevision: { headerVersion: 1, bodyVersion: 1 }, version: '1.0.0', changelog: '' },
+                context: { surface: 'ui', serverId: home.id, authority: 'present_user' } });
+            expect(result).toMatchObject(shared ? { ok: false, errorCode: 'artifact_access_forbidden' } : { artifactId: releaseId, reused: true });
+            const preview = await createActionExecutor(createActionExecutorBoundaryFixture({ botTemplateAction: args => execute(args) })).execute('template.preview',
+                { source: { kind: 'artifact', serverId: home.id, artifactId: releaseId } },
+                { surface: 'ui', serverId: home.id, authority: 'present_user' });
+            expect(preview).toMatchObject({ ok: true, result: { presentation: { ownerDisplayName: 'Maya Rowan', shared: false } } });
+        } finally { account.dispose(); }
+    });
     it('opens only the demanded collection headers in one batch without bodies', async () => {
         const home = await upsertAndActivateServer({ serverUrl: 'https://artifact-visible-header-batch.test', scope: 'tab' });
         const token = `header.${encodeBase64(new TextEncoder().encode(JSON.stringify({ sub: 'artifact-account' })), 'base64url')}.signature`;

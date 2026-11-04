@@ -14,6 +14,7 @@ import { MachinePoolSelectionOriginV1Schema } from '../../machines/pools/v1.js';
 import { SessionTeamCredentialBindingIntentsV1Schema } from '../../teams/credentials/sessionBindingIntentV1.js';
 import { SecretReferenceOverlayV1Schema } from '../../profiles/secretReferenceOverlayV1.js';
 import { SessionDirectoryIntentV1Schema, refineSessionDirectoryIntentCheckoutV1 } from './sessionDirectoryIntentV1.js';
+import { SessionAuthoringSelectionFieldsV1 } from '../authoring/selectionFieldsV1.js';
 
 /** Ordinary launch selections, below input/trigger/host-authority composition. */
 export const SessionSpawnNewSelectionV2BaseSchema = lazyZodSchema(() => z.strictObject({
@@ -26,6 +27,7 @@ export const SessionSpawnNewSelectionV2BaseSchema = lazyZodSchema(() => z.strict
   roleId: z.optional(z.string().check(z.trim(), z.minLength(1))),
   modelSelection: z.optional(SessionModelSelectionV1Schema),
   profileId: z.optional(z.string().check(z.trim(), z.minLength(1))),
+  approvalProfileId: z.optional(SessionAuthoringSelectionFieldsV1.approvalProfileId),
   secretReferenceOverlay: z.optional(SecretReferenceOverlayV1Schema),
   permissionMode: z.optional(asProtocolZod(AgentPermissionIntentV1Schema)),
   agentModeId: z.optional(z.string().check(z.trim(), z.minLength(1))),

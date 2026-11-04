@@ -1,3 +1,10 @@
+import { EXTERNAL_ACTION_REVIEWED_CHILD_HEADER } from '@happier-dev/protocol/actions/externalActionApi';
+import { encodeReviewedActionChildHttpProofV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { mintExternalActionExecutionAuthorization } from './externalActionAuthorizationHttp';
+export { mintExternalActionExecutionAuthorization, type ExternalActionAuthorizationHttpResult } from './externalActionAuthorizationHttp';
+import { createTemplateRequesterExecutionHttpHeadersV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { BotTemplateInstantiateInputV1Schema, BotTemplateActionInputSchemasV1, projectBotTemplateInstantiationRequesterInputV1 } from '@happier-dev/protocol/bots/templates/botTemplateActionsV1';
+import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { MachineAgentIsolationPreviewInputV1Schema, MachineAgentIsolationSetInputV1Schema } from '@happier-dev/protocol';
 import { ManagedEnrollmentInstallationV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { sealManagedCreationActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
@@ -99,7 +106,7 @@ import { projectDiscussionModelParticipantLaunchV1 } from '@happier-dev/protocol
 export type ExternalActionMachineRequestSigningKey = string | Uint8Array;
 
 /** A retained root is opened only with its admitted requester's material. */
-async function readReviewedExternalActionInput(input: Readonly<{
+export async function readReviewedExternalActionInput(input: Readonly<{
   authorization: ExternalActionExecutionAuthorizationV1; envelope: unknown; signal?: AbortSignal;
 }>) {
   const binding = input.authorization.binding;
@@ -331,6 +338,7 @@ type OriginalAccountActionInput = Readonly<{
   serverIdentityId?: string;
   authority?: ActionExecutorContext['authority'];
   managedContinuation?: ExternalActionExecutionAuthorizationRequestV1['managedContinuation'];
+  templateRequesterSetupPlanContinuation?: ExternalActionExecutionAuthorizationRequestV1['templateRequesterSetupPlanContinuation'];
   /** Host provenance retained inside the existing installation-bound private box. */
   invocation?: ExternalActionRequesterInvocationV1;
   /** A human confidentiality decision, distinct from the target Action's Ask first policy. */
@@ -382,6 +390,7 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
   const homeUrl = normalizeServerHttpBaseUrl(input.serverHttpBaseUrl);
   if (input.target.kind === 'session' && input.actionId !== 'session.message.send') return fail('target_unavailable');
   const requiresMachineProof = input.managedContinuation !== undefined
+    || input.templateRequesterSetupPlanContinuation !== undefined
     || requiresOriginalAccountMachineActionProof(input.actionId, input.input);
   const isCurrent = async () => !input.signal?.aborted && (!input.isCurrent || await phase('currentness', () => input.isCurrent!()));
   if (!await isCurrent()) return fail('target_unavailable');
@@ -467,7 +476,8 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
   const access = machine?.access;
   if (machine && access && (foreign || requiresMachineProof)) {
     if (!input.serverIdentityId) return fail('admission_unavailable');
-    if (foreign && !input.onRequesterSessionCredentialDisclosure) return fail('requester_credential_disclosure_required');
+    const templatePlanParent = input.templateRequesterSetupPlanContinuation?.authorization;
+    if (foreign && !templatePlanParent?.requesterAccountContext && !input.onRequesterSessionCredentialDisclosure) return fail('requester_credential_disclosure_required');
     const readInstalledMachine = async (observed: CurrentAccountMachineInventoryItem) => {
       const isOriginalTarget = input.target.kind === 'machine' && observed.id === input.target.machineId && requiresMachineProof;
       if (isOriginalTarget && installedRead.status === 'rejected') throw installedRead.reason;
@@ -483,6 +493,7 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
     const minted = await phase('mint_authorization', () => mintExternalActionExecutionAuthorization({ actionId, envelope, machineId: machine.id,
       pat: input.credentials.token, serverHttpBaseUrl: homeUrl,
       ...(input.managedContinuation ? { managedContinuation: input.managedContinuation } : {}),
+      ...(input.templateRequesterSetupPlanContinuation ? { templateRequesterSetupPlanContinuation: input.templateRequesterSetupPlanContinuation } : {}),
       ...(input.authority === 'account_automation' ? { authorityCeiling: 'account_automation' as const } : {}),
       ...(input.signal ? { signal: input.signal } : {}) }));
     if (!minted.ok) return fail(minted.code);
@@ -493,8 +504,14 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
       || root.machineId !== machine.id || root.installationId !== installed.installationId
       || root.accountEncryptionMode !== mode.mode || root.actionId !== actionId || root.requestId !== input.requestId
       || root.requestEnvelopeDigest !== computeExternalActionRequestEnvelopeDigestV1(envelope)
-      || !externalActionTargetsEqualV1(root.target, input.target) || root.sessionActionOrigin || root.sessionActionSource
-      || root.workflowActionOrigin || root.handoffContinuation
+      || !sameStrictJsonValue(root.templateRequesterSetupPlanAdmission, templatePlanParent ? {
+        parentActionId: 'template.updates.apply', parentRequestEnvelopeDigest: templatePlanParent.binding.requestEnvelopeDigest,
+        planInputDigest: templatePlanParent.binding.templateRequesterSetupAdmission?.planInputDigest,
+      } : undefined)
+      || !externalActionTargetsEqualV1(root.target, input.target)
+      || !sameStrictJsonValue(root.sessionActionOrigin, templatePlanParent?.binding.sessionActionOrigin)
+      || !sameStrictJsonValue(root.sessionActionSource, templatePlanParent?.binding.sessionActionSource)
+      || !sameStrictJsonValue(root.workflowActionOrigin, templatePlanParent?.binding.workflowActionOrigin) || root.handoffContinuation
       || (input.managedContinuation ? !root.managedContinuation
         || root.managedContinuation.managedId !== input.managedContinuation.managedId
         || root.managedContinuation.creationRequestId !== input.managedContinuation.creationRequestId
@@ -518,9 +535,9 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
     };
     let authorization = minted.authorization;
     try {
-      if (foreign || input.invocation) {
+      if (foreign || input.invocation || templatePlanParent?.requesterAccountContext) {
         if (!installed.installationPublicKey) return fail('admission_unavailable');
-        if (foreign) {
+        if (foreign && !templatePlanParent?.requesterAccountContext) {
           const refusal = await confirmDisclosure(machine);
           if (refusal) return refusal;
         }
@@ -710,17 +727,6 @@ export function createExternalActionSourceMachineRpcExecution(input: Readonly<{
   });
 }
 
-type ExternalActionAuthorizationHttpFailure = Readonly<{
-  ok: false;
-  code: 'invalid_token' | 'credential_scope_denied' | 'auth_unavailable' | 'server_unavailable' | 'target_unavailable';
-  /** Private preparation fact; HTTP adapters still project only their existing code. */
-  retryable?: true;
-}>;
-
-export type ExternalActionAuthorizationHttpResult =
-  | Readonly<{ ok: true; authorization: ExternalActionExecutionAuthorizationV1 }>
-  | ExternalActionAuthorizationHttpFailure;
-
 export function createExternalActionAuthorizedRequestHeaders(input: Readonly<{
   authorization: ExternalActionExecutionAuthorizationV1;
   effectActionId: string;
@@ -730,6 +736,7 @@ export function createExternalActionAuthorizedRequestHeaders(input: Readonly<{
   path: string;
   body?: unknown;
   idempotencyKey?: string;
+  reviewedChild?: ReviewedActionChildHttpProofV1;
   privateKey: ExternalActionMachineRequestSigningKey;
 }>): RequesterAccountAuthorizationHeaders {
   const mode = input.authorization.requesterAccountProjection?.accountEncryptionMode;
@@ -739,6 +746,7 @@ export function createExternalActionAuthorizedRequestHeaders(input: Readonly<{
     [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: input.authorization.token,
     [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: input.effectActionId,
     [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(input.target),
+    ...(input.reviewedChild ? { [EXTERNAL_ACTION_REVIEWED_CHILD_HEADER]: encodeReviewedActionChildHttpProofV1(input.reviewedChild) } : {}),
     [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({
       authorizationToken: input.authorization.token,
       effectActionId: input.effectActionId,
@@ -749,6 +757,7 @@ export function createExternalActionAuthorizedRequestHeaders(input: Readonly<{
       path: input.path,
       ...(input.body === undefined ? {} : { body: input.body }),
       ...(input.idempotencyKey === undefined ? {} : { idempotencyKey: input.idempotencyKey }),
+      ...(input.reviewedChild ? { reviewedChild: input.reviewedChild } : {}),
       privateKey: input.privateKey,
     }),
   };
@@ -933,11 +942,13 @@ export async function prepareExternalActionRequesterAccountAuthorizationWithEnve
   serverId: string;
   serverIdentityId: string;
   serverHttpBaseUrl: string;
-  installationId: string;
-  privateKey: ExternalActionMachineRequestSigningKey;
+  templateRequesterSetupAdmission?: ExternalActionExecutionAuthorizationRequestV1['templateRequesterSetupAdmission'];
+  onRefused?: (code: string) => void;
   isCurrent?: () => Promise<boolean>;
   signal?: AbortSignal;
-}>): Promise<Readonly<{ authorization: ExternalActionExecutionAuthorizationV1; envelope: ExternalActionRequestEnvelope }> | null> {
+}> & (Readonly<{ requesterLocalTemplate: true; installationId?: never; privateKey?: never }>
+  | Readonly<{ requesterLocalTemplate?: false; installationId: string; privateKey: ExternalActionMachineRequestSigningKey }>)):
+Promise<Readonly<{ authorization: ExternalActionExecutionAuthorizationV1; envelope: ExternalActionRequestEnvelope }> | null> {
   const isCurrent = async (): Promise<boolean> => {
     try {
       if (input.signal?.aborted) return false;
@@ -953,8 +964,15 @@ export async function prepareExternalActionRequesterAccountAuthorizationWithEnve
   let envelope: ExternalActionRequestEnvelope;
   let pendingResetStartAdmission: ExternalActionExecutionAuthorizationV1['binding']['pendingResetStartAdmission'];
   let sessionActionOrigin: ExternalActionExecutionAuthorizationRequestV1['sessionActionOrigin'];
+  let templateRequesterInitialAccessAdmission: ExternalActionExecutionAuthorizationRequestV1['templateRequesterInitialAccessAdmission'];
   try {
     actionId = ExternalActionActionIdV1Schema.parse(input.actionId);
+    if (input.requesterLocalTemplate && (actionId !== 'template.instantiate' && actionId !== 'template.updates.apply'
+      || input.sessionActionOrigin || input.workflowActionOrigin)) return null;
+    const templateInput = input.requesterLocalTemplate && actionId === 'template.instantiate'
+      ? BotTemplateInstantiateInputV1Schema.parse(input.input) : undefined;
+    templateRequesterInitialAccessAdmission = templateInput?.creation.initialAccess;
+    const originalInput = templateInput ? projectBotTemplateInstantiationRequesterInputV1(templateInput) : input.input;
     pendingResetStartAdmission = actionId === 'session.pending.resetStart.set'
       ? projectExternalActionPendingResetStartAdmissionV1(input.input) : undefined;
     sessionActionOrigin = input.sessionActionOrigin === undefined ? undefined
@@ -978,7 +996,7 @@ export async function prepareExternalActionRequesterAccountAuthorizationWithEnve
       envelope = sealExternalActionRequestV2({
         binding: { serverIdentityId: input.serverIdentityId, accountId: input.accountId, authentication,
           actionId, requestId: input.requestId, target: input.target },
-        input: input.input, material: input.material, randomBytes,
+        input: originalInput, material: input.material, randomBytes,
         // Installed Session authoring inherits launch choices at the agent-start
         // owner. It carries no PAT grant needing a fully resolved public projection.
         ...(actionId === 'session.spawn_new' && !sessionActionOrigin
@@ -988,7 +1006,7 @@ export async function prepareExternalActionRequesterAccountAuthorizationWithEnve
     } else {
       const idempotencyKey = projectExternalActionRunNowIdempotencyKeyV1(actionId, input.input);
       envelope = ExternalActionRequestEnvelopeSchema.parse({
-        v: 1, requestId: input.requestId, target: input.target, input: input.input,
+        v: 1, requestId: input.requestId, target: input.target, input: originalInput,
         ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
       });
     }
@@ -997,7 +1015,9 @@ export async function prepareExternalActionRequesterAccountAuthorizationWithEnve
   const minted = await mintExternalActionExecutionAuthorization({
     actionId, envelope, machineId: input.machineId, pat: input.token,
     serverHttpBaseUrl: input.serverHttpBaseUrl,
-    ...(sessionActionOrigin ? { sessionActionOrigin,
+    ...(input.templateRequesterSetupAdmission ? { templateRequesterSetupAdmission: input.templateRequesterSetupAdmission } : {}),
+    ...(templateRequesterInitialAccessAdmission ? { templateRequesterInitialAccessAdmission } : {}),
+    ...(!input.requesterLocalTemplate && sessionActionOrigin ? { sessionActionOrigin,
       sessionActionSource: { machineId: input.sourceMachineId!, installationId: input.installationId },
       installationProof: signMachineInstallationProof({
       payload: { version: 1, machineId: input.sourceMachineId!, installationId: input.installationId, accountId: input.accountId,
@@ -1005,7 +1025,7 @@ export async function prepareExternalActionRequesterAccountAuthorizationWithEnve
           requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), origin: sessionActionOrigin } },
       privateKey: input.privateKey,
     }) } : {}),
-    ...(input.workflowActionOrigin ? { workflowActionOrigin: input.workflowActionOrigin,
+    ...(!input.requesterLocalTemplate && input.workflowActionOrigin ? { workflowActionOrigin: input.workflowActionOrigin,
       installationProof: signMachineInstallationProof({
         payload: { version: 1, machineId: input.machineId, installationId: input.installationId, accountId: input.accountId,
           externalActionOrigin: { homeId: input.serverIdentityId, actionId, requestId: input.requestId,
@@ -1015,6 +1035,7 @@ export async function prepareExternalActionRequesterAccountAuthorizationWithEnve
     ...(input.signal ? { signal: input.signal } : {}),
   });
   if (!minted.ok) {
+    input.onRefused?.(minted.code);
     if (!input.signal?.aborted && minted.retryable) {
       rethrowRequesterHomeReadFailure({ ok: false, errorCode: 'server_unreachable' });
     }
@@ -1028,17 +1049,27 @@ export async function prepareExternalActionRequesterAccountAuthorizationWithEnve
     || binding.authentication.tokenEpoch !== input.tokenEpochHint
     || binding.accountEncryptionMode !== input.accountEncryptionMode
     || binding.serverIdentityId !== input.serverIdentityId
-    || (!sessionActionOrigin || input.sourceMachineId === input.machineId) && binding.installationId !== input.installationId
+    || !input.requesterLocalTemplate && (!sessionActionOrigin || input.sourceMachineId === input.machineId) && binding.installationId !== input.installationId
     || binding.machineId !== input.machineId
     || binding.actionId !== actionId
     || binding.requestId !== input.requestId
+    || !sameStrictJsonValue(binding.templateRequesterInitialAccessAdmission, templateRequesterInitialAccessAdmission)
     || binding.requestEnvelopeDigest !== computeExternalActionRequestEnvelopeDigestV1(envelope)
     || !sameStrictJsonValue(binding.pendingResetStartAdmission, pendingResetStartAdmission)
+    || !sameStrictJsonValue(binding.templateRequesterSetupAdmission, input.templateRequesterSetupAdmission)
     || !sameStrictJsonValue(binding.sessionActionOrigin, sessionActionOrigin)
     || !sameStrictJsonValue(binding.workflowActionOrigin, input.workflowActionOrigin)
     || !sameStrictJsonValue(binding.sessionActionSource, sessionActionOrigin
       ? { machineId: input.sourceMachineId, installationId: input.installationId } : undefined)
     || !externalActionTargetsEqualV1(binding.target, input.target)) return null;
+  if (input.requesterLocalTemplate) {
+    const authorization = projectTemplateRequesterHttpAuthorization({
+      authorization: minted.authorization, requesterToken: input.token, target: input.target,
+      serverId: input.serverId, serverIdentityId: input.serverIdentityId, serverHttpBaseUrl: input.serverHttpBaseUrl,
+      isCurrent,
+    });
+    return { authorization, envelope };
+  }
   // The destination daemon owns HTTP effect signatures. A remote source only
   // forwards the same Home proof; it must not impersonate the destination signer.
   if (sessionActionOrigin && input.sourceMachineId !== input.machineId) return { authorization: Object.freeze(minted.authorization), envelope };
@@ -1408,82 +1439,6 @@ async function dispatchLocalManagedCreationAction(params: Omit<Parameters<typeof
     observeRecordedApprovalExecution: params.observeRecordedApprovalExecution });
 }
 
-export async function mintExternalActionExecutionAuthorization(input: Readonly<{
-  actionId: string;
-  envelope: ExternalActionRequestEnvelope;
-  machineId: string;
-  pat: string;
-  serverHttpBaseUrl: string;
-  authorityCeiling?: 'account_automation';
-  sessionActionOrigin?: ExternalActionExecutionAuthorizationRequestV1['sessionActionOrigin'];
-  workflowActionOrigin?: ExternalActionExecutionAuthorizationRequestV1['workflowActionOrigin'];
-  sessionActionSource?: ExternalActionExecutionAuthorizationRequestV1['sessionActionSource'];
-  installationProof?: ExternalActionExecutionAuthorizationRequestV1['installationProof'];
-  managedContinuation?: ExternalActionExecutionAuthorizationRequestV1['managedContinuation'];
-  signal?: AbortSignal;
-}>): Promise<ExternalActionAuthorizationHttpResult> {
-  const path = bindExternalActionExecutionAuthorizationHttpPathV1(input.actionId);
-  let response;
-  try {
-    response = await axios.post<unknown>(
-      `${input.serverHttpBaseUrl}${path}`,
-      { v: 1, machineId: input.machineId, envelope: input.envelope,
-        ...(input.sessionActionOrigin ? { sessionActionOrigin: input.sessionActionOrigin } : {}),
-        ...(input.workflowActionOrigin ? { workflowActionOrigin: input.workflowActionOrigin } : {}),
-        ...(input.sessionActionSource ? { sessionActionSource: input.sessionActionSource } : {}),
-        ...(input.managedContinuation ? { managedContinuation: input.managedContinuation } : {}),
-        ...(input.installationProof ? { installationProof: input.installationProof } : {}) },
-      {
-        headers: { Authorization: `Bearer ${input.pat}`, 'Content-Type': 'application/json',
-          ...(input.authorityCeiling === 'account_automation'
-            || readAuthTokenProvenance(decodeJwtPayload(input.pat), { allowLegacyHome: false })?.provenance.kind === 'terminal'
-            ? { [AUTHORITY_CEILING_HEADER_V1]: 'account_automation' } : {}) },
-        // An admitted Action owns cancellation; authorization preparation must
-        // not impose a shorter lifetime on that still-current operation.
-        timeout: input.signal ? 0 : 15_000,
-        ...(input.signal ? { signal: input.signal } : {}),
-        validateStatus: () => true,
-      },
-    );
-  } catch (error) {
-    refuseExternalActionPhase('authorization_mint_http', input.machineId, error);
-    return { ok: false, code: 'server_unavailable',
-      ...(!input.signal?.aborted && classifyServerEndpointError(error).retryable ? { retryable: true as const } : {}) };
-  }
-  if (response.status < 200 || response.status >= 300) {
-    const diagnostic = readSessionInputAdmissionDiagnostic({ actionId: input.actionId, requestId: input.envelope.requestId });
-    if (diagnostic) refuseExternalActionPhase('authorization_mint_http_status', input.machineId,
-      createHttpStatusError(response.status, 'Home authorization unavailable'), diagnostic);
-  }
-  if (response.status === 403) {
-    const refusal = ExternalActionHttpErrorSchema.safeParse(response.data);
-    if (refusal.success && refusal.data.error === 'credential_scope_denied') {
-      return { ok: false, code: 'credential_scope_denied' };
-    }
-  }
-  if (response.status === 401 || response.status === 403) {
-    return { ok: false, code: 'invalid_token' };
-  }
-  if (response.status === 409) {
-    const refusal = ExternalActionHttpErrorSchema.safeParse(response.data);
-    if (refusal.success && refusal.data.error === 'invalid_request' && refusal.data.code === 'target_unavailable') {
-      return { ok: false, code: 'target_unavailable' };
-    }
-  }
-  if ([404, 405, 501].includes(response.status)) {
-    return { ok: false, code: 'server_unavailable' };
-  }
-  if (response.status < 200 || response.status >= 300) {
-    return { ok: false, code: 'auth_unavailable',
-      ...(classifyServerEndpointError(createHttpStatusError(response.status, 'Home authorization unavailable')).retryable
-        ? { retryable: true as const } : {}) };
-  }
-  const authorization = ExternalActionExecutionAuthorizationV1Schema.safeParse(response.data);
-  return authorization.success
-    ? { ok: true, authorization: authorization.data }
-    : { ok: false, code: 'auth_unavailable' };
-}
-
 /** Continue the accepted handoff after its original Session publisher quiesces. */
 export async function prepareExternalActionHandoffContinuationAuthorization(input: Readonly<{
   authorization: ExternalActionExecutionAuthorizationV1;
@@ -1581,13 +1536,17 @@ export async function verifyExternalActionExecutionAuthorizationCurrent(input: R
   serverHttpBaseUrl: string;
   managedFiniteWakeTarget?: ManagedWakeTargetV1;
   retainedDiscussionSource?: SessionInputSourceSessionV1;
+  templateRequesterSetup?: Readonly<{ planInputDigest: string }>;
   signal?: AbortSignal;
 }>): Promise<boolean> {
   const path = bindExternalActionExecutionAuthorizationVerifyHttpPathV1(
     input.authorization.binding.actionId,
   );
-  const body = { v: 1 as const, ...(input.managedFiniteWakeTarget ? { managedFiniteWakeTarget: input.managedFiniteWakeTarget } : {}),
-    ...(input.retainedDiscussionSource ? { retainedDiscussionSource: input.retainedDiscussionSource } : {}) };
+  const body = { v: 1 as const,
+    ...(input.authorization.binding.admittedMachineRole ? { admittedMachineRole: input.authorization.binding.admittedMachineRole } : {}),
+    ...(input.managedFiniteWakeTarget ? { managedFiniteWakeTarget: input.managedFiniteWakeTarget } : {}),
+    ...(input.retainedDiscussionSource ? { retainedDiscussionSource: input.retainedDiscussionSource } : {}),
+    ...(input.templateRequesterSetup ? { templateRequesterSetup: input.templateRequesterSetup } : {}) };
   const headers = createExternalActionAuthorizedRequestHeaders({
     authorization: input.authorization,
     effectActionId: input.effectActionId,
@@ -1729,3 +1688,133 @@ export function readExternalActionRequesterInvocation(context: ActionExecutorCon
 }
 
 export type DeploymentArchiveOriginForHost = NonNullable<NonNullable<ExternalActionMachineRpcExecutionV1['deploymentChildExecution']>['archiveOrigin']>;
+
+
+/** Private HTTP custody belongs to this admitted requester invocation. */
+export function projectTemplateRequesterHttpAuthorization(input: Readonly<{
+  authorization: ExternalActionExecutionAuthorizationV1; requesterToken: string; target: ExternalActionTargetV1;
+  serverId: string; serverIdentityId: string; serverHttpBaseUrl: string; isCurrent: () => Promise<boolean>;
+}>): ExternalActionExecutionAuthorizationV1 {
+  const authorization = { ...input.authorization };
+  const projection: NonNullable<ExternalActionExecutionAuthorizationV1['requesterHttpProjection']> = {
+    accountId: authorization.binding.accountId, serverId: input.serverId, serverIdentityId: input.serverIdentityId,
+    serverHttpBaseUrl: input.serverHttpBaseUrl, accountEncryptionMode: authorization.binding.accountEncryptionMode,
+    isCurrent: input.isCurrent,
+    createRequestHeaders: async request => !request.signal?.aborted && await input.isCurrent()
+      ? createTemplateRequesterExecutionHttpHeadersV1({ authorization, requesterToken: input.requesterToken,
+        target: input.target, effectActionId: request.effectActionId,
+        ...(request.reviewedChild ? { reviewedChild: request.reviewedChild } : {}) }) : null,
+  };
+  Object.defineProperty(authorization, 'requesterHttpProjection', { value: Object.freeze(projection), enumerable: false });
+  return Object.freeze(authorization);
+}
+
+/** Original headless template work uses the requester's Home, before any source read. */
+export async function prepareOriginalTemplateRequesterAuthorization(input: Readonly<{
+  input: unknown; context: ActionExecutorContext; credentials: StoredCredentials;
+  actionId?: 'template.instantiate' | 'template.updates.apply'; executionTarget?: Readonly<{ machineId: string }>;
+  serverId: string; serverIdentityId: string; serverHttpBaseUrl: string;
+}>): Promise<Readonly<{ ok: true; context: ActionExecutorContext }> | Readonly<{ ok: false; code: string }>> {
+  const actionId = input.actionId ?? 'template.instantiate';
+  const parsed = actionId === 'template.instantiate' ? BotTemplateInstantiateInputV1Schema.safeParse(input.input)
+    : BotTemplateActionInputSchemasV1['template.updates.apply'].safeParse(input.input);
+  const claims = decodeJwtPayload(input.credentials.token);
+  const accountId = readAccountIdFromToken(input.credentials.token);
+  const extras = claims && typeof claims.extras === 'object' && claims.extras !== null && !Array.isArray(claims.extras)
+    ? claims.extras as Readonly<Record<string, unknown>> : {};
+  const authentication = ExternalActionSignedAuthenticationV1Schema.safeParse({
+    kind: readAuthTokenProvenance(claims, { allowLegacyHome: false })?.provenance.kind,
+    tokenEpoch: claims?.tokenEpoch ?? extras.tokenEpoch,
+  });
+  if (!parsed.success) return { ok: false, code: 'invalid_parameters' };
+  if (!accountId || !authentication.success) return { ok: false, code: 'admission_unavailable' };
+  const mode = await readAccountEncryptionModeOnce({ credentials: input.credentials,
+    request: () => axios.get<unknown>(`${input.serverHttpBaseUrl}/v1/account/encryption`, {
+      headers: { Authorization: `Bearer ${input.credentials.token}` }, validateStatus: () => true,
+      ...(input.context.signal ? { signal: input.context.signal } : {}),
+    }),
+  });
+  if (mode.kind !== 'resolved') return { ok: false, code: 'content_unavailable' };
+  let material: Extract<AccountScopedCryptoMaterial, { type: 'dataKey' }> | undefined;
+  if (mode.mode === 'e2ee') {
+    const keyed = requireAccountEncryptionCredentials(input.credentials).encryption;
+    material = { type: 'dataKey', machineKey: keyed.type === 'dataKey' ? keyed.machineKey
+      : deriveAccountMachineKeyFromRecoverySecret(keyed.secret) };
+  }
+  const machineId = 'creation' in parsed.data ? parsed.data.creation.executionTarget.machineId : input.executionTarget?.machineId;
+  if (!machineId) return { ok: false, code: 'machine_target_unavailable' };
+  const target = { kind: 'machine' as const, machineId };
+  let code = 'admission_unavailable';
+  const prepared = await prepareExternalActionRequesterAccountAuthorizationWithEnvelope({
+    actionId, input: parsed.data, requestId: input.context.actionRequestId ?? randomBytes(16).toString('hex'),
+    target, machineId: target.machineId, accountId, accountEncryptionMode: mode.mode,
+    tokenEpochHint: authentication.data.tokenEpoch, token: input.credentials.token, material,
+    serverId: input.serverId, serverIdentityId: input.serverIdentityId, serverHttpBaseUrl: input.serverHttpBaseUrl,
+    requesterLocalTemplate: true, ...(input.context.signal ? { signal: input.context.signal } : {}),
+    ...(parsed.data.setup?.software.some(item => item.selection.action === 'install')
+      ? { templateRequesterSetupAdmission: { kind: 'software' as const } } : {}),
+    onRefused: refused => { code = refused; },
+  });
+  return prepared ? { ok: true, context: { ...input.context, actionRequestId: prepared.authorization.binding.requestId, externalActionTarget: target,
+    externalActionExecutionAuthorization: prepared.authorization, originalActionEnvelope: prepared.envelope } } : { ok: false, code };
+}
+
+/** Bind resolved private setup bytes to the already admitted root, without another policy admission. */
+export async function enrichTemplateRequesterSetupAuthorization(input: Readonly<{
+  context: ActionExecutorContext; planInput: MachineSetupPlanInputV1; credentials: StoredCredentials; serverHttpBaseUrl: string;
+}>): Promise<ActionExecutorContext | null> {
+  const authorization = input.context.externalActionExecutionAuthorization;
+  const envelope = ExternalActionRequestEnvelopeSchema.safeParse(input.context.originalActionEnvelope);
+  const projection = authorization?.requesterHttpProjection;
+  if (!authorization || !envelope.success || !projection || authorization.binding.actionId !== 'template.instantiate'
+    && authorization.binding.actionId !== 'template.updates.apply'
+    || input.context.signal?.aborted || !await projection.isCurrent()) return null;
+  const path = `/v1/machines/${encodeURIComponent(authorization.binding.machineId)}`;
+  const headers = await projection.createRequestHeaders({ effectActionId: authorization.binding.actionId, method: 'GET', path,
+    ...(input.context.signal ? { signal: input.context.signal } : {}) });
+  if (!headers) return null;
+  const installation = await readExternalActionInstalledMachine({ machineId: authorization.binding.machineId,
+    serverHttpBaseUrl: input.serverHttpBaseUrl, headers, ...(input.context.signal ? { signal: input.context.signal } : {}) });
+  if (installation?.installationId !== authorization.binding.installationId || !installation.installationPublicKey) return null;
+  const planInputDigest = computeActionInputApprovalDigestV1('machines.setup.plan', input.planInput);
+  const minted = await mintExternalActionExecutionAuthorization({ actionId: authorization.binding.actionId, envelope: envelope.data,
+    machineId: authorization.binding.machineId, pat: input.credentials.token, serverHttpBaseUrl: input.serverHttpBaseUrl,
+    templateRequesterSetupEnrichment: { authorization, planInputDigest },
+    ...(input.context.signal ? { signal: input.context.signal } : {}),
+  });
+  if (!minted.ok || !sameStrictJsonValue(minted.authorization.binding, { ...authorization.binding,
+    templateRequesterSetupAdmission: { kind: 'software', planInputDigest } })) return null;
+  const sealed = sealExternalActionRequesterAccountContextV1({ authorization: minted.authorization,
+    credentials: authorization.binding.accountEncryptionMode === 'plain' ? { token: input.credentials.token }
+      : encodeStoredCredentials(input.credentials), purpose: { kind: 'external_action' },
+    installationPublicKey: decodeBase64(installation.installationPublicKey), randomBytes });
+  return { ...input.context, externalActionExecutionAuthorization: projectTemplateRequesterHttpAuthorization({
+    authorization: sealed, requesterToken: input.credentials.token, target: authorization.binding.target,
+    serverId: projection.serverId, serverIdentityId: projection.serverIdentityId,
+    serverHttpBaseUrl: projection.serverHttpBaseUrl, isCurrent: () => projection.isCurrent(),
+  }) };
+}
+
+/** Spend the existing requester projection without substituting an Account bearer. */
+export async function resolveExternalActionRequesterServerRequestHeaders(input: Readonly<{
+  context: ActionExecutorContext;
+  effectActionId: string;
+  serverHttpBaseUrl: string;
+  method: string;
+  path: string;
+  body?: unknown;
+}>): Promise<Readonly<Record<string, string>> | null> {
+  const authorization = input.context.externalActionExecutionAuthorization;
+  const projection = authorization?.requesterHttpProjection;
+  if (!authorization || !projection || projection.accountId !== authorization.binding.accountId
+    || normalizeServerHttpBaseUrl(projection.serverHttpBaseUrl) !== normalizeServerHttpBaseUrl(input.serverHttpBaseUrl)
+    || input.context.signal?.aborted || !await projection.isCurrent()) return null;
+  const child = readHostAdmittedReviewedChildV1(input.context);
+  return projection.createRequestHeaders({ effectActionId: input.effectActionId, method: input.method, path: input.path,
+    ...(input.body === undefined ? {} : { body: input.body }),
+    ...(input.context.signal ? { signal: input.context.signal } : {}),
+    ...(child?.actionId === input.effectActionId ? { reviewedChild: {
+      actionId: child.actionId, role: child.role, inputDigest: child.inputDigest,
+    } } : {}),
+  });
+}

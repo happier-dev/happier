@@ -37,6 +37,7 @@ import { summaryTextBinding } from './bindings/summaryText.js';
 import { writeProviderSessionIdSessionState, type ProviderSessionIdMetadataKey } from './bindings/providerSessionId.js';
 import {
   clearSessionStateFieldFromMetadata,
+  createSessionStateFieldMetadataUpdater,
   hasSessionStateFieldMetadataBinding,
   publishSessionStateFieldMutationToMetadata,
   publishSessionStateFieldToMetadata,
@@ -45,6 +46,7 @@ import {
 
 export {
   clearSessionStateFieldFromMetadata,
+  createSessionStateFieldMetadataUpdater,
   hasSessionStateFieldMetadataBinding,
   publishSessionStateFieldMutationToMetadata,
   publishSessionStateFieldToMetadata,

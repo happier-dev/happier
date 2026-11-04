@@ -1,3 +1,7 @@
+import { verifyTemplateRequesterExecutionAuthorization, bindTemplateRequesterBirthAuthorization } from '@/app/auth/externalActionExecutionAuthorization';
+import { TEMPLATE_BIRTH_EXECUTION_AUTHORIZATION_HEADER_V1, encodeTemplateBirthExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { SessionCreateRequestSchema } from '@/app/session/create/sessionCreateRequest';
+import { SessionCreationTagV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
 import { InactiveAccountError } from "@/app/auth/accountStatus";
 import { inReadSnapshot, inTx } from "@/storage/inTx";
 import { prepareSessionAccountCursorLocks } from "@/app/session/changeTracking/acquireSessionAccountCursorLocksInTx";
@@ -61,47 +65,48 @@ import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue'
 export function registerSessionCreateOrLoadRoute(app: Fastify) {
     app.post('/v1/sessions', {
         schema: {
-            body: z.union([z.strictObject({
-                tag: z.string(),
-                metadata: z.string(),
-                agentState: z.nullish(z.string()),
-                dataEncryptionKey: z.nullish(z.string()),
-                encryptionMode: z.optional(z.enum(["e2ee", "plain"])),
-                currentStorageState: z.optional(z.literal("machine_only")),
-            }), z.strictObject({
-                tag: z.string(),
-                metadataLayoutVersion: z.literal(SESSION_METADATA_LAYOUT_VERSION_V1),
-                sharedMetadata: z.strictObject({ ciphertext: z.string().check(z.minLength(1)) }),
-                ownerMetadata: SessionOwnerMetadataEnvelopeV1Schema,
-                displayProjectionV1: z.optional(z.nullable(SessionDisplayProjectionV1Schema)),
-                agentState: z.nullish(z.string()),
-                dataEncryptionKey: z.nullish(z.string()),
-                encryptionMode: z.optional(z.enum(["e2ee", "plain"])),
-                currentStorageState: z.optional(z.literal("machine_only")),
-                organizationPlacement: z.optional(SessionOrganizationPlacementV1Schema),
-                initialAccess: z.optional(SessionInitialAccessMaterializedV1Schema),
-                initialTriggers: z.optional(z.array(SessionInitialTriggerAdmissionV1Schema)),
-                primaryTeamId: z.optional(z.nullable(z.string().check(z.minLength(1)))),
-                teamCredentialBindings: z.optional(SessionTeamCredentialBindingIntentsV1Schema),
-                manager: z.optional(SessionManagerV1Schema),
-                creationAuthorizationProof: z.optional(DiscussionModelSessionCreationProofV1Schema),
-                ...SessionCreateOriginFieldsV1Schema.shape,
-            }).check(z.superRefine(refineSessionCreateOriginFieldsV1))])
+            body: SessionCreateRequestSchema,
         },
-        preHandler: app.authenticate
+        preHandler: app.authenticate,
+        config: { allowApiToken: true, allowScopedApiToken: true },
     }, async (request, reply) => {
         let sessionCreationAuthorization: SessionCreationExecutionAuthorization | undefined;
+        const templateRequester = 'templateRequesterAuthorization' in request.body ? request.body.templateRequesterAuthorization : undefined;
+        // The Account bearer has already authenticated. A refused requester
+        // carrier must not retire that independent credential in the client.
+        const refuseCreationAuthorization = () => templateRequester
+            ? reply.code(403).send({ error: 'credential_scope_denied' })
+            : reply.code(401).send({ error: 'invalid_token' });
+        if (request.authTokenKind === 'api_token' && !templateRequester && request.externalActionExecutionAuthorized !== true) {
+            return reply.code(403).send({ error: 'present_user_required' });
+        }
         const creationHeader = request.headers[SESSION_CREATION_AUTHORIZATION_HEADER_V1];
         const nativeProof = 'creationAuthorizationProof' in request.body ? request.body.creationAuthorizationProof : undefined;
-        if (nativeProof && creationHeader === undefined) return reply.code(401).send({ error: 'invalid_token' });
-        if (request.externalActionExecutionAuthorized === true) {
+        if (templateRequester) {
+            if (!SessionCreationTagV1Schema.safeParse(request.body.tag).success) {
+                return reply.code(400).send({ error: 'invalid-params' });
+            }
+            if (nativeProof || creationHeader !== undefined || request.externalActionExecutionAuthorized === true) {
+                return refuseCreationAuthorization();
+            }
+            const admitted = await verifyTemplateRequesterExecutionAuthorization({ ...templateRequester, accountId: request.userId,
+                authentication: readSessionAccessAuthenticationFromRequest(request) });
+            if (!admitted) return refuseCreationAuthorization();
+            sessionCreationAuthorization = { binding: admitted.binding, templateRequesterBirth: true };
+        } else if (nativeProof && creationHeader === undefined) return reply.code(401).send({ error: 'invalid_token' });
+        else if (request.externalActionExecutionAuthorized === true) {
             const binding = request.externalActionExecutionAuthorizationBinding;
-            if (nativeProof || !binding || binding.accountId !== request.userId || binding.actionId !== 'session.spawn_new'
+            if (nativeProof || !binding || binding.accountId !== request.userId
                 || request.externalActionEffectActionId !== 'session.spawn_new'
                 || creationHeader !== undefined && creationHeader !== request.headers[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]) {
                 return reply.code(401).send({ error: 'invalid_token' });
             }
-            sessionCreationAuthorization = binding;
+            // Authentication already verifies the installed host's create_bot
+            // child, input digest and exact POST bytes under the unchanged root.
+            // A bare template token below cannot claim this request-local fact.
+            sessionCreationAuthorization = binding.actionId === 'template.instantiate' && request.externalActionReviewedChildAdmission
+                ? { binding, reviewedChildAdmission: request.externalActionReviewedChildAdmission, effectActionId: 'session.spawn_new' }
+                : binding;
         } else if (creationHeader !== undefined) {
             if (typeof creationHeader !== "string") return reply.code(401).send({ error: "invalid_token" });
             const binding = await auth.verifyExternalActionExecutionAuthorization(creationHeader);
@@ -314,7 +319,7 @@ export function registerSessionCreateOrLoadRoute(app: Fastify) {
                 if (error instanceof ApiTokenOperationError && error.code === "invalid_token") return null;
                 throw error;
             });
-            if (outcome === null) return reply.code(401).send({ error: "invalid_token" });
+            if (outcome === null) return refuseCreationAuthorization();
             if (outcome.kind === "rejected") {
                 return sendSessionCreateRejection(outcome.rejection);
             }
@@ -360,7 +365,7 @@ export function registerSessionCreateOrLoadRoute(app: Fastify) {
                     transactionClass: "session.legacy-create",
                 });
             } catch (error) {
-                if (error instanceof ApiTokenOperationError && error.code === "invalid_token") return reply.code(401).send({ error: "invalid_token" });
+                if (error instanceof ApiTokenOperationError && error.code === "invalid_token") return refuseCreationAuthorization();
                 if (error instanceof InactiveAccountError) {
                     return sendSessionCreateRejection({ reason: "account-disabled" });
                 }
@@ -414,7 +419,7 @@ export function registerSessionCreateOrLoadRoute(app: Fastify) {
                     if (restoreError instanceof ApiTokenOperationError && restoreError.code === 'invalid_token') return null;
                     throw restoreError;
                 });
-                if (restored === null) return reply.code(401).send({ error: 'invalid_token' });
+                if (restored === null) return refuseCreationAuthorization();
                 if ('kind' in restored) return reply.code(409).send({
                     error: 'storage-state-conflict', code: 'session_storage_state_conflict',
                 });
@@ -470,6 +475,12 @@ export function registerSessionCreateOrLoadRoute(app: Fastify) {
         }
 
         const origin = projectStoredSessionOrigin(resolvedSession);
+        if (templateRequester) {
+            const bound = await bindTemplateRequesterBirthAuthorization(templateRequester.authorization,
+                { sessionId: resolvedSession.id, creationTag: resolvedSession.tag });
+            if (!bound) return refuseCreationAuthorization();
+            reply.header(TEMPLATE_BIRTH_EXECUTION_AUTHORIZATION_HEADER_V1, encodeTemplateBirthExecutionAuthorizationV1(bound));
+        }
         const session = V2SessionRecordSchema.parse({
             id: resolvedSession.id,
             seq: applySessionTranscriptPublicationCeiling(resolvedSession.seq, resolvedSession),

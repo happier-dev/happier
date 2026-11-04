@@ -41,6 +41,7 @@ import type { buildReplaySeededSpawnRecipe } from '@/session/replay/buildReplayS
 import type { resolveReplaySourceContextAuthority } from '@/session/replay/resolveReplaySourceContextAuthority';
 import type { ResolveSpawnConnectedServicesTeamResourceCatalog, mergeSessionTeamCredentialBindingIntents, resolveSessionSpawnConnectedServicesDefaultsPayload } from '@/session/services/spawnConnectedServicesDefaults';
 import { fetchAccountEncryptionCurrentness } from '@/api/client/accountEncryptionCurrentness';
+import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { resolveRolesSnapshotV1 } from '@happier-dev/protocol/prompts/roles/resolveRoleSelectionV1';
 import type { buildPluginSessionInputAttachmentDraftsV1 } from '@/session/composer/admitPluginSessionInputAttachmentsV1';
 import type { buildSessionSpawnInitialInputAdmissionForLocalIdV1, requiresMachineAdmissionForSessionInput } from '@/session/services/sessionInputAdmissionIdentity';
@@ -53,6 +54,8 @@ import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError, RPC_ERROR_CODES
 import { type RuntimeActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import type { CliMachineActionCall } from '@/session/actions/cliActionDeps/machineTransport';
 import type { AccountRoleOverridesReadV1 } from '@happier-dev/protocol/prompts/roles/roleOverrideRecordV1';
+import { buildHostOnboardingInput } from './hostOnboardingInput';
+import { createTemplateHostOnboardingAdmissionTransport } from '@/api/session/templateHostOnboardingAdmission';
 
 
 async function resolveSpawnConnectedServicesDefaultPayload(params: Readonly<{
@@ -306,6 +309,13 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
           result: { type: 'error' as const, code: 'target_unavailable' as const, retryable: false },
         };
       }
+      const deferredTemplateOnboarding = context?.invocationServices?.sessionCreation?.hostOnboarding
+        && context.externalActionExecutionAuthorization?.binding.actionId === 'template.instantiate'
+        && context.originalActionEnvelope;
+      if (deferredTemplateOnboarding) {
+        // The exact directory intent is retained at birth and resolved on wake.
+        return { type: 'not_required' as const };
+      }
       if (!needsSessionCreationDirectoryApprovalPreflightV1(input)) {
         // A worktree is materialized by the SCM owner, not by the raw
         // directory-creation authorization path.
@@ -324,9 +334,9 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
       const approval = projectSessionCreationDirectoryApprovalV1(input.executionTarget, preparation.preparedTarget);
       return approval ? { type: 'approval_required' as const, approval } : { type: 'not_required' as const };
     },
-    sessionSpawnNew: async (input) => {
+    sessionSpawnNew: async (input, continuation) => {
       const reviewedOpinionSpawn = input.context?.externalActionExecutionAuthorization?.binding.actionId === 'discussion.second_opinion.start';
-      if (input.admittedInput && params.credentials && params.credentials.credentialProvenance !== 'api_token'
+      if (!continuation && input.admittedInput && params.credentials && params.credentials.credentialProvenance !== 'api_token'
         && isSameActionHomeId(input.admittedInput.executionTarget.serverId)
         && (reviewedOpinionSpawn || params.sessionSpawnDirectTargetTransport?.machineId !== input.executionTarget.machineId)) {
         const { resolveLiveDaemonControlTargetForServer } = await import("@/daemon/multiDaemon");
@@ -388,11 +398,12 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
       identity,
       attestedContext,
       memoryEnabled,
+      approvalProfileId,
       promptStack,
       managedCreation,
       discussionParticipant,
       discussionParticipantLaunch: admittedDiscussionLaunch,
-      initialInput,
+      initialInput: authoredInitialInput,
       agentSessionStartupInstructionsV1,
       environmentVariables,
       sessionCreationTag,
@@ -409,6 +420,14 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
       originRunId,
       signal,
       } = input;
+      const onboardingInput = continuation?.hostOnboarding
+        ? buildHostOnboardingInput(continuation.hostOnboarding) : null;
+      const initialInput = onboardingInput?.initialInput ?? authoredInitialInput;
+      const templateRequesterAuthorization = onboardingInput
+        && context?.externalActionExecutionAuthorization?.binding.actionId === 'template.instantiate'
+        && context.originalActionEnvelope
+        ? { authorization: context.externalActionExecutionAuthorization, originalActionEnvelope: context.originalActionEnvelope }
+        : undefined;
       const creationAuthorization = context?.externalActionExecutionAuthorization?.binding.actionId === 'discussion.second_opinion.start'
         ? input.admittedInput && params.externalActionMachineInstallationId && params.externalActionMachineRequestPrivateKey
           ? createReviewedSecondOpinionSessionCreationAuthorization({ context, publicInput: input.admittedInput,
@@ -427,33 +446,53 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
       if (!params.credentials) {
         return { type: 'error', code: 'permission_denied', retryable: false };
       }
+      const templateOnboardingAdmission = templateRequesterAuthorization
+        ? createTemplateHostOnboardingAdmissionTransport({ credentials: params.credentials,
+          ...(params.serverHttpBaseUrl ? { serverHttpBaseUrl: params.serverHttpBaseUrl } : {}), ...templateRequesterAuthorization })
+        : undefined;
+      const machineAdmissionTransport = templateOnboardingAdmission?.transport ?? params.machineAdmissionTransport;
       if (signal?.aborted) {
         return { type: 'error', code: 'cancelled', retryable: true };
       }
       if ((initialInput?.attachments?.length ?? 0) > 0 && actionCaller.kind !== 'plugin') {
         return { type: 'error', code: 'invalid_input', retryable: false };
       }
-      if (initialInput && !params.machineAdmissionTransport) {
-        const externalRequest = context?.externalActionCredential !== undefined
-          || context?.externalActionExecutionAuthorization !== undefined;
-        const authorizationHeaders = externalRequest
-          ? resolveServerRequestHeaders(context, 'session.spawn_new', {
-              method: 'GET', path: '/v1/account/encryption/currentness',
-            })
-          : null;
-        if (externalRequest && !authorizationHeaders) {
+      const externalRequest = context?.externalActionCredential !== undefined
+        || context?.externalActionExecutionAuthorization !== undefined;
+      let accountEncryptionCurrentness = readRequesterAccountActionContext(context?.externalActionExecutionAuthorization)
+        ?.accountEncryptionCurrentness;
+      if (externalRequest && !accountEncryptionCurrentness) {
+        const authorizationHeaders = templateRequesterAuthorization ? { Authorization: `Bearer ${params.credentials.token}` }
+          : resolveServerRequestHeaders(context, 'session.spawn_new', {
+          method: 'GET', path: '/v1/account/encryption/currentness',
+        });
+        if (!authorizationHeaders) {
           return { type: 'error', code: 'permission_denied', retryable: false };
         }
-        // New Sessions use persisted Account mode, never the parent's mode or
-        // credential key presence. Existing Session sends read their own mode.
-        const [{ fetchAccountEncryptionCurrentness }, { buildSessionSpawnInitialInputAdmissionForLocalIdV1, requiresMachineAdmissionForSessionInput }] = await Promise.all([import("@/api/client/connectedServiceCredentialApi"), import("@/session/services/sessionInputAdmissionIdentity")]);
-        const currentness = await fetchAccountEncryptionCurrentness({
+        const requesterAccountId = context?.externalActionExecutionAuthorization?.binding.accountId
+          ?? context?.externalActionCredential?.accountId;
+        accountEncryptionCurrentness = await fetchAccountEncryptionCurrentness({
+          // A signed requester read cannot borrow the installed custodian's
+          // custody. Prepared requester material is already admitted above.
+          credentials: requesterAccountId === readAccountIdFromToken(params.credentials.token)
+            ? params.credentials : { encryption: null },
           token: params.credentials.token,
           ...(params.serverHttpBaseUrl ? { serverBaseUrl: params.serverHttpBaseUrl } : {}),
-          ...(authorizationHeaders ? { authorizationHeaders } : {}),
+          authorizationHeaders,
           ...(signal ? { signal } : {}),
         });
-        const { inputAdmission } = buildSessionSpawnInitialInputAdmissionForLocalIdV1({
+      }
+      if (initialInput && !machineAdmissionTransport) {
+        // New Sessions use persisted Account mode, never the parent's mode or
+        // credential key presence. Existing Session sends read their own mode.
+        const { buildSessionSpawnInitialInputAdmissionForLocalIdV1, requiresMachineAdmissionForSessionInput } = await import("@/session/services/sessionInputAdmissionIdentity");
+        accountEncryptionCurrentness ??= await fetchAccountEncryptionCurrentness({
+          credentials: params.credentials, token: params.credentials.token,
+          ...(params.serverHttpBaseUrl ? { serverBaseUrl: params.serverHttpBaseUrl } : {}),
+          ...(signal ? { signal } : {}),
+        });
+        const { inputAdmission } = onboardingInput?.buildInitialInputHandoff?.(sessionCreationTag)
+          ?? buildSessionSpawnInitialInputAdmissionForLocalIdV1({
           actionCaller,
           callerSurface,
           callerAuthority: context?.authority,
@@ -464,7 +503,7 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
         });
         if (requiresMachineAdmissionForSessionInput({
           request: inputAdmission.request,
-          mode: currentness.mode,
+          mode: accountEncryptionCurrentness.mode,
           ...(context?.externalActionExecutionAuthorization
             ? { callerInputAuthorization: context.externalActionExecutionAuthorization }
             : {}),
@@ -523,7 +562,7 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
       ) {
         return { type: 'error', code: 'target_unavailable', retryable: false };
       }
-      if (!directTargetTransport) {
+      if (templateRequesterAuthorization || !directTargetTransport) {
         let targetCapabilityProjection: Awaited<ReturnType<typeof readMachineOperationProtocolCapabilitiesV1>>;
         try {
           const { readMachineOperationProtocolCapabilitiesV1 } = await import("@/api/machine/machineOperationProtocolCapabilities");
@@ -555,6 +594,9 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
           || !supportsMachineOperationProtocolCapabilityV1(
             targetCapabilityProjection.capabilities,
             'sessionSpawn',
+          )
+          || templateRequesterAuthorization && !supportsMachineSessionSpawnProtocolVersionV1(
+            targetCapabilityProjection.capabilities, 4,
           )
         ) {
           if (initialSessionRolesV1 !== undefined) {
@@ -712,15 +754,15 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
             revision: agentSessionStartupInstructionsV1.revision,
           }
         : null;
-      const targetPreparation = await prepareSessionSpawnTarget({
+      const targetPreparation = templateRequesterAuthorization ? null : await prepareSessionSpawnTarget({
         executionTarget,
         directory,
         sessionCreationTag,
         ...(checkoutCreationDraft !== undefined ? { checkoutCreationDraft } : {}),
         ...(signal ? { signal } : {}),
       });
-      if (!targetPreparation.ok) return targetPreparation.result;
-      const preparedTarget = targetPreparation.preparedTarget;
+      if (targetPreparation && !targetPreparation.ok) return targetPreparation.result;
+      const preparedTarget = targetPreparation?.preparedTarget;
       // A created receipt is not current exclusive custody. Pre-spawn failures
       // retain the checkout; deleting files remains an explicit SCM operation.
       if (signal?.aborted) {
@@ -730,7 +772,7 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
         sessionCreationDirectoryApproval,
       );
       if (
-        preparedTarget.directoryCreationRequired
+        preparedTarget?.directoryCreationRequired
         && (
           !directoryApproval.success
           || directoryApproval.data.executionTarget.serverId !== executionTarget.serverId
@@ -740,8 +782,10 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
       ) {
         return { type: 'error', code: 'permission_denied', retryable: false };
       }
-      const normalizedDirectory = preparedTarget.directory;
-      const initialTriggerPreparationState: { failure?: unknown } = {};
+      const normalizedDirectory = preparedTarget?.directory ?? (directory.kind === 'path' ? directory.path : undefined);
+      const launchDirectory = preparedTarget ? { directory: preparedTarget.directory }
+        : { directory: normalizedDirectory, deferLaunch: true as const };
+      const initialTriggerPreparationState: { failure?: unknown; targetPreparationFailure?: Extract<SessionSpawnNewResultV1, Readonly<{ type: 'error' }>> } = {};
       let cleanupInitialTriggerCustody: (() => Promise<void>) | undefined;
       const prepareInitialTriggers: Parameters<typeof createSpawnedSession>[0]['prepareInitialTriggers'] =
         !discussionParticipant && (identity?.bot?.kind === 'bot' || (initialTriggers && initialTriggers.length > 0)) ? async () => {
@@ -759,8 +803,26 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
             }
             if (preparedDrafts.length === 0) return [];
             if (!workflowTriggers) throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable' });
+            let triggerDirectory: string;
+            if (targetPreparation) {
+              triggerDirectory = targetPreparation.preparedTarget.directory;
+            } else if (directory.kind === 'path') {
+              triggerDirectory = directory.path;
+            } else {
+              const triggerTarget = await prepareSessionSpawnTarget({
+                executionTarget,
+                directory,
+                sessionCreationTag,
+                ...(signal ? { signal } : {}),
+              });
+              if (!triggerTarget.ok) {
+                initialTriggerPreparationState.targetPreparationFailure = triggerTarget.result;
+                throw triggerTarget.result;
+              }
+              triggerDirectory = triggerTarget.preparedTarget.directory;
+            }
             const prepared = await workflowTriggers.prepareSessionInitialTriggers({
-              project: { machineId: executionTarget.machineId, directory: normalizedDirectory },
+              project: { machineId: executionTarget.machineId, directory: triggerDirectory },
               initialTriggers: preparedDrafts,
               caller: {
                 ...context,
@@ -777,7 +839,7 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
             throw error;
           }
         } : undefined;
-      const immutableCheckout = preparedTarget.checkout
+      const immutableCheckout = preparedTarget?.checkout
         ? {
             kind: preparedTarget.checkout.kind,
             finalDirectory: preparedTarget.checkout.finalDirectory,
@@ -791,7 +853,7 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
         recipe: {
           execution: {
             machineId: executionTarget.machineId,
-            directory: directory.kind === 'managed' ? directory : { kind: 'path', path: normalizedDirectory },
+            directory: directory.kind === 'managed' ? directory : { kind: 'path', path: normalizedDirectory ?? directory.path },
           },
           organization: normalizedPlacement,
           agentTarget,
@@ -799,10 +861,14 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
           profileId: profileId ?? null,
           ...(identity !== undefined ? { identity } : {}),
           ...(memoryEnabled !== undefined ? { memoryEnabled } : {}),
+          ...(approvalProfileId !== undefined ? { approvalProfileId } : {}),
           ...(promptStack !== undefined ? { promptStack } : {}),
           ...(managedCreation ? { managedCreation } : {}),
           ...(discussionParticipant ? { discussionParticipant } : {}),
           ...(secretReferenceOverlay ? { secretReferenceOverlay } : {}),
+          ...(continuation?.machineSetupPlanInput ? { machineSetupPlanInput: continuation.machineSetupPlanInput,
+            ...(templateRequesterAuthorization ? { machineSetupExecution: templateRequesterAuthorization } : {}) } : {}),
+          ...(templateRequesterAuthorization && checkoutCreationDraft ? { checkoutCreationDraft } : {}),
           requestedPermissionMode: resolvedPermissionMode ?? null,
           ...(sessionAllowedTools !== undefined ? { allowedTools: sessionAllowedTools } : {}),
           ...(sessionUnlistedTools !== undefined ? { unlistedTools: sessionUnlistedTools } : {}),
@@ -854,7 +920,8 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
         const { buildReplaySeededSpawnRecipe } = await import("@/session/replay/buildReplaySeededSpawnRecipe");
         const recipeResult = await buildReplaySeededSpawnRecipe({
           credentials: params.credentials,
-          cwd: normalizedDirectory,
+          // Template onboarding excludes sourceContext; replay always used target preparation.
+          cwd: preparedTarget!.directory,
           source: {
             sourceSessionId: sourceContext.sourceSessionId,
             forkPoint: sourceContext.forkPoint,
@@ -900,16 +967,29 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
             && context.operationAcceptance.previousSessionCreationFailure
             ? { previousSessionCreationFailure: context.operationAcceptance.previousSessionCreationFailure } : {}),
           ...(creationAuthorization ? { creationAuthorization } : {}),
+          ...(templateRequesterAuthorization && templateOnboardingAdmission ? { templateRequesterAuthorization,
+            onCreationAuthorization: templateOnboardingAdmission.onCreationAuthorization } : {}),
+          ...(!templateRequesterAuthorization && context?.externalActionExecutionAuthorization?.binding.actionId === 'template.instantiate'
+            ? { authorizeMachineAccessKeyRequest: request => {
+              const headers = resolveServerRequestHeaders(context, 'session.spawn_new', request);
+              if (!headers) throw new Error('Session machine binding authorization unavailable');
+              return headers;
+            }, authorizeCreationRequest: (body: unknown) => {
+              const headers = resolveServerRequestHeaders(context, 'session.spawn_new', { method: 'POST', path: '/v1/sessions', body });
+              if (!headers) throw new Error('Session creation authorization unavailable');
+              return headers;
+            } } : {}),
           ...(callerInputConstraints ? { callerInputConstraints } : {}),
           credentials: params.credentials,
+          ...(accountEncryptionCurrentness ? { accountEncryptionCurrentness } : {}),
           serverId: executionTarget.serverId,
           ...(params.actionsSettingsProvider?.getAccountSettings
             ? { accountSettings: params.actionsSettingsProvider.getAccountSettings() ?? undefined } : {}),
           ...(workDepth !== undefined ? { workDepth } : {}),
           ...(discussionParticipant ? { originKind: 'discussion' as const, discussionParticipant, discussionParticipantLaunch }
             : originKind !== undefined ? { originKind, originSessionId, originRunId } : {}),
-          directory: normalizedDirectory,
-          directoryKind: preparedTarget.directoryKind,
+          ...launchDirectory,
+          directoryKind: preparedTarget?.directoryKind ?? directory.kind,
           ...(managedDirectorySeed ? { managedDirectorySeed } : {}),
           ...(initialAccess !== undefined ? { initialAccess } : {}),
           ...(prepareInitialTriggers ? { prepareInitialTriggers } : {}),
@@ -930,7 +1010,7 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
           sessionCreationTag,
           ...(replaySeededCreation ? { replaySeededCreation } : {}),
           ...(sourceContext ? { sourceContext } : {}),
-          approvedNewDirectoryCreation: preparedTarget.directoryCreationRequired,
+          approvedNewDirectoryCreation: preparedTarget?.directoryCreationRequired ?? false,
           ...(legacyMetadataLabel ? { legacyMetadataLabel } : {}),
           sessionCreationCorrespondence: correspondence,
           organizationPlacement: normalizedPlacement,
@@ -971,14 +1051,17 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
             ? { resume: configurationSnapshot.providerSessionResume.providerSessionId }
             : {}),
           ...(title ? { initialTitle: title } : {}),
+          ...(approvalProfileId !== undefined ? { approvalProfileId } : {}),
           ...(identity !== undefined ? { identity } : {}),
           ...(memoryEnabled !== undefined ? { memoryEnabled } : {}),
           ...(promptStack !== undefined ? { promptStack } : {}),
           ...(initialInput ? { initialInput } : {}),
+          ...(continuation ? { beforeLaunch: continuation.beforeLaunch } : {}),
           ...(attestedContext !== undefined ? { attestedContext } : {}),
           ...(initialInput
             ? {
                 buildInitialInputHandoff: (localId: string) => {
+                  if (onboardingInput?.buildInitialInputHandoff) return onboardingInput.buildInitialInputHandoff(localId);
                   const admission = buildSessionSpawnInitialInputAdmissionForLocalIdV1({
                     actionCaller,
                     callerSurface,
@@ -1016,8 +1099,8 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
                 },
               }
             : {}),
-          ...(params.machineAdmissionTransport
-            ? { machineAdmissionTransport: params.machineAdmissionTransport }
+          ...(machineAdmissionTransport
+            ? { machineAdmissionTransport }
             : {}),
           ...(directTargetTransport
             ? { directTransport: { ...directTargetTransport.spawnedSession,
@@ -1061,6 +1144,8 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
         // establish that the checkout still has no other consumer.
         if (error instanceof PromptStackPreparationError) throw error;
         if ('failure' in initialTriggerPreparationState && initialTriggerPreparationState.failure === error) {
+          const targetFailure = initialTriggerPreparationState.targetPreparationFailure;
+          if (targetFailure && targetFailure === error) return targetFailure;
           const code = readRecord(error).code;
           if (signal?.aborted || code === 'cancelled') {
             return { type: 'error', code: 'cancelled', retryable: true };

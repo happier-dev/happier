@@ -158,6 +158,20 @@ export function createCliMachineActionTransport(
       return execution.result;
     }
     const direct = params.machineActionDirectTargetTransport;
+    const templateUpdateRoot = input.context?.externalActionExecutionAuthorization;
+    if (input.method === RPC_METHODS.MACHINE_SETUP_PLAN && input.effectActionId === 'machines.setup.plan'
+      && templateUpdateRoot?.binding.actionId === 'template.updates.apply' && input.context?.originalActionEnvelope) {
+      if (!params.credentials || !params.serverIdentityId) throw Object.assign(new Error('admission_unavailable'), { code: 'admission_unavailable' });
+      const execution = await dispatchOriginalAccountAction({ actionId: 'machines.setup.plan', input: input.request,
+        requestId: templateUpdateRoot.binding.requestId, target: { kind: 'machine', machineId: input.machineId },
+        credentials: params.credentials, serverHttpBaseUrl: params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl(),
+        serverIdentityId: params.serverIdentityId, authority: input.authority ?? input.context.authority,
+        templateRequesterSetupPlanContinuation: { authorization: templateUpdateRoot, originalActionEnvelope: input.context.originalActionEnvelope },
+        ...(input.signal ? { signal: input.signal } : {}) });
+      if (!execution.ok) throw Object.assign(new RpcError(execution.error, execution.errorCode),
+        execution.details === undefined ? {} : { details: execution.details });
+      return execution.result;
+    }
     const externalRequest = input.context?.externalActionCredential !== undefined
       || input.context?.externalActionExecutionAuthorization !== undefined;
     if (externalRequest && (!params.externalActionMachineRequestPrivateKey || !params.externalActionMachineInstallationId

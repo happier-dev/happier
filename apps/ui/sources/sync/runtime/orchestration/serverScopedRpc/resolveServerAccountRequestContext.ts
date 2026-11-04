@@ -1,3 +1,4 @@
+import { type CapturedServerRequestPreparation } from './capturedServerReadTransport';
 import {
   TokenStorage,
   type AuthCredentials,
@@ -70,6 +71,7 @@ async function buildScopedContext(params: Readonly<{
     homeConnectionDescriptor?: import('@happier-dev/protocol').HomeConnectionDescriptorV1;
   }>;
   timeoutMs: number;
+  prepareRequest?: CapturedServerRequestPreparation;
 }>): Promise<Extract<ResolvedServerAccountRequestContext, { scope: 'scoped' }>> {
   const credentials = await TokenStorage.getCredentialsForServerUrl(params.serverUrl, { serverId: params.serverId });
   if (!credentials) {
@@ -100,7 +102,8 @@ async function buildScopedContext(params: Readonly<{
     accountEncryptionObservation,
     ...(readCredentialAuthorityKind(credentials.token) === 'api_token' ? {} : {
       readTransport: createCapturedServerReadTransport({ serverId: params.serverId,
-        profile: params.profile ?? { serverUrl: params.serverUrl }, credentials, accountEncryptionObservation }),
+        profile: params.profile ?? { serverUrl: params.serverUrl }, credentials, accountEncryptionObservation,
+        ...(params.prepareRequest ? { prepareRequest: params.prepareRequest } : {}) }),
     }),
     runtimeOrigin: transport.runtimeOrigin,
     carrier: transport.carrier,
@@ -181,6 +184,7 @@ export async function resolveServerAccountRequestContext(params: Readonly<{
   preferScoped?: boolean;
   signal?: AbortSignal;
   networkMode?: 'background-task';
+  prepareRequest?: CapturedServerRequestPreparation;
 }>): Promise<ResolvedServerAccountRequestContext> {
   throwIfAborted(params.signal);
   const targetServerId = normalizeId(params.serverId);
@@ -206,6 +210,7 @@ export async function resolveServerAccountRequestContext(params: Readonly<{
       serverUrl: activeSnapshot.serverUrl,
       timeoutMs,
       profile: getServerProfileById(activeServerId) ?? { serverUrl: activeSnapshot.serverUrl },
+      ...(params.prepareRequest ? { prepareRequest: params.prepareRequest } : {}),
     }), { watchActiveHome: params.networkMode !== 'background-task', signal: params.signal });
   }
 
@@ -220,5 +225,6 @@ export async function resolveServerAccountRequestContext(params: Readonly<{
     serverUrl: targetProfile.serverUrl,
     timeoutMs,
     profile: targetProfile,
+    ...(params.prepareRequest ? { prepareRequest: params.prepareRequest } : {}),
   }), { watchActiveHome: false, signal: params.signal });
 }

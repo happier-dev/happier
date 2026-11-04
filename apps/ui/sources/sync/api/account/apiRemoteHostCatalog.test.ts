@@ -27,7 +27,7 @@ describe('Remote host captured catalog mutation', () => {
                 capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } } }));
         const writes: unknown[] = [];
         const context: owner.RemoteHostAccountContext = { serverId: 'home', accountId, credentials: { token: createAccountTokenForTests(accountId) },
-            resolveAccountMode: async () => 'plain', resolveAccountEncryption: async () => ({ accountMode: 'plain', encryption: null }),
+            resolveAccountMode: async () => 'plain' as const, resolveAccountEncryption: async () => ({ accountMode: 'plain' as const, encryption: null }),
             assertCurrent: () => {}, accountLifetime: { scope: { serverId: 'home', accountId }, isCurrent: () => true, onRetire: () => ({ dispose() {} }) },
             mutateRawSettings: async () => { throw new Error('Destination-only credential replacement cannot write Settings'); },
             request: (async (path, init) => {
@@ -62,8 +62,8 @@ describe('Remote host captured catalog mutation', () => {
             const admittedRows = getRemoteHostCatalogSnapshot(scope)!.data;
             const context: owner.RemoteHostAccountContext = {
                 ...scope, credentials: { token: createAccountTokenForTests(scope.accountId) },
-                resolveAccountMode: async () => 'plain',
-                resolveAccountEncryption: async () => ({ accountMode: 'plain', encryption: null }),
+                resolveAccountMode: async () => 'plain' as const,
+                resolveAccountEncryption: async () => ({ accountMode: 'plain' as const, encryption: null }),
                 assertCurrent: () => {},
                 accountLifetime: { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) },
                 mutateRawSettings: async () => { throw new Error('A currentness failure must not mutate Settings'); },
@@ -89,8 +89,8 @@ describe('Remote host captured catalog mutation', () => {
         applyRemoteHostCatalogSnapshot(scope, { status: 'ready', revision: 4, hosts: [host], diagnostics: [] }, true);
         const context: owner.RemoteHostAccountContext = {
             ...scope, credentials: { token: createAccountTokenForTests(scope.accountId) },
-            resolveAccountMode: async () => 'plain',
-            resolveAccountEncryption: async () => ({ accountMode: 'plain', encryption: null }),
+            resolveAccountMode: async () => 'plain' as const,
+            resolveAccountEncryption: async () => ({ accountMode: 'plain' as const, encryption: null }),
             assertCurrent: () => {},
             accountLifetime: { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) },
             mutateRawSettings: async () => { throw new Error('Unsupported catalog reads must not rewrite retained Settings'); },
@@ -152,8 +152,8 @@ describe('Remote host captured catalog mutation', () => {
         const mutations: ReturnType<typeof AccountSettingsV2HistoryMutationRequestSchema.parse>[] = [];
         const hostWrites: unknown[] = [];
         const context: owner.RemoteHostAccountContext = { serverId: 'home', accountId, credentials: { token: createAccountTokenForTests(accountId) },
-            resolveAccountMode: async () => 'plain',
-            resolveAccountEncryption: async () => ({ accountMode: 'plain', encryption: null }), assertCurrent: () => {},
+            resolveAccountMode: async () => 'plain' as const,
+            resolveAccountEncryption: async () => ({ accountMode: 'plain' as const, encryption: null }), assertCurrent: () => {},
             accountLifetime: { scope: { serverId: 'home', accountId }, isCurrent: () => true, onRetire: () => ({ dispose() {} }) },
             mutateRawSettings: async () => { throw new Error('The current source is already clean'); },
             // Home HTTP is the sole substituted boundary; resource opening and History normalization stay real.

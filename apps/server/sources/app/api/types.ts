@@ -1,3 +1,4 @@
+import type { VerifiedExternalActionExecutionRequest } from '@/app/auth/externalActionExecutionAuthorization';
 import { FastifyBaseLogger, FastifyInstance } from "fastify";
 import { ZodTypeProvider } from "fastify-type-provider-zod";
 import { IncomingMessage, Server, ServerResponse } from "http";
@@ -153,6 +154,7 @@ declare module 'fastify' {
         /** Custodian from the verified execution binding, independent of requester principal. */
         externalActionExecutionCustodianAccountId?: string;
         /** Home-derived retained guest scope; only verified controller signatures stamp it. */
+        externalActionReviewedChildAdmission?: NonNullable<VerifiedExternalActionExecutionRequest['reviewedChildAdmission']>
         externalActionManagedGuestActivity?: Readonly<{ machineId: string; installationId: string; encryptionMode: 'plain' | 'e2ee' }>;
         startTime?: number;
         accountStoredContentCompatibility?: AccountStoredContentCompatibilityEvaluation;

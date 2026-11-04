@@ -29,6 +29,7 @@ import { SessionTeamCredentialLaunchUnavailableError } from '@/session/services/
 import { retireObservedSessionRunnerMetadata } from '../sessions/plainRunnerRetirement';
 import { actionStartTargetUnavailableV1 } from '@happier-dev/protocol/actions/executor/agentStartAdmission';
 import type { PendingSessionResumeAdmission, PendingSessionResumePort } from '../sessions/activatePendingInactiveSession';
+import { applyTemplateMachineSetupBeforeAgent } from '../sessions/applyTemplateMachineSetupBeforeAgent';
 import { DiscussionAgentPublisherResponseV1Schema } from '@happier-dev/protocol/discussions/api';
 import type { DiscussionAgentPublisherPrivateRequestV1 } from '@/discussions/discussionAgentPublisher';
 
@@ -4398,6 +4399,22 @@ daemonWorkSignal: AbortSignal;
                 readSpawnFailureLimits: params.readSpawnFailureLimits,
                 checkRegistryUpdates: params.checkRegistryUpdates,
                 options,
+                applyMachineSetupBeforeAgent: async setupOptions => await applyTemplateMachineSetupBeforeAgent({
+                  options: setupOptions, machineId: params.machineId, serverId: params.serverId,
+                  prepareRequester: request => externalActionIngressOwner?.prepareRequesterAccountContext?.(request) ?? Promise.resolve(null),
+                  invokeMachineAction: (method, request, context) => {
+                    const client = params.getApiMachineForSessions();
+                    if (!client) throw new Error('machine_unavailable');
+                    return client.invokeLocalMachineAction(method, request, context);
+                  },
+                  operationContext: prepared => {
+                    const requester = readRequesterAccountActionContext(prepared.authorization);
+                    const client = params.getApiMachineForSessions();
+                    return requester && client ? requesterAccountOperationContext(client, requester, 'manage',
+                      setupOptions.projectSetupOperation?.signal ?? shutdownCancellationDomains.daemonWorkSignal) : null;
+                  },
+                  signal: setupOptions.projectSetupOperation?.signal ?? shutdownCancellationDomains.daemonWorkSignal,
+                }),
                 ...(requesterRuntime
                   ? { requesterSessionRuntimeContext: requesterRuntime }
                   : {}),
@@ -11857,7 +11874,7 @@ daemonWorkSignal: AbortSignal;
           resolveAccountPluginExecutionSelection: async (pluginId, registry, signal) =>
             await params.getApiMachineForSessions()?.resolveAccountPluginExecutionSelection(pluginId, registry, signal)
               ?? { kind: 'unavailable', code: 'plugin_account_execution_unavailable' },
-          prepareRequesterAccountContext: async ({ authorization, purpose, signal, verifyWorkspaceSyncPrepareCurrent, verifyServiceMoveChildCurrent, deploymentChildExecution }) => {
+          prepareRequesterAccountContext: async ({ authorization, purpose, signal, verifyWorkspaceSyncPrepareCurrent, verifyServiceMoveChildCurrent, deploymentChildExecution, templateRequesterSetup }) => {
             const privatePurpose = purpose ?? { kind: 'external_action' as const };
             let executeManagedFiniteWake: ((request: ManagedMachinePolicyRequest) => Promise<ActionExecuteResult>) | undefined;
             let requesterTargetResolver: ReturnType<typeof createDaemonExternalActionTargetResolver> | undefined;
@@ -11865,6 +11882,7 @@ daemonWorkSignal: AbortSignal;
               ...(verifyWorkspaceSyncPrepareCurrent ? { verifyWorkspaceSyncPrepareCurrent } : {}),
               ...(verifyServiceMoveChildCurrent ? { verifyServiceMoveChildCurrent } : {}),
               ...(deploymentChildExecution ? { deploymentChildExecution } : {}),
+              ...(templateRequesterSetup ? { templateRequesterSetup } : {}),
               machineId: params.machineId,
               serverId: params.serverId, serverHttpBaseUrl: params.serverBaseUrl,
               ownCredentials: params.credentials,

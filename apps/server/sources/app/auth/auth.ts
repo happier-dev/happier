@@ -1,3 +1,4 @@
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import * as privacyKit from "privacy-kit";
 import { createHash, randomBytes } from "node:crypto";
 import { AccountEncryptionMigrateExternalAuthBindingDigestV1Schema } from '@happier-dev/protocol/account/encryptionMigrate';
@@ -652,6 +653,51 @@ class AuthModule {
             user: binding.accountId,
             extras: { externalActionExecutionAuthorizationV1: binding },
         });
+        return ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token, binding });
+    }
+
+    /** Seal only private setup bytes or the canonical birth of an already admitted template. */
+    async deriveExternalActionTemplateAuthorization(original: ExternalActionExecutionAuthorizationV1,
+        extension: Readonly<{ planInputDigest?: string;
+            birth?: NonNullable<ExternalActionExecutionAuthorizationBindingV1['templateRequesterBirth']> }>,
+    ): Promise<ExternalActionExecutionAuthorizationV1> {
+        const root = await this.verifyExternalActionExecutionAuthorization(original.token);
+        if (!root || !sameStrictJsonValue(root, original.binding) || !['template.instantiate', 'template.updates.apply'].includes(root.actionId)
+            || root.target.kind !== 'machine' || root.target.machineId !== root.machineId
+            || extension.birth && root.actionId !== 'template.instantiate'
+            || extension.planInputDigest && (!root.templateRequesterSetupAdmission || root.admittedMachineRole !== 'manage')
+            || root.templateRequesterSetupAdmission?.planInputDigest && extension.planInputDigest
+                && root.templateRequesterSetupAdmission.planInputDigest !== extension.planInputDigest
+            || root.templateRequesterBirth && extension.birth && !sameStrictJsonValue(root.templateRequesterBirth, extension.birth)) {
+            throw new ApiTokenOperationError('invalid_token');
+        }
+        const binding = ExternalActionExecutionAuthorizationBindingV1Schema.parse({ ...root,
+            ...(extension.planInputDigest ? { templateRequesterSetupAdmission: {
+                kind: 'software', planInputDigest: extension.planInputDigest } } : {}),
+            ...(extension.birth ? { templateRequesterBirth: extension.birth } : {}) });
+        if (!this.externalActionExecutionAuthorizationTokens) throw new Error('Auth module not initialized');
+        const token = await this.externalActionExecutionAuthorizationTokens.generator.new({ user: binding.accountId,
+            extras: { externalActionExecutionAuthorizationV1: binding } });
+        return ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token, binding });
+    }
+
+    /** Retain the admitted update's grant for its exact native setup Plan. */
+    async deriveExternalActionTemplateSetupPlanAuthorization(original: ExternalActionExecutionAuthorizationV1,
+        requestEnvelopeDigest: string): Promise<ExternalActionExecutionAuthorizationV1> {
+        const root = await this.verifyExternalActionExecutionAuthorization(original.token);
+        if (!root || !sameStrictJsonValue(root, original.binding) || root.actionId !== 'template.updates.apply'
+            || root.admittedMachineRole !== 'manage' || root.target.kind !== 'machine'
+            || root.target.machineId !== root.machineId || !root.templateRequesterSetupAdmission?.planInputDigest) {
+            throw new ApiTokenOperationError('invalid_token');
+        }
+        const { templateRequesterSetupAdmission: setup, ...retained } = root;
+        const binding = ExternalActionExecutionAuthorizationBindingV1Schema.parse({ ...retained,
+            actionId: 'machines.setup.plan', requestEnvelopeDigest,
+            templateRequesterSetupPlanAdmission: { parentActionId: root.actionId,
+                parentRequestEnvelopeDigest: root.requestEnvelopeDigest, planInputDigest: setup.planInputDigest } });
+        if (!this.externalActionExecutionAuthorizationTokens) throw new Error('Auth module not initialized');
+        const token = await this.externalActionExecutionAuthorizationTokens.generator.new({ user: binding.accountId,
+            extras: { externalActionExecutionAuthorizationV1: binding } });
         return ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token, binding });
     }
 

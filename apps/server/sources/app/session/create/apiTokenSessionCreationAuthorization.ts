@@ -1,4 +1,4 @@
-import type { ExternalActionExecutionAuthorizationBindingV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import type { ExternalActionExecutionAuthorizationBindingV1, ReviewedActionChildHttpProofV1 } from '@happier-dev/protocol/actions/externalActionApi';
 
 import { ApiTokenOperationError } from "@/app/auth/auth";
 import { verifyCurrentExternalActionPrincipalInTx } from "@/app/auth/externalActionExecutionAuthorization";
@@ -23,7 +23,16 @@ import { beforeAccountChangePublication } from '@/app/changes/markAccountChanged
 /** A typed, request-local native birth proof; the original signed binding is never rewritten. */
 export type SessionCreationExecutionAuthorization = ExternalActionExecutionAuthorizationBindingV1 | Readonly<{
     binding: ExternalActionExecutionAuthorizationBindingV1;
+    /** Finite template root already admitted by the canonical requester HTTP verifier. */
+    templateRequesterBirth: true;
+}> | Readonly<{
+    binding: ExternalActionExecutionAuthorizationBindingV1;
     modelBirth: Readonly<{ body: Readonly<Record<string, unknown>>; proof: DiscussionModelSessionCreationProofV1; env: NodeJS.ProcessEnv }>;
+}> | Readonly<{
+    binding: ExternalActionExecutionAuthorizationBindingV1;
+    /** Already signature-verified create_bot effect and exact birth bytes; never accepted from a body. */
+    reviewedChildAdmission: ReviewedActionChildHttpProofV1;
+    effectActionId: 'session.spawn_new';
 }>;
 
 async function isCurrentDiscussionModelBirthInTx(tx: Tx, accountId: string,
@@ -67,7 +76,7 @@ async function isCurrentDiscussionModelBirthInTx(tx: Tx, accountId: string,
         || admission.installationId !== machineAdmission.installationId || sourceAdmission.installationId !== binding.installationId
         || admission.custodianAccountId !== machineAdmission.custodianAccountId || admission.encryptionMode !== machineAdmission.encryptionMode
         || machineAdmission.role === 'manage' && admission.role !== 'manage'
-        || !verifyExternalActionMachineRpcRequestV1({ authorizationToken: execution.authorization.token,
+        || !verifyExternalActionMachineRpcRequestV1({ reviewedChild: execution.reviewedChild, authorizationToken: execution.authorization.token,
             requesterAccountContext: execution.authorization.requesterAccountContext, effectActionId: execution.effectActionId,
             target: execution.target, installationId: execution.installationId, method: sourceExecution.method,
             requestId: sourceExecution.requestId, ...(sourceExecution.params === undefined ? {} : { params: sourceExecution.params }),
@@ -91,11 +100,19 @@ export async function readSessionCreationApiTokenIdInTx(
     authorization: SessionCreationExecutionAuthorization | undefined,
 ): Promise<string | null> {
     if (authorization === undefined) return null;
+    if ('binding' in authorization && 'templateRequesterBirth' in authorization) {
+        if (authorization.binding.accountId !== accountId || authorization.binding.actionId !== 'template.instantiate') {
+            throw new ApiTokenOperationError("invalid_token");
+        }
+        // The root PAT owns revocation, not child-credential creation attribution.
+        return null;
+    }
     await acquireAccountSessionOwnerMetadataFenceInTx(tx, accountId, "content");
-    const binding = 'modelBirth' in authorization ? authorization.binding : authorization;
+    const binding = 'binding' in authorization ? authorization.binding : authorization;
     const principal = await verifyCurrentExternalActionPrincipalInTx(tx, binding);
     if (binding.accountId !== accountId || !principal || ('modelBirth' in authorization
-        ? !await isCurrentDiscussionModelBirthInTx(tx, accountId, authorization) : binding.actionId !== 'session.spawn_new')) {
+        ? !await isCurrentDiscussionModelBirthInTx(tx, accountId, authorization)
+        : !('reviewedChildAdmission' in authorization) && binding.actionId !== 'session.spawn_new')) {
         throw new ApiTokenOperationError("invalid_token");
     }
     if ('modelBirth' in authorization) {

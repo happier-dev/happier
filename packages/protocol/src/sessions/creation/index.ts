@@ -10,3 +10,4 @@ export * from './sessionSpawnBudget.js';
 export * from './sessionCreateOriginV1.js';
 export * from './sessionDiscussionParticipantV1.js';
 export * from './sessionInitialTriggerAdmissionV1.js';
+export * from './sessionPreparedBirthV1.js';

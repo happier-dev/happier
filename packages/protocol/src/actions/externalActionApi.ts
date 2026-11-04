@@ -1,5 +1,6 @@
 import { MachineServiceLogsResourceContinuationV1Schema, MachineServiceLogsGenerationV1Schema } from '../daemon/machineServiceLogsResource.js';
 import { ActionOperationListActionInputV1Schema, ActionOperationGetActionInputV1Schema } from './specs/actionOperations.js';
+import { SessionInitialAccessDraftV1Schema } from '../sessions/access/sessionInitialAccessDraftV1.js';
 import { projectDeploymentNativeAdmissionV1 } from '../deployments/deploymentCandidatePublicationV1.js';
 import type { ArtifactBodyV1 } from '../artifacts/artifactBinaryV1.js';
 import type { ArtifactRevisionV1 } from '../artifacts/artifactRevisionV1.js';
@@ -1095,6 +1096,24 @@ const externalActionExecutionAuthorizationRoutingShapeV1 = () => ({
     installationId: ExternalActionTargetIdV1Schema,
     /** Effective grant already decided by Home Machine admission, never an operation-selected role. */
     admittedMachineRole: z.optional(z.enum(['use', 'manage'])),
+    /** Requester template setup is admitted once; its prepared private input is sealed later. */
+    templateRequesterSetupAdmission: z.optional(z.strictObject({
+      kind: z.literal('software'),
+      planInputDigest: z.optional(z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u))),
+    })),
+    /** Selected non-content grants needed for requester-local recipient-key preparation. */
+    templateRequesterInitialAccessAdmission: z.optional(SessionInitialAccessDraftV1Schema),
+    /** Exact native Plan derived from the already admitted template update. */
+    templateRequesterSetupPlanAdmission: z.optional(z.strictObject({
+      parentActionId: z.literal('template.updates.apply'),
+      parentRequestEnvelopeDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)),
+      planInputDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)),
+    })),
+    /** Derived only from the actual canonical Session birth, never an authored final tag. */
+    templateRequesterBirth: z.optional(z.strictObject({
+      sessionId: ExternalActionTargetIdV1Schema,
+      creationTag: z.string().check(z.regex(/^create:v1:[A-Za-z0-9_-]{43}$/u)),
+    })),
     actionId: ExternalActionActionIdV1Schema,
     requestId: ExternalActionRequestIdV1Schema,
     requestEnvelopeDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)),
@@ -1138,6 +1157,19 @@ export const ExternalActionExecutionAuthorizationBindingV1Schema = lazyZodSchema
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(z.omit(ExternalActionAccountServerPrincipalV1Schema, { authority: true }), externalActionExecutionAuthorizationRoutingShapeV1())),
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(z.omit(ExternalActionTerminalServerPrincipalV1Schema, { authority: true }), externalActionExecutionAuthorizationRoutingShapeV1())),
 ]).check(z.superRefine((value, context) => {
+  if (value.templateRequesterSetupPlanAdmission && (value.actionId !== 'machines.setup.plan'
+    || value.admittedMachineRole !== 'manage' || value.target.kind !== 'machine'
+    || value.target.machineId !== value.machineId || value.templateRequesterSetupAdmission || value.templateRequesterBirth)) {
+    context.addIssue({ code: 'custom', path: ['templateRequesterSetupPlanAdmission'], message: 'Template Plan binds its exact Machine and captured Manage admission.' });
+  }
+  if (value.templateRequesterBirth && value.actionId !== 'template.instantiate'
+    || value.templateRequesterInitialAccessAdmission && value.actionId !== 'template.instantiate'
+    || value.templateRequesterSetupAdmission && !['template.instantiate', 'template.updates.apply'].includes(value.actionId)
+    || (value.templateRequesterSetupAdmission || value.templateRequesterBirth || value.templateRequesterInitialAccessAdmission)
+      && (value.target.kind !== 'machine' || value.target.machineId !== value.machineId
+        || value.templateRequesterSetupAdmission && value.admittedMachineRole !== 'manage')) {
+    context.addIssue({ code: 'custom', path: ['templateRequesterSetupAdmission'], message: 'Template requester admission binds its exact Machine and admitted setup role.' });
+  }
   const native = value.deploymentNativeAdmission;
   if (isDeploymentDomainChildActionIdV1(value.actionId) || value.actionId === 'deployments.restart' || value.actionId === 'deployments.backups.restore'
     ? !native || native.actionId !== value.actionId || native.environmentId !== value.environmentId
@@ -1378,11 +1410,48 @@ export function bindExternalActionExecutionAuthorizationHttpPathV1(actionId: str
 export function bindExternalActionExecutionAuthorizationVerifyHttpPathV1(actionId: string): string {
   return `${bindExternalActionExecutionAuthorizationHttpPathV1(actionId)}/verify`;
 }
-function externalActionExecutionAuthorizationRequestSchemaV1(actionId?: 'session.board.item.upsert') {
+type ExternalActionExecutionAuthorizationRequestShapeV1 = {
+  v: z.ZodMiniLiteral<1>;
+  machineId: typeof ExternalActionTargetIdV1Schema;
+  envelope: typeof ExternalActionRequestEnvelopeSchema;
+  executionAuthorization: z.ZodMiniOptional<typeof ExternalActionExecutionAuthorizationV1Schema>;
+  templateRequesterSetupAdmission: z.ZodMiniOptional<z.ZodMiniObject<{ kind: z.ZodMiniLiteral<'software'> }, z.core.$strict>>;
+  templateRequesterInitialAccessAdmission: z.ZodMiniOptional<typeof SessionInitialAccessDraftV1Schema>;
+  templateRequesterSetupEnrichment: z.ZodMiniOptional<z.ZodMiniObject<{
+    authorization: typeof ExternalActionExecutionAuthorizationV1Schema;
+    planInputDigest: z.ZodMiniString;
+  }, z.core.$strict>>;
+  templateRequesterSetupPlanContinuation: z.ZodMiniOptional<z.ZodMiniObject<{
+    authorization: typeof ExternalActionExecutionAuthorizationV1Schema;
+    originalActionEnvelope: typeof ExternalActionRequestEnvelopeSchema;
+  }, z.core.$strict>>;
+  nativeCredentialSpawnChild: z.ZodMiniOptional<typeof ExternalActionNativeCredentialSpawnChildV1Schema>;
+  sessionActionOrigin: z.ZodMiniOptional<typeof SessionActionRpcOriginV1Schema>;
+  sessionActionSource: z.ZodMiniOptional<typeof ExternalActionSessionSourceV1Schema>;
+  workflowActionOrigin: z.ZodMiniOptional<typeof ExternalActionWorkflowOriginV1Schema>;
+  installationProof: z.ZodMiniOptional<typeof MachineInstallationProofV1Schema>;
+  managedContinuation: z.ZodMiniOptional<z.ZodMiniObject<Pick<typeof ExternalActionManagedContinuationV1Schema.shape,
+    'managedId' | 'creationRequestId' | 'expectedIntentRevision'>, z.core.$strict>>;
+  handoffContinuation: z.ZodMiniOptional<z.ZodMiniObject<{
+    authorization: typeof ExternalActionExecutionAuthorizationV1Schema;
+    handoffId: typeof ExternalActionTargetIdV1Schema;
+  }, z.core.$strict>>;
+  handoffPreflight: z.ZodMiniOptional<z.ZodMiniObject<{
+    authorization: typeof ExternalActionExecutionAuthorizationV1Schema;
+  }, z.core.$strict>>;
+};
+
+function externalActionExecutionAuthorizationRequestSchemaV1(actionId?: 'session.board.item.upsert'): z.ZodMiniObject<ExternalActionExecutionAuthorizationRequestShapeV1, z.core.$strict> {
   return z.strictObject({
   v: z.literal(1), machineId: ExternalActionTargetIdV1Schema, envelope: ExternalActionRequestEnvelopeSchema,
   executionAuthorization: z.optional(ExternalActionExecutionAuthorizationV1Schema),
   nativeCredentialSpawnChild: z.optional(ExternalActionNativeCredentialSpawnChildV1Schema),
+  templateRequesterSetupAdmission: z.optional(z.strictObject({ kind: z.literal('software') })),
+  templateRequesterInitialAccessAdmission: z.optional(SessionInitialAccessDraftV1Schema),
+  templateRequesterSetupEnrichment: z.optional(z.strictObject({ authorization: ExternalActionExecutionAuthorizationV1Schema,
+    planInputDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)) })),
+  templateRequesterSetupPlanContinuation: z.optional(z.strictObject({ authorization: ExternalActionExecutionAuthorizationV1Schema,
+    originalActionEnvelope: ExternalActionRequestEnvelopeSchema })),
   sessionActionOrigin: z.optional(SessionActionRpcOriginV1Schema),
   sessionActionSource: z.optional(ExternalActionSessionSourceV1Schema),
   workflowActionOrigin: z.optional(ExternalActionWorkflowOriginV1Schema),
@@ -1463,7 +1532,7 @@ function externalActionExecutionAuthorizationRequestSchemaV1(actionId?: 'session
   }
   }));
 }
-export const ExternalActionExecutionAuthorizationRequestV1Schema = lazyZodSchema(() => externalActionExecutionAuthorizationRequestSchemaV1());
+export const ExternalActionExecutionAuthorizationRequestV1Schema: ReturnType<typeof externalActionExecutionAuthorizationRequestSchemaV1> = lazyZodSchema(() => externalActionExecutionAuthorizationRequestSchemaV1());
 const SessionVisualExecutionAuthorizationRequestV1Schema = lazyZodSchema(() => externalActionExecutionAuthorizationRequestSchemaV1('session.board.item.upsert'));
 /** The trusted routed Action selects framing; JSON never claims this exception. */
 export function externalActionExecutionAuthorizationRequestSchemaForActionV1(actionId: string): typeof ExternalActionExecutionAuthorizationRequestV1Schema {
@@ -1473,8 +1542,10 @@ export function externalActionExecutionAuthorizationRequestSchemaForActionV1(act
 export type ExternalActionExecutionAuthorizationRequestV1 = z.infer<typeof ExternalActionExecutionAuthorizationRequestV1Schema>;
 export const ExternalActionExecutionAuthorizationVerifyRequestV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1),
+  admittedMachineRole: z.optional(z.enum(['use', 'manage'])),
   managedFiniteWakeTarget: z.optional(ManagedWakeTargetV1Schema),
   retainedDiscussionSource: z.optional(SessionInputSourceSessionV1Schema),
+  templateRequesterSetup: z.optional(z.strictObject({ planInputDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)) })),
 }).check(z.superRefine((value, context) => {
   if (value.managedFiniteWakeTarget && value.managedFiniteWakeTarget.origin.kind !== 'finite-command') {
     context.addIssue({ code: 'custom', path: ['managedFiniteWakeTarget'], message: 'Controller custody requires an original finite-command target' });

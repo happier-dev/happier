@@ -28,7 +28,10 @@ function envelopePageQuery(cursor: string | null, state: SessionDataKeyEnvelopeC
     return `?${query.toString()}`;
 }
 
-async function requestEnvelopeCollection(bound: BoundEnvelopeCollection,
+async function requestEnvelopeCollection(bound: Readonly<{
+    authority: Pick<ServerAccountRequestAuthority, 'request'>;
+    guard: ServerAccountScopeRequestGuard;
+}>,
     params: Readonly<{ path: string; init?: RequestInit }>): Promise<unknown> {
     bound.guard.check();
     const response = await bound.authority.request(params.path, { ...params.init, signal: bound.guard.signal });
@@ -50,7 +53,11 @@ function admitEnvelopeResponse(response: Pick<Response, 'ok' | 'status'>, payloa
 }
 
 /** One captured authority spans discovery and every mutation of a preparation pass. */
-export function createEnvelopeTransport(bound: BoundEnvelopeCollection,
+export function createEnvelopeTransport(bound: Readonly<{
+    authority: Pick<ServerAccountRequestAuthority, 'request' | 'readTransport'>;
+    guard: ServerAccountScopeRequestGuard;
+    sessionId: string;
+}>,
     state: SessionDataKeyEnvelopeCollectionState = 'action_required'): CurrentSessionDataKeyEnvelopeTransport {
     const path = envelopeCollectionPath(bound.sessionId);
     const transport = bound.authority.readTransport;

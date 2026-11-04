@@ -8,7 +8,8 @@ import { MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent, encodeP
     API_TOKEN_FULL_GRANT_V1, type AccountPasswordCredentialV1 } from '@happier-dev/protocol';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { bindExternalActionExecutionAuthorizationHttpPathV1, ExternalActionExecutionAuthorizationV1Schema,
-    ExternalActionRequestEnvelopeV1Schema, type ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
+    ExternalActionRequestEnvelopeV1Schema, type ExternalActionExecutionAuthorizationV1,
+    type ReviewedActionChildHttpProofV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { encodeExternalActionResolvedTargetV1, signExternalActionMachineRequestV1,
     signExternalActionMachineRpcRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
@@ -28,12 +29,19 @@ import { userRoutes } from '../user/userRoutes';
 import { createDiscussion } from '@/app/discussions/mutations';
 import { inviteDiscussionParticipant } from '@/app/discussions/accessService';
 import { registerDiscussionRoutes } from '../discussions/registerDiscussionRoutes';
+import { registerAccountEncryptionRoutes } from '../account/registerAccountEncryptionRoutes';
 import { featuresRoutes } from '../features/featuresRoutes';
+import { accessKeysRoutes } from '../accessKeys/accessKeysRoutes';
+import { sessionPendingRoutes } from '../session/pendingRoutes';
+import { registerSessionDataKeyEnvelopeRoutes } from '../session/registerSessionDataKeyEnvelopeRoutes';
+import { registerSessionReadBatchRoute } from '../session/registerSessionReadBatchRoute';
+import { artifactsRoutes } from '../artifacts/artifactsRoutes';
 import { createPresentUserSessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication.testkit';
 import { inTx } from '@/storage/inTx';
 import { setMachineAccessGrantInTx } from '@/app/machines/machineAccess';
 
-export async function createSignedDiscussionHttpFixture(allowedActionId?: ActionId, allowedSessionIds: readonly string[] = [], candidateDirectories = false, machineCustodianAccountId?: string) {
+export async function createSignedDiscussionHttpFixture(allowedActionId?: ActionId, allowedSessionIds: readonly string[] = [], candidateDirectories = false, machineCustodianAccountId?: string,
+    options?: Readonly<{ pending?: true; dataKeyEnvelopes?: true; sessionReads?: true; artifactReads?: true }>) {
     const account = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
     const credential: AccountPasswordCredentialV1 = { v: 1, kind: 'plain_password_hash', hash: {
         v: 1, algorithm: 'scrypt', parameters: { n: 16_384, r: 8, p: 5, keyLength: 32 },
@@ -72,7 +80,13 @@ export async function createSignedDiscussionHttpFixture(allowedActionId?: Action
         await userRoutes(app);
     }
     registerDiscussionRoutes(app);
+    registerAccountEncryptionRoutes(app);
     featuresRoutes(app);
+    accessKeysRoutes(app);
+    if (options?.pending) sessionPendingRoutes(app);
+    if (options?.dataKeyEnvelopes) registerSessionDataKeyEnvelopeRoutes(app);
+    if (options?.sessionReads) registerSessionReadBatchRoute(app);
+    if (options?.artifactReads) await artifactsRoutes(app);
     registerExternalActionRoutes(app, {
         // The daemon network is the only replaced boundary; issuance, signatures and DB admission are real.
         dispatch: async () => ({ kind: 'placement_error', code: 'target_unavailable' }),
@@ -92,11 +106,13 @@ export async function createSignedDiscussionHttpFixture(allowedActionId?: Action
 
     async function verify(authorization: ExternalActionExecutionAuthorizationV1,
         request: Readonly<{ method: string; path: string; body?: unknown; routeInput?: unknown;
+            reviewedChild?: ReviewedActionChildHttpProofV1;
             sessionRouteTarget?: { kind: 'session'; sessionId: string; actionId?: ActionId } }>,
         effectActionId = authorization.binding.actionId) {
         const signed = { authorizationToken: authorization.token, installationId: machine.installationId!,
             requestId: authorization.binding.requestId, target: authorization.binding.target,
-            effectActionId, method: request.method, path: request.path, body: request.body };
+            effectActionId, method: request.method, path: request.path, body: request.body,
+            ...(request.reviewedChild ? { reviewedChild: request.reviewedChild } : {}) };
         return verifyExternalActionDomainExecutionRequest({ ...request,
             body: request.body,
             authorizationToken: authorization.token, effectActionId,

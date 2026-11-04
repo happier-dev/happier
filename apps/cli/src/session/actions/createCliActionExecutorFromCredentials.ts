@@ -91,7 +91,7 @@ import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettin
 import { resolveFilesystemTransferCustodyFailure } from './filesystemTransferCustody';
 import { ensureCliActionPolicySettings } from './ensureCliActionPolicySettings';
 import { requiresManagedMachineDaemonIngress, resolveManagedControlControllerTarget, readMachineSelectorIds, reconcileExternalActionTarget, resolveExternalActionMachineTarget } from '@/daemon/externalActions/reconcileExternalActionTarget';
-import { dispatchOriginalAccountAction, readExternalActionInstalledMachine, requiresOriginalAccountMachineActionProof, type ExternalActionMachineRequestSigningKey } from '@/api/externalActionExecutionAuthorization';
+import { dispatchOriginalAccountAction, prepareOriginalTemplateRequesterAuthorization, readExternalActionInstalledMachine, requiresOriginalAccountMachineActionProof, type ExternalActionMachineRequestSigningKey } from '@/api/externalActionExecutionAuthorization';
 import { MachineEnvironmentApplyInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import {
   fetchServerFeaturesSnapshot,
@@ -737,6 +737,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
   workflowAction?: ActionExecutorDeps['workflowAction'];
   managedMachineAction?: ActionExecutorDeps['managedMachineAction'];
   machineEnvironmentApply?: ActionExecutorDeps['machineEnvironmentApply'];
+  machineSetupPlan?: ActionExecutorDeps['machineSetupPlan'];
   sessionStop?: ActionExecutorDeps['sessionStop'];
   hostActionApprovalLifetime?: ActionExecutorDeps['hostActionApprovalLifetime'];
   runActionOperation?: ActionExecutorDeps['runActionOperation'];
@@ -1056,6 +1057,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
       ...(params.pluginChangeService ? { pluginChangeService: params.pluginChangeService } : {}),
       ...(params.managedMachineAction ? { managedMachineAction: params.managedMachineAction } : {}),
       ...(params.machineEnvironmentApply ? { machineEnvironmentApply: params.machineEnvironmentApply } : {}),
+      ...(params.machineSetupPlan ? { machineSetupPlan: params.machineSetupPlan } : {}),
       ...(params.sessionStop ? { sessionStop: params.sessionStop } : {}),
       ...((approvalLifetime ?? params.hostActionApprovalLifetime) ? { hostActionApprovalLifetime: approvalLifetime ?? params.hostActionApprovalLifetime } : {}),
       ...(params.runActionOperation ? { runActionOperation: params.runActionOperation } : {}),
@@ -1461,6 +1463,18 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
       // retained guest is online. Keep policy/approval in the shared executor;
       // admitted Session/Run origins retain their existing credentialed owner.
       const originalCliCaller = isOriginalCliActionContext(context);
+      if (originalCliCaller && actionId === 'template.instantiate') {
+        const serverIdentityId = context.serverIdentityId ?? params.serverIdentityId;
+        if (!serverIdentityId) return { context,
+          invocation: createOneShotPatInvocation(async () => actionFailure('admission_unavailable')) };
+        const prepared = await prepareOriginalTemplateRequesterAuthorization({ input, context, credentials,
+          serverId: approvalServerId, serverIdentityId, serverHttpBaseUrl: resolveActionServerApiUrl() });
+        return prepared.ok ? { context: prepared.context } : { context,
+          invocation: createOneShotPatInvocation(async () => actionFailure(prepared.code)) };
+      }
+      // Update preparation first reads its owned Session to discover the target;
+      // its canonical recipient hook mints before any Artifact source is read.
+      if (originalCliCaller && actionId === 'template.updates.apply') return { context };
       // Archive state belongs to Home. The archive service requests Stop only
       // when Home reports an active Session; an inactive record must remain
       // archivable after its worker grant or daemon has gone away.

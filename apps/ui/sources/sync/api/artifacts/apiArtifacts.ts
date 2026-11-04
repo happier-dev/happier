@@ -1,4 +1,5 @@
 import { pick } from 'zod/mini';
+import { ArtifactTemplateAcceptedVersionResponseV1Schema, type ArtifactTemplateAcceptedVersionInputV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { ArtifactKindCoverageV1Schema, type ArtifactCoarseKindV1, type ArtifactKindCoverageV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
 import { requireArtifactKindCoverageV1 } from '@happier-dev/protocol/artifacts/artifactListSelectionV1';
 import type { ApprovalArtifactStateV1 } from '@happier-dev/protocol/approvals/approvalArtifactKindV1';
@@ -401,9 +402,12 @@ export function createArtifactAccessApi(credentials: AuthCredentials, opts: Pick
             }
             return schema.parse(value);
         };
-        return method ? artifactMutationAttempt(mutationOptions, run) : run();
+        return method && leaf !== 'accepted-version' ? artifactMutationAttempt(mutationOptions, run) : run();
     };
     return {
+        reportAcceptedVersion: async (input: ArtifactTemplateAcceptedVersionInputV1, signal?: AbortSignal): Promise<void> => {
+            await send(input.artifactId, 'accepted-version', ArtifactTemplateAcceptedVersionResponseV1Schema, 'PUT', input, signal);
+        },
         list: (input: ArtifactAccessGrantsListInputV1, signal?: AbortSignal) =>
             send(input.artifactId, 'grants', ArtifactAccessGrantsListResponseV1Schema, undefined, undefined, signal),
         set: (input: ArtifactAccessGrantSetInputV1, signal?: AbortSignal) =>

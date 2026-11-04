@@ -15,6 +15,7 @@ import { PersistedProviderResumeBindingError } from '@/providers/lifecycle/readP
 import { isCatalogAgentId } from '@/agent/catalog/resolution';
 import { resolveBackendTargetFromSessionMetadata } from '@/session/backendTargets/resolveBackendTargetFromSessionMetadata';
 import { resolveSessionMachineWorkspacePath } from '@/session/machineControlLocality';
+import { createManagedSessionDirectories } from '@/session/creation/managedSessionDirectories';
 import type { SpawnSessionOptions } from '@/session/shared/spawnSessionContract';
 import {
   resolveCanonicalAbsolutePath,
@@ -179,7 +180,13 @@ export function buildInactiveSessionResumeSpawnOptions(
   const createdAt = typeof rawSession.createdAt === 'number' && Number.isFinite(rawSession.createdAt)
     ? rawSession.createdAt : 0;
 
-  const persistedDirectory = selectCanonicalPersistedDirectory(rawDirectory, metadataDirectory);
+  const firstManagedBirth = !rawDirectory && !metadataDirectory
+    && rawSession.runtimeActivityRevision === 0
+    && initialRecipe?.execution.directory.kind === 'managed'
+    && correspondence !== null;
+  const persistedDirectory = firstManagedBirth
+    ? createManagedSessionDirectories().prepareForCreation({ sessionCreationTag: correspondence.sessionCreationTag }).directory
+    : selectCanonicalPersistedDirectory(rawDirectory, metadataDirectory);
   const machineId = rawMachineId ?? metadataMachineId ?? readNonEmptyString(params.fallbackMachineId);
   const runtimeIdentity = resolveSessionPersistedRuntimeIdentity(params.metadata);
   if (!persistedDirectory || !machineId || !runtimeIdentity) return null;
@@ -200,6 +207,9 @@ export function buildInactiveSessionResumeSpawnOptions(
         directory,
         directoryKind,
         ...(initialRecipe?.modelSelection ? { modelSelection: initialRecipe.modelSelection } : {}),
+        ...(initialRecipe?.machineSetupPlanInput ? { machineSetupPlanInput: initialRecipe.machineSetupPlanInput } : {}),
+        ...(initialRecipe?.machineSetupExecution ? { machineSetupExecution: initialRecipe.machineSetupExecution } : {}),
+        ...(initialRecipe?.checkoutCreationDraft ? { checkoutCreationDraft: initialRecipe.checkoutCreationDraft } : {}),
         ...(initialPermissionMode ? { permissionMode: initialPermissionMode,
           permissionModeUpdatedAt: initialRecipe?.configuration?.permissionIntent.updatedAtMs ?? createdAt } : {}),
         ...(correspondence
@@ -231,6 +241,7 @@ export function buildInactiveSessionResumeSpawnOptions(
   // durable tracked state. Reattach only this invocation's fresh controls.
   return {
     ...resolved,
+    ...(firstManagedBirth ? { freshSessionCreation: true } : {}),
     ...(typeof params.initialTranscriptAfterSeq === 'number'
       && Number.isSafeInteger(params.initialTranscriptAfterSeq)
       && params.initialTranscriptAfterSeq >= 0

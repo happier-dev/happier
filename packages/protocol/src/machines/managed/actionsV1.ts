@@ -452,3 +452,21 @@ export { isMachineSetupPlanRpcChildV1 } from './actionIdsV1.js';
 export { ManagedInstallationServerOriginV1Schema } from './managedInstallationV1.js';
 
 export { ManagedTerminalPairingContextV1Schema } from './managedInstallationV1.js';
+
+export function machineSetupApplyTargetFromPlanV1(
+  target: Pick<MachineSetupApplyTargetV1, 'homeId' | 'machineId'>,
+  plan: MachineSetupPlanResultV1,
+): MachineSetupApplyTargetV1 {
+  return MachineSetupApplyTargetV1Schema.parse({ homeId: target.homeId, machineId: target.machineId,
+    desiredRevision: plan.desiredRevision, sources: plan.sources, exclusions: plan.exclusions,
+    recipePlans: plan.recipePlans,
+    ...(plan.removeItemKeys === undefined ? {} : { removeItemKeys: plan.removeItemKeys }),
+    ...(plan.removalPlans === undefined ? {} : { removalPlans: plan.removalPlans }),
+    ...(plan.appChildren === undefined ? {} : { appChildren: plan.appChildren }),
+  });
+}
+
+/** A single exact native target remains an ordinary canonical Apply operand. */
+export function buildMachineSetupTargetApplyInput(target: MachineSetupApplyTargetV1): MachineSetupApplyInputV1 {
+  return { homeId: target.homeId, machineId: target.machineId, targets: [target] };
+}

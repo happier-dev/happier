@@ -9,8 +9,8 @@ import { SessionModelSelectionV1Schema } from '../../providers/selection/v1.js';
 import { AgentSessionConfigurationSnapshotV1Schema } from '../../runtime/agentSessionV1.js';
 import { AgentSessionToolPolicyShapeV1 } from '../../runtime/permissionIntentV1.js';
 import { AgentSessionStartupInstructionsMarkerV1Schema } from '../../runtime/agentSessionStartupInstructionsV1.js';
-import { SessionAuthoringTerminalV1Schema } from '../authoring/creationFieldsV1.js';
-import { SessionCreationTagV1Schema } from './sessionCreationIdentityV1.js';
+import { SessionAuthoringTerminalV1Schema, SessionAuthoringCheckoutCreationDraftV1Schema } from '../authoring/creationFieldsV1.js';
+import { SessionCreationTagV1Schema, deriveSessionCreationTagV1, type SessionCreationTagV1 } from './sessionCreationIdentityV1.js';
 import { SessionOrganizationPlacementV1Schema } from './sessionSpawnNewResultV1.js';
 import { SecretReferenceOverlayV1Schema } from '../../profiles/secretReferenceOverlayV1.js';
 import { SessionDirectoryIntentV1Schema, refineSessionDirectoryIntentCheckoutV1 } from './sessionDirectoryIntentV1.js';
@@ -18,6 +18,20 @@ import { SessionIdentityAdditionsV1Schema } from '../identity/sessionBotV1.js';
 import { SessionPromptStackV1Schema } from '../context/sessionContextV1.js';
 import { ManagedControllerV1Schema } from '../../machines/managed/managedMachineV1.js';
 import { SessionDiscussionParticipantV1Schema } from './sessionDiscussionParticipantV1.js';
+import { SessionAuthoringSelectionFieldsV1 } from '../authoring/selectionFieldsV1.js';
+import { MachineSetupPlanInputV1Schema } from '../../machines/managed/actionsV1.js';
+import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionRequestEnvelopeSchema,
+  type ExternalActionExecutionAuthorizationV1, type ExternalActionRequestEnvelope } from '../../actions/externalActionApi.js';
+
+/** Original admitted setup authority; encrypted owner metadata carries it without minting authority. */
+export type SessionCreationMachineSetupExecutionV1 = Readonly<{
+  authorization: ExternalActionExecutionAuthorizationV1;
+  originalActionEnvelope: ExternalActionRequestEnvelope;
+}>;
+export const SessionCreationMachineSetupExecutionV1Schema: z.ZodMiniType<SessionCreationMachineSetupExecutionV1> = lazyZodSchema(() => z.strictObject({
+  authorization: ExternalActionExecutionAuthorizationV1Schema,
+  originalActionEnvelope: ExternalActionRequestEnvelopeSchema,
+}));
 
 /** Immutable birth provenance, validated against Home's admitted resource before Session creation. */
 export const SessionManagedCreationV1Schema = lazyZodSchema(() => z.strictObject({
@@ -37,10 +51,14 @@ const createSessionCreationImmutableRecipeSchema = () => z.strictObject({
   agentTarget: AgentExecutionTargetV1Schema,
   modelSelection: z.nullable(SessionModelSelectionV1Schema),
   profileId: z.nullable(z.string().check(z.trim(), z.minLength(1))),
+  approvalProfileId: z.optional(SessionAuthoringSelectionFieldsV1.approvalProfileId),
   identity: z.optional(SessionIdentityAdditionsV1Schema),
   memoryEnabled: z.optional(z.boolean()),
   promptStack: z.optional(SessionPromptStackV1Schema),
   managedCreation: z.optional(SessionManagedCreationV1Schema),
+  machineSetupPlanInput: z.optional(z.lazy(() => MachineSetupPlanInputV1Schema)),
+  machineSetupExecution: z.optional(SessionCreationMachineSetupExecutionV1Schema),
+  checkoutCreationDraft: z.optional(SessionAuthoringCheckoutCreationDraftV1Schema),
   discussionParticipant: z.optional(SessionDiscussionParticipantV1Schema),
   secretReferenceOverlay: z.optional(SecretReferenceOverlayV1Schema),
   requestedPermissionMode: z.nullable(z.string().check(z.trim(), z.minLength(1))),
@@ -61,7 +79,7 @@ const createSessionCreationImmutableRecipeSchema = () => z.strictObject({
     branchName: z.optional(z.nullable(z.string())),
   })),
 }).check(z.superRefine((recipe, context) => refineSessionDirectoryIntentCheckoutV1(
-  { directory: recipe.execution.directory, checkoutCreationDraft: recipe.checkout },
+  { directory: recipe.execution.directory, checkoutCreationDraft: recipe.checkoutCreationDraft ?? recipe.checkout },
   context,
   ['checkout'],
 )));
@@ -127,10 +145,13 @@ export function sessionCreationCorrespondenceMatchesV1(
 
 function semanticCorrespondence(value: SessionCreationCorrespondenceV1) {
   const { branchName: _observedBranch, ...checkout } = value.recipe.checkout ?? {};
+  // A fresh admission proof for the same creation key does not change the
+  // authored birth. The exact setup input above remains immutable retry meaning.
+  const { machineSetupExecution: _admissionProof, ...recipe } = value.recipe;
   return {
     ...value,
     recipe: {
-      ...value.recipe,
+      ...recipe,
       checkout: value.recipe.checkout ? checkout : null,
       ...normalizeSessionCreationSelectionIdentityV1(value.recipe),
     },
@@ -153,4 +174,24 @@ export function normalizeSessionCreationSelectionIdentityV1(input: SessionCreati
         [id, { ...option, updatedAtMs: 0 }])),
     } : null }),
   };
+}
+
+export type SessionCreationRecipeInputV1 = Pick<SessionCreationImmutableRecipeV1, 'execution' | 'organization' | 'agentTarget'>
+  & Partial<Omit<SessionCreationImmutableRecipeV1, 'execution' | 'organization' | 'agentTarget' | 'allowedTools'>>
+  & Readonly<{ allowedTools?: Readonly<SessionCreationImmutableRecipeV1['allowedTools']> }>;
+
+/** Shared immutable birth producer for ordinary Actions and host-owned Session creation. */
+export function buildSessionCreationCorrespondence(input: Readonly<{
+  identity: Readonly<{ sessionCreationTag: SessionCreationTagV1 }>
+    | Readonly<{ callerCreationNamespace: string; creationKey: string }>;
+  recipe: SessionCreationRecipeInputV1;
+}>): SessionCreationCorrespondenceV1 {
+  const sessionCreationTag = 'sessionCreationTag' in input.identity ? input.identity.sessionCreationTag
+    : deriveSessionCreationTagV1(input.identity);
+  return SessionCreationCorrespondenceV1Schema.parse({ v: 1, sessionCreationTag, recipe: {
+    modelSelection: null, profileId: null, requestedPermissionMode: null, agentModeId: null, configuration: null,
+    connectedServices: null, capabilitySelection: null, transcriptStorage: null, terminal: null,
+    agentSessionStartupInstructionsMarkerV1: null, checkout: null,
+    ...input.recipe,
+  } });
 }

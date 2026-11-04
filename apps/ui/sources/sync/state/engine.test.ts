@@ -5,7 +5,6 @@ import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/acti
 
 import type { Metadata } from '@happier-dev/session-core/state';
 import { writeUiSessionStateField } from './engine';
-import { createSessionBotUndoMetadataPreprocess } from '@/sync/ops/sessions/sessionBotUndo';
 
 function buildMetadata(overrides: Partial<Metadata> = {}): Metadata {
     return {
@@ -84,7 +83,7 @@ describe('writeUiSessionStateField', () => {
         const changed = buildMetadata({ work: { viewPreferences: { showToolCalls: true } } });
         let persisted = changed;
         const result = await writeUiSessionStateField({ sessionId: 's1', fieldId: 'display.bot', value: null,
-            metadataReason: 'ui-bot-undo', metadataPreprocess: createSessionBotUndoMetadataPreprocess({ kind: 'bot' }),
+            metadataReason: 'ui-bot-undo', expectedValue: { kind: 'bot' },
             updateSessionMetadataWithRetry: async (_id, updater) => {
                 persisted = updater(changed);
                 return { version: 10 };

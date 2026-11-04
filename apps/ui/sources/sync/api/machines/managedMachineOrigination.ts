@@ -1,3 +1,7 @@
+import { ExternalActionRequesterInvocationV1Schema } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { bindPresentUserActionConfirmation } from '@/sync/ops/actions/presentUserConfirmation';
+import { readHostReviewedParentV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { ExternalActionRequestEnvelopeSchema } from '@happier-dev/protocol/actions/externalActionApi';
 import { readManagedMachineActionOutputV1 } from '@/sync/api/machines/managedMachineResponse';
 import { ManagedMachineActionInputSchemasV1, resolveManagedAcquireReviewV1,
     type ManagedMachineActionIdV1, type ManagedMachineActionOutputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -33,6 +37,7 @@ type ManagedMachineNativeActionParams = Readonly<{
     actionId: ManagedMachineActionIdV1;
     input: unknown;
     context: ActionExecutorContext;
+    confirmInFlow?: boolean;
     retainedMachine?: ManagedMachineActionOutputV1<'machines.managed.get'>;
     signal?: AbortSignal;
 }>;
@@ -74,12 +79,14 @@ export async function withManagedMachineNativeReadLifetime(
 }
 
 async function executeManagedMachineNativeActionWithinLifetime(params: ManagedMachineNativeActionParams): Promise<ActionExecuteResult> {
-    const { account, actionId, context } = params;
+    const { account, actionId } = params;
+    let context = params.context;
     account.assertCurrent();
     // The ordinary ingress has no producer for the outer UI approval Artifact's replay custody.
     if (context.bypassApprovals || (context.surface !== 'ui' && context.surface !== 'voice')
         || context.authority !== resolveInvocationAuthority({ credential: 'account', surface: context.surface })) return failure('admission_unavailable');
     if (!account.serverIdentityId || !context.actionRequestId) return failure('admission_unavailable');
+    const requestId = context.actionRequestId;
     const authentication = readOriginalAccountActionAuthentication(account.credentials.token);
     if (!authentication) return failure('admission_unavailable');
     const parsedInput = ManagedMachineActionInputSchemasV1[actionId].safeParse(params.input);
@@ -100,6 +107,37 @@ async function executeManagedMachineNativeActionWithinLifetime(params: ManagedMa
         const selected = ManagedMachineActionInputSchemasV1['machines.environment.apply'].parse(input);
         return validateExecution(await executeOriginalAccountMachineAction({ account, actionId, input: selected,
             machineId: selected.machineId, requestId: context.actionRequestId, authority: context.authority,
+            ...(params.signal ? { signal: params.signal } : {}) }));
+    }
+    if (actionId === 'machines.setup.plan' || actionId === 'machines.setup.apply' || actionId === 'machines.setup.remove') {
+        const selected = ManagedMachineActionInputSchemasV1[actionId].parse(input);
+        const addressedContext = { ...context, externalActionTarget: context.externalActionTarget ?? { kind: 'machine' as const, machineId: selected.machineId } };
+        context = params.confirmInFlow ? bindPresentUserActionConfirmation(actionId, selected, addressedContext) : addressedContext;
+        const confirmation = context.presentUserConfirmation?.inputDigest === undefined ? undefined : context.presentUserConfirmation;
+        const reviewedParent = readHostReviewedParentV1(context);
+        const requester = confirmation || reviewedParent ? ExternalActionRequesterInvocationV1Schema.safeParse({
+            caller: context.actionCaller ?? { kind: 'host' }, surface: context.surface, authority: context.authority,
+            callerPermissionMode: context.callerPermissionMode, callerInputConstraints: context.callerInputConstraints,
+            workspaceWrites: context.workspaceWrites, defaultSessionId: context.defaultSessionId,
+            ...(confirmation ? { presentUserConfirmation: confirmation } : {}),
+            ...(reviewedParent ? { reviewedParent } : {}),
+        }) : null;
+        if (requester && !requester.success) return failure('admission_unavailable');
+        const updateAuthorization = actionId === 'machines.setup.plan'
+            && context.externalActionExecutionAuthorization?.binding.actionId === 'template.updates.apply'
+            ? context.externalActionExecutionAuthorization : undefined;
+        const originalUpdate = updateAuthorization ? ExternalActionRequestEnvelopeSchema.safeParse(context.originalActionEnvelope) : null;
+        if (originalUpdate && !originalUpdate.success) return failure('admission_unavailable');
+        const templateRequesterSetupPlanContinuation = updateAuthorization && originalUpdate?.success
+            ? { authorization: updateAuthorization, originalActionEnvelope: originalUpdate.data } : undefined;
+        return validateExecution(await executeOriginalAccountMachineAction({ account, actionId, input: selected,
+            machineId: selected.machineId, requestId: updateAuthorization?.binding.requestId ?? requestId, authority: context.authority,
+            machineTarget: context.externalActionTarget?.kind === 'machine' ? context.externalActionTarget : undefined,
+            ...(requester?.success ? { invocation: requester.data } : {}),
+            ...(context.invocationServices?.managedContinuation
+                ? { managedContinuation: context.invocationServices.managedContinuation } : {}),
+            ...(templateRequesterSetupPlanContinuation ? { templateRequesterSetupPlanContinuation } : {}),
+            ...(context.actionCaller ? { actionCaller: context.actionCaller } : {}),
             ...(params.signal ? { signal: params.signal } : {}) }));
     }
     let controller = review?.controller ?? ('controller' in input ? input.controller : undefined);

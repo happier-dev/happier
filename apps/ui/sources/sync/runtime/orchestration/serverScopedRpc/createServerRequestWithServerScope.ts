@@ -168,7 +168,7 @@ type ServerAccountRequestTarget =
 
 type CaptureServerAccountRequestParams = ServerAccountRequestTarget & Readonly<{
     activeRequest: RawServerAccountRequest;
-}> & Pick<Parameters<typeof resolveServerAccountRequestContext>[0], 'signal'>;
+}> & Pick<Parameters<typeof resolveServerAccountRequestContext>[0], 'signal' | 'prepareRequest'>;
 
 export async function captureServerRequestAuthorityForServerAccountScope(params: CaptureServerAccountRequestParams): Promise<ServerAccountRequestAuthority> {
     const serverId = params.scope?.serverId ?? params.serverId;
@@ -177,6 +177,7 @@ export async function captureServerRequestAuthorityForServerAccountScope(params:
         serverId,
         preferScoped: true,
         ...(params.signal ? { signal: params.signal } : {}),
+        ...(params.prepareRequest ? { prepareRequest: params.prepareRequest } : {}),
     });
     if (context.scope !== 'scoped') {
         throw new Error('Account-scoped request did not resolve to scoped credentials');
@@ -215,14 +216,17 @@ export async function captureServerRequestAuthorityForServerAccountScope(params:
         carrierRelease = null;
         return transferredRelease;
     };
+    const request = createServerRequestForResolvedServerScope({ context, activeRequest: params.activeRequest });
+    const prepareRequest = params.prepareRequest;
+    const preparedRequest: RawServerAccountRequest = prepareRequest
+        ? async (path, init, options) => request(path, await prepareRequest(path, init), options)
+        : request;
     return {
         scope: resolvedScope,
         context,
         ...(context.readTransport ? { readTransport: context.readTransport } : {}),
-        request: createServerRequestForResolvedServerScope({
-            context,
-            activeRequest: params.activeRequest,
-        }),
+        request: bindAccountEncryptionObservation(preparedRequest,
+            context.credentials ? readAccountEncryptionObservationBinding(request, context.credentials) ?? undefined : undefined),
         release,
         transferCarrierCustody,
     };

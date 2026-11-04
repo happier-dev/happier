@@ -4,6 +4,7 @@ import { BotTemplateArtifactV1Schema, BotTemplateContentV1Schema, BotTemplateRel
 import { withArtifactExcerptV1 } from '../../artifacts/artifactExcerptV1.js';
 import { botTemplateArtifactSharingAdapterV1 } from './botTemplateArtifactSharingV1.js';
 import { getArtifactKindPolicyV1, getArtifactUseTargetV1 } from '../../artifacts/artifactSharingV1.js';
+import { artifactActionListSelectionV1 } from '../../artifacts/artifactListSelectionV1.js';
 
 const content = () => BotTemplateContentV1Schema.parse({ v: 1,
   identity: { name: 'Garden', description: 'Reusable gardening advice', madeFromName: 'Garden Bot' },
@@ -36,6 +37,10 @@ describe('Bot template release boundary', () => {
       expect(header.face).toEqual(face);
       expect(readBotTemplateArtifactV1({ header, body })).toEqual(artifact);
     }
+  });
+  it('allows selected template headers while ordinary browsing still excludes them', () => {
+    expect(artifactActionListSelectionV1({ kinds: ['bot_template.v1'] }).kinds).toEqual(['bot_template.v1']);
+    expect(artifactActionListSelectionV1({}).browserListed).toBe(true);
   });
   it('projects only selected reusable content and never source addresses or private candidates', () => {
     const input = draft();

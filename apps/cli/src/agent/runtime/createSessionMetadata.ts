@@ -192,8 +192,8 @@ export { applyInitialSessionCreationFactsToMetadata, applySessionConfigOptionOve
 
 /** CLI environment adapter for the shared portable birth metadata owner. */
 export function buildCommittedLaunchMetadata(input: Readonly<{
-    options: SpawnSessionOptions;
-    directory: string;
+    options: Omit<SpawnSessionOptions, 'directory'> & Partial<Pick<SpawnSessionOptions, 'directory'>>;
+    directory?: string;
     agentModeId?: string;
     agentModeUpdatedAt?: number;
     materializationIdentity?: ConnectedServiceMaterializationIdentityV1;

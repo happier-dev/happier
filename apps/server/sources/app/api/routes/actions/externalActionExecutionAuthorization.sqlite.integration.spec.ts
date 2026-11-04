@@ -85,7 +85,6 @@ import { requirePresentUser } from "@/app/api/utils/requirePresentUser";
 import { registerAccountEncryptionRoutes } from "@/app/api/routes/account/registerAccountEncryptionRoutes";
 import { registerDiscussionRoutes } from '@/app/api/routes/discussions/registerDiscussionRoutes';
 import { createDiscussion } from '@/app/discussions/mutations';
-import { createPresentUserSessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication.testkit';
 import { registerAccountSettingsRoutes } from "@/app/api/routes/account/registerAccountSettingsRoutes";
 import { kvRoutes } from '@/app/api/routes/kv/kvRoutes';
 import { SCM_REVIEWED_MARKS_KV_PREFIX, buildScmReviewedMarksKey } from '@happier-dev/protocol/scm/reviewedMarks';
@@ -330,7 +329,7 @@ describe("external Action execution authorization", () => {
             authorizationRequests.set(authorization.token, { target: authorization.binding.target,
                 installationId: fixture.machine.installationId!, requestId: authorization.binding.requestId });
             const path = bindExternalActionExecutionAuthorizationVerifyHttpPathV1(actionId);
-            const body = { v: 1 };
+            const body = { v: 1, admittedMachineRole: authorization.binding.admittedMachineRole };
             const request = { method: 'POST' as const, url: path, payload: body,
                 headers: machineHeaders({ authorizationToken: authorization.token, effectActionId: actionId,
                     method: 'POST', path, body, privateKey: fixture.keyPair.secretKey }) };
@@ -370,7 +369,7 @@ describe("external Action execution authorization", () => {
             authorizationRequests.set(authorization.token, { target: authorization.binding.target,
                 installationId: fixture.machine.installationId!, requestId: authorization.binding.requestId });
             const path = bindExternalActionExecutionAuthorizationVerifyHttpPathV1(actionId);
-            const body = { v: 1 };
+            const body = { v: 1, admittedMachineRole: authorization.binding.admittedMachineRole };
             const response = await app.inject({ method: 'POST', url: path, payload: body,
                 headers: machineHeaders({ authorizationToken: authorization.token, effectActionId: actionId,
                     method: 'POST', path, body, privateKey: fixture.keyPair.secretKey }) });
@@ -2703,7 +2702,7 @@ describe("external Action execution authorization", () => {
                 authorizationRequests.set(authorization.token, { target: authorization.binding.target,
                     installationId: fixture.machine.installationId!, requestId: origin.requestId });
                 const path = bindExternalActionExecutionAuthorizationVerifyHttpPathV1(actionId);
-                const proofBody = { v: 1 };
+                const proofBody = { v: 1, admittedMachineRole: authorization.binding.admittedMachineRole };
                 const verify = await app.inject({ method: 'POST', url: path, payload: proofBody,
                     headers: machineHeaders({ authorizationToken: authorization.token, method: 'POST', path,
                         body: proofBody, privateKey: fixture.keyPair.secretKey, effectActionId: actionId }) });
@@ -6216,14 +6215,15 @@ describe("external Action execution authorization", () => {
             expect(await verifyExternalActionMachineRpcExecution(prepareRpc(fixture.keyPair.secretKey), {
                 method: prepareMethod, requestId, params: privatePrepare, resolveCurrentSessionMachine: resolvePublisher })).toBeNull();
             const preparedVerifyPath = bindExternalActionExecutionAuthorizationVerifyHttpPathV1('session.handoff.prepare_target');
-            const verifyPrepared = (privateKey: Uint8Array) => app.inject({ method: 'POST', url: preparedVerifyPath, payload: { v: 1 }, headers: {
+            const preparedVerifyBody = { v: 1, admittedMachineRole: preparedAuthorization.binding.admittedMachineRole };
+            const verifyPrepared = (privateKey: Uint8Array) => app.inject({ method: 'POST', url: preparedVerifyPath, payload: preparedVerifyBody, headers: {
                 [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: preparedAuthorization.token,
                 [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: 'session.handoff.prepare_target',
                 [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(preparedAuthorization.binding.target),
                 [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({ authorizationToken: preparedAuthorization.token,
                     effectActionId: 'session.handoff.prepare_target', target: preparedAuthorization.binding.target,
                     installationId: preparedAuthorization.binding.installationId, requestId, method: 'POST',
-                    path: preparedVerifyPath, body: { v: 1 }, privateKey }),
+                    path: preparedVerifyPath, body: preparedVerifyBody, privateKey }),
             } });
             expect((await verifyPrepared(childKey.secretKey)).statusCode).toBe(200);
             expect((await verifyPrepared(fixture.keyPair.secretKey)).statusCode).toBe(200);
@@ -6377,13 +6377,14 @@ describe("external Action execution authorization", () => {
             expect(root.binding).toMatchObject({ accountId: fixture.account.id, custodianAccountId: custodian.id,
                 accountEncryptionMode: 'plain', actionId, machineId: machine.id, installationId: machine.installationId });
             const path = bindExternalActionExecutionAuthorizationVerifyHttpPathV1(actionId);
-            const verify = () => app.inject({ method: 'POST', url: path, payload: { v: 1 }, headers: {
+            const verifyBody = { v: 1, admittedMachineRole: root.binding.admittedMachineRole };
+            const verify = () => app.inject({ method: 'POST', url: path, payload: verifyBody, headers: {
                 [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: root.token,
                 [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: actionId,
                 [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(root.binding.target),
                 [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({ authorizationToken: root.token,
                     effectActionId: actionId, target: root.binding.target, installationId: root.binding.installationId,
-                    requestId: root.binding.requestId, method: 'POST', path, body: { v: 1 }, privateKey: keys.secretKey }),
+                    requestId: root.binding.requestId, method: 'POST', path, body: verifyBody, privateKey: keys.secretKey }),
             } });
             expect((await verify()).statusCode).toBe(200);
             await inTx(tx => setMachineAccessGrantInTx(tx, { actorAccountId: custodian.id, machineId: machine.id,
@@ -6507,7 +6508,8 @@ describe("external Action execution authorization", () => {
                     requestId: root.binding.requestId, method, path, body, privateKey: fixture.keyPair.secretKey }),
             });
             const verifyPath = bindExternalActionExecutionAuthorizationVerifyHttpPathV1(actionId);
-            const current = await app.inject({ method: 'POST', url: verifyPath, payload: { v: 1 }, headers: signedHeaders(verifyPath, 'POST', { v: 1 }) });
+            const verifyBody = { v: 1, admittedMachineRole: root.binding.admittedMachineRole };
+            const current = await app.inject({ method: 'POST', url: verifyPath, payload: verifyBody, headers: signedHeaders(verifyPath, 'POST', verifyBody) });
             expect(current.statusCode, current.body).toBe(200);
             if (actionId === 'session.attention.set') {
                 const path = `/v2/session-organization/attention-standings/${session.id}`;
@@ -6574,7 +6576,8 @@ describe("external Action execution authorization", () => {
                     effectActionId: actionId, target: root.binding.target, installationId: root.binding.installationId,
                     requestId: root.binding.requestId, method: 'POST', path, body: payload, privateKey: targetKeys.secretKey }),
             });
-            expect((await app.inject({ method: 'POST', url: verifyPath, payload: { v: 1 }, headers: signed(verifyPath, { v: 1 }) })).statusCode).toBe(200);
+            const verifyBody = { v: 1, admittedMachineRole: root.binding.admittedMachineRole };
+            expect((await app.inject({ method: 'POST', url: verifyPath, payload: verifyBody, headers: signed(verifyPath, verifyBody) })).statusCode).toBe(200);
             const relayPath = `/v1/actions/${actionId}`;
             const relayBody = { ...body, executionAuthorization: root };
             expect((await app.inject({ method: 'POST', url: relayPath, payload: relayBody, headers: signed(relayPath, relayBody) })).statusCode).toBe(200);
@@ -6951,7 +6954,7 @@ describe("external Action execution authorization", () => {
             authorizationRequests.set(authorization.token, { target: authorization.binding.target,
                 installationId: destination.installationId!, requestId: authorization.binding.requestId });
             const verifyPath = bindExternalActionExecutionAuthorizationVerifyHttpPathV1(actionId);
-            const verifyBody = { v: 1 };
+            const verifyBody = { v: 1, admittedMachineRole: authorization.binding.admittedMachineRole };
             const verifyHttp = (privateKey: Uint8Array, body: unknown = verifyBody) => app.inject({ method: 'POST', url: verifyPath,
                 payload: body, headers: machineHeaders({ authorizationToken: authorization.token, effectActionId: actionId,
                     method: 'POST', path: verifyPath, body, privateKey }) });
@@ -7088,7 +7091,7 @@ describe("external Action execution authorization", () => {
                     sessionActionOrigin: { ...origin, sourceTurnId: 'substituted-turn' } } });
             expect(forged.statusCode).toBe(401);
             const path = bindExternalActionExecutionAuthorizationVerifyHttpPathV1(actionId);
-            const body = { v: 1 };
+            const body = { v: 1, admittedMachineRole: authorization.binding.admittedMachineRole };
             const headers = machineHeaders({ authorizationToken: authorization.token, effectActionId: actionId,
                 method: 'POST', path, body, privateKey: fixture.keyPair.secretKey });
             expect((await app.inject({ method: 'POST', url: path, headers, payload: body })).statusCode).toBe(200);
