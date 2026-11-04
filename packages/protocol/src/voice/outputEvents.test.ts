@@ -8,6 +8,13 @@ import {
 } from './outputEvents.js';
 
 describe('VoiceAgentOutputEventV1', () => {
+  it('retains the receiving final-text and sequence wire boundaries without a cumulative quota', () => {
+    const event = { v: 1, kind: 'turn_final', turnId: 'turn-1', seq: 4095, text: 'x'.repeat(65_536) } as const;
+    expect(VoiceAgentOutputEventV1Schema.safeParse(event).success).toBe(true);
+    expect(VoiceAgentOutputEventV1Schema.safeParse({ ...event, seq: 4096 }).success).toBe(false);
+    expect(VoiceAgentOutputEventV1Schema.safeParse({ ...event, text: `${event.text}x` }).success).toBe(false);
+  });
+
   it.each([
     ['Run this:\n```ts\nconst a = 1;\n```\nThen restart.', 'Run this:\nThen restart.'],
     ['## Summary\n- **Fixed** the `parser` bug\n> _really_ fixed', 'Summary\nFixed the parser bug\nreally fixed'],
@@ -154,36 +161,39 @@ describe('VoiceAgentOutputEventV1', () => {
     expect(spoken).toBe(`Ready first. See ${label}. Then continue.`);
   });
 
-  it('discards an undecidable link on cancellation and preserves the admitted turn budget', () => {
+  it('discards an undecidable link on cancellation', () => {
     let result = ingestVoiceAgentOutputEventV1(createVoiceAgentOutputTurnV1('turn-1'), {
       v: 1, kind: 'speech_segment', turnId: 'turn-1', seq: 0, segmentId: 'first', text: 'Ready. [unfinished',
     });
-    const pending = result.state;
-    result = ingestVoiceAgentOutputEventV1(pending, { v: 1, kind: 'turn_cancelled', turnId: 'turn-1', seq: 1 });
+    result = ingestVoiceAgentOutputEventV1(result.state, { v: 1, kind: 'turn_cancelled', turnId: 'turn-1', seq: 1 });
     expect(result.effects).toEqual([{ kind: 'cancel_turn' }]);
     expect(result.state.speechTextState).toBeNull();
     expect(ingestVoiceAgentOutputEventV1(result.state, {
       v: 1, kind: 'turn_final', turnId: 'turn-1', seq: 2, text: 'Ready. [unfinished](url)',
     }).effects).toEqual([]);
 
-    let state = pending;
-    let rejected = false;
-    for (let index = 0; index < 20; index += 1) {
-      const previousSpeechState = state.speechTextState;
-      try {
-        state = ingestVoiceAgentOutputEventV1(state, {
-          v: 1, kind: 'speech_segment', turnId: 'turn-1', seq: state.nextSeq,
-          segmentId: `large-${index}`, text: 'x'.repeat(16_384),
-        }).state;
-      } catch (error) {
-        if (!(error instanceof Error)) throw error;
-        expect(error.message).toBe('voice_output_budget_exceeded');
-        expect(state.speechTextState).toBe(previousSpeechState);
-        rejected = true;
-        break;
-      }
+  });
+
+  it.each([
+    { count: 300, text: 'Working', channel: 'status' },
+    { count: 20, text: 'x'.repeat(16_384), channel: 'speech' },
+  ])('admits valid $channel events beyond the retired cumulative budget and executes a late effect once', ({ count, text, channel }) => {
+    let state = createVoiceAgentOutputTurnV1('turn-1');
+    for (let index = 0; index < count; index += 1) {
+      state = ingestVoiceAgentOutputEventV1(state, channel === 'status'
+        ? { v: 1, kind: 'display_status', turnId: 'turn-1', seq: state.nextSeq, statusId: `status-${index}`, text }
+        : { v: 1, kind: 'speech_segment', turnId: 'turn-1', seq: state.nextSeq, segmentId: `segment-${index}`, text }).state;
     }
-    expect(rejected).toBe(true);
+    const action = { t: 'sendSessionMessage', args: { message: 'Do it' } } as const;
+    const event = { v: 1, kind: 'side_effect', turnId: 'turn-1', seq: state.nextSeq,
+      effectId: 'late-effect', action } as const;
+    const result = ingestVoiceAgentOutputEventV1(state, event);
+    expect(result.effects).toEqual([{ kind: 'execute_side_effect', effectId: 'late-effect', action }]);
+    expect(ingestVoiceAgentOutputEventV1(result.state, event).effects).toEqual([]);
+    const final = ingestVoiceAgentOutputEventV1(result.state, {
+      v: 1, kind: 'turn_final', turnId: 'turn-1', seq: result.state.nextSeq, text: 'Done',
+    });
+    expect(final.effects.at(-1)).toEqual({ kind: 'persist_final', text: 'Done' });
   });
 
   it('packs a large semantic segment into accepted wire events without dropping text or splitting Unicode', () => {
@@ -283,6 +293,8 @@ describe('VoiceAgentOutputEventV1', () => {
     expect(VoiceAgentOutputEventV1Schema.safeParse({ ...events[0], segmentId: 'x'.repeat(129) }).success).toBe(false);
     expect(VoiceAgentOutputEventV1Schema.safeParse({ ...events[1], text: 'x'.repeat(1025) }).success).toBe(false);
     expect(VoiceAgentOutputEventV1Schema.safeParse({ ...events[3], text: 'x'.repeat(65_537) }).success).toBe(false);
+    expect(VoiceAgentOutputEventV1Schema.safeParse({ ...events[3], seq: 4_095 }).success).toBe(true);
+    expect(VoiceAgentOutputEventV1Schema.safeParse({ ...events[3], seq: 4_096 }).success).toBe(false);
   });
 
   it('routes each channel once, deduplicates stable ids, and never turns status into speech or transcript', () => {

@@ -65,8 +65,6 @@ export type VoiceAgentOutputEffectV1 =
 export type VoiceAgentOutputTurnV1 = Readonly<{
   turnId: string;
   nextSeq: number;
-  eventCount: number;
-  payloadBytes: number;
   terminal: 'open' | 'final' | 'cancelled';
   spokeAnySegment: boolean;
   speechTextState: VoiceSpeechTextState | null;
@@ -75,8 +73,6 @@ export type VoiceAgentOutputTurnV1 = Readonly<{
   seenEffectIds: ReadonlySet<string>;
 }>;
 
-const MAX_EVENTS_PER_TURN = 256;
-const MAX_PAYLOAD_BYTES_PER_TURN = 256 * 1024;
 export const VOICE_OUTPUT_INCOMPLETE_TEXT = '\n\n[Voice output incomplete: turn output budget reached.]';
 
 /** Pack semantic speech into the existing wire envelope without discarding its remainder. */
@@ -95,24 +91,12 @@ export function resolveVoiceAgentOutputSpeechSegmentLength(
   return end;
 }
 
-function payloadByteLength(event: VoiceAgentOutputEventV1): number {
-  return new TextEncoder().encode(JSON.stringify(event)).byteLength;
-}
-
-function fitsVoiceOutputBudget(eventCount: number, payloadBytes: number): boolean {
-  return eventCount <= MAX_EVENTS_PER_TURN && payloadBytes <= MAX_PAYLOAD_BYTES_PER_TURN;
-}
-
-/** Producer admission uses the same serialized budget as the receiving ingestor. */
+/** Producer admission preserves the receiving wire envelope, not a per-turn quota. */
 export function canAppendVoiceAgentOutputEventsV1(
-  state: VoiceAgentOutputTurnV1,
+  _state: VoiceAgentOutputTurnV1,
   events: readonly VoiceAgentOutputEventV1[],
 ): boolean {
-  return events.every((event) => VoiceAgentOutputEventV1Schema.safeParse(event).success)
-    && fitsVoiceOutputBudget(
-      state.eventCount + events.length,
-      state.payloadBytes + events.reduce((bytes, event) => bytes + payloadByteLength(event), 0),
-    );
+  return events.every((event) => VoiceAgentOutputEventV1Schema.safeParse(event).success);
 }
 
 /** Reserve the repeated final while admitting speech; clip only at a Unicode boundary. */
@@ -159,8 +143,6 @@ export function createVoiceAgentOutputTurnV1(turnId: string): VoiceAgentOutputTu
   return Object.freeze({
     turnId: parsedTurnId,
     nextSeq: 0,
-    eventCount: 0,
-    payloadBytes: 0,
     terminal: 'open' as const,
     spokeAnySegment: false,
     speechTextState: null,
@@ -181,12 +163,6 @@ export function ingestVoiceAgentOutputEventV1(
   const stableId = eventStableId(event);
   if (stableId && wasSeen(state, stableId)) return { state, effects: [] };
   if (event.seq !== state.nextSeq) throw new Error('voice_output_sequence_invalid');
-
-  const nextEventCount = state.eventCount + 1;
-  const nextPayloadBytes = state.payloadBytes + payloadByteLength(event);
-  if (!fitsVoiceOutputBudget(nextEventCount, nextPayloadBytes)) {
-    throw new Error('voice_output_budget_exceeded');
-  }
 
   const seenSegmentIds = new Set(state.seenSegmentIds);
   const seenStatusIds = new Set(state.seenStatusIds);
@@ -231,8 +207,6 @@ export function ingestVoiceAgentOutputEventV1(
     state: Object.freeze({
       turnId: state.turnId,
       nextSeq: state.nextSeq + 1,
-      eventCount: nextEventCount,
-      payloadBytes: nextPayloadBytes,
       terminal,
       spokeAnySegment,
       speechTextState,
