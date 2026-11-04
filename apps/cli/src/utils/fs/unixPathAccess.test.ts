@@ -7,9 +7,12 @@ import { createSessionNativeDirectory, grantExactUidPathAccess } from './unixPat
 
 const inodeKey = (path: string) => { const entry = statSync(path); return `${entry.dev}:${entry.ino}`; };
 const acl = vi.hoisted(() => new Map<string, Map<string, string>>());
+const boundary = vi.hoisted(() => ({ commands: [] as string[], fail: false }));
 // Model only the native ACL utility boundary; placement and cleanup use real fs.
 vi.mock('node:child_process', () => ({ execFile(command: string, args: string[], _options: unknown,
     done: (error: Error | null, stdout: string) => void) {
+    boundary.commands.push(command);
+    if (command === 'setfacl' && boundary.fail) return done(new Error('Operation not supported'), '');
     const path = args.at(-1)!;
     const observed = statSync(path);
     const mode = observed.mode;
@@ -18,21 +21,20 @@ vi.mock('node:child_process', () => ({ execFile(command: string, args: string[],
     const entries = acl.get(key) ?? new Map([['user:', access((mode >> 6) & 7)], ['group:', access((mode >> 3) & 7)], ['other:', access(mode & 7)]]);
     acl.set(key, entries);
     if (command === 'setfacl') {
-        if (args[0] === '-b') for (const key of entries.keys()) if (!['user:', 'group:', 'other:'].includes(key)) entries.delete(key);
-        if (args[0] === '-k') for (const key of entries.keys()) if (key.startsWith('default:')) entries.delete(key);
-        if (args[0] === '-m') for (const entry of args[1]!.split(',')) {
+        if (args.includes('-k')) for (const key of entries.keys()) if (key.startsWith('default:')) entries.delete(key);
+        const replacement = args.indexOf('--set');
+        if (replacement >= 0) for (const key of entries.keys()) if (!key.startsWith('default:')) entries.delete(key);
+        const spec = replacement >= 0 ? args[replacement + 1] : undefined;
+        if (spec) for (const entry of spec.split(',')) {
             const parts = entry.split(':');
             const value = parts.pop()!;
-            const key = parts.join(':').replace(/^d:(user|group|other|mask):/, 'default:$1:').replace(/^u:/, 'user:').replace(/^d:u:/, 'default:user:')
-                .replace(/^d:g:/, 'default:group:').replace(/^d:o:/, 'default:other:').replace(/^d:m:/, 'default:mask:');
+            const key = parts.join(':');
             entries.set(key, value);
-            if (/^user:\d+$/.test(key)) entries.set('mask:', value);
         }
         done(null, '');
-    } else if (command === 'getfacl') done(null, [...entries].map(([key, value]) => `${key}:${value}`).join('\n'));
-    else done(new Error('Unexpected native command'), '');
+    } else done(new Error('Unexpected native command'), '');
 } }));
-afterEach(() => { vi.unstubAllEnvs(); acl.clear(); });
+afterEach(() => { vi.unstubAllEnvs(); acl.clear(); boundary.commands = []; boundary.fail = false; });
 
 it.skipIf(process.platform !== 'linux').each([994, 996])('places UID %s transport leaves outside private TMPDIR with only exact access', async uid => {
     const privateRoot = await mkdtemp(join(tmpdir(), 'private-socket-parent-'));
@@ -44,6 +46,7 @@ it.skipIf(process.platform !== 'linux').each([994, 996])('places UID %s transpor
         expect([...acl.get(inodeKey(directory.path))!.keys()].filter(key => key.startsWith('user:'))).toEqual(['user:', `user:${uid}`]);
         expect([...acl.get(inodeKey(directory.path))!.keys()].some(key => key.startsWith('default:'))).toBe(false);
         expect((await stat(privateRoot)).mode & 0o777).toBe(0o700);
+        expect(boundary.commands).toEqual(['setfacl']);
     } finally {
         await directory.dispose();
         await expect(stat(directory.path)).rejects.toMatchObject({ code: 'ENOENT' });
@@ -60,6 +63,43 @@ it.skipIf(process.platform !== 'linux')('inherits only daemon and selected membe
             [`default:user:${process.getuid!()}`]: 'rwx',
             'default:group:': '---', 'default:mask:': 'rwx', 'default:other:': '---',
         });
+        expect(boundary.commands).toEqual(['setfacl']);
+    } finally { await rm(path, { recursive: true, force: true }); }
+});
+
+it.skipIf(process.platform !== 'linux')('replaces pre-existing file permissions and named grants with exact member access', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'member-public-file-'));
+    const path = join(root, 'entry');
+    await writeFile(path, 'member data'); await chmod(path, 0o644);
+    acl.set(inodeKey(path), new Map([['user:', 'rw-'], ['user:995', 'rwx'], ['group:', 'r--'], ['mask:', 'rwx'], ['other:', 'r--']]));
+    try {
+        await grantExactUidPathAccess({ path, uid: 994, access: 'rw-', directory: false });
+        expect(Object.fromEntries(acl.get(inodeKey(path))!)).toEqual({
+            'user:': 'rw-', 'user:994': 'rw-', 'group:': '---', 'mask:': 'rw-', 'other:': '---',
+        });
+        expect(boundary.commands).toEqual(['setfacl']);
+    } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+it.skipIf(process.platform !== 'linux')('removes stale directory defaults when inheritance is not requested', async () => {
+    const path = await mkdtemp(join(tmpdir(), 'member-stale-default-'));
+    acl.set(inodeKey(path), new Map([['user:', 'rwx'], ['group:', '---'], ['other:', '---'],
+        ['default:user:', 'rwx'], ['default:user:995', 'rwx'], ['default:group:', 'r-x'], ['default:mask:', 'rwx'], ['default:other:', 'r-x']]));
+    try {
+        await grantExactUidPathAccess({ path, uid: 994, access: '--x', directory: true });
+        expect(Object.fromEntries(acl.get(inodeKey(path))!)).toEqual({
+            'user:': 'rwx', 'user:994': '--x', 'group:': '---', 'mask:': '--x', 'other:': '---',
+        });
+        expect(boundary.commands).toEqual(['setfacl']);
+    } finally { await rm(path, { recursive: true, force: true }); }
+});
+
+it.skipIf(process.platform !== 'linux')('rejects when the native ACL write is unsupported', async () => {
+    const path = await mkdtemp(join(tmpdir(), 'member-no-acl-'));
+    boundary.fail = true;
+    try {
+        await expect(grantExactUidPathAccess({ path, uid: 994, access: 'rwx', directory: true })).rejects.toThrow('Native Unix path access is unavailable');
+        expect(boundary.commands).toEqual(['setfacl']);
     } finally { await rm(path, { recursive: true, force: true }); }
 });
 

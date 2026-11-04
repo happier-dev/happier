@@ -1,4 +1,5 @@
 import { mkdtemp, rm, stat } from 'node:fs/promises';
+import { realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createStablePluginExecService, issueAgentNativeLaunchQualifierForHost,
@@ -10,8 +11,8 @@ const boundary = vi.hoisted(() => ({ grants: [] as string[], uid: 994, aclUnavai
 vi.mock('node:child_process', async importOriginal => ({ ...await importOriginal<typeof import('node:child_process')>(),
   execFile(command: string, args: string[], _options: unknown, done: (error: Error | null, stdout: string) => void) {
     if (boundary.aclUnavailable) { done(new Error('Native ACL utility unavailable'), ''); return; }
-    if (command === 'setfacl') { if (args[0] === '-m') boundary.grants.push(args.at(-1)!); done(null, ''); }
-    else done(null, `user::rwx\nuser:${boundary.uid}:rwx\ngroup::---\nmask::rwx\nother::---\n`);
+    if (command === 'setfacl') { if (args.includes('--set')) boundary.grants.push(realpathSync(args.at(-1)!)); done(null, ''); }
+    else done(new Error('Unexpected native command'), '');
   },
 }));
 afterEach(() => { boundary.grants.length = 0; boundary.aclUnavailable = false; });

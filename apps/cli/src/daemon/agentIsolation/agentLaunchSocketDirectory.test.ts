@@ -12,10 +12,9 @@ vi.mock('node:child_process', async importOriginal => ({ ...await importOriginal
   execFile(command: string, args: string[], _options: unknown, done: (error: Error | null, stdout: string) => void) {
     const path = args.at(-1)!;
     if (command === 'setfacl') {
-      if (args[0] === '-b') chmodSync(path, 0o700);
-      if (args[0] === '-m') { boundary.grants.push(realpathSync(path)); chmodSync(path, 0o710); }
+      if (args.includes('--set')) { boundary.grants.push(realpathSync(path)); chmodSync(path, 0o710); }
       done(null, '');
-    } else done(null, `user::rwx\nuser:99998:--x\ngroup::---\nmask::--x\nother::---\n`);
+    } else done(new Error('Unexpected native command'), '');
   },
 }));
 vi.mock('node:fs/promises', async importOriginal => {

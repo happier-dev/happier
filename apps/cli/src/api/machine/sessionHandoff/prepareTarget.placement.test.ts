@@ -32,19 +32,14 @@ vi.mock('node:child_process', async original => ({ ...await original<typeof impo
     const access = (bits: number) => `${bits & 4 ? 'r' : '-'}${bits & 2 ? 'w' : '-'}${bits & 1 ? 'x' : '-'}`;
     const entries = acl.get(metadata.ino) ?? new Map([['user:', access((mode >> 6) & 7)], ['group:', access((mode >> 3) & 7)], ['other:', access(mode & 7)]]);
     acl.set(metadata.ino, entries);
-    if (command === 'getfacl') return done(null, [...entries].map(([key, value]) => `${key}:${value}`).join('\n'));
     if (command !== 'setfacl') return done(new Error('Unexpected native ACL command'), '');
-    if (args[0] === '-b') {
-      for (const key of entries.keys()) if (!['user:', 'group:', 'other:'].includes(key)) entries.delete(key);
-      // chmod updates the native base ACL before the helper removes named entries.
-      entries.set('user:', access((mode >> 6) & 7)); entries.set('group:', access((mode >> 3) & 7)); entries.set('other:', access(mode & 7));
-    }
-    if (args[0] === '-k') for (const key of entries.keys()) if (key.startsWith('default:')) entries.delete(key);
-    if (args[0] === '-m') for (const entry of args[1]!.split(',')) {
+    if (args.includes('-k')) for (const key of entries.keys()) if (key.startsWith('default:')) entries.delete(key);
+    const replacement = args.indexOf('--set');
+    if (replacement >= 0) for (const key of entries.keys()) if (!key.startsWith('default:')) entries.delete(key);
+    if (replacement >= 0) for (const entry of args[replacement + 1]!.split(',')) {
       const parts = entry.split(':'); const value = parts.pop()!;
       const key = parts.join(':').replace(/^d:/, 'default:').replace(/^u:/, 'user:');
       entries.set(key, value);
-      if (/^user:\d+$/.test(key)) entries.set('mask:', value);
     }
     done(null, '');
   },

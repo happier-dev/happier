@@ -13,14 +13,9 @@ vi.mock('node:child_process', () => ({ execFile: (command: string, args: string[
   const observed = statSync(path);
   const key = `${observed.dev}:${observed.ino}`;
   if (command === 'setfacl') {
-    const grant = args.find(value => value.startsWith('u:'));
+    const grant = args[args.indexOf('--set') + 1]?.split(',').find(value => /^user:\d+:/.test(value));
     if (grant) grants.set(key, grant);
     callback(null, '');
-  } else if (command === 'getfacl') {
-    const grant = grants.get(key);
-    if (!grant) throw new Error('No native UID grant');
-    const directory = observed.isDirectory();
-    callback(null, `user::${directory ? 'rwx' : 'rw-'}\nuser:${grant.slice(2)}\ngroup::---\nmask::${directory ? '--x' : 'rw-'}\nother::---\n`);
   } else throw new Error('Unexpected native command');
 } }));
 const grants = vi.hoisted(() => new Map<string, string>());
@@ -49,8 +44,8 @@ it.skipIf(process.platform !== 'linux')('makes shared and member Session sockets
         if (parent === dirname(parent)) break;
       }
       expect(transport.contextFilePath).toBeUndefined();
-      expect(grants.get(inodeKey(context.socketPath))).toBe(`u:${uid}:rw-`);
-      expect(grants.get(inodeKey(dirname(context.socketPath)))).toBe(`u:${uid}:--x`);
+      expect(grants.get(inodeKey(context.socketPath))).toBe(`user:${uid}:rw-`);
+      expect(grants.get(inodeKey(dirname(context.socketPath)))).toBe(`user:${uid}:--x`);
       for (const token of [context.bearerToken, undefined, transports[0]!.localContext!.bearerToken]) {
         const status = await new Promise<number | undefined>((resolve, reject) => {
           const call = request({ socketPath: context.socketPath, path: '/mcp',

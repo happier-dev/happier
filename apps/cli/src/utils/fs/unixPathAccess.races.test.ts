@@ -25,15 +25,15 @@ vi.mock('node:child_process', () => ({ execFile(command: string, args: string[],
     boundary.acls.set(key, entries);
     if (command === 'setfacl') {
         chmodSync(target, 0o750);
-        if (args[0] === '-b') for (const key of entries.keys()) if (!['user:', 'group:', 'other:'].includes(key)) entries.delete(key);
-        if (args[0] === '-k') for (const key of entries.keys()) if (key.startsWith('default:')) entries.delete(key);
-        if (args[0] === '-m') for (const spec of args[1]!.split(',')) {
+        if (args.includes('-k')) for (const key of entries.keys()) if (key.startsWith('default:')) entries.delete(key);
+        const replacement = args.indexOf('--set');
+        if (replacement >= 0) for (const key of entries.keys()) if (!key.startsWith('default:')) entries.delete(key);
+        if (replacement >= 0) for (const spec of args[replacement + 1]!.split(',')) {
             const fields = spec.replace(/^d:/, 'default:').replace(/^u:/, 'user:').split(':');
             const value = fields.pop()!; const field = fields.join(':'); entries.set(field, value);
-            if (/^user:\d+$/.test(field)) entries.set('mask:', value);
         }
         done(null, '');
-    } else done(null, [...entries].map(([key, value]) => `${key}:${value}`).join('\n'));
+    } else done(new Error('Unexpected native command'), '');
 } }));
 vi.mock('node:fs/promises', async importOriginal => {
     const actual = await importOriginal<typeof import('node:fs/promises')>();

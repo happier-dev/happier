@@ -10,15 +10,12 @@ import { observeAgentIsolationNativeReadiness, type AgentIsolationReadinessSyste
 vi.mock('node:child_process', async importOriginal => {
   const actual = await importOriginal<typeof import('node:child_process')>();
   return { ...actual, execFile: (...args: unknown[]) => {
-    const [command, argv] = args;
+    const [command] = args;
     if (command === 'getent') return Reflect.apply(actual.execFile, undefined, [process.execPath,
       ['-e', 'process.stdout.write("happier-agent:x:999:988::/var/lib/happier-agent:/usr/sbin/nologin\\n")'], ...args.slice(2)]);
-    if (command !== 'setfacl' && command !== 'getfacl') return Reflect.apply(actual.execFile, undefined, args);
-    const path = String(Array.isArray(argv) ? argv.at(-1) : '');
-    const directory = !path.endsWith('mcp.sock');
+    if (command !== 'setfacl') return Reflect.apply(actual.execFile, undefined, args);
     const callback = args.at(-1);
-    if (typeof callback === 'function') callback(null, command === 'getfacl'
-      ? `user::${directory ? 'rwx' : 'rw-'}\nuser:999:${directory ? '--x' : 'rw-'}\ngroup::---\nmask::${directory ? '--x' : 'rw-'}\nother::---\n` : '', '');
+    if (typeof callback === 'function') callback(null, '', '');
     return undefined;
   } };
 });

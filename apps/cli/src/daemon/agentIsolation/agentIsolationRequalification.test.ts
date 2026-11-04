@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { Readable } from 'node:stream';
 import { request as httpRequest } from 'node:http';
-import { appendFile, mkdir, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { MachineAgentIsolationPreviewResultV1Schema, type MachineAgentIsolationStatusV1 } from '@happier-dev/protocol';
 import type { RpcHandlerContext, RpcHandlerMap } from '@/api/rpc/types';
@@ -16,12 +16,10 @@ import type { AgentIsolationReadinessSystem } from './agentIsolationReadiness';
 vi.mock('node:child_process', async importOriginal => {
   const actual = await importOriginal<typeof import('node:child_process')>();
   return { ...actual, execFile: (...args: unknown[]) => {
-    const [command, argv] = args;
-    if (command !== 'setfacl' && command !== 'getfacl') return Reflect.apply(actual.execFile, undefined, args);
-    const directory = !String(Array.isArray(argv) ? argv.at(-1) : '').endsWith('mcp.sock');
+    const [command] = args;
+    if (command !== 'setfacl') return Reflect.apply(actual.execFile, undefined, args);
     const callback = args.at(-1);
-    if (typeof callback === 'function') callback(null, command === 'getfacl'
-      ? `user::${directory ? 'rwx' : 'rw-'}\nuser:999:${directory ? '--x' : 'rw-'}\ngroup::---\nmask::${directory ? '--x' : 'rw-'}\nother::---\n` : '', '');
+    if (typeof callback === 'function') callback(null, '', '');
     return undefined;
   } };
 });
@@ -29,8 +27,8 @@ afterEach(() => vi.restoreAllMocks());
 
 it.skipIf(process.platform !== 'linux').each(['effective', 'refused', 'cancelled'] as const)(
   'qualifies the current runtime on explicit preview without reapplying native setup (%s)', async outcome => {
-    vi.spyOn(process as NodeJS.Process & { getuid: () => number }, 'getuid').mockReturnValue(1001);
     await withTempDir('isolation-requalification-', async directory => {
+      expect((await stat(directory)).uid).toBe(process.getuid!());
       const workspace = join(directory, 'workspace');
       await mkdir(workspace);
       let probes = 0, metadataWrites = 0;

@@ -5,11 +5,11 @@ import { tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { removePinnedUnixPath, withPinnedDirectory, withPinnedUnixPath, type PinnedUnixDirectory } from './unixPinnedPath';
 
-function runAclCommand(command: 'setfacl' | 'getfacl', args: string[]): Promise<string> {
+function runAclCommand(args: string[]): Promise<void> {
     return new Promise((resolve, reject) => {
-        execFile(command, args, { encoding: 'utf8' }, (error, stdout) => {
+        execFile('setfacl', args, { encoding: 'utf8' }, error => {
             if (error) reject(new Error('Native Unix path access is unavailable'));
-            else resolve(stdout);
+            else resolve();
         });
     });
 }
@@ -58,28 +58,17 @@ async function grantPinnedEntry(input: ExactUidPathAccess, handle: FileHandle, p
     const other = entry ? permissionAccess(entry.mode & 7) : '---';
     const access = input.access === 'owner' ? owner : input.access;
     const mask = permissionAccess(permissionBits(group) | permissionBits(access));
-    await runAclCommand('setfacl', ['-b', path]);
-    if (input.directory) await runAclCommand('setfacl', ['-k', path]);
-    await runAclCommand('setfacl', ['-m', entry
-        ? `user::${owner},group::${group},other::${other},user:${input.uid}:${access},mask::${mask}`
-        : `u:${input.uid}:${access}`, path]);
     const inherited = input.inherit ? [
         `default:user::${owner}`, `default:user:${process.getuid!()}:${owner}`, `default:user:${input.uid}:${access}`,
         `default:group::${group}`, `default:mask::${permissionAccess(permissionBits(mask) | permissionBits(owner))}`, `default:other::${other}`,
     ] : [];
-    if (input.inherit) {
-        await runAclCommand('setfacl', ['-m', inherited.map(entry => entry.replace(/^default:/, 'd:')).join(','), path]);
-    }
-    const actual = (await runAclCommand('getfacl', ['-n', '-c', '-p', path]))
-        .split('\n').map(line => line.split('#')[0]!.trim()).filter(Boolean).sort();
-    const expected = [`user::${owner}`, `user:${input.uid}:${access}`,
-        `group::${group}`, `mask::${mask}`, `other::${other}`, ...inherited].sort();
-    if (actual.length !== expected.length || actual.some((entry, index) => entry !== expected[index])) {
-        throw new Error('Native Unix path access is unavailable');
-    }
+    const acl = [`user::${owner}`, `user:${input.uid}:${access}`,
+        `group::${group}`, `mask::${mask}`, `other::${other}`, ...inherited];
+    // --set replaces access entries but retains directory defaults unless -k is explicit.
+    await runAclCommand([...(input.directory ? ['-k'] : []), '--set', acl.join(','), path]);
 }
 
-/** The leaf inode stays held through every native ACL command and verification. */
+/** The leaf inode stays held through the native ACL write. */
 export async function grantExactUidPathAccess(input: ExactUidPathAccess): Promise<void> {
     if (input.uid === process.getuid?.()) return;
     assertUid(input.uid);
