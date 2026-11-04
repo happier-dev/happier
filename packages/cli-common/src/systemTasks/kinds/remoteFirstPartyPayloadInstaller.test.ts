@@ -126,17 +126,35 @@ describe('installRemoteFirstPartyComponent', () => {
     }
   });
 
-  it('keeps the finite disk-full promotion refusal without disclosing remote stderr', async () => {
+  it.each([
+    { phase: 'promotion', stderr: 'tar: private-path: Cannot write: No space left on device', code: 'remote_storage_full' },
+    { phase: 'staging', stderr: 'mkdir: private-path: No space left on device', code: 'remote_storage_full' },
+    { phase: 'staging', stderr: 'private-path: ENOSPC', code: 'remote_storage_full' },
+    { phase: 'staging', stderr: 'private-path: [Errno 28]', code: 'remote_storage_full' },
+    { phase: 'promotion', stderr: 'private-path: errno 28', code: 'remote_storage_full' },
+    { phase: 'staging', stderr: 'private-path: [Errno 128] permission denied', code: null },
+  ] as const)('classifies $phase failure ($stderr) without disclosing remote stderr', async ({ phase, stderr, code }) => {
     const fixture = await createPayloadRootFixture();
+    let uploads = 0;
+    let promotions = 0;
     try {
-      await expect(installRemoteFirstPartyComponentPayload({ componentId: 'happier-cli' }, {
+      const failure = await installRemoteFirstPartyComponentPayload({ componentId: 'happier-cli' }, {
         resolveRemoteReleaseTarget: async () => ({ os: 'linux', arch: 'x64' }),
-        runRemoteText: async ({ remoteCommand }) => remoteCommand.includes('tar -xf')
-          ? { status: 2, stdout: '', stderr: 'tar: private-path: Cannot write: No space left on device' }
-          : { status: 0, stdout: 'current=\nprevious=\n', stderr: '' },
-        copyLocalDirectoryToRemote: async () => {},
+        runRemoteText: async ({ remoteCommand }) => {
+          if (remoteCommand.includes('tar -xf')) promotions++;
+          return (phase === 'promotion' ? remoteCommand.includes('tar -xf') : remoteCommand.startsWith('mkdir -p '))
+            ? { status: 2, stdout: '', stderr }
+            : { status: 0, stdout: 'current=\nprevious=\n', stderr: '' };
+        },
+        copyLocalDirectoryToRemote: async () => { uploads++; },
         preparePayload: async () => ({ componentId: 'happier-cli', channel: 'stable', versionId: '1.2.3', payloadRoot: fixture.payloadRoot, source: null, cleanup: async () => {} }),
-      })).rejects.toMatchObject({ code: 'remote_storage_full', message: expect.not.stringContaining('private-path') });
+      }).catch((error: unknown) => error);
+      expect(failure).toBeInstanceOf(Error);
+      expect(failure).toMatchObject({ message: expect.not.stringContaining('private-path') });
+      if (code) expect(failure).toMatchObject({ code });
+      else expect(failure).not.toHaveProperty('code');
+      expect(uploads).toBe(phase === 'staging' ? 0 : 1);
+      expect(promotions).toBe(phase === 'staging' ? 0 : 1);
     } finally { await fixture.cleanup(); }
   });
 

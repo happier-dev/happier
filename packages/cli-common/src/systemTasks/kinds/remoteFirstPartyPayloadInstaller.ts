@@ -86,6 +86,14 @@ function normalizeBootstrapReleaseChannel(raw: unknown): PublicReleaseRingId {
   return normalizePublicReleaseRingId(raw) || 'stable';
 }
 
+function assertRemotePayloadCommandSucceeded(result: RemoteFirstPartyCommandResult, phase: 'staging' | 'promotion'): void {
+  if (result.status === 0) return;
+  if (/No space left|\bENOSPC\b|\berrno\s*28\b/iu.test(result.stderr)) {
+    throw new SystemTaskExecutionError('remote_storage_full', 'The remote machine does not have enough free disk space to install Happier.');
+  }
+  throw new Error(`Remote payload ${phase} failed.`);
+}
+
 export type RemoteFirstPartyPayloadInstallDeps = Readonly<{
   resolveRemoteReleaseTarget: (params: Omit<Parameters<RemoteFirstPartyInstallDeps['resolveRemoteReleaseTarget']>[0], 'ssh' | 'knownHostsMode'>) => ReturnType<RemoteFirstPartyInstallDeps['resolveRemoteReleaseTarget']>;
   runRemoteText: (params: Omit<Parameters<RemoteFirstPartyInstallDeps['runRemoteText']>[0], 'ssh' | 'knownHostsMode'>) => ReturnType<RemoteFirstPartyInstallDeps['runRemoteText']>;
@@ -211,7 +219,7 @@ export async function installRemoteFirstPartyComponentPayload(
                 remoteCommand: `mkdir -p ${quoteRemotePathWithHomeExpansion(stageParent)}`,
         ...(params.signal ? { signal: params.signal } : {}),
       });
-      if (stageResult.status !== 0) throw new Error('Remote payload staging failed.');
+      assertRemotePayloadCommandSucceeded(stageResult, 'staging');
       await resolvedDeps.copyLocalDirectoryToRemote({
                 localPath: scpReadyPayload.archiveStageRoot,
         remotePath: stageParentForScp,
@@ -244,12 +252,7 @@ export async function installRemoteFirstPartyComponentPayload(
         ].join('; '),
         ...(params.signal ? { signal: params.signal } : {}),
       });
-      if (promotionResult.status !== 0) {
-        if (/No space left on device|ENOSPC/u.test(promotionResult.stderr)) {
-          throw new SystemTaskExecutionError('remote_storage_full', 'The remote machine does not have enough free disk space to install Happier.');
-        }
-        throw new Error('Remote payload promotion failed.');
-      }
+      assertRemotePayloadCommandSucceeded(promotionResult, 'promotion');
       await pruneRemoteVersions();
     } finally {
       await scpReadyPayload.cleanup();
