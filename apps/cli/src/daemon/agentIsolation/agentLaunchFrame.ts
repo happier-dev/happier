@@ -49,6 +49,18 @@ export type AgentLaunchPayload = Readonly<{
   selectedMaterials: readonly AgentLaunchSelectedMaterial[];
 }>;
 
+/** Operation lease retirement uses the same RunAs transport without executing a child. */
+const operationCleanupSchema = z.object({ v: z.literal(1), action: z.literal('retire_operation'),
+  runtimeHome: absolutePath, nativeIdentity: AgentLaunchNativeIdentitySchema.optional() }).strict();
+export type AgentLaunchOperationCleanup = z.infer<typeof operationCleanupSchema>;
+export type AgentLaunchFramePayload = AgentLaunchPayload | AgentLaunchOperationCleanup;
+
+function parseAgentLaunchControlFrame(input: unknown): AgentLaunchFramePayload {
+  const parsed = z.union([payloadSchema, operationCleanupSchema]).safeParse(input);
+  if (!parsed.success) throw new AgentLaunchFrameError();
+  return parsed.data;
+}
+
 export class AgentLaunchFrameError extends Error {
   readonly code = 'agent_launch_frame_invalid';
   constructor() {
@@ -63,8 +75,8 @@ export function parseAgentLaunchPayload(input: unknown): AgentLaunchPayload {
   return parsed.data;
 }
 
-export function encodeAgentLaunchFrame(payload: AgentLaunchPayload): Buffer {
-  const body = Buffer.from(JSON.stringify(parseAgentLaunchPayload(payload)), 'utf8');
+export function encodeAgentLaunchFrame(payload: AgentLaunchFramePayload): Buffer {
+  const body = Buffer.from(JSON.stringify(parseAgentLaunchControlFrame(payload)), 'utf8');
   const header = Buffer.alloc(magic.length + 4);
   magic.copy(header);
   // The uint32 frame length is the format boundary, not a phase-local data cap.
@@ -105,14 +117,16 @@ async function readExactly(input: Readable, length: number): Promise<Buffer> {
   return Buffer.concat(chunks, length);
 }
 
-export async function readAgentLaunchFrame(input: Readable, transport?: 'terminal'): Promise<AgentLaunchPayload> {
-  if (transport === 'terminal') return readAgentLaunchTerminalFrame(input);
+export function readAgentLaunchFrame(input: Readable, transport?: 'terminal'): Promise<AgentLaunchPayload>;
+export function readAgentLaunchFrame(input: Readable, transport: 'terminal' | undefined, allowOperationCleanup: true): Promise<AgentLaunchFramePayload>;
+export async function readAgentLaunchFrame(input: Readable, transport?: 'terminal', allowOperationCleanup?: true): Promise<AgentLaunchFramePayload> {
+  if (transport === 'terminal') return readAgentLaunchTerminalFrame(input, allowOperationCleanup);
   const header = await readExactly(input, magic.length + 4);
   if (!header.subarray(0, magic.length).equals(magic)) throw new AgentLaunchFrameError();
   const body = await readExactly(input, header.readUInt32BE(magic.length));
   let decoded: unknown;
   try { decoded = JSON.parse(body.toString('utf8')); } catch { throw new AgentLaunchFrameError(); }
-  return parseAgentLaunchPayload(decoded);
+  return allowOperationCleanup ? parseAgentLaunchControlFrame(decoded) : parseAgentLaunchPayload(decoded);
 }
 
 /** A PTY starts in canonical/echo mode. No selected bytes cross it until the
@@ -125,7 +139,7 @@ export function encodeAgentLaunchTerminalFrame(frame: Uint8Array): string {
   return Buffer.from(frame).toString('base64') + '\n';
 }
 
-async function readAgentLaunchTerminalFrame(input: Readable): Promise<AgentLaunchPayload> {
+async function readAgentLaunchTerminalFrame(input: Readable, allowOperationCleanup?: true): Promise<AgentLaunchFramePayload> {
   const encoded: Buffer[] = [];
   while (true) {
     const chunk = await readExactly(input, Math.max(input.readableLength, 1));
@@ -139,7 +153,7 @@ async function readAgentLaunchTerminalFrame(input: Readable): Promise<AgentLaunc
   const frame = Buffer.from(text, 'base64');
   if (!text.length || frame.toString('base64') !== text) throw new AgentLaunchFrameError();
   const decoded = Readable.from([frame], { objectMode: false });
-  const payload = await readAgentLaunchFrame(decoded);
+  const payload = allowOperationCleanup ? await readAgentLaunchFrame(decoded, undefined, true) : await readAgentLaunchFrame(decoded);
   if (decoded.readableLength || decoded.read() !== null) throw new AgentLaunchFrameError();
   return payload;
 }

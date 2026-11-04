@@ -8,9 +8,10 @@ import { terminateProcessTree } from '@/processes/terminate/terminateProcessTree
 import { isCanonicalConnectedServiceMaterializedRoot,
   ensurePrivateConnectedServiceMaterializedRoot } from '../connectedServices/materialize/privateMaterializedRoot';
 import { writeBytesAtomic } from '../../utils/fs/writeJsonAtomic';
-import { parseAgentLaunchPayload, type AgentLaunchPayload } from './agentLaunchFrame';
+import { parseAgentLaunchPayload, type AgentLaunchPayload, type AgentLaunchFramePayload } from './agentLaunchFrame';
 import { createBestEffortCleanupDirectory } from '../connectedServices/materialization/materializer';
 import { grantExactUidPathAccess } from '@/utils/fs/unixPathAccess';
+import { prepareAgentLaunchIdentityCache, retireAgentLaunchOperationRuntime } from './agentLaunchRuntime';
 
 async function prepareNativeSocketDirectory(payload: AgentLaunchPayload): Promise<() => Promise<void>> {
   const directory = payload.nativeSocketDirectory;
@@ -83,14 +84,18 @@ export async function publishAgentLaunchMaterials(input: AgentLaunchPayload, age
   await publishPreparedAgentLaunchMaterials(await prepareAgentLaunchMaterials(input, agentHome));
 }
 
-export async function executeAgentLaunchPayload(payload: AgentLaunchPayload, io: Readonly<{
+export async function executeAgentLaunchPayload(input: AgentLaunchFramePayload, io: Readonly<{
   agentHome: string; input: Readable; stdout: Writable; stderr: Writable; signal?: AbortSignal;
   /** Actual process terminal only; the fixed RunAs shim derives this from isTTY. */
   terminal?: Readonly<{ accepted(): void }>;
 }>): Promise<Readonly<{ code: number | null; signal: NodeJS.Signals | null }>> {
   io.signal?.throwIfAborted();
-  const prepared = await prepareAgentLaunchMaterials(payload, io.agentHome);
-  payload = prepared.payload;
+  if ('action' in input) {
+    await retireAgentLaunchOperationRuntime(await realpath(io.agentHome), input.runtimeHome);
+    return { code: 0, signal: null };
+  }
+  const prepared = await prepareAgentLaunchMaterials(input, io.agentHome);
+  const payload = prepared.payload;
   // Validation grants cleanup custody before the first selected write. Refused
   // destinations never gain it, while partial publication remains covered.
   // This finally runs as the Agent identity; the daemon never writes/removes Agent-owned material.
@@ -115,6 +120,7 @@ export async function executeAgentLaunchPayload(payload: AgentLaunchPayload, io:
   let executionFailure: unknown;
   let cleanupNativeSocketDirectory = async () => {};
   try {
+    const cacheHome = await prepareAgentLaunchIdentityCache(await realpath(io.agentHome));
     await publishPreparedAgentLaunchMaterials(prepared);
     cleanupNativeSocketDirectory = await prepareNativeSocketDirectory(payload);
     io.signal?.throwIfAborted();
@@ -124,7 +130,7 @@ export async function executeAgentLaunchPayload(payload: AgentLaunchPayload, io:
     const environment = { ...payload.environment, HOME: io.agentHome, USER: identity.username, LOGNAME: identity.username,
       SHELL: '/bin/sh', XDG_CONFIG_HOME: join(payload.runtimeHome, '.config'),
       XDG_DATA_HOME: join(payload.runtimeHome, '.local/share'), XDG_STATE_HOME: join(payload.runtimeHome, '.local/state'),
-      XDG_CACHE_HOME: join(payload.runtimeHome, '.cache') };
+      XDG_CACHE_HOME: cacheHome };
     if (io.terminal) {
       // The payload shares the actual foreground terminal. Pipes would lose
       // isatty, job control and kernel window-size propagation.

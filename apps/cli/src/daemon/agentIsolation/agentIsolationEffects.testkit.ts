@@ -1,10 +1,30 @@
-import { PassThrough } from 'node:stream';
+import { PassThrough, Readable } from 'node:stream';
 import { createInterface } from 'node:readline';
 import * as machineSetup from '@happier-dev/cli-common/machineSetup';
 import type { MachineAdminAccessObservationV1, MachineAdminAccessV1 } from '@happier-dev/protocol';
 import type { MachineElevationSpawn } from '@/machines/adminAccess/runElevatedEffect';
 import { MachineEffectInternalRequestSchema } from '@/machines/setup/effectInternalProtocol';
 import type { AgentIsolationEffectDependencies } from './agentIsolationProvisioner';
+
+import type { AgentIsolationReadinessSystem } from './agentIsolationReadiness';
+import { readAgentLaunchFrame } from './agentLaunchFrame';
+
+/** Virtual OS execution of the fixed member readiness frame. Native fixture
+ * homes stand in for actual uid-owned homes; the readiness owner stays real. */
+export async function runAgentIsolationMemberReadinessBoundary(input: Readonly<{
+  request: Parameters<AgentIsolationReadinessSystem['run']>;
+  nativeHome?: Readonly<{ path: string; uid: number }>;
+  fail?: boolean;
+}>) {
+  const [command, args, options] = input.request;
+  if (command !== 'sudo' || args?.at(-1) !== 'agent-launch' || !options?.inputBytes || !input.nativeHome)
+    return undefined;
+  const frame = await readAgentLaunchFrame(Readable.from([options.inputBytes], { objectMode: false }));
+  if (input.fail || frame.executable !== '/bin/sh' || !frame.args.includes('happier-isolation-readiness')
+    || frame.nativeIdentity?.home !== input.nativeHome.path || frame.nativeIdentity.agentUid !== input.nativeHome.uid)
+    throw Object.assign(new Error('Constructed native payload permission failure'), { code: 73 });
+  return { stdout: 'member-native-ready\n', stderr: '' };
+}
 
 /** Native OS/process boundary only; Actions, field CAS and setup interpretation stay real. */
 export function createAgentIsolationEffectsBoundary(input: Pick<AgentIsolationEffectDependencies,

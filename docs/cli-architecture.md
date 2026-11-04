@@ -320,6 +320,16 @@ another Account's homes are unreferenced. Restarting before requester recovery
 therefore does not authorize deleting that namespace. Ordinary custodian identity
 and staging-attempt cleanup retain their existing retention rules.
 
+Isolated native launches share `XDG_CACHE_HOME` at the executing Agent identity's
+private home `.cache`; separate member identities never share that cache. Finite
+operations keep their own `runtime/operations/<materialization-key>` home until
+the native-operation preparation releases, after its child processes settle.
+Release uses the same managed RunAs shim to retire that exact operation home as
+the executing UID through pinned, no-follow directory access. Retained Session
+homes keep their existing retention policy. This unreleased development contract
+requires matching daemon and installed shim bytes; it adds no background reaper
+and does not sweep historical operation directories.
+
 ## Compose service prerequisites (0.3 development)
 
 Declared Compose Services use the native Compose lifecycle under the daemon's

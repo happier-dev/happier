@@ -1,4 +1,4 @@
-import { chmodSync } from 'node:fs';
+import { chmodSync, realpathSync } from 'node:fs';
 import { lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { PassThrough, Readable } from 'node:stream';
@@ -13,7 +13,7 @@ vi.mock('node:child_process', async importOriginal => ({ ...await importOriginal
     const path = args.at(-1)!;
     if (command === 'setfacl') {
       if (args[0] === '-b') chmodSync(path, 0o700);
-      if (args[0] === '-m') { boundary.grants.push(path); chmodSync(path, 0o710); }
+      if (args[0] === '-m') { boundary.grants.push(realpathSync(path)); chmodSync(path, 0o710); }
       done(null, '');
     } else done(null, `user::rwx\nuser:99998:--x\ngroup::---\nmask::--x\nother::---\n`);
   },

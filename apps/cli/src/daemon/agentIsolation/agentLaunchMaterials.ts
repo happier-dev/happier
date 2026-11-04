@@ -6,7 +6,7 @@ import type { AgentLaunchPayload } from './agentLaunchFrame';
 import type { AgentIsolationMemberNativeIdentity } from './agentIsolationNativeIdentity';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { deriveAgentIsolationMemberIdentity, type AgentIsolationMemberRequester } from './provisioning';
-import { normalizeMaterializationKeyForPath } from '../connectedServices/materialize/normalizeMaterializationKeyForPath';
+import { agentLaunchOperationRuntimeHome } from './agentLaunchRuntime';
 
 /** The incumbent materialization lease supplies its admitted Agent-owned destination. */
 export type AgentLaunchMaterialization = Pick<AgentLaunchPayload,
@@ -40,7 +40,7 @@ export function projectAgentIsolationOperationMaterial(identity: AgentIsolationM
   if (!input.materializationKey) throw new PluginError({ code: 'agent_launch_material_invalid',
     message: 'Native operation materialization identity is unavailable', retryable: false });
   return Object.freeze({ ...('digest' in identity ? { memberIdentity: identity } : {}),
-    runtimeHome: join(identity.home, 'runtime', 'operations', normalizeMaterializationKeyForPath(input.materializationKey)),
+    runtimeHome: agentLaunchOperationRuntimeHome(identity.home, input.materializationKey),
     environment: Object.freeze({ ...input.environment }),
     selectedMaterials: Object.freeze(input.selectedMaterials.map(file => Object.freeze({ ...file }))) });
 }

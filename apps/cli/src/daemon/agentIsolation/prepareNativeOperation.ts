@@ -1,4 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
+import { execFileWithDeadline } from '@happier-dev/cli-common/process';
+import { encodeAgentLaunchFrame } from './agentLaunchFrame';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import type { RequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
@@ -80,6 +82,7 @@ export async function prepareRequesterNativeOperation(input: PrepareRequesterNat
   }
   const launch = agentIsolation.read()?.launch;
   if (!launch) throw unavailable();
+  const runtimeHome = launch.runtimeHome;
   let material: Awaited<ReturnType<typeof prepareRequesterOperationMaterial>> | undefined;
   try {
     if (input.requesterAccount) material = await prepareRequesterOperationMaterial({
@@ -89,7 +92,22 @@ export async function prepareRequesterNativeOperation(input: PrepareRequesterNat
     return { requesterIdentity: selected, memberIdentity, workingDirectory, agentIsolation,
       materialTarget: { runtimeHome: launch.runtimeHome, ...(memberIdentity ? { memberIdentity } : {}) },
       ...(material ? { material, connectedAccounts: material.connectedAccounts } : {}),
-      async dispose() { target = undefined; await material?.dispose(); } };
+      async dispose() {
+        target = undefined;
+        // The caller's native process custody has settled before this lease releases.
+        // Its cancellation may already be aborted; cleanup is still awaited.
+        try {
+          await execFileWithDeadline('sudo', ['-n', '-u', memberIdentity?.username ?? 'happier-agent', '--',
+            operation.managedHappierBinaryPath, 'agent-launch'], { env: {}, inputBytes: encodeAgentLaunchFrame({
+              v: 1, action: 'retire_operation', runtimeHome,
+              ...(memberIdentity ? { nativeIdentity: { username: memberIdentity.username, agentUid: memberIdentity.agentUid,
+                agentGid: memberIdentity.agentGid, home: memberIdentity.home } } : {}),
+            }) });
+        } catch (cause) {
+          throw new PluginError({ code: 'requester_material_cleanup_failed', message: 'Requester material cleanup failed',
+            retryable: false, details: { phase: 'requester_material_cleanup' } }, { cause });
+        } finally { await material?.dispose(); }
+      } };
   } catch (error) {
     try { await material?.dispose(); }
     catch { /* Material owner retains its typed cleanup failure. */ }

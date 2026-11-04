@@ -37,7 +37,7 @@ export async function runAgentLaunchShim(args: readonly string[]): Promise<void>
       readingTerminalFrame = true;
       process.stdout.write(AGENT_LAUNCH_TERMINAL_READY);
     }
-    const payload = await readAgentLaunchFrame(process.stdin, terminal ? 'terminal' : undefined);
+    const payload = await readAgentLaunchFrame(process.stdin, terminal ? 'terminal' : undefined, true);
     if (terminal) {
       process.stdin.pause();
       process.stdin.setRawMode(false);
