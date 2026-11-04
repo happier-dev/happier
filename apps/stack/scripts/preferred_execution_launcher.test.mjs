@@ -5,7 +5,7 @@ import { brokerAddress, createAdmissionBroker } from './utils/proc/admission_bro
 import assert from 'node:assert/strict';
 import { access, chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join, relative, resolve } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { createConnection, createServer } from 'node:net';
 import test from 'node:test';
@@ -1679,6 +1679,8 @@ test('native local fallback prepares dependencies through the local policy owner
   const checkout = resolve(native.launcher, '../../../..');
   await installCliNativeCustodySourceFixture(checkout);
   const cliDir = join(checkout, 'apps/cli');
+  const sourceResolver = relative(cliDir, join(repoRoot, 'apps/cli/scripts/vitestWorkspacePackageResolution.ts')).split(sep).join('/');
+  await writeFile(join(cliDir, 'vitest.config.ts'), `import { workspacePackageSourcesPlugin } from ${JSON.stringify(sourceResolver)};\nexport default { plugins: [workspacePackageSourcesPlugin] };\n`);
   const nativeSource = join(cliDir, 'native/processcustody/main.go');
   const nativeExecutable = join(cliDir, 'tools/unpacked/happier-process-custody');
   await mkdir(dirname(nativeSource), { recursive: true });
@@ -1695,7 +1697,11 @@ test('native local fallback prepares dependencies through the local policy owner
   await executable(join(fixture.binDir, 'awk'), '#!/bin/sh\ncase "$*" in */proc/meminfo*) printf "73400320 73400320\\n" ;; *) exec /usr/bin/awk "$@" ;; esac\n');
   writeFakeBin({ root: fixture.root, name: 'node', content: `#!/bin/sh\nprintf 'node:%s\\n' "$*" >> "$FIXTURE_TRACE"\nexec ${JSON.stringify(process.execPath)} "$@"\n` });
   await executable(join(fixture.binDir, 'go'), `#!/bin/sh
-${process.platform === 'linux' ? '[ -n "$HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN" ] || exit 91' : ''}
+if [ "\${1-}" = env ] && [ "\${2-}" = -json ]; then
+  printf '%s\\n' '{"GOVERSION":"fixture-go","GOFLAGS":"","GOEXPERIMENT":"","GOAMD64":"v1","GOARM":"","GOARM64":""}'
+  exit 0
+fi
+${process.platform === 'linux' ? '[ -n "$HAPPIER_HEAVYWEIGHT_ADMISSION_SLOT" ] || exit 91' : ''}
 while [ "$#" -gt 0 ]; do
   if [ "$1" = '-o' ]; then shift; output=$1; fi
   shift
@@ -1703,7 +1709,6 @@ done
 cat '${nativeSource}' > "$output"
 `);
   await executable(join(fixture.binDir, 'vitest'), `#!/bin/sh
-[ ! -e '${join(checkout, '.project/tmp/cli-dist-build.lock')}' ] || exit 92
 cat '${nativeExecutable}'
 `);
   const emptyStorage = join(fixture.root, 'empty-stacks');
@@ -1715,11 +1720,17 @@ cat '${nativeExecutable}'
   ]) {
     await writeFile(nativeSource, `current-native:${route}\n`);
     await writeFile(nativeExecutable, 'stale native output');
-    const result = spawnSync('/bin/sh', [native.launcher, ...options, '--', 'vitest', 'run', 'fixture.test.ts'], {
+    // The fake Vitest boundary consumes only the preparation result. Request
+    // validation explicitly so this fixture still exercises local fallback;
+    // ordinary compiler-consuming CLI suites must remain on workers.
+    const result = spawnSync('/bin/sh', [native.launcher, ...options, '--', native.launcher,
+      '--heavyweight-admission', '--class=validation', '--', 'vitest', 'run', '--config', 'vitest.config.ts', 'fixture.test.ts'], {
       ...fixture.invocation, env: { ...fixture.invocation.env, ...env },
     });
     assert.equal(result.status, 0, `${route}: ${result.stderr}`);
-    assert.equal(result.stdout, `current-native:${route}\n`);
+    assert.equal(result.stdout, `current-native:${route}\n`, `${route}: ${result.stderr}`);
+    assert.match(result.stderr, /waiting for local validation preparation/,
+      'local preparation must expose its pending phase before payload admission');
   }
   const trace = await readFile(fixture.invocation.env.FIXTURE_TRACE, 'utf8');
   assert.match(trace, /remote_dependency_bootstrap\.mjs[^\n]*--execution-placement=local/,
@@ -7474,6 +7485,47 @@ test('Windows launcher is explicitly local-only and does not start the Node rout
   assert.match(cmd, /powershell/i);
   assert.doesNotMatch(powershell, /HAPPIER_PREFERRED_EXECUTION/);
   assert.match(powershell, /\$invocation\[0\] -eq '--local'/);
+});
+
+test('automatic capacity rejection reroutes without poisoning another invocation or replaying a started payload', async t => {
+  const fixture = await memoryRoutingFixture(t, { availableKiB: 28000000, roomyLoad: 12 });
+  await executable(join(fixture.binDir, 'ssh'), [
+    '#!/bin/sh',
+    'case "$*" in',
+    ' *getconf*) case "$*" in *starved-host*) cat "$STARVED_SAMPLE" ;; *) printf "8 12 0.9 22000000 20 0 28000000 30000000 0 0 0 0 0 0 0 linux\\n" ;; esac ;;',
+    ' *"&& command -v "*|*-O\\ check*|*-MNf*) exit 0 ;;',
+    ' *remote_execution_custody.sh*)',
+    '  case "$*" in *starved-host*) name=starved ;; *) name=roomy ;; esac',
+    '  printf "%s\\n" "$name" >> "$DISPATCHES"',
+    '  if [ "$name" = starved ] || [ "${ALL_CAPACITY-0}" = 1 ]; then',
+    '    for argument in "$@"; do remote=$argument; done',
+    '    id=$(printf "%s\\n" "$remote" | sed -n "s/.*--failure-id=\\(native-[A-Za-z0-9_-]*\\).*/\\1/p")',
+    '    printf "HSTACK_ADMISSION_CAPACITY:%s\\n" "$id" >&2; exit 75',
+    '  fi',
+    '  printf "payload:%s\\n" "$name"; exit "${PAYLOAD_EXIT-0}" ;;',
+    ' *) exit 0 ;;',
+    'esac', '',
+  ].join('\n'));
+  for (const payloadExit of [0, 75]) {
+    const result = spawnSync('/bin/sh', [launcher, '--', 'node', '--test', 'focused.test.mjs'], {
+      ...fixture.invocation, env: { ...fixture.invocation.env, PAYLOAD_EXIT: String(payloadExit) },
+    });
+    assert.equal(result.status, payloadExit, result.stderr);
+    assert.match(result.stderr, /physical memory capacity.*re-evaluating automatic placement/);
+    assert.equal(result.stdout, 'payload:roomy\n');
+  }
+  assert.deepEqual((await readFile(fixture.invocation.env.DISPATCHES, 'utf8')).trim().split('\n'), ['starved', 'roomy', 'starved', 'roomy']);
+  const pinned = spawnSync('/bin/sh', [launcher, '--target=starved', '--', 'node', '--test', 'focused.test.mjs'], fixture.invocation);
+  assert.equal(pinned.status, 75, pinned.stderr);
+  assert.equal(pinned.stdout, '');
+  assert.doesNotMatch(pinned.stderr, /re-evaluating automatic placement/);
+  const allRefused = spawnSync('/bin/sh', [launcher, '--', 'node', '--test', 'focused.test.mjs'], {
+    ...fixture.invocation, env: { ...fixture.invocation.env, ALL_CAPACITY: '1' },
+  });
+  assert.equal(allRefused.status, 1, allRefused.stderr);
+  assert.match(allRefused.stderr, /no configured worker has enough physical RAM for this command class/);
+  assert.deepEqual((await readFile(fixture.invocation.env.DISPATCHES, 'utf8')).trim().split('\n'),
+    ['starved', 'roomy', 'starved', 'roomy', 'starved', 'starved', 'roomy'], 'each incapable worker is tried once, without capacity re-polls');
 });
 
 test('native nonblocking admission certifies capacity refusal without certifying state failure', async (t) => {
