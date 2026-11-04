@@ -1,6 +1,31 @@
-import { expect, it } from 'vitest';
+import axios from 'axios';
+import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { expect, it, vi } from 'vitest';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
-import { reconcileExternalActionTarget, resolveExternalActionMachineTarget } from './reconcileExternalActionTarget';
+import { reconcileExternalActionTarget, resolveExternalActionMachineTarget, resolveManagedControlControllerTarget } from './reconcileExternalActionTarget';
+
+it.each([
+  ['machines.managed.power.set', { when: 'now', intent: 'stop', expectedRevision: 1 }, true],
+  ['machines.managed.power.set', { when: 'after-idle', intent: 'stop' }, false],
+  ['machines.managed.delete', { when: 'now', intent: 'delete', expectedRevision: 1, reviewedDependencies: true }, true],
+  ['machines.managed.delete', { when: 'after-idle', intent: 'delete', reviewedDependencies: true }, false],
+  ['machines.managed.inspect', {}, true],
+  ['machines.managed.bootstrap.retry', { expectedIntentRevision: 1 }, true],
+  ['machines.managed.controller.update', { expectedRevision: 1, controller: null }, false],
+] as const)('selects the CLI executor for %s %j from the retained control classification', async (actionId, args, retained) => {
+  const row = ManagedMachineV1Schema.parse({ id: 'managed', homeId: 'home', custodianAccountId: 'owner',
+    launch: { provider: { pluginId: 'example.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
+    controller: { machineId: 'controller', installationId: 'installation' }, allocation: 'bound', creationState: 'active',
+    resource: { contributionRef: { pluginId: 'example.compute', localId: 'vm' }, schemaVersion: 1, value: {} },
+    desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
+  const read = vi.spyOn(axios, 'post').mockResolvedValue({ status: 200, data: row });
+  try {
+    expect(await resolveManagedControlControllerTarget({ actionId, rawInput: { homeId: 'home', managedId: 'managed', ...args },
+      credentials: { token: 'owner', encryption: null }, serverHttpBaseUrl: 'https://home.test' }))
+      .toEqual(retained ? { kind: 'machine', machineId: 'controller' } : null);
+    expect(read.mock.calls.length).toBe(retained ? 1 : 0);
+  } finally { read.mockRestore(); }
+});
 
 it.each([
   { actionId: 'workspace.sync.relationships.list' as const, rawInput: { workspaceRefId: 'source-ref' } },

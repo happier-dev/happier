@@ -2,7 +2,7 @@ import { readManagedMachine } from '@/machines/managed/readManagedMachine';
 import type { StoredCredentials } from '@/persistence';
 import { getActionSpec, resolveActionExecutionPlacementForInput } from '@happier-dev/protocol/actions/actionSpecs';
 import { readLocalServiceControlActionRequest } from '@happier-dev/protocol/actions/specs/localServices';
-import { MANAGED_MACHINE_ACTION_IDS_V1, ManagedAcquireInputV1Schema, ManagedPowerInputV1Schema, ManagedDeleteInputV1Schema, resolveManagedAcquireReviewV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { MANAGED_MACHINE_ACTION_IDS_V1, ManagedAcquireInputV1Schema, ManagedMachineActionInputSchemasV1, isManagedRetainedControlInvocation, resolveManagedAcquireReviewV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { SessionSpawnNewAgentAuthoringInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import type { ActionExecuteResult, ActionExecutorContext, ExternalActionTargetV1, ActionId } from '@happier-dev/protocol/actions';
 import { readActionSessionTargetField } from '@happier-dev/protocol/actions/executor/sessionTargets';
@@ -21,7 +21,7 @@ const NESTED_SESSION_SELECTOR_ACTION_IDS = new Set<ActionId>([
   'session.continue_with_replay',
 ]);
 
-/** Immediate retained power and Delete use the row's controller; controllerless provisioners stay Account-owned. */
+/** Retained controls use the row's controller; controllerless provisioners stay Account-owned. */
 export async function resolveManagedControlControllerTarget(input: Readonly<{
   actionId: string;
   rawInput: unknown;
@@ -29,11 +29,9 @@ export async function resolveManagedControlControllerTarget(input: Readonly<{
   serverHttpBaseUrl: string;
   signal?: AbortSignal;
 }>): Promise<Readonly<{ kind: 'machine'; machineId: string }> | null> {
-  const schema = input.actionId === 'machines.managed.power.set' ? ManagedPowerInputV1Schema
-    : input.actionId === 'machines.managed.delete' ? ManagedDeleteInputV1Schema : null;
-  if (!schema) return null;
-  const parsed = schema.safeParse(input.rawInput);
-  if (!parsed.success || parsed.data.when !== 'now') return null;
+  if (!isManagedRetainedControlInvocation(input.actionId, input.rawInput)) return null;
+  const parsed = ManagedMachineActionInputSchemasV1[input.actionId].safeParse(input.rawInput);
+  if (!parsed.success) return null;
   const machine = await readManagedMachine({ credentials: input.credentials, serverHttpBaseUrl: input.serverHttpBaseUrl,
     homeId: parsed.data.homeId, managedId: parsed.data.managedId, ...(input.signal ? { signal: input.signal } : {}) });
   return machine.controller ? { kind: 'machine', machineId: machine.controller.machineId } : null;
@@ -44,7 +42,7 @@ export function requiresManagedMachineDaemonIngress(actionId: ActionId,
   placement: ReturnType<typeof resolveActionExecutionPlacementForInput> | null,
   controlControllerTarget?: Readonly<{ kind: 'machine'; machineId: string }> | null): boolean {
   return placement === 'machine' && MANAGED_MACHINE_ACTION_IDS_V1.some(id => id === actionId)
-    || (actionId === 'machines.managed.power.set' || actionId === 'machines.managed.delete') && controlControllerTarget != null;
+    || controlControllerTarget != null;
 }
 
 // Only declared execution targets participate. Other nested Machine ids can

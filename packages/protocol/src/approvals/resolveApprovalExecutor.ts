@@ -6,6 +6,7 @@ import { ConfidentialActionInputReviewV1Schema } from './privateSecretContinuati
 import { readRecord } from '../inputs/inputRecords.js';
 import { isNativeSecretFillAction } from '../actions/executor/confidentialInputs.js';
 import { deploymentOperationForRootActionV1 } from '../deployments/deploymentActionIdsV1.js';
+import { isManagedRetainedControlInvocation } from '../machines/managed/actionsV1.js';
 
 export type ApprovalExecutor =
   | Readonly<{ kind: 'app'; placement: 'account' | 'client' }>
@@ -67,10 +68,7 @@ export function resolveApprovalExecutor(request: ApprovalRequest | TargetActionA
   // reads that custody from the original Artifact; location grants no authority.
   // Ordinary Account proposals keep their app executor.
   if ((deploymentOperationForRootActionV1(actionId.data) !== undefined
-      || actionId.data === 'machines.managed.bootstrap.retry'
-      || actionId.data === 'machines.managed.inspect'
-      || (actionId.data === 'machines.managed.delete' || actionId.data === 'machines.managed.power.set')
-        && readRecord(input.data).when === 'now')
+      || isManagedRetainedControlInvocation(actionId.data, input.data))
     && origin.target?.kind === 'machine') return { kind: 'daemon', machineId: origin.target.machineId };
   if (placement === 'account' || placement === 'client') return { kind: 'app', placement };
   const machineId = origin.machineId?.trim()

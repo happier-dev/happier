@@ -39,6 +39,7 @@ import { MachineProvisionerDestroyResultV1Schema, MachineProvisionerPowerResultV
 import { MachineReferenceCensusV1Schema } from '../machineReferenceCensusV1.js';
 import { MachineEnvironmentV1Schema } from './machineEnvironmentV1.js';
 export { MANAGED_MACHINE_ACTION_IDS_V1, type ManagedMachineActionIdV1 } from './actionIdsV1.js';
+export { isManagedRetainedControlInvocation } from './actionIdsV1.js';
 
 const id = () => mini.string().check(mini.trim(), mini.minLength(1));
 const revision = () => mini.int().check(mini.gte(0));

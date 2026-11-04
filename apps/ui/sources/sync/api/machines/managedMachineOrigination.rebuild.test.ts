@@ -19,7 +19,19 @@ import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } f
 
 installApprovalCommonModuleMocks();
 // Install the shared presentation boundaries before loading the real Account transport.
-const { executeManagedMachineNativeAction } = await import('./managedMachineOrigination');
+const { executeManagedMachineNativeAction, isManagedMachineRetainedControlAction } = await import('./managedMachineOrigination');
+
+it.each([
+    ['machines.managed.power.set', { when: 'now' }, true],
+    ['machines.managed.power.set', { when: 'after-idle' }, false],
+    ['machines.managed.delete', { when: 'now' }, true],
+    ['machines.managed.delete', { when: 'after-idle' }, false],
+    ['machines.managed.inspect', {}, true],
+    ['machines.managed.bootstrap.retry', {}, true],
+    ['machines.managed.controller.update', {}, false],
+] as const)('classifies UI retained invocation %s %j before selecting a controller', (actionId, input, retained) => {
+    expect(isManagedMachineRetainedControlAction(actionId, input)).toBe(retained);
+});
 
 describe('managed Machine rebuild origination', () => {
     it.each((['machines.managed.rebuild', 'machines.managed.controller.update'] as const).flatMap(actionId =>

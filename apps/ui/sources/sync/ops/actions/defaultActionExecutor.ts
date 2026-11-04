@@ -5128,7 +5128,7 @@ async function resolveNativeManagedAction(actionId: ActionId, input: unknown, ac
   if (opts?.admittedClientActionId) return null;
   // Retained control runs where the resource's controller lives. The static
   // Account placement also covers resources without a controller.
-  if (isManagedMachineRetainedControlAction(actionId)) {
+  if (isManagedMachineRetainedControlAction(actionId, input)) {
     // Other surfaces retain their existing Account Action admission path.
     if (context?.surface && context.surface !== 'ui' && context.surface !== 'voice') return null;
     const parsed = ManagedMachineActionInputSchemasV1[actionId].safeParse(input);
