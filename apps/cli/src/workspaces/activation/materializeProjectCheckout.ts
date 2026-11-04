@@ -37,7 +37,7 @@ export type MaterializeProjectCheckoutInput = Readonly<{
 }>;
 
 function refused(code: string, message = code,
-  details?: Pick<Extract<OpenProjectResultV1, { kind: 'refused' }>, 'retryNotBeforeMs' | 'remediation'>): never {
+  details?: Pick<Extract<OpenProjectResultV1, { kind: 'refused' }>, 'retryNotBeforeMs' | 'remediation'> & Readonly<{ destinationPath?: string }>): never {
   throw Object.assign(new Error(message), { code, ...details });
 }
 
@@ -70,24 +70,26 @@ export async function materializeProjectCheckout(input: MaterializeProjectChecko
   input.signal?.throwIfAborted();
   const choice = input.materialization;
   if (choice.kind === 'clone') {
+    if (choice.initialCheckout && input.ref !== undefined && input.ref !== choice.initialCheckout.commit) return refused('invalid_materialization');
     if (!input.selector) return refused('source_unavailable');
     const { runScmRepositoryCloneRoute } = await import('@/scm/rpc/repositoryProvisioningDispatch');
     const parent = await existingDirectory(choice.destinationParentPath);
     input.signal?.throwIfAborted();
     const clone = await runScmRepositoryCloneRoute({
       request: ScmRepositoryCloneInputSchema.parse({ ...input.selector, destinationParentPath: parent, destinationDirectoryName: choice.destinationDirectoryName,
+        ...(choice.initialCheckout ? { initialCheckout: choice.initialCheckout } : {}),
         confirmed: true, authorizationToken: 'clone-repository' }),
       workingDirectory: parent, registry: input.registry, signal: input.signal,
     }).catch(error => { input.onEffectsIssued?.(); throw error; });
     if (!clone.success) {
-      if (!clone.outcome || clone.outcome.kind === 'outcome_unknown' || clone.outcome.kind === 'effect_applied_with_warning') input.onEffectsIssued?.();
+      if (clone.destinationPath || !clone.outcome || clone.outcome.kind === 'outcome_unknown' || clone.outcome.kind === 'effect_applied_with_warning') input.onEffectsIssued?.();
       return refused(clone.errorCode ?? 'checkout_failed', clone.error,
-        clone.errorCode === 'REMOTE_RATE_LIMITED'
-          ? { retryNotBeforeMs: clone.retryNotBeforeMs, remediation: clone.remediation } : undefined);
+        { ...(clone.destinationPath ? { destinationPath: clone.destinationPath } : {}),
+          ...(clone.errorCode === 'REMOTE_RATE_LIMITED' ? { retryNotBeforeMs: clone.retryNotBeforeMs, remediation: clone.remediation } : {}) });
     }
     input.onEffectsIssued?.();
     const rootPath = await existingDirectory(clone.destinationPath);
-    if (input.ref) {
+    if (input.ref && !choice.initialCheckout) {
       const { runScmRoute, notRepositoryResponse } = await import('@/scm/rpc/dispatch');
       const checkout = await runScmRoute({
         request: { cwd: rootPath, name: input.ref, strategy: 'bring_changes' as const },

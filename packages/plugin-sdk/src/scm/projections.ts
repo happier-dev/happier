@@ -1171,6 +1171,7 @@ export type ScmRepositoryCloneInput = {
     destinationParentPath: string;
     destinationDirectoryName: string;
     protocol: ScmCloneProtocol;
+    initialCheckout?: { branch: 'main'; commit: string };
     confirmed: true;
     authorizationToken: 'clone-repository';
 };
@@ -1205,6 +1206,7 @@ export type ScmRepositoryCloneOutput =
         [key: string]: unknown;
         success: false;
         outcome?: ScmOperationOutcome;
+        destinationPath?: string;
         error: string;
         errorCode?: ScmOperationErrorCode;
         retryNotBeforeMs?: number;

@@ -37,6 +37,7 @@ import {
     reserveCloneDestination,
 } from './repositoryCloneDestination.js';
 import { readClonedSnapshot } from './repositoryCloneSnapshotReadback.js';
+import { checkoutInitialClone } from './repositoryCloneCheckout.js';
 
 const GIT_REPOSITORY_CLONE_TIMEOUT_MS = 120_000;
 
@@ -376,6 +377,29 @@ export function createGitRepositoryCloneOperation(
                     identity: reservedDestination.privateTempIdentity,
                 });
                 return mapCloneCommandFailure(clone);
+            }
+
+            if (request.initialCheckout) {
+                let checkout: ScmExecResult;
+                try {
+                    checkout = await checkoutInitialClone({
+                        path: reservedDestination.cloneDestinationPath,
+                        commit: request.initialCheckout.commit,
+                        runCommand,
+                        timeoutMs: GIT_REPOSITORY_CLONE_TIMEOUT_MS,
+                    });
+                } catch (error) {
+                    await reservedDestination.privateTempHandle.close();
+                    throw error;
+                }
+                if (!checkout.success) {
+                    await reservedDestination.privateTempHandle.close();
+                    await cleanupPrivateCloneDestination({
+                        path: reservedDestination.privateTempPath,
+                        identity: reservedDestination.privateTempIdentity,
+                    });
+                    return mapCloneCommandFailure(checkout);
+                }
             }
 
             const publishResult = await publishPrivateCloneDestination(reservedDestination);

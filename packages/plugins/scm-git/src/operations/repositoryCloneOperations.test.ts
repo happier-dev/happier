@@ -1,5 +1,5 @@
-import { existsSync, mkdirSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 
 import {
   SCM_OPERATION_ERROR_CODES,
@@ -18,9 +18,50 @@ import {
     makeContext,
     makeProviderRegistry,
     makeRequest,
+    runGit,
 } from './repositoryCloneOperations.test-support.js';
 
 describe('git repository clone operation', () => {
+    it('does not publish a fresh clone when its reviewed initial commit is unavailable', async () => {
+        const parent = createWorkspace();
+        const remotePath = createBareRemoteRepository();
+        const clone = getRepositoryCloneOperation({ registry: makeProviderRegistry(makeCloneTargetDescription(remotePath)) });
+        const response = await cloneWithRealGitRuntime(clone, { context: makeContext(parent),
+            request: { ...makeRequest(parent, remotePath), initialCheckout: { branch: 'main', commit: 'f'.repeat(40) } } });
+        expect(response).toMatchObject({ success: false });
+        expect(existsSync(join(parent, 'happier'))).toBe(false);
+        expect(runGit(join(dirname(remotePath), 'source'), ['branch', '--show-current'])).toBe('main');
+    });
+
+    it('creates main at an exact reviewed commit before publishing a fresh clone even when upstream main advanced', async () => {
+        const parent = createWorkspace();
+        const remotePath = createBareRemoteRepository();
+        const source = join(dirname(remotePath), 'source');
+        const pin = runGit(source, ['rev-parse', 'HEAD']);
+        const history = runGit(source, ['rev-list', pin]);
+        writeFileSync(join(source, 'README.md'), 'new upstream main\n');
+        runGit(source, ['add', 'README.md']);
+        runGit(source, ['commit', '-m', 'advance upstream main']);
+        const newer = runGit(source, ['rev-parse', 'HEAD']);
+        runGit(source, ['push', remotePath, 'main']);
+        const clone = getRepositoryCloneOperation({ registry: makeProviderRegistry(makeCloneTargetDescription(remotePath)) });
+        const request = { ...makeRequest(parent, remotePath), initialCheckout: { branch: 'main' as const, commit: pin } };
+        const response = await cloneWithRealGitRuntime(clone, { context: makeContext(parent), request });
+        expect(response.success).toBe(true);
+        if (!response.success) throw new Error(response.error);
+        expect({ current: runGit(response.destinationPath, ['branch', '--show-current']),
+            head: runGit(response.destinationPath, ['rev-parse', 'HEAD']),
+            main: runGit(response.destinationPath, ['rev-parse', 'main']) })
+            .toEqual({ current: 'main', head: pin, main: pin });
+        expect(runGit(response.destinationPath, ['rev-list', 'main'])).toBe(history);
+        expect(response.snapshot?.branch).toMatchObject({ head: 'main', detached: false });
+        expect(runGit(source, ['rev-parse', 'main'])).toBe(newer);
+        const repeated = await cloneWithRealGitRuntime(clone, { context: makeContext(parent),
+            request: { ...request, initialCheckout: { branch: 'main' as const, commit: newer } } });
+        expect(repeated).toMatchObject({ success: false, errorCode: SCM_OPERATION_ERROR_CODES.INVALID_PATH });
+        expect(runGit(response.destinationPath, ['rev-parse', 'main'])).toBe(pin);
+    });
+
     it('refuses an unregistered provider or an unrecognized deployment before creating a checkout', async () => {
         const parent = createWorkspace();
         const description = makeCloneTargetDescription('/tmp/unused.git');

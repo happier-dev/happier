@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ProjectAccountRowMutationRequestV1Schema, type ProjectAccountRowV1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { projectAccountRowReadResponse } from '@/testkit/http/projectAccountRows';
+import { createProjectAccountRowsHttpBoundary } from '@/workspaces/projectAccountRows.testkit';
 import { readProjectAccountRows, withdrawActiveProjectAccountRowsSnapshot } from '@/workspaces/projectAccountRows';
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import { computeWorkspaceSyncPolicyDigest } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
@@ -264,17 +265,14 @@ describe('Project Open RPC', () => {
         installationId: 'installation', role: 'manage', encryptionMode: 'plain' }, verifyMachineAdmissionCurrent: async () => true };
     const rows: ProjectAccountRowV1[] = [];
     let loseAcknowledgement = false;
+    const accountRowsHttp = createProjectAccountRowsHttpBoundary(rows);
     vi.spyOn(axios, 'request').mockResolvedValue({ status: 200, data: { ok: true, source, canManage: true } });
     vi.spyOn(axios, 'get').mockImplementation(plainMachineRead);
     vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
       if (url.endsWith('/machines/managed/actions/list')) return { status: 200, data: { machines: [] } };
-      if (url.endsWith('/list')) return { status: 200, data: { status: 'listed', coverage: 'complete', rows } };
-      if (url.endsWith('/read')) return projectAccountRowReadResponse(rows, body);
-      const request = ProjectAccountRowMutationRequestV1Schema.parse(body);
-      const changed = request.mutations.map(mutation => ({ key: mutation.key, revision: 0, content: mutation.content }));
-      rows.push(...changed);
-      if (loseAcknowledgement) throw new Error('Accepted row acknowledgement lost');
-      return { status: 200, data: { status: 'updated', rows: changed, cursor: 1 } };
+      const response = await accountRowsHttp(url, body);
+      if (loseAcknowledgement && !url.endsWith('/list') && !url.endsWith('/read')) throw new Error('Accepted row acknowledgement lost');
+      return response;
     });
     const diagnostic = vi.spyOn(logger, 'warnLocalFile');
     const handler = register(RPC_METHODS.PROJECTS_OPEN, runtime);
@@ -292,6 +290,12 @@ describe('Project Open RPC', () => {
       expect(await activated.backends[0]?.commitCaptureTarget?.({ context: { cwd: seed, projectKey: 'seed',
         detection: { isRepo: true, rootPath: seed, mode: '.git' } } })).toMatchObject({ success: true,
         target: { ref: 'refs/heads/master', headOid: expect.any(String), baseTreeOid: expect.any(String) } });
+      const pin = (await git('git', ['rev-parse', 'HEAD'], { cwd: seed })).stdout.trim();
+      await writeFile(join(seed, 'README.md'), 'upstream advanced beyond the reviewed starter pin');
+      await git('git', ['add', 'README.md'], { cwd: seed });
+      await git('git', ['-c', 'user.name=Open test', '-c', 'user.email=open@example.invalid', 'commit', '-m', 'advance upstream'], { cwd: seed });
+      await git('git', ['branch', 'main'], { cwd: seed });
+      const upstreamHead = (await git('git', ['rev-parse', 'main'], { cwd: seed })).stdout.trim();
       await git('git', ['clone', '--bare', seed, remote]);
       scope.patch({ GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: `url.${remote}.insteadOf`,
         GIT_CONFIG_VALUE_0: 'https://github.com/octocat/Hello-World.git' });
@@ -324,6 +328,15 @@ describe('Project Open RPC', () => {
       await access(join(root, 'checkout', '.happier/project.json'));
       expect(vi.mocked(axios.post).mock.calls.some(([url]) => url.includes('/sessions') || url.includes('/machines/managed/'))).toBe(false);
       expect((await git('git', ['branch', '--show-current'], { cwd: join(root, 'checkout') })).stdout.trim()).toBe('master');
+      const starter = join(root, 'starter');
+      const starterResult = await handler({ ...input, source: { kind: 'repository', selector: source.repository }, ref: pin,
+        materialization: { ...input.materialization, destinationDirectoryName: 'starter',
+          initialCheckout: { branch: 'main', commit: pin } } }, context);
+      expect(starterResult).toMatchObject({ kind: 'opened', directory: starter });
+      expect((await git('git', ['branch', '--show-current'], { cwd: starter })).stdout.trim()).toBe('main');
+      expect((await git('git', ['rev-parse', 'HEAD'], { cwd: starter })).stdout.trim()).toBe(pin);
+      expect((await git('git', ['rev-parse', 'main'], { cwd: starter })).stdout.trim()).toBe(pin);
+      expect((await git('git', ['rev-parse', 'main'], { cwd: seed })).stdout.trim()).toBe(upstreamHead);
       diagnostic.mockClear();
       expect(await handler({ ...input, ref: 'missing-ref', materialization: { ...input.materialization, destinationDirectoryName: 'missing-ref' } }, context))
         .toEqual({ kind: 'outcomeUnknown' });

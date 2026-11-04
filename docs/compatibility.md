@@ -4154,6 +4154,25 @@ There is no released predecessor producer, persisted format change, permissive
 fallback or host-caller translation. FIN supplies the retained leaf admission;
 its relay integration is a separate consumer of this producer contract.
 
+The unpublished 0.3 SCM clone input adds optional
+`initialCheckout: { branch: 'main', commit }`, with a closed nested object and
+the existing full SHA-1/SHA-256 commit schema. Project Open carries this same
+operand in its clone materialization, through both owner and private-member
+execution; it has no separate top-level checkout operand. Matching development
+Open readers are required because older strict readers reject it.
+The mutation input remains closed;
+omission keeps ordinary clone semantics. Dropping this operand is unsafe, so
+matching development host/SDK source is required. Older strict host admission
+rejects it. The current host also checks the callback's existing snapshot:
+an ignored pin or missing head fact settles as a typed failure with the created
+destination, never successful pinning or an automatic replacement clone.
+This is the unpublished direct cut, independently of package SemVer, with no
+persisted format, new epoch or reverse-development adapter. The inspected
+scoped-clean `../0.2` frontier at
+`fd3f03529d96e899e95c8b384f5843340a1339c6` and immutable
+`cli-v0.2.17` / `cli-v0.2.17-preview.1` have no corresponding clone contract in
+the affected Protocol/SDK/clone-route paths.
+
 The 0.3 development SDK adds `exec.clients.connectJsonRpc` for existing Unix
 WebSocket endpoints. Existing process-client `spawn` operations keep their
 contracts. The new connection handle has no process identity or manufactured

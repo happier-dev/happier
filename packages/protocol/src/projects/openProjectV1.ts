@@ -18,7 +18,7 @@ export const WorkspaceActivationRequestV1Schema = lazyZodSchema(() => z.discrimi
     checkout: SessionAuthoringCheckoutCreationDraftV1Schema,
     targetPath: z.optional(PathSchema),
   }),
-  (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(z.pick(ScmRepositoryCloneInputSchema, { destinationParentPath: true, destinationDirectoryName: true }), {
+  (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(z.pick(ScmRepositoryCloneInputSchema, { destinationParentPath: true, destinationDirectoryName: true, initialCheckout: true }), {
     kind: z.literal('clone'),
   })),
   z.strictObject({

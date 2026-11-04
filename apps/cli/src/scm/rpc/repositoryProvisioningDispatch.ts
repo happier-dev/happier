@@ -11,6 +11,7 @@ import type { ScmBackend, ScmBackendContext } from '@/scm/types';
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import { validatePath } from '@/rpc/handlers/pathSecurity';
 import { normalizeScmOperationOutcome } from '@happier-dev/protocol/scm/operationOutcome';
+import { observeCloneInitialCheckout } from './repositoryCloneInitialCheckout';
 
 function hasUnsafeCloneParentPath(value: string): boolean {
     return value.includes('\0') || value.startsWith('~') || value.split(/[\\/]+/).includes('..');
@@ -230,7 +231,7 @@ export async function runScmRepositoryCloneRoute(input: {
             return repositoryCloneUnsupportedResponse('Git repository clone is unavailable.');
         }
 
-        return gitBackend.repositoryClone({
+        const clone = await gitBackend.repositoryClone({
             context: createNonRepositoryGitContext({
                 workingDirectory: normalizedWorkingDirectory,
                 cwd: destinationParent.resolvedPath,
@@ -241,6 +242,8 @@ export async function runScmRepositoryCloneRoute(input: {
                 destinationParentPath: destinationParent.resolvedPath,
             },
         });
+        return clone.success && input.request.initialCheckout
+            ? observeCloneInitialCheckout(input.request.initialCheckout, clone) : clone;
     });
 }
 

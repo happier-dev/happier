@@ -1,5 +1,6 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
+import { ScmCommitOidSchema } from './commitPublication.js';
 
 import {
   ScmWorkingSnapshotSchema,
@@ -117,6 +118,7 @@ export const ScmRepositoryCloneInputSchema = lazyZodSchema(() => z.strictObject(
     destinationParentPath: z.string().check(z.trim(), z.minLength(1), z.refine((value) => !hasUnsafePathInput(value), 'Destination parent path must not use home expansion or traversal segments')),
     destinationDirectoryName: z.string().check(z.trim(), z.minLength(1), z.refine((value) => value !== '.' && value !== '..' && !/[\/\\]/.test(value) && !hasUnsafePathInput(value), 'Destination directory name must be a single safe path segment')),
     protocol: SourceControlCloneProtocolSchema,
+    initialCheckout: z.optional(z.strictObject({ branch: z.literal('main'), commit: ScmCommitOidSchema })),
     confirmed: z.literal(true),
     authorizationToken: ScmRepositoryCloneAuthorizationTokenSchema,
   }));
@@ -152,6 +154,7 @@ export const ScmRepositoryCloneOutputSchema = lazyZodSchema(() => z.union([
     }),
   z.extend(ScmRepositoryProvisioningFailureResponseSchema, {
     errorCode: z.optional(ScmOperationErrorCodeSchema),
+    destinationPath: z.optional(z.string().check(z.minLength(1))),
   }),
 ]));
 export type ScmRepositoryCloneOutput =

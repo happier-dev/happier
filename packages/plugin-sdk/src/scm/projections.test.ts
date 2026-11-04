@@ -743,6 +743,10 @@ describe('SCM package-local projections', () => {
             .toEqualTypeOf<ProtocolScmHostingRepositoryRemoteUrlKind>();
         expectTypeOf<scmProjection.ScmHostingRepositorySummary>()
             .toEqualTypeOf<ProtocolScmHostingRepositorySummary>();
+        expectTypeOf<scmProjection.ScmRepositoryCloneInput>()
+            .toEqualTypeOf<protocolScm.ScmRepositoryCloneInput>();
+        expectTypeOf<scmProjection.ScmRepositoryCloneOutput>()
+            .toEqualTypeOf<protocolScm.ScmRepositoryCloneOutput>();
         expectTypeOf<scmProjection.ScmHostingRepositoryVisibility>()
             .toEqualTypeOf<ProtocolScmHostingRepositoryVisibility>();
         expectTypeOf<ScmRefreshPolicy>().toEqualTypeOf<ProviderRefreshPolicy>();

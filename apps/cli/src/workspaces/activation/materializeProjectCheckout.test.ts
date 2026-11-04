@@ -6,6 +6,8 @@ import { promisify } from 'node:util';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createGitScmBackendRuntimeRegistration } from '../../../../../packages/plugins/scm-git/src/backend';
 import { runWithRealGitScmRuntime } from '../../../../../packages/plugins/scm-git/src/testkit/scmRuntime.test-support';
+import { createScmHostingProviderRuntimeServicesForTest } from '../../../../../packages/plugins/scm-git/src/testkit/scmRuntime.test-support';
+import { createBareRemoteRepository, makeCloneTargetDescription, makeProviderRegistry, makeRequest, runGit } from '../../../../../packages/plugins/scm-git/src/operations/repositoryCloneOperations.test-support';
 import { createRegisteredScmBackendAdapter } from '@/scm/pluginBackends/registeredScmBackendAdapter';
 import { createScmBackendRegistry } from '@/scm/registry';
 
@@ -25,6 +27,39 @@ afterEach(async () => {
 });
 
 describe('materializeProjectCheckout', () => {
+  it('materializes initial main at the reviewed pin without a second detached checkout', async () => {
+    const parent = await temporaryRoot();
+    const remote = createBareRemoteRepository();
+    temporaryRoots.push(join(remote, '..'));
+    const source = join(remote, '..', 'source');
+    const pin = runGit(source, ['rev-parse', 'HEAD']);
+    await writeFile(join(source, 'README.md'), 'advanced upstream main\n');
+    runGit(source, ['add', 'README.md']);
+    runGit(source, ['commit', '-m', 'advance upstream main']);
+    runGit(source, ['push', remote, 'main']);
+    const newer = runGit(source, ['rev-parse', 'HEAD']);
+    const registration = createGitScmBackendRuntimeRegistration();
+    if (!registration.runtime) throw new Error('Git SCM test runtime is unavailable');
+    const registry = createScmBackendRegistry([createRegisteredScmBackendAdapter({
+      definition: { id: 'git', kind: 'git' }, qualifiedId: 'happier.scm.git/git',
+      executableDefinition: registration.runtime, registration,
+      hostingProviderRuntimeServices: createScmHostingProviderRuntimeServicesForTest(
+        makeProviderRegistry(makeCloneTargetDescription(remote))),
+    })]);
+    const request = makeRequest(parent, remote, 'starter');
+    const result = await runWithRealGitScmRuntime(() => materializeProjectCheckout({
+      selector: { provider: request.provider, repository: request.repository, protocol: request.protocol },
+      ref: pin,
+      materialization: { kind: 'clone', destinationParentPath: parent, destinationDirectoryName: 'starter',
+        initialCheckout: { branch: 'main', commit: pin } },
+      registry,
+    }));
+    expect(runGit(result.rootPath, ['branch', '--show-current'])).toBe('main');
+    expect(runGit(result.rootPath, ['rev-parse', 'main'])).toBe(pin);
+    expect(runGit(result.rootPath, ['rev-parse', 'HEAD'])).toBe(pin);
+    expect(runGit(source, ['rev-parse', 'HEAD'])).toBe(newer);
+  });
+
   it('realizes a worktree through the registered Git owner and preserves a selected nested directory', async () => {
     const sandbox = await temporaryRoot();
     const root = join(sandbox, 'repository');

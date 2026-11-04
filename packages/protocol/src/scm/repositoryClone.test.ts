@@ -18,6 +18,20 @@ function readProtocolSchema<TValue = unknown>(name: string, entrypoint: object =
 }
 
 describe('SCM repository clone protocol contracts', () => {
+  it('admits only an exact full commit for the initial main checkout of a fresh clone', () => {
+    const request = { provider: { id: 'happier.scm.forge.github/github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
+      repository: { nameWithOwner: 'octocat/Hello-World' }, destinationParentPath: '/parent',
+      destinationDirectoryName: 'checkout', protocol: 'https', confirmed: true, authorizationToken: 'clone-repository' };
+    const initialCheckout = { branch: 'main', commit: '1'.repeat(40) };
+    expect(scm.ScmRepositoryCloneInputSchema.safeParse({ ...request, initialCheckout }).success).toBe(true);
+    for (const invalid of [
+      { ...initialCheckout, commit: 'main' },
+      { ...initialCheckout, commit: 'v1.0.0' },
+      { ...initialCheckout, branch: 'feature' },
+      { ...initialCheckout, force: true },
+    ]) expect(scm.ScmRepositoryCloneInputSchema.safeParse({ ...request, initialCheckout: invalid }).success).toBe(false);
+  });
+
   it('admits a saved Source locator without pretending its visibility has been discovered', () => {
     const selector = scm.ScmCredentialFreeRepositorySelectorV1Schema.parse({
       provider: { id: 'happier.scm.forge.github/github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
