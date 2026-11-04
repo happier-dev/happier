@@ -1,3 +1,5 @@
+import { createSessionSystemSessionV1Schema } from '../metadata/systemSessionV1.js';
+export { createSessionSystemSessionV1Schema, SessionSystemSessionV1Schema, readSystemSessionMetadataFromMetadata, isHiddenSystemSession, buildSystemSessionMetadataV1, type SessionSystemSessionV1 } from '../metadata/systemSessionV1.js';
 import { maxCodeUnits } from '../../strings/maxCodeUnits.js';
 import { lazyDefinition, lazyZodSchema } from '../../lazyZodSchema.js';
 import { projectZodProtocolSchema } from '../../plugins/actions/internalProtocolZodAdapter.js';
@@ -249,26 +251,7 @@ export const AuthStatusResultSchema = lazyZodSchema(() => z.looseObject({
 }));
 export type AuthStatusResult = z.infer<typeof AuthStatusResultSchema>;
 
-/**
- * Factory form (accepts a caller-provided `z`) for nohoist/multi-zod-instance repos.
- * Consumers that need to embed the schema into their own Zod objects should use this
- * instead of importing `SessionSystemSessionV1Schema` directly.
- */
-export function createSessionSystemSessionV1Schema(zod: typeof z) {
-  return zod.looseObject({
-    v: zod.literal(1),
-    key: zod.string(),
-    hidden: zod.optional(zod.boolean()),
-  });
-}
-
-export const SessionSystemSessionV1Schema = lazyZodSchema(() => createSessionSystemSessionV1Schema(z));
-export type SessionSystemSessionV1 = z.infer<typeof SessionSystemSessionV1Schema>;
-
-export const VOICE_TRANSCRIPT_HISTORY_SYSTEM_SESSION_TAG =
-  'system:voice-transcript-history:v1';
-export const VOICE_TRANSCRIPT_HISTORY_SYSTEM_SESSION_KEY =
-  'voice_transcript_history';
+export { VOICE_TRANSCRIPT_HISTORY_SYSTEM_SESSION_TAG, VOICE_TRANSCRIPT_HISTORY_SYSTEM_SESSION_KEY } from '../../voice/sessionBinding.js';
 
 export function createSessionMetadataSchema(zod: typeof z) {
   return zod.looseObject({
@@ -288,34 +271,6 @@ export function createSessionMetadataSchema(zod: typeof z) {
 export const SessionMetadataSchema = lazyZodSchema(() => createSessionMetadataSchema(z));
 export type SessionMetadata = z.infer<typeof SessionMetadataSchema>;
 
-export function readSystemSessionMetadataFromMetadata(params: Readonly<{ metadata: unknown }>): SessionSystemSessionV1 | null {
-  // Hot path: this runs inside per-session loops on store notifications (session list
-  // filtering, voice lookups, CLI row building). Parse only the marker field itself —
-  // validating the whole metadata blob here is both wasteful and wrong (a malformed
-  // sibling field must not hide a system session).
-  const metadata = params.metadata;
-  if (typeof metadata !== 'object' || metadata === null) return null;
-  const marker = (metadata as Record<string, unknown>).systemSessionV1;
-  if (typeof marker !== 'object' || marker === null) return null;
-  const parsed = SessionSystemSessionV1Schema.safeParse(marker);
-  return parsed.success ? parsed.data : null;
-}
-
-export function isHiddenSystemSession(params: Readonly<{ metadata: unknown }>): boolean {
-  const systemSession = readSystemSessionMetadataFromMetadata(params);
-  return Boolean(systemSession && systemSession.hidden === true);
-}
-
-export function buildSystemSessionMetadataV1(params: Readonly<{ key: string; hidden?: boolean }>): { systemSessionV1: SessionSystemSessionV1 } {
-  const hidden = params.hidden;
-  return {
-    systemSessionV1: {
-      v: 1,
-      key: params.key,
-      ...(typeof hidden === 'boolean' ? { hidden } : {}),
-    },
-  };
-}
 
 export const SessionShareSchema = lazyZodSchema(() => z.looseObject({
     accessLevel: z.enum(['view', 'edit', 'admin']),

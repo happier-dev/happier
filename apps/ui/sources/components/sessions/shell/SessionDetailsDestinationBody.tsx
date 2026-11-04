@@ -5,7 +5,7 @@ import type { DetailsTab } from '@/components/appShell/panes/details/workspace/d
 
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { SessionInvalidLinkFallback } from '@/components/sessions/shell/SessionInvalidLinkFallback';
-import { SessionDetailsPanel } from '@/components/sessions/panes/SessionDetailsPanel';
+import { SessionDetailsPanel } from '@/components/sessions/panes/SessionDetailsPanelHost';
 import {
     applySessionPaneUrlState,
     buildActiveDetailsRouteParams,

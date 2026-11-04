@@ -1,4 +1,4 @@
-import { readSystemSessionMetadataFromMetadata } from '../sessions/control/contract.js';
+import { readSystemSessionMetadataFromMetadata } from '../sessions/metadata/systemSessionV1.js';
 
 export const HAPPIER_VOICE_BINDING_NONCE_DYNAMIC_VARIABLE = 'happier_voice_binding_nonce' as const;
 export const HAPPIER_VOICE_LEASE_ID_DYNAMIC_VARIABLE = 'happier_voice_lease_id' as const;
@@ -27,3 +27,8 @@ export function isVoiceConversationSystemSessionMetadata(metadata: unknown): boo
     || key === VOICE_CONVERSATION_LEGACY_SYSTEM_SESSION_KEY
   );
 }
+
+export const VOICE_TRANSCRIPT_HISTORY_SYSTEM_SESSION_TAG =
+  'system:voice-transcript-history:v1';
+export const VOICE_TRANSCRIPT_HISTORY_SYSTEM_SESSION_KEY =
+  'voice_transcript_history';

@@ -21,7 +21,7 @@ import { SessionGuardNoticeStateV1Schema } from '@happier-dev/protocol/machines/
 import { SessionTerminalControlServiceabilityV1Schema } from '@happier-dev/protocol/sessions/metadata/terminalMetadata';
 import { ExternalAgentObservationSnapshotV1Schema } from '@happier-dev/protocol/sessions/external/externalAgentObservationV1';
 import { SessionUsageLimitRecoveryDisplayV1Schema } from '@happier-dev/protocol/sessions/state/valueSchemas/usageLimitRecovery';
-import { SessionOwnerDisplayV1Schema } from '@happier-dev/protocol';
+import { SessionOwnerDisplayV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionDisplaySchemasV1';
 import { PendingActivationAuthorizationV1Schema } from '@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1';
 import { PluginUiTargetedContributionsV1Schema, type PluginUiTargetedContributionsV1 } from '@happier-dev/protocol/plugins/ui';
 import { z } from 'zod/mini';

@@ -6,7 +6,7 @@ import { DetailsTabLifetimeScope } from './details/workspace/detailsTabLifetime'
 import { DetailsSurfaceFallback } from './details/surfaces/DetailsSurfaceFallback';
 import { parseSessionPaneScopeId } from '@/components/sessions/panes/sessionPaneScopeId';
 import { parseProjectPaneScopeId } from '@/components/projects/detail/projectPaneScope';
-import { SessionDetailsPanel } from '@/components/sessions/panes/SessionDetailsPanel';
+import { SessionDetailsPanel } from '@/components/sessions/panes/SessionDetailsPanelHost';
 import { WorkspaceDetailsPanel } from '@/components/projects/panes/WorkspaceDetailsPanel';
 import { useWorkspaceRefs } from '@/sync/domains/state/storage';
 import { resolveWorkspaceRefById } from '@/sync/domains/workspaces/workspaceRefs';

@@ -1,8 +1,7 @@
 import * as React from 'react';
-import { useLocalSearchParams } from 'expo-router';
 import { Platform } from 'react-native';
 
-import { buildSystemSessionMetadataV1 } from '@happier-dev/protocol/sessions/control/contract';
+import { buildSystemSessionMetadataV1 } from '@happier-dev/protocol/sessions/metadata/systemSessionV1';
 
 import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
@@ -29,10 +28,8 @@ import {
     setVoiceConversationRuntimeSnapshot,
 } from '@/voice/runtime/machine/voiceConversationRuntimeStore';
 
-import { isVoiceQaDebugRuntime } from '@/voice/qa/voiceQaDebugRuntime';
+import { useVoiceSurfaceFixtureIntent } from '@/voice/qa/voiceSurfaceFixtureIntent';
 
-const VOICE_SURFACE_E2E_FIXTURE_QUERY_PARAM = 'happier_voice_e2e_fixture';
-const VOICE_SURFACE_E2E_FIXTURE_STORAGE_KEY = 'happier.voice.e2e.fixture';
 const VOICE_SURFACE_E2E_FIXTURE_SIDEBAR_HIDDEN_CONVERSATION = 'sidebar_hidden_conversation';
 const VOICE_SURFACE_E2E_FIXTURE_REALTIME_RECOVERABLE_DISCONNECT = 'realtime_recoverable_disconnect';
 const VOICE_SURFACE_E2E_FIXTURE_LOCAL_AUTO_RETURN_LISTENING = 'local_auto_return_listening';
@@ -42,24 +39,6 @@ const VOICE_SURFACE_E2E_FIXTURE_CANCEL_DURING_ASSISTANT_SPEECH = 'cancel_during_
 const VOICE_SURFACE_E2E_ROOT_SESSION_ID = 'voice-e2e-root-session';
 const VOICE_SURFACE_E2E_CONVERSATION_SESSION_ID = 'voice-e2e-hidden-conversation';
 const VOICE_SURFACE_E2E_UPDATED_AT = 1_710_000_000_000;
-
-function normalizeFixtureParam(value: string | string[] | undefined): string {
-    if (Array.isArray(value)) {
-        return typeof value[0] === 'string' ? value[0].trim() : '';
-    }
-    return typeof value === 'string' ? value.trim() : '';
-}
-
-function readPersistedFixtureId(): string {
-    const localStorage =
-        typeof globalThis !== 'undefined' && typeof globalThis.localStorage?.getItem === 'function'
-            ? globalThis.localStorage
-            : null;
-    if (!localStorage) {
-        return '';
-    }
-    return normalizeFixtureParam(localStorage.getItem(VOICE_SURFACE_E2E_FIXTURE_STORAGE_KEY) ?? undefined);
-}
 
 type VoiceSurfaceE2eFixtureVoiceSessionSnapshot = Readonly<{
     status: 'connecting' | 'connected' | 'disconnected' | 'error';
@@ -670,12 +649,8 @@ function subscribeThrottledFixtureRepair(repair: () => void, delayMs: number): (
 }
 
 export function useVoiceSurfaceE2eFixtureComposition(): Readonly<{ shouldSuppressOnboarding: boolean }> {
-    const params = useLocalSearchParams<{ happier_voice_e2e_fixture?: string | string[] }>();
     const installedFixtureRef = React.useRef<string | null>(null);
-    const runtimeEnabled = isVoiceQaDebugRuntime();
-    const fixtureId = runtimeEnabled
-        ? normalizeFixtureParam(params[VOICE_SURFACE_E2E_FIXTURE_QUERY_PARAM]) || readPersistedFixtureId()
-        : '';
+    const { runtimeEnabled, fixtureId, shouldSuppressOnboarding } = useVoiceSurfaceFixtureIntent();
 
     React.useEffect(() => {
         if (!runtimeEnabled) return;
@@ -805,5 +780,10 @@ export function useVoiceSurfaceE2eFixtureComposition(): Readonly<{ shouldSuppres
         }
     }, [fixtureId, runtimeEnabled]);
 
-    return React.useMemo(() => ({ shouldSuppressOnboarding: fixtureId.length > 0 }), [fixtureId]);
+    return React.useMemo(() => ({ shouldSuppressOnboarding }), [shouldSuppressOnboarding]);
+}
+
+export function VoiceSurfaceFixtureHost(_props: Readonly<{ enabled: boolean }>) {
+    useVoiceSurfaceE2eFixtureComposition();
+    return null;
 }

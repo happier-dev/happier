@@ -16,7 +16,8 @@ import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { resolveLegacySessionDeepLinkRoute } from '@/sync/domains/server/url/consumeLegacySessionDeepLinkFromWebLocation';
 import { resolveNewSessionAuthContinuation } from '@/components/sessions/new/navigation/newSessionAuthContinuation';
-import { useVoiceSurfaceE2eFixtureComposition } from '@/dev/testkit/harness/useVoiceSurfaceE2eFixtureComposition';
+import { useVoiceSurfaceFixtureIntent } from '@/voice/qa/voiceSurfaceFixtureIntent';
+import { VoiceSurfaceFixtureHost } from '@/voice/qa/VoiceSurfaceFixtureHost';
 import { PersonalHomeBootstrapContent, usePersonalHomeBootstrapActive } from '@/components/personalHome/bootstrap/PersonalHomeBootstrapGate';
 import { buildMachineAddHref } from '@/components/settings/machines/collection/machineCollectionModel';
 import { shouldKeepDesktopPersonalHomeShell } from '@/components/personalHome/bootstrap/personalHomeIndexRoutePolicy';
@@ -37,7 +38,7 @@ export function Home() {
     const activeServerSnapshot = useActiveServerSnapshot();
     const onboardingJourneyActive = useOnboardingJourneySessionActive();
     const onboardingTourDecision = useFeatureDecision('app.ui.onboardingTour', { scopeKind: 'runtime' });
-    const voiceE2eFixture = useVoiceSurfaceE2eFixtureComposition();
+    const voiceE2eFixture = useVoiceSurfaceFixtureIntent();
     const personalHomeBootstrapActive = usePersonalHomeBootstrapActive();
     // Explicit replay and a live journey own the viewport; a persisted machine-add
     // continuation routes to its draft instead of relaunching the setup journey.
@@ -56,14 +57,20 @@ export function Home() {
         // Only the active provider owns bootstrap/adoption recovery in the shell. An explicit
         // existing Home bypasses that provider and needs real pre-auth, not Account-only loading.
         return (
-            <PreAuthOnboardingWizardEntry />
+            <>
+                <VoiceSurfaceFixtureHost enabled={voiceE2eFixture.shouldSuppressOnboarding} />
+                <PreAuthOnboardingWizardEntry />
+            </>
         );
     }
     return (
-        <Authenticated
-            activeServerId={activeServerSnapshot.serverId}
-            shouldSuppressSetupContinuation={voiceE2eFixture.shouldSuppressOnboarding}
-        />
+        <>
+            <VoiceSurfaceFixtureHost enabled={voiceE2eFixture.shouldSuppressOnboarding} />
+            <Authenticated
+                activeServerId={activeServerSnapshot.serverId}
+                shouldSuppressSetupContinuation={voiceE2eFixture.shouldSuppressOnboarding}
+            />
+        </>
     );
 }
 

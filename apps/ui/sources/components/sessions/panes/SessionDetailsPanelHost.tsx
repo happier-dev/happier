@@ -1,0 +1,1 @@
+export { SessionDetailsPanel } from './SessionDetailsPanel';

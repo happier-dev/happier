@@ -223,6 +223,8 @@ test('Home keeps unopened panes, fixtures and builtin widget bodies outside its 
         '/components/appShell/panes/PaneTabDestination.tsx',
         '/components/projects/widgets/ProjectBuiltinWidgetBody.tsx',
         '/components/settings/usage/widgets/UsageWidgetBody.tsx',
+        '/components/sessions/panes/SessionDetailsPanel.tsx',
+        '/dev/testkit/harness/useVoiceSurfaceE2eFixtureComposition.ts',
     ];
     for (const suffix of closed) {
         assert.ok([...graph.keys()].some(file => file.endsWith(suffix)), `demand retains ${suffix}`);
@@ -236,7 +238,9 @@ test('native pane, fixture and builtin widget hosts keep their bodies synchronou
         'components/appShell/panes/PaneTabDestination',
         'components/projects/widgets/ProjectBuiltinWidgetBody',
         'components/settings/usage/widgets/UsageWidgetBody',
+        'components/sessions/panes/SessionDetailsPanel',
     ].map(host => [host + 'Host', host + '.tsx']);
+    hosts.push(['voice/qa/VoiceSurfaceFixtureHost', 'dev/testkit/harness/useVoiceSurfaceE2eFixtureComposition.ts']);
     for (const platform of ['ios', 'android']) {
         for (const [host, implementation] of hosts) {
             const origin = join(repoRoot, 'apps/ui/index.ts');

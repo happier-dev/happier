@@ -8,7 +8,7 @@ import { RIGHT_SIDEBAR_BUILTIN_TABS } from '@/components/appShell/rightSidebar/r
 import { createSessionPaneSurfaceScope } from '@/components/sessions/plugins/useSessionPluginRuntime';
 import { SessionRightPanel, SessionActionRail } from './SessionRightPanel';
 import { SessionBottomPanel } from './bottom/SessionBottomPanel';
-import { SessionDetailsPanel } from './SessionDetailsPanel';
+import { SessionDetailsPanel } from './SessionDetailsPanelHost';
 import { createSessionPaneScopeId } from './sessionPaneScopeId';
 import type { SessionBoardPrimaryMountResolver } from '@/sync/domains/session/board';
 import type { SessionPluginRuntimeState } from '@/components/sessions/plugins/useSessionPluginRuntime';

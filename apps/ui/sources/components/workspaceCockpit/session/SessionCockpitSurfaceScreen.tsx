@@ -33,7 +33,7 @@ import { PluginReactNativeUnavailable } from '@/components/plugins/reactNative/P
 import type { AttachmentDraft } from '@/components/sessions/attachments/attachmentDraftModel';
 import type { SessionRouteHydrationState } from '@/sync/domains/session/sessionRouteHydrationState';
 import type { TranscriptExperience } from '@/components/sessions/transcript/viewport/lifecycle/transcriptSameSessionHandoff';
-import { SessionDetailsPanel } from '@/components/sessions/panes/SessionDetailsPanel';
+import { SessionDetailsPanel } from '@/components/sessions/panes/SessionDetailsPanelHost';
 import {
     createSessionCommitDetailsTab,
     createSessionScmReviewDetailsTab,
