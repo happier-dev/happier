@@ -27,11 +27,14 @@ export type RegistryUpstreamCheckV1 = RegistryUpstreamV1 | Readonly<{
 }>;
 export const RegistryUpdateCheckResultV1Schema = lazyZodSchema(() => z.strictObject({
   checkedAt: z.number().check(z.int(), z.nonnegative()),
-  results: z.array(z.strictObject({ kind: RegistryKindV1Schema, key: z.string().check(z.minLength(1)), upstream: RegistryUpstreamCheckV1Schema })),
+  results: z.array(z.strictObject({ kind: RegistryKindV1Schema, key: z.string().check(z.minLength(1)), upstream: RegistryUpstreamCheckV1Schema,
+    machineId: z.optional(z.string().check(z.minLength(1))) })),
 }));
 export type RegistryUpdateCheckResultV1 = Readonly<{
   checkedAt: number;
-  results: readonly Readonly<{ kind: RegistryKindV1; key: string; upstream: RegistryUpstreamCheckV1 }>[];
+  results: readonly Readonly<{ kind: RegistryKindV1; key: string; upstream: RegistryUpstreamCheckV1;
+    /** Native profile observations are qualified by their actual transport Machine. */
+    machineId?: string }>[];
 }>;
 
 /** Stored observations compare the full latest pointer, including commit custody. */

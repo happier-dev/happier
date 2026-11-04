@@ -7,6 +7,7 @@ import { createCliMcpServerStore, createCliMcpServerStoreForOperation } from '@/
 import { createMcpRegistryUpdateTracker } from '@/mcp/servers/registryUpdateTracker';
 import { createCliAcpCatalogStore } from '@/agent/acp/catalog/acpCatalogStore';
 import { createAgentRegistryUpdateTracker } from '@/agent/acp/catalog/registry/agentRegistryUpdateTracker';
+import { createBrowserExtensionRegistryUpdateTracker } from '@/daemon/browser/extensions/registryUpdateTracker';
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSavedSecretCatalog';
 import { runWithServerHttpBaseUrl, resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createCliRegistryHostV1 } from '../createCliRegistryHost';
@@ -35,7 +36,8 @@ export function createCliRegistryUpdateCheck(input: Readonly<{
       : createCliMcpServerStore({ credentials: input.credentials, serverId: input.serverId, signal: input.signal });
     const checker = createRegistryUpdateCheck({ trackers: [createSkillsUpdateTracker({ execute: skills, signal: input.signal }),
       createMcpRegistryUpdateTracker({ store: mcpStore }),
-      createAgentRegistryUpdateTracker({ store: createCliAcpCatalogStore(input) })],
+      createAgentRegistryUpdateTracker({ store: createCliAcpCatalogStore(input) }),
+      createBrowserExtensionRegistryUpdateTracker({ signal: input.signal })],
       ctx: registry.fetchContext, admitSource: registry.fetchContext.admitSource, readSources: registry.readSources });
     return {
       checkNow: (filter?: Parameters<typeof checker.checkNow>[0]) => runWithServerHttpBaseUrl(baseUrl, () => checker.checkNow(filter)),

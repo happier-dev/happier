@@ -11,7 +11,12 @@ import { createUiRegistryHttpV1 } from './registryHttpV1';
 import { projectPluginRegistrySources } from './pluginRegistrySources';
 import { readCurrentAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
 import { invalidatePromptLibraryCatalogAfterAcknowledgedMutation } from '@/sync/engine/settings/promptLibraryCatalogEngine';
-import { resolveUiAccountActionFallbackMachineId } from '@/sync/ops/actions/accountActionDeps';
+import { storage } from '@/sync/domains/state/storageStore';
+import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
+import { resolveVisibleMachinesForActiveServerFromState } from '@/sync/store/domains/machines/resolveMachinesForActiveServerFromState';
+import { readLiveMachineInventoryRows } from '@/sync/domains/machines/resolveServerScopedMachines';
+import { isMachineSelectableForFleet } from '@/sync/domains/machines/administration/fleetUnion';
+import { resolveFreshMachineAdministrationExecutionTarget } from '@/sync/domains/machines/administration/executionTarget';
 
 type RegistrySessionMemo = { values: Map<string, unknown>; pending: Map<string, Readonly<{ account: LazyActionAccountContext; signal?: AbortSignal; promise: Promise<unknown> }>>;
     refreshReads: Set<string>; rateLimitedUntil: Map<string, number>; sourceSignature: string | null };
@@ -67,10 +72,29 @@ export async function createUiRegistryHostV1(account: LazyActionAccountContext, 
             requestId: context.actionRequestId ?? randomUUID(), authority: context.authority,
             actionCaller: context.actionCaller, signal: context.signal });
     };
-    const carrierForSource = (source?: RegistrySourceDescriptorV1 | null) => resolveUiAccountActionFallbackMachineId(account, {
-        candidateMachineIds: source?.origin.kind === 'plugin' ? source.origin.suppliers : undefined,
-        target: context.externalActionTarget, allowUnreachableFallback: options?.explicitRefresh,
-    });
+    const carriersForSource = function* (source?: RegistrySourceDescriptorV1 | null) {
+        const state = storage.getState();
+        const profile = getServerProfileById(account.serverId);
+        if (!profile?.serverIdentityId) return;
+        const visible = resolveVisibleMachinesForActiveServerFromState(state, account);
+        const suppliers = source?.origin.kind === 'plugin' ? source.origin.suppliers : undefined;
+        const candidates = suppliers === undefined ? visible : visible.filter(machine => suppliers.includes(machine.id));
+        const explicit = context.externalActionTarget;
+        if (explicit && explicit.kind !== 'machine') return;
+        const liveRows = readLiveMachineInventoryRows<(typeof visible)[number]>({ activeServerId: '', activeMachines: [],
+            machineListByServerId: state.machineListByServerId, machineListStatusByServerId: state.machineListStatusByServerId,
+            profile, serverIdentityId: profile.serverIdentityId });
+        const namedRetry = options?.explicitRefresh && (Boolean(explicit) || suppliers !== undefined);
+        for (const machine of candidates) {
+            if (explicit && machine.id !== explicit.machineId) continue;
+            if (!explicit && !namedRetry && (!liveRows.has(machine) || !isMachineSelectableForFleet(account, machine))) continue;
+            const resolved = resolveFreshMachineAdministrationExecutionTarget({
+                serverIdentityId: profile.serverIdentityId, machineId: machine.id,
+            }, { accountScope: account, ...(namedRetry ? { intent: 'retry' } : {}) });
+            if (resolved) yield resolved.machine.id;
+        }
+    };
+    const carrierForSource = (source?: RegistrySourceDescriptorV1 | null) => carriersForSource(source).next().value ?? null;
     const executeActionForSource = async (sourceId: string, actionId: ActionId, input: unknown) => {
         const source = (await readSources()).find(source => source.id === sourceId);
         if (!source) throw new RegistryFetchErrorV1({ state: 'invalid_source' });
@@ -83,12 +107,25 @@ export async function createUiRegistryHostV1(account: LazyActionAccountContext, 
         mutateSources: mutation => updatePromptLibraryRegistrySourcesV1(port, mutation, context.signal),
         updates: async filter => {
             account.assertCurrent(); context.signal?.throwIfAborted();
-            const machineId = carrierForSource();
+            const carriers = carriersForSource();
+            const machineId = carriers.next().value;
             if (!machineId) throw new RegistryFetchErrorV1({ state: 'needs_machine' });
-            const result = await executeOnMachine(machineId, 'registries.updates.check', filter ?? {});
-            account.assertCurrent(); context.signal?.throwIfAborted();
-            if (!result.ok) throw Object.assign(new Error(result.error), { code: result.errorCode, details: result.details });
-            return REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.updates.check'].parse(result.result);
+            const checkOnMachine = async (target: string, selection: typeof filter) => {
+                const result = await executeOnMachine(target, 'registries.updates.check', selection ?? {});
+                account.assertCurrent(); context.signal?.throwIfAborted();
+                if (!result.ok) throw Object.assign(new Error(result.error), { code: result.errorCode, details: result.details });
+                const checked = REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.updates.check'].parse(result.result);
+                return { ...checked, results: checked.results.map(item => item.kind === 'browserExtension'
+                    ? { ...item, machineId: target } : item) };
+            };
+            // Account-owned kinds need one carrier; browser profiles belong to each Machine.
+            const includeExtensions = filter?.kind === undefined || filter.kind === 'browserExtension';
+            const checks = await Promise.all([
+                checkOnMachine(machineId, filter),
+                ...(includeExtensions ? [...carriers].map(target => checkOnMachine(target, { ...filter, kind: 'browserExtension' })) : []),
+            ]);
+            return { checkedAt: checks.reduce((oldest, check) => Math.min(oldest, check.checkedAt), checks[0].checkedAt),
+                results: checks.flatMap(check => check.results) };
         },
         createSourceOnDaemon: async input => {
             account.assertCurrent();context.signal?.throwIfAborted();

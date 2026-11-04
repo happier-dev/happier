@@ -2,7 +2,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol';
-import { createRegistryHostV1, RegistryProvenanceV1Schema, RegistryUpstreamV1Schema, REGISTRY_ACTION_OUTPUT_SCHEMAS_V1,
+import { createRegistryHostV1, RegistryProvenanceV1Schema, RegistryUpstreamV1Schema, RegistryUpstreamCheckV1Schema, REGISTRY_ACTION_OUTPUT_SCHEMAS_V1,
   type RegistrySourceDescriptorV1, type RegistryHttpV1 } from '@happier-dev/protocol/registries';
 import { ACP_REGISTRY_V1_FIXTURE } from '../../../../../packages/protocol/src/registries/formats/fixtures/acpRegistryV1Fixture';
 import { withTempDir } from '@/testkit/fs/tempDir';
@@ -45,6 +45,43 @@ async function fixture(stateDir: string) {
 
 describe('registry tracker coordinator through Actions and strict result consumption', () => {
   afterEach(() => vi.useRealTimers());
+  it('joins native version checks with catalog trackers without fabricating provenance or persisting failed observations', async () => withTempDir('happier-registry-native-', async dir => {
+    const f = await fixture(dir);
+    const statePath = join(dir, 'browser-observation.json');
+    let nativeCalls = 0;
+    let available = true;
+    // Native acquisition is an external HTTP boundary; this tracker reads and records its real filesystem observation.
+    const http: RegistryHttpV1 = { ...f.http, getJson: async (url, options) => url === 'https://extensions.example/latest'
+      ? { ok: true, fetchedAt: 1, value: available ? { state: 'update_available', latest: { kind: 'version', version: '2.0' } }
+        : { state: 'unchecked', reason: { state: 'unreachable' } } } : f.http.getJson(url, options) };
+    const key = JSON.stringify(['work', 'a'.repeat(32)]);
+    const native = {
+      kind: 'browserExtension' as const,
+      list: async () => [{ key }],
+      check: async (items: readonly Readonly<{ key: string }>[]) => {
+        nativeCalls += 1;
+        const response = await http.getJson('https://extensions.example/latest');
+        if (!response.ok) throw new Error('Unexpected transport refusal');
+        return new Map(items.map(item => [item.key, RegistryUpstreamCheckV1Schema.parse(response.value)]));
+      },
+      record: async (changes: Parameters<RegistryUpdateTrackerV1['record']>[0]) => {
+        await writeFile(statePath, JSON.stringify(changes));
+      },
+    };
+    const check = createRegistryUpdateCheck({ trackers: [f.tracker, native], ctx: { http }, readSources: async () => [source] });
+    const host = createRegistryHostV1({ host: 'node', http, readSources: async () => [source], updates: check.checkNow });
+    const consumed = REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.updates.check'].parse(await host.execute('registries.updates.check', {}));
+    expect(consumed.results).toMatchObject([{ kind: 'skill', key: 'skill', upstream: { state: 'current' } },
+      { kind: 'browserExtension', key, upstream: { state: 'update_available', latest: { kind: 'version', version: '2.0' } } }]);
+    const recorded = await readFile(statePath, 'utf8');
+    expect(JSON.parse(recorded)).toEqual([{ key, upstream: { state: 'update_available', latest: { kind: 'version', version: '2.0' } } }]);
+    available = false;
+    expect((await check.checkNow({ kind: 'browserExtension', keys: [key] })).results).toEqual([
+      { kind: 'browserExtension', key, upstream: { state: 'unchecked', reason: { state: 'unreachable' } } },
+    ]);
+    expect(await readFile(statePath, 'utf8')).toBe(recorded);
+    expect(nativeCalls).toBe(2);
+  }));
   it('reports an unavailable check machine as the registry typed refusal', async () => withTempDir('happier-registry-no-machine-', async dir => {
     const f = await fixture(dir);
     const host = createRegistryHostV1({ host: 'web', http: f.http, readSources: async () => [source] });
