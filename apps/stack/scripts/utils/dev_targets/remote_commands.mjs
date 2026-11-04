@@ -1480,9 +1480,41 @@ export function buildRemoteEnsureDirectoriesCommand(target, options = {}) {
       ].join('; '),
     );
   }
+  const replicaOwner = posix.join(target.repoDir, '.happier', 'command-replica.json');
+  const commandReplica = options.commandReplica === true && target.executorRepoDir
+    && posix.isAbsolute(target.executorRepoDir) && posix.isAbsolute(target.repoDir)
+    && posix.dirname(target.repoDir) === posix.dirname(target.executorRepoDir)
+    && target.repoDir !== target.executorRepoDir;
+  const sourceAdmission = [];
+  // An explicit `exit` in the login shell runs ~/.bash_logout under errexit;
+  // Ubuntu's default one ends with a failing test where clear_console is absent.
+  // The cold probe therefore skips the setup through else/fi, not an exit.
+  let probeOnly = false;
+  if (commandReplica) {
+    sourceAdmission.push(`if ${options.requireSourceAdmission === true ? 'true' : `[ ! -f ${posixQuote(posix.join(target.repoDir, 'package.json'))} ]`}; then`);
+    if (options.requiredAdditionalBytes === undefined) {
+      // Probe without creating the destination. Only cold replicas cause the
+      // source owner to inventory bytes and return for disk admission.
+      sourceAdmission.push(`printf '%s\\n' '__HAPPIER_COMMAND_REPLICA_UNMATERIALIZED__'`, 'else');
+      probeOnly = true;
+    } else {
+      if (!Number.isSafeInteger(options.requiredAdditionalBytes) || options.requiredAdditionalBytes < 0) {
+        throw new Error('[dev-targets] invalid replica source byte measurement');
+      }
+      sourceAdmission.push(`node ${posixQuote(posix.join(target.executorRepoDir, 'apps/stack/scripts/utils/dev_targets/worker_disk_budget.mjs'))} --admit --source-materialization --class=source-replica ${posixQuote(`--repo=${target.repoDir}`)} ${posixQuote(`--cache=${posix.join(target.cliHomeDir, 'cache')}`)} ${posixQuote(`--required-additional-bytes=${options.requiredAdditionalBytes}`)} >/dev/null`);
+    }
+    if (!probeOnly) sourceAdmission.push('fi');
+  }
+  const replicaSetup = commandReplica ? [
+    `mkdir -p -- ${posixQuote(posix.dirname(replicaOwner))}`,
+    `replica_temporary=${posixQuote(`${replicaOwner}.tmp`)}.$$; printf '%s\\n' ${posixQuote(JSON.stringify({ version: 1, repoDir: target.repoDir, executorRepoDir: target.executorRepoDir }))} > "$replica_temporary"; mv -- "$replica_temporary" ${posixQuote(replicaOwner)}`,
+    `touch -- ${posixQuote(target.repoDir)}`,
+    `[ -f ${posixQuote(posix.join(target.repoDir, 'package.json'))} ] || printf '%s\\n' '__HAPPIER_COMMAND_REPLICA_UNMATERIALIZED__'`,
+  ] : options.commandReplica === false || options.runtimeMode
+    ? [`rm -f -- ${posixQuote(replicaOwner)}`] : [];
   return wrapRemoteScript(
     target,
-    `set -euo pipefail; mkdir -p -- ${[target.repoDir, target.cliHomeDir, ...additional].map(posixQuote).join(' ')}`,
+    `set -euo pipefail; ${sourceAdmission.length ? `${sourceAdmission.join('\n')}\n` : ''}mkdir -p -- ${[target.repoDir, target.cliHomeDir, ...additional].map(posixQuote).join(' ')}; ${replicaSetup.join('; ')}${probeOnly ? '\nfi' : ''}`,
   );
 }
 

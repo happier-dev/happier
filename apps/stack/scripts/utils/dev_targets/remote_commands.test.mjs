@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFile, spawn, spawnSync } from 'node:child_process';
 import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { access, chmod, mkdir, readFile, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -3183,4 +3183,68 @@ test('entry-load preparation emits runtime outputs without a strict type verdict
   const policy = resolveRemoteCommandPolicy(['node', 'apps/stack/scripts/perf/entry-load.mjs'], { cwd: '.' });
   assert.equal(policy.preparationBuildMode, 'qa-runtime');
   assert.equal(policy.heavyClass, 'entry-loads');
+});
+
+
+test('a cold command-replica probe reports the marker with status 0 under a login shell whose logout hook fails', { skip: process.platform === 'win32' }, async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-cold-replica-probe-' });
+  const home = join(fixture.root, 'home');
+  mkdirSync(home);
+  // Ubuntu's default ~/.bash_logout ends with a failing `[ -x /usr/bin/clear_console ]` test
+  // on workers without clear_console (mac2-linux, 2026-10-29).
+  writeFileSync(join(home, '.bash_logout'), 'false\n');
+  const target = { name: 'worker', platform: 'posix', ssh: 'worker', repoDir: join(fixture.root, 'worker/sibling'),
+    executorRepoDir: join(fixture.root, 'worker/0.3'), cliHomeDir: join(fixture.root, 'worker-home') };
+  const probe = spawnSync('/bin/sh', ['-c', commandPolicy.buildRemoteEnsureDirectoriesCommand(target, {
+    commandReplica: true, requireSourceAdmission: true })], { encoding: 'utf8', env: { ...process.env, HOME: home } });
+  assert.equal(probe.status, 0, probe.stderr);
+  assert.match(probe.stdout, /^__HAPPIER_COMMAND_REPLICA_UNMATERIALIZED__$/m);
+  // The probe does not create the destination before the source owner admits its bytes.
+  assert.equal(existsSync(target.repoDir), false);
+});
+
+test('generated source preflight refuses a worker whose disk owner predates materialization admission', { skip: process.platform === 'win32' }, async t => {
+  const { root } = await createTempFixture(t, { prefix: 'hstack-old-disk-owner-' });
+  const bin = join(root, 'bin'), repoDir = join(root, 'replica'), cliHomeDir = join(root, 'home');
+  await mkdir(bin);
+  await mkdir(repoDir);
+  await mkdir(cliHomeDir);
+  const unexpectedCalls = join(root, 'unexpected-calls');
+  // OS/worker boundary: old owners ignore unknown flags but reject unknown
+  // classes. A new flag alone would silently pass instead of refusing.
+  await writeFile(join(bin, 'node'), `#!/bin/sh\nfor argument do\ncase "$argument" in\n--class=source-replica) exit 76 ;;\nesac\ndone\nprintf invoked >> '${unexpectedCalls}'\nexit 0\n`);
+  await chmod(join(bin, 'node'), 0o700);
+  const target = { name: 'old-worker', platform: 'posix', ssh: 'old-worker', repoDir, cliHomeDir,
+    executorRepoDir: join(root, 'primary'), remotePath: [bin, ...process.env.PATH.split(':')] };
+  const command = buildRemoteEnsureDirectoriesCommand(target, { commandReplica: true,
+    requireSourceAdmission: true, requiredAdditionalBytes: 8192 });
+  const result = spawnSync('/bin/sh', ['-c', command], { encoding: 'utf8' });
+  assert.equal(result.status, 76, result.stderr);
+  await assert.rejects(access(unexpectedCalls), { code: 'ENOENT' });
+  await assert.rejects(access(join(repoDir, '.happier/command-replica.json')), { code: 'ENOENT' });
+});
+
+test('cold replica bootstrap refuses before source transition, while a materialized replica stays usable', { skip: process.platform === 'win32' }, async t => {
+  const { root } = await createTempFixture(t, { prefix: 'hstack-replica-disk-' });
+  const bin = join(root, 'bin');
+  await mkdir(bin);
+  await writeFile(join(bin, 'df'), '#!/bin/sh\nprintf "Filesystem 1024-blocks Used Available Capacity Mounted on\\nfixture 242680816 242000000 260577 100%% /\\n"\n');
+  await chmod(join(bin, 'df'), 0o700);
+  // This fixture links the executor tree; real worker executor paths are not
+  // symlinks. Preserve the linked entry URL so Node still invokes its real CLI.
+  await writeFile(join(bin, 'node'), `#!/bin/sh\nexec '${process.execPath}' --preserve-symlinks-main "$@"\n`);
+  await chmod(join(bin, 'node'), 0o700);
+  const executorRepoDir = join(root, 'primary');
+  await symlink(fileURLToPath(new URL('../../../../../', import.meta.url)), executorRepoDir, 'dir');
+  const repoDir = join(root, 'replica');
+  const target = { name: 'worker', platform: 'posix', ssh: 'worker', executorRepoDir, repoDir,
+    cliHomeDir: join(root, 'home'), remotePath: [bin, ...process.env.PATH.split(':')] };
+  const command = buildRemoteEnsureDirectoriesCommand(target, { commandReplica: true, requiredAdditionalBytes: 5280059392 });
+  const run = () => spawnSync('/bin/sh', ['-c', command], { encoding: 'utf8' });
+  const refused = run();
+  assert.equal(refused.status, 76, 'cold source must not start a transition on a worker below its measured footprint');
+  await assert.rejects(access(join(repoDir, '.happier/command-replica.json')), { code: 'ENOENT' });
+  await mkdir(repoDir, { recursive: true });
+  await writeFile(join(repoDir, 'package.json'), '{}');
+  assert.equal(run().status, 0, 'a warm replica does not copy its resident tree again');
 });
