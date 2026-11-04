@@ -6,6 +6,7 @@ import { ArtifactReadBatchHttpInputV1Schema } from '@happier-dev/protocol/artifa
 import { createPlainAccountEncryptionCurrentnessFixture } from '../fixtures/accountEncryptionCurrentness';
 import { createRootLayoutFeaturesResponse } from '../fixtures/featureFixtures';
 import { createPlainProjectAccountRowListFixture } from '../fixtures/projectAccountRows';
+import { createEmptyAccountBootstrapHttpResponse } from '../fixtures/accountBootstrapHttpBoundary';
 import { createArtifactListHttpResponse, createArtifactReadBatchHttpResponse, projectArtifactBoundaryReadRow, type ArtifactStoreBoundary } from './artifactStoreBoundary';
 import { installSessionOpsNetworkBoundary, type SessionOpsNetworkBoundary } from './sessionOpsNetworkBoundary';
 import { loadSyncSingletonForTests } from './syncSingletonLoader';
@@ -150,8 +151,7 @@ export async function createArtifactInventoryDemandHarness() {
                     : Response.json({ error: 'artifact_not_found' }, { status: 404 });
             }
             if (path === '/v1/feed') return Response.json({ items: [], hasMore: false });
-            if (path === '/v1/kv') return Response.json({ items: [] });
-            return null;
+            return createEmptyAccountBootstrapHttpResponse(path + url.search, init);
         });
         await loadSyncSingletonForTests();
         const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
@@ -163,8 +163,8 @@ export async function createArtifactInventoryDemandHarness() {
         await restoreConnectionToActiveServer({ token: home.token });
         await vi.waitFor(() => {
             expect(storage.getState().isDataReady).toBe(true);
-            expect(network.httpRequests.some(({ url }) => new URL(url).pathname === '/v1/kv')).toBe(true);
         }, { timeout: 30_000 });
+        expect(await sync.awaitBootstrapForegroundAcquisition()).toBe(true);
         // Drain the real bootstrap queue before measuring its physical HTTP cost.
         await (sync as unknown as { artifactsSync: InvalidateSync }).artifactsSync.awaitQueue();
         return Object.assign(fixture, { recoverSnapshot, settleInventory, readChangesCursor, readChangesCursorState, dispose });

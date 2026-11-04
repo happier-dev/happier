@@ -78,7 +78,9 @@ describe('Prompt document attachment inventory', () => {
             expect(screen.getTextContent()).not.toContain(t('contextPages.addDocumentEmpty'));
             expect(fixture.pages).toHaveLength(1);
             fixture.listFailure = 403;
-            await act(async () => { await fixture.recoverSnapshot(); });
+            await act(async () => {
+                await expect(fixture.recoverSnapshot()).rejects.toMatchObject({ name: 'HappyError', status: 403, canTryAgain: false });
+            });
             await vi.waitFor(() => expect(screen.getTextContent()).toContain(t('common.error')));
             expect(screen.getTextContent()).toContain('Instructions 56');
             expect(screen.getTextContent()).not.toContain(t('common.loading'));
