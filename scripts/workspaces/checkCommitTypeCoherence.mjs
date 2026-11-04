@@ -43,32 +43,54 @@ const redirectDist = (target) =>
   );
 
 // Parse only grep candidates: imports in comments or fixture strings are not consumers.
-function importSpecifiers(file, text) {
-  const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, false);
-  const values = new Set();
+function importSpecifiers(file, text, source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, false)) {
+  const values = new Map();
+  const add = (value, node) => {
+    if (!values.has(value)) values.set(value, []);
+    values.get(value).push(node.getText(source));
+  };
   const visit = node => {
     if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node))
       && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) {
-      values.add(node.moduleSpecifier.text);
+      add(node.moduleSpecifier.text, node);
     } else if (ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument)
       && ts.isStringLiteral(node.argument.literal)) {
-      values.add(node.argument.literal.text);
+      add(node.argument.literal.text, node);
     } else if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference)
       && node.moduleReference.expression && ts.isStringLiteral(node.moduleReference.expression)) {
-      values.add(node.moduleReference.expression.text);
+      add(node.moduleReference.expression.text, node);
     } else if (ts.isCallExpression(node)) {
       const callee = node.expression;
       if (callee.kind === ts.SyntaxKind.ImportKeyword
         || ts.isIdentifier(callee) && callee.text === 'require'
         || ts.isPropertyAccessExpression(callee) && callee.name.text === 'mock') {
         const value = node.arguments[0];
-        if (value && ts.isStringLiteral(value)) values.add(value.text);
+      if (value && ts.isStringLiteral(value)) add(value.text, node);
       }
     }
     ts.forEachChild(node, visit);
   };
   visit(source);
   return values;
+}
+
+function sourceContext(file, text) {
+  const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, false);
+  let global = source.isDeclarationFile || !ts.isExternalModule(source);
+  const visit = node => {
+    if (ts.isModuleDeclaration(node)) global = true;
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return { global, dependencies: JSON.stringify([
+    ...[...importSpecifiers(file, text, source).values()].flat(),
+    ...source.referencedFiles.map(ref => `path:${ref.fileName}`),
+    ...source.typeReferenceDirectives.map(ref => `types:${ref.fileName}`),
+    ...source.libReferenceDirectives.map(ref => `lib:${ref.fileName}`),
+    ...[...source.pragmas].map(([name, entries]) => JSON.stringify([name,
+      [entries].flat().map(entry => entry.arguments)])),
+    `noDefaultLib:${source.hasNoDefaultLib}`,
+  ].sort()) };
 }
 
 function repository(repo) {
@@ -392,11 +414,35 @@ export function checkCommitTypeCoherence({ repo, base, tree, onlyGroups }) {
       openProjects: [...head.configs.keys()],
       fileSystem: layer,
     });
-    // Retain the actual program inputs, including dependencies and extended configs, so a
-    // finalizer can carry this result across unrelated commits without starting another API.
+    // Configured module roots are not all dependencies of the checked roots. Resolve a
+    // second, diagnostic-free view through the same compiler, retaining every declaration,
+    // script and augmentation from the complete program as global context. This also keeps
+    // ambient declarations reached only through an unrelated root's imports.
+    const dependencyConfigs = {};
+    for (const project of headSnapshot.getProjects()) {
+      const selected = head.configs.get(project.configFileName);
+      if (!selected) continue;
+      const context = project.program.getSourceFileNames().filter(path => {
+        if (/\.d\.[cm]?ts$/u.test(path)) return true;
+        const text = layer.files[path] ?? readFileSync(path, 'utf8');
+        return sourceContext(path, text).global;
+      });
+      dependencyConfigs[project.configFileName] = JSON.stringify({
+        ...JSON.parse(head.files[project.configFileName]), files: [...new Set([...selected, ...context])],
+      });
+    }
+    const dependencies = api.createSnapshot({
+      openProjects: [...head.configs.keys()],
+      fileSystem: { ...layer, files: { ...layer.files, ...dependencyConfigs } },
+    });
+    // Retain resolved dependencies and extended configs, rather than all configured module
+    // roots, so unrelated same-project commits do not send a finalizer back to admission.
     result.groups = [...groups].map(([id, selected]) => {
       const config = git.abs(id === '.' ? VIRTUAL_CONFIG : `${id}/${VIRTUAL_CONFIG}`);
-      const program = headSnapshot.getProjects().find(project => project.configFileName === config).program;
+      const program = dependencies.getProjects().find(project => project.configFileName === config).program;
+      const members = headSnapshot.getProjects().find(project => project.configFileName === config).program
+        .getSourceFileNames().map(path => posix.relative(repo, path))
+        .filter(path => !path.startsWith('../') && !path.includes('node_modules/'));
       const paths = new Set();
       for (const absolute of [...program.getSourceFileNames(), ...program.getConfigFileNames()]) {
         const path = posix.relative(repo, absolute);
@@ -408,8 +454,9 @@ export function checkCommitTypeCoherence({ repo, base, tree, onlyGroups }) {
         }
       }
       paths.add(id === '.' ? 'tsconfig.json' : `${id}/tsconfig.json`);
-      return { id, roots: selected, paths: [...paths], fresh: [] };
+      return { id, roots: selected, paths: [...paths], members, fresh: [] };
     });
+    dependencies.dispose();
     const headRows = git.collect(headSnapshot, head.configs);
     if (headRows.length === 0) return { ...result, ms: Date.now() - started };
 
@@ -520,11 +567,6 @@ export function finalizeCommitTypeCoherence({ repo, checked, message, ref = 'HEA
     const head = git.gitText(['rev-parse', 'HEAD']).trim();
     if (head !== checked.base) {
       git.git(['merge-base', '--is-ancestor', checked.base, head]);
-      // Inspect each intervening commit, including merge parents: a change followed by a revert
-      // still intersects the checked program even though a net tree diff would conceal it.
-      const changed = new Set(nulList(git.gitText([
-        'log', '--format=', '--name-only', '-z', '-m', `${checked.base}..${head}`,
-      ])));
       const tree = replayPacket(git, original.base, original.tree, head);
       if (tree === git.gitText(['rev-parse', `${head}^{tree}`]).trim())
         throw new Error('Packet is already present at HEAD');
@@ -536,9 +578,30 @@ export function finalizeCommitTypeCoherence({ repo, checked, message, ref = 'HEA
       ])];
       const discovered = git.groupRoots(roots, entries);
       const previousEntries = git.treeEntries(checked.tree);
+      // The verdict belongs to these exact inputs. Intervening edits that were reverted
+      // cannot change it; compare the checked tree with the replayed tree, not commit history.
+      const changed = new Set(nulList(git.gitText([
+        'diff', '--name-only', '-z', '--no-renames', checked.tree, tree,
+      ])));
+      const contextChanges = new Map();
+      const changesContext = path => {
+        if (contextChanges.has(path)) return contextChanges.get(path);
+        const before = previousEntries.get(path);
+        const after = entries.get(path);
+        const blobs = git.readBlobs([...new Set([before?.oid, after?.oid].filter(Boolean))]);
+        const prior = sourceContext(path, before ? blobs.get(before.oid) : 'export {};');
+        const next = sourceContext(path, after ? blobs.get(after.oid) : 'export {};');
+        // A module outside the closure can still add/remove global declarations through
+        // its own body or changed imports. Those changes keep the existing recheck path.
+        const changed = prior.global || next.global || prior.dependencies !== next.dependencies;
+        contextChanges.set(path, changed);
+        return changed;
+      };
       const affected = new Set(checked.groups.filter(group => {
         const paths = new Set(group.paths);
+        const members = new Set(group.members);
         return [...changed].some(path => paths.has(path)
+          || members.has(path) && changesContext(path)
           || ['pnpm-lock.yaml', 'pnpm-workspace.yaml'].includes(path)
           || path.startsWith('patches/')
           // New compiler inputs in this project's directory can join its configured membership

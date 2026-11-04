@@ -52,6 +52,109 @@ async function checkout(t) {
   return { repo, write, commitOnly };
 }
 
+test('verdict dependencies omit unrelated modules while retaining configured global and module augmentations', async t => {
+  const { repo, write, commitOnly } = await checkout(t);
+  await write('ambient.d.ts', 'interface Error { ambientValue: number }\n');
+  await write('globals.ts', 'export {}; declare global { interface Error { moduleValue: number } }\n');
+  await write('augmentation.ts', "import './producer'; declare module './producer' { interface Shape { augmented: number } }\n");
+  await write('producer.ts', 'export interface Shape {}\nexport const original = 1;\n');
+  await mkdir(join(repo, 'types'));
+  await write('types/indirect.d.ts', 'interface Error { importedValue: number }\n');
+  await write('unrelated.ts', "import './types/indirect'; export { value } from './unrelatedDependency';\n");
+  await write('unrelatedDependency.ts', 'export const value = 1;\n');
+  const base = commitOnly('ambient.d.ts', 'globals.ts', 'augmentation.ts', 'producer.ts', 'unrelated.ts', 'unrelatedDependency.ts', 'types');
+  await write('producer.ts', 'export interface Shape {}\ndeclare const shape: Shape; declare const error: Error;\nexport const original = shape.augmented + error.ambientValue + error.moduleValue + error.importedValue;\n');
+  const tree = commitOnly('producer.ts');
+  const result = checkCommitTypeCoherence({ repo, base, tree });
+  assert.deepEqual(result.fresh, []);
+  assert.deepEqual(result.unowned, []);
+  const paths = new Set(result.groups.flatMap(group => group.paths));
+  for (const path of ['producer.ts', 'consumer.ts', 'ambient.d.ts', 'globals.ts', 'augmentation.ts', 'types/indirect.d.ts']) {
+    assert.ok(paths.has(path), `configured context or checked root missing: ${path}`);
+  }
+  for (const path of ['unrelated.ts', 'unrelatedDependency.ts']) {
+    assert.ok(!paths.has(path), `unrelated module entered the slice program: ${path}`);
+  }
+});
+
+test('unrelated same-project HEAD moves finalize with zero compiler admissions', async t => {
+  const { repo, write, commitOnly } = await checkout(t);
+  await write('unrelatedDependency.ts', 'export const value = 1;\n');
+  await write('unrelated.ts', "import { value } from './unrelatedDependency'; export const unrelated = value;\n");
+  const base = commitOnly('unrelated.ts', 'unrelatedDependency.ts');
+  await write('producer.ts', 'export const original = 2;\n');
+  const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
+  git('add', '--', 'producer.ts');
+  const tree = git('write-tree');
+  git('read-tree', base);
+  const checked = checkCommitTypeCoherence({ repo, base, tree });
+  await write('unrelated.ts', "import { value } from './unrelatedDependency'; export const unrelated = String(value);\n");
+  const parent = commitOnly('unrelated.ts');
+  const bin = await mkdtemp(join(tmpdir(), 'happier-coherence-no-readmission-'));
+  t.after(() => rm(bin, { recursive: true, force: true }));
+  const marker = join(bin, 'compiler-launch');
+  const previousPath = process.env.PATH;
+  if (process.platform !== 'win32') {
+    // Observe the genuine executable boundary; keep the compiler/admission path real.
+    const shim = join(bin, 'node');
+    await writeFile(shim, `#!${process.execPath}\nimport { writeFileSync } from 'node:fs';\nimport { spawnSync } from 'node:child_process';\nwriteFileSync(${JSON.stringify(marker)}, 'launched');\nconst result = spawnSync(${JSON.stringify(process.execPath)}, process.argv.slice(2), { stdio: 'inherit' });\nprocess.exit(result.status ?? 1);\n`);
+    await chmod(shim, 0o755);
+    process.env.PATH = `${bin}${delimiter}${previousPath}`;
+  }
+  let result;
+  try {
+    result = coherence.finalizeCommitTypeCoherence({ repo, checked, message: 'fix: independent packet\n' });
+  } finally { process.env.PATH = previousPath; }
+  assert.ok(result.commit);
+  assert.deepEqual(result.recheckedGroups, []);
+  assert.equal(existsSync(marker), false, 'non-intersecting HEAD movement must not launch another compiler admission');
+  assert.equal(git('rev-parse', 'HEAD^'), parent);
+});
+
+test('an unrelated configured module introducing a global augmentation invalidates the verdict', async t => {
+  const { repo, write, commitOnly } = await checkout(t);
+  await write('ambient.d.ts', 'interface CoherenceContext { original: number }\n');
+  await write('unrelated.ts', 'export {};\n');
+  const base = commitOnly('ambient.d.ts', 'unrelated.ts');
+  await write('producer.ts', 'export const original: keyof CoherenceContext extends "original" ? number : string = 1;\n');
+  const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
+  git('add', '--', 'producer.ts');
+  const tree = git('write-tree');
+  git('read-tree', base);
+  const checked = checkCommitTypeCoherence({ repo, base, tree });
+  assert.deepEqual(checked.fresh, []);
+  await write('unrelated.ts', 'export {}; declare global { interface CoherenceContext { added: number } }\n');
+  const parent = commitOnly('unrelated.ts');
+  const result = coherence.finalizeCommitTypeCoherence({ repo, checked, message: 'fix: dependent packet\n' });
+  assert.deepEqual(result.recheckedGroups, ['.']);
+  assert.equal(result.commit, undefined);
+  assert.ok(result.checked.fresh.some(row => row.file === 'producer.ts' && row.code === 2322));
+  assert.equal(git('rev-parse', 'HEAD'), parent);
+});
+
+test('changed imports outside the verdict closure recheck newly reachable global declarations', async t => {
+  const { repo, write, commitOnly } = await checkout(t);
+  await mkdir(join(repo, 'types'));
+  await write('ambient.d.ts', 'interface CoherenceContext { original: number }\n');
+  await write('types/global.d.ts', 'interface CoherenceContext { added: number }\n');
+  await write('unrelated.ts', 'export {};\n');
+  const base = commitOnly('ambient.d.ts', 'types', 'unrelated.ts');
+  await write('producer.ts', 'export const original: keyof CoherenceContext extends "original" ? number : string = 1;\n');
+  const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
+  git('add', '--', 'producer.ts');
+  const tree = git('write-tree');
+  git('read-tree', base);
+  const checked = checkCommitTypeCoherence({ repo, base, tree });
+  assert.deepEqual(checked.fresh, []);
+  await write('unrelated.ts', "import './types/global'; export {};\n");
+  const parent = commitOnly('unrelated.ts');
+  const result = coherence.finalizeCommitTypeCoherence({ repo, checked, message: 'fix: dependent packet\n' });
+  assert.deepEqual(result.recheckedGroups, ['.']);
+  assert.equal(result.commit, undefined);
+  assert.ok(result.checked.fresh.some(row => row.file === 'producer.ts' && row.code === 2322));
+  assert.equal(git('rev-parse', 'HEAD'), parent);
+});
+
 test('testing scripts have a strict compiler owner that reports new validator errors', async t => {
   const { repo, write, commitOnly } = await checkout(t);
   await mkdir(join(repo, 'scripts/testing'), { recursive: true });
@@ -213,7 +316,7 @@ test('conflicting concurrent packet edits leave HEAD, shared staging and worktre
   assert.equal(await readFile(join(repo, 'a/consumer.ts'), 'utf8'), before);
 });
 
-test('moved HEAD inspects intervening commits even when their program changes were reverted', async (t) => {
+test('moved HEAD reuses the verdict when intervening program changes were reverted', async (t) => {
   const { repo, write, commitOnly, checked } = await checkedPacket(t);
   await write('a/producer.ts', 'export const value = 2;\n');
   commitOnly('a/producer.ts');
@@ -221,8 +324,8 @@ test('moved HEAD inspects intervening commits even when their program changes we
   commitOnly('a/producer.ts');
   const result = coherence.finalizeCommitTypeCoherence({ repo, checked, message: 'fix: checked packet\n' });
   assert.ok(result.commit);
-  assert.deepEqual(result.recheckedGroups, ['a']);
-  assert.deepEqual(result.reusedGroups, ['b']);
+  assert.deepEqual(result.recheckedGroups, []);
+  assert.deepEqual(result.reusedGroups, ['a', 'b']);
 });
 
 test('a competing writer wins CAS during finalization and its disjoint commit is preserved on retry', { skip: process.platform === 'win32' }, async (t) => {

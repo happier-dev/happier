@@ -71,23 +71,23 @@ Confirm the diff contains exactly the intended paths and bytes. Compare the priv
 
 If any selected filesystem path changes after verification, rebuild or re-verify that path. Never silently commit the older private-index bytes while claiming the current filesystem version was captured.
 
-Then create the tree, prove it type-resolves (SKILL.md section 7), and create the commit without touching the worktree or shared index:
+Then create the tree and use the checker-owned finalizer to prove it type-resolves (SKILL.md section 7) and commit without touching the worktree or shared index:
 
 ```bash
 tree=$(GIT_INDEX_FILE="$idx" git write-tree)
-./apps/stack/bin/hstack-exec --local -- node scripts/workspaces/checkCommitTypeCoherence.mjs --base="$head" --tree="$tree"
-commit=$(git commit-tree "$tree" -p "$head" < /tmp/happier-commit-message.txt)
+finalization=$(./apps/stack/bin/hstack-exec --local -- node scripts/workspaces/checkCommitTypeCoherence.mjs --base="$head" --tree="$tree" --message-file=/tmp/happier-commit-message.txt) || exit "$?"
+printf '%s\n' "$finalization"
+commit=$(printf '%s\n' "$finalization" | sed -n 's/^committed \([0-9a-f]*\):.*/\1/p')
 git show --no-patch --format=fuller "$commit"
-git update-ref HEAD "$commit" "$head"
 ```
 
-Before advancing, confirm the displayed author and committer match the previously verified current-user identity and inspect the full message with `git show --no-patch --format=fuller "$commit"` to verify exactly the commit-specific co-authors.
+Verify the current-user identity and complete commit-specific co-authors in the message before invoking the finalizer, and inspect the created object with `git show --no-patch --format=fuller "$commit"` afterwards. The finalizer uses ordinary `git commit-tree` configuration, including configured signing; required hook-equivalent checks remain the caller's responsibility.
 
 The message file contains the complete subject, blank line, and body. Remove it after use if it contains no information worth retaining; do not create message files inside the repository.
 
 Verify the private diff is non-empty before `write-tree`; `commit-tree` can create an empty commit and does not apply the normal `git commit` policy checks for you.
 
-`git update-ref` is compare-and-swap: it advances HEAD only if HEAD still equals `$head`. If it fails, do not force. Delete the temporary index, capture the new HEAD, and rebuild the staged packet from current bytes.
+The finalizer advances HEAD by compare-and-swap. If HEAD moved during the check or CAS, it replays only this packet onto the new parent in an external temporary index and compares that tree with the checked tree. It reuses groups whose resolved verdict inputs did not change, including unrelated module edits within the same project and intervening edits that were reverted. The compiler resolves those inputs from checked roots plus the complete program's declarations, scripts and augmentations; changes to other configured modules that introduce global context or alter imports still invalidate the verdict. Only intersecting or newly discovered importer groups run again. Conflicting packet edits, new diagnostics, or unowned roots refuse finalization without changing HEAD. A human-readable check log from an earlier process is not a reusable in-memory result: invoke this combined command rather than a separate stale-base finalizer. The exported `checkCommitTypeCoherence` and `finalizeCommitTypeCoherence` APIs also support this combined flow in one process.
 
 ## 3. Partial-hunk transaction
 
@@ -159,7 +159,7 @@ Private indexes isolate staging, not HEAD history. Use these rules:
 
 - Every agent initializes from its own observed HEAD.
 - Exactly one compare-and-swap can win from a given parent.
-- A losing agent rebuilds from the new parent and current worktree; it never force-updates HEAD.
+- A losing finalizer replays the reviewed packet onto the new parent and rechecks only intersecting groups; it never force-updates HEAD. Worktree changes after packet verification remain uncommitted and visible.
 - Do not create commits in separate checkouts and cherry-pick them blindly when the source checkout is moving. A cherry-pick replays a historical patch and cannot prove which current bytes should remain dirty.
 - A custom lock can reduce retries but does not replace CAS. A private index prepared before acquiring a lock can still have a stale parent.
 - Store an optional custom lock beneath the Git common directory, never in `.project` or another worktree path. Record enough ownership information to distinguish a live owner from a stale lock, and use bounded waits with periodic user-visible progress rather than an unbounded loop.
