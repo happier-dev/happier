@@ -16,13 +16,12 @@ import {
 } from '@/components/atmosphere/atmosphereStage';
 import type { HomePlanetHero } from '@/components/atmosphere/HomePlanet';
 import {
-  HOME_HEADLINE_ABOVE_SEAM_PX,
   HOME_HERO_COMPOSER_GAP_PX,
   HOME_HERO_SIDE_PX,
-  HOME_PHONE_HEADLINE_ABOVE_SEAM_PX,
   HOME_PHONE_HERO_COMPOSER_GAP_PX,
   HOME_PHONE_HERO_SIDE_PX,
   homeAtmosphereSeam,
+  homeHeroTop,
   homeHorizonBand,
   type HomePane,
 } from '@/components/atmosphere/homePlanetPlacement';
@@ -206,14 +205,7 @@ export function HomeHero(
     frame: ReturnType<typeof useHomeHeroFrame>;
   }>,
 ) {
-  const seam = homeAtmosphereSeam(props.paneHeight, props.phone);
-  const top = Math.max(
-    16,
-    seam -
-      (props.phone
-        ? HOME_PHONE_HEADLINE_ABOVE_SEAM_PX
-        : HOME_HEADLINE_ABOVE_SEAM_PX),
-  );
+  const top = homeHeroTop({ paneHeight: props.paneHeight, phone: props.phone, composer: props.showComposer });
   const { frame } = props;
   // Padding-only changes do not resize web's observed content box. Measure the committed layout
   // when these choices move the headline or the next section, including entering/leaving Rise.

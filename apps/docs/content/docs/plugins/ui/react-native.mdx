@@ -1467,7 +1467,9 @@ own Work tab, Inbox and workflow maps use, from
   disclosure. Loading retains the section header and skeleton instead.
 - `HappierWorkRowShell` and `HappierWorkSummary`: a Work row's pressable shell
   and its identity leaf (mark, title, one line of facts, the state word at the
-  trailing edge).
+  trailing edge). On a `page` row, `trailingMeta` sets the date in one
+  right-aligned column after the row's own control, so dates line up however
+  wide each control is; pass `null` on a row with no date to keep that column.
 - `buildHappierWorkMap` and `HappierWorkMapView`: a map of work built only from
   the parent each node declares, drawn as cards on a rail or in side-by-side lanes;
   `density="compact"` is the mini-map a row carries.

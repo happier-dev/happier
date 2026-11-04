@@ -110,8 +110,10 @@ const InboxItemRow = React.memo(function InboxItemRow(props: Readonly<{
         try { await dismissNotice(item); }
         catch { Modal.alert(t('common.error'), t('errors.unknownError')); }
     }, [dismissNotice, item]);
-    return <InboxWorkRow testID={item.focus.kind === 'execution_run' ? `inbox.run.${item.focus.id}` : `inbox.item.${item.key}`} title={item.title} facts={fact ? [fact] : []}
-        source={item.source.displayName ?? null} byline={byline}
+    // Where it comes from leads the line, unless the title already says it.
+    const source = item.source.displayName && item.source.displayName !== item.title ? item.source.displayName : null;
+    return <InboxWorkRow testID={item.focus.kind === 'execution_run' ? `inbox.run.${item.focus.id}` : `inbox.item.${item.key}`} title={item.title} facts={[source, fact]}
+        byline={byline}
         selected={props.selected} showDivider={props.showDivider} narrow={props.narrow}
         phase={item.phase ?? (item.view === 'needs_you' ? 'attention' : 'finished')} status={item.workStatus}
         time={<InboxRelativeTime timestamp={item.createdAt} />}

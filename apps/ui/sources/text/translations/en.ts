@@ -1671,6 +1671,7 @@ const enApprovals = {
   approveUnavailableHint:
     'Approval is unavailable while these details cannot be shown safely.',
   irreversibleNote: "This can't be undone.",
+  irreversibleFact: "Can't be undone",
   dismiss: "Dismiss",
   dismissHint: "Closes the request without approving or denying it.",
   confirmApproveTitle: 'Approve request?',

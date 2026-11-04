@@ -8,12 +8,11 @@ import { WORK_HOST, useWorkTheme } from '@/components/work/map/WorkMapView';
  * Every Inbox row needs the person, so none draws the attention dot in its mark's corner: being in the
  * Inbox says it, and the strong title and the state word carry it (lab `inbox-I1`/`inbox-I2`). On the
  * Inbox page (a page sheet) the rows take the page density and its row hairlines; the rail popover
- * keeps the compact Work density.
+ * keeps the compact Work density. A wide row's date closes the row in its own column, so every date in
+ * a sheet lines up whatever its row's state word and control are.
  */
 export const InboxWorkRow = React.memo(function InboxWorkRow(props: Readonly<{
     testID: string; title: string; facts?: readonly React.ReactNode[]; mark?: React.ReactNode;
-    /** Where it comes from, above the title (lab coordination P4); omit when it would repeat the title. */
-    source?: string | null;
     /** Who it involves, under the facts. */
     byline?: HappierWorkSummaryProps['byline'];
     phase?: HappierWorkSummaryProps['phase']; status?: HappierWorkSummaryProps['trailingState']; time?: React.ReactNode;
@@ -39,10 +38,11 @@ export const InboxWorkRow = React.memo(function InboxWorkRow(props: Readonly<{
         ...(props.facts ?? []).filter((fact): fact is string => typeof fact === 'string'));
     const facts = props.narrow && props.time ? [...(props.facts ?? []), <React.Fragment key="age">{props.time}</React.Fragment>] : props.facts ?? [];
     return <HappierWorkRowShell testID={props.testID} accessibilityLabel={label} selected={props.selected}
-        onPress={props.onPress} trailingAccessory={props.trailingAccessory} belowAccessory={props.belowAccessory} accessibilityActions={props.accessibilityActions}
-        onAccessibilityAction={props.onAccessibilityAction} density={density} showDivider={props.showDivider} theme={theme}>
+        onPress={props.onPress} trailingAccessory={props.trailingAccessory} trailingMeta={density === 'page' && !props.narrow ? props.time : undefined}
+        belowAccessory={props.belowAccessory} accessibilityActions={props.accessibilityActions}
+        onAccessibilityAction={props.onAccessibilityAction} density={density} showDivider={props.showDivider} theme={theme} host={WORK_HOST}>
         <HappierWorkSummary testID={`${props.testID}.summary`} title={props.title} phase={props.phase ?? 'attention'}
-            mark={props.mark} facts={facts} source={props.source && props.source !== props.title ? props.source : undefined} byline={props.byline} trailingState={props.narrow ? null : props.status} trailingTime={props.narrow ? undefined : props.time}
+            mark={props.mark} facts={facts} byline={props.byline} trailingState={props.narrow ? null : props.status} trailingTime={density === 'pane' && !props.narrow ? props.time : undefined}
             accessibilityLabel={label} accessibilityLiveRegion={props.accessibilityLiveRegion} density={density} attentionMark={false}
             titleLines={props.narrow && density === 'page' ? 2 : 1} theme={theme} host={WORK_HOST} />
     </HappierWorkRowShell>;

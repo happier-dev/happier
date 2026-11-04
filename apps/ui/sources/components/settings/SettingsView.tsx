@@ -23,7 +23,7 @@ import { SettingsBelowFoldSections } from '@/components/settings/SettingsBelowFo
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { runAfterInteractionsWithFallback } from '@/utils/timing/runAfterInteractionsWithFallback';
 import { HubIdentityHeader } from '@/components/hub/HubIdentityHeader';
-import { HubAttentionSection } from '@/components/hub/HubAttentionSection';
+import { SettingsAttentionSection } from '@/components/hub/HubAttentionSection';
 import { HubSetupSection } from '@/components/hub/HubSetupSection';
 import { HubSecuritySection } from '@/components/hub/HubSecuritySection';
 import { HubQuickSettingsSection } from '@/components/hub/HubQuickSettingsSection';
@@ -183,11 +183,11 @@ export const SettingsView = React.memo(function SettingsView() {
 
     const overview = (
         <>
-            {/* The lighter hub (lab H1): the same hub sections as the app home, in one column, without
-                the greeting and start box, setup as a checklist with its progress. Every section drops
-                out when it has nothing to say. */}
+            {/* The lighter hub (lab H1): the app home's sections, in one column, without the greeting and
+                start box; attention keeps what setup repairs, setup is a checklist with its progress. Every
+                section drops out when it has nothing to say. */}
             <HubIdentityHeader />
-            <HubAttentionSection />
+            <SettingsAttentionSection />
             <HubSetupSection presentation="checklist" />
             {/* Machines and Usage: Home's own widgets at their defaults, so both hubs show one thing. */}
             <OverviewMachinesSection testID="settings-overview-machines-section" />

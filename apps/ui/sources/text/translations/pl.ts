@@ -1949,6 +1949,7 @@ export const pl: TranslationStructure = {
     unsafeDetailsBody: "Happier nie mógł wyświetlić tego żądania dokładnie tak, jak zostało wysłane, więc nie można go zatwierdzić. Odrzuć je lub poproś o ponowne wysłanie.",
     approveUnavailableHint: "Zatwierdzenie jest niedostępne, dopóki tych szczegółów nie można bezpiecznie wyświetlić.",
     irreversibleNote: "Tego nie można cofnąć.",
+    irreversibleFact: "Nie można cofnąć",
     dismiss: "Odrzuć bez odpowiedzi",
     dismissHint: "Zamyka prośbę bez zatwierdzania ani odrzucania.",
     confirmApproveTitle: "Zatwierdzić prośbę?",

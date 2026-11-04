@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { getLegacyConnectedServiceRegistryEntry, type ConnectedServiceRegistryEntry } from './connectedServiceRegistry';
-import { listConnectedAccountsNeedingSignIn } from './connectedAccountsNeedingSignIn';
+import { describeConnectedAccountsNeedingSignIn, listConnectedAccountsNeedingSignIn } from './connectedAccountsNeedingSignIn';
 
 const service = { pluginId: 'happier.example', localId: 'subscription' } as const;
 const entry: ConnectedServiceRegistryEntry = {
@@ -14,6 +14,43 @@ const entry: ConnectedServiceRegistryEntry = {
 function v4Account(accountId: string, status: 'connected' | 'needs_reauth' | 'refresh_failed_retryable') {
     return { ref: { service, accountId }, status };
 }
+
+describe('describeConnectedAccountsNeedingSignIn', () => {
+    const expired = (accountId: string, facts: Readonly<{ displayName?: string; email?: string }> = {}) => ({
+        ref: { service, accountId },
+        status: 'needs_reauth',
+        ...(facts.displayName ? { displayName: facts.displayName } : {}),
+        ...(facts.email ? { providerIdentity: { email: facts.email, accountId: null } } : {}),
+    });
+    const describeAll = (accounts: ReadonlyArray<ReturnType<typeof expired>>, labelsByKey: Readonly<Record<string, string | undefined>> = {}) => {
+        const profile = { connectedServicesV2: [], connectedAccountsV4: accounts };
+        const needing = listConnectedAccountsNeedingSignIn({ profile, accountTransport: 'advertised-v4', entries: [entry] });
+        return describeConnectedAccountsNeedingSignIn({ accounts: needing, profile, labelsByKey, serviceTitle: () => 'Example' })
+            .map((row) => ({ service: row.service, account: row.account }));
+    };
+
+    it('names which account each row is about, by the one naming rule', () => {
+        expect(describeAll([expired('a', { displayName: 'Work' }), expired('b', { email: 'me@example.test' })])).toEqual([
+            { service: 'Example', account: 'Work' },
+            { service: 'Example', account: 'me@example.test' },
+        ]);
+    });
+
+    it('tells apart accounts that read the same, never by an internal id', () => {
+        const rows = describeAll([expired('a', { displayName: 'Leeroy', email: 'one@example.test' }), expired('b', { displayName: 'Leeroy', email: 'two@example.test' })]);
+        expect(rows).toEqual([
+            { service: 'Example', account: 'Leeroy · one@example.test' },
+            { service: 'Example', account: 'Leeroy · two@example.test' },
+        ]);
+    });
+
+    it('keeps a lone nameless account to its service and numbers several', () => {
+        expect(describeAll([expired('a')])).toEqual([{ service: 'Example', account: null }]);
+        const rows = describeAll([expired('a'), expired('b')]);
+        expect(rows.map((row) => row.account)).toEqual([null, null]);
+        expect(new Set(rows.map((row) => row.service)).size).toBe(2);
+    });
+});
 
 describe('listConnectedAccountsNeedingSignIn', () => {
     it('lists the qualified accounts whose credentials need signing in again, with their service', () => {

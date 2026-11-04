@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   homeAtmosphereSeam,
+  homeHeroTop,
   homeHorizonBand,
   homePlanetGeometry,
   homePlanetSceneOptions,
@@ -136,6 +137,23 @@ describe('Home planet placement against the lab\'s measured shots (at2-metrics.j
     const phone = { width: 390, height: 844 };
     expect(rounded(homePlanetGeometry('corner', phone, { phone: true }))).toEqual({ R: 148, cx: 337, cy: 56 });
     expect(rounded(homePlanetGeometry('rise', phone, { phone: true, limb: homeRiseLimb(257) }))).toEqual({ R: 507, cx: 195, cy: 774 });
+  });
+});
+
+describe('Home hero top', () => {
+  it('stands the greeting on the seam only when the composer straddles it', () => {
+    const seam = homeAtmosphereSeam(892, false);
+    expect(homeHeroTop({ paneHeight: 892, phone: false, composer: true })).toBe(seam - 92);
+    // With nothing to straddle the seam, the greeting does not hold real work under the fold.
+    const bare = homeHeroTop({ paneHeight: 892, phone: false, composer: false });
+    expect(bare).toBeLessThan(seam / 2);
+    expect(homeHeroTop({ paneHeight: 1400, phone: false, composer: false })).toBe(bare);
+  });
+
+  it('never makes a short pane lower a bare greeting than the composer hero would, and clears the phone bar', () => {
+    expect(homeHeroTop({ paneHeight: 260, phone: false, composer: false }))
+      .toBeLessThanOrEqual(homeHeroTop({ paneHeight: 260, phone: false, composer: true }));
+    expect(homeHeroTop({ paneHeight: 760, phone: true, composer: false })).toBeGreaterThanOrEqual(44);
   });
 });
 

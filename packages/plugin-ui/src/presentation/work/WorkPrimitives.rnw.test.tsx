@@ -170,6 +170,43 @@ describe('Work primitives for plugin authors', () => {
     }
   });
 
+  it('sets a page row\'s date in one trailing column, after its own control and outside the row button', () => {
+    const { HappierWorkRowShell } = authorBarrel;
+    const { container, unmount } = mountThroughReactNativeWeb(
+      inSurface(
+        <HappierWorkRowShell
+          testID="work.row"
+          accessibilityLabel="Row"
+          density="page"
+          onPress={() => {}}
+          trailingAccessory={<span data-testid="work.row.control">Review</span>}
+          trailingMeta="20m"
+        >
+          <span>Row</span>
+        </HappierWorkRowShell>,
+      ),
+    );
+    const meta = byTestId(container, 'work.row:meta');
+    const control = byTestId(container, 'work.row.control');
+    expect(meta?.textContent).toBe('20m');
+    expect(byTestId(container, 'work.row')?.contains(meta)).toBe(false);
+    expect(control!.compareDocumentPosition(meta!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    unmount();
+  });
+
+  it('keeps the column on a row with no date, so the controls above and below it share an edge', () => {
+    const { HappierWorkRowShell } = authorBarrel;
+    const { container, unmount } = mountThroughReactNativeWeb(
+      inSurface(
+        <HappierWorkRowShell testID="work.row" accessibilityLabel="Row" density="page" onPress={() => {}} trailingMeta={null}>
+          <span>Row</span>
+        </HappierWorkRowShell>,
+      ),
+    );
+    expect(byTestId(container, 'work.row:meta')?.textContent).toBe('');
+    unmount();
+  });
+
   it('keeps empty invitations and expansion caller-controlled', () => {
     const invite = vi.fn();
     const expand = vi.fn();

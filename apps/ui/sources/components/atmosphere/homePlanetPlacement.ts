@@ -21,6 +21,25 @@ export const HOME_PHONE_HEADLINE_ABOVE_SEAM_PX = 70;
 /** The hero column's sides: it holds the page's reading column plus these (lab `.at-col`). */
 export const HOME_HERO_SIDE_PX = 32;
 export const HOME_PHONE_HERO_SIDE_PX = 16;
+/**
+ * A hero without its composer has nothing to stand on the seam (the person moved or hid it): the greeting
+ * opens the page under the top chips (phone: under the 44 px navigation row), so the attention list and the
+ * cards are in view instead of under a screenful of sky.
+ */
+const HOME_BARE_HEADLINE_TOP_PX = 72;
+const HOME_PHONE_BARE_HEADLINE_TOP_PX = 60;
+
+/** Where the hero's greeting starts in the pane. */
+export function homeHeroTop(input: Readonly<{ paneHeight: number; phone: boolean; composer: boolean }>): number {
+  const seamTop = Math.max(
+    16,
+    homeAtmosphereSeam(input.paneHeight, input.phone)
+      - (input.phone ? HOME_PHONE_HEADLINE_ABOVE_SEAM_PX : HOME_HEADLINE_ABOVE_SEAM_PX),
+  );
+  if (input.composer) return seamTop;
+  return Math.min(seamTop, input.phone ? HOME_PHONE_BARE_HEADLINE_TOP_PX : HOME_BARE_HEADLINE_TOP_PX);
+}
+
 /** The composer stands this far under the headline. */
 export const HOME_HERO_COMPOSER_GAP_PX = 18;
 export const HOME_PHONE_HERO_COMPOSER_GAP_PX = 14;

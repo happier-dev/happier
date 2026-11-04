@@ -16,9 +16,11 @@ import { t } from '@/text';
  */
 export const HubStatusLine = React.memo(function HubStatusLine(props: Readonly<{
     home: (detail: 'full' | 'name') => React.ReactNode;
+    /** Needs your attention is on this page and says it: the line does not say it again. */
+    needsYouListed?: boolean;
 }>) {
     const summary = useActivityOverviewSummary();
-    return <HubStatusLineView working={summary.workingCount} needsYou={summary.needsYouCount} isDataReady={summary.isDataReady} home={props.home} />;
+    return <HubStatusLineView working={summary.workingCount} needsYou={summary.needsYouCount} isDataReady={summary.isDataReady} needsYouListed={props.needsYouListed} home={props.home} />;
 });
 
 /**
@@ -30,6 +32,7 @@ export function HubStatusLineView(props: Readonly<{
     working: number;
     needsYou: number;
     isDataReady?: boolean;
+    needsYouListed?: boolean;
     home: (detail: 'full' | 'name') => React.ReactNode;
 }>) {
     const { working, needsYou } = props;
@@ -46,7 +49,7 @@ export function HubStatusLineView(props: Readonly<{
                     <Text style={styles.text}>{t('homeIndex.sessionsWorking', { count: working })}</Text>
                 </View>
             ) : null}
-            {needsYou > 0 ? (
+            {needsYou > 0 && props.needsYouListed !== true ? (
                 <View testID="home-hub.status.needsYou" style={styles.fact}>
                     <WorkStatusGlyph
                         status={{ state: 'needs_you', bucket: 'needs_you', tone: 'attention', word: '', attentionType: null, glyph: 'attention' }}

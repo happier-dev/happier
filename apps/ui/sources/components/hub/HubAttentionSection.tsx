@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
 import { SvgXml } from 'react-native-svg';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -19,8 +20,10 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { selectConnectedMetadataLabels, useConnectedMetadataCatalog } from '@/hooks/server/connectedServices/useConnectedMetadataCatalog';
+import { useConnectedAccountIdentityPrivacy } from '@/hooks/ui/useConnectedAccountIdentityPrivacy';
 import { buildConnectedAccountSettingsRoute } from '@/sync/domains/connectedServices/connectedAccountSettingsRoute';
-import { listConnectedAccountsNeedingSignIn } from '@/sync/domains/connectedServices/connectedAccountsNeedingSignIn';
+import { describeConnectedAccountsNeedingSignIn, listConnectedAccountsNeedingSignIn } from '@/sync/domains/connectedServices/connectedAccountsNeedingSignIn';
 import { resolveConnectedAccountUiNegotiation } from '@/sync/domains/connectedServices/resolveConnectedAccountUiNegotiation';
 import { useServerFeaturesRuntimeSnapshot } from '@/sync/domains/features/featureDecisionRuntime';
 import { useProfile } from '@/sync/domains/state/storage';
@@ -99,7 +102,10 @@ function useAgentsNeedingSignIn(): AttentionItem[] {
         })), [catalog.machineLabel, catalog.projectionCurrent, collection.onMachine, machine?.id, router, serverId, theme.colors.text.secondary]);
 }
 
-/** Connected accounts whose sign-in expired, from the Account profile the app already holds. */
+/**
+ * Connected accounts whose sign-in expired, from the Account profile the app already holds, each named so
+ * two of a service can be told apart. Personal labels are only read while there is a row to name.
+ */
 function useConnectedAccountsNeedingSignIn(): AttentionItem[] {
     const router = useRouter();
     const { theme } = useUnistyles();
@@ -107,20 +113,27 @@ function useConnectedAccountsNeedingSignIn(): AttentionItem[] {
     const accountTransport = resolveConnectedAccountUiNegotiation(useServerFeaturesRuntimeSnapshot());
     const registry = useProjectedConnectedServicesRegistry();
     const localizePluginText = useProjectedPluginLocalizedTextResolver();
-    return React.useMemo(() => listConnectedAccountsNeedingSignIn({
+    const needs = React.useMemo(() => listConnectedAccountsNeedingSignIn({
         profile,
         accountTransport,
         entries: registry.entries,
-    }).map((account) => {
+    }), [accountTransport, profile, registry.entries]);
+    const labelsByKey = useConnectedMetadataCatalog(needs.length > 0 ? undefined : null, selectConnectedMetadataLabels);
+    const { present: presentIdentity } = useConnectedAccountIdentityPrivacy();
+    return React.useMemo(() => describeConnectedAccountsNeedingSignIn({
+        accounts: needs,
+        profile,
+        labelsByKey,
+        presentIdentity,
+        serviceTitle: (entry) => resolveConnectedServiceRegistryEntryDisplayName(entry, t, localizePluginText),
+    }).map(({ need: account, service, account: accountName }) => {
         const brandXml = resolveConnectedServiceBrandIconXml(account.entry.legacyServiceId, theme);
         return {
             key: `service:${account.key}`,
             mark: brandXml
                 ? <SvgXml xml={brandXml} width={MARK_SIZE} height={MARK_SIZE} />
                 : <Icon name="key" size={MARK_SIZE} color={theme.colors.text.secondary} />,
-            title: t('settingsOverview.serviceSignInExpired', {
-                service: resolveConnectedServiceRegistryEntryDisplayName(account.entry, t, localizePluginText),
-            }),
+            title: joinHappierFacts(t('settingsOverview.serviceSignInExpired', { service }), accountName),
             actionLabel: t('settingsOverview.signInAgain'),
             onAction: () => router.push(buildConnectedAccountSettingsRoute(
                 account.service,
@@ -128,7 +141,7 @@ function useConnectedAccountsNeedingSignIn(): AttentionItem[] {
                 { add: !account.accountId },
             ) as never),
         };
-    }), [accountTransport, localizePluginText, profile, registry.entries, router, theme]);
+    }), [labelsByKey, localizePluginText, needs, presentIdentity, profile, router, theme]);
 }
 
 /**
@@ -212,20 +225,33 @@ function useMachinesNeedingYou(): AttentionItem[] {
     }, [machines, router, theme.colors.text.secondary]);
 }
 
+/** What setup can repair: Homes not answering, then updates, sign-ins and plugin reviews. */
+function useSetupNeedingAttention(): AttentionItem[] {
+    const homes = useHomesNotAnswering();
+    const updates = useUpdatesNeedingAttention();
+    const agents = useAgentsNeedingSignIn();
+    const services = useConnectedAccountsNeedingSignIn();
+    const plugins = usePluginChangesAwaitingReview();
+    return [...homes, ...updates, ...agents, ...services, ...plugins];
+}
+
 /**
- * Only what needs the person now, each with the action that resolves it. The section is absent
- * when nothing does: a healthy setup is quiet.
+ * Home's list: only what needs the person now, each with the action that resolves it. The section is
+ * absent when nothing does: a healthy setup is quiet.
  */
 export const HubAttentionSection = React.memo(function HubAttentionSection(props: HubSectionProps) {
     const sessions = useSessionsNeedingAttention();
-    const agents = useAgentsNeedingSignIn();
-    const services = useConnectedAccountsNeedingSignIn();
-    const updates = useUpdatesNeedingAttention();
-    const plugins = usePluginChangesAwaitingReview();
-    const homes = useHomesNotAnswering();
     const machines = useMachinesNeedingYou();
-    const items = [...sessions, ...machines, ...homes, ...updates, ...agents, ...services, ...plugins];
-    return <HubAttentionList items={items} menu={props.menu} />;
+    const setup = useSetupNeedingAttention();
+    return <HubAttentionList items={[...sessions, ...machines, ...setup]} menu={props.menu} />;
+});
+
+/**
+ * Settings › Overview's list: what setup can repair, on the same rows. Waiting Sessions belong to Home and
+ * the Inbox, and the page's own Machines section already says which machines need the person.
+ */
+export const SettingsAttentionSection = React.memo(function SettingsAttentionSection() {
+    return <HubAttentionList items={useSetupNeedingAttention()} />;
 });
 
 

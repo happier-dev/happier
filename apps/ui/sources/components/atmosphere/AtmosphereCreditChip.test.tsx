@@ -11,6 +11,9 @@ import { GlassMaterialSettingsProvider } from '@/components/ui/glass/useGlassMat
 import { glassPresetMaterials } from '@/components/ui/glass/glassMaterial';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { storage } from '@/sync/domains/state/storageStore';
+import Constants from 'expo-constants';
+import { commitRemoteManifest, resetManifestRuntimeCacheForTests } from '@/changelog/releaseNotes/manifestRuntime';
+import { clearCachedManifest, clearLastSeenReleaseId, setLastSeenReleaseId } from '@/changelog/releaseNotes/storage';
 import { AtmosphereTopChips } from './AtmosphereCreditChip';
 
 const routerMock = vi.hoisted(() => ({ push: vi.fn() }));
@@ -128,7 +131,7 @@ describe('the release caption on Home', () => {
       </GlassMaterialSettingsProvider>
     </GlassRuntimeEnvironmentProvider>;
     const screen = await renderScreen(scene(false));
-    const captionAlphas = () => screen.findByTestId('atmosphere.caption')!.findAllByType('View')
+    const captionAlphas = () => screen.findByTestId('atmosphere.credit')!.findAllByType('View')
       .map(view => flattenTestStyle(view.props.style).backgroundColor)
       .filter((color): color is string => typeof color === 'string')
       .map(color => Color(color).alpha());
@@ -138,14 +141,36 @@ describe('the release caption on Home', () => {
     await screen.unmount();
   });
 
-  it("captions the picture with this version and opens the existing release notes from What's new", async () => {
-    const screen = await renderChips(true);
-    expect(
-      screen.findByTestId('atmosphere.caption')?.props.accessibilityLabel,
-    ).toContain('0.3.4');
-    expect(screen.getTextContent()).toContain(photo.title);
+  it('says this version on the chip only while its release is unread', async () => {
+    const originalExpoConfig = Constants.expoConfig;
+    // The installed version is an Expo/platform boundary; the manifest enters through its real owner.
+    Object.defineProperty(Constants, 'expoConfig', { configurable: true, value: { ...originalExpoConfig, version: '0.3.4' } });
+    clearLastSeenReleaseId();
+    clearCachedManifest();
+    resetManifestRuntimeCacheForTests();
+    try {
+      expect(commitRemoteManifest(JSON.stringify({ schemaVersion: 'v1', latestReleaseId: 'v0.3.4', generatedAt: '2026-01-01T00:00:00.000Z',
+        assetBaseUrl: 'https://cdn.example/releases/', releases: [{ releaseId: 'v0.3.4', versionLabel: 'v0.3.4', publishedAt: '2026-01-01T00:00:00.000Z',
+          titleKey: 'releaseNotes.title', cards: [{ kind: 'list', titleKey: 'releaseNotes.cards.0.title', rows: [{ iconId: 'sparkles', titleKey: 'a', bodyKey: 'b' }] }] }] }))).not.toBeNull();
+      const screen = await renderChips(true);
+      expect(screen.findByTestId('atmosphere.caption')?.props.accessibilityLabel).toContain('0.3.4');
+      await act(async () => { setLastSeenReleaseId('v0.3.4'); });
+      expect(screen.findByTestId('atmosphere.caption')).toBeNull();
+      expect(screen.findByTestId('atmosphere.credit')?.props.accessibilityLabel).not.toContain('0.3.4');
+    } finally {
+      clearLastSeenReleaseId();
+      clearCachedManifest();
+      resetManifestRuntimeCacheForTests();
+      Object.defineProperty(Constants, 'expoConfig', { configurable: true, value: originalExpoConfig });
+    }
+  });
 
-    await screen.pressByTestIdAsync('atmosphere.caption');
+  it("keeps What's new in the card once the release has been read, and opens the existing release notes", async () => {
+    const screen = await renderChips(true);
+    expect(screen.getTextContent()).toContain(photo.title);
+    expect(screen.getTextContent()).not.toContain('0.3.4');
+
+    await screen.pressByTestIdAsync('atmosphere.credit');
     expect(screen.getTextContent()).toContain(photo.credit.author);
 
     // No unread release story here, so What's new is the full release notes.
@@ -157,7 +182,7 @@ describe('the release caption on Home', () => {
     const screen = await renderChips(true);
     expect(screen.findByTestId('look-popover')).toBeNull();
 
-    await screen.pressByTestIdAsync('atmosphere.caption');
+    await screen.pressByTestIdAsync('atmosphere.credit');
     await screen.pressByTestIdAsync('atmosphere.caption.backdrop');
     expect(screen.findByTestId('look-popover')).not.toBeNull();
     expect(screen.findByTestId('atmosphere.caption.whats-new')).toBeNull();

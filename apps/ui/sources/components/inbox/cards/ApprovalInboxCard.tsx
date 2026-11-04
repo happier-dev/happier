@@ -153,9 +153,9 @@ export const ApprovalInboxCard = React.memo(
     );
 
     const sessionTitle = session ? (serverId ? readApprovalSessionName(session, serverId, nowMs) : getSessionName(session)) : null;
-    // What tells this request from its siblings, on one line like every other Inbox row: the Action's
-    // name when the title does not already say it, the session that asked (by name, or by where it
-    // lives when this device does not have it; never its id, its Home's address or its folder path),
+    // What tells this request from its siblings, on one line like every other Inbox row: where it comes
+    // from, the Action's name when the title does not already say it, the session that asked (by name,
+    // or by where it lives when this device does not have it; never its id, its Home's address or its folder path),
     // the Home only when the Inbox spans several, and when it was asked. Every row here needs an
     // approval, so those words are the line only when nothing else is known; a screen reader always
     // hears them.
@@ -179,8 +179,8 @@ export const ApprovalInboxCard = React.memo(
           : null;
       return model ? describeResourceProposalInboxFacts(model) : null;
     }, [parsedApproval]);
-    // Where it comes from leads the row (lab coordination P4): the session that asked, above the title,
-    // unless the title already names it as the request's own subject.
+    // Where it comes from leads the line under the title: the session that asked, or its Machine, unless
+    // the title already names it as the request's own subject.
     const requester = askingSession ?? originMachineLabel;
     const source = requester && !title.includes(requester) ? requester : null;
     // An agent's request to remember a Project's setup says so on its row; the page spells out the consequence.
@@ -188,16 +188,18 @@ export const ApprovalInboxCard = React.memo(
     const asksToRemember = projectCommand?.kind === 'setup' && projectCommand.remembersConsent
       ? t('projects.scripts.setup.agentAsksRememberedRow') : null;
     const distinguishingFacts = [
+      // The row has no room under its buttons: it says once, calmly, what its destructive verb means.
+      // It leads the line so a narrow row truncates where the request comes from, never the consequence.
+      parsedApproval?.family === 'built_in' && readActionApprovalReview(parsedApproval.request).irreversible
+        ? t('approvals.irreversibleFact')
+        : null,
+      source,
       proposalFacts,
       asksToRemember,
       actionTitle && actionTitle !== title && !proposalFacts
         ? actionTitle
         : null,
       props.showHome === true && sessionTitle ? homeName : null,
-      // The row has no room under its buttons: it says once, calmly, what its destructive verb means.
-      parsedApproval?.family === 'built_in' && readActionApprovalReview(parsedApproval.request).irreversible
-        ? t('approvals.irreversibleNote')
-        : null,
     ].filter(isFact);
     const quickActions = React.useMemo(
       () =>
@@ -221,19 +223,14 @@ export const ApprovalInboxCard = React.memo(
       ) : null;
     const needsApproval = t('inbox.work.rows.approvalNeeded');
     const accessibilityLabel = joinHappierFacts(
-      ...[source, title, needsApproval, ...distinguishingFacts].filter(isFact),
+      ...[title, needsApproval, ...distinguishingFacts].filter(isFact),
     );
 
     return (
       <InboxWorkRow
         testID={`inbox.approval.${props.artifact.id}`}
         title={title}
-        source={source}
-        facts={
-          distinguishingFacts.length > 0 || source
-            ? distinguishingFacts
-            : [needsApproval]
-        }
+        facts={distinguishingFacts.length > 0 ? distinguishingFacts : [needsApproval]}
         time={
           props.artifact.createdAt > 0 ? (
             <InboxRelativeTime

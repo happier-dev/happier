@@ -60,6 +60,24 @@ afterEach(async () => {
 });
 
 describe('ApprovalInboxCard', () => {
+  it('says where a request comes from on its one line under the title, never above it', async () => {
+    const { ApprovalInboxCard } = await import('./ApprovalInboxCard');
+    const machine = createMachineFixture({ id: 'origin-machine', metadata: { ...createMachineFixture().metadata!, displayName: 'Build Mac', host: 'build.test' } });
+    storage.setState({ machineListByServerId: { [serverIdB]: [machine] } });
+    const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+      createdBy: { surface: 'system', pluginId: 'example.observer', contributionLocalId: 'observer' },
+      actionId: 'automation.event.sources.list', actionArgs: { transport: { kind: 'checkpointedPull' } }, summary: 'Read sources',
+      executionOriginV1: { v: 1, authority: 'account_automation', surface: 'plugin', serverId: serverIdB,
+        serverIdentityId: 'srv_approval_home_b', machineId: machine.id, actionId: 'automation.event.sources.list', requestId: 'request',
+        caller: { kind: 'plugin', pluginId: 'example.observer', contributionLocalId: 'observer',
+          sourceCustody: { kind: 'development', registeredRootId: 'observer-root' } } } });
+    const artifact = { ...createApprovalArtifact(), header: buildApprovalRequestArtifactHeaderV1(request), body: JSON.stringify(request) };
+    const screen = await renderScreen(<ApprovalInboxCard artifact={artifact} onPress={() => {}} />);
+    expect(screen.findByTestId(`inbox.approval.${artifact.id}.summary:source`)).toBeNull();
+    expect(screen.findByTestId(`inbox.approval.${artifact.id}.summary:facts`)).not.toBeNull();
+    expect(screen.getTextContent()).toContain('Build Mac');
+  });
+
   it('names the origin Machine of a sessionless daemon approval from its exact Home', async () => {
     const { ApprovalInboxCard } = await import('./ApprovalInboxCard');
     const machine = createMachineFixture({ id: 'daemon-machine', metadata: {

@@ -758,6 +758,19 @@ describe('InboxContent renders the canonical item model in three views (C1 L10, 
         expect(tree.root.findAllByProps({ testID: 'inbox.snoozed.snoozed' })).toHaveLength(0);
     });
 
+    it('says where an item comes from on its one line, unless its title already says it', async () => {
+        const { InboxContent } = await import('./InboxContent');
+        const named = (id: string, title: string): InboxItem => {
+            const item = mentionItem(id);
+            return { ...item, title, source: { ...item.source, displayName: 'Release planning' } };
+        };
+        const model = createModel({ extraItems: [named('m-1', 'Retry cap during deploys'), named('m-2', 'Release planning')] });
+        const screen = await renderScreen(<InboxContent model={model} view="mentions" />, { wrapper: PagePresentation });
+        const facts = (id: string) => screen.findByTestId(`inbox.item.discussion:server-a:disc-1:${id}`)!.props.accessibilityLabel as string;
+        expect(facts('m-1')).toContain('Release planning');
+        expect(facts('m-2').match(/Release planning/g)).toHaveLength(1);
+    });
+
     it('shows Mentions as their own view, each opening its item, with a calm empty state when none', async () => {
         const { InboxContent } = await import('./InboxContent');
         const onSelectItem = vi.fn();

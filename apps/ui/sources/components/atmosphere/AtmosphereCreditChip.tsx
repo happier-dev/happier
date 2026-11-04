@@ -8,7 +8,7 @@ import {
   happierPageTextMetrics,
 } from '@happier-dev/plugin-ui/presentation';
 import type { AtmospherePicture } from '@happier-dev/brand/atmosphere';
-import { useReleaseNotesLauncher } from '@/changelog/releaseNotes';
+import { useReleaseNotesLauncher, useReleaseNotesUnread } from '@/changelog/releaseNotes';
 import { GlassSurface } from '@/components/ui/glass/GlassSurface';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
@@ -129,20 +129,24 @@ function PictureCaptionCard(
  * The picture's caption, top right of an atmosphere surface (lab `at-cap`): the picture's name in a
  * small glass chip, with its author for assistive technology. Pressing it opens the caption card (the
  * credit, linking to its source, and Backdrop) from the top-right slot, or the shared sheet on a phone.
- * With the release caption moment on (U9 `releaseCaption`) the chip reads "version · picture" and the
- * card adds What's new; on a phone that chip keeps only the version.
+ * With the release caption moment on (U9 `releaseCaption`) the card adds this version and What's new,
+ * and while that release is unread the chip reads "version · picture" (on a phone, only the version), so
+ * it announces a new release once and is the picture's quiet credit afterwards.
  */
 const PictureCaption = React.memo(function PictureCaption(
   props: Readonly<{
     picture: AtmospherePicture;
-    /** This version while the release caption moment is on; otherwise the chip is the credit alone. */
+    /** This version while the release caption moment is on. */
     version: string | null;
     anchorRef: React.RefObject<View | null>;
     onBackdrop: () => void;
   }>,
 ) {
-  const { picture, version, onBackdrop } = props;
+  const { picture, onBackdrop } = props;
   const { theme } = useUnistyles();
+  const { hasUnread } = useReleaseNotesUnread();
+  // The chip announces only an unread release; once read it is the credit alone.
+  const version = hasUnread ? props.version : null;
   const phone = useDeviceType() === 'phone';
   const [open, setOpen] = React.useState(false);
   const close = React.useCallback(() => setOpen(false), []);
@@ -156,7 +160,7 @@ const PictureCaption = React.memo(function PictureCaption(
     onBackdrop();
   }, [onBackdrop]);
   const card = (
-    <PictureCaptionCard picture={picture} version={version} onWhatsNew={whatsNew} onBackdrop={backdrop} />
+    <PictureCaptionCard picture={picture} version={props.version} onWhatsNew={whatsNew} onBackdrop={backdrop} />
   );
   const title = pictureTitle(picture);
   const name = `${title}, ${picture.credit.author}`;

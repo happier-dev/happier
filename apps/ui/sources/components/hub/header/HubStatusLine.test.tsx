@@ -14,4 +14,14 @@ describe('Home status observation', () => {
         await screen.update(<HubStatusLineView working={0} needsYou={0} isDataReady={true} home={home} />);
         expect(screen.getTextContent()).toContain('Nothing running');
     });
+
+    it('leaves what needs the person to the attention list when that list is on the page', async () => {
+        const home = () => <>{'Home A'}</>;
+        const screen = await renderScreen(<HubStatusLineView working={2} needsYou={3} isDataReady={true} needsYouListed home={home} />);
+        expect(screen.findByTestId('home-hub.status.needsYou')).toBeNull();
+        expect(screen.findByTestId('home-hub.status.working')).not.toBeNull();
+        expect(screen.getTextContent()).toContain('Home A');
+        await screen.update(<HubStatusLineView working={2} needsYou={3} isDataReady={true} home={home} />);
+        expect(screen.findByTestId('home-hub.status.needsYou')).not.toBeNull();
+    });
 });

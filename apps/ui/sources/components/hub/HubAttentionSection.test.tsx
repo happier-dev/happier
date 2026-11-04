@@ -58,7 +58,7 @@ const SERVICE_DESCRIPTOR = ConnectedAccountUiProjectionEntryV1Schema.parse({
 });
 
 // Collect the real UI closure before a case starts its observable interaction deadline.
-const { HubAttentionSection } = await import('./HubAttentionSection');
+const { HubAttentionSection, SettingsAttentionSection } = await import('./HubAttentionSection');
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -144,7 +144,7 @@ function account(accountId: string, status: 'connected' | 'needs_reauth') {
         configurationRevision: null, configurationReady: true, scopes: [] });
 }
 
-async function renderSection() {
+async function renderSection(Section: React.ComponentType = HubAttentionSection) {
     await upsertServerProfile({ serverUrl: state.homeUrl });
     const declaredHome = await setServerProfileIdentityForUrl(state.homeUrl, `srv_attention_${caseNumber}`);
     if (!declaredHome) throw new Error('The attention fixture Home must exist');
@@ -207,7 +207,7 @@ async function renderSection() {
     expect(resolveFreshMachineAdministrationExecutionTarget(target, { accountScope: lifetime.scope }))
         .toMatchObject({ machine: { id: machine.id }, serverId: home.id });
     rpc.mockClear();
-    const screen = await renderScreen(<HubAttentionSection />);
+    const screen = await renderScreen(<Section />);
     await flushHookEffects({ cycles: 3 });
     if (state.loginState === 'logged_out') await vi.waitFor(() =>
         expect(screen.findByTestId('settings-overview-attention.agent:claude.action')).not.toBeNull());
@@ -284,6 +284,37 @@ describe('HubAttentionSection', () => {
         expect(push).toHaveBeenNthCalledWith(2, expect.objectContaining({
             params: expect.objectContaining({ pluginId: SERVICE.pluginId, localId: SERVICE.localId, accountId: 'acct-1' }),
         }));
+    });
+
+    it('names the expired account a row is about', async () => {
+        state.loginState = 'logged_in';
+        state.profile = { connectedServicesV2: [], connectedAccountsV4: [
+            { ...account('acct-1', 'needs_reauth'), displayName: 'Work' },
+            { ...account('acct-2', 'needs_reauth'), displayName: 'Side project' },
+        ] };
+        const { screen } = await renderSection();
+        expect(screen.getTextContent()).toContain('Work');
+        expect(screen.getTextContent()).toContain('Side project');
+    });
+
+    it('in Settings keeps what Settings repairs and leaves Sessions to Home and the Inbox', async () => {
+        state.loginState = 'logged_in';
+        state.profile = { connectedServicesV2: [], connectedAccountsV4: [account('acct-1', 'needs_reauth')] };
+        const { screen } = await renderSection(SettingsAttentionSection);
+        const now = Date.now();
+        const session = createSessionFixture({ id: 'pending-session', serverId: state.serverId,
+            viewer: undefined, active: true, presence: 'online', activeAt: now, updatedAt: now,
+            agentState: { requests: { approval: { tool: 'Bash', arguments: {}, createdAt: now } }, completedRequests: {} },
+        });
+        await act(async () => {
+            storage.setState({ sessions: { [session.id]: session },
+                sessionListRowsByServerId: { [state.serverId]: { [session.id]: buildSessionListRenderableFromSession(session) } },
+                ordinarySessionListMembershipByServerId: { [state.serverId]: [session.id] } });
+        });
+        await flushHookEffects({ cycles: 2 });
+        expect(screen.findAll((node) => node.props?.testID === 'settings-overview-attention.sessions.action')).toHaveLength(0);
+        expect(screen.findAll((node) => node.props?.testID === 'settings-overview-attention.machines.action')).toHaveLength(0);
+        expect(screen.findAll((node) => node.props?.testID === 'settings-overview-attention.service:happier.example/subscription/acct-1.action').length).toBeGreaterThan(0);
     });
 
     it('is absent when nothing needs the person', async () => {

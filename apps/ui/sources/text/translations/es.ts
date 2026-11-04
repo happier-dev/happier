@@ -2122,6 +2122,7 @@ export const es: TranslationStructure = {
     unsafeDetailsBody: "Happier no pudo mostrar esta solicitud exactamente como se envió, por lo que no se puede aprobar. Recházala o pide que se envíe de nuevo.",
     approveUnavailableHint: "La aprobación no está disponible mientras estos detalles no se puedan mostrar de forma segura.",
     irreversibleNote: "Esto no se puede deshacer.",
+    irreversibleFact: "No se puede deshacer",
     dismiss: "Descartar",
     dismissHint: "Cierra la solicitud sin aprobarla ni rechazarla.",
     confirmApproveTitle: "¿Aprobar solicitud?",

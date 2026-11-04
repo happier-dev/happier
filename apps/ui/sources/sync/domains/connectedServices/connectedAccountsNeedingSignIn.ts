@@ -6,6 +6,10 @@ import {
     getLegacyConnectedServiceRegistryEntry,
     type ConnectedServiceRegistryEntry,
 } from './connectedServiceRegistry';
+import { resolveQualifiedConnectedAccountLabel } from './connectedServiceProfilePreferences';
+import type { ConnectedAccountIdentityPresenter } from './maskAccountEmail';
+import { presentConnectedAccountNames } from './qualifiedConnectedAccountTargetPresentation';
+import { t } from '@/text';
 
 type ServiceIdentity = Readonly<{ pluginId: string; localId: string }>;
 
@@ -17,6 +21,8 @@ type ProfileAccounts = Readonly<{
     connectedAccountsV4?: ReadonlyArray<Readonly<{
         ref: Readonly<{ service: ServiceIdentity; accountId: string }>;
         status?: unknown;
+        displayName?: string | null;
+        providerIdentity?: Readonly<{ email?: string | null; accountId?: string | null }> | null;
     }>>;
 }>;
 
@@ -64,4 +70,60 @@ export function listConnectedAccountsNeedingSignIn(params: Readonly<{
         });
     }
     return [];
+}
+
+export type ConnectedAccountNeedingSignInDescription = Readonly<{
+    need: ConnectedAccountNeedingSignIn;
+    /** What the row says expired: the service, or a nameless account's own numbered name. */
+    service: string;
+    /** Which account of that service, by the name people know it by; null when only the service tells it. */
+    account: string | null;
+}>;
+
+/**
+ * What tells these rows apart, through the one connected-account naming rule (its privacy presenter
+ * included): the account's name beside its service. Accounts that read the same also say their identity;
+ * nameless ones keep their service, numbered when several are listed. Never an internal id.
+ */
+export function describeConnectedAccountsNeedingSignIn(params: Readonly<{
+    accounts: readonly ConnectedAccountNeedingSignIn[];
+    profile: ProfileAccounts;
+    labelsByKey: Readonly<Record<string, string | undefined>>;
+    serviceTitle: (entry: ConnectedServiceRegistryEntry) => string;
+    presentIdentity?: ConnectedAccountIdentityPresenter;
+}>): readonly ConnectedAccountNeedingSignInDescription[] {
+    const named = params.accounts.map((need) => {
+        const serviceTitle = params.serviceTitle(need.entry);
+        if (need.accountId === null) return { need, serviceTitle, name: null };
+        const names = presentConnectedAccountNames((params.profile.connectedAccountsV4 ?? [])
+            .filter(({ ref }) => ref.service.pluginId === need.service.pluginId && ref.service.localId === need.service.localId)
+            .map((account) => ({
+                key: account.ref.accountId,
+                serviceTitle,
+                userLabel: resolveQualifiedConnectedAccountLabel({ labelsByKey: params.labelsByKey, service: account.ref.service, accountId: account.ref.accountId }),
+                displayName: account.displayName ?? null,
+                email: account.providerIdentity?.email ?? null,
+                providerAccountId: account.providerIdentity?.accountId ?? null,
+                accountId: account.ref.accountId,
+                presentIdentity: params.presentIdentity,
+            })));
+        return { need, serviceTitle, name: names.get(need.accountId) ?? null };
+    });
+    const nameKey = (service: string, label: string) => `${service}\u0000${label}`;
+    const counts = new Map<string, number>();
+    for (const { serviceTitle, name } of named) {
+        if (!name || name.serviceFallback) continue;
+        const key = nameKey(serviceTitle, name.primaryLabel);
+        counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    return named.map(({ need, serviceTitle, name }) => {
+        if (!name) return { need, service: serviceTitle, account: null };
+        if (name.serviceFallback) {
+            const unnumbered = name.primaryLabel === t('connectedServicesCollection.accountLabel', { service: serviceTitle });
+            return { need, service: unnumbered ? serviceTitle : name.primaryLabel, account: null };
+        }
+        const repeated = (counts.get(nameKey(serviceTitle, name.primaryLabel)) ?? 0) > 1;
+        return { need, service: serviceTitle,
+            account: repeated && name.identityLabel ? `${name.primaryLabel} · ${name.identityLabel}` : name.primaryLabel };
+    });
 }

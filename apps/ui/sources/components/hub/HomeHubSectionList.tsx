@@ -171,6 +171,8 @@ const NO_SPANNING: ReadonlySet<string> = new Set();
 
 /** Home's composer section: it keeps the reading column wherever it is placed. */
 export const HOME_HUB_COMPOSER_SECTION_ID = 'start';
+/** Needs your attention: the page's list of what waits on the person. */
+export const HOME_HUB_ATTENTION_SECTION_ID = 'attention';
 /** Get set up: with no machine yet it follows the cards, which carry the first steps, at their width. */
 const HOME_HUB_SETUP_SECTION_ID = 'setup';
 
@@ -179,7 +181,7 @@ const HOME_HUB_SETUP_SECTION_ID = 'setup';
  * the composer's reading column, centred, so the page reads as one column of things to do; the cards
  * below keep the wider dashboard grid (owner, 2026-10-30).
  */
-const HOME_HUB_READING_SECTION_IDS: ReadonlySet<string> = new Set([HOME_HUB_COMPOSER_SECTION_ID, 'attention', HOME_HUB_SETUP_SECTION_ID]);
+const HOME_HUB_READING_SECTION_IDS: ReadonlySet<string> = new Set([HOME_HUB_COMPOSER_SECTION_ID, HOME_HUB_ATTENTION_SECTION_ID, HOME_HUB_SETUP_SECTION_ID]);
 
 /**
  * With no machine yet the one question is where agents will run (58d AF1): the shown Machines widget leads

@@ -1935,6 +1935,7 @@ export const it: TranslationStructure = {
     unsafeDetailsBody: "Happier non è riuscito a mostrare questa richiesta esattamente come è stata inviata, quindi non può essere approvata. Rifiutala oppure chiedi di inviarla di nuovo.",
     approveUnavailableHint: "L'approvazione non è disponibile finché questi dettagli non possono essere mostrati in sicurezza.",
     irreversibleNote: "Questa azione non può essere annullata.",
+    irreversibleFact: "Non annullabile",
     dismiss: "Ignora",
     dismissHint: "Chiude la richiesta senza approvarla né rifiutarla.",
     confirmApproveTitle: "Approvare la richiesta?",

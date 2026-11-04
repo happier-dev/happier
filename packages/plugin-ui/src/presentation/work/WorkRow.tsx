@@ -7,6 +7,7 @@ import { happierFocusRingStyle } from '../interaction/focusVisible.js';
 import { HappierPressable, type HappierPressableProps } from '../interaction/Pressable.js';
 import { HAPPIER_PRESS_FEEDBACK_V1 } from '../interaction/pressFeedback.js';
 import { HAPPIER_PAGE_METRICS } from '../layout/pageMetrics.js';
+import { HAPPIER_PAGE_TEXT } from '../layout/pageText.js';
 import { happierPageRowDividerWidth, useHappierPageSection } from '../layout/PageSection.js';
 import type { HappierPortableStyle, HappierStyleProp } from '../portableTypes.js';
 import { resolveHappierWorkStatusWordColor, type HappierWorkStatusTone } from './workStatus.js';
@@ -65,13 +66,14 @@ const styles = StyleSheet.create({
   splitTitle: { flexDirection: 'row', minWidth: 0 },
 });
 
+const ROW_PADDING_VERTICAL_PX = 8;
 // Styles handed to the shared pressable and the host's text are portable styles.
 const ROW_STYLE: HappierPortableStyle = {
   borderRadius: 10,
   borderWidth: HAPPIER_WORK_PANE_METRICS.rowRingPx,
   borderColor: 'transparent',
   paddingHorizontal: HAPPIER_WORK_PANE_METRICS.rowPaddingPx,
-  paddingVertical: 8,
+  paddingVertical: ROW_PADDING_VERTICAL_PX,
   minHeight: 52,
   justifyContent: 'center',
 };
@@ -117,10 +119,25 @@ export const HAPPIER_WORK_PAGE_ROW_METRICS = Object.freeze({
 });
 /** Where a pane row's text column starts: the same mark-and-gap measure as a page row, on the pane's inset. */
 const PANE_ROW_TEXT_INSET_PX = HAPPIER_WORK_PANE_METRICS.rowInsetPx + MARK_SIZE_PX + MARK_TEXT_GAP_PX;
+/**
+ * Every page row holds a title and its one line, so a title-only row between described ones keeps their
+ * height and the sheet reads as even rows (a description is what a row may lack, not a different row).
+ */
+const PAGE_ROW_MIN_HEIGHT_PX = Math.max(
+  HAPPIER_PAGE_METRICS.rowMinHeightPx,
+  HAPPIER_PAGE_TEXT.rowTitle.lineHeight + HAPPIER_PAGE_TEXT.rowDescription.lineHeight
+    + 2 * (ROW_PADDING_VERTICAL_PX + HAPPIER_WORK_PANE_METRICS.rowRingPx),
+);
 const PAGE_ROW_STYLE: HappierPortableStyle = {
   paddingHorizontal: PAGE_ROW_PADDING_PX,
-  minHeight: HAPPIER_PAGE_METRICS.rowMinHeightPx,
+  minHeight: PAGE_ROW_MIN_HEIGHT_PX,
 };
+/**
+ * The page row's date column (craft: meta in one right-aligned tabular column). It closes the row at the
+ * sheet's edge, after the row's own control, so dates line up however wide each row's control is and the
+ * controls share a right edge. The width holds a short date ("59m", "23h") at `pageRowTime`.
+ */
+const PAGE_META_COLUMN_STYLE: HappierPortableStyle = { minWidth: 30, alignItems: 'flex-end' };
 const PAGE_TRAILING_ACCESSORY_ROW_STYLE = {
   ...TRAILING_ACCESSORY_ROW_STYLE,
   paddingRight: PAGE_ROW_PADDING_PX,
@@ -148,6 +165,11 @@ export type HappierWorkRowShellProps = Readonly<{
    * the row's own padding, and outside the navigation button like {@link trailingAccessory}.
    */
   belowAccessory?: ReactNode;
+  /**
+   * A page row's date, in its own trailing column after {@link trailingAccessory}. `null` keeps the
+   * column empty, for a row with no date among rows with one; omitted, the row has no column.
+   */
+  trailingMeta?: ReactNode;
   /** How deep under its lead the work sits; each level indents the row. */
   level?: number;
   /** `pane` (default) or `page`: see {@link HappierWorkRowDensity}. */
@@ -163,10 +185,15 @@ export type HappierWorkRowShellProps = Readonly<{
   children: ReactNode;
   /** Omitted inside a mounted plugin surface: the environment's theme. */
   theme?: HappierWorkTheme;
+  /** Omitted inside a mounted plugin surface: the environment's text. */
+  host?: HappierWorkHost;
 }>;
 
 export const HappierWorkRowShell = memo(function HappierWorkRowShell(props: HappierWorkRowShellProps) {
   const theme = useHappierWorkTheme(props.theme);
+  const { Text } = resolveHappierWorkHost(props.host);
+  const hasMetaColumn = props.trailingMeta !== undefined;
+  const hasTrailing = Boolean(props.trailingAccessory) || hasMetaColumn;
   const level = props.level ?? 0;
   const selected = props.selected === true;
   const page = props.density === 'page';
@@ -190,7 +217,7 @@ export const HappierWorkRowShell = memo(function HappierWorkRowShell(props: Happ
   return (
     <View style={[level > 0 ? { paddingLeft: level * LEVEL_INDENT_PX } : null,
       rowSelected ? { backgroundColor: theme.colors.selected, borderRadius: ROW_STYLE.borderRadius } : null]}>
-      <View style={props.trailingAccessory ? (page ? PAGE_TRAILING_ACCESSORY_ROW_STYLE : TRAILING_ACCESSORY_ROW_STYLE) : null}>
+      <View style={hasTrailing ? (page ? PAGE_TRAILING_ACCESSORY_ROW_STYLE : TRAILING_ACCESSORY_ROW_STYLE) : null}>
         <HappierPressable
           testID={props.testID}
           accessibilityRole="button"
@@ -206,7 +233,7 @@ export const HappierWorkRowShell = memo(function HappierWorkRowShell(props: Happ
           style={({ hovered, focused, pressed }) => [
             ROW_STYLE,
             page ? PAGE_ROW_STYLE : null,
-            props.trailingAccessory ? { flex: 1, minWidth: 0 } : null,
+            hasTrailing ? { flex: 1, minWidth: 0 } : null,
             // The open row already carries its fill; the hover paint would cover it.
             hovered && !rowSelected ? { backgroundColor: theme.colors.hover } : null,
             selected && !rowSelected ? { backgroundColor: theme.colors.selected } : null,
@@ -217,6 +244,13 @@ export const HappierWorkRowShell = memo(function HappierWorkRowShell(props: Happ
           {props.children}
         </HappierPressable>
         {props.trailingAccessory}
+        {hasMetaColumn ? (
+          <View testID={`${props.testID}:meta`} style={PAGE_META_COLUMN_STYLE}>
+            {props.trailingMeta ? (
+              <Text role={TEXT_ROLES[page ? 'page' : 'pane'].time} style={{ color: theme.colors.mutedText }}>{props.trailingMeta}</Text>
+            ) : null}
+          </View>
+        ) : null}
       </View>
       {props.belowAccessory ? (
         <View
@@ -259,11 +293,6 @@ export type HappierWorkSummaryProps = Readonly<{
    * from the person, how long it has run); a `HappierWorkStatusWord` draws a fact in a state tone.
    */
   facts: readonly ReactNode[];
-  /**
-   * Where the work comes from, one quiet line above the title (a session, a bot, a plugin; lab
-   * coordination P4). Omitted where the surrounding list already says it.
-   */
-  source?: ReactNode;
   /** Who it involves, one muted line under the facts ("Ana asked you"); its avatar leads it. */
   byline?: Readonly<{ text: string; leading?: ReactNode }> | null;
   /** A short date at the trailing edge ("2h"); omitted while live. */
@@ -328,12 +357,6 @@ export const HappierWorkSummary = memo(function HappierWorkSummary(props: Happie
         ) : null}
       </View> : null}
       <View style={styles.copy}>
-        {props.source ? (
-          <Text role={roles.line} numberOfLines={1} testID={testID ? `${testID}:source` : undefined}
-            style={{ color: theme.colors.secondaryText }}>
-            {props.source}
-          </Text>
-        ) : null}
         {titleTail.length > 0 ? (
           <View style={styles.splitTitle}>
             <Text

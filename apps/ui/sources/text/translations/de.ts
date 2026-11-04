@@ -1742,6 +1742,7 @@ export const de: TranslationStructure = {
         unsafeDetailsBody: 'Happier konnte diese Anfrage nicht genau so anzeigen, wie sie gesendet wurde, daher kann sie nicht freigegeben werden. Lehne sie ab oder bitte darum, sie erneut zu senden.',
         approveUnavailableHint: 'Die Freigabe ist nicht verfügbar, solange diese Details nicht sicher angezeigt werden können.',
         irreversibleNote: 'Das lässt sich nicht rückgängig machen.',
+        irreversibleFact: "Nicht rückgängig zu machen",
         dismiss: "Verwerfen",
         dismissHint: "Schließt die Anfrage, ohne sie freizugeben oder abzulehnen.",
         confirmApproveTitle: 'Anfrage freigeben?',

@@ -50,7 +50,7 @@ import { useIsTablet } from '@/utils/platform/responsive';
 import { HubStatusLine } from './header/HubStatusLine';
 import { useHomeGreeting } from './header/homeGreeting';
 import { findHomeHubBuiltinSection, homeChildTitle, homeHubSectionTitle } from './homeHubSections';
-import { HOME_HUB_COMPOSER_SECTION_ID, HomeHubSectionList } from './HomeHubSectionList';
+import { HOME_HUB_ATTENTION_SECTION_ID, HOME_HUB_COMPOSER_SECTION_ID, HomeHubSectionList } from './HomeHubSectionList';
 import { HubWidgetSection } from './HubWidgetSection';
 import type { HomeHubSection } from './layout/homeHubLayout';
 import { HubSectionMenu } from './layout/HubSectionMenu';
@@ -565,6 +565,8 @@ const HomeHubContent = React.memo(function HomeHubContent() {
         customizing: customizeOpen, showGrips: customizeOpen, groupOperations, movementSourceItem: movement.sourceItem, homeSurface: surface };
     // Only the acknowledged Account layout can place the composer in the hero.
     const heroComposer = heroActive && layout.sections.find(section => !section.hidden)?.id === HOME_HUB_COMPOSER_SECTION_ID;
+    // Needs your attention says what waits, with its actions; the status line keeps it only when that list is hidden.
+    const needsYouListed = layout.sections.some(section => section.id === HOME_HUB_ATTENTION_SECTION_ID && !section.hidden);
     const headerActions = (
         <View style={styles.headerActions}>
             {!heroActive ? <LookChip target={HOME_LOOK_TARGET} /> : null}
@@ -639,7 +641,7 @@ const HomeHubContent = React.memo(function HomeHubContent() {
                         showComposer={heroComposer} />
                     <ItemGroup surface="none">
                         <View ref={heroFrame.nextRef} onLayout={heroFrame.measure} style={styles.statusRow}>
-                            <View style={styles.statusLine}><HubStatusLine home={renderHomeLine} /></View>
+                            <View style={styles.statusLine}><HubStatusLine home={renderHomeLine} needsYouListed={needsYouListed} /></View>
                             {headerActions}
                         </View>
                     </ItemGroup>
@@ -665,7 +667,7 @@ const HomeHubContent = React.memo(function HomeHubContent() {
                 <PageHeader
                     title={title}
                     alwaysShowTitle
-                    details={<HubStatusLine home={renderHomeLine} />}
+                    details={<HubStatusLine home={renderHomeLine} needsYouListed={needsYouListed} />}
                     actions={headerActions}
                 />
             </NavigationLargeTitleProvider>

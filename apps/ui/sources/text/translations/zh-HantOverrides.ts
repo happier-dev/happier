@@ -1529,6 +1529,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     unsafeDetailsBody: 'Happier 無法完全依照傳送的內容顯示此請求，因此無法核准。請拒絕該請求，或請對方重新傳送。',
     approveUnavailableHint: '在這些詳細資料無法安全顯示期間，無法核准。',
     irreversibleNote: '此操作無法復原。',
+    irreversibleFact: "無法復原",
     dismiss: "忽略",
     dismissHint: "關閉此請求，不核准也不拒絕。",
     status: {
