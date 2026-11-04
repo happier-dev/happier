@@ -43,24 +43,43 @@ describe('resolveApprovalExecutor', () => {
       .toEqual({ kind: 'daemon', machineId: 'retained-controller' });
   });
 
-  it.each(['cli', 'ui'] as const)('returns immediate retained Delete to its controller across %s approval replay', surface => {
-    const request = requestFor('machines.managed.delete', {
-      homeId: 'home', managedId: 'lima-leaf', when: 'now', expectedRevision: 0,
-      intent: 'delete', reviewedDependencies: true,
-    }, surface);
-    // An ambient Machine does not turn a controllerless Account proposal native.
-    expect(resolveApprovalExecutor(request)).toEqual({ kind: 'app', placement: 'account' });
+  it.each(['cli', 'ui'] as const)('returns immediate retained controls to their controller across %s approval replay', surface => {
+    for (const actionId of ['machines.managed.delete', 'machines.managed.power.set'] as const) {
+      const request = requestFor(actionId, {
+        homeId: 'home', managedId: 'lima-leaf', when: 'now', expectedRevision: 0,
+        ...(actionId === 'machines.managed.delete' ? { intent: 'delete', reviewedDependencies: true } : { intent: 'stop' }),
+      }, surface);
+      // An ambient Machine does not turn a controllerless Account proposal native.
+      expect(resolveApprovalExecutor(request)).toEqual({ kind: 'app', placement: 'account' });
+      const targeted = ApprovalRequestV2Schema.parse({ ...request, executionOriginV1: {
+        ...request.executionOriginV1, machineId: 'retained-controller',
+        target: { kind: 'machine', machineId: 'retained-controller' },
+      } });
+      expect(resolveApprovalExecutor(targeted)).toEqual({ kind: 'daemon', machineId: 'retained-controller' });
+      expect(resolveApprovalExecutor(ApprovalRequestV2Schema.parse(projectApprovalRequestForPublicRead(targeted))))
+        .toEqual({ kind: 'daemon', machineId: 'retained-controller' });
+      expect(resolveApprovalExecutor(ApprovalRequestV2Schema.parse({ ...targeted,
+        actionArgs: { homeId: 'home', managedId: 'lima-leaf', when: 'after-idle',
+          ...(actionId === 'machines.managed.delete' ? { intent: 'delete', reviewedDependencies: true } : { intent: 'stop' }) },
+      }))).toEqual({ kind: 'app', placement: 'account' });
+    }
+  });
+
+  it.each(['machines.managed.inspect', 'machines.managed.acquire'] as const)('returns native %s approval to its controller after public projection', actionId => {
+    const input = actionId === 'machines.managed.inspect'
+      ? { homeId: 'home', managedId: 'guest' }
+      : { enrollmentIdentity: { kind: 'existingUser', role: 'personal' },
+          selection: { kind: 'one-off', homeId: 'home', controller: { machineId: 'controller', installationId: 'installation' },
+            launch: { provider: { pluginId: 'compute.example', localId: 'vm' }, schemaVersion: 1, name: 'guest', choices: {} },
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } };
+    const request = requestFor(actionId, input);
+    if (actionId === 'machines.managed.inspect') expect(resolveApprovalExecutor(request)).toEqual({ kind: 'app', placement: 'account' });
     const targeted = ApprovalRequestV2Schema.parse({ ...request, executionOriginV1: {
-      ...request.executionOriginV1, machineId: 'retained-controller',
-      target: { kind: 'machine', machineId: 'retained-controller' },
+      ...request.executionOriginV1, machineId: 'controller', target: { kind: 'machine', machineId: 'controller' },
     } });
-    expect(resolveApprovalExecutor(targeted)).toEqual({ kind: 'daemon', machineId: 'retained-controller' });
+    expect(resolveApprovalExecutor(targeted)).toEqual({ kind: 'daemon', machineId: 'controller' });
     expect(resolveApprovalExecutor(ApprovalRequestV2Schema.parse(projectApprovalRequestForPublicRead(targeted))))
-      .toEqual({ kind: 'daemon', machineId: 'retained-controller' });
-    expect(resolveApprovalExecutor(ApprovalRequestV2Schema.parse({ ...targeted,
-      actionArgs: { homeId: 'home', managedId: 'lima-leaf', when: 'after-idle',
-        intent: 'delete', reviewedDependencies: true },
-    }))).toEqual({ kind: 'app', placement: 'account' });
+      .toEqual({ kind: 'daemon', machineId: 'controller' });
   });
 
   it.each(surfaces)('routes placement and private custody independently of the %s surface', surface => {

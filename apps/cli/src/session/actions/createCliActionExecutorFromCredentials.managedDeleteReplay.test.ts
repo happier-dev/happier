@@ -6,6 +6,7 @@ import { AccountSettingsSchema, encodePlainArtifactStoredContent } from '@happie
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import type { ClientToServerEvents } from '@/api/types';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
@@ -15,7 +16,7 @@ import { registerAccountHomeHttp, registerPlainArtifactRoutes } from './widgetAp
 
 afterEach(() => vi.restoreAllMocks());
 
-it('delivers public CLI Delete approval to its retained controller instead of the Account effect endpoint', async () => {
+it.each(['machines.managed.delete', 'machines.managed.power.set', 'machines.managed.inspect', 'machines.managed.acquire'] as const)('delivers public CLI %s approval to its retained controller instead of the Account effect endpoint', async actionId => {
     await withConfiguredDaemonTestHome({ prefix: 'happier-delete-replay-' }, async () => {
         const accountId = 'delete-owner';
         const token = `fixture.${Buffer.from(JSON.stringify({ sub: accountId, tokenEpoch: 1,
@@ -23,15 +24,21 @@ it('delivers public CLI Delete approval to its retained controller instead of th
         const credentials = { token, encryption: null, credentialProvenance: 'stored_session' as const };
         // Captured #48 shape: the explicit controller target survives a public
         // approval read even when private execution authorization is absent.
+        const actionArgs = actionId === 'machines.managed.inspect' ? { homeId: 'srv_home', managedId: 'lima-leaf' }
+            : actionId === 'machines.managed.acquire' ? { enrollmentIdentity: { kind: 'existingUser', role: 'personal' },
+                selection: { kind: 'one-off', homeId: 'srv_home', controller: { machineId: 'controller', installationId: 'installation' },
+                    launch: { provider: { pluginId: 'compute.example', localId: 'vm' }, schemaVersion: 1, name: 'guest', choices: {} },
+                    retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } }
+            : { homeId: 'srv_home', managedId: 'lima-leaf', when: 'now', expectedRevision: 0,
+                ...(actionId === 'machines.managed.delete' ? { intent: 'delete', reviewedDependencies: true } : { intent: 'stop' }) };
         const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
-            createdBy: { surface: 'cli' }, requestedSurface: 'cli', actionId: 'machines.managed.delete',
-            actionArgs: { homeId: 'srv_home', managedId: 'lima-leaf', when: 'now', expectedRevision: 0,
-                intent: 'delete', reviewedDependencies: true }, summary: 'Delete managed machine.',
+            createdBy: { surface: 'cli' }, requestedSurface: 'cli', actionId,
+            actionArgs, summary: 'Control managed machine.',
             approval: { flow: 'deferred', result: 'required' },
             executionOriginV1: { v: 1, authority: 'present_user', surface: 'cli', caller: { kind: 'host' },
                 serverId: configuration.activeServerId, serverIdentityId: 'srv_home', accountId,
                 machineId: 'controller', target: { kind: 'machine', machineId: 'controller' },
-                actionId: 'machines.managed.delete', requestId: 'original-delete' } });
+                actionId, requestId: 'original-delete' } });
         const app = Fastify();
         const features = registerAccountHomeHttp(app, { accountId, serverId: 'srv_home' });
         const artifacts = registerPlainArtifactRoutes(app, accountId);
@@ -71,7 +78,7 @@ it('delivers public CLI Delete approval to its retained controller instead of th
             expect(result, JSON.stringify({ result, paths, calls })).toMatchObject({ ok: true, result: { ok: true, status: 'executed',
                 execution: { ok: true, effectAttempted: true, result: deleted } } });
             expect(calls).toMatchObject([{ method: `controller:${RPC_METHODS.APPROVAL_REQUEST_REPLAY_APPROVED}` }]);
-            expect(paths).not.toContain('/v1/machines/managed/actions/delete');
+            expect(paths).not.toContain(managedMachineActionEndpointPathV1(actionId));
         } finally {
             restore();
             await sockets.close();

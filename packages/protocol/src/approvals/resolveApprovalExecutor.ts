@@ -68,9 +68,9 @@ export function resolveApprovalExecutor(request: ApprovalRequest | TargetActionA
   // Ordinary Account proposals keep their app executor.
   if ((deploymentOperationForRootActionV1(actionId.data) !== undefined
       || actionId.data === 'machines.managed.bootstrap.retry'
-      || actionId.data === 'machines.managed.delete' && readRecord(input.data).when === 'now'
-      || actionId.data === 'machines.managed.power.set' && readRecord(input.data).when === 'now'
-        && origin.externalActionExecutionAuthorization?.binding.actionId === actionId.data)
+      || actionId.data === 'machines.managed.inspect'
+      || (actionId.data === 'machines.managed.delete' || actionId.data === 'machines.managed.power.set')
+        && readRecord(input.data).when === 'now')
     && origin.target?.kind === 'machine') return { kind: 'daemon', machineId: origin.target.machineId };
   if (placement === 'account' || placement === 'client') return { kind: 'app', placement };
   const machineId = origin.machineId?.trim()
