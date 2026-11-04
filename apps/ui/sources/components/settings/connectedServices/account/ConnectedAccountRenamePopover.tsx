@@ -60,7 +60,6 @@ export const ConnectedAccountRenamePopover = React.memo(function ConnectedAccoun
                             autoFocus
                             returnKeyType="done"
                             onSubmitEditing={save}
-                            maxLength={80}
                         />
                         <Text style={styles.note}>{t('connectedServicesCollection.renameBody', { service: props.serviceLabel })}</Text>
                         <View style={styles.actions}>

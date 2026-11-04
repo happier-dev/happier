@@ -11,6 +11,18 @@ vi.mock('@/components/ui/popover', async (importOriginal) =>
 import { ConnectedAccountRenamePopover } from './ConnectedAccountRenamePopover';
 
 describe('Connected Account rename', () => {
+    it('accepts a full account label beyond eighty characters', async () => {
+        const label = 'Personal development account · '.repeat(4);
+        const onSave = vi.fn();
+        const screen = await renderScreen(<ConnectedAccountRenamePopover open anchorRef={React.createRef()}
+            currentLabel="Personal" serviceLabel="Subscription" testID="rename"
+            onRequestClose={() => undefined} onSave={onSave} />);
+        expect(screen.findHostByTestId('rename:input')?.props.maxLength).toBeUndefined();
+        await act(async () => screen.changeTextByTestId('rename:input', label));
+        await screen.pressByTestIdAsync('rename:save');
+        expect(onSave).toHaveBeenCalledWith(label.trim());
+    });
+
     it('submits a trimmed blank label and retains pending-save admission', async () => {
         const pending = createDeferred<void>();
         const labels: string[] = [];
