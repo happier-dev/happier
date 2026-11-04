@@ -1,6 +1,6 @@
-import { TeamCredentialDeliveryModeV1Schema, TeamCredentialDisclosureCeilingV1Schema, type TeamCredentialBrokerPlacementV1, type TeamCredentialDeliveryModeV1, type TeamCredentialDisclosureCeilingV1 } from '@happier-dev/protocol/teams/credentials/resourceV1';
+import { TeamCredentialAllowedRoutesV1Schema, type TeamCredentialBrokerPlacementV1, type TeamCredentialDeliveryPolicyV1, type TeamCredentialAllowedRoutesV1 } from '@happier-dev/protocol/teams/credentials/resourceV1';
+import { readTeamCredentialAudience, readTeamCredentialDeliveryConfiguration, serializeTeamCredentialAudience } from './resourceDeliveryRead';
 import { readTeamCredentialSourceBinding } from './sourceBindingRead';
-import { z } from 'zod/mini';
 import { TransactionReplayRequiredError, type Tx } from "@/storage/inTx";
 import { acquireTeamMembershipAccountAdmissionInTx } from "../memberships/membershipService";
 import { AccountStatus } from "@/storage/enums.generated";
@@ -17,9 +17,9 @@ import { resolveTeamCredentialResourceSourceInTx } from "./resourceSourceResolve
 export type TeamCredentialAudienceInput = Readonly<{
     resourceId: string;
     expectedRevision: number;
-    allMembersDeliveryMode: TeamCredentialDeliveryModeV1 | null;
-    groupGrants: readonly Readonly<{ teamGroupId: string; deliveryMode: TeamCredentialDeliveryModeV1 }>[];
-    memberGrants: readonly Readonly<{ teamMembershipId: string; deliveryMode: TeamCredentialDeliveryModeV1 }>[];
+    allMembersAllowedRoutes: TeamCredentialAllowedRoutesV1 | null;
+    groupGrants: readonly Readonly<{ teamGroupId: string; allowedRoutes: TeamCredentialAllowedRoutesV1 }>[];
+    memberGrants: readonly Readonly<{ teamMembershipId: string; allowedRoutes: TeamCredentialAllowedRoutesV1 }>[];
 }>;
 
 export type TeamCredentialAudienceResult =
@@ -30,26 +30,26 @@ export async function validateTeamCredentialAudienceDraftInTx(
     tx: Tx,
     input: Readonly<{
         teamId: string;
-        disclosureCeiling: TeamCredentialDisclosureCeilingV1;
+        deliveryPolicy: TeamCredentialDeliveryPolicyV1;
         brokerPlacement: TeamCredentialBrokerPlacementV1 | null;
         audience: Omit<TeamCredentialAudienceInput, 'resourceId' | 'expectedRevision'>;
     }>,
 ): Promise<Readonly<{ ok: true }> | Readonly<{ ok: false; error: 'invalid_audience' | 'disclosure_not_allowed' | 'broker_unavailable' }>> {
     const { audience } = input;
     const modes = [
-        ...(audience.allMembersDeliveryMode === null ? [] : [audience.allMembersDeliveryMode]),
-        ...audience.groupGrants.map(grant => grant.deliveryMode),
-        ...audience.memberGrants.map(grant => grant.deliveryMode),
+        ...(audience.allMembersAllowedRoutes === null ? [] : [audience.allMembersAllowedRoutes]),
+        ...audience.groupGrants.map(grant => grant.allowedRoutes),
+        ...audience.memberGrants.map(grant => grant.allowedRoutes),
     ];
-    if (modes.some(mode => !TeamCredentialDeliveryModeV1Schema.safeParse(mode).success)
+    if (modes.some(mode => !TeamCredentialAllowedRoutesV1Schema.safeParse(mode).success)
         || new Set(audience.groupGrants.map(grant => grant.teamGroupId)).size !== audience.groupGrants.length
         || new Set(audience.memberGrants.map(grant => grant.teamMembershipId)).size !== audience.memberGrants.length) {
         return { ok: false, error: 'invalid_audience' };
     }
-    if (input.disclosureCeiling === 'brokered_only' && modes.some(mode => mode !== 'brokered')) {
+    if (modes.some(routes => routes.some(route => !input.deliveryPolicy.preferredAllowedModes.includes(route)))) {
         return { ok: false, error: 'disclosure_not_allowed' };
     }
-    if (modes.some(mode => mode !== 'direct') && input.brokerPlacement === null) {
+    if (modes.some(routes => routes.includes('brokered')) && input.brokerPlacement === null) {
         return { ok: false, error: 'broker_unavailable' };
     }
     const groups = await tx.teamGroup.findMany({
@@ -136,25 +136,18 @@ export async function revokeTeamCredentialAudienceForMembershipInTx(
     }
 }
 
-function deliveryCapabilities(mode: TeamCredentialDeliveryModeV1 | null): ReadonlySet<"brokered" | "direct"> {
-    if (mode === null) return new Set();
-    if (mode === "both") return new Set(["brokered", "direct"]);
-    return new Set([mode]);
-}
-
 function isDeliveryNarrowing(
-    current: TeamCredentialDeliveryModeV1 | null,
-    next: TeamCredentialDeliveryModeV1 | null,
+    current: TeamCredentialAllowedRoutesV1 | null,
+    next: TeamCredentialAllowedRoutesV1 | null,
 ): boolean {
-    const currentCapabilities = deliveryCapabilities(current);
-    return [...deliveryCapabilities(next)].every(capability => currentCapabilities.has(capability));
+    return (next ?? []).every(route => current?.includes(route));
 }
 
 function grantsBySubject<T extends string>(
-    grants: readonly Readonly<{ deliveryMode: TeamCredentialDeliveryModeV1 } & Record<T, string>>[],
+    grants: readonly Readonly<{ allowedRoutes: TeamCredentialAllowedRoutesV1 } & Record<T, string>>[],
     subject: T,
-): ReadonlyMap<string, TeamCredentialDeliveryModeV1> {
-    return new Map(grants.map(grant => [grant[subject], grant.deliveryMode]));
+): ReadonlyMap<string, TeamCredentialAllowedRoutesV1> {
+    return new Map(grants.map(grant => [grant[subject], grant.allowedRoutes]));
 }
 
 /** Replace the complete audience at the resource's one revision boundary. */
@@ -195,14 +188,14 @@ export async function setTeamCredentialAudienceInTx(
     if (!isActiveCustodian && !qualification.ok) return qualification;
     const canManage = canManageStructurally && qualification.ok;
     if (resource.revision !== input.expectedRevision) return { ok: false, error: "resource_changed" };
-    const ceiling = TeamCredentialDisclosureCeilingV1Schema.safeParse(resource.disclosureCeiling);
+    const ceiling = readTeamCredentialDeliveryConfiguration(resource.disclosureCeiling);
     if (!ceiling.success) return { ok: false, error: "resource_corrupt" };
     const modes = [
-        ...(input.allMembersDeliveryMode === null ? [] : [input.allMembersDeliveryMode]),
-        ...input.groupGrants.map(grant => grant.deliveryMode),
-        ...input.memberGrants.map(grant => grant.deliveryMode),
+        ...(input.allMembersAllowedRoutes === null ? [] : [input.allMembersAllowedRoutes]),
+        ...input.groupGrants.map(grant => grant.allowedRoutes),
+        ...input.memberGrants.map(grant => grant.allowedRoutes),
     ];
-    if (modes.some(mode => mode === "direct" || mode === "both")) {
+    if (modes.some(routes => routes.includes('direct'))) {
         const source = readTeamCredentialSourceBinding(resource.sourceBindingJson);
         if (!source.success) return { ok: false, error: "resource_corrupt" };
         const currentSource = await resolveTeamCredentialResourceSourceInTx(tx, {
@@ -227,28 +220,20 @@ export async function setTeamCredentialAudienceInTx(
                 select: { teamMembershipId: true, deliveryMode: true },
             }),
         ]);
-        const currentGroups = grantsBySubject(currentGroupGrants.flatMap((grant) => {
-            const deliveryMode = TeamCredentialDeliveryModeV1Schema.safeParse(grant.deliveryMode);
-            return deliveryMode.success ? [{ ...grant, deliveryMode: deliveryMode.data }] : [];
-        }), "teamGroupId");
-        const currentMembers = grantsBySubject(currentMemberGrants.flatMap((grant) => {
-            const deliveryMode = TeamCredentialDeliveryModeV1Schema.safeParse(grant.deliveryMode);
-            return deliveryMode.success ? [{ ...grant, deliveryMode: deliveryMode.data }] : [];
-        }), "teamMembershipId");
-        if (currentGroups.size !== currentGroupGrants.length || currentMembers.size !== currentMemberGrants.length) {
-            return { ok: false, error: "resource_corrupt" };
-        }
-        const currentAllMembers = z.nullable(TeamCredentialDeliveryModeV1Schema).safeParse(resource.allMembersDeliveryMode);
-        if (!currentAllMembers.success) return { ok: false, error: "resource_corrupt" };
+        const current = readTeamCredentialAudience({ allMembersDeliveryMode: resource.allMembersDeliveryMode,
+            groupGrants: currentGroupGrants, memberGrants: currentMemberGrants });
+        if (!current.success) return { ok: false, error: 'resource_corrupt' };
+        const currentGroups = grantsBySubject(current.data.groupGrants, 'teamGroupId');
+        const currentMembers = grantsBySubject(current.data.memberGrants, 'teamMembershipId');
         const narrowsAudience = isDeliveryNarrowing(
-            currentAllMembers.data,
-            input.allMembersDeliveryMode,
+            current.data.allMembersAllowedRoutes,
+            input.allMembersAllowedRoutes,
         ) && input.groupGrants.every(grant => isDeliveryNarrowing(
             currentGroups.get(grant.teamGroupId) ?? null,
-            grant.deliveryMode,
+            grant.allowedRoutes,
         )) && input.memberGrants.every(grant => isDeliveryNarrowing(
             currentMembers.get(grant.teamMembershipId) ?? null,
-            grant.deliveryMode,
+            grant.allowedRoutes,
         ));
         if (!narrowsAudience) return { ok: false, error: "resource_forbidden" };
     }
@@ -256,32 +241,35 @@ export async function setTeamCredentialAudienceInTx(
     if (!storedPlacement.ok) return { ok: false, error: "resource_corrupt" };
     const validation = await validateTeamCredentialAudienceDraftInTx(tx, {
         teamId: resource.teamId,
-        disclosureCeiling: ceiling.data,
+        deliveryPolicy: ceiling.data.policy,
         brokerPlacement: storedPlacement.placement,
         audience: input,
     });
     if (!validation.ok) return validation;
     // An audience-only withdrawal does not select a new location. Retain its
     // repair path; an audience that still grants brokerage validates the saved location.
-    if (modes.some(mode => mode !== "direct")) {
+    if (modes.some(routes => routes.includes('brokered'))) {
         const placement = await validateTeamCredentialBrokerPlacementForSaveInTx(tx, {
             custodianAccountId: resource.custodianAccountId,
             placement: storedPlacement.placement,
         });
         if (!placement.ok) return placement;
     }
+    const storedAudience = serializeTeamCredentialAudience({ allMembersAllowedRoutes: input.allMembersAllowedRoutes,
+        groupGrants: [...input.groupGrants], memberGrants: [...input.memberGrants] });
     const updated = await tx.teamCredentialResource.updateMany({
         where: { id: resource.id, revision: input.expectedRevision },
-        data: { allMembersDeliveryMode: input.allMembersDeliveryMode, revision: { increment: 1 } },
+        data: { allMembersDeliveryMode: storedAudience.allMembersDeliveryMode,
+            disclosureCeiling: JSON.stringify(ceiling.data), revision: { increment: 1 } },
     });
     if (updated.count !== 1) return { ok: false, error: "resource_changed" };
     await tx.teamCredentialGroupGrant.deleteMany({ where: { resourceId: resource.id } });
     await tx.teamCredentialMemberGrant.deleteMany({ where: { resourceId: resource.id } });
     if (input.groupGrants.length > 0) {
-        await tx.teamCredentialGroupGrant.createMany({ data: input.groupGrants.map(grant => ({ resourceId: resource.id, ...grant })) });
+        await tx.teamCredentialGroupGrant.createMany({ data: storedAudience.groupGrants.map(grant => ({ resourceId: resource.id, ...grant })) });
     }
     if (input.memberGrants.length > 0) {
-        await tx.teamCredentialMemberGrant.createMany({ data: input.memberGrants.map(grant => ({ resourceId: resource.id, ...grant })) });
+        await tx.teamCredentialMemberGrant.createMany({ data: storedAudience.memberGrants.map(grant => ({ resourceId: resource.id, ...grant })) });
     }
     // Recipient material is a projection of who may receive directly, per
     // recipient — not of the audience as a whole. Replacing the audience ends

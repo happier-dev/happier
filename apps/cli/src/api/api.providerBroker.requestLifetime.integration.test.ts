@@ -37,14 +37,15 @@ const admission: ProviderBrokerRequestAdmissionV1 = {
 
 const resource: TeamCredentialResourceSummaryV1 = {
   id: 'resource-1', teamId: 'team-1', custodianAccountId: 'custodian', sourceOwnerDisplayName: null,
-  displayName: 'Shared source', enabled: true, revision: 0, disclosureCeiling: 'brokered_only',
+  displayName: 'Shared source', enabled: true, revision: 0, deliveryPolicy: { preferredAllowedModes: ['brokered'] },
   sessionUsePolicy: 'personal_allowed', source: null,
   sourcePresentation: { kind: 'connected_service', service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' } },
   directExportSupport: 'unsupported', activeUsageLimitCount: 0, requestPolicy: null,
-  brokerPlacement: { kind: 'machine', machineId: 'broker' }, allMembersDeliveryMode: null,
+  brokerPlacement: { kind: 'machine', machineId: 'broker' }, allMembersAllowedRoutes: null,
   groupGrants: [], memberGrants: [], readiness: { kind: 'available' }, recoveryAction: null,
   brokerPresentation: { selectedTarget: null, eligibleTargets: [], selectedPool: null, eligiblePools: [] },
   capabilities: { manageAudience: false, managePolicy: false, manageLimits: false, updateBrokerPlacement: false,
+    updateDeliveryPolicy: false,
     narrowDisclosure: false, widenDisclosure: false, refreshDirectMaterial: false,
     disable: false, enable: false, delete: false },
   createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString(),

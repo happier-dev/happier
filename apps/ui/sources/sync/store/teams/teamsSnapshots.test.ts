@@ -222,7 +222,7 @@ describe('teamsSnapshots', () => {
         const resource = TeamCredentialResourceSummaryV1Schema.parse({
             id: 'resource-1', teamId: 'team_1', custodianAccountId: 'owner',
             displayName: 'Managed credential', enabled: true, revision: 1,
-            disclosureCeiling: 'brokered_only', sessionUsePolicy: 'personal_allowed',
+            deliveryPolicy: { preferredAllowedModes: ['brokered'] }, sessionUsePolicy: 'personal_allowed',
             source: {
                 v: 1, kind: 'provider_connection', connectionId: 'connection-1',
                 connectionSecurityFingerprint: 'connection-security:v1:test', credentialSlotId: 'api-key',
@@ -234,7 +234,7 @@ describe('teamsSnapshots', () => {
                     definitionRevision: 1,
                 },
             },
-            requestPolicy: null, brokerPlacement: null, allMembersDeliveryMode: null,
+            requestPolicy: null, brokerPlacement: null, allMembersAllowedRoutes: null,
             groupGrants: [], memberGrants: [], readiness: { kind: 'available' }, recoveryAction: null,
             brokerPresentation: {
                 selectedTarget: null,

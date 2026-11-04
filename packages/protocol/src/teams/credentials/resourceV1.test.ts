@@ -108,19 +108,38 @@ const validSources = [
 ] as const;
 
 describe('TeamCredentialResourceCreateInputV1Schema', () => {
+  it('defaults a new normalized resource to broker-only while keeping native consent explicit and closed', () => {
+    const draft = { teamId: 'team-1', resourceId: 'native-resource', displayName: 'Shared', source: validSources[2],
+      sessionUsePolicy: 'personal_allowed', brokerPlacement: null, requestPolicy: null,
+      allMembersAllowedRoutes: null, groupGrants: [], memberGrants: [], usageLimits: [] };
+    expect(TeamCredentialResourceCreateInputV1Schema.parse(draft)).toMatchObject({
+      deliveryPolicy: { preferredAllowedModes: ['brokered'] },
+    });
+    expect(TeamCredentialResourceCreateInputV1Schema.safeParse({ ...draft,
+      deliveryPolicy: { preferredAllowedModes: ['vendor-native', 'direct'] },
+      allMembersAllowedRoutes: ['vendor-native'],
+    }).success).toBe(true);
+    expect(TeamCredentialResourceCreateInputV1Schema.safeParse({ ...draft,
+      deliveryPolicy: { preferredAllowedModes: ['vendor-native', 'vendor-native'] },
+    }).success).toBe(false);
+    expect(TeamCredentialResourceCreateInputV1Schema.safeParse({ ...draft,
+      deliveryPolicy: { preferredAllowedModes: ['brokered'], futureAuthority: true },
+    }).success).toBe(false);
+  });
+
   it('requires the complete one-save draft and accepts audience, placement, policy, and limits together', () => {
-    const narrow = { teamId: 'team-1', resourceId: 'resource-1', displayName: 'Shared', source: validSources[0], disclosureCeiling: 'brokered_only' };
+    const narrow = { teamId: 'team-1', resourceId: 'resource-1', displayName: 'Shared', source: validSources[0], deliveryPolicy: { preferredAllowedModes: ['brokered'] } };
     expect(TeamCredentialResourceCreateInputV1Schema.safeParse(narrow).success).toBe(false);
     expect(TeamCredentialResourceCreateInputV1Schema.parse({
       ...narrow,
       sessionUsePolicy: 'team_context_required',
       brokerPlacement: { kind: 'machine', machineId: 'machine-1' },
       requestPolicy: { allowedProtocolKinds: ['openai_responses'], allowedModelIds: ['gpt-5'], reasoningEffort: null },
-      allMembersDeliveryMode: 'brokered',
-      groupGrants: [{ teamGroupId: 'group-1', deliveryMode: 'brokered' }],
-      memberGrants: [{ teamMembershipId: 'membership-1', deliveryMode: 'brokered' }],
+      allMembersAllowedRoutes: ['brokered'],
+      groupGrants: [{ teamGroupId: 'group-1', allowedRoutes: ['brokered'] }],
+      memberGrants: [{ teamMembershipId: 'membership-1', allowedRoutes: ['brokered'] }],
       usageLimits: [{ subjectKind: 'resource', subjectId: '', period: 'month', metric: 'inference_requests', maximum: '100', enabled: true }],
-    })).toMatchObject({ sessionUsePolicy: 'team_context_required', allMembersDeliveryMode: 'brokered' });
+    })).toMatchObject({ sessionUsePolicy: 'team_context_required', allMembersAllowedRoutes: ['brokered'] });
   });
 });
 
@@ -323,9 +342,9 @@ describe('TeamCredentialResourceUpdateInputV1Schema', () => {
     displayName: 'Shared provider',
     sessionUsePolicy: 'team_context_required' as const,
     requestPolicy: null,
-    allMembersDeliveryMode: 'brokered' as const,
-    groupGrants: [{ teamGroupId: 'group-1', deliveryMode: 'brokered' as const }],
-    memberGrants: [{ teamMembershipId: 'membership-1', deliveryMode: 'brokered' as const }],
+    allMembersAllowedRoutes: ['brokered'] as const,
+    groupGrants: [{ teamGroupId: 'group-1', allowedRoutes: ['brokered'] as const }],
+    memberGrants: [{ teamMembershipId: 'membership-1', allowedRoutes: ['brokered'] as const }],
     usageLimitDelta: {
       upserts: [{
         id: 'limit-1', subjectKind: 'resource' as const, subjectId: '', period: 'month' as const,
@@ -341,7 +360,7 @@ describe('TeamCredentialResourceUpdateInputV1Schema', () => {
         connectionSecurityFingerprint: 'connection-security:v1:test',
         credentialSlotId: 'apiKey',
       },
-      disclosureCeiling: 'brokered_only' as const,
+      deliveryPolicy: { preferredAllowedModes: ['brokered'] as const },
       brokerPlacement: { kind: 'machine' as const, machineId: 'machine-1' },
     },
   };
@@ -359,7 +378,12 @@ describe('TeamCredentialResourceUpdateInputV1Schema', () => {
     }).displayName).toBe('Legacy patch');
   });
 
-  it('rejects partial replacements, unknown fields, duplicate deletes, and mixed mutation modes', () => {
+  it('accepts a custodian-only replacement without manufacturing manager fields', () => {
+    const input = { resourceId: 'resource-1', expectedRevision: 2, replacement: { custodian: replacement.custodian } };
+    expect(TeamCredentialResourceUpdateInputV1Schema.parse(input)).toEqual(input);
+  });
+
+  it('rejects incomplete custodian blocks, unknown fields, duplicate deletes, and mixed mutation modes', () => {
     expect(TeamCredentialResourceUpdateInputV1Schema.safeParse({
       resourceId: 'resource-1', expectedRevision: 2,
       replacement: { ...replacement, custodian: { ...replacement.custodian, source: undefined } },
@@ -407,6 +431,7 @@ describe('TeamCredentialResourcePageV1Schema', () => {
     const input = TeamCredentialResourceListInputV1Schema.parse({
       teamId: 'team-1', search: 'Build', filter: 'needs_attention', limit: 2,
     });
+    if (!('teamId' in input)) throw new Error('Expected a Team-scoped fixture');
     const queryKey = teamCredentialResourcesQueryKeyV1(input);
     const cursor = encodeTeamCredentialResourcesCursorV1({
       queryKey, displayName: 'Equal name', id: 'resource-2',

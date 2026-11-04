@@ -65,7 +65,7 @@ describe('teamCredentialOperations outcome recovery', () => {
             displayName: 'Shared provider',
             sessionUsePolicy: 'team_context_required' as const,
             requestPolicy: null,
-            allMembersDeliveryMode: 'brokered' as const,
+            allMembersAllowedRoutes: ['brokered' as const],
             groupGrants: [],
             memberGrants: [],
             usageLimitDelta: { upserts: [], deleteIds: ['limit-a'] },

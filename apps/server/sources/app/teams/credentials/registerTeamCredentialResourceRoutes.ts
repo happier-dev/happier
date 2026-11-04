@@ -1,3 +1,4 @@
+import { readTeamCredentialCustodianResourcePageInTx } from './resourceCustodianRead';
 import { TeamCredentialNativeBindingReadRequestV1Schema, TeamCredentialNativeBindingReadResponseV1Schema } from '@happier-dev/protocol/teams/credentials/directMaterialV1';
 import { readManagedNativeCredentialBindingForGuestInTx } from '@/app/machines/managed/credentialDeliveryAdmission';
 import { TeamCredentialErrorCodeV1Schema, teamCredentialErrorHttpStatusV1, TeamCredentialResourceAudienceInputV1Schema, TeamCredentialResourceCreateInputV1Schema, TeamCredentialResourceDeleteInputV1Schema, TeamCredentialResourceErrorV1Schema, TeamCredentialResourcePageV1Schema, TeamCredentialResourceEntitledPageV1Schema, TeamCredentialResourceGetInputV1Schema, TeamCredentialResourceReadInputV1Schema, TeamCredentialResourceListInputV1Schema, TeamCredentialResourceSummaryV1Schema, TeamCredentialResourceMutationResultV1Schema, TeamCredentialResourceUpdateInputV1Schema, TeamCredentialResourceActivityReadInputV1Schema, TeamCredentialResourceActivityPageV1Schema, TeamCredentialRequestPolicySupportInputV1Schema, TeamCredentialRequestPolicySupportOutputV1Schema, type TeamCredentialErrorCodeV1 } from '@happier-dev/protocol/teams/credentials/resourceV1';
@@ -436,7 +437,8 @@ async function projectTeamCredentialBrokerAdministrationReadiness(
             }
         }
         const sourceChanged = hasChangedSource || providerSourceState === 'changed';
-        const brokerReady = resource.disclosureCeiling === 'direct_allowed'
+        const nonBrokerAllowed = resource.deliveryPolicy.preferredAllowedModes.some(route => route !== 'brokered');
+        const brokerReady = nonBrokerAllowed
             ? hasEligibleSource
             : resource.brokerPlacement !== null && hasEligibleSource;
         const brokerObservationUnknown = presence.state !== 'known'
@@ -447,7 +449,7 @@ async function projectTeamCredentialBrokerAdministrationReadiness(
             || resource.readiness.kind === 'resource_corrupt'
             || resource.readiness.kind === 'source_unavailable'
             ? resource.readiness
-            : source.kind !== 'provider_connection' && resource.disclosureCeiling === 'direct_allowed'
+            : source.kind !== 'provider_connection' && nonBrokerAllowed
                 ? resource.readiness
             : sourceChanged
             ? { kind: 'source_unavailable' as const }
@@ -815,12 +817,15 @@ export function registerTeamCredentialResourceRoutes(
         const body = TeamCredentialResourceListInputV1Schema.safeParse(request.body);
         if (!body.success) return fail(reply, "invalid_resource_input");
         const authentication = readTeamOperationAuthenticationFromRequest(request);
-        const result = await inTx(tx => readTeamCredentialResourcePageInTx(tx, {
-                teamId: body.data.teamId,
-                cursor: body.data.cursor,
-                limit: body.data.limit,
-                search: body.data.search,
-                filter: body.data.filter,
+        const selection = body.data;
+        const result = await inTx(tx => 'scope' in selection ? readTeamCredentialCustodianResourcePageInTx(tx, {
+                actorAccountId: request.userId, authentication, cursor: selection.cursor, limit: selection.limit,
+            }) : readTeamCredentialResourcePageInTx(tx, {
+                teamId: selection.teamId,
+                cursor: selection.cursor,
+                limit: selection.limit,
+                search: selection.search,
+                filter: selection.filter,
                 actorAccountId: request.userId,
                 authentication,
             }));
@@ -917,7 +922,7 @@ export function registerTeamCredentialResourceRoutes(
                 displayName: resource.displayName,
                 enabled: resource.enabled,
                 revision: resource.revision,
-                disclosureCeiling: resource.disclosureCeiling,
+                deliveryPolicy: resource.deliveryPolicy,
                 brokerPlacement: resource.brokerPlacement,
                 brokerPresentation: resource.brokerPresentation,
                 readiness: resource.readiness,

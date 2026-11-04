@@ -53,7 +53,7 @@ describe('retained Team list locale', () => {
             const address = { serverId, teamId: 'team-1' };
             home.answer(serverId, '/v1/teams/get', { body: teamSummaryFixture({ capabilities: teamCapabilitiesFixture({ viewRoster: true, manageInvitations: true }) }) });
             const member = teamMembershipFixture({ role: 'member' });
-            const resource = teamCredentialResourceFixture({ allMembersDeliveryMode: 'brokered' });
+            const resource = teamCredentialResourceFixture({ allMembersAllowedRoutes: ['brokered'] });
             const invitation = teamInvitationRowFixture({ expiresAt: Date.now() + 86_400_000 });
             const path = surface === 'credentials' ? '/v1/teams/credential-resources/list'
                 : surface === 'invitations' ? '/v1/teams/invitations/list' : '/v1/teams/members/list';

@@ -2443,7 +2443,7 @@ describe('Team credential Provider broker admission', () => {
             input: {
                 resourceId: resource.id,
                 expectedRevision: edited.revision,
-                allMembersDeliveryMode: null,
+                allMembersAllowedRoutes: null,
                 groupGrants: [],
                 memberGrants: [],
             },
@@ -3447,7 +3447,7 @@ describe('Team credential Provider broker admission', () => {
             input: {
                 resourceId: runResource.id,
                 expectedRevision: runResource.revision,
-                allMembersDeliveryMode: null,
+                allMembersAllowedRoutes: null,
                 groupGrants: [],
                 memberGrants: [],
             },

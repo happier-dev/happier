@@ -1,7 +1,8 @@
 import { isDeepStrictEqual } from "node:util";
 import { z } from 'zod/mini';
-import { TeamCredentialDisclosureCeilingV1Schema, TeamCredentialSessionUsePolicyV1Schema, TeamCredentialRequestPolicyV1Schema, TeamCredentialBrokerPlacementV1Schema, TeamCredentialResourceReplacementV1Schema, TeamCredentialResourceUpdateInputV1Schema, TeamCredentialDeliveryModeV1Schema, narrowTeamCredentialDeliveryModeToBrokeredOnlyV1, type TeamCredentialDeliveryModeV1, type TeamCredentialDisclosureCeilingV1, type TeamCredentialSessionUsePolicyV1, type TeamCredentialRequestPolicyV1, type TeamCredentialBrokerPlacementV1, type TeamCredentialResourceReplacementV1 } from '@happier-dev/protocol/teams/credentials/resourceV1';
+import { TeamCredentialDeliveryPolicyV1Schema, TeamCredentialSessionUsePolicyV1Schema, TeamCredentialRequestPolicyV1Schema, TeamCredentialBrokerPlacementV1Schema, TeamCredentialResourceReplacementV1Schema, TeamCredentialResourceUpdateInputV1Schema, type TeamCredentialResourceUpdateInputV1 } from '@happier-dev/protocol/teams/credentials/resourceV1';
 import { readTeamCredentialSourceBinding } from './sourceBindingRead';
+import { narrowTeamCredentialAudience, readTeamCredentialAudience, readTeamCredentialDeliveryConfiguration, serializeTeamCredentialAudience } from './resourceDeliveryRead';
 import { TransactionReplayRequiredError, type Tx } from "@/storage/inTx";
 import { acquireTeamMembershipAccountAdmissionInTx } from "../memberships/membershipService";
 import { AccountStatus } from "@/storage/enums.generated";
@@ -25,14 +26,7 @@ import {
     type TeamCredentialRequestPolicySupportEvidence,
 } from "./resourceRequestPolicySupport";
 
-export type UpdateTeamCredentialResourceInput = Readonly<{
-    resourceId: string; expectedRevision: number; displayName?: string; enabled?: boolean;
-    disclosureCeiling?: TeamCredentialDisclosureCeilingV1;
-    sessionUsePolicy?: TeamCredentialSessionUsePolicyV1;
-    brokerPlacement?: TeamCredentialBrokerPlacementV1 | null;
-    requestPolicy?: TeamCredentialRequestPolicyV1 | null;
-    replacement?: TeamCredentialResourceReplacementV1;
-}>;
+export type UpdateTeamCredentialResourceInput = TeamCredentialResourceUpdateInputV1;
 
 export type UpdateTeamCredentialResourceResult =
     | Readonly<{ ok: true; resourceId: string; revision: number }>
@@ -48,26 +42,6 @@ function sortedAudience<T extends { deliveryMode: string }>(rows: readonly T[], 
         .sort(([left], [right]) => left.localeCompare(right));
 }
 
-type ResourceAudience = Pick<TeamCredentialResourceReplacementV1, "allMembersDeliveryMode" | "groupGrants" | "memberGrants">;
-
-/**
- * Applies the protocol's one narrowing rule to a whole audience: the direct
- * half of every grant ends and the broker half stays, so a replacement that
- * narrows the ceiling withdraws exactly what the source-owner PATCH below
- * withdraws. Deliberately authored broker grants pass through unchanged.
- */
-function narrowAudienceToBrokeredOnly(audience: ResourceAudience): ResourceAudience {
-    const narrowGrant = <T extends { deliveryMode: TeamCredentialDeliveryModeV1 }>(grant: T): T[] => {
-        const deliveryMode = narrowTeamCredentialDeliveryModeToBrokeredOnlyV1(grant.deliveryMode);
-        return deliveryMode === null ? [] : [{ ...grant, deliveryMode }];
-    };
-    return {
-        allMembersDeliveryMode: narrowTeamCredentialDeliveryModeToBrokeredOnlyV1(audience.allMembersDeliveryMode),
-        groupGrants: audience.groupGrants.flatMap(narrowGrant),
-        memberGrants: audience.memberGrants.flatMap(narrowGrant),
-    };
-}
-
 async function applyResourceReplacementInTx(
     tx: Tx,
     input: Readonly<{
@@ -75,23 +49,20 @@ async function applyResourceReplacementInTx(
         authentication: TeamOperationAuthenticationContext;
         resource: NonNullable<Awaited<ReturnType<Tx["teamCredentialResource"]["findUnique"]>>>;
         expectedRevision: number;
-        replacement: TeamCredentialResourceReplacementV1;
+        replacement: NonNullable<TeamCredentialResourceUpdateInputV1['replacement']>;
         requestPolicySupport?: TeamCredentialRequestPolicySupportEvidence;
     }>,
 ): Promise<UpdateTeamCredentialResourceResult> {
-    const parsedReplacement = TeamCredentialResourceReplacementV1Schema.safeParse(input.replacement);
-    if (!parsedReplacement.success) return { ok: false, error: "invalid_resource_input" };
-    const replacement = parsedReplacement.data;
     const resource = input.resource;
     if (resource.revision !== input.expectedRevision) return { ok: false, error: "resource_changed" };
 
     const storedSource = readTeamCredentialSourceBinding(resource.sourceBindingJson);
     const storedPolicy = parseJson(resource.requestPolicyJson);
-    const storedCeiling = TeamCredentialDisclosureCeilingV1Schema.safeParse(resource.disclosureCeiling);
+    const storedDelivery = readTeamCredentialDeliveryConfiguration(resource.disclosureCeiling);
     const storedSessionPolicy = TeamCredentialSessionUsePolicyV1Schema.safeParse(resource.sessionUsePolicy);
     const storedRequestPolicy = z.nullable(TeamCredentialRequestPolicyV1Schema).safeParse(storedPolicy);
     const storedPlacement = readTeamCredentialBrokerPlacement(resource);
-    if (!storedSource.success || !storedCeiling.success || !storedSessionPolicy.success
+    if (!storedSource.success || !storedDelivery.success || !storedSessionPolicy.success
         || !storedRequestPolicy.success || !storedPlacement.ok) {
         return { ok: false, error: "resource_corrupt" };
     }
@@ -127,14 +98,35 @@ async function applyResourceReplacementInTx(
         }),
         tx.teamCredentialUsageLimit.findMany({ where: { resourceId: resource.id } }),
     ]);
-    const audienceChanged = resource.allMembersDeliveryMode !== replacement.allMembersDeliveryMode
+    const currentAudience = readTeamCredentialAudience({ allMembersDeliveryMode: resource.allMembersDeliveryMode,
+        groupGrants: currentGroups, memberGrants: currentMembers });
+    if (!currentAudience.success) return { ok: false, error: "resource_corrupt" };
+    const storedCurrentAudience = serializeTeamCredentialAudience(currentAudience.data);
+    // The public summary masks manager-owned fields for custodians. Complete
+    // omitted fields from locked storage, never from those presentation values.
+    const parsedReplacement = TeamCredentialResourceReplacementV1Schema.safeParse({
+        enabled: input.replacement.enabled ?? resource.enabled,
+        displayName: input.replacement.displayName ?? resource.displayName,
+        sessionUsePolicy: input.replacement.sessionUsePolicy ?? storedSessionPolicy.data,
+        requestPolicy: input.replacement.requestPolicy === undefined ? storedRequestPolicy.data : input.replacement.requestPolicy,
+        allMembersAllowedRoutes: input.replacement.allMembersAllowedRoutes === undefined
+            ? currentAudience.data.allMembersAllowedRoutes : input.replacement.allMembersAllowedRoutes,
+        groupGrants: input.replacement.groupGrants ?? currentAudience.data.groupGrants,
+        memberGrants: input.replacement.memberGrants ?? currentAudience.data.memberGrants,
+        usageLimitDelta: input.replacement.usageLimitDelta ?? { upserts: [], deleteIds: [] },
+        custodian: input.replacement.custodian,
+    });
+    if (!parsedReplacement.success) return { ok: false, error: "resource_corrupt" };
+    const replacement = parsedReplacement.data;
+    const requestedAudience = serializeTeamCredentialAudience(replacement);
+    const audienceChanged = storedCurrentAudience.allMembersDeliveryMode !== requestedAudience.allMembersDeliveryMode
         || !isDeepStrictEqual(
-            sortedAudience(currentGroups, "teamGroupId"),
-            sortedAudience(replacement.groupGrants, "teamGroupId"),
+            sortedAudience(storedCurrentAudience.groupGrants, "teamGroupId"),
+            sortedAudience(requestedAudience.groupGrants, "teamGroupId"),
         )
         || !isDeepStrictEqual(
-            sortedAudience(currentMembers, "teamMembershipId"),
-            sortedAudience(replacement.memberGrants, "teamMembershipId"),
+            sortedAudience(storedCurrentAudience.memberGrants, "teamMembershipId"),
+            sortedAudience(requestedAudience.memberGrants, "teamMembershipId"),
         );
     const managerOwnedChanged = resource.enabled !== replacement.enabled
         || resource.displayName !== replacement.displayName.trim()
@@ -170,32 +162,30 @@ async function applyResourceReplacementInTx(
         if (!custodianQualification.ok) return custodianQualification;
     }
     const nextSource = custodianBlock?.source ?? storedSource.data;
-    const nextCeiling = custodianBlock?.disclosureCeiling ?? storedCeiling.data;
+    const nextDeliveryPolicy = custodianBlock?.deliveryPolicy ?? storedDelivery.data.policy;
+    const deliveryPolicyChanged = !isDeepStrictEqual(storedDelivery.data.policy, nextDeliveryPolicy);
     const nextPlacement = custodianBlock === undefined ? storedPlacement.placement : custodianBlock.brokerPlacement;
-    // The audience a custodian cannot edit arrives unchanged, so narrowing is
-    // applied here rather than trusted to the caller: the persisted audience is
-    // the one this narrowing leaves, never a direct grant under brokered_only.
-    const nextAudience = storedCeiling.data === "direct_allowed" && nextCeiling === "brokered_only"
-        ? narrowAudienceToBrokeredOnly(replacement)
+    const removesAllowedRoute = storedDelivery.data.policy.preferredAllowedModes.some(route => !nextDeliveryPolicy.preferredAllowedModes.includes(route));
+    const nextAudience = removesAllowedRoute
+        ? narrowTeamCredentialAudience(replacement, nextDeliveryPolicy.preferredAllowedModes)
         : replacement;
-    const nextAudienceChanged = resource.allMembersDeliveryMode !== nextAudience.allMembersDeliveryMode
+    const storedNextAudience = serializeTeamCredentialAudience(nextAudience);
+    const nextAudienceChanged = storedCurrentAudience.allMembersDeliveryMode !== storedNextAudience.allMembersDeliveryMode
         || !isDeepStrictEqual(
-            sortedAudience(currentGroups, "teamGroupId"),
-            sortedAudience(nextAudience.groupGrants, "teamGroupId"),
+            sortedAudience(storedCurrentAudience.groupGrants, "teamGroupId"),
+            sortedAudience(storedNextAudience.groupGrants, "teamGroupId"),
         )
         || !isDeepStrictEqual(
-            sortedAudience(currentMembers, "teamMembershipId"),
-            sortedAudience(nextAudience.memberGrants, "teamMembershipId"),
+            sortedAudience(storedCurrentAudience.memberGrants, "teamMembershipId"),
+            sortedAudience(storedNextAudience.memberGrants, "teamMembershipId"),
         );
     const source = await resolveTeamCredentialResourceSourceInTx(tx, {
         custodianAccountId: resource.custodianAccountId,
         source: nextSource,
     });
     if (source.status !== "current") return { ok: false, error: "source_replaced_or_missing" };
-    // Widening brokered_only -> direct_allowed is the active custodian's own
-    // consent (it only arrives inside the custodian block), so the one rule
-    // left is the source's ability to export direct material at all.
-    if (resource.disclosureCeiling === "brokered_only" && nextCeiling === "direct_allowed"
+    if (!storedDelivery.data.policy.preferredAllowedModes.includes('direct')
+        && nextDeliveryPolicy.preferredAllowedModes.includes('direct')
         && source.directExportSupport === "unsupported") {
         return { ok: false, error: "disclosure_not_allowed" };
     }
@@ -215,18 +205,18 @@ async function applyResourceReplacementInTx(
     if (replacement.requestPolicy !== null && nextRequestPolicy === null) {
         return { ok: false, error: "update_required" };
     }
-    const requestedModes = [
-        nextAudience.allMembersDeliveryMode,
-        ...nextAudience.groupGrants.map((grant) => grant.deliveryMode),
-        ...nextAudience.memberGrants.map((grant) => grant.deliveryMode),
+    const requestedRoutes = [
+        ...(nextAudience.allMembersAllowedRoutes === null ? [] : [nextAudience.allMembersAllowedRoutes]),
+        ...nextAudience.groupGrants.map((grant) => grant.allowedRoutes),
+        ...nextAudience.memberGrants.map((grant) => grant.allowedRoutes),
     ];
     if (source.directExportSupport === "unsupported"
-        && requestedModes.some((mode) => mode === "direct" || mode === "both")) {
+        && requestedRoutes.some((routes) => routes.includes('direct'))) {
         return { ok: false, error: "disclosure_not_allowed" };
     }
     const audience = await validateTeamCredentialAudienceDraftInTx(tx, {
         teamId: resource.teamId,
-        disclosureCeiling: nextCeiling,
+        deliveryPolicy: nextDeliveryPolicy,
         brokerPlacement: nextPlacement,
         audience: nextAudience,
     });
@@ -234,7 +224,7 @@ async function applyResourceReplacementInTx(
     // Retained direct-only placement does not block withdrawal or repair, but
     // selecting another location is always validated, even without brokered grants.
     if (!isDeepStrictEqual(nextPlacement, storedPlacement.placement)
-        || requestedModes.some(mode => mode !== null && mode !== "direct")) {
+        || requestedRoutes.some(routes => routes.includes('brokered'))) {
         const placement = await validateTeamCredentialBrokerPlacementForSaveInTx(tx, {
             custodianAccountId: resource.custodianAccountId,
             placement: nextPlacement,
@@ -260,9 +250,7 @@ async function applyResourceReplacementInTx(
         enabled: boolean;
     }>> = [];
     const usageCapabilities = resolveCurrentTeamCredentialUsageCapabilitiesForResource({
-        allMembersDeliveryMode: nextAudience.allMembersDeliveryMode,
-        groupGrants: nextAudience.groupGrants,
-        memberGrants: nextAudience.memberGrants,
+        ...storedNextAudience,
         sessionUsePolicy: replacement.sessionUsePolicy,
     });
     for (const limit of replacement.usageLimitDelta.upserts) {
@@ -315,7 +303,7 @@ async function applyResourceReplacementInTx(
 
     const sourceChanged = !isDeepStrictEqual(storedSource.data, nextSource);
     const directAuthorityChanged = sourceChanged
-        || resource.disclosureCeiling !== nextCeiling
+        || storedDelivery.data.policy.preferredAllowedModes.includes('direct') !== nextDeliveryPolicy.preferredAllowedModes.includes('direct')
         || (resource.enabled && !replacement.enabled);
     // `revision` is the authority revision: selection mutations and fresh
     // broker opens use it as their CAS precondition, and every request presents
@@ -324,7 +312,7 @@ async function applyResourceReplacementInTx(
     // only when an authority fact changes; a display-name edit keeps it (the CAS
     // precondition still applies).
     const authorityChanged = sourceChanged
-        || resource.disclosureCeiling !== nextCeiling
+        || deliveryPolicyChanged
         || !isDeepStrictEqual(storedPlacement.placement, nextPlacement)
         || resource.enabled !== replacement.enabled
         || resource.sessionUsePolicy !== replacement.sessionUsePolicy
@@ -339,12 +327,13 @@ async function applyResourceReplacementInTx(
             enabled: replacement.enabled,
             displayName: replacement.displayName.trim(),
             sourceBindingJson: JSON.stringify(nextSource),
-            disclosureCeiling: nextCeiling,
+            disclosureCeiling: JSON.stringify({ ...storedDelivery.data, policy: nextDeliveryPolicy }),
             sessionUsePolicy: replacement.sessionUsePolicy,
-            requestPolicyJson: nextRequestPolicy === null ? null : JSON.stringify(nextRequestPolicy),
+            requestPolicyJson: !requestPolicyChanged ? resource.requestPolicyJson
+                : nextRequestPolicy === null ? null : JSON.stringify(nextRequestPolicy),
             brokerMachineId: nextPlacement?.kind === "machine" ? nextPlacement.machineId : null,
             brokerPoolId: nextPlacement?.kind === "machine_pool" ? nextPlacement.poolId : null,
-            allMembersDeliveryMode: nextAudience.allMembersDeliveryMode,
+            allMembersDeliveryMode: storedNextAudience.allMembersDeliveryMode,
             ...(directAuthorityChanged ? { directSourceVersionsJson: null } : {}),
             revision: nextRevision,
         },
@@ -355,14 +344,14 @@ async function applyResourceReplacementInTx(
             tx.teamCredentialGroupGrant.deleteMany({ where: { resourceId: resource.id } }),
             tx.teamCredentialMemberGrant.deleteMany({ where: { resourceId: resource.id } }),
         ]);
-        if (nextAudience.groupGrants.length > 0) {
+        if (storedNextAudience.groupGrants.length > 0) {
             await tx.teamCredentialGroupGrant.createMany({
-                data: nextAudience.groupGrants.map((grant) => ({ resourceId: resource.id, ...grant })),
+                data: storedNextAudience.groupGrants.map((grant) => ({ resourceId: resource.id, ...grant })),
             });
         }
-        if (nextAudience.memberGrants.length > 0) {
+        if (storedNextAudience.memberGrants.length > 0) {
             await tx.teamCredentialMemberGrant.createMany({
-                data: nextAudience.memberGrants.map((grant) => ({ resourceId: resource.id, ...grant })),
+                data: storedNextAudience.memberGrants.map((grant) => ({ resourceId: resource.id, ...grant })),
             });
         }
     }
@@ -422,7 +411,7 @@ export async function updateTeamCredentialResourceInTx(
     const patch = parsedPatch.data;
     if (!Number.isSafeInteger(patch.expectedRevision) || patch.expectedRevision < 0
         || (patch.displayName !== undefined && (!patch.displayName.trim() || patch.displayName.trim().length > 120))
-        || (patch.disclosureCeiling !== undefined && !TeamCredentialDisclosureCeilingV1Schema.safeParse(patch.disclosureCeiling).success)
+        || (patch.deliveryPolicy !== undefined && !TeamCredentialDeliveryPolicyV1Schema.safeParse(patch.deliveryPolicy).success)
         || (patch.sessionUsePolicy !== undefined && !TeamCredentialSessionUsePolicyV1Schema.safeParse(patch.sessionUsePolicy).success)
         || (patch.requestPolicy !== undefined && !z.nullable(TeamCredentialRequestPolicyV1Schema).safeParse(patch.requestPolicy).success)) {
         return { ok: false, error: "invalid_resource_input" };
@@ -435,7 +424,7 @@ export async function updateTeamCredentialResourceInTx(
     const recheckAdmission = await acquireTeamMembershipAccountAdmissionInTx(tx, {
         teamId: resourceIdentity.teamId,
         accountIds: [input.actorAccountId, resourceIdentity.custodianAccountId, ...materializedRecipients.map(row => row.recipientAccountId)],
-        membershipIds: patch.replacement?.memberGrants.map(grant => grant.teamMembershipId) ?? [],
+        membershipIds: patch.replacement?.memberGrants?.map(grant => grant.teamMembershipId) ?? [],
     });
     await acquireTeamMutationLockInTx(tx, resourceIdentity.teamId);
     await recheckAdmission();
@@ -469,10 +458,9 @@ export async function updateTeamCredentialResourceInTx(
     if (patch.brokerPlacement !== undefined && !isCustodian) {
         return { ok: false, error: "resource_forbidden" };
     }
-    // The ceiling is consent owned by the source custodian. Team management
-    // may shape audiences within it, but may neither widen nor narrow the
-    // source owner's permanent disclosure decision.
-    if (patch.disclosureCeiling !== undefined && !isCustodian) {
+    // Delivery allowance and preference are the custodian's consent; Team
+    // management may only shape audiences within that existing allowance.
+    if (patch.deliveryPolicy !== undefined && !isCustodian) {
         return { ok: false, error: "resource_forbidden" };
     }
     const requiresManagerAuthority = !isCustodian
@@ -489,7 +477,7 @@ export async function updateTeamCredentialResourceInTx(
     if (!qualification.ok) return qualification;
     const canManage = canManageStructurally && qualification.ok;
     if (resource.revision !== patch.expectedRevision) return { ok: false, error: "resource_changed" };
-    const ceiling = TeamCredentialDisclosureCeilingV1Schema.safeParse(patch.disclosureCeiling ?? resource.disclosureCeiling);
+    const storedDelivery = readTeamCredentialDeliveryConfiguration(resource.disclosureCeiling);
     const sessionPolicy = TeamCredentialSessionUsePolicyV1Schema.safeParse(patch.sessionUsePolicy ?? resource.sessionUsePolicy);
     const storedRequestPolicy = (() => {
         if (resource.requestPolicyJson === null) return null;
@@ -498,17 +486,22 @@ export async function updateTeamCredentialResourceInTx(
     const requestPolicy = z.nullable(TeamCredentialRequestPolicyV1Schema).safeParse(
         patch.requestPolicy === undefined ? storedRequestPolicy : patch.requestPolicy,
     );
-    if (!ceiling.success || !sessionPolicy.success || !requestPolicy.success) return { ok: false, error: "resource_corrupt" };
+    if (!storedDelivery.success || !sessionPolicy.success || !requestPolicy.success) return { ok: false, error: "resource_corrupt" };
+    const nextDeliveryPolicy = patch.deliveryPolicy ?? storedDelivery.data.policy;
+    const deliveryPolicyChanged = !isDeepStrictEqual(storedDelivery.data.policy, nextDeliveryPolicy);
+    const [currentGroups, currentMembers] = await Promise.all([
+        tx.teamCredentialGroupGrant.findMany({ where: { resourceId: resource.id }, select: { teamGroupId: true, deliveryMode: true } }),
+        tx.teamCredentialMemberGrant.findMany({ where: { resourceId: resource.id }, select: { teamMembershipId: true, deliveryMode: true } }),
+    ]);
+    const currentAudience = readTeamCredentialAudience({ allMembersDeliveryMode: resource.allMembersDeliveryMode,
+        groupGrants: currentGroups, memberGrants: currentMembers });
+    if (!currentAudience.success) return { ok: false, error: 'resource_corrupt' };
     if (sessionPolicy.data !== resource.sessionUsePolicy) {
-        const [groupGrants, memberGrants, limits] = await Promise.all([
-            tx.teamCredentialGroupGrant.findMany({ where: { resourceId: resource.id }, select: { deliveryMode: true } }),
-            tx.teamCredentialMemberGrant.findMany({ where: { resourceId: resource.id }, select: { deliveryMode: true } }),
-            tx.teamCredentialUsageLimit.findMany({ where: { resourceId: resource.id }, select: { metric: true, enabled: true } }),
-        ]);
+        const limits = await tx.teamCredentialUsageLimit.findMany({ where: { resourceId: resource.id }, select: { metric: true, enabled: true } });
         const limitRefusal = findTeamCredentialUsageLimitCapabilityRefusal(limits, resolveCurrentTeamCredentialUsageCapabilitiesForResource({
             allMembersDeliveryMode: resource.allMembersDeliveryMode,
-            groupGrants,
-            memberGrants,
+            groupGrants: currentGroups,
+            memberGrants: currentMembers,
             sessionUsePolicy: sessionPolicy.data,
         }));
         if (limitRefusal) return { ok: false, error: limitRefusal };
@@ -543,7 +536,7 @@ export async function updateTeamCredentialResourceInTx(
             || patch.enabled === true;
         if (changesManagerOwnedField) return { ok: false, error: "resource_forbidden" };
     }
-    const isWideningDisclosure = resource.disclosureCeiling === "brokered_only" && ceiling.data === "direct_allowed";
+    const isWideningDisclosure = nextDeliveryPolicy.preferredAllowedModes.some(route => !storedDelivery.data.policy.preferredAllowedModes.includes(route));
     if (isWideningDisclosure) {
         // Widening is the active source custodian's own consent; the source
         // must still be current and able to export direct material.
@@ -555,13 +548,15 @@ export async function updateTeamCredentialResourceInTx(
             source: storedSource.data,
         });
         if (currentSource.status !== "current") return { ok: false, error: "source_replaced_or_missing" };
-        if (currentSource.directExportSupport === "unsupported") return { ok: false, error: "disclosure_not_allowed" };
+        if (!storedDelivery.data.policy.preferredAllowedModes.includes('direct')
+            && nextDeliveryPolicy.preferredAllowedModes.includes('direct')
+            && currentSource.directExportSupport === "unsupported") return { ok: false, error: "disclosure_not_allowed" };
     }
-    const isLoweringDisclosure = resource.disclosureCeiling === "direct_allowed"
-        && ceiling.data === "brokered_only";
-    const storedAllMembersDeliveryMode = z.nullable(TeamCredentialDeliveryModeV1Schema)
-        .safeParse(resource.allMembersDeliveryMode);
-    if (isLoweringDisclosure && !storedAllMembersDeliveryMode.success) return { ok: false, error: "resource_corrupt" };
+    const isLoweringDisclosure = storedDelivery.data.policy.preferredAllowedModes.some(route => !nextDeliveryPolicy.preferredAllowedModes.includes(route));
+    const nextAudience = isLoweringDisclosure
+        ? narrowTeamCredentialAudience(currentAudience.data, nextDeliveryPolicy.preferredAllowedModes)
+        : currentAudience.data;
+    const storedNextAudience = serializeTeamCredentialAudience(nextAudience);
     const storedPlacement = readTeamCredentialBrokerPlacement(resource);
     if (!storedPlacement.ok) return { ok: false, error: "resource_corrupt" };
     const parsedPlacement = z.nullable(TeamCredentialBrokerPlacementV1Schema).safeParse(
@@ -570,9 +565,9 @@ export async function updateTeamCredentialResourceInTx(
     if (!parsedPlacement.success) return { ok: false, error: "resource_corrupt" };
     const brokerMachineId = parsedPlacement.data?.kind === "machine" ? parsedPlacement.data.machineId : null;
     const brokerPoolId = parsedPlacement.data?.kind === "machine_pool" ? parsedPlacement.data.poolId : null;
-    const existingBrokerAudience = resource.allMembersDeliveryMode !== null && resource.allMembersDeliveryMode !== "direct"
-        || (await tx.teamCredentialGroupGrant.count({ where: { resourceId: resource.id, deliveryMode: { in: ["brokered", "both"] } } })) > 0
-        || (await tx.teamCredentialMemberGrant.count({ where: { resourceId: resource.id, deliveryMode: { in: ["brokered", "both"] } } })) > 0;
+    const existingBrokerAudience = nextAudience.allMembersAllowedRoutes?.includes('brokered') === true
+        || nextAudience.groupGrants.some(grant => grant.allowedRoutes.includes('brokered'))
+        || nextAudience.memberGrants.some(grant => grant.allowedRoutes.includes('brokered'));
     // Save readiness answers "may this placement be selected", so it is asked of
     // a placement this patch actually selects. A patch that only takes authority
     // away — disabling the resource, or narrowing its ceiling — keeps whatever
@@ -591,15 +586,17 @@ export async function updateTeamCredentialResourceInTx(
         && (patch.enabled === false || isLoweringDisclosure);
     if (!reducesAuthorityOnly) {
         if (existingBrokerAudience && brokerMachineId === null && brokerPoolId === null) return { ok: false, error: "broker_unavailable" };
-        const placement = await validateTeamCredentialBrokerPlacementForSaveInTx(tx, {
-            custodianAccountId: resource.custodianAccountId,
-            placement: parsedPlacement.data,
-        });
-        if (!placement.ok) return placement;
+        if (!keepsStoredPlacement || existingBrokerAudience) {
+            const placement = await validateTeamCredentialBrokerPlacementForSaveInTx(tx, {
+                custodianAccountId: resource.custodianAccountId,
+                placement: parsedPlacement.data,
+            });
+            if (!placement.ok) return placement;
+        }
     }
     // See applyResourceReplacementInTx: only authority facts advance `revision`.
     const authorityChanged = (patch.enabled !== undefined && patch.enabled !== resource.enabled)
-        || ceiling.data !== resource.disclosureCeiling
+        || deliveryPolicyChanged
         || sessionPolicy.data !== resource.sessionUsePolicy
         || requestPolicyChanged
         || brokerMachineId !== resource.brokerMachineId
@@ -608,33 +605,25 @@ export async function updateTeamCredentialResourceInTx(
     const updated = await tx.teamCredentialResource.updateMany({ where: { id: resource.id, revision: patch.expectedRevision }, data: {
         ...(patch.displayName === undefined ? {} : { displayName: patch.displayName.trim() }),
         ...(patch.enabled === undefined ? {} : { enabled: patch.enabled }),
-        disclosureCeiling: ceiling.data, sessionUsePolicy: sessionPolicy.data,
+        disclosureCeiling: JSON.stringify({ ...storedDelivery.data, policy: nextDeliveryPolicy }), sessionUsePolicy: sessionPolicy.data,
         requestPolicyJson: nextRequestPolicy === null ? null : JSON.stringify(nextRequestPolicy),
         brokerMachineId, brokerPoolId, revision: nextRevision,
-        // Narrowing the ceiling withdraws consent to direct disclosure through
-        // the protocol's one narrowing rule: it keeps the broker half of a
-        // `both` audience and ends a direct-only one, and never mints broker
-        // authority the custodian never granted.
-        ...(isLoweringDisclosure && storedAllMembersDeliveryMode.success
-            ? { allMembersDeliveryMode: narrowTeamCredentialDeliveryModeToBrokeredOnlyV1(storedAllMembersDeliveryMode.data) }
-            : {}),
+        allMembersDeliveryMode: storedNextAudience.allMembersDeliveryMode,
     } });
     if (updated.count !== 1) return { ok: false, error: "resource_changed" };
     if (isLoweringDisclosure) {
-        // Every stored grant mode moves exactly where the same rule sends it.
-        await Promise.all(TeamCredentialDeliveryModeV1Schema.options.flatMap((deliveryMode) => {
-            const narrowed = narrowTeamCredentialDeliveryModeToBrokeredOnlyV1(deliveryMode);
-            if (narrowed === deliveryMode) return [];
-            const where = { resourceId: resource.id, deliveryMode };
-            return narrowed === null
-                ? [tx.teamCredentialGroupGrant.deleteMany({ where }), tx.teamCredentialMemberGrant.deleteMany({ where })]
-                : [
-                    tx.teamCredentialGroupGrant.updateMany({ where, data: { deliveryMode: narrowed } }),
-                    tx.teamCredentialMemberGrant.updateMany({ where, data: { deliveryMode: narrowed } }),
-                ];
-        }));
+        await Promise.all([
+            tx.teamCredentialGroupGrant.deleteMany({ where: { resourceId: resource.id } }),
+            tx.teamCredentialMemberGrant.deleteMany({ where: { resourceId: resource.id } }),
+        ]);
+        if (storedNextAudience.groupGrants.length) await tx.teamCredentialGroupGrant.createMany({
+            data: storedNextAudience.groupGrants.map(grant => ({ resourceId: resource.id, ...grant })),
+        });
+        if (storedNextAudience.memberGrants.length) await tx.teamCredentialMemberGrant.createMany({
+            data: storedNextAudience.memberGrants.map(grant => ({ resourceId: resource.id, ...grant })),
+        });
     }
-    if (patch.enabled === false || isLoweringDisclosure) {
+    if (patch.enabled === false || (isLoweringDisclosure && !nextDeliveryPolicy.preferredAllowedModes.includes('direct'))) {
         await tx.teamCredentialRecipientMaterial.deleteMany({ where: { resourceId: resource.id } });
         await tx.teamCredentialResource.update({
             where: { id: resource.id },

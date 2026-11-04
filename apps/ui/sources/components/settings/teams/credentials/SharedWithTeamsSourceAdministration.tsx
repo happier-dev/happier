@@ -169,7 +169,7 @@ export const SharedWithTeamsSourceAdministration = React.memo(function SharedWit
 
     const update = React.useCallback(async (
         row: TeamCredentialSourceResourceAdministrationV1,
-        patch: Readonly<{ enabled?: boolean; disclosureCeiling?: 'brokered_only'; brokerPlacement?: TeamCredentialBrokerPlacementV1 | null }>,
+        patch: Readonly<{ enabled?: boolean; deliveryPolicy?: { preferredAllowedModes: ['brokered'] }; brokerPlacement?: TeamCredentialBrokerPlacementV1 | null }>,
         expectedRevision = row.revision,
     ): Promise<boolean> => {
         if (!rowsCurrentRef.current) return false;
@@ -229,12 +229,12 @@ export const SharedWithTeamsSourceAdministration = React.memo(function SharedWit
                         accessibilityExpanded={openId === row.id}
                         onPress={() => setOpenId((current) => current === row.id ? null : row.id)}
                     />
-                    {openId === row.id && row.capabilities.narrowDisclosure && row.disclosureCeiling === 'direct_allowed' ? (
+                    {openId === row.id && row.capabilities.updateDeliveryPolicy && row.deliveryPolicy.preferredAllowedModes.includes('direct') && !row.deliveryPolicy.preferredAllowedModes.includes('vendor-native') ? (
                         <Item
                             testID={`shared-with-teams:narrow:${row.id}`}
                             title={t('teams.credentials.edit.ceilingBrokeredOnly')}
                             disabled={!rowsCurrent || pendingId === row.id || approval.approvalPending}
-                            onPress={() => void update(row, { disclosureCeiling: 'brokered_only' })}
+                            onPress={() => void update(row, { deliveryPolicy: { preferredAllowedModes: ['brokered'] } })}
                             showChevron={false}
                         />
                     ) : null}

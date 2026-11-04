@@ -420,9 +420,6 @@ describe('TeamCredentialEditScreen broker placement', () => {
                     displayName: 'Claude Enterprise',
                     sessionUsePolicy: 'personal_allowed',
                     requestPolicy: null,
-                    allMembersDeliveryMode: null,
-                    groupGrants: [],
-                    memberGrants: [],
                     custodian: {
                         brokerPlacement: { kind: 'machine_pool', poolId: firstPoolId },
                     },
@@ -632,9 +629,6 @@ describe('TeamCredentialEditScreen broker placement', () => {
                     displayName: 'Repaired credential',
                     sessionUsePolicy: 'personal_allowed',
                     requestPolicy: null,
-                    allMembersDeliveryMode: null,
-                    groupGrants: [],
-                    memberGrants: [],
                     custodian: {
                         brokerPlacement: { kind: 'machine', machineId: 'machine-exact' },
                     },
@@ -711,16 +705,16 @@ describe('TeamCredentialEditScreen disclosure narrowing', () => {
         const { screen } = await renderEditor({
             approvalRequired: true,
             resourceOverrides: {
-                disclosureCeiling: 'direct_allowed',
+                deliveryPolicy: { preferredAllowedModes: ['brokered', 'direct'] },
                 directExportSupport: 'supported',
-                allMembersDeliveryMode: 'direct',
+                allMembersAllowedRoutes: ['direct'],
                 groupGrants: [
-                    { teamGroupId: 'group-both', deliveryMode: 'both' },
-                    { teamGroupId: 'group-direct', deliveryMode: 'direct' },
+                    { teamGroupId: 'group-both', allowedRoutes: ['brokered', 'direct'] },
+                    { teamGroupId: 'group-direct', allowedRoutes: ['direct'] },
                 ],
                 memberGrants: [
-                    { teamMembershipId: 'membership-direct', deliveryMode: 'direct' },
-                    { teamMembershipId: 'membership-brokered', deliveryMode: 'brokered' },
+                    { teamMembershipId: 'membership-direct', allowedRoutes: ['direct'] },
+                    { teamMembershipId: 'membership-brokered', allowedRoutes: ['brokered'] },
                 ],
             },
         });
@@ -734,10 +728,10 @@ describe('TeamCredentialEditScreen disclosure narrowing', () => {
             replacement: Readonly<Record<string, unknown>>;
         };
         expect(actionArgs.replacement).toMatchObject({
-            allMembersDeliveryMode: null,
-            groupGrants: [{ teamGroupId: 'group-both', deliveryMode: 'brokered' }],
-            memberGrants: [{ teamMembershipId: 'membership-brokered', deliveryMode: 'brokered' }],
-            custodian: { disclosureCeiling: 'brokered_only' },
+            allMembersAllowedRoutes: null,
+            groupGrants: [{ teamGroupId: 'group-both', allowedRoutes: ['brokered'] }],
+            memberGrants: [{ teamMembershipId: 'membership-brokered', allowedRoutes: ['brokered'] }],
+            custodian: { deliveryPolicy: { preferredAllowedModes: ['brokered'] } },
         });
     });
 });

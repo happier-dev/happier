@@ -333,11 +333,11 @@ describe('TeamCredentialCreateScreen', () => {
         const sent = harness.requestsFor(CREATE_PATH)[0]!.input as Record<string, unknown>;
         expect(sent).toMatchObject({
             source: candidate.source,
-            disclosureCeiling: 'brokered_only',
+            deliveryPolicy: { preferredAllowedModes: ['brokered'] },
             sessionUsePolicy: 'personal_allowed',
             brokerPlacement: null,
             requestPolicy: null,
-            allMembersDeliveryMode: null,
+            allMembersAllowedRoutes: null,
             groupGrants: [],
             memberGrants: [],
             usageLimits: [],
@@ -864,7 +864,7 @@ describe('TeamCredentialCreateScreen', () => {
         expect(sent).toMatchObject({
             teamId: 'team-1',
             displayName: candidate.label,
-            disclosureCeiling: 'brokered_only',
+            deliveryPolicy: { preferredAllowedModes: ['brokered'] },
             source: candidate.source,
             sessionUsePolicy: 'team_context_required',
             brokerPlacement: { kind: 'machine', machineId: 'machine-broker' },
@@ -873,7 +873,7 @@ describe('TeamCredentialCreateScreen', () => {
                 allowedModelIds: null,
                 reasoningEffort: null,
             },
-            allMembersDeliveryMode: 'brokered',
+            allMembersAllowedRoutes: ['brokered'],
             groupGrants: [],
             memberGrants: [],
             usageLimits: [{

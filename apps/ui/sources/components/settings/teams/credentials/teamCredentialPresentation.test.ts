@@ -33,13 +33,13 @@ describe('teamCredentialPresentation', () => {
 
     it('reports mixed delivery rather than flattening disagreeing grants', () => {
         const brokeredOnly = teamCredentialResourceFixture({
-            groupGrants: [{ teamGroupId: 'group-1', deliveryMode: 'brokered' }],
+            groupGrants: [{ teamGroupId: 'group-1', allowedRoutes: ['brokered'] }],
         });
         expect(resourceDeliverySummary(brokeredOnly)).toBe('Brokered');
 
         const mixed = teamCredentialResourceFixture({
-            allMembersDeliveryMode: 'brokered',
-            memberGrants: [{ teamMembershipId: 'membership-1', deliveryMode: 'direct' }],
+            allMembersAllowedRoutes: ['brokered'],
+            memberGrants: [{ teamMembershipId: 'membership-1', allowedRoutes: ['direct'] }],
         });
         // Flattening this to either mode would tell an administrator that the
         // resource is entirely safe or entirely disclosing, and neither is true.
@@ -53,13 +53,13 @@ describe('teamCredentialPresentation', () => {
     it('reports the Team-wide grant separately from the grant counts', () => {
         expect(audienceSummary(teamCredentialResourceFixture())).toBe('No one yet');
         expect(audienceSummary(teamCredentialResourceFixture({
-            allMembersDeliveryMode: 'brokered',
-            groupGrants: [{ teamGroupId: 'group-1', deliveryMode: 'brokered' }],
+            allMembersAllowedRoutes: ['brokered'],
+            groupGrants: [{ teamGroupId: 'group-1', allowedRoutes: ['brokered'] }],
         }))).toBe('Everyone in the Team · 1 Group');
         // A Team-wide grant is not one more counted audience: collapsing it into
         // the counts would hide the broadest grant behind the narrowest ones.
         expect(audienceSummary(teamCredentialResourceFixture({
-            memberGrants: [{ teamMembershipId: 'membership-1', deliveryMode: 'brokered' }],
+            memberGrants: [{ teamMembershipId: 'membership-1', allowedRoutes: ['brokered'] }],
         }))).toBe('1 person');
     });
 
@@ -68,7 +68,7 @@ describe('teamCredentialPresentation', () => {
         expect(resourceState(teamCredentialResourceFixture({
             readiness: { kind: 'broker_unavailable' },
             enabled: true,
-            allMembersDeliveryMode: 'brokered',
+            allMembersAllowedRoutes: ['brokered'],
         }), known)).toBe('broker_unavailable');
         expect(resourceState(teamCredentialResourceFixture({
             readiness: { kind: 'available' },
@@ -91,7 +91,7 @@ describe('teamCredentialPresentation', () => {
 
     it('puts source, delivery and state in the accessible name rather than the layout', () => {
         const label = resourceAccessibilityLabel(teamCredentialResourceFixture({
-            allMembersDeliveryMode: 'brokered',
+            allMembersAllowedRoutes: ['brokered'],
         }), { audienceKnown: true });
         expect(label).toBe('Claude Enterprise, Connected service pool, Brokered, Available');
     });

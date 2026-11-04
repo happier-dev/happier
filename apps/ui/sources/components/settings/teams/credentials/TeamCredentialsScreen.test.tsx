@@ -84,7 +84,7 @@ describe('TeamCredentialsScreen', () => {
         const serverId = await addHome();
         harness.answer(serverId, CREDENTIALS_LIST_PATH, {
             body: {
-                resources: [teamCredentialResourceFixture({ allMembersDeliveryMode: 'brokered' })],
+                resources: [teamCredentialResourceFixture({ allMembersAllowedRoutes: ['brokered'] })],
                 viewer: teamCredentialViewerFixture({ manageCredentials: true }),
             },
         });
@@ -140,7 +140,7 @@ describe('TeamCredentialsScreen', () => {
         const serverId = await addHome();
         harness.answer(serverId, CREDENTIALS_LIST_PATH, {
             body: {
-                resources: [teamCredentialResourceFixture({ allMembersDeliveryMode: 'brokered' })],
+                resources: [teamCredentialResourceFixture({ allMembersAllowedRoutes: ['brokered'] })],
                 viewer: teamCredentialViewerFixture({ manageCredentials: true, offerOwnCredential: true }),
             },
         });
@@ -161,7 +161,7 @@ describe('TeamCredentialsScreen', () => {
         const serverId = await addHome();
         harness.answer(serverId, CREDENTIALS_LIST_PATH, {
             body: {
-                resources: [teamCredentialResourceFixture({ allMembersDeliveryMode: 'brokered' })],
+                resources: [teamCredentialResourceFixture({ allMembersAllowedRoutes: ['brokered'] })],
                 viewer: teamCredentialViewerFixture({ manageCredentials: true }),
             },
         });
@@ -188,7 +188,7 @@ describe('TeamCredentialsScreen', () => {
         const serverId = await addHome();
         harness.answer(serverId, CREDENTIALS_LIST_PATH, {
             body: {
-                resources: [teamCredentialResourceFixture({ allMembersDeliveryMode: 'brokered' })],
+                resources: [teamCredentialResourceFixture({ allMembersAllowedRoutes: ['brokered'] })],
                 viewer: teamCredentialViewerFixture({ manageCredentials: true }),
             },
         });
@@ -381,7 +381,7 @@ describe('TeamCredentialsScreen', () => {
                         sourceOwnerDisplayName: 'Ada Lovelace',
                         sessionUsePolicy: 'team_context_required',
                         activeUsageLimitCount: 2,
-                        allMembersDeliveryMode: 'brokered',
+                        allMembersAllowedRoutes: ['brokered'],
                         usageCapabilities: {
                             inferenceRequests: 'available',
                             totalTokens: 'available',
@@ -396,7 +396,7 @@ describe('TeamCredentialsScreen', () => {
                         id: 'resource-2',
                         displayName: 'Offered credential',
                         sourceOwnerDisplayName: 'Ada Lovelace',
-                        allMembersDeliveryMode: 'direct',
+                        allMembersAllowedRoutes: ['direct'],
                         capabilities: {
                             manageAudience: false,
                             managePolicy: false,

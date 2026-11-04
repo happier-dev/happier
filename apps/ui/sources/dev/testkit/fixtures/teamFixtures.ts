@@ -145,7 +145,9 @@ export function teamInvitationRowFixture(
  * an audience or a delivery mode has to say so rather than inheriting one.
  */
 export function teamCredentialResourceFixture(
-    overrides?: Partial<TeamCredentialResourceSummaryV1>,
+    overrides?: Omit<Partial<TeamCredentialResourceSummaryV1>, 'capabilities'> & Readonly<{
+        capabilities?: Partial<TeamCredentialResourceSummaryV1['capabilities']>;
+    }>,
 ): TeamCredentialResourceSummaryV1 {
     return {
         id: 'resource-1',
@@ -155,7 +157,7 @@ export function teamCredentialResourceFixture(
         displayName: 'Claude Enterprise',
         enabled: true,
         revision: 3,
-        disclosureCeiling: 'brokered_only',
+        deliveryPolicy: { preferredAllowedModes: ['brokered'] },
         sessionUsePolicy: 'personal_allowed',
         source: {
             v: 1,
@@ -174,7 +176,7 @@ export function teamCredentialResourceFixture(
         activeUsageLimitCount: 0,
         requestPolicy: null,
         brokerPlacement: null,
-        allMembersDeliveryMode: null,
+        allMembersAllowedRoutes: null,
         groupGrants: [],
         memberGrants: [],
         readiness: { kind: 'available' },
@@ -185,27 +187,31 @@ export function teamCredentialResourceFixture(
             selectedPool: null,
             eligiblePools: [],
         },
+        directExportSupport: 'unsupported',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-02T00:00:00.000Z',
+        ...overrides,
         capabilities: {
             manageAudience: true,
             managePolicy: true,
             manageLimits: true,
             updateBrokerPlacement: true,
+            updateDeliveryPolicy: true,
             narrowDisclosure: true,
             widenDisclosure: true,
             refreshDirectMaterial: true,
             disable: true,
             enable: true,
             delete: true,
+            ...overrides?.capabilities,
         },
-        directExportSupport: 'unsupported',
-        createdAt: '2026-01-01T00:00:00.000Z',
-        updatedAt: '2026-01-02T00:00:00.000Z',
-        ...overrides,
     };
 }
 
 export function teamCredentialSourceResourceFixture(
-    overrides?: Partial<TeamCredentialSourceResourceAdministrationV1>,
+    overrides?: Omit<Partial<TeamCredentialSourceResourceAdministrationV1>, 'capabilities'> & Readonly<{
+        capabilities?: Partial<TeamCredentialSourceResourceAdministrationV1['capabilities']>;
+    }>,
 ): TeamCredentialSourceResourceAdministrationV1 {
     const resource = teamCredentialResourceFixture();
     return {
@@ -213,15 +219,15 @@ export function teamCredentialSourceResourceFixture(
         displayName: resource.displayName,
         enabled: resource.enabled,
         revision: resource.revision,
-        disclosureCeiling: resource.disclosureCeiling,
+        deliveryPolicy: resource.deliveryPolicy,
         brokerPlacement: resource.brokerPlacement,
         brokerPresentation: resource.brokerPresentation,
         readiness: resource.readiness,
         recoveryAction: resource.recoveryAction,
-        capabilities: resource.capabilities,
         createdAt: resource.createdAt,
         updatedAt: resource.updatedAt,
         ...overrides,
+        capabilities: { ...resource.capabilities, ...overrides?.capabilities },
     };
 }
 

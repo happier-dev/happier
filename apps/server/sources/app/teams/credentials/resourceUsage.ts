@@ -20,6 +20,7 @@ import { resolveTeamActorContextInTx, type TeamOperationAuthenticationContext } 
 import { resolveTeamCredentialCapabilities } from '../capabilities';
 import { qualifyTeamCredentialOperationInTx } from './resourceRead';
 import { resolveTeamCredentialEntitlementInTx } from './resourceAccess';
+import { readTeamCredentialAllowedRoutes } from './resourceDeliveryRead';
 import {
     hasTeamCredentialDirectDeliveryActivityInTx,
     hasTeamCredentialResourceDirectDeliveryActivityInTx,
@@ -307,7 +308,11 @@ async function authorizeResourceUsageInTx(
         resource.allMembersDeliveryMode,
         ...resource.groupGrants.map((grant) => grant.deliveryMode),
         ...resource.memberGrants.map((grant) => grant.deliveryMode),
-    ].some((mode) => mode === 'direct' || mode === 'both')
+    ].some((mode) => {
+        if (mode === null) return false;
+        const routes = readTeamCredentialAllowedRoutes(mode);
+        return routes.success && routes.data.some(route => route !== 'brokered');
+    })
         || await hasTeamCredentialResourceDirectDeliveryActivityInTx(tx, { resourceId });
     if (readsWholeTeamCredentialUsage({
         viewerAccountId: accountId,
@@ -324,7 +329,7 @@ async function authorizeResourceUsageInTx(
     if (!qualification.ok) return qualification;
     // A member reads only their own use, so only their own direct access or
     // delivery history can make it incomplete.
-    const directUsePossible = entitlement.mayReceiveDirect
+    const directUsePossible = entitlement.allowedRoutes.some(route => route !== 'brokered')
         || await hasTeamCredentialDirectDeliveryActivityInTx(tx, { resourceId, recipientAccountId: accountId });
     return { ok: true as const, resource, manager: false as const, directUsePossible };
 }

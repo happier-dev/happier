@@ -28,7 +28,7 @@ import { useTeamCredentialResourceView } from './useTeamCredentialResourceView';
 import {
     EMPTY_TEAM_CREDENTIAL_RESOURCE_DRAFT,
     TeamCredentialBrokerPlacementSection,
-    confirmTeamCredentialDirectDisclosure,
+    confirmTeamCredentialDisclosure,
     confirmTeamCredentialDisclosureWidening,
     narrowTeamCredentialResourceDraftToBrokeredOnly,
     teamCredentialPolicyFromDraft,
@@ -104,13 +104,15 @@ const CredentialEditor = React.memo(function CredentialEditor(props: Readonly<{
     const {
         name,
         source,
-        disclosureCeiling: ceiling,
+        deliveryPolicy,
         sessionUsePolicy: usePolicy,
         brokerPlacement,
         audience,
         requestPolicy: policyDraft,
         limits: limitDrafts,
     } = resourceDraft.draft;
+    const nativeAllowed = deliveryPolicy.preferredAllowedModes.includes('vendor-native');
+    const ceiling = deliveryPolicy.preferredAllowedModes.includes('direct') ? 'direct_allowed' : 'brokered_only';
     const patchResourceDraft = React.useCallback((patch: Partial<typeof resourceDraft.draft>, _legacyResetsConsent = false) => {
         const update = (current: typeof resourceDraft.draft) => ({ ...current, ...patch });
         resourceDraft.setDraft(update);
@@ -238,7 +240,7 @@ const CredentialEditor = React.memo(function CredentialEditor(props: Readonly<{
         || resource.capabilities.manageAudience
         || resource.capabilities.manageLimits
         || resource.capabilities.updateBrokerPlacement
-        || resource.capabilities.narrowDisclosure;
+        || resource.capabilities.updateDeliveryPolicy;
     if (!canEdit || !context.mutationsAvailable || context.archived) {
         return (
             <ItemGroup description={t('teams.credentials.forbidden')}>
@@ -291,10 +293,10 @@ const CredentialEditor = React.memo(function CredentialEditor(props: Readonly<{
     const changed = draftChanged
         && managerFieldsValid
         && limitsValid
-        && (resourceDraft.directDisclosureFingerprint === null || resourceDraft.directDisclosureAccepted);
+        && (resourceDraft.disclosureFingerprint === null || resourceDraft.disclosureAccepted);
     const custodianFieldsChanged = sourceCustodian && source !== null && (
         custodianSourceDraftChanged
-        || ceiling !== resourceDraft.baseline.disclosureCeiling
+        || JSON.stringify(deliveryPolicy.preferredAllowedModes) !== JSON.stringify(resourceDraft.baseline.deliveryPolicy.preferredAllowedModes)
     );
 
     return (
@@ -323,10 +325,10 @@ const CredentialEditor = React.memo(function CredentialEditor(props: Readonly<{
                         onSelect={(candidate) => {
                             const nextDraft = { ...resourceDraft.draft, source: candidate.candidate.source };
                             void (async () => {
-                                if (!resourceDraft.isDirectDisclosureAcceptedForDraft(nextDraft)
-                                    && !await confirmTeamCredentialDirectDisclosure()) return;
+                                if (!resourceDraft.isDisclosureAcceptedForDraft(nextDraft)
+                                    && !await confirmTeamCredentialDisclosure(nextDraft)) return;
                                 resourceDraft.setDraft(nextDraft);
-                                resourceDraft.acceptDirectDisclosureForDraft(nextDraft);
+                                resourceDraft.acceptDisclosureForDraft(nextDraft);
                                 setNotice(null);
                             })();
                         }}
@@ -378,7 +380,7 @@ const CredentialEditor = React.memo(function CredentialEditor(props: Readonly<{
                 Home says they may move it. Narrowing withdraws only the direct
                 half of each grant, by the one rule the Home applies; widening
                 is confirmed before it is drafted. */}
-            {props.section === undefined && (resource.capabilities.narrowDisclosure || resource.capabilities.widenDisclosure) ? <ItemGroup
+            {props.section === undefined && resource.capabilities.updateDeliveryPolicy ? <ItemGroup
                 title={t('teams.credentials.edit.ceilingLabel')}
                 description={t('teams.credentials.edit.ceilingNote')}
                 accessibilityRole="radiogroup"
@@ -389,8 +391,8 @@ const CredentialEditor = React.memo(function CredentialEditor(props: Readonly<{
                     title={t('teams.credentials.edit.ceilingBrokeredOnly')}
                     accessibilityRole="radio"
                     webRole="radio"
-                    selected={ceiling === 'brokered_only'}
-                    disabled={busy || !resource.capabilities.narrowDisclosure}
+                    selected={!nativeAllowed && ceiling === 'brokered_only'}
+                    disabled={busy || nativeAllowed || !resource.capabilities.updateDeliveryPolicy}
                     onPress={() => resourceDraft.setDraft(narrowTeamCredentialResourceDraftToBrokeredOnly)}
                     showChevron={false}
                 />
@@ -399,13 +401,13 @@ const CredentialEditor = React.memo(function CredentialEditor(props: Readonly<{
                     title={t('teams.credentials.edit.ceilingDirectAllowed')}
                     accessibilityRole="radio"
                     webRole="radio"
-                    selected={ceiling === 'direct_allowed'}
-                    disabled={busy || !resource.capabilities.widenDisclosure}
+                    selected={!nativeAllowed && ceiling === 'direct_allowed'}
+                    disabled={busy || nativeAllowed || !resource.capabilities.updateDeliveryPolicy}
                     onPress={() => {
                         if (ceiling === 'direct_allowed') return;
                         void (async () => {
                             if (!await confirmTeamCredentialDisclosureWidening()) return;
-                            patchResourceDraft({ disclosureCeiling: 'direct_allowed' });
+                            patchResourceDraft({ deliveryPolicy: { preferredAllowedModes: ['brokered', 'direct'] } });
                         })();
                     }}
                     showChevron={false}
@@ -419,14 +421,14 @@ const CredentialEditor = React.memo(function CredentialEditor(props: Readonly<{
                     draft={resourceDraft.draft}
                     busy={busy}
                     onRequestDraftChange={(nextDraft) => {
-                        if (resourceDraft.isDirectDisclosureAcceptedForDraft(nextDraft)) {
+                        if (resourceDraft.isDisclosureAcceptedForDraft(nextDraft)) {
                             resourceDraft.setDraft(nextDraft);
                             return;
                         }
                         void (async () => {
-                            if (!await confirmTeamCredentialDirectDisclosure()) return;
+                            if (!await confirmTeamCredentialDisclosure(nextDraft)) return;
                             resourceDraft.setDraft(nextDraft);
-                            resourceDraft.acceptDirectDisclosureForDraft(nextDraft);
+                            resourceDraft.acceptDisclosureForDraft(nextDraft);
                         })();
                     }}
                 />
@@ -507,32 +509,29 @@ const CredentialEditor = React.memo(function CredentialEditor(props: Readonly<{
                                 address: context.address,
                                 resourceId,
                                 expectedRevision: basis,
+                                ...(resourceDraft.disclosureReviewCompleted ? { confirmedByPresentUser: true } : {}),
                                 replacement: {
-                                    enabled: resource.enabled,
-                                    displayName: resource.capabilities.managePolicy ? trimmed : resource.displayName,
-                                    sessionUsePolicy: resource.capabilities.managePolicy ? usePolicy : resource.sessionUsePolicy,
-                                    requestPolicy: resource.capabilities.managePolicy
-                                        ? requestPolicy
-                                        : resource.requestPolicy,
-                                    allMembersDeliveryMode: resource.capabilities.manageAudience
-                                        ? audience.allMembers
-                                        : resource.allMembersDeliveryMode,
-                                    groupGrants: resource.capabilities.manageAudience
-                                        ? [...audience.groups].map(([teamGroupId, deliveryMode]) => ({ teamGroupId, deliveryMode }))
-                                        : resource.groupGrants,
-                                    memberGrants: resource.capabilities.manageAudience
-                                        ? [...audience.members].map(([teamMembershipId, deliveryMode]) => ({ teamMembershipId, deliveryMode }))
-                                        : resource.memberGrants,
+                                    ...(resource.capabilities.managePolicy ? {
+                                        enabled: resource.enabled,
+                                        displayName: trimmed,
+                                        sessionUsePolicy: usePolicy,
+                                        requestPolicy,
+                                    } : {}),
+                                    ...(resource.capabilities.manageAudience && resourceDraft.hasAudienceChanges() ? {
+                                        allMembersAllowedRoutes: audience.allMembers ? [...audience.allMembers] : null,
+                                        groupGrants: [...audience.groups].map(([teamGroupId, allowedRoutes]) => ({ teamGroupId, allowedRoutes: [...allowedRoutes] })),
+                                        memberGrants: [...audience.members].map(([teamMembershipId, allowedRoutes]) => ({ teamMembershipId, allowedRoutes: [...allowedRoutes] })),
+                                    } : {}),
                                     ...(custodianFieldsChanged && source !== null ? {
                                         custodian: {
                                             source,
-                                            disclosureCeiling: ceiling,
+                                            deliveryPolicy: { preferredAllowedModes: [...deliveryPolicy.preferredAllowedModes] },
                                             brokerPlacement,
                                         },
                                     } : {}),
-                                    usageLimitDelta: resource.capabilities.manageLimits && usageLimitDelta !== 'invalid'
-                                        ? usageLimitDelta
-                                        : { upserts: [], deleteIds: [] },
+                                    ...(resource.capabilities.manageLimits && usageLimitDelta !== 'invalid'
+                                        ? { usageLimitDelta }
+                                        : {}),
                                 },
                                 handlers: {
                                     // The approved save already committed on the

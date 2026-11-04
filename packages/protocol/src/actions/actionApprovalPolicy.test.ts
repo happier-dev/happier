@@ -1286,7 +1286,7 @@ describe('isApprovalRequiredByActionsSettings', () => {
 
   it('admits reversible credential policy edits after the editor owns material-disclosure review', () => {
     const audience = {
-      allMembersDeliveryMode: null,
+      allMembersAllowedRoutes: null,
       groupGrants: [],
       memberGrants: [],
     };
@@ -1301,7 +1301,7 @@ describe('isApprovalRequiredByActionsSettings', () => {
         connectionSecurityFingerprint: 'connection-security:v1:test',
         credentialSlotId: 'apiKey',
       },
-      disclosureCeiling: 'brokered_only',
+      deliveryPolicy: { preferredAllowedModes: ['brokered'] },
       sessionUsePolicy: 'team_context_required',
       brokerPlacement: { kind: 'machine', machineId: 'machine-1' },
       requestPolicy: null,
@@ -1319,9 +1319,19 @@ describe('isApprovalRequiredByActionsSettings', () => {
     };
     const cases = [
       ['teams.credentials.create', create, false],
+      ['teams.credentials.create', { ...create, deliveryPolicy: { preferredAllowedModes: ['vendor-native', 'brokered'] } }, true],
+      ['teams.credentials.update', { ...ref, deliveryPolicy: { preferredAllowedModes: ['vendor-native', 'brokered'] } }, true],
+      ['teams.credentials.update', { ...ref, replacement: { custodian: {
+        source: { ...create.source, connectionId: 'replacement-key' },
+        deliveryPolicy: { preferredAllowedModes: ['vendor-native'] }, brokerPlacement: null,
+      } } }, true],
+      ['teams.credentials.audience.set', { ...ref, ...audience, allMembersAllowedRoutes: ['vendor-native'] }, true],
+      ['teams.credentials.update', { ...ref, replacement: {
+        memberGrants: [{ teamMembershipId: 'member-1', allowedRoutes: ['vendor-native'] }],
+      } }, true],
       [
         'teams.credentials.create',
-        { ...create, allMembersDeliveryMode: 'direct' },
+        { ...create, allMembersAllowedRoutes: ['direct'] },
         false,
       ],
       [
@@ -1329,7 +1339,7 @@ describe('isApprovalRequiredByActionsSettings', () => {
         {
           ...create,
           memberGrants: [
-            { teamMembershipId: 'member-1', deliveryMode: 'brokered' },
+            { teamMembershipId: 'member-1', allowedRoutes: ['brokered'] },
           ],
         },
         false,
@@ -1344,13 +1354,13 @@ describe('isApprovalRequiredByActionsSettings', () => {
         'teams.credentials.update',
         {
           ...ref,
-          replacement: { ...replacement, allMembersDeliveryMode: 'brokered' },
+          replacement: { ...replacement, allMembersAllowedRoutes: ['brokered'] },
         },
         false,
       ],
       [
         'teams.credentials.update',
-        { ...ref, disclosureCeiling: 'direct_allowed' },
+        { ...ref, deliveryPolicy: { preferredAllowedModes: ['brokered', 'direct'] } },
         false,
       ],
       ['teams.credentials.audience.set', { ...ref, ...audience }, false],
@@ -1359,7 +1369,7 @@ describe('isApprovalRequiredByActionsSettings', () => {
         {
           ...ref,
           ...audience,
-          groupGrants: [{ teamGroupId: 'group-1', deliveryMode: 'direct' }],
+          groupGrants: [{ teamGroupId: 'group-1', allowedRoutes: ['direct'] }],
         },
         false,
       ],
@@ -1378,6 +1388,46 @@ describe('isApprovalRequiredByActionsSettings', () => {
         }).required,
         JSON.stringify(input),
       ).toBe(required);
+      const approvalScope = { kind: 'machine', machineId: 'execution-machine' } as const;
+      const reviewed = { ...context, presentUserConfirmation: { actionId } };
+      expect(resolveActionApprovalRouting({ actionId, spec, input, context: reviewed,
+        settings: EMPTY_SETTINGS }).required).toBe(false);
+      expect(resolveActionApprovalRouting({ actionId, spec, input, context: reviewed,
+        settings: normalizeActionsSettingsV1({ v: 1, actions: { [actionId]: { approvalRequiredSurfaces: ['ui'] } } }),
+      }).required).toBe(true);
+      if (required) {
+        for (const unreviewed of [
+          { ...context, presentUserConfirmation: { actionId: 'teams.credentials.delete' as const } },
+          { ...reviewed, authority: 'account_automation' as const },
+          { ...reviewed, actionCaller: { kind: 'plugin' as const, pluginId: 'example.plugin' } },
+        ]) {
+          expect(resolveActionApprovalRouting({ actionId, spec, input, context: unreviewed,
+            settings: EMPTY_SETTINGS }).required).toBe(true);
+        }
+      }
+      for (const surface of ['ui', 'agent', 'mcp', 'cli', 'plugin'] as const) {
+        const invocation = { surface, authority: 'present_user' } as const;
+        const globalWaiver = normalizeActionsSettingsV1({ v: 1,
+          approvalWaivedSurfaces: { [actionId]: [surface] },
+        });
+        const scopedWaiver = setScopedActionApprovalPreference({
+          settings: EMPTY_SETTINGS, actionId, scope: approvalScope, surface, mode: 'waived',
+        });
+        for (const settings of [globalWaiver, scopedWaiver]) {
+          expect(isApprovalRequiredByActionsSettings(actionId, settings, invocation,
+            undefined, undefined, input, undefined, undefined, undefined, approvalScope),
+          // No non-waivable floor (owner ruling 2026-10-29): the user's waiver wins.
+          `${actionId}:${surface}:settings`).toBe(false);
+          expect(resolveActionApprovalRouting({ actionId, spec, input, context: invocation,
+            settings, approvalScope, requiredByPolicy: false,
+          }).required, `${actionId}:${surface}:routing`).toBe(false);
+          // The existing admitted approval replay context, never an input flag,
+          // still executes the exact action after a person approves it.
+          expect(resolveActionApprovalRouting({ actionId, spec, input,
+            context: { ...invocation, bypassApprovals: true }, settings,
+          }).required).toBe(false);
+        }
+      }
       expect(
         resolveActionApprovalRouting({
           actionId,

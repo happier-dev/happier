@@ -1,3 +1,4 @@
+import { SessionTeamCredentialLaunchUnavailableError } from './sessionTeamCredentialLaunchError';
 import type { SpawnSessionOptions } from '@/session/shared/spawnSessionContract';
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
 import type { ActionExecutorDeps, ProviderBrokerApplicationBindingV1, TeamCredentialResourceCatalogEntryV1 } from '@happier-dev/protocol';
@@ -13,8 +14,6 @@ import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/
 import { isSameTeamCredentialBrokerApplication } from '@/providers/broker/teamCredentialModelCatalog';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
 import { readLeasedAgentProviderRequirements } from '@/plugins/runtime/providerBindings/adapter';
-import { ProviderBrokerAdmissionFailureCodeV1Schema, type ProviderBrokerAdmissionFailureCodeV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
-import type { ProviderErrorCodeV1 } from '@happier-dev/protocol/providers/errors';
 
 /** Runtime opens use the worker's admitted application and the shared catalog transport. */
 export async function readSessionTeamCredentialProviderModels(input: Readonly<{
@@ -43,16 +42,7 @@ export type NormalizedSessionTeamCredentialLaunch = Readonly<{
   teamModelRow: TeamCredentialResourceCatalogEntryV1['providerModels'][number] | null;
 }>;
 
-export class SessionTeamCredentialLaunchUnavailableError extends Error {
-  readonly details?: Readonly<{ v: 1; source: 'team_credential' }>;
-  constructor(readonly code: ProviderBrokerAdmissionFailureCodeV1 | ProviderErrorCodeV1 | 'team_credential_provider_selection_not_current'
-    = 'team_credential_provider_selection_not_current') {
-    super(code);
-    if (ProviderBrokerAdmissionFailureCodeV1Schema.safeParse(code).success) {
-      this.details = { v: 1, source: 'team_credential' };
-    }
-  }
-}
+export { SessionTeamCredentialLaunchUnavailableError } from './sessionTeamCredentialLaunchError';
 
 /** Reads source-owned model rows through the one paginated recipient transport.
  * Applications come from the worker's leased Agent/Provider projection, never a

@@ -117,14 +117,14 @@ function sourceCustodyHarness(sourceKind: 'connected_account' | 'connected_pool'
     return {
       id: 'resource-1', teamId: 'team-1', custodianAccountId: 'custodian-1', sourceOwnerDisplayName: null,
       displayName: 'Shared Codex', enabled, revision: 7, source,
-      disclosureCeiling: 'brokered_only', sessionUsePolicy: 'personal_allowed',
+      deliveryPolicy: { preferredAllowedModes: ['brokered'] }, sessionUsePolicy: 'personal_allowed',
       sourcePresentation: { kind: 'connected_service', service: accountSource.target.account.service },
       directExportSupport: 'unsupported', activeUsageLimitCount: 0, requestPolicy: null,
       brokerPlacement: { kind: 'machine', machineId: 'broker-machine' },
-      allMembersDeliveryMode: null, groupGrants: [], memberGrants: [],
+      allMembersAllowedRoutes: null, groupGrants: [], memberGrants: [],
       readiness: { kind: 'available' }, recoveryAction: null,
       brokerPresentation: { selectedTarget: null, eligibleTargets: [], selectedPool: null, eligiblePools: [] },
-      capabilities: { manageAudience: false, managePolicy: false, manageLimits: false, updateBrokerPlacement: false,
+      capabilities: { manageAudience: false, managePolicy: false, manageLimits: false, updateBrokerPlacement: false, updateDeliveryPolicy: false,
         narrowDisclosure: false, widenDisclosure: false, refreshDirectMaterial: false, disable: false, enable: false, delete: false },
       createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString(),
     };

@@ -1,3 +1,5 @@
+import { readTeamCredentialAllowedRoutes, readTeamCredentialDeliveryConfiguration } from './resourceDeliveryRead';
+import { readTeamCredentialResourceCandidatesInTx, teamCredentialAudienceDeliveryWhere } from './resourceCandidateRead';
 import { computeTeamCredentialSourceMemberKeyV1, matchesTeamCredentialSourceVersionBasisV1 } from '@happier-dev/protocol/teams/credentials/directMaterialV1';
 import { TeamCredentialDeliveryModeV1Schema, TeamCredentialDisclosureCeilingV1Schema, TeamCredentialResourceCatalogEntryV1Schema, TeamCredentialResourceAudienceGrantV1Schema, TeamCredentialResourceMemberGrantV1Schema, TeamCredentialResourceSummaryV1Schema, TeamCredentialSessionUsePolicyV1Schema, decodeTeamCredentialResourcesCursorV1, encodeTeamCredentialResourcesCursorV1, teamCredentialResourcesQueryKeyV1 } from '@happier-dev/protocol/teams/credentials/resourceV1';
 import { TeamCredentialSourceBindingV1Schema, type TeamCredentialSourceBindingV1 } from '@happier-dev/protocol/teams/credentials/sourceBindingV1';
@@ -324,7 +326,8 @@ async function resolveProjectionStatusInTx(
     if (source.kind === "provider_connection") {
         return { readiness: { kind: "resource_unavailable" } as const, recoveryAction: "choose_another_resource" as const };
     }
-    if (row.disclosureCeiling === "direct_allowed") {
+    const delivery = readTeamCredentialDeliveryConfiguration(row.disclosureCeiling);
+    if (delivery.success && delivery.data.policy.preferredAllowedModes.some(route => route !== 'brokered')) {
         return { readiness: { kind: "available" } as const, recoveryAction: null };
     }
     const placement = readTeamCredentialBrokerPlacement(row);
@@ -409,13 +412,15 @@ async function projectSummary(
         requestPolicyValue = null;
     }
     const parsedRequestPolicy = TeamCredentialResourceSummaryV1Schema.shape.requestPolicy.safeParse(requestPolicyValue);
-    const parsedCeiling = TeamCredentialDisclosureCeilingV1Schema.safeParse(row.disclosureCeiling);
+    const parsedCeiling = readTeamCredentialDeliveryConfiguration(row.disclosureCeiling);
     const parsedSessionPolicy = TeamCredentialSessionUsePolicyV1Schema.safeParse(row.sessionUsePolicy);
     const parsedAllMembersMode = row.allMembersDeliveryMode === null
         ? { success: true as const, data: null }
-        : TeamCredentialDeliveryModeV1Schema.safeParse(row.allMembersDeliveryMode);
+        : readTeamCredentialAllowedRoutes(row.allMembersDeliveryMode);
     const groupGrants = audience.groupGrants.flatMap((grant) => {
-        const parsed = TeamCredentialResourceAudienceGrantV1Schema.safeParse(grant);
+        const routes = readTeamCredentialAllowedRoutes(grant.deliveryMode);
+        const parsed = TeamCredentialResourceAudienceGrantV1Schema.safeParse({ teamGroupId: grant.teamGroupId,
+            allowedRoutes: routes.success ? routes.data : null });
         if (!parsed.success) {
             corrupt = true;
             return [];
@@ -423,7 +428,9 @@ async function projectSummary(
         return [parsed.data];
     });
     const memberGrants = audience.memberGrants.flatMap((grant) => {
-        const parsed = TeamCredentialResourceMemberGrantV1Schema.safeParse(grant);
+        const routes = readTeamCredentialAllowedRoutes(grant.deliveryMode);
+        const parsed = TeamCredentialResourceMemberGrantV1Schema.safeParse({ teamMembershipId: grant.teamMembershipId,
+            allowedRoutes: routes.success ? routes.data : null });
         if (!parsed.success) {
             corrupt = true;
             return [];
@@ -474,7 +481,7 @@ async function projectSummary(
         displayName: row.displayName,
         enabled: row.enabled,
         revision: row.revision,
-        disclosureCeiling: parsedCeiling.success ? parsedCeiling.data : "brokered_only",
+        deliveryPolicy: parsedCeiling.success ? parsedCeiling.data.policy : { preferredAllowedModes: ['brokered'] },
         sessionUsePolicy: authority.isQualifiedTeamManager && parsedSessionPolicy.success
             ? parsedSessionPolicy.data
             : "personal_allowed",
@@ -490,15 +497,15 @@ async function projectSummary(
             ? parsedRequestPolicy.data
             : null,
         brokerPlacement: sourceOwnerView ? placement : null,
-        allMembersDeliveryMode: authority.isQualifiedTeamManager && parsedAllMembersMode.success
+        allMembersAllowedRoutes: authority.isQualifiedTeamManager && parsedAllMembersMode.success
             ? parsedAllMembersMode.data
             : null,
         groupGrants: authority.isQualifiedTeamManager ? groupGrants : [],
         memberGrants: authority.isQualifiedTeamManager ? memberGrants : [],
         usageCapabilities: resolveCurrentTeamCredentialUsageCapabilitiesForResource({
             allMembersDeliveryMode: row.allMembersDeliveryMode,
-            groupGrants,
-            memberGrants,
+            groupGrants: audience.groupGrants,
+            memberGrants: audience.memberGrants,
             sessionUsePolicy: row.sessionUsePolicy,
         }),
         activeUsageLimitCount: listFacts.activeUsageLimitCount ?? 0,
@@ -519,7 +526,7 @@ async function projectSummary(
         capabilities: projectTeamCredentialResourceAdministrationCapabilities({
             resource: {
                 enabled: row.enabled,
-                disclosureCeiling: parsedCeiling.success ? parsedCeiling.data : "brokered_only",
+                deliveryPolicy: parsedCeiling.success ? parsedCeiling.data.policy : { preferredAllowedModes: ['brokered'] },
             },
             isSourceCustodian: sourceOwnerView,
             isQualifiedTeamManager: authority.isQualifiedTeamManager,
@@ -1148,23 +1155,15 @@ export async function readTeamCredentialResourcePageInTx(tx: Tx, input: Credenti
     const decoded = input.cursor ? decodeTeamCredentialResourcesCursorV1(input.cursor, queryKey) : null;
     if (decoded?.status === 'invalid') return { ok: false as const, error: 'invalid_resource_input' as const };
     const after = decoded?.status === 'ok' ? decoded.cursor : null;
-    const deliveryModes = filter === 'brokered'
-        ? ['brokered', 'both'] as const
-        : filter === 'direct'
-            ? ['direct', 'both'] as const
-            : null;
+    const deliveryMode = filter === 'brokered' || filter === 'direct' ? filter : null;
     const now = new Date();
     const readAdministrationCandidates = async (candidateAfter: typeof after, windowSize: number = limit) => await tx.teamCredentialResource.findMany({
         where: {
             teamId: input.teamId,
             ...(!qualifiedViewer.manageCredentials ? { custodianAccountId: input.actorAccountId } : {}),
             ...(input.search ? { displayName: { contains: input.search } } : {}),
-            ...(deliveryModes ? { AND: [
-                { OR: [
-                    { allMembersDeliveryMode: { in: [...deliveryModes] } },
-                    { groupGrants: { some: { deliveryMode: { in: [...deliveryModes] } } } },
-                    { memberGrants: { some: { deliveryMode: { in: [...deliveryModes] } } } },
-                ] },
+            ...(deliveryMode ? { AND: [
+                teamCredentialAudienceDeliveryWhere(deliveryMode),
                 ...(candidateAfter ? [{ OR: [
                     { displayName: { gt: candidateAfter.displayName } },
                     { displayName: candidateAfter.displayName, id: { gt: candidateAfter.id } },
@@ -1179,7 +1178,7 @@ export async function readTeamCredentialResourcePageInTx(tx: Tx, input: Credenti
                     } },
                 }
                 : {}),
-            ...(!deliveryModes && candidateAfter ? { OR: [
+            ...(!deliveryMode && candidateAfter ? { OR: [
                 { displayName: { gt: candidateAfter.displayName } },
                 { displayName: candidateAfter.displayName, id: { gt: candidateAfter.id } },
             ] } : {}),
@@ -1387,9 +1386,9 @@ export async function readTeamCredentialResourceAdministrationInTx(tx: Tx, input
 }
 
 /**
- * Lists only resources whose stored, canonical source binding has the exact
- * stable logical identity selected on the authenticated Account's source-detail
- * surface.
+ * Shared source-detail and direct-reconciler read within the authenticated
+ * custodian's rows. Source detail selects an exact stable logical identity;
+ * reconciliation selects that custodian's qualified, active direct sources.
  *
  * `custodianAccountId` is always constrained before stored JSON is inspected.
  * The locator is therefore only a selector within the caller's own rows, never
@@ -1399,11 +1398,10 @@ export async function readTeamCredentialResourceAdministrationInTx(tx: Tx, input
  */
 export async function readTeamCredentialSourceResourceAdministrationInTx(tx: Tx, input: Readonly<{
     actorAccountId: string;
-    source: TeamCredentialSourceLocatorV1;
     authentication: TeamOperationAuthenticationContext;
     cursor?: string;
     limit?: number;
-}>) {
+}> & Readonly<{ source: TeamCredentialSourceLocatorV1; scope?: never } | { scope: 'custodian'; source?: never }>) {
     const account = await tx.account.findUnique({
         where: { id: input.actorAccountId },
         select: { status: true },
@@ -1411,33 +1409,23 @@ export async function readTeamCredentialSourceResourceAdministrationInTx(tx: Tx,
     if (account?.status !== "active") {
         return { ok: false as const, error: "not_found_or_not_visible" as const };
     }
-    const locatorKey = teamCredentialSourceLocatorKeyV1(input.source);
+    const locatorKey = input.source ? teamCredentialSourceLocatorKeyV1(input.source) : null;
     const limit = input.limit ?? 50;
-    const queryKey = `v1:credential-source-resources:${input.actorAccountId}:${locatorKey}`;
+    const queryKey = input.scope === 'custodian' ? `v1:credential-direct-custodian:${input.actorAccountId}`
+        : `v1:credential-source-resources:${input.actorAccountId}:${locatorKey}`;
     const decoded = input.cursor ? decodeTeamCredentialResourcesCursorV1(input.cursor, queryKey) : null;
     if (decoded?.status === 'invalid') return { ok: false as const, error: 'invalid_resource_input' as const };
     const after = decoded?.status === 'ok' ? decoded.cursor : null;
-    const sourceIdentityNeedle = input.source.kind === 'provider_connection'
-        ? `\"connectionId\":${JSON.stringify(input.source.connectionId)}`
-        : input.source.kind === 'connected_pool'
-            ? `\"groupId\":${JSON.stringify(input.source.target.groupId)}`
-            : `\"accountId\":${JSON.stringify(input.source.target.account.accountId)}`;
     const matchesSource = (row: ResourceRow) => {
+        if (input.scope === 'custodian') return true;
         const source = readTeamCredentialSourceBinding(row.sourceBindingJson);
         return source.success
             && teamCredentialSourceLocatorKeyV1(teamCredentialSourceLocatorV1(source.data)) === locatorKey;
     };
-    const candidateWindow = await tx.teamCredentialResource.findMany({
-            where: {
-                custodianAccountId: input.actorAccountId,
-                sourceBindingJson: { contains: sourceIdentityNeedle },
-                ...(after ? { OR: [
-                    { displayName: { gt: after.displayName } },
-                    { displayName: after.displayName, id: { gt: after.id } },
-                ] } : {}),
-            },
-            orderBy: [{ displayName: 'asc' }, { id: 'asc' }], take: limit + 1,
-        });
+    const candidateWindow = await readTeamCredentialResourceCandidatesInTx(tx, {
+        selection: { kind: 'custodian', accountId: input.actorAccountId, source: input.source,
+            ...(input.scope === 'custodian' ? { directOnly: true as const } : {}) }, after, limit,
+    });
     const processedCandidates = candidateWindow.slice(0, limit);
     const pageRows = processedCandidates.filter(matchesSource);
     const lastProcessedCandidate = processedCandidates.at(-1) ?? null;
@@ -1469,6 +1457,7 @@ export async function readTeamCredentialSourceResourceAdministrationInTx(tx: Tx,
         const actor = context?.actor ?? null;
         const qualification = context?.qualification ?? { ok: false as const };
         const isQualifiedTeamMember = qualification.ok && actor?.capabilities.viewTeam === true;
+        if (input.scope === 'custodian' && !isQualifiedTeamMember) return null;
         const isQualifiedTeamManager = qualification.ok && actor !== null
             && resolveTeamCredentialCapabilities({ ...actor, teamArchivedAt: actor.team.archivedAt }).manageCredentials;
         const summary = await projectSummary(tx, row, NO_AUDIENCE, input.actorAccountId, {
@@ -1480,13 +1469,15 @@ export async function readTeamCredentialSourceResourceAdministrationInTx(tx: Tx,
         });
         if (!summary.ok) return null;
         const resource = summary.resource;
+        if (input.scope === 'custodian' && (!resource.enabled || resource.source === null
+            || !resource.deliveryPolicy.preferredAllowedModes.includes('direct'))) return null;
         return {
             resource: TeamCredentialSourceResourceAdministrationV1Schema.parse({
                 id: resource.id,
                 displayName: resource.displayName,
                 enabled: resource.enabled,
                 revision: resource.revision,
-                disclosureCeiling: resource.disclosureCeiling,
+                deliveryPolicy: resource.deliveryPolicy,
                 brokerPlacement: resource.brokerPlacement,
                 brokerPresentation: resource.brokerPresentation,
                 readiness: resource.readiness,

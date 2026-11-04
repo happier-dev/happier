@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { useNavigation, useRouter } from '@/components/appShell/workspace/destinationRoute';
-import type { TeamCredentialDeliveryModeV1, TeamCredentialSessionUsePolicyV1, TeamCredentialUsageLimitDefinitionV1 } from '@happier-dev/protocol/teams';
+import type { TeamCredentialRouteV1, TeamCredentialSessionUsePolicyV1, TeamCredentialUsageLimitDefinitionV1 } from '@happier-dev/protocol/teams';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -25,7 +25,7 @@ import { teamCredentialDetailPath } from '../teamsRoutes';
 import { credentialApprovalFailureMessage, credentialFailureMessage, deliveryModeLabel, limitMetricLabel, limitPeriodLabel, limitSubjectKindLabel, requestProtocolKindLabel, sessionUsePolicyLabel, sourceKindLabel } from './teamCredentialPresentation';
 import { TeamCredentialAudiencePicker } from './TeamCredentialAudiencePicker';
 import { TeamCredentialSourcePicker } from './TeamCredentialSourcePicker';
-import { confirmTeamCredentialDirectDisclosure, confirmTeamCredentialDisclosureWidening, EMPTY_TEAM_CREDENTIAL_LIMIT_DRAFT, EMPTY_TEAM_CREDENTIAL_RESOURCE_DRAFT, narrowTeamCredentialResourceDraftToBrokeredOnly, offeredDeliveryModes, reconcileTeamCredentialPolicyDraftForModelCatalog, TEAM_CREDENTIAL_LIMIT_PERIODS, TEAM_CREDENTIAL_LIMIT_SUBJECT_KINDS, TeamCredentialBrokerPlacementSection, teamCredentialBrokerPlacementDraftLabel, TeamCredentialDeliveryModeChooser, teamCredentialLimitMaximumValid, teamCredentialLimitSubjectSelected, teamCredentialPolicyFromDraft, teamCredentialResourceDraftFingerprint, useTeamCredentialResourceDraft, withAudienceEntry, type TeamCredentialResourceDraft } from './teamCredentialEditorDraft';
+import { confirmTeamCredentialDisclosure, confirmTeamCredentialDisclosureWidening, EMPTY_TEAM_CREDENTIAL_LIMIT_DRAFT, EMPTY_TEAM_CREDENTIAL_RESOURCE_DRAFT, narrowTeamCredentialResourceDraftToBrokeredOnly, offeredDeliveryModes, reconcileTeamCredentialPolicyDraftForModelCatalog, TEAM_CREDENTIAL_LIMIT_PERIODS, TEAM_CREDENTIAL_LIMIT_SUBJECT_KINDS, TeamCredentialBrokerPlacementSection, teamCredentialBrokerPlacementDraftLabel, TeamCredentialDeliveryModeChooser, teamCredentialLimitMaximumValid, teamCredentialLimitSubjectSelected, teamCredentialPolicyFromDraft, teamCredentialResourceDraftFingerprint, useTeamCredentialResourceDraft, withAudienceEntry, type TeamCredentialResourceDraft } from './teamCredentialEditorDraft';
 import { useUnsavedDraftNavigationGuard } from '@/utils/navigation/useUnsavedDraftNavigationGuard';
 import {
     projectTeamCredentialRequestPolicyEditorSupport,
@@ -82,19 +82,20 @@ const CredentialCreator = React.memo(function CredentialCreator(props: Readonly<
     const resourceDraft = useTeamCredentialResourceDraft({ targetKey });
     const {
         name,
-        disclosureCeiling: ceiling,
+        deliveryPolicy,
         brokerPlacement: placement,
         sessionUsePolicy: usePolicy,
         audience: { allMembers, groups: groupGrants, members: memberGrants },
         requestPolicy: policyDraft,
         pendingLimit: limitDraft,
     } = resourceDraft.draft;
+    const ceiling = deliveryPolicy.preferredAllowedModes.includes('direct') ? 'direct_allowed' : 'brokered_only';
     const savedLimits = resourceDraft.draft.limits;
     const patchResourceDraft = React.useCallback((patch: Partial<typeof resourceDraft.draft>, _legacyResetsConsent = false) => {
         const update = (current: typeof resourceDraft.draft) => ({ ...current, ...patch });
         resourceDraft.setDraft(update);
     }, [resourceDraft]);
-    const setGroupGrants = React.useCallback((next: React.SetStateAction<ReadonlyMap<string, TeamCredentialDeliveryModeV1>>) => {
+    const setGroupGrants = React.useCallback((next: React.SetStateAction<ReadonlyMap<string, readonly TeamCredentialRouteV1[]>>) => {
         resourceDraft.setDraft((current) => ({
             ...current,
             audience: {
@@ -103,7 +104,7 @@ const CredentialCreator = React.memo(function CredentialCreator(props: Readonly<
             },
         }));
     }, [resourceDraft]);
-    const setMemberGrants = React.useCallback((next: React.SetStateAction<ReadonlyMap<string, TeamCredentialDeliveryModeV1>>) => {
+    const setMemberGrants = React.useCallback((next: React.SetStateAction<ReadonlyMap<string, readonly TeamCredentialRouteV1[]>>) => {
         resourceDraft.setDraft((current) => ({
             ...current,
             audience: {
@@ -206,12 +207,12 @@ const CredentialCreator = React.memo(function CredentialCreator(props: Readonly<
             source: candidate.candidate.source,
             ...(!nameEdited ? { name: candidate.candidate.label } : {}),
         };
-        if (!resourceDraft.isDirectDisclosureAcceptedForDraft(nextDraft)
-            && !await confirmTeamCredentialDirectDisclosure()) return;
+        if (!resourceDraft.isDisclosureAcceptedForDraft(nextDraft)
+            && !await confirmTeamCredentialDisclosure(nextDraft)) return;
         setCandidateId(candidate.selectionId);
         setNotice(null);
         resourceDraft.setDraft(nextDraft);
-        resourceDraft.acceptDirectDisclosureForDraft(nextDraft);
+        resourceDraft.acceptDisclosureForDraft(nextDraft);
     }, [nameEdited, resourceDraft]);
     React.useEffect(() => {
         if (candidateId !== null || sources.status !== 'ready' || !props.sourceHint) return;
@@ -262,25 +263,25 @@ const CredentialCreator = React.memo(function CredentialCreator(props: Readonly<
     if (!mayOffer || (!context.canMutate && !context.approvalPending)) return <ItemGroup description={t('teams.credentials.create.notAllowed')}><Item testID="team-credential-create-forbidden" title={t('teams.denied.title')} showChevron={false} /></ItemGroup>;
     const directExportSupported = selected?.candidate.directExportSupport !== 'unsupported';
     const modes = offeredDeliveryModes({
-        disclosureCeiling: directExportSupported ? ceiling : 'brokered_only',
+        deliveryPolicy,
+        directExportSupport: selected?.candidate.directExportSupport,
     });
     const chooseMode = async (
-        mode: TeamCredentialDeliveryModeV1 | null,
-        update: (draft: TeamCredentialResourceDraft, mode: TeamCredentialDeliveryModeV1 | null) => TeamCredentialResourceDraft,
+        mode: readonly TeamCredentialRouteV1[] | null,
+        update: (draft: TeamCredentialResourceDraft, mode: readonly TeamCredentialRouteV1[] | null) => TeamCredentialResourceDraft,
     ) => {
         const nextDraft = update(resourceDraft.draft, mode);
-        if (mode !== null && mode !== 'brokered'
-            && !resourceDraft.isDirectDisclosureAcceptedForDraft(nextDraft)
-            && !await confirmTeamCredentialDirectDisclosure()) return;
+        if (!resourceDraft.isDisclosureAcceptedForDraft(nextDraft)
+            && !await confirmTeamCredentialDisclosure(nextDraft)) return;
         resourceDraft.setDraft(nextDraft);
-        if (mode !== null && mode !== 'brokered') resourceDraft.acceptDirectDisclosureForDraft(nextDraft);
+        resourceDraft.acceptDisclosureForDraft(nextDraft);
         setExpanded(null);
     };
     const chooser = (
         key: string,
         title: string,
-        mode: TeamCredentialDeliveryModeV1 | null,
-        update: (draft: TeamCredentialResourceDraft, next: TeamCredentialDeliveryModeV1 | null) => TeamCredentialResourceDraft,
+        mode: readonly TeamCredentialRouteV1[] | null,
+        update: (draft: TeamCredentialResourceDraft, next: readonly TeamCredentialRouteV1[] | null) => TeamCredentialResourceDraft,
     ) => expanded === key ? <TeamCredentialDeliveryModeChooser principalKey={key} principalName={title} modes={modes} current={mode} disabled={busy} onChoose={next => void chooseMode(next, update)} /> : null;
     const requestPolicy = managesResources ? teamCredentialPolicyFromDraft(policyDraft) : null;
     const hasLimit = limitDraft.maximum.trim() !== '';
@@ -288,13 +289,13 @@ const CredentialCreator = React.memo(function CredentialCreator(props: Readonly<
     const limitIdentity = (limit: TeamCredentialUsageLimitDefinitionV1) => JSON.stringify([
         limit.subjectKind, limit.subjectId, limit.period, limit.metric,
     ]);
-    const grants = [allMembers, ...groupGrants.values(), ...memberGrants.values()].filter((mode): mode is TeamCredentialDeliveryModeV1 => mode !== null);
-    const needsBroker = managesResources && grants.some(mode => mode !== 'direct');
+    const grants = [allMembers, ...groupGrants.values(), ...memberGrants.values()].filter((mode): mode is readonly TeamCredentialRouteV1[] => mode !== null);
+    const needsBroker = managesResources && grants.some(routes => routes.includes('brokered'));
     const usageLimits = needsBroker ? [...savedLimits, ...(pendingLimit ? [pendingLimit] : [])] : [];
     const uniqueLimits = new Set(usageLimits.map(limitIdentity)).size === usageLimits.length;
     const ready = selected !== null && name.trim().length > 0 && name.trim().length <= NAME_MAX_LENGTH
-        && resourceDraft.directDisclosureAccepted
-        && (directExportSupported || grants.every(mode => mode === 'brokered'))
+        && resourceDraft.disclosureAccepted
+        && (directExportSupported || grants.every(routes => !routes.includes('direct')))
         && (!managesResources || (grants.length > 0 && (!needsBroker || placement !== null)
             && providerPolicyReconciliation.invalidatedModelIds.length === 0
             && (requestPolicy === null || (
@@ -327,7 +328,7 @@ const CredentialCreator = React.memo(function CredentialCreator(props: Readonly<
         {providerConnections.error && sources.supportedKinds.includes('provider_connection') ? <ItemGroup description={t('teams.credentials.requestPolicy.catalogUnavailable')}><Item testID="team-credential-create-provider-source-retry" title={t('teams.unavailable.retry')} onPress={() => void providerConnections.refresh()} showChevron={false} /></ItemGroup> : null}
         <ItemGroup title={t('teams.credentials.edit.nameLabel')}><Item title={t('teams.credentials.edit.nameLabel')} accessoryLayout="adaptive" showChevron={false} rightElement={<FieldTextInput testID="team-credential-create-name" value={name} onChangeText={value => { setNameEdited(true); patchResourceDraft({ name: value }); }} placeholder={t('teams.credentials.edit.namePlaceholder')} accessibilityLabel={t('teams.credentials.edit.nameLabel')} maxLength={NAME_MAX_LENGTH} editable={!busy} />} /></ItemGroup>
         <ItemGroup title={t('teams.credentials.edit.ceilingLabel')} description={t('teams.credentials.edit.ceilingNote')} accessibilityRole="radiogroup" accessibilityLabel={t('teams.credentials.edit.ceilingLabel')}>
-            {(['brokered_only', 'direct_allowed'] as const).map(value => <Item key={value} testID={`team-credential-create-ceiling:${value}`} title={value === 'brokered_only' ? t('teams.credentials.edit.ceilingBrokeredOnly') : t('teams.credentials.edit.ceilingDirectAllowed')} accessibilityRole="radio" webRole="radio" selected={ceiling === value} disabled={busy} onPress={async () => { if (value === 'direct_allowed' && ceiling !== value && !await confirmTeamCredentialDisclosureWidening()) return; if (value === 'brokered_only') resourceDraft.setDraft(narrowTeamCredentialResourceDraftToBrokeredOnly); else patchResourceDraft({ disclosureCeiling: value }, true); }} showChevron={false} />)}
+            {(['brokered_only', 'direct_allowed'] as const).map(value => <Item key={value} testID={`team-credential-create-ceiling:${value}`} title={value === 'brokered_only' ? t('teams.credentials.edit.ceilingBrokeredOnly') : t('teams.credentials.edit.ceilingDirectAllowed')} accessibilityRole="radio" webRole="radio" selected={ceiling === value} disabled={busy} onPress={async () => { if (value === 'direct_allowed' && ceiling !== value && !await confirmTeamCredentialDisclosureWidening()) return; if (value === 'brokered_only') resourceDraft.setDraft(narrowTeamCredentialResourceDraftToBrokeredOnly); else patchResourceDraft({ deliveryPolicy: { preferredAllowedModes: ['brokered', 'direct'] } }, true); }} showChevron={false} />)}
         </ItemGroup>
         {managesResources ? <TeamCredentialBrokerPlacementSection
             scope={context.scope}
@@ -348,7 +349,7 @@ const CredentialCreator = React.memo(function CredentialCreator(props: Readonly<
             {[...memberGrants.keys()].map(membershipId => { const key = `member:${membershipId}`; const title = pickedNames.get(`member:${membershipId}`) ?? t('teams.credentials.limits.unknownSubject'); const mode = memberGrants.get(membershipId) ?? null; return <React.Fragment key={key}><Item testID={`team-credential-create-audience-member:${membershipId}`} title={title} detail={mode ? deliveryModeLabel(mode) : t('teams.credentials.audience.none')} disabled={busy} onPress={() => setExpanded(expanded === key ? null : key)} showChevron={false} />{chooser(key, title, mode, (draft, next) => ({ ...draft, audience: { ...draft.audience, members: withAudienceEntry(draft.audience.members, membershipId, next) } }))}</React.Fragment>; })}
             {/* Both directories are paged and neither is searchable inline, so
                 reaching someone past the first page is the chooser's job. */}
-            <TeamCredentialAudiencePicker testID="team-credential-create-audience-add" scope={context.scope} address={context.address} excludedGroupIds={[...groupGrants.keys()]} excludedMemberIds={[...memberGrants.keys()]} disabled={busy} onChoose={principal => { setPickedNames(names => new Map(names).set(`${principal.kind}:${principal.id}`, principal.name)); if (principal.kind === 'group') setGroupGrants(current => withAudienceEntry(current, principal.id, 'brokered')); else setMemberGrants(current => withAudienceEntry(current, principal.id, 'brokered')); setExpanded(`${principal.kind}:${principal.id}`); }} />
+            <TeamCredentialAudiencePicker testID="team-credential-create-audience-add" scope={context.scope} address={context.address} excludedGroupIds={[...groupGrants.keys()]} excludedMemberIds={[...memberGrants.keys()]} disabled={busy} onChoose={principal => { setPickedNames(names => new Map(names).set(`${principal.kind}:${principal.id}`, principal.name)); if (principal.kind === 'group') setGroupGrants(current => withAudienceEntry(current, principal.id, [...deliveryPolicy.preferredAllowedModes])); else setMemberGrants(current => withAudienceEntry(current, principal.id, [...deliveryPolicy.preferredAllowedModes])); setExpanded(`${principal.kind}:${principal.id}`); }} />
         </ItemGroup> : null}
         {managesResources ? <ItemGroup title={t('teams.credentials.usePolicy.label')} accessibilityRole="radiogroup" accessibilityLabel={t('teams.credentials.usePolicy.label')}>{USE_POLICIES.map(value => <Item key={value} testID={`team-credential-create-use-policy:${value}`} title={sessionUsePolicyLabel(value)} accessibilityRole="radio" webRole="radio" selected={usePolicy === value} disabled={busy} onPress={() => patchResourceDraft({ sessionUsePolicy: value })} showChevron={false} />)}</ItemGroup> : null}
         {managesResources && selectedSource !== null ? requestPolicySupportResult ? (
@@ -410,7 +411,7 @@ const CredentialCreator = React.memo(function CredentialCreator(props: Readonly<
                 if (!ready || !selected) return; const requestedTargetKey = targetKey; setSubmitting(true); setNotice(null);
                 try {
                     if (selectedProviderOffer !== null) { const refreshedOffers = await providerConnections.refresh(); if (!isTeamCredentialProviderSourceOfferCurrent(selectedProviderOffer, refreshedOffers)) { setNotice(t('teams.credentials.directReadiness.state.sourceChanged')); return; } }
-                    const outcome = await createTeamCredentialResource({ scope: context.scope, address: context.address, resourceId: requestId.current, displayName: name.trim(), source: selected.candidate.source, disclosureCeiling: ceiling, sessionUsePolicy: managesResources ? usePolicy : 'personal_allowed', brokerPlacement: managesResources ? placement : null, requestPolicy, allMembersDeliveryMode: managesResources ? allMembers : null, groupGrants: managesResources ? [...groupGrants].map(([teamGroupId, deliveryMode]) => ({ teamGroupId, deliveryMode })) : [], memberGrants: managesResources ? [...memberGrants].map(([teamMembershipId, deliveryMode]) => ({ teamMembershipId, deliveryMode })) : [], usageLimits: managesResources ? usageLimits : [], handlers: { onApprovalSucceeded: summary => { if (currentTargetKey.current === requestedTargetKey) { allowSavedNavigation(); router.replace(teamCredentialDetailPath(context.address, summary.id)); } }, onApprovalFailed: code => { if (currentTargetKey.current === requestedTargetKey) setNotice(credentialApprovalFailureMessage(code)); } } });
+                    const outcome = await createTeamCredentialResource({ ...(resourceDraft.disclosureReviewCompleted ? { confirmedByPresentUser: true } : {}), scope: context.scope, address: context.address, resourceId: requestId.current, displayName: name.trim(), source: selected.candidate.source, deliveryPolicy: { preferredAllowedModes: [...deliveryPolicy.preferredAllowedModes] }, sessionUsePolicy: managesResources ? usePolicy : 'personal_allowed', brokerPlacement: managesResources ? placement : null, requestPolicy, allMembersAllowedRoutes: managesResources && allMembers ? [...allMembers] : null, groupGrants: managesResources ? [...groupGrants].map(([teamGroupId, allowedRoutes]) => ({ teamGroupId, allowedRoutes: [...allowedRoutes] })) : [], memberGrants: managesResources ? [...memberGrants].map(([teamMembershipId, allowedRoutes]) => ({ teamMembershipId, allowedRoutes: [...allowedRoutes] })) : [], usageLimits: managesResources ? usageLimits : [], handlers: { onApprovalSucceeded: summary => { if (currentTargetKey.current === requestedTargetKey) { allowSavedNavigation(); router.replace(teamCredentialDetailPath(context.address, summary.id)); } }, onApprovalFailed: code => { if (currentTargetKey.current === requestedTargetKey) setNotice(credentialApprovalFailureMessage(code)); } } });
                     if (currentTargetKey.current !== requestedTargetKey) return; if (outcome.kind === 'succeeded') { allowSavedNavigation(); router.replace(teamCredentialDetailPath(context.address, outcome.value.id)); } else setNotice(credentialFailureMessage(outcome.failure));
                 } catch (cause) { if (currentTargetKey.current !== requestedTargetKey) return; if (isTeamActionApprovalPendingError(cause)) context.requestApproval(cause.registration); else setNotice(t('teams.errors.generic')); } finally { if (currentTargetKey.current === requestedTargetKey) setSubmitting(false); }
             }} showChevron={false} />

@@ -1,3 +1,9 @@
+import { projectTeamCredentialLaunchFailure } from './sessionTeamCredentialLaunchError';
+import { ManagedCredentialDeliveryResultV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
+import { projectSessionSpawnFailure } from '@/session/creation/projectSessionSpawnFailure';
+import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
 import { describe, expect, it } from 'vitest';
 import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
 import { TeamCredentialResourceCatalogEntryV1Schema, TeamCredentialResourceReadInputV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
@@ -31,6 +37,19 @@ const options: SpawnSessionOptions = {
 const applications = resource.providerModels.map(entry => entry.application);
 
 describe('Session Team launch composition', () => {
+  it.each([
+    { kind: 'unknown', code: 'action_outcome_unknown' },
+    { kind: 'refused', code: 'credential_unavailable' },
+  ])('preserves an unknown native delivery outcome or definite refusal $code through runtime and strict spawn failures', ({ kind, code }) => {
+    const outcome = ManagedCredentialDeliveryResultV1Schema.parse({ kind, code });
+    const error = projectTeamCredentialLaunchFailure(outcome, 'binding', 'team_credential_provider_selection_not_current');
+    expect(error.code).toBe(code);
+    expect(classifyPrimarySessionRuntimeIssue({ cause: 'session_error', error }))
+      .toMatchObject({ code });
+    expect(SessionSpawnNewResultV1Schema.parse(projectSessionSpawnFailure({
+      errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED, errorMessage: error.code,
+    }))).toMatchObject({ launchError: { code } });
+  });
   it('refuses malformed supplied Connected Account bindings through the typed launch refusal', async () => {
     await expect(normalizeSessionTeamCredentialLaunch({ options: { ...options, connectedServices: { v: 99 } },
       agentId: 'codex', agentTargetKey: target, contributions: readCurrentContributionRegistry(), applications,

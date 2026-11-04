@@ -1,11 +1,9 @@
 import { isDeepStrictEqual } from 'node:util';
-import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 
 import { computeTeamCredentialSourceMemberKeyV1 } from '@happier-dev/protocol/teams/credentials/directMaterialV1';
-import { TeamCredentialResourcePageV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
-import type { TeamCredentialResourceSummaryV1, TeamCredentialSourceBindingV1, TeamCredentialSourceMemberV1, TeamCredentialDirectMaterialReconcileOutputV1 } from '@happier-dev/protocol/teams';
-import { TeamsPageV1Schema } from '@happier-dev/protocol/teams/projections';
+import type { TeamCredentialSourceBindingV1, TeamCredentialSourceMemberV1, TeamCredentialDirectMaterialReconcileOutputV1 } from '@happier-dev/protocol/teams';
+import { readCustodianTeamCredentialDirectResources } from '@/session/services/sessionTeamCredentialCatalog';
 import type {
   QualifiedConnectedAccountGroupV4,
   QualifiedConnectedAccountProfileV4,
@@ -125,55 +123,6 @@ export type TeamCredentialDirectMaterialWakeReason =
   | 'account-connect' | 'account-reconnect' | 'account-changes'
   | 'account-page-limit' | 'account-cursor-gone';
 
-function isActionFailure(value: unknown): value is Readonly<{ ok: false }> {
-  return typeof value === 'object' && value !== null && 'ok' in value && value.ok === false;
-}
-
-async function listOwnedResources(input: Readonly<{
-  accountId: string;
-  homeDomainAction: HomeDomainAction;
-  signal?: AbortSignal;
-}>): Promise<readonly TeamCredentialResourceSummaryV1[]> {
-  const resources: TeamCredentialResourceSummaryV1[] = [];
-  let cursor: string | null = null;
-  do {
-    const page = await input.homeDomainAction({
-      actionId: 'teams.list',
-      input: { v: 1, scope: 'member', archived: 'active', limit: 100, cursor },
-      context: { surface: 'cli' },
-      ...(input.signal ? { signal: input.signal } : {}),
-    });
-    if (isActionFailure(page)) return resources;
-    const parsedPage = createStoredReadSchema(TeamsPageV1Schema).safeParse(page);
-    if (!parsedPage.success) return resources;
-    for (const team of parsedPage.data.items) {
-      // The administration list is paginated and carries no custodian filter,
-      // so every page is drained before the owned direct rows are selected.
-      let resourceCursor: string | undefined;
-      do {
-        const listed = await input.homeDomainAction({
-          actionId: 'teams.credentials.list',
-          input: { teamId: team.id, filter: 'direct', ...(resourceCursor ? { cursor: resourceCursor } : {}) },
-          context: { surface: 'cli' },
-          ...(input.signal ? { signal: input.signal } : {}),
-        });
-        if (isActionFailure(listed)) break;
-        const parsedListed = createStoredReadSchema(TeamCredentialResourcePageV1Schema).safeParse(listed);
-        if (!parsedListed.success) break;
-        resources.push(...parsedListed.data.resources.filter((resource) => (
-          resource.custodianAccountId === input.accountId
-          && resource.enabled
-          && resource.disclosureCeiling === 'direct_allowed'
-          && resource.source !== null
-        )));
-        resourceCursor = parsedListed.data.nextCursor ?? undefined;
-      } while (resourceCursor);
-    }
-    cursor = parsedPage.data.nextCursor;
-  } while (cursor);
-  return resources;
-}
-
 function connectedMember(account: QualifiedConnectedAccountRef): TeamCredentialSourceMemberV1 {
   return {
     kind: 'connected_account',
@@ -237,11 +186,9 @@ export function createDaemonTeamCredentialDirectMaterialReconciler(params: Reado
         return params.readGroup(source, currentSignal);
       };
       try {
-        const resources = await listOwnedResources({
-          accountId: params.accountId,
+        const resources = await readCustodianTeamCredentialDirectResources({
           homeDomainAction: request => {
-            if (request.actionId === 'teams.list') readsIssued.teamPages++;
-            else readsIssued.resourcePages++;
+            readsIssued.resourcePages++;
             return params.homeDomainAction(request);
           },
           ...(signal ? { signal } : {}),

@@ -1,3 +1,4 @@
+import { TeamCredentialResourceCustodianListInputV1Schema } from './resourceSelectionV1.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 import { ProviderErrorCodeV1Schema } from '../../providers/errors.js';
@@ -212,18 +213,18 @@ export const TeamCredentialResourceCreateInputV1Schema = lazyZodSchema(() => z.s
   teamId: z.string().check(z.minLength(1)), resourceId: z.string().check(z.minLength(1), z.maxLength(256)),
   displayName: z.string().check(z.trim(), z.minLength(1), z.maxLength(120)),
   source: TeamCredentialSourceBindingV1Schema,
-  disclosureCeiling: TeamCredentialDisclosureCeilingV1Schema,
+  deliveryPolicy: z._default(TeamCredentialDeliveryPolicyV1Schema, { preferredAllowedModes: ['brokered'] }),
   sessionUsePolicy: TeamCredentialSessionUsePolicyV1Schema,
   brokerPlacement: z.nullable(TeamCredentialBrokerPlacementV1Schema),
   requestPolicy: z.nullable(TeamCredentialRequestPolicyV1Schema),
-  allMembersDeliveryMode: z.nullable(TeamCredentialDeliveryModeV1Schema),
+  allMembersAllowedRoutes: z.nullable(TeamCredentialAllowedRoutesV1Schema),
   groupGrants: z.array(z.strictObject({
     teamGroupId: z.string().check(z.minLength(1)),
-    deliveryMode: TeamCredentialDeliveryModeV1Schema,
+    allowedRoutes: TeamCredentialAllowedRoutesV1Schema,
   })),
   memberGrants: z.array(z.strictObject({
     teamMembershipId: z.string().check(z.minLength(1)),
-    deliveryMode: TeamCredentialDeliveryModeV1Schema,
+    allowedRoutes: TeamCredentialAllowedRoutesV1Schema,
   })),
   usageLimits: z.array(TeamCredentialUsageLimitDefinitionV1Schema),
 }));
@@ -231,17 +232,17 @@ export const TeamCredentialResourceCreateInputV1Schema = lazyZodSchema(() => z.s
 
 export const TeamCredentialResourceAudienceGrantV1Schema = lazyZodSchema(() => z.strictObject({
   teamGroupId: z.string().check(z.minLength(1)),
-  deliveryMode: TeamCredentialDeliveryModeV1Schema,
+  allowedRoutes: TeamCredentialAllowedRoutesV1Schema,
 }));
 
 export const TeamCredentialResourceMemberGrantV1Schema = lazyZodSchema(() => z.strictObject({
   teamMembershipId: z.string().check(z.minLength(1)),
-  deliveryMode: TeamCredentialDeliveryModeV1Schema,
+  allowedRoutes: TeamCredentialAllowedRoutesV1Schema,
 }));
 
 export const TeamCredentialResourceAudienceInputV1Schema = lazyZodSchema(() => z.strictObject({
   resourceId: z.string().check(z.minLength(1)), expectedRevision: z.number().check(z.int(), z.nonnegative()),
-  allMembersDeliveryMode: z.nullable(TeamCredentialDeliveryModeV1Schema),
+  allMembersAllowedRoutes: z.nullable(TeamCredentialAllowedRoutesV1Schema),
   groupGrants: z.array(TeamCredentialResourceAudienceGrantV1Schema),
   memberGrants: z.array(TeamCredentialResourceMemberGrantV1Schema),
 }));
@@ -255,13 +256,13 @@ export const TeamCredentialResourceReplacementV1Schema = lazyZodSchema(() => z.s
   displayName: z.string().check(z.trim(), z.minLength(1), z.maxLength(120)),
   sessionUsePolicy: TeamCredentialSessionUsePolicyV1Schema,
   requestPolicy: z.nullable(TeamCredentialRequestPolicyV1Schema),
-  allMembersDeliveryMode: z.nullable(TeamCredentialDeliveryModeV1Schema),
+  allMembersAllowedRoutes: z.nullable(TeamCredentialAllowedRoutesV1Schema),
   groupGrants: z.array(TeamCredentialResourceAudienceGrantV1Schema),
   memberGrants: z.array(TeamCredentialResourceMemberGrantV1Schema),
   /** Present only when the source custodian intentionally edits their private authority. */
   custodian: z.optional(z.strictObject({
     source: TeamCredentialSourceBindingV1Schema,
-    disclosureCeiling: TeamCredentialDisclosureCeilingV1Schema,
+    deliveryPolicy: TeamCredentialDeliveryPolicyV1Schema,
     brokerPlacement: z.nullable(TeamCredentialBrokerPlacementV1Schema),
   })),
   /** Bounded edits preserve limit rows omitted by paginated administration reads. */
@@ -281,17 +282,18 @@ export const TeamCredentialResourceUpdateInputV1Schema = lazyZodSchema(() => z.s
   resourceId: z.string().check(z.minLength(1)), expectedRevision: z.number().check(z.int(), z.nonnegative()),
   enabled: z.optional(z.boolean()),
   displayName: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(120))),
-  disclosureCeiling: z.optional(TeamCredentialDisclosureCeilingV1Schema),
+  deliveryPolicy: z.optional(TeamCredentialDeliveryPolicyV1Schema),
   sessionUsePolicy: z.optional(TeamCredentialSessionUsePolicyV1Schema),
   brokerPlacement: z.optional(z.nullable(TeamCredentialBrokerPlacementV1Schema)),
   requestPolicy: z.optional(z.nullable(TeamCredentialRequestPolicyV1Schema)),
-  replacement: z.optional(TeamCredentialResourceReplacementV1Schema),
+  /** Omitted fields retain storage values; custodians need not restate masked manager fields. */
+  replacement: z.optional(z.partial(TeamCredentialResourceReplacementV1Schema)),
 }).check(z.superRefine((value, context) => {
   if (value.replacement === undefined) return;
   const legacyKeys = [
     'enabled',
     'displayName',
-    'disclosureCeiling',
+    'deliveryPolicy',
     'sessionUsePolicy',
     'brokerPlacement',
     'requestPolicy',
@@ -333,18 +335,18 @@ export const TeamCredentialResourceListFilterV1Schema = lazyZodSchema(() => z.en
 
 /** Administration-list query. Recipient catalog application selection remains
  * on the separate read input above. */
-export const TeamCredentialResourceListInputV1Schema = lazyZodSchema(() => z.strictObject({
+export const TeamCredentialResourceListInputV1Schema = lazyZodSchema(() => z.union([z.strictObject({
   teamId: z.string().check(z.minLength(1)),
   cursor: z.optional(z.string().check(z.minLength(1), z.maxLength(512))),
   limit: z._default(z.number().check(z.int(), z.minimum(1), z.maximum(100)), 50),
   search: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(120))),
   filter: z._default(TeamCredentialResourceListFilterV1Schema, 'all'),
-}));
+}), TeamCredentialResourceCustodianListInputV1Schema]));
 
 export type TeamCredentialResourceListInputV1 = z.infer<typeof TeamCredentialResourceListInputV1Schema>;
 
 export function teamCredentialResourcesQueryKeyV1(
-  input: Pick<TeamCredentialResourceListInputV1, 'teamId' | 'search' | 'filter'>,
+  input: Pick<Extract<TeamCredentialResourceListInputV1, { teamId: string }>, 'teamId' | 'search' | 'filter'>,
 ): string {
   return `v1:credential-resources:${input.teamId}:${input.filter}:${input.search ?? ''}`;
 }
@@ -410,6 +412,7 @@ export const TeamCredentialResourceAdministrationCapabilitiesV1Schema = lazyZodS
   managePolicy: z.boolean(),
   manageLimits: z.boolean(),
   updateBrokerPlacement: z.boolean(),
+  updateDeliveryPolicy: z._default(z.boolean(), false),
   narrowDisclosure: z.boolean(),
   /** Source custodian consent to widen `brokered_only` to `direct_allowed`.
    * Absent on an older Home is read as not permitted. */
@@ -425,7 +428,7 @@ export const TeamCredentialResourceSummaryV1Schema = lazyZodSchema(() => z.stric
   /** Human label for the source owner; the stable Account id remains above. */
   sourceOwnerDisplayName: z._default(z.nullable(z.string().check(z.trim(), z.minLength(1), z.maxLength(120))), null),
   displayName: z.string(), enabled: z.boolean(), revision: z.number().check(z.int(), z.nonnegative()),
-  disclosureCeiling: TeamCredentialDisclosureCeilingV1Schema,
+  deliveryPolicy: TeamCredentialDeliveryPolicyV1Schema,
   sessionUsePolicy: TeamCredentialSessionUsePolicyV1Schema,
   /** Exact source lifetime is visible only to its custodian. */
   source: z.nullable(TeamCredentialSourceBindingV1Schema),
@@ -438,7 +441,7 @@ export const TeamCredentialResourceSummaryV1Schema = lazyZodSchema(() => z.stric
   activeUsageLimitCount: z._default(z.number().check(z.int(), z.nonnegative()), 0),
   requestPolicy: z.nullable(TeamCredentialRequestPolicyV1Schema),
   brokerPlacement: z.nullable(TeamCredentialBrokerPlacementV1Schema),
-  allMembersDeliveryMode: z.nullable(TeamCredentialDeliveryModeV1Schema),
+  allMembersAllowedRoutes: z.nullable(TeamCredentialAllowedRoutesV1Schema),
   /**
    * The complete audience, projected because the audience mutation replaces it
    * whole. Without it an editor could express "add" but never "keep", so every
@@ -467,6 +470,7 @@ export const TeamCredentialResourceSummaryV1Schema = lazyZodSchema(() => z.stric
     managePolicy: false,
     manageLimits: false,
     updateBrokerPlacement: false,
+    updateDeliveryPolicy: false,
     narrowDisclosure: false,
     widenDisclosure: false,
     refreshDirectMaterial: false,

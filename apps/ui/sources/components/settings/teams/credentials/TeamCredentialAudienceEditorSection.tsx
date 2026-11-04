@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { TeamCredentialDeliveryModeV1, TeamCredentialResourceSummaryV1 } from '@happier-dev/protocol/teams';
+import type { TeamCredentialRouteV1, TeamCredentialResourceSummaryV1 } from '@happier-dev/protocol/teams';
 
 import { Avatar } from '@/components/ui/avatar/Avatar';
 import { Item } from '@/components/ui/lists/Item';
@@ -51,7 +51,7 @@ export const TeamCredentialAudienceEditorSection = React.memo(function TeamCrede
         enabled: true,
     });
     const modes = offeredDeliveryModes({
-        disclosureCeiling: draft.disclosureCeiling,
+        deliveryPolicy: draft.deliveryPolicy,
         directExportSupport: resource.directExportSupport,
     });
     const savedGroupIds = React.useMemo(
@@ -97,8 +97,8 @@ export const TeamCredentialAudienceEditorSection = React.memo(function TeamCrede
     const renderChooser = (
         principalKey: string,
         principalName: string,
-        currentMode: TeamCredentialDeliveryModeV1 | null,
-        apply: (mode: TeamCredentialDeliveryModeV1 | null) => void,
+        currentMode: readonly TeamCredentialRouteV1[] | null,
+        apply: (mode: readonly TeamCredentialRouteV1[] | null) => void,
     ) => expanded !== principalKey ? null : (
         <TeamCredentialDeliveryModeChooser
             principalKey={principalKey}
@@ -117,7 +117,7 @@ export const TeamCredentialAudienceEditorSection = React.memo(function TeamCrede
         <>
             <ItemGroup
                 title={t('teams.credentials.audience.title')}
-                description={draft.disclosureCeiling === 'brokered_only'
+                description={draft.deliveryPolicy.preferredAllowedModes.length === 1 && draft.deliveryPolicy.preferredAllowedModes[0] === 'brokered'
                     ? t('teams.credentials.audience.ceilingBlocked')
                     : t('teams.credentials.audience.limitsNote')}
             >
@@ -210,12 +210,12 @@ export const TeamCredentialAudienceEditorSection = React.memo(function TeamCrede
                     address={context.address}
                     excludedGroupIds={groupPrincipals}
                     excludedMemberIds={memberPrincipals}
-                    disabled={busy}
+                    disabled={busy || modes.length === 0 || draft.deliveryPolicy.preferredAllowedModes.includes('vendor-native')}
                     onChoose={(principal) => {
                         setPickedNames((names) => new Map(names).set(`${principal.kind}:${principal.id}`, principal.name));
                         requestAudienceChange(principal.kind === 'group'
-                            ? { ...draft.audience, groups: withAudienceEntry(draft.audience.groups, principal.id, 'brokered') }
-                            : { ...draft.audience, members: withAudienceEntry(draft.audience.members, principal.id, 'brokered') });
+                            ? { ...draft.audience, groups: withAudienceEntry(draft.audience.groups, principal.id, [...draft.deliveryPolicy.preferredAllowedModes]) }
+                            : { ...draft.audience, members: withAudienceEntry(draft.audience.members, principal.id, [...draft.deliveryPolicy.preferredAllowedModes]) });
                         setExpanded(`${principal.kind}:${principal.id}`);
                     }}
                 />

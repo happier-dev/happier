@@ -1,4 +1,5 @@
-import { TeamCredentialDeliveryModeV1Schema, TeamCredentialSessionUsePolicyV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
+import { TeamCredentialAllowedRoutesV1Schema, TeamCredentialSessionUsePolicyV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
+import { readTeamCredentialAllowedRoutes } from './resourceDeliveryRead';
 import { type TeamCredentialUsageCapabilitiesV1 } from '@happier-dev/protocol/teams';
 
 export type TeamCredentialUsageRouteCapability = Readonly<{
@@ -163,13 +164,14 @@ export function resolveCurrentTeamCredentialUsageCapabilitiesForResource(
         ...resource.groupGrants.map((grant) => grant.deliveryMode),
         ...resource.memberGrants.map((grant) => grant.deliveryMode),
     ];
-    const modes = values.map((value) => TeamCredentialDeliveryModeV1Schema.safeParse(value));
+    const modes = values.map(value => typeof value === 'string'
+        ? readTeamCredentialAllowedRoutes(value) : TeamCredentialAllowedRoutesV1Schema.safeParse(value));
     const sessionUsePolicy = TeamCredentialSessionUsePolicyV1Schema.safeParse(resource.sessionUsePolicy);
     if (modes.some((mode) => !mode.success) || !sessionUsePolicy.success) {
         return resolveTeamCredentialUsageCapabilities({ routes: [] });
     }
     const hasBrokeredRoute = modes.some((mode) => mode.success
-        && (mode.data === 'brokered' || mode.data === 'both'));
+        && mode.data.includes('brokered'));
     return resolveTeamCredentialUsageCapabilities({
         routes: hasBrokeredRoute
             ? CURRENT_TEAM_CREDENTIAL_USAGE_ROUTES.filter((route) => (

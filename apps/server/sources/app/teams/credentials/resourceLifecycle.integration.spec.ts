@@ -18,7 +18,7 @@ const EMPTY_CREATE_CONFIGURATION = {
     sessionUsePolicy: "personal_allowed" as const,
     brokerPlacement: null,
     requestPolicy: null,
-    allMembersDeliveryMode: null,
+    allMembersAllowedRoutes: null,
     groupGrants: [],
     memberGrants: [],
     usageLimits: [],
@@ -62,8 +62,8 @@ describe("Team credential resource lifecycle", () => {
                     ...EMPTY_CREATE_CONFIGURATION,
                     actorAccountId: custodian.id, authentication: TEST_AUTHENTICATION,
                     teamId: team.id, resourceId, displayName: "Selected placement",
-                    disclosureCeiling: "direct_allowed" as const, source,
-                    allMembersDeliveryMode: deliveryMode,
+                    deliveryPolicy: { preferredAllowedModes: ["brokered" as const, "direct" as const] }, source,
+                    allMembersAllowedRoutes: deliveryMode === null ? null : [deliveryMode],
                 };
                 if (operation !== "create") {
                     await expect(inTx(tx => createTeamCredentialResourceInTx(tx, draft)))
@@ -79,9 +79,9 @@ describe("Team credential resource lifecycle", () => {
                                 replacement: {
                                     enabled: true, displayName: draft.displayName,
                                     sessionUsePolicy: draft.sessionUsePolicy, requestPolicy: null,
-                                    allMembersDeliveryMode: deliveryMode, groupGrants: [], memberGrants: [],
+                                    allMembersAllowedRoutes: deliveryMode === null ? null : [deliveryMode], groupGrants: [], memberGrants: [],
                                     usageLimitDelta: { upserts: [], deleteIds: [] },
-                                    custodian: { source, disclosureCeiling: draft.disclosureCeiling, brokerPlacement },
+                                    custodian: { source, deliveryPolicy: draft.deliveryPolicy, brokerPlacement },
                                 },
                             }),
                         },
@@ -132,7 +132,7 @@ describe("Team credential resource lifecycle", () => {
         } });
         const replacement = {
             enabled: true, displayName: "Renamed repair source", sessionUsePolicy: "personal_allowed" as const,
-            requestPolicy: null, allMembersDeliveryMode: null, groupGrants: [], memberGrants: [],
+            requestPolicy: null, allMembersAllowedRoutes: null, groupGrants: [], memberGrants: [],
             usageLimitDelta: { upserts: [], deleteIds: [] },
         };
         const previous = process.env.HAPPIER_FEATURE_MACHINES_POOLS__ENABLED;
@@ -148,7 +148,7 @@ describe("Team credential resource lifecycle", () => {
                 actorAccountId: custodian.id, authentication: TEST_AUTHENTICATION,
                 patch: {
                     resourceId: resource.id, expectedRevision: 0,
-                    replacement: { ...replacement, custodian: { source, disclosureCeiling: "direct_allowed", brokerPlacement: null } },
+                    replacement: { ...replacement, custodian: { source, deliveryPolicy: { preferredAllowedModes: ["brokered", "direct"] }, brokerPlacement: null } },
                 },
             }))).resolves.toEqual({ ok: true, resourceId: resource.id, revision: 1 });
             expect(await db.teamCredentialResource.findUniqueOrThrow({ where: { id: resource.id } }))
@@ -180,7 +180,7 @@ describe("Team credential resource lifecycle", () => {
             resourceId: "malformed-policy-resource",
             authentication: TEST_AUTHENTICATION,
             displayName: "Must not be created",
-            disclosureCeiling: "direct_allowed",
+            deliveryPolicy: { preferredAllowedModes: ["brokered", "direct"] },
             source: { v: 1, kind: "connected_pool", target: { kind: "group", service, groupId }, poolIncarnation: pool.id },
         }))).resolves.toEqual({ ok: false, error: "team_authentication_policy_unavailable" });
         await expect(db.teamCredentialResource.findUnique({
@@ -203,7 +203,7 @@ describe("Team credential resource lifecycle", () => {
             ...EMPTY_CREATE_CONFIGURATION,
             actorAccountId: actor.id, teamId: team.id, resourceId: "resource-create-intent",
             authentication: TEST_AUTHENTICATION,
-            displayName: "Shared source", disclosureCeiling: "brokered_only" as const,
+            displayName: "Shared source", deliveryPolicy: { preferredAllowedModes: ["brokered" as const] },
             source: { v: 1 as const, kind: "connected_pool" as const,
                 target: { kind: "group" as const, service, groupId }, poolIncarnation: pool.id },
         };
@@ -213,7 +213,7 @@ describe("Team credential resource lifecycle", () => {
             teamId: team.id,
             custodianAccountId: actor.id,
             displayName: input.displayName,
-            disclosureCeiling: input.disclosureCeiling,
+            disclosureCeiling: JSON.stringify({ policy: input.deliveryPolicy, experimentalBindingConfirmations: [] }),
             sessionUsePolicy: input.sessionUsePolicy,
             requestPolicyJson: null,
             brokerMachineId: null,
@@ -238,8 +238,8 @@ describe("Team credential resource lifecycle", () => {
         await expect(inTx(tx => createTeamCredentialResourceInTx(tx, {
             ...input,
             resourceId: "member-cannot-create-team-policy",
-            disclosureCeiling: "direct_allowed",
-            allMembersDeliveryMode: "direct",
+            deliveryPolicy: { preferredAllowedModes: ["brokered", "direct"] },
+            allMembersAllowedRoutes: ["direct"],
         }))).resolves.toEqual({ ok: false, error: "forbidden" });
         await expect(db.teamCredentialResource.count({ where: { id: "member-cannot-create-team-policy" } })).resolves.toBe(0);
         expect(await db.teamCredentialResource.findUnique({ where: { id: input.resourceId } })).toMatchObject({
@@ -467,19 +467,19 @@ describe("Team credential resource lifecycle", () => {
         } });
         const base = {
             actorAccountId: actor.id, teamId: team.id, authentication: TEST_AUTHENTICATION,
-            displayName: "Atomic source", disclosureCeiling: "brokered_only" as const,
+            displayName: "Atomic source", deliveryPolicy: { preferredAllowedModes: ["brokered" as const] },
             source: { v: 1 as const, kind: "connected_pool" as const, target: { kind: "group" as const, service, groupId }, poolIncarnation: pool.id },
             sessionUsePolicy: "team_context_required" as const,
             brokerPlacement: { kind: "machine" as const, machineId: broker.id }, requestPolicy: {
                 allowedProtocolKinds: ["openai_responses" as const], allowedModelIds: ["gpt-5"], reasoningEffort: null,
-            }, allMembersDeliveryMode: null, groupGrants: [], memberGrants: [],
+            }, allMembersAllowedRoutes: null, groupGrants: [], memberGrants: [],
             usageLimits: [{ subjectKind: "resource" as const, subjectId: "", period: "month" as const, metric: "inference_requests" as const, maximum: "100", enabled: true }],
         };
         await expect(inTx(tx => createTeamCredentialResourceInTx(tx, { ...base, resourceId: "atomic-complete" }))).resolves.toEqual({ ok: false, error: "invalid_limit" });
         await expect(db.teamCredentialResource.findUnique({ where: { id: "atomic-complete" } })).resolves.toBeNull();
         await expect(db.teamCredentialUsageLimit.count({ where: { resourceId: "atomic-complete" } })).resolves.toBe(0);
 
-        await expect(inTx(tx => createTeamCredentialResourceInTx(tx, { ...base, resourceId: "atomic-refused", groupGrants: [{ teamGroupId: "missing-group", deliveryMode: "brokered" }] }))).resolves.toEqual({ ok: false, error: "invalid_audience" });
+        await expect(inTx(tx => createTeamCredentialResourceInTx(tx, { ...base, resourceId: "atomic-refused", groupGrants: [{ teamGroupId: "missing-group", allowedRoutes: ["brokered"] }] }))).resolves.toEqual({ ok: false, error: "invalid_audience" });
         await expect(db.teamCredentialResource.count({ where: { id: "atomic-refused" } })).resolves.toBe(0);
         await expect(db.teamCredentialUsageLimit.count({ where: { resourceId: "atomic-refused" } })).resolves.toBe(0);
         await expect(db.teamCredentialActivityEvent.count({ where: { resourceId: "atomic-refused" } })).resolves.toBe(0);
@@ -507,13 +507,13 @@ describe("Team credential resource lifecycle", () => {
             actorAccountId: custodian.id,
             authentication: TEST_AUTHENTICATION,
             patch: { resourceId: resource.id, expectedRevision: 0, enabled: false,
-                disclosureCeiling: "brokered_only" },
+                deliveryPolicy: { preferredAllowedModes: ["brokered"] } },
         }))).resolves.toEqual({ ok: true, resourceId: resource.id, revision: 1 });
         // Narrowing the ceiling removes the direct audience; it never converts
         // a direct grant into broker authority the custodian never granted.
         await expect(db.teamCredentialResource.findUniqueOrThrow({ where: { id: resource.id } })).resolves.toMatchObject({
             enabled: false,
-            disclosureCeiling: "brokered_only",
+            disclosureCeiling: JSON.stringify({ policy: { preferredAllowedModes: ["brokered"] }, experimentalBindingConfirmations: [] }),
             allMembersDeliveryMode: null,
             sessionUsePolicy: "personal_allowed",
         });
@@ -573,13 +573,13 @@ describe("Team credential resource lifecycle", () => {
         await expect(inTx(tx => updateTeamCredentialResourceInTx(tx, {
             actorAccountId: custodian.id,
             authentication: TEST_AUTHENTICATION,
-            patch: { resourceId: resource.id, expectedRevision: revision + 1, enabled: true, disclosureCeiling: "brokered_only" },
+            patch: { resourceId: resource.id, expectedRevision: revision + 1, enabled: true, deliveryPolicy: { preferredAllowedModes: ["brokered"] } },
         }))).resolves.toEqual({ ok: false, error: "broker_unavailable" });
         await db.teamMembership.updateMany({ where: { teamId: team.id, accountId: custodian.id }, data: { role: "member" } });
         await expect(inTx(tx => updateTeamCredentialResourceInTx(tx, {
             actorAccountId: custodian.id,
             authentication: TEST_AUTHENTICATION,
-            patch: { resourceId: resource.id, expectedRevision: revision + 1, disclosureCeiling: "brokered_only" },
+            patch: { resourceId: resource.id, expectedRevision: revision + 1, deliveryPolicy: { preferredAllowedModes: ["brokered"] } },
         }))).resolves.toEqual({ ok: true, resourceId: resource.id, revision: revision + 2 });
 
         // Selecting a new placement is still a selection and is validated.
@@ -631,26 +631,26 @@ describe("Team credential resource lifecycle", () => {
         await expect(inTx(tx => updateTeamCredentialResourceInTx(tx, {
             actorAccountId: custodian.id,
             authentication: TEST_AUTHENTICATION,
-            patch: { resourceId: resource.id, expectedRevision: 0, disclosureCeiling: "brokered_only" },
+            patch: { resourceId: resource.id, expectedRevision: 0, deliveryPolicy: { preferredAllowedModes: ["brokered"] } },
         }))).resolves.toEqual({ ok: true, resourceId: resource.id, revision: 1 });
 
         await expect(db.teamCredentialResource.findUniqueOrThrow({ where: { id: resource.id } })).resolves.toMatchObject({
-            disclosureCeiling: "brokered_only",
+            disclosureCeiling: JSON.stringify({ policy: { preferredAllowedModes: ["brokered"] }, experimentalBindingConfirmations: [] }),
             allMembersDeliveryMode: null,
             revision: 1,
         });
         await expect(db.teamCredentialMemberGrant.findMany({ where: { resourceId: resource.id } })).resolves.toEqual([]);
         await expect(db.teamCredentialGroupGrant.findMany({
             where: { resourceId: resource.id }, select: { teamGroupId: true, deliveryMode: true },
-        })).resolves.toEqual([{ teamGroupId: group.id, deliveryMode: "brokered" }]);
+        })).resolves.toEqual([{ teamGroupId: group.id, deliveryMode: JSON.stringify(["brokered"]) }]);
     });
 
     // The full editor's replacement narrows through the same rule as the PATCH
-    // above. A source custodian who is not a Team manager sends the audience it
-    // cannot edit unchanged; narrowing still withdraws only its direct half.
+    // above. A source custodian can omit the audience it cannot read or edit;
+    // narrowing still withdraws only its direct half.
     // A manager's deliberately chosen broker grant saved in the same
     // replacement is an explicit grant, not an automatic conversion.
-    it("applies the one narrowing rule when a full replacement narrows the ceiling", async () => {
+    it.each(["full", "custodian-only"] as const)("applies the one narrowing rule when a %s replacement narrows the ceiling", async (mode) => {
         const custodian = await db.account.create({ data: { encryptionMode: "plain", publicKey: null } });
         const owner = await db.account.create({ data: { encryptionMode: "plain", publicKey: null } });
         const directMember = await db.account.create({ data: { encryptionMode: "plain", publicKey: null } });
@@ -676,12 +676,12 @@ describe("Team credential resource lifecycle", () => {
         const replacementOf = (brokerMachineId: string) => ({
             enabled: true, displayName: "Replacement narrowing",
             sessionUsePolicy: "personal_allowed" as const, requestPolicy: null,
-            allMembersDeliveryMode: "direct" as const,
-            groupGrants: [{ teamGroupId: group.id, deliveryMode: "both" as const }],
-            memberGrants: [{ teamMembershipId: directMembership.id, deliveryMode: "direct" as const }],
+            allMembersAllowedRoutes: ["direct" as const],
+            groupGrants: [{ teamGroupId: group.id, allowedRoutes: ["brokered" as const, "direct" as const] }],
+            memberGrants: [{ teamMembershipId: directMembership.id, allowedRoutes: ["direct" as const] }],
             usageLimitDelta: { upserts: [], deleteIds: [] },
             custodian: {
-                source, disclosureCeiling: "brokered_only" as const,
+                source, deliveryPolicy: { preferredAllowedModes: ["brokered" as const] },
                 brokerPlacement: { kind: "machine" as const, machineId: brokerMachineId },
             },
         });
@@ -691,16 +691,18 @@ describe("Team credential resource lifecycle", () => {
         await expect(inTx(tx => updateTeamCredentialResourceInTx(tx, {
             actorAccountId: custodian.id,
             authentication: TEST_AUTHENTICATION,
-            patch: { resourceId: custodianResource.id, expectedRevision: 0, replacement: replacementOf(custodianBroker.id) },
+            patch: { resourceId: custodianResource.id, expectedRevision: 0, replacement: mode === "full"
+                ? replacementOf(custodianBroker.id)
+                : { custodian: replacementOf(custodianBroker.id).custodian } },
         }))).resolves.toEqual({ ok: true, resourceId: custodianResource.id, revision: 1 });
         await expect(db.teamCredentialResource.findUniqueOrThrow({ where: { id: custodianResource.id } })).resolves.toMatchObject({
-            disclosureCeiling: "brokered_only",
+            disclosureCeiling: JSON.stringify({ policy: { preferredAllowedModes: ["brokered"] }, experimentalBindingConfirmations: [] }),
             allMembersDeliveryMode: null,
         });
         await expect(db.teamCredentialMemberGrant.findMany({ where: { resourceId: custodianResource.id } })).resolves.toEqual([]);
         await expect(db.teamCredentialGroupGrant.findMany({
             where: { resourceId: custodianResource.id }, select: { teamGroupId: true, deliveryMode: true },
-        })).resolves.toEqual([{ teamGroupId: group.id, deliveryMode: "brokered" }]);
+        })).resolves.toEqual([{ teamGroupId: group.id, deliveryMode: JSON.stringify(["brokered"]) }]);
 
         const ownerBroker = await brokerFor(owner.id);
         const ownerResource = await createResource(owner.id, ownerBroker.id);
@@ -709,14 +711,14 @@ describe("Team credential resource lifecycle", () => {
             authentication: TEST_AUTHENTICATION,
             patch: { resourceId: ownerResource.id, expectedRevision: 0, replacement: {
                 ...replacementOf(ownerBroker.id),
-                allMembersDeliveryMode: null,
-                groupGrants: [{ teamGroupId: group.id, deliveryMode: "brokered" as const }],
-                memberGrants: [{ teamMembershipId: directMembership.id, deliveryMode: "brokered" as const }],
+                allMembersAllowedRoutes: null,
+                groupGrants: [{ teamGroupId: group.id, allowedRoutes: ["brokered" as const] }],
+                memberGrants: [{ teamMembershipId: directMembership.id, allowedRoutes: ["brokered" as const] }],
             } },
         }))).resolves.toEqual({ ok: true, resourceId: ownerResource.id, revision: 1 });
         await expect(db.teamCredentialMemberGrant.findMany({
             where: { resourceId: ownerResource.id }, select: { teamMembershipId: true, deliveryMode: true },
-        })).resolves.toEqual([{ teamMembershipId: directMembership.id, deliveryMode: "brokered" }]);
+        })).resolves.toEqual([{ teamMembershipId: directMembership.id, deliveryMode: JSON.stringify(["brokered"]) }]);
     });
 
     it("keeps exact broker Machine selection under the source custodian authority", async () => {
@@ -758,7 +760,7 @@ describe("Team credential resource lifecycle", () => {
         await expect(inTx(tx => updateTeamCredentialResourceInTx(tx, {
             actorAccountId: manager.id,
             authentication: TEST_AUTHENTICATION,
-            patch: { resourceId: resource.id, expectedRevision: 0, disclosureCeiling: "brokered_only" },
+            patch: { resourceId: resource.id, expectedRevision: 0, deliveryPolicy: { preferredAllowedModes: ["brokered"] } },
         }))).resolves.toEqual({ ok: false, error: "resource_forbidden" });
         await db.teamMembership.deleteMany({ where: { teamId: team.id, accountId: custodian.id } });
         await expect(inTx(tx => updateTeamCredentialResourceInTx(tx, {
@@ -805,9 +807,9 @@ describe("Team credential resource lifecycle", () => {
             displayName: "After",
             sessionUsePolicy: "team_context_required" as const,
             requestPolicy: null,
-            allMembersDeliveryMode: "brokered" as const,
-            groupGrants: [{ teamGroupId: group.id, deliveryMode: "brokered" as const }],
-            memberGrants: [{ teamMembershipId: recipientMembership.id, deliveryMode: "brokered" as const }],
+            allMembersAllowedRoutes: ["brokered" as const],
+            groupGrants: [{ teamGroupId: group.id, allowedRoutes: ["brokered" as const] }],
+            memberGrants: [{ teamMembershipId: recipientMembership.id, allowedRoutes: ["brokered" as const] }],
             usageLimitDelta: {
                 upserts: [
                     { id: changedLimit.id, subjectKind: "resource" as const, subjectId: "", period: "week" as const, metric: "inference_requests" as const, maximum: "15", enabled: true },
@@ -817,7 +819,7 @@ describe("Team credential resource lifecycle", () => {
             },
             custodian: {
                 source: nextSource,
-                disclosureCeiling: "brokered_only" as const,
+                deliveryPolicy: { preferredAllowedModes: ["brokered" as const] },
                 brokerPlacement: { kind: "machine" as const, machineId: broker.id },
             },
         };
@@ -828,15 +830,15 @@ describe("Team credential resource lifecycle", () => {
         }))).resolves.toEqual({ ok: true, resourceId: resource.id, revision: 1 });
         await expect(db.teamCredentialResource.findUniqueOrThrow({ where: { id: resource.id } })).resolves.toMatchObject({
             enabled: false, displayName: "After", revision: 1, sourceBindingJson: JSON.stringify(nextSource),
-            disclosureCeiling: "brokered_only", sessionUsePolicy: "team_context_required",
-            brokerMachineId: broker.id, brokerPoolId: null, allMembersDeliveryMode: "brokered",
+            disclosureCeiling: JSON.stringify({ policy: { preferredAllowedModes: ["brokered"] }, experimentalBindingConfirmations: [] }), sessionUsePolicy: "team_context_required",
+            brokerMachineId: broker.id, brokerPoolId: null, allMembersDeliveryMode: JSON.stringify(["brokered"]),
             directSourceVersionsJson: null,
         });
         await expect(db.teamCredentialGroupGrant.findMany({ where: { resourceId: resource.id } })).resolves.toEqual([
-            expect.objectContaining({ teamGroupId: group.id, deliveryMode: "brokered" }),
+            expect.objectContaining({ teamGroupId: group.id, deliveryMode: JSON.stringify(["brokered"]) }),
         ]);
         await expect(db.teamCredentialMemberGrant.findMany({ where: { resourceId: resource.id } })).resolves.toEqual([
-            expect.objectContaining({ teamMembershipId: recipientMembership.id, deliveryMode: "brokered" }),
+            expect.objectContaining({ teamMembershipId: recipientMembership.id, deliveryMode: JSON.stringify(["brokered"]) }),
         ]);
         const limits = await db.teamCredentialUsageLimit.findMany({ where: { resourceId: resource.id } });
         expect(limits).toEqual(expect.arrayContaining([
@@ -870,9 +872,9 @@ describe("Team credential resource lifecycle", () => {
         const replacement = {
             enabled: true, displayName: "Must not persist",
             sessionUsePolicy: "personal_allowed" as const, requestPolicy: null,
-            allMembersDeliveryMode: null, groupGrants: [], memberGrants: [],
+            allMembersAllowedRoutes: null, groupGrants: [], memberGrants: [],
             usageLimitDelta: { upserts: [], deleteIds: [] },
-            custodian: { source, disclosureCeiling: "brokered_only" as const, brokerPlacement: null },
+            custodian: { source, deliveryPolicy: { preferredAllowedModes: ["brokered" as const] }, brokerPlacement: null },
         };
         const assertUnchanged = async () => {
             await expect(db.teamCredentialResource.findUniqueOrThrow({ where: { id: resource.id } })).resolves.toMatchObject({
@@ -971,11 +973,11 @@ describe("Team credential resource lifecycle", () => {
         const replacement = {
             enabled: true, displayName: "Policy source",
             sessionUsePolicy: "personal_allowed" as const, requestPolicy,
-            allMembersDeliveryMode: null,
+            allMembersAllowedRoutes: null,
             groupGrants: [],
-            memberGrants: [{ teamMembershipId: recipientMembership.id, deliveryMode: "direct" as const }],
+            memberGrants: [{ teamMembershipId: recipientMembership.id, allowedRoutes: ["direct" as const] }],
             usageLimitDelta: { upserts: [], deleteIds: [] },
-            custodian: { source, disclosureCeiling: "direct_allowed" as const, brokerPlacement: null },
+            custodian: { source, deliveryPolicy: { preferredAllowedModes: ["brokered" as const, "direct" as const] }, brokerPlacement: null },
         };
         await expect(inTx(tx => updateTeamCredentialResourceInTx(tx, {
             actorAccountId: custodian.id,
@@ -1078,7 +1080,7 @@ describe("Team credential resource lifecycle", () => {
                 allowedModelIds: ["gpt-5"],
                 reasoningEffort: null,
             },
-            allMembersDeliveryMode: "brokered" as const,
+            allMembersAllowedRoutes: ["brokered" as const],
             groupGrants: [],
             memberGrants: [],
             usageLimitDelta: { upserts: [], deleteIds: [] },
@@ -1089,7 +1091,7 @@ describe("Team credential resource lifecycle", () => {
             displayName: "Before manager edit",
             sessionUsePolicy: "personal_allowed" as const,
             requestPolicy: null,
-            allMembersDeliveryMode: null,
+            allMembersAllowedRoutes: null,
         };
         const requestPolicySupportModels = [{
             descriptor: { id: "gpt-5", name: "GPT-5" },
@@ -1129,7 +1131,7 @@ describe("Team credential resource lifecycle", () => {
             revision: 1,
             displayName: "After manager edit",
             sourceBindingJson: JSON.stringify(source),
-            disclosureCeiling: "brokered_only",
+            disclosureCeiling: JSON.stringify({ policy: { preferredAllowedModes: ["brokered"] }, experimentalBindingConfirmations: [] }),
             brokerMachineId: broker.id,
             brokerPoolId: null,
         });
@@ -1149,7 +1151,7 @@ describe("Team credential resource lifecycle", () => {
                 ...managerReplacement,
                 custodian: {
                     source,
-                    disclosureCeiling: "direct_allowed",
+                    deliveryPolicy: { preferredAllowedModes: ["brokered", "direct"] },
                     brokerPlacement: { kind: "machine", machineId: broker.id },
                 },
             } },
@@ -1166,14 +1168,14 @@ describe("Team credential resource lifecycle", () => {
                 ...managerReplacement,
                 custodian: {
                     source,
-                    disclosureCeiling: "direct_allowed",
+                    deliveryPolicy: { preferredAllowedModes: ["brokered", "direct"] },
                     brokerPlacement: { kind: "machine", machineId: broker.id },
                 },
             } },
         }))).resolves.toEqual({ ok: true, resourceId: resource.id, revision: 2 });
         await expect(db.teamCredentialResource.findUniqueOrThrow({ where: { id: resource.id } })).resolves.toMatchObject({
             revision: 2,
-            disclosureCeiling: "direct_allowed",
+            disclosureCeiling: JSON.stringify({ policy: { preferredAllowedModes: ["brokered", "direct"] }, experimentalBindingConfirmations: [] }),
             sourceBindingJson: JSON.stringify(source),
         });
     });

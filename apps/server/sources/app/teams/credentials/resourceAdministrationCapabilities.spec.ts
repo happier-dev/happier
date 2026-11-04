@@ -4,7 +4,7 @@ import { projectTeamCredentialResourceAdministrationCapabilities } from "./resou
 
 describe("Team credential resource administration capabilities", () => {
     it("keeps manager and source-custodian authority distinct and unions both roles", () => {
-        const resource = { enabled: true, disclosureCeiling: "direct_allowed" as const };
+        const resource = { enabled: true, deliveryPolicy: { preferredAllowedModes: ['brokered', 'direct'] as ('brokered' | 'direct')[] } };
 
         expect(projectTeamCredentialResourceAdministrationCapabilities({
             resource,
@@ -16,6 +16,7 @@ describe("Team credential resource administration capabilities", () => {
             managePolicy: false,
             manageLimits: false,
             updateBrokerPlacement: true,
+            updateDeliveryPolicy: true,
             narrowDisclosure: true,
             widenDisclosure: false,
             refreshDirectMaterial: true,
@@ -34,6 +35,7 @@ describe("Team credential resource administration capabilities", () => {
             managePolicy: true,
             manageLimits: true,
             updateBrokerPlacement: false,
+            updateDeliveryPolicy: false,
             narrowDisclosure: false,
             widenDisclosure: false,
             refreshDirectMaterial: false,
@@ -52,6 +54,7 @@ describe("Team credential resource administration capabilities", () => {
             managePolicy: true,
             manageLimits: true,
             updateBrokerPlacement: true,
+            updateDeliveryPolicy: true,
             narrowDisclosure: true,
             widenDisclosure: false,
             refreshDirectMaterial: true,
@@ -63,7 +66,7 @@ describe("Team credential resource administration capabilities", () => {
 
     it("withdraws current-Team-only and state-inapplicable operations", () => {
         expect(projectTeamCredentialResourceAdministrationCapabilities({
-            resource: { enabled: false, disclosureCeiling: "brokered_only" },
+            resource: { enabled: false, deliveryPolicy: { preferredAllowedModes: ['brokered'] } },
             isSourceCustodian: true,
             isQualifiedTeamManager: false,
             isQualifiedTeamMember: false,
@@ -72,6 +75,7 @@ describe("Team credential resource administration capabilities", () => {
             managePolicy: false,
             manageLimits: false,
             updateBrokerPlacement: true,
+            updateDeliveryPolicy: true,
             narrowDisclosure: false,
             widenDisclosure: true,
             refreshDirectMaterial: false,
@@ -81,7 +85,7 @@ describe("Team credential resource administration capabilities", () => {
         });
 
         expect(projectTeamCredentialResourceAdministrationCapabilities({
-            resource: { enabled: false, disclosureCeiling: "brokered_only" },
+            resource: { enabled: false, deliveryPolicy: { preferredAllowedModes: ['brokered'] } },
             isSourceCustodian: false,
             isQualifiedTeamManager: true,
             isQualifiedTeamMember: true,

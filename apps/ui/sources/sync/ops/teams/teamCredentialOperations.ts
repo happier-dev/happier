@@ -6,9 +6,9 @@ import {
     TeamCredentialResourceMutationResultV1Schema,
     TeamCredentialResourcePageV1Schema,
     TeamCredentialResourceSummaryV1Schema,
-    type TeamCredentialDeliveryModeV1,
+    type TeamCredentialRouteV1,
     type TeamCredentialBrokerPlacementV1,
-    type TeamCredentialDisclosureCeilingV1,
+    type TeamCredentialDeliveryPolicyV1,
     type TeamCredentialResourceActivityPageV1,
     type TeamCredentialResourceEntitledPageV1,
     type TeamCredentialResourceAudienceGrantV1,
@@ -19,7 +19,7 @@ import {
     type TeamCredentialSessionUsePolicyV1,
     type TeamCredentialRequestPolicyV1,
     type TeamCredentialResourceCreateInputV1,
-    type TeamCredentialResourceReplacementV1,
+    type TeamCredentialResourceUpdateInputV1,
     TeamCredentialSourceResourceListOutputV1Schema,
     type TeamCredentialSourceLocatorV1,
     type TeamCredentialSourceResourceListOutputV1,
@@ -367,26 +367,28 @@ async function resourceMutation<TValue>(params: Readonly<{
 export function createTeamCredentialResource(params: Readonly<{
     scope: ServerAccountScope;
     address: TeamAddress;
+    confirmedByPresentUser?: true;
     handlers?: TeamCredentialApprovalHandlers<TeamCredentialResourceSummaryV1>;
 }> & Omit<TeamCredentialResourceCreateInputV1, 'teamId'>): Promise<TeamCredentialOutcome<TeamCredentialResourceSummaryV1>> {
     return resourceMutation({
         scope: params.scope,
         ...(params.address ? { address: params.address } : {}),
         actionId: 'teams.credentials.create',
+        ...(params.confirmedByPresentUser ? { approval: 'surface_confirmed' } : {}),
         resourceId: params.resourceId,
         parse: (value) => TeamCredentialResourceSummaryV1Schema.parse(value),
         ...(params.handlers ? { handlers: params.handlers } : {}),
         input: { teamId: params.address.teamId, resourceId: params.resourceId, displayName: params.displayName,
-            source: params.source, disclosureCeiling: params.disclosureCeiling, sessionUsePolicy: params.sessionUsePolicy,
+            source: params.source, deliveryPolicy: params.deliveryPolicy, sessionUsePolicy: params.sessionUsePolicy,
             brokerPlacement: params.brokerPlacement, requestPolicy: params.requestPolicy,
-            allMembersDeliveryMode: params.allMembersDeliveryMode, groupGrants: params.groupGrants,
+            allMembersAllowedRoutes: params.allMembersAllowedRoutes, groupGrants: params.groupGrants,
             memberGrants: params.memberGrants, usageLimits: params.usageLimits },
     });
 }
 
 /**
  * Sends either a legacy bounded patch or the route-owned editor's one complete
- * replacement. The Home rejects mixing both shapes and fences either form on
+ * replacement with omitted fields retained by the Home. The Home rejects mixing both shapes and fences either form on
  * the exact revision supplied by the caller.
  */
 export function updateTeamCredentialResource(params: Readonly<{
@@ -396,11 +398,11 @@ export function updateTeamCredentialResource(params: Readonly<{
     expectedRevision: number;
     enabled?: boolean;
     displayName?: string;
-    disclosureCeiling?: TeamCredentialDisclosureCeilingV1;
+    deliveryPolicy?: TeamCredentialDeliveryPolicyV1;
     sessionUsePolicy?: TeamCredentialSessionUsePolicyV1;
     brokerPlacement?: TeamCredentialBrokerPlacementV1 | null;
     requestPolicy?: TeamCredentialRequestPolicyV1 | null;
-    replacement?: TeamCredentialResourceReplacementV1;
+    replacement?: TeamCredentialResourceUpdateInputV1['replacement'];
     confirmedByPresentUser?: true;
     signal?: AbortSignal;
     handlers?: TeamCredentialApprovalHandlers<TeamCredentialResourceMutationResultV1>;
@@ -417,7 +419,7 @@ export function updateTeamCredentialResource(params: Readonly<{
             expectedRevision: params.expectedRevision,
             ...(params.enabled === undefined ? {} : { enabled: params.enabled }),
             ...(params.displayName === undefined ? {} : { displayName: params.displayName }),
-            ...(params.disclosureCeiling === undefined ? {} : { disclosureCeiling: params.disclosureCeiling }),
+            ...(params.deliveryPolicy === undefined ? {} : { deliveryPolicy: params.deliveryPolicy }),
             ...(params.sessionUsePolicy === undefined ? {} : { sessionUsePolicy: params.sessionUsePolicy }),
             ...(params.brokerPlacement === undefined ? {} : { brokerPlacement: params.brokerPlacement }),
             ...(params.requestPolicy === undefined ? {} : { requestPolicy: params.requestPolicy }),
@@ -439,7 +441,7 @@ export function setTeamCredentialAudience(params: Readonly<{
     address: TeamAddress;
     resourceId: string;
     expectedRevision: number;
-    allMembersDeliveryMode: TeamCredentialDeliveryModeV1 | null;
+    allMembersAllowedRoutes: readonly TeamCredentialRouteV1[] | null;
     groupGrants: readonly TeamCredentialResourceAudienceGrantV1[];
     memberGrants: readonly TeamCredentialResourceMemberGrantV1[];
     handlers?: TeamCredentialApprovalHandlers<TeamCredentialResourceMutationResultV1>;
@@ -454,7 +456,7 @@ export function setTeamCredentialAudience(params: Readonly<{
         input: {
             resourceId: params.resourceId,
             expectedRevision: params.expectedRevision,
-            allMembersDeliveryMode: params.allMembersDeliveryMode,
+            allMembersAllowedRoutes: params.allMembersAllowedRoutes,
             groupGrants: [...params.groupGrants],
             memberGrants: [...params.memberGrants],
         },

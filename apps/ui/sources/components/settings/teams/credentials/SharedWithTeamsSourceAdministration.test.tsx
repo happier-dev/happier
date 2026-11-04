@@ -86,7 +86,7 @@ describe('SharedWithTeamsSourceAdministration', () => {
         const serverId = await harness.addHome({ name: 'Home', serverUrl: 'https://home.example', accountId: 'owner' });
         await harness.selectHomes([serverId]);
         const row = teamCredentialSourceResourceFixture({
-            disclosureCeiling: 'direct_allowed',
+            deliveryPolicy: { preferredAllowedModes: ['brokered', 'direct'] },
             capabilities: {
                 manageAudience: false, managePolicy: false, manageLimits: false,
                 updateBrokerPlacement: true, narrowDisclosure: true, widenDisclosure: false,
@@ -106,7 +106,7 @@ describe('SharedWithTeamsSourceAdministration', () => {
         await screen.pressByTestIdAsync(`shared-with-teams:resource:${row.id}`);
         const refresh = createDeferred<void>();
         harness.answer(serverId, LIST_PATH, {
-            ...(refreshFails ? { status: 503 } : { body: { resources: operation === 'delete' ? [] : [{ ...row, revision: row.revision + 1, disclosureCeiling: 'brokered_only' }] } }),
+            ...(refreshFails ? { status: 503 } : { body: { resources: operation === 'delete' ? [] : [{ ...row, revision: row.revision + 1, deliveryPolicy: { preferredAllowedModes: ['brokered'] } }] } }),
             respondAfter: refresh.promise,
         });
         const control = `shared-with-teams:${operation}:${row.id}`;
@@ -165,7 +165,7 @@ describe('SharedWithTeamsSourceAdministration', () => {
             machineId: 'machine-exact', displayName: 'Exact broker', serverId, serverIdentityId: serverId,
         }]);
         harness.answer(serverId, LIST_PATH, { body: { resources: [teamCredentialSourceResourceFixture({
-            disclosureCeiling: 'direct_allowed',
+            deliveryPolicy: { preferredAllowedModes: ['brokered', 'direct'] },
             capabilities: {
                 manageAudience: false, managePolicy: false, manageLimits: false,
                 updateBrokerPlacement: false, narrowDisclosure: true, widenDisclosure: false,
@@ -193,7 +193,7 @@ describe('SharedWithTeamsSourceAdministration', () => {
         await harness.selectHomes([serverId]);
         harness.answer(serverId, LIST_PATH, { body: { resources: [teamCredentialSourceResourceFixture({
             enabled: false,
-            disclosureCeiling: 'direct_allowed',
+            deliveryPolicy: { preferredAllowedModes: ['brokered', 'direct'] },
             capabilities: {
                 manageAudience: false, managePolicy: false, manageLimits: false,
                 updateBrokerPlacement: false, narrowDisclosure: true, widenDisclosure: false,
@@ -215,7 +215,7 @@ describe('SharedWithTeamsSourceAdministration', () => {
         const serverId = await harness.addHome({ name: 'Home', serverUrl: 'https://home.example', accountId: 'owner' });
         await harness.selectHomes([serverId]);
         const row = teamCredentialSourceResourceFixture({
-            disclosureCeiling: 'direct_allowed',
+            deliveryPolicy: { preferredAllowedModes: ['brokered', 'direct'] },
             capabilities: {
                 manageAudience: false, managePolicy: false, manageLimits: false,
                 updateBrokerPlacement: false, narrowDisclosure: true, widenDisclosure: false,
@@ -303,7 +303,7 @@ describe('SharedWithTeamsSourceAdministration', () => {
         } as const;
         const initial = teamCredentialSourceResourceFixture({
             revision: 3,
-            disclosureCeiling: 'direct_allowed',
+            deliveryPolicy: { preferredAllowedModes: ['brokered', 'direct'] },
             brokerPlacement: null,
             brokerPresentation: {
                 selectedTarget: null,

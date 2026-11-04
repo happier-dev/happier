@@ -1,6 +1,8 @@
+import { deliveryModeLabel } from '@/sync/domains/teams/teamCredentialDeliveryPresentation';
+export { deliveryModeLabel } from '@/sync/domains/teams/teamCredentialDeliveryPresentation';
 import type {
     TeamCredentialBrokerPlacementV1,
-    TeamCredentialDeliveryModeV1,
+    TeamCredentialRouteV1,
     TeamCredentialRequestProtocolKindV1,
     TeamCredentialResourceRecoveryActionV1,
     TeamCredentialResourceSummaryV1,
@@ -94,24 +96,10 @@ export function sourceKindLabel(source: TeamCredentialSourceBindingV1 | TeamCred
     }
 }
 
-export function deliveryModeLabel(mode: TeamCredentialDeliveryModeV1): string {
-    switch (mode) {
-        case 'brokered':
-            return t('teams.credentials.delivery.brokered');
-        case 'direct':
-            return t('teams.credentials.delivery.direct');
-        case 'both':
-            return t('teams.credentials.delivery.both');
-    }
-}
-
 export function recipientDeliveryMode(
-    resource: Readonly<{ mayBroker: boolean; mayReceiveDirect: boolean }>,
-): TeamCredentialDeliveryModeV1 | null {
-    if (resource.mayBroker && resource.mayReceiveDirect) return 'both';
-    if (resource.mayReceiveDirect) return 'direct';
-    if (resource.mayBroker) return 'brokered';
-    return null;
+    resource: Readonly<{ allowedRoutes?: readonly TeamCredentialRouteV1[] }>,
+): readonly TeamCredentialRouteV1[] | null {
+    return resource.allowedRoutes?.length ? resource.allowedRoutes : null;
 }
 
 /**
@@ -122,14 +110,15 @@ export function recipientDeliveryMode(
  * A resource nobody can reach yet says so instead of claiming a mode.
  */
 export function resourceDeliverySummary(resource: TeamCredentialResourceSummaryV1): string | null {
-    const modes = new Set<TeamCredentialDeliveryModeV1>([
-        ...(resource.allMembersDeliveryMode === null ? [] : [resource.allMembersDeliveryMode]),
-        ...resource.groupGrants.map((grant) => grant.deliveryMode),
-        ...resource.memberGrants.map((grant) => grant.deliveryMode),
-    ]);
+    const audiences = [
+        ...(resource.allMembersAllowedRoutes === null ? [] : [resource.allMembersAllowedRoutes]),
+        ...resource.groupGrants.map((grant) => grant.allowedRoutes),
+        ...resource.memberGrants.map((grant) => grant.allowedRoutes),
+    ];
+    const modes = new Set(audiences.map(routes => [...routes].sort().join(',')));
     if (modes.size === 0) return null;
     if (modes.size === 1) {
-        const [only] = [...modes];
+        const [only] = audiences;
         return only === undefined ? null : deliveryModeLabel(only);
     }
     return t('teams.credentials.delivery.mixed');
@@ -150,13 +139,13 @@ export function resourceDirectExposure(
     resource: TeamCredentialResourceSummaryV1,
 ): TeamCredentialDirectExposure {
     const modes = [
-        ...(resource.allMembersDeliveryMode === null ? [] : [resource.allMembersDeliveryMode]),
-        ...resource.groupGrants.map((grant) => grant.deliveryMode),
-        ...resource.memberGrants.map((grant) => grant.deliveryMode),
+        ...(resource.allMembersAllowedRoutes === null ? [] : [resource.allMembersAllowedRoutes]),
+        ...resource.groupGrants.map((grant) => grant.allowedRoutes),
+        ...resource.memberGrants.map((grant) => grant.allowedRoutes),
     ];
     if (modes.length === 0) return 'none';
-    if (modes.every((mode) => mode === 'direct')) return 'only';
-    return modes.some((mode) => mode !== 'brokered') ? 'some' : 'none';
+    if (modes.every((routes) => routes.length === 1 && routes.includes('direct'))) return 'only';
+    return modes.some((routes) => routes.includes('direct')) ? 'some' : 'none';
 }
 
 /**
@@ -168,7 +157,7 @@ export function resourceDirectExposure(
  */
 export function audienceSummary(resource: TeamCredentialResourceSummaryV1): string {
     const parts: string[] = [];
-    if (resource.allMembersDeliveryMode !== null) parts.push(t('teams.credentials.audience.everyone'));
+    if (resource.allMembersAllowedRoutes !== null) parts.push(t('teams.credentials.audience.everyone'));
     if (resource.groupGrants.length > 0) {
         parts.push(t('teams.credentials.audience.groupCount', { count: resource.groupGrants.length }));
     }

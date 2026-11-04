@@ -286,8 +286,8 @@ describe('TeamCredentialDetailScreen', () => {
         harness.answer(serverId, GET_PATH, {
             body: teamCredentialResourceFixture({
                     custodianAccountId: 'account-ada',
-                    disclosureCeiling: 'direct_allowed',
-                    allMembersDeliveryMode: 'direct',
+                    deliveryPolicy: { preferredAllowedModes: ['brokered', 'direct'] },
+                    allMembersAllowedRoutes: ['direct'],
                     readiness: { kind: 'source_unavailable' },
                     recoveryAction: 'source_owner_action',
                 }),
@@ -303,7 +303,7 @@ describe('TeamCredentialDetailScreen', () => {
         harness.answer(serverId, GET_PATH, {
             body: teamCredentialResourceFixture({
                     custodianAccountId: 'account-other', source: null,
-                    disclosureCeiling: 'direct_allowed', allMembersDeliveryMode: 'direct',
+                    deliveryPolicy: { preferredAllowedModes: ['brokered', 'direct'] }, allMembersAllowedRoutes: ['direct'],
                     readiness: { kind: 'source_unavailable' }, recoveryAction: 'source_owner_action',
                     capabilities: {
                         manageAudience: true, managePolicy: true, manageLimits: true,
@@ -331,7 +331,7 @@ describe('TeamCredentialDetailScreen', () => {
         });
         harness.answer(serverId, GET_PATH, {
             body: teamCredentialResourceFixture({
-                    allMembersDeliveryMode: null,
+                    allMembersAllowedRoutes: null,
                     groupGrants: [],
                     memberGrants: [],
                     requestPolicy: null,
@@ -396,7 +396,7 @@ describe('TeamCredentialDetailScreen', () => {
         });
         harness.answer(serverId, GET_PATH, {
             body: teamCredentialResourceFixture({
-                    disclosureCeiling: 'direct_allowed', allMembersDeliveryMode: 'direct',
+                    deliveryPolicy: { preferredAllowedModes: ['brokered', 'direct'] }, allMembersAllowedRoutes: ['direct'],
                 }),
         });
         harness.answer(serverId, PREPARATION_READ_PATH, {

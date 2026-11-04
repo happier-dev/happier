@@ -1,6 +1,5 @@
 import * as React from 'react';
-import type { TeamCredentialBrokerPlacementV1, TeamCredentialDeliveryModeV1, TeamCredentialDisclosureCeilingV1, TeamCredentialRequestPolicyV1, TeamCredentialRequestProtocolKindV1, TeamCredentialResourceReplacementV1, TeamCredentialResourceSummaryV1, TeamCredentialSourceBindingV1, TeamCredentialUsageCapabilitiesV1, TeamCredentialUsageLimitMetricV1, TeamCredentialUsageLimitPeriodV1, TeamCredentialUsageLimitSubjectKindV1, TeamCredentialUsageLimitV1 } from '@happier-dev/protocol/teams';
-import { narrowTeamCredentialDeliveryModeToBrokeredOnlyV1 } from '@happier-dev/protocol/teams';
+import type { TeamCredentialBrokerPlacementV1, TeamCredentialDeliveryModeV1, TeamCredentialRouteV1, TeamCredentialRequestPolicyV1, TeamCredentialRequestProtocolKindV1, TeamCredentialResourceReplacementV1, TeamCredentialResourceSummaryV1, TeamCredentialSourceBindingV1, TeamCredentialUsageCapabilitiesV1, TeamCredentialUsageLimitMetricV1, TeamCredentialUsageLimitPeriodV1, TeamCredentialUsageLimitSubjectKindV1, TeamCredentialUsageLimitV1 } from '@happier-dev/protocol/teams';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { MachineAdministrationTargetSelector } from '@/components/settings/machines/MachineAdministrationTargetSelector';
@@ -28,9 +27,9 @@ import {
 } from './teamCredentialBrokerMachineSelection';
 
 export type AudienceDraft = Readonly<{
-    allMembers: TeamCredentialDeliveryModeV1 | null;
-    groups: ReadonlyMap<string, TeamCredentialDeliveryModeV1>;
-    members: ReadonlyMap<string, TeamCredentialDeliveryModeV1>;
+    allMembers: readonly TeamCredentialRouteV1[] | null;
+    groups: ReadonlyMap<string, readonly TeamCredentialRouteV1[]>;
+    members: ReadonlyMap<string, readonly TeamCredentialRouteV1[]>;
 }>;
 
 export type TeamCredentialPolicyDraft = Readonly<{
@@ -57,7 +56,7 @@ export type TeamCredentialLimitDraft = Readonly<{
 export type TeamCredentialResourceDraft = Readonly<{
     name: string;
     source: TeamCredentialSourceBindingV1 | null;
-    disclosureCeiling: TeamCredentialDisclosureCeilingV1;
+    deliveryPolicy: Readonly<{ preferredAllowedModes: readonly TeamCredentialRouteV1[] }>;
     brokerPlacement: import('@happier-dev/protocol/teams').TeamCredentialBrokerPlacementV1 | null;
     sessionUsePolicy: import('@happier-dev/protocol/teams').TeamCredentialSessionUsePolicyV1;
     audience: AudienceDraft;
@@ -75,7 +74,7 @@ export const EMPTY_TEAM_CREDENTIAL_POLICY_DRAFT: TeamCredentialPolicyDraft = Obj
 export const EMPTY_TEAM_CREDENTIAL_RESOURCE_DRAFT: TeamCredentialResourceDraft = Object.freeze({
     name: '',
     source: null,
-    disclosureCeiling: 'brokered_only',
+    deliveryPolicy: Object.freeze({ preferredAllowedModes: Object.freeze(['brokered'] as const) }),
     brokerPlacement: null,
     sessionUsePolicy: 'personal_allowed',
     audience: Object.freeze({ allMembers: null, groups: new Map(), members: new Map() }),
@@ -103,13 +102,13 @@ export function teamCredentialResourceDraftFromSummary(
     return {
         name: resource.displayName,
         source: resource.source,
-        disclosureCeiling: resource.disclosureCeiling,
+        deliveryPolicy: resource.deliveryPolicy,
         brokerPlacement: resource.brokerPlacement,
         sessionUsePolicy: resource.sessionUsePolicy,
         audience: {
-            allMembers: resource.allMembersDeliveryMode,
-            groups: new Map(resource.groupGrants.map((grant) => [grant.teamGroupId, grant.deliveryMode])),
-            members: new Map(resource.memberGrants.map((grant) => [grant.teamMembershipId, grant.deliveryMode])),
+            allMembers: resource.allMembersAllowedRoutes,
+            groups: new Map(resource.groupGrants.map((grant) => [grant.teamGroupId, grant.allowedRoutes])),
+            members: new Map(resource.memberGrants.map((grant) => [grant.teamMembershipId, grant.allowedRoutes])),
         },
         requestPolicy: teamCredentialPolicyDraftFromPolicy(resource.requestPolicy),
         limits: limits.map((limit) => ({
@@ -186,16 +185,22 @@ function limitKey(limit: TeamCredentialLimitDraft): string {
     ]);
 }
 
+function audienceKey(audience: AudienceDraft): string {
+    return JSON.stringify([
+        orderedStrings(audience.allMembers),
+        orderedEntries(audience.groups).map(([id, routes]) => [id, orderedStrings(routes)]),
+        orderedEntries(audience.members).map(([id, routes]) => [id, orderedStrings(routes)]),
+    ]);
+}
+
 export function teamCredentialResourceDraftFingerprint(draft: TeamCredentialResourceDraft): string {
     return JSON.stringify([
         draft.name,
         sourceKey(draft.source),
-        draft.disclosureCeiling,
+        draft.deliveryPolicy.preferredAllowedModes,
         placementKey(draft.brokerPlacement),
         draft.sessionUsePolicy,
-        draft.audience.allMembers,
-        orderedEntries(draft.audience.groups),
-        orderedEntries(draft.audience.members),
+        audienceKey(draft.audience),
         policyKey(draft.requestPolicy),
         [...draft.limits].map(limitKey).sort((left, right) => left.localeCompare(right)),
         limitKey(draft.pendingLimit),
@@ -221,16 +226,16 @@ export function teamCredentialUsageLimitDeltaFromDraft(
     };
 }
 
-function directAudienceEntries(audience: AudienceDraft): readonly unknown[] {
-    const directMode = (mode: TeamCredentialDeliveryModeV1 | null) => mode === 'direct' || mode === 'both';
+function disclosureAudienceEntries(audience: AudienceDraft, route: 'direct' | 'vendor-native'): readonly unknown[] {
+    const discloses = (routes: readonly TeamCredentialRouteV1[] | null) => routes?.includes(route) === true;
     return [
-        ...(directMode(audience.allMembers) ? [['all_members', audience.allMembers]] : []),
+        ...(discloses(audience.allMembers) ? [['all_members']] : []),
         ...orderedEntries(audience.groups)
-            .filter(([, mode]) => directMode(mode))
-            .map(([id, mode]) => ['group', id, mode]),
+            .filter(([, mode]) => discloses(mode))
+            .map(([id]) => ['group', id]),
         ...orderedEntries(audience.members)
-            .filter(([, mode]) => directMode(mode))
-            .map(([id, mode]) => ['member', id, mode]),
+            .filter(([, mode]) => discloses(mode))
+            .map(([id]) => ['member', id]),
     ];
 }
 
@@ -245,17 +250,19 @@ function directAudienceEntries(audience: AudienceDraft): readonly unknown[] {
 export function narrowTeamCredentialResourceDraftToBrokeredOnly(
     draft: TeamCredentialResourceDraft,
 ): TeamCredentialResourceDraft {
-    const narrowGrants = (grants: ReadonlyMap<string, TeamCredentialDeliveryModeV1>) => new Map(
-        [...grants].flatMap(([id, mode]) => {
-            const narrowed = narrowTeamCredentialDeliveryModeToBrokeredOnlyV1(mode);
+    const narrow = (routes: readonly TeamCredentialRouteV1[] | null): readonly TeamCredentialRouteV1[] | null =>
+        routes?.includes('brokered') ? ['brokered'] : null;
+    const narrowGrants = (grants: AudienceDraft['groups']) => new Map(
+        [...grants].flatMap(([id, routes]) => {
+            const narrowed = narrow(routes);
             return narrowed === null ? [] : [[id, narrowed] as const];
         }),
     );
     return {
         ...draft,
-        disclosureCeiling: 'brokered_only',
+        deliveryPolicy: { preferredAllowedModes: ['brokered'] },
         audience: {
-            allMembers: narrowTeamCredentialDeliveryModeToBrokeredOnlyV1(draft.audience.allMembers),
+            allMembers: narrow(draft.audience.allMembers),
             groups: narrowGrants(draft.audience.groups),
             members: narrowGrants(draft.audience.members),
         },
@@ -263,17 +270,19 @@ export function narrowTeamCredentialResourceDraftToBrokeredOnly(
 }
 
 /** Identity of the exact material-disclosure consequence acknowledged by a user. */
-export function teamCredentialDirectDisclosureConsequenceFingerprint(
+export function teamCredentialDisclosureConsequenceFingerprint(
     targetKey: string,
     draft: TeamCredentialResourceDraft,
 ): string | null {
-    const audience = directAudienceEntries(draft.audience);
-    if (draft.source === null || draft.disclosureCeiling !== 'direct_allowed' || audience.length === 0) return null;
+    const directAudience = draft.deliveryPolicy.preferredAllowedModes.includes('direct')
+        ? disclosureAudienceEntries(draft.audience, 'direct') : [];
+    const nativeAllowed = draft.deliveryPolicy.preferredAllowedModes.includes('vendor-native');
+    if (draft.source === null || (!nativeAllowed && directAudience.length === 0)) return null;
     return JSON.stringify([
         targetKey,
         sourceKey(draft.source),
-        draft.disclosureCeiling,
-        audience,
+        directAudience,
+        nativeAllowed ? disclosureAudienceEntries(draft.audience, 'vendor-native') : null,
     ]);
 }
 
@@ -291,7 +300,7 @@ export function useTeamCredentialResourceDraft(input: Readonly<{
     const initial = input.initial ?? EMPTY_TEAM_CREDENTIAL_RESOURCE_DRAFT;
     const [draft, setDraftState] = React.useState<TeamCredentialResourceDraft>(initial);
     const [baseline, setBaseline] = React.useState<TeamCredentialResourceDraft>(initial);
-    const [acceptedDirectDisclosureFingerprint, setAcceptedDirectDisclosureFingerprint] = React.useState<string | null>(null);
+    const [acceptedDisclosureFingerprint, setAcceptedDisclosureFingerprint] = React.useState<string | null>(null);
     const targetRef = React.useRef(input.targetKey);
 
     React.useEffect(() => {
@@ -299,7 +308,7 @@ export function useTeamCredentialResourceDraft(input: Readonly<{
         targetRef.current = input.targetKey;
         setDraftState(initial);
         setBaseline(initial);
-        setAcceptedDirectDisclosureFingerprint(null);
+        setAcceptedDisclosureFingerprint(null);
     }, [initial, input.targetKey]);
 
     const setDraft = React.useCallback((next: React.SetStateAction<TeamCredentialResourceDraft>) => {
@@ -311,10 +320,10 @@ export function useTeamCredentialResourceDraft(input: Readonly<{
     const reset = React.useCallback((next: TeamCredentialResourceDraft) => {
         setDraftState(next);
         setBaseline(next);
-        setAcceptedDirectDisclosureFingerprint(null);
+        setAcceptedDisclosureFingerprint(null);
     }, []);
-    const directDisclosureFingerprint = teamCredentialDirectDisclosureConsequenceFingerprint(input.targetKey, draft);
-    const baselineDirectDisclosureFingerprint = teamCredentialDirectDisclosureConsequenceFingerprint(input.targetKey, baseline);
+    const disclosureFingerprint = teamCredentialDisclosureConsequenceFingerprint(input.targetKey, draft);
+    const baselineDisclosureFingerprint = teamCredentialDisclosureConsequenceFingerprint(input.targetKey, baseline);
     return {
         draft,
         baseline,
@@ -322,46 +331,53 @@ export function useTeamCredentialResourceDraft(input: Readonly<{
         updateDisclosureConsequence,
         reset,
         isDirty: teamCredentialResourceDraftFingerprint(draft) !== teamCredentialResourceDraftFingerprint(baseline),
-        directDisclosureAccepted: directDisclosureFingerprint === null
-            || directDisclosureFingerprint === baselineDirectDisclosureFingerprint
-            || directDisclosureFingerprint === acceptedDirectDisclosureFingerprint,
-        directDisclosureFingerprint,
-        isDirectDisclosureAcceptedForDraft: React.useCallback((next: TeamCredentialResourceDraft) => {
-            const fingerprint = teamCredentialDirectDisclosureConsequenceFingerprint(input.targetKey, next);
+        hasAudienceChanges: () => audienceKey(draft.audience) !== audienceKey(baseline.audience),
+        disclosureAccepted: disclosureFingerprint === null
+            || disclosureFingerprint === baselineDisclosureFingerprint
+            || disclosureFingerprint === acceptedDisclosureFingerprint,
+        disclosureFingerprint,
+        disclosureReviewCompleted: disclosureFingerprint !== null
+            && (disclosureFingerprint === baselineDisclosureFingerprint
+                || disclosureFingerprint === acceptedDisclosureFingerprint),
+        isDisclosureAcceptedForDraft: React.useCallback((next: TeamCredentialResourceDraft) => {
+            const fingerprint = teamCredentialDisclosureConsequenceFingerprint(input.targetKey, next);
             return fingerprint === null
-                || fingerprint === baselineDirectDisclosureFingerprint
-                || fingerprint === acceptedDirectDisclosureFingerprint;
-        }, [acceptedDirectDisclosureFingerprint, baselineDirectDisclosureFingerprint, input.targetKey]),
-        acceptDirectDisclosure: React.useCallback(() => {
-            setAcceptedDirectDisclosureFingerprint(directDisclosureFingerprint);
-        }, [directDisclosureFingerprint]),
-        acceptDirectDisclosureForDraft: React.useCallback((next: TeamCredentialResourceDraft) => {
-            setAcceptedDirectDisclosureFingerprint(
-                teamCredentialDirectDisclosureConsequenceFingerprint(input.targetKey, next),
+                || fingerprint === baselineDisclosureFingerprint
+                || fingerprint === acceptedDisclosureFingerprint;
+        }, [acceptedDisclosureFingerprint, baselineDisclosureFingerprint, input.targetKey]),
+        acceptDisclosure: React.useCallback(() => {
+            setAcceptedDisclosureFingerprint(disclosureFingerprint);
+        }, [disclosureFingerprint]),
+        acceptDisclosureForDraft: React.useCallback((next: TeamCredentialResourceDraft) => {
+            setAcceptedDisclosureFingerprint(
+                teamCredentialDisclosureConsequenceFingerprint(input.targetKey, next),
             );
         }, [input.targetKey]),
-        resetDirectDisclosureConsent: React.useCallback(() => setAcceptedDirectDisclosureFingerprint(null), []),
+        resetDisclosureConsent: React.useCallback(() => setAcceptedDisclosureFingerprint(null), []),
     } as const;
 }
 
 /**
  * The one confirmation shown before a draft starts disclosing material.
  *
- * Four editors reach this decision — choosing a source, widening the ceiling,
- * and granting direct delivery from either the create or the edit audience —
- * and they must not drift into four different promises about what disclosure
- * means. Each caller still decides whether its draft has already acknowledged
+ * Create/edit source and audience changes use the same reviewed direct/vendor
+ * consequences. Each caller decides whether its draft has already acknowledged
  * this exact consequence, so the question appears once per distinct consequence
  * rather than once per press — and a draft that needs no question is applied
  * without waiting on one.
  */
-export async function confirmTeamCredentialDirectDisclosure(): Promise<boolean> {
+export async function confirmTeamCredentialDisclosure(draft: TeamCredentialResourceDraft): Promise<boolean> {
+    const nativeAllowed = draft.deliveryPolicy.preferredAllowedModes.includes('vendor-native');
+    const directAllowed = draft.deliveryPolicy.preferredAllowedModes.includes('direct')
+        && disclosureAudienceEntries(draft.audience, 'direct').length > 0;
     return await Modal.confirm(
-        t('teams.credentials.audience.directTitle'),
-        t('teams.credentials.audience.directBody'),
+        nativeAllowed ? t('teams.credentials.nativeDisclosure.title') : t('teams.credentials.audience.directTitle'),
+        nativeAllowed ? [t('teams.credentials.nativeDisclosure.body'),
+            ...(directAllowed ? [t('teams.credentials.audience.directBody')] : []),
+        ].join('\n\n') : t('teams.credentials.audience.directBody'),
         {
-            confirmText: t('teams.credentials.audience.directConfirm'),
-            cancelText: t('teams.credentials.audience.keepBrokered'),
+            confirmText: nativeAllowed ? t('teams.credentials.nativeDisclosure.confirm') : t('teams.credentials.audience.directConfirm'),
+            cancelText: nativeAllowed ? t('common.cancel') : t('teams.credentials.audience.keepBrokered'),
             destructive: true,
         },
     );
@@ -626,17 +642,23 @@ export const TeamCredentialBrokerPlacementSection = React.memo(function TeamCred
     );
 });
 
-export function withAudienceEntry(current: ReadonlyMap<string, TeamCredentialDeliveryModeV1>, id: string, mode: TeamCredentialDeliveryModeV1 | null) { const next = new Map(current); if (mode === null) next.delete(id); else next.set(id, mode); return next; }
+export function withAudienceEntry(current: AudienceDraft['groups'], id: string, routes: readonly TeamCredentialRouteV1[] | null) { const next = new Map(current); if (routes === null) next.delete(id); else next.set(id, routes); return next; }
 export function offeredDeliveryModes(resource: Readonly<{
-    disclosureCeiling: TeamCredentialDisclosureCeilingV1;
+    deliveryPolicy: TeamCredentialResourceDraft['deliveryPolicy'];
     directExportSupport?: 'supported' | 'mixed' | 'unsupported';
 }>): readonly TeamCredentialDeliveryModeV1[] {
-    return resource.disclosureCeiling === 'direct_allowed'
-        && resource.directExportSupport !== 'unsupported'
-        ? ['brokered', 'direct', 'both']
-        : ['brokered'];
+    const brokered = resource.deliveryPolicy.preferredAllowedModes.includes('brokered');
+    const direct = resource.deliveryPolicy.preferredAllowedModes.includes('direct')
+        && resource.directExportSupport !== 'unsupported';
+    return brokered && direct ? ['brokered', 'direct', 'both'] : direct ? ['direct'] : brokered ? ['brokered'] : [];
 }
-export const TeamCredentialDeliveryModeChooser = React.memo(function TeamCredentialDeliveryModeChooser(props: Readonly<{ principalKey: string; principalName: string; modes: readonly TeamCredentialDeliveryModeV1[]; current: TeamCredentialDeliveryModeV1 | null; disabled: boolean; onChoose: (mode: TeamCredentialDeliveryModeV1 | null) => void }>) { return <>{props.modes.map(mode => <Item key={mode} testID={`team-credential-audience-mode:${props.principalKey}:${mode}`} title={deliveryModeLabel(mode)} accessibilityLabel={`${props.principalName}, ${deliveryModeLabel(mode)}`} selected={props.current === mode} disabled={props.disabled} onPress={() => props.onChoose(mode)} showChevron={false} />)}{props.current === null ? null : <Item testID={`team-credential-audience-mode:${props.principalKey}:remove`} title={t('teams.credentials.audience.remove')} accessibilityLabel={`${props.principalName}, ${t('teams.credentials.audience.remove')}`} destructive disabled={props.disabled} onPress={() => props.onChoose(null)} showChevron={false} />}</>; });
+/** Presentation adapter for the existing broker/direct controls; `both` never means native. */
+export function teamCredentialAudienceRoutesForMode(mode: TeamCredentialDeliveryModeV1, current: readonly TeamCredentialRouteV1[] | null): readonly TeamCredentialRouteV1[] {
+    const routes: TeamCredentialRouteV1[] = mode === 'both' ? ['brokered', 'direct'] : [mode];
+    const retained = current?.filter(route => route === 'vendor-native' || routes.includes(route)) ?? [];
+    return [...retained, ...routes.filter(route => !retained.includes(route))];
+}
+export const TeamCredentialDeliveryModeChooser = React.memo(function TeamCredentialDeliveryModeChooser(props: Readonly<{ principalKey: string; principalName: string; modes: readonly TeamCredentialDeliveryModeV1[]; current: readonly TeamCredentialRouteV1[] | null; disabled: boolean; onChoose: (routes: readonly TeamCredentialRouteV1[] | null) => void }>) { return <>{props.modes.map(mode => <Item key={mode} testID={`team-credential-audience-mode:${props.principalKey}:${mode}`} title={deliveryModeLabel(mode)} accessibilityLabel={`${props.principalName}, ${deliveryModeLabel(mode)}`} selected={props.current !== null && props.current.includes('brokered') === (mode !== 'direct') && props.current.includes('direct') === (mode !== 'brokered')} disabled={props.disabled} onPress={() => props.onChoose(teamCredentialAudienceRoutesForMode(mode, props.current))} showChevron={false} />)}{props.current === null ? null : <Item testID={`team-credential-audience-mode:${props.principalKey}:remove`} title={t('teams.credentials.audience.remove')} accessibilityLabel={`${props.principalName}, ${t('teams.credentials.audience.remove')}`} destructive disabled={props.disabled} onPress={() => props.onChoose(null)} showChevron={false} />}</>; });
 
 export const TEAM_CREDENTIAL_REQUEST_PROTOCOL_KINDS: readonly TeamCredentialRequestProtocolKindV1[] = ['openai_responses', 'openai_chat_completions', 'anthropic_messages'];
 export function teamCredentialRequestProtocolKindFromProviderProtocol(

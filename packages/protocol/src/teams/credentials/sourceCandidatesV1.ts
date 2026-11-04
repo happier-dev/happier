@@ -5,7 +5,7 @@ import { TeamCredentialSourceBindingV1Schema } from './sourceBindingV1.js';
 import {
   TeamCredentialBrokerPlacementV1Schema,
   TeamCredentialBrokerPresentationV1Schema,
-  TeamCredentialDisclosureCeilingV1Schema,
+  TeamCredentialDeliveryPolicyV1Schema,
   TeamCredentialResourceAdministrationCapabilitiesV1Schema,
   TeamCredentialResourceRecoveryActionV1Schema,
 } from './resourceV1.js';
@@ -59,7 +59,7 @@ export const TeamCredentialSourceResourceAdministrationV1Schema = lazyZodSchema(
   displayName: z.string().check(z.trim(), z.minLength(1), z.maxLength(120)),
   enabled: z.boolean(),
   revision: z.number().check(z.int(), z.nonnegative()),
-  disclosureCeiling: TeamCredentialDisclosureCeilingV1Schema,
+  deliveryPolicy: TeamCredentialDeliveryPolicyV1Schema,
   brokerPlacement: z.nullable(TeamCredentialBrokerPlacementV1Schema),
   brokerPresentation: TeamCredentialBrokerPresentationV1Schema,
   readiness: TeamCredentialResourceReadinessV1Schema,

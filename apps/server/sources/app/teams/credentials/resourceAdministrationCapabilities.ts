@@ -1,9 +1,9 @@
-import { TeamCredentialResourceAdministrationCapabilitiesV1Schema, type TeamCredentialDisclosureCeilingV1, type TeamCredentialResourceAdministrationCapabilitiesV1 } from '@happier-dev/protocol/teams/credentials/resourceV1';
+import { TeamCredentialResourceAdministrationCapabilitiesV1Schema, type TeamCredentialDeliveryPolicyV1, type TeamCredentialResourceAdministrationCapabilitiesV1 } from '@happier-dev/protocol/teams/credentials/resourceV1';
 
 type AdministrationCapabilityInput = Readonly<{
     resource: Readonly<{
         enabled: boolean;
-        disclosureCeiling: TeamCredentialDisclosureCeilingV1;
+        deliveryPolicy: TeamCredentialDeliveryPolicyV1;
     }>;
     isSourceCustodian: boolean;
     isQualifiedTeamManager: boolean;
@@ -28,12 +28,13 @@ export function projectTeamCredentialResourceAdministrationCapabilities(
         managePolicy: manager,
         manageLimits: manager,
         updateBrokerPlacement: custodian,
-        narrowDisclosure: custodian && input.resource.disclosureCeiling === "direct_allowed",
-        widenDisclosure: custodian && input.resource.disclosureCeiling === "brokered_only",
+        updateDeliveryPolicy: custodian,
+        narrowDisclosure: custodian && input.resource.deliveryPolicy.preferredAllowedModes.some(route => route !== 'brokered'),
+        widenDisclosure: custodian && !input.resource.deliveryPolicy.preferredAllowedModes.includes('direct'),
         refreshDirectMaterial: custodian
             && input.isQualifiedTeamMember
             && input.resource.enabled
-            && input.resource.disclosureCeiling === "direct_allowed",
+            && input.resource.deliveryPolicy.preferredAllowedModes.includes('direct'),
         disable: input.resource.enabled && (manager || custodian),
         enable: !input.resource.enabled && manager,
         delete: manager || custodian,

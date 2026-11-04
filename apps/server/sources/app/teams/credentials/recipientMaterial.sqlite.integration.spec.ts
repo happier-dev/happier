@@ -440,8 +440,8 @@ describe("Team credential recipient material", () => {
             actorAccountId: custodian.id, authentication: { authenticationAuthority: 'present_user' },
             patch: { resourceId: resource.id, expectedRevision: resource.revision, replacement: {
                 enabled: true, displayName: resource.displayName, sessionUsePolicy: 'team_visibility_required',
-                requestPolicy: null, allMembersDeliveryMode: null, groupGrants: [],
-                memberGrants: [{ teamMembershipId: membership.id, deliveryMode: 'direct' }],
+                requestPolicy: null, allMembersAllowedRoutes: null, groupGrants: [],
+                memberGrants: [{ teamMembershipId: membership.id, allowedRoutes: ['direct'] }],
                 usageLimitDelta: { upserts: [], deleteIds: [] },
             } },
         }));

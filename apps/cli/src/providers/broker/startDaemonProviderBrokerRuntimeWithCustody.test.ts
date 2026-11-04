@@ -81,14 +81,14 @@ it.each(['network', 500, 403, 404] as const)('composes Team wakes and exact clos
   const resource: TeamCredentialResourceSummaryV1 = {
     id: 'resource-1', teamId: 'team-1', custodianAccountId: 'custodian-account', sourceOwnerDisplayName: null,
     displayName: 'Shared Codex', enabled: true, revision: 7, source,
-    disclosureCeiling: 'brokered_only', sessionUsePolicy: 'personal_allowed',
+    deliveryPolicy: { preferredAllowedModes: ['brokered'] }, sessionUsePolicy: 'personal_allowed',
     sourcePresentation: { kind: 'connected_service', service: source.target.account.service },
     directExportSupport: 'unsupported', activeUsageLimitCount: 0, requestPolicy: null,
     brokerPlacement: { kind: 'machine', machineId: 'broker-machine' },
-    allMembersDeliveryMode: null, groupGrants: [], memberGrants: [], readiness: { kind: 'available' }, recoveryAction: null,
+    allMembersAllowedRoutes: null, groupGrants: [], memberGrants: [], readiness: { kind: 'available' }, recoveryAction: null,
     brokerPresentation: { selectedTarget: null, eligibleTargets: [], selectedPool: null, eligiblePools: [] },
     capabilities: { manageAudience: false, managePolicy: false, manageLimits: false, updateBrokerPlacement: false,
-      narrowDisclosure: false, widenDisclosure: false, refreshDirectMaterial: false, disable: false, enable: false, delete: false },
+      updateDeliveryPolicy: false, narrowDisclosure: false, widenDisclosure: false, refreshDirectMaterial: false, disable: false, enable: false, delete: false },
     createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString(),
   };
   let cursor = 0;

@@ -205,7 +205,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("T
                 : kind === "audience"
                     ? await setTeamCredentialAudienceInTx(tx, { actorAccountId: input.owner.id, authentication: { authenticationAuthority: "present_user" }, input: {
                         resourceId: input.resource.id, expectedRevision: input.resource.revision,
-                        allMembersDeliveryMode: null, groupGrants: [], memberGrants: [],
+                        allMembersAllowedRoutes: null, groupGrants: [], memberGrants: [],
                     } })
                     : await updateTeamCredentialResourceInTx(tx, { actorAccountId: input.owner.id, authentication: { authenticationAuthority: "present_user" }, patch: {
                         resourceId: input.resource.id, expectedRevision: input.resource.revision, enabled: false,
@@ -257,7 +257,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("T
             : kind === "management" ? homeDomainActionPathForMethod("teams.members.management.set", "POST")
             : homeDomainActionPathForMethod(`teams.members.${kind}`, "POST");
         const payload = kind === "material" ? { items: [item] }
-            : kind === "audience" ? { resourceId: input.resource.id, expectedRevision: input.resource.revision, allMembersDeliveryMode: null, groupGrants: [], memberGrants: [] }
+            : kind === "audience" ? { resourceId: input.resource.id, expectedRevision: input.resource.revision, allMembersAllowedRoutes: null, groupGrants: [], memberGrants: [] }
             : kind === "update" ? { resourceId: input.resource.id, expectedRevision: input.resource.revision, enabled: false }
             : { v: 1, teamId: input.team.id, ...(kind === "leave" ? {} : { membershipId: input.membership.id }),
                 ...(management ? { management: { kind: "directory_source", directorySourceId: management.source.id } } : {}) };

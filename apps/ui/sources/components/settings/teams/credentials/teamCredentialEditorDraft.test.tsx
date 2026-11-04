@@ -1,7 +1,8 @@
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { ProviderConnectionIdSchema, ProviderConnectionSecurityFingerprintV1Schema, ProviderLocalIdSchema } from '@happier-dev/protocol';
+import { ProviderConnectionIdSchema, ProviderLocalIdSchema } from '@happier-dev/protocol/providers/ids';
+import { ProviderConnectionSecurityFingerprintV1Schema} from '@happier-dev/protocol/providers/fingerprints';
 
 import { renderHook, standardCleanup } from '@/dev/testkit';
 
@@ -24,6 +25,26 @@ vi.mock('@/modal', async () => {
 });
 
 afterEach(standardCleanup);
+
+describe('normalized Team delivery draft', () => {
+    it('keeps native grants independent of the existing broker/direct presentation choices', async () => {
+        const { offeredDeliveryModes, teamCredentialAudienceRoutesForMode } = await import('./teamCredentialEditorDraft');
+        expect(offeredDeliveryModes({ deliveryPolicy: { preferredAllowedModes: ['vendor-native'] } })).toEqual([]);
+        expect(offeredDeliveryModes({ deliveryPolicy: { preferredAllowedModes: ['direct'] }, directExportSupport: 'supported' })).toEqual(['direct']);
+        expect(teamCredentialAudienceRoutesForMode('both', null)).toEqual(['brokered', 'direct']);
+        expect(teamCredentialAudienceRoutesForMode('brokered', ['vendor-native', 'direct'])).toEqual(['vendor-native', 'brokered']);
+        expect(teamCredentialAudienceRoutesForMode('both', ['vendor-native', 'brokered'])).toEqual(['vendor-native', 'brokered', 'direct']);
+    });
+
+    it('defaults new resources to broker-only permission and retains preference order in dirty state', async () => {
+        const { EMPTY_TEAM_CREDENTIAL_RESOURCE_DRAFT, teamCredentialResourceDraftFingerprint } = await import('./teamCredentialEditorDraft');
+        expect(EMPTY_TEAM_CREDENTIAL_RESOURCE_DRAFT.deliveryPolicy).toEqual({ preferredAllowedModes: ['brokered'] });
+        const nativeFirst = { ...EMPTY_TEAM_CREDENTIAL_RESOURCE_DRAFT,
+            deliveryPolicy: { preferredAllowedModes: ['vendor-native', 'brokered'] as const } };
+        const brokerFirst = { ...nativeFirst, deliveryPolicy: { preferredAllowedModes: ['brokered', 'vendor-native'] as const } };
+        expect(teamCredentialResourceDraftFingerprint(nativeFirst)).not.toBe(teamCredentialResourceDraftFingerprint(brokerFirst));
+    });
+});
 
 describe('reconcileTeamCredentialPolicyDraftForModelCatalog', () => {
     it('preserves policy when support is unknown and identifies only positively unsupported models', async () => {
@@ -83,7 +104,7 @@ describe('useTeamCredentialResourceDraft', () => {
                     initial: {
                         name: 'Saved',
                         source: null,
-                        disclosureCeiling: 'brokered_only',
+                        deliveryPolicy: { preferredAllowedModes: ['brokered'] },
                         brokerPlacement: null,
                         sessionUsePolicy: 'personal_allowed',
                         audience: { allMembers: null, groups: new Map(), members: new Map() },
@@ -111,7 +132,7 @@ describe('useTeamCredentialResourceDraft', () => {
             initial: {
                 name: 'Server moved',
                 source: null,
-                disclosureCeiling: 'direct_allowed',
+                deliveryPolicy: { preferredAllowedModes: ['brokered', 'direct'] },
                 brokerPlacement: { kind: 'machine', machineId: 'new-machine' },
                 sessionUsePolicy: 'team_context_required',
                 audience: { allMembers: null, groups: new Map(), members: new Map() },
@@ -134,7 +155,7 @@ describe('useTeamCredentialResourceDraft', () => {
             initial: {
                 name: 'Other target',
                 source: null,
-                disclosureCeiling: 'brokered_only',
+                deliveryPolicy: { preferredAllowedModes: ['brokered'] },
                 brokerPlacement: null,
                 sessionUsePolicy: 'personal_allowed',
                 audience: { allMembers: null, groups: new Map(), members: new Map() },
@@ -154,6 +175,35 @@ describe('useTeamCredentialResourceDraft', () => {
         expect(hook.getCurrent().isDirty).toBe(false);
     });
 
+    it('requires review when a native-only resource changes source, even before granting an audience', async () => {
+        const { EMPTY_TEAM_CREDENTIAL_RESOURCE_DRAFT, useTeamCredentialResourceDraft } = await import('./teamCredentialEditorDraft');
+        const initial: TeamCredentialResourceDraft = {
+            ...EMPTY_TEAM_CREDENTIAL_RESOURCE_DRAFT,
+            source: {
+                v: 1, kind: 'provider_connection',
+                connectionId: ProviderConnectionIdSchema.parse('connection-a'),
+                connectionSecurityFingerprint: ProviderConnectionSecurityFingerprintV1Schema.parse('connection-security:v1:source-a'),
+                credentialSlotId: ProviderLocalIdSchema.parse('apiKey'),
+            },
+            deliveryPolicy: { preferredAllowedModes: ['vendor-native', 'brokered'] },
+        };
+        const hook = await renderHook(() => useTeamCredentialResourceDraft({ targetKey: 'home:account:team:resource', initial }));
+        expect(hook.getCurrent().disclosureAccepted).toBe(true);
+        expect(hook.getCurrent().disclosureReviewCompleted).toBe(true);
+        act(() => hook.getCurrent().setDraft(current => ({ ...current,
+            source: current.source?.kind === 'provider_connection'
+                ? { ...current.source, connectionId: ProviderConnectionIdSchema.parse('connection-b') }
+                : current.source,
+        })));
+        expect(hook.getCurrent().disclosureAccepted).toBe(false);
+        expect(hook.getCurrent().disclosureReviewCompleted).toBe(false);
+        act(() => hook.getCurrent().acceptDisclosure());
+        act(() => hook.getCurrent().setDraft(current => ({ ...current,
+            name: 'Renamed', deliveryPolicy: { preferredAllowedModes: ['brokered', 'vendor-native'] },
+        })));
+        expect(hook.getCurrent().disclosureAccepted).toBe(true);
+    });
+
     it('keys disclosure acknowledgement to the exact source and direct audience consequence', async () => {
         const { useTeamCredentialResourceDraft } = await import('./teamCredentialEditorDraft');
         const hook = await renderHook(() => useTeamCredentialResourceDraft({ targetKey: 'home-a:account-a:team-a:new' }));
@@ -169,18 +219,18 @@ describe('useTeamCredentialResourceDraft', () => {
                     connectionSecurityFingerprint: ProviderConnectionSecurityFingerprintV1Schema.parse('connection-security:v1:source-a'),
                     credentialSlotId: ProviderLocalIdSchema.parse('apiKey'),
                 },
-                disclosureCeiling: 'direct_allowed',
+                deliveryPolicy: { preferredAllowedModes: ['brokered', 'direct'] },
                 brokerPlacement: { kind: 'machine', machineId: 'machine-a' },
                 audience: {
                     ...current.audience,
-                    members: new Map([['membership-a', 'direct']]),
+                    members: new Map([['membership-a', ['direct']]]),
                 },
             }));
         });
         act(() => {
-            hook.getCurrent().acceptDirectDisclosure();
+            hook.getCurrent().acceptDisclosure();
         });
-        expect(hook.getCurrent().directDisclosureAccepted).toBe(true);
+        expect(hook.getCurrent().disclosureAccepted).toBe(true);
 
         // Non-disclosure fields do not make the person repeat the same consent.
         act(() => hook.getCurrent().setDraft((current) => ({
@@ -189,20 +239,20 @@ describe('useTeamCredentialResourceDraft', () => {
             name: 'Renamed',
             requestPolicy: { ...current.requestPolicy, allowedModelIds: ['model-a'] },
         })));
-        expect(hook.getCurrent().directDisclosureAccepted).toBe(true);
+        expect(hook.getCurrent().disclosureAccepted).toBe(true);
 
         // Narrowing the ceiling removes the direct consequence entirely.
         act(() => hook.getCurrent().setDraft((current) => ({
             ...current,
-            disclosureCeiling: 'brokered_only',
+            deliveryPolicy: { preferredAllowedModes: ['brokered'] },
         })));
-        expect(hook.getCurrent().directDisclosureAccepted).toBe(true);
+        expect(hook.getCurrent().disclosureAccepted).toBe(true);
 
         act(() => hook.getCurrent().setDraft((current) => ({
             ...current,
-            disclosureCeiling: 'direct_allowed',
+            deliveryPolicy: { preferredAllowedModes: ['brokered', 'direct'] },
         })));
-        act(() => hook.getCurrent().acceptDirectDisclosure());
+        act(() => hook.getCurrent().acceptDisclosure());
 
         act(() => hook.getCurrent().setDraft((current) => ({
             ...current,
@@ -210,19 +260,19 @@ describe('useTeamCredentialResourceDraft', () => {
                 ? { ...current.source, connectionSecurityFingerprint: ProviderConnectionSecurityFingerprintV1Schema.parse('connection-security:v1:source-b') }
                 : current.source,
         })));
-        expect(hook.getCurrent().directDisclosureAccepted).toBe(false);
+        expect(hook.getCurrent().disclosureAccepted).toBe(false);
 
-        act(() => hook.getCurrent().acceptDirectDisclosure());
+        act(() => hook.getCurrent().acceptDisclosure());
 
-        // Delivery and exact source lifetime are the material consequence.
+        // A new direct recipient changes the material disclosure consequence.
         act(() => hook.getCurrent().setDraft((current) => ({
             ...current,
             audience: {
                 ...current.audience,
-                members: new Map([['membership-a', 'both']]),
+                members: new Map([['membership-a', ['direct']], ['membership-b', ['direct']]]),
             },
         })));
-        expect(hook.getCurrent().directDisclosureAccepted).toBe(false);
+        expect(hook.getCurrent().disclosureAccepted).toBe(false);
     });
 
     it('fingerprints the complete draft deterministically, including unordered audience and invalid raw limit input', async () => {
@@ -233,9 +283,9 @@ describe('useTeamCredentialResourceDraft', () => {
         const left = {
             ...EMPTY_TEAM_CREDENTIAL_RESOURCE_DRAFT,
             audience: {
-                allMembers: 'brokered' as const,
-                groups: new Map([['group-b', 'direct' as const], ['group-a', 'brokered' as const]]),
-                members: new Map([['member-b', 'both' as const], ['member-a', 'direct' as const]]),
+                allMembers: ['brokered'] as const,
+                groups: new Map([['group-b', ['direct'] as const], ['group-a', ['brokered'] as const]]),
+                members: new Map([['member-b', ['brokered', 'direct'] as const], ['member-a', ['direct'] as const]]),
             },
             requestPolicy: {
                 ...EMPTY_TEAM_CREDENTIAL_RESOURCE_DRAFT.requestPolicy,

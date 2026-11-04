@@ -1,3 +1,8 @@
+import { sealQualifiedConnectedAccountContentEnvelope } from '@happier-dev/protocol/connect/qualifiedConnectedAccountContentEnvelope';
+import { QualifiedConnectedAccountCredentialSnapshotV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
+import { createQualifiedConnectedAccountEstablishedRuntimeOwner } from '../qualifiedConnectedAccountEstablishedRuntimeOwner';
+import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { createConnectedAccountTeamCredentialSourceSnapshot } from '@/providers/broker/teamCredentialSourceSnapshot';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { accountSettingsParse, type ActionExecutorDeps } from '@happier-dev/protocol';
@@ -40,6 +45,7 @@ import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids'
 import { ConnectedAccountCatalogRecordV1Schema } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
 import {
   fetchTeamCredentialDirectMaterialPreparation,
+  withdrawTeamCredentialDirectMaterial,
 } from './teamCredentialDirectMaterialHttp';
 import { commitActiveConnectedAccountCatalog } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 
@@ -111,7 +117,7 @@ function summary(input: Readonly<{ id: string; custodianAccountId?: string }>): 
     displayName: input.id,
     enabled: true,
     revision: 1,
-    disclosureCeiling: 'direct_allowed',
+    deliveryPolicy: { preferredAllowedModes: ['direct'] },
     sessionUsePolicy: 'personal_allowed',
     source: {
       v: 1,
@@ -128,7 +134,7 @@ function summary(input: Readonly<{ id: string; custodianAccountId?: string }>): 
     activeUsageLimitCount: 0,
     requestPolicy: null,
     brokerPlacement: null,
-    allMembersDeliveryMode: 'direct',
+    allMembersAllowedRoutes: ['direct'],
     groupGrants: [],
     memberGrants: [],
     readiness: { kind: 'available' },
@@ -195,6 +201,86 @@ function reconciler(homeDomainAction: NonNullable<ActionExecutorDeps['homeDomain
 
 describe('daemon Team credential direct-material reconciler', () => {
   beforeEach(() => { vi.mocked(fetchTeamCredentialDirectMaterialPreparation).mockReset(); });
+
+  it('reads only the custodian selection across 101 Teams and 351 resources, preserving source withdrawal and recovery', async () => {
+    const admitted = await createAdmittedPluginRuntimeFixture();
+    try {
+      const teams = Array.from({ length: 101 }, (_, index) => ({ ...teamsPage.items[0]!, id: `team-${index}` }));
+      const account = { service: { pluginId: 'happier.voice.openai', localId: 'openai' }, accountId: 'source-account' };
+      const source = { v: 1 as const, kind: 'connected_account' as const,
+        target: { kind: 'account' as const, account }, credentialIncarnation: 'incarnation' };
+      let credentialRevision = 'csr_0123456789ABCDEFGHJKMNPQRS';
+      let sourceReads = 0;
+      const establishedRuntimeOwner = createQualifiedConnectedAccountEstablishedRuntimeOwner({
+        reloadController: admitted.controller, credentials: { token: 'synthetic', encryption: null },
+        getAccountEncryptionMode: async () => 'plain',
+        // The qualified credential HTTP reader and configuration persistence are
+        // boundaries. Admission, opening and currentness stay with their real owner.
+        readCredential: async () => { sourceReads++; return QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({
+          ref: account, revisionSemantics: 'revisioned', credentialRevision, authenticationModeId: 'api-key', configurationRevision: null,
+          content: sealQualifiedConnectedAccountContentEnvelope({ kind: 'credential', accountMode: 'plain',
+            payload: { v: 1, values: { token: 'synthetic' } }, randomBytes: length => new Uint8Array(length) }), metadata: { scopes: [] },
+        }); },
+        configuration: { read: async () => null, secrets: { admit: async () => undefined, has: async () => false, read: async () => null } },
+      });
+      const material = await establishedRuntimeOwner.readMaterialSnapshot({ account });
+      const snapshot = createConnectedAccountTeamCredentialSourceSnapshot({ source, material,
+        authenticationKind: 'manual', isPersistedSourceCurrent: () => true })!;
+      let owned = TeamCredentialResourceSummaryV1Schema.parse({ ...summary({ id: 'owned' }), teamId: 'team-100', source,
+        sourcePresentation: { kind: 'connected_service', service: account.service } });
+      const unrelated = Array.from({ length: 350 }, (_, index) => TeamCredentialResourceSummaryV1Schema.parse({
+        ...summary({ id: `foreign-${index}`, custodianAccountId: 'other-custodian' }), teamId: `team-${index % teams.length}`,
+      }));
+      let reads = 0;
+      sourceReads = 0;
+      let connected = true;
+      const homeDomainAction: NonNullable<ActionExecutorDeps['homeDomainAction']> = async request => {
+        reads++;
+        const input = request.input;
+        const cursor = input && typeof input === 'object' && 'cursor' in input ? Number(input.cursor ?? 0) : 0;
+        if (request.actionId === 'teams.list') return TeamsPageV1Schema.parse({
+          items: teams.slice(cursor, cursor + 100), nextCursor: cursor + 100 < teams.length ? String(cursor + 100) : null,
+        });
+        const selected = input && typeof input === 'object' && 'scope' in input && input.scope === 'custodian'
+          ? (owned.custodianAccountId === ACCOUNT_ID ? [owned] : [])
+          : [...unrelated, owned].filter(row => input && typeof input === 'object' && 'teamId' in input && row.teamId === input.teamId);
+        return TeamCredentialResourcePageV1Schema.parse({ resources: selected.slice(cursor, cursor + 50),
+          nextCursor: cursor + 50 < selected.length ? String(cursor + 50) : null,
+          viewer: { manageCredentials: false, offerOwnCredential: true } });
+      };
+      const owner = createDaemonTeamCredentialDirectMaterialReconciler({ token: 'synthetic', accountId: ACCOUNT_ID,
+        homeDomainAction, establishedRuntimeOwner,
+        listAccounts: async () => ({ accounts: connected ? [{ revisionSemantics: 'revisioned', credentialRevision,
+          ref: account, status: 'connected', authenticationModeId: 'api-key', configurationReady: true, configurationRevision: null, scopes: [] }] : [] }),
+        readGroup: async () => null, resolveProviderSource: async () => null,
+      });
+      vi.mocked(fetchTeamCredentialDirectMaterialPreparation).mockResolvedValue({
+        homeServerIdentityId: 'home', teamId: owned.teamId, resourceId: owned.id, resourceRevision: owned.revision,
+        source: owned.source!, sourceMember: snapshot.currentness.sourceMember,
+        sourceCredentialIncarnation: 'incarnation', publishedSourceVersion: snapshot.currentness.sourceVersion, recipients: [], nextCursor: null,
+      });
+      vi.mocked(withdrawTeamCredentialDirectMaterial).mockClear();
+      expect(await owner.reconcile('startup')).toMatchObject({ failures: [] });
+      expect(reads).toBe(1);
+      const initialSourceReads = sourceReads;
+      expect(initialSourceReads).toBeGreaterThan(0);
+      connected = false;
+      expect(await owner.reconcile('source-snapshot')).toMatchObject({ failures: [{ reason: 'source_unavailable' }] });
+      expect(reads).toBe(2);
+      expect(withdrawTeamCredentialDirectMaterial).toHaveBeenCalledOnce();
+      connected = true;
+      credentialRevision = `csr_${'x'.repeat(22)}`;
+      expect(await owner.reconcile('account-reconnect')).toMatchObject({ failures: [] });
+      expect(reads).toBe(3);
+      expect(sourceReads).toBeGreaterThan(initialSourceReads);
+      const recoveredSourceReads = sourceReads;
+      owned = { ...owned, custodianAccountId: 'new-custodian' };
+      expect(await owner.reconcile('account-changes')).toMatchObject({ failures: [] });
+      expect(reads).toBe(4);
+      expect(sourceReads).toBe(recoveredSourceReads);
+    } finally { await admitted.dispose(); }
+  });
+
 
   it('does no resource or account reads for 25 unrelated and cleanup-only publications across 20 resources and 5 sources', async () => {
     resetActiveAccountSettingsSnapshotForTests();
@@ -478,18 +564,17 @@ describe('daemon Team credential direct-material reconciler', () => {
     }
   });
 
-  // The administration list is paginated, so an owned direct resource beyond
-  // the first page must still be reconciled instead of silently reported clean.
-  it('requests only direct-delivery resources and drains every page of a Team', async () => {
+  // Qualification can empty a candidate page without ending its keyset.
+  it('drains every custodian page, including an empty intermediate page', async () => {
     const owned = summary({ id: 'owned-on-page-two' });
-    const foreign = summary({ id: 'other-team-member-source', custodianAccountId: 'someone-else' });
     const homeDomainAction = vi.fn(async (request: Readonly<{ actionId: string; input?: unknown }>) => {
       if (request.actionId === 'teams.list') return { ...teamsPage, retiredPageField: true,
         items: teamsPage.items.map(team => ({ ...team, retiredTeamField: true })) };
-      const input = request.input as Readonly<{ cursor?: string | null; filter?: string }>;
+      const input = request.input as Readonly<{ cursor?: string | null; filter?: string; scope?: string }>;
       // The Home's default administration read probes broker readiness. Direct
       // preparation must use its existing delivery filter on every page.
       expect(input.filter).toBe('direct');
+      expect(input.scope).toBe('custodian');
       const page = TeamCredentialResourcePageV1Schema.parse(input?.cursor === 'page-two'
         ? {
           resources: [owned],
@@ -497,7 +582,7 @@ describe('daemon Team credential direct-material reconciler', () => {
           nextCursor: null,
         }
         : {
-          resources: [foreign],
+          resources: [],
           viewer: { manageCredentials: false, offerOwnCredential: true },
           nextCursor: 'page-two',
         });

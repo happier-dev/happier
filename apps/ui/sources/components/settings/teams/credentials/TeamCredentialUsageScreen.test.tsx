@@ -128,7 +128,8 @@ async function addHome(options?: Readonly<{ deliveryMode?: 'brokered' | 'direct'
     });
     harness.answer(serverId, CREDENTIAL_GET_PATH, {
         body: teamCredentialResourceFixture({
-            allMembersDeliveryMode: options?.deliveryMode ?? 'brokered',
+            allMembersAllowedRoutes: options?.deliveryMode === 'both'
+                ? ['brokered', 'direct'] : [options?.deliveryMode ?? 'brokered'],
         }),
     });
     return serverId;
@@ -817,7 +818,7 @@ describe('TeamCredentialUsageScreen', () => {
         expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-credential-usage-loading');
 
         harness.answer(serverId, CREDENTIAL_GET_PATH, {
-            body: teamCredentialResourceFixture({ allMembersDeliveryMode: 'brokered' }),
+            body: teamCredentialResourceFixture({ allMembersAllowedRoutes: ['brokered'] }),
         });
         screen.pressByTestId('team-credential-usage-resource-retry');
 

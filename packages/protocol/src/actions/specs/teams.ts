@@ -1,3 +1,4 @@
+import { teamCredentialMutationRequiresUiConfirmation, teamCredentialNativeDisclosureApprovalSummary } from './teamCredentialApproval.js';
 import type { z } from 'zod/mini';
 
 import type { TeamIdentityActionIdV1 } from '../../teams/actionsV1.js';
@@ -211,11 +212,11 @@ function teamCredentialActionRow<TActionId extends TeamCredentialHomeActionIdV1>
     ...(['teams.credentials.limits.upsert', 'teams.credentials.limits.delete', 'teams.credentials.test',
       'teams.credentials.externalKeys.authorize'].includes(input.id)
       ? { approvalPolicy: { uiConfirmation: 'direct' as const } } : {}),
-    ...(['teams.credentials.create', 'teams.credentials.update', 'teams.credentials.audience.set'].includes(input.id) ? { approvalPolicy: {
+    ...(['teams.credentials.create', 'teams.credentials.update', 'teams.credentials.audience.set'].includes(input.id) ? {
+      approvalPresentation: { summary: (value: unknown) => teamCredentialNativeDisclosureApprovalSummary(input.id, value) },
+      approvalPolicy: {
       uiConfirmation: 'direct' as const,
-      // Audience and broker policy remain reversible. The credential editor
-      // owns the designed review before drafting actual material disclosure.
-      uiConfirmationForInput: (value: unknown) => !TEAM_CREDENTIAL_ACTION_INPUT_SCHEMAS_V1[input.id].safeParse(value).success,
+      uiConfirmationForInput: (value: unknown) => teamCredentialMutationRequiresUiConfirmation(input.id, value),
     } } : {}),
     inputSchema: TEAM_CREDENTIAL_ACTION_INPUT_SCHEMAS_V1[input.id],
     outputSchema: TEAM_CREDENTIAL_ACTION_OUTPUT_SCHEMAS_V1[input.id],

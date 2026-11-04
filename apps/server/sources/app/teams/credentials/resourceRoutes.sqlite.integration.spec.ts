@@ -1,3 +1,4 @@
+import { createConnectedServiceCredentialRevision } from "@/app/api/routes/connect/credentials/credentialRevision";
 import { MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent } from '@happier-dev/protocol';
 import { createNativeSessionTeamCredentialFixture, TEST_AUTHENTICATION } from './sessionBinding.testkit';
 import { writeSessionTeamCredentialBindingsInTx, stampSessionTeamCredentialNativeDeliveryInTx,
@@ -93,6 +94,39 @@ describe("Team credential resource routes (SQLite integration)", () => {
     afterAll(async () => {
         if (app) await app.close();
         if (harness) await harness.close();
+    });
+
+    it('selects only the authenticated custodian direct sources and observes authority changes', async () => {
+        const owner = await createAccount();
+        const foreign = await createAccount();
+        const team = await db.team.create({ data: { name: 'Custodian selection' } });
+        await db.teamMembership.createMany({ data: [
+            { teamId: team.id, accountId: owner.id, role: 'owner' },
+            { teamId: team.id, accountId: foreign.id, role: 'member' },
+        ] });
+        const source = { v: 1, kind: 'provider_connection', connectionId: 'pc_source',
+            connectionSecurityFingerprint: 'connection-security:v1:test', credentialSlotId: 'apiKey' };
+        const base = { teamId: team.id, displayName: 'Direct source', sourceBindingJson: JSON.stringify(source),
+            disclosureCeiling: 'direct_allowed', sessionUsePolicy: 'personal_allowed', allMembersDeliveryMode: 'direct' };
+        const owned = await db.teamCredentialResource.create({ data: { ...base, custodianAccountId: owner.id } });
+        await db.teamCredentialResource.createMany({ data: [
+            { ...base, custodianAccountId: foreign.id },
+            { ...base, custodianAccountId: owner.id, enabled: false },
+            { ...base, custodianAccountId: owner.id, disclosureCeiling: 'brokered_only' },
+        ] });
+        const read = () => post('/v1/teams/credential-resources/list', owner.id, { scope: 'custodian', filter: 'direct' });
+        const selected = await read();
+        expect(selected.statusCode, selected.body).toBe(200);
+        expect(selected.json().resources.map((row: { id: string }) => row.id)).toEqual([owned.id]);
+        const forged = await post('/v1/teams/credential-resources/list', owner.id,
+            { scope: 'custodian', filter: 'direct', custodianAccountId: foreign.id });
+        expect(forged.statusCode).toBe(400);
+        await db.teamCredentialResource.update({ where: { id: owned.id }, data: { custodianAccountId: foreign.id } });
+        expect((await read()).json().resources).toEqual([]);
+        await db.teamCredentialResource.update({ where: { id: owned.id }, data: { custodianAccountId: owner.id, revision: { increment: 1 } } });
+        expect((await read()).json().resources).toContainEqual(expect.objectContaining({ id: owned.id, revision: owned.revision + 1 }));
+        await db.teamMembership.update({ where: { teamId_accountId: { teamId: team.id, accountId: owner.id } }, data: { status: 'suspended' } });
+        expect((await read()).json().resources).toEqual([]);
     });
 
     async function post(url: string, actorAccountId: string, payload: unknown, authenticationEvidence?: unknown) {
@@ -663,7 +697,7 @@ describe("Team credential resource routes (SQLite integration)", () => {
             teamId: team.id,
             displayName: "Created with policy",
             source: providerSource,
-            disclosureCeiling: "brokered_only" as const,
+            deliveryPolicy: { preferredAllowedModes: ["brokered" as const] },
             sessionUsePolicy: "personal_allowed" as const,
             brokerPlacement: { kind: "machine" as const, machineId: broker.id },
             requestPolicy: {
@@ -671,7 +705,7 @@ describe("Team credential resource routes (SQLite integration)", () => {
                 allowedModelIds: ["missing-model"],
                 reasoningEffort: null,
             },
-            allMembersDeliveryMode: null,
+            allMembersAllowedRoutes: null,
             groupGrants: [],
             memberGrants: [],
             usageLimits: [],
@@ -841,7 +875,7 @@ describe("Team credential resource routes (SQLite integration)", () => {
                 allowedModelIds: ["missing-model"],
                 reasoningEffort: null,
             },
-            allMembersDeliveryMode: null,
+            allMembersAllowedRoutes: null,
             groupGrants: [],
             memberGrants: [],
             usageLimitDelta: { upserts: [], deleteIds: [] },
@@ -930,7 +964,7 @@ describe("Team credential resource routes (SQLite integration)", () => {
                     },
                     custodian: {
                         source: connectedAccountSource,
-                        disclosureCeiling: "brokered_only",
+                        deliveryPolicy: { preferredAllowedModes: ["brokered"] },
                         brokerPlacement: { kind: "machine", machineId: broker.id },
                     },
                 },
@@ -956,7 +990,7 @@ describe("Team credential resource routes (SQLite integration)", () => {
                     },
                     custodian: {
                         source: connectedAccountSource,
-                        disclosureCeiling: "brokered_only",
+                        deliveryPolicy: { preferredAllowedModes: ["brokered"] },
                         brokerPlacement: { kind: "machine", machineId: broker.id },
                     },
                 },
@@ -1132,8 +1166,8 @@ describe("Team credential resource routes (SQLite integration)", () => {
             const requestPolicy = { allowedProtocolKinds: ["openai_responses"], allowedModelIds: ["gpt-5"], reasoningEffort: null };
             const draft = {
                 teamId: team.id, source, brokerPlacement: placement, displayName: "Partial census policy",
-                disclosureCeiling: "brokered_only", sessionUsePolicy: "personal_allowed", requestPolicy,
-                allMembersDeliveryMode: null, groupGrants: [], memberGrants: [], usageLimits: [],
+                deliveryPolicy: { preferredAllowedModes: ["brokered"] }, sessionUsePolicy: "personal_allowed", requestPolicy,
+                allMembersAllowedRoutes: null, groupGrants: [], memberGrants: [], usageLimits: [],
             };
             const rejectedId = `unsupported-partial-policy-${owner.id}`;
             const rejected = await post("/v1/teams/credential-resources/create", owner.id, {
@@ -1148,7 +1182,7 @@ describe("Team credential resource routes (SQLite integration)", () => {
             const updatedPolicy = { ...requestPolicy, allowedModelIds: null };
             const replacement = {
                 enabled: true, displayName: "Updated partial policy", sessionUsePolicy: "personal_allowed",
-                requestPolicy: updatedPolicy, allMembersDeliveryMode: null, groupGrants: [], memberGrants: [],
+                requestPolicy: updatedPolicy, allMembersAllowedRoutes: null, groupGrants: [], memberGrants: [],
                 usageLimitDelta: { upserts: [], deleteIds: [] },
             };
             const updated = await post("/v1/teams/credential-resources/update", owner.id, {
@@ -1262,6 +1296,96 @@ describe("Team credential resource routes (SQLite integration)", () => {
             brokerPlacement: null,
         })]);
         expect(managed.body).not.toContain("source-owner-list");
+    });
+
+    it("lets a non-manager custodian replace only its source while preserving hidden manager fields", async () => {
+        const custodian = await createAccount();
+        const manager = await createAccount();
+        const team = await db.team.create({ data: { name: "Custodian source repair" } });
+        const membership = await db.teamMembership.create({ data: { teamId: team.id, accountId: custodian.id, role: "member" } });
+        await db.teamMembership.create({ data: { teamId: team.id, accountId: manager.id, role: "owner" } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: "Builders", nameKey: "builders" } });
+        const broker = await db.machine.create({ data: {
+            id: crypto.randomUUID(), accountId: custodian.id, metadata: "{}", kind: "persistent",
+            operationProtocolCapabilities: { providerBrokerIngress: { protocolVersions: [1] } },
+            operationProtocolCapabilitiesRevision: 1,
+        } });
+        const service = { pluginId: "source-repair.accounts", localId: "primary" };
+        const account = { service, accountId: "healthy-account" };
+        const credential = await db.serviceAccountToken.create({ data: {
+            accountId: custodian.id, servicePluginId: service.pluginId, serviceLocalId: service.localId,
+            qualifiedServiceDigest: createQualifiedConnectedAccountServiceDigest(service),
+            connectedAccountId: account.accountId, qualifiedIdentityDigest: createQualifiedConnectedAccountIdentityDigest(account),
+            authenticationModeId: "api-key", token: new Uint8Array([1]),
+            metadata: { v: 4, storage: 'stored_envelope_v1', credentialRevision: createConnectedServiceCredentialRevision(), values: {} },
+        } });
+        const source = { v: 1, kind: "connected_account", target: { kind: "account", account }, credentialIncarnation: credential.id } as const;
+        const resource = await db.teamCredentialResource.create({ data: {
+            teamId: team.id, custodianAccountId: custodian.id, displayName: "Offered source", enabled: false,
+            disclosureCeiling: "direct_allowed", sessionUsePolicy: "team_visibility_required",
+            requestPolicyJson: '{ "allowedProtocolKinds": ["openai_responses"], "allowedModelIds": ["model-a"], "reasoningEffort": null }',
+            allMembersDeliveryMode: "brokered", brokerMachineId: broker.id,
+            sourceBindingJson: JSON.stringify({ ...source, credentialIncarnation: "replaced-incarnation" }),
+        } });
+        const groupGrant = await db.teamCredentialGroupGrant.create({ data: { resourceId: resource.id, teamGroupId: group.id, deliveryMode: "brokered" } });
+        const memberGrant = await db.teamCredentialMemberGrant.create({ data: { resourceId: resource.id, teamMembershipId: membership.id, deliveryMode: "brokered" } });
+        const limit = await db.teamCredentialUsageLimit.create({ data: {
+            resourceId: resource.id, subjectKind: "resource", subjectId: "", period: "month", metric: "inference_requests", maximum: "23",
+        } });
+        const read = await post("/v1/teams/credential-resources/get", custodian.id, { resourceId: resource.id });
+        expect(read.statusCode, read.body).toBe(200);
+        const summary = TeamCredentialResourceSummaryV1Schema.parse(read.json());
+        expect(summary).toMatchObject({ sessionUsePolicy: "personal_allowed", requestPolicy: null,
+            allMembersAllowedRoutes: null, groupGrants: [], memberGrants: [], capabilities: { managePolicy: false, manageAudience: false, manageLimits: false } });
+        const custodianBlock = { source, deliveryPolicy: { preferredAllowedModes: ["brokered", "direct"] }, brokerPlacement: { kind: "machine", machineId: broker.id } } as const;
+        // Reproduces the old editor's full replacement from a masked summary.
+        const masked = await post("/v1/teams/credential-resources/update", custodian.id, {
+            resourceId: resource.id, expectedRevision: 0, replacement: {
+                enabled: summary.enabled, displayName: summary.displayName, sessionUsePolicy: summary.sessionUsePolicy,
+                requestPolicy: summary.requestPolicy, allMembersAllowedRoutes: summary.allMembersAllowedRoutes,
+                groupGrants: summary.groupGrants, memberGrants: summary.memberGrants,
+                usageLimitDelta: { upserts: [], deleteIds: [] }, custodian: custodianBlock,
+            },
+        });
+        expect(masked.statusCode, masked.body).toBe(403);
+        expect(masked.json()).toMatchObject({ error: "resource_forbidden" });
+        const repaired = await post("/v1/teams/credential-resources/update", custodian.id, {
+            resourceId: resource.id, expectedRevision: 0, replacement: { custodian: custodianBlock },
+        });
+        expect(repaired.statusCode, repaired.body).toBe(200);
+        expect(repaired.json()).toEqual({ resourceId: resource.id, revision: 1 });
+        for (const managerEdit of [
+            { enabled: true }, { displayName: "Unauthorized rename" }, { sessionUsePolicy: "personal_allowed" },
+            { requestPolicy: null }, { allMembersAllowedRoutes: null }, { groupGrants: [] }, { memberGrants: [] },
+            { usageLimitDelta: { upserts: [], deleteIds: [limit.id] } },
+        ]) {
+            const refused = await post("/v1/teams/credential-resources/update", custodian.id, {
+                resourceId: resource.id, expectedRevision: 1, replacement: { custodian: custodianBlock, ...managerEdit },
+            });
+            expect(refused.statusCode, refused.body).toBe(403);
+            expect(refused.json()).toMatchObject({ error: "resource_forbidden" });
+        }
+        expect(await db.teamCredentialResource.findUniqueOrThrow({ where: { id: resource.id } })).toMatchObject({
+            enabled: resource.enabled, displayName: resource.displayName, sessionUsePolicy: resource.sessionUsePolicy,
+            requestPolicyJson: resource.requestPolicyJson, allMembersDeliveryMode: JSON.stringify(["brokered"]),
+            sourceBindingJson: JSON.stringify(source), revision: 1,
+        });
+        expect(await db.teamCredentialGroupGrant.findMany({ where: { resourceId: resource.id } })).toEqual([groupGrant]);
+        expect(await db.teamCredentialMemberGrant.findMany({ where: { resourceId: resource.id } })).toEqual([memberGrant]);
+        expect(await db.teamCredentialUsageLimit.findMany({ where: { resourceId: resource.id } })).toEqual([limit]);
+        const stale = await post("/v1/teams/credential-resources/update", custodian.id, {
+            resourceId: resource.id, expectedRevision: 0, replacement: { custodian: custodianBlock },
+        });
+        expect(stale.statusCode, stale.body).toBe(409);
+        expect(stale.json()).toMatchObject({ error: "resource_changed" });
+        const managed = await post("/v1/teams/credential-resources/update", manager.id, {
+            resourceId: resource.id, expectedRevision: 1, replacement: {
+                enabled: true, displayName: "Manager policy", sessionUsePolicy: "team_context_required", requestPolicy: null,
+                allMembersAllowedRoutes: ["brokered"], groupGrants: [], memberGrants: [], usageLimitDelta: { upserts: [], deleteIds: [] },
+            },
+        });
+        expect(managed.statusCode, managed.body).toBe(200);
+        expect(managed.json()).toEqual({ resourceId: resource.id, revision: 2 });
     });
 
     it("uses a query-bound stable keyset for equal names and non-sort updates", async () => {
@@ -1835,7 +1959,7 @@ describe("Team credential resource routes (SQLite integration)", () => {
             {
                 resourceId: "route-source-admin-provider",
                 expectedRevision: providerRevision,
-                disclosureCeiling: "brokered_only",
+                deliveryPolicy: { preferredAllowedModes: ["brokered"] },
             },
         );
         expect(narrowed.statusCode, narrowed.body).toBe(200);
@@ -1853,7 +1977,7 @@ describe("Team credential resource routes (SQLite integration)", () => {
             {
                 resourceId: "route-source-admin-provider",
                 expectedRevision: providerRevision + 1,
-                allMembersDeliveryMode: null,
+                allMembersAllowedRoutes: null,
                 groupGrants: [],
                 memberGrants: [],
             },
@@ -3421,16 +3545,16 @@ describe("Team credential resource routes (SQLite integration)", () => {
                 resourceId: "denied-create",
                 displayName: "Denied create",
                 source,
-                disclosureCeiling: "brokered_only",
+                deliveryPolicy: { preferredAllowedModes: ["brokered"] },
                 sessionUsePolicy: "personal_allowed",
                 brokerPlacement: { kind: "machine", machineId: privateBrokerMachineId },
                 requestPolicy: null,
-                allMembersDeliveryMode: null,
+                allMembersAllowedRoutes: null,
                 groupGrants: [],
                 memberGrants: [],
                 usageLimits: [],
             }],
-            ["/v1/teams/credential-resources/audience/set", { resourceId: resource.id, expectedRevision: resource.revision, allMembersDeliveryMode: null, groupGrants: [], memberGrants: [] }],
+            ["/v1/teams/credential-resources/audience/set", { resourceId: resource.id, expectedRevision: resource.revision, allMembersAllowedRoutes: null, groupGrants: [], memberGrants: [] }],
             ["/v1/teams/credential-resources/update", { resourceId: resource.id, expectedRevision: resource.revision, displayName: "Denied update" }],
             ["/v1/teams/credential-resources/delete", { resourceId: resource.id, expectedRevision: resource.revision }],
         ] as const;
@@ -3660,11 +3784,11 @@ describe("Team credential resource routes (SQLite integration)", () => {
             brokerPlacement: null,
             brokerPresentation: { selectedTarget: null, eligibleTargets: [] },
             sourcePresentation: { kind: "connected_service", service },
-            groupGrants: [{ teamGroupId: directGroup.id, deliveryMode: "direct" }],
+            groupGrants: [{ teamGroupId: directGroup.id, allowedRoutes: ["direct"] }],
             memberGrants: expect.arrayContaining([
-                { teamMembershipId: custodianMembership.id, deliveryMode: "direct" },
-                { teamMembershipId: recipientMembership.id, deliveryMode: "direct" },
-                { teamMembershipId: exactGuestMembership.id, deliveryMode: "direct" },
+                { teamMembershipId: custodianMembership.id, allowedRoutes: ["direct"] },
+                { teamMembershipId: recipientMembership.id, allowedRoutes: ["direct"] },
+                { teamMembershipId: exactGuestMembership.id, allowedRoutes: ["direct"] },
             ]),
         });
         expect(managerPage.body).not.toContain(groupId);

@@ -41,14 +41,14 @@ function credentialResource(id: string, teamId = 'team-1') {
     return TeamCredentialResourceSummaryV1Schema.parse({
         id, teamId, custodianAccountId: 'account',
         displayName: 'Deep-linked credential', enabled: true, revision: 1,
-        disclosureCeiling: 'brokered_only', sessionUsePolicy: 'personal_allowed',
+        deliveryPolicy: { preferredAllowedModes: ['brokered'] }, sessionUsePolicy: 'personal_allowed',
         source: null,
         sourcePresentation: {
             kind: 'provider', provider: {
                 identity: { pluginId: 'happier.provider.test', localId: 'provider' }, definitionRevision: 1,
             },
         },
-        requestPolicy: null, brokerPlacement: null, allMembersDeliveryMode: null,
+        requestPolicy: null, brokerPlacement: null, allMembersAllowedRoutes: null,
         groupGrants: [], memberGrants: [], readiness: { kind: 'available' }, recoveryAction: null,
         brokerPresentation: { selectedTarget: null, eligibleTargets: [], selectedPool: null, eligiblePools: [] },
         createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString(),

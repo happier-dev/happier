@@ -1,5 +1,6 @@
 import { isDeepStrictEqual } from "node:util";
 import { readTeamCredentialSourceBinding } from './sourceBindingRead';
+import { readTeamCredentialAudience, readTeamCredentialDeliveryConfiguration, serializeTeamCredentialAudience } from './resourceDeliveryRead';
 import { TeamCredentialResourceCreateInputV1Schema, type TeamCredentialResourceCreateInputV1 } from '@happier-dev/protocol/teams/credentials/resourceV1';
 import type { Tx } from "@/storage/inTx";
 import { acquireTeamMembershipAccountAdmissionInTx } from "../memberships/membershipService";
@@ -41,15 +42,21 @@ async function existingMatchesDraft(tx: Tx, existing: NonNullable<Awaited<Return
     ]);
     const placement = readTeamCredentialBrokerPlacement(existing);
     if (!placement.ok) return false;
-    const groupTuples = groups.map(row => [row.teamGroupId, row.deliveryMode]).sort();
-    const requestedGroupTuples = body.groupGrants.map(row => [row.teamGroupId, row.deliveryMode]).sort();
-    const memberTuples = members.map(row => [row.teamMembershipId, row.deliveryMode]).sort();
-    const requestedMemberTuples = body.memberGrants.map(row => [row.teamMembershipId, row.deliveryMode]).sort();
+    const storedAudience = readTeamCredentialAudience({ allMembersDeliveryMode: existing.allMembersDeliveryMode,
+        groupGrants: groups, memberGrants: members });
+    const configuration = readTeamCredentialDeliveryConfiguration(existing.disclosureCeiling);
+    if (!storedAudience.success || !configuration.success) return false;
+    const canonicalStoredAudience = serializeTeamCredentialAudience(storedAudience.data);
+    const requestedAudience = serializeTeamCredentialAudience(body);
+    const groupTuples = canonicalStoredAudience.groupGrants.map(row => [row.teamGroupId, row.deliveryMode]).sort();
+    const requestedGroupTuples = requestedAudience.groupGrants.map(row => [row.teamGroupId, row.deliveryMode]).sort();
+    const memberTuples = canonicalStoredAudience.memberGrants.map(row => [row.teamMembershipId, row.deliveryMode]).sort();
+    const requestedMemberTuples = requestedAudience.memberGrants.map(row => [row.teamMembershipId, row.deliveryMode]).sort();
     const limitTuples = limits.map(row => [row.subjectKind, row.subjectId, row.period, row.metric, row.maximum, row.enabled]).sort();
     const requestedLimitTuples = body.usageLimits.map(row => [row.subjectKind, row.subjectId, row.period, row.metric, canonicalUsageLimitMaximum(row.maximum, row.metric), row.enabled]).sort();
     return existing.teamId === body.teamId && existing.displayName === body.displayName.trim()
-        && existing.disclosureCeiling === body.disclosureCeiling && existing.sessionUsePolicy === body.sessionUsePolicy
-        && existing.allMembersDeliveryMode === body.allMembersDeliveryMode && JSON.stringify(storedSource) === JSON.stringify(body.source)
+        && isDeepStrictEqual(configuration.data.policy, body.deliveryPolicy) && existing.sessionUsePolicy === body.sessionUsePolicy
+        && canonicalStoredAudience.allMembersDeliveryMode === requestedAudience.allMembersDeliveryMode && JSON.stringify(storedSource) === JSON.stringify(body.source)
         && isDeepStrictEqual(placement.placement, body.brokerPlacement)
         && existing.requestPolicyJson === (body.requestPolicy === null ? null : JSON.stringify(body.requestPolicy))
         && isDeepStrictEqual(groupTuples, requestedGroupTuples)
@@ -78,7 +85,7 @@ export async function createTeamCredentialResourceInTx(tx: Tx, input: CreateTeam
     if (!actor) return { ok: false, error: "not_found_or_not_visible" };
     const capabilities = resolveTeamCredentialCapabilities({ ...actor, teamArchivedAt: actor.team.archivedAt });
     if (!capabilities.offerOwnCredential) return { ok: false, error: "forbidden" };
-    const configuresTeamPolicy = body.allMembersDeliveryMode !== null || body.groupGrants.length > 0
+    const configuresTeamPolicy = body.allMembersAllowedRoutes !== null || body.groupGrants.length > 0
         || body.memberGrants.length > 0 || body.sessionUsePolicy !== 'personal_allowed'
         || body.requestPolicy !== null || body.usageLimits.length > 0;
     if (configuresTeamPolicy && !capabilities.manageCredentials) return { ok: false, error: 'forbidden' };
@@ -94,15 +101,15 @@ export async function createTeamCredentialResourceInTx(tx: Tx, input: CreateTeam
     const source = await resolveTeamCredentialResourceSourceInTx(tx, { custodianAccountId: input.actorAccountId, source: body.source });
     if (source.status !== "current") return { ok: false, error: "source_replaced_or_missing" };
     const requestsDirect = [
-        body.allMembersDeliveryMode,
-        ...body.groupGrants.map(grant => grant.deliveryMode),
-        ...body.memberGrants.map(grant => grant.deliveryMode),
-    ].some(mode => mode === "direct" || mode === "both");
+        body.allMembersAllowedRoutes,
+        ...body.groupGrants.map(grant => grant.allowedRoutes),
+        ...body.memberGrants.map(grant => grant.allowedRoutes),
+    ].some(routes => routes?.includes('direct'));
     if (requestsDirect && source.directExportSupport === "unsupported") {
         return { ok: false, error: "disclosure_not_allowed" };
     }
     const audience = await validateTeamCredentialAudienceDraftInTx(tx, {
-        teamId: body.teamId, disclosureCeiling: body.disclosureCeiling,
+        teamId: body.teamId, deliveryPolicy: body.deliveryPolicy,
         brokerPlacement: body.brokerPlacement, audience: body,
     });
     if (!audience.ok) return audience;
@@ -111,6 +118,7 @@ export async function createTeamCredentialResourceInTx(tx: Tx, input: CreateTeam
         placement: body.brokerPlacement,
     });
     if (!placement.ok) return placement;
+    const storedAudience = serializeTeamCredentialAudience(body);
     const limitRows: { subjectKind: string; subjectId: string; period: string; metric: string; maximum: string; enabled: boolean }[] = [];
     const identities = new Set<string>();
     for (const limit of body.usageLimits) {
@@ -121,9 +129,7 @@ export async function createTeamCredentialResourceInTx(tx: Tx, input: CreateTeam
             teamId: body.teamId,
             limit,
             usageCapabilities: resolveCurrentTeamCredentialUsageCapabilitiesForResource({
-                allMembersDeliveryMode: body.allMembersDeliveryMode,
-                groupGrants: body.groupGrants,
-                memberGrants: body.memberGrants,
+                ...storedAudience,
                 sessionUsePolicy: body.sessionUsePolicy,
             }),
         });
@@ -154,14 +160,15 @@ export async function createTeamCredentialResourceInTx(tx: Tx, input: CreateTeam
     }
     const resource = await tx.teamCredentialResource.create({ data: {
         id: body.resourceId, teamId: body.teamId, custodianAccountId: input.actorAccountId,
-        displayName: body.displayName.trim(), sourceBindingJson: JSON.stringify(body.source), disclosureCeiling: body.disclosureCeiling,
+        displayName: body.displayName.trim(), sourceBindingJson: JSON.stringify(body.source),
+        disclosureCeiling: JSON.stringify({ policy: body.deliveryPolicy }),
         sessionUsePolicy: body.sessionUsePolicy, requestPolicyJson: requestPolicy === null ? null : JSON.stringify(requestPolicy),
         brokerMachineId: body.brokerPlacement?.kind === 'machine' ? body.brokerPlacement.machineId : null,
         brokerPoolId: body.brokerPlacement?.kind === 'machine_pool' ? body.brokerPlacement.poolId : null,
-        allMembersDeliveryMode: body.allMembersDeliveryMode,
+        allMembersDeliveryMode: storedAudience.allMembersDeliveryMode,
     } });
-    if (body.groupGrants.length > 0) await tx.teamCredentialGroupGrant.createMany({ data: body.groupGrants.map(grant => ({ resourceId: resource.id, ...grant })) });
-    if (body.memberGrants.length > 0) await tx.teamCredentialMemberGrant.createMany({ data: body.memberGrants.map(grant => ({ resourceId: resource.id, ...grant })) });
+    if (storedAudience.groupGrants.length > 0) await tx.teamCredentialGroupGrant.createMany({ data: storedAudience.groupGrants.map(grant => ({ resourceId: resource.id, ...grant })) });
+    if (storedAudience.memberGrants.length > 0) await tx.teamCredentialMemberGrant.createMany({ data: storedAudience.memberGrants.map(grant => ({ resourceId: resource.id, ...grant })) });
     if (limitRows.length > 0) await tx.teamCredentialUsageLimit.createMany({ data: limitRows.map(limit => ({ resourceId: resource.id, ...limit })) });
     await recordTeamCredentialActivityInTx(tx, { teamId: body.teamId, resourceId: resource.id, kind: "resource_created", actor: { kind: "account", accountId: input.actorAccountId }, subjectDisplayName: resource.displayName });
     await publishTeamChangedInTx(tx, { teamId: body.teamId, additionalAccountIds: [input.actorAccountId] });
