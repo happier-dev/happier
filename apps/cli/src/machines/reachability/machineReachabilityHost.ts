@@ -623,7 +623,8 @@ export async function executeMachineReachabilityTransition(input: MachineReachab
 
 /** The deployed Domain supplies the exact new owned Caddy bindings. Root CHECK
  * and the existing retained-SSH transaction remain the only firewall writer.
- * Reapply the admitted posture; Domain setup never chooses a new SSH policy.
+ * Preserve observed SSH access even if posture metadata declares it closed;
+ * Domain setup never authorizes a management-access transition.
  */
 export async function settleMachineCaddyFirewallForHost(input: Pick<RetainedSshTransitionInput,
   'machineId' | 'installationId' | 'operationId' | 'basis' | 'port' | 'native' | 'elevation' | 'readDaemonProof' | 'signal'>
@@ -634,7 +635,7 @@ export async function settleMachineCaddyFirewallForHost(input: Pick<RetainedSshT
   const transitioned = await executeRetainedSshTransition({ ...input,
     expectedMetadataVersion: state.metadataVersion, current: state.posture, desired: state.posture,
     field: reachabilityPostureField,
-    firewallIntent: { v: 1, kind: 'retainSsh', caddy: {
+    firewallIntent: { v: 1, kind: 'preserveSsh', caddy: {
       ...(input.caddy.privateBinding ? { privateBinding: { ...input.caddy.privateBinding,
         sourceRanges: [...input.caddy.privateBinding.sourceRanges] } } : {}),
       publicBindings: [...(input.caddy.publicBindings ?? [])],

@@ -788,7 +788,7 @@ describe('native firewall bounded transition owner', () => {
       }
     });
 
-  it('keeps every pre-existing concrete SSH address, port, interface and source scope without adding the scalar endpoint to an existing firewall', async () => {
+  it('keeps every pre-existing concrete SSH address, port, interface and source scope during Domain reconciliation despite closed metadata', async () => {
     const f = await fixture();
     f.setNetwork({ interfaces: { ens18: [nativeInterface('10.10.0.4'), nativeInterface('2001:db8::4')], tun42: [nativeInterface('100.96.0.4')] } });
     await f.listenSsh('LISTEN 0 128 10.10.0.4:2205 0.0.0.0:* users:(("sshd",pid=412,fd=3))\n',
@@ -809,7 +809,7 @@ describe('native firewall bounded transition owner', () => {
     } });
     f.setNativePolicy({ nftables: [{ chain: { family: 'inet', table: 'happier', name: 'input', type: 'filter', hook: 'input', policy: 'drop' } },
       nativeRule('ip', '10.10.0.4', 2205, '198.51.100.0', 24), nativeRule('ip6', '2001:db8::4', 2206, '2001:db8:abcd::', 48)] });
-    const intent = boundedTransitionIntent({ kind: 'open', port: 2299, sourceCidrs: ['0.0.0.0/0', '::/0'] });
+    const intent = { ...boundedTransitionIntent({ kind: 'closed' }), kind: 'preserveSsh' as const };
     const observation = await f.backend.observe(createMachineFirewallTransitionObservationStepV1(intent));
     const native = readMachineFirewallTransitionFactsV1(observation);
     expect(native).toMatchObject({ status: 'available', ownedTable: 'present', retainedSshEndpoints: [
@@ -827,6 +827,37 @@ describe('native firewall bounded transition owner', () => {
       expect(table).not.toContain('tcp dport 2299 accept');
       expect(table).not.toContain('ip saddr 0.0.0.0/0 tcp dport 2205 accept');
       expect(table).not.toContain('ip6 saddr ::/0 tcp dport 2206 accept');
+      return staged.planIndex === 0 ? 'continue' : 'commit';
+    } });
+    expect(result.status).toBe('applied');
+  });
+
+  it('keeps fresh IPv4 and IPv6 SSH listeners on their actual ports through Domain FINAL despite closed metadata', async () => {
+    const f = await fixture();
+    f.setNetwork({ interfaces: { ens18: [nativeInterface('10.10.0.4'), nativeInterface('2001:db8::4')], tun42: [nativeInterface('100.96.0.4')] } });
+    await f.listenSsh('LISTEN 0 128 0.0.0.0:2205 0.0.0.0:* users:(("sshd",pid=412,fd=3))\n',
+      'LISTEN 0 128 [::]:2206 [::]:* users:(("sshd",pid=412,fd=4))\n');
+    const intent = { ...boundedTransitionIntent({ kind: 'closed' }), kind: 'preserveSsh' as const };
+    const native = readMachineFirewallTransitionFactsV1(await f.backend.observe(createMachineFirewallTransitionObservationStepV1(intent)));
+    const materialized = materializeMachineFirewallTransitionV1(intent, native);
+    if (materialized.status !== 'ready') throw new Error(`Unexpected materialization ${materialized.reason}`);
+    for (const step of materialized.steps) {
+      expect(step.rules).toContain('tcp dport 2205 accept');
+      expect(step.rules).toContain('tcp dport 2206 accept');
+    }
+    const plans = await Promise.all(materialized.steps.map(async step => ({ plan: await checkMachineSetupEffectPlan({ basis, steps: [step], backend: f.backend }) })));
+    const result = await applyMachineSetupEffectPlans({ plans, backend: f.backend, onStaged: async staged => {
+      expect(await staged.verifyNative()).toBe(true);
+      const table = f.readEffectiveTable()!;
+      for (const permit of [
+        'iifname "ens18" meta nfproto ipv4 ip saddr 0.0.0.0/0 tcp dport 2205 accept',
+        'iifname "tun42" meta nfproto ipv4 ip saddr 0.0.0.0/0 tcp dport 2205 accept',
+        'iifname "ens18" meta nfproto ipv6 ip6 saddr ::/0 tcp dport 2206 accept',
+      ]) {
+        expect(table).toContain(permit);
+        expect(table.indexOf(permit)).toBeLessThan(table.indexOf('ct state new drop'));
+      }
+      expect(table).not.toContain('tcp dport 22 accept');
       return staged.planIndex === 0 ? 'continue' : 'commit';
     } });
     expect(result.status).toBe('applied');

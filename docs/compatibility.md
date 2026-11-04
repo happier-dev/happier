@@ -74,6 +74,15 @@ not a release certification.
 HTTP 431 is a typed `request_headers_too_large` transport refusal, not a
 deployment output schema failure; no server header limit is raised.
 
+The unreleased private Machine firewall V1 intent distinguishes `preserveSsh`
+(preserve native management scopes in both stages) from `retainSsh`
+(apply an explicitly reviewed SSH posture). Domain reconciliation uses the
+former even when stored posture says closed. This executable declaration and
+its nested operands remain closed; unknown fields and intent kinds reject.
+The development daemon and installed root helper refresh together under the
+0.3 direct cut: an older root helper rejects the new `preserveSsh` kind before
+applying changes. There is no downgrade, new wire epoch, migration or server reload.
+
 ## Trigger
 
 Apply this policy when a change affects a cross-component wire shape or semantic, persisted/session/settings data, schema or migration, feature/capability negotiation, installer or service state, upgrade/coexistence, or rollback. Routine internal refactors that leave these seams unchanged do not need a compatibility matrix or shim.

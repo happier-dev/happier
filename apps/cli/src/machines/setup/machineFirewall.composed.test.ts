@@ -195,7 +195,11 @@ describe('firewall through the same P10 installed root invocation', () => {
         expect(f.prompt).not.toHaveBeenCalled();
     });
 
-    it.each(['preauthorized', 'ask'] as const)('materializes reviewed retain-all intent from actual protected facts inside one %s CHECK→APPLY', async mode => {
+    it.each([
+        { mode: 'preauthorized', kind: 'retainSsh' },
+        { mode: 'ask', kind: 'retainSsh' },
+        { mode: 'preauthorized', kind: 'preserveSsh' },
+    ] as const)('materializes $kind from actual protected facts inside one $mode CHECK→APPLY', async ({ mode, kind }) => {
         const f = await fixture(mode);
         await f.setFirewallFacts({ interfaces: {
             ens18: [{ address: '10.10.0.4', netmask: '255.255.255.0', family: 'IPv4',
@@ -203,10 +207,11 @@ describe('firewall through the same P10 installed root invocation', () => {
         }, ssh4: 'LISTEN 0 128 0.0.0.0:2205 0.0.0.0:* users:(("sshd",pid=412,fd=3))\n'
             + 'LISTEN 0 128 10.10.0.4:2222 0.0.0.0:* users:(("sshd",pid=412,fd=4))\n' });
         const firewallIntent = MachineFirewallTransitionIntentV1Schema.parse({
-            v: 1, kind: 'retainSsh',
+            v: 1, kind,
             caddy: { publicBindings: [{ requirementId: 'https', hostAddress: '0.0.0.0', hostPort: 443,
                 protocol: 'tcp', containerPort: 443, exposure: 'public' }] },
-            publicSsh: { kind: 'open', port: 22, sourceCidrs: ['198.51.100.0/24'] },
+            publicSsh: kind === 'preserveSsh' ? { kind: 'closed' }
+                : { kind: 'open', port: 22, sourceCidrs: ['198.51.100.0/24'] },
         });
         const basis = { kind: 'setup' as const, machineId: 'machine', desiredRevision: 1 };
         const stages: number[] = [], stageDigests: string[] = [];
@@ -223,7 +228,7 @@ describe('firewall through the same P10 installed root invocation', () => {
                     expect(f.readTable()).not.toContain('tcp dport 22 accept');
                     return 'continue';
                 }
-                expect(f.readTable()).toContain('ip saddr 198.51.100.0/24 tcp dport 22 accept');
+                expect(f.readTable()!.includes('ip saddr 198.51.100.0/24 tcp dport 22 accept')).toBe(kind === 'retainSsh');
                 return 'commit';
             },
         }, f.deps);

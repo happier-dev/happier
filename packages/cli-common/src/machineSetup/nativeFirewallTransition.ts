@@ -74,8 +74,10 @@ export function materializeMachineFirewallTransitionV1(intent: MachineFirewallTr
     ...(privateBinding ? [{ exposure: privateBinding.exposure, interfaces: [privateBinding.interfaceName] }] : []),
   ];
   const retained = native.retainedSshEndpoints;
-  const final: SshEndpoint[] = intent.publicSsh.kind === 'closed' ? [] : [...retained];
-  if (intent.publicSsh.kind === 'open' && native.ownedTable === 'absent') {
+  // Domain reconciliation is not approval to close a live management socket.
+  // Only an explicit posture transition may replace the observed SSH policy.
+  const final: SshEndpoint[] = intent.kind === 'retainSsh' && intent.publicSsh.kind === 'closed' ? [] : [...retained];
+  if (intent.kind === 'retainSsh' && intent.publicSsh.kind === 'open' && native.ownedTable === 'absent') {
     for (const interfaceName of native.externalInterfaces) for (const family of [4, 6]) {
       const sourceCidrs = intent.publicSsh.sourceCidrs.filter(source => isIP(source.split('/')[0]!) === family);
       if (sourceCidrs.length) final.push({ interfaceName, hostAddress: family === 4 ? '0.0.0.0' : '::', port: intent.publicSsh.port, sourceCidrs });

@@ -33,13 +33,14 @@ export const MachineFirewallTransitionBindingsV1Schema = lazyZodSchema(() => z.o
 }).strict());
 export type MachineFirewallTransitionBindingsV1 = z.infer<typeof MachineFirewallTransitionBindingsV1Schema>;
 
-/** Plan21 owner decision 2026-10-30 22:33 UTC:
- * A retains every observed SSH endpoint exactly. FINAL closes those endpoints
- * only when explicitly reviewed closed; Keep retains them all. On a fresh
- * firewall only, the reviewed scalar additionally specifies what to ensure.
+/** Reviewed SSH transition versus Domain reconciliation:
+ * A retains every observed SSH endpoint exactly. preserveSsh keeps those same
+ * scopes in FINAL, regardless of the declared posture. Only retainSsh
+ * applies an explicitly reviewed publicSsh change: closed removes the retained
+ * scopes, while open additionally ensures its scalar on a fresh firewall.
  * Protected native facts may be unknown until the one approved root CHECK. */
 export const MachineFirewallTransitionIntentV1Schema = lazyZodSchema(() => mini.strictObject({
-  v: mini.literal(1), kind: mini.literal('retainSsh'),
+  v: mini.literal(1), kind: mini.enum(['retainSsh', 'preserveSsh']),
   caddy: MachineFirewallTransitionBindingsV1Schema,
   publicSsh: MachinePublicSshV1Schema,
 }));

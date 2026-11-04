@@ -1,5 +1,13 @@
 # CLI Architecture
 
+Domain Caddy reconciliation uses `preserveSsh`: both firewall stages preserve
+the observed SSH addresses, ports, interfaces and accepted source ranges,
+including when stored posture says SSH is closed. Only an explicitly reviewed
+`retainSsh` posture-transition intent may remove those allows or ensure a declared new endpoint.
+The broad host/Docker closure from Plan 21 remains in effect for undeclared
+ingress; foreign tables are preserved. Domain setup does not authorize closing
+an existing management path.
+
 ## Managed bootstrap settlement (0.3 development)
 
 The portable driver saves `bootstrap.incomplete` through the existing Home
