@@ -12340,6 +12340,7 @@ settingsSession: {
 	          tagsTitle: 'Tags da sessão',
 	          tagsEnabledSubtitle: 'Controles de tags visíveis na lista de sessões',
 	          tagsDisabledSubtitle: 'Controles de tags ocultos',
+	          statusWordsTitle: "Texto de status",
 	          statusWordsSubtitle: "Mostrar o texto de status ao lado dos ícones de trabalho em Sessões, Execuções, Fluxos de trabalho e Discussões.",
 	          workingStatusAnimatedTextTitle: 'Texto de trabalho animado',
 	          workingStatusAnimatedTextEnabledSubtitle: 'Alterne verbos de trabalho enquanto uma sessão está em execução',

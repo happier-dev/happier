@@ -12117,6 +12117,7 @@ settingsSession: {
 	              tagsTitle: 'Session-Tags',
 	              tagsEnabledSubtitle: 'Tag-Steuerung in der Session-Liste sichtbar',
 	              tagsDisabledSubtitle: 'Tag-Steuerung ausgeblendet',
+	              statusWordsTitle: "Statustexte",
 	              statusWordsSubtitle: "Statuswörter neben den Arbeitssymbolen in Sessions, Läufen, Workflows und Diskussionen anzeigen.",
 	              workingStatusAnimatedTextTitle: 'Animierter Arbeitstext',
 	              workingStatusAnimatedTextEnabledSubtitle: 'Während eine Session läuft, wechselnde Verben zeigen',

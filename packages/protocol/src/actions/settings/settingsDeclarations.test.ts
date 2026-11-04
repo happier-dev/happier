@@ -251,3 +251,23 @@ describe('portable built-in Settings declarations', () => {
     }));
   });
 });
+
+describe('status words Settings declaration', () => {
+  it('owns one opt-in Account boolean for every host work column', () => {
+    const anchor = 'session.list.statusWords';
+    expect(BUILT_IN_SETTINGS_DECLARATIONS_V1.filter(value => value.anchor === anchor)).toHaveLength(1);
+    const declaration = readBuiltInSettingDeclarationV1(anchor);
+    expect(declaration).toMatchObject({ pageId: 'session', sectionId: 'session.rowDetails',
+      sectionTitleKey: 'settingsSession.rootGroups.rowDetails.title', agentSafety: 'safe',
+      sensitive: false,
+      storage: { scope: 'account', key: 'sessionListStatusWords', access: 'read_write' } });
+    if (!declaration) throw new Error('Status words setting unavailable');
+    const baseline = accountSettingsParse({});
+    expect(readBuiltInAccountSettingValueV1(declaration, baseline)).toBe(false);
+    expect(buildBuiltInAccountSettingMutationV1(declaration, baseline, true)).toEqual({ sessionListStatusWords: true });
+    expect(readBuiltInAccountSettingValueV1(declaration, accountSettingsParse({ sessionListStatusWords: true }))).toBe(true);
+    expect(readBuiltInAccountSettingValueV1(declaration, accountSettingsParse({ sessionListStatusWords: 'true' }))).toBe(false);
+    expect(buildBuiltInAccountSettingMutationV1(declaration, baseline, 'true')).toBeNull();
+    expect(resolveBuiltInAccountSettingResetValueV1(declaration)).toEqual({ success: true, value: false });
+  });
+});

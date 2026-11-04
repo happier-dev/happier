@@ -14429,6 +14429,7 @@ const enSettingsSession = {
     tagsTitle: 'Session tags',
     tagsEnabledSubtitle: 'Tag controls visible in the session list',
     tagsDisabledSubtitle: 'Tag controls hidden',
+    statusWordsTitle: 'Status words',
     statusWordsSubtitle:
       'Show status words beside work icons in Sessions, Runs, Workflows and Discussions.',
     workingStatusAnimatedTextTitle: 'Animated working text',

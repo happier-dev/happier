@@ -11413,6 +11413,7 @@ settingsSession: {
 	                tagsTitle: 'Etiquetes de sessió',
 	                tagsEnabledSubtitle: 'Controls d\'etiquetes visibles a la llista de sessions',
 	                tagsDisabledSubtitle: 'Controls d\'etiquetes ocults',
+	                statusWordsTitle: "Paraules d’estat",
 	                statusWordsSubtitle: "Mostra paraules d’estat al costat de les icones de treball a Sessions, Execucions, Fluxos de treball i Discussions.",
 	                workingStatusAnimatedTextTitle: 'Text de treball animat',
 	                workingStatusAnimatedTextEnabledSubtitle: 'Alterna verbs de treball mentre una sessió s’executa',

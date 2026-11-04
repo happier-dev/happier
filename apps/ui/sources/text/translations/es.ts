@@ -12222,6 +12222,7 @@ settingsSession: {
 	          tagsTitle: 'Etiquetas de sesión',
 	          tagsEnabledSubtitle: 'Controles de etiquetas visibles en la lista de sesiones',
 	          tagsDisabledSubtitle: 'Controles de etiquetas ocultos',
+	          statusWordsTitle: "Texto de estado",
 	          statusWordsSubtitle: "Muestra el texto de estado junto a los iconos de trabajo en Sesiones, Ejecuciones, Flujos de trabajo y Discusiones.",
 	          workingStatusAnimatedTextTitle: 'Texto de trabajo animado',
 	          workingStatusAnimatedTextEnabledSubtitle: 'Alterna verbos de trabajo mientras una sesión se ejecuta',

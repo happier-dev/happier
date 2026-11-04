@@ -12441,6 +12441,7 @@ settingsSession: {
 	          tagsTitle: 'Tag della sessione',
 	          tagsEnabledSubtitle: "Controlli tag visibili nell'elenco sessioni",
 	          tagsDisabledSubtitle: 'Controlli tag nascosti',
+	          statusWordsTitle: "Testi di stato",
 	          statusWordsSubtitle: "Mostra i testi di stato accanto alle icone di lavoro in Sessioni, Esecuzioni, Flussi di lavoro e Discussioni.",
 	          workingStatusAnimatedTextTitle: 'Testo di lavoro animato',
 	          workingStatusAnimatedTextEnabledSubtitle: 'Alterna verbi di lavoro mentre una sessione è in esecuzione',

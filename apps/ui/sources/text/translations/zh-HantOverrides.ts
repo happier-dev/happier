@@ -10029,6 +10029,7 @@ settingsSession: {
 	              tagsTitle: '工作階段標籤',
 	              tagsEnabledSubtitle: '在工作階段列表中顯示標籤控制項',
 	              tagsDisabledSubtitle: '隱藏標籤控制項',
+	              statusWordsTitle: "狀態文字",
 	              statusWordsSubtitle: "在工作階段、執行、工作流程和討論的工作圖示旁顯示狀態文字。",
 	              workingStatusAnimatedTextTitle: '動態工作文字',
 	              workingStatusAnimatedTextEnabledSubtitle: '工作階段執行時輪換工作動詞',

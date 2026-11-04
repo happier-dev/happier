@@ -12051,6 +12051,7 @@ settingsSession: {
 	          tagsTitle: 'Tagi sesji',
 	          tagsEnabledSubtitle: 'Kontrolki tagów widoczne na liście sesji',
 	          tagsDisabledSubtitle: 'Kontrolki tagów ukryte',
+	          statusWordsTitle: "Etykiety stanu",
 	          statusWordsSubtitle: "Pokazuj etykiety stanu obok ikon pracy w sesjach, uruchomieniach, przepływach pracy i dyskusjach.",
 	          workingStatusAnimatedTextTitle: 'Animowany tekst pracy',
 	          workingStatusAnimatedTextEnabledSubtitle: 'Zmieniaj czasowniki pracy podczas działania sesji',

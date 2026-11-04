@@ -12073,6 +12073,7 @@ settingsSession: {
 	        tagsTitle: 'Теги сессии',
 	        tagsEnabledSubtitle: 'Управление тегами отображается в списке',
 	        tagsDisabledSubtitle: 'Управление тегами скрыто',
+	        statusWordsTitle: "Текст статуса",
 	        statusWordsSubtitle: "Показывать текст статуса рядом со значками работы в сеансах, запусках, рабочих процессах и обсуждениях.",
 	        workingStatusAnimatedTextTitle: 'Анимированный рабочий текст',
 	        workingStatusAnimatedTextEnabledSubtitle: 'Менять рабочие глаголы, пока сессия выполняется',

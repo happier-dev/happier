@@ -12517,6 +12517,7 @@ settingsSession: {
 	        tagsTitle: 'セッションタグ',
 	        tagsEnabledSubtitle: 'セッション一覧にタグ操作を表示',
 	        tagsDisabledSubtitle: 'タグ操作を非表示',
+	        statusWordsTitle: "状態テキスト",
 	        statusWordsSubtitle: "セッション、実行、ワークフロー、ディスカッションの作業アイコンの横に状態テキストを表示します。",
 	        workingStatusAnimatedTextTitle: '作業中テキストのアニメーション',
 	        workingStatusAnimatedTextEnabledSubtitle: 'セッションの実行中に作業中の動詞を切り替えます',

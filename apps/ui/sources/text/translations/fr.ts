@@ -12060,6 +12060,7 @@ settingsSession: {
 	          tagsTitle: 'Tags de session',
 	          tagsEnabledSubtitle: 'Contrôles de tags visibles dans la liste des sessions',
 	          tagsDisabledSubtitle: 'Contrôles de tags masqués',
+	          statusWordsTitle: "Libellés d’état",
 	          statusWordsSubtitle: "Afficher les libellés d’état à côté des icônes de travail dans les sessions, les exécutions, les workflows et les discussions.",
 	          workingStatusAnimatedTextTitle: 'Texte d’activité animé',
 	          workingStatusAnimatedTextEnabledSubtitle: 'Fait défiler des verbes d’activité pendant qu’une session tourne',

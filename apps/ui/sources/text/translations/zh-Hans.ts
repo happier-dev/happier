@@ -11850,6 +11850,7 @@ settingsSession: {
 	        tagsTitle: '会话标签',
 	        tagsEnabledSubtitle: '在会话列表中显示标签控件',
 	        tagsDisabledSubtitle: '隐藏标签控件',
+	        statusWordsTitle: "状态文字",
 	        statusWordsSubtitle: "在会话、运行、工作流和讨论的工作图标旁显示状态文字。",
 	        workingStatusAnimatedTextTitle: '动态工作文本',
 	        workingStatusAnimatedTextEnabledSubtitle: '会话运行时轮换工作动词',
