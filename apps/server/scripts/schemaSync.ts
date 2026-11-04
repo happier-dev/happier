@@ -299,6 +299,10 @@ function annotateMySqlTeamFields(schemaBody: string): string {
             (model) => model.replace(/^([ \t]*resourceId\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(256)"),
         )
         .replace(
+            /^model\s+SessionTeamCredentialBinding\s+\{[\s\S]*?^\}\s*$/gm,
+            (model) => model.replace(/^([ \t]*nativeDeliveryJson\s+String\?)(?![^\n]*@db\.)/m, "$1 @db.LongText"),
+        )
+        .replace(
             /^model\s+TeamCredentialExternalApiKey\s+\{[\s\S]*?^\}\s*$/gm,
             (model) => model.replace(/^([ \t]*label\s+String)(?![^\n]*@db\.)/m, "$1 @db.LongText"),
         )
