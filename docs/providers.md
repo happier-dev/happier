@@ -1022,6 +1022,10 @@ The same owner-only metadata projection includes stored health observations
 present. It does not expose credential content or raw provider error text and
 does not backfill missing observations.
 
+After a qualified refresh returns a replacement, caller cancellation no longer
+interrupts replacement preparation, the existing credential CAS, or successful
+health settlement. This preserves a rotated single-use refresh token even when
+the initiating caller leaves. Cancellation before the exchange remains active;
 Runtime currentness admits the exchange; registry retirement after a successful
 exchange does not veto its replacement. Account-mode authority, credential and
 configuration CAS, and refresh-lease checks still apply during settlement.
