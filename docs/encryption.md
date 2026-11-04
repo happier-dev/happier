@@ -2040,8 +2040,9 @@ server persistence layer.
   transport observations never shares mutation admission or adds mutation replay.
 - Current 0.3 development stored owner/shared readers discard unknown extensions
   recursively while validating known fields; creation and mutation remain strict.
-  The reversible Bot marker alone is recipient-safe. Its birth fact, memory choice
-  and tool-call view override remain inside the Account-scoped owner envelope.
+  The reversible Bot marker and optional cosmetic face are recipient-safe shared
+  metadata. Its birth fact, memory choice and tool-call view override remain
+  inside the Account-scoped owner envelope.
 - The UI may name a layout-1 Session from its successfully opened Account-owner
   envelope before opening the separate Session DEK. Its existing deferred-row
   projection retains only the explicit owner name and system visibility fact,

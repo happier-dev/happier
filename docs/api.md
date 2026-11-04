@@ -2670,6 +2670,11 @@ Artifact bytes and grants. See the
 [Source storage disclosure](encryption.md#project-source-metadata-03-development).
 
 ### Artifacts
+- In 0.3 development, the admitted Artifact read projection carries optional
+  nullable `ownerDisplayName`. The existing owner Account join and neutral
+  display-label resolver supply it; this is presentation beside an authorized
+  resource, not authorship asserted by its content. No profile request or
+  inventory scan is needed. Older or unnamed projections remain unknown.
 - In 0.3 development, `GET /v1/artifacts?kind=skill`
   (accepted kinds are owned by Protocol's `artifacts/artifactKindV1.ts`) returns
   `{items: [...], hasUnclassified: boolean}` with the same authorized header
@@ -2710,6 +2715,8 @@ Artifact bytes and grants. See the
   stable `updatedAt`, `id` order. The optional opaque cursor resumes after the
   last observed row, allowing typed clients to continue through sparse pages
   without loading Artifact bodies or assuming the first page is complete.
+  The development `audience=received` selector intersects the existing grant
+  predicate with nonownership before paging and coverage counting.
   In 0.3 development source, each header includes its current `bodyVersion`
   and the same authenticated `publicAudience` fact as an exact read, captured
   in the authorized list snapshot; refreshing an unchanged header does not
@@ -2746,6 +2753,8 @@ Artifact bytes and grants. See the
   a missing identity removes its retained row, while any other per-id refusal
   fails catch-up without advancing the persisted cursor. A lost cursor still
   requires the existing complete paged header inventory.
+  For `bot_template.v1`, the Artifact kind policy limits full grant inspection
+  to the owner.
   Current 0.3 client and server update together;
   this is not a released or mixed-component availability claim.
 - `GET /v1/artifacts/:id`, authenticated lists and selected-detail reads return the same
