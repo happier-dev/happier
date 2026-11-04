@@ -69,6 +69,8 @@ export async function resolveSessionTransportContext(params: Readonly<{
     reason: SessionSnapshotRefreshReason;
     credentials: StoredCredentials;
     idOrPrefix: string;
+    /** The daemon already owns this exact effect target; never search for a substitute. */
+    exact?: true;
     resolveAuthorizationHeaders?: (request: Readonly<{
         method: 'GET' | 'POST'; path: string; body?: unknown;
     }>) => Readonly<Record<string, string>> | null;
@@ -123,6 +125,7 @@ export async function resolveSessionTransportContext(params: Readonly<{
         reason: params.reason,
         credentials: params.credentials,
         idOrPrefix: params.idOrPrefix,
+        ...(params.exact ? { exact: true as const } : {}),
         ...(params.resolveAuthorizationHeaders
             ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders }
             : {}),

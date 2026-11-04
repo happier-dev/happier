@@ -101,6 +101,8 @@ export async function resolveSessionIdOrPrefix(params: Readonly<{
   reason: SessionSnapshotRefreshReason;
   credentials: StoredCredentials;
   idOrPrefix: string;
+  /** Host-known exact target, not an interactive tag/prefix selector. */
+  exact?: true;
   resolveAuthorizationHeaders?: (request: Readonly<{
     method: 'GET' | 'POST'; path: string; body?: unknown;
   }>) => Readonly<Record<string, string>> | null;
@@ -115,7 +117,7 @@ export async function resolveSessionIdOrPrefix(params: Readonly<{
   if (!input) return { ok: false, code: 'session_not_found' };
 
   // Prefer exact matches for long inputs, while retaining fallback tag and prefix resolution.
-  if (input.length >= 12) {
+  if (params.exact || input.length >= 12) {
     const exact = await fetchSessionById({
       reason: params.reason,
       token: params.credentials.token,
@@ -129,6 +131,7 @@ export async function resolveSessionIdOrPrefix(params: Readonly<{
     if (exact) {
       return { ok: true, sessionId: input, rawSession: exact };
     }
+    if (params.exact) return { ok: false, code: 'session_not_found' };
   }
 
   const indexedTagLookup = input.length <= SESSION_LOOKUP_BY_TAGS_TAG_MAX_CODE_UNITS_V2
