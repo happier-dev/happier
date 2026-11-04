@@ -2835,9 +2835,8 @@ describe('Codex app-server temporary recoverable turn failures', () => {
       await expect(send).resolves.toMatchObject({
         status: 'unavailable', diagnostic: { code: 'codex_send_outcome_unknown' },
       });
-      if (activity !== 'terminal') {
-        expect(events).toContainEqual(expect.objectContaining({ kind: 'message-delta', text: 'Partial output' }));
-      }
+      expect(events.filter(event => ['input-accepted', 'message-delta', 'turn-start', 'turn-complete', 'turn-failed'].includes(event.kind)))
+        .toEqual([]);
       expect(events.some((event) => event.kind === 'input-rejected')).toBe(false);
     } finally { await native.dispose(); }
   });

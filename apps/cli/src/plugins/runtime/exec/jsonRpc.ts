@@ -7,6 +7,7 @@ import type {
     JsonRpcRequestHandlerV1,
     JsonRpcRequestOptionsV1,
 } from './privateContract';
+import { createJsonRpcApplicationError as createApplicationError, type JsonRpcApplicationError } from '@happier-dev/plugin-sdk/exec/protocol-clients';
 import { armDeadlineTimer } from '@happier-dev/protocol/common/deadlineTimer';
 import { createJsonlRequestCorrelator } from '@/plugins/runtime/jsonlRequestCorrelator';
 
@@ -25,11 +26,6 @@ import { attachWebSocketFrameReader } from './webSocketFraming';
 
 type JsonRpcObject = Record<string, unknown>;
 type JsonRpcNotificationReceipt = Readonly<{ method: string; params?: unknown; receivedAtMs: number }>;
-type JsonRpcApplicationError = Error & Readonly<{
-    code?: number | string;
-    data?: unknown;
-    method?: string;
-}>;
 const MAX_JSON_RPC_ERROR_MESSAGE_BYTES = 500;
 export const DEFAULT_JSON_RPC_MAX_FRAME_BYTES = 1024 * 1024;
 
@@ -152,23 +148,13 @@ function createJsonRpcApplicationError(params: Readonly<{
     const rawMessage = typeof errorRecord.message === 'string' && errorRecord.message.trim().length > 0
         ? errorRecord.message
         : 'JSON-RPC request failed';
-    const failure = new Error(
-        sanitizeExecDiagnosticText(rawMessage, MAX_JSON_RPC_ERROR_MESSAGE_BYTES),
-        { cause: params.error },
-    ) as JsonRpcApplicationError;
-    failure.name = 'JsonRpcApplicationError';
-
-    const code = readJsonRpcErrorCode(errorRecord.code);
-    if (code !== undefined) {
-        Object.defineProperty(failure, 'code', { value: code, enumerable: true });
-    }
-    if (params.method) {
-        Object.defineProperty(failure, 'method', { value: params.method, enumerable: true });
-    }
-    if (Object.prototype.hasOwnProperty.call(errorRecord, 'data')) {
-        Object.defineProperty(failure, 'data', { value: errorRecord.data, enumerable: true });
-    }
-    return failure;
+    return createApplicationError({
+        method: params.method,
+        code: readJsonRpcErrorCode(errorRecord.code),
+        message: sanitizeExecDiagnosticText(rawMessage, MAX_JSON_RPC_ERROR_MESSAGE_BYTES),
+        data: errorRecord.data,
+        cause: params.error,
+    });
 }
 
 function toErrorObject(error: unknown): Readonly<{ code: number; message: string }> {

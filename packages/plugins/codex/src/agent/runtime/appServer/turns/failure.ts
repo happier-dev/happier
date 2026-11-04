@@ -1,6 +1,6 @@
 import { createProviderErrorV1, ProviderErrorCodeV1Schema, type ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { readCodexAppServerErrorPayload, type CodexAppServerErrorPayload } from './errorPayload.js';
-import { readJsonRpcApplicationRejection } from '@happier-dev/plugin-sdk/exec/protocol-clients';
+import { classifyJsonRpcSubmissionFailure, readJsonRpcApplicationRejection, type JsonRpcApplicationRejectionDetails, type JsonRpcApplicationError } from '@happier-dev/plugin-sdk/exec/protocol-clients';
 import { SESSION_RUNTIME_ISSUE_PREVIEW_MAX_LENGTH, RunnerDaemonPluginServicesPreparationCauseV1Schema, SessionRuntimeFailureCauseV1Schema, sanitizeSessionRuntimeIssueV1, readAgentStartupFailureCode, readAgentStartupFailureDetails, readSessionPreparationFailureCode, readSessionStartupFailurePreview, type SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { ProviderBrokerAdmissionFailureCodeV1Schema } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import { readCodexNativeTransportStartupFailure, readCodexSharedAppServerStartupFailure, type CodexSharedAppServerStartupFailure } from '../sharedServer.js';
@@ -78,6 +78,11 @@ const CODEX_APP_SERVER_SAFE_PLAN_TYPES = new Set([
     'edu',
 ]);
 
+type CodexAppServerStartRejection = JsonRpcApplicationRejectionDetails &
+  Readonly<{
+    inputTooLarge?: Readonly<{ maxChars?: number; actualChars?: number }>;
+  }>;
+
 class CodexAppServerTurnFailure extends Error {
     declare readonly code?: string;
     declare readonly details?: Readonly<{ failureCause?: CodexFailureCause }>;
@@ -94,6 +99,7 @@ class CodexAppServerTurnFailure extends Error {
     readonly runtimeAuthClassification: unknown | null;
     readonly isWorkspaceRoutingUnauthorized: boolean;
     readonly isRejectedStartModelEntitlement: boolean;
+    readonly startRejection: CodexAppServerStartRejection | null;
 
     constructor(message: string, options: Readonly<{
         providerError?: ProviderErrorV1 | null;
@@ -107,6 +113,7 @@ class CodexAppServerTurnFailure extends Error {
         runtimeAuthClassification: unknown | null;
         isWorkspaceRoutingUnauthorized: boolean;
         isRejectedStartModelEntitlement: boolean;
+        startRejection: CodexAppServerStartRejection | null;
         providerErrorCode?: string | number;
         httpStatus?: number;
     }>) {
@@ -123,6 +130,7 @@ class CodexAppServerTurnFailure extends Error {
         this.runtimeAuthClassification = options.runtimeAuthClassification;
         this.isWorkspaceRoutingUnauthorized = options.isWorkspaceRoutingUnauthorized;
         this.isRejectedStartModelEntitlement = options.isRejectedStartModelEntitlement;
+        this.startRejection = options.startRejection;
         const classification = readRecord(options.runtimeAuthClassification);
         this.failureReason = options.isWorkspaceRoutingUnauthorized ? 'workspace_routing_unauthorized'
             : options.contextWindowExhaustionEvidence === 'structured' ? 'context_window_exceeded'
@@ -172,6 +180,7 @@ export function readCodexAppServerFailureCause(
   if (retained) return retained;
   const diagnostic = readCodexAppServerTurnFailureDiagnostic(error);
   const rejection =
+    readCodexAppServerStartRejection(error) ??
     readJsonRpcApplicationRejection(error);
   const nativeStartup = readCodexAppServerStartupFailure(error);
   const providerErrorMessage = readRedactedProviderErrorMessage(error);
@@ -389,11 +398,41 @@ export function createCodexAppServerTurnFailure(params: Readonly<{
     authContext?: CodexAppServerTurnFailureAuthContext | null;
     sourceAccountIdentity?: CodexAppServerTurnFailureSourceAccountIdentity | null;
     /** The native request owner proved application rejection before any provider work. */
-    providerStartRejected?: boolean;
+    providerStartRejected?: 'thread/start' | 'turn/start';
 }>): Error {
     const primary = readCodexAppServerPrimaryFailure(params.value);
     if (primary !== params.value) return createCodexAppServerTurnFailure({ ...params, value: primary });
     if (params.value instanceof CodexAppServerTurnFailure) return params.value;
+  const submission = classifyJsonRpcSubmissionFailure(params.value, {
+    method: params.providerStartRejected ?? 'turn/start',
+    effectObserved: params.providerStartRejected === undefined,
+  });
+  let startRejection: CodexAppServerStartRejection | null = null;
+  if (submission.kind === 'rejected_before_effect') {
+    // Codex rust-v0.163.0 reports this structured admission error. The
+    // provider owns the character limit; Happier never enforces a local cap.
+    const data = readRecord((params.value as JsonRpcApplicationError).data);
+    const inputTooLarge =
+      submission.details.providerErrorCode === -32602 &&
+      data?.input_error_code === 'input_too_large';
+    startRejection = {
+      ...submission.details,
+      ...(inputTooLarge
+        ? {
+            inputTooLarge: {
+              ...(Number.isSafeInteger(data.max_chars) &&
+              Number(data.max_chars) >= 0
+                ? { maxChars: Number(data.max_chars) }
+                : {}),
+              ...(Number.isSafeInteger(data.actual_chars) &&
+              Number(data.actual_chars) >= 0
+                ? { actualChars: Number(data.actual_chars) }
+                : {}),
+            },
+          }
+        : {}),
+    };
+  }
     const retainedCause = readRetainedFailureCause(params.value);
     const providerErrorMessage = readRedactedProviderErrorMessage(params.value);
     const phase = retainedCause?.phase ?? params.phase;
@@ -463,7 +502,8 @@ export function createCodexAppServerTurnFailure(params: Readonly<{
             isTemporaryRecoverableTurnFailure: runtimeAuthClassification?.kind === 'capacity',
             runtimeAuthClassification: providerError ? null : sanitizedClassification,
             isWorkspaceRoutingUnauthorized: isCodexWorkspaceRoutingUnauthorizedFailure(params.value),
-            isRejectedStartModelEntitlement: params.providerStartRejected === true
+            startRejection,
+            isRejectedStartModelEntitlement: params.providerStartRejected !== undefined
                 && sanitizedClassification?.kind === 'plan'
                 && sanitizedClassification.limitCategory === 'plan_invalid'
                 && sanitizedClassification.quotaScope === 'model'
@@ -490,6 +530,14 @@ export function createCodexAppServerTurnFailure(params: Readonly<{
 
 export function isCodexAppServerRejectedStartModelEntitlementError(error: unknown): error is Error {
     return error instanceof CodexAppServerTurnFailure && error.isRejectedStartModelEntitlement;
+}
+
+export function readCodexAppServerStartRejection(
+  error: unknown,
+): CodexAppServerStartRejection | null {
+  return error instanceof CodexAppServerTurnFailure
+    ? error.startRejection
+    : null;
 }
 
 export function isCodexAppServerWorkspaceRoutingUnauthorizedError(error: unknown): boolean {

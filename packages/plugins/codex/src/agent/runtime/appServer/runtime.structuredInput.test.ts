@@ -247,7 +247,10 @@ describe('Codex app-server structured input dispatch', () => {
       inputIds: ['input-1'],
       input: { text: 'Use @gmail and $review', structuredInput: STRUCTURED_INPUT },
       delivery: { kind: 'newTurn', turnId: 'turn-1' },
-    })).resolves.toMatchObject({ status: 'unsupported' });
+    })).resolves.toMatchObject({ status: 'unsupported', diagnostic: {
+      code: 'codex_send_unsupported', message: 'codex_image_input_unsupported',
+      details: { providerErrorCode: -32602, method: 'turn/start', messageClass: 'JsonRpcApplicationError' },
+    } });
 
     expect(clientState.readTurnInputs('turn/start')).toHaveLength(1);
   });
@@ -266,7 +269,10 @@ describe('Codex app-server structured input dispatch', () => {
       inputIds: ['input-2'],
       input: { text: 'also look at $review', structuredInput: STRUCTURED_INPUT },
       delivery: { kind: 'steer', turnId: 'turn-1' },
-    })).resolves.toMatchObject({ status: 'unsupported' });
+    })).resolves.toMatchObject({ status: 'unsupported', diagnostic: {
+      code: 'codex_send_unsupported', message: 'codex_image_input_unsupported',
+      details: { providerErrorCode: -32602, method: 'turn/steer', messageClass: 'JsonRpcApplicationError' },
+    } });
 
     expect(clientState.readTurnInputs('turn/steer')).toHaveLength(1);
   });
@@ -284,7 +290,10 @@ describe('Codex app-server structured input dispatch', () => {
       inputIds: ['input-mentions'],
       input: { text: 'Use @gmail and $review', structuredInput: input },
       delivery: { kind: 'newTurn', turnId: 'turn-mentions' },
-    })).resolves.toMatchObject({ status: 'unsupported', diagnostic: { code: 'codex_send_unsupported', message: 'codex_structured_input_rejected' } });
+    })).resolves.toMatchObject({ status: 'unsupported', diagnostic: {
+      code: 'codex_send_unsupported', message: 'codex_structured_input_rejected',
+      details: { providerErrorCode: -32602, method: 'turn/start', messageClass: 'JsonRpcApplicationError' },
+    } });
     expect(clientState.readTurnInputs('turn/start')).toEqual([[
       { type: 'text', text: 'Use @gmail and $review' },
       { type: 'mention', name: 'Gmail', path: 'plugin://gmail@openai-curated' },
@@ -314,7 +323,10 @@ describe('Codex app-server structured input dispatch', () => {
         skillMentions: STRUCTURED_INPUT.skillMentions,
       } },
       delivery: { kind: 'steer', turnId: 'turn-primary' },
-    })).resolves.toMatchObject({ status: 'unsupported', diagnostic: { code: 'codex_send_unsupported', message: 'codex_structured_input_rejected' } });
+    })).resolves.toMatchObject({ status: 'unsupported', diagnostic: {
+      code: 'codex_send_unsupported', message: 'codex_structured_input_rejected',
+      details: { providerErrorCode: -32602, method: 'turn/steer', messageClass: 'JsonRpcApplicationError' },
+    } });
     expect(clientState.readTurnInputs('turn/steer')).toEqual([[
       { type: 'text', text: 'Use @gmail and $review' },
       { type: 'mention', name: 'Gmail', path: 'plugin://gmail@openai-curated' },

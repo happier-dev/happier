@@ -19,6 +19,7 @@ import type {
 } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { SessionAuthService } from '@happier-dev/plugin-sdk/sessions';
 import { readProviderReasoningEffortOption } from '@happier-dev/plugin-sdk/providers';
+import { readJsonRpcApplicationRejection } from '@happier-dev/plugin-sdk/exec/protocol-clients';
 import {
   AgentRuntimeJsonValueSchema,
   canPublishSessionResumeIdentity,
@@ -125,6 +126,7 @@ import {
   readCodexAppServerTurnFailureDiagnostic,
   sanitizeCodexAppServerRuntimeAuthClassification,
   isCodexAppServerRejectedStartModelEntitlementError,
+  readCodexAppServerStartRejection,
   isCodexAppServerContextWindowExhaustedError,
   isCodexAppServerWorkspaceRoutingUnauthorizedError,
 } from './turns/failure.js';
@@ -2081,7 +2083,7 @@ export function createCodexAppServerRuntime(
   };
 
   const failPendingTurn = (error: Error, failure = createCodexAppServerTurnFailure({ value: error, providerConnectionId: params.initialProviderConnectionId })): void => {
-    const diagnostic = readCodexAppServerTurnFailureDiagnostic(failure);
+    const diagnostic = readCodexAppServerFailureCause(failure);
     const activeTurn = pendingTurn;
     if (!activeTurn || activeTurn.failureSettling) return;
     if (activeTurn.compaction) {
@@ -2104,6 +2106,7 @@ export function createCodexAppServerRuntime(
     clearPendingProviderPrompt(activeTurn.providerPrompt);
     rejectPendingProviderAcceptancesForHostTurn(activeTurn.sessionTurnId, error);
     params.host.logger.warn('Codex app-server turn failed', {
+      causeCode: issue.code,
       ...diagnostic,
       providerStartAcknowledged: activeTurn.providerStartAcknowledged,
     });
@@ -2765,9 +2768,9 @@ export function createCodexAppServerRuntime(
             value: error,
             phase: 'thread_open',
             sourceAccountIdentity: latestConnectedServiceRuntimeIdentity,
-            providerStartRejected: turnSeq === 0 && pendingTurn === null,
+            providerStartRejected: turnSeq === 0 && pendingTurn === null ? 'thread/start' : undefined,
           });
-          throw isCodexAppServerRejectedStartModelEntitlementError(failure) ? failure : error;
+          throw readCodexAppServerStartRejection(failure) ? failure : error;
         });
     const observedThreadId = readThreadId(response);
     if (
@@ -2937,6 +2940,7 @@ export function createCodexAppServerRuntime(
       turnId: activeTurn.sessionTurnId,
       startedBy: 'user',
     });
+    let turnStartDispatched = false;
     try {
       if (currentCollaborationModeId && !currentCollaborationModePayload) {
         await resolveCollaborationMode(currentCollaborationModeId);
@@ -2998,6 +3002,7 @@ export function createCodexAppServerRuntime(
       const requestTurnStart = async (params: Record<string, unknown>): Promise<unknown> => {
         await captureRequestAccount();
         activeTurn.nativePermissionPolicyKey = serializeCodexAppServerPolicy(policy);
+        turnStartDispatched = true;
         return await appServerClient.request('turn/start', params)
           .then((result) => {
             if (Object.prototype.hasOwnProperty.call(params, 'permissions')) {
@@ -3012,7 +3017,9 @@ export function createCodexAppServerRuntime(
             permissionSupport = 'legacy';
             const retryParams = { ...params };
             delete retryParams.permissions;
+            turnStartDispatched = false;
             await captureRequestAccount();
+            turnStartDispatched = true;
             return await appServerClient.request('turn/start', {
               ...retryParams,
               ...buildCodexAppServerLegacyPermissionParams({ policy, target: 'turn' }),
@@ -3053,22 +3060,26 @@ export function createCodexAppServerRuntime(
       clearPendingProviderPrompt(pendingProviderPrompt);
     } catch (error) {
       preAckCancelledTurns.delete(activeTurn);
-      const classifiedFailure = isCodexAppServerApplicationRejectionForMethod(error, 'turn/start')
-        ? createCodexAppServerTurnFailure({
+      const classifiedFailure = createCodexAppServerTurnFailure({
             value: error,
-            phase: 'turn_start',
             providerConnectionId: params.initialProviderConnectionId,
+            phase: 'turn_start',
+            inputNotDispatched: !turnStartDispatched,
             sourceAccountIdentity: activeTurn.providerOperationIdentity,
             providerStartRejected: pendingTurn === activeTurn
               && !activeTurn.providerStartAcknowledged
               && activeTurn.agentTurnId === null
-              && activeTurn.deferredTerminalNotification === null,
-          })
-        : null;
-      const failure = isCodexAppServerRejectedStartModelEntitlementError(classifiedFailure)
-        ? classifiedFailure
-        : error instanceof Error ? error : new Error(String(error));
-      failPendingTurn(failure, classifiedFailure ?? createCodexAppServerTurnFailure({ value: failure, providerConnectionId: params.initialProviderConnectionId }));
+              && activeTurn.deferredTerminalNotification === null
+              && isCodexAppServerApplicationRejectionForMethod(error, 'turn/start') ? 'turn/start' : undefined,
+          });
+      const failure = !turnStartDispatched || readCodexAppServerStartRejection(classifiedFailure)
+        ? classifiedFailure : error instanceof Error ? error : new Error(String(error));
+      failPendingTurn(failure, classifiedFailure);
+      if (readCodexAppServerStartRejection(failure)) {
+        // Quota evidence can defer settlement. Finish attempted lifecycle while
+        // native admission still buffers it, before the host can dispose us.
+        await activeTurn.promise.catch(() => undefined);
+      }
       throw failure;
     }
   };
@@ -3623,20 +3634,30 @@ export function createCodexAppServerRuntime(
         ...(structuredInput === undefined ? {} : { structuredInput }),
       };
       const resolveStructuredInputRefusal = (error: unknown, method: 'turn/start' | 'turn/steer') => {
-        if (!isCodexAppServerInvalidParamsError(error)) return null;
+        const startRejection = readCodexAppServerStartRejection(error);
+        const rejection = startRejection
+          ?? (method === 'turn/steer' ? readJsonRpcApplicationRejection(error) : null);
+        // New turns require the request owner's pre-effect proof. Provider size
+        // evidence takes precedence over this existing unsupported-input projection.
+        if (!rejection || rejection.method !== method || rejection.providerErrorCode !== -32602
+          || startRejection?.inputTooLarge) return null;
         const rejectedInput = buildCodexAppServerTurnInput(turnInput);
         if (!rejectedInput.some((item) => item.type !== 'text')) return null;
-        const errorCode = readRecord(error)?.code;
         params.host.logger.warn('Codex app-server rejected structured input', {
           method,
           ...buildCodexAppServerSafeErrorIdentity(error),
-          ...(typeof errorCode === 'number' && Number.isFinite(errorCode) ? { errorCode } : {}),
+          errorCode: rejection.providerErrorCode,
         });
         return {
           status: 'unsupported' as const,
           diagnostic: rejectedInput.some((item) => item.type === 'image' || item.type === 'localImage')
             ? 'codex_image_input_unsupported'
             : 'codex_structured_input_rejected',
+          rejection: {
+            providerErrorCode: rejection.providerErrorCode,
+            method: rejection.method,
+            messageClass: rejection.messageClass,
+          },
         };
       };
       if (options?.deliverAs === 'steer') {

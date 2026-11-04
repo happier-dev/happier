@@ -44,6 +44,7 @@ import {
 } from './runtime.js';
 import {
   isCodexAppServerRejectedStartModelEntitlementError,
+  readCodexAppServerStartRejection,
   createCodexAppServerTurnFailure,
   readCodexAppServerFailureCause,
   readCodexAppServerFailureCode,
@@ -629,12 +630,14 @@ function mapCodexAppServerEvent(event: CodexAppServerEvent): NativeSessionEventI
 function toNativeSendFailure(
   status: 'rejected' | 'unavailable' | 'unsupported',
   message?: string,
-  refusal?: Pick<CodexAppServerSendResult, 'diagnosticCode' | 'retryable'>,
+  refusal?: Pick<CodexAppServerSendResult, 'diagnosticCode' | 'retryable' | 'rejection' | 'failureCause'>,
 ): Exclude<Awaited<ReturnType<AgentSessionRuntime['send']>>, { status: 'admitted' }> {
   return {
     status,
     retryable: refusal?.retryable ?? status === 'unavailable',
-    diagnostic: diagnostic(refusal?.diagnosticCode ?? `codex_send_${status}`, message ?? `Codex input was ${status}.`),
+    diagnostic: diagnostic(refusal?.diagnosticCode ?? `codex_send_${status}`,
+      message ?? `Codex input was ${status}.`, refusal?.failureCause
+        ? { ...refusal.rejection, failureCause: refusal.failureCause } : refusal?.rejection),
   };
 }
 
@@ -781,7 +784,11 @@ function createCodexNativeAppServerConversationRuntime(
         text: request.input.text,
         ...(structuredInput?.success ? { structuredInput: structuredInput.data } : {}),
       };
-      bufferedEvents = createAgentSessionPreAdmissionBuffer();
+      // A steer targets an already accepted turn; its existing output must keep
+      // flowing even when the new steer input is refused or has unknown custody.
+      bufferedEvents = request.delivery.kind === 'newTurn'
+        ? createAgentSessionPreAdmissionBuffer()
+        : null;
       bufferedEventFailure = null;
       let result: CodexAppServerSendResult;
       try {
@@ -798,19 +805,26 @@ function createCodexNativeAppServerConversationRuntime(
         bufferedEvents = null;
         bufferedEventFailure = null;
         // The app-server emits attempted host lifecycle before turn/start replies.
-        // Only those synthetic events may be discarded for a proven rejection.
+        // They cannot become host lifecycle until input acceptance is proven.
         const onlyAttemptedLifecycle = queued.every(({ event }) => (
           (event.kind === 'turn-start' && !event.agentTurnId && event.startedBy === 'host')
           || (event.kind === 'turn-failed' && !event.agentTurnId)
           || (event.kind === 'runtime-ended' && event.cause === 'protocolError'
             && event.diagnostic?.code === 'codex_app_server_turn_failed')
         ));
+        const rejection = readCodexAppServerStartRejection(error);
         if (request.delivery.kind === 'newTurn' && admissionFailure === null
-          && onlyAttemptedLifecycle && isCodexAppServerRejectedStartModelEntitlementError(error)) {
+          && onlyAttemptedLifecycle && rejection !== null) {
+          const entitlementRejected = isCodexAppServerRejectedStartModelEntitlementError(error);
+          const { inputTooLarge, ...responseIdentity } = rejection;
           const failure = diagnostic(
-            'connected_service_model_start_rejected',
-            'The connected account cannot start the requested model.',
-            readBoundedRuntimeAuthDiagnosticDetails(error),
+            entitlementRejected ? 'connected_service_model_start_rejected'
+              : inputTooLarge ? 'provider_input_too_large' : 'provider_request_rejected',
+            entitlementRejected ? 'The connected account cannot start the requested model.'
+              : inputTooLarge ? 'The provider rejected input that exceeds its character limit.'
+                : 'The provider rejected the start request.',
+            { ...responseIdentity, ...inputTooLarge, failureCause: readCodexAppServerFailureCause(error),
+              ...readBoundedRuntimeAuthDiagnosticDetails(error) },
           );
           emit({ kind: 'input-rejected', inputIds: request.inputIds, retryable: false, diagnostic: failure });
           return { status: 'rejected', retryable: false, diagnostic: failure };
@@ -825,7 +839,6 @@ function createCodexNativeAppServerConversationRuntime(
           inputIds: request.inputIds,
           issue: failure,
         });
-        for (const queuedEvent of queued) emit(queuedEvent.event, queuedEvent.emittedAtMs);
         return {
           status: 'unavailable',
           retryable: true,
@@ -865,7 +878,6 @@ function createCodexNativeAppServerConversationRuntime(
         diagnostic: failure.diagnostic,
         retryable: failure.retryable,
       });
-      for (const queuedEvent of queued) emit(queuedEvent.event, queuedEvent.emittedAtMs);
       return failure;
     },
     async cancel(request) {

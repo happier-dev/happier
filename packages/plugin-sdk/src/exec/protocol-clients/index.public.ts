@@ -25,5 +25,5 @@ export type { PluginJsonRpcConnectionSpec } from '../protocol-clients.js';
 
 export type { PluginJsonRpcConnection } from '../protocol-clients.js';
 
-export { readJsonRpcApplicationRejection } from '../jsonRpcOutcome.js';
+export { createJsonRpcApplicationError, readJsonRpcApplicationRejection, classifyJsonRpcSubmissionFailure } from '../jsonRpcOutcome.js';
 export type { JsonRpcApplicationError, JsonRpcApplicationRejectionDetails } from '../jsonRpcOutcome.js';

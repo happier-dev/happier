@@ -1,8 +1,6 @@
-export type CodexAppServerRpcError = Error & Readonly<{
-    code?: number | string;
-    data?: unknown;
-    method?: string;
-}>;
+import { createJsonRpcApplicationError, readJsonRpcApplicationRejection, type JsonRpcApplicationError } from '@happier-dev/plugin-sdk/exec/protocol-clients';
+
+export type CodexAppServerRpcError = JsonRpcApplicationError;
 
 export function createCodexAppServerRpcError(params: Readonly<{
     method: string;
@@ -10,16 +8,9 @@ export function createCodexAppServerRpcError(params: Readonly<{
     message?: string;
     data?: unknown;
 }>): CodexAppServerRpcError {
-    const error = new Error(params.message ?? `Codex app-server request failed: ${params.method}`) as CodexAppServerRpcError;
-    error.name = 'JsonRpcApplicationError';
-    if (typeof params.code === 'number') {
-        Object.defineProperty(error, 'code', { value: params.code, enumerable: true });
-    }
-    Object.defineProperty(error, 'method', { value: params.method, enumerable: true });
-    if (params.data !== undefined) {
-        Object.defineProperty(error, 'data', { value: params.data, enumerable: true });
-    }
-    return error;
+    return createJsonRpcApplicationError({ ...params,
+        message: params.message ?? `Codex app-server request failed: ${params.method}`,
+    });
 }
 
 export function isCodexAppServerNoActiveTurnToSteerError(error: unknown): boolean {
@@ -100,8 +91,7 @@ export function isCodexAppServerApplicationRejectionForMethod(
     error: unknown,
     method: string,
 ): boolean {
-    if (!(error instanceof Error) || error.name !== 'JsonRpcApplicationError') return false;
-    return (error as Partial<CodexAppServerRpcError>).method === method;
+    return readJsonRpcApplicationRejection(error)?.method === method;
 }
 
 export function isCodexAppServerExperimentalApiUnavailableError(error: unknown): boolean {

@@ -50,7 +50,7 @@ describe('createCodexAppServerTurnFailure', () => {
     });
     const failure = createCodexAppServerTurnFailure({
       phase: 'thread_open',
-      providerStartRejected: true,
+      providerStartRejected: 'thread/start',
       value: rejection,
     });
     const failureCause = readCodexAppServerFailureCause(failure);

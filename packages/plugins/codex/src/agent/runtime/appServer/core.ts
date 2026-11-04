@@ -1,3 +1,4 @@
+import type { JsonRpcApplicationRejectionDetails } from '@happier-dev/plugin-sdk/exec/protocol-clients';
 import type { ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import type {
   AgentSessionCompactRequest,
@@ -181,6 +182,9 @@ export type CodexAppServerSendResult = Readonly<{
   diagnostic?: string;
   /** A known refusal resolved before native input dispatch. */
   diagnosticCode?: string;
+  failureCause?: NonNullable<CodexAppServerRuntimeIssue['failureCause']>;
+  /** Content-free provider response identity for a semantic input refusal. */
+  rejection?: JsonRpcApplicationRejectionDetails;
   retryable?: boolean;
 }>;
 
