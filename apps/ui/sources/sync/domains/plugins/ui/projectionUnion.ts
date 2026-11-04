@@ -1,3 +1,8 @@
+import { DECLARATION_MAP_KEYS, UNION_MAP_KEYS, pluginSliceKeys, prepareProjectionPluginIndex,
+    publishProjectionPluginIndex, readPublishedProjectionPluginIndex,
+    type PublishedProjectionPluginIndex, type UnionMapKey } from './projectionUnionIndex';
+import { derivePluginUiExecutionOriginCandidateFacts, type PluginUiExecutionOriginCandidateFacts } from './projectionUnionCandidates';
+export type { PluginUiExecutionOriginCandidateFacts } from './projectionUnionCandidates';
 import {
     EMPTY_PLUGIN_UI_PROJECTION,
     samePluginUiMaterializationFacts,
@@ -33,7 +38,7 @@ import type { MachineAdministrationTargetV1 } from '@happier-dev/protocol/accoun
 import { PluginUiArtifactsManifestEntryV2Schema } from '@happier-dev/protocol/plugins/ui';
 import { projectPluginDeclarativeModelComparisonV1, type PluginDeclarativeProjectedModelV1 } from '@happier-dev/protocol/plugins/contributions/ui/declarativeProjectedModelV1';
 import type { PluginUiProjectionPhase } from './usePluginUiProjectionCurrentness';
-import { composePluginMachineExecutionOriginV1, type PluginMachineSourceExecutionOriginCandidateV1, type PluginMachineExecutionOriginRejectionV1 } from '@/sync/domains/machines/administration/pluginExecutionOrigin';
+import { composePluginMachineExecutionOriginV1 } from '@/sync/domains/machines/administration/pluginExecutionOrigin';
 import { resolveFleetSupplyAgreement } from '@/sync/domains/machines/administration/fleetUnion';
 import { readSelectedPluginUiResourceCapability } from './resourceCapability';
 import { normalizeStrictJsonValue, projectNativeJsonValueForTransport, sameStrictJsonValue, type JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -608,83 +613,6 @@ function declarationMaps(model: PluginUiProjectionModel): readonly Readonly<Reco
     return DECLARATION_MAP_KEYS.map(key => model[key]);
 }
 
-const DECLARATION_MAP_KEYS = ['translationsByPluginId', 'sessionHeaderActionsById', 'searchProvidersById',
-    'hostedWebById', 'reactNativeBundlesById', 'surfacePlacementsById', 'settingsGroupsById', 'settingsPagesById',
-    'actionsById', 'voiceProvidersById', 'dragSourcesById', 'workItemsById', 'dropTargetsById',
-    'atmospherePicturesById', 'registrySourcesById', 'storeKindsById', 'machineRecipesById', 'machineSetupPresetsById', 'skillsById', 'unknownEntriesById', 'inputTypesById',
-    'composerControlsById', 'composerRegionsById', 'composerReferencesById'] as const;
-const UNION_MAP_KEYS = [...DECLARATION_MAP_KEYS, 'resourcesById', 'connectedAccountDescriptorsById', 'installedPackagesById'] as const;
-type UnionMapKey = typeof UNION_MAP_KEYS[number];
-/** Typed fallback for the optional connected-account family; EMPTY_PLUGIN_UI_PROJECTION's frozen families win at runtime. */
-const EMPTY_UNION_FAMILY: Readonly<Record<string, never>> = Object.freeze({});
-
-
-type PublishedPluginSlice = Readonly<{ model: PluginUiProjectionModel; entries: readonly unknown[] }>;
-type PublishedProjectionPluginIndex = Readonly<{ slices: Readonly<Record<string, PublishedPluginSlice>> }>;
-const publishedProjectionPluginIndex = Symbol('pluginUiPublishedPluginIndex');
-
-function readPublishedProjectionPluginIndex(model: PluginUiProjectionModel | null): PublishedProjectionPluginIndex | null {
-    const proof = model ? asRecord(Object.getOwnPropertyDescriptor(model, publishedProjectionPluginIndex)?.value) : null;
-    // Only this publication owner creates the private immutable index. Copying
-    // its descriptor to another snapshot must not turn that snapshot into proof.
-    return proof && proof.owner === model ? proof.index as PublishedProjectionPluginIndex : null;
-}
-
-function publishProjectionPluginIndex(model: PluginUiProjectionModel, index: PublishedProjectionPluginIndex): PluginUiProjectionModel {
-    if (readPublishedProjectionPluginIndex(model) === index) return model;
-    const owned = { ...model };
-    Object.defineProperty(owned, publishedProjectionPluginIndex, { value: Object.freeze({ owner: owned, index }) });
-    return Object.freeze(owned);
-}
-
-/** Index new raw inputs once; owned publications hand their current slices on. */
-function prepareProjectionPluginIndex(model: PluginUiProjectionModel, previous?: PublishedProjectionPluginIndex | null): PublishedProjectionPluginIndex {
-    const groups = new Map<string, Partial<Record<UnionMapKey, Record<string, unknown>>>>();
-    for (const key of UNION_MAP_KEYS) for (const [entryId, entry] of Object.entries(model[key] ?? {})) {
-        const id = key === 'installedPackagesById' ? entryId : readString(asRecord(entry)?.pluginId);
-        if (!id) continue;
-        const group = groups.get(id) ?? {};
-        const map = group[key] ??= {};
-        Object.defineProperty(map, entryId, { value: entry, enumerable: true, configurable: true, writable: true });
-        groups.set(id, group);
-    }
-    const slices = Object.fromEntries([...groups].map(([id, group]) => {
-        const old = previous?.slices[id];
-        const maps = Object.fromEntries(UNION_MAP_KEYS.map(key => {
-            const map = group[key] ?? EMPTY_PLUGIN_UI_PROJECTION[key] ?? EMPTY_UNION_FAMILY;
-            const keys = Object.keys(map);
-            const previousMap = old?.model[key];
-            const oldKeys = previousMap ? Object.keys(previousMap) : [];
-            const same = previousMap && keys.length === oldKeys.length
-                && keys.every((entryId, index) => Object.hasOwn(previousMap, entryId) && previousMap[entryId] === map[entryId]
-                    && (key !== 'atmospherePicturesById' || oldKeys[index] === entryId));
-            return [key, same ? previousMap : Object.freeze(map)];
-        }));
-        if (old && UNION_MAP_KEYS.every(key => maps[key] === old.model[key])) return [id, old] as const;
-        // Only plugin-owned dictionaries cross this handoff. Global generation,
-        // diagnostics and pending-target facts come from the actual next root,
-        // never from a retained dictionary slice.
-        const sliceModel = Object.freeze({ ...EMPTY_PLUGIN_UI_PROJECTION, ...maps }) as PluginUiProjectionModel;
-        const entries = DECLARATION_MAP_KEYS.flatMap(key => Object.values(sliceModel[key]));
-        const retainedEntries = old && old.entries.length === entries.length && entries.every((entry, index) => entry === old.entries[index])
-            ? old.entries : Object.freeze(entries);
-        return [id, Object.freeze({ model: sliceModel, entries: retainedEntries })] as const;
-    }));
-    const ids = Object.keys(slices);
-    if (previous && ids.length === Object.keys(previous.slices).length && ids.every(id => slices[id] === previous.slices[id])) return previous;
-    Object.setPrototypeOf(slices, null);
-    return Object.freeze({ slices: Object.freeze(slices) });
-}
-
-function pluginSliceKeys(models: readonly (PluginUiProjectionModel | undefined | null)[]): ReadonlyMap<UnionMapKey, ReadonlySet<string>> {
-    const keys = new Map<UnionMapKey, ReadonlySet<string>>();
-    for (const key of UNION_MAP_KEYS) {
-        const ids = models.flatMap(model => Object.keys(model?.[key] ?? EMPTY_PLUGIN_UI_PROJECTION[key] ?? EMPTY_UNION_FAMILY));
-        if (ids.length > 0) keys.set(key, new Set(ids));
-    }
-    return keys;
-}
-
 function replacePublishedPluginSlices(previous: PublishedProjectionPluginIndex,
     changed: ReadonlyMap<string, PluginUiProjectionModel | null>): PublishedProjectionPluginIndex {
     if (changed.size === 0) return previous;
@@ -887,7 +815,7 @@ function prepareUnionPublicationSource(members: readonly PluginUiProjectionUnion
         }
         const sameDictionaries = previousMember?.projection && UNION_MAP_KEYS.every(key => previousMember.projection![key] === model[key]);
         const publicationIndex = readPublishedProjectionPluginIndex(model)
-            ?? (sameDictionaries && preceding ? preceding.publicationIndex : prepareProjectionPluginIndex(model, preceding?.publicationIndex));
+            ?? (sameDictionaries && preceding ? preceding.publicationIndex : prepareProjectionPluginIndex(model, preceding?.publicationIndex, previousMember?.projection));
         const modelSlices = new Map(Object.entries(publicationIndex.slices).map(([id, slice]) => {
             const old = preceding?.slices.get(id);
             return [id, old && preceding?.publicationIndex.slices[id] === slice && (old.generation === null) === (model.generation === null)
@@ -1277,15 +1205,6 @@ function samePluginDeclarationContent(
     });
 }
 
-export type PluginUiExecutionOriginCandidateFacts = Readonly<{
-    establishingTargets: readonly MachineAdministrationTargetV1[];
-    sourceCandidates: readonly PluginMachineSourceExecutionOriginCandidateV1[];
-    declaredDefaultOrigins: readonly PluginMachineExecutionOriginV1[];
-    machineRejections: readonly PluginMachineExecutionOriginRejectionV1[];
-    autoPick: boolean;
-    renderedVersion?: string;
-}>;
-
 /** Project exact reported supplies into Administration; never elect an origin here. */
 export function readPluginUiExecutionOriginCandidates(params: Readonly<{
     projection: PluginUiProjectionModel | null;
@@ -1305,10 +1224,6 @@ function derivePluginUiExecutionOriginCandidates(
     params: Parameters<typeof readPluginUiExecutionOriginCandidates>[0],
     entries: readonly unknown[],
 ): PluginUiExecutionOriginCandidateFacts {
-    const sourceCandidates: PluginMachineSourceExecutionOriginCandidateV1[] = [];
-    const declaredDefaultOrigins: PluginMachineExecutionOriginV1[] = [];
-    const machineRejections: PluginMachineExecutionOriginRejectionV1[] = [];
-    const establishingTargets: MachineAdministrationTargetV1[] = [...(params.projection?.establishingExecutionTargetsByPluginId?.[params.pluginId] ?? [])];
     const packageSupplies: PluginUiContributionSupplyV1[] = [];
     for (const member of params.members ?? []) {
         if (!member.projection) continue;
@@ -1326,76 +1241,7 @@ function derivePluginUiExecutionOriginCandidates(
             executionTargetDefault: installed.executionTarget?.default === 'installation',
             executionTargetAutoPick: installed.executionTarget?.autoPick });
     }
-    const supplyGroups = [
-        ...entries.map(entry => ({ conflict: asRecord(entry)?.hostCompatibility === 'conflict', supplies: readPluginUiContributionSupplies(entry) })),
-        { conflict: entries.some(entry => asRecord(entry)?.hostCompatibility === 'conflict'), supplies: packageSupplies },
-    ];
-    for (const { conflict, supplies } of supplyGroups) {
-        for (const supply of supplies) {
-            if (supply.phase === 'establishing' && supply.serverIdentityId
-                && !establishingTargets.some(target => target.serverIdentityId === supply.serverIdentityId && target.machineId === supply.machineId)) {
-                establishingTargets.push({ serverIdentityId: supply.serverIdentityId, machineId: supply.machineId });
-            }
-            const origin = supply.executionOrigin;
-            const reason = readPluginUiSupplyRejection(supply);
-            const serverIdentityId = origin?.serverIdentityId ?? supply.serverIdentityId;
-            if (reason && serverIdentityId && !machineRejections.some(entry => entry.serverIdentityId === serverIdentityId
-                && entry.machineId === supply.machineId)) {
-                machineRejections.push({ serverIdentityId, machineId: supply.machineId, reason });
-            }
-            if (!origin || getPluginMachineExecutionOriginRef(origin).pluginId !== params.pluginId) continue;
-            if (supply.executionTargetDefault && !conflict
-                && !declaredDefaultOrigins.some(candidate => arePluginMachineExecutionOriginsEqual(candidate, origin))) declaredDefaultOrigins.push(origin);
-            if (!('sourceRef' in origin) || !supply.occurrenceId || !supply.pluginVersion
-                || !supply.serverId
-                || sourceCandidates.some(candidate => arePluginMachineExecutionOriginsEqual(candidate.source.origin, origin))) continue;
-            sourceCandidates.push(Object.freeze({
-                source: Object.freeze({ origin, version: supply.pluginVersion, occurrenceId: supply.occurrenceId,
-                    serverId: supply.serverId }),
-                // A machine-local source is selected by exact custody, not by
-                // correspondence with another Machine's portable release.
-                releaseContent: 'matched',
-                validation: reason ? { kind: 'rejected' as const, reason }
-                    : supply.phase === 'current' && supply.interactionEnabled ? { kind: 'admitted' as const }
-                        : { kind: 'rejected' as const, reason: 'stale' as const },
-            }));
-        }
-    }
-    const installed = params.projection?.installedPackagesById[params.pluginId];
-    const autoPick = installed ? installed.executionTarget?.autoPick !== false
-        : !supplyGroups.some(({ supplies }) => supplies.some(supply => supply.executionTargetAutoPick === false));
-    const renderedVersion = installed?.version;
-    const previous = params.previous;
-    if (previous && previous.autoPick === autoPick && previous.renderedVersion === renderedVersion
-        && previous.establishingTargets.length === establishingTargets.length
-        && establishingTargets.every((target, index) => target.serverIdentityId === previous.establishingTargets[index]!.serverIdentityId
-            && target.machineId === previous.establishingTargets[index]!.machineId)
-        && previous.sourceCandidates.length === sourceCandidates.length
-        && sourceCandidates.every((candidate, index) => {
-            const other = previous.sourceCandidates[index]!;
-            return candidate.source.serverId === other.source.serverId
-                && candidate.source.version === other.source.version
-                && candidate.source.occurrenceId === other.source.occurrenceId
-                && arePluginMachineExecutionOriginsEqual(candidate.source.origin, other.source.origin)
-                && candidate.releaseContent === other.releaseContent
-                && candidate.validation.kind === other.validation.kind
-                && (candidate.validation.kind !== 'rejected'
-                    || (other.validation.kind === 'rejected' && candidate.validation.reason === other.validation.reason));
-        })
-        && previous.declaredDefaultOrigins.length === declaredDefaultOrigins.length
-        && declaredDefaultOrigins.every((origin, index) => arePluginMachineExecutionOriginsEqual(origin, previous.declaredDefaultOrigins[index]!))
-        && previous.machineRejections.length === machineRejections.length
-        && machineRejections.every((rejection, index) => {
-            const other = previous.machineRejections[index]!;
-            return rejection.serverIdentityId === other.serverIdentityId && rejection.machineId === other.machineId
-                && rejection.reason === other.reason;
-        })) return previous;
-    return Object.freeze({ establishingTargets: Object.freeze(establishingTargets), sourceCandidates: Object.freeze(sourceCandidates), declaredDefaultOrigins: Object.freeze(declaredDefaultOrigins),
-        // The rendered declaration owns policy. An older replica's opt-out
-        // cannot change the current rendered release's automatic placement.
-        autoPick,
-        ...(renderedVersion ? { renderedVersion } : {}),
-        machineRejections: Object.freeze(machineRejections) });
+    return derivePluginUiExecutionOriginCandidateFacts(params, entries, packageSupplies);
 }
 
 type CandidatePublicationInput = Readonly<{
@@ -1445,7 +1291,7 @@ export function createPluginUiExecutionOriginCandidatePublication() {
             }
             if (projection !== nextProjection) {
                 projectionIndex = nextProjection ? readPublishedProjectionPluginIndex(nextProjection)
-                    ?? prepareProjectionPluginIndex(nextProjection, projectionIndex) : null;
+                    ?? prepareProjectionPluginIndex(nextProjection, projectionIndex, projection) : null;
             }
             if (!arePluginUiProjectionUnionMembersEquivalentForPlugins(members, nextMembers, true)) {
                 // Membership keys belong to the installed-package dictionary,
@@ -1501,18 +1347,6 @@ export function createPluginUiExecutionOriginCandidatePublication() {
             return snapshot;
         },
     };
-}
-
-function readPluginUiSupplyRejection(supply: PluginUiContributionOriginV1): PluginMachineExecutionOriginRejectionV1['reason'] | null {
-    switch (supply.unavailableReasonCode) {
-        case 'plugin_machine_unreachable': return 'home_unreachable';
-        case 'plugin_daemon_unsupported': return 'daemon_unsupported';
-        case 'plugin_daemon_invalid_response': return 'daemon_invalid_response';
-        case 'plugin_daemon_unavailable': return 'daemon_unavailable';
-        case 'plugin_activation_failed': return 'activation_refused';
-        case 'plugin_source_not_ready': return 'source_not_ready';
-        default: return null;
-    }
 }
 
 /** A Resource without a View still has its own producer and current runtime slot. */
@@ -1630,18 +1464,17 @@ function readUnionPublicationFacts(
     // A known Account installation can precede its first runtime projection,
     // including all contribution supplies. Preserve that producer's pending
     // fact without inventing custody, an occurrence, or executable authority.
-    const establishingExecutionTargetsByPluginId: Record<string, readonly MachineAdministrationTargetV1[]> = {};
+    const establishingExecutionTargetsByPluginId: Record<string, MachineAdministrationTargetV1[]> = {};
     for (const member of eligible) {
         if (member.phase !== 'establishing') continue;
         for (const [pluginId, installation] of Object.entries(member.materializationsByPluginId ?? {})) {
             if (!installation.enabled || installation.trustState !== 'trusted' || installation.machineId !== member.machineId
                 || installation.serverIdentityId !== member.serverIdentityId) continue;
-            establishingExecutionTargetsByPluginId[pluginId] = Object.freeze([
-                ...(establishingExecutionTargetsByPluginId[pluginId] ?? []),
-                Object.freeze({ serverIdentityId: installation.serverIdentityId, machineId: installation.machineId }),
-            ]);
+            (establishingExecutionTargetsByPluginId[pluginId] ??= []).push(
+                Object.freeze({ serverIdentityId: installation.serverIdentityId, machineId: installation.machineId }));
         }
     }
+    for (const targets of Object.values(establishingExecutionTargetsByPluginId)) Object.freeze(targets);
     const establishingFacts = Object.keys(establishingExecutionTargetsByPluginId).length > 0
         ? { establishingExecutionTargetsByPluginId: Object.freeze(establishingExecutionTargetsByPluginId) } : {};
     const emptyProjection = 'establishingExecutionTargetsByPluginId' in establishingFacts
