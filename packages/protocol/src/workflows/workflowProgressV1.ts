@@ -40,7 +40,7 @@ import {
   type WorkflowStepExecutionSelection,
 } from './workflowV1.js';
 import { WorkflowProjectTargetV1Schema, WorkflowWorkspaceProgressV1Schema } from './workflowWorkspaceV1.js';
-import { WorkflowResolvedInputsV1Schema, WorkflowRunStartedByV1Schema, WorkflowDefinitionContentUnavailableReasonV1Schema } from './workflowDefinitionV1.js';
+import { WorkflowResolvedInputsV1Schema, WorkflowRunStartedByV1Schema, WorkflowDefinitionContentUnavailableReasonV1Schema, WorkflowDefinitionSavedByV1Schema } from './workflowDefinitionV1.js';
 import { WorkflowDestinationsV1Schema } from './workflowDestinationsV1.js';
 import { SessionRuntimeIssueV1Schema } from '../sessions/control/runtimeIssueV1.js';
 
@@ -195,6 +195,7 @@ export type WorkflowRunStepProgressCurrentnessV1 = z.infer<typeof WorkflowRunSte
 
 export const WorkflowRunSummaryV1Schema = lazyZodSchema(() => z.strictObject({
   startedBy: zMini.optional(zMini.nullable(WorkflowRunStartedByV1Schema)),
+  sourceSavedBy: z.optional(WorkflowDefinitionSavedByV1Schema),
   stepProgress: z.optional(z.nullable(WorkflowRunStepProgressV1Schema)),
   stepProgressCurrentness: z.optional(z.nullable(WorkflowRunStepProgressCurrentnessV1Schema)),
   /** Authorized attention-list projection; null clears a hold, omission preserves a prior observation. */

@@ -99,6 +99,35 @@ function storedRootInvocation(snapshot: ReturnType<typeof runSnapshot>) {
 }
 
 describe('shared Account workflow run owner', () => {
+  it('projects frozen source authorship without reading the current definition or Run detail', async () => {
+    if (!acceptedSnapshotResult.ok) throw new Error('snapshot_fixture_failed');
+    for (const savedBy of [
+      { kind: 'person', accountId: 'account-1' },
+      { kind: 'person', accountId: 'earlier-editor' },
+      { kind: 'agent', accountId: 'account-1', sessionId: 'author-session' },
+      null,
+    ] as const) {
+      const snapshot = runSnapshot();
+      const accepted = WorkflowAcceptedSnapshotV1Schema.parse({ ...acceptedSnapshotResult.snapshot,
+        source: { kind: 'saved', definitionId: 'def-1', revision: { headerVersion: 1, bodyVersion: 1 }, savedBy } });
+      snapshot.acceptedEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({
+        mode: 'plain', binding: { v: 1, purpose: 'accepted_snapshot', accountId: 'account-1', runId }, acceptedSnapshot: accepted,
+      }));
+      const reads: string[] = [];
+      const owner = createWorkflowAccountRunActionOwner({ ...ownerDeps({ execute: async operation => {
+        reads.push(operation.operation);
+        if (operation.operation !== 'list') throw new Error('unexpected_detail_read');
+        return { runs: [snapshot.run], acceptedEnvelopesByRunId: { [runId]: snapshot.acceptedEnvelope },
+          keyCensusByRunId: { [runId]: snapshot.keyCensus } };
+      } }), definitions: { get: async () => { throw new Error('mutable_source_read'); } } });
+      const page = await owner.execute({ actionId: 'workflow.run.list', input: {}, context: {} });
+      expect(page.runs[0]).toMatchObject(savedBy === null ? { id: runId }
+        : { sourceSavedBy: { kind: savedBy.kind, accountId: savedBy.accountId } });
+      if (savedBy === null) expect(page.runs[0]).not.toHaveProperty('sourceSavedBy');
+      expect(reads).toEqual(['list']);
+    }
+  });
+
   it('keeps membership private facts unrequested and rejects mismatched storage projection modes', async () => {
     const snapshot = runSnapshot();
     let projection: unknown = 'membership';

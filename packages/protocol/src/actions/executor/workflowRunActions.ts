@@ -16,7 +16,7 @@ import type { MachineSetupApplyInputV1 } from '../../machines/managed/actionsV1.
 import type { ActionExecutorContext } from './types.js';
 import type { WorkflowProjectTargetV1 } from '../../workflows/workflowWorkspaceV1.js';
 import { deriveWorkflowReplacementId } from '../../workflows/workflowInvocationIdentityV1.js';
-import { readWorkflowRunDisplayMetadataV1 } from '../../workflows/workflowRunDisplayMetadataV1.js';
+import { readWorkflowRunDisplayMetadataV1, readWorkflowRunSourceSavedByV1 } from '../../workflows/workflowRunDisplayMetadataV1.js';
 import { z as zodMiniCore0 } from 'zod/mini';
 
 import { WorkflowAcceptedSnapshotV1Schema, type WorkflowDefinitionSavedByV1 } from '../../workflows/workflowDefinitionV1.js';
@@ -2358,6 +2358,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
             let projected: WorkflowRunPrivateMetadataV1 | null;
             let where: WorkflowRunSummaryV1['where'] = null;
             let startedBy: WorkflowRunSummaryV1['startedBy'] = null;
+            let sourceSavedBy: WorkflowRunSummaryV1['sourceSavedBy'];
             let stepProgress: WorkflowRunSummaryV1['stepProgress'] = null;
             let resultProvenance: WorkflowProgressEnvelopeV1['resultProvenance'];
             let stepProgressCurrentness = openRootProgress(run.id, rootProgressByRunId[run.id], undefined, run.ownerAccountId).stepProgressCurrentness;
@@ -2448,6 +2449,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
               matchesDestination = args.input.targetSessionId === undefined || targetSessionIds.includes(args.input.targetSessionId);
               if (underSessionIds !== null) matchesUnder ||= targetSessionIds.some(id => underSessionIds.has(id));
               startedBy = accepted.startedBy;
+              sourceSavedBy = readWorkflowRunSourceSavedByV1(accepted) ?? undefined;
               const project = accepted.workspaceTarget.project;
               where = { machineId: project.machineId, directory: project.directory,
                 ...(project.workspaceRefId ? { workspaceRefId: project.workspaceRefId } : {}) };
@@ -2467,7 +2469,10 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
               projected = { kind: 'unavailable', reason: reason.success ? reason.data : 'content_unavailable' };
             }
             if (!matchesResource || !matchesDestination || !matchesUnder || !matchesDiscussion) continue;
-            runs.push({ ...run, origin, where, startedBy, stepProgress, stepProgressCurrentness, heldStep });
+            // Storage/control rows cannot author this private accepted-source fact.
+            const { sourceSavedBy: _unopenedSavedBy, ...publicRun } = run;
+            runs.push({ ...publicRun, origin, where, startedBy, stepProgress, stepProgressCurrentness, heldStep,
+              ...(sourceSavedBy ? { sourceSavedBy } : {}) });
             if (projected) metadataByRunId[run.id] = projected;
           }
           return WorkflowActionOutputSchemasV1[args.actionId].parse({

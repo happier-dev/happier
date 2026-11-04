@@ -1,6 +1,15 @@
 import type { WorkflowRunAcceptedContextV1 } from './actionsV1.js';
 import type { BuiltinWorkflowIdV1 } from './builtins/catalog.js';
-import type { WorkflowDefinitionMetadataV1 } from './workflowDefinitionV1.js';
+import type { WorkflowDefinitionMetadataV1, WorkflowDefinitionSavedByV1 } from './workflowDefinitionV1.js';
+
+/** Information only, from the immutable accepted source; no current-definition lookup. */
+export function readWorkflowRunSourceSavedByV1(context: Readonly<{
+  source: WorkflowRunAcceptedContextV1['source'];
+}> | null | undefined): WorkflowDefinitionSavedByV1 | null {
+  const source = context?.source;
+  const savedBy = source?.kind === 'saved' || source?.kind === 'automation' ? source.savedBy : null;
+  return savedBy ? { kind: savedBy.kind, accountId: savedBy.accountId } : null;
+}
 
 /** Portable names for built-ins started without host-authored display metadata. */
 export const BUILTIN_WORKFLOW_TITLES_V1 = Object.freeze({
