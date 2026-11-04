@@ -1,3 +1,5 @@
+import { isDeepStrictEqual } from 'node:util';
+
 import { logger } from '@/ui/logger'
 import { normalizeSessionMetadataForRead, projectSessionMetadataForWire } from '@happier-dev/protocol';
 import { backoff } from '@/utils/time';
@@ -99,6 +101,12 @@ export async function updateSessionMetadataWithAckResult<TResult>(opts: {
         const current = opts.getMetadata() ?? ({} as Metadata);
         const update = opts.handler(current);
         const updated = update.metadata;
+        const wireMetadata = projectSessionMetadataForWire(updated);
+        // Producers publish only real changes. An E2EE ciphertext differs on every encrypt, so the
+        // server cannot detect an equal re-publish (#832); the writer skips it: no emit, no version.
+        if (isDeepStrictEqual(wireMetadata, projectSessionMetadataForWire(current))) {
+            return update.result;
+        }
         logger.debug('[API] updateMetadata attempting', {
             expectedVersion: opts.getMetadataVersion(),
             hasModeOverride: Boolean((updated as Record<string, unknown> | null)?.acpSessionModeOverrideV1),
@@ -108,8 +116,8 @@ export async function updateSessionMetadataWithAckResult<TResult>(opts: {
         });
         const metadataPayload =
             opts.sessionEncryptionMode === 'plain'
-                ? JSON.stringify(projectSessionMetadataForWire(updated))
-                : encodeBase64(encrypt(opts.encryptionKey, opts.encryptionVariant, projectSessionMetadataForWire(updated)));
+                ? JSON.stringify(wireMetadata)
+                : encodeBase64(encrypt(opts.encryptionKey, opts.encryptionVariant, wireMetadata));
         const answer = await emitSocketWithAck<any>({
             socket: opts.getSocket?.() ?? opts.socket,
             event: 'update-metadata',
