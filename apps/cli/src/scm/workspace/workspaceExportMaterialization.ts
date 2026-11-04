@@ -3,7 +3,8 @@ import { lstat } from 'node:fs/promises';
 import { unlink } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { access, readFile, readdir, realpath, rename, rm, rmdir } from 'node:fs/promises';
-import { basename, dirname, join, parse, resolve } from 'node:path';
+import { basename, dirname, join, parse, relative, resolve } from 'node:path';
+import type { PinnedUnixDirectoryAccess } from '@/utils/fs/unixPathAccess';
 import { z } from 'zod/mini';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 
@@ -13,6 +14,7 @@ import { runWithScmBackendRegistryLease } from '../scmBackendCatalog';
 import { cleanupWorkspaceStaging } from './workspaceExportStaging/cleanupWorkspaceStaging';
 import {
     createWorkspaceStagingRoot,
+    WORKSPACE_TRANSFER_STAGING_ROOT_PREFIX,
     type WorkspaceStagingRoot,
 } from './workspaceExportStaging/createWorkspaceStagingRoot';
 import { promoteStagedWorkspace, type WorkspaceMaterializedEntryAccess } from './workspaceExportStaging/promoteStagedWorkspace';
@@ -255,11 +257,17 @@ async function resolveWorkspaceExportMaterializationTargetPath(params: Readonly<
  * Rollback before the promotion was bound therefore restores the backup, or
  * the absence, without touching a foreign object.
  */
+async function removeMaterializedPath(path: string, parent?: PinnedUnixDirectoryAccess): Promise<void> {
+    if (parent) await parent.remove(relative(parent.path, path));
+    else await rm(path, { recursive: true, force: true });
+}
+
 async function rollbackMaterializedTarget(input: Readonly<{
     targetPath: string;
     previousTargetPath?: string;
     receipt: WorkspaceTargetMaterializationReceiptV1;
     receiptPath?: string;
+    pinnedTargetParent?: PinnedUnixDirectoryAccess;
 }>): Promise<void> {
     const { receipt } = input;
     const currentTargetIdentity = await readObjectIdentityOrAbsent(input.targetPath);
@@ -277,7 +285,7 @@ async function rollbackMaterializedTarget(input: Readonly<{
         await assertObjectIdentity(input.previousTargetPath, receipt.expectedBackupIdentity);
     }
     if (currentTargetIdentity) {
-        await rm(input.targetPath, { recursive: true, force: true });
+        await removeMaterializedPath(input.targetPath, input.pinnedTargetParent);
     }
     if (input.previousTargetPath) {
         await rename(input.previousTargetPath, input.targetPath);
@@ -319,6 +327,7 @@ export async function abortWorkspaceTargetMaterializationAfterFailure(
 
 export async function beginWorkspaceTargetMaterialization(input: Readonly<{
     targetPath: string;
+    pinnedTargetParent?: PinnedUnixDirectoryAccess;
     backupDirectoryPrefix: string;
     /**
      * Bootstrap-owned durable receipt. When supplied, it is written before
@@ -385,7 +394,7 @@ export async function beginWorkspaceTargetMaterialization(input: Readonly<{
             throw materializationRecoveryError('Prepared target identity is unavailable');
         }
         await assertObjectIdentity(input.targetPath, receipt.originalTargetIdentity);
-        await rm(input.targetPath, { recursive: true, force: true });
+        await removeMaterializedPath(input.targetPath, input.pinnedTargetParent);
     }
 
     let settled = false;
@@ -421,7 +430,7 @@ export async function beginWorkspaceTargetMaterialization(input: Readonly<{
                         throw error;
                     });
                 } else {
-                    await rm(previousTargetPath, { recursive: true, force: true });
+                    await removeMaterializedPath(previousTargetPath, input.pinnedTargetParent);
                 }
             }
             receipt = await committedReceipt(input.targetPath, receipt);
@@ -434,6 +443,7 @@ export async function beginWorkspaceTargetMaterialization(input: Readonly<{
                 targetPath: input.targetPath,
                 ...(previousTargetPath ? { previousTargetPath } : {}),
                 receipt,
+                pinnedTargetParent: input.pinnedTargetParent,
                 ...(input.receiptPath ? { receiptPath: input.receiptPath } : {}),
             });
             settled = true;
@@ -669,6 +679,7 @@ export async function materializeWorkspaceExportArtifactsWithScmWorkspace(params
     workspaceExportArtifacts: ScmWorkspaceIntegrationWorkspaceExportArtifacts;
     targetPath: string;
     prepareEntryAccess?: WorkspaceMaterializedEntryAccess;
+    pinnedTargetParent?: PinnedUnixDirectoryAccess;
     /** An admitted release destination is exact and may never fall back to the user's home. */
     admittedTargetRoot?: string;
     conflictPolicy: ScmWorkspaceIntegrationWorkspaceTransferConflictPolicy;
@@ -695,7 +706,7 @@ export async function materializeWorkspaceExportArtifactsWithScmWorkspace(params
             }));
     }
 
-    const targetPath = params.admittedTargetRoot ? resolve(params.targetPath) : await resolveWorkspaceExportMaterializationTargetPath({
+    const targetPath = params.pinnedTargetParent ? params.targetPath : params.admittedTargetRoot ? resolve(params.targetPath) : await resolveWorkspaceExportMaterializationTargetPath({
         targetPath: params.targetPath,
         conflictPolicy: params.conflictPolicy,
         naming: params.naming,
@@ -716,9 +727,10 @@ export async function materializeWorkspaceExportArtifactsWithScmWorkspace(params
         registry: params.registry,
     });
 
+    const stagingId = `${params.naming.stagingIdPrefix}-${randomUUID()}`;
+    const materialize = async (pinnedRoot?: PinnedUnixDirectoryAccess): Promise<WorkspaceExportMaterializationResult> => {
     const stagingRoot = await createWorkspaceStagingRoot({
-        parentDirectory: dirname(targetPath),
-        stagingId: `${params.naming.stagingIdPrefix}-${randomUUID()}`,
+        parentDirectory: dirname(targetPath), stagingId, pinnedRoot,
     });
 
     let targetMaterialization: Awaited<ReturnType<typeof beginWorkspaceTargetMaterialization>>
@@ -763,6 +775,7 @@ export async function materializeWorkspaceExportArtifactsWithScmWorkspace(params
             ? await beginWorkspaceTargetMaterializationRetainingFile({ targetPath, retained: params.retainedTargetFile })
             : await beginWorkspaceTargetMaterialization({
             targetPath,
+            pinnedTargetParent: params.pinnedTargetParent,
             backupDirectoryPrefix: params.naming.backupDirectoryPrefix,
             ...(params.materializationReceiptPath ? { receiptPath: params.materializationReceiptPath } : {}),
             ...(params.originalTargetExists === undefined ? {} : { originalTargetExists: params.originalTargetExists }),
@@ -774,6 +787,7 @@ export async function materializeWorkspaceExportArtifactsWithScmWorkspace(params
             expectedManifest: params.workspaceExportArtifacts.manifest,
             scmRegistry: params.registry,
             prepareEntryAccess: params.prepareEntryAccess,
+            pinnedRoot,
             ...('existingTarget' in targetMaterialization ? { existingTarget: targetMaterialization.existingTarget } : {}),
         });
         await targetMaterialization.custody.bindPromotedTarget();
@@ -790,16 +804,25 @@ export async function materializeWorkspaceExportArtifactsWithScmWorkspace(params
     } catch (error) {
         const rollback = await abortWorkspaceTargetMaterializationAfterFailure(targetMaterialization?.custody, error)
             .then(() => undefined, (rollbackFailure: unknown) => rollbackFailure);
-        await cleanupWorkspaceStaging({ rootDirectory: stagingRoot.rootDirectory }).catch(() => undefined);
+        if (!pinnedRoot) await cleanupWorkspaceStaging({ rootDirectory: stagingRoot.rootDirectory }).catch(() => undefined);
         throw rollback ?? error;
     }
 
-    await cleanupWorkspaceStaging({ rootDirectory: stagingRoot.rootDirectory }).catch(() => undefined);
+    if (!pinnedRoot) await cleanupWorkspaceStaging({ rootDirectory: stagingRoot.rootDirectory }).catch(() => undefined);
 
     return {
         targetPath,
         custody: targetMaterialization!.custody,
     };
+    };
+    if (params.pinnedTargetParent) {
+        const stagingName = `${WORKSPACE_TRANSFER_STAGING_ROOT_PREFIX}${stagingId}`;
+        return params.pinnedTargetParent.withDirectory(stagingName, { createIfMissing: true }, async pinnedRoot => {
+            try { return await materialize(pinnedRoot); }
+            finally { await params.pinnedTargetParent!.remove(stagingName); }
+        });
+    }
+    return materialize();
 }
 
 async function beginWorkspaceTargetMaterializationRetainingFile(input: Readonly<{

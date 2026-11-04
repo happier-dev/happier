@@ -1,8 +1,9 @@
 import { access, mkdir, rename } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 
 import type { WorkspaceManifest } from '@happier-dev/protocol';
 import type { ScmBackendRegistry } from '@/scm/registry';
+import type { PinnedUnixDirectoryAccess } from '@/utils/fs/unixPathAccess';
 
 import { resolveWorkspaceRelativePath } from '../workspaceExportPackaging/resolveWorkspaceRelativePath';
 import { applyWorkspaceMetadata } from './applyWorkspaceMetadata';
@@ -10,7 +11,9 @@ import { readWorkspaceStagingRootMarker, type WorkspaceStagingRoot } from './cre
 import { verifyStagedWorkspace, type VerifyStagedWorkspaceResult } from './verifyStagedWorkspace';
 
 type WorkspaceFileManifestEntry = Extract<WorkspaceManifest['entries'][number], { kind: 'file' }>;
-export type WorkspaceMaterializedEntryAccess = (entry: Readonly<{ path: string; directory: boolean }>) => Promise<void>;
+export type WorkspaceMaterializedEntryAccess = (entry: Readonly<{
+    path: string; directory: boolean; pinnedRoot?: PinnedUnixDirectoryAccess;
+}>) => Promise<void>;
 
 function resolveWorkspaceEntryPath(params: Readonly<{
     workspaceRoot: string;
@@ -31,19 +34,29 @@ async function applyPromotedWorkspaceMetadata(params: Readonly<{
     workspaceDirectory: string;
     expectedManifest: WorkspaceManifest;
     prepareEntryAccess?: WorkspaceMaterializedEntryAccess;
+    pinnedRoot?: PinnedUnixDirectoryAccess;
 }>): Promise<void> {
     for (const entry of params.expectedManifest.entries) {
         if (entry.kind === 'symlink') continue;
         const entryPath = resolveWorkspaceEntryPath({ workspaceRoot: params.workspaceDirectory, relativePath: entry.relativePath });
-        if (entry.kind === 'file') await applyWorkspaceMetadata({
+        if (entry.kind === 'file' && params.pinnedRoot) {
+            await params.pinnedRoot.chmod(relative(params.pinnedRoot.path, entryPath), entry.executable ? 0o755 : 0o644);
+        } else if (entry.kind === 'file') await applyWorkspaceMetadata({
             entryKind: 'file',
             entryPath,
             mode: entry.executable ? 0o755 : 0o644,
         });
-        // Apply exact native access after chmod, which otherwise masks ACL grants.
-        await params.prepareEntryAccess?.({ path: entryPath, directory: entry.kind === 'directory' });
     }
-    await params.prepareEntryAccess?.({ path: params.workspaceDirectory, directory: true });
+    // Finish every write and metadata effect while the staging root is private.
+    // Grants happen only afterwards, and its traversal grant is always last.
+    for (const entry of params.expectedManifest.entries) {
+        if (entry.kind === 'symlink') continue;
+        await params.prepareEntryAccess?.({
+            path: resolveWorkspaceEntryPath({ workspaceRoot: params.workspaceDirectory, relativePath: entry.relativePath }),
+            directory: entry.kind === 'directory', pinnedRoot: params.pinnedRoot,
+        });
+    }
+    await params.prepareEntryAccess?.({ path: params.workspaceDirectory, directory: true, pinnedRoot: params.pinnedRoot });
 }
 
 export type PromoteStagedWorkspaceResult = Readonly<{
@@ -84,6 +97,7 @@ export async function promoteStagedWorkspace(params: Readonly<{
     expectedManifest: WorkspaceManifest;
     scmRegistry?: ScmBackendRegistry;
     prepareEntryAccess?: WorkspaceMaterializedEntryAccess;
+    pinnedRoot?: PinnedUnixDirectoryAccess;
 }>): Promise<PromoteStagedWorkspaceResult> {
     await assertVerifiedStagingRootMarker(params.stagingRoot);
     await assertTargetWorkspaceDoesNotExist(params.targetWorkspaceDirectory);
@@ -103,6 +117,7 @@ export async function promoteStagedWorkspace(params: Readonly<{
         workspaceDirectory: params.stagingRoot.workspaceDirectory,
         expectedManifest: params.expectedManifest,
         prepareEntryAccess: params.prepareEntryAccess,
+        pinnedRoot: params.pinnedRoot,
     });
 
     await mkdir(dirname(params.targetWorkspaceDirectory), { recursive: true });

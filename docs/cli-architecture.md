@@ -5178,6 +5178,13 @@ removal use the same owner. Old records keep their original placement.
 
 The daemon creates isolated payload directories and grants only the executing
 UID the access needed to work there, including inherited access for its files.
+On Linux, the filesystem owner pins directory components without following
+symlinks before creating or repairing payloads, applies modes and exact-UID ACLs
+to held descriptors, and removes trees relative to held parent directories.
+Seed staging and promotion retain the same pinned directory custody. An Agent
+renaming a member or shared-workspace directory therefore cannot redirect these
+effects onto the Machine owner's files. ACL targets must be daemon-owned;
+regular-file targets must have one hard link.
 It does not grant access to daemon-private ancestors or the ownership inventory.
 Ordinary POSIX root/allocation permissions remain 0700. Windows protection uses
 the existing owner + LOCAL SYSTEM ACL boundary in `protectedLocalState`;

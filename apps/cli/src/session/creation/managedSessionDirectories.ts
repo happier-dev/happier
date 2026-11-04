@@ -20,7 +20,7 @@ import { canonicalAbsolutePathsEqual, isCanonicalAbsolutePathInsideRoot } from '
 import { isTerminalHostPhysicallyRetiredStopResult } from '@/daemon/sessions/stopSessionContract';
 import { SessionCreationCorrespondenceConflictError } from '@/api/session/sessionCreationCorrespondenceConflictError';
 import { renameStoragePathNoReplace } from '@/storage/trash/renameStoragePath';
-import { grantExactUidPathAccess } from '@/utils/fs/unixPathAccess';
+import { ensureExactUidDirectoryAccess, grantExactUidPathAccess, removeUnixPathTree, withPinnedUnixDirectory } from '@/utils/fs/unixPathAccess';
 import type { WorkspaceMaterializedEntryAccess } from '@/scm/workspace/workspaceExportStaging/promoteStagedWorkspace';
 
 const RecordSchema = z.strictObject({
@@ -166,6 +166,10 @@ export function createManagedSessionDirectories(input: Readonly<{
     }
   };
   const protectPayload = async (target: ManagedSessionDirectoryAllocation, placement?: ManagedSessionDirectoryPayloadPlacement, createIfMissing = true) => {
+    if (placement && platform === 'linux') {
+      await ensureExactUidDirectoryAccess({ path: target.directory, uid: placement.agentUid, createIfMissing });
+      return;
+    }
     await ensureProtectedLocalStateDirectory(target.directory, { ...protection, createIfMissing });
     if (placement) await grantExactUidPathAccess({ path: target.directory, uid: placement.agentUid,
       access: 'rwx', directory: true, inherit: true });
@@ -174,8 +178,9 @@ export function createManagedSessionDirectories(input: Readonly<{
     const record = await readRecord(allocationId);
     if (!record) throw conflict();
     const uid = record.payloadPlacement?.agentUid;
-    return uid === undefined ? undefined : async ({ path, directory }) => {
-      await grantExactUidPathAccess({ path, uid, directory, access: 'owner', preservePermissions: true,
+    return uid === undefined ? undefined : async ({ path, directory, pinnedRoot }) => {
+      const grant = pinnedRoot ? pinnedRoot.grantExactUidPathAccess : grantExactUidPathAccess;
+      await grant({ path: pinnedRoot ? paths.relative(pinnedRoot.path, path) : path, uid, directory, access: 'owner', preservePermissions: true,
         ...(directory ? { inherit: true } : {}) });
     };
   };
@@ -300,8 +305,10 @@ export function createManagedSessionDirectories(input: Readonly<{
       } else await assertContained(target, record.payloadPlacement);
       // Node owns transient filesystem retries; prolonged locks remain durable pending removals.
       await options.beforeEffect?.();
-      if (options.removeDirectory) await options.removeDirectory();
-      else await rm(record.inTrash?.payloadPath ?? target.directory, { recursive: true, force: true, maxRetries: 1 });
+      const payloadPath = record.inTrash?.payloadPath ?? target.directory;
+      if (record.payloadPlacement && platform === 'linux') await removeUnixPathTree(payloadPath);
+      else if (options.removeDirectory) await options.removeDirectory();
+      else await rm(payloadPath, { recursive: true, force: true, maxRetries: 1 });
       await removeProtectedLocalStateFile(recordPath(allocationId), protection);
     } catch (error) {
       // Storage has its own per-item receipt/re-check path; a rejected approval
@@ -402,6 +409,12 @@ export function createManagedSessionDirectories(input: Readonly<{
     catch (error) { if (absent(error)) return; throw error; }
     throw new ManagedSessionDirectoryTrashError('restore_occupied');
   };
+  const movePayload = async (source: string, destination: string, placement: ManagedSessionDirectoryPayloadPlacement | undefined) => {
+    if (!placement || platform !== 'linux') return rename(source, destination);
+    return withPinnedUnixDirectory(paths.dirname(source), sourceParent =>
+      withPinnedUnixDirectory(paths.dirname(destination), destinationParent =>
+        rename(paths.join(sourceParent.path, paths.basename(source)), paths.join(destinationParent.path, paths.basename(destination)))));
+  };
   const retireToTrash = async ({ allocationId, payloadPath, beforeEffect }: Readonly<{
     allocationId: string; payloadPath: string; beforeEffect?: () => Promise<void>;
   }>) => {
@@ -424,9 +437,9 @@ export function createManagedSessionDirectories(input: Readonly<{
     if (record.inTrash) throw new ManagedSessionDirectoryTrashError('owner_unavailable');
     await requireAbsent(payloadPath);
     await beforeEffect?.();
-    await rename(target.directory, payloadPath);
+    await movePayload(target.directory, payloadPath, record.payloadPlacement);
     try { await writeRecord(allocationId, { ...record, inTrash: { payloadPath } }); }
-    catch (error) { await rename(payloadPath, target.directory); throw error; }
+    catch (error) { await movePayload(payloadPath, target.directory, record.payloadPlacement); throw error; }
   };
   const reinstateFromTrash = async ({ allocationId, payloadPath, restorePath, beforeEffect }: Readonly<{
     allocationId: string; payloadPath: string; restorePath: string; beforeEffect?: () => Promise<void>;
@@ -455,9 +468,10 @@ export function createManagedSessionDirectories(input: Readonly<{
     }
     await requireAbsent(target.directory);
     await beforeEffect?.();
+    // The native no-replace owner already pins both parents before renameat2.
     await renameStoragePathNoReplace(payloadPath, target.directory);
     try { await writeRecord(allocationId, activeRecord); }
-    catch (error) { await rename(target.directory, payloadPath); throw error; }
+    catch (error) { await movePayload(target.directory, payloadPath, record.payloadPlacement); throw error; }
   };
   const discardFromTrash = async ({ allocationId, payloadPath, removePayload, beforeEffect }: Readonly<{
     allocationId: string; payloadPath: string; removePayload: () => Promise<void>; beforeEffect?: () => Promise<void>;
@@ -469,7 +483,10 @@ export function createManagedSessionDirectories(input: Readonly<{
     const info = await lstat(payloadPath).catch(error => { if (absent(error)) return null; throw error; });
     if (info && (!record || !info.isDirectory() || info.isSymbolicLink())) throw new ManagedSessionDirectoryTrashError('owner_unavailable');
     await beforeEffect?.();
-    if (info) await removePayload();
+    if (info) {
+      if (record?.payloadPlacement && platform === 'linux') await removeUnixPathTree(payloadPath);
+      else await removePayload();
+    }
     await requireAbsent(payloadPath);
     // Payload deletion commits removal; finish its owner record without
     // rechecking the identity of a path that has already been removed.

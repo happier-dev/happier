@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { z } from 'zod/mini';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
+import type { PinnedUnixDirectoryAccess } from '@/utils/fs/unixPathAccess';
 
 export const WORKSPACE_TRANSFER_STAGING_ROOT_PREFIX = 'workspace-transfer-staging-';
 const stagingMarkerFileName = 'workspace-staging-root.json';
@@ -37,8 +38,9 @@ export function resolveWorkspaceStagingMarkerFilePath(params: Readonly<{ rootDir
 export function createWorkspaceStagingDescriptor(params: Readonly<{
     parentDirectory: string;
     stagingId: string;
+    pinnedRoot?: PinnedUnixDirectoryAccess;
 }>): WorkspaceStagingRoot {
-    const rootDirectory = resolveWorkspaceStagingRootDirectory(params);
+    const rootDirectory = params.pinnedRoot?.path ?? resolveWorkspaceStagingRootDirectory(params);
 
     return {
         stagingId: params.stagingId,
@@ -78,6 +80,7 @@ export async function readWorkspaceStagingRootMarker(params: Readonly<{ rootDire
 export async function createWorkspaceStagingRoot(params: Readonly<{
     parentDirectory: string;
     stagingId: string;
+    pinnedRoot?: PinnedUnixDirectoryAccess;
 }>): Promise<WorkspaceStagingRoot> {
     const stagingRoot = createWorkspaceStagingDescriptor(params);
 

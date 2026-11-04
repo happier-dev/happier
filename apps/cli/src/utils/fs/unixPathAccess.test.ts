@@ -5,15 +5,18 @@ import { dirname, join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createSessionNativeDirectory, grantExactUidPathAccess } from './unixPathAccess';
 
+const inodeKey = (path: string) => { const entry = statSync(path); return `${entry.dev}:${entry.ino}`; };
 const acl = vi.hoisted(() => new Map<string, Map<string, string>>());
 // Model only the native ACL utility boundary; placement and cleanup use real fs.
 vi.mock('node:child_process', () => ({ execFile(command: string, args: string[], _options: unknown,
     done: (error: Error | null, stdout: string) => void) {
     const path = args.at(-1)!;
-    const mode = statSync(path).mode;
+    const observed = statSync(path);
+    const mode = observed.mode;
+    const key = `${observed.dev}:${observed.ino}`;
     const access = (bits: number) => `${bits & 4 ? 'r' : '-'}${bits & 2 ? 'w' : '-'}${bits & 1 ? 'x' : '-'}`;
-    const entries = acl.get(path) ?? new Map([['user:', access((mode >> 6) & 7)], ['group:', access((mode >> 3) & 7)], ['other:', access(mode & 7)]]);
-    acl.set(path, entries);
+    const entries = acl.get(key) ?? new Map([['user:', access((mode >> 6) & 7)], ['group:', access((mode >> 3) & 7)], ['other:', access(mode & 7)]]);
+    acl.set(key, entries);
     if (command === 'setfacl') {
         if (args[0] === '-b') for (const key of entries.keys()) if (!['user:', 'group:', 'other:'].includes(key)) entries.delete(key);
         if (args[0] === '-k') for (const key of entries.keys()) if (key.startsWith('default:')) entries.delete(key);
@@ -37,9 +40,9 @@ it.skipIf(process.platform !== 'linux').each([994, 996])('places UID %s transpor
     const directory = await createSessionNativeDirectory({ uid, access: 'rwx', prefix: 'happier-ipc-' });
     try {
         expect(dirname(directory.path)).toBe('/tmp');
-        expect(acl.get(directory.path)?.get(`user:${uid}`)).toBe('rwx');
-        expect([...acl.get(directory.path)!.keys()].filter(key => key.startsWith('user:'))).toEqual(['user:', `user:${uid}`]);
-        expect([...acl.get(directory.path)!.keys()].some(key => key.startsWith('default:'))).toBe(false);
+        expect(acl.get(inodeKey(directory.path))?.get(`user:${uid}`)).toBe('rwx');
+        expect([...acl.get(inodeKey(directory.path))!.keys()].filter(key => key.startsWith('user:'))).toEqual(['user:', `user:${uid}`]);
+        expect([...acl.get(inodeKey(directory.path))!.keys()].some(key => key.startsWith('default:'))).toBe(false);
         expect((await stat(privateRoot)).mode & 0o777).toBe(0o700);
     } finally {
         await directory.dispose();
@@ -52,7 +55,7 @@ it.skipIf(process.platform !== 'linux')('inherits only daemon and selected membe
     const path = await mkdtemp(join(tmpdir(), 'managed-member-leaf-'));
     try {
         await grantExactUidPathAccess({ path, uid: 994, access: 'rwx', directory: true, inherit: true });
-        expect(Object.fromEntries(acl.get(path)!)).toMatchObject({
+        expect(Object.fromEntries(acl.get(inodeKey(path))!)).toMatchObject({
             'default:user:': 'rwx', 'default:user:994': 'rwx',
             [`default:user:${process.getuid!()}`]: 'rwx',
             'default:group:': '---', 'default:mask:': 'rwx', 'default:other:': '---',
@@ -68,7 +71,7 @@ it.skipIf(process.platform !== 'linux').each([0o400, 0o500, 0o640])('grants sele
     try {
         await grantExactUidPathAccess({ path, uid: 994, access: 'owner', directory: false, preservePermissions: true });
         const access = (bits: number) => `${bits & 4 ? 'r' : '-'}${bits & 2 ? 'w' : '-'}${bits & 1 ? 'x' : '-'}`;
-        expect(Object.fromEntries(acl.get(path)!)).toEqual({
+        expect(Object.fromEntries(acl.get(inodeKey(path))!)).toEqual({
             'user:': access((mode >> 6) & 7), 'user:994': access((mode >> 6) & 7),
             'group:': access((mode >> 3) & 7), 'mask:': access(((mode >> 6) | (mode >> 3)) & 7), 'other:': access(mode & 7),
         });

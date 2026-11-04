@@ -34,14 +34,14 @@ async function allocationAdapter(data: JsonValue, deps: StorageCategoryCatalogDe
         discard: async ({ payloadPath, beforeEffect }) => {
             if (payloadPath) await owner.discardFromTrash!({ allocationId, payloadPath, beforeEffect, removePayload: async () => {
                 const expectedIdentity = await readStoragePathIdentity(payloadPath);
-                await removeStoragePath(payloadPath, { allowedRoot: dirname(payloadPath), expectedIdentity, beforeEffect });
+                await removeStoragePath(payloadPath, { allowedRoot: dirname(payloadPath), expectedIdentity });
             } });
             else {
                 if (!record) throw new StorageCategoryAdapterError('owner_unavailable');
-                const directory = join(deps.activeServerDir, 'session-directories', allocationId);
-                await owner.removeAllocation!(allocationId, { throwOnFailure: true, removeDirectory: async () => {
+                const directory = record.directory;
+                await owner.removeAllocation!(allocationId, { throwOnFailure: true, beforeEffect, removeDirectory: async () => {
                     const expectedIdentity = await readStoragePathIdentity(directory);
-                    await removeStoragePath(directory, { allowedRoot: join(deps.activeServerDir, 'session-directories'), expectedIdentity, beforeEffect });
+                    await removeStoragePath(directory, { allowedRoot: dirname(directory), expectedIdentity });
                 } });
             }
         },

@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { PinnedUnixDirectoryAccess } from '@/utils/fs/unixPathAccess';
 
 import { WorkspaceManifestSchema } from '@happier-dev/protocol/workspaces/manifestSchema';
 import type { WorkspaceContentPolicyV1 } from '@happier-dev/protocol';
@@ -103,6 +104,7 @@ export async function materializeLocalWorkspaceSyncSeed(input: Readonly<{
   sourcePath: string;
   targetPath: string;
   prepareEntryAccess?: WorkspaceMaterializedEntryAccess;
+  pinnedTargetParent?: PinnedUnixDirectoryAccess;
   workspaceTransfer: ScmWorkspaceIntegrationWorkspaceTransferRequestInput;
   materializationReceiptPath?: string;
   originalTargetExists?: boolean;
@@ -115,6 +117,7 @@ export async function materializeLocalWorkspaceSyncSeed(input: Readonly<{
       workspaceExportArtifacts: built.workspaceExportArtifacts,
       targetPath: input.targetPath,
       prepareEntryAccess: input.prepareEntryAccess,
+      pinnedTargetParent: input.pinnedTargetParent,
       conflictPolicy: 'replace_existing',
       blobProvider: built.blobProvider ?? { getBlobFilePath: () => undefined },
       naming: WORKSPACE_SYNC_SEED_MATERIALIZATION_NAMING,

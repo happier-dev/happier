@@ -4,6 +4,8 @@ import type {
   TransferEndpointCandidate,
 } from '@happier-dev/protocol';
 import { copyFile } from 'node:fs/promises';
+import { basename, dirname, join } from 'node:path';
+import { withPinnedUnixDirectory, type PinnedUnixDirectoryAccess } from '@/utils/fs/unixPathAccess';
 import { materializeWorkspaceSyncSeedExport } from '@/workspaces/sync/workspaceSyncSeedTransfer';
 import { materializeWorkspaceExportArtifactsWithScmWorkspace } from '@/scm/workspace/workspaceExportMaterialization';
 import { ensureProtectedLocalStateDirectory } from '@/utils/fs/protectedLocalState';
@@ -86,7 +88,9 @@ export async function materializePrepareManagedWorkspaceSeed(params: Readonly<{
   const publication = params.request.handoffMetadataV2?.workspaceSeedTransferPublication;
   const transferId = buildSessionHandoffWorkspaceSeedTransferId(params.request.handoffId);
   if (!publication || publication.transferId !== transferId) throw new Error('Managed handoff workspace seed publication is unavailable');
-  const custody = await materializeWorkspaceSyncSeedExport({ operationId: transferId, targetPath: params.targetPath,
+  const materialize = async (pinnedTargetParent?: PinnedUnixDirectoryAccess) => {
+  const targetPath = pinnedTargetParent ? join(pinnedTargetParent.path, basename(params.targetPath)) : params.targetPath;
+  const custody = await materializeWorkspaceSyncSeedExport({ operationId: transferId, targetPath,
     requestPayload: async (request) => {
       await params.assertCanContinue();
       const expectedSizeBytes = request.transferId === transferId ? publication.sizeBytes : request.expectedSizeBytes;
@@ -132,15 +136,20 @@ export async function materializePrepareManagedWorkspaceSeed(params: Readonly<{
       await params.assertCanContinue();
     },
     materializeWorkspaceExportArtifacts: async (request) => await materializeWorkspaceExportArtifactsWithScmWorkspace({
-      ...request, assertCanContinue: params.assertCanContinue, prepareEntryAccess: params.prepareEntryAccess,
+      ...request, assertCanContinue: params.assertCanContinue, prepareEntryAccess: params.prepareEntryAccess, pinnedTargetParent,
     }),
   });
   try {
     await params.assertCanContinue();
     await custody.bindPromotedTarget();
-    await ensureProtectedLocalStateDirectory(params.targetPath, { authority: 'owned' });
+    if (pinnedTargetParent) await pinnedTargetParent.chmod(basename(params.targetPath), 0o700);
+    else await ensureProtectedLocalStateDirectory(params.targetPath, { authority: 'owned' });
     await custody.commit();
   } catch (error) { await custody.abort(); throw error; }
+  };
+  if (params.prepareEntryAccess && process.platform === 'linux') {
+    await withPinnedUnixDirectory(dirname(params.targetPath), materialize);
+  } else await materialize();
 }
 
 export function isSessionHandoffDirectPeerProtocolError(error: unknown): boolean {
