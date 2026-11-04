@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -11,6 +11,65 @@ import { spawnDetachedTestProcess } from './testkit/core/spawn_test_process.mjs'
 import { writeStubHappierCliFiles } from './testkit/core/stub_happier_cli_files.mjs';
 import { resolvePreferredStackDaemonStatePaths } from './utils/auth/credentials_paths.mjs';
 import { recordStackRuntimeStart } from './utils/stack/runtime_state.mjs';
+
+for (const liveness of ['retired', 'alive', 'inconclusive']) {
+  test(`stopLocalDaemon with an unloadable source bundle requires proven PID absence (${liveness === 'alive' ? 'alive reused PID' : liveness})`, async (t) => {
+    const tmp = await mkdtemp(join(tmpdir(), 'hstack-stop-unloadable-source-'));
+    let daemonPid = null;
+    try {
+      const cliHomeDir = join(tmp, 'cli-home');
+      const internalServerUrl = 'http://127.0.0.1:3005';
+      const stackName = 'unloadable-source-stop';
+      // A foreign owner must survive even if its PID remains in our old publication.
+      daemonPid = await spawnDaemonLikeProcess({ cliHomeDir,
+        internalServerUrl, stackName: liveness === 'alive' ? `${stackName}-peer` : stackName });
+      const entrypoint = join(tmp, 'source-bundle.mjs');
+      await writeFile(entrypoint, "import './dependency-no-longer-installed.mjs';\n");
+      const runtimeStatePath = join(tmp, 'stack.runtime.json');
+      await recordStackRuntimeStart(runtimeStatePath, { stackName, ownerPid: process.pid,
+        sourceRuntimeLaunch: { entrypoint, cliDir: tmp, env: {} },
+        processes: { daemonPid } });
+      if (liveness === 'alive') {
+        // Model a reused retained PID. Windows proves ownership by incarnation,
+        // while POSIX can also reject the foreign stack's environment markers.
+        const retained = JSON.parse(await readFile(runtimeStatePath, 'utf8'));
+        retained.processInstances = { ...retained.processInstances,
+          processes: { ...retained.processInstances?.processes,
+            daemonPid: { pid: daemonPid, fingerprint: 'different-process-incarnation' } } };
+        await writeFile(runtimeStatePath, JSON.stringify(retained));
+      }
+      const { statePath } = resolvePreferredStackDaemonStatePaths({ cliHomeDir, serverUrl: internalServerUrl, env: {} });
+      await mkdir(dirname(statePath), { recursive: true });
+      await writeFile(statePath, JSON.stringify({ pid: daemonPid, httpPort: 0 }));
+      // Only the OS signal boundary is replaced; all lifecycle and identity logic stays real.
+      const kill = process.kill.bind(process);
+      if (liveness === 'inconclusive') {
+        t.mock.method(process, 'kill', (pid, signal) => {
+          if (pid === daemonPid && signal === 0) throw Object.assign(new Error('signal probe unavailable'), { code: 'EIO' });
+          return kill(pid, signal);
+        });
+      }
+      const stop = () => stopLocalDaemon({ cliBin: entrypoint, cliHomeDir, internalServerUrl,
+        runtimeStatePath, stackName,
+        env: { ...process.env, HAPPIER_STACK_REPO_DIR: '', HAPPIER_STACK_STACK: stackName } });
+      if (liveness === 'alive') {
+        await stop();
+        assert.doesNotThrow(() => kill(daemonPid, 0), 'a replacement process survives retirement of the recorded daemon');
+      } else if (liveness === 'retired') {
+        await stop();
+        assert.throws(() => kill(daemonPid, 0), { code: 'ESRCH' });
+        daemonPid = null;
+      } else {
+        await assert.rejects(stop, { code: 'daemon_stop_incomplete' });
+        assert.doesNotThrow(() => kill(daemonPid, 0));
+      }
+    } finally {
+      t.mock.restoreAll();
+      if (daemonPid) { try { process.kill(daemonPid, 'SIGKILL'); } catch {} }
+      await rm(tmp, { recursive: true, force: true });
+    }
+  });
+}
 
 test('stopLocalDaemon retires unpublished starting generations only for the exact stack home', async () => {
   const tmp = await mkdtemp(join(tmpdir(), 'hstack-stop-unpublished-daemon-'));
@@ -178,41 +237,51 @@ async function spawnDaemonLikeProcess({ cliHomeDir, internalServerUrl, stackName
 
 test('stopLocalDaemon skips stop when expectedPid does not match current daemon state pid', async () => {
   const tmp = await mkdtemp(join(tmpdir(), 'hstack-stop-daemon-expected-pid-'));
+  let daemonPid = null;
   try {
     const cliDir = join(tmp, 'apps', 'cli');
     const cliHomeDir = join(tmp, 'cli-home');
     const markerPath = join(tmp, 'marker.txt');
     const cliBin = await writeStubHappyCli({ cliDir });
+    const stackName = 'expected-pid-stop';
     const daemonEnv = {
       ...process.env,
       // This fixture owns its CLI checkout; do not inherit the unit runner's real repo override.
       HAPPIER_STACK_REPO_DIR: '',
+      HAPPIER_STACK_STACK: stackName,
       MARKER_PATH: markerPath,
     };
 
     const internalServerUrl = 'http://127.0.0.1:3005';
+    daemonPid = await spawnDaemonLikeProcess({ cliHomeDir, internalServerUrl, stackName });
     const { statePath } = resolvePreferredStackDaemonStatePaths({ cliHomeDir, serverUrl: internalServerUrl, env: {} });
     await mkdir(dirname(statePath), { recursive: true });
-    await writeFile(statePath, JSON.stringify({ pid: 222, httpPort: 0 }) + '\n', 'utf-8');
+    await writeFile(statePath, JSON.stringify({ pid: daemonPid, httpPort: 0 }) + '\n', 'utf-8');
 
     await stopLocalDaemon({
       cliBin,
       cliHomeDir,
       internalServerUrl,
-      expectedPid: 111,
+      stackName,
+      expectedPid: process.pid,
       env: daemonEnv,
     });
     assert.equal(existsSync(markerPath), false);
+    assert.doesNotThrow(() => process.kill(daemonPid, 0));
 
     await stopLocalDaemon({
       cliBin,
       cliHomeDir,
       internalServerUrl,
-      expectedPid: 222,
+      stackName,
+      expectedPid: daemonPid,
       env: daemonEnv,
     });
     assert.equal(existsSync(markerPath), true);
+    assert.throws(() => process.kill(daemonPid, 0), { code: 'ESRCH' });
+    daemonPid = null;
   } finally {
+    if (daemonPid) { try { process.kill(daemonPid, 'SIGKILL'); } catch {} }
     await rm(tmp, { recursive: true, force: true });
   }
 });

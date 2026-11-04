@@ -51,8 +51,8 @@ import {
   recordStackRuntimeUpdate,
 } from './utils/stack/runtime_state.mjs';
 import { applyCliRuntimeLaunchProvenanceEnv, resolveCliRuntimeLaunchSpec } from './runtime/launch/resolveCliRuntimeLaunchSpec.mjs';
-import { killPidOwnedByStack, listPidsWithEnvNeedles } from './utils/proc/ownership.mjs';
-import { isPidAlive } from './utils/proc/pids.mjs';
+import { isRecordedStackProcessRetired, killPidOwnedByStack, listPidsWithEnvNeedles } from './utils/proc/ownership.mjs';
+import { isPidAlive, observePidLiveness } from './utils/proc/pids.mjs';
 import { readProcessInstanceFingerprintSync } from '@happier-dev/cli-common/processInstance';
 import { createServerUrlComparableKey } from '@happier-dev/protocol/server/urls/serverUrlComparableKey';
 import {
@@ -1847,9 +1847,11 @@ export async function stopLocalDaemon({
 
   // A CLI stop can remove/replace its state publication. Capture every retained
   // daemon before invoking it so disappearance never becomes proof of death.
-  const { lockPath } = resolvePreferredStackDaemonStatePaths({ cliHomeDir, serverUrl: internalServerUrl, env: daemonEnv });
+  const { lockPath, statePath } = resolvePreferredStackDaemonStatePaths({ cliHomeDir, serverUrl: internalServerUrl, env: daemonEnv });
   let retainedLock = null;
+  let retainedState = null;
   try { retainedLock = parseDaemonLockSnapshot(readFileSync(lockPath, 'utf-8')); } catch {}
+  try { retainedState = JSON.parse(readFileSync(statePath, 'utf-8')); } catch {}
   // Starting daemons and their launch wrappers can be live before publishing
   // state or a lock. Discover by exact stack/home/kind, never by bundle path,
   // server port or an inferred PID. Guarded shutdown must not sweep a successor.
@@ -1908,20 +1910,33 @@ export async function stopLocalDaemon({
   }
 
   for (const pid of retainedPids) {
-    if (!isPidAlive(pid)) continue;
-    await killDaemonPidSafely({ pid, cliHomeDir, serverUrl: internalServerUrl, env: daemonEnv,
-      sourcePath: runtimeStatePath, sourceLabel: 'retained daemon owner',
+    const recordedIdentity = {
       processInstanceFingerprint: getStackRuntimeProcessInstanceFingerprint(runtimeState, 'daemonPid', pid)
         ?? getStackRuntimeProcessInstanceFingerprint(runtimeState, 'daemonPids', pid)
         ?? (retainedLock?.pid === pid ? retainedLock.record?.processInstanceFingerprint : null)
-        ?? unpublishedFingerprints.get(pid) });
-    if (isPidAlive(pid)) {
+        ?? unpublishedFingerprints.get(pid),
+      recordedStartedAt: Number(retainedState?.pid) === pid ? retainedState.startedAt
+        : getStackRuntimeProcessEntries(runtimeState).some(entry => entry.pid === pid
+          && (entry.key === 'daemonPid' || entry.key === 'daemonPids')) ? runtimeState?.startedAt : null,
+    };
+    if (isRecordedStackProcessRetired(pid, recordedIdentity)) continue;
+    const liveness = observePidLiveness(pid);
+    if (liveness.status === 'dead') continue;
+    if (liveness.status === 'alive') {
+      await killDaemonPidSafely({ pid, cliHomeDir, serverUrl: internalServerUrl, env: daemonEnv,
+        sourcePath: runtimeStatePath, sourceLabel: 'retained daemon owner',
+        processInstanceFingerprint: recordedIdentity.processInstanceFingerprint });
+    }
+    if (!isRecordedStackProcessRetired(pid, recordedIdentity)) {
       const error = new Error(`[local] daemon retirement is incomplete (pid=${pid}); refusing to replace the retained daemon.`);
       error.code = 'daemon_stop_incomplete';
       throw error;
     }
   }
-  if (stopError && runtimeState?.sourceRuntimeLaunch) throw stopError;
+  // An unloadable retained bundle cannot veto proven process retirement.
+  // A malformed publication still leaves its daemon identity unknown.
+  if (stopError && runtimeState?.sourceRuntimeLaunch
+    && ['bad_state', 'bad_lock'].includes(scopedDaemonState.status)) throw stopError;
   await syncStackRuntimeDaemonPidFromDaemonState(
     {
       runtimeStatePath,

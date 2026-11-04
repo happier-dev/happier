@@ -133,6 +133,41 @@ test('source stack stop preserves runtime custody when retained CLI retirement f
   assert.equal(retained.sourceRuntimeLaunch.entrypoint, entrypoint);
 });
 
+test('startup retires an unloadable source bundle and admits the replacement after daemon absence', async (t) => {
+  const fixture = await createStopFixture(t, { stackName: 'source-stop-missing-module' });
+  const entrypoint = join(fixture.baseDir, 'source-stop.mjs');
+  await writeFile(entrypoint, "import './dependency-no-longer-installed.mjs';\n");
+  const daemon = await fixture.spawnDaemon('stale-source-daemon');
+  await writeRuntimeState(fixture.runtimeStatePath, { version: 1, stackName: fixture.stackName,
+    ownerPid: null, processes: { daemonPid: daemon.pid },
+    sourceRuntimeLaunch: { entrypoint, cliDir: join(fixture.repoRoot, 'apps', 'cli'), env: {} },
+    stopRequest: { signal: 'SIGTERM', requestedBy: 'stack restart', reason: 'replace stale source bundle',
+      preserveDaemon: false, requestedAt: new Date().toISOString() } });
+  const env = { ...process.env, HAPPIER_STACK_STACK: fixture.stackName,
+    HAPPIER_STACK_REPO_DIR: fixture.repoRoot, HAPPIER_STACK_CLI_HOME_DIR: fixture.cliHomeDir,
+    HAPPIER_HOME_DIR: fixture.cliHomeDir, HAPPIER_STACK_ENV_FILE: fixture.envPath };
+  const internalServerUrl = 'http://127.0.0.1:3005';
+  const daemonEnv = await getDaemonEnv({ baseEnv: env, cliHomeDir: fixture.cliHomeDir,
+    internalServerUrl, publicServerUrl: internalServerUrl, stackName: fixture.stackName });
+  const { statePath } = resolvePreferredStackDaemonStatePaths({ cliHomeDir: fixture.cliHomeDir,
+    serverUrl: internalServerUrl, env: daemonEnv });
+  await mkdir(dirname(statePath), { recursive: true });
+  await writeFile(statePath, JSON.stringify({ pid: daemon.pid, httpPort: 3005 }));
+  daemon.kill('SIGTERM');
+  await waitForProcessExit({ pid: daemon.pid, timeoutMs: 2_000, intervalMs: 25, label: 'prior source daemon exit' });
+
+  const result = await completeInterruptedStackStopBeforeStart({ rootDir: fixture.rootDir,
+    stackName: fixture.stackName, baseDir: fixture.baseDir, env, json: true, noDocker: true, autoSweep: false });
+  assert.equal(result.finalization?.finalized, true);
+  assert.equal(isAlive(daemon.pid), false);
+  await withStackRuntimeStartClaim(fixture.runtimeStatePath, { stackName: fixture.stackName }, async ({ recordStart }) => {
+    await recordStart({ stackName: fixture.stackName, script: 'replacement', ownerPid: process.pid, ports: {} });
+  });
+  const replacement = JSON.parse(await readFile(fixture.runtimeStatePath, 'utf8'));
+  assert.equal(replacement.ownerPid, process.pid);
+  assert.equal(replacement.stopRequest, null);
+});
+
 test('explicit-stop fallback applies canonical grace only to persisted server process roles', async (t) => {
   const fixture = await createStopFixture(t, { stackName: 'server-role-grace' });
   const serverKeys = [
