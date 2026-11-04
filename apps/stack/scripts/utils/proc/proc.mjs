@@ -19,7 +19,7 @@ function resolveProcSpawnInvocation(cmd, args, env, shellOverride) {
     return {
       command: cmd,
       args,
-      spawnOptions: { shell: true },
+      spawnOptions: { windowsHide: true, shell: true },
     };
   }
   const invocation = resolveCommandInvocation({ command: cmd, args, env });
@@ -27,6 +27,7 @@ function resolveProcSpawnInvocation(cmd, args, env, shellOverride) {
     command: invocation.command,
     args: invocation.args,
     spawnOptions: {
+      windowsHide: true,
       shell: false,
       ...(invocation.windowsVerbatimArguments !== undefined
         ? { windowsVerbatimArguments: invocation.windowsVerbatimArguments }
@@ -233,7 +234,7 @@ function writeChildStdinBestEffort(child, input) {
 const DEFAULT_FAILURE_DIAGNOSTIC_MAX_CHARS = 16_000;
 const SECRET_ENV_KEY_PATTERN = /(?:TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|ACCESS_KEY|PRIVATE_KEY|CREDENTIAL)/i;
 
-export function appendBoundedTail(current, chunk, maxChars) {
+export function appendBoundedTail(current, chunk, maxChars = DEFAULT_FAILURE_DIAGNOSTIC_MAX_CHARS) {
   const next = `${current}${chunk.toString()}`;
   return next.length > maxChars ? next.slice(-maxChars) : next;
 }
@@ -246,6 +247,8 @@ export function redactFailureDiagnostic(output, env = {}) {
       '$1<redacted>',
     )
     .replace(/\b(Bearer\s+)\S+/gi, '$1<redacted>')
+    .replace(/\beyJ[\w-]*\.[\w-]+\.[\w-]+\b/g, '<redacted signed token>')
+    .replace(/\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis(?:s)?):\/\/[^\s"']+/gi, '<redacted database URL>')
     .replace(/\b(?:ssh-(?:ed25519|rsa|dss)|ecdsa-sha2-[\w-]+|sk-[\w@.-]+)\s+[A-Za-z0-9+/=]+/g, '<redacted SSH public key>')
     .replace(/((?:[\w-]*(?:token|password|secret|credential|access[_-]?key|api[_-]?key)[\w-]*)["']?\s*[:=]\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;}]+)/gi, '$1<redacted>')
     .replace(/https?:\/\/[^\s"']+/gi, raw => {

@@ -7,10 +7,34 @@ import { appendFile, chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Writable } from 'node:stream';
+import childProcess from 'node:child_process';
+import { syncBuiltinESMExports } from 'node:module';
 
 import { withCliDistBuildLock } from './cliDistBuildLock.mjs';
 import { killProcessTree, markSpawnedProcessPlannedExit, run, runCapture, runCaptureResult, runCommand, spawnProc } from './proc.mjs';
 import { isPidAlive } from './pids.mjs';
+
+for (const [name, invoke] of [
+  ['run', () => run(process.execPath, ['-e', ''], { stdio: 'ignore' })],
+  ['runCommand', () => runCommand(process.execPath, ['-e', ''], { stdio: 'ignore' })],
+  ['runCapture', () => runCapture(process.execPath, ['-e', ''])],
+  ['runCaptureResult', () => runCaptureResult(process.execPath, ['-e', ''])],
+  ['spawnProc', () => spawnProc('hidden-console', process.execPath, ['-e', ''], process.env, { silent: true }).completion],
+]) {
+  test(`${name} suppresses creation of a Windows console at the process boundary`, async (t) => {
+    const originalSpawn = childProcess.spawn;
+    t.mock.method(childProcess, 'spawn', (command, args, options) => {
+      assert.equal(options.windowsHide, true);
+      return originalSpawn(command, args, options);
+    });
+    syncBuiltinESMExports();
+    t.after(() => {
+      t.mock.restoreAll();
+      syncBuiltinESMExports();
+    });
+    await invoke();
+  });
+}
 
 test('foreground commands preserve their controlling terminal', { skip: process.platform === 'win32' }, async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'happier-proc-tty-'));
@@ -415,6 +439,19 @@ test('runCapture preserves bounded redacted stdout compiler diagnostics on failu
   assert.ok((failure?.message.length ?? Infinity) < 20_000, 'failure diagnostic must stay bounded');
 });
 
+test('failure diagnostics redact database URLs and signed tokens while preserving file errors', async () => {
+  const { redactFailureDiagnostic } = await import('./proc.mjs');
+  const value = Buffer.from(JSON.stringify({ diagnostic: Date.now() })).toString('base64url');
+  const signed = `${Buffer.from('{"alg":"HS256"}').toString('base64url')}.${value}.${value}`;
+  const database = new URL('postgresql://fixture.invalid/database');
+  database.username = value;
+  database.password = value;
+  const diagnostic = redactFailureDiagnostic(`src/replacement.ts:12: Error: loader failed\n${database}\n${signed}`);
+  assert.match(diagnostic, /src\/replacement\.ts:12: Error: loader failed/);
+  assert.equal(diagnostic.includes(value), false);
+  assert.equal(diagnostic.includes('postgresql://'), false);
+});
+
 test('run preserves inherited progress while capturing compiler failure diagnostics', () => {
   const result = spawnSync(process.execPath, ['--input-type=module', '-e', `
     import { run } from ${JSON.stringify(new URL('./proc.mjs', import.meta.url).href)};
@@ -784,6 +821,155 @@ test('spawnProc bounds long-lived tee logs with one rotated predecessor', async 
   assert.ok((await stat(teeFile)).size <= teeMaxBytes);
   assert.ok((await stat(`${teeFile}.1`)).size <= teeMaxBytes);
   assert.match(await readFile(teeFile, 'utf-8'), /\[bounded\] 003-abcdefghij/);
+});
+
+for (const helper of ['spawnProc', 'runCaptureResult']) {
+  test(`${helper} drains real child output after its tee fails to open`, { timeout: 15_000 }, async (t) => {
+    const root = await withTempRoot(t);
+    const lines = 1027;
+    const command = `
+      const { once } = require('node:events');
+      (async () => {
+        for (let i = 0; i < ${lines}; i++) {
+          if (!process.stdout.write('x'.repeat(4095) + '\\n')) await once(process.stdout, 'drain');
+        }
+      })();
+    `;
+    if (helper === 'spawnProc') {
+      let observed = 0;
+      // Opening a directory as a file exercises a real filesystem error.
+      const child = spawnProc('failed-tee', process.execPath, ['-e', command], process.env, {
+        silent: true,
+        teeFile: root,
+        onLine: () => { observed += 1; },
+      });
+      t.after(() => {
+        if (child.exitCode == null && child.signalCode == null) child.kill('SIGKILL');
+      });
+      assert.deepEqual(await child.completion, { code: 0, signal: null });
+      assert.equal(observed, lines);
+    } else {
+      const result = await runCaptureResult(process.execPath, ['-e', command], { teeFile: root });
+      assert.equal(result.ok, true);
+      assert.equal(result.out, ('x'.repeat(4095) + '\n').repeat(lines));
+    }
+  });
+}
+
+for (const withError of [false, true]) {
+  test(`spawnProc resumes after a real tee destination is destroyed during rotation (error=${withError})`, { timeout: 15_000 }, async (t) => {
+    const root = await withTempRoot(t);
+    const teeFile = join(root, 'destroyed-rotation.log');
+    const teeMaxBytes = 8192;
+    await writeFile(teeFile, 'x'.repeat(teeMaxBytes));
+    const originalEnd = WriteStream.prototype.end;
+    let destroyed = false;
+    // Filesystem stream destruction is the external failure boundary; the
+    // bounded writer and proc pause/resume path remain real.
+    t.mock.method(WriteStream.prototype, 'end', function (...args) {
+      const result = originalEnd.apply(this, args);
+      if (this.path === teeFile && !destroyed) {
+        destroyed = true;
+        this.destroy(withError ? new Error('destination disconnected during rotation') : undefined);
+      }
+      return result;
+    });
+    let observed = 0;
+    const lines = 1027;
+    const child = spawnProc('destroyed-tee', process.execPath, ['-e', `
+      const { once } = require('node:events');
+      (async () => {
+        for (let i = 0; i < ${lines}; i++) {
+          if (!process.stdout.write('x'.repeat(4095) + '\\n')) await once(process.stdout, 'drain');
+        }
+      })();
+    `], process.env, {
+      silent: true,
+      teeFile,
+      teeMaxBytes,
+      onLine: () => { observed += 1; },
+    });
+    t.after(() => {
+      if (child.exitCode == null && child.signalCode == null) child.kill('SIGKILL');
+    });
+    assert.deepEqual(await child.completion, { code: 0, signal: null });
+    assert.equal(destroyed, true);
+    assert.equal(observed, lines);
+  });
+}
+
+test('spawnProc drains both real child pipes across repeated bounded tee rotations', { timeout: 15_000 }, async (t) => {
+  const root = await withTempRoot(t);
+  const teeFile = join(root, 'rotation-flood.log');
+  const lineBytes = 1024;
+  const linesPerStream = 1027;
+  const linesPerFile = 8;
+  const observed = [];
+  const completedFiles = [];
+  const originalEnd = WriteStream.prototype.end;
+  // Observe each real closed filesystem destination before the owner rotates
+  // it away; this proves all lines, including predecessors later overwritten.
+  t.mock.method(WriteStream.prototype, 'end', function (...args) {
+    if (this.path !== teeFile) return originalEnd.apply(this, args);
+    const callback = args.pop();
+    return originalEnd.call(this, ...args, (...callbackArgs) => {
+      readFile(teeFile, 'utf8').then(content => {
+        completedFiles.push(content);
+        callback(...callbackArgs);
+      }, error => callback(error));
+    });
+  });
+  const pauses = { stdout: 0, stderr: 0 };
+  const child = spawnProc('rotate', process.execPath, ['-e', `
+    const { once } = require('node:events');
+    async function flood(stream, label) {
+      for (let i = 0; i < ${linesPerStream}; i++) {
+        const line = label + String(i).padStart(6, '0') + '-' + 'x'.repeat(1006) + '\\n';
+        if (!stream.write(line)) await once(stream, 'drain');
+      }
+    }
+    Promise.all([flood(process.stdout, 'o'), flood(process.stderr, 'e')]);
+  `], process.env, {
+    silent: true,
+    teeFile,
+    teeMaxBytes: lineBytes * linesPerFile,
+    onLine: ({ line }) => observed.push(`[rotate] ${line}\n`),
+  });
+  child.stdout.on('pause', () => { pauses.stdout += 1; });
+  child.stderr.on('pause', () => { pauses.stderr += 1; });
+  t.after(() => {
+    if (child.exitCode == null && child.signalCode == null) child.kill('SIGKILL');
+  });
+  assert.deepEqual(await child.completion, { code: 0, signal: null });
+  assert.equal(observed.length, linesPerStream * 2);
+  assert.equal(completedFiles.length, Math.ceil(observed.length / linesPerFile));
+  assert.equal(completedFiles.join(''), observed.join(''), 'every line must land before a rotation retires its file');
+  assert.ok(pauses.stdout > 0 && pauses.stderr > 0, 'both pipes must exercise backpressure');
+  const activeLines = observed.length % linesPerFile;
+  assert.equal(await readFile(teeFile, 'utf8'), observed.slice(-activeLines).join(''));
+  assert.equal(await readFile(`${teeFile}.1`, 'utf8'), observed.slice(-activeLines - linesPerFile, -activeLines).join(''));
+  assert.equal((await stat(teeFile)).size, activeLines * lineBytes);
+  assert.equal((await stat(`${teeFile}.1`)).size, linesPerFile * lineBytes);
+});
+
+test('runCaptureResult drains high-rate output across repeated bounded tee rotations', { timeout: 15_000 }, async (t) => {
+  const root = await withTempRoot(t);
+  const teeFile = join(root, 'capture-rotation-flood.log');
+  const lines = Array.from({ length: 1027 }, (_, i) => String(i).padStart(6, '0') + '-' + 'x'.repeat(1007) + '\n');
+  const result = await runCaptureResult(process.execPath, ['-e', `
+    const { once } = require('node:events');
+    (async () => {
+      for (let i = 0; i < ${lines.length}; i++) {
+        const line = String(i).padStart(6, '0') + '-' + 'x'.repeat(1007) + '\\n';
+        if (!process.stdout.write(line)) await once(process.stdout, 'drain');
+      }
+    })();
+  `], { teeFile, teeLabel: 'rotate', teeMaxBytes: 8192, timeoutMs: 10_000 });
+  assert.equal(result.ok, true);
+  assert.equal(result.out, lines.join(''));
+  const render = batch => batch.map(line => `[rotate] ${line}`).join('');
+  assert.equal(await readFile(teeFile, 'utf8'), render(lines.slice(-3)));
+  assert.equal(await readFile(`${teeFile}.1`, 'utf8'), render(lines.slice(-11, -3)));
 });
 
 test('spawnProc propagates a stalled tee to both child pipes without retaining the output flood', { timeout: 15_000 }, async (t) => {
