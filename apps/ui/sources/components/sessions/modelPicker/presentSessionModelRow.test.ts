@@ -2,6 +2,7 @@ import { createProviderErrorV1 } from '@happier-dev/protocol';
 import { describe, expect, it } from 'vitest';
 
 import { presentProviderModelRow } from '@/providers/models/presentProviderModelRow';
+import { t } from '@/text';
 
 const base = {
     modelId: 'vendor/model-v1',
@@ -106,6 +107,14 @@ describe('presentProviderModelRow', () => {
         expect(presentProviderModelRow(input)).toMatchObject({
             primaryStatus: { kind: expected },
         });
+    });
+
+    it('says an unreachable source once, without a second "may be unavailable" for its cached catalog', () => {
+        // Live 1103: each card of an unreachable source read "Unreachable · Experimental · May be unavailable".
+        const row = presentProviderModelRow({ ...base, endpointHealth: 'unreachable', stale: true });
+        expect(row.primaryStatus).toMatchObject({ kind: 'endpoint' });
+        expect(row.description?.split(' · ')).toContain(t('settingsProviders.status.unreachable'));
+        expect(row.description?.split(' · ')).not.toContain(t('settingsProviders.models.stale'));
     });
 
     it('keeps the exact vendor model id visible when a display name and description exist', () => {

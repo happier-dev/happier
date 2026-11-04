@@ -147,7 +147,8 @@ export function presentProviderModelRow(input: Readonly<{
     }
     pushDetail(primaryStatus?.label);
     if (compatibilityStatus === 'experimental') pushDetail(t('settingsProviders.models.experimental'));
-    if (input.stale) pushDetail(t('settingsProviders.models.stale'));
+    // "May be unavailable" only repeats an endpoint status that already says the source cannot be reached.
+    if (input.stale && primaryStatus?.kind !== 'endpoint') pushDetail(t('settingsProviders.models.stale'));
     if (input.loadState === 'unloaded') pushDetail(t('settingsProviders.models.notLoaded'));
 
     return {
