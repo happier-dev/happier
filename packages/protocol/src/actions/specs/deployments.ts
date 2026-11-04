@@ -21,7 +21,7 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
     ...(id === 'deployments.backups.restore' || id === 'deployments.teardown' || id === 'deployments.domains.remove' ? { irreversible: true as const } : {}),
     ...(id !== 'deployments.environments.create' && id !== 'deployments.environments.list' && id !== 'deployments.publish'
       ? { approvalScope: 'environment' } : {}),
-    executionPlacement: id === 'deployments.backups.restore' || id === 'deployments.prepare' || id === 'deployments.templates.instantiate' ? 'machine' : 'account', requiredAuthority: 'account_automation', placements: [],
+    executionPlacement: id === 'deployments.receipts.observe' || id === 'deployments.backups.restore' || id === 'deployments.prepare' || id === 'deployments.templates.instantiate' ? 'machine' : 'account', requiredAuthority: 'account_automation', placements: [],
     // Machine placement uses the original Action dispatcher, not a standalone RPC method.
     surfaces: { ui: true, cli: true, agent: true, mcp: true, voice: false, rpc: false },
     bindings: { mcpToolName: id.replaceAll('.', '_'),
@@ -96,7 +96,7 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
         ...(id === 'deployments.logs.read' ? [{ path: 'kind', title: 'Build or runtime logs', widget: 'text' as const, required: true },
           { path: 'cursor', title: 'Native log cursor', widget: 'json' as const }] : []),
       ] : []),
-      ...(id === 'deployments.receipts.get' || id === 'deployments.rollback' || id === 'deployments.cancel'
+      ...(id === 'deployments.receipts.get' || id === 'deployments.receipts.observe' || id === 'deployments.rollback' || id === 'deployments.cancel'
         ? [{ path: 'deploymentId', title: 'Deployment receipt', widget: 'text' as const, required: true }] : []),
       ...(id === 'deployments.cancel'
         ? [{ path: 'expectedReceiptRevision', title: 'Receipt revision', widget: 'number' as const, required: true }] : []),
@@ -151,6 +151,7 @@ export const DEPLOYMENT_ACTION_SPECS_V1 = [
   deploymentSpec('deployments.teardown', 'Tear down deployment resources', '/v1/deployments/environments/:environmentId/teardown'),
   deploymentSpec('deployments.environments.get', 'Read deployment environment', '/v1/deployments/environments/:environmentId', true),
   deploymentSpec('deployments.receipts.get', 'Read deployment receipt', '/v1/deployments/receipts/:deploymentId', true),
+  deploymentSpec('deployments.receipts.observe', 'Observe provider deployment receipt', undefined, true),
   deploymentSpec('deployments.bindings.set', 'Set environment bindings', '/v1/deployments/environments/:environmentId/bindings'),
   deploymentSpec('deployments.environments.list', 'List deployment environments', '/v1/deployments/environments', true),
   deploymentSpec('deployments.receipts.list', 'List deployment receipts', '/v1/deployments/environments/:environmentId/deployments', true),

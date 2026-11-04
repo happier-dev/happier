@@ -451,6 +451,10 @@ export type DeploymentEnvironmentAccessResultV1 = z.infer<typeof DeploymentEnvir
 export const DeploymentReceiptGetInputV1Schema = lazyZodSchema(() => z.strictObject({
   ...home, environmentId: z.optional(DeploymentIdentifierV1Schema), deploymentId: DeploymentIdentifierV1Schema,
 }));
+/** Observe an already-issued provider deployment; the host reads its retained identity and custody. */
+export const DeploymentReceiptObserveInputV1Schema = lazyZodSchema(() => z.strictObject({
+  ...deploymentEnvironmentReadAddress, deploymentId: DeploymentIdentifierV1Schema,
+}));
 export const DeploymentEnvironmentGetResultV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ ok: z.literal(true), environment: DeploymentEnvironmentHeaderV1Schema,
     targetLinks: z.array(DeploymentTargetLinkHeaderV1Schema), pendingDeploy: z.optional(DeploymentPendingDeployV1Schema),
@@ -614,6 +618,7 @@ export const DeploymentActionInputSchemasV1 = lazyDefinition(() => ({
   'deployments.promote': DeploymentPromoteInputV1Schema,
   'deployments.environments.get': DeploymentEnvironmentGetInputV1Schema,
   'deployments.receipts.get': DeploymentReceiptGetInputV1Schema,
+  'deployments.receipts.observe': DeploymentReceiptObserveInputV1Schema,
   'deployments.bindings.set': DeploymentBindingsSetInputV1Schema,
   'deployments.environments.list': DeploymentEnvironmentListInputV1Schema,
   'deployments.receipts.list': DeploymentReceiptListInputV1Schema,
@@ -665,6 +670,7 @@ export const DeploymentActionOutputSchemasV1 = lazyDefinition(() => ({
   'deployments.promote': DeploymentReceiptResultV1Schema,
   'deployments.environments.get': DeploymentEnvironmentGetResultV1Schema,
   'deployments.receipts.get': DeploymentReceiptGetResultV1Schema,
+  'deployments.receipts.observe': DeploymentReceiptResultV1Schema,
   'deployments.bindings.set': DeploymentEnvironmentCreateResultV1Schema,
   'deployments.environments.list': DeploymentEnvironmentListResultV1Schema,
   'deployments.receipts.list': DeploymentReceiptListResultV1Schema,

@@ -9,7 +9,7 @@ export const DEPLOYMENT_ACTION_IDS_V1 = [
   'deployments.teardown',
   'deployments.cancel',
   'deployments.environments.get', 'deployments.receipts.get', 'deployments.bindings.set',
-  'deployments.environments.list', 'deployments.receipts.list',
+  'deployments.environments.list', 'deployments.receipts.list', 'deployments.receipts.observe',
   'deployments.publish', 'deployments.publish.prepare', 'deployments.prepare', 'deployments.templates.instantiate',
   'deployments.health.read', 'deployments.health.current', 'deployments.drift.read', 'deployments.logs.read',
 ] as const;
