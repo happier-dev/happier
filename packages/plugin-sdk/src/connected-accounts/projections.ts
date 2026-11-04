@@ -41,3 +41,5 @@ export type AuthCallbackCreateResult =
 export type AuthCallbackService = Readonly<{
     create(input: AuthCallbackCreateInput): Promise<AuthCallbackCreateResult>;
 }>;
+
+export { classifyConnectedAccountTokenEndpointFailure, parseConnectedAccountTokenEndpointFailure } from '@happier-dev/cli-common/connectedAccounts';

@@ -14,6 +14,7 @@ export * from './purposeBinding.js';
 export * from './purposeMaterialization.js';
 export * from './purposeAccountListing.js';
 export * from './establishedRuntimeTypes.js';
+export * from './tokenEndpointFailure.js';
 export * from './establishedReadScope.js';
 export * from './configuredOrigins.js';
 export * from './establishedRuntimeOwner.js';

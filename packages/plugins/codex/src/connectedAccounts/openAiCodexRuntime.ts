@@ -1,4 +1,5 @@
 import {
+  parseConnectedAccountTokenEndpointFailure,
   type ConnectedAccountAuthenticationContext as PluginConnectedAccountAuthenticationContext,
   type ConnectedAccountHealthResult as PluginConnectedAccountHealthResult,
   type ConnectedAccountRuntime as PluginConnectedAccountRuntime,
@@ -53,8 +54,16 @@ type CredentialStore = PluginConnectedAccountAuthenticationContext['attemptCrede
 type ConnectedAccountCredentialReader =
   Parameters<PluginConnectedAccountRuntime['status']>[0]['credentials'];
 
-function diagnostic(code: string, message: string) {
-  return { code, severity: 'error' as const, message };
+function diagnostic(code: string, message: string,
+  credentialRefreshFailureKind?: ReturnType<typeof parseConnectedAccountTokenEndpointFailure>['kind'], providerHttpStatus?: number,
+  providerErrorCode?: ReturnType<typeof parseConnectedAccountTokenEndpointFailure>['providerErrorCode']) {
+  return { code, severity: 'error' as const, message,
+    ...(credentialRefreshFailureKind === undefined && providerHttpStatus === undefined ? {} : { details: {
+      ...(credentialRefreshFailureKind === undefined ? {} : { credentialRefreshFailureKind }),
+      ...(providerHttpStatus === undefined ? {} : { providerHttpStatus }),
+      ...(providerErrorCode === undefined ? {} : { providerErrorCode }),
+    } }),
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -150,11 +159,15 @@ async function exchangeTokens(
     };
   }
   if (response.status >= 400 && response.status < 500 && response.status !== 429) {
+    const failure = parseConnectedAccountTokenEndpointFailure(response);
     return {
       status: 'rejected',
       diagnostic: diagnostic(
         'openai_codex_oauth_rejected',
         'OpenAI rejected the Codex OAuth request.',
+        failure.kind,
+        response.status,
+        failure.providerErrorCode,
       ),
     };
   }
@@ -164,6 +177,7 @@ async function exchangeTokens(
       diagnostic: diagnostic(
         'openai_codex_oauth_outcome_unknown',
         'OpenAI Codex did not return a conclusive OAuth result.',
+        undefined, response.status,
       ),
     };
   }
@@ -186,6 +200,8 @@ async function exchangeTokens(
       diagnostic: diagnostic(
         'openai_codex_oauth_response_invalid',
         'OpenAI Codex returned an incomplete OAuth result.',
+        undefined,
+        response.status,
       ),
     };
   }
@@ -446,7 +462,8 @@ const openAiCodexRuntimeDefinition: PluginConnectedAccountRuntime = {
     }, context, options);
     if (exchanged.status === 'rejected') {
       return {
-        status: 'reconnectRequired',
+        status: exchanged.diagnostic.details?.credentialRefreshFailureKind === 'invalid_grant'
+          ? 'reconnectRequired' : 'outcomeUnknown',
         diagnostic: exchanged.diagnostic,
       };
     }

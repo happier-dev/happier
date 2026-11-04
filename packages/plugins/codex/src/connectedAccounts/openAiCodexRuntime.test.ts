@@ -129,7 +129,7 @@ describe('OpenAI Codex Connected Account', () => {
   });
 
   it.each([
-    [429, 'outcomeUnknown'], [503, 'outcomeUnknown'], [200, 'outcomeUnknown'], [401, 'reconnectRequired'],
+    [429, 'outcomeUnknown'], [503, 'outcomeUnknown'], [200, 'outcomeUnknown'], [401, 'outcomeUnknown'],
   ] as const)('preserves stored credentials without staging when refresh returns %s (%s)', async (status, outcome) => {
     const runtime = activateConnectedAccountRuntime();
     const original = new Map([
@@ -149,10 +149,44 @@ describe('OpenAI Codex Connected Account', () => {
       } } },
     } as Parameters<typeof runtime.refresh>[0];
 
-    await expect(runtime.refresh(context)).resolves.toMatchObject({ status: outcome });
+    await expect(runtime.refresh(context)).resolves.toMatchObject({ status: outcome,
+      diagnostic: { details: { providerHttpStatus: status,
+        ...(status === 401 ? { credentialRefreshFailureKind: 'provider_401' } : {}),
+      } },
+    });
     expect(staged.values.size).toBe(0);
     expect(credentials.values).toEqual(original);
     await expect(runtime.status(context)).resolves.toMatchObject({ status: 'connected' });
+  });
+
+  it.each([
+    ['invalid_grant', 'reconnectRequired', 'invalid_grant'],
+    ['refresh_token_reused', 'reconnectRequired', 'invalid_grant'],
+    ['refresh_token_expired', 'reconnectRequired', 'invalid_grant'],
+    ['refresh_token_invalidated', 'reconnectRequired', 'invalid_grant'],
+    ['invalid_client', 'outcomeUnknown', 'invalid_client'],
+    ['unauthorized_client', 'outcomeUnknown', 'provider_401'],
+    ['other_error', 'outcomeUnknown', 'provider_401'],
+  ] as const)('only terminal refresh grants require reconnection: %s', async (code, outcome, category) => {
+    const runtime = activateConnectedAccountRuntime();
+    const credentials = credentialStore(new Map([['accessToken', 'synthetic-access'], ['refreshToken', 'synthetic-refresh']]));
+    const result = await runtime.refresh({
+      ...materializationContext(credentials.store),
+      operation: { operationId: 'refresh-1', configurationRevision: 'configuration-1' },
+      stagedCredentials: credentialStore().store,
+      services: { http: { async request() {
+        return { status: 401, finalUrl: 'https://auth.openai.com/oauth/token', headers: {},
+          body: new TextEncoder().encode(JSON.stringify({ error: { code }, error_description: 'private-description',
+            access_token: 'private-response-access', refresh_token: 'private-response-refresh' })) };
+      } } },
+    } as Parameters<typeof runtime.refresh>[0]);
+    expect(result).toMatchObject({
+      status: outcome, diagnostic: { details: { credentialRefreshFailureKind: category, providerHttpStatus: 401 } },
+    });
+    expect('diagnostic' in result ? result.diagnostic?.details : undefined).toEqual({
+      credentialRefreshFailureKind: category, providerHttpStatus: 401,
+      ...(code === 'other_error' ? {} : { providerErrorCode: code }),
+    });
   });
 
   it.each(['access_token', 'id_token'])('accepts a freshly returned %s while retaining refresh and identity metadata', async (tokenField) => {
