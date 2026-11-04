@@ -1758,16 +1758,21 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
       assertLegacyStateAvailable();
       signal?.throwIfAborted();
       // SOURCE has acknowledged staging at Home before dispatching this RPC.
-      // A receiving process can still lack those endpoint rows. Refresh that
-      // projection before admission; existing immutable endpoints and private
-      // requester reads retain their current owners.
+      // A receiving process can still lack the endpoints or staged graph.
+      // Refresh that projection before bootstrap so pre-engine recovery can
+      // use the retained target with its durable intent. Private requester
+      // reads retain their current owner.
       if (!context?.callerInputAuthorization) {
         const relationship = request.transientRelationship;
         const endpointIds = request.owner.kind === 'copy_once'
           ? [request.owner.operation.alphaWorkspaceRefId, request.owner.operation.betaWorkspaceRefId]
           : relationship ? [relationship.alphaWorkspaceRefId, relationship.betaWorkspaceRefId] : [request.targetWorkspaceRefId];
-        const refs = factories.getProjectSnapshot()?.workspaceRefs ?? [];
-        if (endpointIds.some(id => !resolveWorkspaceRefById(refs, id, semanticServerId))) {
+        const snapshot = factories.getProjectSnapshot();
+        const refs = snapshot?.workspaceRefs ?? [];
+        const owner = request.owner;
+        const missingRelationship = owner.kind === 'relationship'
+          && !snapshot?.relationships.some(candidate => candidate.relationshipId === owner.relationshipId);
+        if (missingRelationship || endpointIds.some(id => !resolveWorkspaceRefById(refs, id, semanticServerId))) {
           await refreshInstalledProjectRows(signal);
         }
       }

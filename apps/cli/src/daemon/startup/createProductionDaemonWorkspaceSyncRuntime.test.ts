@@ -192,7 +192,7 @@ describe('createProductionDaemonWorkspaceSyncRuntime', () => {
     await expect(fixture.parentManagedWorkspaceSync!.listRelationships({})).resolves.toMatchObject({ discoveryAvailable: true });
   });
 
-  it('refreshes receiving target rows before bootstrapping a newly staged remote endpoint', async () => {
+  it.each(['missing endpoint', 'missing graph'] as const)('refreshes receiving target rows before bootstrapping a newly staged remote endpoint (%s)', async missing => {
     const rows: ProjectAccountRowV1[] = [];
     const fixture = await composeBindChildSourcePhaseTestRuntime({ socketIo, separateTargetParent: true,
       projectRowsFromHttp: true, readAdditionalHttpPostResponse: async url => {
@@ -203,14 +203,16 @@ describe('createProductionDaemonWorkspaceSyncRuntime', () => {
     const sourceKey = { kind: 'workspace-ref' as const, serverId: fixture.serverId, id: fixture.sourceRef.id };
     rows.push(ProjectAccountRowV1Schema.parse({ key: sourceKey, revision: 0,
       content: cipher.seal({ key: sourceKey, value: fixture.sourceRef }) }));
+    const targetKey = { kind: 'workspace-ref' as const, serverId: fixture.serverId, id: fixture.targetRef.id };
+    const targetRow = ProjectAccountRowV1Schema.parse({ key: targetKey, revision: 0,
+      content: cipher.seal({ key: targetKey, value: fixture.targetRef }) });
+    if (missing === 'missing graph') rows.push(targetRow);
     await runWithServerHttpBaseUrl('https://bind-child-home.invalid', async () =>
       await readProjectAccountRows({ credentials: fixture.credentials, serverId: fixture.serverId, publication: 'installed' }));
     await fixture.settleProjects();
     // The SOURCE has just committed these rows at Home. The receiving process
     // still has the previous real Account snapshot until its next HTTP read.
-    const targetKey = { kind: 'workspace-ref' as const, serverId: fixture.serverId, id: fixture.targetRef.id };
-    rows.push(ProjectAccountRowV1Schema.parse({ key: targetKey, revision: 0,
-      content: cipher.seal({ key: targetKey, value: fixture.targetRef }) }));
+    if (missing === 'missing endpoint') rows.push(targetRow);
     const relationship = { v: 1 as const, relationshipId: 'fresh-remote-endpoint',
       controllerMachineId: fixture.sourceRef.machineId, alphaWorkspaceRefId: fixture.sourceRef.id,
       betaWorkspaceRefId: fixture.targetRef.id, mode: 'keep_synced' as const, contentPolicy,
@@ -218,7 +220,7 @@ describe('createProductionDaemonWorkspaceSyncRuntime', () => {
     const graphKey = { kind: 'relationship-graph' as const };
     rows.push(ProjectAccountRowV1Schema.parse({ key: graphKey, revision: 0,
       content: cipher.seal({ key: graphKey, value: { relationships: [relationship] } }) }));
-    expect(getActiveProjectAccountRowsSnapshot()?.workspaceRefs.map(ref => ref.id)).toEqual([fixture.sourceRef.id]);
+    expect(getActiveProjectAccountRowsSnapshot()?.relationships).toEqual([]);
     await mkdir(fixture.targetPath);
     const prepare = fixture.targetParentRpcHandlers.get(RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE);
     if (!prepare) throw new Error('The receiving target bootstrap RPC is not registered');
@@ -226,6 +228,12 @@ describe('createProductionDaemonWorkspaceSyncRuntime', () => {
       owner: { kind: 'relationship', relationshipId: relationship.relationshipId }, transientRelationship: { ...relationship, enabled: true },
       targetWorkspaceRefId: fixture.targetRef.id, endpointRole: 'beta', policyDigest: contentPolicy.policyDigest,
       createIfMissing: false, targetBootstrap: 'use_existing' })).resolves.toMatchObject({ state: 'ready' });
+    const recover = fixture.targetParentRpcHandlers.get(RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_CONFLICT_RECOVER);
+    if (!recover) throw new Error('The receiving target recovery RPC is not registered');
+    await expect(recover({ relationshipId: relationship.relationshipId,
+      targetMachineId: fixture.targetRef.machineId, targetWorkspaceRefId: fixture.targetRef.id }))
+      .resolves.toEqual({ status: 'settled' });
+    expect(getActiveProjectAccountRowsSnapshot()?.relationships).toEqual([relationship]);
     expect(getActiveProjectAccountRowsSnapshot()?.workspaceRefs.map(ref => ref.id))
       .toContain(fixture.targetRef.id);
   });

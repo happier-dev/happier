@@ -106,11 +106,13 @@ describe('endpoint Machine read costs', () => {
       credentials: { token: 'token', encryption: null }, machineIds: ['machine-a', 'machine-b', 'machine-a'] });
     const outcome = result.catch((error: unknown) => error);
     try {
-      await vi.waitFor(() => expect(started).toEqual(['machine-a', 'machine-b']));
+      // Concurrent HTTP requests may arrive in either order; both must start
+      // before responses are released. Refusal precedence follows input order.
+      await vi.waitFor(() => expect([...started].sort()).toEqual(['machine-a', 'machine-b']));
     } finally { release(); }
     try {
       expect(await outcome).toMatchObject({ code: 'workspace_sync_child_unavailable' });
-      expect(started).toEqual(['machine-a', 'machine-b']);
+      expect([...started].sort()).toEqual(['machine-a', 'machine-b']);
     } finally { get.mockRestore(); }
   });
 });
