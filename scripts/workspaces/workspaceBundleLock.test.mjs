@@ -707,7 +707,7 @@ void result;
       ],
       { cwd: cliCommonDir, encoding: 'utf8' },
     );
-    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.equal(result.status, 0, [result.stderr, result.stdout].filter(Boolean).join('\n'));
   } finally {
     rmSync(fixtureDir, { recursive: true, force: true });
   }

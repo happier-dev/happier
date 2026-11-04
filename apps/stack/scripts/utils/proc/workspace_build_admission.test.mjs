@@ -799,8 +799,9 @@ test('batch resource closure covers transitive publishers and detects graph chan
   assert.equal(before.locks.length, 3, 'bundle publisher and two package publishers');
   assert.equal(before.admissionClass, 'compilation', 'choose the producer requirement before acquiring the lower reader envelope');
   assert.deepEqual(await collectWorkspaceBuildBatchResources([...selected].reverse(), { admissionClass: 'package-dist' }), before);
-  assert.equal((await collectWorkspaceBuildBatchResources(selected, { admissionClass: 'compilation-ui' })).admissionClass,
-    'compilation-ui', 'a reader envelope that already covers producers is retained');
+  const uiReader = await collectWorkspaceBuildBatchResources(selected, { admissionClass: 'compilation-ui' });
+  assert.equal(resolveHeavyweightMemoryFloorKiB(uiReader.admissionClass), resolveHeavyweightMemoryFloorKiB(before.admissionClass),
+    'the UI reader must cover the same producer demand as the general batch');
   assert.deepEqual(before.consumerOnlyPackageNames, ['@happier-dev/fixture-cli', '@happier-dev/fixture-ui']);
   let compilerCalls = 0;
   await withWorkspaceBuildResources({ locks: before.locks, env: buildNativeAdmissionFixtureEnv(), signal: t.signal }, async env => {
@@ -828,7 +829,7 @@ test('batch resource closure covers transitive publishers and detects graph chan
   assert.equal(after.locks.length, before.locks.length + 1);
 });
 
-for (const failure of ['none', 'lease', 'producer', 'identity', 'capacity']) test(`composed batch inherits its sole reservation and exact publication custody (${failure})`, { skip: process.platform !== 'linux', timeout: 15000 }, async t => {
+for (const failure of ['none', 'lease', 'producer', 'identity', 'larger-leaf-class']) test(`composed batch inherits its sole reservation and exact publication custody (${failure})`, { skip: process.platform !== 'linux', timeout: 15000 }, async t => {
   const fixture = await createTempFixture(t, { prefix: 'happier-composed-build-' });
   const native = await installWorkspaceAdmissionProcessFixture(t, fixture.root);
   const { launcher, admissionRoot } = native;
@@ -845,13 +846,15 @@ for (const failure of ['none', 'lease', 'producer', 'identity', 'capacity']) tes
     ${failure === 'identity' ? "delete env.HAPPIER_HEAVYWEIGHT_ADMISSION_SLOT;" : ''}
     const result=await runWorkspaceBuildAdmission({command:process.execPath,args:['--input-type=module','-e',${JSON.stringify(leaf)}],
       launcherPath:${JSON.stringify(launcher)},locks:[{path:${JSON.stringify(failure === 'lease' ? fixture.path('unreserved.lock') : lockPath)}}],
-      env,inheritedAdmission:true,admissionClass:${JSON.stringify(failure === 'capacity' ? 'compilation-ui' : 'package-dist')},stdio:['ignore','pipe','pipe']});
+      env,inheritedAdmission:true,admissionClass:${JSON.stringify(failure === 'larger-leaf-class' ? 'compilation-ui' : 'package-dist')},stdio:['ignore','pipe','pipe']});
     process.stdout.write(result.stdout??'');process.stderr.write(result.stderr??'');process.exit(result.status??1);`;
   const result = await runWorkspaceBuildAdmission({ command: process.execPath, args: ['--input-type=module', '-e', payload],
     launcherPath: launcher, admissionClass: 'compilation-cli', locks: [{ path: lockPath }],
     env: buildNativeAdmissionFixtureEnv(native.env), signal: t.signal, stdio: ['ignore', 'pipe', 'pipe'] });
-  assert.equal(result.status, failure === 'none' ? 0 : failure === 'producer' ? 23 : 1, result.stderr);
-  assert.equal(result.stdout, ['lease', 'identity', 'capacity'].includes(failure) ? '' : 'producer-entered');
+  // Broker admission owns the containing envelope; an admitted compiler phase
+  // keeps that slot even when its standalone class would request more memory.
+  assert.equal(result.status, ['none', 'larger-leaf-class'].includes(failure) ? 0 : failure === 'producer' ? 23 : 1, result.stderr);
+  assert.equal(result.stdout, ['lease', 'identity'].includes(failure) ? '' : 'producer-entered');
   await assertBrokerIdle(native);
   await assert.rejects(lstat(lockPath), { code: 'ENOENT' });
 });
