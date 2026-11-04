@@ -613,11 +613,7 @@ if [ -n "$runtime_build_target" ]; then
   HSTACK_EXEC_RUNTIME_BUILD_COMPONENTS=$runtime_build_components
   HSTACK_EXEC_CONTROL_STDIN=$control_stdin
   export HSTACK_EXEC_RUNTIME_BUILD_TARGET HSTACK_EXEC_RUNTIME_BUILD_COMPONENTS HSTACK_EXEC_CONTROL_STDIN
-  if [ -z "${HSTACK_EXEC_RUNTIME_CONTROL_CHILD-}" ]; then
-    [ "$control_stdin" = 1 ] || { printf '%s\n' '[preferred-execution] runtime build dispatch requires --control-stdin' >&2; exit 64; }
-    [ -z "$command_repo_root" ] || set -- "--repo=$command_repo_root" "$@"
-    exec node "$script_dir/../scripts/utils/dev_targets/native_runtime_control.mjs" "$launcher_path" "$@"
-  fi
+  [ "$control_stdin" = 1 ] || { printf '%s\n' '[preferred-execution] runtime build dispatch requires --control-stdin' >&2; exit 64; }
 fi
 case "${1-}" in
   --target=*)

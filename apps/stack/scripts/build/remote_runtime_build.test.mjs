@@ -198,8 +198,6 @@ test('runtime publication resolves explicit local placement and memory admission
   await mkdir(join(fixtureRepo, 'packages/cli-common'), { recursive: true });
   await symlink(fileURLToPath(new URL('../../../../packages/cli-common/registerSourceRuntime.mjs', import.meta.url)), join(fixtureRepo, 'packages/cli-common/registerSourceRuntime.mjs'));
   await writeFile(join(stackBaseDir, 'dev-target-exec-v1.sh'), renderNativeExecutionProjection(config, { repoRoot: fixtureRepo }));
-  await symlink(fileURLToPath(new URL('../utils/dev_targets/native_runtime_control.mjs', import.meta.url)),
-    join(fixtureRepo, 'apps/stack/scripts/utils/dev_targets/native_runtime_control.mjs'));
   const workerDir = join(fixtureRepo, 'apps/stack/scripts/build');
   await mkdir(workerDir, { recursive: true });
   const workerEntry = fileURLToPath(new URL('./remote_runtime_build.mjs', import.meta.url));
@@ -260,8 +258,6 @@ test('explicit local runtime placement reuses its real admitted worker ancestor 
   const repoDir = join(root, 'native-owner');
   await mkdir(join(repoDir, 'packages/cli-common'), { recursive: true });
   await symlink(fileURLToPath(new URL('../../../../packages/cli-common/registerSourceRuntime.mjs', import.meta.url)), join(repoDir, 'packages/cli-common/registerSourceRuntime.mjs'));
-  await symlink(fileURLToPath(new URL('../utils/dev_targets/native_runtime_control.mjs', import.meta.url)),
-    join(repoDir, 'apps/stack/scripts/utils/dev_targets/native_runtime_control.mjs'));
   const stackBaseDir = join(root, 'stack');
   await mkdir(stackBaseDir);
   await writeFile(join(stackBaseDir, 'dev-targets.json'), JSON.stringify({ version: 3, targets: [],
