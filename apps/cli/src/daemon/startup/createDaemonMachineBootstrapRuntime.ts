@@ -1,3 +1,4 @@
+import { createWorkflowRunMachineTransport } from '../workflows/workflowMachineTransport';
 import type { ApiClient } from '@/api/api';
 import type { DaemonAdmissionDrain } from '../lifecycle/admissionDrain';
 import type {
@@ -56,9 +57,6 @@ import { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client
 import { readInstallationIdentityIfExistsSync } from '../identity/store';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import type { RequesterWorkAttributionV1 } from '../lifecycle/requesterWorkAttribution';
-import type { prepareRequesterSessionBootstrap } from '../sessionEncryption/requesterSessionCredentials';
-import { readRequesterHomeWithinActionLifetime } from '../sessionEncryption/requesterCurrentness';
-import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { runTracedExternalActionStage } from '@/daemon/externalActions/externalActionPhase';
 
 /** The installed host's passive source Action composition; it never reads a remote OS path. */
@@ -181,6 +179,7 @@ export function createDaemonMachineBootstrapRuntime(
     savedSecretOperationContext?: BootstrapRuntime['savedSecretOperationContext'];
     requesterServerId?: BootstrapRuntime['requesterServerId'];
     resolveCurrentMachineExecutionOriginContext?: BootstrapRuntime['resolveCurrentMachineExecutionOriginContext'];
+    resolveCurrentServerIdentityId?: ApiMachineClientLifecycleDependencies['resolveCurrentServerIdentityId'];
     resolveRequesterSessionRuntimeContext?: BootstrapRuntime['resolveRequesterSessionRuntimeContext'];
     readRequesterSessionCredentialBindings?: BootstrapRuntime['readRequesterSessionCredentialBindings'];
     releaseRequesterSessionRuntimeContext?: BootstrapRuntime['releaseRequesterSessionRuntimeContext'];
@@ -288,15 +287,18 @@ export function createDaemonMachineBootstrapRuntime(
     externalActionIngressOwner?: ExternalActionIngressOwner;
     createWorkflowRunCoordinatorForMachine?: (input: Readonly<{
       machineId: string;
+      requesterCredentials?: StoredCredentials;
       requesterWorkAttributionV1?: RequesterWorkAttributionV1;
       machineAdmissionTransport: NonNullable<Parameters<typeof startAutomationWorker>[0]['machineAdmissionTransport']>;
       machineActionDirectTargetTransport: import('@/session/actions/createCliActionDeps').MachineActionDirectTargetTransport;
     }>) => ReturnType<typeof createProductionWorkflowRunCoordinator>;
     createWorkflowRecoveryForMachine?: (input: Readonly<{
       machineId: string;
+      requesterCredentials?: StoredCredentials;
+      requesterWorkAttributionV1?: RequesterWorkAttributionV1;
       machineAdmissionTransport: NonNullable<Parameters<typeof startAutomationWorker>[0]['machineAdmissionTransport']>;
       machineActionDirectTargetTransport: import('@/session/actions/createCliActionDeps').MachineActionDirectTargetTransport;
-    }>) => (trigger: WorkflowRecoveryTrigger) => Promise<void>;
+    }>) => (trigger: WorkflowRecoveryTrigger, signal?: AbortSignal, workflowRunId?: string) => Promise<void>;
     /** Starts the provider-broker application against the authoritative
      * registered Machine identity. A successful installation — never a
      * manifest or schema — is what makes the daemon advertise
@@ -339,7 +341,7 @@ agentIsolation?: ApiMachineClientLifecycleDependencies['agentIsolation'];
   >>> | null = null;
   let providerBrokerApplicationMachineId: string | null = null;
   let providerBrokerApplicationApiMachine: ApiMachineClient | null = null;
-  let workflowRecovery: ((trigger: WorkflowRecoveryTrigger) => Promise<void>) | null = null;
+  let workflowRecovery: ((trigger: WorkflowRecoveryTrigger, signal?: AbortSignal, workflowRunId?: string) => Promise<void>) | null = null;
   let workspaceSyncReadiness: WorkspaceSyncRuntimeReadinessV1 | null = null;
   let workspaceSyncPublicationTail = Promise.resolve();
   const publishWorkspaceSyncEvent = (): void => {
@@ -557,7 +559,7 @@ agentIsolation: params.agentIsolation,
       const createWorkflowRecovery = params.createWorkflowRecoveryForMachine;
       let recoverWorkflowRuns: ReturnType<NonNullable<typeof createWorkflowRecovery>> | undefined;
       workflowRecovery = createWorkflowRecovery
-        ? async (trigger) => {
+        ? async (trigger, signal, workflowRunId) => {
             if (params.isWorkflowFeatureEnabled?.() !== true) return;
             recoverWorkflowRuns ??= createWorkflowRecovery({
               machineId: registeredMachine.id,
@@ -569,7 +571,7 @@ agentIsolation: params.agentIsolation,
                 invoke: async (method, request, options) => await apiMachine.invokeLocalMachineAction(method, request, options),
               },
             });
-            await recoverWorkflowRuns(trigger);
+            await recoverWorkflowRuns(trigger, signal, workflowRunId);
           }
         : null;
       publishWorkspaceSyncEvent();
@@ -620,57 +622,41 @@ agentIsolation: params.agentIsolation,
         ? Object.freeze({ serverId: automationHomeId, accountId: automationAccountId,
           machineId: runtimeMachineId, installationId: automationInstallationId }) : undefined;
       const coordinateWorkflowRun = automationApiMachine && params.createWorkflowRunCoordinatorForMachine
-        ? async (claim: Parameters<ReturnType<typeof createProductionWorkflowRunCoordinator>>[0]) => {
+        ? async (claim: Parameters<ReturnType<typeof createProductionWorkflowRunCoordinator>>[0], requester?: Readonly<{
+          credentials: StoredCredentials; attribution: RequesterWorkAttributionV1;
+        }>) => {
           const { readStoredCredentialsForServerId, sameStoredCredentials } = await import('@/persistence');
           // Each claim owns its requester lifetime, including parallel leaves.
           // Ordinary local controls remain unprivileged; only this captured
-          // Workflow transport can carry freshly verified Account custody.
-          let requester: ReturnType<typeof prepareRequesterSessionBootstrap> | undefined;
-          let authorizationCurrent: ((signal?: AbortSignal) => Promise<boolean>) | undefined;
-          const isCurrent = async () => Boolean(requesterWorkAttributionV1
+          // Workflow transport carries the admitted Run's captured Account custody.
+          const selectedCredentials = requester?.credentials ?? params.credentials;
+          const selectedAttribution = requester?.attribution ?? requesterWorkAttributionV1;
+          const isCurrent = async () => Boolean(selectedAttribution
             && connectedApiMachine === automationApiMachine && !params.isShuttingDown()
             && configuration.activeServerId === automationHomeId
             && readInstallationIdentityIfExistsSync()?.installationId === automationInstallationId
             && sameStoredCredentials(params.credentials, await readStoredCredentialsForServerId(automationHomeId))
-            && authorizationCurrent && await authorizationCurrent(claim.signal));
+            && !claim.signal?.aborted);
+          const requesterTransport = createWorkflowRunMachineTransport({ runId: claim.runId,
+            credentials: selectedCredentials, requesterWorkAttributionV1: selectedAttribution, isCurrent,
+            boundary: { serverId: automationHomeId, serverHttpBaseUrl: machineSkillHomeUrl,
+              happyHomeDir: configuration.happyHomeDir,
+              getObservedServerIdentityId: async () => await params.resolveCurrentServerIdentityId?.() ?? null },
+            ...(claim.signal ? { signal: claim.signal } : {}),
+            transport: { machineId: runtimeMachineId,
+              machineServiceAction: request => automationApiMachine.executeMachineServiceAction(request),
+              invoke: (method, request, options) => automationApiMachine.invokeLocalMachineAction(method, request, options) },
+          });
           const coordinate = params.createWorkflowRunCoordinatorForMachine!({
             machineId: runtimeMachineId,
-            ...(requesterWorkAttributionV1 ? { requesterWorkAttributionV1 } : {}),
+            requesterCredentials: selectedCredentials,
+            ...(selectedAttribution ? { requesterWorkAttributionV1: selectedAttribution } : {}),
             machineAdmissionTransport: async (request, options) =>
               await automationApiMachine.enqueueSessionPendingByMachine(request, options),
-            machineActionDirectTargetTransport: {
-              machineId: runtimeMachineId,
-              machineServiceAction: request => automationApiMachine.executeMachineServiceAction(request),
-              invoke: async (method, request, options) => {
-                const local = options?.localActionContext;
-                if (!local?.executionRunWorkflowRunId) return await automationApiMachine.invokeLocalMachineAction(method, request, options);
-                const { withExecutionRunStartFailureDetails } = await import('@happier-dev/protocol/execution/runs/responseSchemas');
-                const unavailable = { ok: false, errorCode: 'project_requester_credentials_unavailable',
-                  error: 'Workflow requester authority unavailable',
-                  ...(method === SESSION_RPC_METHODS.EXECUTION_RUN_START
-                    ? { details: withExecutionRunStartFailureDetails(undefined, 'noRunCreated') } : {}) };
-                const stamp = local.requesterWorkAttributionV1;
-                if (!requesterWorkAttributionV1 || local.executionRunWorkflowRunId !== claim.runId
-                  || stamp?.accountId !== requesterWorkAttributionV1.accountId || stamp.serverId !== automationHomeId
-                  || stamp.machineId !== runtimeMachineId || stamp.installationId !== automationInstallationId
-                  || !await isCurrent()) return unavailable;
-                const { prepareRequesterSessionBootstrap } = await import('../sessionEncryption/requesterSessionCredentials');
-                requester ??= readRequesterHomeWithinActionLifetime(() => prepareRequesterSessionBootstrap({ credentials: params.credentials, attribution: requesterWorkAttributionV1,
-                  boundary: { serverId: automationHomeId, serverHttpBaseUrl: machineSkillHomeUrl, happyHomeDir: configuration.happyHomeDir },
-                  verifyMachineAdmissionCurrent: isCurrent, ...(claim.signal ? { signal: claim.signal } : {}) }), claim.signal);
-                const prepared = await requester;
-                if (!prepared || !await prepared.admitted.isCurrent()) return unavailable;
-                return await automationApiMachine.invokeLocalMachineAction(method, request, { ...options,
-                  rpcContext: { requesterSessionBootstrap: prepared.admitted, callerAuthority: 'account_automation',
-                    verifyMachineAdmissionCurrent: isCurrent } });
-              },
-            },
+            machineActionDirectTargetTransport: requesterTransport.transport,
           });
-          try { return await coordinate({ ...claim, registerAuthorizationCurrentnessCheck: check => {
-            authorizationCurrent = check;
-            claim.registerAuthorizationCurrentnessCheck?.(check);
-          } }); }
-          finally { await (await requester)?.cleanupOnFailure(); }
+          try { return await coordinate(claim); }
+          finally { await requesterTransport.dispose(); }
         }
         : null;
       const worker = startAutomationWorker({
@@ -678,6 +664,7 @@ agentIsolation: params.agentIsolation,
         token: params.credentials.token,
         credentials: params.credentials,
         machineId: runtimeMachineId,
+        requesterHomeServerIdentityId: await params.resolveCurrentServerIdentityId?.() ?? undefined,
         ...(requesterWorkAttributionV1 ? { requesterWorkAttributionV1 } : {}),
         ...(coordinateWorkflowRun
           ? {
@@ -689,7 +676,29 @@ agentIsolation: params.agentIsolation,
               },
             }
           : {}),
-        recoverWorkflowRuns: async () => await workflowRecovery?.('control'),
+        recoverWorkflowRuns: async (runId, requester) => {
+          if (!requester) { await workflowRecovery?.('control', undefined, runId); return; }
+          if (!automationApiMachine || !params.createWorkflowRecoveryForMachine || !runId) return;
+          const transport = createWorkflowRunMachineTransport({ runId, credentials: requester.credentials,
+            requesterWorkAttributionV1: requester.attribution,
+            isCurrent: async () => connectedApiMachine === automationApiMachine && !params.isShuttingDown()
+              && configuration.activeServerId === automationHomeId
+              && readInstallationIdentityIfExistsSync()?.installationId === automationInstallationId,
+            boundary: { serverId: automationHomeId, serverHttpBaseUrl: machineSkillHomeUrl,
+              happyHomeDir: configuration.happyHomeDir,
+              getObservedServerIdentityId: async () => await params.resolveCurrentServerIdentityId?.() ?? null },
+            transport: { machineId: runtimeMachineId,
+              machineServiceAction: request => automationApiMachine.executeMachineServiceAction(request),
+              invoke: (method, request, options) => automationApiMachine.invokeLocalMachineAction(method, request, options) },
+          });
+          try {
+            const recover = params.createWorkflowRecoveryForMachine({ machineId: runtimeMachineId,
+              requesterCredentials: requester.credentials, requesterWorkAttributionV1: requester.attribution,
+              machineAdmissionTransport: (request, options) => automationApiMachine.enqueueSessionPendingByMachine(request, options),
+              machineActionDirectTargetTransport: transport.transport });
+            await recover('control', undefined, runId);
+          } finally { await transport.dispose(); }
+        },
         ...(connectedApiMachine
           ? {
               machineAdmissionTransport: async (request, options) =>

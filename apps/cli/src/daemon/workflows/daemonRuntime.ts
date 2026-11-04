@@ -24,7 +24,7 @@ import {
   ConversationPermissionMediationSourceCurrentnessResultV1Schema,
 } from '@happier-dev/channels-protocol/v1';
 import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
-import { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { captureServerHttpBaseUrl, resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { configuration } from '@/configuration';
 import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import { resolveAutomationWorkerAccountEncryption } from '@/daemon/automation/automationWorker';
@@ -35,6 +35,7 @@ import {
 import { executeContributedAction } from '@/plugins/runtime/invocation/actions/executeContributedAction';
 import { createCommittedContributedActionDefinitionLister, createCommittedContributedActionInvoker } from '@/plugins/runtime/invocation/actions/createCommittedContributedActionDeps';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
+import { createWorkflowRequesterCustody } from './requesterCustody';
 import { createCredentialedTargetActionCurrentIntent } from '@/session/actions/approvals/credentialedTargetActionCurrentIntent';
 import { createCredentialedWorkflowMaterializationHostV1, projectWorkflowConversationRoleSelection } from '@/session/actions/workflowMaterializationHost';
 import type { sendSessionMessage } from '@/session/services/sendSessionMessage';
@@ -304,6 +305,7 @@ export function createProductionDaemonWorkflowRuntime(params: Readonly<{
   serverId?: string;
 }>) {
   const serverId = params.serverId ?? configuration.activeServerId;
+  const readBaseUrl = captureServerHttpBaseUrl();
   const admissionDrain = params.admissionDrain;
   const operationRpc = async (transport: import('@/session/actions/createCliActionDeps').MachineActionDirectTargetTransport,
     operation: ActionCompletionOperation, kind: 'get' | 'cancel' | 'wait', signal?: AbortSignal,
@@ -356,6 +358,11 @@ export function createProductionDaemonWorkflowRuntime(params: Readonly<{
         serverId,
         serverApiUrl: resolveServerHttpBaseUrl(),
         machineId: input.machineId,
+        ...(requesterWorkAttributionV1 ? { workflowRequesterCustody: createWorkflowRequesterCustody({
+          credentials: params.credentials, attribution: requesterWorkAttributionV1,
+          happyHomeDir: configuration.happyHomeDir, serverHttpBaseUrl: readBaseUrl(),
+          homeServerIdentityId: input.serverIdentityId,
+        }) } : {}),
         machineAdmissionTransport: input.machineAdmissionTransport,
         machineActionDirectTargetTransport: input.machineActionDirectTargetTransport,
         ...(input.sessionActionRpcTransport ? { sessionActionRpcTransport: input.sessionActionRpcTransport } : {}),

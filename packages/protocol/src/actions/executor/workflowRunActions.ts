@@ -1,3 +1,4 @@
+import type { SessionInitialTriggerAdmissionV1 } from '../../sessions/creation/sessionInitialTriggerAdmissionV1.js';
 import { ActionInvokeInputSchema } from '../actionInvokeInput.js';
 import { artifactSavedByFromActionContextV1 } from '../../artifacts/artifactBinaryV1.js';
 import { WorkflowApprovedOperationStepV1Schema } from '../approvedOperationV1.js';
@@ -495,6 +496,16 @@ function translateStorageError(error: unknown, options: Readonly<{ unconfirmedWr
 }
 
 export type WorkflowAccountRunActionDeps = Readonly<{
+  /** Private host custody, settled before admission; never part of Action input or stored Run content. */
+  workflowRequesterCustody?: Readonly<{
+    retain: (input: Readonly<{ scopeId: string; machineId: string; automationId?: string }>) => Promise<void>;
+    /** Session birth supplies the already minted trigger identities before their rows are committed. */
+    retainInitialTriggers?: (admissions: readonly SessionInitialTriggerAdmissionV1[]) => Promise<Readonly<{
+      cleanupOnFailure: () => Promise<void>;
+    }>>;
+    /** The host defers retirement until already admitted Runs release this scope. */
+    retire: (input: Readonly<{ scopeId: string; machineId: string }>) => Promise<void>;
+  }>;
   resolveAccountId: (signal?: AbortSignal) => Promise<string>;
   storage: Storage;
   definitions: DefinitionReader;

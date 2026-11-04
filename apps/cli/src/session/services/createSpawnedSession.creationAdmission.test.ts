@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { createServer } from 'node:http';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -36,6 +36,8 @@ import { resolveNodeBackedMcpServerCommand } from '@/mcp/runtime/resolveNodeBack
 import { getWorkflowStarterExamplesV1 } from '@happier-dev/protocol/workflows/builtins/examples';
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
+import { createLocalMachineActionTransportFixture } from '@/testkit/apiMachineTransport';
+import { createWorkflowRequesterCustody, listWorkflowRequesterCredentialScopes } from '@/daemon/workflows/requesterCustody';
 import { configuration } from '@/configuration';
 import { resetServerFeaturesClientForTests } from '@/features/serverFeaturesClient';
 import { createSpawnedSession } from './createSpawnedSession';
@@ -435,11 +437,28 @@ describe('canonical Session creation admission', () => {
   }, 120_000);
 
   it.each([
-    { bot: true, upkeep: undefined, installed: true },
-    { bot: true, upkeep: true, installed: true },
-    { bot: true, upkeep: false, installed: false },
-    { bot: false, upkeep: true, installed: false },
-  ])('installs canonical weekly upkeep only at ordinary Bot birth ($bot/$upkeep)', async ({ bot, upkeep, installed }) => {
+    { bot: true, upkeep: undefined, installed: true, refused: false },
+    { bot: true, upkeep: true, installed: true, refused: false },
+    { bot: true, upkeep: false, installed: false, refused: false },
+    { bot: false, upkeep: true, installed: false, refused: false },
+    { bot: true, upkeep: true, installed: true, refused: true },
+  ])('installs canonical weekly upkeep only at ordinary Bot birth ($bot/$upkeep/$refused)', async ({ bot, upkeep, installed, refused }) => {
+    const custodyHome = await mkdtemp(join(tmpdir(), 'initial-trigger-custody-'));
+    onTestFinished(() => rm(custodyHome, { recursive: true, force: true }));
+    const attribution = { serverId: 'home-a', accountId: 'guest', machineId: 'machine-1', installationId: 'installation' };
+    // The native process boundary may produce sessionStarted immediately.
+    // Its admitted trigger scopes must already have real protected custody.
+    spawn.mockImplementation(async raw => {
+      const request = SpawnDaemonSessionRequestSchema.parse(raw);
+      const scopes = await listWorkflowRequesterCredentialScopes({ ...attribution, happyHomeDir: custodyHome });
+      expect(scopes.status).toBe('ready');
+      if (scopes.status === 'ready') expect(scopes.bindings.map(row => row.sessionId).sort())
+        .toEqual((request.initialTriggers ?? []).flatMap(admission => admission.triggers.map(trigger => trigger.triggerId)).sort());
+      if (refused) return { error: 'Session birth refused', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
+        errorDetail: { kind: 'session_creation_initial_trigger_refused', code: 'feature_disabled' } };
+      return { success: true, sessionId: 'session-created',
+        sessionCreationOutcome: { disposition: 'created', organizationPlacement: { folderId: null, tagIds: [] } } };
+    });
     fetchAccountEncryptionCurrentness.mockResolvedValue({ mode: 'plain', version: 1,
       signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
       recipientEnvelopeReadiness: { status: 'unavailable', reason: 'plain_account' } });
@@ -463,6 +482,9 @@ describe('canonical Session creation admission', () => {
       sessionId: 'cli-global', mode: 'plain', ctx: null, rawSession: {},
       serverId: 'home-a', serverHttpBaseUrl: 'https://home-a.example.test',
       actionsSettingsProvider: createActionSettingsProvider({ getAccountSettings: () => accountSettings }),
+      workflowRequesterCustody: createWorkflowRequesterCustody({ happyHomeDir: custodyHome, attribution,
+        credentials: params.credentials, serverHttpBaseUrl: 'https://home-a.example.test' }),
+      machineActionDirectTargetTransport: createLocalMachineActionTransportFixture('machine-1'),
       sessionSpawnDirectTargetTransport: {
         machineId: 'machine-1',
         prepare: async () => ({ ok: true, directory: '/repo', directoryKind: 'path', directoryCreationRequired: false, checkout: null }),
@@ -485,6 +507,12 @@ describe('canonical Session creation admission', () => {
       surface: 'cli', authority: 'present_user', serverId: 'home-a',
       presentUserConfirmation: { actionId: 'session.spawn_new' }, actionRequestId: 'bot-weekly-upkeep',
     });
+    if (refused) {
+      expect(result).toMatchObject({ ok: true, result: { type: 'error', code: 'target_unavailable', retryable: false } });
+      const remaining = await listWorkflowRequesterCredentialScopes({ ...attribution, happyHomeDir: custodyHome });
+      expect(remaining).toEqual({ status: 'ready', bindings: [] });
+      return;
+    }
     expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { type: 'success', disposition: 'created', sessionId: 'session-created' } });
     expect(spawn).toHaveBeenCalledTimes(1);
     const request = spawn.mock.calls[0]![0];

@@ -1875,6 +1875,9 @@ export async function bootstrapMachineSyncRuntime(
         pendingSessionActivationRecovery.recoverAfterConnect;
     }
 
+    connectedApiMachine.onAutomationWorkInvalidated(async () => {
+      if (!params.isShuttingDown()) await activeAutomationWorker?.catchUp();
+    });
     connectedApiMachine.onAutomationEventSourcesInvalidated(payload => {
       publishDaemonHostEvent({
         eventId: HAPPIER_AUTOMATION_EVENT_SOURCES_INVALIDATED_HOST_EVENT_ID_V1,
@@ -2161,7 +2164,14 @@ export async function bootstrapMachineSyncRuntime(
         }
       }
     };
+    const catchUpAutomationWorkAfterConnect = async (): Promise<void> => {
+      if (params.isShuttingDown()) return;
+      await activeAutomationWorker?.catchUp().catch((error) => {
+        logger.warn('[DAEMON RUN] Failed to catch up automation work on machine reconnect', error);
+      });
+    };
     resumeMachineConnectionPublications = async () => {
+      await catchUpAutomationWorkAfterConnect();
       await refreshMachineConnectionPublications();
       if (params.isShuttingDown()) return;
       await workflowRecoveryTriggers?.onResumed().catch((error) => {
@@ -2169,6 +2179,7 @@ export async function bootstrapMachineSyncRuntime(
       });
     };
     const handleMachineConnected = async (): Promise<void> => {
+      await catchUpAutomationWorkAfterConnect();
       await refreshMachineConnectionPublications();
       if (params.isShuttingDown()) return;
       await Promise.all([

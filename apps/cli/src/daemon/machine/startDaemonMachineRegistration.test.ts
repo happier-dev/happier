@@ -108,6 +108,7 @@ describe('startDaemonMachineRegistration', () => {
           events.push(`worker-stopped:${attempt}`);
         }),
         refreshAssignments: vi.fn(async () => {}),
+        catchUp: vi.fn(async () => {}),
         pause: vi.fn(),
         resume: vi.fn(),
         handleServerUpdate: vi.fn(),
@@ -309,6 +310,7 @@ describe('startDaemonMachineRegistration', () => {
           if (attempt === 1) throw cleanupFailure;
         }),
         refreshAssignments: vi.fn(async () => {}),
+        catchUp: vi.fn(async () => {}),
         pause: vi.fn(),
         resume: vi.fn(),
         handleServerUpdate: vi.fn(),

@@ -12,6 +12,7 @@ import {
   type AutomationDefinitionDetail,
   type AutomationDefinitionReconcileRequest,
 } from '@happier-dev/protocol';
+import { AutomationV3WorkerClaimResponseSchema } from '@happier-dev/protocol/automations/automationApiV3';
 import type { StoredCredentials } from '@/persistence';
 import { AUTOMATION_TEMPLATE_V02_PLAIN, AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED } from '../../../../../packages/protocol/src/automations/automationTemplateV02.testFixtures';
 import { createProductionWorkflowRunCoordinator } from '@/daemon/workflows/production';
@@ -23,6 +24,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1, ConnectedAccountCatalogRowReadResponseV1Schema,
   emptyConnectedAccountCatalogRecordV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
 import { startAutomationWorker } from './automationWorker';
+import { listWorkflowRequesterCredentialScopes, retainWorkflowRequesterCredentials } from '../workflows/requesterCustody';
 import { createDaemonAdmissionDrain } from '../lifecycle/admissionDrain';
 import { createManagedActivityInventory, type LiveWorkInventoryV1 } from '../lifecycle/managedActivity';
 import { projectMachineWorkSummary } from '../machines/machineWorkSummary';
@@ -271,6 +273,177 @@ describe('automationWorker', () => {
       expect(mockPost.mock.calls.filter(([url]) => String(url).endsWith('/runs/claim'))).toHaveLength(0);
       releaseDrain();
       await waitForCondition(() => mockPost.mock.calls.some(([url]) => String(url).endsWith('/runs/claim')));
+    } finally { worker.stop(); }
+  });
+
+  it.each(['queued', 'claimed', 'running'] as const)('reports missing requester custody without claiming or reading Workflow content with the custodian bearer (%s)', async state => {
+    mockPost.mockClear();
+    const now = Date.now();
+    process.env.HAPPIER_HOME_DIR = join(os.tmpdir(), `happier-missing-requester-${now}-${Math.random()}`);
+    reloadCapacityConfiguration();
+    const { configuration } = await import('@/configuration');
+    mockGet.mockResolvedValue({ data: { assignments: [], settings: DEFAULT_WORKER_SETTINGS } });
+    mockPost.mockImplementation(async (url: string) => ({ data: url.endsWith('/requester-custody-unavailable')
+      ? { recorded: true } : { run: null, automation: null, accountCurrentness: null } }));
+    const admissionDrain = createDaemonAdmissionDrain();
+    const releaseDrain = admissionDrain.beginTemporaryDrain();
+    const worker = startCapacityAutomationWorker({ token: 'custodian-token', credentials: { token: 'custodian-token', encryption: null },
+      admissionDrain, machineId: 'machine-1', requesterHomeServerIdentityId: 'srv_guest_home', requesterWorkAttributionV1: {
+        serverId: configuration.activeServerId, accountId: 'custodian', machineId: 'machine-1', installationId: 'installation' } });
+    try {
+      await worker.catchUp();
+      await settleRequestDispatch();
+      mockPost.mockClear();
+      worker.handleServerUpdate({ id: 'missing-guest-wake', seq: 1, createdAt: now, body: {
+        t: 'automation-run-updated', runId: 'guest-run', automationId: 'automation', requesterScope: { kind: 'workflow_trigger', id: 'missing' },
+        state, scheduledAt: now, startedAt: state === 'running' ? now : null, finishedAt: null,
+        updatedAt: now, machineId: null, targetMachineId: 'machine-1',
+      } } satisfies Update);
+      if (state === 'queued') releaseDrain();
+      await waitForCondition(() => mockPost.mock.calls.some(([url]) => String(url).endsWith('/requester-custody-unavailable')));
+      expect(mockPost.mock.calls).toEqual([[
+        expect.stringContaining('/runs/guest-run/requester-custody-unavailable'), { machineId: 'machine-1' },
+        expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer custodian-token' }) }),
+      ]]);
+    } finally { worker.stop(); releaseDrain(); }
+  });
+
+  it.each(['matching', 'different'] as const)('binds pre-retained guest trigger catch-up to the captured Home (%s identity)', async homeIdentity => {
+    const now = Date.now();
+    process.env.HAPPIER_HOME_DIR = join(os.tmpdir(), `happier-requester-catchup-${now}-${Math.random()}`);
+    reloadCapacityConfiguration();
+    const { configuration } = await import('@/configuration');
+    const attribution = { serverId: configuration.activeServerId, accountId: 'guest', machineId: 'machine-1', installationId: 'installation' };
+    await retainWorkflowRequesterCredentials({ happyHomeDir: configuration.happyHomeDir, scopeId: 'offline-trigger',
+      automationId: 'offline-deleted-automation', homeServerIdentityId: homeIdentity === 'matching' ? 'srv_captured_home' : 'srv_other_home',
+      attribution, credentials: { token: 'guest-token', encryption: null } });
+    mockGet.mockImplementation(async (url: string) => ({ status: 200, data: url.endsWith('/profile') ? { id: 'guest' }
+      : url.endsWith('/currentness') ? { mode: 'plain', version: 1, updatedAt: 1, signingKeyFingerprint: null, contentKeyFingerprint: null }
+      : { assignments: [], settings: DEFAULT_WORKER_SETTINGS } }));
+    migrationBoundary.get.mockResolvedValue(null); // Actual Automation GET boundary reports the offline deletion.
+    mockPost.mockImplementation(async (url: string) => ({ data: url.endsWith('/workflow-storage') ? { runs: [] }
+      : { run: null, automation: null, accountCurrentness: null } }));
+    const worker = startCapacityAutomationWorker({ token: 'custodian-token', credentials: { token: 'custodian-token', encryption: null },
+      machineId: 'machine-1', requesterHomeServerIdentityId: 'srv_captured_home',
+      requesterWorkAttributionV1: { ...attribution, accountId: 'custodian' } });
+    try {
+      await worker.catchUp();
+      const scopes = await listWorkflowRequesterCredentialScopes({ ...attribution, happyHomeDir: configuration.happyHomeDir });
+      if (homeIdentity === 'matching') {
+        expect(scopes).toEqual({ status: 'ready', bindings: [] });
+        expect(migrationBoundary.get).toHaveBeenCalledWith({ token: 'guest-token', automationId: 'offline-deleted-automation' });
+      } else {
+        expect(scopes).toMatchObject({ status: 'ready', bindings: [{ sessionId: 'offline-trigger' }] });
+        expect(migrationBoundary.get).not.toHaveBeenCalled();
+      }
+    } finally { worker.stop(); }
+  });
+
+  it('observes newly retained guest trigger custody and retires an offline-deleted schedule at Account reconnect', async () => {
+    const now = Date.now();
+    process.env.HAPPIER_HOME_DIR = join(os.tmpdir(), `happier-requester-observation-${now}-${Math.random()}`);
+    reloadCapacityConfiguration();
+    const { configuration } = await import('@/configuration');
+    const attribution = { serverId: configuration.activeServerId, accountId: 'guest', machineId: 'machine-1', installationId: 'installation' };
+    mockGet.mockImplementation(async (url: string) => ({ status: 200, data: url.endsWith('/profile') ? { id: 'guest' }
+      : url.endsWith('/currentness') ? { mode: 'plain', version: 1, updatedAt: 1, signingKeyFingerprint: null, contentKeyFingerprint: null }
+      : { assignments: [], settings: DEFAULT_WORKER_SETTINGS } }));
+    migrationBoundary.get.mockResolvedValue(null); // Home's exact Automation GET returns 404 after offline deletion.
+    mockPost.mockImplementation(async (url: string) => ({ data: url.endsWith('/workflow-storage') ? { runs: [] }
+      : { run: null, automation: null, accountCurrentness: null } }));
+    const worker = startCapacityAutomationWorker({ token: 'custodian-token', credentials: { token: 'custodian-token', encryption: null },
+      machineId: 'machine-1', requesterHomeServerIdentityId: 'srv_guest_home',
+      requesterWorkAttributionV1: { ...attribution, accountId: 'custodian' } });
+    try {
+      await worker.refreshAssignments();
+      await retainWorkflowRequesterCredentials({ happyHomeDir: configuration.happyHomeDir, scopeId: 'guest-trigger',
+        automationId: 'deleted-automation', homeServerIdentityId: 'srv_guest_home',
+        attribution, credentials: { token: 'guest-token', encryption: null } });
+      await expect.poll(async () => {
+        const scopes = await listWorkflowRequesterCredentialScopes({ ...attribution, happyHomeDir: configuration.happyHomeDir });
+        return scopes.status === 'ready' ? scopes.bindings.map(row => row.sessionId) : scopes.status;
+      }).toEqual([]);
+      expect(migrationBoundary.get).toHaveBeenCalledWith({ token: 'guest-token', automationId: 'deleted-automation' });
+      expect(socketIoBoundary.mock.calls.some(([, options]) => options.auth?.clientType === 'user-scoped'
+        && options.auth.token === 'guest-token')).toBe(true);
+    } finally { worker.stop(); }
+  });
+
+  it('selects the guest custody bearer from the wake before claiming its Workflow', async () => {
+    mockPost.mockClear();
+    const now = Date.now();
+    process.env.HAPPIER_SERVER_URL = 'https://api.example.test';
+    process.env.HAPPIER_WEBAPP_URL = 'https://app.example.test';
+    process.env.HAPPIER_HOME_DIR = join(os.tmpdir(), `happier-requester-claim-${now}-${Math.random()}`);
+    reloadCapacityConfiguration();
+    const { configuration } = await import('@/configuration');
+    const attribution = { serverId: configuration.activeServerId, accountId: 'guest', machineId: 'machine-1', installationId: 'installation' };
+    await retainWorkflowRequesterCredentials({ happyHomeDir: configuration.happyHomeDir, scopeId: 'guest-trigger',
+      attribution, credentials: { token: 'guest-token', encryption: null }, homeServerIdentityId: 'srv_guest_home' });
+    mockGet.mockImplementation(async (url: string) => ({ status: 200, data: url.endsWith('/profile') ? { id: 'guest' }
+      : url.endsWith('/currentness') ? { mode: 'plain', version: 1, updatedAt: 1, signingKeyFingerprint: null, contentKeyFingerprint: null }
+      : { assignments: [], settings: DEFAULT_WORKER_SETTINGS } }));
+    mockPost.mockResolvedValue({ data: { run: null, automation: null, accountCurrentness: null } });
+    const worker = startCapacityAutomationWorker({ token: 'custodian-token', credentials: { token: 'custodian-token', encryption: null },
+      machineId: 'machine-1', requesterWorkAttributionV1: { ...attribution, accountId: 'custodian' }, requesterHomeServerIdentityId: 'srv_guest_home' });
+    try {
+      await worker.refreshAssignments();
+      worker.handleServerUpdate({ id: 'guest-wake', seq: 1, createdAt: now, body: {
+        t: 'automation-run-updated', runId: 'guest-run', automationId: 'automation', requesterScope: { kind: 'workflow_trigger', id: 'guest-trigger' },
+        state: 'queued', scheduledAt: now, startedAt: null, finishedAt: null,
+        updatedAt: now, machineId: null, targetMachineId: 'machine-1',
+      } } satisfies Update);
+      await waitForCondition(() => mockPost.mock.calls.some(([url]) => String(url).endsWith('/runs/claim')));
+      const claims = mockPost.mock.calls.filter(([url]) => String(url).endsWith('/runs/claim'));
+      expect(claims.some(([, body, options]) => body.scope === 'workflow' && options.headers.Authorization === 'Bearer guest-token')).toBe(true);
+    } finally { worker.stop(); }
+  });
+
+  it('refuses a different claimed trigger without its custody before executing with the wake requester', async () => {
+    const now = Date.now();
+    process.env.HAPPIER_HOME_DIR = join(os.tmpdir(), `happier-requester-other-claim-${now}-${Math.random()}`);
+    reloadCapacityConfiguration();
+    const { configuration } = await import('@/configuration');
+    const attribution = { serverId: configuration.activeServerId, accountId: 'guest', machineId: 'machine-1', installationId: 'installation' };
+    mockGet.mockImplementation(async (url: string) => ({ status: 200, data: url.endsWith('/profile') ? { id: 'guest' }
+      : url.endsWith('/currentness') ? { mode: 'plain', version: 1, updatedAt: 1, signingKeyFingerprint: null, contentKeyFingerprint: null }
+      : { assignments: [], settings: DEFAULT_WORKER_SETTINGS } }));
+    const claimedResponse = AutomationV3WorkerClaimResponseSchema.parse({ run: { id: 'claimed-other-run', automationId: 'automation', triggerId: 'missing-trigger',
+        triggerRetired: false, cause: { kind: 'trigger', triggerId: 'missing-trigger', triggerRevision: 1,
+          triggerKind: 'schedule', occurrenceKey: Buffer.alloc(32, 7).toString('base64url'), occurredAt: now,
+          evidence: { scheduledFor: now } }, recipeKind: 'workflow-v2',
+        leaseExpiresAt: now + 30_000, attempt: 1, revision: 0, executionInputEnvelope: '{}',
+        automationEvidenceEnvelope: null, workflowAcceptedSnapshotEnvelope: '{}' },
+        automation: { id: 'automation', name: 'Other trigger', enabled: true }, accountCurrentness: V3_CLAIM_CURRENTNESS });
+    let claimedGuest = false;
+    mockPost.mockImplementation(async (url: string, _body: unknown, options: { headers: { Authorization: string } }) => {
+      if (url.endsWith('/workflow-storage')) return { data: { runs: [] } };
+      if (!url.endsWith('/runs/claim')) return { data: { recorded: true } };
+      if (options.headers.Authorization !== 'Bearer guest-token' || claimedGuest) {
+        return { data: { run: null, automation: null, accountCurrentness: null } };
+      }
+      claimedGuest = true;
+      return { data: claimedResponse };
+    });
+    const worker = startCapacityAutomationWorker({ token: 'custodian-token', credentials: { token: 'custodian-token', encryption: null },
+      machineId: 'machine-1', requesterWorkAttributionV1: { ...attribution, accountId: 'custodian' }, requesterHomeServerIdentityId: 'srv_guest_home' });
+    try {
+      await worker.refreshAssignments();
+      await retainWorkflowRequesterCredentials({ happyHomeDir: configuration.happyHomeDir, scopeId: 'retained-trigger',
+        attribution, credentials: { token: 'guest-token', encryption: null }, homeServerIdentityId: 'srv_guest_home' });
+      worker.handleServerUpdate({ id: 'other-claim-wake', seq: 1, createdAt: now, body: {
+        t: 'automation-run-updated', runId: 'wake-run', automationId: 'automation',
+        requesterScope: { kind: 'workflow_trigger', id: 'retained-trigger' },
+        state: 'queued', scheduledAt: now, startedAt: null, finishedAt: null,
+        updatedAt: now, machineId: null, targetMachineId: 'machine-1',
+      } } satisfies Update);
+      await expect.poll(() => claimedGuest).toBe(true);
+      await expect.poll(() => mockPost.mock.calls.filter(([url]) => String(url).endsWith('/requester-custody-unavailable')))
+        .toEqual([[expect.stringContaining('/runs/claimed-other-run/requester-custody-unavailable'), { machineId: 'machine-1' },
+          expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer custodian-token' }) })]]);
+      expect(mockPost.mock.calls.some(([url]) => /\/runs\/claimed-other-run\/(start|fail|succeed)$/.test(String(url)))).toBe(false);
+      const remaining = await listWorkflowRequesterCredentialScopes({ ...attribution, happyHomeDir: configuration.happyHomeDir });
+      expect(remaining).toMatchObject({ status: 'ready', bindings: [{ sessionId: 'retained-trigger' }] });
     } finally { worker.stop(); }
   });
 

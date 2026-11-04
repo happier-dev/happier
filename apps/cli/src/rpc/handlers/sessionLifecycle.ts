@@ -1,8 +1,10 @@
+import { createWorkflowRequesterCustody } from '@/daemon/workflows/requesterCustody';
 import type { RpcActionExecutor, RpcActionExecutorContext } from './_actionDispatchAdapter';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import { readStoredCredentials } from '@/persistence';
+import { configuration } from '@/configuration';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import type { SessionSpawnDirectTargetTransport } from '@/session/actions/createCliActionDeps';
 import {
@@ -328,6 +330,9 @@ async function resolveProductionSessionSpawnNewActionExecutor(params: Readonly<{
         serverId: requester.attribution.serverId,
         serverApiUrl: requester.serverHttpBaseUrl,
         machineId: requester.attribution.machineId,
+        workflowRequesterCustody: createWorkflowRequesterCustody({ credentials: requester.credentials,
+            attribution: requester.attribution, happyHomeDir: configuration.happyHomeDir,
+            homeServerIdentityId: requester.homeServerIdentityId, serverHttpBaseUrl: requester.serverHttpBaseUrl }),
         readCredentials: async () => await requester.isCurrent() ? requester.credentials : null,
         actionsSettingsProvider: {
             getActionsSettings: () => requester.savedSecretOperationContext.readSnapshot()?.settings.actionsSettingsV1

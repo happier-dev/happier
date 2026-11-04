@@ -17,6 +17,9 @@ export const REQUESTER_SESSION_ID_ENV = 'HAPPIER_SESSION_REQUESTER_SESSION_ID';
 export const CustodySchema = z.strictObject({
   v: z.literal(1),
   sessionId: z.string().check(z.minLength(1)),
+  scope: z.optional(z.enum(['workflow_trigger'])),
+  automationId: z.optional(z.string().check(z.minLength(1))),
+  retireWhenIdle: z.optional(z.literal(true)),
   attribution: RequesterWorkAttributionV1Schema,
   homeServerIdentityId: z.optional(z.string().check(z.minLength(1))),
   /** The daemon's Machine admission for this requester; the actor is attribution.accountId. */
@@ -32,15 +35,17 @@ export const CustodyStoredReadSchema = createStoredReadSchema(CustodySchema);
 export type RequesterSessionCredentialBinding = Readonly<{
   happyHomeDir: string;
   sessionId: string;
+  scope?: 'workflow_trigger';
   attribution: RequesterWorkAttributionV1;
 }>;
 
 /** Local private state, not a Session lifecycle ledger or an authority witness. */
-export function requesterSessionCredentialPath(binding: Pick<RequesterSessionCredentialBinding, 'happyHomeDir' | 'sessionId'>
+export function requesterSessionCredentialPath(binding: Pick<RequesterSessionCredentialBinding, 'happyHomeDir' | 'sessionId' | 'scope'>
   & Readonly<{ attribution: Pick<RequesterWorkAttributionV1, 'serverId'> }>): string {
+  const prefix = binding.scope === 'workflow_trigger' ? 'workflow-trigger' : 'session';
   return join(binding.happyHomeDir, 'requester-session-credentials',
     `home-${encodeURIComponent(binding.attribution.serverId)}`,
-    `session-${encodeURIComponent(binding.sessionId)}.json`);
+    `${prefix}-${encodeURIComponent(binding.sessionId)}.json`);
 }
 
 /** Only a private path travels to the child; failure never selects a global credential. */
@@ -48,7 +53,7 @@ export async function readRequesterSessionCredentialsForChild(path: string): Pro
   try {
     if (!path || !process.env[REQUESTER_SESSION_ID_ENV]) return null;
     const value = CustodyStoredReadSchema.parse(JSON.parse(await readPrivateOwnerFile(path)) as unknown);
-    if (value.sessionId !== process.env[REQUESTER_SESSION_ID_ENV]
+    if (value.scope || value.sessionId !== process.env[REQUESTER_SESSION_ID_ENV]
       || value.attribution.serverId !== configuration.activeServerId) return null;
     const credentials = decodeStoredCredentials(value.credentials);
     return credentials ? bindRequesterSessionCredentialScope(credentials, { serverId: value.attribution.serverId,

@@ -17,7 +17,7 @@ import { projectDiscussionModelParticipantLaunchV1 } from '@happier-dev/protocol
 import { SessionCreationTargetPreparationResultV1Schema, SessionCreationDirectoryApprovalV1Schema, needsSessionCreationDirectoryApprovalPreflightV1, projectSessionCreationDirectoryApprovalV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationTargetPreparationV1';
 import { SessionModelSelectionV1Schema } from '@happier-dev/protocol/providers/model-selection';
 import { SessionAuthoringTerminalV1Schema } from '@happier-dev/protocol/sessions/authoring/creationFieldsV1';
-import { normalizeSpawnSessionErrorDetail, SPAWN_SESSION_ERROR_DETAIL_KINDS, isSessionCreationCorrespondenceConflictSpawnErrorDetail, isSessionCreationOrganizationInvalidSpawnErrorDetail } from '@happier-dev/protocol/spawnSession';
+import { normalizeSpawnSessionErrorDetail, SessionCreationTerminalSpawnErrorDetailSchema, SPAWN_SESSION_ERROR_DETAIL_KINDS, isSessionCreationCorrespondenceConflictSpawnErrorDetail, isSessionCreationOrganizationInvalidSpawnErrorDetail } from '@happier-dev/protocol/spawnSession';
 import { supportsMachineOperationProtocolCapabilityV1, supportsMachineSessionSpawnProtocolVersionV1 } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
 import { HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1 } from '@happier-dev/protocol/runtime/input/structuredInputV1';
 import type { SpawnSessionTerminalSchema } from '@/rpc/handlers/spawnSessionOptionsContract';
@@ -742,6 +742,7 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
       }
       const normalizedDirectory = preparedTarget.directory;
       const initialTriggerPreparationState: { failure?: unknown } = {};
+      let cleanupInitialTriggerCustody: (() => Promise<void>) | undefined;
       const prepareInitialTriggers: Parameters<typeof createSpawnedSession>[0]['prepareInitialTriggers'] =
         !discussionParticipant && (identity?.bot?.kind === 'bot' || (initialTriggers && initialTriggers.length > 0)) ? async () => {
           try {
@@ -758,7 +759,7 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
             }
             if (preparedDrafts.length === 0) return [];
             if (!workflowTriggers) throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable' });
-            return await workflowTriggers.prepareSessionInitialTriggers({
+            const prepared = await workflowTriggers.prepareSessionInitialTriggers({
               project: { machineId: executionTarget.machineId, directory: normalizedDirectory },
               initialTriggers: preparedDrafts,
               caller: {
@@ -768,6 +769,9 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
                 ...(signal ? { signal } : {}),
               },
             });
+            const retained = await params.workflowRequesterCustody?.retainInitialTriggers?.(prepared);
+            cleanupInitialTriggerCustody = retained?.cleanupOnFailure;
+            return prepared;
           } catch (error) {
             initialTriggerPreparationState.failure = error;
             throw error;
@@ -1085,6 +1089,9 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
         const [{ readSessionCreationTerminalSpawnErrorDetail }, { isAuthenticationError }, { SPAWN_SESSION_ERROR_CODES }, { readMachineRpcRequestDisposition }, { projectSessionSpawnFailure }] = await Promise.all([import("@/api/session/sessionCreationTerminalSpawnErrorDetail"), import("@/api/client/httpStatusError"), import("@/session/shared/spawnSessionContract"), import("@/session/transport/rpc/machineRpc"), import("@/session/creation/projectSessionSpawnFailure")]);
         const spawnErrorDetails = [readSessionCreationTerminalSpawnErrorDetail(error), details, details.errorDetail, readRecord(details.spawnResponse).errorDetail]
           .map(normalizeSpawnSessionErrorDetail);
+        if (spawnErrorDetails.some(detail => SessionCreationTerminalSpawnErrorDetailSchema.safeParse(detail).success)) {
+          await cleanupInitialTriggerCustody?.();
+        }
         const initialTriggerRefusal = spawnErrorDetails.find(
           (detail) => detail?.kind === SPAWN_SESSION_ERROR_DETAIL_KINDS.SESSION_CREATION_INITIAL_TRIGGER_REFUSED,
         );

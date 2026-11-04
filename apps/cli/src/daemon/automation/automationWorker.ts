@@ -27,7 +27,7 @@ import type {
 } from './automationTypes';
 import type { Update } from '@/api/types';
 import { readStoredCredentials, sameStoredCredentials, type StoredCredentials } from '@/persistence';
-import { DEFAULT_AUTOMATION_V3_MAX_ACTIVE_RUNS_PER_MACHINE } from '@happier-dev/protocol/automations/automationApiV3';
+import { DEFAULT_AUTOMATION_V3_MAX_ACTIVE_RUNS_PER_MACHINE, isTerminalAutomationRunStateV3 } from '@happier-dev/protocol/automations/automationApiV3';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { invalidateActiveAutomationRun } from './automationRunInvalidation';
 import type { sendSessionMessage } from '@/session/services/sendSessionMessage';
@@ -35,6 +35,8 @@ import type { createProductionWorkflowRunCoordinator } from '@/daemon/workflows/
 import type { DaemonAdmissionDrain } from '../lifecycle/admissionDrain';
 import type { LiveWorkItemV1, LiveWorkListenerV1, LiveWorkProducerV1 } from '../lifecycle/managedActivity';
 import { RequesterWorkAttributionV1Schema, type RequesterWorkAttributionV1 } from '../lifecycle/requesterWorkAttribution';
+import { configuration } from '@/configuration';
+import { acquireWorkflowRequesterCredentials, listWorkflowRequesterCredentialScopes, observeWorkflowRequesterCredentialCustody, reconcileWorkflowRequesterCredentialScope, retireWorkflowRequesterCredentials, settleWorkflowRequesterCredentialRetirement } from '../workflows/requesterCustody';
 
 type AutomationMachineAdmissionTransport = NonNullable<
   Parameters<typeof sendSessionMessage>[0]['machineAdmissionTransport']
@@ -46,6 +48,8 @@ export type AutomationWorkerHandle = Readonly<{
   liveWorkProducer: LiveWorkProducerV1;
   stop: () => void;
   refreshAssignments: () => Promise<void>;
+  /** Rejoin durable queued work after connection or changes-feed recovery. */
+  catchUp: () => Promise<void>;
   handleServerUpdate: (update: Update) => void;
   pause: () => void;
   resume: () => void;
@@ -89,11 +93,14 @@ export function startAutomationWorker(params: {
   token: string;
   credentials: StoredCredentials;
   machineId: string;
+  requesterHomeServerIdentityId?: string;
   machineAdmissionTransport?: AutomationMachineAdmissionTransport;
   env?: NodeJS.ProcessEnv;
-  coordinateWorkflowRun?: ReturnType<typeof createProductionWorkflowRunCoordinator>;
+  coordinateWorkflowRun?: (claim: Parameters<ReturnType<typeof createProductionWorkflowRunCoordinator>>[0], requester?: Readonly<{
+    credentials: StoredCredentials; attribution: RequesterWorkAttributionV1;
+  }>) => ReturnType<ReturnType<typeof createProductionWorkflowRunCoordinator>>;
   /** Existing custody reader, woken by control invalidation or release of a Workflow claim. */
-  recoverWorkflowRuns?: () => Promise<void>;
+  recoverWorkflowRuns?: (runId?: string, requester?: Readonly<{ credentials: StoredCredentials; attribution: RequesterWorkAttributionV1 }>) => Promise<void>;
 }): AutomationWorkerHandle {
   const env = params.env ?? process.env;
   const workerDecision = getAutomationWorkerFeatureDecision(env);
@@ -113,6 +120,7 @@ export function startAutomationWorker(params: {
         });
       },
       refreshAssignments: async () => {},
+      catchUp: async () => {},
       handleServerUpdate: () => {},
       pause: () => {},
       resume: () => {},
@@ -125,7 +133,19 @@ export function startAutomationWorker(params: {
   const claimClient = createAutomationClaimClient({ token: params.token });
   const assignments = createAutomationAssignmentCache();
 
+  const requesterWakes = new Map<string, { scopeId: string; runId?: string; nextClaimAt: number }>();
+
   let stopped = false;
+  let requesterCustodyObservation: ReturnType<typeof observeWorkflowRequesterCredentialCustody> | undefined;
+  const observeRequesterCustody = () => {
+    const host = params.requesterWorkAttributionV1;
+    if (!host || !params.requesterHomeServerIdentityId) return;
+    requesterCustodyObservation = observeWorkflowRequesterCredentialCustody({ happyHomeDir: configuration.happyHomeDir,
+      serverId: host.serverId, machineId: params.machineId, installationId: host.installationId,
+      homeServerIdentityId: params.requesterHomeServerIdentityId, hostAccountId: host.accountId,
+      serverHttpBaseUrl: resolveServerHttpBaseUrl(), onError: error =>
+        logAutomationWarn('Workflow requester custody observation failed', error, { machineId: params.machineId }) });
+  };
   const managedTargetBackfillCancellation = new AbortController();
   let paused = false;
   // These values govern only the one claim request loop. A per-Run executor
@@ -355,6 +375,7 @@ export function startAutomationWorker(params: {
     managedTargetBackfillCancellation.abort();
     unsubscribeAdmission?.();
     sourceObservers.clear();
+    requesterCustodyObservation?.dispose();
     for (const active of activeExecutions.values()) {
       active.controller.abort();
     }
@@ -379,9 +400,21 @@ export function startAutomationWorker(params: {
     }
   };
 
-  const recoverWorkflowCustody = (runId: string) => {
-    void params.recoverWorkflowRuns?.().catch((error) => {
-      logAutomationWarn('Workflow cancellation custody recovery failed; pending custody retained', error, {
+  const recoverWorkflowCustody = (runId: string, scopeId?: string) => {
+    void (async () => {
+      const host = params.requesterWorkAttributionV1;
+      const requester = scopeId && host && params.requesterHomeServerIdentityId ? await acquireWorkflowRequesterCredentials({ scopeId,
+        happyHomeDir: configuration.happyHomeDir, serverId: host.serverId, machineId: params.machineId,
+        installationId: host.installationId, serverHttpBaseUrl: resolveServerHttpBaseUrl(),
+        ...(params.requesterHomeServerIdentityId ? { homeServerIdentityId: params.requesterHomeServerIdentityId } : {}) }) : null;
+      if (scopeId && !requester) {
+        await claimClient.reportRequesterCustodyUnavailable({ machineId: params.machineId, runId });
+        return;
+      }
+      try { await params.recoverWorkflowRuns?.(runId, requester ?? undefined); }
+      finally { await requester?.release(); }
+    })().catch((error) => {
+      logAutomationWarn('Workflow custody recovery failed; pending custody retained', error, {
         machineId: params.machineId,
         runId,
       });
@@ -473,6 +506,9 @@ export function startAutomationWorker(params: {
     // the incumbent claim slot only after rechecking that asynchronous gap.
     if (claimInFlight) return;
     let claimedRunStarted = false;
+    let requester: Awaited<ReturnType<typeof acquireWorkflowRequesterCredentials>> = null;
+    let executionOwnsRequester = false;
+    const requesterWake = [...requesterWakes.values()].find(wake => wake.nextClaimAt <= Date.now());
     let releaseClaim = () => {};
     try {
       claimInFlight = new Promise<void>(resolve => { releaseClaim = resolve; });
@@ -491,8 +527,22 @@ export function startAutomationWorker(params: {
         pendingQueuedWake = true;
         return;
       }
+      if (requesterWake && params.requesterWorkAttributionV1) {
+        const host = params.requesterWorkAttributionV1;
+        requester = await acquireWorkflowRequesterCredentials({ scopeId: requesterWake.scopeId,
+          happyHomeDir: configuration.happyHomeDir, serverId: host.serverId, machineId: params.machineId,
+          installationId: host.installationId, serverHttpBaseUrl: resolveServerHttpBaseUrl(),
+          ...(params.requesterHomeServerIdentityId ? { homeServerIdentityId: params.requesterHomeServerIdentityId } : {}) });
+        if (!requester) {
+          requesterWakes.delete(requesterWake.scopeId);
+          if (requesterWake.runId) await claimClient.reportRequesterCustodyUnavailable({ machineId: params.machineId, runId: requesterWake.runId });
+          return;
+        }
+      }
       const scope = 'workflow';
-      const claimResult = await claimClient.claimRun({
+      const selectedCredentials = requester?.credentials ?? params.credentials;
+      const selectedClaimClient = requester ? createAutomationClaimClient({ token: selectedCredentials.token }) : claimClient;
+      const claimResult = await selectedClaimClient.claimRun({
         machineId: params.machineId,
         leaseDurationMs: scheduler.leaseDurationMs,
         scope,
@@ -505,6 +555,10 @@ export function startAutomationWorker(params: {
 
       const claimed = toClaimableRunPayload(claimResult);
       if (!claimed) {
+        if (requesterWake) {
+          requesterWakes.delete(requesterWake.scopeId);
+          return;
+        }
         const nextRunAt = getNextAssignedRunAtMs();
         if (nextRunAt !== null && (forceCapacityRefill || nextRunAt <= Date.now())) {
           // Another machine likely claimed (or our clock is ahead). Back off to avoid a thundering herd.
@@ -517,6 +571,27 @@ export function startAutomationWorker(params: {
         return;
       }
 
+      // The Account-scoped claim may return another admitted occurrence. Its
+      // own private scope must be available before this executor reads content.
+      const claimedScopeId = claimed.run.triggerId ?? claimed.run.id;
+      if (requester && requesterWake && params.requesterWorkAttributionV1 && claimedScopeId !== requesterWake.scopeId) {
+        const host = params.requesterWorkAttributionV1;
+        const claimedRequester = await acquireWorkflowRequesterCredentials({ scopeId: claimedScopeId,
+          accountId: requester.attribution.accountId, happyHomeDir: configuration.happyHomeDir,
+          serverId: host.serverId, machineId: params.machineId, installationId: host.installationId,
+          serverHttpBaseUrl: resolveServerHttpBaseUrl(),
+          ...(params.requesterHomeServerIdentityId ? { homeServerIdentityId: params.requesterHomeServerIdentityId } : {}) });
+        if (!claimedRequester) {
+          await claimClient.reportRequesterCustodyUnavailable({ machineId: params.machineId, runId: claimed.run.id });
+          return;
+        }
+        const previousRequester = requester;
+        requester = claimedRequester;
+        await previousRequester.release();
+      }
+      const executionCredentials = requester?.credentials ?? selectedCredentials;
+      const executionClaimClient = requester ? createAutomationClaimClient({ token: executionCredentials.token }) : selectedClaimClient;
+
       const executionController = new AbortController();
       activeExecutions.set(claimed.run.id, {
         runId: claimed.run.id,
@@ -528,12 +603,15 @@ export function startAutomationWorker(params: {
       });
       publishActivity();
       claimedRunStarted = true;
+      executionOwnsRequester = true;
+      const admittedRequester = requester;
+      const releaseClaimedScope = admittedRequester?.release;
 
       void (async () => {
         try {
           await executeClaimedRun({
             machineId: params.machineId,
-            claimClient,
+            claimClient: executionClaimClient,
             acquireMachineStartCapacity: (signal) => acquireMachineStartCapacity(claimed.run.id, executionController, signal),
             registerReviewHoldRefresh: (refresh) => {
               const active = activeExecutions.get(claimed.run.id);
@@ -558,11 +636,11 @@ export function startAutomationWorker(params: {
                     publishActivity();
                   };
                 },
-              }) }
+              }, admittedRequester ? { credentials: admittedRequester.credentials, attribution: admittedRequester.attribution } : undefined) }
               : {}),
             resolveAutomationAccountEncryption: async (signal) => await resolveAutomationWorkerAccountEncryption({
-              token: params.token,
-              ...(params.credentials ? { credentials: params.credentials } : {}),
+              token: executionCredentials.token,
+              credentials: executionCredentials,
               signal,
             }),
             signal: executionController.signal,
@@ -610,8 +688,16 @@ export function startAutomationWorker(params: {
             // recovery so its existing operation-completion wait stays armed.
             // This also covers cancellation learned by the coordinator's read.
             if (!stopped && (claimed.run.automationId === null || claimed.run.recipeKind === 'workflow-v2'
-              || claimed.run.executionInputEnvelope !== null)) recoverWorkflowCustody(claimed.run.id);
+              || claimed.run.executionInputEnvelope !== null)) {
+              if (admittedRequester) {
+                // Preserve the admitted credential while recovery joins any
+                // still-running Session start, including a disabled trigger.
+                try { await params.recoverWorkflowRuns?.(claimed.run.id, admittedRequester); }
+                finally { await releaseClaimedScope?.(); }
+              } else recoverWorkflowCustody(claimed.run.id);
+            }
           }
+          await releaseClaimedScope?.();
           if (!stopped && !paused) {
             // This is the same bounded map's capacity continuation. The
             // server still chooses the next durable Run, and a null claim
@@ -640,6 +726,7 @@ export function startAutomationWorker(params: {
         assignmentCount: assignments.getAll().length,
       });
     } finally {
+      if (!executionOwnsRequester) await requester?.release();
       claimInFlight = null;
       releaseClaim();
 
@@ -665,6 +752,28 @@ export function startAutomationWorker(params: {
     if (pendingQueuedWake) scheduleClaimSoon('admission-reopened');
     else rescheduleClaim('admission-reopened', true);
   });
+
+  const catchUp = async (): Promise<void> => {
+    if (stopped) return;
+    const host = params.requesterWorkAttributionV1;
+    if (host) {
+      const scopes = await listWorkflowRequesterCredentialScopes({ happyHomeDir: configuration.happyHomeDir,
+        serverId: host.serverId, machineId: params.machineId, installationId: host.installationId });
+      if (scopes.status === 'unavailable') throw new Error(scopes.reason);
+      for (const scope of scopes.bindings) if (scope.attribution.accountId !== host.accountId) {
+        await reconcileWorkflowRequesterCredentialScope({ happyHomeDir: configuration.happyHomeDir,
+          serverId: host.serverId, machineId: params.machineId, installationId: host.installationId,
+          scopeId: scope.sessionId, serverHttpBaseUrl: resolveServerHttpBaseUrl(),
+          ...(params.requesterHomeServerIdentityId ? { homeServerIdentityId: params.requesterHomeServerIdentityId } : {}) });
+        requesterWakes.set(scope.sessionId, { scopeId: scope.sessionId, nextClaimAt: Date.now() });
+      }
+    }
+    pendingQueuedWake = true;
+    // A prior empty read is superseded by a real recovery edge. Server retry
+    // deadlines and claim fencing remain authoritative.
+    await refreshAssignments();
+    await runTick('work-catch-up');
+  };
 
   // This retained-row migration belongs to this admitted startup, never to
   // assignment refresh, socket catch-up or the worker's claim/retry loop.
@@ -710,7 +819,8 @@ export function startAutomationWorker(params: {
   // startup failure cannot leave an empty cache without another authoritative read.
   scheduleNextAssignmentReconciliation();
   rescheduleClaim('worker-start');
-  void refreshAssignments().catch((error) => {
+  observeRequesterCustody();
+  void (params.requesterWorkAttributionV1 ? catchUp() : refreshAssignments()).catch((error) => {
     logAutomationWarn('Failed to refresh automation assignments on worker start', error, {
       machineId: params.machineId,
     });
@@ -725,6 +835,7 @@ export function startAutomationWorker(params: {
   return {
     liveWorkProducer,
     stop: () => stopWorker('manual'),
+    catchUp,
     refreshAssignments: async () => {
       await refreshAssignments();
     },
@@ -732,6 +843,8 @@ export function startAutomationWorker(params: {
       if (stopped || paused) return;
       paused = true;
       sourceObservers.clear();
+      requesterCustodyObservation?.dispose();
+      requesterCustodyObservation = undefined;
       clearClaimTimer();
       if (refreshSoonTimer) {
         clearTimeout(refreshSoonTimer);
@@ -741,6 +854,7 @@ export function startAutomationWorker(params: {
     resume: () => {
       if (stopped || !paused) return;
       paused = false;
+      observeRequesterCustody();
       wakeCapacityWaiters();
       void refreshAssignments();
       rescheduleClaim('resumed');
@@ -759,6 +873,24 @@ export function startAutomationWorker(params: {
       }
 
       invalidateActiveExecution(update);
+      if (body.t === 'automation-run-updated' && body.targetMachineId === params.machineId
+        && isTerminalAutomationRunStateV3(body.state) && params.requesterWorkAttributionV1) {
+        if (body.automationId === null) requesterWakes.delete(body.runId);
+        const host = params.requesterWorkAttributionV1;
+        const scope = body.requesterScope;
+        const scopeId = scope && typeof scope === 'object' && 'id' in scope && typeof scope.id === 'string' ? scope.id : body.runId;
+        const retire = body.automationId === null ? retireWorkflowRequesterCredentials : settleWorkflowRequesterCredentialRetirement;
+        void retire({ scopeId, happyHomeDir: configuration.happyHomeDir, serverHttpBaseUrl: resolveServerHttpBaseUrl(),
+          serverId: host.serverId, machineId: params.machineId, installationId: host.installationId }).catch(error =>
+          logAutomationWarn('Workflow requester custody retirement failed', error, { runId: body.runId }));
+      }
+
+      if (body.t === 'automation-run-updated' && body.targetMachineId === params.machineId
+        && body.state !== 'queued' && !isTerminalAutomationRunStateV3(body.state)
+        && body.requesterScope?.kind === 'workflow_trigger' && !activeExecutions.has(body.runId)) {
+        recoverWorkflowCustody(body.runId, body.requesterScope.id);
+        return;
+      }
 
       if (
         body.t === 'automation-run-updated'
@@ -766,11 +898,18 @@ export function startAutomationWorker(params: {
         && body.workflowControl === 'cancel_requested'
         && !activeExecutions.has(body.runId)
       ) {
-        recoverWorkflowCustody(body.runId);
+        const scope = body.requesterScope;
+        recoverWorkflowCustody(body.runId, scope && typeof scope === 'object' && 'id' in scope && typeof scope.id === 'string' ? scope.id : undefined);
         return;
       }
 
       if (body.t === 'automation-run-updated' && body.state === 'queued') {
+        const scope = body.requesterScope;
+        if (scope && typeof scope === 'object' && 'kind' in scope && scope.kind === 'workflow_trigger'
+          && 'id' in scope && typeof scope.id === 'string' && body.targetMachineId === params.machineId) {
+          const scopeId = scope.id;
+          requesterWakes.set(scopeId, { scopeId, runId: body.runId, nextClaimAt: Date.now() });
+        }
         pendingQueuedWake = true;
         scheduleClaimSoon('socket-run-queued');
       }

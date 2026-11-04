@@ -3299,6 +3299,7 @@ agentIsolation,
         controlPort,
         credentials,
         requesterServerId: requesterRuntimeServerId,
+        resolveCurrentServerIdentityId: resolveBoundHomeServerIdentityId,
         resolveCurrentMachineExecutionOriginContext,
         resolveRequesterSessionRuntimeContext,
         resolveExecutionRunLiveBrokerAuthority,
@@ -4011,7 +4012,12 @@ agentIsolation,
                 serverFeaturesSnapshotStore.getSnapshot(),
               ),
               createWorkflowRunCoordinatorForMachine: (input) => {
-                const runtime = getWorkflowRuntime();
+                const selectedCredentials = input.requesterCredentials ?? credentials;
+                // getWorkflowRuntime is available only with a controller Account.
+                const selectedAccountId = input.requesterWorkAttributionV1?.accountId ?? externalActionAccountId!;
+                const runtime = sameStoredCredentials(selectedCredentials, credentials) ? getWorkflowRuntime()
+                  : createProductionDaemonWorkflowRuntime({ credentials: selectedCredentials, accountId: selectedAccountId,
+                    serverId: requesterRuntimeServerId, secretSources: daemonSecretSources, admissionDrain });
                 const installation = readInstallationIdentityIfExistsSync();
                 return runtime.createCoordinatorForMachine({ ...input, managedMachineAction: managedMachinePolicyAdapter,
                   postWorkflowMessage,
@@ -4020,11 +4026,11 @@ agentIsolation,
                     const stamp = input.requesterWorkAttributionV1;
                     const current = async () => Boolean(client && client === apiMachineForSessions
                       && !homeTransportCancellation.signal.aborted && !isDaemonQuiescing()
-                      && stamp && stamp.accountId === externalActionAccountId && stamp.machineId === input.machineId
+                      && stamp && stamp.accountId === selectedAccountId && stamp.machineId === input.machineId
                       && stamp.serverId === requesterRuntimeServerId && configuration.activeServerId === requesterRuntimeServerId
                       && stamp.installationId === readInstallationIdentityIfExistsSync()?.installationId
                       && request.authorization && await runtime.isAcceptedAuthorizationCurrent({ authorization: request.authorization }));
-                    if (!client || !stamp || !externalActionAccountId || !sameStoredCredentials(request.request.credentials, credentials) || !await current()) {
+                    if (!client || !stamp || !externalActionAccountId || !sameStoredCredentials(request.request.credentials, selectedCredentials) || !await current()) {
                       throw Object.assign(new Error('Workflow requester Session authority unavailable'), { code: 'project_requester_credentials_unavailable' });
                     }
                     const prepared = request.retainedOperation ? null : await prepareWorkflowSessionRequester({
@@ -4070,8 +4076,13 @@ agentIsolation,
                     return await apiMachineForSessions.callSessionActionRpc(request);
                   } });
               },
-              createWorkflowRecoveryForMachine: (input) =>
-                getWorkflowRuntime().createRecoveryForMachine({ ...input, postWorkflowMessage }),
+              createWorkflowRecoveryForMachine: (input) => {
+                const runtime = input.requesterCredentials && input.requesterWorkAttributionV1
+                  ? createProductionDaemonWorkflowRuntime({ credentials: input.requesterCredentials,
+                    accountId: input.requesterWorkAttributionV1.accountId, serverId: requesterRuntimeServerId,
+                    secretSources: daemonSecretSources, admissionDrain }) : getWorkflowRuntime();
+                return runtime.createRecoveryForMachine({ ...input, postWorkflowMessage });
+              },
             }
           : {}),
         prepareApiMachineForSessions:

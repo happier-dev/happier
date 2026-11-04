@@ -890,7 +890,7 @@ describe('createDaemonMachineBootstrapRuntime', () => {
       machineId: machine.id,
       machineAdmissionTransport: expect.any(Function),
     }));
-    expect(recover).toHaveBeenCalledWith('startup');
+    expect(recover).toHaveBeenCalledWith('startup', undefined, undefined);
   });
 
   it('forwards the daemon runtime-open attestation reader into machine bootstrap', () => {
@@ -919,6 +919,7 @@ describe('createDaemonMachineBootstrapRuntime', () => {
       liveWorkProducer: { read: () => ({ coverage: 'complete', items: [] }), subscribe: () => () => {} },
       stop: vi.fn(),
       refreshAssignments: vi.fn(async () => {}),
+      catchUp: vi.fn(async () => {}),
       pause: vi.fn(),
       resume: vi.fn(),
       handleServerUpdate: vi.fn(),
@@ -975,7 +976,7 @@ describe('createDaemonMachineBootstrapRuntime', () => {
     const coordinateWorkflowRun = vi.fn();
     const createWorkflowRunCoordinatorForMachine = vi.fn(() => coordinateWorkflowRun);
     automationWorkerMocks.startAutomationWorker.mockReturnValueOnce({
-      stop: vi.fn(), refreshAssignments: vi.fn(), pause: vi.fn(), resume: vi.fn(), handleServerUpdate: vi.fn(),
+      stop: vi.fn(), catchUp: async () => {}, refreshAssignments: vi.fn(), pause: vi.fn(), resume: vi.fn(), handleServerUpdate: vi.fn(),
     });
     const runtime = createDaemonMachineBootstrapRuntime(createBaseRuntimeParams({
       api: { machineSyncClient: vi.fn(() => apiMachine) } as never,
@@ -1043,7 +1044,7 @@ describe('createDaemonMachineBootstrapRuntime', () => {
       createWorkflowRecoveryForMachine: vi.fn(() => recoverWorkflowRuns),
     }));
     automationWorkerMocks.startAutomationWorker.mockReturnValueOnce({
-      stop: vi.fn(), refreshAssignments: vi.fn(), pause: vi.fn(), resume: vi.fn(), handleServerUpdate: vi.fn(),
+      stop: vi.fn(), catchUp: async () => {}, refreshAssignments: vi.fn(), pause: vi.fn(), resume: vi.fn(), handleServerUpdate: vi.fn(),
     });
 
     await runtime.createConnectedApiMachine({ id: 'machine_1' } as never);

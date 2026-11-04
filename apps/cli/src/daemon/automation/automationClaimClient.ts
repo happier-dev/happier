@@ -159,6 +159,11 @@ export function createAutomationClaimClient(params: {
   }
 
   return {
+    async reportRequesterCustodyUnavailable(input: Readonly<{ machineId: string; runId: string }>): Promise<void> {
+      const path = `/v3/automations/runs/${encodeURIComponent(input.runId)}/requester-custody-unavailable`;
+      const body = { machineId: input.machineId };
+      await axios.post(`${baseUrl}${path}`, body, { headers: await workerHeaders({ method: 'POST', path, body }), timeout: 15_000 });
+    },
     async fetchAssignments(machineId: string): Promise<AutomationWorkerAssignmentsResponse> {
       const response = await axios.get<AutomationV3WorkerAssignmentsResponse>(
         `${baseUrl}/v3/automations/worker/assignments`,

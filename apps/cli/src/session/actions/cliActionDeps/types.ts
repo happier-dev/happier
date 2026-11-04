@@ -276,6 +276,8 @@ export type CliActionDepsParams = Readonly<{
   readAgentStartPolicy?: (signal?: AbortSignal) => Promise<RequesterAgentStartPolicyV1 | null>;
   /** Existing Account workflow family owner, shared with notification link checks. */
   workflowAction?: ActionExecutorDeps['workflowAction'];
+  /** Privately delivered requester credentials retained by the Machine custody owner. */
+  workflowRequesterCustody?: import('@happier-dev/protocol').WorkflowAccountRunActionDeps['workflowRequesterCustody'];
   /** Exact committed contributed-Action owner supplied by this host constructor. */
   invokeContributedAction?: ActionExecutorDeps['invokeContributedAction'];
   /** Current plugin notification owner from this host's executable registry lease. */

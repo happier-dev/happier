@@ -644,6 +644,7 @@ describe('bootstrapMachineSyncRuntime', () => {
         const automationWorker: AutomationWorkerHandle = {
             stop: vi.fn(),
             refreshAssignments: vi.fn(async () => {}),
+            catchUp: vi.fn(async () => {}),
             pause: vi.fn(),
             resume: vi.fn(),
             handleServerUpdate: vi.fn(),
@@ -953,6 +954,7 @@ describe('bootstrapMachineSyncRuntime', () => {
         const startAutomationWorkerForMachine = vi.fn((): AutomationWorkerHandle => ({
             stop: vi.fn(),
             refreshAssignments: vi.fn(async () => {}),
+            catchUp: vi.fn(async () => {}),
             pause: vi.fn(),
             resume: vi.fn(),
             handleServerUpdate: vi.fn(),
@@ -1053,6 +1055,7 @@ describe('bootstrapMachineSyncRuntime', () => {
                 throw workerStopFailure;
             }),
             refreshAssignments: vi.fn(async () => {}),
+            catchUp: vi.fn(async () => {}),
             pause: vi.fn(),
             resume: vi.fn(),
             handleServerUpdate: vi.fn(),
@@ -1220,6 +1223,7 @@ describe('bootstrapMachineSyncRuntime', () => {
             startAutomationWorkerForMachine: vi.fn((): AutomationWorkerHandle => ({
                 stop: vi.fn(),
                 refreshAssignments: vi.fn(async () => {}),
+                catchUp: vi.fn(async () => {}),
                 pause: vi.fn(),
                 resume: vi.fn(),
                 handleServerUpdate: vi.fn(),
@@ -1294,6 +1298,7 @@ describe('bootstrapMachineSyncRuntime', () => {
         const automationWorker: AutomationWorkerHandle = {
             stop: vi.fn(),
             refreshAssignments: vi.fn(async () => {}),
+            catchUp: vi.fn(async () => {}),
             pause: vi.fn(),
             resume: vi.fn(),
             handleServerUpdate: vi.fn(),
@@ -1522,6 +1527,7 @@ describe('bootstrapMachineSyncRuntime', () => {
             startAutomationWorkerForMachine: vi.fn((): AutomationWorkerHandle => ({
                 stop: vi.fn(),
                 refreshAssignments,
+                catchUp: refreshAssignments,
                 pause: vi.fn(),
                 resume: vi.fn(),
                 handleServerUpdate: vi.fn(),
@@ -1799,6 +1805,7 @@ describe('bootstrapMachineSyncRuntime', () => {
             startAutomationWorkerForMachine: vi.fn((): AutomationWorkerHandle => ({
                 stop: vi.fn(),
                 refreshAssignments: vi.fn(async () => {}),
+                catchUp: vi.fn(async () => {}),
                 pause: vi.fn(),
                 resume: vi.fn(),
                 handleServerUpdate: vi.fn(),
@@ -2001,6 +2008,7 @@ describe('bootstrapMachineSyncRuntime', () => {
             startAutomationWorkerForMachine: vi.fn((): AutomationWorkerHandle => ({
                 stop: vi.fn(),
                 refreshAssignments: vi.fn(async () => {}),
+                catchUp: vi.fn(async () => {}),
                 pause: vi.fn(),
                 resume: vi.fn(),
                 handleServerUpdate: vi.fn(),
@@ -2184,6 +2192,7 @@ describe('bootstrapMachineSyncRuntime', () => {
             startAutomationWorkerForMachine: vi.fn((): AutomationWorkerHandle => ({
                 stop: vi.fn(),
                 refreshAssignments: vi.fn(async () => {}),
+                catchUp: vi.fn(async () => {}),
                 pause: vi.fn(),
                 resume: vi.fn(),
                 handleServerUpdate: vi.fn(),
@@ -2432,6 +2441,7 @@ describe('bootstrapMachineSyncRuntime', () => {
             startAutomationWorkerForMachine: vi.fn((): AutomationWorkerHandle => ({
                 stop: vi.fn(),
                 refreshAssignments: vi.fn(async () => {}),
+                catchUp: vi.fn(async () => {}),
                 pause: vi.fn(),
                 resume: vi.fn(),
                 handleServerUpdate: vi.fn(),
@@ -2721,6 +2731,7 @@ describe('bootstrapMachineSyncRuntime', () => {
             startAutomationWorkerForMachine: vi.fn((): AutomationWorkerHandle => ({
                 stop: vi.fn(),
                 refreshAssignments: vi.fn(async () => {}),
+                catchUp: vi.fn(async () => {}),
                 pause: vi.fn(),
                 resume: vi.fn(),
                 handleServerUpdate: vi.fn(),

@@ -1,9 +1,10 @@
+import { logger } from '@/ui/logger';
 import { loadInstalledPlugins } from '@/plugins/discovery/load/installed';
 import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import { acquireSavedSecretMaterializerForOperation } from '@/settings/secrets/savedSecretCatalogRead';
-import { mkdtemp, rm, readFile, chmod, mkdir, writeFile } from 'node:fs/promises';
+import { access, mkdtemp, rm, readFile, chmod, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import axios from 'axios';
 import { dirname, join } from 'node:path';
@@ -100,7 +101,7 @@ import * as installationStore from '@/daemon/identity/store';
 import { decodeExternalActionResolvedTargetV1, encodeExternalActionResolvedTargetV1, verifyExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { resolveSessionRunnerFailureExitCode } from '@/cli/resolveSessionRunnerFailureExitCode';
-import { admitRequesterSessionBootstrap, prepareRequesterSessionBootstrap, createRequesterSessionCredentialCustody, resolveRequesterSessionBootstrap, verifyRequesterSessionMachineAdmissionCurrent, resolveRequesterSessionCredentials, readRequesterSessionCredentialsForChild, listRequesterSessionCredentialBindings, requesterSessionCredentialPath, REQUESTER_SESSION_ID_ENV, type RequesterSessionMachineAdmissionBoundary } from "./requesterSessionCredentials";
+import { admitRequesterSessionBootstrap, prepareRequesterSessionBootstrap, createRequesterSessionCredentialCustody, resolveRequesterSessionBootstrap, verifyRequesterSessionCredentialBinding, verifyRequesterSessionMachineAdmissionCurrent, resolveRequesterSessionCredentials, readRequesterSessionCredentialsForChild, listRequesterSessionCredentialBindings, requesterSessionCredentialPath, REQUESTER_SESSION_ID_ENV, type RequesterSessionMachineAdmissionBoundary } from "./requesterSessionCredentials";
 import { runWithRequesterSessionCurrentnessCheckpoint } from "@/daemon/sessionEncryption/requesterCurrentness";
 import { prepareWorkflowSessionRequester } from '@/daemon/workflows/workflowSessionStartup';
 
@@ -146,7 +147,9 @@ async function home(options: Readonly<{ sessionId?: string; creationMachineId?: 
   let unavailablePath: string | null = null;
   let acpCatalog: AcpCatalogRecordV1 = { v: 1, definitions: [] };
   let settingsAvailable = true;
-  const requests: Array<{ path: string; bearer: string | undefined; sessionActionAuthorized?: true }> = [];
+  let machineRowsReturned = 0;
+  let grantRowsReturned = 0;
+  const requests: Array<{ path: string; bearer: string | undefined; purpose: string | string[] | undefined; sessionActionAuthorized?: true }> = [];
   const pendingInputs: unknown[] = [];
   let sessionActionAuthorization: ExternalActionExecutionAuthorizationV1 | undefined;
   const hasSignedSessionActionAuthority = (request: FastifyRequest) => {
@@ -175,7 +178,8 @@ async function home(options: Readonly<{ sessionId?: string; creationMachineId?: 
   };
   app.addHook('preHandler', async (request, reply) => {
     const signed = hasSignedSessionActionAuthority(request);
-    requests.push({ path: request.url, bearer: request.headers.authorization, ...(signed ? { sessionActionAuthorized: true as const } : {}) });
+    requests.push({ path: request.url, bearer: request.headers.authorization, purpose: request.headers['x-happier-request-purpose'],
+      ...(signed ? { sessionActionAuthorized: true as const } : {}) });
     if (request.headers[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER.toLowerCase()] && !signed)
       return reply.code(403).send({ error: 'access_denied' });
     if (request.url === unavailablePath) return reply.code(503).send({ error: 'home_unavailable' });
@@ -197,6 +201,7 @@ async function home(options: Readonly<{ sessionId?: string; creationMachineId?: 
   app.get('/v1/account/entity-rows/acp', async () => ({ status: 'present', revision: 1, content: { t: 'plain', v: acpCatalog } }));
   app.get('/v1/machines/machine/access', async (_request, reply) => {
     await options.beforeMachineAccessRead?.();
+    if (access) grantRowsReturned += options.machineGrantCount ?? 0;
     return access ? {
     machineId: 'machine', custodian: { accountId: custodianAccountId, displayName: 'Custodian' },
     access: { custodian: { accountId: custodianAccountId, displayName: 'Custodian' }, role: machineRole, resourceMode: 'plain', accessState: 'ready' },
@@ -207,6 +212,19 @@ async function home(options: Readonly<{ sessionId?: string; creationMachineId?: 
       removal: { losesAccessAccountIds: [`recipient-${index}`] },
     })), ownDirectGrant: true, ownAccessSources: [],
   } : reply.code(403).send({ kind: 'refused', code: 'access_denied' });
+  });
+  // The publication read exposes the one Machine's access without its grant roster.
+  // Currentness inspects authority; the encoded content is not opened.
+  const machineRows = Array.from({ length: 128 }, (_, index) => ({
+    id: index === 0 ? 'machine' : `unrelated-machine-${index}`, metadata: 'opaque-machine-content', metadataVersion: 1,
+    daemonState: null, daemonStateVersion: 0, installationId: 'installation', revokedAt: null, replacedByMachineId: null,
+    access: { custodian: { accountId: custodianAccountId, displayName: 'Custodian' }, role: machineRole, resourceMode: 'plain', accessState: 'ready' },
+  }));
+  app.get('/v1/machines', async () => { machineRowsReturned += machineRows.length; return machineRows; });
+  app.get('/v1/machines/machine', async (_request, reply) => {
+    await options.beforeMachineAccessRead?.();
+    if (access) machineRowsReturned++;
+    return access ? { machine: machineRows[0] } : reply.code(404).send({ error: 'machine_unavailable' });
   });
   app.post('/v1/machines/machine/admission/verify', async (request, reply) => {
     // The network adapter is the external Home boundary; the real signer and verifier remain in-process.
@@ -248,6 +266,7 @@ async function home(options: Readonly<{ sessionId?: string; creationMachineId?: 
   const boundary: RequesterSessionMachineAdmissionBoundary = { machineId: 'machine', daemonToken: 'alice-daemon',
     isHomeCurrent: () => true, readInstallation: () => ({ installationId, privateKey: keyPair.secretKey }) };
   return { boundary, requests, pendingInputs, correspondence, keyPair, setAccess: (value: boolean) => { access = value; },
+    readReturnedRows: () => ({ machine: machineRowsReturned, grants: grantRowsReturned }),
     setSessionActionAuthorization: (value: ExternalActionExecutionAuthorizationV1) => { sessionActionAuthorization = value; },
     setUnavailablePath: (value: string | null) => { unavailablePath = value; },
     setSettingsAvailable: (value: boolean) => { settingsAvailable = value; },
@@ -258,6 +277,140 @@ async function home(options: Readonly<{ sessionId?: string; creationMachineId?: 
 }
 
 describe('requester Session lifecycle custody', () => {
+  it.each(['direct', 'cold', 'session-binding'] as const)('preserves ordinary requester custody after refused %s recovery following a crash', async recovery => {
+    const host = await home();
+    const binding = { happyHomeDir: directory!, sessionId: 'session', attribution };
+    const custody = await createRequesterSessionCredentialCustody({ ...binding, credentials, homeServerIdentityId: 'srv_original_home' });
+    const other = await createRequesterSessionCredentialCustody({ ...binding, sessionId: 'cara-session',
+      attribution: { ...attribution, accountId: 'cara' }, credentials: { token: 'cara-fixture', encryption: null } });
+    const recover = () => recovery !== 'direct'
+      ? requesterCredentialOwner.resolveRequesterSessionBootstrapFromCustody({ ...binding, serverId: attribution.serverId,
+        serverHttpBaseUrl: origin, expectedAttribution: attribution, machineAdmissionBoundary: host.boundary })
+      : resolveRequesterSessionCredentials({ ...binding, serverHttpBaseUrl: origin,
+        verifyMachineAdmissionCurrent: () => verifyRequesterSessionMachineAdmissionCurrent({ credentials, attribution,
+          sessionId: binding.sessionId, serverHttpBaseUrl: origin, boundary: host.boundary }) });
+    const admitted = await recover();
+    expect(admitted).not.toBeNull();
+    if (admitted && 'dispose' in admitted) await admitted.dispose();
+    if (recovery === 'session-binding') host.setSessionRole('view');
+    else host.setAccess(false);
+    // The runner crashes after revocation, leaving custody for recovery.
+    await expect(promisify(execFile)(process.execPath, ['-e', 'process.exitCode = 1']))
+      .rejects.toMatchObject({ code: 1 });
+    await expect(access(custody.path)).resolves.toBeUndefined();
+    await expect(recover()).resolves.toBeNull();
+    await expect(access(custody.path)).resolves.toBeUndefined();
+    await expect(access(other.path)).resolves.toBeUndefined();
+    host.setAccess(true);
+    host.setSessionRole('owner');
+    const recovered = await recover();
+    expect(recovered).not.toBeNull();
+    if (recovered && 'dispose' in recovered) await recovered.dispose();
+    await expect(access(custody.path)).resolves.toBeUndefined();
+    await expect(access(other.path)).resolves.toBeUndefined();
+  });
+
+  it.each(['home-withdrawal', 'machine-refusal', 'session-role-withdrawal'] as const)(
+    'preserves ordinary Session custody across direct %s recovery', async failure => {
+      const host = await home();
+      let homeCurrent = true;
+      const boundary = { ...host.boundary, isHomeCurrent: () => homeCurrent };
+      const binding = { happyHomeDir: directory!, sessionId: 'session', attribution };
+      const custody = await createRequesterSessionCredentialCustody({ ...binding, credentials });
+      const recover = () => resolveRequesterSessionCredentials({ ...binding, serverHttpBaseUrl: origin,
+        verifyMachineAdmissionCurrent: () => verifyRequesterSessionMachineAdmissionCurrent({ credentials, attribution,
+          sessionId: binding.sessionId, serverHttpBaseUrl: origin, boundary }) });
+      expect((await recover())?.token).toBe(credentials.token);
+      if (failure === 'home-withdrawal') homeCurrent = false;
+      if (failure === 'machine-refusal') host.setAccess(false);
+      if (failure === 'session-role-withdrawal') host.setSessionRole('view');
+      await expect(recover()).resolves.toBeNull();
+      await expect(access(custody.path)).resolves.toBeUndefined();
+      homeCurrent = true;
+      host.setAccess(true);
+      host.setSessionRole('owner');
+      expect((await recover())?.token).toBe(credentials.token);
+      await expect(access(custody.path)).resolves.toBeUndefined();
+    });
+
+  it.each(['machine-home', 'binding-home', 'network', 'cancelled', 'retargeted-home', 'home-changed-during-read', 'invalid-home-response', 'invalid-admission-response'] as const)(
+    'retains requester recovery custody across %s and admits after recovery', async failure => {
+      let homeCurrent = true;
+      let changeHomeDuringRead = failure === 'home-changed-during-read';
+      const host = await home({ beforeMachineAccessRead: async () => {
+        if (changeHomeDuringRead) homeCurrent = false;
+      } });
+      const binding = { happyHomeDir: directory!, sessionId: 'session', attribution };
+      const custody = await createRequesterSessionCredentialCustody({ ...binding, credentials, homeServerIdentityId: 'srv_original_home' });
+      const controller = new AbortController();
+      const boundary = { ...host.boundary, isHomeCurrent: () => homeCurrent };
+      const recover = (signal?: AbortSignal) => requesterCredentialOwner.resolveRequesterSessionBootstrapFromCustody({
+        ...binding, serverId: attribution.serverId, serverHttpBaseUrl: origin, expectedAttribution: attribution,
+        machineAdmissionBoundary: boundary, signal });
+      try {
+        if (failure === 'machine-home') host.setUnavailablePath('/v1/machines/machine');
+        if (failure === 'binding-home') host.setUnavailablePath('/v2/sessions/session');
+        if (failure === 'network') vi.spyOn(axios, 'get').mockRejectedValueOnce(new axios.AxiosError('fixture transport failure', 'ECONNRESET'));
+        if (failure === 'invalid-home-response') {
+          const get = axios.get.bind(axios);
+          vi.spyOn(axios, 'get').mockImplementation(async (url, config) => {
+            const response = await get(url, config);
+            return String(url).endsWith('/v2/sessions/session') ? { ...response, data: { session: { id: 'session' } } } : response;
+          });
+        }
+        if (failure === 'invalid-admission-response') {
+          const post = axios.post.bind(axios);
+          vi.spyOn(axios, 'post').mockImplementation(async (url, body, config) => {
+            const response = await post(url, body, config);
+            return String(url).endsWith('/admission/verify') ? { ...response, data: {} } : response;
+          });
+        }
+        if (failure === 'cancelled') controller.abort();
+        if (failure === 'retargeted-home') homeCurrent = false;
+        if (['cancelled', 'retargeted-home', 'home-changed-during-read', 'invalid-home-response', 'invalid-admission-response'].includes(failure))
+          await expect(recover(controller.signal)).resolves.toBeNull();
+        else await expect(recover()).rejects.toMatchObject({ code: 'project_requester_home_unavailable', retryable: true });
+        await expect(access(custody.path)).resolves.toBeUndefined();
+      } finally { vi.restoreAllMocks(); host.setUnavailablePath(null); homeCurrent = true; changeHomeDuringRead = false; }
+      const admitted = await recover();
+      expect(admitted?.getBoundSessionId()).toBe('session');
+      await admitted?.dispose();
+    });
+
+  it('reads one exact Machine per binding evaluation without its inventory or grant roster, and refuses later revocation', async () => {
+    const host = await home({ machineGrantCount: 128 });
+    const phases = vi.spyOn(logger, 'debug');
+    const verify = () => verifyRequesterSessionCredentialBinding({ credentials, attribution, sessionId: 'session',
+      serverHttpBaseUrl: origin, verifyMachineAdmissionCurrent: () => verifyRequesterSessionMachineAdmissionCurrent({
+        credentials, attribution, sessionId: 'session', serverHttpBaseUrl: origin, boundary: host.boundary }) });
+    try {
+      // Report cold and warm fixtures; counts, rather than timing noise, gate cost.
+      for (let iteration = 0; iteration < 2; iteration++) {
+        phases.mockClear();
+        expect(await verify()).toBe(true);
+        console.info('REQLATENCY fixture warmup', iteration, JSON.stringify(phases.mock.calls
+          .filter(([label]) => label === '[PluginExec] Requester currentness phase').map(([, phase]) => phase)));
+      }
+      host.requests.length = 0;
+      phases.mockClear();
+      const before = host.readReturnedRows();
+      expect(await verify()).toBe(true);
+      const paths = host.requests.map(request => request.path);
+      const measured = phases.mock.calls.filter(([label]) => label === '[PluginExec] Requester currentness phase')
+        .map(([, phase]) => phase);
+      console.info('REQLATENCY fixture phases', JSON.stringify(measured));
+      const after = host.readReturnedRows();
+      expect({ machine: after.machine - before.machine, grants: after.grants - before.grants }).toEqual({ machine: 1, grants: 0 });
+      expect(paths.filter(path => path === '/v1/machines/machine')).toHaveLength(1);
+      expect(paths.filter(path => path === '/v1/machines' || path.endsWith('/access'))).toHaveLength(0);
+      expect(paths.filter(path => path === '/v1/account/profile')).toHaveLength(1);
+      expect(host.requests.filter(request => request.path.startsWith('/v2/sessions/session')).map(request => request.purpose))
+        .toEqual(['session-detail:requester-binding']);
+      expect(paths.filter(path => path.endsWith('/admission/verify'))).toHaveLength(2);
+      host.setAccess(false);
+      expect(await verify()).toBe(false);
+    } finally { phases.mockRestore(); }
+  });
   it.each(['plain', 'e2ee'] as const)('admits early original requester input through exact retained Session custody without another credential box (%s)', async mode => {
     const sessionId = 'c123456789012345678901234';
     const secret = new Uint8Array(32).fill(31);

@@ -53,9 +53,15 @@ export function createWorkflowRunMachineTransport(input: Readonly<{
         return await input.transport.machineServiceAction!(request);
       } } : {}),
       invoke: async (method, request, options) => {
-        const local = options?.localActionContext;
-        if (!local?.executionRunWorkflowRunId) return await input.transport.invoke(method, request, options);
-        const prepared = await prepare(local);
+        // Startup observation and retained-operation recovery already belong to
+        // this captured Run, even when they have no local Action context.
+        const local = options?.localActionContext ?? (input.requesterWorkAttributionV1 ? {
+          executionRunWorkflowRunId: input.runId, requesterWorkAttributionV1: input.requesterWorkAttributionV1,
+        } : undefined);
+        const differentRun = options?.executionRunWorkflowRunId !== undefined
+          && options.executionRunWorkflowRunId !== input.runId;
+        if (!local && !differentRun) return await input.transport.invoke(method, request, options);
+        const prepared = differentRun || !local ? null : await prepare(local);
         if (!prepared) return { ok: false, errorCode: 'project_requester_credentials_unavailable',
           error: 'Workflow requester authority unavailable',
           ...(method === SESSION_RPC_METHODS.EXECUTION_RUN_START
