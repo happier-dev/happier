@@ -89,23 +89,17 @@ const ACP_SETTINGS_KEY = 'acpCatalogSettingsV1';
 export const PLUGIN_SECRET_BINDINGS_SETTINGS_KEY = 'pluginSecretBindingsV1';
 const MAX_PLUGIN_SECRET_BINDINGS = 256;
 const MAX_PLUGIN_SECRET_BINDINGS_BYTES = 64 * 1024;
-export type AccountSettingsSavedSecretReferenceOwner =
-  | 'profile'
-  | 'provider'
-  | 'voice'
-  | 'mcp'
-  | 'acp'
-  | 'plugin'
-  | 'connectedAccountConfiguration'
-  | 'remoteHost'
-  | 'notificationChannel'
-  | 'registrySource'
-  | 'unknown';
+const savedSecretReferenceOwner = z.enum(['profile', 'provider', 'voice', 'mcp', 'acp', 'plugin',
+  'connectedAccountConfiguration', 'connectedAccountCredential', 'remoteHost', 'notificationChannel', 'registrySource', 'unknown']);
+export type AccountSettingsSavedSecretReferenceOwner = z.infer<typeof savedSecretReferenceOwner>;
 
-export type AccountSettingsSavedSecretReference = Readonly<{
-  owner: AccountSettingsSavedSecretReferenceOwner;
-  path: string;
-}>;
+export const AccountSettingsSavedSecretReferenceSchema = z.strictObject({
+  owner: savedSecretReferenceOwner,
+  path: z.string(),
+  /** Value-free identity supplied by the referencing resource's owner, never parsed from a path. */
+  referrer: z.optional(z.strictObject({ kind: savedSecretReferenceOwner, id: z.string(), displayName: z.optional(z.string()) })),
+});
+export type AccountSettingsSavedSecretReference = Readonly<z.infer<typeof AccountSettingsSavedSecretReferenceSchema>>;
 
 export {
   SAVED_SECRET_REF_MAX_LENGTH_V1,
@@ -151,6 +145,12 @@ export type SavedSecretReferenceCatalogsV1 = Readonly<{
   connectedPurposes?: ConnectedPurposeCatalogV1 | null;
   notificationChannels?: NotificationChannelCatalogRecordV1 | null;
   registrySources?: RegistrySourcesRecordV1 | null;
+  /** Connected Accounts whose key is held by Saved Secret records (the profile's server-visible ids). */
+  connectedAccountCredentials?: readonly Readonly<{
+    account: Readonly<{ service: Readonly<{ pluginId: string; localId: string }>; accountId: string }>;
+    displayName?: string;
+    savedSecretResourceIds: readonly string[];
+  }>[];
 }>;
 
 export type SavedSecretClassifiedSourceCatalogsV1 = Omit<SavedSecretReferenceCatalogsV1, 'profileRecords'> & Readonly<{
@@ -2398,6 +2398,16 @@ export function listSavedSecretReferenceCatalogRefsV1(catalogs: SavedSecretRefer
       if (typeof secretId === 'string') output.push(Object.freeze({ owner: 'remoteHost', path: `remoteHostRows${pathSegment(host.id)}.ssh.${slot}`, secretId }));
     }
   }
+  for (const credential of catalogs.connectedAccountCredentials ?? []) {
+    const { service, accountId } = credential.account;
+    for (const resourceId of credential.savedSecretResourceIds) {
+      output.push(Object.freeze({ owner: 'connectedAccountCredential',
+        path: `connectedAccountCredentials${pathSegment(service.pluginId)}${pathSegment(service.localId)}${pathSegment(accountId)}`,
+        referrer: { kind: 'connectedAccountCredential' as const, id: accountId,
+          ...(credential.displayName ? { displayName: credential.displayName } : {}) },
+        secretId: formatSharedSavedSecretRefV1(resourceId) }));
+    }
+  }
   if (catalogs.notificationChannels !== undefined && catalogs.notificationChannels !== null) {
     const parsed = NotificationChannelCatalogRecordV1Schema.safeParse(catalogs.notificationChannels);
     if (!parsed.success) invalidReferenceRoot('Notification channel SavedSecret reference inventory is invalid');
@@ -2492,7 +2502,10 @@ export function listAccountSettingsSavedSecretReferences(
   collectConnectedAccountReferences(settings, secretId, output);
   if (catalogs) {
     for (const reference of listSavedSecretReferenceCatalogRefsV1(catalogs)) {
-      if (reference.secretId === secretId) output.push(Object.freeze({ owner: reference.owner, path: reference.path }));
+      if (reference.secretId === secretId) {
+        output.push(Object.freeze({ owner: reference.owner, path: reference.path,
+          ...(reference.referrer ? { referrer: reference.referrer } : {}) }));
+      }
     }
   }
   collectUnknownSavedSecretReferences(settings, secretId, output);

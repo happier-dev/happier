@@ -1,3 +1,6 @@
+import { getConnectedMetadataCatalog } from '@/sync/store/settings/connectedMetadataCatalogSnapshot';
+import { projectConnectedAccountCredentialReferenceSources } from '@/sync/domains/connectedServices/connectedAccountCredentialReferenceSources';
+import { getStorage } from '@/sync/domains/state/storageStore';
 import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
 import { formatSavedSecretCatalogReferenceV1, formatSavedSecretCatalogFingerprintV1, SavedSecretCatalogEntryV1Schema, SavedSecretResourceEnvelopeCensusRequestV1Schema, SavedSecretResourceEnvelopeCensusResponseV1Schema, type SavedSecretResourceEnvelopeCensusRecipientV1, type SavedSecretResourceMaterialV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 import { listAccountSettingsSavedSecretReferences, listSavedSecretPersonalImportSourceReferencesV1, listSavedSecretReferenceCatalogRefsV1, type AccountSettingsSavedSecretReference, promotePersonalSavedSecretReference,
@@ -1905,6 +1908,12 @@ export async function updateSavedSecretResourceInContext(context: ProfileAccount
     }
 }
 
+function readConnectedAccountCredentialRecordsForScope(scope: ServerAccountScope) {
+    const { profile } = getStorage().getState();
+    if (profile.id !== scope.accountId) return [];
+    return projectConnectedAccountCredentialReferenceSources(profile.connectedAccountsV4 ?? [], getConnectedMetadataCatalog(scope).labelsByKey);
+}
+
 export async function deleteSavedSecretResource(params: Readonly<{
     scope: ServerAccountScope;
     resourceId: string;
@@ -1925,7 +1934,8 @@ export async function deleteSavedSecretResource(params: Readonly<{
                 expectedSettingsVersion: params.expectedSettingsVersion,
             });
             if (!captured.ok) return captured;
-            const { baseline, catalogs, referenceCensus } = captured;
+            const { baseline, catalogs: capturedCatalogs, referenceCensus } = captured;
+            const catalogs = { ...capturedCatalogs, connectedAccountCredentials: readConnectedAccountCredentialRecordsForScope(params.scope) };
             const references = listAccountSettingsSavedSecretReferences(baseline.source.raw, resourceRef, catalogs);
             if (references.length > 0) return { ok: false, reason: 'in_use', references };
             context.assertCurrent();

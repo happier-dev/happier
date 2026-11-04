@@ -3,8 +3,37 @@ import { getActionSpec } from './actionSpecs.js';
 import { normalizeActionsSettingsV1 } from './actionSettings.js';
 import { resolveActionApprovalRouting } from './actionApprovalPolicy.js';
 import { createPersonalSavedSecretActionExecuteV1 } from '../account/settings/personalSavedSecretActionsV1.js';
+import { formatSharedSavedSecretRefV1, listAccountSettingsSavedSecretReferences } from '../account/settings/savedSecretMutationOwner.js';
+import { DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, ProviderConnectionsCatalogV1Schema } from '../providers/connections/connectionRowsV1.js';
 
 describe('personal Saved Secret Action boundary', () => {
+  it('describes one secret with its value-free census and leaves ordinary lists census-free', async () => {
+    const requested: string[] = [];
+    const references = [{ owner: 'provider' as const, path: 'diagnostic-only',
+      referrer: { kind: 'provider' as const, id: 'pc_northwind', displayName: 'Northwind models' } }];
+    const providerConnections = ProviderConnectionsCatalogV1Schema.parse({ ...DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1,
+      connections: [{ v: 1, id: 'pc_northwind', source: { kind: 'contribution', contributionKey: 'happier.provider.fixture/default' },
+        role: 'default', displayName: 'Northwind models', displayNameMode: 'automatic', revision: 1, createdAt: 1, updatedAt: 1 }],
+      secretBindingsByConnectionId: { pc_northwind: { account: { apiKey: formatSharedSavedSecretRefV1('one') }, byMachineId: {} } },
+    });
+    const execute = createPersonalSavedSecretActionExecuteV1({
+      list: async () => [{ secretId: 'one', name: 'Key', kind: 'apiKey', revision: 1 },
+        { secretId: 'other', name: 'Other', kind: 'token', revision: 2 }],
+      usedBy: async secretId => {
+        requested.push(secretId);
+        return listAccountSettingsSavedSecretReferences({}, formatSharedSavedSecretRefV1(secretId), { profileRecords: [], providerConnections });
+      },
+      create: async () => ({ secretId: 'unused', secretRef: 'unused' }),
+      update: async () => ({ revision: 2 }), delete: async () => { throw new Error('read must not delete'); },
+    });
+    await expect(execute('secrets.list', {})).resolves.toMatchObject({ secrets: [{ secretId: 'one' }, { secretId: 'other' }] });
+    expect(requested).toEqual([]);
+    await expect(execute('secrets.list', { secretId: 'one' })).resolves.toEqual({
+      secrets: [{ secretId: 'one', name: 'Key', kind: 'apiKey', updatedAt: 1 }], usedBy: [{ ...references[0],
+        path: 'providerConnectionsCatalog.secretBindingsByConnectionId.pc_northwind.account.apiKey' }],
+    });
+    expect(requested).toEqual(['one']);
+  });
   it('admits one metadata browse, bulk link, and export operation while keeping Store-in private', async () => {
     const target = { contribution: { pluginId: 'acme.vault', localId: 'vault' }, account: 'account', vaultId: 'vault' };
     expect(getActionSpec('secrets.create').inputSchema.safeParse({ name: 'Token', value: 'private-test-value', storeIn: target }).success).toBe(true);

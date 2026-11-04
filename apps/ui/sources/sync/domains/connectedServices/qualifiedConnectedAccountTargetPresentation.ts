@@ -15,6 +15,7 @@ import { abbreviateConnectedAccountId } from './maskAccountEmail';
 import { humanizeConnectedServiceIdentity } from './connectedServiceIdentityLabel';
 
 import {
+  resolveConnectedAccountPrimaryNameV1,
   resolveQualifiedConnectedAccountLabel,
 } from './connectedServiceProfilePreferences';
 
@@ -146,23 +147,18 @@ export function presentConnectedAccountName(input: Readonly<{
   presentIdentity?: ConnectedAccountIdentityPresenter;
 }>): ConnectedAccountNamePresentation {
   const serviceTitle = input.serviceTitle;
-  const userLabel = nonEmptyText(input.userLabel);
   const email = nonEmptyText(input.email);
   const providerAccountId = nonEmptyText(input.providerAccountId);
-  const storedDisplayName = nonEmptyText(input.displayName);
-  // Earlier producers used the provider id as displayName. Read those stored
-  // facts without requiring an Account write or a reconnect to fix the title.
-  const displayName = storedDisplayName === providerAccountId || storedDisplayName === nonEmptyText(input.accountId) || storedDisplayName === serviceTitle
-    ? null : storedDisplayName;
+  const name = resolveConnectedAccountPrimaryNameV1(input);
   const fallbackLabel = t('connectedServicesCollection.accountLabel', { service: serviceTitle });
-  const primaryLabel = userLabel ?? displayName ?? email ?? fallbackLabel;
-  const primaryLabelKind = !userLabel && !displayName && email ? 'email' : undefined;
+  const primaryLabel = name.name ?? fallbackLabel;
+  const primaryLabelKind = name.labelKind;
   const shown = input.presentIdentity?.({ label: primaryLabel, labelKind: primaryLabelKind, email, accountId: providerAccountId })
     ?? { label: primaryLabel, email, accountId: providerAccountId };
   const shownPrimaryLabel = shown.label ?? fallbackLabel;
   const identityLabel = shown.email && shown.email !== shownPrimaryLabel
     ? shown.email
-    : !email && !displayName && !userLabel ? abbreviateConnectedAccountId(shown.accountId) : null;
+    : !name.name ? abbreviateConnectedAccountId(shown.accountId) : null;
   return {
     primaryLabel: shownPrimaryLabel,
     ...(primaryLabelKind ? { primaryLabelKind } : {}),

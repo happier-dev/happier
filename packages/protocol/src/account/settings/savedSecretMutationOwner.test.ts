@@ -46,6 +46,22 @@ describe('registry token SavedSecret reference census', () => {
     expect(() => listAccountSettingsSavedSecretReferences({}, secret.id, { profileRecords: [], registrySources }))
       .toThrow(AccountSettingsSavedSecretMutationError);
   });
+  it('lists a Connected Account whose key is this record, so delete review names the account', () => {
+    const ref = formatSharedSavedSecretRefV1('anthropic-key');
+    const account = { service: { pluginId: 'happier.agent.claude', localId: 'anthropic' }, accountId: 'work' };
+    const catalogs = { profileRecords: [], connectedAccountCredentials: [
+      { account, displayName: 'Work credential', savedSecretResourceIds: ['anthropic-key'] },
+      { account: { ...account, accountId: 'unnamed' }, savedSecretResourceIds: ['anthropic-key'] },
+      { account: { ...account, accountId: 'other' }, savedSecretResourceIds: ['unrelated-key'] },
+    ] };
+    expect(listAccountSettingsSavedSecretReferences({}, ref, catalogs)).toEqual([
+      { owner: 'connectedAccountCredential', path: 'connectedAccountCredentials["happier.agent.claude"].anthropic.work',
+        referrer: { kind: 'connectedAccountCredential', id: 'work', displayName: 'Work credential' } },
+      { owner: 'connectedAccountCredential', path: 'connectedAccountCredentials["happier.agent.claude"].anthropic.unnamed',
+        referrer: { kind: 'connectedAccountCredential', id: 'unnamed' } },
+    ]);
+    expect(listAccountSettingsSavedSecretReferences({}, formatSharedSavedSecretRefV1('free-key'), catalogs)).toEqual([]);
+  });
   it('blocks deletion and preserves token binding through personal promotion', () => {
     const registrySources = RegistrySourcesRecordV1Schema.parse({ v: 2, disabledSourceIds: [], sources: [{
       id: 'registry:private', title: 'Private', format: 'git', kinds: ['skill'], url: 'https://github.com/acme/private',
@@ -443,6 +459,10 @@ describe('destination catalog SavedSecret reference ownership', () => {
     const target = formatSharedSavedSecretRefV1('mixed-catalog-secret');
     const references = Reflect.apply(listAccountSettingsSavedSecretReferences, undefined, [settings, secret.id, catalogs]);
     expect(references.map((entry: { owner: string }) => entry.owner).sort()).toEqual(['connectedAccountConfiguration', 'provider', 'provider']);
+    expect(references.filter((entry: { owner: string }) => entry.owner === 'provider')).toEqual([
+      expect.objectContaining({ referrer: { kind: 'provider', id: 'connection.a', displayName: 'Fixture' } }),
+      expect.objectContaining({ referrer: { kind: 'provider', id: 'connection.a', displayName: 'Fixture' } }),
+    ]);
     const rewrite = Reflect.apply(promotePersonalSavedSecretReference, undefined,
       [settings, { secretId: secret.id, expectedUpdatedAt: 1, sharedSecretRef: target }, catalogs]);
     expect(rewrite.providerConnections.secretBindingsByConnectionId['connection.a']).toEqual({

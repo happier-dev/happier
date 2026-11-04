@@ -5,7 +5,8 @@ import { readSavedSecretCatalogMetadataInContext, readSavedSecretContentsInConte
 import { homeDomainFailureFromActionFailure } from '@/sync/api/home/homeDomainActions';
 import { createSavedSecretResource, updateSavedSecretResource, deleteSavedSecretResource,
     type SavedSecretAdmittedMutationExecute } from './savedSecretResourceOperations';
-import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
+import { formatSharedSavedSecretRefV1, parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
+import { readSavedSecretUsedBy } from '@/sync/store/settings/savedSecretUsedBy';
 import { readProfileTransferSourceInContext } from '@/sync/api/account/apiProfileCatalog';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { listSavedSecretVaultFieldsInContext, linkSavedSecretVaultItemsInContext, exportSavedSecretsToVaultInContext,
@@ -41,6 +42,7 @@ export function createUiPersonalSavedSecretActionExecute(account: LazyActionAcco
                 'ref' in entry && entry.relationship === 'owner');
         };
         const execute = createPersonalSavedSecretActionExecuteV1({
+            usedBy: async secretId => readSavedSecretUsedBy(scope, formatSharedSavedSecretRefV1(secretId)),
             list: async () => {
                 const secrets = [];
                 for (const entry of await read()) {

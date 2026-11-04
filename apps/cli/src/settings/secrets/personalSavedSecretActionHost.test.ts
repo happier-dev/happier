@@ -15,6 +15,10 @@ import { createInvocationSavedSecretOperationContextV1 } from './savedSecretOper
 import { createSavedSecretMaterializerFromSnapshotV1 } from './savedSecretCatalog';
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { createSecretSourceHostFixture } from '@/plugins/testkit/secretSources';
+import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
+import { PROFILE_ROWS_ROUTE_V1, PROFILE_REFERENCE_GUARD_ROUTE_V1 } from '@happier-dev/protocol/profiles/profileRecordV1';
+import { PROFILE_TRANSFER_ROUTE_V1 } from '@happier-dev/protocol/profiles/profileTransferV1';
+import { CONNECTED_PRESENTATION_ROWS_ROUTE_V1 } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
 
 // HTTP is the process boundary; Account admission, resource opening, sealing and Action execution stay real.
 vi.mock('axios', async importOriginal => {
@@ -24,6 +28,54 @@ vi.mock('axios', async importOriginal => {
 afterEach(() => { vi.mocked(axios.get).mockReset(); vi.mocked(axios.post).mockReset(); vi.mocked(axios.request).mockReset(); vi.unstubAllGlobals(); });
 
 describe('personal Saved Secret key rotation', () => {
+    it('describes Connected Account referrers through the same read-only census as delete', async () => {
+        const accountId = 'secret-owner';
+        const token = `e30.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
+        const credentials = { token, encryption: null };
+        const operationContext = createInvocationSavedSecretOperationContextV1({ credentials,
+            serverHttpBaseUrl: 'https://describe.example.test', isCurrent: async () => true,
+            snapshot: { source: 'network', settings: AccountSettingsSchema.parse({}), rawSettings: {}, settingsVersion: 0,
+                loadedAtMs: 1, scopeKey: resolveAccountSettingsScopeKeyForToken(token), settingsSecretsReadKeys: [] } });
+        const account = { service: { pluginId: 'happier.agent.claude', localId: 'anthropic' }, accountId: 'work' };
+        const resource: SavedSecretResourceMaterialV1 = { resourceId: 'one', encryptionMode: 'plain', recipientEnvelope: null,
+            storedContent: { t: 'plain', v: { v: 1, name: 'Key', kind: 'apiKey', value: 'dummy-test-key' } },
+            entry: SavedSecretCatalogEntryV1Schema.parse({ ref: formatSharedSavedSecretRefV1('one'), source: 'shared_resource',
+                relationship: 'owner', ownerAccountId: accountId, name: 'Key', kind: 'apiKey', revision: 1, materialStatus: 'ready',
+                capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } }) };
+        vi.stubGlobal('fetch', vi.fn<typeof fetch>(async () => Response.json(FeaturesResponseSchema.parse({ features: {}, capabilities: {} }))));
+        vi.mocked(axios.get).mockImplementation(async rawUrl => {
+            const path = new URL(String(rawUrl)).pathname;
+            if (path === '/v1/account/profile') return { status: 200, data: AccountProfileSchema.parse({ id: accountId,
+                connectedAccountsV4: [{ ref: account, displayName: 'Provider name', status: 'connected', authenticationModeId: 'api-key',
+                    revisionSemantics: 'revisioned', credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
+                    configurationReady: true, configurationRevision: null, savedSecretResourceIds: ['one'] }] }) };
+            if (path === CONNECTED_PRESENTATION_ROWS_ROUTE_V1) return { status: 200, data: { status: 'present', revision: 1,
+                content: { t: 'plain', v: { v: 1, entries: [{ v: 1, subject: { kind: 'account', account }, label: 'Work credential' }] } } } };
+            if (path === '/v1/account/saved-secrets/resources/materials') return { status: 200, data: { resources: [resource] } };
+            if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+            if (path === '/v1/account/encryption/currentness') return { status: 200, data: { mode: 'plain', version: 1,
+                settingsVersion: 0, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
+                recipientEnvelopeReadiness: { status: 'unavailable', reason: 'plain_account' } } };
+            if (path === '/v2/account/settings') return { status: 200, data: { version: 0, content: { t: 'plain', v: {} } } };
+            if (path === '/v2/account/settings/history') return { status: 200, data: { snapshots: [] } };
+            if (path === PROFILE_ROWS_ROUTE_V1) return { status: 200, data: { status: 'listed', rows: [], nextCursor: null,
+                complete: true, diagnostics: [], referenceGuardRevision: 1, transferControl: { status: 'absent' } } };
+            if (path === PROFILE_REFERENCE_GUARD_ROUTE_V1) return { status: 200, data: { status: 'ready', revision: 1 } };
+            // All catalog transports use their real empty-row envelope; unknown paths still fail their schema.
+            if (path === PROFILE_TRANSFER_ROUTE_V1 || path.startsWith('/v1/account/')) return { status: 200, data: { status: 'absent' } };
+            throw new Error(`Unexpected boundary request ${path}`);
+        });
+        const execute = createCliPersonalSavedSecretActionExecute({ credentials, operationContext,
+            home: async () => { throw new Error('Describe must not mutate'); } });
+        await expect(execute({ actionId: 'secrets.list', input: { secretId: 'one' }, context: { surface: 'cli' } }))
+            .resolves.toMatchObject({ secrets: [{ secretId: 'one', name: 'Key' }], usedBy: [{ owner: 'connectedAccountCredential',
+                referrer: { kind: 'connectedAccountCredential', id: 'work', displayName: 'Work credential' } }] });
+        expect(vi.mocked(axios.get).mock.calls.filter(([url]) => new URL(String(url)).pathname === '/v1/account/profile')).toHaveLength(1);
+        await expect(execute({ actionId: 'secrets.delete', input: { secretId: 'one', expectedUpdatedAt: 1 }, context: { surface: 'cli' } }))
+            .resolves.toMatchObject({ ok: false, errorCode: 'in_use', details: { references: [{ owner: 'connectedAccountCredential',
+                referrer: { id: 'work', displayName: 'Work credential' } }] } });
+        expect(axios.post).not.toHaveBeenCalled();
+    });
     it('lists installed source declarations without acquiring native values', async () => {
         let reads = 0;
         const source = await createSecretSourceHostFixture({ runtime: {

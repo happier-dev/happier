@@ -1,6 +1,26 @@
 import { buildQualifiedPluginContributionKey, type PluginContributionIdentityV1 } from '../plugins/contributionIdentity.js';
 import type { ConnectedServiceId } from './connectedServiceBindings.js';
 
+/** Stored identity is descriptive fallback, never execution or installation authority. */
+export function humanizeConnectedServiceIdentity(localId: string): string {
+  return localId.trim().replace(/[-_/]+/g, ' ').replace(/(^|\s)\p{L}/gu, value => value.toLocaleUpperCase());
+}
+
+/** Shared account-name evidence; hosts supply localized copy only when no name exists. */
+export function resolveConnectedAccountPrimaryNameV1(input: Readonly<{
+  serviceTitle: string; userLabel?: string | null; displayName?: string | null;
+  email?: string | null; providerAccountId?: string | null; accountId?: string | null;
+}>): Readonly<{ name: string | null; labelKind?: 'email' }> {
+  const text = (value: string | null | undefined) => value?.trim() || null;
+  const userLabel = text(input.userLabel);
+  const email = text(input.email);
+  const storedName = text(input.displayName);
+  const displayName = storedName === text(input.providerAccountId) || storedName === text(input.accountId)
+    || storedName === input.serviceTitle ? null : storedName;
+  return { name: userLabel ?? displayName ?? email,
+    ...(!userLabel && !displayName && email ? { labelKind: 'email' as const } : {}) };
+}
+
 export function connectedServiceProfileKey(params: Readonly<{ serviceId: string; profileId: string }>): string {
   const serviceId = encodeURIComponent(String(params.serviceId).trim());
   const profileId = encodeURIComponent(String(params.profileId).trim());

@@ -122,13 +122,23 @@ describe('Provider connection catalog row owner', () => {
     expect(raw).toHaveProperty('providerSettingsV1');
   });
 
-  it('addresses Account and Machine bindings through the same canonical reference owner', () => {
-    expect(listProviderConnectionsCatalogSavedSecretRefsV1(catalog)).toEqual([
-      { path: 'secretBindingsByConnectionId.pc_one.account.apiKey', secretId: accountSecretRef },
-      { path: 'secretBindingsByConnectionId.pc_one.byMachineId["machine.with.dots"].apiKey', secretId: machineSecretRef },
+  it('addresses inference and billing bindings at Account and Machine scopes through the same canonical reference owner', () => {
+    const withBilling = ProviderConnectionsCatalogV1Schema.parse({ ...catalog, secretBindingsByConnectionId: { pc_one: {
+      account: { apiKey: accountSecretRef, managementKey: accountSecretRef },
+      byMachineId: { 'machine.with.dots': { apiKey: machineSecretRef, managementKey: machineSecretRef } },
+    } } });
+    expect(listProviderConnectionsCatalogSavedSecretRefsV1(withBilling)).toMatchObject([
+      { path: 'secretBindingsByConnectionId.pc_one.account.apiKey', secretId: accountSecretRef, slot: 'apiKey' },
+      { path: 'secretBindingsByConnectionId.pc_one.account.managementKey', secretId: accountSecretRef, slot: 'managementKey' },
+      { path: 'secretBindingsByConnectionId.pc_one.byMachineId["machine.with.dots"].apiKey', secretId: machineSecretRef, slot: 'apiKey' },
+      { path: 'secretBindingsByConnectionId.pc_one.byMachineId["machine.with.dots"].managementKey', secretId: machineSecretRef, slot: 'managementKey' },
     ]);
-    expect(rewriteProviderConnectionsCatalogSavedSecretRefsV1(catalog, accountSecretRef, formatSharedSavedSecretRefV1('replacement')).secretBindingsByConnectionId.pc_one).toEqual({
-      account: { apiKey: formatSharedSavedSecretRefV1('replacement') }, byMachineId: { 'machine.with.dots': { apiKey: machineSecretRef } },
+    expect(listProviderConnectionsCatalogSavedSecretRefsV1(withBilling).every(reference =>
+      reference.referrer.kind === 'provider' && reference.referrer.id === connection.id
+      && reference.referrer.displayName === connection.displayName)).toBe(true);
+    expect(rewriteProviderConnectionsCatalogSavedSecretRefsV1(withBilling, accountSecretRef, formatSharedSavedSecretRefV1('replacement')).secretBindingsByConnectionId[withBilling.connections[0]!.id]).toEqual({
+      account: { apiKey: formatSharedSavedSecretRefV1('replacement'), managementKey: formatSharedSavedSecretRefV1('replacement') },
+      byMachineId: { 'machine.with.dots': { apiKey: machineSecretRef, managementKey: machineSecretRef } },
     });
   });
 

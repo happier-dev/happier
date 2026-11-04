@@ -135,6 +135,8 @@ export const QualifiedConnectedAccountPresentationMetadataV4Schema = lazyZodSche
 
 const QualifiedConnectedAccountProfileV4Shape = {
   ref: asProtocolZod(QualifiedConnectedAccountRefSchema),
+  /** Present only when the account's key is held by its Saved Secret record(s): the one credential record to show and edit. */
+  savedSecretResourceIds: z.optional(z.array(z.string().check(z.minLength(1), z.maxLength(128))).check(z.minLength(1), z.maxLength(64))),
   status: z.enum([
     'connected',
     'refreshing',

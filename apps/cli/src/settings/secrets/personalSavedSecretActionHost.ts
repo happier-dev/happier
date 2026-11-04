@@ -9,6 +9,13 @@ import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/
 import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { StoredCredentials } from '@/persistence';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
+import { fetchAccountProfile } from '@/api/accountProfile';
+import axios from '@/api/client/credentialAxios';
+import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
+import { CONNECTED_PRESENTATION_ROWS_ROUTE_V1, ConnectedPresentationRowReadResponseV1Schema,
+    openConnectedPresentationContentV1, projectConnectedPresentationLabelsV1 } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
+import { humanizeConnectedServiceIdentity, resolveConnectedAccountPrimaryNameV1,
+    resolveQualifiedConnectedAccountLabel } from '@happier-dev/protocol/connect/connectedServiceProfilePreferences';
 import { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
@@ -151,6 +158,40 @@ export function createCliPersonalSavedSecretActionExecute(params: CliOwnedSavedS
 }>): NonNullable<ActionExecutorDeps['personalSavedSecretActionExecute']> {
     return async ({ actionId, input, context }) => withOwnedSavedSecretOperation(params, context.signal, async owner => {
         const { accountId, scopeKey, assertCurrent, read, findOwned, materializer } = owner;
+        const captureReferences = async (secretId: string) => {
+            const { captureSavedSecretSourcePreparationForOperation } = await import('./hydrateSavedSecretCatalog');
+            const captured = await captureSavedSecretSourcePreparationForOperation({ credentials: params.credentials,
+                expectedScopeKey: scopeKey, operationContext: params.operationContext, signal: context.signal });
+            const profile = await fetchAccountProfile({ token: params.credentials.token, signal: context.signal });
+            if (profile.id !== accountId) refusal('saved_secret_account_lifetime_changed');
+            const response = await axios.get<unknown>(`${resolveServerHttpBaseUrl()}${CONNECTED_PRESENTATION_ROWS_ROUTE_V1}`, {
+                headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), Authorization: `Bearer ${params.credentials.token}` },
+                signal: context.signal, validateStatus: () => true,
+            });
+            if (response.status !== 200) refusal('secret_unavailable');
+            const row = ConnectedPresentationRowReadResponseV1Schema.parse(response.data);
+            let labelsByKey: Readonly<Record<string, string>> = {};
+            if (row.status === 'present') {
+                const opened = openConnectedPresentationContentV1({ mode: captured.source.mode,
+                    material: captured.source.material, content: row.content });
+                if (opened.status === 'unavailable') refusal('secret_unavailable');
+                labelsByKey = projectConnectedPresentationLabelsV1(opened.record);
+            } else if (row.status !== 'absent' && row.status !== 'deleted') refusal('secret_unavailable');
+            await assertCurrent();
+            const references = listAccountSettingsSavedSecretReferences(captured.rawSettings, formatSharedSavedSecretRefV1(secretId), {
+                ...captured.referenceCatalogs,
+                connectedAccountCredentials: profile.connectedAccountsV4.map(account => ({
+                    account: account.ref, displayName: resolveConnectedAccountPrimaryNameV1({
+                        serviceTitle: humanizeConnectedServiceIdentity(account.ref.service.localId),
+                        userLabel: resolveQualifiedConnectedAccountLabel({ labelsByKey, service: account.ref.service, accountId: account.ref.accountId }),
+                        displayName: account.displayName, accountId: account.ref.accountId,
+                        providerAccountId: account.providerIdentity?.accountId,
+                    }).name ?? undefined,
+                    savedSecretResourceIds: account.savedSecretResourceIds ?? [],
+                })),
+            });
+            return { captured, references };
+        };
         let nativeRuntime: Awaited<ReturnType<NonNullable<typeof params.resolveNativeSecretSourceRuntime>>> | undefined;
         const mutate = async (id: 'secrets.shared.create' | 'secrets.shared.update' | 'secrets.shared.delete' | 'secrets.shared.promote', value: unknown) => {
             await assertCurrent();
@@ -199,6 +240,7 @@ export function createCliPersonalSavedSecretActionExecute(params: CliOwnedSavedS
             return { kind: 'external', contribution: target.contribution, account: result.account, reference: result.reference };
         };
         const execute = createPersonalSavedSecretActionExecuteV1({
+            usedBy: async secretId => (await captureReferences(secretId)).references,
             sources: () => params.operationContext?.secretSources?.list() ?? [],
             list: async () => {
                 const resources = await read();
@@ -281,10 +323,7 @@ export function createCliPersonalSavedSecretActionExecute(params: CliOwnedSavedS
             }),
             delete: async args => {
                 await findOwned(args.secretId, args.expectedUpdatedAt);
-                const { captureSavedSecretSourcePreparationForOperation } = await import('./hydrateSavedSecretCatalog');
-                const captured = await captureSavedSecretSourcePreparationForOperation({ credentials: params.credentials,
-                    expectedScopeKey: scopeKey, operationContext: params.operationContext, signal: context.signal });
-                const references = listAccountSettingsSavedSecretReferences(captured.rawSettings, formatSharedSavedSecretRefV1(args.secretId), captured.referenceCatalogs);
+                const { captured, references } = await captureReferences(args.secretId);
                 if (references.length) refusal('in_use', { references });
                 SharedSavedSecretDeleteOutputV1Schema.parse(await mutate('secrets.shared.delete', { resourceId: args.secretId,
                     expectedRevision: args.expectedUpdatedAt, expectedSettingsVersion: captured.expectedSettingsVersion, referenceCensus: captured.referenceCensus }));

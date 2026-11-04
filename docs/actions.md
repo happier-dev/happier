@@ -6845,6 +6845,13 @@ Actions use this live-only input custody when carrying a value. Their observatio
 projection omits the value. Present-user UI writes act directly, while Agent,
 CLI and MCP writes ask through the shared spec-owned policy. `secrets.list`
 returns owned resource metadata only; create returns its canonical resource ref.
+Supplying `secretId` to `secrets.list` selects one resource and includes `usedBy`,
+the existing value-free Saved Secret reference census (`owner`, diagnostic `path`,
+and optional owner-supplied `referrer: { kind, id, displayName? }`). Ordinary lists
+do not run a census. `usedBy: null` means complete reference coverage is unavailable;
+an empty array means the census found no references. The app reads held Account
+Settings and catalog metadata, without fetching or polling; the CLI reuses the
+existing delete preparation. Paths are diagnostic, never names or navigation ids.
 The `updatedAt`/`expectedUpdatedAt` fields on these Actions are aliases for the
 private resource's revision concurrency token, not wall-clock timestamps.
 The existing encrypted/plain private-resource mutation owner remains the writer;

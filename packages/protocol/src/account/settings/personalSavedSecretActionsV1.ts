@@ -1,6 +1,7 @@
 import { PERSONAL_SAVED_SECRET_ACTION_IDS_V1 } from './personalSavedSecretActionIdsV1.js';
 export { PERSONAL_SAVED_SECRET_ACTION_IDS_V1 } from './personalSavedSecretActionIdsV1.js';
 import { z } from 'zod/mini';
+import { AccountSettingsSavedSecretReferenceSchema, type AccountSettingsSavedSecretReference } from './savedSecretMutationOwner.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { ActionExecuteFailureSchema } from '../../actions/actionExecutionResult.js';
 import { SavedSecretResourceSourceV1Schema, SavedSecretExternalSourceV1Schema, type SavedSecretExternalSourceV1 } from './savedSecretResourceContentSchemaV1.js';
@@ -45,7 +46,7 @@ export const PersonalSavedSecretCreateInputObjectV1Schema = lazyZodSchema(() => 
   storeIn: z.optional(SavedSecretVaultTargetV1Schema),
 }));
 export const PERSONAL_SAVED_SECRET_ACTION_INPUT_SCHEMAS_V1 = {
-  'secrets.list': lazyZodSchema(() => z.strictObject({ source: z.optional(SavedSecretVaultQueryV1Schema) })),
+  'secrets.list': lazyZodSchema(() => z.strictObject({ source: z.optional(SavedSecretVaultQueryV1Schema), secretId: z.optional(identity()) })),
   'secrets.create': lazyZodSchema(() => PersonalSavedSecretCreateInputObjectV1Schema.check(
       z.refine(input => (input.value === undefined) !== (input.source === undefined), 'Expected one secret value or source'),
       z.refine(input => input.storeIn === undefined || input.value !== undefined, 'Store requires a secret value'),
@@ -63,7 +64,8 @@ export const PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1 = {
       contribution: asProtocolZod(PluginContributionIdentityV1Schema), title: identity(),
       capabilities: PluginSecretSourceContributionV1Schema.shape.capabilities,
     }))), fields: z.optional(z.array(PluginSecretSourceFieldV1Schema)),
-    vaults: z.optional(z.array(PluginSecretSourceFieldV1Schema.shape.vault)) })),
+    vaults: z.optional(z.array(PluginSecretSourceFieldV1Schema.shape.vault)),
+    usedBy: z.optional(z.nullable(z.array(AccountSettingsSavedSecretReferenceSchema))) })),
   'secrets.create': lazyZodSchema(() => z.strictObject({ secretId: identity(), secretRef: identity() })),
   'secrets.update': lazyZodSchema(() => z.strictObject({ secretId: identity(), updatedAt: revision() })),
   'secrets.delete': lazyZodSchema(() => z.strictObject({ deleted: z.literal(true) })),
@@ -78,6 +80,8 @@ export type PersonalSavedSecretMetadataV1 = Readonly<{ secretId: string; name: s
 /** Hosts adapt the incumbent private-resource writer, never a Settings writer. */
 export type PersonalSavedSecretActionPortV1 = Readonly<{
   list(): Promise<readonly PersonalSavedSecretMetadataV1[]>;
+  /** One selected secret; null means the host does not hold complete census coverage. */
+  usedBy?(secretId: string): Promise<readonly AccountSettingsSavedSecretReference[] | null>;
   sources?(): readonly Readonly<{ contribution: PluginContributionIdentityV1; title: string; capabilities?: PluginSecretSourceContributionV1['capabilities'] }>[];
   browse?(input: SavedSecretVaultQueryV1): Promise<Pick<Extract<z.infer<typeof PluginSecretSourceListResultV1Schema>, { ok: true }>, 'fields' | 'vaults'>>;
   link?(input: z.infer<typeof PERSONAL_SAVED_SECRET_ACTION_INPUT_SCHEMAS_V1['secrets.link']>): Promise<z.infer<typeof PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1['secrets.link']>>;
@@ -93,7 +97,10 @@ export function createPersonalSavedSecretActionExecuteV1(port: PersonalSavedSecr
       case 'secrets.list': {
         const input = PERSONAL_SAVED_SECRET_ACTION_INPUT_SCHEMAS_V1[actionId].parse(raw);
         if (input.source && !port.browse) throw Object.assign(new Error('unsupported_action'), { code: 'unsupported_action' });
-        return PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1[actionId].parse({ secrets: (await port.list()).map(({ revision, ...secret }) => ({ ...secret, updatedAt: revision })),
+        return PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1[actionId].parse({ secrets: (await port.list())
+          .filter(secret => input.secretId === undefined || secret.secretId === input.secretId)
+          .map(({ revision, ...secret }) => ({ ...secret, updatedAt: revision })),
+          ...(input.secretId ? { usedBy: await port.usedBy?.(input.secretId) ?? null } : {}),
           ...(port.sources ? { sources: port.sources() } : {}), ...(input.source ? await port.browse!(input.source) : {}) });
       }
       case 'secrets.link':

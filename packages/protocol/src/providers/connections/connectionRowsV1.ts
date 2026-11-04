@@ -1,5 +1,6 @@
 import { splitProviderSettingsV1 } from "./catalogSchemasV1.js";
 export { splitProviderSettingsV1, composeProviderSettingsV1 } from "./catalogSchemasV1.js";
+export { reconcileProviderConnectionsCatalogV1 } from "./reconcileCatalogV1.js";
 import { ProviderConnectionsCatalogV1Schema, StoredProviderConnectionsCatalogV1Schema, StoredProviderConnectionsContentV1Schema } from "./catalogSchemasV1.js";
 import type { ProviderConnectionsCatalogV1, ProviderConnectionsContentV1, StoredProviderConnectionsContentV1 } from "./catalogSchemasV1.js";
 export { ProviderConnectionsCatalogV1Schema, StoredProviderConnectionsCatalogV1Schema, ProviderConnectionsContentV1Schema, StoredProviderConnectionsContentV1Schema, ProviderConnectionsMigrationContentV1Schema, ProviderConnectionsRowFailureV1Schema, ProviderConnectionsRowReadResponseV1Schema, ProviderConnectionsRowMutationV1Schema, ProviderConnectionsRowMutationResponseV1Schema } from "./catalogSchemasV1.js";
@@ -164,16 +165,23 @@ export function readRetainedProviderConnectionsCatalogV1(raw: Readonly<Record<st
     : { status: 'ready' as const, catalog: opened.catalog, defaults: defaults.success ? defaults.data : {} };
 }
 
-export function listProviderConnectionsCatalogSavedSecretRefsV1(catalog: ProviderConnectionsCatalogV1): readonly Readonly<{ path: string; secretId: string }>[] {
-  const refs: Array<{ path: string; secretId: string }> = [];
+export function listProviderConnectionsCatalogSavedSecretRefsV1(catalog: ProviderConnectionsCatalogV1): readonly Readonly<{
+  path: string; secretId: string; slot: string; referrer: Readonly<{ kind: 'provider'; id: string; displayName?: string }>;
+}>[] {
+  const refs: Array<ReturnType<typeof listProviderConnectionsCatalogSavedSecretRefsV1>[number]> = [];
+  const connections = new Map<string, ProviderConnectionsCatalogV1['connections'][number]>(
+    catalog.connections.map(connection => [connection.id, connection]),
+  );
   for (const [id, bindings] of Object.entries(catalog.secretBindingsByConnectionId)) {
+    const connection = connections.get(id);
+    const referrer = { kind: 'provider' as const, id, ...(connection ? { displayName: connection.displayName } : {}) };
     const connectionPath = appendSavedSecretReferencePathV1('secretBindingsByConnectionId', id);
     for (const [slot, secretId] of Object.entries(bindings.account ?? {})) {
-      refs.push({ path: appendSavedSecretReferencePathV1(`${connectionPath}.account`, slot), secretId });
+      refs.push({ path: appendSavedSecretReferencePathV1(`${connectionPath}.account`, slot), secretId, slot, referrer });
     }
     for (const [machineId, slots] of Object.entries(bindings.byMachineId ?? {})) {
       const machinePath = appendSavedSecretReferencePathV1(`${connectionPath}.byMachineId`, machineId);
-      for (const [slot, secretId] of Object.entries(slots)) refs.push({ path: appendSavedSecretReferencePathV1(machinePath, slot), secretId });
+      for (const [slot, secretId] of Object.entries(slots)) refs.push({ path: appendSavedSecretReferencePathV1(machinePath, slot), secretId, slot, referrer });
     }
   }
   return refs;

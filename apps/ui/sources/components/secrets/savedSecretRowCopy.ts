@@ -1,8 +1,18 @@
-import type { SavedSecretCatalogEntryV1 } from '@happier-dev/protocol';
+import type { SavedSecretCatalogEntryV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
+import type { AccountSettingsSavedSecretReference } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
 
 import type { CollectionRowStatus } from '@/components/ui/lists/collection/CollectionStatusGlyph';
 import { formatAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
 import { t } from '@/text';
+
+/** Used-by row copy from the resource owner's identity; paths are diagnostic metadata only. */
+export function savedSecretUsedByCopy(reference: AccountSettingsSavedSecretReference): Readonly<{ title: string; subtitle: string }> {
+    return {
+        title: reference.referrer?.displayName || t('common.unknown'),
+        subtitle: reference.referrer?.kind === 'provider' ? t('settingsProviders.kind.frontier')
+            : reference.referrer?.kind === 'connectedAccountCredential' ? t('settingsVoice.realtimeProviders.authentication.account.title') : '',
+    };
+}
 
 /** The material status of a shared secret, in the owner's or recipient's words. */
 export function sharedSecretStatusLabel(status: SavedSecretCatalogEntryV1['materialStatus']): string {
