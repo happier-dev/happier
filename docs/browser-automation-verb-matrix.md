@@ -580,6 +580,9 @@ Only actions declared by `INJECTED_PAGE_AUTOMATION_ACTIONS` enter the installed 
   A terminal `capture_source_unavailable` receipt refreshes discovery once: removal of a previously discovered view
   follows the existing workspace tab-close path, which restores the previous tab. A view
   still listed without capture, or a failed discovery request, keeps its tab for recovery.
+  `browser.view.list` exposes the existing Session view list so agents can discover adopted
+  popup tabs and use the existing focus/close Actions.
+
 ## Related
 
 - `docs/browser-recording-capture-matrix.md` — the recording half of the same question.

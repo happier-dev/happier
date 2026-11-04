@@ -214,6 +214,7 @@ export const DaemonBrowserViewListRequestV1Schema = lazyZodSchema(() => z.strict
   machineId: IdSchema,
   browserSessionId: IdSchema,
 }));
+export type DaemonBrowserViewListRequestV1 = z.infer<typeof DaemonBrowserViewListRequestV1Schema>;
 export const DaemonBrowserViewListResponseV1Schema = lazyZodSchema(() => z.strictObject({
   protocolVersion: z.literal(1),
   views: z.array(BrowserDaemonViewV1Schema),

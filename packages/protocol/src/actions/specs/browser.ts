@@ -32,6 +32,8 @@ import {
   BrowserTakeControlCommandV1Schema,
   BrowserHandBackCommandV1Schema,
   BrowserSetViewportCommandV1Schema,
+  DaemonBrowserViewListRequestV1Schema,
+  DaemonBrowserViewListResponseV1Schema,
 } from '../../browser/control/v1.js';
 import {
   BrowserContextAttachmentV1Schema,
@@ -199,6 +201,7 @@ export const BROWSER_RUNTIME_ACTION_TITLES: Readonly<Partial<Record<RuntimeActio
   'browser.control.handBack': 'Return browser control to the Session',
   'browser.workspace.open': 'Open browser target in workspace',
   'browser.view.open': 'Open browser view',
+  'browser.view.list': 'List browser views',
   'browser.view.openExternal': 'Open browser page in the system browser',
   'browser.view.openDevtools': 'Open native browser developer tools',
   'browser.view.close': 'Close browser view',
@@ -279,6 +282,7 @@ export const BROWSER_RUNTIME_ACTION_DESCRIPTIONS: Readonly<Partial<Record<Runtim
   'browser.control.handBack': 'Return browser control to the Session after accepted input settles. The agent must observe again before its next mutation.',
   'browser.workspace.open': 'Open a target in the exact answering-client workspace, before a Browser view exists. Requires the current Home and mounted workspace owner.',
   'browser.view.open': 'Open a browser view inside an existing browser session.',
+  'browser.view.list': 'List the live browser views in the selected browser session, including page-created tabs.',
   'browser.view.openExternal': 'Open the exact mounted page in the answering client\'s system browser without replacing its view.',
   'browser.view.openDevtools': 'Open native developer tools for the exact mounted desktop browser view when its engine supports them.',
   'browser.view.close': 'Close a browser view and detach it from its session.',
@@ -360,6 +364,7 @@ export const BROWSER_RUNTIME_ACTION_INPUT_SCHEMAS = Object.freeze({
     target: BrowserViewTargetV1Schema,
   })),
   'browser.view.open': BrowserOpenViewCommandV1Schema,
+  'browser.view.list': DaemonBrowserViewListRequestV1Schema,
   'browser.view.openExternal': RuntimeBrowserViewEffectInputSchema,
   'browser.view.openDevtools': RuntimeBrowserViewEffectInputSchema,
   'browser.view.close': BrowserCloseViewCommandV1Schema,
@@ -436,6 +441,7 @@ const browserRuntimeOutputGeneralSchemas: Readonly<typeof BROWSER_EXTENSION_ACTI
   'browser.control.handBack': z.ZodMiniUnion<readonly [typeof BrowserCommandDispatchResultV1Schema, typeof BrowserAutomationInterruptedResultV1Schema]>;
   'browser.workspace.open': typeof BrowserWorkspaceOpenResultV1Schema;
   'browser.view.open': z.ZodMiniUnion<readonly [typeof BrowserCommandDispatchResultV1Schema, typeof BrowserOpenViewInProgressV1Schema]>;
+  'browser.view.list': typeof DaemonBrowserViewListResponseV1Schema;
   'browser.view.openExternal': typeof BrowserCommandDispatchResultV1Schema;
   'browser.view.openDevtools': typeof BrowserCommandDispatchResultV1Schema;
   'browser.view.close': typeof BrowserCommandDispatchResultV1Schema;
@@ -476,6 +482,7 @@ const browserRuntimeOutputGeneralSchemas: Readonly<typeof BROWSER_EXTENSION_ACTI
   'browser.control.handBack': z.union([BrowserCommandDispatchResultV1Schema, BrowserAutomationInterruptedResultV1Schema]),
   'browser.workspace.open': BrowserWorkspaceOpenResultV1Schema,
   'browser.view.open': z.union([BrowserCommandDispatchResultV1Schema, BrowserOpenViewInProgressV1Schema]),
+  'browser.view.list': DaemonBrowserViewListResponseV1Schema,
   'browser.view.openExternal': BrowserCommandDispatchResultV1Schema,
   'browser.view.openDevtools': BrowserCommandDispatchResultV1Schema,
   'browser.view.close': BrowserCommandDispatchResultV1Schema,

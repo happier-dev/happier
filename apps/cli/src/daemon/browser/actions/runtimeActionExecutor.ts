@@ -1,7 +1,7 @@
 import { ACTION_ID_FAMILIES_V1, isBrowserExtensionActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
 import type { BrowserExtensionActionInputV1 } from '@happier-dev/protocol/actions';
 import { createUnavailableRuntimeActionExecutor, resolveRuntimeActionExecutionFamily } from '@happier-dev/protocol/actions/executor/dispatch';
-import { BrowserCommandV1Schema, BrowserOpenViewInProgressV1Schema } from '@happier-dev/protocol/browser/control/v1';
+import { BrowserCommandV1Schema, BrowserOpenViewInProgressV1Schema, type DaemonBrowserViewListRequestV1, type DaemonBrowserViewListResponseV1 } from '@happier-dev/protocol/browser/control/v1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { getActionRequiredServerFeatureId } from '@happier-dev/protocol/actions/actionRequiredServerFeature';
 import { MOUNTED_BROWSER_DIAGNOSTICS_ACTION_IDS } from '@happier-dev/protocol/browser/automation/reverseDispatchV1';
@@ -135,6 +135,14 @@ async function executeBrowserControlAction(
     const control = input.control ?? input.resolveControl?.();
     if (!control?.extensions) return { status: 'unavailable', code: 'managed_browser_required' };
     return await control.extensions.execute(args.actionId, parsed.input as BrowserExtensionActionInputV1, args.context);
+  }
+
+  if (args.actionId === 'browser.view.list') {
+    const control = input.control ?? input.resolveControl?.();
+    if (!control) return browserRuntimeActionDisabledResult('browser_control_route_unavailable');
+    // The Action spec above already parsed the canonical list request.
+    const request = parsed.input as DaemonBrowserViewListRequestV1;
+    return { protocolVersion: 1, views: [...control.listViews(request.browserSessionId)] } satisfies DaemonBrowserViewListResponseV1;
   }
 
   const command = BrowserCommandV1Schema.safeParse(parsed.input);
