@@ -3,6 +3,7 @@ import type { AgentSessionConnectedAccountSelection } from '@happier-dev/plugin-
 import type { AgentLaunchMaterialization } from '@/daemon/agentIsolation/agentLaunchMaterials';
 
 import type {
+  ConnectedServiceCredentialRefreshFailureKindV1,
   ConnectedServiceCredentialRevisionV1,
   ConnectedAccountServiceKey,
   QualifiedConnectedAccountPurposeBindingV1,
@@ -54,15 +55,7 @@ export type ConnectedServicesMaterialization = Readonly<{
 }>;
 
 export type ConnectedServiceMaterializationCredentialRefreshFailureCategory =
-  | 'invalid_grant'
-  | 'invalid_client'
-  | 'provider_401'
-  | 'provider_403'
-  | 'network_error'
-  | 'malformed_response'
-  | 'missing_access_token'
-  | 'missing_refresh_token'
-  | 'unknown';
+  ConnectedServiceCredentialRefreshFailureKindV1;
 
 export type ConnectedServicesMaterializationDiagnostic = Readonly<{
   code: string;
