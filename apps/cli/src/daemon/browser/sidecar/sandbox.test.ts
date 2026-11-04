@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const osBoundary = vi.hoisted(() => ({ restriction: '1\n', usernsFailed: true }));
@@ -40,14 +41,13 @@ describe('managed Chromium sandbox diagnosis', () => {
         const child = new EventEmitter();
         const stderr = new EventEmitter();
         const factory = createBrowserSidecarLaunchOwnerControlAdapterFactory({
-            browserSessionId: 'session', sidecarId: 'sidecar', featureEnabled: true,
-            allowPersistentProfiles: false,
+            browserSessionId: 'session', sidecarId: 'sidecar',
             profile: { profileId: 'profile', owner: { kind: 'session', id: 'session' }, storageMode: 'ephemeral', cleanupOnSessionClose: true },
             profileDirectory: '/tmp/profile',
             binaryResolution: { ok: true, source: 'managedBrowserPackage', executablePath: '/managed/chrome', discoveryKind: 'managedRuntime', diagnostics: [] },
             spawnProcess: () => {
                 queueMicrotask(() => { stderr.emit('data', browserStderr); child.emit('exit', null, 'SIGABRT'); });
-                return Object.assign(child, { pid: 42, stderr, kill: () => true });
+                return Object.assign(child, { pid: 42, stderr, stdio: [null, null, null, new PassThrough(), new PassThrough()], kill: () => true });
             },
             cleanupProfileDirectory: () => {},
         });

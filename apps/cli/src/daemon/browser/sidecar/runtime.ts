@@ -36,7 +36,7 @@ function buildSidecarLaunchArgs(profileDirectory: string): readonly string[] {
     return [
         '--headless=new',
         `--user-data-dir=${profileDirectory}`,
-        '--remote-debugging-port=0',
+        '--remote-debugging-pipe',
         '--no-first-run',
         '--no-default-browser-check',
     ];
@@ -45,22 +45,10 @@ function buildSidecarLaunchArgs(profileDirectory: string): readonly string[] {
 export function createSidecarLaunchPlan(params: Readonly<{
     sidecarId: string;
     nowMs: number;
-    featureEnabled: boolean;
-    allowPersistentProfiles: boolean;
     profile: BrowserProfileV1;
     profileDirectory: string;
     binaryResolution: SidecarBrowserBinaryResolution;
 }>): SidecarLaunchPlan {
-    if (!params.featureEnabled) {
-        return {
-            publicResult: rejectedLaunchResult({
-                errorCode: 'feature_disabled',
-                disabledReason: 'browser.sidecar feature disabled',
-            }),
-            privateLaunch: null,
-        };
-    }
-
     if (!params.binaryResolution.ok) {
         return {
             publicResult: rejectedLaunchResult({
@@ -73,7 +61,6 @@ export function createSidecarLaunchPlan(params: Readonly<{
 
     const profileResolution = resolveSidecarProfileBinding({
         profile: params.profile,
-        allowPersistentProfiles: params.allowPersistentProfiles,
         profileDirectory: params.profileDirectory,
     });
     if (!profileResolution.ok) {

@@ -3,11 +3,7 @@ import {
     createBrowserSidecarCdpControlAdapter,
     type BrowserSidecarControlAdapterFactory,
 } from './controlAdapter';
-import {
-    discoverBrowserSidecarCdpEndpoint,
-    type BrowserSidecarCdpEndpoint,
-    type BrowserSidecarCdpEndpointSource,
-} from './cdpEndpoint';
+import type { BrowserSidecarCdpPipe } from './cdpTransport';
 import { connectBrowserSidecarCdpTransport } from './cdpTransport';
 
 type ConnectedBrowserSidecarCdpTransport = Readonly<{
@@ -16,41 +12,43 @@ type ConnectedBrowserSidecarCdpTransport = Readonly<{
 }>;
 
 export type ConnectBrowserSidecarCdpTransport = (
-    endpoint: BrowserSidecarCdpEndpoint
+    pipe: BrowserSidecarCdpPipe,
+    scope?: Readonly<{ signal?: AbortSignal; deadlineMs?: number }>,
 ) => Promise<ConnectedBrowserSidecarCdpTransport>;
 
 function unavailable() {
     return {
         ok: false as const,
         errorCode: 'cdp_unavailable' as const,
-        disabledReason: 'Browser sidecar CDP endpoint is unavailable.',
+        disabledReason: 'Browser sidecar CDP pipe is unavailable.',
     };
 }
 
-async function defaultConnectTransport(endpoint: BrowserSidecarCdpEndpoint): Promise<ConnectedBrowserSidecarCdpTransport> {
-    const transport = await connectBrowserSidecarCdpTransport({ endpoint });
-    return {
-        transport,
-        dispose: () => transport.dispose(),
-    };
+async function defaultConnectTransport(pipe: BrowserSidecarCdpPipe, scope?: Readonly<{ signal?: AbortSignal; deadlineMs?: number }>): Promise<ConnectedBrowserSidecarCdpTransport> {
+    const transport = await connectBrowserSidecarCdpTransport({ pipe, signal: scope?.signal });
+    try {
+        // Readiness is a reply from this child, under the containing launch's lifetime.
+        await transport.dispatchBrowserCommand({ method: 'Browser.getVersion', ...scope });
+        return { transport, dispose: () => transport.dispose() };
+    } catch (error) {
+        transport.dispose();
+        throw error;
+    }
 }
 
 export function createBrowserSidecarCdpControlAdapterFactory(input: Readonly<{
     browserSessionId: string;
     sidecarId: string;
-    endpointSource: BrowserSidecarCdpEndpointSource;
+    pipe: BrowserSidecarCdpPipe;
+    signal?: AbortSignal;
+    deadlineMs?: number;
     connectTransport?: ConnectBrowserSidecarCdpTransport;
 }>): BrowserSidecarControlAdapterFactory {
     return async (factoryInput) => {
-        const discovered = discoverBrowserSidecarCdpEndpoint(input.endpointSource);
-        if (!discovered.ok) {
-            return unavailable();
-        }
-
         const connectTransport = input.connectTransport ?? defaultConnectTransport;
         let connected: ConnectedBrowserSidecarCdpTransport;
         try {
-            connected = await connectTransport(discovered.endpoint);
+            connected = await connectTransport(input.pipe, { signal: input.signal, deadlineMs: input.deadlineMs });
         } catch {
             return unavailable();
         }

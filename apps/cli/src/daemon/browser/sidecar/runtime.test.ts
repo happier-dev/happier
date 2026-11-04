@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import * as runtime from './runtime';
 
 describe('daemon browser sidecar runtime planning', () => {
-    it('fails closed when the browser.sidecar feature gate is disabled', async () => {
+    it('plans the already admitted source without replaying its feature decision', async () => {
         const mod = runtime;
 
         expect(mod).not.toBeNull();
@@ -12,8 +12,6 @@ describe('daemon browser sidecar runtime planning', () => {
         const plan = mod.createSidecarLaunchPlan({
             sidecarId: 'sidecar_1',
             nowMs: 2_000,
-            featureEnabled: false,
-            allowPersistentProfiles: false,
             profile: {
                 profileId: 'profile_1',
                 storageMode: 'ephemeral',
@@ -32,11 +30,10 @@ describe('daemon browser sidecar runtime planning', () => {
 
         expect(plan.publicResult).toMatchObject({
             v: 1,
-            accepted: false,
-            state: 'unavailable',
-            errorCode: 'feature_disabled',
+            accepted: true,
+            state: 'ready',
         });
-        expect(plan.privateLaunch).toBeNull();
+        expect(plan.privateLaunch).not.toBeNull();
         expect(JSON.stringify(plan.publicResult)).not.toContain('/managed/chrome');
     });
 
@@ -49,8 +46,6 @@ describe('daemon browser sidecar runtime planning', () => {
         const plan = mod.createSidecarLaunchPlan({
             sidecarId: 'sidecar_1',
             nowMs: 2_000,
-            featureEnabled: true,
-            allowPersistentProfiles: false,
             profile: {
                 profileId: 'profile_1',
                 storageMode: 'ephemeral',
@@ -85,7 +80,7 @@ describe('daemon browser sidecar runtime planning', () => {
             args: expect.arrayContaining([
                 '--headless=new',
                 '--user-data-dir=/tmp/happier/browser/profile_1',
-                '--remote-debugging-port=0',
+                '--remote-debugging-pipe',
             ]),
             cleanupOnStop: true,
         });

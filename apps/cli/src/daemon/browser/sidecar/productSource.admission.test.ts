@@ -62,8 +62,7 @@ async function host(initialOverride: number | null = null,
                 const child = new EventEmitter();
                 const stderr = new PassThrough();
                 children.push(child);
-                queueMicrotask(() => stderr.write('DevTools listening on ws://127.0.0.1:9444/devtools/browser/test\n'));
-                return Object.assign(child, { pid: 42, stderr,
+                return Object.assign(child, { pid: 42, stderr, stdio: [null, null, stderr, new PassThrough(), new PassThrough()],
                     kill: () => {
                         if (deferredExit) deferredExit();
                         else child.emit('exit', 0, 'SIGTERM');

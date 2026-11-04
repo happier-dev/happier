@@ -96,8 +96,8 @@ describe('managed browser live Session execution', () => {
                 createLaunchOwnerFactory: input => createBrowserSidecarLaunchOwnerControlAdapterFactory({
                     ...input,
                     spawnProcess: (executable, args) => {
-                        const child = spawn(executable, [...args], { stdio: ['ignore', 'ignore', 'pipe'] });
-                        child.stderr.on('data', chunk => browserStderr.push(String(chunk)));
+                        const child = spawn(executable, [...args], { stdio: ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'] });
+                        child.stderr?.on('data', chunk => browserStderr.push(String(chunk)));
                         child.once('error', error => browserStderr.push(`${error.name}: ${error.message}\n`));
                         child.once('exit', (code, signal) => browserStderr.push(`Browser exit: ${code ?? signal}\n`));
                         return child;

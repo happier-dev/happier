@@ -1,6 +1,6 @@
 import { BrowserProfileV1Schema } from '@happier-dev/protocol/browser/profile/v1';
 import { BrowserSidecarProfileBindingV1Schema } from '@happier-dev/protocol/browser/sidecar/v1';
-import type { BrowserProfileV1, BrowserSidecarErrorCodeV1, BrowserSidecarProfileBindingV1 } from '@happier-dev/protocol';
+import type { BrowserSidecarErrorCodeV1, BrowserSidecarProfileBindingV1 } from '@happier-dev/protocol';
 
 export type SidecarProfileCleanupPlan = Readonly<{
     cleanupOnStop: boolean;
@@ -19,13 +19,8 @@ export type SidecarProfileBindingResolution =
         disabledReason: string;
     }>;
 
-function isPersistentProfile(profile: BrowserProfileV1): boolean {
-    return profile.storageMode !== 'ephemeral';
-}
-
 export function resolveSidecarProfileBinding(params: Readonly<{
     profile: unknown;
-    allowPersistentProfiles: boolean;
     profileDirectory: string;
 }>): SidecarProfileBindingResolution {
     const parsed = BrowserProfileV1Schema.safeParse(params.profile);
@@ -38,14 +33,6 @@ export function resolveSidecarProfileBinding(params: Readonly<{
     }
 
     const profile = parsed.data;
-    if (isPersistentProfile(profile) && !params.allowPersistentProfiles) {
-        return {
-            ok: false,
-            errorCode: 'profile_policy_denied',
-            disabledReason: 'Persistent browser sidecar profiles are disabled by policy.',
-        };
-    }
-
     const binding = BrowserSidecarProfileBindingV1Schema.parse({
         profileId: profile.profileId,
         storageMode: profile.storageMode,

@@ -41,6 +41,7 @@ describe('browser sidecar product source owner', () => {
         class OwnedProcess extends EventEmitter {
             pid = 42;
             stderr = new PassThrough();
+            stdio = [null, null, this.stderr, new PassThrough(), new PassThrough()];
             kill() { queueMicrotask(() => this.emit('exit', 0, 'SIGTERM')); return true; }
         }
         const profileStore = createBrowserProfileStore({
@@ -58,7 +59,6 @@ describe('browser sidecar product source owner', () => {
                 spawnProcess: (_executable, args) => {
                     expect(args).toContain('--headless=new');
                     const process = new OwnedProcess();
-                    queueMicrotask(() => process.stderr.write('DevTools listening on ws://127.0.0.1:9444/devtools/browser/private-token\n'));
                     return process;
                 },
                 connectTransport: async () => ({ transport: {
@@ -111,6 +111,7 @@ describe('browser sidecar product source owner', () => {
         class StartingProcess extends EventEmitter {
             pid = 42;
             stderr = new PassThrough();
+            stdio = [null, null, this.stderr, new PassThrough(), new PassThrough()];
             exited = false;
             kill() {
                 queueMicrotask(() => {

@@ -1,3 +1,4 @@
+import { PassThrough } from 'node:stream';
 import { EventEmitter } from 'node:events';
 import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -55,16 +56,15 @@ describe('product browser session isolation', () => {
             }),
             createLaunchOwnerFactory: (input) => {
                 const child = new EventEmitter();
-                const stderr = new EventEmitter();
+                const stderr = new PassThrough();
                 const listeners = new Set<BrowserSidecarCdpEventSubscriber>();
                 cdpListeners.set(input.browserSessionId, listeners);
                 return createBrowserSidecarLaunchOwnerControlAdapterFactory({
                     ...input,
                     spawnProcess: (_executable, args) => {
                         spawnArgs.push([...args]);
-                        queueMicrotask(() => stderr.emit('data', 'DevTools listening on ws://127.0.0.1:9222/devtools/browser/test\n'));
                         return Object.assign(child, {
-                            pid: 123, stderr,
+                            pid: 123, stderr, stdio: [null, null, stderr, new PassThrough(), new PassThrough()],
                             kill: () => { stopped.push(input.browserSessionId); child.emit('exit', 0, 'SIGTERM'); return true; },
                         });
                     },

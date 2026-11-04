@@ -18,6 +18,12 @@ UPDATE_AUTOMATION_VERB_MATRIX=1 ../../apps/stack/bin/hstack-exec --local -- \
   sources/sync/domains/browser/adapters/automationVerbMatrix.closure.test.ts
 ```
 
+The launch owner supplies child read fd 3 and write fd 4 (inherited handles on Windows);
+the sidecar transport carries NUL-delimited CDP JSON over those descriptors. Automation,
+screencast, diagnostics, recording and agents share that connection. No debugging port or
+`/json/version` endpoint is opened. Missing pipes or a failed readiness handshake return
+typed unavailable results without a TCP fallback. Stderr remains diagnostic input only.
+
 ## Controller and cancellation (development source)
 
 `browser.view.setViewport` selects a per-view device preset or `fitViewer` through the

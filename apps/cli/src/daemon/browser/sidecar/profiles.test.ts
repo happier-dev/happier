@@ -14,7 +14,6 @@ describe('daemon browser sidecar profile planning', () => {
                 owner: { kind: 'session', id: 'session_1' },
                 cleanupOnSessionClose: true,
             },
-            allowPersistentProfiles: false,
             profileDirectory: '/tmp/happier/sidecar/profile_1',
         });
 
@@ -33,7 +32,7 @@ describe('daemon browser sidecar profile planning', () => {
         });
     });
 
-    it('denies persistent sidecar profiles until profile policy explicitly allows them', async () => {
+    it('binds the selected persistent profile without a second permission flag and preserves its data', async () => {
         const mod = await import('./profiles');
 
         expect(mod).not.toBeNull();
@@ -46,14 +45,13 @@ describe('daemon browser sidecar profile planning', () => {
                 owner: { kind: 'user', id: 'account_1' },
                 cleanupOnSessionClose: false,
             },
-            allowPersistentProfiles: false,
             profileDirectory: '/Users/test/.happier/browser/profiles/profile_user_1',
         });
 
         expect(result).toMatchObject({
-            ok: false,
-            errorCode: 'profile_policy_denied',
+            ok: true,
+            binding: { profileId: 'profile_user_1', storageMode: 'user', ownerKind: 'user', ownerId: 'account_1' },
+            cleanup: { cleanupOnStop: false },
         });
-        expect(JSON.stringify(result)).not.toContain('/Users/test/.happier/browser/profiles/profile_user_1');
     });
 });

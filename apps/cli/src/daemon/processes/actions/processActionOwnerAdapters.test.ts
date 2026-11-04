@@ -28,6 +28,7 @@ describe('Process Actions through retained lifecycle owners', () => {
         class NativeProcess extends EventEmitter {
             pid = 42;
             stderr = new PassThrough();
+            stdio = [null, null, this.stderr, new PassThrough(), new PassThrough()];
             kill() { queueMicrotask(() => this.emit('exit', 0, 'SIGTERM')); return true; }
         }
         const profileStore = createBrowserProfileStore({ storageRootDirectory: '/unused',
@@ -39,7 +40,6 @@ describe('Process Actions through retained lifecycle owners', () => {
                     pinnedVersion: '127.0.6533.88', channel: 'stable', integrityDigest: `sha256:${'a'.repeat(64)}`, license: 'BSD-3-Clause' } }),
             createLaunchOwnerFactory: input => createBrowserSidecarLaunchOwnerControlAdapterFactory({ ...input,
                 spawnProcess: () => { const child = new NativeProcess();
-                    queueMicrotask(() => child.stderr.write('DevTools listening on ws://127.0.0.1:9444/devtools/browser/test\n'));
                     return child; },
                 connectTransport: async () => ({ transport: { openPage: async () => ({ targetId: 'page', sessionId: 'cdp' }),
                     dispatchPageCommand: async () => ({}), dispatchBrowserCommand: async () => ({ success: true }) } }),

@@ -52,8 +52,7 @@ it('wires canonical effective memory through startup into browser admission', as
           spawnProcess: () => {
             const child = new EventEmitter();
             const stderr = new PassThrough();
-            queueMicrotask(() => stderr.write('DevTools listening on ws://127.0.0.1:9444/devtools/browser/test\n'));
-            return Object.assign(child, { pid: process.pid, stderr, kill: () => { child.emit('exit', 0, 'SIGTERM'); return true; } });
+            return Object.assign(child, { pid: process.pid, stderr, stdio: [null, null, stderr, new PassThrough(), new PassThrough()], kill: () => { child.emit('exit', 0, 'SIGTERM'); return true; } });
           },
           connectTransport: async () => ({ transport: { openPage: async () => ({ targetId: 'target', sessionId: 'cdp' }),
             dispatchPageCommand: async () => ({}), dispatchBrowserCommand: async () => ({}) } }),

@@ -1,15 +1,14 @@
-import { createHash } from 'node:crypto';
-import http from 'node:http';
-import type { AddressInfo } from 'node:net';
-import type { Duplex } from 'node:stream';
+import { PassThrough, Writable } from 'node:stream';
 
-import type { LoopbackWebSocketJsonClientV1 } from '@/plugins/runtime/exec/privateContract';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createBrowserAutomationCdpAdapter } from '../automation/adapters/cdp';
 import { createControlAdapterAutomationTransport } from '../automation/adapters/controlBridge';
 import { connectBrowserSidecarCdpTransport, createBrowserSidecarCdpTransport } from './cdpTransport';
 import { createBrowserSidecarCdpControlAdapter } from './controlAdapter';
+import type { BrowserSidecarCdpPipe } from './cdpTransport';
+
+type CdpJsonClient = Parameters<typeof createBrowserSidecarCdpTransport>[0]['client'];
 
 type CdpPageHandle = Readonly<{
     targetId: string;
@@ -38,11 +37,11 @@ type CdpTransport = Readonly<{
 
 type CdpTransportModule = Readonly<{
     createBrowserSidecarCdpTransport?: (input: Readonly<{
-        client: LoopbackWebSocketJsonClientV1;
+        client: CdpJsonClient;
     }>) => CdpTransport;
     connectBrowserSidecarCdpTransport?: (input: Readonly<{
-        endpoint: Readonly<{ url: string }>;
-        connectTimeoutMs?: number;
+        pipe: BrowserSidecarCdpPipe;
+        signal?: AbortSignal;
     }>) => Promise<CdpTransport>;
 }>;
 
@@ -53,7 +52,7 @@ async function loadTransportModule(): Promise<CdpTransportModule | null> {
 }
 
 function createFakeJsonClient(reply?: (message: SentMessage) => Record<string, unknown> | undefined): {
-    readonly client: LoopbackWebSocketJsonClientV1;
+    readonly client: CdpJsonClient;
     readonly sent: readonly SentMessage[];
     emit(message: unknown): void;
     close(error?: Error): void;
@@ -108,118 +107,144 @@ function responseFor(message: SentMessage, result: unknown): Readonly<{ id: numb
     return { id: message.id, result };
 }
 
-function encodeServerFrame(text: string): Buffer {
-    const payload = Buffer.from(text, 'utf8');
-    if (payload.byteLength > 65_535) {
-        const header = Buffer.alloc(10);
-        header[0] = 0x81;
-        header[1] = 127;
-        header.writeBigUInt64BE(BigInt(payload.byteLength), 2);
-        return Buffer.concat([header, payload]);
-    }
-    if (payload.byteLength >= 126) {
-        const header = Buffer.alloc(4);
-        header[0] = 0x81;
-        header[1] = 126;
-        header.writeUInt16BE(payload.byteLength, 2);
-        return Buffer.concat([header, payload]);
-    }
-    return Buffer.concat([Buffer.from([0x81, payload.byteLength]), payload]);
-}
-
-function decodeClientFrame(buffer: Buffer<ArrayBufferLike>): null | Readonly<{
-    opcode: number;
-    text: string;
-    rest: Buffer<ArrayBufferLike>;
-}> {
-    if (buffer.byteLength < 2) return null;
-    const opcode = buffer[0] & 0x0f;
-    const length = buffer[1] & 0x7f;
-    const masked = (buffer[1] & 0x80) !== 0;
-    if (length >= 126) throw new Error('test server supports small frames only');
-    const offset = 2 + (masked ? 4 : 0);
-    if (buffer.byteLength < offset + length) return null;
-    const payload = Buffer.from(buffer.subarray(offset, offset + length));
-    if (masked) {
-        const mask = buffer.subarray(2, 6);
-        for (let index = 0; index < payload.length; index += 1) {
-            payload[index] = payload[index] ^ mask[index % 4];
+function startCdpPipeServer(onMessage: (message: Record<string, unknown>) => unknown | string) {
+    const readable = new PassThrough();
+    const writable = new PassThrough();
+    let pending = Buffer.alloc(0);
+    writable.on('data', (chunk: Buffer) => {
+        pending = Buffer.concat([pending, chunk]);
+        for (;;) {
+            const end = pending.indexOf(0);
+            if (end < 0) return;
+            const message = JSON.parse(pending.subarray(0, end).toString('utf8')) as Record<string, unknown>;
+            pending = pending.subarray(end + 1);
+            const response = onMessage(message);
+            for (const frame of Array.isArray(response) ? response : [response]) {
+                if (frame !== undefined) readable.write(Buffer.from(`${typeof frame === 'string' ? frame : JSON.stringify(frame)}\0`));
+            }
         }
-    }
-    return {
-        opcode,
-        text: payload.toString('utf8'),
-        rest: buffer.subarray(offset + length),
-    };
-}
-
-async function startCdpWebSocketServer(onMessage: (message: Record<string, unknown>) => unknown | string): Promise<Readonly<{
-    endpoint: Readonly<{ url: string }>;
-    close(): Promise<void>;
-}>> {
-    const server = http.createServer();
-    const sockets = new Set<Duplex>();
-    server.on('upgrade', (request, socket) => {
-        sockets.add(socket);
-        socket.on('close', () => {
-            sockets.delete(socket);
-        });
-        const key = String(request.headers['sec-websocket-key'] ?? '');
-        const accept = createHash('sha1')
-            .update(`${key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`)
-            .digest('base64');
-        socket.write([
-            'HTTP/1.1 101 Switching Protocols',
-            'Upgrade: websocket',
-            'Connection: Upgrade',
-            `Sec-WebSocket-Accept: ${accept}`,
-            '',
-            '',
-        ].join('\r\n'));
-
-        let buffer: Buffer<ArrayBufferLike> = Buffer.alloc(0);
-        socket.on('data', (chunk) => {
-            buffer = Buffer.concat([buffer, chunk]);
-            for (;;) {
-                const decoded = decodeClientFrame(buffer);
-                if (!decoded) return;
-                buffer = decoded.rest;
-                if (decoded.opcode === 0x8) {
-                    socket.end();
-                    return;
-                }
-                const requestMessage = JSON.parse(decoded.text) as Record<string, unknown>;
-                const response = onMessage(requestMessage);
-                for (const frame of Array.isArray(response) ? response : [response]) {
-                    if (frame === undefined) continue;
-                    socket.write(encodeServerFrame(typeof frame === 'string' ? frame : JSON.stringify(frame)));
-                }
-            }
-        });
     });
-
-    await new Promise<void>((resolve, reject) => {
-        server.once('error', reject);
-        server.listen(0, '127.0.0.1', () => {
-            server.off('error', reject);
-            resolve();
-        });
-    });
-    const address = server.address() as AddressInfo;
     return {
-        endpoint: { url: `ws://127.0.0.1:${address.port}/devtools/browser/server-token` },
-        close: async () => {
-            for (const socket of sockets) {
-                socket.destroy();
-            }
-            await new Promise<void>((resolve, reject) => {
-                server.close((error) => error ? reject(error) : resolve());
-            });
-        },
+        pipe: { readable, writable },
+        close() { readable.destroy(); writable.destroy(); },
     };
 }
 
 describe('browser sidecar CDP JSON-RPC transport', () => {
+    it('decodes fragmented and coalesced NUL frames including split UTF-8 across browser and page sessions', async () => {
+        const readable = new PassThrough();
+        const sent: SentMessage[] = [];
+        const writable = new Writable({ write(chunk: Buffer, _encoding, callback) {
+            sent.push(JSON.parse(chunk.subarray(0, -1).toString('utf8')) as SentMessage);
+            callback();
+        } });
+        const transport = await connectBrowserSidecarCdpTransport({ pipe: { readable, writable } });
+        try {
+            const events: unknown[] = [];
+            transport.subscribeCdpEvents(event => events.push(event));
+            const browser = transport.dispatchBrowserCommand({ method: 'Browser.getVersion' });
+            const page = transport.dispatchPageCommand({ targetId: 'target', sessionId: 'page', method: 'Runtime.evaluate' });
+            await waitForSent(sent, 2);
+            expect(sent[1]).toMatchObject({ sessionId: 'page' });
+            const event = { method: 'Runtime.consoleAPICalled', sessionId: 'page', params: { text: '雪🙂' } };
+            const bytes = Buffer.from(`${JSON.stringify(event)}\0${JSON.stringify(responseFor(sent[1], { value: '雪🙂' }))}\0${JSON.stringify(responseFor(sent[0], { product: 'Chrome/Test' }))}\0`);
+            const split = bytes.indexOf(Buffer.from('雪')) + 1;
+            readable.write(bytes.subarray(0, split));
+            expect(events).toEqual([]);
+            readable.write(bytes.subarray(split, split + 1));
+            readable.write(bytes.subarray(split + 1));
+            await expect(browser).resolves.toEqual({ product: 'Chrome/Test' });
+            await expect(page).resolves.toEqual({ value: '雪🙂' });
+            expect(events).toEqual([event]);
+        } finally { transport.dispose(); }
+        expect(readable.destroyed).toBe(true);
+        expect(writable.destroyed).toBe(true);
+    });
+
+    it('keeps correlated replies working while pipe writes are backpressured', async () => {
+        const readable = new PassThrough();
+        let releaseWrite: (() => void) | undefined;
+        const writable = new Writable({ highWaterMark: 1, write(chunk: Buffer, _encoding, callback) {
+            const command = JSON.parse(chunk.subarray(0, -1).toString('utf8')) as SentMessage;
+            readable.write(Buffer.from(`${JSON.stringify(responseFor(command, { method: command.method }))}\0`));
+            releaseWrite = callback;
+        } });
+        const transport = await connectBrowserSidecarCdpTransport({ pipe: { readable, writable } });
+        try {
+            const first = transport.dispatchBrowserCommand({ method: 'First' });
+            await expect(first).resolves.toEqual({ method: 'First' });
+            expect(writable.writableNeedDrain).toBe(true);
+            const second = transport.dispatchBrowserCommand({ method: 'Second' });
+            releaseWrite?.();
+            await expect(second).resolves.toEqual({ method: 'Second' });
+            releaseWrite?.();
+        } finally { transport.dispose(); }
+    });
+
+    it.each(['eof', 'readError', 'writeError'] as const)('settles issued commands privately when the pipe ends with %s', async failure => {
+        const readable = new PassThrough();
+        const writable = new PassThrough();
+        const transport = await connectBrowserSidecarCdpTransport({ pipe: { readable, writable } });
+        try {
+            const issued = transport.dispatchBrowserCommand({ method: 'Input.insertText' });
+            const result = expect(issued).rejects.toMatchObject({ code: 'cdp_transport_closed', dispatchStatus: 'unknown' });
+            await expect.poll(() => writable.readableLength).toBeGreaterThan(0);
+            if (failure === 'eof') readable.end();
+            else (failure === 'readError' ? readable : writable).destroy(new Error('private-pipe-payload'));
+            await result;
+            await expect(issued).rejects.not.toThrow(/private-pipe-payload/);
+            await expect(transport.dispatchBrowserCommand({ method: 'Browser.getVersion' }))
+                .rejects.toMatchObject({ dispatchStatus: 'not_dispatched' });
+        } finally { transport.dispose(); }
+    });
+
+    it('sends nothing on preflight cancellation and preserves unknown effects when an issued pipe command is canceled', async () => {
+        const readable = new PassThrough();
+        const writable = new PassThrough();
+        const transport = await connectBrowserSidecarCdpTransport({ pipe: { readable, writable } });
+        try {
+            const preflight = new AbortController();
+            preflight.abort();
+            await expect(transport.dispatchBrowserCommand({ method: 'Input.insertText', signal: preflight.signal }))
+                .rejects.toMatchObject({ name: 'AbortError', dispatchStatus: 'not_dispatched' });
+            expect(writable.readableLength).toBe(0);
+            const cancellation = new AbortController();
+            const issued = transport.dispatchBrowserCommand({ method: 'Input.insertText', signal: cancellation.signal });
+            const result = expect(issued).rejects.toMatchObject({ name: 'AbortError', dispatchStatus: 'unknown' });
+            await expect.poll(() => writable.readableLength).toBeGreaterThan(0);
+            const command = JSON.parse(writable.read().toString('utf8').replace(/\0$/, '')) as SentMessage;
+            cancellation.abort();
+            await result;
+            readable.write(Buffer.from(`${JSON.stringify(responseFor(command, {}))}\0`));
+            expect(writable.readableLength).toBe(0);
+            const healthy = transport.dispatchBrowserCommand({ method: 'Browser.getVersion' });
+            await expect.poll(() => writable.readableLength).toBeGreaterThan(0);
+            const next = JSON.parse(writable.read().toString('utf8').replace(/\0$/, '')) as SentMessage;
+            readable.write(Buffer.from(`${JSON.stringify(responseFor(next, { product: 'healthy' }))}\0`));
+            await expect(healthy).resolves.toEqual({ product: 'healthy' });
+        } finally { transport.dispose(); }
+    });
+
+    it('closes the owned pipe on connection-lifetime cancellation and never retries an issued effect', async () => {
+        const readable = new PassThrough();
+        const writable = new PassThrough();
+        const cancellation = new AbortController();
+        const transport = await connectBrowserSidecarCdpTransport({ pipe: { readable, writable }, signal: cancellation.signal });
+        try {
+            const issued = transport.dispatchBrowserCommand({ method: 'Input.insertText' });
+            const result = expect(issued).rejects.toMatchObject({ dispatchStatus: 'unknown' });
+            await expect.poll(() => writable.readableLength).toBeGreaterThan(0);
+            writable.read();
+            cancellation.abort();
+            await result;
+            expect(readable.destroyed).toBe(true);
+            expect(writable.destroyed).toBe(true);
+            await expect(transport.dispatchBrowserCommand({ method: 'Input.insertText' }))
+                .rejects.toMatchObject({ dispatchStatus: 'not_dispatched' });
+            expect(writable.readableLength).toBe(0);
+        } finally { transport.dispose(); }
+    });
+
     it('drains issued navigation acknowledgements on cancellation and honors the containing deadline without closing unrelated requests', async () => {
         vi.useFakeTimers();
         const fake = createFakeJsonClient(command => {
@@ -303,10 +328,10 @@ describe('browser sidecar CDP JSON-RPC transport', () => {
         } finally { transport.dispose(); }
     });
 
-    it('keeps large screenshot responses and screencast events healthy alongside unrelated responses on a real socket', async () => {
+    it('keeps large screenshot responses and screencast events healthy alongside unrelated responses on a real pipe', async () => {
         const data = 'A'.repeat(1024 * 1024 + 4);
         let screenshotId: unknown;
-        const server = await startCdpWebSocketServer((message) => {
+        const server = await startCdpPipeServer((message) => {
             if (message.method === 'Page.captureScreenshot') {
                 screenshotId = message.id;
                 return undefined;
@@ -317,7 +342,7 @@ describe('browser sidecar CDP JSON-RPC transport', () => {
                 { id: message.id, result: { product: 'Chrome/Test' } },
             ];
         });
-        const transport = await connectBrowserSidecarCdpTransport({ endpoint: server.endpoint });
+        const transport = await connectBrowserSidecarCdpTransport({ pipe: server.pipe });
         try {
             const events: unknown[] = [];
             transport.subscribeCdpEvents((event) => events.push(event));
@@ -567,13 +592,13 @@ describe('browser sidecar CDP JSON-RPC transport', () => {
         await expect(disposedCommand).rejects.toMatchObject({ code: 'cdp_transport_disposed' });
     });
 
-    it('connects to an already-discovered loopback DevTools endpoint and rejects malformed JSON privately', async () => {
+    it('connects to the child-owned pipe and rejects malformed JSON privately', async () => {
         const mod = await loadTransportModule();
 
         expect(mod?.connectBrowserSidecarCdpTransport).toBeTypeOf('function');
         if (!mod?.connectBrowserSidecarCdpTransport) return;
 
-        const server = await startCdpWebSocketServer((message) => {
+        const server = await startCdpPipeServer((message) => {
             if (message.method === 'Browser.getVersion') {
                 return { id: message.id, result: { product: 'Chrome/Test' } };
             }
@@ -581,8 +606,7 @@ describe('browser sidecar CDP JSON-RPC transport', () => {
         });
         try {
             const transport = await mod.connectBrowserSidecarCdpTransport({
-                endpoint: server.endpoint,
-                connectTimeoutMs: 250,
+                pipe: server.pipe,
             });
             await expect(transport.dispatchBrowserCommand({ method: 'Browser.getVersion' }))
                 .resolves.toEqual({ product: 'Chrome/Test' });

@@ -1,3 +1,4 @@
+import { PassThrough } from 'node:stream';
 import type { BrowserCommandV1 } from '@happier-dev/protocol';
 import * as childProcess from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -26,6 +27,7 @@ function createFakeProcess() {
     return {
         process: {
             pid: 84,
+            stdio: [null, null, null, new PassThrough(), new PassThrough()],
             stderr: {
                 on(event: 'data', listener: StderrListener) {
                     if (event === 'data') stderrListeners.push(listener);
@@ -83,6 +85,77 @@ function openViewCommand(): Extract<BrowserCommandV1, { kind: 'openView' }> {
 }
 
 describe('browser sidecar launch owner', () => {
+    it.skipIf(process.platform !== 'linux')('inherits CDP descriptors through the default Linux spawn and a systemd-run exec fixture', async () => {
+        const directory = await mkdtemp(join(tmpdir(), 'happier-browser-inherited-pipe-'));
+        const actual = await vi.importActual<typeof import('node:child_process')>('node:child_process');
+        const spawn = vi.mocked(childProcess.spawn).mockImplementation(actual.spawn);
+        let dispose: (() => void | Promise<void>) | undefined;
+        try {
+            vi.stubEnv('PATH', directory);
+            vi.stubEnv('DBUS_SESSION_BUS_ADDRESS', 'unix:path=/test/browser-pipe-bus');
+            await writeFile(join(directory, 'systemctl'), '#!/bin/sh\nprintf "LoadState=loaded\\nCPUWeight=50\\nIOWeight=50\\nMemoryHigh=1073741824\\n"\n', { mode: 0o700 });
+            // This exec fixture preserves real inherited descriptors; it does not run systemd or create a cgroup.
+            await writeFile(join(directory, 'systemd-run'), '#!/bin/sh\nif [ "$1" = "--help" ]; then printf -- "--expand-environment=\\n"; exit; fi\nwhile [ "$#" -gt 0 ] && [ "$1" != "--" ]; do shift; done\nshift\nexec "$@"\n', { mode: 0o700 });
+            const executablePath = join(directory, 'cdp-child.cjs');
+            await writeFile(executablePath, `#!${process.execPath}
+const fs = require('node:fs');
+if (!process.argv.includes('--remote-debugging-pipe') || process.argv.some(arg => arg.startsWith('--remote-debugging-port'))) process.exit(1);
+const input = fs.createReadStream(null, { fd: 3 });
+const output = fs.createWriteStream(null, { fd: 4 });
+let pending = '';
+input.on('data', chunk => {
+    pending += chunk.toString('utf8');
+    for (;;) {
+        const end = pending.indexOf('\\0');
+        if (end < 0) return;
+        const command = JSON.parse(pending.slice(0, end));
+        pending = pending.slice(end + 1);
+        const result = command.method === 'Browser.getVersion' ? { product: 'InheritedPipeFixture' }
+            : command.method === 'Target.createTarget' ? { targetId: 'child-target' }
+            : command.method === 'Target.attachToTarget' ? { sessionId: 'child-session' } : {};
+        output.write(JSON.stringify({ id: command.id, result }) + '\\0');
+    }
+});
+input.on('end', () => output.end());
+`, { mode: 0o700 });
+            const factory = launchOwner.createBrowserSidecarLaunchOwnerControlAdapterFactory({
+                browserSessionId: 'browser_session_default', sidecarId: 'sidecar_inherited_pipe',
+                profile: { profileId: 'profile_inherited_pipe', storageMode: 'ephemeral',
+                    owner: { kind: 'session', id: 'browser_session_default' }, cleanupOnSessionClose: true },
+                profileDirectory: directory,
+                binaryResolution: { ok: true, source: 'managedBrowserPackage', executablePath,
+                    discoveryKind: 'managedRuntime', diagnostics: [] },
+                cleanupProfileDirectory: async () => {},
+                deadlineMs: Date.now() + 10_000,
+            });
+            const result = await factory({ machineId: 'machine_inherited_pipe' });
+            expect(result).toMatchObject({ ok: true });
+            if (!result.ok) return;
+            dispose = result.dispose;
+            expect(spawn.mock.calls[0]?.[0]).toBe(join(directory, 'systemd-run'));
+            await expect(result.adapter.dispatchCommand(openViewCommand())).resolves.toMatchObject({ status: 'dispatched' });
+            expect(result.contextCapture?.resolvePageHandle(openViewCommand()))
+                .toEqual({ targetId: 'child-target', sessionId: 'child-session' });
+            await dispose?.();
+            dispose = undefined;
+            const child = spawn.mock.results[0]?.value;
+            expect(child?.exitCode !== null || child?.signalCode !== null).toBe(true);
+            expect(child?.stdio[3]?.destroyed).toBe(true);
+            expect(child?.stdio[4]?.destroyed).toBe(true);
+        } finally {
+            await dispose?.();
+            const child = spawn.mock.results[0]?.value;
+            if (child && child.exitCode === null && child.signalCode === null) {
+                const exited = new Promise<void>(resolve => child.once('exit', () => resolve()));
+                child.kill('SIGTERM');
+                await exited;
+            }
+            spawn.mockReset();
+            vi.unstubAllEnvs();
+            await rm(directory, { recursive: true, force: true });
+        }
+    });
+
     it('launches its Linux singleton through the canonical owned scope', async () => {
         const directory = await mkdtemp(join(tmpdir(), 'happier-browser-scope-fixture-'));
         const platform = process.platform;
@@ -97,7 +170,6 @@ describe('browser sidecar launch owner', () => {
             await writeFile(join(directory, 'systemd-run'), '#!/bin/sh\nprintf -- "--expand-environment=\\n"\n', { mode: 0o700 });
             const factory = launchOwner.createBrowserSidecarLaunchOwnerControlAdapterFactory({
                 browserSessionId: 'browser_session_scope', sidecarId: 'sidecar_scope',
-                featureEnabled: true, allowPersistentProfiles: false,
                 profile: { profileId: 'profile_scope', storageMode: 'ephemeral',
                     owner: { kind: 'session', id: 'browser_session_scope' }, cleanupOnSessionClose: true },
                 profileDirectory: directory,
@@ -107,6 +179,7 @@ describe('browser sidecar launch owner', () => {
             });
             const result = factory({ machineId: 'machine_scope' });
             await vi.waitFor(() => expect(spawn).toHaveBeenCalled());
+            expect(spawn.mock.calls[0]?.[2]?.stdio).toEqual(['ignore', 'ignore', 'pipe', 'pipe', 'pipe']);
             const unit = spawn.mock.calls[0]?.[1]?.find(argument => argument.startsWith('--unit='))?.slice('--unit='.length);
             fake.emitExit(1);
             await expect(result).resolves.toMatchObject({ ok: false, errorCode: 'cdp_unavailable' });
@@ -130,8 +203,6 @@ describe('browser sidecar launch owner', () => {
         const factory = mod.createBrowserSidecarLaunchOwnerControlAdapterFactory({
             browserSessionId: 'browser_session_default',
             sidecarId: 'sidecar_launch_disabled',
-            featureEnabled: false,
-            allowPersistentProfiles: false,
             profile: {
                 profileId: 'profile_launch_disabled',
                 storageMode: 'ephemeral',
@@ -140,10 +211,10 @@ describe('browser sidecar launch owner', () => {
             },
             profileDirectory: '/tmp/happier/browser/profile_launch_disabled',
             binaryResolution: {
-                ok: true,
+                ok: false,
                 source: 'managedBrowserPackage',
-                executablePath: '/managed/chrome',
-                discoveryKind: 'managedRuntime',
+                errorCode: 'managed_package_missing',
+                disabledReason: 'Managed browser is missing.',
                 diagnostics: [],
             },
             spawnProcess,
@@ -155,8 +226,8 @@ describe('browser sidecar launch owner', () => {
 
         expect(result).toMatchObject({
             ok: false,
-            errorCode: 'feature_disabled',
-            disabledReason: 'browser.sidecar feature disabled',
+            errorCode: 'managed_package_missing',
+            disabledReason: 'Managed browser is missing.',
         });
         expect(spawnProcess).not.toHaveBeenCalled();
         expect(cleanupProfileDirectory).not.toHaveBeenCalled();
@@ -173,8 +244,6 @@ describe('browser sidecar launch owner', () => {
         const factory = mod.createBrowserSidecarLaunchOwnerControlAdapterFactory({
             browserSessionId: 'browser_session_default',
             sidecarId: 'sidecar_launch_system',
-            featureEnabled: true,
-            allowPersistentProfiles: false,
             profile: {
                 profileId: 'profile_launch_system',
                 storageMode: 'ephemeral',
@@ -205,7 +274,7 @@ describe('browser sidecar launch owner', () => {
         expect(cleanupProfileDirectory).not.toHaveBeenCalled();
     });
 
-    it('launches the sidecar, discovers the private endpoint, connects CDP, and cleans up on dispose', async () => {
+    it('launches the sidecar over inherited descriptors, connects CDP, and cleans up on dispose', async () => {
         const mod = launchOwner;
 
         expect(mod?.createBrowserSidecarLaunchOwnerControlAdapterFactory).toBeTypeOf('function');
@@ -227,8 +296,6 @@ describe('browser sidecar launch owner', () => {
         const factory = mod.createBrowserSidecarLaunchOwnerControlAdapterFactory({
             browserSessionId: 'browser_session_default',
             sidecarId: 'sidecar_launch_owner',
-            featureEnabled: true,
-            allowPersistentProfiles: false,
             profile: {
                 profileId: 'profile_launch_owner',
                 storageMode: 'ephemeral',
@@ -246,24 +313,21 @@ describe('browser sidecar launch owner', () => {
             spawnProcess,
             connectTransport,
             cleanupProfileDirectory,
-            endpointTimeoutMs: 100,
+            deadlineMs: Date.now() + 100,
             nowMs: () => 8_000,
         });
 
         const resultPromise = Promise.resolve(factory({ machineId: 'machine_launch_owner' }));
         await waitForCondition(() => spawnProcess.mock.calls.length === 1);
 
-        fake.emitStderr('DevTools listening on ws://127.0.0.1:9444/devtools/browser/private-token\n');
         const result = await resultPromise;
 
         expect(spawnProcess).toHaveBeenCalledWith('/managed/chrome', expect.arrayContaining([
             '--headless=new',
             '--user-data-dir=/tmp/happier/browser/profile_launch_owner',
-            '--remote-debugging-port=0',
+            '--remote-debugging-pipe',
         ]));
-        expect(connectTransport).toHaveBeenCalledWith(expect.objectContaining({
-            url: 'ws://127.0.0.1:9444/devtools/browser/private-token',
-        }));
+        expect(connectTransport).toHaveBeenCalledWith({ writable: fake.process.stdio[3], readable: fake.process.stdio[4] }, expect.any(Object));
         expect(result).toMatchObject({
             ok: true,
             adapter: { adapterKind: 'chromiumSidecar' },
@@ -321,8 +385,6 @@ describe('browser sidecar launch owner', () => {
         const factory = mod.createBrowserSidecarLaunchOwnerControlAdapterFactory({
             browserSessionId: 'browser_session_default',
             sidecarId: 'sidecar_launch_owner_dispose_failure',
-            featureEnabled: true,
-            allowPersistentProfiles: false,
             profile: {
                 profileId: 'profile_launch_owner_dispose_failure',
                 storageMode: 'ephemeral',
@@ -340,13 +402,12 @@ describe('browser sidecar launch owner', () => {
             spawnProcess: () => fake.process,
             connectTransport: vi.fn(async () => ({ transport, dispose: disposeTransport })),
             cleanupProfileDirectory,
-            endpointTimeoutMs: 100,
+            deadlineMs: Date.now() + 100,
             nowMs: () => 8_250,
         });
 
         const resultPromise = Promise.resolve(factory({ machineId: 'machine_launch_owner' }));
         await waitForCondition(() => fake.process.stderr !== undefined);
-        fake.emitStderr('DevTools listening on ws://127.0.0.1:9444/devtools/browser/private-token\n');
         const result = await resultPromise;
 
         expect(result).toMatchObject({ ok: true });
@@ -362,7 +423,7 @@ describe('browser sidecar launch owner', () => {
         expect(cleanupProfileDirectory).toHaveBeenCalledWith('/tmp/happier/browser/profile_launch_owner_dispose_failure');
     });
 
-    it('fails closed, stops the process, and does not leak stderr when the endpoint never appears', async () => {
+    it('fails closed, stops the process, and does not leak stderr when CDP never replies', async () => {
         const mod = launchOwner;
 
         expect(mod?.createBrowserSidecarLaunchOwnerControlAdapterFactory).toBeTypeOf('function');
@@ -373,8 +434,6 @@ describe('browser sidecar launch owner', () => {
         const factory = mod.createBrowserSidecarLaunchOwnerControlAdapterFactory({
             browserSessionId: 'browser_session_default',
             sidecarId: 'sidecar_launch_timeout',
-            featureEnabled: true,
-            allowPersistentProfiles: false,
             profile: {
                 profileId: 'profile_launch_timeout',
                 storageMode: 'ephemeral',
@@ -391,7 +450,7 @@ describe('browser sidecar launch owner', () => {
             },
             spawnProcess: () => fake.process,
             cleanupProfileDirectory,
-            endpointTimeoutMs: 1,
+            deadlineMs: Date.now() + 1,
             nowMs: () => 8_500,
         });
 

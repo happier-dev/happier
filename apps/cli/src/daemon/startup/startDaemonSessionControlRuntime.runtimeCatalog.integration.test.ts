@@ -1,3 +1,4 @@
+import { PassThrough } from 'node:stream';
 import * as accountUsageControlTransport from '@/daemon/controlClient';
 import { createNativeAgentAccountUsageService } from '@/agent/runtime/registry/engineRegistry/nativeAgentAccountUsage';
 import { ConnectedServiceQuotasCoordinator } from '@/daemon/connectedServices/quotas/ConnectedServiceQuotasCoordinator';
@@ -890,6 +891,7 @@ function createBrowserStartupFakeProcess() {
     return {
         process: {
             pid: 128,
+            stdio: [null, null, null, new PassThrough(), new PassThrough()],
             stderr: {
                 on(event: 'data', listener: BrowserStartupStderrListener) {
                     if (event === 'data') stderrListeners.push(listener);
@@ -15863,8 +15865,6 @@ describe('startDaemonSessionControlRuntime', () => {
         const browserSidecarControlAdapterFactory = mod.createBrowserSidecarLaunchOwnerControlAdapterFactory({
             browserSessionId: 'browser_session_default',
             sidecarId: 'sidecar_startup_owner',
-            featureEnabled: true,
-            allowPersistentProfiles: false,
             profile: {
                 profileId: 'profile_startup_owner',
                 storageMode: 'ephemeral',
@@ -15882,7 +15882,7 @@ describe('startDaemonSessionControlRuntime', () => {
             spawnProcess,
             connectTransport: vi.fn(async () => ({ transport })),
             cleanupProfileDirectory,
-            endpointTimeoutMs: 100,
+            deadlineMs: Date.now() + 100,
             nowMs: () => 9_000,
         });
 

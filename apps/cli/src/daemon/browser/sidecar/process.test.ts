@@ -1,3 +1,4 @@
+import { PassThrough } from 'node:stream';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { SidecarPrivateLaunchPlan } from './runtime';
@@ -16,6 +17,7 @@ function createFakeProcess() {
     return {
         process: {
             pid: 42,
+            stdio: [null, null, null, new PassThrough(), new PassThrough()],
             stderr: {
                 on(event: 'data', listener: StderrListener) {
                     if (event === 'data') stderrListeners.push(listener);
@@ -52,7 +54,7 @@ function privateLaunchPlan(overrides: Partial<SidecarPrivateLaunchPlan> = {}): S
     return {
         sidecarId: 'sidecar_1',
         executablePath: '/managed/chrome',
-        args: ['--user-data-dir=/tmp/profile_1', '--remote-debugging-port=0'],
+        args: ['--user-data-dir=/tmp/profile_1', '--remote-debugging-pipe'],
         source: 'managedBrowserPackage',
         profileId: 'profile_1',
         profileDirectory: '/tmp/profile_1',
@@ -73,29 +75,16 @@ describe('daemon browser sidecar process lifecycle', () => {
         fake.emitExit(0, 'SIGTERM');
         expect(controller.getPid?.()).toBeNull();
     });
-    it('waits for a healthy process endpoint beyond five seconds and settles on owner cancellation', async () => {
-        vi.useFakeTimers();
-        try {
-            const fake = createFakeProcess();
-            const controller = sidecarProcess.createSidecarProcessController({ nowMs: Date.now, spawnProcess: () => fake.process });
-            controller.launch(privateLaunchPlan());
-            const cancellation = new AbortController();
-            let settled = false;
-            const endpoint = controller.waitForDevToolsEndpointSource({ sidecarId: 'sidecar_1', signal: cancellation.signal });
-            void endpoint.then(() => { settled = true; });
-            await vi.advanceTimersByTimeAsync(6_000);
-            expect(settled).toBe(false);
-            fake.emitStderr('DevTools listening on ws://127.0.0.1:9222/devtools/browser/ready\n');
-            await expect(endpoint).resolves.toMatchObject({ ok: true });
-
-            fake.emitExit(0);
-            controller.launch(privateLaunchPlan({ sidecarId: 'sidecar_2' }));
-            const cancelled = controller.waitForDevToolsEndpointSource({ sidecarId: 'sidecar_2', signal: cancellation.signal });
-            cancellation.abort();
-            await expect(cancelled).resolves.toMatchObject({ ok: false, errorCode: 'cdp_unavailable' });
-        } finally {
-            vi.useRealTimers();
-        }
+    it('returns its inherited pipe without waiting for stderr and closes both ends on exit', () => {
+        const fake = createFakeProcess();
+        const controller = sidecarProcess.createSidecarProcessController({ nowMs: Date.now, spawnProcess: () => fake.process });
+        controller.launch(privateLaunchPlan());
+        const pipe = controller.getCdpPipe({ sidecarId: 'sidecar_1' });
+        expect(pipe).toMatchObject({ ok: true, pipe: { writable: fake.process.stdio[3], readable: fake.process.stdio[4] } });
+        fake.emitExit(1);
+        expect(fake.process.stdio[3]?.destroyed).toBe(true);
+        expect(fake.process.stdio[4]?.destroyed).toBe(true);
+        expect(controller.getCdpPipe({ sidecarId: 'sidecar_1' })).toMatchObject({ ok: false, errorCode: 'cdp_unavailable' });
     });
     it('launches through the private plan and publishes a public running status without executable paths', async () => {
         const mod = sidecarProcess;
@@ -112,7 +101,7 @@ describe('daemon browser sidecar process lifecycle', () => {
 
         const result = controller.launch(privateLaunchPlan());
 
-        expect(spawnProcess).toHaveBeenCalledWith('/managed/chrome', ['--user-data-dir=/tmp/profile_1', '--remote-debugging-port=0']);
+        expect(spawnProcess).toHaveBeenCalledWith('/managed/chrome', ['--user-data-dir=/tmp/profile_1', '--remote-debugging-pipe']);
         expect(result).toMatchObject({
             ok: true,
             status: {
@@ -217,34 +206,13 @@ describe('daemon browser sidecar process lifecycle', () => {
         });
     });
 
-    it('captures a private DevTools endpoint source from sidecar stderr after launch', async () => {
-        const mod = sidecarProcess;
-
-        expect(mod).not.toBeNull();
-        if (!mod) return;
-
+    it('refuses missing inherited descriptors even when stderr advertises a debugging endpoint', () => {
         const fake = createFakeProcess();
-        const controller = mod.createSidecarProcessController({
-            nowMs: () => 7_000,
-            spawnProcess: () => fake.process,
-        });
-        controller.launch(privateLaunchPlan({ sidecarId: 'sidecar_endpoint' }));
-
-        const endpointSource = controller.waitForDevToolsEndpointSource({
-            sidecarId: 'sidecar_endpoint',
-            timeoutMs: 100,
-        });
-
-        fake.emitStderr('[noise] Chrome starting\n');
+        const controller = sidecarProcess.createSidecarProcessController({ nowMs: Date.now,
+            spawnProcess: () => ({ ...fake.process, stdio: [null, null, null] }) });
+        controller.launch(privateLaunchPlan());
         fake.emitStderr('DevTools listening on ws://127.0.0.1:9222/devtools/browser/private-token\n');
-
-        await expect(endpointSource).resolves.toMatchObject({
-            ok: true,
-            endpointSource: {
-                kind: 'devtoolsStderr',
-                stderr: expect.stringContaining('DevTools listening on ws://127.0.0.1:9222/devtools/browser/private-token'),
-            },
-        });
+        expect(controller.getCdpPipe({ sidecarId: 'sidecar_1' })).toMatchObject({ ok: false, errorCode: 'cdp_unavailable' });
         expect(JSON.stringify(controller.getStatus())).not.toContain('private-token');
     });
 });

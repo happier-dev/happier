@@ -37,12 +37,10 @@ import {
 export type BrowserSidecarLaunchOwnerControlAdapterFactoryInput = Readonly<{
     browserSessionId: string;
     sidecarId: string;
-    featureEnabled: boolean;
-    allowPersistentProfiles: boolean;
     profile: BrowserProfileV1;
     profileDirectory: string;
     binaryResolution: SidecarBrowserBinaryResolution;
-    endpointTimeoutMs?: number;
+    deadlineMs?: number;
     signal?: AbortSignal;
     nowMs?: () => number;
     processController?: SidecarProcessController;
@@ -70,7 +68,8 @@ function defaultSpawnSidecarProcess(executablePath: string, args: readonly strin
         unit: createHappierLinuxScopeName(environment.HAPPIER_PROCESS_OWNER) }) : launchSpec;
     const child = spawn(launch.filePath, launch.args, {
         env: launch.env,
-        stdio: ['ignore', 'ignore', 'pipe'],
+        // Chromium reads descriptor 3 and writes descriptor 4; Windows receives inherited CRT handles.
+        stdio: ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'],
     });
     observeProcessLaunch(child);
     return child;
@@ -114,8 +113,6 @@ export function createBrowserSidecarLaunchOwnerControlAdapterFactory(
         const launchPlan = createSidecarLaunchPlan({
             sidecarId: input.sidecarId,
             nowMs: input.nowMs?.() ?? Date.now(),
-            featureEnabled: input.featureEnabled,
-            allowPersistentProfiles: input.allowPersistentProfiles,
             profile: input.profile,
             profileDirectory: input.profileDirectory,
             binaryResolution: input.binaryResolution,
@@ -145,30 +142,29 @@ export function createBrowserSidecarLaunchOwnerControlAdapterFactory(
             return unavailable('launch_failed', 'Browser sidecar process could not be launched.');
         }
 
-        const endpointSource = await processController.waitForDevToolsEndpointSource({
-            sidecarId: privateLaunch.sidecarId,
-            timeoutMs: input.endpointTimeoutMs,
-            signal: input.signal,
-        });
-        if (!endpointSource.ok) {
+        const connection = processController.getCdpPipe({ sidecarId: privateLaunch.sidecarId });
+        if (!connection.ok) {
             await processController.stopAndWait();
             await cleanupPrivateProfile(input, privateLaunch);
-            if (endpointSource.sandboxUnavailable && await isAppArmorUserNamespaceRestriction()) {
-                return unavailable('sandbox_unavailable', `Managed Chromium sandbox is unavailable. ${BROWSER_SANDBOX_NEXT_ACTION}`);
-            }
-            return unavailable('cdp_unavailable', 'Browser sidecar CDP endpoint is unavailable.');
+            return unavailable('cdp_unavailable', 'Browser sidecar inherited CDP pipe is unavailable on this platform.');
         }
 
         const adapterFactory = createBrowserSidecarCdpControlAdapterFactory({
             browserSessionId: input.browserSessionId,
             sidecarId: privateLaunch.sidecarId,
-            endpointSource: endpointSource.endpointSource,
+            pipe: connection.pipe,
+            signal: input.signal,
+            deadlineMs: input.deadlineMs,
             ...(input.connectTransport ? { connectTransport: input.connectTransport } : {}),
         });
         const adapterResult = await adapterFactory(factoryInput);
         if (!adapterResult.ok) {
             await processController.stopAndWait();
             await cleanupPrivateProfile(input, privateLaunch);
+            const failure = processController.getCdpPipe({ sidecarId: privateLaunch.sidecarId });
+            if (!failure.ok && failure.sandboxUnavailable && await isAppArmorUserNamespaceRestriction()) {
+                return unavailable('sandbox_unavailable', `Managed Chromium sandbox is unavailable. ${BROWSER_SANDBOX_NEXT_ACTION}`);
+            }
             return adapterResult;
         }
 
@@ -221,8 +217,8 @@ export function createBrowserSidecarLaunchOwnerControlAdapterFactory(
             readProcessRoots: () => readResourceTargets().map(target => target.root),
             ...(adapterResult.contextCapture ? { contextCapture: {
                 ...adapterResult.contextCapture,
-                // This exact transport was connected to the private endpoint discovered from
-                // the process above, whose canonical launch plan uses --headless=new.
+                // This exact transport uses the private inherited descriptors of
+                // the process above. Only an actually headless launch proves native non-observability.
                 resolveNativeObservation: (view) => !disposal && adapterResult.contextCapture?.resolvePageHandle(view)
                     ? 'not_observable' as const : undefined,
             } } : {}),

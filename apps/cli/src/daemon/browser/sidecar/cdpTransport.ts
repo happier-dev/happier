@@ -1,6 +1,4 @@
-import type { LoopbackWebSocketJsonClientV1 } from '@/plugins/runtime/exec/privateContract';
-
-import { createLoopbackWebSocketJsonClient } from '@/plugins/runtime/exec/loopbackWebSocket';
+import type { Readable, Writable } from 'node:stream';
 
 import type {
     BrowserSidecarCdpCommandScope,
@@ -8,10 +6,17 @@ import type {
     BrowserSidecarCdpEventSubscriber,
     BrowserSidecarCdpPageHandle,
 } from './controlAdapter';
-import {
-    discoverBrowserSidecarCdpEndpoint,
-    type BrowserSidecarCdpEndpoint,
-} from './cdpEndpoint';
+/** Parent ends of Chromium's inherited descriptors: child reads fd 3 and writes fd 4. */
+export type BrowserSidecarCdpPipe = Readonly<{
+    readable: Readable;
+    writable: Writable;
+}>;
+
+type CdpJsonClient = Readonly<{
+    closed: Promise<void>;
+    subscribe(listener: (message: unknown) => void): () => void;
+    sendJson(message: unknown, options?: Readonly<{ signal?: AbortSignal }>): Promise<void>;
+}>;
 
 export type BrowserSidecarCdpTransportErrorCode =
     | 'cdp_command_failed'
@@ -116,29 +121,8 @@ function readStringField(input: unknown, field: string): string | null {
     return typeof value === 'string' && value.length > 0 ? value : null;
 }
 
-function readErrorCode(input: unknown): string | null {
-    return input && typeof input === 'object' && typeof (input as { code?: unknown }).code === 'string'
-        ? (input as { code: string }).code
-        : null;
-}
-
-function readErrorMessage(input: unknown): string {
-    return input instanceof Error ? input.message : '';
-}
-
-function mapClientClosedError(input: unknown): BrowserSidecarCdpTransportErrorCode {
-    if (readErrorCode(input) !== 'PLUGIN_EXEC_CLIENT_PROTOCOL_ERROR') {
-        return 'cdp_transport_closed';
-    }
-    const message = readErrorMessage(input);
-    if (message.includes('not valid JSON')) {
-        return 'cdp_malformed_response';
-    }
-    return 'cdp_protocol_error';
-}
-
 export function createBrowserSidecarCdpTransport(input: Readonly<{
-    client: LoopbackWebSocketJsonClientV1;
+    client: CdpJsonClient;
     disposeClient?: (error?: Error) => void;
 }>): BrowserSidecarCdpTransport {
     const pending = new Map<number, PendingRequest>();
@@ -242,7 +226,7 @@ export function createBrowserSidecarCdpTransport(input: Readonly<{
     input.client.closed.then(() => {
         failAll(privateError('cdp_transport_closed'));
     }, (error: unknown) => {
-        failAll(privateError(mapClientClosedError(error)));
+        failAll(error instanceof BrowserSidecarCdpTransportError ? error : privateError('cdp_transport_closed'));
     });
 
     async function sendCommand(command: CdpCommandInput): Promise<unknown> {
@@ -363,37 +347,80 @@ export function createBrowserSidecarCdpTransport(input: Readonly<{
 }
 
 export async function connectBrowserSidecarCdpTransport(input: Readonly<{
-    endpoint: Pick<BrowserSidecarCdpEndpoint, 'url'>;
-    connectTimeoutMs?: number;
+    pipe: BrowserSidecarCdpPipe;
     signal?: AbortSignal;
 }>): Promise<BrowserSidecarCdpTransport> {
-    const endpoint = discoverBrowserSidecarCdpEndpoint({
-        kind: 'explicit',
-        endpoint: input.endpoint.url,
-    });
-    if (!endpoint.ok) {
+    const { readable, writable } = input.pipe;
+    const listeners = new Set<(message: unknown) => void>();
+    let closed = false;
+    let rejectClosed!: (error: Error) => void;
+    const closedPromise = new Promise<void>((_resolve, reject) => { rejectClosed = reject; });
+    // Buffer only the current frame. Decode after the NUL so split UTF-8 stays intact;
+    // append fragments rather than recopying the growing screenshot on every chunk.
+    let fragments: Buffer[] = [];
+    function close(error: Error = privateError('cdp_transport_closed')): void {
+        if (closed) return;
+        closed = true;
+        fragments = [];
+        readable.off('data', onData);
+        readable.off('end', onClose);
+        readable.off('close', onClose);
+        writable.off('close', onClose);
+        input.signal?.removeEventListener('abort', onClose);
+        rejectClosed(error);
+        readable.destroy();
+        writable.destroy();
+    }
+    function onClose(): void { close(); }
+    function onData(chunk: Buffer): void {
+        let offset = 0;
+        while (!closed) {
+            const end = chunk.indexOf(0, offset);
+            if (end === -1) {
+                if (offset < chunk.length) fragments.push(chunk.subarray(offset));
+                return;
+            }
+            fragments.push(chunk.subarray(offset, end));
+            let message: unknown;
+            try {
+                message = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(fragments)));
+            } catch {
+                close(privateError('cdp_malformed_response'));
+                return;
+            }
+            fragments = [];
+            for (const listener of listeners) listener(message);
+            offset = end + 1;
+        }
+    }
+    const client: CdpJsonClient = {
+        closed: closedPromise,
+        subscribe(listener) {
+            listeners.add(listener);
+            return () => { listeners.delete(listener); };
+        },
+        async sendJson(message, options) {
+            if (options?.signal?.aborted) throw new BrowserSidecarCdpRequestAbortedError('not_dispatched');
+            if (closed) throw privateError('cdp_transport_closed');
+            const frame = Buffer.from(`${JSON.stringify(message)}\0`, 'utf8');
+            await new Promise<void>((resolve, reject) => {
+                // Node's Writable serializes complete frames. Its callback observes flush /
+                // backpressure; a false write result never means resend an issued command.
+                writable.write(frame, error => error ? reject(privateError('cdp_transport_closed')) : resolve());
+            });
+        },
+    };
+    const transport = createBrowserSidecarCdpTransport({ client, disposeClient: close });
+    readable.on('data', onData);
+    readable.once('end', onClose);
+    readable.once('close', onClose);
+    readable.on('error', onClose);
+    writable.once('close', onClose);
+    writable.on('error', onClose);
+    input.signal?.addEventListener('abort', onClose, { once: true });
+    if (input.signal?.aborted || readable.destroyed || writable.destroyed) {
+        transport.dispose();
         throw privateError('cdp_unavailable');
     }
-
-    let client: Awaited<ReturnType<typeof createLoopbackWebSocketJsonClient>>;
-    try {
-        client = await createLoopbackWebSocketJsonClient({
-            endpoint: { url: endpoint.endpoint.url },
-            connect: {
-                timeoutMs: input.connectTimeoutMs,
-            },
-            limits: {
-                // Capture/stream operations own resource policy, not this multiplexed socket.
-                messageByteLimits: null,
-            },
-            signal: input.signal,
-        });
-    } catch {
-        throw privateError('cdp_unavailable');
-    }
-
-    return createBrowserSidecarCdpTransport({
-        client: client.client,
-        disposeClient: (error) => client.dispose(error),
-    });
+    return transport;
 }

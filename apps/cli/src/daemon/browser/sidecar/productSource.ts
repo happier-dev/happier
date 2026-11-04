@@ -189,13 +189,11 @@ export function createProductBrowserSidecarControlAdapterFactory(params: Readonl
                 const result = await createLaunchOwner({
                     browserSessionId: sessionId,
                     sidecarId: profileId,
-                    featureEnabled: params.featureEnabled,
-                    allowPersistentProfiles: false,
                     profile,
                     profileDirectory: profileStore.resolveProfileDirectory(profileId),
                     binaryResolution,
                     signal: cancellation.signal,
-                    ...(remainingDeadlineMs !== undefined ? { endpointTimeoutMs: remainingDeadlineMs } : {}),
+                    ...(scope?.deadlineMs !== undefined ? { deadlineMs: scope.deadlineMs } : {}),
                     // Registered profile lifecycle owns deletion, after dispose has settled CDP
                     // and the process. Never delete these same bytes through a second owner.
                     cleanupProfileDirectory: () => {},
