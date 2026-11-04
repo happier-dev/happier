@@ -23,7 +23,7 @@ import { normalizeSessionListFilterV1 } from '@happier-dev/protocol/sessions/lis
 import { applySessionTurnMutation } from '@/app/session/sessionWriteService';
 import { writeSessionTranscriptMessageInTx } from '@/app/session/sessionTranscriptWrite';
 import { inTx } from '@/storage/inTx';
-import { applyViewerReadCursorOperation } from '@/app/session/personal/readState';
+import { applyViewerReadCursorOperation, initializeSessionOwnerReadStateInTx } from '@/app/session/personal/readState';
 
 const authentication = createPresentUserSessionAccessAuthentication();
 
@@ -325,6 +325,8 @@ describe("Manager listing (SQLite)", () => {
         const { owner, lead, create } = await fixture();
         const failed = await create();
         const permission = await create();
+        // Approved 09B §4.2/L09B-I2: owner creation seeds a read baseline; absence stays quiet.
+        await inTx(tx => initializeSessionOwnerReadStateInTx(tx, { accountId: owner.id, sessionId: failed.id }));
         await db.session.update({ where: { id: failed.id }, data: { active: true } });
         await db.session.update({ where: { id: permission.id }, data: { active: true,
             pendingPermissionRequestCount: 1, pendingRequestObservedAt: new Date() } });
