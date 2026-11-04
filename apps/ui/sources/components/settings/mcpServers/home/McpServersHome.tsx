@@ -139,7 +139,6 @@ const McpServersHomeBody = React.memo(function McpServersHomeBody(
       <PageHeader
         testID="mcp.home.header"
         title={headline}
-        titleProminence="hero"
         alwaysShowTitle
         description={purpose}
         {...(firstVisit

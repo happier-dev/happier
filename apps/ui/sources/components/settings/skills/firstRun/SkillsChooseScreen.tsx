@@ -96,7 +96,6 @@ export const SkillsChoosePage = React.memo(function SkillsChoosePage(
         <PageHeader
           testID="skills.choose.header"
           title={firstRun.eligible ? t('capabilities.skills.home.firstHeadline') : t('capabilities.skills.home.choose')}
-          titleProminence="page"
           alwaysShowTitle
           description={
             firstRun.firstVisit

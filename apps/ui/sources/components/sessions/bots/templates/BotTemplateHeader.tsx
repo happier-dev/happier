@@ -12,8 +12,8 @@ import { t } from '@/text';
 /**
  * The identity anatomy shared by authoring, previews, and recipient Info (R10): the face in the page
  * mark slot, the name, then the byline (author · version · sharing) and the quieter made-from line.
- * `prominence="hero"` is a template's own page; the pane editor keeps the page step. A page that says
- * what the Bot does in its own section passes `descriptionPlacement="body"` so the sentence is said once.
+ * A page that says what the Bot does in its own section passes `descriptionPlacement="body"` so the
+ * sentence is said once.
  */
 export function BotTemplateHeader(props: Readonly<{
     identity: BotTemplateContentV1['identity'];
@@ -26,7 +26,6 @@ export function BotTemplateHeader(props: Readonly<{
     descriptionEditor?: PageHeaderTextEditor;
     actions?: React.ReactNode;
     status?: React.ReactNode;
-    prominence?: 'page' | 'hero';
     descriptionPlacement?: 'header' | 'body';
 }>) {
     const author = props.presentation ? props.presentation.ownerDisplayName ?? undefined : props.author;
@@ -35,7 +34,7 @@ export function BotTemplateHeader(props: Readonly<{
     const byline = author && sharing
         ? t('botTemplates.byline', { author, version: props.version, sharing })
         : [author, props.version, sharing].filter(Boolean).join(' · ');
-    return <PageHeader title={props.identity.name} titleProminence={props.prominence}
+    return <PageHeader title={props.identity.name}
         description={props.descriptionPlacement === 'body' ? undefined : props.identity.description}
         titleEditor={props.titleEditor} descriptionEditor={props.descriptionPlacement === 'body' ? undefined : props.descriptionEditor}
         leading={<PageHeaderMarkSlot testID="bot-template-header-mark">{props.leading

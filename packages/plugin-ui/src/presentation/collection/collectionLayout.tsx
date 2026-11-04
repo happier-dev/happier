@@ -21,6 +21,11 @@ export type HappierCollectionLayoutState = Readonly<{
   mode: HappierCollectionLayoutMode;
   /** The current Collection composition, when provided by Collection rather than a standalone split layout. */
   composition?: HappierCollectionComposition;
+  /**
+   * A detail is open beside the list right now. `mode: 'split'` only says the window could hold both: a grid, or a
+   * list with nothing open, is the whole page.
+   */
+  detailBeside?: boolean;
 }>;
 
 const HAPPIER_COLLECTION_LAYOUT_STATES: Readonly<Record<HappierCollectionLayoutMode, HappierCollectionLayoutState>> = Object.freeze({
@@ -28,6 +33,7 @@ const HAPPIER_COLLECTION_LAYOUT_STATES: Readonly<Record<HappierCollectionLayoutM
   split: Object.freeze({ mode: 'split' }),
   stacked: Object.freeze({ mode: 'stacked' }),
 });
+const HAPPIER_COLLECTION_DETAIL_BESIDE_STATE: HappierCollectionLayoutState = Object.freeze({ mode: 'split', detailBeside: true });
 
 /** @internal Provided only by the split geometry (`HappierListDetailLayout`). */
 export const HappierCollectionLayoutContext = createContext<HappierCollectionLayoutState | null>(null);
@@ -35,8 +41,11 @@ export const HappierCollectionLayoutContext = createContext<HappierCollectionLay
 /** @internal The provider value before the first measurement. */
 export function resolveHappierCollectionLayoutState(
   measured: HappierListDetailLayoutState | null,
+  detailBeside = false,
 ): HappierCollectionLayoutState {
-  return HAPPIER_COLLECTION_LAYOUT_STATES[measured?.mode ?? 'measuring'];
+  return detailBeside && measured?.mode === 'split'
+    ? HAPPIER_COLLECTION_DETAIL_BESIDE_STATE
+    : HAPPIER_COLLECTION_LAYOUT_STATES[measured?.mode ?? 'measuring'];
 }
 
 /**

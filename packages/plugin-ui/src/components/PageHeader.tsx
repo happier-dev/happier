@@ -24,8 +24,6 @@ export type PageHeaderMetaFact = Readonly<{
 export type PageHeaderProps = Readonly<{
   /** The page's title. Hidden when the host's navigation already shows it; the purpose line stays. */
   title: string;
-  /** A surface's one display greeting, above the regular page-title step. */
-  titleProminence?: 'page' | 'hero';
   /** A key from this plugin's declared translation bundle; `title` is its fallback. */
   titleKey?: string;
   /** One sentence saying what the page is for. */
@@ -90,13 +88,10 @@ export function PageHeader(props: PageHeaderProps): ReactElement {
     {hostActions && chrome.showsTitle ? actions : null}
     <HappierPageHeader
       title={title}
-      titleProminence={props.titleProminence}
+      largeTitle={chrome?.largeTitle === true && headingRef === undefined}
       showTitle={headingRef !== undefined || chrome?.showsTitle !== true}
       description={description}
       leading={props.leading ? <PageHeaderMarkSlot>{props.leading}</PageHeaderMarkSlot> : undefined}
-      // Plugin pages get their route controls (Run on) from the host on its own schedule, after the
-      // title: the title line keeps a control's height so they never move it on arrival.
-      reserveControlLine
       details={props.details}
       detailsPlacement={props.detailsPlacement}
       compactPresentation={props.compactPresentation}

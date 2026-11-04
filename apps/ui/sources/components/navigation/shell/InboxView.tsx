@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { retryableLazy } from '@/components/ui/performance/retryableLazy';
-import { View, useWindowDimensions } from 'react-native';
+import { Platform, View, useWindowDimensions } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { COLLECTION_RAIL_MIN_WIDTH_PX, HappierListDetailLayout, useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 import { HAPPIER_COLLECTION_RAIL_WIDTH_PX } from '@happier-dev/plugin-ui/advanced';
@@ -13,6 +13,7 @@ import { countInboxMentions, countInboxNeedsYou, countInboxUpdates } from '@/com
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { Header } from '@/components/navigation/Header';
 import { NavigationTitleChromeProvider, PageHeader } from '@/components/ui/layout/PageHeader';
+import { NavigationLargeTitleProvider } from '@/components/ui/layout/navigationTitleChrome';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { useCollectionRailWidth } from '@/components/ui/lists/collection/useCollectionRailWidth';
 import {
@@ -129,12 +130,13 @@ const InboxViewContent = React.memo(function InboxViewContent(props: Readonly<{ 
         <NavigationTitleChromeProvider showsTitle={false}>
             {/* A page of work rows with their inline answers (lab `inbox-I1`): the wide column. */}
             <ItemList testID="inbox.screen" pageColumn="wide">
-                <PageHeader
-                    title={t('tabs.inbox')}
-                    titleProminence={phone ? 'hero' : 'page'}
-                    description={phone ? undefined : view === 'needs_you' && needsYouSummary ? needsYouSummary : t('inbox.work.pageDescription')}
-                    actions={phone ? undefined : tabs}
-                />
+                <NavigationLargeTitleProvider largeTitle={phone}>
+                    <PageHeader
+                        title={t('tabs.inbox')}
+                        description={phone ? undefined : view === 'needs_you' && needsYouSummary ? needsYouSummary : t('inbox.work.pageDescription')}
+                        actions={phone ? undefined : tabs}
+                    />
+                </NavigationLargeTitleProvider>
                 {phone ? <View style={styles.phoneTabs}>{tabs}</View> : null}
                 <InboxContent model={model} presentation="screen" view={view} focusedItem={focusedItem} onSelectItem={onSelectItem} />
             </ItemList>
@@ -146,7 +148,7 @@ const InboxViewContent = React.memo(function InboxViewContent(props: Readonly<{ 
     return (
         <View style={[styles.container, { backgroundColor: materialColor(theme.colors.surface.base, 'transparent') }]}>
             {/* A phone's bar belongs to the tab shell (`MainView`); a second empty band would push the title down. */}
-            {phone ? null : (
+            {phone || Platform.OS === 'web' ? null : (
                 <Header
                     title={null}
                     headerLeft={() => null}

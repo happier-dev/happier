@@ -8,6 +8,7 @@ import { HomeReachabilityGate } from '@/components/navigation/connectionStatus/H
 import { SessionGettingStartedGuidance } from '@/components/sessions/guidance/SessionGettingStartedGuidance';
 import { useSessionGettingStartedGuidanceBaseModel } from '@/components/sessions/guidance/useSessionGettingStartedGuidanceBaseModel';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
+import { NavigationLargeTitleProvider } from '@/components/ui/layout/navigationTitleChrome';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { PAGE_ROW_TOUCH_MIN_HEIGHT_PX } from '@/components/ui/lists/pageRowMetrics';
@@ -660,13 +661,14 @@ const HomeHubContent = React.memo(function HomeHubContent() {
             onContentSizeChange={tracker.onContentSizeChange}
             scrollEventThrottle={16}
         >
-            <PageHeader
-                title={title}
-                titleProminence={phone ? 'hero' : 'page'}
-                alwaysShowTitle
-                details={<HubStatusLine home={renderHomeLine} />}
-                actions={headerActions}
-            />
+            <NavigationLargeTitleProvider largeTitle={phone}>
+                <PageHeader
+                    title={title}
+                    alwaysShowTitle
+                    details={<HubStatusLine home={renderHomeLine} />}
+                    actions={headerActions}
+                />
+            </NavigationLargeTitleProvider>
             {sections}
         </ItemList>
     );

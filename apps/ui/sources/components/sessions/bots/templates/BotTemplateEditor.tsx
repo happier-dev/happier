@@ -123,7 +123,6 @@ function EditorIdentity(props: LoadedProps) {
             onChangeText: value => edit('name', value), onCommit: () => { void props.buffer.commit(props.save); }, testID: 'bot-template-name' }}
         descriptionEditor={{ value: identity.description, placeholder: t('botTemplates.description'), accessibilityLabel: t('botTemplates.description'),
             onChangeText: value => edit('description', value), onCommit: () => { void props.buffer.commit(props.save); }, testID: 'bot-template-description' }}
-        prominence={props.presentation === 'page' ? 'hero' : 'page'}
         actions={props.presentation === 'pane' ? <IconButton testID="bot-template-expand" variant="plain" iconName="arrows-out"
             accessibilityLabel={t('common.expand')} tooltip={t('common.expand')} tooltipPlacement="bottom"
             onPress={() => router.pushRetainingCurrent(buildBotTemplateEditorRoute({ draftArtifactId: props.artifactId,

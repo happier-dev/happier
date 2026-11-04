@@ -1687,7 +1687,8 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
   const rowGeometry: 'table' | 'list' = transition?.kind === 'travel' || composition !== 'table' ? 'list' : 'table';
   const layoutMode = resolveHappierCollectionLayoutState(geometry).mode;
   const publishedComposition: HappierCollectionComposition = rowGeometry === 'table' ? 'table' : composition === 'table' ? 'list' : composition;
-  const layoutState = useMemo(() => ({ mode: layoutMode, composition: publishedComposition }), [layoutMode, publishedComposition]);
+  const detailBeside = publishedComposition === 'split';
+  const layoutState = useMemo(() => ({ mode: layoutMode, composition: publishedComposition, detailBeside }), [detailBeside, layoutMode, publishedComposition]);
 
   const wrapTitles = composition === 'list' && transition === null && !besideDetail;
   const restingRows = useContext(HappierCollectionRestingRowsContext);

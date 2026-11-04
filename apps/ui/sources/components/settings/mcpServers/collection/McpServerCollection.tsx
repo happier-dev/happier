@@ -243,7 +243,6 @@ export const McpServerCollection = React.memo(function McpServerCollection(props
             <SettingsPageHeader
                 testID="settings.mcpServers.header"
                 alwaysShowTitle
-                titleProminence="page"
                 actionsPlacement="page"
                 actions={total > 0 ? addMenu : undefined}
             />

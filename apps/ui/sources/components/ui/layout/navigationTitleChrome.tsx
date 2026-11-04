@@ -45,3 +45,19 @@ export function useNavigationTitleChromeShowsTitle(): boolean {
 export function useNavigationChromeShowsBack(): boolean {
     return React.useContext(NavigationBackChromeShownContext);
 }
+
+/**
+ * The navigation chrome leaves the page's name to the page's own large title under it: a phone's top-level
+ * collection page, as the Inbox tab (lab `phone-P4`). A mounted plugin page reads it as page chrome
+ * (`HappierPageChromeInternal.largeTitle`), and its Collection leads with the name.
+ */
+const NavigationLargeTitleContext = React.createContext<boolean>(false);
+
+export function NavigationLargeTitleProvider(props: Readonly<{ largeTitle: boolean; children: React.ReactNode }>) {
+    return <NavigationLargeTitleContext.Provider value={props.largeTitle}>{props.children}</NavigationLargeTitleContext.Provider>;
+}
+
+/** Whether the surrounding navigation leaves the page's name to its large title (see `NavigationLargeTitleProvider`). */
+export function useNavigationLeavesLargeTitle(): boolean {
+    return React.useContext(NavigationLargeTitleContext);
+}

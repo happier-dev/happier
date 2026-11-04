@@ -386,7 +386,6 @@ const AllMachinesHeader = React.memo(function AllMachinesHeader(props: Readonly<
             <PageHeader
                 testID="machines.index.header"
                 alwaysShowTitle
-                titleProminence="hero"
                 title={props.title ?? t('settings.machines')}
                 // Under the fleet sentence the page's generic purpose would read as a non sequitur: it only stands under "Machines".
                 description={props.description ?? (props.title === null ? t('settingsMachines.pageDescription') : undefined)}

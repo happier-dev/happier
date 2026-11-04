@@ -18,7 +18,7 @@ import { InlineTextField, type InlineTextEditor } from '@/components/ui/text/Inl
 import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
 import { useLayoutMaxWidth } from '@/components/ui/layout/layout';
 import { NavigationHeaderActions, type NavigationHeaderAction } from '@/components/ui/layout/NavigationHeaderActions';
-import { useNavigationChromeShowsBack, useNavigationTitleChromePublisher, useNavigationTitleChromeShowsTitle } from '@/components/ui/layout/navigationTitleChrome';
+import { useNavigationChromeShowsBack, useNavigationLeavesLargeTitle, useNavigationTitleChromePublisher, useNavigationTitleChromeShowsTitle } from '@/components/ui/layout/navigationTitleChrome';
 import { useClaimedStackHeaderActions } from '@/components/navigation/stackHeaderActions';
 
 export { NavigationTitleChromeProvider, useNavigationTitleChromeShowsTitle } from './navigationTitleChrome';
@@ -48,8 +48,6 @@ export type PageHeaderPrimaryAction = NavigationHeaderAction;
 
 export type PageHeaderProps = Readonly<{
     title: string;
-    /** The surface's one display greeting, above the regular page-title step. */
-    titleProminence?: 'page' | 'hero';
     /** An inline mark after the title, such as a release-channel badge. */
     titleAccessory?: React.ReactNode;
     /** One sentence saying what the page is for (a node only when the sentence itself animates). */
@@ -79,8 +77,6 @@ export type PageHeaderProps = Readonly<{
     actionsPlacement?: 'navigation' | 'page';
     /** Prefer the title row, wrapping controls beneath when the title needs its readable width. */
     actionsLayout?: 'wrap' | 'inline';
-    /** Keep a control's height on the title line while it has none yet (controls that arrive after the title). */
-    reserveControlLine?: boolean;
     /**
      * A status line under the actions (a save state and validity readout). It is the actions' own
      * row, as wide as they are, so its changing words never reflow the title.
@@ -135,6 +131,7 @@ export const PageHeader = React.memo(function PageHeader(props: PageHeaderProps)
     const maxWidth = useLayoutMaxWidth();
     const chromeShowsTitle = useNavigationTitleChromeShowsTitle();
     const chromeShowsBack = useNavigationChromeShowsBack();
+    const largeTitle = useNavigationLeavesLargeTitle();
     const publisher = useNavigationTitleChromePublisher();
     const setChromeTitle = publisher?.setTitle;
     const setPageTitle = publisher?.setPageTitle;
@@ -220,7 +217,7 @@ export const PageHeader = React.memo(function PageHeader(props: PageHeaderProps)
         ) : null}
         <HappierPageHeader
             title={titleNode}
-            titleProminence={props.titleProminence}
+            largeTitle={largeTitle}
             showTitle={showTitle}
             titleAccessory={props.titleAccessory}
             description={descriptionNode}
@@ -231,7 +228,6 @@ export const PageHeader = React.memo(function PageHeader(props: PageHeaderProps)
             leading={props.leading}
             actions={actions}
             actionsLayout={props.actionsLayout}
-            reserveControlLine={props.reserveControlLine}
             status={props.status}
             renderBack={renderBack}
             columnMaxWidthPx={props.columnWidth === 'pane' ? undefined : maxWidth}

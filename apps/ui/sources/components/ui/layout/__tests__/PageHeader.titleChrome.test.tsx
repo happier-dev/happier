@@ -12,6 +12,8 @@ installSettingsViewCommonModuleMocks();
 
 const { PageHeader, NavigationTitleChromeProvider } = await import('@/components/ui/layout/PageHeader');
 const { NavigationBackChromeProvider } = await import('@/components/ui/layout/NavigationBackChrome');
+const { NavigationLargeTitleProvider } = await import('@/components/ui/layout/navigationTitleChrome');
+const { happierPageTextMetrics } = await import('@happier-dev/plugin-ui/presentation');
 
 function BackArrow() {
     return React.createElement('BackArrow');
@@ -46,6 +48,20 @@ function headings(screen: Awaited<ReturnType<typeof renderHeader>>): string[] {
 }
 
 describe('PageHeader title and navigation chrome (R2)', () => {
+    it('takes the large title from the navigation that leaves the name to the page, and the page title everywhere else', async () => {
+        const titleSize = async (largeTitle: boolean) => {
+            const screen = await renderScreen(
+                <NavigationLargeTitleProvider largeTitle={largeTitle}>
+                    <PageHeader title="Inbox" alwaysShowTitle />
+                </NavigationLargeTitleProvider>,
+            );
+            const heading = screen.root.findAll((node: ReactTestInstance) => typeof node.type === 'string' && node.props.accessibilityRole === 'header')[0]!;
+            return [heading.props.style].flat(Infinity).reduce((size: number | undefined, style: { fontSize?: number } | null) => style?.fontSize ?? size, undefined);
+        };
+        expect(await titleSize(true)).toBe(happierPageTextMetrics('heroTitle').fontSize);
+        expect(await titleSize(false)).toBe(happierPageTextMetrics('pageTitle').fontSize);
+    });
+
     it('keeps explicitly page-owned entity actions visible and usable beneath phone title chrome', async () => {
         const onPress = vi.fn();
         const screen = await renderScreen(<NavigationTitleChromeProvider showsTitle>

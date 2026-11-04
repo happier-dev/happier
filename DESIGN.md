@@ -640,6 +640,12 @@ live in the page-presentation owners in code.
   the readable surface.
 - **Every page has an identity.** A page header states the title and one sentence of purpose. Where
   native navigation already shows the title, the header shows only the purpose.
+- **One title rule.** Every page uses the page title. A page uses the large title in one case only:
+  on a phone, at the top level of a tab, where the navigation bar leaves the page's name to the page
+  (Home, Inbox, a plugin's top-level collection). An entity page keeps the page title because its mark
+  leads. Home's greeting over its planet is Home's own moment, not a page title. A page never chooses;
+  `HappierPageHeader` decides from what navigation says. The title sits at one height on every page,
+  with or without header actions. Only a detail actually open beside a list shares that list's top band.
 - **Sections read before their controls.** A sentence-case section title with its explanation above
   the rows, then one card sheet. Row dividers use the divider ink and run from the rows' text edge
   (past the leading column when the section reserves one) to the sheet's trailing edge; the last row

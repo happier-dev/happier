@@ -206,7 +206,6 @@ const SkillsHomepageBody = React.memo(function SkillsHomepageBody(
       <PageHeader
         testID="skills.home.header"
         title={headline}
-        titleProminence={props.phone ? 'page' : 'hero'}
         alwaysShowTitle
         {...(props.phone ? {} : { description: purpose })}
         {...(props.phone

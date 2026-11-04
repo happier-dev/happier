@@ -8,6 +8,10 @@ The shapes every Happier page is built from. Values come from the owners named i
   read (`surface.base`). The selected rail row is a soft fill, never an accent bar.
 - **Sheets sit a hair off the page** (`surface.sectionTint` plus a hairline border), not on a grey
   canvas and not as floating shadowed cards. If sheets "have no background", check the tint first.
+- **One title rule.** Pages never choose a title size. `HappierPageHeader` draws the page title, and the
+  large title only where navigation leaves the name to the page (a phone tab's top level). A host states
+  that with `NavigationLargeTitleProvider` or page chrome's `largeTitle`, around the header. An entity
+  (leading mark) keeps the page title.
 - **One scroll owner per pane.** A list and its detail scroll independently; nothing nests scrolling.
 
 ## Page

@@ -29,6 +29,7 @@ import { automationRunTone, type LatestAutomationRunRow } from '@/components/aut
 import type { AutomationDefinitionRun } from '@/sync/domains/automations/automationTypes';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
+import { NavigationLargeTitleProvider } from '@/components/ui/layout/navigationTitleChrome';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -178,18 +179,19 @@ export function HomeHubSpecimen(props: Readonly<{ machines: boolean; firstRun?: 
 
     return (
         <ItemList testID="dev-home" pageColumn="dashboard">
-            <PageHeader
-                title={t('homeIndex.greetingAfternoon', { name: 'Leeroy' })}
-                titleProminence={phone ? 'hero' : 'page'}
-                alwaysShowTitle
-                details={<HubStatusLineView working={2} needsYou={1} home={renderHomeLine} />}
-                actions={(
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 }}>
-                        {props.brief || phone ? null : <VoiceBriefButtonView onOpen={NEVER_OPENS} />}
-                        <HubCustomizeButton open={false} onOpenChange={NEVER_OPENS} />
-                    </View>
-                )}
-            />
+            <NavigationLargeTitleProvider largeTitle={phone}>
+                <PageHeader
+                    title={t('homeIndex.greetingAfternoon', { name: 'Leeroy' })}
+                    alwaysShowTitle
+                    details={<HubStatusLineView working={2} needsYou={1} home={renderHomeLine} />}
+                    actions={(
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 }}>
+                            {props.brief || phone ? null : <VoiceBriefButtonView onOpen={NEVER_OPENS} />}
+                            <HubCustomizeButton open={false} onOpenChange={NEVER_OPENS} />
+                        </View>
+                    )}
+                />
+            </NavigationLargeTitleProvider>
             {phone && !props.brief ? (
                 <ItemGroup surface="none"><VoiceBriefButtonView onOpen={NEVER_OPENS} block /></ItemGroup>
             ) : null}

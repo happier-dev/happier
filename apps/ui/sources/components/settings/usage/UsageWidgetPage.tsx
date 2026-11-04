@@ -597,6 +597,8 @@ function UsagePageHeader(
         description={t(props.sessionId ? 'usage.board.page.sessionSubtitle' : 'usage.board.page.subtitle')}
         meta={facts}
         alwaysShowTitle
+        // This view already sits in the page's wide column: a second, narrower column would inset the title from the cards.
+        columnWidth="pane"
         testID="usage-page.header"
       />
       {props.sessionId ? <SessionRetentionNotice sessionId={props.sessionId} /> : null}

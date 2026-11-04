@@ -263,7 +263,6 @@ type _AuthorItemGroupPropKeysAreCurated = Assert<IsEqual<keyof ItemGroupProps,
 // suppression, the content column) stays host-supplied.
 type _AuthorPageHeaderPropKeysAreCurated = Assert<IsEqual<keyof PageHeaderProps,
   | 'title'
-  | 'titleProminence'
   | 'titleKey'
   | 'description'
   | 'descriptionKey'

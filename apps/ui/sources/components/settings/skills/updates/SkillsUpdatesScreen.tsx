@@ -135,7 +135,6 @@ export const SkillsUpdatesPage = React.memo(function SkillsUpdatesPage(
       <PageHeader
         testID="skills.updates.header"
         title={t('capabilities.skillsUpdates.updates.title')}
-        titleProminence="page"
         alwaysShowTitle
         description={t('capabilities.skillsUpdates.updates.purpose')}
         actions={

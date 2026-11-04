@@ -20,9 +20,17 @@ export type HappierPageChrome = Readonly<{
   columnMaxWidthPx?: number;
 }>;
 
+/** Where a page header's actions live under navigation chrome that shows the title. */
+export type HappierPageActionsPlacement = 'navigation' | 'page';
+
 /** Same-realm host binding only; not part of the public page-chrome contract. */
 export type HappierPageChromeInternal = HappierPageChrome & Readonly<{
-  renderNavigationActions?: (actions: ReactNode) => ReactNode;
+  /**
+   * The host's controls for this page's header row (its route controls, its pane's Hide) joined to the page's
+   * own actions. `navigation` (the default) lets the host hoist them into navigation chrome that shows the title;
+   * `page` keeps them in the page header row, as an entity header keeps its actions by its identity.
+   */
+  renderNavigationActions?: (actions: ReactNode, placement?: HappierPageActionsPlacement) => ReactNode;
   /**
    * The navigation's own Back is showing and would return the page to a step it declared rather than leave it,
    * so a pushed detail draws no Back of its own beside it.
@@ -33,6 +41,12 @@ export type HappierPageChromeInternal = HappierPageChrome & Readonly<{
    * `PageHeader` does; the page header then omits its title. `undefined` withdraws it.
    */
   publishTitle?: (title: string | undefined) => void;
+  /**
+   * The navigation chrome leaves the page's name to the page, drawn as its large title under the navigation row:
+   * a phone's top-level collection page, as core's Inbox tab (lab `phone-P4`). A `Collection` that is the page
+   * (it carries `title`) leads with it above its toolbar.
+   */
+  largeTitle?: boolean;
 }>;
 
 const HappierPageChromeContext = createContext<HappierPageChromeInternal | null>(null);

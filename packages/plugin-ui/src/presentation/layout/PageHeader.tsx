@@ -43,8 +43,12 @@ export type HappierPageHeaderProps = Readonly<{
   title: ReactNode;
   /** Whether the title is drawn. `false` when navigation chrome already shows it (the purpose line stays). */
   showTitle?: boolean;
-  /** A surface's one greeting or display heading, above the regular page-title step. */
-  titleProminence?: 'page' | 'hero';
+  /**
+   * Navigation leaves the page's name to the page (a phone tab's top level): it draws the large title. Every other
+   * page, and any entity with a `leading` mark, draws the page title. This is the whole rule (DESIGN.md "One title
+   * rule"); hosts state this fact and pages never choose a title size.
+   */
+  largeTitle?: boolean;
   /** An inline mark after the title, such as a release-channel badge. */
   titleAccessory?: ReactNode;
   /** One sentence saying what the page is for (string or element, as for `title`). */
@@ -74,11 +78,6 @@ export type HappierPageHeaderProps = Readonly<{
    * whose sentence is long).
    */
   actionsLayout?: 'wrap' | 'inline' | 'hang';
-  /**
-   * The title line keeps a control's height even while it has no controls, for a page whose controls
-   * arrive after its title (a plugin page's Run on chip), so their arrival never moves the title.
-   */
-  reserveControlLine?: boolean;
   /**
    * A status line under the actions ("Unsaved changes · Save · Ready"). It is the actions' own row:
    * as wide as the actions above it, wrapping within them and ending on their edge, so its changing
@@ -176,7 +175,8 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
   const textInsetPx = useHappierColumnEdgeRemainder(HAPPIER_PAGE_METRICS.pageTextInsetPx);
   const renderBack = props.renderBack ?? null;
   const showsBack = showTitle && renderBack !== null;
-  const collectionMode = useHappierCollectionLayout()?.mode ?? null;
+  const collectionLayout = useHappierCollectionLayout();
+  const collectionMode = collectionLayout?.mode ?? null;
   const detailWidthPx = useHappierCollectionDetailWidth();
   // The pane's width decides whether back fits in the gutter left of the
   // column. Every header measures it: a back control often arrives after the
@@ -282,7 +282,7 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
   // gutter elsewhere), so nothing moves on arrival.
   const measuring = showsBack && backPlacement === null;
   const measuringOnLine = measuring && resolveHappierPageBackMeasuringLine({ backShown: showsBack, collectionMode, detailWidthPx });
-  const titleRole = props.titleProminence === 'hero' ? 'heroTitle' : 'pageTitle';
+  const titleRole = props.largeTitle === true && !props.leading ? 'heroTitle' : 'pageTitle';
   const titleLineHeight = HAPPIER_PAGE_TEXT[titleRole].lineHeight;
   const backLine = renderBack && !centered && (backPlacement === 'above-title' || measuringOnLine) ? (
     <View
@@ -344,7 +344,9 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
     </>
   );
   const textBelowTitle = wrapPart ? wrapPart('supporting', textBelowTitleContent) : textBelowTitleContent;
-  const splitTitleLine = showTitle && !centered && !inlineActions && Boolean(props.actions || props.status || props.reserveControlLine);
+  // Every title line is the same line, with controls or without, so a header's actions (however late they arrive)
+  // never move the title or what sits under it.
+  const splitTitleLine = showTitle && !centered && !inlineActions;
   const actionsBelowIdentity = splitTitleLine
     && actionsWrapWidthPx !== null && splitWidthPx !== null && splitWidthPx <= actionsWrapWidthPx;
   const columnContentWidthPx = paneWidthPx === null ? splitWidthPx
@@ -403,8 +405,13 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
           maxWidth: props.columnMaxWidthPx,
           paddingHorizontal: textInsetPx,
           // When navigation chrome already shows the title, the purpose line takes the title's place
-          // right under that chrome instead of leaving the title's room empty above it.
-          paddingTop: showTitle ? HAPPIER_PAGE_METRICS.pageHeaderPaddingTopPx : HAPPIER_PAGE_METRICS.pageHeaderUnderChromePaddingTopPx,
+          // right under that chrome instead of leaving the title's room empty above it. Beside a collection's
+          // list the list's header is that chrome's row: the title row centres on it, so the column title,
+          // the page title and their actions read as one band (owner 2026-10-30; Lane 12 Main approved). A window
+          // wide enough for a split with no detail open has no such band: the page keeps the page's top.
+          paddingTop: showTitle && collectionLayout?.detailBeside !== true
+            ? HAPPIER_PAGE_METRICS.pageHeaderPaddingTopPx
+            : HAPPIER_PAGE_METRICS.pageHeaderUnderChromePaddingTopPx,
           paddingBottom: HAPPIER_PAGE_METRICS.pageHeaderPaddingBottomPx,
         }}
       >
@@ -442,7 +449,7 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
                     lines (DESIGN-14 D5). A title wider than the row still wraps within it. */}
                 <View
                   onLayout={splitTitleLine && !actionsBelowIdentity ? handleTitleBoxLayout : undefined}
-                  style={{ position: 'relative', flexGrow: centered ? 0 : 1, flexShrink: 1, flexBasis: splitTitleLine || centered ? 'auto' : HAPPIER_PAGE_METRICS.sectionTextMinWidthPx, minWidth: 0, ...(centered ? { width: '100%', alignItems: 'center' } : {}), ...(props.reserveControlLine && splitTitleLine ? { minHeight: HAPPIER_PAGE_METRICS.controlHeightPx, justifyContent: 'center' } : {}) }}
+                  style={{ position: 'relative', flexGrow: centered ? 0 : 1, flexShrink: 1, flexBasis: splitTitleLine || centered ? 'auto' : HAPPIER_PAGE_METRICS.sectionTextMinWidthPx, minWidth: 0, ...(centered ? { width: '100%', alignItems: 'center' } : {}), ...(splitTitleLine ? { minHeight: HAPPIER_PAGE_METRICS.controlHeightPx, justifyContent: 'center' } : {}) }}
                 >
                   {props.leading ? null : gutterBack}
                   {splitTitleLine ? <View onLayout={handleTitleNaturalLayout} style={{ alignSelf: 'flex-start', maxWidth: '100%' }}>{titleLine}</View> : titleLine}

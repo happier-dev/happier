@@ -83,8 +83,8 @@ export function HappierListDetailLayout({
   const { layout, resize } = useResizableListDetailGeometry({
     ...sizing, availableWidth, minListWidth, minDetailWidth, preferredListRatio, gap,
   });
-  const collectionLayout = useMemo(() => resolveHappierCollectionLayoutState(layout), [layout]);
   const idle = !detailActive && idleDetail !== undefined && idleDetail !== null && layout?.mode === 'split';
+  const collectionLayout = useMemo(() => resolveHappierCollectionLayoutState(layout, detailActive || idle), [detailActive, idle, layout]);
   const split = (detailActive || idle) && layout?.mode === 'split' ? layout : null;
   const listVisible = !detailActive || split !== null || stackedPane === 'list';
   const detailVisible = idle || (detailActive && (split !== null || stackedPane === 'detail'));

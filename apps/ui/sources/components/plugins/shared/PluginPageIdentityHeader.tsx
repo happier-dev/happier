@@ -41,7 +41,6 @@ export function PluginPageIdentityHeaderProvider(props: Readonly<{
                     description={props.description}
                     // The route's Run on chip arrives with the plugin, after this header: the title line already
                     // holds its height, so the loaded header carries the same title in the same place.
-                    reserveControlLine
                     leading={<PluginMark title={props.title} pluginId={props.pluginId} size="page"
                         installedPackage={installedPackage} machineId={app.machineId} serverId={app.serverId} />}
                 />

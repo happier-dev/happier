@@ -206,13 +206,14 @@ export function ArtifactsBrowser(props: Readonly<{
                     />
                 )}
             />
-            {loadFailed && total > 0 ? <SurfaceFreshnessLine
+            {/* On the grid's edges, like the quota notice above: the column's padding is not the page's edge. */}
+            {loadFailed && total > 0 ? <View style={stylesheet.freshness}><SurfaceFreshnessLine
                 testID="artifacts:stale"
                 tone="warning"
                 reason={t('artifacts.browser.retainedBody')}
                 action={{ label: t('common.retry'), onPress: props.onRetry }}
-            /> : null}
-            {partial ? <SurfaceFreshnessLine testID="artifacts:pending" busy reason={t('artifacts.browser.loadingBody')} /> : null}
+            /></View> : null}
+            {partial ? <View style={stylesheet.freshness}><SurfaceFreshnessLine testID="artifacts:pending" busy reason={t('artifacts.browser.loadingBody')} /></View> : null}
         </>
     );
 
@@ -657,6 +658,9 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     meterTextFull: {
         color: theme.colors.state.warning.foreground,
+    },
+    freshness: {
+        marginHorizontal: PAGE_LIST_METRICS.sheetInsetPx,
     },
     banner: {
         marginHorizontal: PAGE_LIST_METRICS.sheetInsetPx,
