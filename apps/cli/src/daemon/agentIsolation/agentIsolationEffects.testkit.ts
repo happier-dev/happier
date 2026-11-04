@@ -122,14 +122,17 @@ export function createAgentIsolationMemberPreparationBoundary(input: Readonly<{
   let nextAllocatedUid = uid;
   let userObservations = 0, daemonInspections = 0, heldObservationAvailable = true, rootUid = uid;
   const permissionQueries: Readonly<{ command: string; args: readonly string[] }>[] = [];
-  const permissionSystem: AgentIsolationReadinessSystem = { run: async (command, args) => {
+  const permissionSystem: AgentIsolationReadinessSystem = { run: async (command, args, options) => {
     permissionQueries.push({ command, args: [...args ?? []] });
     if (command !== 'sudo' || JSON.stringify(args) !== JSON.stringify([
-      '-n', '-l', '-u', derived.username, '--', '/opt/happier/cli/current/happier', 'agent-launch',
+      '-n', '-u', derived.username, '--', '/opt/happier/cli/current/happier', 'agent-launch',
     ])) throw new Error('Unexpected member permission probe');
     if (!installed.has('agent-runas') || drifted.has('agent-runas'))
       throw Object.assign(new Error('Native RunAs permission denied'), { code: 1 });
-    return { stdout: '', stderr: '' };
+    const readiness = await runAgentIsolationMemberReadinessBoundary({ request: [command, args, options],
+      nativeHome: { path: derived.home, uid: nativeState.accountUid } });
+    if (!readiness) throw new Error('Unexpected member readiness frame');
+    return readiness;
   } };
   const backend: machineSetup.MachineSetupBackend = {
     async observe(step): Promise<machineSetup.MachineSetupStepObservationV1> {
@@ -176,8 +179,10 @@ export function createAgentIsolationMemberPreparationBoundary(input: Readonly<{
     target: () => ({ homeServerIdentityId: requesterIdentity.homeServerIdentityId,
       machineId: requesterIdentity.requester.machineId, installationId: requesterIdentity.requester.installationId,
       custodianAccountId: input.custodianAccountId, encryptionMode: input.encryptionMode }) });
-  const prepare = (options: Readonly<{ rpcContext?: RpcHandlerContext; signal?: AbortSignal }> = {}) =>
-    members.prepare({ requesterIdentity, ...options });
+  const prepare = (options: Readonly<{ rpcContext?: RpcHandlerContext; signal?: AbortSignal }> = {}) => {
+    permissionQueries.length = 0;
+    return members.prepare({ requesterIdentity, ...options });
+  };
   return { ...native, effects, runtime, members, prepare, installed, drifted, port, nativeState, permissionQueries,
     filesystemHome: { path: derived.home, backingDirectory: activeServerDir, uid, gid: uid },
     run: () => prepare(),

@@ -27,11 +27,9 @@ vi.mock('node:child_process', async importOriginal => ({
 }));
 vi.mock('@happier-dev/cli-common/process', async importOriginal => {
   const actual = await importOriginal<typeof import('@happier-dev/cli-common/process')>();
-  return { ...actual, execFileWithDeadline: async (...args: Parameters<typeof actual.execFileWithDeadline>) => {
-    const readiness = await runAgentIsolationMemberReadinessBoundary({ request: args,
-      nativeHome: nativeOs.home, fail: nativeOs.readinessFailure });
-    if (readiness) { nativeOs.readinessProbes++; return readiness; }
-    return actual.execFileWithDeadline(...args);
+  return { ...actual, execFileWithDeadline: async (...request: Parameters<typeof actual.execFileWithDeadline>) => {
+    const result = await runAgentIsolationMemberReadinessBoundary({ request, nativeHome: nativeOs.home });
+    return result ?? actual.execFileWithDeadline(...request);
   } };
 });
 
@@ -39,7 +37,7 @@ describe('member desktop launch custody', () => {
   afterEach(() => { nativeOs.home = undefined; nativeOs.readinessFailure = false; nativeOs.readinessProbes = 0;
     vi.restoreAllMocks(); vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 
-  it.skipIf(process.platform !== 'linux').each([false, true])('uses native member readiness before Exec and never lends the owner display (readiness refused: %s)', async readinessFailure => {
+  it.skipIf(process.platform !== 'linux').each([false, true])('uses admitted native member binding without readiness probes and never lends the owner display (probe would refuse: %s)', async readinessFailure => {
     const identity = { kind: 'isolated', separationRequired: true, requester: {
       serverId: 'home', accountId: 'member', machineId: 'machine', installationId: 'installation',
     } } satisfies HostRequesterExecutionIdentity;
@@ -49,6 +47,15 @@ describe('member desktop launch custody', () => {
     onTestFinished(() => filesystem.rm(directory, { recursive: true, force: true }));
     const preparation = createAgentIsolationMemberPreparationBoundary({ activeServerDir: directory,
       requesterIdentity, custodianAccountId: 'owner', encryptionMode: 'plain', uid: member.agentUid });
+    const system = preparation.effects.nativeReadiness?.system;
+    if (!system) throw new Error('Member native OS boundary missing');
+    vi.spyOn(system, 'run').mockImplementation(async (...request) => {
+      nativeOs.readinessProbes++;
+      const readiness = await runAgentIsolationMemberReadinessBoundary({ request,
+        nativeHome: nativeOs.home, fail: nativeOs.readinessFailure });
+      if (!readiness) throw new Error('Unexpected member native OS command');
+      return readiness;
+    });
     for (const step of buildAgentIsolationProvisioningSteps({ requesterIdentity, daemonUsername: 'happier',
       daemonPrimaryGroup: 'happier', binaryPath: preparation.effects.installedCli })) preparation.installed.add(step.id);
     await writeAgentIsolationMemberBinding(directory, member);
@@ -66,6 +73,7 @@ describe('member desktop launch custody', () => {
     const machine: HostAgentIsolationLaunchContext = {
       managedHappierBinaryPath: preparation.effects.installedCli,
       read: () => ({ enabled: true, memberProvisioning: 'linuxUsersV1', status: { kind: 'unavailable', code: 'metadata_unavailable' }, workspaceRoots: [] }),
+      readMember: input => preparation.members.read(input),
       async prepareMember(input) {
         const result = await preparation.members.prepare(input);
         if (result.kind !== 'ready') throw new Error('Native member fixture preparation was refused');
@@ -77,17 +85,27 @@ describe('member desktop launch custody', () => {
       return prepareRequesterNativeOperation(input, { machine, homeServerIdentityId: 'home', machineId: 'machine',
         installationId: 'installation', reloadController: createPluginReloadController() });
     };
+    for (let index = 0; index < 4; index++) {
+      const native = await prepareNativeOperation({ requesterIdentity: identity,
+        readMaterial: () => ({ materializationKey: `admitted-${index}`, environment: {}, selectedMaterials: [] }),
+        signal: new AbortController().signal });
+      expect(native.memberIdentity).toEqual(member);
+      expect(native.workingDirectory).toBe(member.workspaceRoot);
+      expect(native.agentIsolation.read()?.localTransport).toEqual({ agentUid: member.agentUid, agentGid: member.agentGid });
+    }
+    expect(nativeOs.readinessProbes).toBe(0);
+    expect(preparation.launches).toHaveLength(0);
+    await expect(prepareRequesterNativeOperation({ requesterIdentity: { ...identity,
+      requester: { ...identity.requester, accountId: 'member-without-binding' } },
+      readMaterial: () => ({ materializationKey: 'missing-binding', environment: {}, selectedMaterials: [] }),
+      signal: new AbortController().signal }, { machine: { ...machine, prepareMember: undefined },
+      homeServerIdentityId: 'home', machineId: 'machine', installationId: 'installation',
+      reloadController: createPluginReloadController() })).rejects.toMatchObject({ code: 'agent_isolation_unavailable' });
+    expect(nativeOs.readinessProbes).toBe(0);
     vi.mocked(spawn).mockClear();
     vi.mocked(spawn).mockImplementationOnce(() => { selectedMaterial = readMaterial?.(); throw new Error('fixture_native_spawn_refusal'); });
     const result = prepareMemberComputerRuntime({ prepareNativeOperation, identity, placement: 'member' });
-    if (readinessFailure) {
-      await expect(result).rejects.toMatchObject({ code: 'agent_isolation_unavailable', details: {
-        reason: 'payload_not_accessible', phase: 'native_execution_preparation' } });
-      expect(spawn).not.toHaveBeenCalled();
-      return;
-    }
     await expect(result).rejects.toMatchObject({ code: 'plugin_exec_spawn_failed' });
-    expect(nativeOs.readinessProbes).toBe(1);
     const call = vi.mocked(spawn).mock.calls.at(-1)!;
     expect(call[0]).toBe('sudo');
     expect(call[1]).toEqual(['-n', '-u', member.username, '--', preparation.effects.installedCli, 'agent-launch']);

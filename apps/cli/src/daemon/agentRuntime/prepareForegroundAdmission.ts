@@ -1023,8 +1023,7 @@ export async function prepareForegroundAgentRuntimeAdmission(
       materializedConnectedServices = connectedServiceAuth?.connectedServicesBindings
         ?? effectiveConnectedServices;
       const childEnvironment = await resolveSpawnChildEnvironment({
-        ...(foregroundMemberIdentity ? { memberAgentCliLaunch: { identity: foregroundMemberIdentity,
-          installedCli: dependencies.agentIsolation?.managedHappierBinaryPath ?? '', signal: dependencies.signal } } : {}),
+        ...(foregroundMemberIdentity ? { memberAgentCliLaunch: { signal: dependencies.signal } } : {}),
         happyHomeDir: configuration.happyHomeDir,
         pluginRuntimeRegistry: lease.registry,
         resolvedAgentId: request.agentId,

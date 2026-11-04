@@ -6,12 +6,34 @@ import type { RequesterWorkAttributionV1 } from '@/daemon/lifecycle/requesterWor
 import { readAgentIsolationNativeIdentity } from './agentIsolationNativeIdentity';
 import type { AgentIsolationMemberRequester, AgentIsolationDaemonObservation } from './provisioning';
 import type { AgentIsolationMemberNativeIdentity } from './agentIsolationNativeIdentity';
+import type { RpcHandlerContext } from '@/api/rpc/types';
 import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
 
 function withMemberWorkspace(snapshot: HostAgentIsolationLaunchSnapshot | undefined,
   member: AgentIsolationMemberNativeIdentity | undefined): HostAgentIsolationLaunchSnapshot | undefined {
   if (!snapshot || !member || snapshot.workspaceRoots.includes(member.workspaceRoot)) return snapshot;
   return { ...snapshot, workspaceRoots: [...snapshot.workspaceRoots, member.workspaceRoot] };
+}
+
+function memberLaunchFailureRecovery(input: Readonly<{
+  machine: HostAgentIsolationLaunchContext;
+  requesterIdentity: AgentIsolationMemberRequester;
+  rpcContext?: RpcHandlerContext;
+  signal?: AbortSignal;
+}>): HostAgentIsolationLaunchContext['onNativeLaunchFailure'] {
+  const prepareMember = input.machine.prepareMember;
+  if (!prepareMember) return undefined;
+  return async () => {
+    if (input.signal?.aborted || input.rpcContext?.signal.aborted) return false;
+    try {
+      const result = await prepareMember({ requesterIdentity: input.requesterIdentity,
+        rpcContext: input.rpcContext, signal: input.signal });
+      return result.repaired === true;
+    } catch {
+      // Failed repair never turns the failed command into a success or replays it.
+      return !input.signal?.aborted && !input.rpcContext?.signal.aborted;
+    }
+  };
 }
 
 /** Each native invocation consumes its existing current materialization lease. */
@@ -95,7 +117,8 @@ export function createAgentIsolationSessionContext(input: Readonly<{
       const launchMaterial = mcpLaunchMaterial ? { ...material,
         environment: { ...material.environment, ...mcpLaunchMaterial.environment },
         selectedMaterials: [...material.selectedMaterials, ...mcpLaunchMaterial.selectedMaterials] } : material;
-      return { read() {
+      return { ...(member ? { onNativeLaunchFailure: memberLaunchFailureRecovery({ machine: input.machine!,
+        requesterIdentity: { ...requesterIdentity, homeServerIdentityId: home }, signal }) } : {}), read() {
         if (input.readMaterial() !== material) throw new PluginError({ code: 'agent_isolation_unavailable',
           message: 'The Session materialization was retired', retryable: false });
         const snapshot = withMemberWorkspace(input.machine?.read(), member);
@@ -117,6 +140,7 @@ export function createAgentIsolationOperationContext(input: Readonly<{
   machine: HostAgentIsolationLaunchContext;
   managedHappierBinaryPath: string;
   requesterIdentity: AgentIsolationMemberRequester;
+  rpcContext?: RpcHandlerContext;
   daemonObservation?: AgentIsolationDaemonObservation | null;
   signal: AbortSignal;
   readMaterial(): AgentLaunchOperationMaterialization | undefined;
@@ -171,7 +195,8 @@ export function createAgentIsolationOperationContext(input: Readonly<{
         environment: projected.environment, selectedEnvironmentKeys: Object.keys(projected.environment),
         selectedMaterials: projected.selectedMaterials } };
   };
-  return { requesterIdentity,
+  const onNativeLaunchFailure = member ? memberLaunchFailureRecovery(input) : undefined;
+  return { requesterIdentity, ...(onNativeLaunchFailure ? { onNativeLaunchFailure } : {}),
     resolveRequesterIdentity: async signal => {
       signal?.throwIfAborted(); input.signal.throwIfAborted(); return requesterIdentity;
     },
@@ -185,7 +210,7 @@ export function createAgentIsolationOperationContext(input: Readonly<{
       const captured = input.readMaterial();
       if (!captured) unavailable();
       read(captured);
-      return { requesterIdentity, read: () => read(captured) };
+      return { requesterIdentity, ...(onNativeLaunchFailure ? { onNativeLaunchFailure } : {}), read: () => read(captured) };
     },
   };
 }

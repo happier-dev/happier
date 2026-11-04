@@ -72,7 +72,7 @@ export async function prepareMemberComputerRuntime(input: Readonly<{
       launchSpec = buildHappyCliSubprocessLaunchSpec(['computer-effect']);
     } else {
       native = await input.prepareNativeOperation({ requesterIdentity: input.identity,
-        resolveRequesterIdentity: async () => input.identity, readMaterial: () => material, signal,
+        readMaterial: () => material, signal,
         ...(input.ingress ? { ingress: input.ingress } : {}) });
       material = Object.freeze({ materializationKey, selectedMaterials: Object.freeze([]), environment: Object.freeze({
         TMPDIR: native.materialTarget.runtimeHome, TEMP: native.materialTarget.runtimeHome, TMP: native.materialTarget.runtimeHome,

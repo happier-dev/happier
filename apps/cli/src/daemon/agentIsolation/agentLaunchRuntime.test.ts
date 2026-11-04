@@ -13,7 +13,7 @@ import * as filesystem from 'node:fs/promises';
 import { deriveAgentIsolationMemberIdentity } from './provisioning';
 import { createAgentIsolationEffectsBoundary, runAgentIsolationMemberReadinessBoundary } from './agentIsolationEffects.testkit';
 import { ensureAgentIsolationMember } from './agentIsolationProvisioner';
-import { writeAgentIsolationMemberBinding } from './memberBindings';
+import { readAgentIsolationMemberLaunchIdentity, writeAgentIsolationMemberBinding } from './memberBindings';
 
 const boundary = vi.hoisted(() => ({ home: '', member: undefined as undefined | { path: string; uid: number },
   memberFrames: [] as Array<{ username: string; agentUid: number; home: string }> }));
@@ -49,7 +49,7 @@ async function operation(agentHome: string, key: string) {
   boundary.home = agentHome;
   const identity = { kind: 'isolated' as const, separationRequired: true,
     requester: { serverId: 'home', accountId: 'guest', machineId: 'machine', installationId: 'installation' } };
-  return prepareRequesterNativeOperation({ requesterIdentity: identity, resolveRequesterIdentity: async () => identity,
+  return prepareRequesterNativeOperation({ requesterIdentity: identity,
     readMaterial: () => ({ materializationKey: key, environment: {}, selectedMaterials: [] }), signal: new AbortController().signal }, {
     machine: { managedHappierBinaryPath: '/fixture/happier', read: () => ({ enabled: true,
       status: { kind: 'effective', platform: 'linux', agentUser: 'happier-agent' }, workspaceRoots: [agentHome] }) },
@@ -241,21 +241,25 @@ describe.skipIf(process.platform !== 'linux')('finite native operation runtime',
       const realpathSpy = vi.spyOn(filesystem, 'realpath').mockImplementation(async path => String(path) === member.home || String(path) === member.workspaceRoot
         ? String(path) : actualRealpath(path));
       try {
-        const native = await prepareRequesterNativeOperation({ requesterIdentity: identity, resolveRequesterIdentity: async () => identity,
+        const native = await prepareRequesterNativeOperation({ requesterIdentity: identity,
           readMaterial: () => ({ materializationKey: 'same-operation', environment: {}, selectedMaterials: [] }), signal: new AbortController().signal }, {
           machine: { managedHappierBinaryPath: preparation.effects.installedCli,
             read: () => ({ enabled: true, memberProvisioning: 'linuxUsersV1', status: { kind: 'unavailable', code: 'metadata_unavailable' }, workspaceRoots: [] }),
+            async readMember(input) {
+              const identity = await readAgentIsolationMemberLaunchIdentity({ ...input,
+                activeServerDir: agentHome }, preparation.effects.backend);
+              return { identity, daemonObservation: preparation.effects.readDaemonObservation!()! };
+            },
             async prepareMember(input) { const result = await ensureAgentIsolationMember({ ...input,
               activeServerDir: agentHome, verifyLocalCustody: async () => true,
-              port: { read: async () => ({ status: 'ready', metadataVersion: 1,
-                metadata: { agentIsolation: { enabled: true, memberProvisioning: 'linuxUsersV1' } } }),
-                compareAndSwap: async () => ({ status: 'unavailable' }) },
               setup: async () => { throw new Error('Already prepared member requires no setup'); },
             }, { ...preparation.effects, nativeReadiness: { privateRoots: [], system: {
-              async run(command, args) {
-                expect(command).toBe('sudo');
-                expect(args).toEqual(['-n', '-l', '-u', member.username, '--', preparation.effects.installedCli, 'agent-launch']);
-                return { stdout: '', stderr: '' };
+              async run(...request) {
+                expect(request[0]).toBe('sudo');
+                expect(request[1]).toEqual(['-n', '-u', member.username, '--', preparation.effects.installedCli, 'agent-launch']);
+                const readiness = await runAgentIsolationMemberReadinessBoundary({ request, nativeHome: boundary.member });
+                if (!readiness) throw new Error('Unexpected member readiness frame');
+                return readiness;
               },
             } } });
               if (result.kind !== 'ready') throw new Error('Member OS fixture refused preparation'); return result; } },

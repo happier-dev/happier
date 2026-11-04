@@ -52,7 +52,6 @@ export async function prepareRequesterMcpTestOperation(input: Readonly<{
   if (placement !== 'daemon' && !input.prepareNativeOperation) throw refusal('requester_mcp_admission');
   const native = placement !== 'daemon' ? await input.prepareNativeOperation!({ requesterIdentity, requesterAccount: account,
     ingress: input.ingress, signal: input.ingress.signal,
-    resolveRequesterIdentity: async () => { input.ingress.signal.throwIfAborted(); return requesterIdentity; },
     readMaterial: () => live ? nativeMaterial : undefined }) : undefined;
   const material = native ? native.material : await prepareRequesterOperationMaterial({ requesterAccount: account,
     requesterIdentity: input.requesterIdentity, reloadController: pluginReloadController, signal: input.ingress.signal });

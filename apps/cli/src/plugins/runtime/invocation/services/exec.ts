@@ -27,6 +27,7 @@ import {
     createLoopbackWebSocketHandshakeClient,
 } from '../../exec/loopbackWebSocket';
 import {
+    associateSupervisedPluginProcessHandleForHost,
     spawnSupervisedPluginProcess,
     type SupervisedPluginProcess,
     type SupervisedPluginGracefulStop,
@@ -382,6 +383,8 @@ export type HostAuthorizedPluginExecLaunch = Readonly<{
     detachDeploymentEnvironmentForObservation?(): HostAuthorizedPluginExecLaunch;
     /** Recheck opaque input custody after asynchronous admission, before spawn. */
     recheckInputs?(): Promise<void>;
+    /** Host-only failed launch recovery; true requires the person to retry. */
+    onNativeLaunchFailure?: HostAgentIsolationLaunchContext['onNativeLaunchFailure'];
     release(): void | Promise<void>;
 }>;
 
@@ -416,6 +419,7 @@ export function spawnAuthorizedHostExecLaunchForHost(
         }
     }
     let supervised: SupervisedPluginProcess;
+    let spawnAttempted = false;
     // The service cleanup must retain even a no-launch capture: native
     // preparation may already own resources when the final spawn fails.
     options.retainLaunch?.(launch.release);
@@ -425,6 +429,7 @@ export function spawnAuthorizedHostExecLaunchForHost(
             ? buildCgroupProcessLaunchSpec({ scope: options.linuxProcessLaunchScope, unit,
                 launchSpec: { filePath: launch.command, args: [...launch.args], env: { ...environment } } })
             : null;
+        spawnAttempted = true;
         supervised = spawnSupervisedPluginProcess({
             command: custody ? custody.executablePath : scopedLaunch?.filePath ?? launch.command,
             args: custody ? [
@@ -459,9 +464,34 @@ export function spawnAuthorizedHostExecLaunchForHost(
             readSpawnFailureLimits: options.readSpawnFailureLimits,
         });
     } catch (error) {
+        if (spawnAttempted && !options.signal?.aborted && launch.onNativeLaunchFailure) {
+            // This API is synchronous. Preserve its original spawn error while
+            // the existing setup owner repairs for an explicit later retry.
+            void launch.onNativeLaunchFailure().catch(() => undefined);
+        }
         if (!options.retainLaunch) void launch.release();
         const spawnFailure = classifySpawnFailure(error, { syscall: 'spawn', limits: options.readSpawnFailureLimits?.() });
         throw new PluginError({ code: 'plugin_exec_spawn_failed', message: spawnFailureMessage(spawnFailure, 'Process could not be started'), details: { spawnFailure } }, { cause: error });
+    }
+    const recoverFailedNativeLaunch = launch.onNativeLaunchFailure;
+    if (recoverFailedNativeLaunch) {
+        const result = supervised.handle.wait().then(async result => {
+            const observed = result.termination.observed;
+            if (options.signal?.aborted || result.termination.requestedBy.kind !== 'none'
+                || observed.kind === 'exit' && observed.exitCode === 0) return result;
+            // Exec has no payload-accepted marker. Qualify only a failed native
+            // result; a healthy member preserves the payload's original failure.
+            if (!await recoverFailedNativeLaunch()) return result;
+            return Object.freeze({ ...result, termination: Object.freeze({ ...result.termination,
+                observed: Object.freeze({ kind: 'failed' as const, diagnostic: Object.freeze({
+                    code: 'agent_isolation_unavailable', severity: 'error' as const,
+                    message: 'Native execution was unavailable; retry the command',
+                }) }),
+            }) });
+        });
+        const handle = Object.freeze({ ...supervised.handle, wait: () => result });
+        associateSupervisedPluginProcessHandleForHost(handle, supervised.child);
+        supervised = Object.freeze({ ...supervised, handle });
     }
     if (!options.retainLaunch) void supervised.waitForSettlement().then(() => launch.release());
     return supervised;
@@ -947,6 +977,7 @@ async function finalizeHostExecLaunch(input: Readonly<{
             ...(input.launch.stdin ? { stdin: new Uint8Array(input.launch.stdin) } : {}),
             ...(stdinPreamble ? { stdinPreamble: new Uint8Array(stdinPreamble) } : {}),
             ...(invocation.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
+            ...(isolated?.onNativeLaunchFailure ? { onNativeLaunchFailure: isolated.onNativeLaunchFailure } : {}),
             release,
         });
     } catch (error) {
@@ -1534,7 +1565,7 @@ export function createStablePluginExecService(params: Readonly<{
                     mcpLaunchMaterial: INTERNAL_NATIVE_MCP_MATERIAL.get(nativeLaunch)?.() } : {}),
                 agentLaunchKind: params.agentLaunchKind,
                 executionKind: params.executionKind,
-                requesterIdentity: params.requesterIdentity,
+                requesterIdentity,
                 hostNativeSystemTool,
                 signal: options?.signal ? AbortSignal.any([params.signal, options.signal]) : params.signal,
                 assertCurrent }) : launch;

@@ -1,26 +1,26 @@
-import { resolveMachineAgentExecutionPlacementV1, readMachineAgentIsolationPolicyV1 } from '@happier-dev/protocol';
 import { createMachineSetupNativeBackend } from '@happier-dev/cli-common/machineSetup';
-import type { MachineMetadataFieldPortV1 } from '@happier-dev/protocol/machines/machineMetadataFieldV1';
 import type { AgentIsolationEffectDependencies, ApplyAgentIsolationMemberEffectsResult } from '@/daemon/agentIsolation/agentIsolationProvisioner';
 import type { AgentIsolationMemberRequester } from '@/daemon/agentIsolation/provisioning';
 import { readAgentIsolationMemberLaunchIdentity } from './memberBindings';
 import { readAgentIsolationMemberWorkspaceRoot } from './agentIsolationNativeIdentity';
-import { hasAgentIsolationMemberRunAsPermission } from './agentIsolationReadiness';
+import { observeAgentIsolationMemberLaunchReadiness } from './agentIsolationReadiness';
 
 export type EnsureAgentIsolationMemberInput = Readonly<{
   /** Selected by verified admission before this operation. Profile ids do not qualify Home. */
   requesterIdentity: AgentIsolationMemberRequester;
   activeServerDir: string;
-  port: MachineMetadataFieldPortV1;
   signal?: AbortSignal;
   /** Local operation/installation/cancellation custody only. No repeated Home admission. */
   verifyLocalCustody(): Promise<boolean>;
   /** Bound only by createAgentIsolationMemberOperations to its existing Action,
    * setup task, transient prompt and machineSetup native admission. Every
    * failed native qualification idempotently repairs state before payload dispatch. */
-  setup(): Promise<EnsureAgentIsolationMemberResult>;
+  setup(): Promise<ApplyAgentIsolationMemberEffectsResult>;
 }>;
-export type EnsureAgentIsolationMemberResult = ApplyAgentIsolationMemberEffectsResult;
+export type EnsureAgentIsolationMemberResult = Extract<ApplyAgentIsolationMemberEffectsResult, { kind: 'not_ready' }>
+  | (Extract<ApplyAgentIsolationMemberEffectsResult, { kind: 'ready' }> & Readonly<{
+    repaired?: true;
+  }>);
 
 /** Existing P11 provisioner owner, re-exported from agentIsolationProvisioner.
  * A ready result is one observed native identity; effective launch still
@@ -36,11 +36,6 @@ export async function ensureAgentIsolationMember(input: EnsureAgentIsolationMemb
     if (input.signal?.aborted) return refused('cancelled');
     if (!await input.verifyLocalCustody()) return refused('plan_stale');
     if (effects.platform !== 'linux') return { kind: 'not_ready', result: { outcome: 'not_applied', reasonCode: 'platform_unsupported' } };
-    const snapshot = await input.port.read();
-    if (snapshot.status !== 'ready') return refused('denied');
-    const policy = readMachineAgentIsolationPolicyV1(snapshot.metadata);
-    // Deliberate old enablement alone does not approve future user creation.
-    if (policy.status !== 'ready' || resolveMachineAgentExecutionPlacementV1({ policy: policy.policy, platform: effects.platform }) !== 'member') return refused('denied');
     const daemonObservation = effects.readDaemonObservation?.();
     if (daemonObservation) {
       try {
@@ -48,9 +43,9 @@ export async function ensureAgentIsolationMember(input: EnsureAgentIsolationMemb
         const identity = await readAgentIsolationMemberLaunchIdentity({ requesterIdentity,
           activeServerDir: input.activeServerDir, signal: input.signal }, backend);
         await readAgentIsolationMemberWorkspaceRoot(identity, backend, { daemonObservation, signal: input.signal });
-        if (await hasAgentIsolationMemberRunAsPermission({ installedCli: effects.installedCli,
-          memberIdentity: identity, signal: input.signal, system: effects.nativeReadiness?.system })) {
-          if (!await input.verifyLocalCustody()) return refused('plan_stale');
+        const readiness = await observeAgentIsolationMemberLaunchReadiness({ installedCli: effects.installedCli,
+          memberIdentity: identity, signal: input.signal, system: effects.nativeReadiness?.system });
+        if (readiness.kind === 'member_native_ready') {
           return { kind: 'ready', identity, daemonObservation };
         }
       } catch {
@@ -60,7 +55,10 @@ export async function ensureAgentIsolationMember(input: EnsureAgentIsolationMemb
       }
     }
     if (input.signal?.aborted) return refused('cancelled');
-    if (!await input.verifyLocalCustody()) return refused('plan_stale');
-    return await input.setup();
+    const prepared = await input.setup();
+    if (prepared.kind !== 'ready') return prepared;
+    const readiness = await observeAgentIsolationMemberLaunchReadiness({ installedCli: effects.installedCli,
+      memberIdentity: prepared.identity, signal: input.signal, system: effects.nativeReadiness?.system });
+    return readiness.kind === 'member_native_ready' ? { ...prepared, repaired: true } : refused('denied');
   } catch { return refused(input.signal?.aborted ? 'cancelled' : 'denied'); }
 }

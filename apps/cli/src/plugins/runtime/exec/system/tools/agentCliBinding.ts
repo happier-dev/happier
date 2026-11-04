@@ -22,15 +22,10 @@ import { AGENT_CLI_MISSING_PREVIEW } from '@/packagedRuntime/managedTools/agentC
 
 import type { PluginExecSystemToolDefinition } from './definitions';
 import { createPluginExecSystemToolResolver } from './resolveGrant';
-import { observeAgentIsolationMemberLaunchReadiness, type AgentIsolationReadinessSystem } from '@/daemon/agentIsolation/agentIsolationReadiness';
-import type { AgentIsolationMemberNativeIdentity } from '@/daemon/agentIsolation/agentIsolationNativeIdentity';
 import type { HostAgentIsolationLaunchContext } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 
 export type MemberAgentCliLaunchContext = Readonly<{
-    identity: AgentIsolationMemberNativeIdentity;
-    installedCli: string;
     signal?: AbortSignal;
-    system?: AgentIsolationReadinessSystem;
 }>;
 
 /** Consume the operation/Session owner's existing native selection. */
@@ -40,11 +35,11 @@ export function readMemberAgentCliLaunchContext(context?: HostAgentIsolationLaun
     const installedCli = snapshot.launch?.managedHappierBinaryPath ?? context?.managedHappierBinaryPath;
     if (!snapshot.memberIdentity || !installedCli) throw new PluginError({ code: 'agent_isolation_unavailable',
         message: 'Current member launch material is unavailable', retryable: false });
-    return { identity: snapshot.memberIdentity, installedCli };
+    return {};
 }
 
-/** The member consumes machine-wide managed code, never the owner's PATH or
- * overrides. Its actual UID qualifies the selected runner and entrypoint. */
+/** The admitted member consumes machine-wide managed code, never the owner's
+ * PATH or overrides. The native launch shim enforces the selected identity. */
 export async function resolveMemberRunnableAgentCliLaunch(params: Readonly<{
     agentId: string;
     runtimeSpec: AgentCliRuntimeDescriptor;
@@ -69,11 +64,6 @@ export async function resolveMemberRunnableAgentCliLaunch(params: Readonly<{
     }
     const launch = buildAgentCliLaunchSpecFromResolution(resolved, { processEnv });
     if (!launch || managedRuntime && launch.command !== managedRuntime) return refuse();
-    const observed = await observeAgentIsolationMemberLaunchReadiness({
-        installedCli: params.memberLaunch.installedCli, memberIdentity: params.memberLaunch.identity,
-        agentCliLaunch: launch, signal: params.memberLaunch.signal, system: params.memberLaunch.system,
-    });
-    if (observed.kind !== 'member_native_ready') return refuse();
     return launch;
 }
 

@@ -149,10 +149,7 @@ export async function prepareInactiveSessionControlLaunchScope(
       }
     }
     const child = await prepareDaemonSpawnChildEnvironment({
-      ...(connected.agentLaunchMaterials?.memberIdentity ? { memberAgentCliLaunch: {
-        identity: connected.agentLaunchMaterials.memberIdentity,
-        installedCli: admission.agentIsolation?.managedHappierBinaryPath ?? '', signal,
-      } } : {}),
+      ...(connected.agentLaunchMaterials?.memberIdentity ? { memberAgentCliLaunch: { signal } } : {}),
       savedSecretOperationContext: admission.savedSecretOperationContext,
       options: connected.options, existingSessionMetadata: adapterParams.metadata, resolvedAgentId: agentId,
       effectiveModelSelection: persisted.selection ?? options.modelSelection, terminal: options.terminal,

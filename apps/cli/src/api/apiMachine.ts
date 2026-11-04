@@ -1029,6 +1029,14 @@ export class ApiMachineClient {
     private readonly actionOperationRuntime: HostActionOperationRuntime;
     private agentIsolationMemberOperations: AgentIsolationMemberOperations | null = null;
 
+    async readAgentIsolationMember(input: Parameters<NonNullable<HostAgentIsolationLaunchContext['readMember']>>[0]) {
+        if (!this.agentIsolationMemberOperations) throw Object.assign(new PluginError({
+            code: 'agent_isolation_unavailable', message: 'Member execution requires owner setup', retryable: false,
+            details: { reason: 'member_setup_required', phase: 'native_identity_binding' },
+        }), { rpcErrorCode: 'agent_isolation_unavailable' });
+        return this.agentIsolationMemberOperations.read(input);
+    }
+
     async prepareAgentIsolationMember(input: Parameters<NonNullable<HostAgentIsolationLaunchContext['prepareMember']>>[0]) {
         const result = await this.agentIsolationMemberOperations?.prepare(input);
         if (result?.kind !== 'ready') throw Object.assign(new PluginError({
@@ -1038,7 +1046,8 @@ export class ApiMachineClient {
                     ...('reasonCode' in result.result ? { reasonCode: result.result.reasonCode } : {}) } : {}),
             },
         }), { rpcErrorCode: 'agent_isolation_unavailable' });
-        return { identity: result.identity, daemonObservation: result.daemonObservation };
+        return { identity: result.identity, daemonObservation: result.daemonObservation,
+            ...(result.repaired ? { repaired: result.repaired } : {}) };
     }
 
 

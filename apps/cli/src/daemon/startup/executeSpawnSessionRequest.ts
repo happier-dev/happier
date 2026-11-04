@@ -1229,10 +1229,7 @@ export async function executeSpawnSessionRequest(
                 });
             }
             const childEnvironment = await prepareDaemonSpawnChildEnvironment({
-                ...(connectedServices.agentLaunchMaterials?.memberIdentity ? { memberAgentCliLaunch: {
-                    identity: connectedServices.agentLaunchMaterials.memberIdentity,
-                    installedCli: params.agentIsolation?.managedHappierBinaryPath ?? '', signal: params.signal,
-                } } : {}),
+                ...(connectedServices.agentLaunchMaterials?.memberIdentity ? { memberAgentCliLaunch: { signal: params.signal } } : {}),
                 savedSecretOperationContext: acpOperationContext,
                 readMachineResourcesPolicy: params.readMachineResourcesPolicy,
                 options: effectiveOptionsForSpawn,

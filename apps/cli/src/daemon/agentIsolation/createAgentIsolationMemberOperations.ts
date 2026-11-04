@@ -1,4 +1,5 @@
 import { SystemTaskExecutionError } from '@happier-dev/cli-common/systemTasks';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { isSocketRpcMachineAccessLossServerOriginAuthorizationContext } from '@happier-dev/protocol/socketRpc';
 import { MachineSudoPasswordPromptV1Schema, type MachineSudoPasswordPromptV1 } from '@happier-dev/protocol';
 import type { RpcHandlerContext } from '@/api/rpc/types';
@@ -11,9 +12,10 @@ import type { HostActionOperationRuntime } from '../actionOperations/createHostA
 import type { ManagedActivityInventory } from '../lifecycle/managedActivity';
 import { waitForRequesterMachineNaturalBoundary } from './naturalBoundary';
 import { memberIdentityRetirementInput, supersedeMemberIdentityRetirement } from './supersedeRetirement';
+import { readAgentIsolationMemberLaunchIdentity } from './memberBindings';
 import { retireAgentIsolationMemberIdentity, readProvisionedRequesterAccounts,
   ensureAgentIsolationMember, applyAgentIsolationMemberEffects, type EnsureAgentIsolationMemberResult,
-  type AgentIsolationEffectDependencies } from './agentIsolationProvisioner';
+  type AgentIsolationEffectDependencies, type ApplyAgentIsolationMemberEffectsResult } from './agentIsolationProvisioner';
 
 type RetirementResult = Readonly<{ kind: 'settled' | 'incomplete' }>;
 type MemberOperationTarget = Readonly<{
@@ -85,6 +87,31 @@ export function createAgentIsolationMemberOperations(options: Readonly<{
     } });
   };
   return Object.freeze({
+    /** Native operations consume the admitted binding. Setup/readiness belongs
+     * to preparation and explicit own-status, never the per-operation path. */
+    async read(input: Readonly<{
+      requesterIdentity: AgentIsolationMemberRequester; rpcContext?: RpcHandlerContext; signal?: AbortSignal;
+    }>) {
+      const target = options.target(), { requesterIdentity, rpcContext } = input;
+      const signal = input.signal && rpcContext ? AbortSignal.any([input.signal, rpcContext.signal])
+        : input.signal ?? rpcContext?.signal;
+      signal?.throwIfAborted();
+      const daemonObservation = options.effects.readDaemonObservation?.();
+      if (!target || target.homeServerIdentityId !== requesterIdentity.homeServerIdentityId
+        || target.machineId !== requesterIdentity.requester.machineId
+        || target.installationId !== requesterIdentity.requester.installationId
+        || target.installationId !== options.effects.elevation.installationId
+        || options.effects.platform !== 'linux' || !daemonObservation || daemonObservation.daemonIdentity !== 'nonRoot'
+        || daemonObservation.daemonUid === null || daemonObservation.daemonUid <= 0
+        || !daemonObservation.daemonUsername || !daemonObservation.daemonPrimaryGroup) throw new PluginError({
+          code: 'agent_isolation_unavailable', message: 'The requester identity binding is unavailable', retryable: false,
+          details: { reason: 'requester_authority_unavailable', phase: 'native_identity_binding' },
+        });
+      const identity = await readAgentIsolationMemberLaunchIdentity({ requesterIdentity,
+        activeServerDir: options.activeServerDir, signal }, options.effects.backend);
+      signal?.throwIfAborted();
+      return { identity, daemonObservation };
+    },
     async prepare(input: Readonly<{
       requesterIdentity: AgentIsolationMemberRequester; rpcContext?: RpcHandlerContext; signal?: AbortSignal;
     }>): Promise<EnsureAgentIsolationMemberResult> {
@@ -109,13 +136,13 @@ export function createAgentIsolationMemberOperations(options: Readonly<{
           admittedOperationId: rpcContext?.localActionContext?.operationAcceptance?.operationId, requesterServerId: options.serverId });
         if (superseded.kind !== 'settled') return refused();
         return await ensureAgentIsolationMember({ requesterIdentity, activeServerDir: options.activeServerDir,
-          port: options.captureMetadataPort(), signal: initialSignal, verifyLocalCustody: current,
+          signal: initialSignal, verifyLocalCustody: current,
           setup: async () => {
             // This effect was admitted by the current owner-reviewed policy.
             // Its child uses the runtime's actual enrolled Account; it never
             // copies or fabricates an owner RPC/admission for the requester.
             rpcContext?.localActionContext?.operationProgress?.update({ phase: 'owner_setup', label: 'Waiting for owner setup' });
-            let result: EnsureAgentIsolationMemberResult = refused();
+            let result: ApplyAgentIsolationMemberEffectsResult = refused();
             const execute = async (operation: Readonly<{
               signal: AbortSignal;
               operationAcceptance?: NonNullable<RpcHandlerContext['localActionContext']>['operationAcceptance'];

@@ -1,4 +1,3 @@
-import { isDeepStrictEqual } from 'node:util';
 import { execFileWithDeadline } from '@happier-dev/cli-common/process';
 import { encodeAgentLaunchFrame } from './agentLaunchFrame';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
@@ -9,7 +8,6 @@ import { resolveInstalledMachineEffectCli } from '@/machines/adminAccess/runElev
 import { assertHostRequesterExecutionAdmissionForHost, resolveHostRequesterAgentPlacementForHost,
   type HostAgentIsolationLaunchContext, type HostRequesterExecutionIdentity } from './agentIsolationLaunchPolicy';
 import { readAgentIsolationNativeIdentity, type AgentIsolationMemberNativeIdentity } from './agentIsolationNativeIdentity';
-import { observeAgentIsolationMemberLaunchReadiness } from './agentIsolationReadiness';
 import { createAgentIsolationOperationContext } from './agentIsolationSessionContext';
 import { projectAgentIsolationOperationMaterial, type AgentLaunchMaterialization,
   type AgentLaunchOperationMaterialization } from './agentLaunchMaterials';
@@ -17,15 +15,14 @@ import { projectAgentIsolationOperationMaterial, type AgentLaunchMaterialization
 export type PrepareRequesterNativeOperationInput = Readonly<{
   requesterIdentity: HostRequesterExecutionIdentity;
   requesterAccount?: RequesterAccountActionContext;
-  resolveRequesterIdentity: NonNullable<HostAgentIsolationLaunchContext['resolveRequesterIdentity']>;
   readMaterial(): AgentLaunchOperationMaterialization | undefined;
   ingress?: RpcHandlerContext;
   signal: AbortSignal;
 }>;
 
 /** Finite native effects consume admitted requester custody. Shared-user
- * readiness belongs to the Machine; member readiness belongs to the exact
- * prepared identity and is observed before its operation material is used. */
+ * readiness belongs to setup/own-status; operations consume the admitted native
+ * binding and actual launch failures use the existing repair owner. */
 export async function prepareRequesterNativeOperation(input: PrepareRequesterNativeOperationInput, host: Readonly<{
   machine?: HostAgentIsolationLaunchContext;
   homeServerIdentityId?: string | null;
@@ -38,9 +35,9 @@ export async function prepareRequesterNativeOperation(input: PrepareRequesterNat
     details: { reason: 'requester_authority_unavailable', phase: 'native_execution_preparation' },
   }), { rpcErrorCode: 'agent_isolation_unavailable' });
   input.signal.throwIfAborted();
-  const selected = await input.resolveRequesterIdentity(input.signal);
+  const selected = input.requesterIdentity;
   const { machine, homeServerIdentityId } = host;
-  if (selected.kind !== 'isolated' || !isDeepStrictEqual(selected, input.requesterIdentity)
+  if (selected.kind !== 'isolated'
     || !machine || !homeServerIdentityId || selected.requester.machineId !== host.machineId
     || selected.requester.installationId !== host.installationId) throw unavailable();
   const requesterIdentity = { ...selected, homeServerIdentityId };
@@ -55,22 +52,24 @@ export async function prepareRequesterNativeOperation(input: PrepareRequesterNat
   let target: AgentLaunchMaterialization | undefined;
   let agentIsolation: HostAgentIsolationLaunchContext;
   if (placement === 'member') {
-    if (!machine.prepareMember) throw unavailable();
-    const native = await machine.prepareMember({ requesterIdentity, rpcContext: input.ingress, signal: input.signal });
-    const readiness = await observeAgentIsolationMemberLaunchReadiness({ installedCli: operation.managedHappierBinaryPath,
-      memberIdentity: native.identity, signal: input.signal });
-    if (readiness.kind !== 'member_native_ready') throw Object.assign(new PluginError({ code: 'agent_isolation_unavailable',
-      message: 'Requester native execution is unavailable', retryable: false,
-      details: { reason: readiness.code, phase: 'native_execution_preparation' },
-    }), { rpcErrorCode: 'agent_isolation_unavailable' });
-    // This is the existing native readiness owner's result for this operation,
-    // never a publication of global/shared-user readiness or inferred consent.
-    const memberSnapshot = snapshot && { ...snapshot, status: readiness.status };
+    if (!machine.readMember) throw unavailable();
+    const memberInput = { requesterIdentity, rpcContext: input.ingress, signal: input.signal };
+    const native = await machine.readMember(memberInput).catch(error => {
+      input.signal.throwIfAborted();
+      // Missing binding/native identity is an actual preparation failure. Keep
+      // cold member auto-setup at the incumbent owner; never use the daemon UID.
+      if (!machine.prepareMember) throw error;
+      return machine.prepareMember(memberInput);
+    });
+    // This operation consumes a committed member binding. Global shared-user
+    // readiness is independent and is not republished by native operations.
+    const memberSnapshot = snapshot && { ...snapshot, status: { kind: 'effective' as const, platform: 'linux' as const } };
     assertHostRequesterExecutionAdmissionForHost({ identity: selected, snapshot: memberSnapshot, agentLaunchKind: 'exec' });
     memberIdentity = native.identity;
     workingDirectory = native.identity.workspaceRoot;
     agentIsolation = createAgentIsolationOperationContext({ ...operation,
-      machine: { read: () => memberSnapshot }, memberIdentity, daemonObservation: native.daemonObservation });
+      machine: { ...machine, read: () => memberSnapshot }, memberIdentity,
+      rpcContext: input.ingress, daemonObservation: native.daemonObservation });
   } else {
     assertHostRequesterExecutionAdmissionForHost({ identity: selected, snapshot, agentLaunchKind: 'exec' });
     const nativeIdentity = await readAgentIsolationNativeIdentity(input.signal);

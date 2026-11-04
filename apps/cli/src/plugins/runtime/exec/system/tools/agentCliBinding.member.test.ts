@@ -1,11 +1,12 @@
-import { expect, it } from 'vitest';
-import { chmod, copyFile, mkdir, writeFile } from 'node:fs/promises';
+import { expect, it, vi } from 'vitest';
+import { chmod, copyFile, mkdir, unlink, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { PassThrough, Readable } from 'node:stream';
 import { userInfo } from 'node:os';
 import { getAgentCliRuntimeSpec } from '@happier-dev/agents';
 import { resolveAgentCliManagedCommandPathForRuntime } from '@happier-dev/cli-common/agents/resolution';
 import { FIRST_PARTY_INSTALL_HOME_ENV_KEY } from '@happier-dev/cli-common/firstPartyRuntime';
+import * as processBoundary from '@happier-dev/cli-common/process';
 import { managedJavaScriptRuntimeBinPath } from '@happier-dev/cli-common/agents/managedJavaScriptRuntime';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { deriveAgentIsolationMemberIdentity } from '@/daemon/agentIsolation/provisioning';
@@ -22,7 +23,7 @@ import { BUNDLED_FIRST_PARTY_AGENT_REGISTRATION_BINDINGS } from '@/plugins/proje
 import { PLUGIN_MANIFEST } from '@happier-dev/plugins-codex/manifest';
 import { PluginManifestV2Schema } from '@happier-dev/protocol';
 
-it.skipIf(process.platform !== 'linux').each(['owner', 'managed', 'missing', 'inaccessible', 'javascript', 'javascriptMissingRuntime'] as const)(
+it.skipIf(process.platform !== 'linux').each(['owner', 'managed', 'missing', 'javascript', 'javascriptMissingRuntime'] as const)(
     'selects the Agent CLI for its admitted native identity (%s)', async outcome => {
         await withTempDir('member-agent-selection-', async home => {
             const runtimeSpec = getAgentCliRuntimeSpec('codex')!;
@@ -46,40 +47,42 @@ it.skipIf(process.platform !== 'linux').each(['owner', 'managed', 'missing', 'in
                 await writeFile(wrapper, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
                 await writeFile(runner, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
             }
-            const identity = { ...deriveAgentIsolationMemberIdentity({ homeServerIdentityId: 'home',
-                requester: { serverId: 'server', accountId: 'member', machineId: 'machine', installationId: 'installation' } }),
-                agentUid: 994, agentGid: 994 };
-            let probes = 0;
-            // sudo is the OS boundary. The real binding, resolver, readiness
-            // owner and framed member launch remain beneath this boundary.
-            const system: AgentIsolationReadinessSystem = { run: async (command, args, options) => {
-                probes++;
-                expect(command).toBe('sudo');
-                expect(args?.slice(0, 4)).toEqual(['-n', '-u', identity.username, '--']);
-                const frame = await readAgentLaunchFrame(Readable.from([options!.inputBytes!], { objectMode: false }));
-                expect(frame.nativeIdentity).toMatchObject({ agentUid: 994, agentGid: 994 });
-                expect(frame.args).toContain(managed);
-                expect(frame.args).not.toContain(owner);
-                if (javascript) expect(frame.args.slice(-2)).toEqual([runner, managed]);
-                if (outcome === 'inaccessible') throw Object.assign(new Error('Access denied as member'), { code: 73 });
-                return { stdout: 'member-native-ready\n', stderr: '' };
-            } };
-            const service = createAgentCliSystemToolService({ agentId: 'codex', runtimeSpec,
-                binding: { toolId: 'codex-cli' },
-                definition: { toolId: 'codex-cli', displayName: 'Codex', lookupNames: ['codex'] },
-                processEnv, delegate: { async resolve() { throw new Error('No alternate resolution'); } },
-                ...(outcome === 'owner' ? {} : { memberLaunch: { identity, installedCli: '/opt/happier/current/happier', system } }),
-            });
-            const selection = service.resolve({ toolId: 'codex-cli', purpose: 'Start Codex', signal: new AbortController().signal });
-            if (outcome === 'missing' || outcome === 'inaccessible' || outcome === 'javascriptMissingRuntime') {
-                await expect(selection).rejects.toMatchObject({ code: 'agent_cli_not_runnable', retryable: false,
-                    details: { agentId: 'codex', remedy: 'install_managed_runtime' },
-                    message: expect.stringMatching(/Codex.*[Ii]nstall.*managed/u) });
-            } else {
-                await expect(selection).resolves.toMatchObject({ executablePath: outcome === 'owner' ? owner : managed });
-                if (javascript) await expect(selection).resolves.toMatchObject({ launch: { executablePath: runner, args: [managed] } });
-            }
-            expect(probes).toBe(outcome === 'owner' || outcome === 'missing' || outcome === 'javascriptMissingRuntime' ? 0 : 1);
+            // Observe the OS process boundary while the binding and managed
+            // resolution stay real: admitted selections require no sudo probe.
+            const probes = vi.spyOn(processBoundary, 'execFileWithDeadline')
+                .mockResolvedValue({ stdout: 'member-native-ready\n', stderr: '' });
+            try {
+                const service = createAgentCliSystemToolService({ agentId: 'codex', runtimeSpec,
+                    binding: { toolId: 'codex-cli' },
+                    definition: { toolId: 'codex-cli', displayName: 'Codex', lookupNames: ['codex'] },
+                    processEnv, delegate: { async resolve() { throw new Error('No alternate resolution'); } },
+                    ...(outcome === 'owner' ? {} : { memberLaunch: {} }),
+                });
+                const selection = service.resolve({ toolId: 'codex-cli', purpose: 'Start Codex', signal: new AbortController().signal });
+                if (outcome === 'missing' || outcome === 'javascriptMissingRuntime') {
+                    await expect(selection).rejects.toMatchObject({ code: 'agent_cli_not_runnable', retryable: false,
+                        details: { agentId: 'codex', remedy: 'install_managed_runtime' },
+                        message: expect.stringMatching(/Codex.*[Ii]nstall.*managed/u) });
+                } else {
+                    await expect(selection).resolves.toMatchObject({ executablePath: outcome === 'owner' ? owner : managed });
+                    if (javascript) await expect(selection).resolves.toMatchObject({ launch: { executablePath: runner, args: [managed] } });
+                }
+                if (outcome === 'managed' || outcome === 'javascript') {
+                    for (let index = 0; index < 3; index++) {
+                        await expect(service.resolve({ toolId: 'codex-cli', purpose: 'Start Codex', preferredPath: owner }))
+                            .resolves.toMatchObject({ executablePath: managed });
+                    }
+                    const controller = new AbortController();
+                    const cancellation = new Error('Tool resolution cancelled');
+                    controller.abort(cancellation);
+                    await expect(service.resolve({ toolId: 'codex-cli', purpose: 'Start Codex', signal: controller.signal }))
+                        .rejects.toBe(cancellation);
+                    await unlink(managed);
+                    await expect(service.resolve({ toolId: 'codex-cli', purpose: 'Start Codex' }))
+                        .rejects.toMatchObject({ code: 'agent_cli_not_runnable' });
+                }
+                expect(probes).not.toHaveBeenCalled();
+            } finally { probes.mockRestore(); }
         });
     });
 
@@ -94,13 +97,10 @@ it.skipIf(process.platform !== 'linux')('returns a closed member refusal before 
             contributes: createResolvedContributionRegistry({ agents, activationTargets: [] }), pluginIds: [],
         } });
         try {
-            const identity = { ...deriveAgentIsolationMemberIdentity({ homeServerIdentityId: 'home', requester: {
-                serverId: 'server', accountId: 'member', machineId: 'machine', installationId: 'installation',
-            } }), agentUid: 994, agentGid: 994 };
             const input = { agentId: 'codex', options: { directory: home },
                 pluginRuntimeRegistry: fixture.registry,
                 processEnv: { PATH: '', HOME: home, [FIRST_PARTY_INSTALL_HOME_ENV_KEY]: home },
-                memberAgentCliLaunch: { identity, installedCli: '/opt/happier/current/happier' },
+                memberAgentCliLaunch: {},
             };
             await expect(validateSpawnAgentCliLaunch(input)).resolves.toMatchObject({
                 ok: false, errorCode: 'SPAWN_VALIDATION_FAILED', errorMessage: 'agent_cli_not_runnable' });

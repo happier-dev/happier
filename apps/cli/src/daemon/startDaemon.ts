@@ -1720,6 +1720,11 @@ const readIsolationRoots = () => {
     machineRpcRouteAttachments.attachMachineAgentIsolationRoutes(isolationEffects);
 const agentIsolation: import('./agentIsolation/agentIsolationLaunchPolicy').HostAgentIsolationLaunchContext = {
       managedHappierBinaryPath: isolationEffects.installedCli,
+      async readMember(input) {
+        const machine = apiMachineForSessions;
+        if (!machine) throw new Error('agent_isolation_unavailable');
+        return machine.readAgentIsolationMember(input);
+      },
       async prepareMember(input) {
         const machine = apiMachineForSessions;
         if (!machine) throw new Error('agent_isolation_unavailable');

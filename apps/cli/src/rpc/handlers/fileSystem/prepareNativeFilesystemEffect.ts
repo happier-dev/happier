@@ -72,7 +72,7 @@ export async function prepareNativeFilesystemEffect(input: Readonly<{
   try {
     assertOpen();
     native = await input.prepareNativeOperation({ requesterIdentity: input.identity,
-      resolveRequesterIdentity: async () => input.identity, readMaterial: () => material,
+      readMaterial: () => material,
       signal: input.signal, ...(input.ingress ? { ingress: input.ingress } : {}) });
     // Existing temp-file owners stay inside this selected operation directory;
     // a shared daemon-created system temp parent may be private to its UID.

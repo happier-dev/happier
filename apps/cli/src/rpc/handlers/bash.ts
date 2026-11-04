@@ -190,10 +190,7 @@ export function registerBashHandler(
                 });
                 try {
                     nativeOperation = await opts.nativeOperationRuntime.prepareNativeOperation({ requesterIdentity,
-                        ingress: context, signal: context.signal, readMaterial: () => material,
-                        resolveRequesterIdentity: async signal => {
-                            signal?.throwIfAborted(); context.signal.throwIfAborted(); return requesterIdentity;
-                        } });
+                        ingress: context, signal: context.signal, readMaterial: () => material });
                     // Node's POSIX shell mode uses /bin/sh. Literal argv is expanded
                     // only by exec "$@", so PATH and relative commands resolve as
                     // the selected member instead of the daemon.

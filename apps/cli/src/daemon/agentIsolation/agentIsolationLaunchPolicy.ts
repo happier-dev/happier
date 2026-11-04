@@ -377,7 +377,7 @@ export type HostAgentIsolationLaunchSnapshot = Readonly<{
     enabled: boolean;
     /** Explicit owner-reviewed future member creation; legacy enablement is not consent. */
     memberProvisioning?: 'linuxUsersV1';
-    /** A prepared member operation carries its own observed readiness, without
+    /** A prepared member operation carries its admitted native binding, without
      * claiming that the Machine's shared agent user is effective. */
     status: MachineAgentIsolationStatusV1 | Extract<MachineAgentIsolationOwnStatusV1, { protection: 'member_separated' }>['status'];
     /** Canonical Workspace-owner facts, never caller-supplied cwd enrollment. */
@@ -403,11 +403,20 @@ export type HostAgentIsolationLaunchContext = Readonly<{
     /** Native Session custody is demanded before effects, not at service construction. */
     resolveRequesterIdentity?(signal?: AbortSignal): Promise<HostRequesterExecutionIdentity>;
     managedHappierBinaryPath?: string;
+    /** Read the already admitted native binding without setup or a readiness probe. */
+    readMember?(input: Readonly<{ requesterIdentity: AgentIsolationMemberRequester;
+        rpcContext?: RpcHandlerContext; signal?: AbortSignal }>): Promise<Readonly<{
+        identity: AgentIsolationMemberNativeIdentity; daemonObservation: AgentIsolationDaemonObservation;
+    }>>;
     /** Existing custodian-authorized setup owner. This does not admit a requester. */
     prepareMember?(input: Readonly<{ requesterIdentity: AgentIsolationMemberRequester;
         rpcContext?: RpcHandlerContext; signal?: AbortSignal }>): Promise<Readonly<{
         identity: AgentIsolationMemberNativeIdentity; daemonObservation: AgentIsolationDaemonObservation;
+        /** This attempt needed the existing native setup owner. */
+        repaired?: true;
     }>>;
+    /** Failed launch only: repair through prepareMember; true requires a visible retry. */
+    onNativeLaunchFailure?(): Promise<boolean>;
     /** Identity custody also exists when the optional Machine policy/transport
      * port is absent. Absence is not a disabled or effective policy snapshot. */
     read(): HostAgentIsolationLaunchSnapshot | undefined;
@@ -420,19 +429,16 @@ export type HostAgentIsolationLaunchContext = Readonly<{
         signal?: AbortSignal }>): Promise<HostAgentIsolationLaunchContext>;
 }>;
 
-/** One captured identity proof; the same lazy owner rechecks its custody after
- * awaited preparation. A previously resolved value cannot suppress withdrawal. */
+/** Resolve once at admission. Finite preparation carries this verified identity;
+ * withdrawal is observed by the next admission, and cancellation stays local. */
 export async function resolveHostRequesterExecutionIdentityForLaunch(input: Readonly<{
     context?: HostAgentIsolationLaunchContext; requesterIdentity?: HostRequesterExecutionIdentity; signal?: AbortSignal;
 }>): Promise<HostRequesterExecutionIdentity | undefined> {
     input.signal?.throwIfAborted();
-    const current = input.context?.resolveRequesterIdentity ? await input.context.resolveRequesterIdentity(input.signal) : undefined;
-    if (input.requesterIdentity && input.context?.resolveRequesterIdentity && !isDeepStrictEqual(input.requesterIdentity, current)) {
-        input.signal?.throwIfAborted();
-        return current?.kind === 'unknown' ? current : { kind: 'unknown', reason: 'requester_authority_unavailable' };
-    }
     const identity = input.requesterIdentity ?? (input.context?.resolveRequesterIdentity
-        ? current ?? { kind: 'unknown' as const, reason: 'requester_authority_unavailable' as const } : input.context?.requesterIdentity);
+        ? await input.context.resolveRequesterIdentity(input.signal)
+            ?? { kind: 'unknown' as const, reason: 'requester_authority_unavailable' as const }
+        : input.context?.requesterIdentity);
     input.signal?.throwIfAborted();
     return identity;
 }
@@ -452,15 +458,15 @@ export async function admitAgentIsolationLaunchForHost(input: Readonly<{
     signal?: AbortSignal;
     requesterIdentity?: HostRequesterExecutionIdentity;
     personBreakGlass?: boolean;
-}>): Promise<Readonly<{ snapshot: HostAgentIsolationLaunchSnapshot; cwd: string }> | undefined> {
+}>): Promise<Readonly<{ snapshot: HostAgentIsolationLaunchSnapshot; cwd: string;
+    onNativeLaunchFailure?: HostAgentIsolationLaunchContext['onNativeLaunchFailure'] }> | undefined> {
     const identity = await resolveHostRequesterExecutionIdentityForLaunch(input);
     if (input.personBreakGlass) {
         assertHostRequesterExecutionAdmissionForHost({ identity, personBreakGlass: true, agentLaunchKind: input.agentLaunchKind });
         return undefined;
     }
-    const snapshot = input.context?.read();
-    assertHostRequesterExecutionAdmissionForHost({ identity, snapshot,
-        agentLaunchKind: input.agentLaunchKind ?? (input.agentNativeLaunch ? 'exec' : undefined) });
+    let snapshot = input.context?.read();
+    assertHostRequesterExecutionAdmissionForHost({ identity, agentLaunchKind: input.agentLaunchKind });
     if (!snapshot?.enabled) return undefined;
     // Typed Machine administration has no Workspace. Do not derive a root from
     // the daemon's cwd; explicit cwd and Agent/Project intent still require proof.
@@ -468,12 +474,38 @@ export async function admitAgentIsolationLaunchForHost(input: Readonly<{
         && !input.agentNativeLaunch && input.agentLaunchKind === undefined) return undefined;
     const launchKind = input.agentLaunchKind ?? (input.agentNativeLaunch ? 'exec' : 'workspaceExec');
     const code = identity || input.agentNativeLaunch ? 'agent_isolation_unavailable' : 'workspace_exec_isolation_unavailable';
+    const admittedSnapshot = snapshot;
+    let onNativeLaunchFailure = input.context?.onNativeLaunchFailure;
     const refuse = (reason: HostAgentIsolationRefusalReason): never => {
         throwNativeAdmissionRefusal(new PluginError({ code, message: 'Agent isolation cannot admit this launch', retryable: false,
-            details: { reason, status: snapshot.status.kind, launchKind } }), reason, launchKind);
+            details: { reason, status: admittedSnapshot.status.kind, launchKind } }), reason, launchKind);
     };
     const requestedCwd = input.requestedCwd ?? input.cwd ?? process.cwd();
     if (!isAbsolute(requestedCwd) || requestedCwd.includes('\u0000')) return refuse('workspace_not_ready');
+    const requireReady = () => {
+        if (process.platform !== 'linux') return refuse('unsupported_platform');
+        if (admittedSnapshot.status.kind !== 'effective') return refuse(admittedSnapshot.status.kind === 'unavailable'
+            ? admittedSnapshot.status.code : 'launch_probe_failed');
+        assertHostIsolationLaunchKindSupported(launchKind, refuse);
+    };
+    const prepare = async () => {
+        const prepared = await input.context!.prepareLaunch!({ requesterIdentity: identity,
+            sessionMcpContext: input.sessionMcpContext, mcpLaunchMaterial: input.mcpLaunchMaterial,
+            agentNativeLaunch: input.agentNativeLaunch, signal: input.signal });
+        input.signal?.throwIfAborted();
+        const projection = prepared.read();
+        onNativeLaunchFailure = prepared.onNativeLaunchFailure ?? onNativeLaunchFailure;
+        if (!projection) return refuse('launch_probe_failed');
+        // Preparation supplies roots and native material, never a new policy
+        // decision for work already admitted under this snapshot.
+        snapshot = { ...projection, enabled: admittedSnapshot.enabled,
+            memberProvisioning: admittedSnapshot.memberProvisioning, status: admittedSnapshot.status };
+    };
+    const requesterLaunch = !!identity || !!input.agentNativeLaunch || input.agentLaunchKind !== undefined;
+    if (requesterLaunch) {
+        requireReady();
+        if (input.context?.prepareLaunch) await prepare();
+    }
     const canonicalCwd = await realpath(input.cwd ?? requestedCwd).catch(() => null);
     if (!canonicalCwd || snapshot.workspaceRoots.length === 0) return refuse('workspace_not_ready');
     let workspaceExec = false;
@@ -490,20 +522,12 @@ export async function admitAgentIsolationLaunchForHost(input: Readonly<{
     // Workspace can belong to a different requester from the daemon's held
     // Account projection; absence there must never downgrade it to host code.
     if (!identity && !input.agentNativeLaunch && input.agentLaunchKind === undefined && !workspaceExec) return undefined;
-    if (process.platform !== 'linux') return refuse('unsupported_platform');
-    if (snapshot.status.kind !== 'effective') return refuse(snapshot.status.kind === 'unavailable'
-        ? snapshot.status.code : 'launch_probe_failed');
-    assertHostIsolationLaunchKindSupported(launchKind, refuse);
-    if (input.context?.prepareLaunch) {
-        const prepared = await input.context.prepareLaunch({ requesterIdentity: identity, sessionMcpContext: input.sessionMcpContext,
-            mcpLaunchMaterial: input.mcpLaunchMaterial, agentNativeLaunch: input.agentNativeLaunch, signal: input.signal });
-        // Recheck current held policy/roots after the asynchronous lease/OS read,
-        // without preparing again or downgrading a native launch to host Exec.
-        return admitAgentIsolationLaunchForHost({ ...input, requesterIdentity: identity, context: {
-            read: prepared.read,
-            ...(input.context.resolveRequesterIdentity ? { resolveRequesterIdentity: input.context.resolveRequesterIdentity } : {}),
-        } });
+    // Anonymous host Exec is first classified by its existing Workspace roots;
+    // unrelated host work never acquires Session material.
+    if (!requesterLaunch) {
+        requireReady();
+        if (input.context?.prepareLaunch) await prepare();
     }
     if (!snapshot.launch || !snapshot.localTransport) return refuse('launch_probe_failed');
-    return { snapshot, cwd: canonicalCwd };
+    return { snapshot, cwd: canonicalCwd, ...(onNativeLaunchFailure ? { onNativeLaunchFailure } : {}) };
 }

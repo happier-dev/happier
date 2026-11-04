@@ -14,29 +14,6 @@ import { readAgentIsolationNativeIdentity, type AgentIsolationMemberNativeIdenti
 export type AgentIsolationReadinessSystem = Readonly<{ run: typeof execFileWithDeadline }>;
 type Unavailable = Extract<MachineAgentIsolationStatusV1, { kind: 'unavailable' }>;
 
-/** Noninteractive authorization for the fixed member shim, without executing
- * a payload or reading privileged sudoers bytes. This is effective permission,
- * not an assertion that the managed rule's file content is unchanged. */
-export async function hasAgentIsolationMemberRunAsPermission(input: Readonly<{
-  installedCli: string;
-  memberIdentity: AgentIsolationMemberNativeIdentity;
-  signal?: AbortSignal;
-  system?: AgentIsolationReadinessSystem;
-}>): Promise<boolean> {
-  if (process.platform !== 'linux') return false;
-  input.signal?.throwIfAborted();
-  try {
-    await (input.system?.run ?? execFileWithDeadline)('sudo', [
-      '-n', '-l', '-u', input.memberIdentity.username, '--', input.installedCli, 'agent-launch',
-    ], { env: {}, signal: input.signal, terminateOnAbort: terminateProcessTree });
-    input.signal?.throwIfAborted();
-    return true;
-  } catch {
-    input.signal?.throwIfAborted();
-    return false;
-  }
-}
-
 // This fixed host-authored program runs only through the incumbent framed
 // RunAs shim. No Workspace/provider command or custodian environment is read.
 const nativeLaunchChecks = `[ "$(id -u)" = "$1" ] && [ "$1" != 0 ] || exit 71
