@@ -319,6 +319,7 @@ export function createProductBrowserSidecarControlAdapterFactory(params: Readonl
                 },
             },
             contextCapture: {
+                resolveViewportOwner: view => sessions.get(view.browserSessionId)?.result?.contextCapture?.resolveViewportOwner?.(view),
                 resolvePageHandle,
                 resolveNativeObservation: (view) => resolvePageHandle(view)
                     ? sessions.get(view.browserSessionId)?.result?.contextCapture?.resolveNativeObservation?.(view) : undefined,
