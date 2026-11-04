@@ -861,6 +861,20 @@ health is unverified. Browser selection is only for that foreground
 lifetime and writes no persistent pin. Use the returned local CDP endpoint with agent-browser
 or Playwright on the controller, opening the returned browser-facing `url` with lane-owned ports.
 Dedicated QA-host Chromium uses `--no-sandbox` under the approved policy for Happier's own QA app.
+
+In 0.3 development, sign an existing, signed-out QA browser into an Account with
+`hstack dev-targets browser signin <session> --stack=<qa> --cdp=<returned-cdp-http-url>`, piping the Account
+secret key to stdin. Use the pool's returned CDP endpoint directly; the session name labels
+the existing browser and does not launch or discover another browser. The command opens the
+app's manual restore route with the Stack's canonical Home address selected through the normal connection gate,
+then submits its existing form, bypassing Welcome navigation. Use the QA Account's key for that Home.
+If the app requires a Home-address confirmation, the command returns `restore_entry_unavailable`
+before filling the form. Review the Home connection in the browser and rerun the command.
+It reads the signed-in Account id from Account settings and returns the browser to Home.
+It leaves authentication and persistence to the app, and prints only a JSON success result with
+the Account id prefix, or a typed failure reason. It never saves credentials or browser state
+outside the browser's normal storage. Keep the browser owner handle alive and close it after QA.
+
 In current 0.3 development, request a headed GPU browser on a specific configured POSIX target
 with an active graphical login/display and hardware GPU:
 

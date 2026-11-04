@@ -18,7 +18,7 @@ import { readTextOrEmpty } from '../utils/fs/ops.mjs';
 import { resolveDefaultRepoEnv } from './stack_environment.mjs';
 import { resolveStackRuntimeMode } from '../runtime/shared/runtime_mode.mjs';
 import { inspectStackRuntimeSelection } from '../runtime/launch/inspectActiveRuntimeSnapshot.mjs';
-import { resolveStackServerEndpoint } from '../utils/server/urls.mjs';
+import { resolveStackCanonicalServerUrl, resolveStackServerEndpoint } from '../utils/server/urls.mjs';
 import { getObservedStackDaemonAsync, readStackRuntimeStateWithDaemonSync } from '../utils/stack/runtime_daemon_state.mjs';
 import { applyStackActiveServerScopeEnv, applyStackDaemonLifecycleScopeEnv } from '../utils/auth/stable_scope_id.mjs';
 import { resolveStackDaemonStartRequested } from '../utils/auth/daemon_gate.mjs';
@@ -156,7 +156,10 @@ export async function readStackInfoSnapshot({
   const stackScopedEnv = applyStackDaemonLifecycleScopeEnv({
     env: applyStackActiveServerScopeEnv({
       env: {
-        ...process.env, ...stackEnv,
+        ...process.env,
+        // A named Stack owns its sign-in origin, including when it has no override.
+        HAPPIER_CANONICAL_SERVER_URL: undefined,
+        ...stackEnv,
         HAPPIER_STACK_STACK: stackName,
         HAPPIER_STACK_ENV_FILE: envPath,
         HAPPIER_STACK_RUNTIME_STATE_PATH: runtimeStatePath,
@@ -442,6 +445,10 @@ export async function readStackInfoSnapshot({
   const internalServerUrl = endpoint.publicServerUrl
     ? endpoint.internalServerUrl
     : activeServerPort ? endpoint.internalServerUrl : null;
+  const canonicalServerUrl = endpoint.port || endpoint.publicServerUrl
+    ? await resolveStackCanonicalServerUrl({ env: stackScopedEnv, serverPort: endpoint.port,
+      stackName, envPublicUrl: endpoint.publicServerUrl ?? null })
+    : null;
   const uiUrl = borrowedExpo?.running
     ? buildBorrowedExpoUiUrl({ consumerHost: host, expoPort: uiPort, serverPort: activeServerPort })
     : uiPort ? `http://${host}:${uiPort}` : null;
@@ -628,6 +635,7 @@ export async function readStackInfoSnapshot({
     urls: {
       host,
       internalServerUrl,
+      canonicalServerUrl,
       uiUrl,
       mobileUrl,
     },

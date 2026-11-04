@@ -1,21 +1,23 @@
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { spawn } from 'node:child_process';
-import { createHash, randomUUID, X509Certificate } from 'node:crypto';
+import { createHash, randomBytes, randomUUID, X509Certificate } from 'node:crypto';
 import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PassThrough } from 'node:stream';
+import { PassThrough, Readable } from 'node:stream';
 import { setTimeout as delay } from 'node:timers/promises';
 import test from 'node:test';
 import { rootCertificates } from 'node:tls';
 import { createServer } from 'node:http';
 import { createServer as createSocketServer } from 'node:net';
-import { resolveQaBrowserUrl, runQaBrowserSession as runRealQaBrowserSession, runQaBrowserWorker, stopQaBrowsers, stopStackQaBrowsers } from './qa_browser.mjs';
+import { resolveQaBrowserUrl, runQaBrowserSignin, runQaBrowserSession as runRealQaBrowserSession, runQaBrowserWorker, stopQaBrowsers, stopStackQaBrowsers } from './qa_browser.mjs';
 import { buildRemoteQaBrowserStopCommand, resolveRemoteStackStatePaths } from './remote_commands.mjs';
 import { runCaptureResult, spawnProc, killProcessTree } from '../proc/proc.mjs';
 import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
+import { withPatchedProcessEnv } from '../../testkit/core/env_scope.mjs';
+import { readStackInfoSnapshot } from '../../stack/stack_info_snapshot.mjs';
 import { resolveMutagenSessionName } from './mutagen_project.mjs';
 import { captureDevTargetSyncFixture } from '../../testkit/core/dev_target_sync.mjs';
 import { writeFakeBin } from '../../testkit/core/fake_bin_harness.mjs';
@@ -1366,3 +1368,147 @@ for (const failure of ['invalid executable', 'discovery close', 'cancel query'])
     assert.equal(signals.listenerCount('SIGINT'), 0);
   });
 }
+
+test('browser signin reads the named Stack canonical address rather than the transport or ambient Home', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-signin-home-' });
+  const stackName = 'signin-home';
+  const stackDir = join(fixture.root, stackName);
+  await mkdir(stackDir);
+  const canonical = new URL('https:' + '//qa-home.invalid').origin;
+  withPatchedProcessEnv(t, { HAPPIER_STACK_STORAGE_DIR: fixture.root,
+    HAPPIER_CANONICAL_SERVER_URL: new URL('https:' + '//other-home.invalid').origin });
+  await writeFile(join(stackDir, 'env'), [
+    `HAPPIER_CANONICAL_SERVER_URL=${canonical}`,
+    'HAPPIER_STACK_SERVER_PORT=14311',
+    'HAPPIER_STACK_DAEMON=0', 'HAPPIER_STACK_SERVE_UI=0', '',
+  ].join('\n'));
+  const info = await readStackInfoSnapshot({ rootDir: process.cwd(), stackName,
+    synchronizeDaemonState: false, observeRemoteSourceRuntime: false });
+  assert.equal(info.urls.canonicalServerUrl, canonical);
+  assert.equal(info.urls.internalServerUrl, null);
+});
+
+test('browser signin excludes an ambient canonical Home when the named Stack has no override', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-signin-ambient-' });
+  const stackName = 'signin-home';
+  const stackDir = join(fixture.root, stackName);
+  await mkdir(stackDir);
+  withPatchedProcessEnv(t, { HAPPIER_STACK_STORAGE_DIR: fixture.root,
+    HAPPIER_CANONICAL_SERVER_URL: new URL('https:' + '//other-home.invalid').origin });
+  await writeFile(join(stackDir, 'env'), [
+    'HAPPIER_STACK_SERVER_PORT=14311', 'HAPPIER_STACK_DAEMON=0', 'HAPPIER_STACK_SERVE_UI=0',
+    'HAPPIER_STACK_BIND_MODE=loopback', 'HAPPIER_STACK_LOCALHOST_SUBDOMAINS=1',
+    'HAPPIER_STACK_LOCALHOST_SUBDOMAIN_PREFIX=happier', '',
+  ].join('\n'));
+  const info = await readStackInfoSnapshot({ rootDir: process.cwd(), stackName,
+    synchronizeDaemonState: false, observeRemoteSourceRuntime: false });
+  assert.equal(info.urls.canonicalServerUrl, new URL('http:' + '//happier-signin-home.localhost:14311').origin);
+});
+
+test('browser signin rejects malformed stdin with a typed, sanitized result before browser access', async () => {
+  const input = randomBytes(7).toString('hex');
+  const result = await runCaptureResult(process.execPath, [
+    '--import=./apps/stack/bin/localSourceRuntimeBootstrap.mjs',
+    './apps/stack/scripts/dev_targets.mjs', 'browser', 'signin', 'absent', '--stack=qa-signin-test',
+  ], { input, cwd: fileURLToPath(new URL('../../../../..', import.meta.url)) });
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.out.trim(), JSON.stringify({ ok: false, reason: 'invalid_key' }));
+  assert.equal((result.out + result.err).includes(input), false);
+});
+
+for (const outcome of ['home', 'restore_failed', 'restore_entry_unavailable', 'disconnect']) {
+  test(`browser signin settles ${outcome} without exporting credentials or closing the browser`, async () => {
+    const input = randomBytes(32).toString('base64url');
+    const origin = new URL('http:' + '//127.0.0.1:1234');
+    const homeUrl = new URL('http:' + '//127.0.0.1:5678').href;
+    const canonicalHomeUrl = new URL('http:' + '//qa-home.localhost:5678').href;
+    let socketClosed = false;
+    // CDP is an external browser boundary. The fixture implements its protocol,
+    // while stdin parsing, endpoint selection, transport and result handling stay real.
+    class BrowserSocket extends EventTarget {
+      evaluated = 0;
+      navigations = 0;
+      loaded = false;
+      constructor() { super(); queueMicrotask(() => this.dispatchEvent(new Event('open'))); }
+      message(value) { this.dispatchEvent(new MessageEvent('message', { data: JSON.stringify(value) })); }
+      send(raw) {
+        const { id, method, params } = JSON.parse(raw);
+        queueMicrotask(() => {
+          if (method === 'Runtime.callFunctionOn' && outcome === 'disconnect') {
+            this.dispatchEvent(new Event('close'));
+            return;
+          }
+          if (method === 'Runtime.evaluate') assert.fail('use the main-frame context admitted by this navigation');
+          if (method === 'Runtime.callFunctionOn') {
+            assert.equal(this.loaded, true, 'an unrelated load event must not admit the restore form');
+            assert.equal(params.executionContextId, 42);
+            assert.equal(params.functionDeclaration.includes(input), false);
+            this.evaluated++;
+          }
+          this.message({ id, result: method === 'Page.navigate' ? { frameId: 'main', loaderId: `document-${++this.navigations}` }
+            : method === 'Runtime.callFunctionOn' ? { result: { value: this.evaluated === 2 ? 'account-' : outcome } }
+            : method === 'Network.getResponseBody' ? { body: JSON.stringify({ id: params.requestId === 'profile' ? 'account-owner-id' : 'wrong-account' }) } : {} });
+          if (method === 'Page.navigate') {
+            this.loaded = false;
+            const url = new URL(params.url);
+            assert.equal(url.searchParams.get('server'), url.pathname === '/restore/manual' ? canonicalHomeUrl : null,
+              'restore must select the Stack Home through the app gate before accepting stdin');
+            this.message({ method: 'Network.responseReceived', params: {
+              requestId: 'previous', response: { url: new URL('/v1/account/profile', origin).href, status: 200 },
+            } });
+            this.message({ method: 'Network.loadingFinished', params: { requestId: 'previous' } });
+            this.message({ method: 'Page.loadEventFired', params: {} });
+            this.message({ method: 'Page.lifecycleEvent', params: { frameId: 'main', loaderId: 'previous', name: 'load' } });
+            setImmediate(() => {
+              this.loaded = true;
+              this.message({ method: 'Runtime.executionContextCreated', params: {
+                context: { id: 42, auxData: { isDefault: true, frameId: 'main' } },
+              } });
+              this.message({ method: 'Page.lifecycleEvent', params: { frameId: 'main', loaderId: `document-${this.navigations}`, name: 'load' } });
+            });
+          }
+          if (method === 'Runtime.callFunctionOn' && outcome === 'home') {
+            this.message({ method: 'Runtime.bindingCalled', params: { name: 'hstackRestoreSubmitted', payload: '' } });
+            this.message({ method: 'Network.requestWillBeSent', params: {
+              requestId: 'foreign', request: { url: new URL('/v1/account/profile', 'https:' + '//other.invalid').href },
+            } });
+            this.message({ method: 'Network.responseReceived', params: {
+              requestId: 'foreign', response: { url: new URL('/v1/account/profile', 'https:' + '//other.invalid').href, status: 200 },
+            } });
+            this.message({ method: 'Network.loadingFinished', params: { requestId: 'foreign' } });
+            this.message({ method: 'Network.requestWillBeSent', params: {
+              requestId: 'profile', request: { url: new URL('/v1/account/profile', origin).href },
+            } });
+            this.message({ method: 'Network.responseReceived', params: {
+              requestId: 'profile', response: { url: new URL('/v1/account/profile', origin).href, status: 200 },
+            } });
+            this.message({ method: 'Network.loadingFinished', params: { requestId: 'profile' } });
+          }
+        });
+      }
+      close() { socketClosed = true; }
+    }
+    const result = await runQaBrowserSignin({ sessionName: 'existing', stackName: 'qa',
+      cdpHttpUrl: origin.href, input: Readable.from([input]),
+    }, {
+      WebSocketImpl: BrowserSocket,
+      fetchImpl: async () => ({ ok: true, json: async () => [
+        { type: 'page', url: 'about:blank', webSocketDebuggerUrl: 'ws:' + '//127.0.0.1:9999/devtools/page/fixture' },
+      ] }),
+      readStackInfo: async () => ({ urls: { uiUrl: origin.href, internalServerUrl: homeUrl, canonicalServerUrl: canonicalHomeUrl } }),
+    });
+    assert.deepEqual(result, outcome === 'home' ? { ok: true, accountIdPrefix: 'account-' }
+      : { ok: false, reason: outcome === 'disconnect' ? 'browser_unavailable' : outcome });
+    assert.equal(JSON.stringify(result).includes(input), false);
+    assert.equal(socketClosed, true);
+  });
+}
+
+test('an explicit CDP endpoint is required without starting a browser', async () => {
+  const result = await runQaBrowserSignin({ sessionName: 'missing', stackName: 'qa',
+    input: Readable.from([randomBytes(32).toString('base64url')]),
+  }, {
+    fetchImpl: async () => { assert.fail('must not reach a browser'); },
+  });
+  assert.deepEqual(result, { ok: false, reason: 'cdp_required' });
+});

@@ -172,6 +172,8 @@ Most live failures in 0.3 were correct owners wired together wrongly: an empty e
 
 ## Live Validation Gates
 
+For QA Account sign-in, use `dev-targets browser signin` as documented in the [Stack browser guide](../../../apps/docs/content/docs/hstack/dev-targets.mdx).
+
 The dedicated QA-host browser owner launches Chromium with `--no-sandbox`, as approved for browsing Happier's own QA app. Agent-browser/Playwright attach to its returned CDP endpoint; keep this policy in `qa_browser.mjs` rather than adding launch flags in individual lanes. Use a TTY-backed foreground tool handle and verify browser/profile/forward cleanup after SIGINT; cancelling a non-TTY checkout launcher can leave the actual command running.
 
 Host-test green alone is not shippable for user-visible behavior; this skill owns the lane-level live-validation rules.

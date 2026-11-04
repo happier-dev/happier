@@ -23,7 +23,7 @@ import {
   doctorManagedDevTargetRuntime,
 } from './utils/dev_targets/managed_runtime.mjs';
 import { prepareDevTargetHost, provisionPosixDevTarget, provisionQaDevTarget } from './utils/dev_targets/provision.mjs';
-import { runQaBrowserSession } from './utils/dev_targets/qa_browser.mjs';
+import { runQaBrowserSession, runQaBrowserSignin } from './utils/dev_targets/qa_browser.mjs';
 import { provisionManagedLimaDevTarget } from './utils/dev_targets/managed_worker.mjs';
 import {
   inspectDevTargetAdmission,
@@ -352,6 +352,8 @@ async function main() {
         '  hstack dev-targets qa setup NAME --stack=QA_STACK [--json]',
         '  hstack dev-targets browser start SESSION --stack=QA_STACK --url=QA_UI_URL [--target=NAME] [--gpu] [--forward-url=LOOPBACK_URL] [--worker-loopback-url=HTTP_LOOPBACK_URL] [--trust-cert=PEM_PATH] [--fake-audio[=WAV_PATH]]',
         '    Keeps the lane browser and CDP forward alive; Ctrl+C closes only this session.',
+        '  hstack dev-targets browser signin SESSION --stack=QA_STACK --cdp=CDP_HTTP_URL',
+        '    Read the Account secret key from stdin; SESSION is an attached agent-browser session.',
         '    --gpu requires --target: headed Chromium on a host with an active GPU display, without software rasterization.',
         '    --trust-cert pins the supplied certificate SPKI for this browser lifetime.',
         '    --worker-loopback-url routes one observed listener on the selected browser host directly, while Home/Expo use the controller route.',
@@ -385,6 +387,14 @@ async function main() {
         'Mutagen is intentionally user-installed and remains available as the normal `mutagen` CLI.',
       ].join('\n'),
     });
+    return;
+  }
+
+  if (command === 'browser' && positionals[1] === 'signin') {
+    const result = await runQaBrowserSignin({ sessionName: positionals[2], stackName,
+      rootDir: executorRepoRoot, cdpHttpUrl: kv.get('--cdp') });
+    process.stdout.write(`${JSON.stringify(result)}\n`);
+    if (!result.ok) process.exitCode = 1;
     return;
   }
 

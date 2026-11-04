@@ -16,6 +16,7 @@ import { buildRemoteQaBrowserStopCommand, buildSshForwardArgs, buildSshWorkerArg
 import { loadControlledRuntimeConfig } from './service_placement.mjs';
 import { requireSessionName, stopQaBrowsers } from './qa_browser_retirement.mjs';
 export { stopQaBrowsers } from './qa_browser_retirement.mjs';
+export { runQaBrowserSignin } from './qa_browser_signin.mjs';
 import { resolveExplicitStackEnvFilePath, resolveStackEnvPath } from '../paths/paths.mjs';
 
 const READY_MARKER = 'HSTACK_QA_BROWSER=';
