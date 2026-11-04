@@ -294,7 +294,8 @@ describe('AcpBackend.sendPrompt (prompt ACK vs first session/update)', () => {
         const started = await backend.startSession();
         const submitted = await backend.sendPrompt(started.sessionId, 'hi');
         const settled = submitted.kind === 'submitted_to_transport' ? await submitted.settlement : submitted;
-        expect(settled).toEqual({ kind: 'rejected_before_effect', error: expect.any(Error) });
+        expect(settled).toEqual({ kind: 'accepted_by_prompt_response' });
+        await expect(backend.waitForResponseComplete()).rejects.toThrow('Model stream ended with empty response text');
         expect(debug).toHaveBeenCalled();
         expect(debug.mock.calls.filter(([message]) => message === '[AcpBackend] Error sending prompt:'))
           .toEqual([['[AcpBackend] Error sending prompt:']]);
@@ -349,7 +350,7 @@ describe('AcpBackend.sendPrompt (prompt ACK vs first session/update)', () => {
     });
   }, 20_000);
 
-  it('reports request-scoped rejection before provider effect', async () => {
+  it('settles a request-scoped processing failure without provider output', async () => {
     await withTempDir('happier-acp-sendprompt-pre-effect-rejection-', async (dir) => {
       const scriptPath = writeFakeAcpAgentScript({
         dir,
@@ -374,9 +375,9 @@ describe('AcpBackend.sendPrompt (prompt ACK vs first session/update)', () => {
         expect(outcome).toEqual(expect.objectContaining({ kind: 'submitted_to_transport' }));
         if (outcome.kind !== 'submitted_to_transport') throw new Error('expected prompt transport submission');
         await expect(outcome.settlement).resolves.toEqual(expect.objectContaining({
-          kind: 'rejected_before_effect',
+          kind: 'accepted_by_prompt_response',
         }));
-        await delay(25);
+        await expect(backend.waitForResponseComplete()).rejects.toThrow('Model stream ended with empty response text');
       } finally {
         await backendForCleanup?.dispose().catch(() => {});
       }
