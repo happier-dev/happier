@@ -165,7 +165,9 @@ export function CustomModal({ config, onClose, showBackdrop = true, visible, zIn
             accessibilityLabel={accessibilityLabel}
             testID={effectiveChrome?.kind === 'stage' ? effectiveChrome.testID : undefined}
             focusReturnRef={config.focusReturnRef}
-            focusReturnFallback={effectiveChrome?.kind === 'stage' ? 'activation-time' : undefined}
+            // A captured opener can vanish as it opens the modal (a menu or picker row); return to the control
+            // that held focus when the modal activated instead of the page.
+            focusReturnFallback={effectiveChrome ? 'activation-time' : undefined}
             closeOnBackdrop={config.closeOnBackdrop ?? true}
             showBackdrop={showBackdrop && presentation.showBackdrop}
             motion={presentation.motion}

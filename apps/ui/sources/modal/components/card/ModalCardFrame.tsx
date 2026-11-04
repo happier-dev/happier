@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Animated, Platform, ScrollView, View, type StyleProp, type ViewStyle } from 'react-native';
+import { Animated, Platform, ScrollView, View, type LayoutChangeEvent, type StyleProp, type ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { shadowLevelStyle } from '@/shadowElevation';
@@ -111,6 +111,8 @@ const stylesheet = StyleSheet.create((theme) => ({
         overflow: 'hidden',
     },
     boundedSurface: {
+        // Fills a frame that kept its earlier height; sized by content otherwise.
+        flexGrow: 1,
         flexShrink: 1,
         minHeight: 0,
     },
@@ -146,6 +148,16 @@ export function ModalCardFrame(props: ModalCardFrameProps) {
     const sheetDismiss = useSheetDismiss();
     const dismiss = sheet ? sheetDismiss : null;
     const drag = useSheetDrag(dismiss);
+    // A bounded card keeps the tallest height it has shown while it is presented, so a pushed child (a
+    // folder browser) or a narrowed list never shrinks the container under the person; it still grows.
+    const [shownHeight, setShownHeight] = React.useState(0);
+    const dragLayout = dismiss ? drag.onLayout : null;
+    const onFrameLayout = React.useCallback((event: LayoutChangeEvent) => {
+        const height = event.nativeEvent.layout.height;
+        if (bounded) setShownHeight(previous => (height > previous ? height : previous));
+        dragLayout?.(event);
+    }, [bounded, dragLayout]);
+
 
     const hasHeader = framed && props.header !== 'none' && (props.leading != null
         || props.title != null
@@ -159,7 +171,7 @@ export function ModalCardFrame(props: ModalCardFrameProps) {
             {...(framed && Platform.OS === 'web'
                 ? ({ dataSet: { happyModalCardBoundary: 'true' } } as unknown as Record<string, unknown>)
                 : null)}
-            {...(dismiss ? { onLayout: drag.onLayout } : {})}
+            {...(dismiss || bounded ? { onLayout: onFrameLayout } : {})}
             style={[
                 dismiss ? { transform: [{ translateY: drag.offset }] } : null,
                 framed ? (fullscreen ? styles.fullscreenFrame : styles.shadowFrame) : null,
@@ -180,7 +192,7 @@ export function ModalCardFrame(props: ModalCardFrameProps) {
                     ? {
                         height: dimensions.maxHeight,
                     }
-                    : bounded ? { maxHeight: dimensions.maxHeight } : null,
+                    : bounded ? { maxHeight: dimensions.maxHeight, ...(shownHeight > 0 ? { minHeight: Math.min(shownHeight, dimensions.maxHeight) } : null) } : null,
                 props.style,
             ]}
         >

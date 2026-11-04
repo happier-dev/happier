@@ -101,6 +101,29 @@ describe('ModalCardFrame', () => {
         expect(seen).toBe(modalScroller);
     });
 
+    // F-U5-UI live (U4 finding): pushing a short child (a folder browser) into a bounded sheet shrank it
+    // ~690 → ~350 px under the person's finger. A container keeps its height while its content changes.
+    it('keeps a bounded card at the tallest height it has shown while its content changes', async () => {
+        windowState.width = 390;
+        windowState.height = 844;
+        try {
+            const { renderScreen } = await import('@/dev/testkit');
+            const { ModalCardFrame } = await import('./ModalCardFrame');
+            const frame = (child: string) => <ModalCardFrame testID="bounded-sheet" presentation="sheet" scrollHost="bounded"
+                title="Where should it run?" dimensions={{ size: 'md', maxHeightRatio: 0.92 }}>{React.createElement(child)}</ModalCardFrame>;
+            const layout = (height: number) => ({ nativeEvent: { layout: { x: 0, y: 0, width: 390, height } } });
+            const screen = await renderScreen(frame('RecipeFields'));
+            expect(flattenStyle(screen.findHostByTestId('bounded-sheet')?.props.style).minHeight || 0).toBe(0);
+            act(() => screen.findHostByTestId('bounded-sheet')?.props.onLayout?.(layout(690)));
+            await screen.update(frame('FolderBrowser'));
+            act(() => screen.findHostByTestId('bounded-sheet')?.props.onLayout?.(layout(350)));
+            expect(flattenStyle(screen.findHostByTestId('bounded-sheet')?.props.style).minHeight).toBe(690);
+        } finally {
+            windowState.width = 1024;
+            windowState.height = 768;
+        }
+    });
+
     it('fills the viewport for full-page chrome and keeps content mounted across presentation changes', async () => {
         windowState.width = 390;
         windowState.height = 844;

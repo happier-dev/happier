@@ -124,6 +124,18 @@ describe('CustomModal', () => {
         act(() => base.props.onClose());
         expect(onClose).toHaveBeenCalledOnce();
     });
+    // F-U5-UI live: Work + → Run a workflow → pick opened the phone Start sheet while the picker row (about to
+    // unmount) still held focus; Escape then had no eligible return target and focus fell to BODY. The launch
+    // button held focus when the sheet activated, so card chrome falls back to that control, as stage does.
+    it('falls back to the control focused at activation when a card’s captured opener is gone', async () => {
+        const focusReturnRef = { current: { focus: vi.fn(), isConnected: false } };
+        const screen = await renderCustomModal({
+            type: 'custom', component: RawModal, props: { label: 'start' }, focusReturnRef,
+            chrome: { kind: 'card', header: 'none', scrollHost: 'body', bodyScroll: 'none', dimensions: { size: 'lg' }, phonePresentation: 'sheet' },
+        }, vi.fn());
+        expect(screen.findByType(BaseModal).props.focusReturnFallback).toBe('activation-time');
+    });
+
     it('preserves the raw rendering path when no chrome is requested', async () => {
         const screen = await renderCustomModal({
             type: 'custom',

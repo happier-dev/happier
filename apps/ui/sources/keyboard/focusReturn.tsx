@@ -2,7 +2,7 @@ import * as React from 'react';
 import { AccessibilityInfo, findNodeHandle, Platform } from 'react-native';
 
 type FocusableFocusReturnTarget = Readonly<{
-    focus?: () => void;
+    focus?: (options?: Readonly<{ preventScroll?: boolean }>) => void;
     isConnected?: boolean;
 }>;
 
@@ -195,4 +195,31 @@ export function useRestoreFocusToTrigger(triggerRef: FocusReturnRef) {
     return React.useCallback(() => {
         return restoreFocusToBestTarget(triggerRef, context?.fallbackRef);
     }, [context?.fallbackRef, triggerRef]);
+}
+
+/**
+ * An inline level pushed inside a form or sheet (a folder browser, a participant picker) takes focus when it
+ * opens and gives it back to the control that opened it when it closes, by Back or by choosing. Attach
+ * `attachEntry` as the level's first control (its Back), so focus does not fall to the document when the
+ * opener is replaced. Attach `attachOrigin` as the opener's ref: it re-attaches when an opener that the level
+ * replaced mounts again. A host whose opener stays mounted and reaches the level through a port records the
+ * pressed control into `originRef` instead.
+ */
+export function useInlineLevelFocusReturn(open: boolean): Readonly<{
+    originRef: FocusReturnMutableRef;
+    attachOrigin: (node: FocusableFocusReturnTarget | null) => void;
+    attachEntry: (node: FocusableFocusReturnTarget | null) => void;
+}> {
+    const originRef = React.useRef<FocusReturnTarget>(null);
+    const entryRef = React.useRef<FocusableFocusReturnTarget | null>(null);
+    const restore = useRestoreFocusToTrigger(originRef);
+    const wasOpen = React.useRef(open);
+    React.useEffect(() => {
+        if (!wasOpen.current && open) entryRef.current?.focus?.({ preventScroll: true });
+        if (wasOpen.current && !open) restore();
+        wasOpen.current = open;
+    }, [open, restore]);
+    const attachOrigin = React.useCallback((node: FocusableFocusReturnTarget | null) => { originRef.current = node; }, []);
+    const attachEntry = React.useCallback((node: FocusableFocusReturnTarget | null) => { entryRef.current = node; }, []);
+    return React.useMemo(() => ({ originRef, attachOrigin, attachEntry }), [attachEntry, attachOrigin]);
 }
