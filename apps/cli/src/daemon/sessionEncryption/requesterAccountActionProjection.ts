@@ -481,6 +481,7 @@ export async function prepareInstalledRequesterAccountActionContext(input: Reado
   verifyWorkspaceSyncPrepareCurrent?: () => Promise<boolean>;
   /** Manager-owned proof of the exact forwarded Move child, including current destination access. */
   verifyServiceMoveChildCurrent?: () => Promise<boolean>;
+  deploymentChildExecution?: import('@happier-dev/protocol/socketRpc').WorkspaceSyncSourceExecutionV1;
   resolveCurrentMachineExecutionOriginContext(signal?: AbortSignal): Promise<CurrentMachineExecutionOriginContext | null>;
   createExecutor(context: RequesterAccountActionContext, installation: NonNullable<ReturnType<typeof readInstallationIdentityIfExistsSync>>):
     NonNullable<ExternalActionExecutionAuthorizationV1['requesterAccountExecutor']>;
@@ -561,6 +562,7 @@ export async function prepareInstalledRequesterAccountActionContext(input: Reado
 
 export async function prepareRequesterAccountActionContext(input: Readonly<{
   authorization: ExternalActionExecutionAuthorizationV1;
+  deploymentChildExecution?: import('@happier-dev/protocol/socketRpc').WorkspaceSyncSourceExecutionV1;
   purpose: ExternalActionRequesterAccountContextPurposeV1;
   machineId: string;
   installationId: string;

@@ -103,6 +103,7 @@ export type PrepareExternalActionRequesterAccountContext = (input: Readonly<{
   /** Private SOURCE admission rechecks the installed controller without impersonating the finite worker. */
   verifyWorkspaceSyncPrepareCurrent?: () => Promise<boolean>;
   verifyServiceMoveChildCurrent?: () => Promise<boolean>;
+  deploymentChildExecution?: import('@happier-dev/protocol/socketRpc').WorkspaceSyncSourceExecutionV1;
   signal?: AbortSignal;
 }>) => Promise<Readonly<{
   authorization: ExternalActionExecutionAuthorizationV1;
