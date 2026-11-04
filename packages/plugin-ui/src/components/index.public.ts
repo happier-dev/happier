@@ -17,9 +17,11 @@ export * from './Button.js';
 export * from './Collection.js';
 export {
   useCollectionSavedViewsControl,
+  useCollectionSavedViewsSelection,
   type CollectionSavedViewItem,
   type CollectionSavedViewsLabels,
   type CollectionSavedViewsControlProps,
+  type CollectionSavedViewsSelectionProps,
 } from './CollectionSavedViews.js';
 export * from './CollectionFilter.js';
 export { CollectionConditionEditor, type CollectionConditionEditorProps } from './CollectionConditionEditor.js';

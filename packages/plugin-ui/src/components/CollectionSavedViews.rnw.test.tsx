@@ -3,7 +3,7 @@ import { act } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createPluginUiTestkit, createSurfaceContextFixture, type PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
-import { Button, useCollectionSavedViewsControl } from '@happier-dev/plugin-ui/components';
+import { Button, Dropdown, useCollectionSavedViewsControl, useCollectionSavedViewsSelection } from '@happier-dev/plugin-ui/components';
 import { defineUiSurface } from '@happier-dev/plugin-ui';
 
 const mounted: PluginUiTestkit[] = [];
@@ -30,6 +30,61 @@ async function typeName(value: string) {
 }
 
 describe('the public controlled collection saved-view presentation', () => {
+  it('opens an empty read-only catalog without requiring an unselected item or writer', async () => {
+    function Surface() {
+      const selection = useCollectionSavedViewsSelection({
+        scope: 'account-a', items: [], selectedId: null, labels: { title: 'Spaces' }, onSelect: () => undefined,
+      });
+      return <Dropdown open={selection.open} onOpenChange={selection.onOpenChange}
+        trigger="Choose lens" items={selection.items} radioGroups={selection.radioGroups} onSelect={selection.selectItem} />;
+    }
+    let fixture!: PluginUiTestkit;
+    await act(async () => { fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'empty-views', mountNonce: 'empty-views' },
+      authorPlugin: { id: 'happier.example', version: '0.0.0' },
+      surface: defineUiSurface(() => <Surface />), surfaceContext: createSurfaceContextFixture(),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter({ overlays: true }),
+    }); });
+    mounted.push(fixture);
+    await press(fixture, 'button', 'Choose lens');
+    await expect(fixture.getByRole('menu')).resolves.toBeDefined();
+  });
+
+  it('composes a read-only domain catalog and retires its unavailable selection on Account change', async () => {
+    const selections: string[] = [];
+    function Surface() {
+      const [scope, setScope] = React.useState('account-a');
+      const [selectedId, setSelectedId] = React.useState<string | null>(null);
+      const items = React.useMemo(() => [{ id: scope, label: scope, filter: { status: 'open' } }], [scope]);
+      const selection = useCollectionSavedViewsSelection({
+        scope, items, selectedId, labels,
+        onSelect: (id) => { selections.push(`${scope}:${id}`); setSelectedId(id); },
+      });
+      return <>
+        <Dropdown open={selection.open} onOpenChange={selection.onOpenChange}
+          trigger={selection.selected?.label ?? 'Choose lens'} items={selection.items}
+          radioGroups={selection.radioGroups} onSelect={selection.selectItem} />
+        <Button title="Switch Account" onPress={() => setScope('account-b')} />
+      </>;
+    }
+    let fixture!: PluginUiTestkit;
+    await act(async () => { fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'read-only-views', mountNonce: 'read-only-views' },
+      authorPlugin: { id: 'happier.example', version: '0.0.0' },
+      surface: defineUiSurface(() => <Surface />), surfaceContext: createSurfaceContextFixture(),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter({ overlays: true }),
+    }); });
+    mounted.push(fixture);
+    await press(fixture, 'button', 'Choose lens');
+    await press(fixture, 'menuitemradio', 'account-a');
+    await press(fixture, 'button', 'account-a');
+    await press(fixture, 'button', 'Switch Account');
+    expect(await fixture.queryByRole('menuitemradio', { name: 'account-b' })).toBeUndefined();
+    await press(fixture, 'button', 'Choose lens');
+    await press(fixture, 'menuitemradio', 'account-b');
+    expect(selections).toEqual(['account-a:account-a', 'account-b:account-b']);
+  });
+
   it('selects typed items and preserves a refused name until acceptance, without writing on edit or cancel', async () => {
     const writes: string[] = [];
     let accept = false;
