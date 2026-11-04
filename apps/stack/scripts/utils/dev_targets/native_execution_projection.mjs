@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { basename, dirname, isAbsolute, join, posix, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { loadDevTargetExecutionConfig, loadDevTargetsConfig, parseDevTargetsConfig, resolveDevTargetExecutionPolicy } from './config.mjs';
+import { DEFAULT_LOAD_PROBE_TTL_MS, loadDevTargetExecutionConfig, loadDevTargetsConfig, parseDevTargetsConfig, resolveDevTargetExecutionPolicy } from './config.mjs';
 import { resolveRepoStackIdentity, resolveStacksStorageRoot } from '../stack/repo_stack_identity.mjs';
 import { resolveDevTargetServicePlans } from './service_placement.mjs';
 import { resolveMutagenSessionName } from './mutagen_project.mjs';
@@ -88,7 +88,7 @@ export function renderNativeExecutionProjection(config, { repoRoot = '', executo
     assignment('command_mode', policy.mode),
     assignment('include_local', policy.includeLocal === true ? '1' : '0'),
     assignment('fallback_mode', policy.fallback ?? 'local'),
-    assignment('load_ttl_seconds', Math.max(1, Math.ceil((policy.loadProbeTtlMs ?? 15000) / 1000))),
+    assignment('load_ttl_seconds', Math.max(1, Math.ceil((policy.loadProbeTtlMs ?? DEFAULT_LOAD_PROBE_TTL_MS) / 1000))),
     assignment('unavailable_ttl_seconds', Math.max(1, Math.ceil((policy.unavailableProbeTtlMs ?? 120000) / 1000))),
     assignment('execution_provenance_schema_version', EXECUTION_PROVENANCE_SCHEMA_VERSION),
     assignment('execution_provenance_filename', EXECUTION_PROVENANCE_FILENAME),

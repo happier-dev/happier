@@ -217,7 +217,7 @@ function normalizeTarget(raw, index, version) {
 }
 
 const LOCAL_PLACEMENT = Object.freeze({ mode: 'local' });
-const DEFAULT_LOAD_PROBE_TTL_MS = 15_000;
+export const DEFAULT_LOAD_PROBE_TTL_MS = 15_000;
 const DEFAULT_UNAVAILABLE_PROBE_TTL_MS = 120_000;
 
 function normalizePlacement(
