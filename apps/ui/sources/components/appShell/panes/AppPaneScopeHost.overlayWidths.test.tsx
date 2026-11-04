@@ -41,10 +41,6 @@ vi.mock('@/components/ui/panels/MultiPaneHostWithBottom', () => ({
     },
 }));
 
-vi.mock('@/utils/platform/responsive', () => ({
-    useDeviceType: () => 'tablet',
-}));
-
 vi.mock('./AppPaneProvider', () => {
     const useSelectedPaneContext = (select = (value: unknown) => value) => select({
             dispatch: vi.fn(),
@@ -58,6 +54,7 @@ vi.mock('./AppPaneProvider', () => {
                 },
             },
             getDriver: () => null,
+            registerDriver: () => () => {},
             driverRegistryVersion: 1,
         });
     return { useAppPaneContext: useSelectedPaneContext, useOptionalAppPaneContext: useSelectedPaneContext };

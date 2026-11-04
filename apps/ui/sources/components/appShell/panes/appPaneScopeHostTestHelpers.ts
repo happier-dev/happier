@@ -51,6 +51,14 @@ export function installAppPaneScopeHostCommonModuleMocks(
             View: 'View',
             useWindowDimensions: () =>
                 appPaneScopeHostModuleState.options.getDimensions?.() ?? { width: 1200, height: 900 },
+            Dimensions: {
+                get: () => ({
+                    ...(appPaneScopeHostModuleState.options.getDimensions?.() ?? { width: 1200, height: 900 }),
+                    scale: 1,
+                    fontScale: 1,
+                }),
+                addEventListener: () => ({ remove() {} }),
+            },
         });
     });
 

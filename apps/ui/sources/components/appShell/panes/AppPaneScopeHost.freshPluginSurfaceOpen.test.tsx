@@ -4,7 +4,7 @@ import type { PluginMachineExecutionOriginV1 } from '@happier-dev/protocol';
 import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { renderScreen } from '@/dev/testkit';
+import { renderScreen as renderPanelScreen, standardCleanup } from '@/dev/testkit';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 import { createEmptyPaneDetailsState } from './details/workspace/detailsWorkspaceReducer';
 import {
@@ -13,58 +13,21 @@ import {
     type PluginUiSurfacePlacementProjection,
 } from '@/sync/domains/plugins/ui/projection';
 import type { PluginSurfaceOpenHandler } from '@/components/plugins/surfaces/openPluginSurface';
-import { installAppPaneScopeHostCommonModuleMocks } from './appPaneScopeHostTestHelpers';
+import type { PaneScopeState } from './model/appPaneReducer';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const paneHostState = vi.hoisted(() => ({
-    scope: {
-        right: { isOpen: false, activeTabId: null, selectedDestination: null as unknown, tabState: {} },
-        // Each test installs the complete Details owner state before its first
-        // render. Keep the hoisted module-mock state independent of imports.
-        details: null as unknown,
-        bottom: { isOpen: false, activeTabId: null, selectedDestination: null as unknown, tabState: {} },
-    },
-    dispatch: vi.fn(),
-}));
+let paneSeed: Pick<PaneScopeState, 'right' | 'details' | 'bottom'>;
 
-installAppPaneScopeHostCommonModuleMocks({
-    getLocalSetting: (key) => key === 'uiMultiPanePanelsEnabled' ? true : null,
+vi.mock('react-native', async () => {
+    const dimensions = () => ({ width: 1200, height: 900, scale: 1, fontScale: 1 });
+    return (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({
+        useWindowDimensions: dimensions,
+        Dimensions: { get: dimensions, addEventListener: () => ({ remove() {} }) },
+    });
 });
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({ theme: { colors: { text: { secondary: '#777' } } } }),
-    StyleSheet: { create: () => ({}) },
-}));
-
-vi.mock('@/components/ui/panels/MultiPaneHostWithBottom', () => ({
-    MultiPaneHostWithBottom: (props: Readonly<Record<string, unknown>>) => (
-        React.createElement('MultiPaneHostStub', props)
-    ),
-}));
-
-vi.mock('@/utils/platform/responsive', () => ({
-    useDeviceType: () => 'tablet',
-}));
-
-vi.mock('./AppPaneProvider', () => {
-    const useSelectedPaneContext = (select = (value: unknown) => value) => select({
-            dispatch: paneHostState.dispatch,
-            state: { scopes: { scope1: paneHostState.scope } },
-            getDriver: () => null,
-            driverRegistryVersion: 1,
-            overlayFocusReturnOwner: undefined,
-        });
-    return { useAppPaneContext: useSelectedPaneContext, useOptionalAppPaneContext: useSelectedPaneContext };
-});
-
-vi.mock('@/components/plugins/surfaces', () => ({
-    PluginSurfacePlacementHost: () => React.createElement('PluginSurfacePlacementHostMock'),
-}));
-
-vi.mock('@/components/plugins/reactNative/PluginReactNativeUnavailable', () => ({
-    PluginReactNativeUnavailable: () => React.createElement('PluginReactNativeUnavailableMock'),
-}));
+vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 
 function createPlacement(input: Readonly<{
     descriptorId: string;
@@ -122,12 +85,48 @@ function projectionWith(...placements: readonly PluginUiSurfacePlacementProjecti
     };
 }
 
+// Install physical transports before collecting the real host graph. A cold
+// source transform must not outlive a timed test and leave overlapping act work.
+const collectionBoundary = await installSessionOpsNetworkBoundary();
+const { loadSyncSingletonForTests } = await import('@/dev/testkit/harness/syncSingletonLoader');
+await loadSyncSingletonForTests();
+const { AppPaneProvider, useAppPaneContext } = await import('./AppPaneProvider');
+const { storage } = await import('@/sync/domains/state/storageStore');
+await import('./AppPaneScopeHost');
+await collectionBoundary.dispose();
+
+let pane: ReturnType<typeof useAppPaneContext>;
+let initialScope: PaneScopeState;
+function PaneProbe() {
+    pane = useAppPaneContext();
+    return null;
+}
+function PaneHarness({ children }: React.PropsWithChildren) {
+    return <AppPaneProvider><PaneProbe />{children}</AppPaneProvider>;
+}
+function readScope() { return pane.getReadState().scopes.scope1; }
+const detailsPaneBuiltinAdapter = {
+    destinationIds: ['details'],
+    defaultDestinationId: 'details',
+    render: () => <div>Built-in Details</div>,
+};
+async function renderScreen(element: React.ReactElement) {
+    const screen = await renderPanelScreen(<React.Fragment />, { wrapper: PaneHarness });
+    await act(async () => pane.dispatch({ type: 'restoreScope', scopeId: 'scope1', scope: { mainHidden: false, ...paneSeed } }));
+    await screen.update(element);
+    initialScope = readScope();
+    return screen;
+}
+
 describe('AppPaneScopeHost fresh plugin surface open', () => {
     let network: Awaited<ReturnType<typeof installSessionOpsNetworkBoundary>>;
+    let previousSettings: ReturnType<typeof storage.getState>['localSettings'];
     let accountContext: Awaited<ReturnType<typeof import('@/sync/ops/actions/actionAccountContext').captureLazyActionAccountContext>>;
 
     beforeEach(async () => {
         network = await installSessionOpsNetworkBoundary();
+        previousSettings = storage.getState().localSettings;
+        storage.setState({ localSettings: { ...storage.getState().localSettings, uiMultiPanePanelsEnabled: true } });
         const home = await network.addHome('https://server-1', 'account-a');
         expect(home.id).toBe('server-1');
         const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
@@ -137,6 +136,8 @@ describe('AppPaneScopeHost fresh plugin surface open', () => {
     });
 
     afterEach(async () => {
+        standardCleanup();
+        storage.setState({ localSettings: previousSettings });
         accountContext.dispose();
         await network.dispose();
     });
@@ -166,8 +167,7 @@ describe('AppPaneScopeHost fresh plugin surface open', () => {
         });
         let openSurface: PluginSurfaceOpenHandler | undefined;
 
-        paneHostState.dispatch.mockClear();
-        paneHostState.scope = {
+        paneSeed = {
             right: { isOpen: false, activeTabId: null, selectedDestination: null, tabState: {} },
             details: createEmptyPaneDetailsState(),
             bottom: { isOpen: false, activeTabId: null, selectedDestination: null, tabState: {} },
@@ -177,6 +177,7 @@ describe('AppPaneScopeHost fresh plugin surface open', () => {
             <AppPaneScopeHost
                 scopeId="scope1"
                 main={<div />}
+                detailsPaneBuiltinAdapter={detailsPaneBuiltinAdapter}
                 surfaceScope={{
                     targetKind: 'project',
                     projectId: 'project-1',
@@ -202,7 +203,6 @@ describe('AppPaneScopeHost fresh plugin surface open', () => {
         expect(openSurface).toBeTypeOf('function');
         const currentOpenSurface = openSurface;
         if (!currentOpenSurface) throw new Error('AppPane did not expose its fresh Project destination owner');
-        paneHostState.dispatch.mockClear();
 
         await act(async () => {
             await expect(currentOpenSurface({
@@ -223,32 +223,13 @@ describe('AppPaneScopeHost fresh plugin surface open', () => {
             })).resolves.toEqual({ ok: true });
         });
 
-        expect(paneHostState.dispatch).toHaveBeenCalledWith({
-            type: 'selectRightDestination',
-            scopeId: 'scope1',
-            destination: { kind: 'plugin', destination: rightPlacement.binding.destination },
-        });
-        expect(paneHostState.dispatch).toHaveBeenCalledWith({
-            type: 'selectBottomDestination',
-            scopeId: 'scope1',
-            destination: { kind: 'plugin', destination: projectCompanionBottomPlacement.binding.destination },
-        });
-        expect(paneHostState.dispatch).toHaveBeenCalledWith(expect.objectContaining({
-            type: 'openDetailsTab',
-            scopeId: 'scope1',
-            tab: expect.objectContaining({
-                kind: 'pluginDetailsDestination',
-                resource: {
-                    kind: 'pluginDetailsDestination',
-                    destination: detailsTabPlacement.binding.destination,
-                },
-            }),
+        expect(readScope().right.selectedDestination).toEqual({ kind: 'plugin', destination: rightPlacement.binding.destination });
+        expect(readScope().bottom.selectedDestination).toEqual({ kind: 'plugin', destination: projectCompanionBottomPlacement.binding.destination });
+        expect(readScope().details.overlay?.destination).toEqual(detailsPanePlacement.binding.destination);
+        expect(Object.values(readScope().details.tabsByKey)).toContainEqual(expect.objectContaining({
+            kind: 'pluginDetailsDestination',
+            resource: { kind: 'pluginDetailsDestination', destination: detailsTabPlacement.binding.destination },
         }));
-        expect(paneHostState.dispatch).toHaveBeenCalledWith({
-            type: 'openDetailsOverlay',
-            scopeId: 'scope1',
-            destination: detailsPanePlacement.binding.destination,
-        });
     });
 
     it('refuses a fresh Project Details request whose sub-path the Details owner cannot retain', async () => {
@@ -260,8 +241,7 @@ describe('AppPaneScopeHost fresh plugin surface open', () => {
         });
         let openSurface: PluginSurfaceOpenHandler | undefined;
 
-        paneHostState.dispatch.mockClear();
-        paneHostState.scope = {
+        paneSeed = {
             right: { isOpen: false, activeTabId: null, selectedDestination: null, tabState: {} },
             details: createEmptyPaneDetailsState(),
             bottom: { isOpen: false, activeTabId: null, selectedDestination: null, tabState: {} },
@@ -291,7 +271,6 @@ describe('AppPaneScopeHost fresh plugin surface open', () => {
         expect(openSurface).toBeTypeOf('function');
         const currentOpenSurface = openSurface;
         if (!currentOpenSurface) throw new Error('AppPane did not expose its fresh Project destination owner');
-        paneHostState.dispatch.mockClear();
 
         await expect(currentOpenSurface({
             destination: detailsPlacement.binding.destination,
@@ -301,7 +280,7 @@ describe('AppPaneScopeHost fresh plugin surface open', () => {
             code: 'invalid_payload',
             reason: 'plugin_surface_open_sub_path_unsupported',
         });
-        expect(paneHostState.dispatch).not.toHaveBeenCalled();
+        expect(readScope()).toBe(initialScope);
     });
 
     it('hands fresh current Session pane and Details destinations to their existing owners', async () => {
@@ -328,8 +307,7 @@ describe('AppPaneScopeHost fresh plugin surface open', () => {
             instancePolicy: 'multiple',
         });
 
-        paneHostState.dispatch.mockClear();
-        paneHostState.scope = {
+        paneSeed = {
             right: { isOpen: false, activeTabId: null, selectedDestination: null, tabState: {} },
             details: createEmptyPaneDetailsState(),
             bottom: { isOpen: false, activeTabId: null, selectedDestination: null, tabState: {} },
@@ -339,6 +317,7 @@ describe('AppPaneScopeHost fresh plugin surface open', () => {
             <AppPaneScopeHost
                 scopeId="scope1"
                 main={<div />}
+                detailsPaneBuiltinAdapter={detailsPaneBuiltinAdapter}
                 surfaceScope={{
                     targetKind: 'session',
                     sessionId: 'session-1',
@@ -359,7 +338,6 @@ describe('AppPaneScopeHost fresh plugin surface open', () => {
         expect(openSurface).toBeTypeOf('function');
         const currentOpenSurface = openSurface;
         if (!currentOpenSurface) throw new Error('AppPane did not expose its fresh destination owner');
-        paneHostState.dispatch.mockClear();
 
         await act(async () => {
             const rightOutcome = await currentOpenSurface({
@@ -378,46 +356,19 @@ describe('AppPaneScopeHost fresh plugin surface open', () => {
                 input: { source: 'header' },
             });
             expect(detailsTabOutcome).toEqual({ ok: true });
-            const detailsPaneOutcome = await currentOpenSurface({
+            await expect(currentOpenSurface({
                 destination: detailsPanePlacement.binding.destination,
                 input: { source: 'header' },
-            });
-            expect(detailsPaneOutcome).toEqual({ ok: true });
+            })).resolves.toEqual({ ok: true });
         });
 
-        expect(paneHostState.dispatch).toHaveBeenCalledWith({
-            type: 'selectRightDestination',
-            scopeId: 'scope1',
-            destination: {
-                kind: 'plugin',
-                destination: rightPlacement.binding.destination,
-            },
-        });
-        expect(paneHostState.dispatch).toHaveBeenCalledWith({
-            type: 'selectBottomDestination',
-            scopeId: 'scope1',
-            destination: {
-                kind: 'plugin',
-                destination: bottomPlacement.binding.destination,
-                instanceKey: 'activity-1',
-            },
-        });
-        expect(paneHostState.dispatch).toHaveBeenCalledWith(expect.objectContaining({
-            type: 'openDetailsTab',
-            scopeId: 'scope1',
-            tab: expect.objectContaining({
-                kind: 'pluginDetailsDestination',
-                resource: {
-                    kind: 'pluginDetailsDestination',
-                    destination: detailsTabPlacement.binding.destination,
-                },
-            }),
+        expect(readScope().right.selectedDestination).toEqual({ kind: 'plugin', destination: rightPlacement.binding.destination });
+        expect(readScope().bottom.selectedDestination).toEqual({ kind: 'plugin', destination: bottomPlacement.binding.destination, instanceKey: 'activity-1' });
+        expect(readScope().details.overlay?.destination).toEqual(detailsPanePlacement.binding.destination);
+        expect(Object.values(readScope().details.tabsByKey)).toContainEqual(expect.objectContaining({
+            kind: 'pluginDetailsDestination',
+            resource: { kind: 'pluginDetailsDestination', destination: detailsTabPlacement.binding.destination },
         }));
-        expect(paneHostState.dispatch).toHaveBeenCalledWith({
-            type: 'openDetailsOverlay',
-            scopeId: 'scope1',
-            destination: detailsPanePlacement.binding.destination,
-        });
     });
 
     it('refuses malformed fresh right and Details requests before any owner mutation', async () => {
@@ -430,8 +381,7 @@ describe('AppPaneScopeHost fresh plugin surface open', () => {
         const detailsPlacement = createPlacement({ descriptorId: 'details-tab', container: 'detailsTab' });
         let openSurface: PluginSurfaceOpenHandler | undefined;
 
-        paneHostState.dispatch.mockClear();
-        paneHostState.scope = {
+        paneSeed = {
             right: { isOpen: false, activeTabId: null, selectedDestination: null, tabState: {} },
             details: createEmptyPaneDetailsState(),
             bottom: { isOpen: false, activeTabId: null, selectedDestination: null, tabState: {} },
@@ -461,7 +411,6 @@ describe('AppPaneScopeHost fresh plugin surface open', () => {
         expect(openSurface).toBeTypeOf('function');
         const currentOpenSurface = openSurface;
         if (!currentOpenSurface) throw new Error('AppPane did not expose its fresh destination owner');
-        paneHostState.dispatch.mockClear();
 
         await act(async () => {
             await expect(currentOpenSurface({
@@ -481,7 +430,7 @@ describe('AppPaneScopeHost fresh plugin surface open', () => {
             });
         });
 
-        expect(paneHostState.dispatch).not.toHaveBeenCalled();
+        expect(readScope()).toBe(initialScope);
     });
 
     it('retires a prior public handler when its direct scope is gone', async () => {
@@ -493,8 +442,7 @@ describe('AppPaneScopeHost fresh plugin surface open', () => {
         });
         let openSurface: PluginSurfaceOpenHandler | undefined;
 
-        paneHostState.dispatch.mockClear();
-        paneHostState.scope = {
+        paneSeed = {
             right: { isOpen: false, activeTabId: null, selectedDestination: null, tabState: {} },
             details: createEmptyPaneDetailsState(),
             bottom: { isOpen: false, activeTabId: null, selectedDestination: null, tabState: {} },
@@ -537,7 +485,6 @@ describe('AppPaneScopeHost fresh plugin surface open', () => {
         });
 
         expect(openSurface).toBeUndefined();
-        paneHostState.dispatch.mockClear();
 
         await expect(retiredOpenSurface({
             destination: bottomPlacement.binding.destination,
@@ -547,7 +494,7 @@ describe('AppPaneScopeHost fresh plugin surface open', () => {
             code: 'unavailable',
             reason: 'plugin_surface_open_destination_owner_unavailable',
         });
-        expect(paneHostState.dispatch).not.toHaveBeenCalled();
+        expect(readScope()).toBe(initialScope);
     });
 
     it('retires an older public handler before a new Project target can own the same destination', async () => {
@@ -563,8 +510,7 @@ describe('AppPaneScopeHost fresh plugin surface open', () => {
             openSurface = next;
         };
 
-        paneHostState.dispatch.mockClear();
-        paneHostState.scope = {
+        paneSeed = {
             right: { isOpen: false, activeTabId: null, selectedDestination: null, tabState: {} },
             details: createEmptyPaneDetailsState(),
             bottom: { isOpen: false, activeTabId: null, selectedDestination: null, tabState: {} },
@@ -615,7 +561,6 @@ describe('AppPaneScopeHost fresh plugin surface open', () => {
         const currentOpenSurface = openSurface;
         if (!currentOpenSurface) throw new Error('AppPane did not expose its replacement Project destination owner');
         expect(currentOpenSurface).not.toBe(retiredOpenSurface);
-        paneHostState.dispatch.mockClear();
 
         await expect(retiredOpenSurface({
             destination: bottomPlacement.binding.destination,
@@ -625,16 +570,13 @@ describe('AppPaneScopeHost fresh plugin surface open', () => {
             code: 'unavailable',
             reason: 'plugin_surface_open_destination_owner_unavailable',
         });
-        await expect(currentOpenSurface({
-            destination: bottomPlacement.binding.destination,
-            input: { source: 'project-2' },
-        })).resolves.toEqual({ ok: true });
-        expect(paneHostState.dispatch).toHaveBeenCalledTimes(1);
-        expect(paneHostState.dispatch).toHaveBeenCalledWith({
-            type: 'selectBottomDestination',
-            scopeId: 'scope1',
-            destination: { kind: 'plugin', destination: bottomPlacement.binding.destination },
+        await act(async () => {
+            await expect(currentOpenSurface({
+                destination: bottomPlacement.binding.destination,
+                input: { source: 'project-2' },
+            })).resolves.toEqual({ ok: true });
         });
+        expect(readScope().bottom.selectedDestination).toEqual({ kind: 'plugin', destination: bottomPlacement.binding.destination });
     });
 
     it('retires a superseded semantic callback subscription without retiring the live Project owner', async () => {
@@ -665,8 +607,7 @@ describe('AppPaneScopeHost fresh plugin surface open', () => {
             interactionEnabled: true,
         };
 
-        paneHostState.dispatch.mockClear();
-        paneHostState.scope = {
+        paneSeed = {
             right: { isOpen: false, activeTabId: null, selectedDestination: null, tabState: {} },
             details: createEmptyPaneDetailsState(),
             bottom: { isOpen: false, activeTabId: null, selectedDestination: null, tabState: {} },
@@ -697,7 +638,6 @@ describe('AppPaneScopeHost fresh plugin surface open', () => {
         const currentSubscription = secondSubscription;
         if (!currentSubscription) throw new Error('AppPane did not expose its replacement semantic callback subscription');
         expect(currentSubscription).not.toBe(retiredSubscription);
-        paneHostState.dispatch.mockClear();
 
         await expect(retiredSubscription({
             destination: bottomPlacement.binding.destination,
@@ -707,11 +647,13 @@ describe('AppPaneScopeHost fresh plugin surface open', () => {
             code: 'unavailable',
             reason: 'plugin_surface_open_destination_owner_unavailable',
         });
-        await expect(currentSubscription({
-            destination: bottomPlacement.binding.destination,
-            input: { source: 'live-semantic-callback' },
-        })).resolves.toEqual({ ok: true });
-        expect(paneHostState.dispatch).toHaveBeenCalledTimes(1);
+        await act(async () => {
+            await expect(currentSubscription({
+                destination: bottomPlacement.binding.destination,
+                input: { source: 'live-semantic-callback' },
+            })).resolves.toEqual({ ok: true });
+        });
+        expect(readScope().bottom.selectedDestination).toEqual({ kind: 'plugin', destination: bottomPlacement.binding.destination });
     });
 
     it('keeps a restored Project bottom selection as its exact tombstone instead of falling back', async () => {
@@ -722,8 +664,7 @@ describe('AppPaneScopeHost fresh plugin surface open', () => {
         };
         const BuiltinBottomPane = () => React.createElement('BuiltinBottomPane');
 
-        paneHostState.dispatch.mockClear();
-        paneHostState.scope = {
+        paneSeed = {
             right: { isOpen: false, activeTabId: null, selectedDestination: null, tabState: {} },
             details: createEmptyPaneDetailsState(),
             bottom: {
@@ -757,17 +698,13 @@ describe('AppPaneScopeHost fresh plugin surface open', () => {
             />,
         );
 
-        const bottomPane = screen.tree.findByType('MultiPaneHostStub' as never).props.bottomPane;
-        expect(bottomPane).toEqual(expect.objectContaining({
-            props: expect.objectContaining({ diagnostics: ['pane_destination_unavailable'] }),
-        }));
-        expect(bottomPane.type).not.toBe(BuiltinBottomPane);
-        expect(paneHostState.scope.bottom.selectedDestination).toEqual({
+        const { PluginReactNativeUnavailable } = await import('@/components/plugins/reactNative/PluginReactNativeUnavailable');
+        expect(screen.findByType(PluginReactNativeUnavailable).props.diagnostics).toEqual(['pane_destination_unavailable']);
+        expect(screen.findAllByType(BuiltinBottomPane)).toHaveLength(0);
+        expect(readScope().bottom.selectedDestination).toEqual({
             kind: 'plugin',
             destination: restoredDestination,
         });
-        expect(paneHostState.dispatch).not.toHaveBeenCalledWith(expect.objectContaining({
-            type: 'selectBottomDestination',
-        }));
+        expect(readScope().bottom.selectedDestination).toEqual(paneSeed.bottom.selectedDestination);
     });
 });

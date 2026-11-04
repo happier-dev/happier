@@ -23,10 +23,6 @@ vi.mock('@/components/ui/panels/MultiPaneHostWithBottom', () => ({
     MultiPaneHostWithBottom: () => React.createElement('MultiPaneHostStub'),
 }));
 
-vi.mock('@/utils/platform/responsive', () => ({
-    useDeviceType: () => 'tablet',
-}));
-
 installAppPaneScopeHostCommonModuleMocks({
     getDimensions: () => ({ width: 600, height: 800 }),
     getLocalSetting: (key: string) => {
@@ -54,6 +50,7 @@ vi.mock('./AppPaneProvider', () => {
                 },
             },
             getDriver: () => null,
+            registerDriver: () => () => {},
             driverRegistryVersion: 1,
         });
     return { useAppPaneContext: useSelectedPaneContext, useOptionalAppPaneContext: useSelectedPaneContext };
