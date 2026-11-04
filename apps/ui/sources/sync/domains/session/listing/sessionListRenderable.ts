@@ -1,3 +1,8 @@
+import { selectOldestPendingRequest } from '@happier-dev/session-core/pending';
+import { resolvePendingRequestAttentionReasonV1 } from '@happier-dev/protocol/sessions/personal/attention';
+import { createCollectionSessionRequestIdentity, areCollectionSessionRequestIdentitiesEqual,
+    type CollectionSessionRequestIdentity } from '@/components/ui/lists/collection/collectionRequestRef';
+import { listPendingSessionRequests } from '@/sync/domains/session/pending/listPendingSessionRequests';
 import { reconcileSessionRequestProjection } from '../sessionTupleApplyCurrentness';
 import { reconcileSessionLifecycleProjection } from '../sessionLifecycleProjection';
 import { readSessionManagerSessionIdV1 } from '@happier-dev/protocol/sessions/follow/sessionManagerV1';
@@ -224,6 +229,7 @@ export interface SessionListRenderableSession {
     hasPendingPermissionRequests?: boolean;
     hasPendingUserActionRequests?: boolean;
     pendingRequestObservedAt?: number | null;
+    currentRequestRef?: CollectionSessionRequestIdentity | null;
     hasUnreadMessages?: boolean;
     /** Derived client operation presentation; never persisted as runtime authority. */
     archiving?: boolean;
@@ -587,6 +593,21 @@ export function buildSessionListRenderableFromSession(
         if (preservePendingFlags && previous) return previous.pendingRequestObservedAt ?? null;
         return deriveLatestPendingRequestObservedAtFromSession(session, messages, statesCache);
     })();
+    const currentRequestRef = (() => {
+        // An opened display omits both request ledgers. Even a retained, current Agent-state
+        // witness cannot prove that newer shared metadata has no Action confirmation.
+        if (openedDisplay && metadataUndecided) return undefined;
+        if (preservePendingFlags) return previous?.currentRequestRef ?? null;
+        const reason = pending.hasPendingPermissionRequests ? 'permission_required'
+            : pending.hasPendingUserActionRequests ? 'user_action_required' : null;
+        // Reuse this derivation's held Agent/shared-action facts and transcript aggregate. Never
+        // consult storage or hydrate a Session just to acquire a row's request identity.
+        const request = reason ? selectOldestPendingRequest(listPendingSessionRequests(session, messages ?? [], statesCache)
+            .filter(value => resolvePendingRequestAttentionReasonV1(value) === reason)) : null;
+        const identity = request ? createCollectionSessionRequestIdentity(request) : null;
+        return areCollectionSessionRequestIdentitiesEqual(previous?.currentRequestRef, identity)
+            ? previous?.currentRequestRef ?? null : identity;
+    })();
     const previousMetadata: ReturnType<typeof readSessionListRenderableMetadataComparisonFromRenderable> = previous?.metadata
         ? readSessionListRenderableMetadataComparisonFromRenderable(previous.metadata)
         : null;
@@ -775,6 +796,7 @@ export function buildSessionListRenderableFromSession(
             }
             : {}),
         pendingRequestObservedAt,
+        currentRequestRef,
         hasUnreadMessages: deriveSessionListRenderableHasUnreadMessagesFromSession({
             ...session,
             latestReadyEventSeq,
@@ -865,6 +887,7 @@ function preserveSessionListRenderablePendingFlags(
         hasPendingPermissionRequests: previous.hasPendingPermissionRequests,
         hasPendingUserActionRequests: previous.hasPendingUserActionRequests,
         pendingRequestObservedAt: preserveMissingFlags ? previous.pendingRequestObservedAt ?? null : next.pendingRequestObservedAt,
+        currentRequestRef: preserveMissingFlags ? previous.currentRequestRef ?? null : next.currentRequestRef,
     };
     if (preserveMissingFlags) return retainedPendingProjection;
     // An unopened inactive replay can omit proved-empty flags. Retain them only
@@ -1089,6 +1112,7 @@ export function areSessionListRenderablesEqual(
         && (previous.hasPendingPermissionRequests ?? null) === (next.hasPendingPermissionRequests ?? null)
         && (previous.hasPendingUserActionRequests ?? null) === (next.hasPendingUserActionRequests ?? null)
         && (previous.pendingRequestObservedAt ?? null) === (next.pendingRequestObservedAt ?? null)
+        && areCollectionSessionRequestIdentitiesEqual(previous.currentRequestRef, next.currentRequestRef)
         && (previous.hasUnreadMessages === true) === (next.hasUnreadMessages === true)
         && (previous.keepVisibleWhenInactive === true) === (next.keepVisibleWhenInactive === true)
         && (previous.metadataUnavailable === true) === (next.metadataUnavailable === true)

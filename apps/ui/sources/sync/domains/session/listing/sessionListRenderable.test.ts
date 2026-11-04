@@ -77,6 +77,40 @@ function buildRenderable(
 }
 
 describe('derivePendingRequestFlagsFromAgentState', () => {
+    it('retains current request reference identity across unrelated publications in a thousand-row list', () => {
+        const sources = Array.from({ length: 1_000 }, (_, index) => createSessionFixture({
+            id: `request-row-${index}`, serverId: 'home-a', active: true, activeAt: 1_000,
+            agentState: { requests: { pending: { kind: 'permission', tool: 'Bash',
+                arguments: { command: 'private command' }, createdAt: 10, turnId: `turn-${index}` } } },
+        }));
+        const rows = sources.map(source => buildSessionListRenderableFromSession(source, undefined, []));
+        expect(rows[0].currentRequestRef).toEqual({ kind: 'permission', requestId: 'pending', turnId: 'turn-0' });
+        let changedReferences = 0;
+        for (let publication = 0; publication < 5; publication++) {
+            for (const [index, source] of sources.entries()) {
+                const previous = rows[index];
+                // List refreshes may change unrelated activity and recreate the held Agent tuple.
+                const next = buildSessionListRenderableFromSession({ ...source, seq: source.seq + publication + 1,
+                    updatedAt: source.updatedAt + publication + 1,
+                    agentState: { requests: { ...source.agentState!.requests } },
+                }, previous, []);
+                if (next.currentRequestRef !== previous.currentRequestRef) changedReferences++;
+                rows[index] = next;
+            }
+        }
+        expect(changedReferences).toBe(0);
+        const replacement = buildSessionListRenderableFromSession({ ...sources[0], agentStateVersion: 1,
+            agentState: { requests: { pending: { kind: 'permission', tool: 'Bash', arguments: {}, createdAt: 10, turnId: 'turn-new' } } },
+        }, rows[0], []);
+        expect(replacement.currentRequestRef).not.toBe(rows[0].currentRequestRef);
+        expect(replacement.currentRequestRef?.turnId).toBe('turn-new');
+        const settled = buildSessionListRenderableFromSession({ ...sources[0], agentStateVersion: 2,
+            agentState: { requests: {} },
+        }, replacement, []);
+        expect(settled.currentRequestRef).toBeNull();
+        expect(preserveSessionListRenderableStaleFields(settled, { ...rows[0], updatedAt: 5_000 }).currentRequestRef).toBeNull();
+    });
+
     it('retains omitted empty request flags only for an otherwise unchanged row', () => {
         const previous = buildRenderable({ id: 'empty-request-projection',
             encryptedContentAvailability: 'ready',
