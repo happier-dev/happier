@@ -97,9 +97,9 @@ export function collectionSpaceSettingRefs(entityKind: CollectionEntityKindV1): 
         enabled: ref('spacesEnabled', {}), masterEnabled: { ...builtInSettingUiDeclaration('spaces.enabled'),
             anchor: 'spaces.enabled', sectionId: readBuiltInSettingDeclarationV1('spaces.enabled')!.sectionId } };
 }
-export const COLLECTION_SPACE_SETTINGS: readonly SettingsPageDeclaration[] = (['sessionWork', 'workflow', 'discussion'] as const).flatMap(entityKind => {
+export const COLLECTION_SPACE_SETTINGS: readonly SettingsPageDeclaration[] = (['sessionWork', 'workflow', 'discussion'] as const).flatMap((entityKind): SettingsPageDeclaration[] => {
     const settings = collectionSpaceSettingRefs(entityKind);
-    const pageSettings = { spaces: settings.spaces, selectedSpace: settings.selectedSpace, enabled: settings.enabled,
+    const pageSettings: Record<string, SettingRef> = { spaces: settings.spaces, selectedSpace: settings.selectedSpace, enabled: settings.enabled,
         ...(entityKind === 'sessionWork' ? { masterEnabled: settings.masterEnabled } : {}) };
     const sectionId = settings.spaces.sectionId;
     // Manage spaces is the rows' home: search and the title menu open that entity's page at the same anchors.
