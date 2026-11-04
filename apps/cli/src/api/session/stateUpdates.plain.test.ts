@@ -167,6 +167,49 @@ describe('stateUpdates (plaintext sessions)', () => {
     });
     expect(version).toBe(2);
   });
+  it.each(['plain', 'e2ee'] as const)('publishes nothing for an equal-content %s metadata update and publishes a real change in full', async (mode) => {
+    // Issue #832: an E2EE ciphertext differs on every encrypt, so only the writer can tell
+    // that a re-published catalogue is unchanged. Equal content must cost no emit and no version.
+    const slashCommandDetails = Array.from({ length: 50 }, (_, index) => ({
+      command: `skill-${index}`,
+      description: `Skill ${index} description`,
+    }));
+    let metadata: Metadata | null = createTestMetadata({
+      path: '/tmp', host: 'localhost',
+      slashCommands: slashCommandDetails.map((detail) => detail.command),
+      slashCommandDetails,
+    });
+    let version = 7;
+    const encryptionKey = new Uint8Array(32);
+    const emitted: unknown[] = [];
+    const socket = {
+      emitWithAck: async (_event: string, payload: { metadata: string; expectedVersion: number }) => {
+        emitted.push(mode === 'plain' ? JSON.parse(payload.metadata) : decrypt(encryptionKey, 'legacy', decodeBase64(payload.metadata)));
+        return { result: 'success', metadata: payload.metadata, version: payload.expectedVersion + 1 };
+      },
+    };
+    const write = (handler: (current: Metadata) => Metadata) => updateSessionMetadataWithAckResult({
+      socket, sessionId: 's1', sessionEncryptionMode: mode,
+      encryptionKey, encryptionVariant: 'legacy',
+      getMetadata: () => metadata, setMetadata: (next) => { metadata = next; },
+      getMetadataVersion: () => version, setMetadataVersion: (next) => { version = next; },
+      syncSessionSnapshotFromServer: async () => {},
+      handler: (current) => ({ metadata: handler(current), result: 'settled' }),
+    });
+
+    // The same object, a rebuilt copy, and a copy with a different key order are all equal content.
+    await expect(write((current) => current)).resolves.toBe('settled');
+    await write((current) => ({ ...current, slashCommands: [...(current.slashCommands ?? [])], slashCommandDetails: slashCommandDetails.map((detail) => ({ ...detail })) }));
+    await write(({ slashCommandDetails: details, ...rest }) => ({ slashCommandDetails: details, ...rest }));
+    expect(emitted).toEqual([]);
+    expect(version).toBe(7);
+
+    await write((current) => ({ ...current, slashCommands: [...(current.slashCommands ?? []), 'new-skill'] }));
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0]).toMatchObject({ slashCommandDetails, slashCommands: expect.arrayContaining(['new-skill']) });
+    expect(version).toBe(8);
+  });
+
   it('sends + applies plaintext metadata updates when session encryption mode is plain', async () => {
     const emitWithAck = vi.fn(async (_event: string, payload: any) => {
       expect(typeof payload.metadata).toBe('string');
