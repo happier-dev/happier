@@ -1138,7 +1138,9 @@ export async function openCodexNativeAppServerSession(
       ...(request.kind === 'resume' && request.strictNativeResumeIdentity === true
         ? { strictNativeResumeIdentity: true }
         : {}),
-      ...(request.kind !== 'fork' && request.startupInstructions
+      ...(request.kind === 'resume'
+        ? { developerInstructions: request.startupInstructions?.instructions ?? '' }
+        : request.kind !== 'fork' && request.startupInstructions
         ? { developerInstructions: request.startupInstructions.instructions }
         : {}),
     });

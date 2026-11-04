@@ -862,20 +862,16 @@ describe('Codex app-server temporary recoverable turn failures', () => {
     }
   });
 
-  it.each([
-    ['thread/start', undefined],
-    ['thread/resume', 'thread-existing'],
-  ])('sends startup developer instructions on %s', async (method, resumeId) => {
+  it('sends startup developer instructions on thread/start', async () => {
     const runtime = createRuntime();
 
     await startCodexAppServerRuntime(runtime, {
-      ...(resumeId ? { resumeId, preserveRequestedThreadId: true } : {}),
       developerInstructions: 'Global Voice developer instructions.',
     });
 
-    expect(clientState.requests.find((request) => request.method === method))
+    expect(clientState.requests.find((request) => request.method === 'thread/start'))
       .toMatchObject({
-        method,
+        method: 'thread/start',
         params: expect.objectContaining({
           developerInstructions: 'Global Voice developer instructions.',
         }),

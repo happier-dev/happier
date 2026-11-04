@@ -51,11 +51,13 @@ export async function withCodexNativeAttachFixture(run: (fixture: {
   sessionFactory?: Pick<AgentSessionRuntimeFactory, 'open'>;
   skillListFailure?: Readonly<{ code: number; message: string }>;
   initializeFailure?: Readonly<{ code: number; message: string }>;
+  threadInjectFailure?: Readonly<{ code: number; message: string }>;
   goalFailure?: Readonly<{ code: number; message: string }>;
   goalThreadsVisibleOnlyWhenLoaded?: boolean;
   onTurnStart?: (input: Readonly<{ socket: WebSocket; params: Record<string, unknown>; turnId: string }>) => void | Promise<void>;
   beforeTurnStartResponse?: () => Promise<void>;
   beforeThreadResumeResponse?: (input: Readonly<{ socket: WebSocket; params: Record<string, unknown> }>) => void | Promise<void>;
+  ignoreThreadRead?: boolean;
   turnIdForStart?: (occurrence: number) => string;
   nativeToolMode?: 'code_mode_only' | 'direct';
   nativeMcpServers?: Readonly<Record<string, Readonly<{ enabled: boolean }>>>;
@@ -174,6 +176,8 @@ export async function withCodexNativeAttachFixture(run: (fixture: {
           goal = null;
           result = { cleared: true };
         } else result = { goal };
+      } else if (message.method === 'thread/inject_items') {
+        error = options.threadInjectFailure;
       } else if (message.method === 'turn/start') {
         const turn = { id: turnId, status: 'inProgress' };
         turns.push(turn);
@@ -182,6 +186,7 @@ export async function withCodexNativeAttachFixture(run: (fixture: {
       } else if (message.method === 'thread/name/set') {
         named = true;
       } else if (message.method === 'thread/read') {
+        if (options.ignoreThreadRead) return;
         if (rejectRead) error = { code: -32000, message: 'rollout persistence failed' };
         else {
           materialized ||= named && params.includeTurns === true;
@@ -354,6 +359,10 @@ export async function withCodexNativeAttachFixture(run: (fixture: {
       opened.session = await openSession({
         ...(providerSessionId ? { kind: 'resume' as const, providerSessionId } : { kind: 'create' as const }),
         sessionId: 'actual-happier-session', cwd: root,
+        ...(providerSessionId && options.appServerTransport ? { runtimeDescriptorV1: {
+          v: 1 as const, agentId: 'codex', agent: { backendMode: 'appServer', providerSessionId,
+            appServerTransport: options.appServerTransport },
+        } } : {}),
         ...(options.sessionConnectedAccounts ? { connectedAccounts: options.sessionConnectedAccounts } : {}),
         launchEnvironment: configuredLaunchEnvironment,
         configuration: {

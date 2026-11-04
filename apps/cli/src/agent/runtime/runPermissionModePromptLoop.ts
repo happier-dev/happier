@@ -1440,10 +1440,13 @@ export async function runPermissionModePromptLoop(opts: {
         const canReopenForNativePlan = planDeliveryState?.startupInstructionsSupported === true
           && opts.runtime.readSessionStartupInstructionsSupport?.() !== false
           && planDeliveryState.revisionChanges === 'resume';
-        const nativePlanMatches = () => planDeliveryState?.startupInstructionsSupported === true
-          && opts.runtime.readSessionStartupInstructions?.()?.instructions === effectiveAppendSystemPrompt.normalize('NFC')
-          && (marker === undefined || (opts.runtime.readSessionStartupInstructions?.()?.id === marker.id
-            && opts.runtime.readSessionStartupInstructions?.()?.revision === marker.revision));
+        const nativePlanMatches = () => {
+          const startup = opts.runtime.readSessionStartupInstructions?.();
+          return planDeliveryState?.startupInstructionsSupported === true
+            && (startup?.instructions ?? '') === effectiveAppendSystemPrompt.normalize('NFC')
+            && (!effectiveAppendSystemPrompt || marker === undefined
+              || (startup?.id === marker.id && startup.revision === marker.revision));
+        };
         let preparedNativePlan = lastDeliveredSessionSystemPrompt === null && nativePlanMatches();
         const lostNativePlan = lastDeliveredSessionSystemPrompt?.native === true && !nativePlanMatches();
         if (resolveSessionPlan && canReopenForNativePlan

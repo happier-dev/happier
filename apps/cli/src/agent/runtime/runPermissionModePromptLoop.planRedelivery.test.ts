@@ -14,6 +14,8 @@ import { resolveEffectiveCodingPromptPlan } from '@/agent/prompting/coding/resol
 import type { PromptPlanComposition } from '@/agent/prompting/promptComposition';
 import { TranscriptRawAgentEventV1Schema } from '@happier-dev/protocol/sessions/messages/transcriptRawRecordV1';
 import { formatFileReviewNoteV1 } from '@happier-dev/protocol/messages/structured/fileReviewNoteV1';
+import { PluginAgentContributionV2Schema } from '@happier-dev/protocol';
+import { PLUGIN_MANIFEST } from '@happier-dev/plugins-codex/manifest';
 
 type PlanTurn = Readonly<{
   text: string;
@@ -26,7 +28,7 @@ type PlanTurn = Readonly<{
   composition?: PromptPlanComposition;
 }>;
 
-async function dispatchPlans(turns: readonly PlanTurn[], nativePlans?: string[], initialNativePlan?: string,
+async function dispatchPlans(turns: readonly PlanTurn[], nativePlans?: (string | null)[], initialNativePlan?: string,
   nativeMarkers?: AgentSessionStartupInstructionsMarkerV1[], initialResumeId?: string,
   retainedEvents?: unknown[], reviewNotes = false) {
   const dispatchedInputs: (readonly string[])[] = [];
@@ -96,10 +98,10 @@ async function dispatchPlans(turns: readonly PlanTurn[], nativePlans?: string[],
           serviceId: 'host-runtime', groupId: 'primary-runtime', epochId: 'replacement',
         });
         nativeInstructions = intent?.startupInstructions ?? null;
+        expect(reason).toBe('session_closed');
+        expect(intent).toMatchObject({ kind: 'resume', providerSessionId: 'native-session', importHistory: false });
+        nativePlans?.push(nativeInstructions?.instructions ?? null);
         if (intent?.startupInstructions) {
-          expect(reason).toBe('session_closed');
-          expect(intent).toMatchObject({ kind: 'resume', providerSessionId: 'native-session', importHistory: false });
-          nativePlans?.push(intent.startupInstructions.instructions);
           const { instructions: _instructions, ...marker } = intent.startupInstructions;
           nativeMarkers?.push(marker);
         }
@@ -189,6 +191,24 @@ describe('session prompt-plan re-delivery', () => {
       components: [{ kind: 'other', overlap: 'none', byteLength: Buffer.byteLength(nativePrompts[0]!) }] });
   });
   const supersedingPlan = (plan: string) => `These instructions supersede the Happier startup instructions and any earlier Happier session plan.\n\n${plan}`;
+  it('reopens an existing Codex session for changed and removed plans with prefix-free input', async () => {
+    const agent = PluginAgentContributionV2Schema.parse(PLUGIN_MANIFEST.contributes.agents?.[0]);
+    if (!('primary' in agent) || agent.primary !== 'sessions') throw new Error('Codex Session Agent declaration is absent');
+    const startup = agent.capabilities.sessions.startupInstructions;
+    const deliveryState = { startupInstructionsSupported: startup?.versions.includes(1) === true,
+      revisionChanges: startup?.revisionChanges };
+    const nativePlans: (string | null)[] = [];
+    expect(await dispatchPlans([
+      { text: 'unchanged V2', plan: 'PLAN_V2', deliveryState },
+      { text: 'apply V3', plan: 'PLAN_V3', deliveryState },
+      { text: 'unchanged V3', plan: 'PLAN_V3', deliveryState },
+      { text: 'apply V4', plan: 'PLAN_V4', deliveryState },
+      { text: 'remove plan', plan: '', deliveryState },
+      { text: 'still empty', plan: '', deliveryState },
+    ], nativePlans, 'PLAN_V2', undefined, 'native-session'))
+      .toEqual(['unchanged V2', 'apply V3', 'unchanged V3', 'apply V4', 'remove plan', 'still empty']);
+    expect(nativePlans).toEqual(['PLAN_V3', 'PLAN_V4', null]);
+  });
   it('uses the initial native full plan without reopening, then keeps unsupported resume revisions on prefix fallback', async () => {
     const nativePlans: string[] = [];
     const deliveryState = { startupInstructionsSupported: true };

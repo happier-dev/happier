@@ -2669,7 +2669,7 @@ export function createCodexAppServerRuntime(
       ...buildThreadServiceTierParams(currentServiceTier, hasServiceTierOverride),
       ...(Object.keys(threadConfig).length > 0 ? { config: threadConfig } : {}),
       ...permissionFields,
-      ...(options?.developerInstructions
+      ...(typeof options?.developerInstructions === 'string'
         ? { developerInstructions: options.developerInstructions }
         : {}),
     };
@@ -2787,6 +2787,17 @@ export function createCodexAppServerRuntime(
       throw new Error('Codex app-server thread/start returned no thread id');
     }
     threadId = nextThreadId;
+    if (requestedThreadId && typeof options?.developerInstructions === 'string') {
+      // Codex 0.162.1 replays the old initial developer context even on cold resume.
+      // Native injection appends the current plan at developer priority on both transports.
+      await appServerClient.request('thread/inject_items', {
+        threadId: nextThreadId,
+        items: [{ type: 'message', role: 'developer', content: [{ type: 'input_text', text: [
+          'This is the complete current Happier session plan. It supersedes all earlier Happier startup instructions and session plans, including instructions removed from this version.',
+          options.developerInstructions || 'The current plan is empty.',
+        ].join('\n\n') }] }],
+      }, { timeoutMs: null });
+    }
     startedEmptyThreadWithoutExplicitModel = !requestedThreadId && !Object.prototype.hasOwnProperty.call(commonFields, 'model');
     startedEmptyThreadPolicyKey = requestedThreadId ? null : policyKey;
     currentModelId = readModelId(response) ?? currentModelId;

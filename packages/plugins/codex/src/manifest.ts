@@ -300,7 +300,7 @@ export const CODEX_PLUGIN = definePlugin({
             },
             continuationVerification: { intents: ['resume', 'fork'], requirement: 'required' },
             workStateSources: [{ id: 'goals', itemKinds: ['goal'] }],
-            startupInstructions: { versions: [1] },
+            startupInstructions: { versions: [1], revisionChanges: 'resume' },
             executionRunContext: { versions: [1] },
           },
         }),
