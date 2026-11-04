@@ -1,3 +1,4 @@
+import { createProviderAccountUsageStore } from '../connectedServices/accountUsage/store';
 import axios from 'axios';
 import fastify from 'fastify';
 import { afterAll, afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -195,7 +196,7 @@ let openedRunPluginRuntime = false;
 beforeEach(async () => { channel = await createRequesterCurrentnessSocketHarness(); });
 afterEach(async () => { await channel.close(); });
 afterAll(async () => { if (openedRunPluginRuntime) await runPluginRuntimeController.shutdown(); });
-it.each(['refresh', 'settings-refresh-failure', 'startup-settings-recovery', 'startup-settings-cancel', 'startup-settings-forbidden', 'startup-settings-unbound', 'untracked-lifetime', 'profile-unavailable', 'action-policy', 'action-home-recovery', 'run-home-recovery', 'run-purpose-home-recovery', 'run-binding-home-recovery', 'authorization-observations', 'warm-account', 'currentness-phase', 'resolution-currentness', 'spawn-currentness', 'background-home-failure', 'startup-home-failure', 'refresh-observations', 'request-auth-observations', 'follow-wake', 'follow-rules', 'follow-source', 'follow-receiver', 'follow-pending', 'follow-idle-source'] as const)('keeps requester %s isolated from active Alice', async (surface) => {
+it.each(['usage-owner', 'refresh', 'settings-refresh-failure', 'startup-settings-recovery', 'startup-settings-cancel', 'startup-settings-forbidden', 'startup-settings-unbound', 'untracked-lifetime', 'profile-unavailable', 'action-policy', 'action-home-recovery', 'run-home-recovery', 'run-purpose-home-recovery', 'run-binding-home-recovery', 'authorization-observations', 'warm-account', 'currentness-phase', 'resolution-currentness', 'spawn-currentness', 'background-home-failure', 'startup-home-failure', 'refresh-observations', 'request-auth-observations', 'follow-wake', 'follow-rules', 'follow-source', 'follow-receiver', 'follow-pending', 'follow-idle-source'] as const)('keeps requester %s isolated from active Alice', async (surface) => {
   const actionPolicySurface = surface === 'action-policy' || surface === 'action-home-recovery' || surface === 'authorization-observations';
   const runSurface = surface === 'run-home-recovery' || surface === 'run-purpose-home-recovery' || surface === 'run-binding-home-recovery';
   const runPurposeSurface = surface === 'run-purpose-home-recovery' || surface === 'run-binding-home-recovery';
@@ -444,7 +445,9 @@ it.each(['refresh', 'settings-refresh-failure', 'startup-settings-recovery', 'st
     admitted.admitted.bindRuntimeMachineAdmissionCurrentness(async () => current);
     // Admission captures the real settings/cache lifetime after daemon startup.
     expect(admitted.admitted.accountSettingsContext.scopeKey).toBe(resolveAccountSettingsScopeKey(admitted.admitted.credentials));
+    const sharedUsageStore = host.runtime.resolveProviderAccountUsageStore(admitted.admitted.attribution);
     const runtimeConstruction = createRequesterSessionRuntimeContext({ bootstrap: admitted.admitted,
+      providerAccountUsageStore: sharedUsageStore,
       activeServerDir: directory, connectedServicesMaterializationBaseDir: join(directory, 'materialized'),
       resolveQualifiedConnectedAccountV4Support: () => runPurposeSurface ? 'advertised' : 'indeterminate',
       coordinatorInput: { machineId: 'machine', machineIdProvider: () => 'machine', runtimeId: 'runtime', happyHomeDir: directory,
@@ -465,6 +468,21 @@ it.each(['refresh', 'settings-refresh-failure', 'startup-settings-recovery', 'st
     }
     runtime = await runtimeConstruction;
     if (!runtime) throw new Error('Missing real requester runtime');
+    if (surface === 'usage-owner') {
+      const recordKey = { providerId: 'openai-codex', accountSubjectId: 'provider-bob', subjectKind: 'account' as const, quotaScope: 'account' as const };
+      const source = { serviceId: 'happier.agent.codex/openai-codex', profileId: 'primary', bindingKind: 'group_member' as const, groupId: 'pool', groupGeneration: 7 };
+      sharedUsageStore.recordSnapshot({ v: 1, recordId: buildProviderAccountUsageRecordId(recordKey), recordKey,
+        providerId: 'openai-codex', accountSubject: { kind: 'providerSubject', id: 'provider-bob' },
+        observedAtMs: 900, fetchedAtMs: 900, staleAfterMs: 60_000, source: 'providerHttp', confidence: 'confirmed', state: 'loaded_data',
+        meters: [{ meterId: 'weekly', label: 'Weekly', used: 100, limit: 100, unit: 'unknown', remainingPct: 0,
+          utilizationPct: 100, resetsAt: 100_000, status: 'ok', details: {} }] }, { sources: [source] });
+      expect(runtime.providerAccountUsageStore.resolveBySource(source)?.meters[0]?.remainingPct).toBe(0);
+      expect(host.runtime.providerAccountUsageStore.resolveBySource(source)).toBeNull();
+      await runtime.dispose();
+      runtime = null;
+      expect(host.runtime.resolveProviderAccountUsageStore(admitted.admitted.attribution).resolveBySource(source)?.meters[0]?.remainingPct).toBe(0);
+      return;
+    }
     if (surface === 'spawn-currentness') {
       const requester = runtime;
       const spawn = () => executeSpawnSessionRequest({ options: {
@@ -1564,7 +1582,7 @@ it.each(['generation', 'usage', 'reconnect', 'run_custody'] as const)('keeps req
       verifyMachineAdmissionCurrent: async () => current } });
     if (!admitted) throw new Error('Missing real requester admission');
     admitted.admitted.bindRuntimeMachineAdmissionCurrentness(async () => current);
-    runtime = await createRequesterSessionRuntimeContext({ bootstrap: admitted.admitted,
+    runtime = await createRequesterSessionRuntimeContext({ providerAccountUsageStore: createProviderAccountUsageStore(), bootstrap: admitted.admitted,
       activeServerDir: directory, connectedServicesMaterializationBaseDir: join(directory, 'materialized'),
       resolveQualifiedConnectedAccountV4Support: () => 'indeterminate',
       coordinatorInput: { machineId: 'machine', machineIdProvider: () => 'machine', runtimeId: 'runtime', happyHomeDir: directory,
@@ -1719,7 +1737,7 @@ it.each(['retired', 'pending_release'] as const)('keeps requester runtime %s und
       verifyMachineAdmissionCurrent: async () => true } });
     if (!admitted) throw new Error('Missing real requester admission');
     admitted.admitted.bindRuntimeMachineAdmissionCurrentness(async () => true);
-    runtime = await createRequesterSessionRuntimeContext({ bootstrap: admitted.admitted,
+    runtime = await createRequesterSessionRuntimeContext({ providerAccountUsageStore: createProviderAccountUsageStore(), bootstrap: admitted.admitted,
       activeServerDir: directory, connectedServicesMaterializationBaseDir: join(directory, 'materialized'),
       resolveQualifiedConnectedAccountV4Support: () => 'indeterminate',
       coordinatorInput: { machineId: 'machine', machineIdProvider: () => 'machine', runtimeId: 'runtime', happyHomeDir: directory,

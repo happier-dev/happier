@@ -1,3 +1,4 @@
+import { createProviderAccountUsageStore } from '@/daemon/connectedServices/accountUsage/store';
 import { logger } from '@/ui/logger';
 import { loadInstalledPlugins } from '@/plugins/discovery/load/installed';
 import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
@@ -778,7 +779,7 @@ describe('requester Session lifecycle custody', () => {
         serverId: attribution.serverId, expectedAttribution: expected ?? attribution, serverHttpBaseUrl: origin,
         machineAdmissionBoundary: host.boundary, legacyOwnerCredentials: { ...credentials } });
       if (!bootstrap) return null;
-      requester = await createRequesterSessionRuntimeContext({ bootstrap, activeServerDir: directory!,
+      requester = await createRequesterSessionRuntimeContext({ providerAccountUsageStore: createProviderAccountUsageStore(), bootstrap, activeServerDir: directory!,
         connectedServicesMaterializationBaseDir: join(directory!, 'materialized'),
         resolveQualifiedConnectedAccountV4Support: () => 'indeterminate', coordinatorInput: {
           machineId: 'machine', machineIdProvider: () => 'machine', runtimeId: 'runtime', happyHomeDir: directory!,

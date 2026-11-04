@@ -1,3 +1,4 @@
+import { createProviderAccountUsageStore } from '@/daemon/connectedServices/accountUsage/store';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -236,7 +237,7 @@ describe('requester native subscription hot apply', () => {
       if (!custody) throw new Error('Missing retained requester custody');
       cleanupCustody = custody.cleanup;
       const accountHost = host.runtime;
-      const createRuntime = (bootstrap: Parameters<typeof createRequesterSessionRuntimeContext>[0]['bootstrap']) => createRequesterSessionRuntimeContext({ bootstrap,
+      const createRuntime = (bootstrap: Parameters<typeof createRequesterSessionRuntimeContext>[0]['bootstrap']) => createRequesterSessionRuntimeContext({ providerAccountUsageStore: createProviderAccountUsageStore(), bootstrap,
         activeServerDir: pluginRuntime.happyHomeDir, connectedServicesMaterializationBaseDir: join(pluginRuntime.happyHomeDir, 'materialized'),
         resolveQualifiedConnectedAccountV4Support: () => resolveQualifiedConnectedAccountAtomicV4Negotiation(features),
         coordinatorInput: { machineId: 'machine', machineIdProvider: () => 'machine', runtimeId: 'runtime',

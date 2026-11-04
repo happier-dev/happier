@@ -1,3 +1,4 @@
+import { createProviderAccountUsageStore } from '@/daemon/connectedServices/accountUsage/store';
 import fastify from 'fastify';
 import tweetnacl from 'tweetnacl';
 import { describe, expect, it, vi } from 'vitest';
@@ -198,7 +199,7 @@ describe('foreground requester Account admission through protected custody', () 
             connectedServicesMaterializationBaseDir: join(fixture.home, 'alice-runtime-materialized'),
             registry: runtimeRegistry, trackedSessions, getRequester: () => runtime,
             resolveQualifiedConnectedAccountV4Support: () => resolveQualifiedConnectedAccountAtomicV4Negotiation(homeFeatures) });
-          runtime = await createRequesterSessionRuntimeContext({ bootstrap: runtimeBootstrap,
+          runtime = await createRequesterSessionRuntimeContext({ providerAccountUsageStore: createProviderAccountUsageStore(), bootstrap: runtimeBootstrap,
             activeServerDir: fixture.home, connectedServicesMaterializationBaseDir: join(fixture.home, 'bob-runtime-materialized'),
             resolveQualifiedConnectedAccountV4Support: () => resolveQualifiedConnectedAccountAtomicV4Negotiation(homeFeatures), coordinatorInput: {
               machineId: 'machine-1', machineIdProvider: () => 'machine-1', runtimeId: 'foreground-runtime', happyHomeDir: fixture.home,

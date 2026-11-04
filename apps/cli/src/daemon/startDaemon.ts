@@ -2239,6 +2239,7 @@ const pluginRuntimeOwner = createDaemonPluginRuntimeOwner({
       readMaterializedStateObservationBinding,
       resolveExecutionRunLiveBrokerAuthority,
       providerAccountUsageStore,
+      resolveProviderAccountUsageStore,
       flushProviderAccountUsagePersistence,
       connectedServiceRuntimeQuotaSnapshots,
       createAgentCatalogObservation,
@@ -3294,6 +3295,7 @@ const pluginRuntimeOwner = createDaemonPluginRuntimeOwner({
         bootstrap, boundary: requesterMachineAdmissionBoundary(bootstrap.attribution),
       });
       return await createRequesterSessionRuntimeContext({ bootstrap, signal,
+        providerAccountUsageStore: resolveProviderAccountUsageStore(bootstrap.attribution),
         activeServerDir: configuration.activeServerDir, connectedServicesMaterializationBaseDir,
         resolveQualifiedConnectedAccountV4Support: () => resolveQualifiedConnectedAccountAtomicV4Negotiation(serverFeaturesSnapshotStore.getSnapshot()),
         coordinatorInput: {

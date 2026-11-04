@@ -1,3 +1,4 @@
+import { createProviderAccountUsageStore } from '@/daemon/connectedServices/accountUsage/store';
 import axios from 'axios';
 import tweetnacl from 'tweetnacl';
 import { afterEach, expect, it, onTestFinished, vi } from 'vitest';
@@ -364,7 +365,7 @@ it.each([false, true])('recovers a Discussion result through the actual Session 
         machineAdmission: { actorAccountId: 'bob', custodianAccountId: 'owner', machineId: 'target-machine',
           installationId: os.identity!.installationId, role: 'use', encryptionMode: 'plain' }, verifyMachineAdmissionCurrent: async () => requesterCurrent } });
     if (!admitted) throw new Error('Missing real requester bootstrap');
-    requesterRuntime = await createRequesterSessionRuntimeContext({ bootstrap: admitted.admitted, activeServerDir: directory,
+    requesterRuntime = await createRequesterSessionRuntimeContext({ providerAccountUsageStore: createProviderAccountUsageStore(), bootstrap: admitted.admitted, activeServerDir: directory,
       connectedServicesMaterializationBaseDir: join(directory, 'materialized'), resolveQualifiedConnectedAccountV4Support: () => 'indeterminate',
       coordinatorInput: { machineId: 'target-machine', machineIdProvider: () => 'target-machine', runtimeId: 'return-runtime',
         happyHomeDir: directory, logger: { debug() {}, info() {}, warn() {} },

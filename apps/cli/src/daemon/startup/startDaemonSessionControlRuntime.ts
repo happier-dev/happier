@@ -686,6 +686,7 @@ import {
   isProviderAccountUsageStoreMutationAccepted,
   type ProviderAccountUsageStore,
 } from '../connectedServices/accountUsage/store';
+import { createProviderAccountUsageStores } from '../connectedServices/accountUsage/scope';
 import { ConnectedServiceRuntimeAuthSwitchAttemptTracker } from '../connectedServices/runtimeAuth/ConnectedServiceRuntimeAuthSwitchAttemptTracker';
 import { buildConnectedServiceRuntimeAuthSwitchAttemptLogContext } from '../connectedServices/runtimeAuth/buildConnectedServiceRuntimeAuthSwitchAttemptLogContext';
 import { commitConnectedServiceAccountSwitchSessionEvent } from '../connectedServices/runtimeAuth/commitConnectedServiceAccountSwitchSessionEvent';
@@ -1581,6 +1582,7 @@ export async function startDaemonSessionControlRuntime(
       ProviderAccountUsageStore,
       'recordSnapshot' | 'resolveRecordId' | 'resolveBySource' | 'retainSourcesForProfile'
     >;
+    resolveProviderAccountUsageStore(scope: Readonly<{ serverId: string; accountId: string }>): ProviderAccountUsageStore;
     /** Resubmits provider account-usage material the persistence scheduler paused. */
     flushProviderAccountUsagePersistence: (timeoutMs: number) => Promise<void>;
     connectedServiceRuntimeQuotaSnapshots: ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore;
@@ -2096,7 +2098,10 @@ daemonWorkSignal: AbortSignal;
   let unsubscribeRunnerAgentAuthorityCurrentness = () => {};
   const connectedServiceRuntimeQuotaSnapshots =
     new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore();
-  const providerAccountUsageStore = createProviderAccountUsageStore();
+  const providerAccountUsageStores = createProviderAccountUsageStores();
+  const providerAccountUsageStore = params.externalActionAccountId
+    ? providerAccountUsageStores.forAccount({ serverId: params.serverId, accountId: params.externalActionAccountId })
+    : createProviderAccountUsageStore();
   const providerAccountUsagePersistence =
     createProviderAccountUsagePersistenceScheduler({
       api: {
@@ -16196,6 +16201,7 @@ daemonWorkSignal: AbortSignal;
     readMaterializedStateObservationBinding: (sessionId) =>
       readTrackedSessionMaterializedStateObservationBinding(params.pidToTrackedSession.values(), sessionId),
     providerAccountUsageStore,
+    resolveProviderAccountUsageStore: providerAccountUsageStores.forAccount,
     // Provider account-usage persistence pauses a key after repeated write
     // failures and retains its last payload. Reconnect is the only signal that
     // the failure cause is gone, so the daemon connectivity lifecycle resubmits

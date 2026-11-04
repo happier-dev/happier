@@ -1,3 +1,4 @@
+import { createProviderAccountUsageStore } from '@/daemon/connectedServices/accountUsage/store';
 import axios from 'axios';
 import { spawn } from 'node:child_process';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -94,7 +95,7 @@ it.each(['before_exit', 'during_exit', 'before_cleanup_registration', 'collision
         return admitted.admitted;
       };
       const createRuntime = async (bootstrap: AdmittedRequesterSessionBootstrap) => {
-        const runtime = await createRequesterSessionRuntimeContext({ bootstrap,
+        const runtime = await createRequesterSessionRuntimeContext({ providerAccountUsageStore: createProviderAccountUsageStore(), bootstrap,
           activeServerDir: directory, connectedServicesMaterializationBaseDir: join(directory, 'materialized'),
           resolveQualifiedConnectedAccountV4Support: () => 'indeterminate',
           coordinatorInput: { machineId: 'machine', machineIdProvider: () => 'machine', runtimeId: 'runtime', happyHomeDir: directory,

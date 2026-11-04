@@ -173,6 +173,7 @@ export async function createInstalledProjectAgentDaemonFixture(readControl: () =
   createRequesterRuntime = async bootstrap => {
     requesterRecoveryStage = 'runtime';
     const context = await createRequesterSessionRuntimeContext({ bootstrap,
+      providerAccountUsageStore: daemon.resolveProviderAccountUsageStore(bootstrap.attribution),
       activeServerDir: f.directory, connectedServicesMaterializationBaseDir: join(f.directory, 'requester-connected-services'),
       resolveQualifiedConnectedAccountV4Support: requesterOptions?.resolveQualifiedConnectedAccountV4Support ?? (() => 'indeterminate'),
       coordinatorInput: { machineId: 'machine', machineIdProvider: () => 'machine', runtimeId: 'project-runtime', happyHomeDir: f.directory,

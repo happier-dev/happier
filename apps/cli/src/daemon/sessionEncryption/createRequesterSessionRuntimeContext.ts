@@ -10,7 +10,7 @@ import { createRequesterConnectedAccountPurposeBindingRuntime } from '../connect
 import { readActiveConnectedAccountCatalog } from '@/settings/connectedAccounts/hydrateConnectedAccountCatalog';
 import { createHttpTeamCredentialDirectMaterialClient } from '../connectedServices/directMaterial/teamCredentialDirectMaterialClient';
 import { createDaemonSessionMutationCustody } from '../connectedServices/usageLimitRecovery/createDaemonUsageLimitRecoveryMutationCustody';
-import { createProviderAccountUsageStore } from '../connectedServices/accountUsage/store';
+import type { ProviderAccountUsageStore } from '../connectedServices/accountUsage/store';
 import { createProviderAccountUsagePersistenceScheduler } from '../connectedServices/accountUsage/persistence';
 import { ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore } from '../connectedServices/accountGroups/quotas/ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore';
 import { startDaemonConnectedServiceRuntime } from '../startup/startDaemonRuntimeBootstrap';
@@ -48,6 +48,7 @@ export function resolveRequesterSessionRuntimeDirectories(input: Readonly<{
 /** Reuses ordinary Account owners with invocation custody; never publishes Bob as the daemon Account. */
 export async function createRequesterSessionRuntimeContext(input: Readonly<{
   bootstrap: AdmittedRequesterSessionBootstrap;
+  providerAccountUsageStore: ProviderAccountUsageStore;
   signal?: AbortSignal;
   coordinatorInput: Omit<CoordinatorInput, 'api' | 'credentials' | 'accountSettingsSnapshot' | 'subscribeAccountSettingsSnapshot'
     | 'activeServerDir' | 'providerAccountUsageStore' | 'connectedServiceRuntimeQuotaSnapshots'
@@ -175,7 +176,7 @@ export async function createRequesterSessionRuntimeContext(input: Readonly<{
     allowNativeAccountCredentials: bootstrap.allowNativeAccountCredentials === true, openTeamDirect: directMaterial.open,
     resolveQualifiedConnectedAccountV4Support: input.resolveQualifiedConnectedAccountV4Support,
   });
-  const providerAccountUsageStore = createProviderAccountUsageStore();
+  const providerAccountUsageStore = input.providerAccountUsageStore;
   const providerAccountUsagePersistence = createProviderAccountUsagePersistenceScheduler({
     api: { getAccountEncryptionMode: async options => {
       if (!await isCurrent()) throw requesterAccountContextUnavailable();

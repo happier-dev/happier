@@ -255,6 +255,7 @@ export async function createAttachedManagedRunFixture(input: Readonly<{ director
       }))) throw new Error('Expected owned Provider catalog admission');
       preparationPhase = 'requester runtime';
       requester = await createRequesterSessionRuntimeContext({ bootstrap: admission.admitted,
+        providerAccountUsageStore: daemon.resolveProviderAccountUsageStore(admission.admitted.attribution),
         activeServerDir: fixture.happyHomeDir, connectedServicesMaterializationBaseDir: join(fixture.happyHomeDir, 'issued-connected-services'),
         resolveQualifiedConnectedAccountV4Support: () => 'advertised', coordinatorInput: {
           machineId: fixture.machineId, machineIdProvider: () => fixture.machineId, runtimeId: 'issued-runtime', happyHomeDir: fixture.happyHomeDir,
