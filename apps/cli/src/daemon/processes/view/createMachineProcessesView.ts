@@ -280,7 +280,7 @@ export function createMachineProcessesView(options: MachineProcessesViewOptions)
             try {
                 const answer = await parkWatch({ isNewer: newer,
                     subscribe: listener => { requesterIdentities = identities; return subscribe(listener, request.scope); }, read,
-                    signal: controller.signal, windowMs: MACHINE_WATCH_WINDOW_MS });
+                    signal: controller.signal });
                 return answer.changed ? { changed: true, answer: answer.snapshot } : { changed: false };
             } finally { watches.delete(controller); signal?.removeEventListener('abort', abort); }
         },

@@ -18,6 +18,7 @@ import { MachineGuardActivityListV1Schema } from '@happier-dev/protocol/machines
 import { HappierStorageSummaryV1Schema } from '@happier-dev/protocol/storage/storageV1';
 import { MachineProcessesAnswerV1Schema } from '@happier-dev/protocol/machines/processes/machineProcessesV1';
 import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 
 // HTTP/auth are the Home boundary; the Action, route, codec and Socket.IO path stay real.
 const homes = createHomeGovernanceHarness();
@@ -30,6 +31,7 @@ const { watchMachineGuardViaMachineRpc, watchMachineGuardActivityViaMachineRpc }
 const { watchMachineProcessesViaMachineRpc } = await import('../processes/machineProcessesRpc');
 const { watchMachineStorageViaMachineRpc } = await import('../storage/machineRpc');
 const { watchLocalServiceInventorySnapshotViaMachineRpc } = await import('@/sync/domains/local/services/inventory/machineRpc');
+const { watchWorkspaceSyncStatuses } = await import('@/sync/ops/workspaceSync');
 const { machineResourceStore } = await import('./machineResourceStore');
 const { useMachineVitalsOverview } = await import('./useMachineVitalsOverview');
 const { useMachineResourceSummary } = await import('./useMachineResourceSummary');
@@ -130,6 +132,8 @@ it('lets all parked machine watches follow the remote reply and caller cancellat
             () => watchMachineGuardActivityViaMachineRpc({ ...key, range: '7d', filter: 'all', signal: controller.signal }),
             () => watchMachineStorageViaMachineRpc({ ...key, signal: controller.signal }),
             () => watchLocalServiceInventorySnapshotViaMachineRpc({ ...key, accountId: 'owner', signal: controller.signal }),
+            () => watchWorkspaceSyncStatuses({ serverId: home.serverId, controllerMachineId: key.machineId, signal: controller.signal })
+                .then(value => ({ ok: true, value }), error => ({ ok: false, reason: 'request_failed', errorCode: readRpcErrorCode(error) })),
         ];
         vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
         try {
@@ -150,6 +154,7 @@ it('lets all parked machine watches follow the remote reply and caller cancellat
                 { ok: true, value: { changed: false } },
                 { ok: true, value: { changed: false } },
                 { ok: true, changed: false },
+                { ok: true, value: { changed: false } },
             ]);
             const cancelled = watches.map(watch => watch());
             await vi.waitFor(() => expect(home.calls).toHaveLength(watches.length * 2));
@@ -160,6 +165,18 @@ it('lets all parked machine watches follow the remote reply and caller cancellat
             await vi.waitFor(() => expect(home.cancellations).toHaveLength(watches.length));
             await vi.advanceTimersByTimeAsync(36_000);
             expect(home.calls).toHaveLength(watches.length * 2);
+            // Engine.IO captured real timers before the fake clock started. Its
+            // next real ping has not fired, although Date advanced 72 seconds.
+            // Deliver that real protocol heartbeat before reusing the connection.
+            await Promise.all([...home.socketServer.sockets.sockets.values()].map(socket => new Promise<void>(resolve => {
+                const onPacket = (packet: { type: string }) => {
+                    if (packet.type !== 'pong') return;
+                    socket.conn.off('packet', onPacket);
+                    resolve();
+                };
+                socket.conn.on('packet', onPacket);
+                socket.conn.sendPacket('ping');
+            })));
             controller = new AbortController();
             const disconnected = watches.map(watch => watch());
             await vi.waitFor(() => expect(home.calls).toHaveLength(watches.length * 3));

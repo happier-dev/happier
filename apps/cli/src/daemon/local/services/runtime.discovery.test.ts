@@ -4,7 +4,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { LocalServiceLauncherSnapshotV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
 import type { LocalServiceLauncherSnapshotV1 } from '@happier-dev/protocol';
-import { MACHINE_WATCH_WINDOW_MS } from '@happier-dev/protocol/rpc/machineWatchWindow';
 
 import { createLocalServicesDaemonRuntime } from './runtime';
 
@@ -48,7 +47,7 @@ function scripts(snapshot: LocalServiceLauncherSnapshotV1) {
 }
 
 describe('Services declaration discovery demand', () => {
-    it('reads only the requested root, admits changes immediately, and retains sibling observations', async () => {
+    it('discovers each requested root once and admits filesystem changes through mounted observation', async () => {
         const directory = await realpath(await mkdtemp(join(tmpdir(), 'happier-services-discovery-')));
         const selected = join(directory, 'selected');
         const sibling = join(directory, 'sibling');
@@ -64,28 +63,44 @@ describe('Services declaration discovery demand', () => {
                 return [{ id: 'selected', path: selected }, { id: 'sibling', path: sibling }];
             },
             scan: async () => ({ listeners: [], processes: new Map(), workspaces: [], diagnostics: [] }) });
+        const cancellation = new AbortController();
+        let observing: Promise<void> | undefined;
         try {
             observations.directories.length = 0;
-            expect(scripts(await runtime.launcherRoutes.getSnapshot({ workspaceRoot: selected }))).toEqual(['selected:dev']);
+            const initial = await Promise.all([0, 1].map(() => runtime.launcherRoutes.getSnapshot({ workspaceRoot: selected })));
+            for (const snapshot of initial) expect(scripts(snapshot)).toEqual(['selected:dev']);
+            expect(observations.directories.filter(path => path === selected)).toHaveLength(1);
             expect.soft(observations.directories.filter(path => path === sibling || path.startsWith(`${sibling}/`))).toHaveLength(0);
             observations.directories.length = 0;
             expect((await runtime.launcherRoutes.getSnapshot({ workspaceRoot: join(directory, 'unadmitted') })).targets).toEqual([]);
             expect(observations.directories).toHaveLength(0);
             await runtime.launcherRoutes.getSnapshot({ workspaceRoot: sibling });
+            observations.directories.length = 0;
+            for (let index = 0; index < 51; index++) {
+                expect(scripts(await runtime.launcherRoutes.getSnapshot({ workspaceRoot: index % 2 ? sibling : selected })))
+                    .toEqual([index % 2 ? 'sibling:dev' : 'selected:dev']);
+            }
+            expect(observations.directories).toHaveLength(0);
             failSource = true;
             expect(scripts(await runtime.launcherRoutes.getSnapshot({ workspaceRoot: selected }))).toEqual(['selected:dev']);
             failSource = false;
+            observing = (async () => {
+                while (!cancellation.signal.aborted) await runtime.inventoryRoutes.watchSnapshot({
+                    sinceGeneratedAt: runtime.inventoryRegistry.getSnapshot().generatedAt, signal: cancellation.signal,
+                });
+            })();
+            await vi.waitFor(() => expect(observations.attachments.has(selected) && observations.attachments.has(sibling)).toBe(true));
             await writeFile(join(selected, 'package.json'), JSON.stringify({ name: 'selected', packageManager: 'npm@10', scripts: { preview: 'serve' } }));
-            expect(scripts(await runtime.launcherRoutes.getSnapshot({ workspaceRoot: selected }))).toEqual(['selected:preview']);
+            await vi.waitFor(async () => expect(scripts(await runtime.launcherRoutes.getSnapshot({ workspaceRoot: selected }))).toEqual(['selected:preview']));
             expect(scripts(await runtime.launcherRoutes.getSnapshot({ workspaceRoot: selected, discovery: 'cached' }))).toEqual(['selected:preview']);
             expect(scripts(await runtime.launcherRoutes.getSnapshot({ workspaceRoot: sibling, discovery: 'cached' }))).toEqual(['sibling:dev']);
             // Package scripts are Workspace suggestions; Machine Services does not surface them.
             expect((await runtime.launcherRoutes.getSnapshot({ scope: 'machine', discovery: 'cached' })).targets).toEqual([]);
             await writeFile(join(selected, 'package.json'), JSON.stringify({ name: 'selected', packageManager: 'npm@10', scripts: {} }));
-            await Promise.all([runtime.launcherRoutes.getSnapshot({ workspaceRoot: selected }), runtime.launcherRoutes.getSnapshot({ workspaceRoot: sibling })]);
+            await vi.waitFor(async () => expect(scripts(await runtime.launcherRoutes.getSnapshot({ workspaceRoot: selected }))).toEqual([]));
             expect(scripts(await runtime.launcherRoutes.getSnapshot({ workspaceRoot: selected, discovery: 'cached' }))).toEqual([]);
             expect(scripts(await runtime.launcherRoutes.getSnapshot({ workspaceRoot: sibling, discovery: 'cached' }))).toEqual(['sibling:dev']);
-        } finally { await runtime.stop(); await rm(directory, { recursive: true, force: true }); }
+        } finally { cancellation.abort(); await observing; await runtime.stop(); await rm(directory, { recursive: true, force: true }); }
     });
 
     it('keeps accepted nested-package identities across scoped reads without traversing siblings', async () => {
@@ -242,7 +257,7 @@ describe('Services declaration discovery demand', () => {
         } finally { cancellation.abort(); await pending; await runtime.stop(); await rm(root, { recursive: true, force: true }); }
     });
 
-    it('retires a held declaration read with the last viewer and permits a later fresh scoped read', async () => {
+    it('retires a held declaration read with the last viewer and reconciles for a new viewer', async () => {
         const root = await realpath(await mkdtemp(join(tmpdir(), 'happier-services-retirement-')));
         const packageFile = join(root, 'package.json');
         const writeScript = (script: string) => writeFile(packageFile, JSON.stringify({ name: 'retirement', packageManager: 'npm@10', scripts: { [script]: 'serve' } }));
@@ -255,6 +270,8 @@ describe('Services declaration discovery demand', () => {
         let release!: () => void;
         let entered!: () => void;
         let freshRead: Promise<LocalServiceLauncherSnapshotV1> | undefined;
+        const reconnect = new AbortController();
+        let reconnectWatch: Promise<unknown> | undefined;
         const resumed = new Promise<void>(resolve => { release = resolve; });
         const held = new Promise<void>(resolve => { entered = resolve; });
         let publications = 0;
@@ -277,13 +294,15 @@ describe('Services declaration discovery demand', () => {
             expect(scripts(await runtime.launcherRoutes.getSnapshot({ workspaceRoot: root, discovery: 'cached' }))).toEqual(['retirement:dev']);
             // The retired filesystem read remains held: a new viewer must be
             // able to obtain fresh data without waiting for that old demand.
-            let fresh: LocalServiceLauncherSnapshotV1 | undefined;
-            freshRead = runtime.launcherRoutes.getSnapshot({ workspaceRoot: root }).then(snapshot => { fresh = snapshot; return snapshot; });
-            await vi.waitFor(() => expect(fresh && scripts(fresh)).toEqual(['retirement:start']));
+            reconnectWatch = runtime.inventoryRoutes.watchSnapshot({ sinceGeneratedAt: runtime.inventoryRegistry.getSnapshot().generatedAt,
+                signal: reconnect.signal });
+            await expect(reconnectWatch).resolves.toMatchObject({ changed: true });
+            freshRead = runtime.launcherRoutes.getSnapshot({ workspaceRoot: root });
+            expect(scripts(await freshRead)).toEqual(['retirement:start']);
             release();
         } finally {
             observations.heldRead = undefined;
-            release(); cancellation.abort(); await Promise.all([watch, freshRead]); unsubscribe(); await runtime.stop(); await rm(root, { recursive: true, force: true });
+            release(); cancellation.abort(); reconnect.abort(); await Promise.all([watch, freshRead, reconnectWatch]); unsubscribe(); await runtime.stop(); await rm(root, { recursive: true, force: true });
         }
     });
 
@@ -355,14 +374,13 @@ describe('Services declaration discovery demand', () => {
         } finally { observations.failedWatchPath = undefined; cancellation.abort(); await pending; await runtime.stop(); await rm(root, { recursive: true, force: true }); }
     });
 
-    it('reconciles once per unscoped parked-watch renewal without a discovery timer or unchanged publication', async () => {
+    it('does no idle rediscovery or watch renewal and reconciles declarations after reconnect', async () => {
         const root = await realpath(await mkdtemp(join(tmpdir(), 'happier-services-renewal-')));
         await writeFile(join(root, 'package.json'), JSON.stringify({ name: 'renewal', packageManager: 'npm@10', scripts: { dev: 'serve' } }));
-        let observedAt = 1_000;
         const runtime = createLocalServicesDaemonRuntime({ machineId: 'machine', startLoop: false, inventoryEnabled: () => true,
-            now: () => observedAt, workspaceFacts: () => [{ id: 'workspace', path: root }],
+            now: () => 1_000, workspaceFacts: () => [{ id: 'workspace', path: root }],
             scan: async () => ({ listeners: [], processes: new Map(), workspaces: [], diagnostics: [] }) });
-        const cancellation = new AbortController();
+        let cancellation = new AbortController();
         let pending: Promise<unknown> | undefined;
         let publications = 0;
         const unsubscribe = runtime.inventoryRegistry.subscribe(() => { publications++; });
@@ -370,20 +388,26 @@ describe('Services declaration discovery demand', () => {
             await runtime.launcherRoutes.getSnapshot({ workspaceRoot: root });
             observations.directories.length = 0;
             publications = 0;
-            // The canonical deadline timer rechecks Date.now after every fire.
             vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
-            const renewals = 10 * 60_000 / MACHINE_WATCH_WINDOW_MS;
-            for (let index = 0; index < renewals; index++) {
-                pending = runtime.inventoryRoutes.watchSnapshot({ sinceGeneratedAt: runtime.inventoryRegistry.getSnapshot().generatedAt, signal: cancellation.signal });
-                await vi.waitFor(() => expect(observations.directories.filter(path => path === root)).toHaveLength(index + 1));
-                await vi.advanceTimersByTimeAsync(MACHINE_WATCH_WINDOW_MS);
-                await expect(pending).resolves.toMatchObject({ changed: false });
-                await vi.waitFor(() => expect(observations.attachments.has(root)).toBe(false));
-                observedAt += MACHINE_WATCH_WINDOW_MS;
-            }
-            expect(observations.directories.filter(path => path === root)).toHaveLength(renewals);
+            let replies = 0;
+            pending = runtime.inventoryRoutes.watchSnapshot({ sinceGeneratedAt: runtime.inventoryRegistry.getSnapshot().generatedAt,
+                signal: cancellation.signal }).then(reply => { replies++; return reply; });
+            await vi.waitFor(() => expect(observations.directories.filter(path => path === root)).toHaveLength(1));
+            observations.directories.length = 0;
+            await vi.advanceTimersByTimeAsync(600_000);
+            expect(replies).toBe(0);
+            expect(observations.directories).toHaveLength(0);
             expect(publications).toBe(0);
             expect(vi.getTimerCount()).toBe(0);
+            cancellation.abort();
+            await expect(pending).resolves.toMatchObject({ changed: false });
+            await vi.waitFor(() => expect(observations.attachments.has(root)).toBe(false));
+            await writeFile(join(root, 'package.json'), JSON.stringify({ name: 'renewal', packageManager: 'npm@10', scripts: { preview: 'serve' } }));
+            cancellation = new AbortController();
+            pending = runtime.inventoryRoutes.watchSnapshot({ sinceGeneratedAt: runtime.inventoryRegistry.getSnapshot().generatedAt,
+                signal: cancellation.signal });
+            await expect(pending).resolves.toMatchObject({ changed: true });
+            expect(scripts(await runtime.launcherRoutes.getSnapshot({ workspaceRoot: root, discovery: 'cached' }))).toEqual(['renewal:preview']);
         } finally { cancellation.abort(); await pending; unsubscribe(); await runtime.stop(); vi.useRealTimers(); await rm(root, { recursive: true, force: true }); }
     });
 });

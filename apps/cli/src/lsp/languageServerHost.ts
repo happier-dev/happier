@@ -4,7 +4,6 @@ import { relative, resolve } from 'node:path';
 import { LanguageIntelligenceCommandSchema, type DaemonLspApplyRequest, type DaemonLspApplyResponse, type DaemonLspSyncRequest, type DaemonLspSyncResponse, type DaemonLspQueryRequest, type DaemonLspQueryResponse, type DaemonLspWatchRequest, type DaemonLspWatchResponse, type DaemonLspRestartRequest, type DaemonLspRestartResponse, type LanguageIntelligenceCapabilities, type LanguageIntelligenceDiagnostic, type LanguageIntelligenceDiagnosticsEntry, } from '@happier-dev/protocol/machines/languageIntelligence';
 import type { WorkspaceFileEditSetFile, DaemonWorkspaceFileReplaceApplyResponse } from '@happier-dev/protocol/machines/workspaceFiles';
 import { MachineProcessesPolicyV1Schema } from '@happier-dev/protocol/machines/resources/machineResourcesPolicyV1';
-import { MACHINE_WATCH_WINDOW_MS } from '@happier-dev/protocol/rpc/machineWatchWindow';
 import { getFileLanguageFromPath } from '@happier-dev/protocol/machines/fileLanguage';
 import { armDeadlineTimer } from '@happier-dev/protocol/common/deadlineTimer';
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
@@ -679,7 +678,7 @@ export function createLanguageServerHost(options: LanguageServerHostOptions = {}
                     return watchSnapshot(root);
                 root.watchers++;
                 try {
-                    const result = await parkWatch({ signal: context?.signal, windowMs: MACHINE_WATCH_WINDOW_MS, isNewer: () => root.revision > input.sinceRevision!, subscribe: listener => { root.listeners.add(listener); return () => root.listeners.delete(listener); }, read: () => watchSnapshot(root, input.sinceRevision) });
+                    const result = await parkWatch({ signal: context?.signal, isNewer: () => root.revision > input.sinceRevision!, subscribe: listener => { root.listeners.add(listener); return () => root.listeners.delete(listener); }, read: () => watchSnapshot(root, input.sinceRevision) });
                     return result.changed ? result.snapshot : watchSnapshot(root, input.sinceRevision);
                 }
                 finally {

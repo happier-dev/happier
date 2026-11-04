@@ -3867,7 +3867,13 @@ equality does not make argv or the current exec environment immutable. Shared
 captures coalesce only identical field and command-root demand. These changes
 neither add a census timer nor alter the inventory/watch owners' cadence.
 
-Local Services discovery still scans at the inventory runtime's existing cadence
+The first launcher read discovers its requested workspace roots. Later ordinary
+reads project those admitted observations without repeating discovery. The feed
+retains those observations without a discovery TTL. Parked inventory watches
+attach declaration filesystem observers, release them with the last viewer,
+and reconcile edits made while detached on the next attachment. An unchanged
+watch waits for a material change or caller cancellation without a periodic
+unchanged reply. Native inventory discovery retains its existing cadence
 while readers are parked. Its registry advances `generatedAt` and wakes that
 Machine's watch only for material inventory or launcher changes; `lastSeenAt`
 and endpoint `probedAt` remain current on demand without publishing each scan.

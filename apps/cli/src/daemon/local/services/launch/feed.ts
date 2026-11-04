@@ -199,10 +199,21 @@ export function createLocalServiceLauncherFeed(
     // checkout × script collection, including after a Workspace read or watch update.
     let observedDeclarations: readonly LocalServiceLauncherRunTarget[] = [];
     let observedPackageScripts: readonly LocalServiceLauncherRunTarget[] = [];
+    // Record which scopes have their first observation; the collections above remain
+    // the sole data owner. An unscoped read does not admit a later, newly requested root.
+    const declarationScopes = new Set<string | undefined>();
+    const packageScriptScopes = new Set<string | undefined>();
+    const hasObservation = (scopes: ReadonlySet<string | undefined>, roots?: readonly string[]) => roots
+        ? roots.every(root => [...scopes].some(observed => observed !== undefined && isWorkspacePathWithin(observed, root)))
+        : scopes.has(undefined);
     let discovery = Promise.resolve();
-    const refreshRunTargets = (workspaceRoots?: readonly string[], signal?: AbortSignal, options?: LocalServiceRunTargetDiscoveryOptions): Promise<void> => {
+    const refreshRunTargets = (workspaceRoots?: readonly string[], signal?: AbortSignal, options?: LocalServiceRunTargetDiscoveryOptions,
+        reuseObservation = false): Promise<void> => {
         const read = discovery.then(async () => {
             if (signal?.aborted) return;
+            // Decide inside the existing serial read so concurrent first demands share it.
+            if (reuseObservation && hasObservation(declarationScopes, workspaceRoots)
+                && (options?.includePackageScripts === false || hasObservation(packageScriptScopes, workspaceRoots))) return;
             const observation = resolveRunTargets(input.runTargets, input.onRunTargetsError, workspaceRoots, options).then(targets => {
                 // A retired read can finish native I/O, but may neither hold a
                 // fresh viewer nor replace its admitted declarations afterward.
@@ -218,9 +229,11 @@ export function createLocalServiceLauncherFeed(
                     ...next.filter(target => workspaceRoots.some(root => isWorkspacePathWithin(root, target.cwd))),
                 ] : next;
                 observedDeclarations = replaceObservation(observedDeclarations, declarations);
+                for (const root of workspaceRoots ?? [undefined]) declarationScopes.add(root);
                 // A declarations-only read has no new observation of Workspace suggestions.
                 if (options?.includePackageScripts !== false) {
                     observedPackageScripts = replaceObservation(observedPackageScripts, packageScripts);
+                    for (const root of workspaceRoots ?? [undefined]) packageScriptScopes.add(root);
                 }
             });
             if (signal) await waitForChangeOrDeadline({ signal, waitForChange: () => observation });
@@ -254,7 +267,7 @@ export function createLocalServiceLauncherFeed(
             // Complete bindings read cached listener evidence without waiting for discovery.
             // Both projections must retain the same managed identity and preview presentation.
             if (!bindingsOnly && request?.discovery !== 'cached') {
-                await refreshRunTargets(workspaceScopePaths, undefined, { includePackageScripts });
+                await refreshRunTargets(workspaceScopePaths, undefined, { includePackageScripts }, true);
             }
             const runTargets = bindingsOnly ? [] : includePackageScripts
                 ? [...observedDeclarations, ...observedPackageScripts] : observedDeclarations;

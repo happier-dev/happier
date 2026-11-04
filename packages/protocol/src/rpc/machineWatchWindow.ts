@@ -1,6 +1,6 @@
 /**
- * Daemon-owned parking window for machine watches. Mounted clients keep one watch outstanding
- * and re-arm after each answer. RPC operation lifetime follows the caller and remote reply;
- * connection/setup budgets remain transport-owned, without a separate client response margin.
+ * Existing Processes observation/history retention and ownership refresh duration. Parked Machine RPCs have no
+ * expiry: their operation lifetime follows the caller and remote reply, with transport-owned
+ * connection/setup budgets. This value does not schedule unchanged watch answers.
  */
 export const MACHINE_WATCH_WINDOW_MS = 25_000;

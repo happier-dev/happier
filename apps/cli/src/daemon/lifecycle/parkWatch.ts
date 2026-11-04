@@ -6,7 +6,6 @@ export type ParkWatchInput<T> = Readonly<{
     subscribe(listener: () => void): () => void;
     read(): T;
     signal?: AbortSignal;
-    windowMs: number;
 }>;
 export type ParkWatchOwner = Readonly<{
     parkWatch<T>(input: ParkWatchInput<T>): Promise<ParkWatchResult<T>>;
@@ -28,8 +27,6 @@ export function createParkWatch(options: Readonly<{
             try {
                 const result = await waitForChangeOrDeadline({
                     signal: input.signal,
-                    remainingMs: input.windowMs,
-                    unref: true,
                     waitForChange(signal) {
                         return new Promise<void>(resolve => {
                             unsubscribe = input.subscribe(resolve);

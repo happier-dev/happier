@@ -1,7 +1,6 @@
 import type { RpcAdmissionPredicate, RpcHandlerContext, RpcHandlerRegistrar } from '@/api/rpc/types';
 import type { StorageService, StorageServiceDeps, StorageOperationActor } from '@/storage/storageService';
 import { parkWatch } from '@/daemon/lifecycle/parkWatch';
-import { MACHINE_WATCH_WINDOW_MS } from '@happier-dev/protocol/rpc/machineWatchWindow';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { RPC_ERROR_CODES, RpcError } from '@happier-dev/protocol/rpcErrors';
 import {
@@ -244,7 +243,7 @@ export function registerDaemonStorageRpcHandlers(rpc: RpcHandlerRegistrar, optio
             const cursor = request.sinceRevision ?? first.revision;
             const parked = await parkWatch({ isNewer: () => service.revision() !== cursor,
                 read: () => service.summary({ actor, signal: context?.signal }), subscribe: service.subscribe,
-                signal: context?.signal, windowMs: MACHINE_WATCH_WINDOW_MS });
+                signal: context?.signal });
             const summary = parked.changed ? await parked.snapshot : undefined;
             return MachineStorageWatchResultV1Schema.parse(summary
                 ? { changed: true, summary: projectSummary(summary, access.custodian) } : { changed: false });

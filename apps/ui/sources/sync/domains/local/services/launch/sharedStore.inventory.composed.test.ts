@@ -20,9 +20,11 @@ import { getLocalServiceLauncherState, resetLocalServiceLauncherStoreForTests, s
 afterEach(() => {
     resetLocalServiceLauncherStoreForTests();
     resetLocalServiceInventoryStoreForTests();
+    vi.useRealTimers();
 });
 
 it('refreshes a retained Session projection after a managed-only Stop while sharing the Machine watch', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
     const registry = createLocalServiceInventoryRegistry();
     registry.replaceSnapshot({ v: 1, machineId: 'machine-a', generatedAt: 1_000,
         refreshState: 'idle', entries: [], diagnostics: [] });
@@ -75,6 +77,10 @@ it('refreshes a retained Session projection after a managed-only Stop while shar
         expect(reads).toBe(settledReads);
         expect(sessionListener).not.toHaveBeenCalled();
         expect(routes.watcherCount()).toBe(1);
+        const settledWatches = rpc.machine.mock.calls.filter(([request]) => request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH).length;
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(rpc.machine.mock.calls.filter(([request]) => request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH))
+            .toHaveLength(settledWatches);
     } finally { releaseSession(); releaseMachine(); cancellation.abort(); }
 });
 

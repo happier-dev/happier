@@ -1,4 +1,3 @@
-import { MACHINE_WATCH_WINDOW_MS } from '@happier-dev/protocol/rpc/machineWatchWindow';
 import { projectLocalServiceMachineSummaryV1, type LocalServiceMachineSummaryV1 } from '@happier-dev/protocol/local/services/inventory/v1';
 
 import { createParkWatch, type ParkWatchResult } from '@/daemon/lifecycle/parkWatch';
@@ -50,12 +49,9 @@ export function createLocalServiceInventoryRoutes(input: Readonly<{
      * inventory nobody has scanned. Coalesced by the same single flight as `refreshSnapshot`.
      */
     ensureFreshSnapshot?: () => Promise<void>;
-    /** Daemon-owned park budget; callers derive their RPC timeout from the protocol constant. */
-    watchWindowMs?: number;
     /** Fired whenever the parked-watcher count changes, so the runtime can follow demand. */
     onWatcherCountChanged?: (count: number) => void;
 }>): LocalServiceInventoryRoutes {
-    const watchWindowMs = input.watchWindowMs ?? MACHINE_WATCH_WINDOW_MS;
     const watches = createParkWatch({ onWatcherCountChanged: input.onWatcherCountChanged });
 
     return {
@@ -77,7 +73,6 @@ export function createLocalServiceInventoryRoutes(input: Readonly<{
                 subscribe: input.registry.subscribe,
                 read: input.registry.getSnapshot,
                 signal: request.signal,
-                windowMs: watchWindowMs,
             });
         },
         watcherCount() {

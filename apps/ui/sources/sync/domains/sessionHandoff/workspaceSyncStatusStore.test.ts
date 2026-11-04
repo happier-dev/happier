@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { MACHINE_WATCH_WINDOW_MS } from '@happier-dev/protocol/rpc/machineWatchWindow';
 import { createWorkspaceSyncStatusWatchBoundary } from '@/dev/testkit/harness/workspaceSyncStatusWatchBoundary';
 import { createWorkspaceSyncHarness } from '@/dev/testkit/harness/workspaceSyncHarness';
 
@@ -59,7 +58,7 @@ describe('workspaceSyncStatusStore', () => {
         await workspace.dispose();
     });
 
-    it('bounds settled status RPCs by parked watch windows over ten visible minutes', async () => {
+    it('does zero settled status RPC re-arms over ten visible idle minutes', async () => {
         vi.useFakeTimers();
         const scope = { serverId: workspace.serverId, controllerMachineId: 'machine-a', relationshipId: 'relationship-1' };
         const status = {
@@ -79,7 +78,7 @@ describe('workspaceSyncStatusStore', () => {
             await vi.waitFor(() => expect(watchBoundary.parkedCount()).toBe(1));
             machineRpcCalls.mockClear();
             await vi.advanceTimersByTimeAsync(600_000);
-            expect(machineRpcCalls.mock.calls.length).toBe(600_000 / MACHINE_WATCH_WINDOW_MS);
+            expect(machineRpcCalls).not.toHaveBeenCalled();
             expect(listWorkspaceSyncStatuses).not.toHaveBeenCalled();
         } finally {
             unsubscribe();
@@ -147,8 +146,8 @@ describe('workspaceSyncStatusStore', () => {
         const failure = new Error('daemon unavailable');
         const unsubscribe = subscribeWorkspaceSyncStatus(scope, () => {});
         await vi.advanceTimersByTimeAsync(1_000);
-        watchWorkspaceSyncStatuses.mockRejectedValueOnce(failure);
-        await vi.advanceTimersByTimeAsync(MACHINE_WATCH_WINDOW_MS);
+        watchBoundary.fail(failure);
+        await vi.advanceTimersByTimeAsync(0);
         expect(getWorkspaceSyncStatusSnapshot(scope)).toMatchObject({ phase: 'error', status, error: failure });
         const failedCalls = watchWorkspaceSyncStatuses.mock.calls.length;
         await vi.advanceTimersByTimeAsync(600_000);

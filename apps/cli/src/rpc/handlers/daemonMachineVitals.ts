@@ -8,7 +8,6 @@ import {
     MachineVitalsSnapshotV1Schema, MachineVitalsWatchResultV1Schema, type MachineVitalsSnapshotV1,
 } from '@happier-dev/protocol/machines/vitals/machineVitalsRpcV1';
 import { MachineVitalsHistoryV1Schema } from '@happier-dev/protocol/machines/vitals/machineVitalsHistoryV1';
-import { MACHINE_WATCH_WINDOW_MS } from '@happier-dev/protocol/rpc/machineWatchWindow';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { RPC_ERROR_CODES, RpcError } from '@happier-dev/protocol/rpcErrors';
 import { doesMachineRpcTargetMatchAdmission } from '@/api/machine/machineRpcAuthorization';
@@ -126,7 +125,6 @@ export function registerDaemonMachineVitalsRpcHandlers(rpc: RpcHandlerRegistrar,
                     return () => { unsubscribe(); release(); };
                 },
                 signal: context?.signal,
-                windowMs: MACHINE_WATCH_WINDOW_MS,
             });
             return MachineVitalsWatchResultV1Schema.parse(parked.changed
                 ? { changed: true, samples: parked.snapshot } : { changed: false });

@@ -7,7 +7,6 @@ import type { WorkspaceSyncCommittedCopyPreviewV1, WorkspaceSyncCommittedCopyPre
 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncCommittedCopyV1';
 
 import { randomUUID } from '@/platform/randomUUID';
-import { MACHINE_WATCH_WINDOW_MS } from '@happier-dev/protocol/rpc/machineWatchWindow';
 import { WorkspaceSyncStatusWatchRequestV1Schema, WorkspaceSyncStatusWatchResultV1Schema,
     type WorkspaceSyncStatusWatchRequestV1, type WorkspaceSyncStatusWatchResultV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 
@@ -63,7 +62,6 @@ async function callWorkspaceSync<R>(
     scope: WorkspaceSyncControllerScope,
     method: string,
     payload: unknown,
-    timeoutMs?: number,
 ): Promise<R> {
     const { machineRpcWithServerScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc');
     const response = await machineRpcWithServerScope<R, unknown>({
@@ -71,7 +69,6 @@ async function callWorkspaceSync<R>(
         serverId: scope.serverId,
         method,
         payload,
-        ...(timeoutMs === undefined ? {} : { timeoutMs }),
         ...(scope.signal ? { signal: scope.signal } : {}),
     });
     // An encrypted transport hands a daemon handler's refusal back as the response value. Raise it here, once,
@@ -179,7 +176,7 @@ export async function watchWorkspaceSyncStatuses(
         ...(input.sinceRevision === undefined ? {} : { sinceRevision: input.sinceRevision }),
     });
     const parsed = WorkspaceSyncStatusWatchResultV1Schema.safeParse(
-        await callWorkspaceSync(input, method, payload, MACHINE_WATCH_WINDOW_MS + 10_000),
+        await callWorkspaceSync(input, method, payload),
     );
     if (!parsed.success) unsupported(method);
     if (parsed.data.changed && parsed.data.snapshot.statuses.some(status => status.controllerMachineId !== input.controllerMachineId)) {

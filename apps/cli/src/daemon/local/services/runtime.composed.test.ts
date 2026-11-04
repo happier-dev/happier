@@ -163,7 +163,7 @@ describe('createLocalServicesDaemonRuntime', () => {
         } finally { await runtime.stop(); }
     });
 
-    it('preserves native discovery cadence across an unchanged watch window and reports disappearance on the next scan', async () => {
+    it('preserves native discovery cadence through an idle watch and reports disappearance on the next scan', async () => {
         vi.useFakeTimers();
         vi.setSystemTime(1_000);
         let listenerPresent = true;
@@ -172,22 +172,23 @@ describe('createLocalServicesDaemonRuntime', () => {
             processes: new Map(), workspaces: [], diagnostics: [] }));
         const runtime = createLocalServicesDaemonRuntime({ machineId: 'machine-a', inventoryEnabled: () => true,
             scan, runTargets: () => [] });
+        const cancellation = new AbortController();
         try {
             const initial = await runtime.inventoryRoutes.getSnapshot();
-            const watch = () => runtime.inventoryRoutes.watchSnapshot({ sinceGeneratedAt: initial.generatedAt });
-            const first = watch();
+            let replies = 0;
+            const pending = runtime.inventoryRoutes.watchSnapshot({ sinceGeneratedAt: initial.generatedAt, signal: cancellation.signal })
+                .then(reply => { replies++; return reply; });
             await vi.advanceTimersByTimeAsync(25_000);
-            expect(await first).toEqual({ changed: false });
+            expect(replies).toBe(0);
             expect(scan).toHaveBeenCalledTimes(3);
             listenerPresent = false;
-            const second = watch();
             await vi.advanceTimersByTimeAsync(4_999);
             expect(scan).toHaveBeenCalledTimes(3);
             await vi.advanceTimersByTimeAsync(1);
-            const changed = await second;
+            const changed = await pending;
             expect(scan).toHaveBeenCalledTimes(4);
             expect(changed.changed && changed.snapshot.entries[0]?.state).toBe('stale');
-        } finally { await runtime.stop(); vi.useRealTimers(); }
+        } finally { cancellation.abort(); await runtime.stop(); vi.useRealTimers(); }
     });
 
     it('publishes declaration changes and endpoint-free managed start/stop without a listener change', async () => {
@@ -545,7 +546,9 @@ describe('createLocalServicesDaemonRuntime', () => {
         ] });
         expect(summaries.at(-1)).toEqual({ v: 1, state: 'ready', runningCount: 1 });
         const last = summaries.at(-1);
-        runtime.inventoryRegistry.replaceSnapshot({ ...runtime.inventoryRegistry.getSnapshot(), generatedAt: 2_000 });
+        for (let index = 0; index < 17; index++) {
+            runtime.inventoryRegistry.replaceSnapshot({ ...runtime.inventoryRegistry.getSnapshot(), generatedAt: 2_000 + index });
+        }
         expect(summaries.at(-1)).toBe(last);
         expect(summaries).toHaveLength(3);
         runtime.inventoryRegistry.replaceSnapshot({ ...runtime.inventoryRegistry.getSnapshot(), refreshState: 'error' });

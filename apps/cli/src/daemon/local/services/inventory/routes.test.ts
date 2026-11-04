@@ -85,7 +85,7 @@ describe('createLocalServiceInventoryRoutes', () => {
     it('parks on the registry event producer and answers when the inventory changes', async () => {
         const registry = createLocalServiceInventoryRegistry();
         registry.replaceSnapshot(snapshotAt(1_000));
-        const routes = createLocalServiceInventoryRoutes({ registry, watchWindowMs: 25_000 });
+        const routes = createLocalServiceInventoryRoutes({ registry });
 
         const pending = routes.watchSnapshot({ sinceGeneratedAt: 1_000 });
         await Promise.resolve();
@@ -100,26 +100,37 @@ describe('createLocalServiceInventoryRoutes', () => {
         expect(routes.watcherCount()).toBe(0);
     });
 
-    it('holds the watch open for its whole window when nothing changes', async () => {
+    it('does not re-arm during an idle minute and reconnects from the retained cursor', async () => {
         vi.useFakeTimers();
         const registry = createLocalServiceInventoryRegistry();
         registry.replaceSnapshot(snapshotAt(1_000));
-        const routes = createLocalServiceInventoryRoutes({ registry, watchWindowMs: 25_000 });
-
-        const pending = routes.watchSnapshot({ sinceGeneratedAt: 1_000 });
-        let settled = false;
-        void pending.then(() => {
-            settled = true;
-        });
-
-        // This is the contract the client relies on to re-arm without a timer or a backoff: an
-        // answer means the window elapsed, so re-arming per answer cannot become a busy loop.
-        await vi.advanceTimersByTimeAsync(24_000);
-        expect(settled).toBe(false);
-
-        await vi.advanceTimersByTimeAsync(2_000);
-        expect(await pending).toEqual({ changed: false });
+        const routes = createLocalServiceInventoryRoutes({ registry });
+        const disconnected = new AbortController();
+        let dispatches = 0;
+        let idleAnswerBytes = 0;
+        const pending = (async () => {
+            while (!disconnected.signal.aborted) {
+                dispatches++;
+                const result = await routes.watchSnapshot({ sinceGeneratedAt: 1_000, signal: disconnected.signal });
+                if (!disconnected.signal.aborted) idleAnswerBytes += Buffer.byteLength(JSON.stringify(result));
+                else expect(result).toEqual({ changed: false });
+            }
+        })();
+        try {
+            await vi.advanceTimersByTimeAsync(60_000);
+            expect({ reArms: dispatches - 1, idleAnswerBytes }).toEqual({ reArms: 0, idleAnswerBytes: 0 });
+            expect(routes.watcherCount()).toBe(1);
+        } finally { disconnected.abort(); await pending; }
         expect(routes.watcherCount()).toBe(0);
+        // The old request is cancelled by transport disconnect. A replacement
+        // request catches changes made while disconnected without a timer.
+        registry.replaceSnapshot(snapshotAt(2_000, 'entry-reconnected'));
+        expect(await routes.watchSnapshot({ sinceGeneratedAt: 1_000 })).toEqual({ changed: true, snapshot: registry.getSnapshot() });
+        const reconnected = new AbortController();
+        const next = routes.watchSnapshot({ sinceGeneratedAt: 2_000, signal: reconnected.signal });
+        registry.replaceSnapshot(snapshotAt(3_000, 'entry-live'));
+        expect(await next).toEqual({ changed: true, snapshot: registry.getSnapshot() });
+        expect(vi.getTimerCount()).toBe(0);
     });
 
     it('does not miss a snapshot produced while demand starts before subscription', async () => {
@@ -143,7 +154,7 @@ describe('createLocalServiceInventoryRoutes', () => {
     it('releases its watcher slot when the caller aborts', async () => {
         const registry = createLocalServiceInventoryRegistry();
         registry.replaceSnapshot(snapshotAt(1_000));
-        const routes = createLocalServiceInventoryRoutes({ registry, watchWindowMs: 25_000 });
+        const routes = createLocalServiceInventoryRoutes({ registry });
         const controller = new AbortController();
 
         const pending = routes.watchSnapshot({ sinceGeneratedAt: 1_000, signal: controller.signal });

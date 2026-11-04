@@ -23,7 +23,6 @@ import { assertWorkspaceSyncStatusClean, isWorkspaceSyncStatusClean } from './wo
 import type { LiveWorkProducerV1, LiveWorkInventoryV1, LiveWorkItemV1 } from '@/daemon/lifecycle/managedActivity';
 import { timeWebLatencyPhase } from '@/daemon/externalActions/webLatencyTrace';
 import { createParkWatch } from '@/daemon/lifecycle/parkWatch';
-import { MACHINE_WATCH_WINDOW_MS } from '@happier-dev/protocol/rpc/machineWatchWindow';
 import type { WorkspaceSyncStatusWatchRequestV1, WorkspaceSyncStatusWatchResultV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 
 export type WorkspaceSyncResolvedRef = Readonly<{
@@ -1227,7 +1226,6 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
       },
       read: () => ({ revision: this.statusRevision, statuses: [...this.statuses.values()] }),
       signal,
-      windowMs: MACHINE_WATCH_WINDOW_MS,
     });
     if (this.shuttingDown) throw Object.assign(new Error('Workspace sync runtime is unavailable'), { code: 'workspace_sync_unavailable' });
     return result;

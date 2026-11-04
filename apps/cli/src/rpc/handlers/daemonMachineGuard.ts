@@ -16,7 +16,6 @@ import { MachineGuardActivityListInputV1Schema, MachineGuardActivityUndoInputV1S
 import { isMachineGuardRestorationWayBackV1 } from '@happier-dev/protocol/machines/guard/activityV1';
 import { MachineGuardGetInputV1Schema, MachineGuardViewV1Schema, MachineGuardWatchInputV1Schema, MachineGuardWatchResultV1Schema,
   MachineGuardActivityWatchInputV1Schema, MachineGuardActivityWatchResultV1Schema } from '@happier-dev/protocol/machines/guard/guardRpcV1';
-import { MACHINE_WATCH_WINDOW_MS } from '@happier-dev/protocol/rpc/machineWatchWindow';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { RPC_ERROR_CODES, RpcError } from '@happier-dev/protocol/rpcErrors';
 import { doesMachineRpcTargetMatchAdmission } from '@/api/machine/machineRpcAuthorization';
@@ -104,7 +103,7 @@ export function registerDaemonMachineGuardRpcHandlers(rpc: RpcHandlerRegistrar, 
     const request = MachineGuardActivityWatchInputV1Schema.parse(raw);
     const admitted = bindAdmission(request, context, false);
     try {
-      const answer = await parkWatch({ windowMs: MACHINE_WATCH_WINDOW_MS, signal: context?.signal,
+      const answer = await parkWatch({ signal: context?.signal,
         isNewer: () => request.since !== options.activity.revision(),
         subscribe: options.activity.subscribe, read: options.activity.revision });
       return MachineGuardActivityWatchResultV1Schema.parse(answer.changed ? {

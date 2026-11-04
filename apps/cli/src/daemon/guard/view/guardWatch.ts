@@ -6,7 +6,6 @@ import type { createProcessOwnershipRuntime } from '../../processes/ownership/pr
 import type { GuardFacts, GuardOwnership } from '../guardPlanner';
 import type { ActivityLog } from '../activityLog';
 import { projectGuardActivityRowsForRequester } from '../activityLog';
-import { MACHINE_WATCH_WINDOW_MS } from '@happier-dev/protocol/rpc/machineWatchWindow';
 import { createParkWatch } from '../../lifecycle/parkWatch';
 import { waitForChangeOrDeadline } from '../../lifecycle/waitForChangeOrDeadline';
 import { projectGuardLadderV1, type GuardTarget } from '../guardPlanner';
@@ -247,7 +246,7 @@ export function createGuardWatch(input: GuardWatchInput) {
       const watcher: Watcher = { requester, since: next.since,
         view: { ...project(next, requester), otherMemoryGuards: otherMemoryGuards(next.facts) }, notify: () => {} };
       const combined = signal ? AbortSignal.any([signal, lifetime.signal]) : lifetime.signal;
-      const result = await park.parkWatch({ windowMs: MACHINE_WATCH_WINDOW_MS, signal: combined,
+      const result = await park.parkWatch({ signal: combined,
         isNewer: () => watcher.error !== undefined || request.since === undefined || watcher.since > request.since,
         read: () => { if (watcher.error) throw watcher.error; return { view: watcher.view, since: watcher.since }; },
         subscribe: listener => { watcher.notify = listener; watchers.add(watcher); return () => { watchers.delete(watcher); }; },

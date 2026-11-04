@@ -18,7 +18,6 @@ describe('parkWatch', () => {
                 listeners.add(listener);
                 return () => listeners.delete(listener);
             },
-            windowMs: 25_000,
         });
 
         expect(result).toEqual({ changed: true, snapshot: 2 });
@@ -27,11 +26,12 @@ describe('parkWatch', () => {
         expect(counts).toEqual([1, 0]);
     });
 
-    it('accounts for concurrent watches and releases each one on abort or deadline', async () => {
+    it('keeps concurrent watches parked through idle time and releases each one on cancellation', async () => {
         vi.useFakeTimers();
         const listeners = new Set<() => void>();
         const watches = createParkWatch();
         const controller = new AbortController();
+        const otherController = new AbortController();
         const input = {
             isNewer: () => false,
             read: () => 1,
@@ -39,18 +39,21 @@ describe('parkWatch', () => {
                 listeners.add(listener);
                 return () => listeners.delete(listener);
             },
-            windowMs: 25_000,
         };
         const aborted = watches.parkWatch({ ...input, signal: controller.signal });
-        const timedOut = watches.parkWatch(input);
+        let idleReplies = 0;
+        const idle = watches.parkWatch({ ...input, signal: otherController.signal }).then(result => { idleReplies++; return result; });
         expect(watches.watcherCount()).toBe(2);
 
         controller.abort();
         expect(await aborted).toEqual({ changed: false });
         expect(watches.watcherCount()).toBe(1);
         expect(listeners.size).toBe(1);
-        await vi.advanceTimersByTimeAsync(25_000);
-        expect(await timedOut).toEqual({ changed: false });
+        try {
+            await vi.advanceTimersByTimeAsync(60_000);
+            expect(idleReplies).toBe(0);
+            expect(watches.watcherCount()).toBe(1);
+        } finally { otherController.abort(); await idle; }
         expect(watches.watcherCount()).toBe(0);
         expect(listeners.size).toBe(0);
         expect(vi.getTimerCount()).toBe(0);
@@ -71,7 +74,6 @@ describe('parkWatch', () => {
                     return () => { subscribed = false; };
                 },
                 signal: controller.signal,
-                windowMs: 25_000,
             });
             expect(result).toEqual(outcome === 'change' ? { changed: true, snapshot: 2 } : { changed: false });
             expect(subscribed).toBe(false);
