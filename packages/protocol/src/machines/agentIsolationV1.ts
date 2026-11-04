@@ -122,7 +122,7 @@ export const MachineAgentIsolationOwnStatusV1Schema = lazyZodSchema(() => z.unio
   }) }),
   z.strictObject({ protection: z.literal('member_separated'), status: z.strictObject({
     kind: z.literal('effective'), platform: z.literal('linux'),
-  }) }),
+  }), directories: z.optional(z.strictObject({ home: id, workspace: id })) }),
   z.strictObject({ protection: z.literal('setup_pending'), status: z.union([
     z.strictObject({ kind: z.literal('disabled') }),
     z.strictObject({ kind: z.literal('enable_required'), reason: z.literal('existing_machine_workspace_migration') }),
