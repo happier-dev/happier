@@ -1,5 +1,10 @@
+import { sealPublicShareDataKeyV1 } from '../../crypto/publicShareEncryptedDataKeyEnvelopeV0.js';
+import { ed25519, x25519 } from '@noble/curves/ed25519';
+import { signAccountContentKeyBindingV1 } from '../../crypto/accountContentKeyBindingV1.js';
+import { encodeBase64, decodeBase64 } from '../../crypto/base64.js';
+import { openEncryptedDataKeyEnvelopeV1 } from '../../crypto/encryptedDataKeyEnvelopeV1.js';
 import { describe, expect, it } from 'vitest';
-import { createArtifactPublicLinkActionsV1, type ArtifactPublicLinkActionIdV1, type ArtifactPublicLinkIssuedV1, type ArtifactPublicLinkKeyholdingResourceV1 } from './artifactPublicLinkActions.js';
+import { createArtifactPublicLinkActionsV1, createArtifactSignedInLinkJoinActionV1, type ArtifactPublicLinkActionIdV1, type ArtifactPublicLinkIssuedV1, type ArtifactPublicLinkKeyholdingResourceV1 } from './artifactPublicLinkActions.js';
 import { openPublicShareDataKeyV1 } from '../../crypto/publicShareEncryptedDataKeyEnvelopeV0.js';
 import { StoredContentPublicShareV1Schema } from '../../sharing/storedContentPublicShareV1.js';
 
@@ -7,6 +12,84 @@ const publicShare = StoredContentPublicShareV1Schema.parse({ id: 'share-1', subj
   maxUses: null, useCount: 0, isConsentRequired: false, networkOff: false, createdAt: 1, updatedAt: 1, keyDerivation: 'fragment_v1' });
 
 describe('keyholding Artifact public-link Actions', () => {
+  it('rejects private or malformed opened template bytes before granting access or presenting them', async () => {
+    const requests: string[] = [], opened: unknown[] = [];
+    const execute = createArtifactSignedInLinkJoinActionV1({ consumeSecret: async () => 'a'.repeat(43),
+      resolveRecipient: async () => ({ accountId: 'recipient', mode: 'plain', contentPublicKey: null }),
+      randomBytes: length => new Uint8Array(length), onOpened: value => { opened.push(value); },
+      openContent: async () => ({ artifactId: 'artifact', ownerAccountId: 'author', header: { kind: 'bot_template.v1', state: 'draft' },
+        body: 'private draft', revision: { headerVersion: 1, bodyVersion: 1 } }),
+      request: async request => { requests.push(request.method); return request.method === 'POST'
+        ? { artifactId: 'artifact', ownerAccountId: 'author', access: 'view' }
+        : { subject: { kind: 'artifact', id: 'artifact' }, artifactId: 'artifact', authorAccountId: 'author', recipientAccountId: 'recipient',
+          recipientContentKey: { status: 'unavailable', reason: 'plain_account' }, encryptionMode: 'plain', encryptedDataKey: null,
+          keyDerivation: 'fragment_v1', isConsentRequired: false, networkOff: false,
+          content: { kind: 'artifact', header: 'header', body: 'body', headerVersion: 1, bodyVersion: 1 } }; },
+    });
+    await expect(execute({ input: { lookupId: 'lookup' } })).rejects.toMatchObject({ code: 'artifact_content_unavailable' });
+    expect(requests).toEqual(['GET']);
+    expect(opened).toEqual([]);
+  });
+  it.each(['known', 'wrong_account', 'substituted_key'] as const)('binds the encrypted join envelope to local Account custody (%s)', async identity => {
+    const signingSecret = new Uint8Array(32).fill(3);
+    const signingPublic = ed25519.getPublicKey(signingSecret);
+    const contentSecret = new Uint8Array(32).fill(4);
+    const contentPublic = x25519.getPublicKey(contentSecret);
+    const recipientContentKey = { status: 'available', accountSigningPublicKey: Buffer.from(signingPublic).toString('hex'),
+      contentPublicKey: encodeBase64(contentPublic), contentPublicKeySignature: encodeBase64(signAccountContentKeyBindingV1({
+        accountSigningSecretKey: new Uint8Array([...signingSecret, ...signingPublic]), contentPublicKey: contentPublic })) };
+    const dataKey = new Uint8Array(32).fill(9), secret = 'a'.repeat(43);
+    const requests: Array<{ method: string; path: string; body?: unknown }> = [];
+    const artifact = { artifactId: 'artifact-1', ownerAccountId: 'author', header: {}, body: 'release', revision: { headerVersion: 1, bodyVersion: 1 } };
+    const opened: unknown[] = [];
+    const execute = createArtifactSignedInLinkJoinActionV1({ consumeSecret: async () => secret,
+      resolveRecipient: async () => ({ accountId: identity === 'wrong_account' ? 'someone-else' : 'recipient', mode: 'e2ee' as const,
+        contentPublicKey: identity === 'substituted_key' ? x25519.getPublicKey(new Uint8Array(32).fill(6)) : contentPublic }),
+      randomBytes: length => new Uint8Array(length).fill(2), onOpened: value => { opened.push(value); }, openContent: async () => artifact,
+      request: async request => {
+        requests.push(request);
+        if (request.method === 'POST') return { artifactId: 'artifact-1', ownerAccountId: 'author', access: 'view' };
+        return { subject: { kind: 'artifact', id: 'artifact-1' }, artifactId: 'artifact-1', authorAccountId: 'author', recipientAccountId: 'recipient', recipientContentKey,
+          encryptionMode: 'e2ee', encryptedDataKey: sealPublicShareDataKeyV1({ dataKey, secret, randomBytes: length => new Uint8Array(length).fill(1) }),
+          keyDerivation: 'fragment_v1', isConsentRequired: false, networkOff: false,
+          content: { kind: 'artifact', header: 'encrypted', body: 'encrypted', headerVersion: 1, bodyVersion: 1 } };
+      },
+    });
+    if (identity !== 'known') {
+      await expect(execute({ input: { lookupId: 'lookup' } })).rejects.toMatchObject({ code: 'recipient_key_unavailable' });
+      expect(requests).toHaveLength(1);
+      expect(opened).toEqual([]);
+      return;
+    }
+    await expect(execute({ input: { lookupId: 'lookup' } })).resolves.toEqual({ artifactId: 'artifact-1', authorAccountId: 'author', follow: true });
+    const body = requests[1]!.body as { keyEnvelope: { recipientAccountId: string; encryptedDataKey: string } };
+    expect(body.keyEnvelope.recipientAccountId).toBe('recipient');
+    expect(openEncryptedDataKeyEnvelopeV1({ envelope: decodeBase64(body.keyEnvelope.encryptedDataKey), recipientSecretKeyOrSeed: contentSecret })).toEqual(dataKey);
+    expect(JSON.stringify(requests)).not.toContain(secret);
+    expect(opened).toEqual([{ artifact, source: { artifactId: 'artifact-1', authorAccountId: 'author' }, follow: true }]);
+  });
+  it('opens an encrypted link once for a Plain Account without creating a grant or retaining a secret', async () => {
+    const secret = 'a'.repeat(43);
+    const dataKey = new Uint8Array(32).fill(9);
+    const requests: unknown[] = [];
+    const opened: unknown[] = [];
+    const artifact = { artifactId: 'artifact-1', ownerAccountId: 'author', header: {}, body: 'content', revision: { headerVersion: 1, bodyVersion: 1 } };
+    const execute = createArtifactSignedInLinkJoinActionV1({ consumeSecret: async () => secret,
+      randomBytes: length => new Uint8Array(length).fill(1), onOpened: value => { opened.push(value); },
+      resolveRecipient: async () => ({ accountId: 'recipient', mode: 'plain', contentPublicKey: null }),
+      openContent: async input => { expect(input.dataKey).toEqual(dataKey); return artifact; },
+      request: async request => { requests.push(request); return { subject: { kind: 'artifact', id: 'artifact-1' },
+        artifactId: 'artifact-1', authorAccountId: 'author', recipientAccountId: 'recipient',
+        recipientContentKey: { status: 'unavailable', reason: 'plain_account' }, encryptionMode: 'e2ee',
+        encryptedDataKey: sealPublicShareDataKeyV1({ dataKey, secret, randomBytes: length => new Uint8Array(length).fill(2) }),
+        keyDerivation: 'fragment_v1', isConsentRequired: false, networkOff: false,
+        content: { kind: 'artifact', header: 'ciphertext', body: 'ciphertext', headerVersion: 1, bodyVersion: 1 } }; },
+    });
+    await expect(execute({ input: { lookupId: 'lookup' } })).resolves.toEqual({ artifactId: 'artifact-1', authorAccountId: 'author', follow: false, followUnavailableReason: 'plain_account' });
+    expect(requests).toHaveLength(1);
+    expect(JSON.stringify(requests)).not.toContain(secret);
+    expect(opened).toEqual([{ artifact, source: { authorAccountId: 'author', artifactId: 'artifact-1' }, follow: false, followUnavailableReason: 'plain_account' }]);
+  });
   it('lets owners revoke existing layout publications after new publication admission is disabled', async () => {
     const requests: string[] = [];
     const execute = createArtifactPublicLinkActionsV1({

@@ -162,6 +162,8 @@ export type CliActionDepsParams = Readonly<{
   token: string;
   /** Local delivery only; a host without a link consumer refuses creation before HTTP. */
   onPublicLinkIssued?: (link: import('@happier-dev/protocol').ArtifactPublicLinkIssuedV1) => void | Promise<void>;
+  consumeArtifactSignedInLinkSecret?: (lookupId: string) => Promise<string | null>;
+  onArtifactSignedInLinkOpened?: (opened: import('@happier-dev/protocol/actions/executor/artifactPublicLinkActions').ArtifactSignedInLinkOpenedV1) => void | Promise<void>;
   credentials?: StoredCredentials;
   /** Immutable Account mode from finite requester admission, including unavailable. */
   admittedAccountEncryptionMode?: ConnectedServiceAccountEncryptionMode;

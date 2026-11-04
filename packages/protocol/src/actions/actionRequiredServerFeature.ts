@@ -52,6 +52,7 @@ export function getActionRequiredServerFeatureId(
   if (browserAutomationActionIds.has(actionId) || (browserNavigationActionIds.has(actionId) && !presentHumanUi)) {
     return 'browser.automation';
   }
+  if (actionId === 'artifact.public_link.join') return null;
   if (actionId.startsWith('artifact.public_link.')) return 'sharing.public';
   if (actionId === 'session.bot.face.set') return 'bots';
   if (workflowActionIds.includes(actionId)) return 'workflows';

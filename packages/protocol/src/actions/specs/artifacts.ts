@@ -48,6 +48,7 @@ export const ARTIFACT_ACTION_COPY = {
   'artifact.storage.usage': ['Read document storage', 'See how much space your documents take.'],
   'artifact.public_link.create': ['Create document public link', 'Make a link that lets anyone who has it read a document.'],
   'artifact.public_link.list': ['List document public links', 'See the public links a document has.'],
+  'artifact.public_link.join': ['Open signed-in document link', 'Join a signed-in document link with Can copy access.'],
   'artifact.public_link.revoke': ['Turn off document public link', 'Stop a public link working. People who have it can no longer open the document.'],
   'artifact.public_link.audit': ['Read document public link activity', 'See when a document\'s public link was opened.'],
 } as const satisfies Record<ArtifactActionIdV1, readonly [title: string, summary: string]>;
@@ -73,7 +74,7 @@ export const ARTIFACT_ACTION_SPECS: readonly (PreNormalizedActionSpec & Readonly
       executionPlacementForInput: (input: unknown) => isAnsweringClientArtifactExport(input) ? 'client' as const : 'machine' as const } : {}),
     ...(id === 'artifact.public_link.audit' ? { approvalPolicy: { agentDefault: 'egress' as const } } : {}),
     // Opening the share sheet reads the document's links; a present-user read is not confirmed.
-    ...(id === 'artifact.public_link.list' ? { approvalPolicy: { uiConfirmation: 'direct' as const } } : {}),
+    ...(id === 'artifact.public_link.list' || id === 'artifact.public_link.join' ? { approvalPolicy: { uiConfirmation: 'direct' as const } } : {}),
     // Both create a new private Account document (artifactActionDeps#createDocument).
     // Public-link creation carries its own in-page network choice (owner ruling
     // 2026-10-16); existing-document edits and revocation stay confirmed.

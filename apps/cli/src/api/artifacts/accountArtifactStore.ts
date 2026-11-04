@@ -1,3 +1,4 @@
+import { createCliArtifactSignedInLinkJoinAction } from './artifactSignedInLinkJoin';
 import { isDeepStrictEqual } from 'node:util';
 import { resolveInboxItemAttentionV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';
 import { type ServiceHealthNoticeNotificationV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
@@ -47,6 +48,7 @@ import type { Credentials, StoredCredentials } from '@/persistence';
 import type { AccountEncryptionModeReadOptions, ConnectedServiceAccountEncryptionMode } from '@/api/client/connectedServiceCredentialApi';
 import { createConnectedServiceCredentialApi } from '@/api/client/connectedServiceCredentialApi';
 import {
+  libsodiumPublicKeyFromSecretKey,
   decodeBase64,
   decryptWithDataKey,
   encodeBase64,
@@ -1024,6 +1026,19 @@ export function createAccountArtifactStore(params: Readonly<{
       options?.signal?.throwIfAborted();
       return { grants, publicShares };
     },
+    joinSignedInLink: (args: Readonly<{ input: unknown; signal?: AbortSignal }>,
+      callbacks: Pick<Parameters<typeof createCliArtifactSignedInLinkJoinAction>[0], 'consumeSecret' | 'onOpened'>) => createCliArtifactSignedInLinkJoinAction({
+        ...callbacks, request: request => requestPublicLink(request),
+        resolveRecipient: async signal => {
+          const mode = await params.getAccountEncryptionMode({ signal, usage: 'identity' });
+          if (!contentAccountId || mode !== 'plain' && mode !== 'e2ee') throw new ArtifactEncryptionMaterialUnavailableError();
+          if (mode === 'plain') return { accountId: contentAccountId, mode, contentPublicKey: null };
+          const encryption = requireCredentials(contentCredentials).encryption;
+          const contentPublicKey = encryption.type === 'dataKey' ? encryption.publicKey
+            : libsodiumPublicKeyFromSecretKey(deriveAccountMachineKeyFromRecoverySecret(encryption.secret));
+          return { accountId: contentAccountId, mode, contentPublicKey };
+        },
+      })(args),
     publicLinks: async (args: Readonly<{ actionId: ArtifactPublicLinkActionIdV1; input: unknown; signal?: AbortSignal }>,
       onPublicLinkIssued?: (link: ArtifactPublicLinkIssuedV1) => void | Promise<void>) => createArtifactPublicLinkActionsV1({
         randomBytes: getRandomBytes, onPublicLinkIssued,

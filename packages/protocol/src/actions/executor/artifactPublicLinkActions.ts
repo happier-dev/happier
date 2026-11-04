@@ -1,6 +1,11 @@
-import { ArtifactActionInputSchemasV1, ArtifactActionOutputSchemasV1 } from '../../artifacts/artifactActionsV1.js';
+import { decodeBase64, encodeBase64 } from '../../crypto/base64.js';
+import { computeContentPublicKeyFingerprint } from '../../machines/identity/contentPublicKeyFingerprint.js';
+import { prepareResourceRecipientKeyEnvelopesV1 } from '../../teams/resourceRecipientKeyPreparationV1.js';
+import { z } from 'zod/mini';
+import { lazyZodSchema } from '../../lazyZodSchema.js';
+import { ArtifactActionInputSchemasV1, ArtifactActionOutputSchemasV1, ArtifactDocumentV1Schema, ArtifactSignedInLinkJoinReadV1Schema, ArtifactSignedInLinkJoinCommitInputV1Schema, ArtifactSignedInLinkJoinCommitResultV1Schema, type ArtifactSignedInLinkJoinReadV1 } from '../../artifacts/artifactActionsV1.js';
 import { getArtifactUseTargetV1, type ArtifactSharingResourceV1 } from '../../artifacts/artifactSharingV1.js';
-import { sealPublicShareDataKeyV1 } from '../../crypto/publicShareEncryptedDataKeyEnvelopeV0.js';
+import { sealPublicShareDataKeyV1, openPublicShareDataKeyV1 } from '../../crypto/publicShareEncryptedDataKeyEnvelopeV0.js';
 import { buildStoredContentPublicShareUrlV1, generateStoredContentPublicShareMaterialV1,
   StoredContentPublicShareCreateRequestV1Schema, StoredContentPublicShareCreateResponseV1Schema,
   StoredContentPublicSharesListResponseV1Schema } from '../../sharing/storedContentPublicShareV1.js';
@@ -12,6 +17,75 @@ export type ArtifactPublicLinkKeyholdingResourceV1 = ArtifactSharingResourceV1 &
   encryptionMode: 'plain' | 'e2ee'; dataKey: Uint8Array | null;
 }>;
 export type ArtifactPublicLinkRequestV1 = Readonly<{ method: 'GET' | 'POST' | 'DELETE'; path: string; body?: unknown; signal?: AbortSignal }>;
+
+const signedInLinkOpenedArtifactSchema = lazyZodSchema(() => z.pick(ArtifactDocumentV1Schema, {
+  artifactId: true, ownerAccountId: true, header: true, body: true, revision: true,
+}));
+export type ArtifactSignedInLinkOpenedArtifactV1 = z.infer<typeof signedInLinkOpenedArtifactSchema>;
+export type ArtifactSignedInLinkOpenedV1 = Readonly<{
+  artifact: ArtifactSignedInLinkOpenedArtifactV1;
+  source: Readonly<{ authorAccountId: string; artifactId: string }>;
+  follow: boolean;
+  followUnavailableReason?: 'plain_account';
+}>;
+
+/** Opening material belongs to the answering host, never to an Action operand or stored source. */
+export function createArtifactSignedInLinkJoinActionV1(params: Readonly<{
+  request: (request: ArtifactPublicLinkRequestV1) => Promise<unknown>;
+  consumeSecret: (lookupId: string) => Promise<string | null>;
+  resolveRecipient: (signal?: AbortSignal) => Promise<Readonly<{ accountId: string; mode: 'plain' | 'e2ee'; contentPublicKey: Uint8Array | null }>>;
+  randomBytes: (length: number) => Uint8Array;
+  openContent: (input: Readonly<{ read: ArtifactSignedInLinkJoinReadV1; dataKey: Uint8Array | null }>) => Promise<ArtifactSignedInLinkOpenedArtifactV1>;
+  onOpened: (opened: ArtifactSignedInLinkOpenedV1) => void | Promise<void>;
+}>) {
+  return async (args: Readonly<{ input: unknown; signal?: AbortSignal }>) => {
+    args.signal?.throwIfAborted();
+    const input = ArtifactActionInputSchemasV1['artifact.public_link.join'].parse(args.input);
+    const secret = await params.consumeSecret(input.lookupId);
+    if (!secret) throw Object.assign(new Error('artifact_encryption_material_unavailable'), { code: 'artifact_encryption_material_unavailable' });
+    const path = `/v1/artifact-signed-in-links/${encodeURIComponent(input.lookupId)}/join`;
+    const read = ArtifactSignedInLinkJoinReadV1Schema.parse(await params.request({ method: 'GET', path, signal: args.signal }));
+    const recipient = await params.resolveRecipient(args.signal);
+    if (read.recipientAccountId !== recipient.accountId) throw Object.assign(new Error('recipient_key_unavailable'), { code: 'recipient_key_unavailable' });
+    args.signal?.throwIfAborted();
+    const dataKey = read.encryptionMode === 'e2ee' ? openPublicShareDataKeyV1({ encryptedDataKey: read.encryptedDataKey!, secret }) : null;
+    if (read.encryptionMode === 'e2ee' && !dataKey) throw Object.assign(new Error('artifact_encryption_material_unavailable'), { code: 'artifact_encryption_material_unavailable' });
+    const artifact = signedInLinkOpenedArtifactSchema.parse(await params.openContent({ read, dataKey }));
+    const source = { authorAccountId: read.authorAccountId, artifactId: read.artifactId };
+    if (artifact.artifactId !== source.artifactId || artifact.ownerAccountId !== source.authorAccountId) {
+      throw Object.assign(new Error('artifact_content_unavailable'), { code: 'artifact_content_unavailable' });
+    }
+    if (!getArtifactUseTargetV1(artifact, 'signed_in').publicLinkAllowed) {
+      throw Object.assign(new Error('artifact_content_unavailable'), { code: 'artifact_content_unavailable' });
+    }
+    args.signal?.throwIfAborted();
+    let keyEnvelope;
+    if (dataKey) {
+      if (recipient.mode === 'plain') {
+        const result = { ...source, follow: false, followUnavailableReason: 'plain_account' as const };
+        await params.onOpened({ artifact, source, follow: false, followUnavailableReason: 'plain_account' });
+        return ArtifactActionOutputSchemasV1['artifact.public_link.join'].parse(result);
+      }
+      if (read.recipientContentKey.status === 'unavailable') throw Object.assign(new Error('recipient_key_unavailable'), { code: 'recipient_key_unavailable', reason: read.recipientContentKey.reason });
+      if (!recipient.contentPublicKey || encodeBase64(recipient.contentPublicKey) !== read.recipientContentKey.contentPublicKey)
+        throw Object.assign(new Error('recipient_key_unavailable'), { code: 'recipient_key_unavailable' });
+      keyEnvelope = prepareResourceRecipientKeyEnvelopesV1({ dataKey, randomBytes: params.randomBytes, recipients: [{
+        recipientAccountId: read.recipientAccountId, contentKey: read.recipientContentKey,
+        contentPublicKeyFingerprint: computeContentPublicKeyFingerprint(decodeBase64(read.recipientContentKey.contentPublicKey)),
+        encryptedDataKey: null, recipientContentPublicKeyFingerprint: null,
+      }] })[0];
+      if (!keyEnvelope) throw Object.assign(new Error('recipient_key_unavailable'), { code: 'recipient_key_unavailable' });
+    }
+    args.signal?.throwIfAborted();
+    const body = ArtifactSignedInLinkJoinCommitInputV1Schema.parse({ ...(keyEnvelope ? { keyEnvelope } : {}) });
+    const committed = ArtifactSignedInLinkJoinCommitResultV1Schema.parse(await params.request({ method: 'POST', path, body, signal: args.signal }));
+    if (committed.artifactId !== read.artifactId || committed.ownerAccountId !== read.authorAccountId) {
+      throw Object.assign(new Error('artifact_content_unavailable'), { code: 'artifact_content_unavailable' });
+    }
+    await params.onOpened({ artifact, source, follow: true });
+    return ArtifactActionOutputSchemasV1['artifact.public_link.join'].parse({ ...source, follow: true });
+  };
+}
 
 /** The authenticated publication-list transport shared by management and audience admission. */
 export async function readArtifactPublicLinksV1(params: Readonly<{

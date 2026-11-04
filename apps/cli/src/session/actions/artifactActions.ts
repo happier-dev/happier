@@ -1,3 +1,4 @@
+import type { ArtifactSignedInLinkOpenedV1 } from '@happier-dev/protocol/actions/executor/artifactPublicLinkActions';
 import { ArtifactActionInputSchemasV1, projectArtifactHeaderV1, type ArtifactActionInputV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 import { artifactSavedByFromActionContextV1 } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
 import { isArtifactHtmlHeaderV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
@@ -18,6 +19,8 @@ export function createCliArtifactActions(params: Readonly<{
   forwardWorkspacePublication?: (input: ArtifactActionInputV1<'artifact.publish_from_file'> & Readonly<{ workspace: WorkspaceSource }>,
     context: ActionExecutorContext, signal?: AbortSignal) => Promise<unknown>;
   onPublicLinkIssued?: (link: ArtifactPublicLinkIssuedV1) => void | Promise<void>;
+  consumeArtifactSignedInLinkSecret?: (lookupId: string) => Promise<string | null>;
+  onArtifactSignedInLinkOpened?: (opened: ArtifactSignedInLinkOpenedV1) => void | Promise<void>;
   authorizationHeaders?: (context: ActionExecutorContext, effectActionId: string) => ArtifactRequestAuthorizationHeaders;
 }>) {
   const readUpload = async (context: ActionExecutorContext, input: Readonly<{ uploadPath: string; mime?: string; header: Readonly<Record<string, unknown>> }>, signal?: AbortSignal) => {
@@ -46,6 +49,11 @@ export function createCliArtifactActions(params: Readonly<{
         case 'doc.edit.decline':
           return await params.store.decideDocEditProposal({ actionId: args.actionId, input: DocEditDeclineInputV1Schema.parse(args.input), signal,
             ...(resolveAuthorization ? { authorizationHeaders: resolveAuthorization(args.context, args.actionId) } : {}) });
+        case 'artifact.public_link.join':
+          if (!params.consumeArtifactSignedInLinkSecret || !params.onArtifactSignedInLinkOpened)
+            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
+          return await params.store.joinSignedInLink({ input: args.input, signal }, {
+            consumeSecret: params.consumeArtifactSignedInLinkSecret, onOpened: params.onArtifactSignedInLinkOpened });
         case 'artifact.public_link.create':
         case 'artifact.public_link.list':
         case 'artifact.public_link.revoke':

@@ -12,7 +12,7 @@ import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { getActiveAccountSettingsSnapshotLifetimeToken, isActiveAccountSettingsSnapshotLifetimeCurrent } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 export function createCliArtifactsActionDeps(
-  params: Pick<CliActionDepsParams, 'machineActionDirectTargetTransport' | 'onPublicLinkIssued' | 'serverHttpBaseUrl' | 'serverId'>,
+  params: Pick<CliActionDepsParams, 'machineActionDirectTargetTransport' | 'onPublicLinkIssued' | 'consumeArtifactSignedInLinkSecret' | 'onArtifactSignedInLinkOpened' | 'serverHttpBaseUrl' | 'serverId'>,
   { artifactCallerContext, callMachineAction, homeAccountId, readRawRoleSettings, requireLocalPromptActionMachine, resolveServerRequestHeaders, resolveWorkspacePublishCaller, roleAccountLifetimeToken, roleAccountScopeKey, roleArtifactStore }: Readonly<{
     artifactCallerContext: (context: ActionExecutorContext) => ActionExecutorContext;
     callMachineAction: CliMachineActionCall;
@@ -37,6 +37,8 @@ export function createCliArtifactsActionDeps(
       if (!roleArtifactStore) return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
       const { createCliArtifactActions } = await import("../artifactActions");
       const execute = createCliArtifactActions({ store: roleArtifactStore, onPublicLinkIssued: params.onPublicLinkIssued,
+        consumeArtifactSignedInLinkSecret: params.consumeArtifactSignedInLinkSecret,
+        onArtifactSignedInLinkOpened: params.onArtifactSignedInLinkOpened,
         authorizationHeaders: (context, effectActionId) => async request => {
           const headers = resolveServerRequestHeaders(context, effectActionId, request);
           if (!headers) throw Object.assign(new Error('execution_not_authorized'), { code: 'execution_not_authorized' });
