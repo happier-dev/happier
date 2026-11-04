@@ -12275,6 +12275,7 @@ settingsSession: {
 	          placementInPlaceTitle: 'En su lugar',
 	          placementAtTopTitle: 'Arriba',
 	          placementBothTitle: "Arriba y en su proyecto",
+	          rowContextTitle: "Mostrar dónde se ejecuta",
 	          rowContextSubtitle: "Proyecto, máquina y rama, cuando difieren del grupo",
 	          identityDisplayAutoTitle: "Automático",
 	          identityDisplayProjectTitle: "Proyecto",

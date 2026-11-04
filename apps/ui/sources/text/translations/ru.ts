@@ -12126,6 +12126,7 @@ settingsSession: {
 	        placementInPlaceTitle: 'На месте',
 	        placementAtTopTitle: 'Наверху',
 	        placementBothTitle: "Вверху и в своём проекте",
+	        rowContextTitle: "Показывать, где выполняется",
 	        rowContextSubtitle: "Проект, машина и ветка, если отличаются от группы",
 	        identityDisplayAutoTitle: "Автоматически",
 	        identityDisplayProjectTitle: "Проект",

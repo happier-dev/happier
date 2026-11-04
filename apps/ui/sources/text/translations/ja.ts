@@ -12570,6 +12570,7 @@ settingsSession: {
 	        placementInPlaceTitle: '現在の位置',
 	        placementAtTopTitle: '上部',
 	        placementBothTitle: "上部とプロジェクト内",
+	        rowContextTitle: "実行場所を表示",
 	        rowContextSubtitle: "グループと異なる場合にプロジェクト、マシン、ブランチ",
 	        identityDisplayAutoTitle: "自動",
 	        identityDisplayProjectTitle: "プロジェクト",

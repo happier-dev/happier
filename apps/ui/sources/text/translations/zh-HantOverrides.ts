@@ -10082,6 +10082,7 @@ settingsSession: {
 	              placementInPlaceTitle: '保持原位',
 	              placementAtTopTitle: '置頂',
 	              placementBothTitle: "置頂並保留在專案中",
+	              rowContextTitle: "顯示執行位置",
 	              rowContextSubtitle: "與分組不同時顯示專案、機器和分支",
 	              identityDisplayAutoTitle: "自動",
 	              identityDisplayProjectTitle: "專案",

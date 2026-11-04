@@ -12113,6 +12113,7 @@ settingsSession: {
 	          placementInPlaceTitle: 'En place',
 	          placementAtTopTitle: 'En haut',
 	          placementBothTitle: "En haut et dans leur projet",
+	          rowContextTitle: "Afficher où ça s’exécute",
 	          rowContextSubtitle: "Projet, machine et branche, quand ils diffèrent du groupe",
 	          identityDisplayAutoTitle: "Automatique",
 	          identityDisplayProjectTitle: "Projet",

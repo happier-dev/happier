@@ -12170,6 +12170,7 @@ settingsSession: {
 	              placementInPlaceTitle: 'An Position',
 	              placementAtTopTitle: 'Oben',
 	              placementBothTitle: "Oben und in ihrem Projekt",
+	              rowContextTitle: "Zeigen, wo es läuft",
 	              rowContextSubtitle: "Projekt, Rechner und Branch, wenn sie von der Gruppe abweichen",
 	              identityDisplayAutoTitle: "Automatisch",
 	              identityDisplayProjectTitle: "Projekt",

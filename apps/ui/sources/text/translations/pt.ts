@@ -12393,6 +12393,7 @@ settingsSession: {
 	          placementInPlaceTitle: 'No lugar',
 	          placementAtTopTitle: 'No topo',
 	          placementBothTitle: "No topo e no projeto",
+	          rowContextTitle: "Mostrar onde roda",
 	          rowContextSubtitle: "Projeto, máquina e branch, quando diferem do grupo",
 	          identityDisplayAutoTitle: "Automático",
 	          identityDisplayProjectTitle: "Projeto",

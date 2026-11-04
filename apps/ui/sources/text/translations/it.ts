@@ -12494,6 +12494,7 @@ settingsSession: {
 	          placementInPlaceTitle: 'In posizione',
 	          placementAtTopTitle: 'In alto',
 	          placementBothTitle: "In alto e nel loro progetto",
+	          rowContextTitle: "Mostra dove viene eseguita",
 	          rowContextSubtitle: "Progetto, macchina e branch, quando differiscono dal gruppo",
 	          identityDisplayAutoTitle: "Automatico",
 	          identityDisplayProjectTitle: "Progetto",

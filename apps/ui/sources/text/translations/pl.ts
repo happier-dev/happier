@@ -12104,6 +12104,7 @@ settingsSession: {
 	          placementInPlaceTitle: 'Na miejscu',
 	          placementAtTopTitle: 'Na górze',
 	          placementBothTitle: "Na górze i w projekcie",
+	          rowContextTitle: "Pokaż, gdzie działa",
 	          rowContextSubtitle: "Projekt, maszyna i gałąź, gdy różnią się od grupy",
 	          identityDisplayAutoTitle: "Automatycznie",
 	          identityDisplayProjectTitle: "Projekt",

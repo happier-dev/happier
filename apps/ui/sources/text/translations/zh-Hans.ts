@@ -11903,6 +11903,7 @@ settingsSession: {
 	        placementInPlaceTitle: '保持原位',
 	        placementAtTopTitle: '置顶',
 	        placementBothTitle: "置顶并保留在项目中",
+	        rowContextTitle: "显示运行位置",
 	        rowContextSubtitle: "与分组不同时显示项目、机器和分支",
 	        identityDisplayAutoTitle: "自动",
 	        identityDisplayProjectTitle: "项目",

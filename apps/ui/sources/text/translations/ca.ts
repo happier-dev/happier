@@ -11466,6 +11466,7 @@ settingsSession: {
 	                placementInPlaceTitle: 'Al seu lloc',
 	                placementAtTopTitle: 'A dalt',
 	                placementBothTitle: "A dalt i al seu projecte",
+	                rowContextTitle: "Mostra on s’executa",
 	                rowContextSubtitle: "Projecte, màquina i branca, quan difereixen del grup",
 	                identityDisplayAutoTitle: "Automàtic",
 	                identityDisplayProjectTitle: "Projecte",

@@ -14501,6 +14501,7 @@ const enSettingsSession = {
     placementInPlaceTitle: 'In place',
     placementAtTopTitle: 'At top',
     placementBothTitle: "At the top and in their project",
+    rowContextTitle: "Show where it runs",
     rowContextSubtitle: "Project, machine and branch, when they differ from the group",
     identityDisplayAutoTitle: "Auto",
     identityDisplayProjectTitle: "Project",
