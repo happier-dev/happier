@@ -101,7 +101,7 @@ describe('streamVoiceAgentTurn', () => {
             .resolves.toMatchObject({ assistantText: 'ready' });
     });
     it('returns the useful incomplete predecessor reply through the real consumer without cancelling it', async () => {
-        const text = '你好🙂'.repeat(15_000);
+        const text = '你好🙂'.repeat(25_000);
         const accepted: VoiceAgentAcceptedOutputV1[] = [];
         const handle = {
             transcriptEpoch: 0,
@@ -126,7 +126,7 @@ describe('streamVoiceAgentTurn', () => {
         const spoken = accepted.flatMap((output) => output.effects).filter((effect) => effect.kind === 'speak').map((effect) => effect.text).join('');
         expect(result.assistantText.startsWith(spoken)).toBe(true);
         expect(result.assistantText.endsWith(VOICE_OUTPUT_INCOMPLETE_TEXT)).toBe(true);
-        expect(result.actions).toEqual([]);
+        expect(result.actions).toEqual([{ t: 'teleportVoiceAgentToSessionRoot', args: { sessionId: 's1' } }]);
         expect(accepted.at(-1)?.effects).toEqual([{ kind: 'persist_final', text: result.assistantText }]);
         expect(network.requests.some(request => request.method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_CANCEL)).toBe(false);
     });
@@ -249,9 +249,9 @@ describe('streamVoiceAgentTurn', () => {
         expect(readVoiceAgentActionEffectId(result.actions[0])).toBe('effect-stable');
     });
 
-    it('enforces the canonical payload budget before display-status redaction', async () => {
+    it('delivers all wire-valid status output beyond the retired payload quota with display redaction', async () => {
         const onOutputEvent = vi.fn(async (_output: VoiceAgentAcceptedOutputV1) => {});
-        const events = Array.from({ length: 240 }, (_, seq) => ({
+        const events = [...Array.from({ length: 240 }, (_, seq) => ({
             t: 'voice_output' as const,
             output: {
                 v: 1 as const,
@@ -261,7 +261,8 @@ describe('streamVoiceAgentTurn', () => {
                 statusId: `status-${seq}`,
                 text: `/Users/a/${'x'.repeat(1_015)}`,
             },
-        }));
+        })), { t: 'voice_output' as const, output: { v: 1 as const, kind: 'turn_final' as const,
+            turnId: 'stream-budget', seq: 240, text: 'Complete.' } }];
         const handle = {
             transcriptEpoch: 0,
             backend: 'daemon',
@@ -286,8 +287,8 @@ describe('streamVoiceAgentTurn', () => {
             userText: 'status',
             displayUserText: 'status',
             options: { onOutputEvent },
-        })).rejects.toThrow('voice_output_budget_exceeded');
-        expect(onOutputEvent).toHaveBeenCalled();
+        })).resolves.toMatchObject({ assistantText: 'Complete.' });
+        expect(onOutputEvent).toHaveBeenCalledTimes(events.length);
         expect(onOutputEvent.mock.calls[0]?.[0].event).toMatchObject({
             kind: 'display_status',
             text: '<path_redacted>',
