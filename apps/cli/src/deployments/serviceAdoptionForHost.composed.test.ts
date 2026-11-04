@@ -229,8 +229,12 @@ else process.exit(23);
                 .toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
             expect(creates).toBe(0);
             phase = 'apply and lost binding response';
+            const composeCalls = async () => (await readFile(callsPath, 'utf8')).trim().split('\n')
+                .map(line => JSON.parse(line) as { args: string[] }).filter(call => call.args.includes('config')).length;
+            const beforeApply = await composeCalls();
             expect(await executor.execute('machines.services.adopt', apply, context)).toMatchObject({ ok: true,
                 result: { kind: 'partial', environmentId: 'adopted-environment', targetLinkId: 'native-target', errorCode: 'outcome_unknown' } });
+            expect(await composeCalls() - beforeApply).toBe(3);
             phase = 'same request continuation';
             const result = await executor.execute('machines.services.adopt', apply, context);
             expect(result).toMatchObject({ ok: true, result: { kind: 'adopted', environmentId: 'adopted-environment', targetLinkId: 'native-target' } });

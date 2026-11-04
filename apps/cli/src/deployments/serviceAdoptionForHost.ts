@@ -111,8 +111,6 @@ export async function prepareServiceAdoptionForHost(request: Parameters<NonNulla
                         prepared = prior.data.preparedCreate; environmentId = prior.data.environmentId;
                         revision = prior.data.revision; targetLinkId = prior.data.targetLinkId;
                     }
-                    const currentCapture = await capture(context);
-                    if (currentCapture.reviewedDigest !== input.reviewedDigest) return partial('approval_stale');
                     if (!prepared) {
                         const createdInput = await host.prepareCreate({ input: create, context, nativeOrigin: reviewed.origin });
                         if ('errorCode' in createdInput) return createdInput;
