@@ -2,10 +2,11 @@ import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, relative, resolve } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { parseMutagenSyncList } from './utils/dev_targets/mutagen_runtime.mjs';
+import { renderMutagenProject } from './utils/dev_targets/mutagen_project.mjs';
 
 const testDir = dirname(fileURLToPath(import.meta.url));
 const controlExecutable = resolve(testDir, '..', 'bin', 'hstack-dev-target-control');
@@ -53,6 +54,30 @@ async function executable(path, contents) {
   await writeFile(path, contents);
   await chmod(path, 0o755);
 }
+
+test('sync control resolves relative daemon storage before selecting its shared namespace', {
+  skip: process.platform === 'win32',
+}, async t => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-sync-control-relative-'));
+  t.after(() => removeFixture(root));
+  const binDir = join(root, 'bin');
+  const dataDir = join(root, 'mutagen', 'data');
+  const session = root.split('/').at(-1);
+  await mkdir(binDir);
+  await executable(join(binDir, 'mutagen'), '#!/bin/sh\nif [ "$2" = list ]; then printf "%s|Watching|false|true|1|0/0|0/0|true|1|0/0|0/0|active|2|ok|0|0\\n" "$3"; fi\n');
+  for (const configured of [dataDir, relative(binDir, dataDir)]) {
+    const result = spawnSync(controlExecutable, ['--sync-flush', session, '--', 'mutagen', 'sync', 'flush', session], {
+      cwd: binDir, encoding: 'utf8', env: { ...process.env,
+        PATH: `${binDir}:${process.env.PATH ?? ''}`, MUTAGEN_DATA_DIRECTORY: configured,
+        DBUS_SESSION_BUS_ADDRESS: '',
+      },
+    });
+    assert.equal(result.status, 0, result.stderr);
+  }
+  const stateDir = `/tmp/happier-sync-control-${process.getuid()}${root}/mutagen/hstack-control`;
+  assert.equal(await readFile(join(stateDir, `${session}.flight`), 'utf8'), '2 2\n',
+    'relative and absolute spellings of one daemon must advance the same causal record');
+});
 
 async function waitForFile(path) {
   for (let attempt = 0; attempt < 250; attempt += 1) {
@@ -201,6 +226,57 @@ test('the causal barrier retries known transient transition problems once and re
     assert.equal(inspect(error, mode === 'excluded' ? 1 : 0).recovery, undefined);
     assert.notEqual(run(mode, error).status, 0);
     await assert.rejects(readFile(marker), { code: 'ENOENT' });
+  }
+});
+
+test('project log churn does not wedge the flush while persistent source transitions still block it', {
+  skip: process.platform === 'win32',
+}, async t => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-sync-log-churn-'));
+  t.after(() => removeFixture(root));
+  const binDir = join(root, 'bin');
+  await mkdir(binDir);
+  const rendered = renderMutagenProject({ sourceDir: root, targets: [] });
+  const ignores = rendered.split('\n').filter(line => line.startsWith('        - '))
+    .map(line => JSON.parse(line.slice(10)));
+  const git = spawnSync('git', ['init', '--quiet', root]);
+  assert.equal(git.status, 0);
+  await writeFile(join(root, '.gitignore'), `${ignores.join('\n')}\n`);
+  await writeFile(join(root, 'empty-excludes'), '');
+  // Mutagen is the external boundary. Reproduce its observed missing-stage
+  // result for each included file changed during the flush, using the real
+  // generated ignore policy and Git's matcher rather than a second parser.
+  await executable(join(binDir, 'mutagen'), [
+    '#!/bin/sh',
+    'cd "$CHURN_ROOT" || exit 1',
+    'case "$2" in',
+    '  flush) printf "appended during flush\\n" >> "$CHURN_PATH"; exit 0 ;;',
+    '  list)',
+    '    transition=1/0',
+    '    git -c "core.excludesFile=$CHURN_ROOT/empty-excludes" check-ignore --no-index --quiet -- "$CHURN_PATH" && transition=0/0',
+    '    printf "%s|Watching|false|true|1|0/0|0/0|true|1|0/0|%s|active|2|ok|0|0\\n" "$3" "$transition"',
+    '    [ "$transition" = 0/0 ] || printf "%s|unable to swap file: unable to set staged file permissions: chmod /tmp/staged: no such file or directory\\n" "$CHURN_PATH" ;;',
+    'esac',
+  ].join('\n'));
+  const flush = async path => {
+    await mkdir(join(root, dirname(path)), { recursive: true });
+    await writeFile(join(root, path), 'initial\n');
+    const result = spawnSync(controlExecutable,
+      ['--sync-flush', 'happier-churn', '--', 'mutagen', 'sync', 'flush', 'happier-churn'], {
+        env: { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ''}`,
+          MUTAGEN_DATA_DIRECTORY: join(root, 'mutagen', 'data'), DBUS_SESSION_BUS_ADDRESS: '',
+          CHURN_ROOT: root, CHURN_PATH: path }, encoding: 'utf8',
+      });
+    assert.match(await readFile(join(root, path), 'utf8'), /appended during flush/);
+    return result;
+  };
+  const timeline = '.project/plans/2026-10-02-changes-walkthrough/lanes/wt-verify/logs/N5-timeline.txt';
+  const accepted = await flush(timeline);
+  assert.equal(accepted.status, 0, accepted.stderr);
+  for (const path of ['apps/stack/source.mjs', '.project/plans/audit/briefs/worker-input.json']) {
+    const rejected = await flush(path);
+    assert.notEqual(rejected.status, 0, path);
+    assert.ok(rejected.stderr.includes(path), rejected.stderr);
   }
 });
 
@@ -494,6 +570,36 @@ test('a waiter joining a successful flush still rejects fresh session problems',
   assert.equal(await readFile(flushLog, 'utf8'), 'flush\n', 'both pre-start demands share one cycle');
   assert.equal((await launch().result).code, 0, 'a new request must recover with another flush');
   assert.equal(await readFile(flushLog, 'utf8'), 'flush\nflush\n');
+});
+
+test('paused sync sessions report their project without inspecting absent endpoint state or flushing', {
+  skip: process.platform === 'win32',
+}, async t => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-sync-paused-project-'));
+  t.after(() => removeFixture(root));
+  const binDir = join(root, 'bin');
+  const calls = join(root, 'calls');
+  await mkdir(binDir);
+  // Mutagen 0.18.1 has nil embedded EndpointState on paused sessions.
+  // Its template evaluation fails if the active branch is entered; the real
+  // paused session replay is also checked at the lane's loaded-runtime gate.
+  await executable(join(binDir, 'mutagen'), [
+    '#!/bin/sh',
+    'printf "%s\\n" "$2" >> "$PAUSED_CALLS"',
+    'case "$5" in',
+    '  \'{{range .}}{{if .Paused}}\'*)',
+    '    printf "%s|Disconnected|true|false|X|X|X|false|X|X|X|paused|0|ok|0|0|||basis-project\\n" "$3" ;;',
+    '  *) printf "%s\\n" "reflect: indirection through nil pointer to embedded struct field EndpointState" >&2; exit 1 ;;',
+    'esac',
+  ].join('\n'));
+  const result = spawnSync(controlExecutable, ['--sync-check', 'happier-basis-linux'], {
+    env: { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ''}`,
+      MUTAGEN_DATA_DIRECTORY: join(root, 'mutagen', 'data'), PAUSED_CALLS: calls }, encoding: 'utf8',
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /sync session paused \(basis-project\)/);
+  assert.doesNotMatch(result.stderr, /status inspection failed/);
+  assert.equal(await readFile(calls, 'utf8'), 'list\n', 'paused sessions must not trigger recovery or flush');
 });
 
 test('sync inspection does not reinterpret partial template output as session health', async (t) => {

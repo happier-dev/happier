@@ -32,8 +32,28 @@ sync_control_state_dir() {
   # Sandboxes bind the host /tmp; TMPDIR and stack storage may be caller-private
   # or read-only, so neither can own this shared state.
   # Separate daemons can use identical session names (e.g. sibling checkouts).
-  # Retain the daemon's existing namespace beneath the shared per-uid root.
-  printf '/tmp/happier-sync-control-%s%s/hstack-control\n' "$(id -u)" "${MUTAGEN_DATA_DIRECTORY%/data}"
+  # Resolve the daemon namespace before placing it beneath the shared root.
+  # Relative storage is supported by the runtime owner; raw parent traversals
+  # must not become part of the per-uid directory name or escape its root.
+  # Keep this lexical (the daemon directory may not exist or be writable) and
+  # native: control dispatch must not start a JavaScript runtime to find state.
+  sync_remainder=$MUTAGEN_DATA_DIRECTORY
+  case "$sync_remainder" in /*) ;; *) sync_remainder=$PWD/$sync_remainder ;; esac
+  sync_namespace=''
+  while [ -n "$sync_remainder" ]; do
+    sync_component=${sync_remainder%%/*}
+    case "$sync_remainder" in
+      */*) sync_remainder=${sync_remainder#*/} ;;
+      *) sync_remainder='' ;;
+    esac
+    case "$sync_component" in
+      ''|.) ;;
+      ..) sync_namespace=${sync_namespace%/*} ;;
+      *) sync_namespace=$sync_namespace/$sync_component ;;
+    esac
+  done
+  sync_namespace=${sync_namespace%/data}
+  printf '/tmp/happier-sync-control-%s/%s/hstack-control\n' "$(id -u)" "${sync_namespace#/}"
 }
 
 run_control_command() {
@@ -102,7 +122,9 @@ check_sync_session_clean() {
     printf '%s\n' 'hstack-dev-target-control: MUTAGEN_DATA_DIRECTORY is required for sync inspection' >&2
     return 1
   }
-  sync_template='{{range .}}{{.Name}}|{{.Status}}|{{.Paused}}|{{.Alpha.Connected}}|{{if .Alpha.Connected}}{{if .Alpha.Scanned}}1{{else}}0{{end}}{{else}}X{{end}}|{{if .Alpha.Connected}}{{len .Alpha.ScanProblems}}/{{.Alpha.ExcludedScanProblems}}{{else}}X{{end}}|{{if .Alpha.Connected}}{{len .Alpha.TransitionProblems}}/{{.Alpha.ExcludedTransitionProblems}}{{else}}X{{end}}|{{.Beta.Connected}}|{{if .Beta.Connected}}{{if .Beta.Scanned}}1{{else}}0{{end}}{{else}}X{{end}}|{{if .Beta.Connected}}{{len .Beta.ScanProblems}}/{{.Beta.ExcludedScanProblems}}{{else}}X{{end}}|{{if .Beta.Connected}}{{len .Beta.TransitionProblems}}/{{.Beta.ExcludedTransitionProblems}}{{else}}X{{end}}|{{if .Paused}}paused|0|ok|0|0{{else}}active|{{.SuccessfulCycles}}|{{if .LastError}}error{{else}}ok{{end}}|{{len .Conflicts}}|{{.ExcludedConflicts}}{{end}}|{{.Alpha.Watch.Mode}}|{{.Beta.Watch.Mode}}{{println}}{{range .Alpha.TransitionProblems}}{{printf "%s|%s\n" .Path .Error}}{{end}}{{range .Beta.TransitionProblems}}{{printf "%s|%s\n" .Path .Error}}{{end}}{{range .Alpha.ScanProblems}}{{printf "%s|%s\n" .Path .Error}}{{end}}{{range .Beta.ScanProblems}}{{printf "%s|%s\n" .Path .Error}}{{end}}{{end}}'
+  # Paused Mutagen sessions have no embedded EndpointState. Branch before
+  # reading it, including the problem ranges, so pause remains an observable fact.
+  sync_template='{{range .}}{{if .Paused}}{{.Name}}|{{.Status}}|true|false|X|X|X|false|X|X|X|paused|0|ok|0|0|||{{index .Labels "io.mutagen.project"}}{{println}}{{else}}{{.Name}}|{{.Status}}|{{.Paused}}|{{.Alpha.Connected}}|{{if .Alpha.Connected}}{{if .Alpha.Scanned}}1{{else}}0{{end}}{{else}}X{{end}}|{{if .Alpha.Connected}}{{len .Alpha.ScanProblems}}/{{.Alpha.ExcludedScanProblems}}{{else}}X{{end}}|{{if .Alpha.Connected}}{{len .Alpha.TransitionProblems}}/{{.Alpha.ExcludedTransitionProblems}}{{else}}X{{end}}|{{.Beta.Connected}}|{{if .Beta.Connected}}{{if .Beta.Scanned}}1{{else}}0{{end}}{{else}}X{{end}}|{{if .Beta.Connected}}{{len .Beta.ScanProblems}}/{{.Beta.ExcludedScanProblems}}{{else}}X{{end}}|{{if .Beta.Connected}}{{len .Beta.TransitionProblems}}/{{.Beta.ExcludedTransitionProblems}}{{else}}X{{end}}|active|{{.SuccessfulCycles}}|{{if .LastError}}error{{else}}ok{{end}}|{{len .Conflicts}}|{{.ExcludedConflicts}}|{{.Alpha.Watch.Mode}}|{{.Beta.Watch.Mode}}{{println}}{{range .Alpha.TransitionProblems}}{{printf "%s|%s\n" .Path .Error}}{{end}}{{range .Beta.TransitionProblems}}{{printf "%s|%s\n" .Path .Error}}{{end}}{{range .Alpha.ScanProblems}}{{printf "%s|%s\n" .Path .Error}}{{end}}{{range .Beta.ScanProblems}}{{printf "%s|%s\n" .Path .Error}}{{end}}{{end}}{{end}}'
   if ! status_output=$(mutagen sync list "$session_name" --template "$sync_template" 2>/dev/null); then
     printf '%s\n' "hstack-dev-target-control: $session_name synchronization status inspection failed" >&2
     return 1
@@ -112,7 +134,7 @@ check_sync_session_clean() {
     return 1
   }
   status_line=$(printf '%s\n' "$status_output" | sed -n '1p')
-  IFS='|' read -r s_name s_status s_paused s_alpha_connected s_alpha_scanned s_alpha_scan s_alpha_trans s_beta_connected s_beta_scanned s_beta_scan s_beta_trans s_active s_cycles s_error s_conflicts s_excluded s_alpha_watch s_beta_watch <<EOF
+  IFS='|' read -r s_name s_status s_paused s_alpha_connected s_alpha_scanned s_alpha_scan s_alpha_trans s_beta_connected s_beta_scanned s_beta_scan s_beta_trans s_active s_cycles s_error s_conflicts s_excluded s_alpha_watch s_beta_watch s_project <<EOF
 $status_line
 EOF
   [ "$s_name" = "$session_name" ] || {
@@ -120,11 +142,11 @@ EOF
     return 1
   }
   [ "$s_paused" = false ] || {
-    printf '%s\n' "hstack-dev-target-control: $session_name synchronization is paused" >&2
+    printf '%s\n' "hstack-dev-target-control: $session_name sync session paused (${s_project:-$session_name})" >&2
     return 1
   }
   [ "$s_active" = active ] || {
-    printf '%s\n' "hstack-dev-target-control: $session_name synchronization is paused" >&2
+    printf '%s\n' "hstack-dev-target-control: $session_name sync session paused (${s_project:-$session_name})" >&2
     return 1
   }
   case "$s_status" in
