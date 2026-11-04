@@ -390,19 +390,17 @@ export function useVoiceConversationsReadinessModel(props: {
     enabled: configuredAgent !== null,
     load: false,
   });
-  const agentCatalogReady = agentCatalog?.catalog.status === 'ready' && !agentCatalog.stale
-    && (!configuredAgent?.agentIdentity || agentProjection.phase === 'ready');
   const configuredAgentTarget = configuredAgent ? projectVoiceConfiguredAgentTarget({
     selection: configuredAgent,
     backendEnabledByTargetKey: accountSettings.backendEnabledByTargetKey,
-    entries: agentCatalogReady ? getResolvedBackendCatalogEntries({
+    entries: getResolvedBackendCatalogEntries({
       enabledAgentIds: getEnabledAgentIds({ backendEnabledByTargetKey: accountSettings.backendEnabledByTargetKey }),
-      acpCatalogSnapshot: agentCatalog.catalog,
+      acpCatalogSnapshot: agentCatalog?.catalog.status === 'ready' && !agentCatalog.stale ? agentCatalog.catalog : undefined,
       backendEnabledByTargetKey: accountSettings.backendEnabledByTargetKey,
       mergedProviderProjectionById: agentProjection.inputs?.mergedProviderProjectionById,
       mergedBackendProjectionById: agentProjection.inputs?.mergedBackendProjectionById,
       discoveredBackendIds: agentProjection.inputs?.discoveredBackendIds,
-    }) : null,
+    }),
     mergedProviderProjectionById: agentProjection.inputs?.mergedProviderProjectionById,
   }) : null;
   const selectedSpeechProviderIds = [

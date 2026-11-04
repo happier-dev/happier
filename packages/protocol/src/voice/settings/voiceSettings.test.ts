@@ -25,6 +25,13 @@ describe('shared Voice settings owner', () => {
     expect(owner.readLocalConversationVoiceSettings(retained).agent.permissionIntent).toBe('read-only');
   });
 
+  it('keeps audible waiting cues opt-in and persists the deliberate preference', () => {
+    expect(owner.voiceSettingsParse({}).audibleWaitingCue).toBe(false);
+    for (const audibleWaitingCue of [true, false]) {
+      const voice = owner.voiceSettingsParse({ audibleWaitingCue });
+      expect(owner.voiceSettingsParse(JSON.parse(JSON.stringify(voice))).audibleWaitingCue).toBe(audibleWaitingCue);
+    }
+  });
 
   it('uses one conversation lifetime preference and migrates both retained warm policies to continuity', () => {
     // ui-web-v0.2.19 (63829e3cd6a8f1f48b10891af0c8b2313e51ac7e),

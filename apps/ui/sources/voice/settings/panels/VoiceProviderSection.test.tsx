@@ -2084,6 +2084,50 @@ describe('VoiceProviderSection', () => {
         expect(readiness?.props.announcement).not.toContain(tLoose('voice.readiness.credential_missing'));
     }, 120_000);
 
+    it('makes a bundled fixed Agent ready on cold Home without demanding ACP, enabling Try', async () => {
+        const { useVoiceConversationsReadinessModel } = await import('./VoiceProviderSection');
+        const { deriveVoiceSetupFacts } = await import('../setup/voiceSetupFacts');
+        const { VoiceSetupPanel } = await import('../setup/VoiceSetupPanel');
+        const { getAcpCatalogSnapshot } = await import('@/sync/store/settings/acpCatalogSnapshot');
+        const { readLocalConversationVoiceSettings, writeLocalConversationVoiceSettings } = await import('@/sync/domains/settings/voiceSettings');
+        const defaults = readLocalConversationVoiceSettings(accountFixture.settings.voice);
+        const voice = writeLocalConversationVoiceSettings({ ...accountFixture.settings.voice, providerId: 'local_conversation' }, {
+            ...defaults, conversationMode: 'agent',
+            agent: { ...defaults.agent, agentSource: 'agent', agentId: 'codex', agentTargetKey: 'backend:codex', agentIdentity: null },
+            stt: { ...defaults.stt, provider: 'device' }, tts: { ...defaults.tts, provider: 'device' },
+        });
+        storageBoundary.settings = settingsParse({ ...accountFixture.settings, experiments: true,
+            featureToggles: { ...accountFixture.settings.featureToggles, voice: true, 'voice.agent': true, 'execution.runs': true } });
+        accountFixture.replaceVoice(voice);
+        passiveSetupBoundary.machineTarget = { daemonStateVersion: 0, isOnline: true };
+        const { resolveRuntimeFeatureDecision } = await import('@/sync/domains/features/featureDecisionInputs');
+        expect(await resolveRuntimeFeatureDecision({ featureId: 'voice.agent' })).toMatchObject({ state: 'enabled' });
+        expect(getAcpCatalogSnapshot(accountFixture.scope)).toBeNull();
+        function ColdHome() {
+            const model = useVoiceConversationsReadinessModel({ voice, setVoice: vi.fn(), happierVoiceSupported: true,
+                platformOs: 'web', executionMachineId: 'machine-1',
+                executionMachineSelectedId: 'machine-1', executionMachineSelectionKind: 'resolved',
+                localAvailability: { browserSpeech: { support: 'cloud_only', onDevice: 'unsupported' }, daemon: {
+                    featureEnabled: true, route: 'direct', modelState: 'ready', runtimeState: 'available', pcmCapture: 'available',
+                }, nativeDevice: { requested: false } },
+            });
+            const facts = deriveVoiceSetupFacts({ providerId: voice.providerId, readiness: model.selectedProviderReadiness,
+                microphonePermission: 'granted', messages: [] });
+            return <>
+                {React.createElement('ColdHome', { readiness: model.selectedProviderReadiness, canTry: facts.canTry })}
+                <VoiceSetupPanel testID="cold-home" model={{ facts, serviceTitle: 'Local Voice', serviceTiles: [],
+                    readiness: null, tryLive: false, shortcutLabel: null }}
+                    actions={{ onSelectService() {}, onRecover() {}, onAllowMicrophone() {}, onOpenSystemSettings: null,
+                        onTry() {}, onDone() {}, onOpenSettings() {}, onClose() {} }} />
+            </>;
+        }
+        const screen = await renderScreen(<ColdHome />);
+        const projected = screen.tree.root.findByType('ColdHome').props;
+        expect(projected, JSON.stringify(projected)).toMatchObject({ readiness: { status: 'ready' }, canTry: true });
+        expect(screen.tree.root.findByProps({ title: t('voiceMoments.setupTryAction') }).props.disabled === true).toBe(false);
+        expect(getAcpCatalogSnapshot(accountFixture.scope)).toBeNull();
+    });
+
     it('uses the pipeline readiness for the selected Service row, including unobserved Local prerequisites', async () => {
         const { VoiceProviderSection } = await import('./VoiceProviderSection');
         const { VoicePipelineCard } = await import('@/voice/settings/pipeline/VoicePipelineCard');

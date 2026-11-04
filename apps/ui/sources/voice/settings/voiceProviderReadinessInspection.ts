@@ -212,11 +212,10 @@ export async function inspectVoiceSettingsSemanticReadiness(input: Readonly<{
     const catalog = getAcpCatalogSnapshot(scope);
     const agentProjection = readReusableDaemonMergedProjectionCacheEntry({ machineId: machine.machineId, serverId });
     const projectionInputs = agentProjection?.kind === 'ready' ? agentProjection.inputs : null;
-    const agentEntries = catalog?.catalog.status === 'ready' && !catalog.stale && (!agent?.agentIdentity || projectionInputs)
-        ? getResolvedBackendCatalogEntries({ enabledAgentIds: getEnabledAgentIds({ backendEnabledByTargetKey: settings.backendEnabledByTargetKey }),
-            acpCatalogSnapshot: catalog.catalog, backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
+    const agentEntries = getResolvedBackendCatalogEntries({ enabledAgentIds: getEnabledAgentIds({ backendEnabledByTargetKey: settings.backendEnabledByTargetKey }),
+            acpCatalogSnapshot: catalog?.catalog.status === 'ready' && !catalog.stale ? catalog.catalog : undefined, backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
             mergedProviderProjectionById: projectionInputs?.mergedProviderProjectionById,
-            mergedBackendProjectionById: projectionInputs?.mergedBackendProjectionById, discoveredBackendIds: projectionInputs?.discoveredBackendIds }) : null;
+            mergedBackendProjectionById: projectionInputs?.mergedBackendProjectionById, discoveredBackendIds: projectionInputs?.discoveredBackendIds });
     const agentTarget = agent ? projectVoiceConfiguredAgentTarget({ selection: agent, entries: agentEntries,
         backendEnabledByTargetKey: settings.backendEnabledByTargetKey, mergedProviderProjectionById: projectionInputs?.mergedProviderProjectionById }) : null;
     const localFacts = projectLocalConversationReadinessFacts({ registry, voice, voiceSettingsV1: settings.voiceSettingsV1,

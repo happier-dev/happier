@@ -1,14 +1,18 @@
 import * as React from 'react';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import renderer, { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createMachineFixture, registerStandardCleanupTarget, renderScreen, renderHook, standardCleanup, waitForTestEvent, type RenderScreenResult } from '@/dev/testkit';
 import { createDiagnosticsTestEvents } from './diagnosticsTestEvents';
 import { installSessionActionRpcBoundary } from '@/dev/testkit/harness/sessionActionRpcBoundary';
 import { serveAccountHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
-import { createPlainMachineReadHttpResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { observeMachinePresenceForTest } from '@/dev/testkit/harness/machinePresence';
+import { createPlainMachineReadHttpResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { VoiceSpeechDiagnosticsConfigureRequestV1Schema, VoiceSpeechDiagnosticsRevokeCaptureRequestV1Schema, VoiceSpeechDiagnosticsSettingsV1Schema, VoiceSpeechDiagnosticsStatusResponseV1Schema,
   resolveVoiceSpeechDiagnosticsStoragePolicy, type VoiceSpeechDiagnosticsSettingsV1 } from '@happier-dev/protocol/voice/diagnostics';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { tLoose } from '@/text';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -116,12 +120,14 @@ let modalScreen: RenderScreenResult;
 let home: Awaited<ReturnType<typeof serveAccountHomes>>;
 let disconnect: (() => Promise<void>) | undefined;
 function publishSettingsFixture(voice: unknown) {
-  const machines = ['m1', 'm2', 'former-machine'].map(id => createMachineFixture({ id, active: machineState.isOnline,
+  const machines = ['m1', 'm2', 'former-machine'].map(id => createMachineFixture({ id, storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER, active: machineState.isOnline,
     activeAt: machineState.isOnline ? Date.now() : 0, daemonStateVersion: machineState.daemonStateVersion }));
   storage.setState({ machines: Object.fromEntries(machines.map(machine => [machine.id, machine])),
     machineListByServerId: { [home.homes.diagnostics!.id]: machines } });
+  observeMachinePresenceForTest({ serverId: home.homes.diagnostics!.id, accountId: 'account-a' }, machines.map(machine => machine.id));
   storage.getState().applySettingsLocal(normalizeVoiceSettingsLocalDelta({ voice: voiceSettingsParse({ ...voiceSettingsParse(voice),
     executionMachine: { mode: 'fixed', machineId: machineState.machineId } }) }, storage.getState().settings));
+  home.replaceAccountSettings('diagnostics', { settings: storage.getState().settings, version: 1 });
   if (activeVoiceAttempt.sessionId) setVoiceSessionSnapshot({ adapterId: 'local_conversation', sessionId: activeVoiceAttempt.sessionId,
     status: 'connected', mode: 'listening', canStop: true });
 }
@@ -181,7 +187,9 @@ describe('VoiceDiagnosticsSettingsSection selected-machine status', () => {
   afterEach(async () => { standardCleanup(); diagnosticsEvents.clear(); await disconnect?.(); await home?.dispose(); vi.restoreAllMocks(); });
   beforeEach(async () => {
     home = await serveAccountHomes({ homes: [{ key: 'diagnostics', serverUrl: 'https://diagnostics-settings.test', accountId: 'account-a' }],
-      route: ({ path, method, body }) => createPlainMachineReadHttpResponseFixture(path,
+      route: ({ path, method, body }) => path === '/v1/machines'
+        ? Response.json(['m1', 'm2', 'former-machine'].map(id => createPlainMachineRowFixture({ id, accountId: 'account-a' })))
+        : createPlainMachineReadHttpResponseFixture(path,
         { method, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }, 'account-a') ?? undefined });
     disconnect = await home.restoreActiveConnection();
     modalScreen = await renderScreen(React.createElement(ModalProvider, { children: null }));
@@ -218,6 +226,39 @@ describe('VoiceDiagnosticsSettingsSection selected-machine status', () => {
     await waitForTestEvent(readiness.subscribe, readiness.getCurrent, value => value.isOnline);
     expect(readiness.getCurrent().isOnline).toBe(true);
     await readiness.unmount();
+  });
+
+  it('does not enable diagnostics through a click when settings.invoke is disabled', async () => {
+    let tree!: renderer.ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(createSettingsSection({ voice: voiceSettingsParse({ diagnostics: { ...diagnostics, enabled: false, consentVersion: null } }), setVoice: commitVoiceSettings }));
+      registerStandardCleanupTarget(tree);
+    });
+    storage.getState().applySettingsLocal({ actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1,
+      actions: { 'settings.invoke': { disabledSurfaces: ['ui'] } } }) });
+    await act(async () => { tree.root.findByProps({ testID: 'settings-voice-diagnostics-enabled-switch' }).props.onValueChange(true); });
+    // Disabled admission must happen before the operation's consent confirmation.
+    expect(modalScreen.findAllByType(WebAlertModal).some(node => node.props.config.title === tLoose('settingsVoice.diagnostics.consentTitle'))).toBe(false);
+  });
+
+  it('reflects disabled settings Actions on export, cleanup and delete controls and restores availability', async () => {
+    testState.artifacts = [{ id: 'abcdef12-dead-beef', createdAtMs: 1, direction: 'stt_input', format: 'webm', durationMs: null, byteLength: 1236 }];
+    testState.health = { captureFailure: false, cleanup: { status: 'required', code: 'cleanup_failed', ownedEntryCount: 1 } };
+    const screen = await renderScreen(createSettingsSection({ voice: voiceSettingsParse({ diagnostics }), setVoice: commitVoiceSettings }));
+    await act(async () => { await diagnosticsEvents.waitFor(() => { expect(statusSignals.length).toBeGreaterThan(0); }); });
+    const artifact = () => screen.tree.root.findAllByProps({ testID: 'settings-voice-diagnostics-artifact-abcdef12-dead-beef' })[0];
+    expect(artifact()).toBeDefined();
+    const controls = () => [artifact(),
+      screen.tree.root.findAllByProps({ title: tLoose('settingsVoice.diagnostics.retryCleanup') })[0],
+      screen.tree.root.findByProps({ testID: 'settings-voice-diagnostics-delete-all' }),
+      screen.tree.root.findByProps({ testID: 'settings-voice-diagnostics-enabled-switch' })];
+    expect(controls().every(control => control?.props.disabled !== true)).toBe(true);
+    const settings = storage.getState().settings.actionsSettingsV1;
+    await act(async () => { storage.getState().applySettingsLocal({ actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1,
+      actions: { 'settings.invoke': { disabledSurfaces: ['ui'] } } }) }); });
+    expect(controls().every(control => control?.props.disabled === true)).toBe(true);
+    await act(async () => { storage.getState().applySettingsLocal({ actionsSettingsV1: settings }); });
+    expect(controls().every(control => control?.props.disabled !== true)).toBe(true);
   });
 
   it('gives every diagnostics switch a programmatic accessible name', async () => {
@@ -389,7 +430,11 @@ describe('VoiceDiagnosticsSettingsSection selected-machine status', () => {
 
     await act(async () => {
       releaseCleanup();
-      await diagnosticsEvents.waitFor(() => expect(testState.configureCompletions).toHaveLength(4));
+      await diagnosticsEvents.waitFor(() => {
+        expect(testState.configureCompletions.filter(([machineId]) => machineId === 'm1').at(-1))
+          .toEqual(['m1', false]);
+        expect(testState.policyByMachine.get('m1')).toBe(false);
+      });
     });
     if (modalScreen.findByTestId('web-modal-confirm')) await modalScreen.pressByTestIdAsync('web-modal-confirm');
     expect(testState.configureCompletions.filter(([machineId]) => machineId === 'm1').at(-1))
@@ -468,14 +513,12 @@ describe('VoiceDiagnosticsSettingsSection selected-machine status', () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    if (modalScreen.findByTestId('web-modal-confirm')) await modalScreen.pressByTestIdAsync('web-modal-confirm');
-
+    await waitForHomeGovernance(() => expect(modalScreen.findByTestId('web-modal-confirm')).not.toBeNull());
+    await modalScreen.pressByTestIdAsync('web-modal-confirm');
+    await waitForHomeGovernance(() => expect(storage.getState().settings.voice.diagnostics.enabled).toBe(true));
     expect(fireAndForgetError.mock.calls.filter(([message]) => (
       typeof message === 'string' && message.startsWith('[fireAndForget] VoiceDiagnosticsSettingsSection')
     ))).toEqual([]);
-    expect(setVoice).toHaveBeenCalledWith(expect.objectContaining({
-      diagnostics: expect.objectContaining({ enabled: true, consentVersion: 1 }),
-    }));
     expect(storage.getState().settings.voice.diagnostics).toMatchObject({ enabled: true, consentVersion: 1 });
     expect(configure).not.toHaveBeenCalled();
     expect(tree.root.findByProps({ testID: 'settings-voice-diagnostics-unavailable' })).toBeTruthy();
@@ -499,11 +542,9 @@ describe('VoiceDiagnosticsSettingsSection selected-machine status', () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    if (modalScreen.findByTestId('web-modal-confirm')) await modalScreen.pressByTestIdAsync('web-modal-confirm');
-
-    expect(setVoice).toHaveBeenCalledWith(expect.objectContaining({
-      diagnostics: expect.objectContaining({ enabled: true, consentVersion: 1 }),
-    }));
+    await waitForHomeGovernance(() => expect(modalScreen.findByTestId('web-modal-confirm')).not.toBeNull());
+    await modalScreen.pressByTestIdAsync('web-modal-confirm');
+    await waitForHomeGovernance(() => expect(storage.getState().settings.voice.diagnostics.enabled).toBe(true));
     expect(storage.getState().settings.voice.diagnostics).toMatchObject({ enabled: true, consentVersion: 1 });
     expect(configure).not.toHaveBeenCalled();
   });

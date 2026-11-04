@@ -162,6 +162,28 @@ describe('useDaemonVoiceModelCatalogState', () => {
     });
     afterEach(async () => { vi.useRealTimers(); await account.reset(); vi.restoreAllMocks(); });
 
+    it('keeps an explicit successful install when an unrelated Voice preference changes', async () => {
+        const pending = createDeferred<ReturnType<typeof installed>>();
+        const started = createDeferred<void>();
+        const reply = respond;
+        respond = (request, context) => {
+            if (request.method.endsWith('.install')) { started.resolve(); return pending.promise; }
+            return reply(request, context);
+        };
+        const action = createDefaultActionExecutor().execute('settings.invoke', {
+            anchor: 'voiceAdvanced.installSpeechModel', input: { kind: 'model_pack', packId: STT_PACK, machineId: 'machine-a' },
+        }, { surface: 'ui', authority: 'present_user', serverId: storage.getState().settingsScope!.serverId,
+            presentUserConfirmation: { actionId: 'settings.invoke' } });
+        await started.promise;
+        const current = storage.getState().settings;
+        storage.getState().applySettingsLocal(normalizeVoiceSettingsLocalDelta({ voice: {
+            ...current.voice, audibleWaitingCue: !current.voice.audibleWaitingCue,
+        } }, current));
+        expect(storage.getState().settings.voice.audibleWaitingCue).toBe(!current.voice.audibleWaitingCue);
+        pending.resolve(installed());
+        expect(await action).toMatchObject({ ok: true, result: { status: 'completed', value: { packId: STT_PACK } } });
+    });
+
     it('refuses an installed batch-only pack as the streaming conversation default through the existing Action', async () => {
         const packId = 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8';
         catalogReply([status(packId, { installState: 'installed' })]);

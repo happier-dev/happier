@@ -22,7 +22,7 @@ export function PluginDictationButton(props: Omit<DictationButtonProps, 'fallbac
         onTranscription: props.onTranscription,
     });
     return <View>
-        <AgentInputDictationButton testID={props.testID} disabled={!featureEnabled || props.disabled}
+        <AgentInputDictationButton testID={props.testID} disabled={!featureEnabled || props.disabled || !dictation.available}
             status={dictation.status} onFocus={() => { void dictation.onFocus(); }}
             onPress={() => { void dictation.onFocus(); void dictation.onPress(); }} />
     </View>;

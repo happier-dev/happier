@@ -10,19 +10,20 @@ import { createCurrentUiContextVoiceToolPort } from '@/components/appShell/curre
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import type { RenderWithAppProvidersOptions } from '@/dev/testkit/render/renderWithAppProviders';
 
 function ActionPort() {
     const reader = useOptionalCurrentUiContextReader();
     React.useEffect(() => {
         if (!reader) return;
-        return registerCurrentUiContextActionPort(surface => createCurrentUiContextVoiceToolPort({ reader,
-            invocationSurface: surface, readProjection: () => null, readNavigationBinding: () => null }));
+        return registerCurrentUiContextActionPort((surface, hostAction) => createCurrentUiContextVoiceToolPort({ reader,
+            invocationSurface: surface, hostAction, readProjection: () => null, readNavigationBinding: () => null }));
     }, [reader]);
     return null;
 }
 
 /** Real mounted command publication and Action port. Install Home/Socket boundaries before importing. */
-export async function renderMountedCurrentUiContext(children: React.ReactNode) {
+export async function renderMountedCurrentUiContext(children: React.ReactNode, options?: Pick<RenderWithAppProvidersOptions, 'createNodeMock'>) {
     const authority = captureActiveServerAccountScopeLifetime();
     if (!authority) throw new Error('Mounted command fixture requires a restored Account');
     const server = getServerProfileById(authority.scope.serverId);
@@ -35,5 +36,5 @@ export async function renderMountedCurrentUiContext(children: React.ReactNode) {
                 <ActionPort />{children}
             </PluginSurfaceFocusEligibilityProvider>
         </CurrentUiContextProvider></AppPaneProvider></MainAppTabStateProvider>
-    </InjectedAuthProvider>);
+    </InjectedAuthProvider>, options);
 }

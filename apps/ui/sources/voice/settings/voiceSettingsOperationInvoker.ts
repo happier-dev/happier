@@ -84,9 +84,13 @@ export async function invokeVoiceSettingsOperation(operation: VoiceSettingsOpera
                 featureToggles: latest.featureToggles, experiments: latest.experiments, secrets: latest.secrets,
                 executionMachine: { machineId: machine.machineId, selectedMachineId: machine.selectedMachineId, selectionKind: machine.selectionKind } });
         };
-        const capturedMaterial = material(settings);
-        const selectionCurrent = () => current() && resolveVoiceExecutionMachineId() === machineId;
+        // Explicit model-pack Actions retain their admitted target. Preference edits
+        // do not withdraw that work; Account retirement and local cancel still do.
+        const explicitModelTarget = input?.kind === 'model_pack';
+        const capturedMaterial = explicitModelTarget ? null : material(settings);
+        const selectionCurrent = () => current() && (explicitModelTarget || resolveVoiceExecutionMachineId() === machineId);
         const operationCurrent = async () => {
+            if (explicitModelTarget) return current();
             if (!selectionCurrent()) return false;
             const latest = await context.readSettings();
             return selectionCurrent() && material(latest) === capturedMaterial;
@@ -162,7 +166,7 @@ export async function invokeVoiceSettingsOperation(operation: VoiceSettingsOpera
             if (!machineId) return unavailable('execution_machine_unavailable');
             const client = createVoiceDiagnosticsClientForMachine(machineId);
             if (operation === 'diagnostics_cleanup') {
-                const result = await applyVoiceDiagnosticsMachinePolicy({ machineId, settings: diagnostics, signal: context.signal });
+                const result = await applyVoiceDiagnosticsMachinePolicy({ machineId, settings: diagnostics, waitSignal: context.signal });
                 if (!await operationCurrent()) return { status: 'cancelled' };
                 return result.applied && result.acknowledged ? completed(result.status) : unavailable('diagnostics_cleanup_unacknowledged');
             }
@@ -279,7 +283,7 @@ export async function invokeVoiceSettingsOperation(operation: VoiceSettingsOpera
             if (!row.canSetDefault) return unavailable('model_pack_unavailable');
             await context.mutateSettings(latest => {
                 const next = updateVoiceLocalConversationSetting(latest.voice, row.kind === 'stt_sherpa' ? 'stt.localNeural.assetId' : 'tts.localNeural.assetId', packId);
-                return selectionCurrent() && material(latest) === capturedMaterial && next ? { voice: next } : null;
+                return selectionCurrent() && (explicitModelTarget || material(latest) === capturedMaterial) && next ? { voice: next } : null;
             });
             return selectionCurrent() ? completed({ packId }) : { status: 'cancelled' };
         }

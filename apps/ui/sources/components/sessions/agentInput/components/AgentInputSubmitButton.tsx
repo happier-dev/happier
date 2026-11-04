@@ -135,6 +135,7 @@ export const AgentInputSubmitButton = React.memo(function AgentInputSubmitButton
      */
     hasDedicatedStopControl?: boolean;
     dictationPressHandler?: (() => void) | undefined;
+    dictationAvailable?: boolean;
     dictationStatus: VoiceDictationSnapshot['status'];
     /**
      * The Agent the in-session picker has armed, or null for an ordinary send.
@@ -200,6 +201,7 @@ export const AgentInputSubmitButton = React.memo(function AgentInputSubmitButton
         && !stopWouldDisplaceDictation;
     const showDictation = Boolean(props.dictationPressHandler)
         && (dictationActive || (!props.hasSendableContent && !showStopWhenEmpty));
+    const disabled = props.disabled || (showDictation && props.dictationAvailable === false);
 
     // The armed switch only reaches the button while the button is actually a
     // send. Dictation and Stop are other actions, and labelling either
@@ -301,7 +303,7 @@ export const AgentInputSubmitButton = React.memo(function AgentInputSubmitButton
                     leading={armedContinuation.markPlacement === 'leading' ? mark : undefined}
                     trailing={armedContinuation.markPlacement === 'trailing' ? mark : undefined}
                     loading={props.isSending}
-                    disabled={props.disabled}
+                    disabled={disabled}
                     onPress={submitPress}
                 />
             </AgentInputSubmitShape>
@@ -330,9 +332,9 @@ export const AgentInputSubmitButton = React.memo(function AgentInputSubmitButton
         <PrimaryCircleIconButton
             appearance={props.appearance}
             testID={props.testID}
-            active={!props.disabled && (props.hasSendableContent || props.isSending || showDictation || showStopWhenEmpty)}
+            active={!disabled && (props.hasSendableContent || props.isSending || showDictation || showStopWhenEmpty)}
             loading={props.isSending || dictationTranscribing || (showStopWhenEmpty && props.isStopping)}
-            disabled={props.disabled}
+            disabled={disabled}
             accessibilityLabel={
                 dictationTranscribing
                     ? t('voiceAssistant.transcribing')
@@ -355,7 +357,7 @@ export const AgentInputSubmitButton = React.memo(function AgentInputSubmitButton
             }
             accessibilityState={{
                 busy: dictationTranscribing,
-                disabled: Boolean(props.disabled),
+                disabled,
                 ...(sendMenuEnabled ? { expanded: sendMenuOpen } : {}),
             }}
             hitReach={SUBMIT_HIT_REACH}

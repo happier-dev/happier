@@ -15,18 +15,21 @@ import { useActiveServerAccountScope } from '@/sync/store/hooks';
 import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
 import { tLoose } from '@/text';
 import { Modal } from '@/modal';
+import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
+import { requireActionSuccess } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { presentActionTurnedOffNoticeIfOff } from '@/sync/ops/actions/actionTurnedOffNotice';
+import { SettingsDeclarationActionOutputSchemasV1 } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
+import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { VOICE_PRIVACY_SETTINGS } from '@/voice/settings/voiceSettingsDeclarations';
+import { resolveActionSurfaceAvailability } from '@happier-dev/protocol/actions/actionSurfaceAvailability';
+import { useSettingsSelector } from '@/sync/store/settingsReadHooks';
 
 import {
   isVoiceDiagnosticsSessionCaptureAllowed,
-  resolveVoiceDiagnosticsCaptureAuthorizationId,
 } from './capturePolicy';
 import {
   useVoiceDiagnosticsRuntimeStatus,
 } from './runtimeStatus';
-import {
-  retryVoiceDiagnosticsRevocation,
-  revokeVoiceDiagnosticsSessionAuthorization,
-} from './runtimeRevocation';
 
 // The action draws at the WCAG 2.2 pointer floor under every pointer; a finger reaches past it through the hit area.
 const minimumInteractiveTargetSize = HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE;
@@ -57,6 +60,10 @@ export function VoiceDiagnosticsIndicator(props: Readonly<{
   const diagnostics = voiceSettingsParse(rawVoice).diagnostics;
   const runtimeStatus = useVoiceDiagnosticsRuntimeStatus();
   const persistenceScope = useActiveServerAccountScope();
+  const { execute } = useMountedActionExecution(persistenceScope);
+  const actionAvailable = useSettingsSelector(settings => resolveActionSurfaceAvailability({
+    actionId: 'settings.invoke', surface: 'ui', settings: settings.actionsSettingsV1,
+  }).available, ['actionsSettingsV1']);
   const [sessionAllowed, setSessionAllowed] = React.useState(() =>
     isVoiceDiagnosticsSessionCaptureAllowed(props.sessionId),
   );
@@ -167,7 +174,8 @@ export function VoiceDiagnosticsIndicator(props: Readonly<{
           accessibilityLabel={tLoose(obligation
             ? 'settingsVoice.diagnostics.retryShutdown'
             : 'settingsVoice.diagnostics.sessionOptOut')}
-          disabled={obligation?.status === 'pending'}
+          disabled={obligation?.status === 'pending' || !actionAvailable}
+          accessibilityState={{ disabled: obligation?.status === 'pending' || !actionAvailable }}
           hitSlop={actionHitArea.hitSlop}
           onLayout={actionHitArea.onLayout}
           style={{
@@ -187,41 +195,26 @@ export function VoiceDiagnosticsIndicator(props: Readonly<{
               focusLostOnActionRemovalRef.current = false;
               void (async () => {
                 try {
-                  if (obligation) {
-                    const result = await retryVoiceDiagnosticsRevocation({
-                      obligation,
-                      settings: diagnostics,
-                      persistenceScope,
-                    });
-                    if (!result.ok) throw result.error;
-                    if (!result.acknowledged) return;
-                    restoreAcknowledgedFocus();
-                    if (obligation.target.kind === 'session_authorization') {
-                      const targetSessionId = obligation.target.sessionId;
-                      if (mountedRef.current && currentSessionIdRef.current === targetSessionId) {
-                        setSessionAllowed(false);
-                      }
-                    }
-                    return;
-                  }
-                  const targetSessionId = props.sessionId;
+                  const targetSessionId = obligation?.target.kind === 'session_authorization'
+                    ? obligation.target.sessionId : props.sessionId;
                   const targetMachineId = runtimeStatus.machineId;
-                  if (!targetSessionId || !targetMachineId) return;
-                  const confirmed = await Modal.confirm(
-                    tLoose('settingsVoice.diagnostics.sessionOptOutConfirmTitle'),
-                    tLoose('settingsVoice.diagnostics.sessionOptOutConfirmBody'),
-                    { confirmText: tLoose('settingsVoice.diagnostics.sessionOptOut') },
-                  );
-                  if (!confirmed) return;
-                  const result = await revokeVoiceDiagnosticsSessionAuthorization({
-                    machineId: targetMachineId,
-                    sessionId: targetSessionId,
-                    authorizationId: resolveVoiceDiagnosticsCaptureAuthorizationId(targetSessionId),
+                  if (!obligation && (!targetSessionId || !targetMachineId)) return;
+                  const outcome = await execute('settings.invoke', obligation ? {
+                    anchor: VOICE_PRIVACY_SETTINGS.settings.diagnosticsRetryShutdown.anchor,
+                    input: { kind: 'diagnostics_revocation', key: obligation.key, revision: obligation.revision },
+                  } : {
+                    anchor: VOICE_PRIVACY_SETTINGS.settings.diagnosticsSessionOptOut.anchor,
+                    input: { kind: 'diagnostics_session', sessionId: targetSessionId, machineId: targetMachineId },
                   });
-                  if (!result.ok) throw result.error;
-                  if (!result.acknowledged) return;
+                  if (!outcome.ok && presentActionTurnedOffNoticeIfOff(outcome, 'settings.invoke')) return;
+                  if (!outcome.ok && isActionApprovalDeclinedErrorCode(outcome.errorCode)) return;
+                  requireActionSuccess(outcome);
+                  const result = SettingsDeclarationActionOutputSchemasV1['settings.invoke'].parse(outcome.result);
+                  if (result.status === 'unavailable') throw new Error(result.reason ?? 'diagnostics_unavailable');
+                  if (result.status !== 'completed') return;
                   restoreAcknowledgedFocus();
-                  if (mountedRef.current && currentSessionIdRef.current === targetSessionId) {
+                  if ((!obligation || obligation.target.kind === 'session_authorization')
+                    && mountedRef.current && currentSessionIdRef.current === targetSessionId) {
                     setSessionAllowed(false);
                   }
                 } catch {

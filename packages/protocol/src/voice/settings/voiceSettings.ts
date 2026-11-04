@@ -140,6 +140,7 @@ function createCanonicalVoiceSettingsSchema(createDefaultProviderEnvelopes: () =
   return z.object({
   providerId: z._default(z.nullable(VoiceProviderIdSchema), null),
   canApproveRequests: z._default(z.boolean(), true),
+  audibleWaitingCue: z._default(z.boolean(), false),
   assistantLanguage: z._default(z.nullable(z.string()), null),
   dictation: z.prefault(VoiceDictationSettingsSchema, {}),
   welcome: z.prefault(VoiceWelcomeSchema, {}),
@@ -621,6 +622,9 @@ function voiceSettingsParse(
 
   const canApproveRequests = CanonicalVoiceSettingsSchema.shape.canApproveRequests.safeParse(raw.canApproveRequests);
   if (canApproveRequests.success) base.canApproveRequests = canApproveRequests.data;
+
+  const audibleWaitingCue = CanonicalVoiceSettingsSchema.shape.audibleWaitingCue.safeParse(raw.audibleWaitingCue);
+  if (audibleWaitingCue.success) base.audibleWaitingCue = audibleWaitingCue.data;
 
   const canonicalAssistantLanguage = z.nullable(z.string()).safeParse(raw.assistantLanguage);
   if (canonicalAssistantLanguage.success) base.assistantLanguage = canonicalAssistantLanguage.data;

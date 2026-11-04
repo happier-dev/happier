@@ -1986,7 +1986,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const availableFieldAccessory = props.fieldAccessory
         ?? (ownsFieldDictation
             ? <AgentInputDictationButton
-                disabled={!dictationEditable}
+                disabled={!dictationEditable || !dictation.available}
                 status={dictationStatus}
                 onPress={handleDictationPress}
                 onFocus={() => { void dictation.onFocus(); }}
@@ -4188,6 +4188,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                             canStop={submitEnabled && canStopFromComposer}
                                             hasDedicatedStopControl={Boolean(props.onAbort) && Boolean(props.showAbortButton)}
                                             dictationPressHandler={dictationPressHandler}
+            dictationAvailable={dictation.available}
                                             dictationStatus={dictationStatus}
                                             armedContinuationTarget={props.armedContinuationTarget ?? null}
                                             armedRouteContinuation={props.armedRouteContinuation ?? null}
@@ -4366,6 +4367,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                                 canStop={submitEnabled && canStopFromComposer}
                                                 hasDedicatedStopControl={Boolean(props.onAbort) && Boolean(props.showAbortButton)}
                                                 dictationPressHandler={dictationPressHandler}
+            dictationAvailable={dictation.available}
                                                 dictationStatus={dictationStatus}
                                                 armedContinuationTarget={props.armedContinuationTarget ?? null}
                                                 armedRouteContinuation={props.armedRouteContinuation ?? null}

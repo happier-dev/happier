@@ -1,5 +1,6 @@
 import 'fake-indexeddb/auto';
 import * as React from 'react';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { act } from 'react-test-renderer';
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
@@ -50,6 +51,7 @@ const recordingModule = await loadVitestModuleForNodeRequire(
 afterAll(() => recordingModule.dispose());
 const { storage } = await import('@/sync/domains/state/storage');
 const { voiceSettingsParse } = await import('@/sync/domains/settings/voiceSettings');
+const { normalizeVoiceSettingsLocalDelta } = await import('@/sync/domains/settings/voiceSettingsPersistence');
 const { setRuntimeFetch, resetRuntimeFetch } = await import('@/utils/system/runtimeFetch');
 const { primeServerFeaturesSnapshot, resetServerFeaturesClientForTests } = await import('@/sync/api/capabilities/serverFeaturesClient');
 const { publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
@@ -121,10 +123,14 @@ describe('mounted field Dictation Actions', () => {
         storage.getState().applySettingsForScope(scope, { ...storage.getState().settings, experiments: true,
             featureToggles: { ...storage.getState().settings.featureToggles, voice: true, 'voice.agent': true,
                 'execution.runs': true, 'voice.daemonInference': true },
-            voice: voiceSettingsParse({ providerId: 'off', executionMachine: { mode: 'fixed', machineId: 'speech-machine' },
-                dictation: { sttBinding: 'explicit', stt: { provider: 'local_neural', localNeural: { execution: 'daemon' } } } }),
+            ...normalizeVoiceSettingsLocalDelta({ voice: voiceSettingsParse({ providerId: 'off', executionMachine: { mode: 'fixed', machineId: 'speech-machine' },
+                dictation: { sttBinding: 'explicit', stt: { provider: 'local_neural', localNeural: { execution: 'daemon' } } } }) }, storage.getState().settings),
         }, 1);
-        const speechMachine = createMachineFixture({ id: 'speech-machine', active: true, activeAt: Date.now() });
+        // Account refreshes must serve the same configured STT as the mounted field.
+        home.answer(serverId, '/v2/account/settings', { body: {
+            content: { t: 'plain', v: storage.getState().settings }, version: 1,
+        } });
+        const speechMachine = createMachineFixture({ id: 'speech-machine', storageMode: 'plain', active: true, activeAt: Date.now() });
         const speechMachineRow = createPlainMachineRowFixture({ id: speechMachine.id, accountId: 'alice' });
         storage.setState({ machines: { [speechMachine.id]: speechMachine },
             machineListByServerId: { [serverId]: [speechMachine] } });
@@ -156,7 +162,7 @@ describe('mounted field Dictation Actions', () => {
             <MainAppTabStateProvider><AppPaneProvider><CurrentUiContextProvider><ActionPort />{children}</CurrentUiContextProvider></AppPaneProvider></MainAppTabStateProvider>
         </InjectedAuthProvider>;
         // The AppShell modal host outlives the individual field registration.
-        await renderScreen(<ModalProvider>{null}</ModalProvider>);
+        const modalScreen = await renderScreen(<ModalProvider>{null}</ModalProvider>);
         let words = 'draft';
         const field = await renderHook(() => useTextInputDictation({ controlId: 'mounted-field', enabled: true,
             presented: true, editable: true, transcriptionSessionId: null, onTranscription: text => { words += ` ${text}`; } }), { wrapper });
@@ -204,15 +210,29 @@ describe('mounted field Dictation Actions', () => {
             expect(recording.starts).toBe(0);
             const decided = await execute('approval.request.decide', { artifactId: approval.id, decision: 'approve' }, ui);
             expect(decided, JSON.stringify(decided))
-                .toMatchObject({ ok: true, result: { status: 'approved' } });
+                .toMatchObject({ ok: true, result: { status: 'executed', execution: {
+                    ok: true, effectAttempted: true,
+                    result: { status: 'completed', dictationStatus: 'listening', inserted: false },
+                } } });
             const admitted = await requested;
-            expect(admitted, JSON.stringify(admitted)).toMatchObject({ ok: true, result: { status: 'completed', dictationStatus: 'listening' } });
+            expect(admitted, JSON.stringify(admitted)).toMatchObject({ ok: true, result: {
+                kind: 'approval_request_created', artifactId: approval.id,
+                actionId: 'ui.voice_global.dictation.start',
+            } });
         } finally {
             approvalWait.abort();
             await requested;
         }
         expect(voiceDictationController.getSnapshot()).toMatchObject({ sessionId: 'mounted-field', status: 'listening' });
         expect(recording.starts).toBe(1);
+        const enabledActions = storage.getState().settings.actionsSettingsV1;
+        await act(async () => { storage.getState().applySettingsLocal({ actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1,
+            actions: { 'ui.voice_global.dictation.finish': { disabledSurfaces: ['ui'] } } }) }); });
+        expect(await execute('ui.voice_global.dictation.finish', { commandId: finish }, ui)).toMatchObject({ ok: false });
+        await act(async () => { await field.getCurrent().onPress(); });
+        expect(voiceDictationController.getSnapshot().status).toBe('listening');
+        await modalScreen.pressByTestIdAsync('web-modal-button-0');
+        await act(async () => { storage.getState().applySettingsLocal({ actionsSettingsV1: enabledActions }); });
         const observations: unknown[] = [];
         const unsubscribe = voiceDictationController.subscribe(() => observations.push(voiceDictationController.getSnapshot()));
         const finished = await execute('ui.current_context.command.invoke', { commandId: finish }, agent);
@@ -223,8 +243,8 @@ describe('mounted field Dictation Actions', () => {
             .toMatchObject({ ok: true, result: { status: 'completed', dictationStatus: 'idle', inserted: true } });
         expect(words).toBe('draft editable words');
         expect(home.requests.some(request => request.path.includes('/pending') || request.path.includes('/messages'))).toBe(false);
-        expect(await execute('ui.voice_global.dictation.start', { commandId: start }, ui))
-            .toMatchObject({ ok: true, result: { status: 'completed', dictationStatus: 'listening' } });
+        await act(async () => { await field.getCurrent().onPress(); });
+        expect(voiceDictationController.getSnapshot().status).toBe('listening');
         expect(await execute('ui.current_context.command.invoke', { commandId: cancel }, agent))
             .toMatchObject({ ok: true, result: { status: 'completed', dictationStatus: 'idle', inserted: false } });
         expect(words).toBe('draft editable words');

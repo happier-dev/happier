@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import renderer, { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -7,10 +8,12 @@ import { createMachineFixture, registerStandardCleanupTarget, renderScreen, rend
 import { createDiagnosticsTestEvents } from './diagnosticsTestEvents';
 import { installSessionActionRpcBoundary } from '@/dev/testkit/harness/sessionActionRpcBoundary';
 import { serveAccountHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
-import { createPlainMachineReadHttpResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createPlainMachineReadHttpResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { VoiceSpeechDiagnosticsConfigureRequestV1Schema, VoiceSpeechDiagnosticsRevokeCaptureRequestV1Schema, VoiceSpeechDiagnosticsStatusResponseV1Schema,
   resolveVoiceSpeechDiagnosticsStoragePolicy } from '@happier-dev/protocol/voice/diagnostics';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { tLoose } from '@/text';
 
 const runtimeState = vi.hoisted(() => ({ daemonStateVersion: 1, isOnline: true }));
@@ -73,6 +76,7 @@ const { storage } = await import('@/sync/domains/state/storage');
 const { voiceSettingsParse } = await import('@/sync/domains/settings/voiceSettings');
 const { normalizeVoiceSettingsLocalDelta } = await import('@/sync/domains/settings/voiceSettingsPersistence');
 const { useMachineCliDetectionTarget } = await import('@/sync/store/hooks');
+const { setVoiceSessionSnapshot, resetVoiceSessionStoreForTests } = await import('@/voice/session/voiceSessionStore');
 const { VoiceDiagnosticsIndicator: Indicator } = await import('./VoiceDiagnosticsIndicator');
 const { ModalProvider } = await import('@/modal');
 const { WebAlertModal } = await import('@/modal/components/WebAlertModal');
@@ -80,7 +84,10 @@ let modalScreen: RenderScreenResult;
 function readAlertDialogs() {
   return modalScreen.findAllByType(WebAlertModal).filter(node => node.props.config.type === 'alert');
 }
-async function respondToVisibleConfirmation() {
+async function respondToVisibleConfirmation(required = false) {
+  if (required) await waitForHomeGovernance(() => {
+    expect(modalScreen.findAllByType(WebAlertModal).some(node => node.props.visible !== false && node.props.config.type === 'confirm')).toBe(true);
+  });
   // The host retains hidden dialogs during exit. Only a visible confirmation
   // can accept another user gesture.
   if (modalScreen.findAllByType(WebAlertModal).some(node => node.props.visible !== false && node.props.config.type === 'confirm')) {
@@ -91,7 +98,9 @@ let home: Awaited<ReturnType<typeof serveAccountHomes>>;
 let disconnect: (() => Promise<void>) | undefined;
 function VoiceDiagnosticsIndicator(props: React.ComponentProps<typeof Indicator>) {
   React.useLayoutEffect(() => {
-    const machines = ['m1', 'm2'].map(id => createMachineFixture({ id, active: runtimeState.isOnline,
+    if (props.sessionId) setVoiceSessionSnapshot({ adapterId: 'local_conversation', sessionId: props.sessionId,
+      status: 'connected', mode: 'listening', canStop: true });
+    const machines = ['m1', 'm2'].map(id => createMachineFixture({ id, storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER, active: runtimeState.isOnline,
       activeAt: runtimeState.isOnline ? Date.now() : 0, daemonStateVersion: runtimeState.daemonStateVersion,
       daemonState: { status: 'running', startedAt: runtimeState.daemonStateVersion } }));
     storage.setState({ machines: Object.fromEntries(machines.map(machine => [machine.id, machine])),
@@ -153,9 +162,12 @@ describe('VoiceDiagnosticsIndicator', () => {
   });
 
   beforeEach(async () => {
+    resetVoiceSessionStoreForTests();
     platformState.OS = 'web';
     home = await serveAccountHomes({ homes: [{ key: 'diagnostics', serverUrl: 'https://diagnostics-indicator.test', accountId: 'account-a' }],
-      route: ({ path, method, body }) => createPlainMachineReadHttpResponseFixture(path,
+      route: ({ path, method, body }) => path === '/v1/machines'
+        ? Response.json(['m1', 'm2'].map(id => createPlainMachineRowFixture({ id, accountId: 'account-a' })))
+        : createPlainMachineReadHttpResponseFixture(path,
         { method, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }, 'account-a') ?? undefined });
     disconnect = await home.restoreActiveConnection();
     modalScreen = await renderScreen(React.createElement(ModalProvider, { children: null }));
@@ -192,6 +204,19 @@ describe('VoiceDiagnosticsIndicator', () => {
     registerStandardCleanupTarget({ unmount: runtimeStatus.subscribe(diagnosticsEvents.notify) });
   });
 
+  it('reflects disabled settings Actions on session opt-out and restores availability', async () => {
+    const screen = await renderScreen(<VoiceDiagnosticsIndicator sessionId="session-1" />);
+    const action = () => screen.tree.root.findByProps({ accessibilityLabel: tLoose('settingsVoice.diagnostics.sessionOptOut') });
+    expect(action().props.disabled).not.toBe(true);
+    const settings = storage.getState().settings.actionsSettingsV1;
+    await act(async () => { storage.getState().applySettingsLocal({ actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1,
+      actions: { 'settings.invoke': { disabledSurfaces: ['ui'] } } }) }); });
+    expect(action().props.disabled).toBe(true);
+    expect(action().props.accessibilityState).toMatchObject({ disabled: true });
+    await act(async () => { storage.getState().applySettingsLocal({ actionsSettingsV1: settings }); });
+    expect(action().props.disabled).not.toBe(true);
+  });
+
   it('uses persistent text plus color and is removed for a session opt-out', async () => {
     let tree!: renderer.ReactTestRenderer;
     await act(async () => {
@@ -205,8 +230,8 @@ describe('VoiceDiagnosticsIndicator', () => {
       tree.root.findByType('Pressable' as any).props.onPress();
       await Promise.resolve();
     });
-    await respondToVisibleConfirmation();
-    expect(tree.toJSON()).toBeNull();
+    await respondToVisibleConfirmation(true);
+    await waitForHomeGovernance(() => expect(tree.toJSON()).toBeNull());
     expect(rpcRequests).toContainEqual(expect.objectContaining({ method: `m1:${RPC_METHODS.DAEMON_VOICE_DIAGNOSTICS_REVOKE_CAPTURE}`,
       params: expect.objectContaining({ authorizationId: expect.any(String) }) }));
   });
@@ -457,7 +482,6 @@ describe('VoiceDiagnosticsIndicator', () => {
   });
 
   it('does not revoke on cancel and suppresses duplicate actions while a revoke is pending', async () => {
-    const { VoiceDiagnosticsIndicator } = await import('./VoiceDiagnosticsIndicator');
     let tree!: renderer.ReactTestRenderer;
     await act(async () => {
       tree = renderer.create(React.createElement(VoiceDiagnosticsIndicator, { sessionId: 'session-1' })); registerStandardCleanupTarget(tree);
@@ -468,8 +492,9 @@ describe('VoiceDiagnosticsIndicator', () => {
       tree.root.findByType('Pressable' as any).props.onPress();
       await Promise.resolve();
     });
-    await respondToVisibleConfirmation();
+    await respondToVisibleConfirmation(true);
     expect(revokeCaptureAuthorization).not.toHaveBeenCalled();
+    await waitForHomeGovernance(() => expect(tree.root.findByType('Pressable' as any).props.disabled).toBe(false));
 
     modalState.confirmed = true;
     let release!: () => void;
@@ -480,19 +505,18 @@ describe('VoiceDiagnosticsIndicator', () => {
       press();
       await Promise.resolve();
     });
-    await respondToVisibleConfirmation();
-    expect(revokeCaptureAuthorization).toHaveBeenCalledOnce();
+    await respondToVisibleConfirmation(true);
+    await waitForHomeGovernance(() => expect(revokeCaptureAuthorization).toHaveBeenCalledOnce());
     await act(async () => {
       release();
       await revokeState.pending;
       await Promise.resolve();
     });
     await respondToVisibleConfirmation();
-    expect(tree.toJSON()).toBeNull();
+    await waitForHomeGovernance(() => expect(tree.toJSON()).toBeNull());
   });
 
   it('completes an exact-machine opt-out without disabling a newly selected daemon', async () => {
-    const { VoiceDiagnosticsIndicator } = await import('./VoiceDiagnosticsIndicator');
     let tree!: renderer.ReactTestRenderer;
     let release!: () => void;
     revokeState.pending = new Promise<void>((resolve) => { release = resolve; });
@@ -504,7 +528,8 @@ describe('VoiceDiagnosticsIndicator', () => {
       tree.root.findByType('Pressable' as any).props.onPress();
       await Promise.resolve();
     });
-    await respondToVisibleConfirmation();
+    await respondToVisibleConfirmation(true);
+    await waitForHomeGovernance(() => expect(revokeCaptureAuthorization).toHaveBeenCalledOnce());
     await act(async () => {
       publishVoiceDiagnosticsRuntimeStatus({ phase: 'status_unknown', machineId: 'm2' });
       tree.update(React.createElement(VoiceDiagnosticsIndicator, { sessionId: 'session-1' }));
@@ -518,7 +543,7 @@ describe('VoiceDiagnosticsIndicator', () => {
     });
     await respondToVisibleConfirmation();
 
-    expect(tree.toJSON()).toBeNull();
+    await waitForHomeGovernance(() => expect(tree.toJSON()).toBeNull());
     expect(readAlertDialogs()).toEqual([]);
     expect(rpcRequests).toContainEqual(expect.objectContaining({ method: `m1:${RPC_METHODS.DAEMON_VOICE_DIAGNOSTICS_REVOKE_CAPTURE}` }));
   });

@@ -16,10 +16,11 @@ import type { VoiceSettings } from '@/sync/domains/settings/voiceSettings';
 import { createMachineFixture, createDeferred, waitForTestEvent } from '@/dev/testkit';
 import { installSessionActionRpcBoundary } from '@/dev/testkit/harness/sessionActionRpcBoundary';
 import { serveAccountHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
-import { createPlainMachineReadHttpResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createPlainMachineReadHttpResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { installBrowserStorageLockBoundary } from '@/dev/testkit/harness/browserStorageLockBoundary';
 import { VoiceSpeechDiagnosticsConfigureRequestV1Schema, VoiceSpeechDiagnosticsRevokeCaptureRequestV1Schema, VoiceSpeechDiagnosticsStatusResponseV1Schema, resolveVoiceSpeechDiagnosticsStoragePolicy } from '@happier-dev/protocol/voice/diagnostics';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { tLoose } from '@/text';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -117,6 +118,23 @@ async function waitForControlRemoval(selector: string): Promise<void> {
   expect(container?.querySelector(selector)).toBeNull();
 }
 
+async function waitForConfirmation(): Promise<HTMLElement> {
+  const confirm = await waitForTestEvent((notify) => {
+    const observer = new MutationObserver(notify);
+    observer.observe(document.body, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, () => document.querySelector('[data-testid="web-modal-confirm"]'), value => value instanceof HTMLElement);
+  if (!(confirm instanceof HTMLElement)) throw new Error('Missing real diagnostics confirmation control');
+  return confirm;
+}
+
+async function waitForFocus(target: HTMLElement | null): Promise<void> {
+  await waitForTestEvent((notify) => {
+    document.addEventListener('focusin', notify);
+    return () => document.removeEventListener('focusin', notify);
+  }, () => document.activeElement, value => value === target);
+}
+
 function pressWithPointer(node: HTMLElement): void {
   const base = { bubbles: true, cancelable: true, button: 0, clientX: 4, clientY: 4 };
   node.dispatchEvent(new MouseEvent('mousedown', { ...base, buttons: 1 }));
@@ -160,12 +178,14 @@ describe('VoiceDiagnosticsSettingsSection web focus return', () => {
     });
     home = await serveAccountHomes({ homes: [{ key: 'diagnostics', serverUrl: 'https://diagnostics-focus.test', accountId: 'account-a',
       settings: { voice: boundary.voice } }],
-      route: ({ path, method, body }) => createPlainMachineReadHttpResponseFixture(path,
+      route: ({ path, method, body }) => path === '/v1/machines'
+        ? Response.json([createPlainMachineRowFixture({ id: 'm1', accountId: 'account-a' })])
+        : createPlainMachineReadHttpResponseFixture(path,
         { method, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }, 'account-a') ?? undefined });
     disconnect = await home.restoreActiveConnection();
     resetVoiceSessionStoreForTests();
     boundary.sessionId = 'focused-diagnostics-session';
-    const machine = createMachineFixture({ id: 'm1', activeAt: Date.now() });
+    const machine = createMachineFixture({ id: 'm1', storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER, activeAt: Date.now() });
     storage.setState({ machines: { m1: machine }, machineListByServerId: { [home.homes.diagnostics!.id]: [machine] } });
     setVoiceSessionSnapshot({ adapterId: 'local_conversation', sessionId: boundary.sessionId, status: 'connected', mode: 'listening', canStop: true });
     boundary.revokeCaptureAuthorization.mockClear();
@@ -204,13 +224,13 @@ describe('VoiceDiagnosticsSettingsSection web focus return', () => {
       await Promise.resolve();
     });
     await flush();
-    const confirm = document.querySelector('[data-testid="web-modal-confirm"]');
-    if (!(confirm instanceof HTMLElement)) throw new Error('Missing real diagnostics confirmation control');
+    const confirm = await waitForConfirmation();
     await act(async () => { pressWithPointer(confirm); });
     await flush();
 
     expect(boundary.revokeCaptureAuthorization).toHaveBeenCalledTimes(1);
     expect(container?.querySelector(`[aria-label="${tLoose('settingsVoice.diagnostics.sessionOptOut')}"]`)).toBeNull();
+    await waitForFocus(diagnosticsEnabledSwitch);
     expect(document.activeElement).toBe(diagnosticsEnabledSwitch);
   });
 
@@ -224,10 +244,10 @@ describe('VoiceDiagnosticsSettingsSection web focus return', () => {
     optOut.focus();
     await act(async () => { pressWithPointer(optOut); });
     await flush();
-    const confirm = document.querySelector('[data-testid="web-modal-confirm"]');
-    if (!(confirm instanceof HTMLElement)) throw new Error('Missing real opt-out confirmation control');
+    const confirm = await waitForConfirmation();
     await act(async () => { pressWithPointer(confirm); });
     await waitForControlRemoval(`[aria-label="${tLoose('settingsVoice.diagnostics.sessionOptOut')}"]`);
+    await waitForFocus(fallback.current);
     expect(document.activeElement).toBe(fallback.current);
   });
 
@@ -245,8 +265,7 @@ describe('VoiceDiagnosticsSettingsSection web focus return', () => {
     optOut.focus();
     await act(async () => { pressWithPointer(optOut); });
     await flush();
-    const confirm = document.querySelector('[data-testid="web-modal-confirm"]');
-    if (!(confirm instanceof HTMLElement)) throw new Error('Missing real opt-out confirmation control');
+    const confirm = await waitForConfirmation();
     await act(async () => { pressWithPointer(confirm); });
     await revokeStarted.promise;
     expect(boundary.revokeCaptureAuthorization).toHaveBeenCalledOnce();
@@ -267,6 +286,7 @@ describe('VoiceDiagnosticsSettingsSection web focus return', () => {
     retry.focus();
     await act(async () => { pressWithPointer(retry); });
     await waitForControlRemoval(`[aria-label="${tLoose('settingsVoice.diagnostics.retryShutdown')}"]`);
+    await waitForFocus(fallback.current);
     expect(document.activeElement).toBe(fallback.current);
   });
 });

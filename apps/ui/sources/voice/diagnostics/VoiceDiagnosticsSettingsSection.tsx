@@ -1,5 +1,7 @@
 import * as React from 'react';
-import { resolveVoiceSpeechDiagnosticsHealthPresentation } from '@happier-dev/protocol/voice/diagnostics';
+import { resolveVoiceSpeechDiagnosticsHealthPresentation, VoiceSpeechDiagnosticsStatusResponseV1Schema } from '@happier-dev/protocol/voice/diagnostics';
+import { SettingsDeclarationActionOutputSchemasV1, type SettingsDeclarationOperationInputV1 } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
+import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { formatHappierDataBytes } from '@happier-dev/plugin-ui/presentation';
 
 import { Item } from '@/components/ui/lists/Item';
@@ -22,10 +24,13 @@ import { t, tLoose } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { useVoiceExecutionMachineId } from '@/voice/credentials/useExecutionMachinePresentation';
 import { useActiveServerAccountScopeLifetime } from '@/sync/store/hooks';
+import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
+import { requireActionSuccess } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { presentActionTurnedOffNoticeIfOff } from '@/sync/ops/actions/actionTurnedOffNotice';
+import { resolveActionSurfaceAvailability } from '@happier-dev/protocol/actions/actionSurfaceAvailability';
+import { useSettingsSelector } from '@/sync/store/settingsReadHooks';
 
 import { createVoiceDiagnosticsClientForMachine } from './client';
-import { exportVoiceDiagnosticArtifact } from './exportDiagnosticArtifact';
-import { applyVoiceDiagnosticsMachinePolicy } from './runtimeRevocation';
 import { useVoiceDiagnosticsRuntimeStatus } from './runtimeStatus';
 import { VoiceDiagnosticsIndicator } from './VoiceDiagnosticsIndicator';
 import { applyVoiceDiagnosticsCaptureDirection } from './diagnosticsSettings';
@@ -37,6 +42,7 @@ function DiagnosticsExportRows(props: Readonly<{
   status: DiagnosticsStatus | null;
   showEmpty: boolean;
   busy: boolean;
+  available: boolean;
   onExport: (artifact: NonNullable<DiagnosticsStatus>['artifacts'][number]) => void;
   showDivider?: boolean;
 }>) {
@@ -49,7 +55,7 @@ function DiagnosticsExportRows(props: Readonly<{
         key={artifact.id}
         testID={`settings-voice-diagnostics-artifact-${artifact.id}`}
         showDivider={index === 0 ? props.showDivider : true}
-        disabled={props.busy}
+        disabled={props.busy || !props.available}
         loading={props.busy}
         title={artifact.direction === 'stt_input'
           ? tLoose('settingsVoice.diagnostics.exportSttArtifact')
@@ -87,6 +93,10 @@ export function VoiceDiagnosticsSettingsSection(props: Readonly<{
   );
   const machineId = useVoiceExecutionMachineId();
   const accountLifetime = useActiveServerAccountScopeLifetime();
+  const { execute } = useMountedActionExecution(accountLifetime?.scope);
+  const actionAvailable = useSettingsSelector(settings => resolveActionSurfaceAvailability({
+    actionId: 'settings.invoke', surface: 'ui', settings: settings.actionsSettingsV1,
+  }).available, ['actionsSettingsV1']);
   const runtimeStatus = useVoiceDiagnosticsRuntimeStatus();
   const client = React.useMemo(
     () => machineId ? createVoiceDiagnosticsClientForMachine(machineId) : null,
@@ -142,25 +152,39 @@ export function VoiceDiagnosticsSettingsSection(props: Readonly<{
     return () => { active = false; controller.abort(); retirement?.dispose(); };
   }, [client, diagnostics, machineId, runtimeStatus.machineId, runtimeStatus.phase, accountLifetime]);
 
-  const toggleEnabled = (enabled: boolean) => {
-    fireAndForget((async () => {
-      if (!enabled) {
-        await commit({ ...diagnostics, enabled: false, consentVersion: null });
-        return;
+  const invokeOperation = React.useCallback(async (
+    anchor: string,
+    input: SettingsDeclarationOperationInputV1 | undefined,
+    failureKey: string,
+    refresh?: (value: unknown, signal: AbortSignal) => DiagnosticsStatus | null | Promise<DiagnosticsStatus | null>,
+  ) => {
+    if (busy) return;
+    const lifetime = operationLifetimeRef.current;
+    if (!lifetime || lifetime.signal.aborted) return;
+    const isCurrent = () => operationLifetimeRef.current === lifetime && !lifetime.signal.aborted;
+    setBusy(true);
+    try {
+      const outcome = await execute('settings.invoke', { anchor, ...(input ? { input } : {}) }, { signal: lifetime.signal });
+      if (!outcome.ok && presentActionTurnedOffNoticeIfOff(outcome, 'settings.invoke')) return;
+      if (!outcome.ok && isActionApprovalDeclinedErrorCode(outcome.errorCode)) return;
+      requireActionSuccess(outcome);
+      const result = SettingsDeclarationActionOutputSchemasV1['settings.invoke'].parse(outcome.result);
+      if (result.status === 'unavailable') throw new Error(result.reason ?? 'diagnostics_unavailable');
+      if (result.status === 'completed' && refresh && isCurrent()) {
+        const next = await refresh(result.value, lifetime.signal);
+        if (isCurrent()) setStatus(next);
       }
-      const confirmed = await Modal.confirm(
-        tLoose('settingsVoice.diagnostics.consentTitle'),
-        tLoose('settingsVoice.diagnostics.consentBody'),
-        { confirmText: tLoose('settingsVoice.diagnostics.consentAction') },
-      );
-      if (!confirmed) return;
-      await commit({
-        ...diagnostics,
-        enabled: true,
-        consentVersion: 1,
-        captureSttInput: diagnostics.captureSttInput || !diagnostics.captureTtsOutput,
-      });
-    })(), { tag: 'VoiceDiagnosticsSettingsSection.toggleEnabled' });
+    } catch {
+      if (isCurrent()) await Modal.alert(tLoose('common.error'), tLoose(failureKey));
+    } finally {
+      if (isCurrent()) setBusy(false);
+    }
+  }, [busy, execute]);
+
+  const toggleEnabled = (enabled: boolean) => {
+    fireAndForget(invokeOperation(VOICE_PRIVACY_SETTINGS.settings.diagnosticsEnabled.anchor,
+      { kind: 'diagnostics_enabled', enabled }, 'errors.operationFailed', () => null),
+    { tag: 'VoiceDiagnosticsSettingsSection.toggleEnabled' });
   };
 
   const toggleDirection = (direction: 'captureSttInput' | 'captureTtsOutput', enabled: boolean) => {
@@ -168,43 +192,14 @@ export function VoiceDiagnosticsSettingsSection(props: Readonly<{
     fireAndForget(commit(next), { tag: `VoiceDiagnosticsSettingsSection.${direction}` });
   };
 
-  const exportArtifact = React.useCallback(async (artifact: NonNullable<DiagnosticsStatus>['artifacts'][number]) => {
-    if (busy || !client) return;
-    const lifetime = operationLifetimeRef.current;
-    if (!lifetime || lifetime.signal.aborted) return;
-    const isCurrent = () => operationLifetimeRef.current === lifetime && !lifetime.signal.aborted;
-    setBusy(true);
-    try {
-      await exportVoiceDiagnosticArtifact({ client, artifact, signal: lifetime.signal, isCurrent });
-    } catch {
-      if (isCurrent()) await Modal.alert(tLoose('common.error'), tLoose('settingsVoice.diagnostics.exportFailed'));
-    } finally {
-      if (isCurrent()) setBusy(false);
-    }
-  }, [busy, client]);
+  const exportArtifact = (artifact: NonNullable<DiagnosticsStatus>['artifacts'][number]) => invokeOperation(
+    VOICE_PRIVACY_SETTINGS.settings.diagnosticsExport.anchor,
+    { kind: 'diagnostics_export', artifactId: artifact.id, ...(machineId ? { machineId } : {}) },
+    'settingsVoice.diagnostics.exportFailed',
+  );
 
-  const retryCleanup = React.useCallback(async () => {
-    if (busy || !client || !machineId) return;
-    const lifetime = operationLifetimeRef.current;
-    if (!lifetime || lifetime.signal.aborted) return;
-    const isCurrent = () => operationLifetimeRef.current === lifetime && !lifetime.signal.aborted;
-    setBusy(true);
-    try {
-      const result = await applyVoiceDiagnosticsMachinePolicy({
-        machineId,
-        settings: diagnostics,
-        waitSignal: lifetime.signal,
-      });
-      if (isCurrent()) setStatus(result.applied && result.acknowledged ? result.status : null);
-    } catch {
-      if (isCurrent()) await Modal.alert(
-        tLoose('common.error'),
-        tLoose('settingsVoice.diagnostics.cleanupRetryFailed'),
-      );
-    } finally {
-      if (isCurrent()) setBusy(false);
-    }
-  }, [busy, client, diagnostics, machineId]);
+  const retryCleanup = () => invokeOperation(VOICE_PRIVACY_SETTINGS.settings.diagnosticsCleanup.anchor,
+    undefined, 'settingsVoice.diagnostics.cleanupRetryFailed', value => VoiceSpeechDiagnosticsStatusResponseV1Schema.parse(value));
 
   return (
     <SettingSection section={VOICE_PRIVACY_SETTINGS.sectionRefs.diagnostics}>
@@ -216,14 +211,14 @@ export function VoiceDiagnosticsSettingsSection(props: Readonly<{
         setting={VOICE_PRIVACY_SETTINGS.settings.diagnosticsEnabled}
         testID="settings-voice-diagnostics-enabled"
         subtitle={tLoose('settingsVoice.diagnostics.enabledSubtitle')}
-        disabled={busy}
+        disabled={busy || !actionAvailable}
         rightElementOutsidePressable
         rightElement={(
           <Switch
             ref={diagnosticsEnabledSwitchRef}
             testID="settings-voice-diagnostics-enabled-switch"
             accessibilityLabel={tLoose('settingsVoice.diagnostics.enabled')}
-            disabled={busy}
+            disabled={busy || !actionAvailable}
             value={diagnostics.enabled}
             onValueChange={toggleEnabled}
           />
@@ -297,6 +292,7 @@ export function VoiceDiagnosticsSettingsSection(props: Readonly<{
             status={status}
             showEmpty={healthPresentation?.severity === 'healthy' && status.artifacts.length === 0}
             busy={busy}
+            available={actionAvailable}
             onExport={(artifact) => { fireAndForget(exportArtifact(artifact), { tag: 'VoiceDiagnosticsSettingsSection.exportArtifact' }); }}
           />
             </>
@@ -325,7 +321,7 @@ export function VoiceDiagnosticsSettingsSection(props: Readonly<{
           {cleanupObligation ? (
             <SettingRow
               setting={VOICE_PRIVACY_SETTINGS.settings.diagnosticsCleanup}
-              disabled={busy || !client}
+              disabled={busy || !client || !actionAvailable}
               loading={busy}
               subtitle={tLoose('settingsVoice.diagnostics.retryCleanupSubtitle')}
               onPress={() => {
@@ -337,34 +333,12 @@ export function VoiceDiagnosticsSettingsSection(props: Readonly<{
             setting={VOICE_PRIVACY_SETTINGS.settings.diagnosticsDelete}
             testID="settings-voice-diagnostics-delete-all"
             destructive
-            disabled={busy}
+            disabled={busy || !actionAvailable}
             subtitle={tLoose('settingsVoice.diagnostics.deleteAllSubtitle')}
             onPress={() => {
-              fireAndForget((async () => {
-                const lifetime = operationLifetimeRef.current;
-                if (!lifetime || lifetime.signal.aborted) return;
-                const isCurrent = () => operationLifetimeRef.current === lifetime && !lifetime.signal.aborted;
-                const confirmed = await Modal.confirm(
-                  tLoose('settingsVoice.diagnostics.deleteConfirmTitle'),
-                  tLoose('settingsVoice.diagnostics.deleteConfirmBody'),
-                  { confirmText: tLoose('settingsVoice.diagnostics.deleteAction'), destructive: true },
-                );
-                if (!confirmed || busy || !isCurrent()) return;
-                setBusy(true);
-                try {
-                  if (!client) return;
-                  await client.deleteAll(lifetime.signal);
-                  const next = await client.status(lifetime.signal);
-                  if (isCurrent()) setStatus(next);
-                } catch {
-                  if (isCurrent()) await Modal.alert(
-                    tLoose('common.error'),
-                    tLoose('settingsVoice.diagnostics.deleteFailed'),
-                  );
-                } finally {
-                  if (isCurrent()) setBusy(false);
-                }
-              })(), { tag: 'VoiceDiagnosticsSettingsSection.deleteAll' });
+              fireAndForget(invokeOperation(VOICE_PRIVACY_SETTINGS.settings.diagnosticsDelete.anchor,
+                undefined, 'settingsVoice.diagnostics.deleteFailed', (_value, signal) => client?.status(signal) ?? null),
+              { tag: 'VoiceDiagnosticsSettingsSection.deleteAll' });
             }}
           /> : null}
           <VoiceDiagnosticsIndicator
