@@ -167,8 +167,9 @@ same workspace binding for both reads. The existing Session-namespace fallback
 to repository-level captures is intentionally preserved.
 
 The complete JSON reply fits `WORKSPACE_FILE_RPC_MAX_RESPONSE_UTF8_BYTES`
-from Protocol's workspace-files transport budget (18,749,807 bytes), derived
-from the socket floor after authenticated RPC, cipher and base64 framing.
+from Protocol's workspace-files transport budget, derived from the current
+V2 socket floor shared with server admission after authenticated RPC, cipher
+and base64 framing.
 Pages have explicit continuation; an individual entry or file exceeding the
 budget fails visibly rather than being silently truncated. Legacy small
 capture replies remain readable, while an oversized legacy request receives a

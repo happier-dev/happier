@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import type { ScmComparison } from '@happier-dev/protocol/scm/comparison';
 import { WORKSPACE_FILE_RPC_MAX_RESPONSE_UTF8_BYTES } from '@happier-dev/protocol/machines/workspaceFiles';
 import { projectCapturedComparison } from './projectCapturedComparison';
+import { EXTERNAL_ACTION_RELAY_RESPONSE_SOCKET_MIN_BUFFER_BYTES_V2 } from '@happier-dev/protocol/actions/externalActionApi';
+import { encryptLegacy, encodeBase64 } from '@/api/encryption';
 
 function capture(count: number, patch = '@@ -1 +1,2 @@\n-before\n+after\n+é😀\n') {
   const comparison: ScmComparison = { id: 'a'.repeat(64), source: { kind: 'workingTree' },
@@ -12,6 +14,27 @@ function capture(count: number, patch = '@@ -1 +1,2 @@\n-before\n+after\n+é😀
 }
 
 describe('captured comparison wire projection', () => {
+  it('retains a 20 MB capture supported by the current socket transport', () => {
+    const result = projectCapturedComparison(capture(1, 'x'.repeat(20_000_000)));
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.comparison.inventory.files[0]?.evidence.unifiedDiff).toHaveLength(20_000_000);
+  });
+
+  it('fits a boundary-sized retained response through authenticated RPC encryption and socket ACK framing', () => {
+    const retained = capture(1, '');
+    const empty = { success: true, comparison: retained.comparison, metadata: retained.metadata };
+    const framingBytes = Buffer.byteLength(JSON.stringify(empty), 'utf8');
+    retained.comparison.inventory.files[0]!.evidence.unifiedDiff = 'x'.repeat(WORKSPACE_FILE_RPC_MAX_RESPONSE_UTF8_BYTES - framingBytes);
+    const result = projectCapturedComparison(retained);
+    expect(result.success).toBe(true);
+    const encoded = encodeBase64(encryptLegacy({ v: 2, k: 'res', c: '0'.repeat(32), r: result }, new Uint8Array(32)));
+    const ack = `43${Number.MAX_SAFE_INTEGER + 1}${JSON.stringify([{ v: 1, result: encoded }])}`;
+    expect(Buffer.byteLength(ack, 'utf8')).toBeLessThanOrEqual(EXTERNAL_ACTION_RELAY_RESPONSE_SOCKET_MIN_BUFFER_BYTES_V2);
+    retained.comparison.inventory.files[0]!.evidence.unifiedDiff += 'x';
+    expect(projectCapturedComparison(retained)).toMatchObject({ success: false, errorCode: 'DIFF_UNAVAILABLE' });
+  });
+
   it('returns all 14,592 file metadata entries without sending retained patches', () => {
     const retained = capture(14_592, '@@ -1 +1 @@\n-before\n+' + 'é😀'.repeat(2400) + '\n');
     expect(retained.comparison.inventory.files.reduce((bytes, file) => bytes
@@ -29,7 +52,9 @@ describe('captured comparison wire projection', () => {
 
   it('pages metadata at the socket byte boundary and preserves source coverage', () => {
     const retained = capture(5);
-    retained.comparison.inventory.files.forEach(file => { file.path = 'é'.repeat(2_000_000) + file.path; });
+    retained.comparison.inventory.files.forEach(file => {
+      file.path = 'é'.repeat(Math.ceil(WORKSPACE_FILE_RPC_MAX_RESPONSE_UTF8_BYTES / 8)) + file.path;
+    });
     const first = projectCapturedComparison(retained, { kind: 'index' });
     expect(first.success).toBe(true);
     if (!first.success || !first.page?.nextCursor) throw new Error('Expected a bounded first page');

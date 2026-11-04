@@ -25,15 +25,15 @@ describe('resolveSocketMaxHttpBufferSizeFromEnv', () => {
     });
 
     it('reads an explicit size from env', () => {
-        expect(resolveSocketMaxHttpBufferSizeFromEnv({ HAPPIER_SOCKET_MAX_HTTP_BUFFER_SIZE: String(EXTERNAL_ACTION_RELAY_REQUEST_SOCKET_MIN_BUFFER_BYTES_V2) }))
-            .toBe(EXTERNAL_ACTION_RELAY_REQUEST_SOCKET_MIN_BUFFER_BYTES_V2);
-        expect(resolveSocketMaxHttpBufferSizeFromEnv({ HAPPY_SOCKET_MAX_HTTP_BUFFER_SIZE: String(EXTERNAL_ACTION_RELAY_REQUEST_SOCKET_MIN_BUFFER_BYTES_V2 + 1) }))
-            .toBe(EXTERNAL_ACTION_RELAY_REQUEST_SOCKET_MIN_BUFFER_BYTES_V2 + 1);
+        expect(resolveSocketMaxHttpBufferSizeFromEnv({ HAPPIER_SOCKET_MAX_HTTP_BUFFER_SIZE: String(DEFAULT_SOCKET_MAX_HTTP_BUFFER_SIZE) }))
+            .toBe(DEFAULT_SOCKET_MAX_HTTP_BUFFER_SIZE);
+        expect(resolveSocketMaxHttpBufferSizeFromEnv({ HAPPY_SOCKET_MAX_HTTP_BUFFER_SIZE: String(DEFAULT_SOCKET_MAX_HTTP_BUFFER_SIZE + 1) }))
+            .toBe(DEFAULT_SOCKET_MAX_HTTP_BUFFER_SIZE + 1);
     });
 
     it('rejects an explicit size below either external Action relay carrier minimum', () => {
         expect(() => resolveSocketMaxHttpBufferSizeFromEnv({
-            HAPPIER_SOCKET_MAX_HTTP_BUFFER_SIZE: String(EXTERNAL_ACTION_RELAY_REQUEST_SOCKET_MIN_BUFFER_BYTES_V2 - 1),
+            HAPPIER_SOCKET_MAX_HTTP_BUFFER_SIZE: String(DEFAULT_SOCKET_MAX_HTTP_BUFFER_SIZE - 1),
         })).toThrow(/at least/);
     });
 

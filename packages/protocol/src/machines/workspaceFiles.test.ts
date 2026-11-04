@@ -9,6 +9,23 @@ import {
 } from './workspaceFiles.js';
 
 describe('workspace file response budgets', () => {
+  it('admits a 20 MB response supported by the current socket transport', () => {
+    const response = { ok: true, files: [{ path: 'large.txt', matches: [
+      { line: 1, column16: 1, length16: 1, text: 'a'.repeat(20_000_000), before: [], after: [] },
+    ] }], hasMore: false, coverage: 'complete' };
+    expect(new TextEncoder().encode(JSON.stringify(response)).byteLength).toBe(20_000_162);
+    expect(DaemonWorkspaceFileSearchResponseSchema.safeParse(response).success).toBe(true);
+  });
+
+  it('admits a complete response at its byte boundary and rejects one byte more', () => {
+    const response = { ok: true, paths: [''], truncated: false };
+    const framingBytes = new TextEncoder().encode(JSON.stringify(response)).byteLength;
+    response.paths[0] = 'a'.repeat(WORKSPACE_FILE_LIST_MAX_RESPONSE_UTF8_BYTES - framingBytes);
+    expect(DaemonWorkspaceFileListResponseSchema.safeParse(response).success).toBe(true);
+    response.paths[0] += 'a';
+    expect(DaemonWorkspaceFileListResponseSchema.safeParse(response).success).toBe(false);
+  });
+
   it('admits substantial Unicode search and replace previews', () => {
     const match = { line: 1, column16: 1, length16: 1, text: '😀'.repeat(80_000), before: [], after: [] };
     expect(DaemonWorkspaceFileSearchResponseSchema.safeParse({ ok: true,
