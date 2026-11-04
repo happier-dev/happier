@@ -9,11 +9,158 @@ import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
 const repoRoot = resolve(import.meta.dirname, '../../../../..');
 const owner = join(import.meta.dirname, 'controller_coalescing.mjs');
 
+test('an ordinary controller caller after a source edit receives the edited failing test result', {
+  timeout: 15000, skip: process.platform !== 'linux',
+}, async t => {
+  const fixture = await createTempFixture(t, { prefix: 'ce-' });
+  const payload = fixture.path('edited.test.mjs');
+  const gatePath = fixture.path('s');
+  const connections = [];
+  const gate = createServer(socket => { connections.push(socket); });
+  await new Promise(resolveListen => gate.listen(gatePath, resolveListen));
+  t.after(() => { for (const socket of connections) socket.destroy(); gate.close(); });
+  const source = valid => `import test from 'node:test';
+import assert from 'node:assert/strict';
+import { once } from 'node:events';
+import { createConnection } from 'node:net';
+test('edited contract', async () => {
+  const socket = createConnection(process.env.HAPPIER_TEST_GATE);
+  await once(socket, 'connect');
+  console.log('source-loaded');
+  await once(socket, 'data');
+  socket.end();
+  assert.equal(${valid}, true);
+});
+`;
+  const callers = [];
+  t.after(() => { for (const caller of callers) if (caller.exitCode === null) caller.kill('SIGTERM'); });
+  const start = () => {
+    const caller = spawn(process.execPath, [owner, fixture.root, fixture.root, '0', '',
+      '"$HAPPIER_TEST_NODE" --test --test-reporter=tap "$HAPPIER_TEST_PAYLOAD"'], {
+      env: { ...process.env, HAPPIER_TEST_NODE: process.execPath, HAPPIER_TEST_PAYLOAD: payload,
+        // This payload is a separate runner, not this test's child reporter.
+        NODE_TEST_CONTEXT: undefined, HAPPIER_TEST_GATE: gatePath }, stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    callers.push(caller);
+    let stdout = '', stderr = '', ready, attached;
+    const started = new Promise(resolveStarted => { ready = resolveStarted; });
+    const joined = new Promise(resolveJoined => { attached = resolveJoined; });
+    caller.stdout.on('data', chunk => {
+      stdout += chunk;
+      if (stdout.includes('source-loaded')) { ready(); attached(false); }
+    });
+    caller.stderr.on('data', chunk => {
+      stderr += chunk;
+      if (stderr.includes('coalesced queued')) attached(true);
+    });
+    const result = new Promise(resolveExit => caller.once('close', code => resolveExit({ code, stdout, stderr })));
+    return { started, joined, result };
+  };
+  await writeFile(payload, source(true));
+  const leader = start();
+  await leader.started;
+  await writeFile(payload, source(false));
+  const joiner = start();
+  const queued = await joiner.joined;
+  connections[0].write('finish');
+  const leaderResult = await leader.result;
+  if (queued) {
+    await joiner.started;
+    connections[1].write('finish');
+  }
+  const joinerResult = await joiner.result;
+  assert.deepEqual([leaderResult.code, joinerResult.code], [0, 1]);
+  assert.match(joinerResult.stdout, /ERR_ASSERTION/);
+  assert.equal(connections.length, 2, 'the later caller must execute the edited source');
+});
+
+// Short prefixes keep Unix socket paths valid under worker TMPDIRs.
+for (const outcome of ['success', 'failure', 'signal']) test(`queued controller followers progress after leader ${outcome} with inherited output`, {
+  timeout: 15000, skip: process.platform !== 'linux',
+}, async t => {
+  const fixture = await createTempFixture(t, { prefix: 'cf-' });
+  const gatePath = fixture.path('s');
+  const payload = fixture.path('payload.cjs');
+  await writeFile(payload, `const { spawn } = require('node:child_process');
+const socket = require('node:net').connect(process.argv[2]);
+// A dispatch lifetime reader inherits output and waits for its parent's EOF.
+spawn(process.execPath, ['-e', "process.stdout.write('reader-ready' + String.fromCharCode(10)); process.stdin.resume();"], { stdio: 'inherit' });
+socket.on('data', () => process.exit(Number(process.argv[3])));
+socket.resume();
+`);
+  const connections = [];
+  const arrivals = [];
+  const gate = createServer(socket => {
+    connections.push(socket);
+    arrivals.shift()?.(socket);
+  });
+  await new Promise(resolveListen => gate.listen(gatePath, resolveListen));
+  t.after(() => { for (const socket of connections) socket.destroy(); gate.close(); });
+  const nextConnection = () => new Promise(resolveConnection => arrivals.push(resolveConnection));
+  const callers = [];
+  let dispatchPids = [];
+  t.after(() => {
+    for (const caller of callers) if (caller.exitCode === null) caller.kill('SIGTERM');
+    // Only this fixture's recorded private process groups are cleanup targets.
+    for (const pid of dispatchPids) {
+      try { process.kill(-pid, 'SIGTERM'); } catch (error) { if (error.code !== 'ESRCH') throw error; }
+    }
+  });
+  const start = () => {
+    const caller = spawn(process.execPath, [owner, fixture.root, repoRoot, '1', '',
+      '"$HAPPIER_TEST_NODE" "$HAPPIER_TEST_PAYLOAD" "$HAPPIER_TEST_GATE" "$HAPPIER_TEST_EXIT"'], {
+      env: { ...process.env, HAPPIER_TEST_NODE: process.execPath, HAPPIER_TEST_PAYLOAD: payload,
+        HAPPIER_TEST_GATE: gatePath, HAPPIER_TEST_EXIT: outcome === 'success' ? '0' : '7' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    callers.push(caller);
+    let stdout = '', stderr = '';
+    let ready;
+    const started = new Promise(resolveStarted => { ready = resolveStarted; });
+    let queued;
+    const attached = new Promise(resolveAttached => { queued = resolveAttached; });
+    caller.stdout.on('data', chunk => {
+      stdout += chunk;
+      if (stdout.includes('reader-ready\n')) ready();
+    });
+    caller.stderr.on('data', chunk => {
+      stderr += chunk;
+      if (stderr.includes('coalesced queued')) queued();
+    });
+    const result = new Promise(resolveExit => caller.once('close', resolveExit));
+    return { attached, result, started };
+  };
+  const firstConnection = nextConnection();
+  const first = start();
+  const leader = await firstConnection;
+  await first.started;
+  const follower = start();
+  await follower.attached;
+  const status = () => JSON.parse(spawnSync(process.execPath, [owner, '--status', fixture.root], { encoding: 'utf8' }).stdout);
+  const before = status();
+  dispatchPids = before.dispatchPids;
+  assert.equal(before.runningDispatches, 1);
+  assert.equal(before.queuedFollowers, 1);
+  const followerConnection = nextConnection();
+  if (outcome === 'signal') process.kill(dispatchPids[0], 'SIGKILL');
+  else leader.write('finish');
+  assert.equal(await first.result, outcome === 'signal' ? 137 : outcome === 'success' ? 0 : 7);
+  const promoted = await followerConnection;
+  const after = status();
+  dispatchPids = [...dispatchPids, ...after.dispatchPids];
+  assert.equal(after.runningDispatches, 1);
+  assert.equal(after.queuedFollowers, 0);
+  assert.equal(connections.length, 2, 'one queued follower produces exactly one successor dispatch');
+  await follower.started;
+  promoted.write('finish');
+  assert.equal(await follower.result, outcome === 'success' ? 0 : 7);
+});
+
 for (const scenario of ['remote', 'fallback-broker', 'fallback-caller']) test(scenario === 'remote'
   ? 'a controller lifetime reader does not hold AUTO target selection'
   : `late SSH refusal preserves local fallback lifetime after ${scenario === 'fallback-broker' ? 'broker death' : 'last caller cancellation'}`,
 { timeout: 60000, skip: process.platform !== 'linux' }, async t => {
-  const fixture = await createTempFixture(t, { prefix: 'hstack-controller-selection-' });
+  const fixture = await createTempFixture(t, { prefix: 'cs-' });
   const bin = fixture.path('bin');
   await mkdir(bin);
   const executable = (name, source) => writeFile(join(bin, name), source, { mode: 0o755 });
@@ -99,7 +246,7 @@ esac
 });
 
 for (const exitKind of ['payload', 'broker']) test(`controller lifetime settles after ${exitKind === 'broker' ? 'broker SIGKILL' : 'a local exec completes'}`, { timeout: 60000, skip: process.platform !== 'linux' }, async t => {
-  const fixture = await createTempFixture(t, { prefix: 'hstack-controller-lifetime-' });
+  const fixture = await createTempFixture(t, { prefix: 'cl-' });
   const payload = fixture.path('payload.cjs');
   const gatePath = fixture.path('gate.sock');
   await writeFile(payload, `const socket = require('node:net').connect(process.argv[2]);
