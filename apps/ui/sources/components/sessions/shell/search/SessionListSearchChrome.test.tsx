@@ -492,4 +492,41 @@ describe('SessionListSearchChrome', () => {
         expect(controls.findAllByProps({ testID: 'filter-control' }).length).toBeGreaterThan(0);
     });
 
+    it('moves the layout segment into View options while the space name would be cut short, and brings it back for a name that fits', async () => {
+        const { SessionListSearchChrome } = await import('./SessionListSearchChrome');
+        const { CollectionTitleButton } = await import('@/components/ui/lists/collection/CollectionTitleButton');
+        const chrome = (label: string) => (
+            <SessionListSearchChrome
+                filterControl={<CollectionTitleButton testID="space-title" label={label} accessibilityLabel={label}
+                    expanded={false} hasPopup="menu" onPress={vi.fn()} />}
+                searchQuery=""
+                onSearchQueryChange={vi.fn()}
+            />
+        );
+        const segmentShown = () => screen.root.findAll((node) => String(node.props.testID ?? '').startsWith('session-list-layout')).length > 0;
+        const layout = async (testID: string, width: number) => {
+            await act(async () => {
+                firstByTestId(screen.root, testID).props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width, height: 36 } } });
+            });
+        };
+        const screen = await renderScreen(chrome('Follow-ups'));
+        expect(segmentShown()).toBe(true);
+
+        // A 272px column: the title slot is 100px beside a 70px segment; the whole title wants 109px
+        // (6px of it hang into the slot's optical inset), so its name would be cut to "Follow-…".
+        await layout('session-list-layout-slot', 70);
+        await layout('session-list-title-slot', 100);
+        await layout('space-title-natural', 109);
+        expect(segmentShown()).toBe(false);
+
+        // The slot widens by the segment and its gap; that is still not room for both, so nothing flickers back.
+        await layout('session-list-title-slot', 172);
+        expect(segmentShown()).toBe(false);
+
+        // A name that fits beside the segment brings it back.
+        await act(async () => { screen.update(chrome('Nightly')); });
+        await layout('space-title-natural', 92);
+        expect(segmentShown()).toBe(true);
+    });
+
 });

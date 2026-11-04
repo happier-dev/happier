@@ -15,6 +15,7 @@ import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback
 import { SessionListLayoutSegment, SessionListViewOptionsButton, stopPressEventPropagation } from '../sessionListChrome';
 import { SESSION_LIST_COLUMN_METRICS, sessionListStyles } from '../sessionListStyles';
 import { CollectionFilterButton } from '@/components/ui/lists/collection/CollectionFilterButton';
+import { CollectionTitleNaturalWidthContext } from '@/components/ui/lists/collection/CollectionTitleButton';
 import { CollectionSpaceSwipeTitle, CollectionSpaceSwipeZone, useCollectionSpaceSwipeTrack } from '@/components/ui/lists/collection/CollectionSpaceSwipeZone';
 import { useIsTablet } from '@/utils/platform/responsive';
 import { usePhoneTabNavRow } from '@/components/navigation/shell/phoneTabNavRow';
@@ -93,16 +94,28 @@ export const SessionListSearchChrome = React.memo(function SessionListSearchChro
     const toggleRef = React.useRef<Focusable | null>(null);
     // The header's icon buttons keep the lab's compact squares under every pointer; a finger reaches
     // them through the shared hit area, never a larger drawn square.
-    // The title keeps its floor; the segment yields to View options when the row is too narrow for both. Measured on layout only, never per frame.
+    // The title keeps its floor and, beside the segment, the space's whole name: the segment yields to View options
+    // when the row is too narrow for both. Measured on layout only, never per frame.
     const [layoutSegmentFits, setLayoutSegmentFits] = React.useState(true);
     const layoutSegmentWidthRef = React.useRef<number | null>(null);
-    const handleTitleSlotLayout = React.useCallback((event: { nativeEvent: { layout: { width: number } } }) => {
-        const titleWidth = event.nativeEvent.layout.width;
+    const titleSlotWidthRef = React.useRef<number | null>(null);
+    const titleNaturalWidthRef = React.useRef(0);
+    const decideLayoutSegment = React.useCallback(() => {
+        const titleWidth = titleSlotWidthRef.current;
         setLayoutSegmentFits((shown) => resolveHappierCollectionTitleAccessoryFits({
             shown, titleWidth, accessoryWidth: layoutSegmentWidthRef.current,
-            titleFloor: SESSION_LIST_COLUMN_METRICS.titleFloorPx, gap: SESSION_LIST_COLUMN_METRICS.iconButtonGapPx,
+            titleFloor: Math.max(SESSION_LIST_COLUMN_METRICS.titleFloorPx, titleNaturalWidthRef.current),
+            gap: SESSION_LIST_COLUMN_METRICS.iconButtonGapPx,
         }));
     }, []);
+    const handleTitleSlotLayout = React.useCallback((event: { nativeEvent: { layout: { width: number } } }) => {
+        titleSlotWidthRef.current = event.nativeEvent.layout.width;
+        decideLayoutSegment();
+    }, [decideLayoutSegment]);
+    const handleTitleNaturalWidth = React.useCallback((widthPx: number) => {
+        titleNaturalWidthRef.current = widthPx;
+        decideLayoutSegment();
+    }, [decideLayoutSegment]);
     const handleLayoutSegmentLayout = React.useCallback((event: { nativeEvent: { layout: { width: number } } }) => {
         layoutSegmentWidthRef.current = event.nativeEvent.layout.width;
     }, []);
@@ -192,7 +205,7 @@ export const SessionListSearchChrome = React.memo(function SessionListSearchChro
     const navRow = props.presentation === 'runs' ? null : shellNavRow;
     const columnControls = (
         <>
-            {props.presentation === 'runs' || !layoutSegmentFits ? null : <View onLayout={handleLayoutSegmentLayout}>
+            {props.presentation === 'runs' || !layoutSegmentFits ? null : <View testID="session-list-layout-slot" onLayout={handleLayoutSegmentLayout}>
                 <SessionListLayoutSegment />
             </View>}
             <IconButton
@@ -238,12 +251,15 @@ export const SessionListSearchChrome = React.memo(function SessionListSearchChro
                 style={[styles.searchChromeControlsRow, props.presentation === 'runs' ? styles.searchChromeSummaryRow : null]}
             >
                 <View testID="session-list-title-slot" style={styles.searchChromeTitleSlot} onLayout={navRow ? undefined : handleTitleSlotLayout}>
+                    {/* Beside its controls the title says how wide its whole name is; alone on its row (a phone tab) it has the row. */}
+                    <CollectionTitleNaturalWidthContext.Provider value={navRow ? null : handleTitleNaturalWidth}>
                     {spaceChrome ? (
                         <CollectionSpaceSwipeTitle track={spaceSwipeTrack}
                             previousLabel={props.spaceSwipe?.previousLabel ?? null} nextLabel={props.spaceSwipe?.nextLabel ?? null}>
                             {filterControl}
                         </CollectionSpaceSwipeTitle>
                     ) : filterControl}
+                    </CollectionTitleNaturalWidthContext.Provider>
                 </View>
                 {navRow ? null : columnControls}
             </View>
