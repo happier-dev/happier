@@ -7,8 +7,9 @@ import type {
 } from '@happier-dev/protocol/collections/spaces/collectionSpacesV1';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
-import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
+import { ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
+import { CollectionSpaceIcon } from './CollectionSpaceIcon';
 import { resolvePluginUiIconName } from '@/components/plugins/surfaces/iconToken/resolvePluginUiIconToken';
 import {
   EntityFlatReorderList,
@@ -105,8 +106,8 @@ export const CollectionSpacesStrip = React.memo(function CollectionSpacesStrip(
         id: item.id,
         label: item.shortcut ? `${item.name} · ${item.shortcut}` : item.name,
         icon: (
-          <Icon
-            name={resolveCollectionSpaceIconName(item.icon)}
+          <CollectionSpaceIcon
+            icon={item.icon}
             size={ICON_SIZE.sm}
             color={iconColor}
           />

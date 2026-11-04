@@ -3,23 +3,21 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import type { CollectionSpaceIconV1 } from '@happier-dev/protocol/collections/spaces/collectionSpacesV1';
-import type { PluginUiIconTokenV1 } from '@happier-dev/protocol/plugins/ui';
 
 import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { Switch } from '@/components/ui/forms/Switch';
-import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
+import { ICON_SIZE } from '@/components/ui/icons/Icon';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 
-import { resolveCollectionSpaceIconName } from './CollectionSpacesStrip';
+import { COLLECTION_SPACE_GLYPHS } from './collectionSpaceGlyphs';
+import { CollectionSpaceIcon } from './CollectionSpaceIcon';
 
 /** Glyphs a space can wear, from the shared icon vocabulary (lab `clfilter:save`). */
-const SPACE_GLYPHS: readonly PluginUiIconTokenV1[] = [
-  'list', 'attention', 'review', 'pin', 'new', 'change-open', 'bug', 'terminal', 'desktop',
-];
+
 
 export type CollectionSpaceFormValue = Readonly<{
   name: string;
@@ -161,7 +159,7 @@ export const CollectionSpaceForm = React.memo(function CollectionSpaceForm(
     return [
       ...props.suggestedIcons,
       props.initial.icon,
-      ...SPACE_GLYPHS.map((name): CollectionSpaceIconV1 => ({
+      ...COLLECTION_SPACE_GLYPHS.map((name): CollectionSpaceIconV1 => ({
         kind: 'icon',
         name,
       })),
@@ -186,8 +184,8 @@ export const CollectionSpaceForm = React.memo(function CollectionSpaceForm(
     <View testID={`${props.testIDPrefix}-form`} style={styles.root}>
       <View style={styles.nameRow}>
         <View style={styles.nameIcon}>
-          <Icon
-            name={resolveCollectionSpaceIconName(icon)}
+          <CollectionSpaceIcon
+            icon={icon}
             size={ICON_SIZE.md}
             color={theme.colors.text.primary}
           />
@@ -237,8 +235,8 @@ export const CollectionSpaceForm = React.memo(function CollectionSpaceForm(
                 }),
               ]}
             >
-              <Icon
-                name={resolveCollectionSpaceIconName(candidate)}
+              <CollectionSpaceIcon
+                icon={candidate}
                 size={ICON_SIZE.sm}
                 color={theme.colors.text.secondary}
               />

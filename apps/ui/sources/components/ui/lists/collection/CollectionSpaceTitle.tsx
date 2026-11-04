@@ -14,7 +14,8 @@ import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { KeyboardShortcutLabelsContext } from '@/keyboard/shortcutLabels';
 import { t } from '@/text';
 
-import { resolveCollectionSpaceIconName, type CollectionSpacesStripItem } from './CollectionSpacesStrip';
+import { type CollectionSpacesStripItem } from './CollectionSpacesStrip';
+import { CollectionSpaceIcon } from './CollectionSpaceIcon';
 import { CollectionTitleButton } from './CollectionTitleButton';
 
 const FILTER_ITEM = 'filter';
@@ -81,7 +82,7 @@ export const CollectionSpaceTitle = React.memo(function CollectionSpaceTitle(
           id: item.id,
           testID: `${props.testIDPrefix}-menu:${space.id}`,
           title: item.label,
-          icon: <Icon name={resolveCollectionSpaceIconName(space.icon)} size={ICON_SIZE.sm} color={iconColor} />,
+          icon: <CollectionSpaceIcon icon={space.icon} size={ICON_SIZE.sm} color={iconColor} />,
           shortcut:
             props.spaceShortcutPrefix !== undefined && index < 9
               ? shortcutLabels[`${props.spaceShortcutPrefix}${index + 1}` as ShortcutId]
