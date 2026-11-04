@@ -252,16 +252,14 @@ export async function prepareDaemonProviderLaunch(input: Readonly<{
         onFailure: prepared.attempt.cleanupOnFailure,
         onExit: () => {},
     });
-    if (prepared.connectedServices) {
-        optionsWithProviderIsolation = {
-            ...optionsWithProviderIsolation,
-            connectedServices: prepared.connectedServices,
-        };
-        if (prepared.suppressedConnectedServiceIds.length > 0) {
-            logger.info(
-                `[DAEMON RUN] Provider binding suppressed conflicting connected services for this spawn: ${prepared.suppressedConnectedServiceIds.join(', ')}`,
-            );
-        }
+    optionsWithProviderIsolation = {
+        ...optionsWithProviderIsolation,
+        connectedServices: prepared.connectedServices ?? { v: 2, bindingsByServiceId: {} },
+    };
+    if (prepared.suppressedConnectedServiceIds.length > 0) {
+        logger.info(
+            `[DAEMON RUN] Provider binding suppressed conflicting connected services for this spawn: ${prepared.suppressedConnectedServiceIds.join(', ')}`,
+        );
     }
     return {
         ok: true,
