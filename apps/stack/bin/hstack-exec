@@ -1593,17 +1593,34 @@ EOF
   fi
 fi
 
+read_dispatch_reservation() {
+  # Published dispatch metadata is immutable. Read its five lines once with
+  # shell builtins: selectors scan every retained dispatch on each launch.
+  # Clear all fields first so a removed or short record cannot reuse a prior
+  # record's identity, class or affinity. read also retains an unterminated line.
+  dispatch_metadata_pid=
+  dispatch_metadata_class=
+  dispatch_metadata_execution_id=
+  dispatch_metadata_identity=
+  dispatch_metadata_affinity=
+  {
+    IFS= read -r dispatch_metadata_pid || :
+    IFS= read -r dispatch_metadata_class || :
+    IFS= read -r dispatch_metadata_execution_id || :
+    IFS= read -r dispatch_metadata_identity || :
+    IFS= read -r dispatch_metadata_affinity || :
+  } 2>/dev/null < "$1" || :
+}
+
 dispatch_reservation_is_active() {
-  # Controllers in distinct PID namespaces share this cache. The lifetime
-  # lock remains authoritative even when the recorded PID is not visible or
-  # resolves to a different process here. Darwin retains the PID fallback.
+  read_dispatch_reservation "$1"
+  # A held lifetime lock remains authoritative across PID namespaces. An
+  # unlocked record can also belong to a live pre-existing controller whose
+  # environment lacked flock; lack of that lock alone cannot authorize reap.
   if command -v flock >/dev/null 2>&1; then
-    ! flock -n "$1" -c : 2>/dev/null
-    return
+    if ! flock -n "$1" -c : 2>/dev/null; then return 0; fi
   fi
-  dispatch_controller_pid=$(sed -n '1p' "$1" 2>/dev/null || true)
-  dispatch_controller_token=$(sed -n '4p' "$1" 2>/dev/null || true)
-  heavyweight_process_is_current "$dispatch_controller_pid" "${dispatch_controller_token:--}"
+  ! heavyweight_process_is_provably_retired "$dispatch_metadata_pid" "${dispatch_metadata_identity:--}"
 }
 
 count_active_dispatches() {
@@ -1614,12 +1631,12 @@ count_active_dispatches() {
   for reservation in "$cache_dir/$target_name.active."*; do
     [ -f "$reservation" ] || continue
     if ! dispatch_reservation_is_active "$reservation"; then
-      stale_execution_id=$(sed -n '3p' "$reservation" 2>/dev/null || true)
+      stale_execution_id=$dispatch_metadata_execution_id
       case "$stale_execution_id" in native-*) ;; *) rm -f -- "$reservation" 2>/dev/null || true ;; esac
       continue
     fi
     active_count=$((active_count + 1))
-    reservation_class=$(sed -n '2p' "$reservation" 2>/dev/null || true)
+    reservation_class=$dispatch_metadata_class
     [ "$reservation_class" = "$command_class" ] && active_class_count=$((active_class_count + 1))
     is_heavyweight_dispatch_class "$reservation_class" && active_heavyweight_count=$((active_heavyweight_count + 1))
   done
@@ -1639,7 +1656,8 @@ if [ -n "$typecheck_affinity_key" ] && [ -z "$explicit_target_number" ]; then
   if [ "$policy_kind" = typecheck ]; then
     for typecheck_active in "$cache_dir"/*.active.*; do
       [ -f "$typecheck_active" ] || continue
-      [ "$(sed -n '5p' "$typecheck_active")" = "$typecheck_affinity_key" ] || continue
+      read_dispatch_reservation "$typecheck_active"
+      [ "$dispatch_metadata_affinity" = "$typecheck_affinity_key" ] || continue
       dispatch_reservation_is_active "$typecheck_active" || continue
       typecheck_running_target=${typecheck_active##*/}
       typecheck_running_target=${typecheck_running_target%%.active.*}
