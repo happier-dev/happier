@@ -1,3 +1,6 @@
+import { ManagedMachineActionOutputSchemasV1, managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
+import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
@@ -204,7 +207,8 @@ vi.mock('socket.io-client', async () => {
 
 function tokenFor(accountId: string): string {
     const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url');
-    return `${encode({ alg: 'none' })}.${encode({ sub: accountId })}.signature`;
+    return `${encode({ alg: 'none' })}.${encode({ sub: accountId, tokenEpoch: 1,
+        provenance: { v: 1, kind: 'account', authority: 'present_user' } })}.signature`;
 }
 
 function sessionSpawnCalls() {
@@ -352,6 +356,9 @@ describe('multi-Home Session creation composition', () => {
                 });
             }
             if (url.endsWith('/v1/machines/pools/list')) return Response.json({ pools: [] });
+            if (new URL(url).pathname === managedMachineActionEndpointPathV1('machines.managed.list')) {
+                return Response.json(ManagedMachineActionOutputSchemasV1['machines.managed.list'].parse({ machines: [] }));
+            }
             if (new URL(url).pathname === '/v1/machines') return Response.json((machineHttpSnapshots.get(new URL(url).origin) ?? []).map((machine) => ({
                 ...machine, dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
                 metadata: encodePlainMachineStoredContent(machine.metadata),
@@ -625,6 +632,201 @@ describe('multi-Home Session creation composition', () => {
                 .toMatchObject({ selectedMachineId: target.id, selectedPath: '/home/happier/d-dd-ky' });
             expect(socketBoundary.emits.mock.calls.filter(([request]) => request.payload?.method?.endsWith(':session.spawnNew'))).toEqual([]);
         } finally { await reopened.unmount(); }
+    });
+
+    it.each(['send', 'route-send', 'manual-send', 'use', 'cancel', 'cancel-start'] as const)('continues a managed Machine receipt through the real composer (%s)', async intent => {
+        ({ homeA, homeAScopeId, homeAToken } = await arrangeFocusedHomeA('FIX30-COMPOSER-START', { applyConnectionManager: true }));
+        const { storage } = await import('@/sync/domains/state/storageStore');
+        const { createMachineFixture, flushHookEffects } = await import('@/dev/testkit');
+        const { createManagedMachineSelectionDraft } = await import('@/sync/domains/state/newSessionManagedMachineDraft');
+        const { ManagedMachineV1Schema } = await import('@happier-dev/protocol/machines/managed/managedMachineV1');
+        const { createDefaultCollectionSpaceV1 } = await import('@happier-dev/protocol/collections/spaces/collectionSpacesV1');
+        const { SessionOrganizationSnapshotResponseSchema } = await import('@happier-dev/protocol/sessions/organization/snapshot');
+        const { seedNewSessionDraftV1 } = await import('../newSessionDraftSeed');
+        const { readNewSessionDraftFromRepository, writeNewSessionDraftToRepository } = await import('@/components/sessions/composer/newSessionDraftRepositoryAdapter');
+        const scope = { serverId: homeAScopeId, accountId: 'account-a' };
+        const spaceMembership = { spaceId: 'managed-captured-space', spaceSettingsTarget: scope };
+        const catalog = { v: 1 as const, spaces: [{ ...createDefaultCollectionSpaceV1('sessionWork'),
+            id: spaceMembership.spaceId, membership: { mode: 'manual_only' as const, tags: [{ ...scope, tagId: 'managed-space-tag' }] } }] };
+        accountHttpSettings = { collectionSpacesV1: catalog };
+        storage.getState().applySettingsLocal({ collectionSpacesV1: catalog });
+        const draftId = seedNewSessionDraftV1({ scope, seed: { spaceMembership } });
+        if (!draftId) throw new Error('Expected captured managed draft');
+        const seeded = readNewSessionDraftFromRepository({ scope, draftId });
+        if (!seeded) throw new Error('Expected retained managed draft');
+        writeNewSessionDraftToRepository({ scope, draftId,
+            draft: { ...seeded, organizationPlacement: { folderId: null, tagIds: ['ordinary-managed-label'] } } });
+        const organization = SessionOrganizationSnapshotResponseSchema.parse({ snapshot: {
+            schemaVersion: 1, version: 1, pins: [], folders: [], folderAssignments: [], orderEntries: [], labels: [], tagAssignments: [],
+            tags: [{ tagId: 'managed-space-tag', tagKey: 'managed-space-tag', sortKey: null,
+                display: { t: 'plain', v: { kind: 'space_membership', ...spaceMembership } }, archivedAt: null, createdAt: 1, updatedAt: 1 },
+            { tagId: 'ordinary-managed-label', tagKey: 'ordinary-managed-label', sortKey: null,
+                display: { t: 'plain', v: { label: 'Ordinary label' } }, archivedAt: null, createdAt: 1, updatedAt: 1 }],
+        } });
+        const coreHttp = await createDraftSurfaceCoreHttpBoundary();
+        const joined = createDeferred<void>();
+        const acquisitions: unknown[] = [];
+        const controller = { machineId: 'machine-b', installationId: 'test-installation' };
+        const acquireHttp = await createExternalActionAccountHttpBoundary({
+            serverUrl: homeA.serverUrl, serverIdentityId: homeA.serverIdentityId!, accountId: 'account-a',
+            machineId: controller.machineId, actionId: 'machines.managed.acquire', tokenEpoch: 1,
+            execute: input => { acquisitions.push(input); return { managedId: 'FIX30-paid' }; },
+        });
+        const selection = createManagedMachineSelectionDraft({
+            enrollmentIdentity: { kind: 'dedicatedDaemonUser', username: 'happier', serviceMode: 'user', role: 'server', adminAccessAtCreation: 'none' },
+            selection: { kind: 'one-off', homeId: homeA.serverIdentityId!, controller,
+                launch: { provider: { pluginId: 'custom.compute', localId: 'native' }, schemaVersion: 1, name: 'FIX30 guest', choices: {} },
+                retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false },
+            receipt: { controller, launch: { provider: { pluginId: 'custom.compute', localId: 'native' }, schemaVersion: 1, name: 'FIX30 guest', choices: {} },
+                optionStatus: 'current', prerequisites: [], billing: { location: 'cloud', stoppedBilling: 'billed' },
+                retentionCapabilities: { supportedIntents: ['delete'] }, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false },
+            archiveEffect: 'keep',
+        });
+        const guest = createMachineFixture({ id: 'FIX30-guest', activeAt: Date.now(), metadata: {
+            ...createMachineFixture().metadata!, homeDir: '/guest', host: 'FIX30-guest',
+        } });
+        const managed = ManagedMachineV1Schema.parse({ id: 'FIX30-paid', homeId: homeA.serverIdentityId, controller,
+            custodianAccountId: 'account-a', launch: selection.receipt.launch, allocation: 'bound',
+            resource: { contributionRef: selection.receipt.launch.provider, schemaVersion: 1, value: {} },
+            creationState: 'active', enrolledMachineId: guest.id, desired: 'start', desiredWhen: 'now', intentRevision: 1,
+            observation: { observedAt: Date.now(), availability: 'present', power: 'running', storage: 'retained' },
+            retention: selection.receipt.retention, wakeOnAcceptedMessage: false });
+        sessionHttpBoundary = async (url, init) => {
+            const path = new URL(url).pathname;
+            if (path === '/v2/session-organization') return Response.json(organization);
+            if (path.startsWith('/v1/actions/machines.managed.acquire')) {
+                return await acquireHttp.handle(new URL(url), init);
+            }
+            if (path === managedMachineActionEndpointPathV1('machines.managed.get')) {
+                await joined.promise;
+                return Response.json(managed);
+            }
+            if (path === managedMachineActionEndpointPathV1('machines.managed.list')) {
+                return Response.json(ManagedMachineActionOutputSchemasV1['machines.managed.list'].parse({ machines: [managed] }));
+            }
+            if (path === '/v1/machines') return Response.json((machineHttpSnapshots.get(new URL(url).origin) ?? [])
+                .map(machine => machine.id === controller.machineId ? acquireHttp.machine
+                    : createPlainMachineRowFixture({ id: machine.id, accountId: 'account-a', machine })));
+            if (path === `/v1/machines/${guest.id}`) return Response.json({
+                machine: createPlainMachineRowFixture({ id: guest.id, accountId: 'account-a', machine: guest }),
+            });
+            if (path === '/v1/machines/read-batch' && init?.method === 'POST') {
+                return createMachineReadBatchResponseFixture(init.body, id => {
+                    if (id === controller.machineId) return acquireHttp.machine;
+                    const machine = machineHttpSnapshots.get(new URL(url).origin)?.find(row => row.id === id);
+                    return machine ? createPlainMachineRowFixture({ id, accountId: 'account-a', machine }) : null;
+                });
+            }
+            if (path === `/v1/machines/${guest.id}/access`) {
+                const custodian = { accountId: 'account-a', displayName: 'Account A' };
+                return Response.json({ machineId: guest.id, custodian, canManage: true, grants: [], ownDirectGrant: false, ownAccessSources: [],
+                    access: { custodian, role: 'manage', resourceMode: 'plain', accessState: 'ready' } });
+            }
+            return coreHttp(path) ?? createEmptyAccountBootstrapHttpResponse(path, init);
+        };
+        await storage.getState().activateSettingsScope({ serverId: homeAScopeId, accountId: 'account-a' });
+        storage.getState().applySettingsLocal({ useEnhancedSessionWizard: false });
+        routeBoundary.params = { spawnServerId: homeAScopeId, directory: '/workspace/project' };
+        const hook = await renderProductionCreateCaller({ activeServerId: homeAScopeId, targetServerId: homeAScopeId, draftId });
+        try {
+            const { observeMachinePresenceForTest } = await import('@/dev/testkit/harness/machinePresence');
+            await act(async () => {
+                const origin = new URL(homeA.serverUrl).origin;
+                const machines = (machineHttpSnapshots.get(origin) ?? []).map(machine => ({ ...machine, installationId: controller.installationId }));
+                machineHttpSnapshots.set(origin, machines);
+                storage.getState().applyMachines(machines, true, { sourceServerId: homeAScopeId });
+                observeMachinePresenceForTest({ serverId: homeAScopeId, accountId: 'account-a' }, ['machine-b']);
+            });
+            const { getConnectedAccountCatalogValue } = await import('@/sync/store/settings/connectedAccountCatalogSnapshot');
+            await vi.waitFor(() => expect(getConnectedAccountCatalogValue({ serverId: homeAScopeId, accountId: 'account-a' }, 'purposes')).toMatchObject({ status: 'ready', stale: false }));
+            await flushHookEffects();
+            const model = hook.getCurrent();
+            if (model.variant !== 'simple') throw new Error('Expected the real simple composer');
+            const renderPicker = model.simpleProps.machinePopover?.renderContent;
+            if (!renderPicker) throw new Error('Expected the production Machine picker');
+            const picker = renderPicker({ requestClose() {}, maxHeight: 420 }) as React.ReactElement<import('../components/NewSessionMachineSelectionContent').NewSessionMachineSelectionContentProps>;
+            // The receipt starts the session only while the composer holds a drafted prompt (58d receipt, Q2).
+            expect(picker.props.managedMachineStartsSession?.()).toBe(false);
+            await act(async () => { model.simpleProps.setSessionPrompt('FIX30 drafted work'); });
+            expect(picker.props.managedMachineStartsSession?.()).toBe(true);
+            socketBoundary.emits.mockClear();
+            socketBoundary.fetches.mockClear();
+            await act(async () => {
+                if (intent === 'route-send') {
+                    const { setNewSessionPickerReturnParams } = await import('../navigation/setNewSessionPickerReturnParams');
+                    setNewSessionPickerReturnParams({
+                        navigation: { getState: () => ({ index: 1, routes: [
+                            { key: 'composer', name: '(app)/new/index' }, { key: 'picker', name: '(app)/new/pick/machine' },
+                        ] }), dispatch: event => { routeBoundary.params = { ...routeBoundary.params, ...event.payload.params }; } },
+                        router: { replace: routeBoundary.replace }, currentParams: routeBoundary.params,
+                        routeParams: { machineId: undefined, spawnServerId: homeAScopeId },
+                        managedMachineSelection: selection, managedMachineUseOptions: { send: true },
+                    });
+                } else {
+                    picker.props.onSelectManagedMachine?.(selection, intent === 'send' || intent === 'cancel-start' ? { send: true } : undefined);
+                    if (intent === 'cancel') hook.getCurrent().managedMachineDraft?.cancel?.();
+                }
+            });
+            if (intent === 'route-send') await hook.rerender();
+            await flushHookEffects();
+            if (intent === 'manual-send') await act(async () => { void readProductionCreateAction(hook.getCurrent())(); });
+            if (intent === 'use' || intent === 'cancel') {
+                expect(acquisitions).toEqual([]);
+                expect(sessionSpawnCalls()).toEqual([]);
+                expect(model.simpleProps.promptStore.getPrompt()).toBe('FIX30 drafted work');
+                expect(hook.getCurrent().managedMachineDraft?.selection ?? null).toEqual(intent === 'use' ? selection : null);
+                const selectedComposer = hook.getCurrent();
+                if (selectedComposer.variant !== 'simple') throw new Error('Expected the real simple composer');
+                if (intent === 'use') expect(selectedComposer.simpleProps.machineName).toBe('FIX30 guest');
+                return;
+            }
+            await vi.waitFor(() => {
+                const current = hook.getCurrent();
+                expect(acquisitions.length, JSON.stringify({
+                    progress: current.managedMachineDraft?.progress,
+                    composer: current.variant === 'simple' ? current.simpleProps.connectionStatus : null,
+                    alerts: modalBoundary.alert.mock.calls, exceptions: observabilityBoundary.capture.mock.calls.map(([error]) => error instanceof Error ? error.stack : error),
+                    requests: socketBoundary.fetches.mock.calls,
+                })).toBe(1);
+            });
+            expect(acquisitions[0]).toMatchObject({ agentStart: { initialInput: { text: 'FIX30 drafted work' },
+                organizationPlacement: { folderId: null, tagIds: ['ordinary-managed-label', 'managed-space-tag'] } } });
+            expect(hook.getCurrent().managedMachineDraft?.selection).toEqual(selection);
+            expect(sessionSpawnCalls()).toEqual([]);
+            expect(model.simpleProps.promptStore.getPrompt()).toBe('FIX30 drafted work');
+            if (intent === 'cancel-start') {
+                await act(async () => { hook.getCurrent().managedMachineDraft?.cancel?.(); joined.resolve(); });
+                await flushHookEffects();
+                expect(sessionSpawnCalls()).toEqual([]);
+                expect(model.simpleProps.promptStore.getPrompt()).toBe('FIX30 drafted work');
+                return;
+            }
+            socketBoundary.result = { type: 'success', disposition: 'created', sessionId: 'FIX30-session',
+                executionTarget: { serverId: homeAScopeId, machineId: guest.id }, organizationPlacement: { folderId: null, tagIds: [] },
+                initialInput: { status: 'accepted', localId: 'FIX30-input' } };
+            await act(async () => {
+                machineHttpSnapshots.set(new URL(homeA.serverUrl).origin, [guest]);
+                await sync.refreshMachinesThrottled({ staleMs: 0 });
+                const { observeMachinePresenceForTest } = await import('@/dev/testkit/harness/machinePresence');
+                observeMachinePresenceForTest({ serverId: homeAScopeId, accountId: 'account-a' }, [guest.id]);
+                joined.resolve();
+            });
+            await vi.waitFor(() => expect(sessionSpawnCalls(), JSON.stringify({
+                progress: hook.getCurrent().managedMachineDraft?.progress,
+                rpcMethods: socketBoundary.emits.mock.calls.map(([request]) => request.payload?.method),
+                capabilityInvocations: socketBoundary.emits.mock.calls.filter(([request]) => request.payload?.method?.endsWith(':capabilities.invoke'))
+                    .map(([request]) => request.payload.params),
+                alerts: modalBoundary.alert.mock.calls, exceptions: observabilityBoundary.capture.mock.calls.map(([error]) => error instanceof Error ? error.stack : error),
+                requests: socketBoundary.fetches.mock.calls,
+            })).toHaveLength(1));
+            expect(sessionSpawnCalls()[0][0].payload.params).toMatchObject({
+                executionTarget: { serverId: homeAScopeId, machineId: guest.id }, initialInput: { text: 'FIX30 drafted work' },
+                organizationPlacement: { folderId: null, tagIds: ['ordinary-managed-label', 'managed-space-tag'] },
+            });
+            await flushHookEffects();
+            expect(acquisitions).toHaveLength(1);
+            expect(sessionSpawnCalls()).toHaveLength(1);
+        } finally { joined.resolve(); await hook.unmount(); }
     });
 
     it('keeps the mounted embedded composer quiet across unrelated Machine and Session arrivals', async () => {
