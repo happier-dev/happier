@@ -607,7 +607,7 @@ export function BrowserSurfaceHost(props: Readonly<{
             const facts = browserActionFactsRef.current;
             return { desktopWebViewAvailability: facts.desktopWebViewAvailability,
                 nativeViewCaptureHandlerRegistered: facts.nativeViewCaptureHandlerRegistered,
-                ...((command.kind === 'openView' || command.kind === 'setTarget') ? {
+                ...(('kind' in command && (command.kind === 'openView' || command.kind === 'setTarget')) ? {
                     targetPolicyDecision: evaluateBrowserTargetPolicy({ target: command.target, profile: facts.browserProfile,
                         browserFeatureDecision: facts.browserFeatureDecision, allowExternalUrlBrowsing: facts.allowExternalUrlBrowsing }),
                 } : {}),
@@ -659,8 +659,7 @@ export function BrowserSurfaceHost(props: Readonly<{
     React.useEffect(() => {
         const machineId = props.pluginBrowserActionContext?.machineId?.trim();
         const sessionId = props.pluginBrowserActionContext?.sessionId?.trim();
-        if (!machineId || !sessionId || !focusedView || (!runtimeAutomationAdapter && !liveBrowserDiagnostics?.bridge) || unavailableReason
-            || (policy.automationEnabled !== true && policy.diagnosticsEnabled !== true)
+        if (!machineId || !sessionId || !focusedView || unavailableReason
             || (focusedView.engineKind !== 'webIframe' && focusedView.engineKind !== 'nativeWebView'
                 && focusedView.engineKind !== 'desktopWebView')) return;
         const lifetime = captureActiveServerAccountScopeLifetime();
@@ -685,9 +684,9 @@ export function BrowserSurfaceHost(props: Readonly<{
             unregister?.();
         };
     }, [focusedView?.browserSessionId, focusedView?.viewId, focusedView?.engineKind,
-        policy.automationEnabled, policy.diagnosticsEnabled, Boolean(liveBrowserDiagnostics?.bridge), props.pluginBrowserActionContext?.machineId,
+        props.pluginBrowserActionContext?.machineId,
         props.pluginBrowserActionContext?.serverId, props.pluginBrowserActionContext?.sessionId,
-        runtimeAutomationAdapter, unavailableReason]);
+        unavailableReason]);
 
     const onCommand = React.useCallback((command: BrowserCommandV1) => executeBrowserAction(browserControlActionId(command), command, {
         surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
@@ -699,6 +698,15 @@ export function BrowserSurfaceHost(props: Readonly<{
 
     const onOpenInSystemBrowser = React.useCallback((view: Readonly<{ browserSessionId: string; viewId: string }>) => executeBrowserAction(
         'browser.view.openExternal', { ...view, commandId: `browser_command:${view.viewId}:openExternal:${Date.now()}` }, {
+            surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+            serverId: browserActionAccountLifetime?.scope.serverId,
+            expectedAccountId: browserActionAccountLifetime?.scope.accountId,
+            defaultSessionId: props.pluginBrowserActionContext?.sessionId ?? undefined,
+            externalActionTarget: browserActionTarget,
+        }), [executeBrowserAction, browserActionAccountLifetime, props.pluginBrowserActionContext?.sessionId, browserActionTarget]);
+
+    const onOpenDevtools = React.useCallback((view: Readonly<{ browserSessionId: string; viewId: string }>) => executeBrowserAction(
+        'browser.view.openDevtools', { ...view, commandId: `browser_command:${view.viewId}:openDevtools:${Date.now()}` }, {
             surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
             serverId: browserActionAccountLifetime?.scope.serverId,
             expectedAccountId: browserActionAccountLifetime?.scope.accountId,
@@ -899,6 +907,7 @@ export function BrowserSurfaceHost(props: Readonly<{
                 onCheckAgain={onCheckAgain}
                 onAllowBrowserSandbox={onAllowBrowserSandbox}
                 onOpenInSystemBrowser={onOpenInSystemBrowser}
+                onOpenDevtools={onOpenDevtools}
                 daemonControlAvailable={sendDaemonCommand !== undefined}
                 onViewLifecycle={applyViewLifecycleSignal}
                 lifecycleState={lifecycleSlot ? lifecycleSnapshot.lifecycleState : undefined}

@@ -1,6 +1,6 @@
+import { UiBrowserAutomationDispatchRequestV1Schema, UiBrowserAutomationDispatchResultV1Schema, MOUNTED_BROWSER_DIAGNOSTICS_ACTION_IDS, EXISTING_VIEW_BROWSER_CONTROL_ACTION_IDS } from '@happier-dev/protocol/browser/automation/reverseDispatchV1';
 import { BrowserCookieApplyV1Schema, BrowserPasskeysApplyV1Schema, type BrowserProfileLoginsImportResultV1 } from '@happier-dev/protocol/browser/profile/v1';
 import { applyDesktopBrowserLoginCookies, getDesktopBrowserNativePasskeyAvailability } from '../adapters/desktopWebViewBridge';
-import { UiBrowserAutomationDispatchRequestV1Schema, UiBrowserAutomationDispatchResultV1Schema, MOUNTED_BROWSER_DIAGNOSTICS_ACTION_IDS } from '@happier-dev/protocol/browser/automation/reverseDispatchV1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 
 import { createBrowserRuntimeActionExecutor } from '../actions/runtimeActionExecutor';
@@ -60,7 +60,10 @@ export async function handleUiBrowserAutomationDispatchRequest(
   const automation = readRegisteredBrowserRuntimeAutomationAdapter(view.browserSessionId, view.viewId);
   const isDiagnostics = (MOUNTED_BROWSER_DIAGNOSTICS_ACTION_IDS as readonly string[]).includes(request.data.actionId);
   const diagnostics = isDiagnostics ? readRegisteredBrowserRuntimeDiagnosticsAdapter(view.browserSessionId, view.viewId) : null;
-  if (isDiagnostics ? !diagnostics : request.data.actionId !== 'browser.view.openExternal' && !automation?.controlService) return unavailable;
+  const ordinaryControl = (EXISTING_VIEW_BROWSER_CONTROL_ACTION_IDS as readonly string[]).includes(request.data.actionId)
+    && request.data.actionId !== 'browser.control.takeControl' && request.data.actionId !== 'browser.control.handBack';
+  if (isDiagnostics ? !diagnostics : !ordinaryControl && request.data.actionId !== 'browser.view.openExternal'
+    && request.data.actionId !== 'browser.view.openDevtools' && !automation?.controlService) return unavailable;
   if (options?.signal?.aborted) return unavailable;
   const execute = createBrowserRuntimeActionExecutor({ control, ...(automation ? { automation } : {}), ...(diagnostics ? { diagnostics } : {}) });
   const result = await execute({ actionId: request.data.actionId, input: parsed.data, context: {

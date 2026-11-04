@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { BrowserInjectedRuntimeResultMessageV1Schema, BrowserAutomationActionResultV1Schema, UiBrowserAutomationDispatchRequestV1Schema, UiBrowserAutomationDispatchResultV1Schema, type RuntimeActionExecuteArgs } from '@happier-dev/protocol';
+import { BrowserInjectedRuntimeResultMessageV1Schema, BrowserAutomationActionResultV1Schema, UiBrowserAutomationDispatchRequestV1Schema, UiBrowserAutomationDispatchResultV1Schema, uiBrowserAutomationDispatchMethod, type RuntimeActionExecuteArgs } from '@happier-dev/protocol';
 
 import { handleUiBrowserAutomationDispatchRequest } from './reverseDispatchHandler';
 import { createBrowserAutomationControlService } from './controlService';
@@ -67,6 +67,62 @@ afterEach(() => {
 });
 
 describe('daemon to exact mounted UI browser Action', () => {
+  it('opens native DevTools from the public agent Action through the exact mounted view without automation', async () => {
+    const mounted = mountView(undefined, false, desktopAvailability);
+    let enabled = true;
+    nativeInvoke.mockResolvedValue({ ok: true, availability: desktopAvailability });
+    const runtimeActionExecute = createDaemonRuntimeActionExecutor({ env: { NODE_ENV: 'test' },
+      resolveRouteOwners: () => ({ browserUiAutomation: { ownsAutomationView: () => false,
+        uiAutomation: createBrowserAutomationReverseDispatcher({ getMachineClient: () => ({
+          callConnectedClientRpc: async (method, payload) => {
+            expect(method).toBe(uiBrowserAutomationDispatchMethod(view));
+            const wire = UiBrowserAutomationDispatchRequestV1Schema.parse(payload);
+            return { ok: true, result: UiBrowserAutomationDispatchResultV1Schema.parse(
+              await handleUiBrowserAutomationDispatchRequest(wire, boundView)) };
+          },
+        }) }),
+      } }),
+      resolveServerFeaturesSnapshot: () => ({ status: 'ready', features: FeaturesResponseSchema.parse({ features: {
+        browser: { enabled: true, viewTargets: { enabled: true }, internal: { enabled: true }, sidecar: { enabled: true } },
+      } }) }),
+    });
+    const executor = createActionExecutor(createActionExecutorBoundaryFixture({ runtimeActionExecute, isActionEnabled: () => enabled }));
+    const input = { ...view, commandId: 'open-devtools' };
+    const context = { ...args.context, bypassApprovals: true,
+      externalActionTarget: { kind: 'machine' as const, machineId: 'machine-1' } };
+    const result = await executor.execute('browser.view.openDevtools', input, context);
+    expect(result, JSON.stringify(result))
+      .toMatchObject({ ok: true, result: { status: 'dispatched', commandId: input.commandId, adapterKind: 'localPreview' } });
+    expect(nativeInvoke).toHaveBeenCalledWith('desktop_browser_open_devtools', { request: view });
+    nativeInvoke.mockClear();
+    enabled = false;
+    expect(await executor.execute('browser.view.openDevtools', input, context)).toMatchObject({ ok: false });
+    expect(nativeInvoke).not.toHaveBeenCalled();
+    enabled = true;
+    mounted.dispose();
+    expect(await executor.execute('browser.view.openDevtools', input, context))
+      .toMatchObject({ ok: false, errorCode: 'runtime_action_disabled' });
+    expect(nativeInvoke).not.toHaveBeenCalled();
+  });
+
+  it.each([undefined, { ...desktopAvailability, supports: { ...desktopAvailability.supports, nativeDevtools: false } }])(
+    'refuses DevTools on an unsupported mounted engine before invoking native code', async availability => {
+      mountView(undefined, false, availability);
+      expect(await handleUiBrowserAutomationDispatchRequest({ v: 1, sessionId: boundView.sessionId,
+        actionId: 'browser.view.openDevtools', input: { ...view, commandId: 'unsupported-devtools' },
+        authority: 'account_automation' }, boundView)).toMatchObject({ ok: false, errorCode: 'runtime_action_disabled' });
+      expect(nativeInvoke).not.toHaveBeenCalled();
+    });
+
+  it('does not report DevTools opened when the native bridge refuses', async () => {
+    mountView(undefined, false, desktopAvailability);
+    nativeInvoke.mockResolvedValue({ ok: false, availability: desktopAvailability });
+    expect(await handleUiBrowserAutomationDispatchRequest({ v: 1, sessionId: boundView.sessionId,
+      actionId: 'browser.view.openDevtools', input: { ...view, commandId: 'refused-devtools' },
+      authority: 'account_automation' }, boundView)).toMatchObject({ ok: false, errorCode: 'runtime_action_disabled' });
+    expect(nativeInvoke).toHaveBeenCalledWith('desktop_browser_open_devtools', { request: view });
+  });
+
   it('rejects dialog responses through the mounted Action route without clicking the page', async () => {
     const mounted = mountView();
     const result = await handleUiBrowserAutomationDispatchRequest({ v: 1, actionId: args.actionId,

@@ -6,6 +6,20 @@ import { isApprovalRequiredByActionsSettings } from './actionApprovalPolicy.js';
 import { UiBrowserAutomationDispatchRequestV1Schema } from '../browser/automation/reverseDispatchV1.js';
 
 describe('pre-mount Browser workspace Action contract', () => {
+  it('advertises native DevTools with configurable approval and exact mounted-view routing', () => {
+    const spec = getActionSpec('browser.view.openDevtools');
+    expect(spec).toMatchObject({ executionPlacement: 'machine',
+      surfaces: { ui: true, agent: true, plugin: true, api: true, mcp: false, voice: false, cli: false } });
+    expect(isApprovalRequiredByActionsSettings(spec.id, normalizeActionsSettingsV1({ v: 1 }),
+      { surface: 'agent', authority: 'account_automation' })).toBe(true);
+    expect(isApprovalRequiredByActionsSettings(spec.id, normalizeActionsSettingsV1({ v: 1,
+      approvalWaivedSurfaces: { [spec.id]: ['agent'] } }), { surface: 'agent', authority: 'account_automation' })).toBe(false);
+    const input = spec.inputSchema.parse({ browserSessionId: 'browser-session', viewId: 'view', commandId: 'devtools' });
+    expect(UiBrowserAutomationDispatchRequestV1Schema.safeParse({ v: 1, sessionId: 'session',
+      actionId: spec.id, input, authority: 'account_automation' }).success).toBe(true);
+    expect(spec.inputSchema.safeParse({ ...input, nativeDevtools: true }).success).toBe(false);
+    expect(spec.inputHints?.fields.map(field => field.path)).toEqual(expect.arrayContaining(['commandId', 'browserSessionId', 'viewId']));
+  });
   it('carries the canonical openExternal input from Machine placement to its exact answering client', () => {
     const spec = getActionSpec('browser.view.openExternal');
     const input = spec.inputSchema.parse({ browserSessionId: 'browser-session', viewId: 'view', commandId: 'open-external' });

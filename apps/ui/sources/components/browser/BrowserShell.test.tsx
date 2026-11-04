@@ -453,6 +453,24 @@ async function createSimulatorPreviewShellState(): Promise<
 }
 
 describe('BrowserShell', () => {
+  it('routes native DevTools from overflow through the surface Action callback', async () => {
+    const { BrowserShell } = await import('./BrowserShell');
+    const state = await createShellState();
+    const view = { ...state.viewsById.view_1!, engineKind: 'desktopWebView' as const };
+    const onOpenDevtools = vi.fn();
+    const screen = await renderScreen(<BrowserShell browserSessionId={view.browserSessionId} platform="desktop"
+      state={{ ...state, viewsById: { ...state.viewsById, [view.viewId]: view } }} onCommand={vi.fn()}
+      onOpenDevtools={onOpenDevtools} testID="browser-shell" desktopWebViewAvailability={{
+        available: true, platform: 'macos', primitive: 'macosNsViewWebKit', renderEngine: 'desktopWebView',
+        producer: 'tauriWryNativeChildView', privilegedIpc: false, disabledReasons: [],
+        supports: { navigation: true, goBackForward: true, reload: true, stop: true,
+          pageInfoDiagnostics: true, nativeDevtools: true, capture: true, recording: false, automation: true },
+      }} />);
+    await screen.pressByTestIdAsync('browser-shell-overflow');
+    await screen.pressByTestIdAsync('browser-shell-overflow-item-open-devtools');
+    expect(onOpenDevtools).toHaveBeenCalledWith({ browserSessionId: view.browserSessionId, viewId: view.viewId });
+  });
+
 
   it.each(['ui', 'agent'] as const)('admits mounted page and draft attachments from %s before capture, media or composer effects', async (surface) => {
     const { BrowserShell } = await import('./BrowserShell');

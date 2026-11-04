@@ -43,6 +43,27 @@ describe('daemon browser reverse dispatch protocol boundary', () => {
     } })).toMatchObject({ ok: false, errorCode: 'client_ambiguous' });
     expect(effects).toBe(0);
   });
+  it.each(['browser.view.openExternal', 'browser.view.openDevtools'] as const)(
+    'routes client-owned %s without requiring the managed sidecar', async actionId => {
+      const uiAutomation = createBrowserAutomationReverseDispatcher({ getMachineClient: () => ({
+        callConnectedClientRpc: async (method, payload) => {
+          expect(method).toBe(uiBrowserAutomationDispatchMethod(view));
+          expect(UiBrowserAutomationDispatchRequestV1Schema.parse(payload).actionId).toBe(actionId);
+          return { ok: true, result: { v: 1, status: 'dispatched', commandId: 'client-view-effect',
+            adapterKind: 'localPreview', events: [] } };
+        },
+      }) });
+      const execute = createDaemonRuntimeActionExecutor({ env: { NODE_ENV: 'test' },
+        resolveRouteOwners: () => ({ browserUiAutomation: { ownsAutomationView: () => false, uiAutomation } }),
+        resolveServerFeaturesSnapshot: () => ({ status: 'ready', features: FeaturesResponseSchema.parse({ features: {
+          browser: { enabled: true, viewTargets: { enabled: true }, internal: { enabled: true },
+            sidecar: { enabled: false }, automation: { enabled: false } },
+        } }) }),
+      });
+      expect(await execute({ ...args, actionId, input: { ...view, commandId: 'client-view-effect' } }))
+        .toMatchObject({ status: 'dispatched', commandId: 'client-view-effect' });
+    });
+
   it('preserves a definitive no-responder refusal after sending the RPC envelope', async () => {
     const execute = createBrowserAutomationReverseDispatcher({ getMachineClient: () => ({
       hasConnectedClientRpcHandler: () => true,
@@ -75,16 +96,16 @@ describe('daemon browser reverse dispatch protocol boundary', () => {
     expect(issued).toBe(1);
   });
 
-  it('reports an unknown external-open effect after its client transport was issued', async () => {
+  it.each(['browser.view.openExternal', 'browser.view.openDevtools', 'browser.reload'] as const)('reports an unknown %s effect after its client transport was issued', async actionId => {
     const execute = createBrowserAutomationReverseDispatcher({ getMachineClient: () => ({
       hasConnectedClientRpcHandler: () => true,
       callConnectedClientRpc: async (_method, payload, options) => {
-        expect(UiBrowserAutomationDispatchRequestV1Schema.parse(payload).actionId).toBe('browser.view.openExternal');
+        expect(UiBrowserAutomationDispatchRequestV1Schema.parse(payload).actionId).toBe(actionId);
         options?.onIssued?.();
         throw new Error('Client disconnected after opening');
       },
     }) });
-    expect(await execute({ ...args, actionId: 'browser.view.openExternal', input: { ...view, commandId: 'open-external' } }))
+    expect(await execute({ ...args, actionId, input: { ...view, commandId: 'open-external', ...(actionId === 'browser.reload' ? { kind: 'reload' } : {}) } }))
       .toEqual({ ok: false, errorCode: 'outcome_unknown', error: 'outcome_unknown' });
   });
 
@@ -104,7 +125,7 @@ describe('daemon browser reverse dispatch protocol boundary', () => {
       .toMatchObject({ status: 'dispatched', commandId: kind });
   });
 
-  it.each(['browser.automation.click', 'browser.control.takeControl', 'browser.control.handBack'] as const)('preserves %s interrupted unknown through composed daemon and public Action settlement after an issued abort', async actionId => {
+  it.each(['browser.automation.click', 'browser.control.takeControl', 'browser.control.handBack'] as const)('preserves %s unknown completion through composed daemon and public Action settlement after an issued abort', async actionId => {
     const abort = new AbortController();
     let began!: () => void;
     const issued = new Promise<void>(resolve => { began = resolve; });
@@ -143,7 +164,9 @@ describe('daemon browser reverse dispatch protocol boundary', () => {
     await issued;
     abort.abort();
     finish();
-    await expect(running).resolves.toMatchObject({ ok: true, result: { status: 'interrupted', completion: 'unknown' } });
+    await expect(running).resolves.toMatchObject(actionId === 'browser.automation.click'
+      ? { ok: true, result: { status: 'interrupted', completion: 'unknown' } }
+      : { ok: false, errorCode: 'outcome_unknown' });
   });
 
   it('keeps pre-send unavailability distinct from unknown completion', async () => {

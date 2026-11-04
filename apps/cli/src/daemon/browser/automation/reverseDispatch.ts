@@ -1,4 +1,4 @@
-import { UiBrowserAutomationDispatchRequestV1Schema, UiBrowserAutomationDispatchResultV1Schema, uiBrowserAutomationDispatchMethod, MOUNTED_BROWSER_DIAGNOSTICS_ACTION_IDS } from '@happier-dev/protocol/browser/automation/reverseDispatchV1';
+import { UiBrowserAutomationDispatchRequestV1Schema, UiBrowserAutomationDispatchResultV1Schema, uiBrowserAutomationDispatchMethod, MOUNTED_BROWSER_DIAGNOSTICS_ACTION_IDS, EXISTING_VIEW_BROWSER_CONTROL_ACTION_IDS } from '@happier-dev/protocol/browser/automation/reverseDispatchV1';
 import { BrowserAutomationActionKindV1Schema, isBrowserAutomationMutatingActionKind } from '@happier-dev/protocol/browser/automation/v1';
 import type { RuntimeActionExecute } from '@happier-dev/protocol';
 import { RPC_ERROR_CODES, isRpcMethodNotFoundResult } from '@happier-dev/protocol/rpcErrors';
@@ -26,7 +26,9 @@ export function createBrowserAutomationReverseDispatcher(input: Readonly<{
     if (!request.success) return unavailable;
     const actionKind = BrowserAutomationActionKindV1Schema.safeParse(record.actionKind);
     const diagnostics = (MOUNTED_BROWSER_DIAGNOSTICS_ACTION_IDS as readonly string[]).includes(args.actionId);
-    const effectBearing = diagnostics || args.actionId === 'browser.view.openExternal' || args.actionId === 'browser.automation.cancelActive'
+    const clientViewEffect = args.actionId === 'browser.view.openExternal' || args.actionId === 'browser.view.openDevtools'
+      || (EXISTING_VIEW_BROWSER_CONTROL_ACTION_IDS as readonly string[]).includes(args.actionId);
+    const effectBearing = diagnostics || clientViewEffect || args.actionId === 'browser.automation.cancelActive'
       || args.actionId === 'browser.control.takeControl' || args.actionId === 'browser.control.handBack'
       || (actionKind.success && isBrowserAutomationMutatingActionKind(actionKind.data));
     let issued = false;
@@ -35,7 +37,7 @@ export function createBrowserAutomationReverseDispatcher(input: Readonly<{
       ...(typeof record.automationRequestId === 'string' ? { automationRequestId: record.automationRequestId } : {}),
     });
     const failedTransport = () => issued && effectBearing
-      ? args.actionId === 'browser.view.openExternal' || diagnostics
+      ? clientViewEffect || diagnostics
         ? { ok: false, errorCode: 'outcome_unknown', error: 'outcome_unknown' } as const
         : interrupted()
       : unavailable;

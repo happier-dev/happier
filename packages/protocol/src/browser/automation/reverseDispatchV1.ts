@@ -15,11 +15,18 @@ export const MOUNTED_BROWSER_DIAGNOSTICS_ACTION_IDS = [
   'browser.diagnostics.elementPicker.start', 'browser.diagnostics.elementPicker.cancel',
 ] as const;
 
+/** BrowserCommands addressing an existing view, whether daemon- or App-owned. */
+export const EXISTING_VIEW_BROWSER_CONTROL_ACTION_IDS = [
+  'browser.control.takeControl', 'browser.control.handBack', 'browser.view.close', 'browser.view.focus',
+  'browser.view.setViewport',
+  'browser.target.set', 'browser.navigate', 'browser.reload', 'browser.goBack', 'browser.goForward', 'browser.stop',
+] as const;
+
 /** A continuation of an already-admitted daemon Action, on the exact client-owned view. */
 export const UiBrowserAutomationDispatchRequestV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1),
   sessionId: z.string().check(z.trim(), z.minLength(1)),
-  actionId: z.enum([...ACTION_ID_FAMILIES_V1.browser_automation, ...MOUNTED_BROWSER_DIAGNOSTICS_ACTION_IDS, 'browser.control.takeControl', 'browser.control.handBack', 'browser.view.openExternal']),
+  actionId: z.enum([...ACTION_ID_FAMILIES_V1.browser_automation, ...MOUNTED_BROWSER_DIAGNOSTICS_ACTION_IDS, ...EXISTING_VIEW_BROWSER_CONTROL_ACTION_IDS, 'browser.view.openExternal', 'browser.view.openDevtools']),
   input: z.unknown(),
   authority: z.optional(z.enum(['present_user', 'account_automation'])),
 }));

@@ -63,8 +63,7 @@ import {
     selectBrowserViewDisplayHost,
 } from '@/sync/domains/browser/shell';
 import type { BrowserLaunchpadRow } from '@/sync/domains/browser/targets';
-import type { DesktopWebViewNativeAvailability } from '@/sync/domains/browser/adapters/desktopWebView';
-import { openDesktopBrowserDevtools } from '@/sync/domains/browser/adapters/desktopWebViewBridge';
+import { canOpenDesktopBrowserDevtools, type DesktopWebViewNativeAvailability } from '@/sync/domains/browser/adapters/desktopWebView';
 import type { SimulatorPreviewSurfaceRuntime } from '@/sync/domains/devices/simulator/useSimulatorPreviewRuntime';
 import type { BrowserControlCommandEffect } from '@/sync/domains/browser/control';
 import type { BrowserSurfaceLifecycleState } from './surfaces/browserSurfaceLifecycle';
@@ -268,6 +267,7 @@ export function BrowserShell(props: Readonly<{
     /** Allow the managed browser's sandbox on the Session's Machine; null when the person declined. */
     onAllowBrowserSandbox?: () => Promise<BrowserSandboxInstallOutcome | null>;
     onOpenInSystemBrowser?: (view: Readonly<{ browserSessionId: string; viewId: string }>) => void | Promise<ActionExecuteResult>;
+    onOpenDevtools?: (view: Readonly<{ browserSessionId: string; viewId: string }>) => void | Promise<ActionExecuteResult>;
     /**
      * B-2 cause-2: a sink the in-app render engines call to feed their page-load lifecycle
      * (iframe `onLoad`/`onError`, RN `onLoadStart`/`onLoadEnd`/`onError`, desktop `publishPageInfo`)
@@ -457,18 +457,15 @@ export function BrowserShell(props: Readonly<{
         });
     }, [activeView, props]);
 
-    const desktopNativeDevtoolsAvailable = Boolean(
-        activeView
-        && props.desktopWebViewAvailability?.available
-        && props.desktopWebViewAvailability.supports.nativeDevtools,
-    );
+    const desktopNativeDevtoolsAvailable = Boolean(props.onOpenDevtools)
+        && canOpenDesktopBrowserDevtools(activeView, props.desktopWebViewAvailability);
     const openDesktopDevtools = React.useCallback(() => {
         if (!activeView) return;
-        void openDesktopBrowserDevtools({
+        void props.onOpenDevtools?.({
             browserSessionId: activeView.browserSessionId,
             viewId: activeView.viewId,
         });
-    }, [activeView]);
+    }, [activeView?.browserSessionId, activeView?.viewId, props.onOpenDevtools]);
 
     // The whole browser-context / annotation half of the shell: capture-provider selection, the
     // runtime-action-front-door dispatch path, the draft projection the overlay renders, and the

@@ -4,7 +4,7 @@ import { createUnavailableRuntimeActionExecutor, resolveRuntimeActionExecutionFa
 import { BrowserCommandV1Schema, BrowserOpenViewInProgressV1Schema, type DaemonBrowserViewListRequestV1, type DaemonBrowserViewListResponseV1 } from '@happier-dev/protocol/browser/control/v1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { getActionRequiredServerFeatureId } from '@happier-dev/protocol/actions/actionRequiredServerFeature';
-import { MOUNTED_BROWSER_DIAGNOSTICS_ACTION_IDS } from '@happier-dev/protocol/browser/automation/reverseDispatchV1';
+import { MOUNTED_BROWSER_DIAGNOSTICS_ACTION_IDS, EXISTING_VIEW_BROWSER_CONTROL_ACTION_IDS } from '@happier-dev/protocol/browser/automation/reverseDispatchV1';
 import type { ActionExecuteResult, RuntimeActionExecute, RuntimeActionExecuteArgs, RuntimeActionIdV1 } from '@happier-dev/protocol';
 
 import type { BrowserDaemonControlRoutes } from '../control/routes';
@@ -284,19 +284,16 @@ export function createBrowserDaemonRuntimeActionExecutor(
       return await executeBrowserAutomationAction(args, input);
     }
     if (BROWSER_CONTROL_ACTION_IDS.has(args.actionId)) {
-      if (!featureGate.isEnabled('browser.sidecar')) {
-        return browserRuntimeActionDisabledResult('browser_control_route_unavailable');
-      }
-      // External opening belongs to the exact answering client's mounted page,
+      // Client view effects belong to the exact answering client's mounted page,
       // not to the Machine's BrowserCommand broker or its system browser.
-      if (args.actionId === 'browser.view.openExternal') {
+      if (args.actionId === 'browser.view.openExternal' || args.actionId === 'browser.view.openDevtools') {
         const parsed = parseRuntimeActionInput(args);
         if (!parsed.ok) return parsed.result;
         return input.uiAutomation
           ? await input.uiAutomation({ ...args, input: parsed.input })
           : browserRuntimeActionDisabledResult('browser_ui_automation_unavailable');
       }
-      if (args.actionId === 'browser.control.takeControl' || args.actionId === 'browser.control.handBack') {
+      if ((EXISTING_VIEW_BROWSER_CONTROL_ACTION_IDS as readonly string[]).includes(args.actionId)) {
         const parsed = parseRuntimeActionInput(args);
         if (!parsed.ok) return parsed.result;
         const view = parsed.input as Readonly<{ browserSessionId: string; viewId: string }>;
@@ -305,6 +302,9 @@ export function createBrowserDaemonRuntimeActionExecutor(
             ? await input.uiAutomation({ ...args, input: parsed.input })
             : browserRuntimeActionDisabledResult('browser_ui_automation_unavailable');
         }
+      }
+      if (!featureGate.isEnabled('browser.sidecar')) {
+        return browserRuntimeActionDisabledResult('browser_control_route_unavailable');
       }
       if (sessionBrowserMismatch) return invalidParametersResult;
       return await executeBrowserControlAction(args, input);

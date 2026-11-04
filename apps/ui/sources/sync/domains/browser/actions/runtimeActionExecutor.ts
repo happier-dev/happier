@@ -25,6 +25,8 @@ import {
     type BrowserControlCommandDispatchOptions,
 } from '../control/commands';
 import type { BrowserDaemonControlDispatchClientResult } from '../control/machineRpc';
+import { canOpenDesktopBrowserDevtools } from '../adapters/desktopWebView';
+import { openDesktopBrowserDevtools } from '../adapters/desktopWebViewBridge';
 import { buildOpenExternalTabSelection, openBrowserExternalTabSelection } from '../adapters/selection';
 import type { BrowserControlState } from '../control/state';
 import {
@@ -67,7 +69,7 @@ export type BrowserRuntimeControlAdapter = Readonly<{
     applyDaemonEvents?: (events: readonly BrowserEventV1[]) => void | Promise<void>;
     sendDaemonCommand?: (command: BrowserCommandV1) => Promise<BrowserDaemonControlDispatchClientResult>;
     /** Trusted mounted platform/target facts, shared by UI and Agent dispatch. */
-    readDispatchOptions?: (command: BrowserCommandV1) => Omit<BrowserControlCommandDispatchOptions, 'sendDaemonCommand' | 'clientControlService'>;
+    readDispatchOptions?: (command: BrowserCommandV1 | PublicActionInputById['browser.view.openDevtools']) => Omit<BrowserControlCommandDispatchOptions, 'sendDaemonCommand' | 'clientControlService'>;
 }>;
 
 export type BrowserRuntimeAutomationAdapter = Readonly<{
@@ -270,6 +272,24 @@ async function executeBrowserControlAction(
         }
         const openerRegion = readClaimedBrowserRuntimeWorkspaceOpenRegion(lifetime.scope, request.scopeId, request.commandId);
         return await owner.open(request, args.context, openerRegion ? { openerRegion } : undefined);
+    }
+
+    if (args.actionId === 'browser.view.openDevtools') {
+        const parsed = PUBLIC_ACTION_INPUT_SCHEMAS['browser.view.openDevtools'].safeParse(args.input ?? {});
+        if (!parsed.success) return invalidParametersResult;
+        const request = parsed.data;
+        const control = input.control ?? input.resolveControl?.(request);
+        const view = control?.readState()?.viewsById[request.viewId];
+        if (!view || view.browserSessionId !== request.browserSessionId || args.context.signal?.aborted) {
+            return browserRuntimeActionDisabledResult('browser_view_unavailable');
+        }
+        if (!canOpenDesktopBrowserDevtools(view, control?.readDispatchOptions?.(request).desktopWebViewAvailability)) {
+            return browserRuntimeActionDisabledResult('browser_adapter_unavailable');
+        }
+        const opened = await openDesktopBrowserDevtools({ browserSessionId: request.browserSessionId, viewId: request.viewId });
+        if (!opened.ok) return browserRuntimeActionDisabledResult('browser_adapter_unavailable');
+        return BrowserCommandDispatchResultV1Schema.parse({ v: 1, commandId: request.commandId,
+            status: 'dispatched', adapterKind: view.adapterKind, events: [] });
     }
 
     const parsed = parseRuntimeActionInput(args);
