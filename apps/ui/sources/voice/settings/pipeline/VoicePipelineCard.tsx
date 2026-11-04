@@ -244,7 +244,7 @@ function StepsPressArea(props: Readonly<{ onPress?: () => void; style: StyleProp
 
 const styles = StyleSheet.create((theme) => ({
     card: {
-        borderRadius: PAGE_LIST_METRICS.sheetRadiusPx + 2,
+        borderRadius: PAGE_LIST_METRICS.sheetRadiusPx,
         borderWidth: StyleSheet.hairlineWidth,
         borderColor: theme.colors.border.default,
         backgroundColor: theme.colors.surface.sectionTint,
@@ -289,11 +289,12 @@ const styles = StyleSheet.create((theme) => ({
         flexShrink: 1,
         color: theme.colors.text.secondary,
     },
+    // The steps stand on the card's own paper: their text starts on the title's edge.
     flow: {
         flexDirection: 'row',
         alignItems: 'stretch',
-        paddingHorizontal: theme.space.s10,
-        paddingBottom: theme.space.s10,
+        paddingHorizontal: theme.space.s4,
+        paddingBottom: theme.space.s4,
     },
     arrow: {
         width: 28,
@@ -303,15 +304,13 @@ const styles = StyleSheet.create((theme) => ({
     tile: {
         flex: 1,
         minWidth: 0,
-        borderRadius: 12,
+        borderRadius: theme.space.s8,
         paddingHorizontal: 14,
-        paddingVertical: theme.space.s12,
+        paddingTop: theme.space.s4,
+        paddingBottom: theme.space.s12,
         gap: theme.space.s4,
-        // A step is one more tint layer inside the card's tint: a breath darker on light and a small
-        // lift on dark (DESIGN.md: dark is layered, not inverted). `inset` is the navigation plane,
-        // which sits below the page on dark and made the steps read sunken.
-        backgroundColor: theme.colors.surface.sectionTint,
     },
+    // The ink selection, not a second box: only the step the page below is editing has a ground of its own.
     tileNeedsYou: {
         backgroundColor: theme.colors.state.warning.background,
     },
@@ -319,10 +318,7 @@ const styles = StyleSheet.create((theme) => ({
         backgroundColor: theme.colors.state.danger.background,
     },
     tileSelected: {
-        borderWidth: 1.5,
-        borderColor: theme.colors.text.primary,
-        paddingHorizontal: 12.5,
-        paddingVertical: 10.5,
+        backgroundColor: theme.colors.surface.selected,
     },
     role: {
         ...Typography.variant('meta', 'semiBold'),

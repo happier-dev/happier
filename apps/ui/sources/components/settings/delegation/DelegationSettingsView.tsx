@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { SettingAnchor, SettingRow, SettingSection } from '@/components/settings/shell/SettingRow';
@@ -7,7 +8,6 @@ import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHead
 import { Icon } from '@/components/ui/icons/Icon';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
-import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -70,9 +70,12 @@ export const DelegationSettingsView = React.memo(function DelegationSettingsView
                             onChange={(next) => setWorkDepthLimit(Number(next))}
                         />
                     </SettingAnchor>
-                    <SectionContentRow testID="settings.delegation.ladder">
+                </ItemGroup>
+                {/* The levels are cards of their own, so they stand on the page under the choice, never inside its sheet. */}
+                <ItemGroup surface="none">
+                    <View testID="settings.delegation.ladder">
                         <DepthLadder limit={limit} />
-                    </SectionContentRow>
+                    </View>
                 </ItemGroup>
             </SettingSection>
         </ItemList>
