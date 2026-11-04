@@ -93,7 +93,7 @@ export async function prepareUiSourcePluginInventory({ uiPackageDir = uiDir, env
     if (metroServer) await metroServer.getBundler().getBundler().getDependencyGraph();
     signal?.throwIfAborted();
     await prepareSourcePluginUiInventory({ repoDir: repoRoot, outputDir, inventoryPath: candidatePath,
-      retainedInventoryPath: outputPath, artifactStoreDir, env, signal });
+      retainedInventoryPath: outputPath, artifactStoreDir, env, signal, devStartup: true });
     if (metroServer) await waitForMetroPluginUiInventory({ metroServer, metroConfig,
       inventoryPath: candidatePath, artifactStoreDir, signal });
     signal?.throwIfAborted();

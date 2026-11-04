@@ -9,6 +9,8 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { createRequire, syncBuiltinESMExports } from 'node:module';
 import { createServer } from 'node:http';
+import { EventEmitter } from 'node:events';
+import childProcess from 'node:child_process';
 import { execFile, spawn, spawnSync } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -394,6 +396,69 @@ test('source plugin UI publication admits complete directories to real Metro', {
     }
     assert.deepEqual(failures, []);
   });
+});
+
+for (const lifecycle of ['startup', 'refresh', 'finite']) test(lifecycle === 'finite'
+  ? 'finite Plugin UI preparation retains capacity admission'
+  : `Expo Plugin UI ${lifecycle} uses dev-runtime admission without validation capacity`, async t => {
+  const fixture = await createTempFixture(t, { prefix: 'happier-plugin-ui-admission-' });
+  const repoDir = fixture.path('repo');
+  const uiPackageDir = join(repoDir, 'apps/ui');
+  for (const app of ['cli', 'ui']) {
+    await mkdir(join(repoDir, 'apps', app), { recursive: true });
+    await writeFile(join(repoDir, 'apps', app, 'package.json'), JSON.stringify({
+      name: `@fixture/${app}`, bundledDependencies: [] }));
+  }
+  await writeFile(join(repoDir, 'package.json'), JSON.stringify({ private: true, workspaces: ['apps/*'] }));
+  const env = { ...process.env, HAPPIER_WORKSPACE_BUILD_STARTUP: '', HAPPIER_STACK_HOME_DIR: fixture.path('home'),
+    HAPPIER_UI_PLUGIN_ARTIFACT_INVENTORY: fixture.path('inventory.js') };
+  const { prepareUiSourcePluginInventory, watchUiSourcePluginInventory } =
+    await import('../../../ui/scripts/ensureWorkspacePackagesBuilt.mjs');
+  const boundaryStop = new Error('compiler process boundary reached');
+  const nativeSpawn = childProcess.spawn;
+  const nativeFork = childProcess.fork;
+  // Only the OS spawn is replaced. Exercise the real Expo owner, source runner
+  // and admission decision, then stop before running an expensive compiler.
+  const inspectCompilerInvocation = args => {
+    if (args.some(arg => typeof arg === 'string' && basename(arg) === 'build_source_web_ui.mjs')) {
+      if (lifecycle === 'finite') {
+        assert.ok(!args.includes('--dev-startup'), 'finite preparation must retain its existing admission');
+        assert.ok(args.includes(process.platform === 'win32' ? '--standalone' : '--heavyweight-admission'));
+      } else {
+        assert.ok(args.includes('--dev-startup'), 'Expo Plugin UI construction must use dev-startup admission');
+        assert.ok(!args.includes('--heavyweight-admission'), 'Expo Plugin UI must not request validation capacity');
+      }
+      throw boundaryStop;
+    }
+  };
+  t.mock.method(childProcess, 'fork', (modulePath, args, options) => {
+    if (basename(modulePath) === 'proc.mjs') inspectCompilerInvocation(JSON.parse(args[1]).args);
+    return nativeFork(modulePath, args, options);
+  });
+  t.mock.method(childProcess, 'spawn', (command, args, options) => {
+    inspectCompilerInvocation(args);
+    return nativeSpawn(command, args, options);
+  });
+  syncBuiltinESMExports();
+  t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
+  if (lifecycle !== 'refresh') {
+    const { prepareSourcePluginUiInventory } = await import('./build_source_web_ui.mjs');
+    const preparation = lifecycle === 'finite'
+      ? prepareSourcePluginUiInventory({ repoDir, outputDir: fixture.path('output'), env })
+      : prepareUiSourcePluginInventory({ uiPackageDir, env });
+    await assert.rejects(preparation, error => error === boundaryStop);
+    return;
+  }
+  const events = new EventEmitter();
+  const bundler = { getWatcher: () => events, getDependencyGraph: async () => ({}) };
+  const metroServer = { getBundler: () => ({ getBundler: () => bundler }) };
+  let resolveRefresh;
+  const refreshed = new Promise(resolve => { resolveRefresh = resolve; });
+  const owner = watchUiSourcePluginInventory({ uiPackageDir, env, metroServer,
+    logger: { error: (_message, error) => resolveRefresh(error) } });
+  t.after(() => owner.close());
+  events.emit('change', { eventsQueue: [{ filePath: join(repoDir, 'apps/cli/package.json'), type: 'change' }] });
+  assert.equal(await refreshed, boundaryStop);
 });
 
 test('source edits refresh the inventory module consumed by a running Metro', async (t) => {

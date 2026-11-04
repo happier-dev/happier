@@ -324,9 +324,9 @@ async function exportCapturedSourceWebUiInputs({ repoDir, baseDir, outputDir, in
 /** Live Metro and finite exports share source artifact construction. Only a
  * finite export captures inputs; interactive Expo intentionally reads live source. */
 export async function prepareSourcePluginUiInventory({ repoDir, inputRepoDir = repoDir, outputDir, inventoryPath, retainedInventoryPath, artifactStoreDir, env = process.env, signal,
-  stdoutStream = process.stdout }) {
+  stdoutStream = process.stdout, devStartup = false }) {
   await runSourceBuildCommand({ repoDir, scriptPath: fileURLToPath(import.meta.url),
-    args: [JSON.stringify({ repoDir: inputRepoDir, outputDir, inventoryPath, retainedInventoryPath, artifactStoreDir })], env, signal, captureStdout: false, captureStderr: true, stdoutStream });
+    args: [JSON.stringify({ repoDir: inputRepoDir, outputDir, inventoryPath, retainedInventoryPath, artifactStoreDir })], env, signal, captureStdout: false, captureStderr: true, stdoutStream, devStartup });
 }
 
 async function prepareSourceWebUiInputs({ repoDir, outputDir, inventoryPath, retainedInventoryPath, artifactStoreDir }) {

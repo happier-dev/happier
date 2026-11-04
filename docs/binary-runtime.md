@@ -848,7 +848,11 @@ pins the completed graph, so startup reads it without waiting on publication
 custody. The existing server reload coordinator builds replacements in the
 background and owns readiness and process activation. These development builds
 reuse protected local jobs placement and dependency custody, without entering
-validation's capacity queue or the shared CLI dist publication lease. A first
+validation's capacity queue or the shared CLI dist publication lease. Interactive
+Expo's private Plugin UI preparation uses that same development-runtime policy
+at startup and on Metro source refresh. Finite web exports retain their containing
+build's admission. The development path retains local jobs scheduling and resource
+custody; it does not request a separate validation capacity reservation. A first
 startup without retained output still needs a cold build. Retained startup and
 availability recovery do not replay an older migration ledger; current source
 replacement remains the migration owner.
