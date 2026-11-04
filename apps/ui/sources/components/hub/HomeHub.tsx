@@ -50,7 +50,7 @@ import { useIsTablet } from '@/utils/platform/responsive';
 import { HubStatusLine } from './header/HubStatusLine';
 import { useHomeGreeting } from './header/homeGreeting';
 import { findHomeHubBuiltinSection, homeChildTitle, homeHubSectionTitle } from './homeHubSections';
-import { HOME_HUB_ATTENTION_SECTION_ID, HOME_HUB_COMPOSER_SECTION_ID, HomeHubSectionList } from './HomeHubSectionList';
+import { HOME_HUB_ATTENTION_SECTION_ID, HOME_HUB_COMPOSER_SECTION_ID, HomeHubReadingColumn, HomeHubSectionList } from './HomeHubSectionList';
 import { HubWidgetSection } from './HubWidgetSection';
 import type { HomeHubSection } from './layout/homeHubLayout';
 import { HubSectionMenu } from './layout/HubSectionMenu';
@@ -72,6 +72,7 @@ import { useHomeLoadingMoment } from '@/components/atmosphere/moments/homeLoadin
 import { WelcomePlanet } from '@/components/atmosphere/moments/WelcomePlanet';
 import { useHomeWelcome } from '@/components/atmosphere/moments/useHomeWelcome';
 import { useActiveHomeUnavailable } from '@/components/navigation/connectionStatus/HomeReachabilityGate';
+import { useAppShellColumn } from '@/components/navigation/shell/appRail/appShellColumnContext';
 import { AtmosphereTopChips } from '@/components/atmosphere/AtmosphereCreditChip';
 import { isAtmosphereMomentOn } from '@/components/atmosphere/atmosphereMoments';
 import { HomeIdleResettle } from '@/components/atmosphere/HomeIdleResettle';
@@ -409,6 +410,7 @@ export const HomeHub = React.memo(function HomeHub() {
 const HomeHubContent = React.memo(function HomeHubContent() {
     const observedGuidance = useSessionGettingStartedGuidanceBaseModel();
     const homeUnavailable = useActiveHomeUnavailable();
+    const columnSaysHome = useAppShellColumn().columnVisible;
     const guidance = { ...observedGuidance, kind: useHomeHubGuidanceKind(observedGuidance.kind, homeUnavailable) };
     const greeting = useReturningGreeting();
     const title = useHomeGreeting();
@@ -577,6 +579,13 @@ const HomeHubContent = React.memo(function HomeHubContent() {
     const sections = (
         <>
             {customizeOpen ? <HomeCustomizeBar onDone={closeCustomize} interactionBoundaryRef={contentRef} /> : null}
+            {/* The widgets' reads wait on the Home: one line says why, and the sections keep their room. A visible
+                column already says it above its own rows. */}
+            {homeUnavailable && !columnSaysHome ? (
+                <HomeHubReadingColumn>
+                    <ItemGroup surface="none"><HomeReachabilityGate variant="line">{null}</HomeReachabilityGate></ItemGroup>
+                </HomeHubReadingColumn>
+            ) : null}
             {phone && !briefOpen ? (
                 // Phone (lab B0p): the brief's entry spans the page under the greeting.
                 <ItemGroup surface="none">

@@ -2,6 +2,7 @@ import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/ac
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
+import { publishAppliedActiveServerRuntimeAvailability } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { NavigationContext, useNavigation } from '@react-navigation/native';
 
 import { createDeferred, flushHookEffects, installTimerCensus, renderScreen, standardCleanup } from '@/dev/testkit';
@@ -453,6 +454,15 @@ describe('HomeHub', () => {
             expect(holdsText(screen.findByTestId('home-hero')!, 'section:start')).toBe(false);
         } finally { read.resolve(); }
     });
+    it('says once that the Home cannot be reached while its sections wait, and offers Retry', async () => {
+        const screen = await renderHome();
+        publishAppliedActiveServerRuntimeAvailability(true);
+        await act(async () => { storage.setState({ endpointStatus: 'offline', socketStatus: 'disconnected', endpointReason: null, syncError: null }); });
+        expect(screen.findAllByTestId('home-hub').length).toBeGreaterThan(0);
+        expect(screen.findAllByTestId('home-unreachable').length).toBeGreaterThan(0);
+        expect(screen.findAllByTestId('home-unreachable-retry').length).toBeGreaterThan(0);
+    });
+
     it('holds a quiet page while it is not known yet whether a machine can run a session', async () => {
         settings.guidanceKind = 'loading';
         const loading = await renderHome();
