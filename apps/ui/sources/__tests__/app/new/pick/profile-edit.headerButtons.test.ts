@@ -173,26 +173,14 @@ describe('ProfileEditScreen (header buttons)', () => {
         expect(saveButton?.props?.disabled).toBe(true);
     });
 
-    it('keeps the profile edit form inside the standard keyboard-aware screen frame', async () => {
-        const ProfileEditScreen = (await import('@/app/(app)/new/pick/profile-edit')).default;
-        const { KeyboardAwareScreen } = await import('@/components/ui/keyboardAvoidance');
-        const screen = await renderScreen(React.createElement(ProfileEditScreen));
-
-        const keyboardFrame = screen.findByType(KeyboardAwareScreen);
-        expect(keyboardFrame.props.mode).toBe('form');
-        expect(keyboardFrame.props.keyboardVerticalOffset).toBe(0);
-    });
-
-    it('does not apply the native header offset to Android keyboard avoidance', async () => {
+    it('leaves keyboard avoidance to the profile form list instead of a second screen-level owner', async () => {
         keyboardOffsetState.platformOS = 'android';
-        keyboardOffsetState.statusBarHeight = 24;
-        keyboardOffsetState.headerHeight = 56;
 
         const ProfileEditScreen = (await import('@/app/(app)/new/pick/profile-edit')).default;
-        const { KeyboardAwareScreen } = await import('@/components/ui/keyboardAvoidance');
         const screen = await renderScreen(React.createElement(ProfileEditScreen));
 
-        const keyboardFrame = screen.findByType(KeyboardAwareScreen);
-        expect(keyboardFrame.props.keyboardVerticalOffset).toBe(0);
+        // ProfileEditForm's keyboard-aware ItemList owns avoidance; a screen frame would double it.
+        expect(screen.findAllByType('KeyboardAvoidingView' as never)).toHaveLength(0);
+        expect(screen.findAllByType('ProfileEditForm' as never)).toHaveLength(1);
     });
 });
