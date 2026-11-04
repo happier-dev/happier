@@ -54,6 +54,10 @@ const predecessor0217SetupParams = (target) => Object.freeze({
 export const PREDECESSOR_SETUP_PARAMS_BY_DESKTOP_TAG = Object.freeze({
   'ui-desktop-v0.2.12': () => PREDECESSOR_0_2_12_SETUP_PARAMS,
   'ui-desktop-v0.2.17': predecessor0217SetupParams,
+  // Same builder and hsetup params parser as 0.2.17 (no diff in either file from ui-desktop-v0.2.17 to
+  // ui-desktop-v0.2.19, or to release candidate f6f4032ffe that becomes ui-desktop-v0.2.21).
+  'ui-desktop-v0.2.19': predecessor0217SetupParams,
+  'ui-desktop-v0.2.21': predecessor0217SetupParams,
 });
 
 /**
